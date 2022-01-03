@@ -7,7 +7,7 @@ from numbers import Number
 from typing import Dict, List
 import dace
 import sympy
-from dace import data, dtypes, registry, subsets, symbolic
+from dace import data, dtypes, subsets, symbolic
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import OrderedMultiDiConnectorGraph
@@ -16,8 +16,7 @@ from dace.transformation.subgraph.helpers import subgraph_from_maps
 from functools import reduce
 
 
-@registry.autoregister_params(singlestate=True)
-class ElementWiseArrayOperation(pm.Transformation):
+class ElementWiseArrayOperation(pm.SingleStateTransformation):
     """ Distributes element-wise array operations.
     """
 
@@ -241,8 +240,7 @@ class ElementWiseArrayOperation(pm.Transformation):
         map_entry.map.range = subsets.Range(ranges)
 
 
-@registry.autoregister_params(singlestate=True)
-class ElementWiseArrayOperation2D(pm.Transformation):
+class ElementWiseArrayOperation2D(pm.SingleStateTransformation):
     """ Distributes element-wise array operations.
     """
 
@@ -495,8 +493,7 @@ class ElementWiseArrayOperation2D(pm.Transformation):
         map_entry.map.range = subsets.Range(ranges)
 
 
-@registry.autoregister_params(singlestate=True)
-class RedundantComm2D(pm.Transformation):
+class RedundantComm2D(pm.SingleStateTransformation):
     """ Implements the redundant communication removal transformation,
         applied when data are scattered and immediately gathered,
         but never used anywhere else. """
@@ -574,8 +571,7 @@ class RedundantComm2D(pm.Transformation):
         graph.remove_node(out_array)
 
 
-@registry.autoregister_params(singlestate=True)
-class StencilOperation(pm.Transformation):
+class StencilOperation(pm.SingleStateTransformation):
     """ Detects stencil operations.
     """
 
@@ -687,8 +683,7 @@ class StencilOperation(pm.Transformation):
         pass
 
 
-@registry.autoregister_params(singlestate=True)
-class OuterProductOperation(pm.Transformation):
+class OuterProductOperation(pm.SingleStateTransformation):
     """ Detects outer-product operations.
     """
 
@@ -774,8 +769,7 @@ class OuterProductOperation(pm.Transformation):
         pass
 
 
-@registry.autoregister_params(singlestate=True)
-class Reduction1Operation(pm.Transformation):
+class Reduction1Operation(pm.SingleStateTransformation):
     """ Detects reduction1 operations.
     """
 
@@ -826,8 +820,7 @@ class Reduction1Operation(pm.Transformation):
         pass
 
 
-@registry.autoregister_params(singlestate=True)
-class ReductionNOperation(pm.Transformation):
+class ReductionNOperation(pm.SingleStateTransformation):
     """ Detects reductionN operations.
     """
 

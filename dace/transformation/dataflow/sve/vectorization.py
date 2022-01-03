@@ -30,9 +30,8 @@ import dace.transformation.dataflow.sve.infer_types as infer_types
 import dace.sdfg.analysis.vector_inference as vector_inference
 
 
-@registry.autoregister_params(singlestate=True)
 @make_properties
-class SVEVectorization(transformation.Transformation):
+class SVEVectorization(transformation.SingleStateTransformation):
     """ Implements the Arm SVE vectorization transform.
 
         Takes a map entry of a possibly multidimensional map and enforces a

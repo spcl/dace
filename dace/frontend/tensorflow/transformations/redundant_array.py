@@ -8,7 +8,7 @@ from dace.transformation import transformation as pm
 from dace.config import Config
 
 
-class TensorflowRedundantArray(pm.Transformation):
+class TensorflowRedundantArray(pm.SingleStateTransformation):
     """ Implements the redundant array removal transformation, applied
         to remove ReadVariableOps and control dependencies. """
 

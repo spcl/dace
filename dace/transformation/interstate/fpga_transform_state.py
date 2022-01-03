@@ -28,8 +28,7 @@ def fpga_update(sdfg, state, depth):
                 fpga_update(node.sdfg, s, depth + 1)
 
 
-@registry.autoregister
-class FPGATransformState(transformation.Transformation):
+class FPGATransformState(transformation.MultiStateTransformation):
     """ Implements the FPGATransformState transformation. """
 
     _state = sd.SDFGState()

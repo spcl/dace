@@ -52,9 +52,8 @@ def calc_set_image(map_idx, map_set, array_set):
         return calc_set_image_index(map_idx, map_set, array_set)
 
 
-@registry.autoregister_params(singlestate=True)
 @make_properties
-class StreamTransient(transformation.Transformation):
+class StreamTransient(transformation.SingleStateTransformation):
     """ Implements the StreamTransient transformation, which adds a transient
         and stream nodes between nested maps that lead to a stream. The
         transient then acts as a local buffer.
@@ -147,9 +146,8 @@ class StreamTransient(transformation.Transformation):
         return
 
 
-@registry.autoregister_params(singlestate=True)
 @make_properties
-class AccumulateTransient(transformation.Transformation):
+class AccumulateTransient(transformation.SingleStateTransformation):
     """ Implements the AccumulateTransient transformation, which adds
         transient stream and data nodes between nested maps that lead to a
         stream. The transient data nodes then act as a local accumulator.

@@ -33,9 +33,8 @@ def in_path(path, edge, nodetype, forward=True):
     return False
 
 
-@registry.autoregister_params(singlestate=True)
 @make_properties
-class GPUTransformLocalStorage(transformation.Transformation):
+class GPUTransformLocalStorage(transformation.SingleStateTransformation):
     """Implements the GPUTransformLocalStorage transformation.
 
         Similar to GPUTransformMap, but takes multiple maps leading from the

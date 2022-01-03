@@ -42,8 +42,7 @@ class PythonLHSExtractor(ast.NodeVisitor):
             self.assignments.add(node.targets[0].id)
 
 
-@registry.autoregister_params(singlestate=True, coarsening=False)
-class SimpleTaskletFusion(pm.Transformation):
+class SimpleTaskletFusion(pm.SingleStateTransformation):
     """ Fuses two connected Tasklets.
         It is recommended that this transformation is used on Tasklets that
         contain only simple assignments.

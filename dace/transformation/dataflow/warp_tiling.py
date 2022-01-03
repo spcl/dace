@@ -8,9 +8,8 @@ from dace.transformation import transformation as xf, helpers as xfh
 from dace.sdfg import utils as sdutil
 
 
-@registry.autoregister_params(singlestate=True)
 @properties.make_properties
-class WarpTiling(xf.Transformation):
+class WarpTiling(xf.SingleStateTransformation):
     """ 
     Implements a GPU specialization tiling that takes a GPU kernel map (with 
     nested maps, but without explicit block sizes) and divides its work across

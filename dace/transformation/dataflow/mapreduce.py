@@ -2,7 +2,6 @@
 """ Contains classes and functions that implement the map-reduce-fusion 
     transformation. """
 
-from dace import registry
 from dace.sdfg import SDFG, SDFGState
 from dace.memlet import Memlet
 from dace.sdfg import nodes
@@ -16,9 +15,8 @@ from dace.transformation.dataflow.map_collapse import MapCollapse
 from dace.transformation.dataflow.map_fusion import MapFusion
 
 
-@registry.autoregister_params(singlestate=True)
 @make_properties
-class MapReduceFusion(pm.Transformation):
+class MapReduceFusion(pm.SingleStateTransformation):
     """ Implements the map-reduce-fusion transformation.
         Fuses a map with an immediately following reduction, where the array
         between the map and the reduction is not used anywhere else.
@@ -157,8 +155,7 @@ class MapReduceFusion(pm.Transformation):
                 external_edges=True)
 
 
-@registry.autoregister_params(singlestate=True)
-class MapWCRFusion(pm.Transformation):
+class MapWCRFusion(pm.SingleStateTransformation):
     """ Implements the map expanded-reduce fusion transformation.
         Fuses a map with an immediately following reduction, where the array
         between the map and the reduction is not used anywhere else, and the

@@ -1,7 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from typing import Any, Dict, Iterable, List, Tuple, Union
 
-from dace import data, dtypes, properties, registry
+from dace import data, dtypes, properties
 from dace.sdfg import utils
 from dace.transformation import transformation
 from dace.sdfg import nodes as nd
@@ -10,9 +10,8 @@ from dace import symbolic
 import functools
 
 
-@registry.autoregister_params(singlestate=True)
 @properties.make_properties
-class BankSplit(transformation.Transformation):
+class BankSplit(transformation.SingleStateTransformation):
     """
     A transformation that allow splitting an array and distribute it on another
     array with one dimension more, or vice versa. Works with arbitrary arrays,

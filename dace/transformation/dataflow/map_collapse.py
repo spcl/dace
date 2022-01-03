@@ -1,7 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains classes that implement the map-collapse transformation. """
 
-from dace import registry
 from dace.symbolic import symlist
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
@@ -10,9 +9,8 @@ from dace.properties import make_properties
 from typing import Tuple
 
 
-@registry.autoregister_params(singlestate=True)
 @make_properties
-class MapCollapse(transformation.Transformation):
+class MapCollapse(transformation.SingleStateTransformation):
     """ Implements the Map Collapse pattern.
 
         Map-collapse takes two nested maps with M and N dimensions respectively,

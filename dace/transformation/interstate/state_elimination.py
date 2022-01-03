@@ -12,8 +12,7 @@ from dace.transformation import transformation
 from dace.config import Config
 
 
-@registry.autoregister_params(coarsening=True)
-class EndStateElimination(transformation.Transformation):
+class EndStateElimination(transformation.MultiStateTransformation, transformation.DataflowCoarseningTransformation):
     """
     End-state elimination removes a redundant state that has one incoming edge
     and no contents.
@@ -66,8 +65,7 @@ class EndStateElimination(transformation.Transformation):
                 sdfg.remove_symbol(sym)
 
 
-@registry.autoregister_params(coarsening=False)
-class StartStateElimination(transformation.Transformation):
+class StartStateElimination(transformation.MultiStateTransformation):
     """
     Start-state elimination removes a redundant state that has one outgoing edge
     and no contents. This transformation applies only to nested SDFGs.
@@ -139,8 +137,7 @@ def _assignments_to_consider(sdfg, edge):
     return assignments_to_consider
 
 
-@registry.autoregister_params(coarsening=True)
-class StateAssignElimination(transformation.Transformation):
+class StateAssignElimination(transformation.MultiStateTransformation, transformation.DataflowCoarseningTransformation):
     """
     State assign elimination removes all assignments into the final state
     and subsumes the assigned value into its contents.
@@ -242,8 +239,7 @@ def _alias_assignments(sdfg, edge):
     return assignments_to_consider
 
 
-@registry.autoregister_params(coarsening=True)
-class SymbolAliasPromotion(transformation.Transformation):
+class SymbolAliasPromotion(transformation.MultiStateTransformation, transformation.DataflowCoarseningTransformation):
     """
     SymbolAliasPromotion moves inter-state assignments that create symbolic
     aliases to the previous inter-state edge according to the topological order.
@@ -353,8 +349,7 @@ class SymbolAliasPromotion(transformation.Transformation):
             in_edge.assignments[k] = v
 
 
-@registry.autoregister_params(singlestate=True)
-class HoistState(transformation.Transformation):
+class HoistState(transformation.SingleStateTransformation):
     """ Move a state out of a nested SDFG """
     nsdfg = transformation.PatternNode(nodes.NestedSDFG)
 

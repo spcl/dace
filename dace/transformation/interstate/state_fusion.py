@@ -30,8 +30,7 @@ def top_level_nodes(state: SDFGState):
     return state.scope_children()[None]
 
 
-@registry.autoregister_params(coarsening=True)
-class StateFusion(transformation.Transformation):
+class StateFusion(transformation.MultiStateTransformation, transformation.DataflowCoarseningTransformation):
     """ Implements the state-fusion transformation.
 
         State-fusion takes two states that are connected through a single edge,

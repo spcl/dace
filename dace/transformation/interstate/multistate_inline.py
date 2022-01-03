@@ -21,9 +21,8 @@ from dace.properties import make_properties, Property
 from dace import data
 
 
-@registry.autoregister_params(singlestate=True, coarsening=True)
 @make_properties
-class InlineMultistateSDFG(transformation.Transformation):
+class InlineMultistateSDFG(transformation.SingleStateTransformation, transformation.DataflowCoarseningTransformation):
     """
     Inlines a multi-state nested SDFG into a top-level SDFG. This only happens
     if the state has the nested SDFG node isolated (i.e., only containing it

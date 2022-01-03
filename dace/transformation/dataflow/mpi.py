@@ -9,9 +9,8 @@ from dace.transformation import transformation
 from dace.properties import make_properties
 
 
-@registry.autoregister_params(singlestate=True)
 @make_properties
-class MPITransformMap(transformation.Transformation):
+class MPITransformMap(transformation.SingleStateTransformation):
     """ Implements the MPI parallelization pattern.
 
         Takes a map and makes it an MPI-scheduled map, introduces transients

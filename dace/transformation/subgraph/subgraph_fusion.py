@@ -27,7 +27,6 @@ from collections import defaultdict
 from itertools import chain
 
 
-@registry.autoregister_params(singlestate=True)
 @make_properties
 class SubgraphFusion(transformation.SubgraphTransformation):
     """ Implements the SubgraphFusion transformation.

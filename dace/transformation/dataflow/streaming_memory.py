@@ -84,9 +84,8 @@ def _streamify_recursive(node: nodes.NestedSDFG, to_replace: str, desc: data.Str
                         _streamify_recursive(e.dst, e.dst_conn, newdesc)
 
 
-@registry.autoregister_params(singlestate=True)
 @properties.make_properties
-class StreamingMemory(xf.Transformation):
+class StreamingMemory(xf.SingleStateTransformation):
     """ 
     Converts a read or a write to streaming memory access, where data is
     read/written to/from a stream in a separate connected component than the
@@ -319,9 +318,8 @@ class StreamingMemory(xf.Transformation):
         return ionodes
 
 
-@registry.autoregister_params(singlestate=True)
 @properties.make_properties
-class StreamingComposition(xf.Transformation):
+class StreamingComposition(xf.SingleStateTransformation):
     """ 
     Converts two connected computations (nodes, map scopes) into two separate
     processing elements, with a stream connecting the results. Only applies

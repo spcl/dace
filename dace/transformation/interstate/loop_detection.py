@@ -11,7 +11,8 @@ from dace.sdfg import utils as sdutil
 from dace.transformation import transformation
 
 
-class DetectLoop(transformation.Transformation):
+# NOTE: This class extends PatternTransformation directly in order to not show up in the matches
+class DetectLoop(transformation.PatternTransformation):
     """ Detects a for-loop construct from an SDFG. """
 
     _loop_guard = sd.SDFGState()

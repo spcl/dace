@@ -4,7 +4,7 @@
 
 from copy import deepcopy as dcpy
 from dace.sdfg.state import SDFGState
-from dace import data, dtypes, registry, symbolic, subsets
+from dace import data, dtypes, symbolic, subsets
 from dace.sdfg import nodes
 from dace.memlet import Memlet
 from dace.sdfg import replace
@@ -14,8 +14,7 @@ from typing import List, Union
 import networkx as nx
 
 
-@registry.autoregister_params(singlestate=True)
-class MapFusion(transformation.Transformation):
+class MapFusion(transformation.SingleStateTransformation):
     """ Implements the MapFusion transformation.
         It wil check for all patterns MapExit -> AccessNode -> MapEntry, and
         based on the following rules, fuse them and remove the transient in

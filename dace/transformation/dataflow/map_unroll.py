@@ -1,15 +1,12 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-from dace import data as dt, dtypes, registry, symbolic, SDFG
+from dace import data as dt, dtypes, symbolic, SDFG
 from dace.sdfg import nodes, utils as sdutil
 from dace.transformation import transformation
-from dace.properties import make_properties
 import copy
 import itertools
 
 
-@registry.autoregister_params(singlestate=True)
-@make_properties
-class MapUnroll(transformation.Transformation):
+class MapUnroll(transformation.SingleStateTransformation):
     """
     Unrolls a map with constant ranges in the top-level scope of an SDFG by
     replicating its subgraph for each iteration. If there are local data

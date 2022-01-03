@@ -1,16 +1,14 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains classes that implement the trivial-map-elimination transformation. """
 
-from dace import registry
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation
 from dace.properties import make_properties
 
 
-@registry.autoregister_params(singlestate=True)
 @make_properties
-class TrivialMapElimination(transformation.Transformation):
+class TrivialMapElimination(transformation.SingleStateTransformation):
     """ Implements the Trivial-Map Elimination pattern.
 
         Trivial-Map Elimination removes all dimensions containing only one

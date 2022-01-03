@@ -13,7 +13,6 @@ from dace.transformation.interstate.loop_detection import (DetectLoop, find_for_
 from dace.transformation.interstate.loop_unroll import LoopUnroll
 
 
-@registry.autoregister
 @make_properties
 class LoopPeeling(LoopUnroll):
     """

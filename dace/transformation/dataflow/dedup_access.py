@@ -6,7 +6,7 @@ import copy
 import itertools
 from typing import List, Set
 
-from dace import data, dtypes, sdfg as sd, subsets, symbolic, registry
+from dace import data, dtypes, sdfg as sd, subsets, symbolic
 from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
@@ -16,8 +16,7 @@ import dace.transformation.helpers as helpers
 import warnings
 
 
-@registry.autoregister_params(singlestate=True)
-class DeduplicateAccess(xf.Transformation):
+class DeduplicateAccess(xf.SingleStateTransformation):
     """ 
     This transformation takes a node that is connected to multiple destinations
     with overlapping memlets, and consolidates those accesses through a 

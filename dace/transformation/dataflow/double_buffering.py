@@ -4,7 +4,7 @@
 import copy
 import itertools
 
-from dace import data, dtypes, sdfg as sd, subsets, symbolic, registry
+from dace import data, dtypes, sdfg as sd, subsets, symbolic
 from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
@@ -13,8 +13,7 @@ from dace.transformation import transformation
 from dace.transformation.dataflow.map_for_loop import MapToForLoop
 
 
-@registry.autoregister_params(singlestate=True)
-class DoubleBuffering(transformation.Transformation):
+class DoubleBuffering(transformation.SingleStateTransformation):
     """ Implements the double buffering pattern, which pipelines reading
         and processing data by creating a second copy of the memory.
         In particular, the transformation takes a 1D map and all internal

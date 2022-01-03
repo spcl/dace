@@ -8,9 +8,8 @@ from dace.transformation import transformation
 from dace.properties import make_properties
 
 
-@registry.autoregister_params(singlestate=True)
 @make_properties
-class TrivialTaskletElimination(transformation.Transformation):
+class TrivialTaskletElimination(transformation.SingleStateTransformation):
     """ Implements the Trivial-Tasklet Elimination pattern.
 
         Trivial-Tasklet Elimination removes tasklets that just copy the input

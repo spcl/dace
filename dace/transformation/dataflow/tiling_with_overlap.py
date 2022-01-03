@@ -9,7 +9,6 @@ from dace.sdfg import nodes
 from dace.symbolic import pystr_to_symbolic
 
 
-@registry.autoregister_params(singlestate=True)
 @make_properties
 class MapTilingWithOverlap(MapTiling):
     """ Implements the orthogonal tiling transformation with overlap.

@@ -121,9 +121,8 @@ def calc_set_union(set_a, set_b):
     return subsets.Range(union)
 
 
-@registry.autoregister_params(singlestate=True)
 @make_properties
-class StripMining(transformation.Transformation):
+class StripMining(transformation.SingleStateTransformation):
     """ Implements the strip-mining transformation.
 
         Strip-mining takes as input a map dimension and splits it into

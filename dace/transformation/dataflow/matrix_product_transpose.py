@@ -10,9 +10,8 @@ from dace.properties import make_properties
 import dace.libraries.blas as blas
 
 
-@registry.autoregister_params(singlestate=True)
 @make_properties
-class MatrixProductTranspose(transformation.Transformation):
+class MatrixProductTranspose(transformation.SingleStateTransformation):
     """ Implements the matrix-matrix product transpose transformation.
 
         T(A) @ T(B) = T(B @ A)

@@ -14,7 +14,7 @@ from dace.transformation import transformation as xf
 
 
 @make_properties
-class LocalStorage(xf.Transformation, ABC):
+class LocalStorage(xf.SingleStateTransformation, ABC):
     """ Implements the Local Storage prototype transformation, which adds a
         transient data node between two nodes.
     """
@@ -118,7 +118,6 @@ class LocalStorage(xf.Transformation, ABC):
         return data_node
 
 
-@registry.autoregister_params(singlestate=True)
 @make_properties
 class InLocalStorage(LocalStorage):
     """ Implements the InLocalStorage transformation, which adds a transient
@@ -136,7 +135,6 @@ class InLocalStorage(LocalStorage):
         return False
 
 
-@registry.autoregister_params(singlestate=True)
 @make_properties
 class OutLocalStorage(LocalStorage):
     """ Implements the OutLocalStorage transformation, which adds a transient

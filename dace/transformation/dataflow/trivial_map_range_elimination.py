@@ -8,9 +8,8 @@ from dace.transformation import transformation
 from dace.properties import make_properties
 
 
-@registry.autoregister_params(singlestate=True)
 @make_properties
-class TrivialMapRangeElimination(transformation.Transformation):
+class TrivialMapRangeElimination(transformation.SingleStateTransformation):
     """ Implements the Trivial Map Range Elimination pattern.
 
         Trivial Map Range Elimination takes a multi-dimensional map with 

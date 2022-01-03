@@ -9,9 +9,8 @@ from dace.sdfg import utils as sdutil
 from dace.transformation import transformation
 
 
-@registry.autoregister_params(singlestate=True)
 @make_properties
-class MapTiling(transformation.Transformation):
+class MapTiling(transformation.SingleStateTransformation):
     """ Implements the orthogonal tiling transformation.
 
         Orthogonal tiling is a type of nested map fission that creates tiles

@@ -1,7 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains classes that implement the BufferTiling transformation. """
 
-from dace import registry
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.properties import ShapeProperty, make_properties
@@ -9,9 +8,8 @@ from dace.transformation import transformation
 from dace.transformation.dataflow import MapTiling, MapTilingWithOverlap, MapFusion, TrivialMapElimination
 
 
-@registry.autoregister_params(singlestate=True)
 @make_properties
-class BufferTiling(transformation.Transformation):
+class BufferTiling(transformation.SingleStateTransformation):
     """ Implements the buffer tiling transformation.
 
         BufferTiling tiles a buffer that is in between two maps, where the preceding map

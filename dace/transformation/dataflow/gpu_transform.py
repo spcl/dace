@@ -1,7 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains the GPU Transform Map transformation. """
 
-from dace import data, dtypes, sdfg as sd, registry
+from dace import data, dtypes, sdfg as sd
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import SubgraphView
@@ -9,9 +9,8 @@ from dace.transformation import transformation, helpers
 from dace.properties import Property, make_properties
 
 
-@registry.autoregister_params(singlestate=True)
 @make_properties
-class GPUTransformMap(transformation.Transformation):
+class GPUTransformMap(transformation.SingleStateTransformation):
     """ Implements the GPUTransformMap transformation.
 
         Converts a single map to a GPU-scheduled map and creates GPU arrays

@@ -24,9 +24,8 @@ from dace.properties import make_properties, Property
 from dace import data
 
 
-@registry.autoregister_params(singlestate=True, coarsening=True)
 @make_properties
-class InlineSDFG(transformation.Transformation):
+class InlineSDFG(transformation.SingleStateTransformation, transformation.DataflowCoarseningTransformation):
     """ Inlines a single-state nested SDFG into a top-level SDFG.
 
         In particular, the steps taken are:
@@ -719,9 +718,8 @@ class InlineSDFG(transformation.Transformation):
                 state.add_edge(node, None, edge.dst, edge.dst_conn, edge.data)
 
 
-@registry.autoregister_params(singlestate=True)
 @make_properties
-class InlineTransients(transformation.Transformation):
+class InlineTransients(transformation.SingleStateTransformation):
     """
     Inlines all transient arrays that are not used anywhere else into a
     nested SDFG.
@@ -870,9 +868,8 @@ class ASTRefiner(ast.NodeTransformer):
         return self.generic_visit(node)
 
 
-@registry.autoregister_params(singlestate=True)
 @make_properties
-class RefineNestedAccess(transformation.Transformation):
+class RefineNestedAccess(transformation.SingleStateTransformation):
     """
     Reduces memlet shape when a memlet is connected to a nested SDFG, but not
     using all of the contents. Makes the outer memlet smaller in shape and
@@ -1073,9 +1070,8 @@ class RefineNestedAccess(transformation.Transformation):
         propagation.propagate_memlets_state(sdfg, state)
 
 
-@registry.autoregister
 @make_properties
-class NestSDFG(transformation.Transformation):
+class NestSDFG(transformation.MultiStateTransformation):
     """ Implements SDFG Nesting, taking an SDFG as an input and creating a
         nested SDFG node from it. """
 

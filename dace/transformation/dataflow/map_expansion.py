@@ -4,15 +4,14 @@
 from dace.sdfg.utils import consolidate_edges
 from typing import Dict, List
 import dace
-from dace import dtypes, registry, subsets, symbolic
+from dace import dtypes, subsets, symbolic
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import OrderedMultiDiConnectorGraph
 from dace.transformation import transformation as pm
 
 
-@registry.autoregister_params(singlestate=True)
-class MapExpansion(pm.Transformation):
+class MapExpansion(pm.SingleStateTransformation):
     """ Implements the map-expansion pattern.
 
         Map-expansion takes an N-dimensional map and expands it to N 

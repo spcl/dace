@@ -20,7 +20,6 @@ import copy
 import warnings
 
 
-@registry.autoregister_params(singlestate=True)
 @make_properties
 class CompositeFusion(transformation.SubgraphTransformation):
     """ MultiExpansion + SubgraphFusion in one Transformation

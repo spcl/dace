@@ -74,9 +74,8 @@ def _sanitize_by_index(indices: Set[int], subset: subsets.Subset) -> subsets.Ran
     return type(subset)([t for i, t in enumerate(subset) if i in indices])
 
 
-@registry.autoregister
 @make_properties
-class LoopToMap(DetectLoop):
+class LoopToMap(DetectLoop, xf.MultiStateTransformation):
     """Convert a control flow loop into a dataflow map. Currently only supports
        the simple case where there is no overlap between inputs and outputs in
        the body of the loop, and where the loop body only consists of a single

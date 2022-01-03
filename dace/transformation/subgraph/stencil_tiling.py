@@ -32,7 +32,6 @@ from collections import defaultdict
 from dace.transformation.subgraph import helpers
 
 
-@registry.autoregister_params(singlestate=True)
 @make_properties
 class StencilTiling(transformation.SubgraphTransformation):
     """ Operates on top level maps of the given subgraph.

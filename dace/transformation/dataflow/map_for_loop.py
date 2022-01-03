@@ -12,8 +12,7 @@ from dace.transformation.helpers import nest_state_subgraph
 from typing import Tuple
 
 
-@registry.autoregister_params(singlestate=True)
-class MapToForLoop(transformation.Transformation):
+class MapToForLoop(transformation.SingleStateTransformation):
     """ Implements the Map to for-loop transformation.
 
         Takes a map and enforces a sequential schedule by transforming it into

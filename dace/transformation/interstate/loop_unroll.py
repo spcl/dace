@@ -12,11 +12,10 @@ from dace.sdfg import graph as gr, nodes
 from dace.sdfg import utils as sdutil
 from dace.frontend.python.astutils import ASTFindReplace
 from dace.transformation.interstate.loop_detection import (DetectLoop, find_for_loop)
+from dace.transformation import transformation as xf
 
-
-@registry.autoregister
 @make_properties
-class LoopUnroll(DetectLoop):
+class LoopUnroll(DetectLoop, xf.MultiStateTransformation):
     """ Unrolls a state machine for-loop into multiple states """
 
     count = Property(

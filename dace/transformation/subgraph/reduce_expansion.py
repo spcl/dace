@@ -23,9 +23,8 @@ import numpy as np
 import timeit
 
 
-@registry.autoregister_params(singlestate=True)
 @make_properties
-class ReduceExpansion(transformation.Transformation):
+class ReduceExpansion(transformation.SingleStateTransformation):
     """ Implements the ReduceExpansion transformation.
         Expands a Reduce node into inner and outer map components,
         where the outer map consists of the axes not being reduced.

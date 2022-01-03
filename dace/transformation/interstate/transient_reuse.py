@@ -6,9 +6,8 @@ from dace.properties import make_properties
 import networkx as nx
 
 
-@registry.autoregister
 @make_properties
-class TransientReuse(transformation.Transformation):
+class TransientReuse(transformation.MultiStateTransformation):
     """ Implements the TransientReuse transformation.
         Finds all possible reuses of arrays,
         decides for a valid combination and changes sdfg accordingly.

@@ -162,8 +162,7 @@ def compose_and_push_back(first, second, dims=None, popped=None):
 ##############################################################################
 
 
-@registry.autoregister_params(singlestate=True, coarsening=True)
-class RedundantArray(pm.Transformation):
+class RedundantArray(pm.SingleStateTransformation, pm.DataflowCoarseningTransformation):
     """ Implements the redundant array removal transformation, applied
         when a transient array is copied to and from (to another array),
         but never used anywhere else. """
@@ -570,8 +569,7 @@ class RedundantArray(pm.Transformation):
             pass
 
 
-@registry.autoregister_params(singlestate=True, coarsening=True)
-class RedundantSecondArray(pm.Transformation):
+class RedundantSecondArray(pm.SingleStateTransformation, pm.DataflowCoarseningTransformation):
     """ Implements the redundant array removal transformation, applied
         when a transient array is copied from and to (from another array),
         but never used anywhere else. This transformation removes the second
@@ -913,8 +911,7 @@ class RedundantSecondArray(pm.Transformation):
             graph.remove_node(in_array)
 
 
-@registry.autoregister_params(singlestate=True, coarsening=True)
-class SqueezeViewRemove(pm.Transformation):
+class SqueezeViewRemove(pm.SingleStateTransformation, pm.DataflowCoarseningTransformation):
     in_array = pm.PatternNode(nodes.AccessNode)
     out_array = pm.PatternNode(nodes.AccessNode)
 
@@ -994,8 +991,7 @@ class SqueezeViewRemove(pm.Transformation):
             pass
 
 
-@registry.autoregister_params(singlestate=True, coarsening=True)
-class UnsqueezeViewRemove(pm.Transformation):
+class UnsqueezeViewRemove(pm.SingleStateTransformation, pm.DataflowCoarseningTransformation):
     in_array = pm.PatternNode(nodes.AccessNode)
     out_array = pm.PatternNode(nodes.AccessNode)
 
@@ -1112,8 +1108,7 @@ def _sliced_dims(adesc: data.Array, vdesc: data.View) -> typing.List[int]:
     return [adesc.strides.index(s) for s in vdesc.strides]
 
 
-@registry.autoregister_params(singlestate=True, coarsening=True)
-class RedundantReadSlice(pm.Transformation):
+class RedundantReadSlice(pm.SingleStateTransformation, pm.DataflowCoarseningTransformation):
     """ Detects patterns of the form Array -> View(Array) and removes
     the View if it is a slice. """
 
@@ -1256,8 +1251,7 @@ class RedundantReadSlice(pm.Transformation):
                 pass
 
 
-@registry.autoregister_params(singlestate=True, coarsening=True)
-class RedundantWriteSlice(pm.Transformation):
+class RedundantWriteSlice(pm.SingleStateTransformation, pm.DataflowCoarseningTransformation):
     """ Detects patterns of the form View(Array) -> Array and removes
     the View if it is a slice. """
 

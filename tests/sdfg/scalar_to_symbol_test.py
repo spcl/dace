@@ -2,7 +2,7 @@
 """ Tests the scalar to symbol promotion functionality. """
 import dace
 from dace.sdfg.analysis import scalar_to_symbol
-from dace.transformation import interstate as isxf
+from dace.transformation import transformation as xf, interstate as isxf
 from dace.transformation.interstate import loop_detection as ld
 from dace import registry
 from dace.transformation import helpers as xfh
@@ -230,8 +230,7 @@ def test_promote_array_assignment_tasklet():
     assert np.allclose(A, expected)
 
 
-@registry.autoregister
-class LoopTester(ld.DetectLoop):
+class LoopTester(ld.DetectLoop, xf.MultiStateTransformation):
     """ Tester method that sets loop index on a guard state. """
     @staticmethod
     def can_be_applied(graph, candidate, expr_index, sdfg, permissive):

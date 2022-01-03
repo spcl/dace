@@ -8,8 +8,7 @@ from dace.sdfg import graph as gr, utils as sdutil
 from dace import SDFG, SDFGState
 
 
-@registry.autoregister_params(singlestate=True)
-class AugAssignToWCR(transformation.Transformation):
+class AugAssignToWCR(transformation.SingleStateTransformation):
     """
     Converts an augmented assignment ("a += b", "a = a + b") into a tasklet
     with a write-conflict resolution.

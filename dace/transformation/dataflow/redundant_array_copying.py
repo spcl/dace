@@ -8,8 +8,7 @@ from dace.transformation import transformation as pm
 from dace.config import Config
 
 
-@registry.autoregister_params(singlestate=True, coarsening=False)
-class RedundantArrayCopyingIn(pm.Transformation):
+class RedundantArrayCopyingIn(pm.SingleStateTransformation):
     """ Implements the redundant array removal transformation. Removes the first and second access nodeds
         in pattern A -> B -> A
     """
@@ -88,8 +87,7 @@ class RedundantArrayCopyingIn(pm.Transformation):
         graph.remove_node(in_array)
 
 
-@registry.autoregister_params(singlestate=True, coarsening=False)
-class RedundantArrayCopying(pm.Transformation):
+class RedundantArrayCopying(pm.SingleStateTransformation):
     """ Implements the redundant array removal transformation. Removes the last access node
         in pattern A -> B -> A, and the second (if possible)
     """
@@ -196,8 +194,7 @@ class RedundantArrayCopying(pm.Transformation):
                 RedundantArrayCopying._arrays_removed += 1
 
 
-@registry.autoregister_params(singlestate=True)
-class RedundantArrayCopying2(pm.Transformation):
+class RedundantArrayCopying2(pm.SingleStateTransformation):
     """ Implements the redundant array removal transformation. Removes
         multiples of array B in pattern A -> B.
     """
@@ -248,8 +245,7 @@ class RedundantArrayCopying2(pm.Transformation):
                     RedundantArrayCopying2._arrays_removed += 1
 
 
-@registry.autoregister_params(singlestate=True)
-class RedundantArrayCopying3(pm.Transformation):
+class RedundantArrayCopying3(pm.SingleStateTransformation):
     """ Implements the redundant array removal transformation. Removes multiples
         of array B in pattern MapEntry -> B.
     """

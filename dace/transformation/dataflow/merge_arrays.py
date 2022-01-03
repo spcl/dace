@@ -1,13 +1,12 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from dace.transformation import transformation
-from dace import memlet, registry
+from dace import memlet
 from dace.sdfg import nodes
 from dace.sdfg import SDFGState
 from dace.sdfg.propagation import propagate_memlet
 
 
-@registry.autoregister_params(singlestate=True, coarsening=True)
-class InMergeArrays(transformation.Transformation):
+class InMergeArrays(transformation.SingleStateTransformation, transformation.DataflowCoarseningTransformation):
     """ Merge duplicate arrays connected to the same scope entry. """
 
     _array1 = nodes.AccessNode("_")
@@ -114,8 +113,7 @@ class InMergeArrays(transformation.Transformation):
                                           union_inner_edges=True)
 
 
-@registry.autoregister_params(singlestate=True, coarsening=True)
-class OutMergeArrays(transformation.Transformation):
+class OutMergeArrays(transformation.SingleStateTransformation, transformation.DataflowCoarseningTransformation):
     """ Merge duplicate arrays connected to the same scope entry. """
 
     _array1 = nodes.AccessNode("_")
@@ -217,8 +215,7 @@ class OutMergeArrays(transformation.Transformation):
                                           union_inner_edges=True)
 
 
-@registry.autoregister_params(singlestate=True, coarsening=True)
-class MergeSourceSinkArrays(transformation.Transformation):
+class MergeSourceSinkArrays(transformation.SingleStateTransformation, transformation.DataflowCoarseningTransformation):
     """ Merge duplicate arrays that are source/sink nodes. """
 
     _array1 = nodes.AccessNode("_")

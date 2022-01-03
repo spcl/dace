@@ -3,13 +3,12 @@
 
 import networkx as nx
 
-from dace import registry, properties
+from dace import properties
 from dace.transformation import transformation
 
 
-@registry.autoregister
 @properties.make_properties
-class FPGATransformSDFG(transformation.Transformation):
+class FPGATransformSDFG(transformation.MultiStateTransformation):
     """ Implements the FPGATransformSDFG transformation, which takes an entire
         SDFG and transforms it into an FPGA-capable SDFG. """
 

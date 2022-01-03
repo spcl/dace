@@ -10,9 +10,8 @@ from collections import defaultdict
 from typing import Dict
 
 
-@registry.autoregister
 @make_properties
-class GPUTransformSDFG(transformation.Transformation):
+class GPUTransformSDFG(transformation.MultiStateTransformation):
     """ Implements the GPUTransformSDFG transformation.
 
         Transforms a whole SDFG to run on the GPU:

@@ -10,9 +10,8 @@ from dace.properties import Property, make_properties
 import itertools
 
 
-@registry.autoregister_params(singlestate=True)
 @make_properties
-class Vectorization(transformation.Transformation):
+class Vectorization(transformation.SingleStateTransformation):
     """ Implements the vectorization transformation.
 
         Vectorization matches when all the input and output memlets of a 
