@@ -9,7 +9,7 @@ import ast
 
 
 class TestTypeInference(unittest.TestCase):
-    def testSimpleAssignement(self):
+    def testSimpleAssignment(self):
         # simple assignment tests
 
         #bool
@@ -48,6 +48,14 @@ class TestTypeInference(unittest.TestCase):
         inf_symbols = type_inference.infer_types(code_str)
         self.assertEqual(inf_symbols["value"], dtypes.typeclass(int))
 
+        code_str = "value : dace.int32  = 1"
+        inf_symbols = type_inference.infer_types(code_str)
+        self.assertEqual(inf_symbols["value"], dtypes.int32)
+
+        code_str = "value : numpy.float64  = 1"
+        inf_symbols = type_inference.infer_types(code_str)
+        self.assertEqual(inf_symbols["value"], dtypes.float64)
+
         code_str = "value : str"
         inf_symbols = type_inference.infer_types(code_str)
         self.assertEqual(inf_symbols["value"], dtypes.pointer(dtypes.int8))
@@ -57,6 +65,14 @@ class TestTypeInference(unittest.TestCase):
         code_str = "value = int(1.1)"
         inf_symbols = type_inference.infer_types(code_str)
         self.assertEqual(inf_symbols["value"], dtypes.typeclass(np.int))
+
+        code_str = "value = int32(1.1)"
+        inf_symbols = type_inference.infer_types(code_str)
+        self.assertEqual(inf_symbols["value"], dtypes.int32)
+
+        code_str = "value = dace.float64(1.1)"
+        inf_symbols = type_inference.infer_types(code_str)
+        self.assertEqual(inf_symbols["value"], dtypes.float64)
 
         code_str = "value = float(1)"
         inf_symbols = type_inference.infer_types(code_str)

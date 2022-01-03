@@ -17,6 +17,7 @@ import sympy
 import sys
 import dace.frontend.python.astutils
 import inspect
+from typing import Union
 
 
 def infer_types(code, symbols=None):
@@ -155,7 +156,9 @@ def _AnnAssign(t, symbols, inferred_symbols):
     # Assignment of the form x: int = 0 is converted to int x = (int)0;
     if not target.id in symbols and not target.id in inferred_symbols:
         # get the type indicated into the annotation
-        inferred_type = _dispatch(t.annotation, symbols, inferred_symbols)
+        inferred_type = _infer_dtype(t.annotation)
+        if not inferred_type:
+            inferred_type = _dispatch(t.annotation, symbols, inferred_symbols)
         inferred_symbols[target.id] = inferred_type
 
         _dispatch(t.annotation, symbols, inferred_symbols)
@@ -391,6 +394,20 @@ def _BoolOp(t, symbols, inferred_symbols):
     return dtypes.vector(dace.bool,
                          vec_len) if vec_len is not None else dtypes.bool
 
+def _infer_dtype(t: Union[ast.Name, ast.Attribute]):
+    name = dace.frontend.python.astutils.rname(t)
+    if '.' in name:
+        dtype_str = name[name.rfind('.') + 1:]
+    else:
+        dtype_str = name
+
+    dtype = getattr(dtypes, dtype_str, False)
+    if isinstance(dtype, dtypes.typeclass):
+        return dtype
+    if isinstance(dtype, np.dtype):
+        return dtypes.typeclass(dtype.type)
+
+    return None
 
 def _Attribute(t, symbols, inferred_symbols):
     inferred_type = _dispatch(t.value, symbols, inferred_symbols)
@@ -419,6 +436,11 @@ def _Call(t, symbols, inferred_symbols):
     # Reading from an Intel channel returns the channel type
     if name == "read_channel_intel":
         return arg_types[0]
+
+    # dtypes (dace.int32, np.float64) can be used as functions
+    inf_type = _infer_dtype(t)
+    if inf_type:
+        return inf_type
 
     # In any other case simply return None
     return None
