@@ -10,13 +10,7 @@ from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
 from dace.transformation.dataflow import StreamingMemory
 
 
-def pure_graph(dtype,
-               transposed,
-               expansion,
-               veclen,
-               alpha,
-               beta,
-               expansion_args=None):
+def pure_graph(dtype, transposed, expansion, veclen, alpha, beta, expansion_args=None):
 
     sdfg = dace.SDFG(f"gemv_{expansion}_{dtype}_{transposed}_w{veclen}")
 
@@ -43,18 +37,9 @@ def pure_graph(dtype,
     gemv_node = blas.Gemv("gemv", transA=transposed, alpha=alpha, beta=beta)
     gemv_node.implementation = expansion
 
-    state.add_memlet_path(A,
-                          gemv_node,
-                          dst_conn="_A",
-                          memlet=Memlet(f"A[0:{A_rows}, 0:{A_cols}]"))
-    state.add_memlet_path(x,
-                          gemv_node,
-                          dst_conn="_x",
-                          memlet=Memlet(f"x[0:{x_size}]"))
-    state.add_memlet_path(gemv_node,
-                          result,
-                          src_conn="_y",
-                          memlet=Memlet(f"y[0:{y_size}]"))
+    state.add_memlet_path(A, gemv_node, dst_conn="_A", memlet=Memlet(f"A[0:{A_rows}, 0:{A_cols}]"))
+    state.add_memlet_path(x, gemv_node, dst_conn="_x", memlet=Memlet(f"x[0:{x_size}]"))
+    state.add_memlet_path(gemv_node, result, src_conn="_y", memlet=Memlet(f"y[0:{y_size}]"))
 
     if expansion_args is not None:
         gemv_node.expand(sdfg, state, **expansion_args)
@@ -62,8 +47,7 @@ def pure_graph(dtype,
     return sdfg
 
 
-def fpga_graph(dtype, transposed, expansion, veclen, alpha, beta, tile_size_x,
-               tile_size_y):
+def fpga_graph(dtype, transposed, expansion, veclen, alpha, beta, tile_size_x, tile_size_y):
     sdfg = pure_graph(dtype, transposed, expansion, veclen, alpha, beta, {
         "tile_size_x": tile_size_x,
         "tile_size_y": tile_size_y
@@ -71,10 +55,7 @@ def fpga_graph(dtype, transposed, expansion, veclen, alpha, beta, tile_size_x,
     sdfg.apply_transformations_repeated([FPGATransformSDFG, InlineSDFG])
 
     sdfg.expand_library_nodes()
-    sdfg.apply_transformations_repeated(
-        [InlineSDFG, StreamingMemory], [{}, {
-            "storage": dace.StorageType.FPGA_Local
-        }])
+    sdfg.apply_transformations_repeated([InlineSDFG, StreamingMemory], [{}, {"storage": dace.StorageType.FPGA_Local}])
     return sdfg
 
 
@@ -89,12 +70,10 @@ def run_gemv(target: str,
 
     beta = 0  # TODO: GEMV is not currently implemented for beta != 0
     if target == "pure":
-        sdfg = pure_graph(dace.float32, transposed, "pure", vectorize, alpha,
-                          beta)
+        sdfg = pure_graph(dace.float32, transposed, "pure", vectorize, alpha, beta)
     elif target == "tiles_by_column":
         if not transposed and vectorize > 1:
-            raise NotImplementedError(
-                "Non-transposed vectorized tile-by-column NYI.")
+            raise NotImplementedError("Non-transposed vectorized tile-by-column NYI.")
         sdfg = fpga_graph(dace.float32,
                           transposed,
                           "FPGA_TilesByColumn",
@@ -152,10 +131,7 @@ if __name__ == "__main__":
     parser.add_argument("N", type=int, nargs="?", default=512)
     parser.add_argument("alpha", type=int, nargs="?", default=1)
     # parser.add_argument("beta", type=int, nargs="?", default=0)
-    parser.add_argument("--transposed",
-                        action="store_true",
-                        default=False,
-                        help="Compute GEMV with transposed matrix")
+    parser.add_argument("--transposed", action="store_true", default=False, help="Compute GEMV with transposed matrix")
     parser.add_argument("--target", dest="target", default="pure")
     parser.add_argument("--vectorize", dest="vectorize", default=1, type=int)
     parser.add_argument("--tile-size-x", type=int, default=32)
@@ -163,5 +139,5 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    run_gemv(args.target, args.N, args.M, args.alpha, args.transposed,
-             args.vectorize, args.tile_size_x, args.tile_size_y)
+    run_gemv(args.target, args.N, args.M, args.alpha, args.transposed, args.vectorize, args.tile_size_x,
+             args.tile_size_y)

@@ -9,8 +9,7 @@ def test_eliminate_end_state():
     state2 = sdfg.add_state()
     state3 = sdfg.add_state()
     sdfg.add_edge(state1, state2, dace.InterstateEdge(assignments=dict(k=1)))
-    sdfg.add_edge(state2, state3,
-                  dace.InterstateEdge(assignments=dict(k='k + 1')))
+    sdfg.add_edge(state2, state3, dace.InterstateEdge(assignments=dict(k='k + 1')))
     sdfg.coarsen_dataflow()
     assert sdfg.number_of_nodes() == 1
 
@@ -22,12 +21,10 @@ def test_state_assign_elimination():
     state1 = sdfg.add_state()
     state2 = sdfg.add_state()
     state3 = sdfg.add_state()
-    state3.add_nedge(state3.add_read('A'), state3.add_write('B'),
-                     dace.Memlet.simple('A', 'k'))
+    state3.add_nedge(state3.add_read('A'), state3.add_write('B'), dace.Memlet.simple('A', 'k'))
 
     sdfg.add_edge(state1, state2, dace.InterstateEdge(assignments=dict(k=1)))
-    sdfg.add_edge(state2, state3,
-                  dace.InterstateEdge(assignments=dict(k='k + 1')))
+    sdfg.add_edge(state2, state3, dace.InterstateEdge(assignments=dict(k='k + 1')))
 
     # Assertions before/after transformations
     sdfg.apply_transformations_repeated(StateFusion)
@@ -51,12 +48,10 @@ def test_sae_scalar():
     sdfg.add_array('B', [1], dace.float64)
     sdfg.add_scalar('scal', dace.int32, transient=True)
     initstate = sdfg.add_state()
-    initstate.add_edge(initstate.add_tasklet('do', {}, {'out'}, 'out = 5'),
-                       'out', initstate.add_write('scal'), None,
+    initstate.add_edge(initstate.add_tasklet('do', {}, {'out'}, 'out = 5'), 'out', initstate.add_write('scal'), None,
                        dace.Memlet('scal'))
     state = sdfg.add_state()
-    sdfg.add_edge(initstate, state,
-                  dace.InterstateEdge(assignments=dict(s2='scal')))
+    sdfg.add_edge(initstate, state, dace.InterstateEdge(assignments=dict(s2='scal')))
     a = state.add_read('A')
     t = state.add_tasklet('do', {'inp'}, {'out'}, 'out = inp')
     b = state.add_write('B')

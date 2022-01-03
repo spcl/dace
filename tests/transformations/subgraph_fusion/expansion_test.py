@@ -18,8 +18,8 @@ O.set(70)
 
 
 @dace.program
-def expansion1(A: dace.float64[M, N, O], B: dace.float64[M, N, O],
-               C: dace.float64[M, N, O], out1: dace.float64[M, N, O]):
+def expansion1(A: dace.float64[M, N, O], B: dace.float64[M, N, O], C: dace.float64[M, N, O], out1: dace.float64[M, N,
+                                                                                                                O]):
 
     tmp1 = np.ndarray([M, N, O], dtype=dace.float64)
     tmp2 = np.ndarray([M, N, O], dtype=dace.float64)
@@ -42,8 +42,7 @@ def expansion1(A: dace.float64[M, N, O], B: dace.float64[M, N, O],
 
 
 @dace.program
-def expansion2(A: dace.float64[M, N], B: dace.float64[M, O],
-               out1: dace.float64[M, N], out2: dace.float64[M, O]):
+def expansion2(A: dace.float64[M, N], B: dace.float64[M, O], out1: dace.float64[M, N], out2: dace.float64[M, O]):
 
     tmp1 = np.ndarray([M, N], dtype=dace.float64)
     tmp2 = np.ndarray([M, O], dtype=dace.float64)

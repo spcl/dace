@@ -6,8 +6,7 @@ import numpy as np
 from dace.fpga_testing import fpga_test
 
 
-def create_reduce_sdfg(wcr_str, reduction_axis, sdfg_name, input_data,
-                       output_data, dtype):
+def create_reduce_sdfg(wcr_str, reduction_axis, sdfg_name, input_data, output_data, dtype):
     '''
     Build an SDFG that perform the given reduction along the given axis
     :param wcr_str: reduction operation to perform
@@ -38,8 +37,7 @@ def create_reduce_sdfg(wcr_str, reduction_axis, sdfg_name, input_data,
 
     in_device_A = copy_in_state.add_write("device_A")
 
-    copy_in_memlet = dace.Memlet("A[{}]".format(",".join(
-        [f"0:{i}" for i in input_data_shape])))
+    copy_in_memlet = dace.Memlet("A[{}]".format(",".join([f"0:{i}" for i in input_data_shape])))
 
     copy_in_state.add_memlet_path(in_host_A, in_device_A, memlet=copy_in_memlet)
 
@@ -56,8 +54,7 @@ def create_reduce_sdfg(wcr_str, reduction_axis, sdfg_name, input_data,
 
     out_device = copy_out_state.add_read("device_B")
     out_host = copy_out_state.add_write("B")
-    copy_out_memlet = dace.Memlet("B[{}]".format(",".join(
-        [f"0:{i}" for i in output_data_shape])))
+    copy_out_memlet = dace.Memlet("B[{}]".format(",".join([f"0:{i}" for i in output_data_shape])))
     copy_out_state.add_memlet_path(out_device, out_host, memlet=copy_out_memlet)
 
     ########################################################################
@@ -66,10 +63,7 @@ def create_reduce_sdfg(wcr_str, reduction_axis, sdfg_name, input_data,
     fpga_state = sdfg.add_state("fpga_state")
     r = fpga_state.add_read("device_A")
     w = fpga_state.add_write("device_B")
-    red = fpga_state.add_reduce(wcr_str,
-                                reduction_axis,
-                                0,
-                                schedule=dace.dtypes.ScheduleType.FPGA_Device)
+    red = fpga_state.add_reduce(wcr_str, reduction_axis, 0, schedule=dace.dtypes.ScheduleType.FPGA_Device)
 
     fpga_state.add_nedge(r, red, dace.Memlet(data="device_A"))
     fpga_state.add_nedge(red, w, dace.Memlet(data="device_B"))
@@ -88,8 +82,7 @@ def create_reduce_sdfg(wcr_str, reduction_axis, sdfg_name, input_data,
 def test_reduce_sum_one_axis():
     A = np.random.rand(8, 8).astype(np.float32)
     B = np.random.rand(8).astype(np.float32)
-    sdfg = create_reduce_sdfg("lambda a,b: a+b", [0], "reduction_sum_one_axis",
-                              A, B, dace.float32)
+    sdfg = create_reduce_sdfg("lambda a,b: a+b", [0], "reduction_sum_one_axis", A, B, dace.float32)
     from dace.libraries.standard import Reduce
     Reduce.default_implementation = "FPGAPartialReduction"
     sdfg.expand_library_nodes()
@@ -102,8 +95,7 @@ def test_reduce_sum_one_axis():
 def test_reduce_sum_all_axis():
     A = np.random.rand(4, 4).astype(np.float32)
     B = np.random.rand(1).astype(np.float32)
-    sdfg = create_reduce_sdfg("lambda a,b: a+b", (0, 1),
-                              "reduction_sum_all_axis", A, B, dace.float32)
+    sdfg = create_reduce_sdfg("lambda a,b: a+b", (0, 1), "reduction_sum_all_axis", A, B, dace.float32)
     from dace.libraries.standard import Reduce
     Reduce.default_implementation = "FPGAPartialReduction"
     sdfg.expand_library_nodes()
@@ -116,8 +108,7 @@ def test_reduce_sum_all_axis():
 def test_reduce_sum_4D():
     A = np.random.rand(4, 4, 4, 12).astype(np.float64)
     B = np.random.rand(4, 4).astype(np.float64)
-    sdfg = create_reduce_sdfg("lambda a,b: a+b", [2, 3], "reduction_sum_4D", A,
-                              B, dace.float64)
+    sdfg = create_reduce_sdfg("lambda a,b: a+b", [2, 3], "reduction_sum_4D", A, B, dace.float64)
     from dace.libraries.standard import Reduce
     Reduce.default_implementation = "FPGAPartialReduction"
     sdfg.expand_library_nodes()
@@ -130,8 +121,7 @@ def test_reduce_sum_4D():
 def test_reduce_max():
     A = np.random.rand(4, 4).astype(np.float32)
     B = np.random.rand(4).astype(np.float32)
-    sdfg = create_reduce_sdfg("lambda a,b: max(a,b)", [1], "reduction_max", A,
-                              B, dace.float32)
+    sdfg = create_reduce_sdfg("lambda a,b: max(a,b)", [1], "reduction_max", A, B, dace.float32)
     from dace.libraries.standard import Reduce
     Reduce.default_implementation = "FPGAPartialReduction"
     sdfg.expand_library_nodes()

@@ -7,11 +7,9 @@ N, BS = (dace.symbol(name) for name in ['N', 'BS'])
 
 
 @dace.program
-def seq_cond(HD: dace.complex128[N, BS, BS], HE: dace.complex128[N, BS, BS],
-             HF: dace.complex128[N, BS, BS],
-             sigmaRSD: dace.complex128[N, BS, BS],
-             sigmaRSE: dace.complex128[N, BS, BS],
-             sigmaRSF: dace.complex128[N, BS, BS]):
+def seq_cond(HD: dace.complex128[N, BS, BS], HE: dace.complex128[N, BS, BS], HF: dace.complex128[N, BS, BS],
+             sigmaRSD: dace.complex128[N, BS, BS], sigmaRSE: dace.complex128[N, BS,
+                                                                             BS], sigmaRSF: dace.complex128[N, BS, BS]):
 
     for n in range(N):
         if n < N - 1:

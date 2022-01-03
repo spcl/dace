@@ -23,13 +23,12 @@ class MapScoringEnumerator(Enumerator):
     '''
 
     mode = Property(desc="Data type the Iterator should return. "
-                         "Choice between Subgraph and List of Map Entries.",
+                    "Choice between Subgraph and List of Map Entries.",
                     default="map_entries",
                     choices=["subgraph", "map_entries"],
                     dtype=str)
 
-    def __init__(self, sdfg, graph, subgraph, condition_function,
-                 scoring_function):
+    def __init__(self, sdfg, graph, subgraph, condition_function, scoring_function):
 
         super().__init__(sdfg, graph, subgraph, condition_function)
 

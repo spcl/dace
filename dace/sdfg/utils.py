@@ -211,8 +211,7 @@ def dfs_conditional(G, sources=None, condition=None):
                 stack.pop()
 
 
-def change_edge_dest(graph: gr.OrderedDiGraph,
-                     node_a: Union[nd.Node, gr.OrderedMultiDiConnectorGraph],
+def change_edge_dest(graph: gr.OrderedDiGraph, node_a: Union[nd.Node, gr.OrderedMultiDiConnectorGraph],
                      node_b: Union[nd.Node, gr.OrderedMultiDiConnectorGraph]):
     """ Changes the destination of edges from node A to node B.
 
@@ -241,8 +240,7 @@ def change_edge_dest(graph: gr.OrderedDiGraph,
             graph.add_edge(e.src, node_b, e.data)
 
 
-def change_edge_src(graph: gr.OrderedDiGraph,
-                    node_a: Union[nd.Node, gr.OrderedMultiDiConnectorGraph],
+def change_edge_src(graph: gr.OrderedDiGraph, node_a: Union[nd.Node, gr.OrderedMultiDiConnectorGraph],
                     node_b: Union[nd.Node, gr.OrderedMultiDiConnectorGraph]):
     """ Changes the sources of edges from node A to node B.
 
@@ -304,11 +302,8 @@ def merge_maps(
     outer_map_exit: nd.MapExit,
     inner_map_entry: nd.MapEntry,
     inner_map_exit: nd.MapExit,
-    param_merge: Callable[[ParamsType, ParamsType],
-                          ParamsType] = lambda p1, p2: p1 + p2,
-    range_merge: Callable[[RangesType, RangesType],
-                          RangesType] = lambda r1, r2: type(r1)
-    (r1.ranges + r2.ranges)
+    param_merge: Callable[[ParamsType, ParamsType], ParamsType] = lambda p1, p2: p1 + p2,
+    range_merge: Callable[[RangesType, RangesType], RangesType] = lambda r1, r2: type(r1)(r1.ranges + r2.ranges)
 ) -> (nd.MapEntry, nd.MapExit):
     """ Merges two maps (their entries and exits). It is assumed that the
     operation is valid. """
@@ -336,27 +331,21 @@ def merge_maps(
     # Handle the case of dynamic map inputs in the inner map
     inner_dynamic_map_inputs = dynamic_map_inputs(graph, inner_map_entry)
     for edge in inner_dynamic_map_inputs:
-        remove_conn = (len(
-            list(graph.out_edges_by_connector(edge.src, edge.src_conn))) == 1)
+        remove_conn = (len(list(graph.out_edges_by_connector(edge.src, edge.src_conn))) == 1)
         conn_to_remove = edge.src_conn[4:]
         if remove_conn:
             merged_entry.remove_in_connector('IN_' + conn_to_remove)
             merged_entry.remove_out_connector('OUT_' + conn_to_remove)
-        merged_entry.add_in_connector(
-            edge.dst_conn, inner_map_entry.in_connectors[edge.dst_conn])
-        outer_edge = next(
-            graph.in_edges_by_connector(outer_map_entry,
-                                        'IN_' + conn_to_remove))
-        graph.add_edge(outer_edge.src, outer_edge.src_conn, merged_entry,
-                       edge.dst_conn, outer_edge.data)
+        merged_entry.add_in_connector(edge.dst_conn, inner_map_entry.in_connectors[edge.dst_conn])
+        outer_edge = next(graph.in_edges_by_connector(outer_map_entry, 'IN_' + conn_to_remove))
+        graph.add_edge(outer_edge.src, outer_edge.src_conn, merged_entry, edge.dst_conn, outer_edge.data)
         if remove_conn:
             graph.remove_edge(outer_edge)
 
     # Redirect inner in edges.
     for edge in graph.out_edges(inner_map_entry):
         if edge.src_conn is None:  # Empty memlets
-            graph.add_edge(merged_entry, edge.src_conn, edge.dst, edge.dst_conn,
-                           edge.data)
+            graph.add_edge(merged_entry, edge.src_conn, edge.dst, edge.dst_conn, edge.data)
             continue
 
         # Get memlet path and edge
@@ -364,14 +353,12 @@ def merge_maps(
         ind = path.index(edge)
         # Add an edge directly from the previous source connector to the
         # destination
-        graph.add_edge(merged_entry, path[ind - 1].src_conn, edge.dst,
-                       edge.dst_conn, edge.data)
+        graph.add_edge(merged_entry, path[ind - 1].src_conn, edge.dst, edge.dst_conn, edge.data)
 
     # Redirect inner out edges.
     for edge in graph.in_edges(inner_map_exit):
         if edge.dst_conn is None:  # Empty memlets
-            graph.add_edge(edge.src, edge.src_conn, merged_exit, edge.dst_conn,
-                           edge.data)
+            graph.add_edge(edge.src, edge.src_conn, merged_exit, edge.dst_conn, edge.data)
             continue
 
         # Get memlet path and edge
@@ -379,22 +366,19 @@ def merge_maps(
         ind = path.index(edge)
         # Add an edge directly from the source to the next destination
         # connector
-        graph.add_edge(edge.src, edge.src_conn, merged_exit,
-                       path[ind + 1].dst_conn, edge.data)
+        graph.add_edge(edge.src, edge.src_conn, merged_exit, path[ind + 1].dst_conn, edge.data)
 
     # Redirect outer edges.
     change_edge_dest(graph, outer_map_entry, merged_entry)
     change_edge_src(graph, outer_map_exit, merged_exit)
 
     # Clean-up
-    graph.remove_nodes_from(
-        [outer_map_entry, outer_map_exit, inner_map_entry, inner_map_exit])
+    graph.remove_nodes_from([outer_map_entry, outer_map_exit, inner_map_entry, inner_map_exit])
 
     return merged_entry, merged_exit
 
 
-def consolidate_edges_scope(
-        state: SDFGState, scope_node: Union[nd.EntryNode, nd.ExitNode]) -> int:
+def consolidate_edges_scope(state: SDFGState, scope_node: Union[nd.EntryNode, nd.ExitNode]) -> int:
     """
         Union scope-entering memlets relating to the same data node in a scope.
         This effectively reduces the number of connectors and allows more
@@ -436,12 +420,9 @@ def consolidate_edges_scope(
         target_conn = prefix + data_to_conn[e.data.data][len(oprefix):]
         conn_to_remove = prefix + conn[len(oprefix):]
         remove_outer_connector(conn_to_remove)
-        out_edge = next(ed for ed in outer_edges(scope_node)
-                        if ed.dst_conn == target_conn)
-        edge_to_remove = next(ed for ed in outer_edges(scope_node)
-                              if ed.dst_conn == conn_to_remove)
-        out_edge.data.subset = sbs.union(out_edge.data.subset,
-                                         edge_to_remove.data.subset)
+        out_edge = next(ed for ed in outer_edges(scope_node) if ed.dst_conn == target_conn)
+        edge_to_remove = next(ed for ed in outer_edges(scope_node) if ed.dst_conn == conn_to_remove)
+        out_edge.data.subset = sbs.union(out_edge.data.subset, edge_to_remove.data.subset)
 
         # Check if dangling connectors have been created and remove them,
         # as well as their parent edges
@@ -464,8 +445,7 @@ def remove_edge_and_dangling_path(state: SDFGState, edge: MultiConnectorEdge):
     :param edge: The edge to remove.
     """
     mtree = state.memlet_tree(edge)
-    inwards = (isinstance(edge.src, nd.EntryNode)
-               or isinstance(edge.dst, nd.EntryNode))
+    inwards = (isinstance(edge.src, nd.EntryNode) or isinstance(edge.dst, nd.EntryNode))
 
     # Traverse tree upwards, removing edges and connectors as necessary
     curedge = mtree
@@ -473,15 +453,9 @@ def remove_edge_and_dangling_path(state: SDFGState, edge: MultiConnectorEdge):
         e = curedge.edge
         state.remove_edge(e)
         if inwards:
-            neighbors = [
-                neighbor for neighbor in state.out_edges(e.src)
-                if e.src_conn == neighbor.src_conn
-            ]
+            neighbors = [neighbor for neighbor in state.out_edges(e.src) if e.src_conn == neighbor.src_conn]
         else:
-            neighbors = [
-                neighbor for neighbor in state.in_edges(e.dst)
-                if e.dst_conn == neighbor.dst_conn
-            ]
+            neighbors = [neighbor for neighbor in state.in_edges(e.dst) if e.dst_conn == neighbor.dst_conn]
         if len(neighbors) > 0:  # There are still edges connected, leave as-is
             break
 
@@ -562,8 +536,7 @@ def is_array_stream_view(sdfg: SDFG, dfg: SDFGState, node: nd.AccessNode):
         if isinstance(src_node, nd.CodeNode):
             all_source_paths.append(None)
         # Append path from source node
-        if isinstance(src_node, nd.AccessNode) and isinstance(
-                src_node.desc(sdfg), dt.Array):
+        if isinstance(src_node, nd.AccessNode) and isinstance(src_node.desc(sdfg), dt.Array):
             source_paths.append(src_node)
     for e in dfg.out_edges(node):
         sink_node = dfg.memlet_path(e)[-1].dst
@@ -572,23 +545,20 @@ def is_array_stream_view(sdfg: SDFG, dfg: SDFGState, node: nd.AccessNode):
         if isinstance(sink_node, nd.CodeNode):
             all_sink_paths.append(None)
         # Append path to sink node
-        if isinstance(sink_node, nd.AccessNode) and isinstance(
-                sink_node.desc(sdfg), dt.Array):
+        if isinstance(sink_node, nd.AccessNode) and isinstance(sink_node.desc(sdfg), dt.Array):
             sink_paths.append(sink_node)
 
     all_sink_paths.extend(sink_paths)
     all_source_paths.extend(source_paths)
 
     # Special case: stream can be represented as a view of an array
-    if ((len(all_source_paths) > 0 and len(sink_paths) == 1)
-            or (len(all_sink_paths) > 0 and len(source_paths) == 1)):
+    if ((len(all_source_paths) > 0 and len(sink_paths) == 1) or (len(all_sink_paths) > 0 and len(source_paths) == 1)):
         # TODO: What about a source path?
         arrnode = sink_paths[0]
         # Only works if the stream itself is not an array of streams
         if list(node.desc(sdfg).shape) == [1]:
             node.desc(sdfg).sink = arrnode.data  # For memlet generation
-            arrnode.desc(
-                sdfg).src = node.data  # TODO: Move src/sink to node, not array
+            arrnode.desc(sdfg).src = node.data  # TODO: Move src/sink to node, not array
             return True
     return False
 
@@ -623,8 +593,7 @@ def get_last_view_node(state: SDFGState, view: nd.AccessNode) -> nd.AccessNode:
     return node
 
 
-def get_view_edge(state: SDFGState,
-                  view: nd.AccessNode) -> gr.MultiConnectorEdge[mm.Memlet]:
+def get_view_edge(state: SDFGState, view: nd.AccessNode) -> gr.MultiConnectorEdge[mm.Memlet]:
     """
     Given a view access node, returns the
     incoming/outgoing edge which points to the viewed access node.
@@ -692,8 +661,7 @@ def get_view_edge(state: SDFGState,
     return in_edge
 
 
-def dynamic_map_inputs(state: SDFGState,
-                       map_entry: nd.MapEntry) -> List[gr.MultiConnectorEdge]:
+def dynamic_map_inputs(state: SDFGState, map_entry: nd.MapEntry) -> List[gr.MultiConnectorEdge]:
     """
     For a given map entry node, returns a list of dynamic-range input edges.
     :param state: The state in which the map entry node resides.
@@ -701,10 +669,7 @@ def dynamic_map_inputs(state: SDFGState,
     :return: A list of edges in state whose destination is map entry and denote
              dynamic-range input memlets.
     """
-    return [
-        e for e in state.in_edges(map_entry)
-        if e.dst_conn and not e.dst_conn.startswith('IN_')
-    ]
+    return [e for e in state.in_edges(map_entry) if e.dst_conn and not e.dst_conn.startswith('IN_')]
 
 
 def has_dynamic_map_inputs(state: SDFGState, map_entry: nd.MapEntry) -> bool:
@@ -736,9 +701,7 @@ def is_parallel(state: SDFGState, node: Optional[nd.Node] = None) -> bool:
                 return True
     if state.parent.parent is not None:
         # Find nested SDFG node and continue recursion
-        nsdfg_node = next(
-            n for n in state.parent.parent
-            if isinstance(n, nd.NestedSDFG) and n.sdfg == state.parent)
+        nsdfg_node = next(n for n in state.parent.parent if isinstance(n, nd.NestedSDFG) and n.sdfg == state.parent)
         return is_parallel(state.parent.parent, nsdfg_node)
 
     return False
@@ -747,21 +710,18 @@ def is_parallel(state: SDFGState, node: Optional[nd.Node] = None) -> bool:
 def find_input_arraynode(graph, edge):
     result = graph.memlet_path(edge)[0]
     if not isinstance(result.src, nd.AccessNode):
-        raise RuntimeError("Input array node not found for memlet " +
-                           str(edge.data))
+        raise RuntimeError("Input array node not found for memlet " + str(edge.data))
     return result.src
 
 
 def find_output_arraynode(graph, edge):
     result = graph.memlet_path(edge)[-1]
     if not isinstance(result.dst, nd.AccessNode):
-        raise RuntimeError("Output array node not found for memlet " +
-                           str(edge.data))
+        raise RuntimeError("Output array node not found for memlet " + str(edge.data))
     return result.dst
 
 
-def weakly_connected_component(dfg,
-                               node_in_component: Node) -> StateSubgraphView:
+def weakly_connected_component(dfg, node_in_component: Node) -> StateSubgraphView:
     """
     Returns a subgraph of all nodes that form the weakly connected component in
     `dfg` that contains `node_in_component`.
@@ -794,9 +754,7 @@ def concurrent_subgraphs(graph):
     from dace.sdfg.scope import ScopeSubgraphView
 
     if not isinstance(graph, (SDFGState, ScopeSubgraphView)):
-        raise TypeError(
-            "Expected SDFGState or ScopeSubgraphView, got: {}".format(
-                type(graph).__name__))
+        raise TypeError("Expected SDFGState or ScopeSubgraphView, got: {}".format(type(graph).__name__))
     candidates = graph.source_nodes()
     components = collections.OrderedDict()  # {start node: nodes in component}
     for cand in candidates:
@@ -847,10 +805,7 @@ def concurrent_subgraphs(graph):
     # Now stick each of the found components in a ScopeSubgraphView and return
     # them. Sort according to original order of nodes
     all_nodes = graph.nodes()
-    return [
-        ScopeSubgraphView(graph, [n for n in all_nodes if n in sg], None)
-        for sg in subgraphs
-    ]
+    return [ScopeSubgraphView(graph, [n for n in all_nodes if n in sg], None) for sg in subgraphs]
 
 
 def separate_maps(state, dfg, schedule):
@@ -901,11 +856,9 @@ def _transients_in_scope(sdfg, outer_scope, scope_dict, include_nested):
     while scopes:
         scope = scopes.pop()
         for node in scope_dict[scope]:
-            if (isinstance(node, nd.AccessNode)
-                    and sdfg.arrays[node.data].transient):
+            if (isinstance(node, nd.AccessNode) and sdfg.arrays[node.data].transient):
                 transients.add(node.data)
-            if (isinstance(node, nd.EntryNode) and node is not scope
-                    and include_nested):
+            if (isinstance(node, nd.EntryNode) and node is not scope and include_nested):
                 # "Recurse" into nested scopes
                 scopes.append(node)
         if not include_nested:
@@ -931,21 +884,18 @@ def local_transients(sdfg, dfg, entry_node, include_nested=False):
     defined_transients = set(sdfg.shared_transients())
 
     # Get access nodes in current scope
-    transients = _transients_in_scope(sdfg, current_scope, scope_children,
-                                      include_nested)
+    transients = _transients_in_scope(sdfg, current_scope, scope_children, include_nested)
 
     # Add transients defined in parent scopes
     while current_scope.parent is not None:
         current_scope = current_scope.parent
-        defined_transients.update(
-            _transients_in_scope(sdfg, current_scope, scope_children, False))
+        defined_transients.update(_transients_in_scope(sdfg, current_scope, scope_children, False))
 
     return sorted(list(transients - defined_transients))
 
 
-def trace_nested_access(
-        node: nd.AccessNode, state: SDFGState,
-        sdfg: SDFG) -> List[Tuple[nd.AccessNode, SDFGState, SDFG]]:
+def trace_nested_access(node: nd.AccessNode, state: SDFGState,
+                        sdfg: SDFG) -> List[Tuple[nd.AccessNode, SDFGState, SDFG]]:
     """
     Given an AccessNode in a nested SDFG, trace the accessed memory
     back to the outermost scope in which it is defined.
@@ -974,8 +924,7 @@ def trace_nested_access(
             memlet_read = m.data
             break
 
-    trace = [((curr_read, curr_write), (memlet_read, memlet_write), state, sdfg)
-             ]
+    trace = [((curr_read, curr_write), (memlet_read, memlet_write), state, sdfg)]
 
     while curr_sdfg.parent is not None:
         curr_state = curr_sdfg.parent
@@ -1010,8 +959,7 @@ def trace_nested_access(
                 curr_write = None
                 memlet_write = None
         if curr_read is not None or curr_write is not None:
-            trace.append(((curr_read, curr_write), (memlet_read, memlet_write),
-                          curr_state, curr_state.parent))
+            trace.append(((curr_read, curr_write), (memlet_read, memlet_write), curr_state, curr_state.parent))
         else:
             break
         curr_sdfg = curr_state.parent  # Recurse
@@ -1056,19 +1004,13 @@ def fuse_states(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> 
             applied = 0
             skip_nodes = set()
             for u, v in edges:
-                if (progress is None and tqdm is not None
-                        and (time.time() - start) > 5):
+                if (progress is None and tqdm is not None and (time.time() - start) > 5):
                     progress = True
-                    pbar = tqdm(total=fusible_states,
-                                desc='Fusing states',
-                                initial=counter)
+                    pbar = tqdm(total=fusible_states, desc='Fusing states', initial=counter)
 
                 if u in skip_nodes or v in skip_nodes:
                     continue
-                candidate = {
-                    StateFusion.first_state: u,
-                    StateFusion.second_state: v
-                }
+                candidate = {StateFusion.first_state: u, StateFusion.second_state: v}
                 sf = StateFusion(id, -1, candidate, 0, override=True)
                 if sf.can_be_applied(sd, candidate, 0, sd, permissive=permissive):
                     sf.apply(sd)
@@ -1087,10 +1029,7 @@ def fuse_states(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> 
     return counter
 
 
-def inline_sdfgs(sdfg: SDFG,
-                 permissive: bool = False,
-                 progress: bool = None,
-                 multistate: bool = True) -> int:
+def inline_sdfgs(sdfg: SDFG, permissive: bool = False, progress: bool = None, multistate: bool = True) -> int:
     """
     Inlines all possible nested SDFGs (or sub-SDFGs) using an optimized
     routine that uses the structure of the SDFG hierarchy.
@@ -1123,12 +1062,9 @@ def inline_sdfgs(sdfg: SDFG,
         id = sd.sdfg_id
         for state in sd.nodes():
             for node in state.nodes():
-                if (progress is None and tqdm is not None
-                        and (time.time() - start) > 5):
+                if (progress is None and tqdm is not None and (time.time() - start) > 5):
                     progress = True
-                    pbar = tqdm(total=len(sdfgs),
-                                desc='Inlining SDFG',
-                                initial=counter)
+                    pbar = tqdm(total=len(sdfgs), desc='Inlining SDFG', initial=counter)
 
                 if not isinstance(node, NestedSDFG):
                     continue
@@ -1139,16 +1075,8 @@ def inline_sdfgs(sdfg: SDFG,
                     candidate = {
                         InlineMultistateSDFG.nested_sdfg: node_id,
                     }
-                    inliner = InlineMultistateSDFG(id,
-                                                   state_id,
-                                                   candidate,
-                                                   0,
-                                                   override=True)
-                    if inliner.can_be_applied(state,
-                                              candidate,
-                                              0,
-                                              sd,
-                                              permissive=permissive):
+                    inliner = InlineMultistateSDFG(id, state_id, candidate, 0, override=True)
+                    if inliner.can_be_applied(state, candidate, 0, sd, permissive=permissive):
                         inliner.apply(sd)
                         counter += 1
                         if progress:
@@ -1159,11 +1087,7 @@ def inline_sdfgs(sdfg: SDFG,
                     InlineSDFG._nested_sdfg: node_id,
                 }
                 inliner = InlineSDFG(id, state_id, candidate, 0, override=True)
-                if inliner.can_be_applied(state,
-                                          candidate,
-                                          0,
-                                          sd,
-                                          permissive=permissive):
+                if inliner.can_be_applied(state, candidate, 0, sd, permissive=permissive):
                     inliner.apply(sd)
                     counter += 1
                     if progress:
@@ -1187,11 +1111,8 @@ def load_precompiled_sdfg(folder: str):
     from dace.codegen import compiled_sdfg as csdfg
     sdfg = SDFG.from_file(os.path.join(folder, 'program.sdfg'))
     suffix = config.Config.get('compiler', 'library_extension')
-    return csdfg.CompiledSDFG(
-        sdfg,
-        csdfg.ReloadableDLL(
-            os.path.join(folder, 'build', f'lib{sdfg.name}.{suffix}'),
-            sdfg.name))
+    return csdfg.CompiledSDFG(sdfg,
+                              csdfg.ReloadableDLL(os.path.join(folder, 'build', f'lib{sdfg.name}.{suffix}'), sdfg.name))
 
 
 def get_next_nonempty_states(sdfg: SDFG, state: SDFGState) -> Set[SDFGState]:
@@ -1209,10 +1130,7 @@ def get_next_nonempty_states(sdfg: SDFG, state: SDFGState) -> Set[SDFGState]:
 
     # Traverse children until states are not empty
     for succ in sdfg.successors(state):
-        result |= set(
-            dfs_conditional(sdfg,
-                            sources=[succ],
-                            condition=lambda parent, _: parent.is_empty()))
+        result |= set(dfs_conditional(sdfg, sources=[succ], condition=lambda parent, _: parent.is_empty()))
 
     # Filter out empty states
     result = {s for s in result if not s.is_empty()}
@@ -1220,8 +1138,7 @@ def get_next_nonempty_states(sdfg: SDFG, state: SDFGState) -> Set[SDFGState]:
     return result
 
 
-def unique_node_repr(graph: Union[SDFGState, ScopeSubgraphView],
-                     node: Node) -> str:
+def unique_node_repr(graph: Union[SDFGState, ScopeSubgraphView], node: Node) -> str:
     """
     Returns unique string representation of the given node,
     considering its placement into the SDFG graph.
@@ -1234,12 +1151,10 @@ def unique_node_repr(graph: Union[SDFGState, ScopeSubgraphView],
     # Build a unique representation
     sdfg = graph.parent
     state = graph if isinstance(graph, SDFGState) else graph._graph
-    return str(sdfg.sdfg_id) + "_" + str(sdfg.node_id(state)) + "_" + str(
-        state.node_id(node))
+    return str(sdfg.sdfg_id) + "_" + str(sdfg.node_id(state)) + "_" + str(state.node_id(node))
 
 
-def is_nonfree_sym_dependent(node: nd.AccessNode, desc: dt.Data,
-                             state: SDFGState, fsymbols: Set[str]) -> bool:
+def is_nonfree_sym_dependent(node: nd.AccessNode, desc: dt.Data, state: SDFGState, fsymbols: Set[str]) -> bool:
     """
     Checks whether the Array or View descriptor is non-free symbol dependent.
     An Array is non-free symbol dependent when its attributes (e.g., shape)

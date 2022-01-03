@@ -19,23 +19,17 @@ def _make_sdfg_1(succeed: bool = True):
     first_A_0 = state.add_access('A_0')
     second_A_0 = state.add_access('A_0')
 
-    _, me, mx = state.add_mapped_tasklet('MyMap', {'i': '0:7'},
-                                         {'inp': dace.Memlet('A_1[i]')},
-                                         'out = 2 * inp',
-                                         {'out': dace.Memlet('tmp[i]')},
+    _, me, mx = state.add_mapped_tasklet('MyMap', {'i': '0:7'}, {'inp': dace.Memlet('A_1[i]')},
+                                         'out = 2 * inp', {'out': dace.Memlet('tmp[i]')},
                                          external_edges=True)
     A_1 = state.in_edges(me)[0].src
     tmp = state.out_edges(mx)[0].dst
     # NOTE: View edges must point to the viewed Data, not the Views.
     iset = '11:19' if succeed else '1:9'
-    state.add_nedge(first_A, first_A_0,
-                    dace.Memlet(data='A', subset=iset, other_subset='0:8'))
-    state.add_nedge(first_A_0, A_1,
-                    dace.Memlet(data='A_0', subset='1:8', other_subset='0:7'))
-    state.add_nedge(tmp, second_A_0,
-                    dace.Memlet(data='A_0', subset='0:7', other_subset='0:7'))
-    state.add_nedge(second_A_0, second_A,
-                    dace.Memlet(data='A', subset='1:9', other_subset='0:8'))
+    state.add_nedge(first_A, first_A_0, dace.Memlet(data='A', subset=iset, other_subset='0:8'))
+    state.add_nedge(first_A_0, A_1, dace.Memlet(data='A_0', subset='1:8', other_subset='0:7'))
+    state.add_nedge(tmp, second_A_0, dace.Memlet(data='A_0', subset='0:7', other_subset='0:7'))
+    state.add_nedge(second_A_0, second_A, dace.Memlet(data='A', subset='1:9', other_subset='0:8'))
 
     return sdfg
 
@@ -70,23 +64,17 @@ def _make_sdfg_2(succeed: bool = True):
     first_A_0 = state.add_access('A_0')
     second_A_0 = state.add_access('A_0')
 
-    _, me, mx = state.add_mapped_tasklet('MyMap', {'i': '0:7'},
-                                         {'inp': dace.Memlet('tmp[i]')},
-                                         'out = 2 * inp',
-                                         {'out': dace.Memlet('A_1[i]')},
+    _, me, mx = state.add_mapped_tasklet('MyMap', {'i': '0:7'}, {'inp': dace.Memlet('tmp[i]')},
+                                         'out = 2 * inp', {'out': dace.Memlet('A_1[i]')},
                                          external_edges=True)
     tmp = state.in_edges(me)[0].src
     A_1 = state.out_edges(mx)[0].dst
     # NOTE: View edges must point to the viewed Data, not the Views.
     iset = '11:19' if succeed else '1:9'
-    state.add_nedge(first_A, first_A_0,
-                    dace.Memlet(data='A', subset=iset, other_subset='0:8'))
-    state.add_nedge(first_A_0, tmp,
-                    dace.Memlet(data='A_0', subset='1:8', other_subset='0:7'))
-    state.add_nedge(A_1, second_A_0,
-                    dace.Memlet(data='A_0', subset='0:7', other_subset='0:7'))
-    state.add_nedge(second_A_0, second_A,
-                    dace.Memlet(data='A', subset='1:9', other_subset='0:8'))
+    state.add_nedge(first_A, first_A_0, dace.Memlet(data='A', subset=iset, other_subset='0:8'))
+    state.add_nedge(first_A_0, tmp, dace.Memlet(data='A_0', subset='1:8', other_subset='0:7'))
+    state.add_nedge(A_1, second_A_0, dace.Memlet(data='A_0', subset='0:7', other_subset='0:7'))
+    state.add_nedge(second_A_0, second_A, dace.Memlet(data='A', subset='1:9', other_subset='0:8'))
 
     return sdfg
 

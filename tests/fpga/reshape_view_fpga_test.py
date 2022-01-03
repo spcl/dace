@@ -36,9 +36,7 @@ def test_view_fpga_sdfg():
 
     in_device_A = copy_in_state.add_write("device_A")
 
-    copy_in_state.add_memlet_path(in_host_A,
-                                  in_device_A,
-                                  memlet=dace.Memlet("A[0:2,0:3,0:4]"))
+    copy_in_state.add_memlet_path(in_host_A, in_device_A, memlet=dace.Memlet("A[0:2,0:3,0:4]"))
     ###########################################################################
     # Copy data from FPGA
 
@@ -53,18 +51,14 @@ def test_view_fpga_sdfg():
     out_device = copy_out_state.add_read("device_B")
     out_host = copy_out_state.add_write("B")
 
-    copy_out_state.add_memlet_path(out_device,
-                                   out_host,
-                                   memlet=dace.Memlet("B[0:8,0:3]"))
+    copy_out_state.add_memlet_path(out_device, out_host, memlet=dace.Memlet("B[0:8,0:3]"))
 
     ########################################################################
     # FPGA State
 
     fpga_state = sdfg.add_state("fpga_state")
 
-    sdfg.add_view('Av', [8, 3],
-                  dace.float32,
-                  storage=dace.dtypes.StorageType.FPGA_Global)
+    sdfg.add_view('Av', [8, 3], dace.float32, storage=dace.dtypes.StorageType.FPGA_Global)
     r = fpga_state.add_read('device_A')
     v = fpga_state.add_access('Av')
     w = fpga_state.add_write('device_B')
@@ -121,17 +115,9 @@ def test_reshape_dst_explicit():
 
     me, mx = state.add_map('compute', dict(i='0:2', j='0:3', k='0:4'))
     t = state.add_tasklet('add', {'a'}, {'b'}, 'b = a + 1')
-    state.add_memlet_path(state.add_read('A'),
-                          me,
-                          t,
-                          dst_conn='a',
-                          memlet=dace.Memlet('A[i,j,k]'))
+    state.add_memlet_path(state.add_read('A'), me, t, dst_conn='a', memlet=dace.Memlet('A[i,j,k]'))
     v = state.add_access('Bv')
-    state.add_memlet_path(t,
-                          mx,
-                          v,
-                          src_conn='b',
-                          memlet=dace.Memlet('Bv[i,j,k]'))
+    state.add_memlet_path(t, mx, v, src_conn='b', memlet=dace.Memlet('Bv[i,j,k]'))
     state.add_nedge(v, state.add_write('B'), dace.Memlet('B'))
     sdfg.validate()
 
@@ -155,9 +141,8 @@ def test_view_slice():
     M = dace.symbol('M', dace.int32)
 
     @dace.program
-    def view_slice(alpha: dace.float32, beta: dace.float32, C: dace.float32[M,
-                                                                            N],
-                   A: dace.float32[M, M], B: dace.float32[M, N]):
+    def view_slice(alpha: dace.float32, beta: dace.float32, C: dace.float32[M, N], A: dace.float32[M, M],
+                   B: dace.float32[M, N]):
 
         C *= beta
         for i in range(M):

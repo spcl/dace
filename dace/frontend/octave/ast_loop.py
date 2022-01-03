@@ -12,8 +12,8 @@ class AST_ForLoop(AST_Node):
         self.stmts = stmts
 
     def __repr__(self):
-        return "AST_ForLoop(" + str(self.var) + " = " + str(
-            self.initializer) + ", stmts: {\n" + str(self.stmts) + "\n})"
+        return "AST_ForLoop(" + str(self.var) + " = " + str(self.initializer) + ", stmts: {\n" + str(
+            self.stmts) + "\n})"
 
     def get_children(self):
         return [self.var, self.initializer, self.stmts]
@@ -28,8 +28,7 @@ class AST_ForLoop(AST_Node):
         if old == self.stmts:
             self.stmts = new
             return
-        raise ValueError("The child " + str(old) + " is not a child of " +
-                         str(self))
+        raise ValueError("The child " + str(old) + " is not a child of " + str(self))
 
     def generate_code(self, sdfg, state):
         from .ast_range import AST_RangeExpression
@@ -47,13 +46,10 @@ class AST_ForLoop(AST_Node):
             lhs_node = self.initializer.lhs.get_datanode(sdfg, state)
             self.initializer.rhs.generate_code(sdfg, state)
             rhs_node = self.initializer.rhs.get_datanode(sdfg, state)
-            sdfg.add_transient(self.var.get_name_in_sdfg(sdfg), [1],
-                               self.initializer.lhs.get_basetype())
+            sdfg.add_transient(self.var.get_name_in_sdfg(sdfg), [1], self.initializer.lhs.get_basetype())
             var_node = s.add_access(self.var.get_name_in_sdfg(sdfg))
-            s.add_edge(
-                lhs_node, None, var_node, None,
-                dace.memlet.Memlet.from_array(var_node.data,
-                                              var_node.desc(sdfg)))
+            s.add_edge(lhs_node, None, var_node, None,
+                       dace.memlet.Memlet.from_array(var_node.data, var_node.desc(sdfg)))
             loop_guard_var = '_loopiter_' + str(state)
             loop_end_var = '_loopend_' + str(state)
 
@@ -61,27 +57,21 @@ class AST_ForLoop(AST_Node):
             # datanode
             guard_state_num = initializer_state_num + 1
             s_guard = sdfg.add_state('s' + str(guard_state_num))
-            task = s_guard.add_tasklet('reinitloopiter', {}, {'out'},
-                                       "out=" + loop_guard_var)
+            task = s_guard.add_tasklet('reinitloopiter', {}, {'out'}, "out=" + loop_guard_var)
 
             if self.var.get_name_in_sdfg(sdfg) not in sdfg.arrays:
-                sdfg.add_transient(self.var.get_name_in_sdfg(sdfg), [1],
-                                   self.initializer.lhs.get_basetype())
+                sdfg.add_transient(self.var.get_name_in_sdfg(sdfg), [1], self.initializer.lhs.get_basetype())
             trans = s_guard.add_access(self.var.get_name_in_sdfg(sdfg))
             # Workaround until "condition for putting a variable as top-level
             # doesn't take inter-state edges into account" is solved.
             # When fixed, the line below can be removed.
             self.initializer.rhs.generate_code(sdfg, guard_state_num)
 
-            s_guard.add_edge(
-                task, 'out', trans, None,
-                dace.memlet.Memlet.from_array(trans.data, trans.desc(sdfg)))
+            s_guard.add_edge(task, 'out', trans, None, dace.memlet.Memlet.from_array(trans.data, trans.desc(sdfg)))
             lg_init = dace.sdfg.InterstateEdge(
                 assignments={
-                    loop_guard_var:
-                    self.var.get_name_in_sdfg(sdfg) + '(0)',
-                    loop_end_var:
-                    self.initializer.rhs.get_name_in_sdfg(sdfg) + '(0)'
+                    loop_guard_var: self.var.get_name_in_sdfg(sdfg) + '(0)',
+                    loop_end_var: self.initializer.rhs.get_name_in_sdfg(sdfg) + '(0)'
                 })
             sdfg.add_edge(sdfg.nodes()[state], s_guard, lg_init)
 
@@ -89,9 +79,7 @@ class AST_ForLoop(AST_Node):
             prev = s_guard
             for s in self.stmts.statements:
                 state = len(sdfg.nodes())
-                newstate = dace.SDFGState("s" + str(state),
-                                          sdfg,
-                                          debuginfo=s.context)
+                newstate = dace.SDFGState("s" + str(state), sdfg, debuginfo=s.context)
                 sdfg.add_node(newstate)
                 last_state = s.generate_code(sdfg, state)
                 if last_state is None: last_state = state
@@ -99,35 +87,27 @@ class AST_ForLoop(AST_Node):
                     edge = dace.sdfg.InterstateEdge()
                     sdfg.add_edge(prev, newstate, edge)
                 else:
-                    edge = dace.sdfg.InterstateEdge(
-                        condition=dace.properties.CodeProperty.from_string(
-                            loop_guard_var + " <= " + loop_end_var,
-                            language=dace.dtypes.Language.Python))
+                    edge = dace.sdfg.InterstateEdge(condition=dace.properties.CodeProperty.from_string(
+                        loop_guard_var + " <= " + loop_end_var, language=dace.dtypes.Language.Python))
                     sdfg.add_edge(prev, newstate, edge)
                 prev = sdfg.nodes()[last_state]
 
             # Create inter-state back-edge
-            edge = dace.sdfg.InterstateEdge(
-                assignments={loop_guard_var: loop_guard_var + '+1'})
+            edge = dace.sdfg.InterstateEdge(assignments={loop_guard_var: loop_guard_var + '+1'})
             sdfg.add_edge(prev, s_guard, edge)
 
             # Create the loop exit state
             state = len(sdfg.nodes())
-            s_lexit = dace.SDFGState("s" + str(state),
-                                     sdfg,
-                                     debuginfo=s.context)
+            s_lexit = dace.SDFGState("s" + str(state), sdfg, debuginfo=s.context)
             lend_val = str(self.initializer.get_dims()[-1])
-            for_exit = dace.sdfg.InterstateEdge(
-                condition=dace.properties.CodeProperty.from_string(
-                    loop_guard_var + " > " + loop_end_var,
-                    language=dace.dtypes.Language.Python))
+            for_exit = dace.sdfg.InterstateEdge(condition=dace.properties.CodeProperty.from_string(
+                loop_guard_var + " > " + loop_end_var, language=dace.dtypes.Language.Python))
             sdfg.add_edge(s_guard, s_lexit, for_exit)
 
             return state
 
         else:
-            raise NotImplementedError(
-                "Loops over anything but ranges are not implemented.")
+            raise NotImplementedError("Loops over anything but ranges are not implemented.")
 
     def generate_code_proper(self, sdfg, state):
         # This follows matlab semantics, i.e., a loop iterates over the columns
@@ -155,27 +135,21 @@ class AST_ForLoop(AST_Node):
         dims = self.initializer.get_dims()[:1]
         sdfg.add_transient(loopvar_name, dims, self.initializer.get_basetype())
         part = s_getinit.add_access(loopvar_name)
-        sdfg.add_transient(initializer_name, self.initializer.get_dims(),
-                           self.initializer.get_basetype())
+        sdfg.add_transient(initializer_name, self.initializer.get_dims(), self.initializer.get_basetype())
         full = s_getinit.add_read(initializer_name)
-        s_getinit.add_edge(full, None, part, None,
-                           dace.memlet.Memlet.simple(initializer_name, 'i,0'))
+        s_getinit.add_edge(full, None, part, None, dace.memlet.Memlet.simple(initializer_name, 'i,0'))
 
         # Add edge from guard to getinit
         lend_val = str(self.initializer.get_dims()[-1])
-        for_entry = dace.sdfg.InterstateEdge(
-            condition=dace.properties.CodeProperty.from_string(
-                loop_guard_var + " < " + lend_val,
-                language=dace.dtypes.Language.Python))
+        for_entry = dace.sdfg.InterstateEdge(condition=dace.properties.CodeProperty.from_string(
+            loop_guard_var + " < " + lend_val, language=dace.dtypes.Language.Python))
         sdfg.add_edge(s_guard, s_getinit, for_entry)
 
         # Add state for each statement within the for loop
         prev = s_getinit
         for s in self.stmts.statements:
             state = len(sdfg.nodes())
-            newstate = dace.SDFGState("s" + str(state),
-                                      sdfg,
-                                      debuginfo=s.context)
+            newstate = dace.SDFGState("s" + str(state), sdfg, debuginfo=s.context)
             sdfg.add_node(newstate)
             last_state = s.generate_code(sdfg, state)
             if last_state is None: last_state = state
@@ -184,18 +158,15 @@ class AST_ForLoop(AST_Node):
             prev = sdfg.nodes()[last_state]
 
         # Create inter-state back-edge
-        edge = dace.sdfg.InterstateEdge(
-            assignments={loop_guard_var: loop_guard_var + '+1'})
+        edge = dace.sdfg.InterstateEdge(assignments={loop_guard_var: loop_guard_var + '+1'})
         sdfg.add_edge(prev, s_guard, edge)
 
         # Create the loop exit state
         state = len(sdfg.nodes())
         s_lexit = dace.SDFGState("s" + str(state), sdfg, debuginfo=s.context)
         lend_val = str(self.initializer.get_dims()[-1])
-        for_exit = dace.sdfg.InterstateEdge(
-            condition=dace.properties.CodeProperty.from_string(
-                loop_guard_var + " >= " + lend_val,
-                language=dace.dtypes.Language.Python))
+        for_exit = dace.sdfg.InterstateEdge(condition=dace.properties.CodeProperty.from_string(
+            loop_guard_var + " >= " + lend_val, language=dace.dtypes.Language.Python))
         sdfg.add_edge(s_guard, s_lexit, for_exit)
 
         return state

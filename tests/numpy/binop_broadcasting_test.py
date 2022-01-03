@@ -221,6 +221,7 @@ def test_bitorr4(A: dace.int64[4, 1], B: dace.int64[3, 5]):
 #def test_noteqr4(A: dace.int64[3, 3, 2], B: dace.int64[3, 5]):
 #    return A != B
 
+
 @compare_numpy_output()
 def test_regression_result_none(A: dace.int32[1, 3], B: dace.int32[3]):
     return A + B

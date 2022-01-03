@@ -19,8 +19,7 @@ N.set(1000)
 
 
 @dace.program
-def mimo(A: dace.float64[N], B: dace.float64[N], C: dace.float64[N],
-         D: dace.float64[N]):
+def mimo(A: dace.float64[N], B: dace.float64[N], C: dace.float64[N], D: dace.float64[N]):
 
     for i in dace.map[0:N // 2]:
         with dace.tasklet:

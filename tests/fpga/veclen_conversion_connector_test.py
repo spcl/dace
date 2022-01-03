@@ -15,12 +15,9 @@ def test_veclen_conversion_connector():
     VECTOR_LENGTH.set(vector_length)
 
     if size % vector_length != 0:
-        raise ValueError(
-            "Size {} must be divisible by vector length {}.".format(
-                size, vector_length))
+        raise ValueError("Size {} must be divisible by vector length {}.".format(size, vector_length))
 
-    sdfg = make_sdfg(name="veclen_conversion_connector",
-                     vectorize_connector=True)
+    sdfg = make_sdfg(name="veclen_conversion_connector", vectorize_connector=True)
     sdfg.specialize({"W": vector_length})
 
     A = np.arange(size, dtype=np.float64)
@@ -32,11 +29,9 @@ def test_veclen_conversion_connector():
 
     for i in range(size // vector_length):
         expected = np.concatenate(
-            (A[i * vector_length + mid:(i + 1) * vector_length],
-             A[i * vector_length:i * vector_length + mid]))
+            (A[i * vector_length + mid:(i + 1) * vector_length], A[i * vector_length:i * vector_length + mid]))
         if any(B[i * vector_length:(i + 1) * vector_length] != expected):
-            raise ValueError("Shuffle failed: {} (should be {})".format(
-                B, expected))
+            raise ValueError("Shuffle failed: {} (should be {})".format(B, expected))
 
     return sdfg
 

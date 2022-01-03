@@ -10,8 +10,7 @@ from dace.transformation.dataflow import RedundantReadSlice, RedundantWriteSlice
 def _count_views(sdfg: dace.SDFG) -> int:
     num = 0
     for n, _ in sdfg.all_nodes_recursive():
-        if (isinstance(n, nodes.AccessNode)
-                and isinstance(sdfg.arrays[n.data], data.View)):
+        if (isinstance(n, nodes.AccessNode) and isinstance(sdfg.arrays[n.data], data.View)):
             num += 1
     return num
 
@@ -34,8 +33,7 @@ def test_read_slice():
 
 
 @dace.program
-def jacobi1d_half2(TMAX: dace.int32, A: dace.float32[12, 12, 12],
-                   B: dace.float32[12]):
+def jacobi1d_half2(TMAX: dace.int32, A: dace.float32[12, 12, 12], B: dace.float32[12]):
     for _ in range(TMAX):
         B[1:-1] = 0.3333 * (A[:-2, 3, 4] + A[5, 1:-1, 6] + A[7, 8, 2:])
 

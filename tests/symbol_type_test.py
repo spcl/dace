@@ -13,10 +13,7 @@ def test_nested_symbol_type():
     out = test_state.add_write('output')
     tasklet = test_state.add_tasklet('bugs', [], ['out'], 'out = s')
 
-    test_state.add_memlet_path(tasklet,
-                               out,
-                               src_conn='out',
-                               memlet=Memlet.simple(out.data, "0"))
+    test_state.add_memlet_path(tasklet, out, src_conn='out', memlet=Memlet.simple(out.data, "0"))
 
     outer_sdfg = dace.SDFG("nested_symbol_type")
     outer_state = outer_sdfg.add_state("outer_state")
@@ -27,10 +24,7 @@ def test_nested_symbol_type():
     data = outer_state.add_write('data')
     nested = outer_state.add_nested_sdfg(test_sdfg, outer_sdfg, {}, {'output'})
 
-    outer_state.add_memlet_path(nested,
-                                data,
-                                src_conn='output',
-                                memlet=Memlet.simple(data.data, "0"))
+    outer_state.add_memlet_path(nested, data, src_conn='output', memlet=Memlet.simple(data.data, "0"))
 
     compiledSDFG = outer_sdfg.compile()
 

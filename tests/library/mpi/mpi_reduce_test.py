@@ -23,14 +23,8 @@ def make_sdfg(dtype):
     root = state.add_access("root")
     reduce_node = mpi.nodes.reduce.Reduce("reduce")
 
-    state.add_memlet_path(inbuf,
-                          reduce_node,
-                          dst_conn="_inbuffer",
-                          memlet=Memlet.simple(inbuf, "0:n", num_accesses=n))
-    state.add_memlet_path(root,
-                          reduce_node,
-                          dst_conn="_root",
-                          memlet=Memlet.simple(root, "0:1", num_accesses=1))
+    state.add_memlet_path(inbuf, reduce_node, dst_conn="_inbuffer", memlet=Memlet.simple(inbuf, "0:n", num_accesses=n))
+    state.add_memlet_path(root, reduce_node, dst_conn="_root", memlet=Memlet.simple(root, "0:1", num_accesses=1))
     state.add_memlet_path(reduce_node,
                           outbuf,
                           src_conn="_outbuffer",
@@ -54,8 +48,7 @@ def test_mpi(implementation, dtype):
     commsize = comm.Get_size()
     mpi_sdfg = None
     if commsize < 2:
-        raise ValueError(
-            "This test is supposed to be run with at least two processes!")
+        raise ValueError("This test is supposed to be run with at least two processes!")
     for r in range(0, commsize):
         if r == rank:
             sdfg = make_sdfg(dtype)
@@ -68,14 +61,10 @@ def test_mpi(implementation, dtype):
     root = np.array([0], dtype=np.int32)
     mpi_sdfg(inbuf=A, outbuf=B, root=root, n=size)
     # now B should be an array of size, containing commsize
-    if (rank == root) and (not np.allclose(
-            B, np.full(size, commsize, dtype=np_dtype))):
-        raise (
-            ValueError("The received values are not what I expected on root."))
-    if (rank != root) and (not np.allclose(B, np.full(size, 42,
-                                                      dtype=np_dtype))):
-        raise (ValueError(
-            "The received values are not what I expected on non-root nodes."))
+    if (rank == root) and (not np.allclose(B, np.full(size, commsize, dtype=np_dtype))):
+        raise (ValueError("The received values are not what I expected on root."))
+    if (rank != root) and (not np.allclose(B, np.full(size, 42, dtype=np_dtype))):
+        raise (ValueError("The received values are not what I expected on non-root nodes."))
 
 
 ###############################################################################

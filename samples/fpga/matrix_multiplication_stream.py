@@ -26,18 +26,9 @@ def make_copy_to_fpga_state(sdfg):
     B_host = state.add_read("B")
     C_host = state.add_read("C")
 
-    sdfg.add_array("A_device", [N, K],
-                   dtype=dace.float32,
-                   transient=True,
-                   storage=dace.StorageType.FPGA_Global)
-    sdfg.add_array("B_device", [K, M],
-                   dtype=dace.float32,
-                   transient=True,
-                   storage=dace.StorageType.FPGA_Global)
-    sdfg.add_array("C_device", [N, M],
-                   dtype=dace.float32,
-                   transient=True,
-                   storage=dace.StorageType.FPGA_Global)
+    sdfg.add_array("A_device", [N, K], dtype=dace.float32, transient=True, storage=dace.StorageType.FPGA_Global)
+    sdfg.add_array("B_device", [K, M], dtype=dace.float32, transient=True, storage=dace.StorageType.FPGA_Global)
+    sdfg.add_array("C_device", [N, M], dtype=dace.float32, transient=True, storage=dace.StorageType.FPGA_Global)
 
     A_device = state.add_write("A_device")
     B_device = state.add_write("B_device")
@@ -73,83 +64,41 @@ def make_fpga_state(sdfg):
     B = state.add_read("B_device")
     C = state.add_write("C_device")
 
-    A_pipe_in = state.add_stream("A_pipe",
-                                 dace.float32,
-                                 transient=True,
-                                 storage=dace.StorageType.FPGA_Local)
-    B_pipe_in = state.add_stream("B_pipe",
-                                 dace.float32,
-                                 transient=True,
-                                 storage=dace.StorageType.FPGA_Local)
-    C_pipe_in = state.add_stream("C_pipe",
-                                 dace.float32,
-                                 transient=True,
-                                 storage=dace.StorageType.FPGA_Local)
-    A_pipe_out = state.add_stream("A_pipe",
-                                  dace.float32,
-                                  transient=True,
-                                  storage=dace.StorageType.FPGA_Local)
-    B_pipe_out = state.add_stream("B_pipe",
-                                  dace.float32,
-                                  transient=True,
-                                  storage=dace.StorageType.FPGA_Local)
-    C_pipe_out = state.add_stream("C_pipe",
-                                  dace.float32,
-                                  transient=True,
-                                  storage=dace.StorageType.FPGA_Local)
+    A_pipe_in = state.add_stream("A_pipe", dace.float32, transient=True, storage=dace.StorageType.FPGA_Local)
+    B_pipe_in = state.add_stream("B_pipe", dace.float32, transient=True, storage=dace.StorageType.FPGA_Local)
+    C_pipe_in = state.add_stream("C_pipe", dace.float32, transient=True, storage=dace.StorageType.FPGA_Local)
+    A_pipe_out = state.add_stream("A_pipe", dace.float32, transient=True, storage=dace.StorageType.FPGA_Local)
+    B_pipe_out = state.add_stream("B_pipe", dace.float32, transient=True, storage=dace.StorageType.FPGA_Local)
+    C_pipe_out = state.add_stream("C_pipe", dace.float32, transient=True, storage=dace.StorageType.FPGA_Local)
 
     state.add_memlet_path(A, A_pipe_out, memlet=dace.Memlet("A_device"))
 
-    read_b_entry, read_b_exit = state.add_map(
-        "read_b", {
-            "n": "0:N",
-            "k": "0:K",
-            "m": "0:M"
-        },
-        schedule=dace.ScheduleType.FPGA_Device)
-    read_b_tasklet = state.add_tasklet("read_b", {"mem"}, {"s"}, "s = mem")
-    state.add_memlet_path(B,
-                          read_b_entry,
-                          read_b_tasklet,
-                          dst_conn="mem",
-                          memlet=dace.Memlet("B_device[k, m]"))
-    state.add_memlet_path(read_b_tasklet,
-                          read_b_exit,
-                          B_pipe_out,
-                          src_conn="s",
-                          memlet=dace.Memlet("B_pipe[0]"))
-
-    state.add_memlet_path(C_pipe_in,
-                          C,
-                          src_conn="mem",
-                          memlet=dace.Memlet("C_device"))
-
-    ###########################################################################
-
-    n_entry, n_exit = state.add_map("outer_map", {"n": "0:N"},
-                                    schedule=dace.ScheduleType.FPGA_Device)
-    km_entry, km_exit = state.add_map("inner_map", {
+    read_b_entry, read_b_exit = state.add_map("read_b", {
+        "n": "0:N",
         "k": "0:K",
         "m": "0:M"
     },
-                                      schedule=dace.ScheduleType.FPGA_Device)
+                                              schedule=dace.ScheduleType.FPGA_Device)
+    read_b_tasklet = state.add_tasklet("read_b", {"mem"}, {"s"}, "s = mem")
+    state.add_memlet_path(B, read_b_entry, read_b_tasklet, dst_conn="mem", memlet=dace.Memlet("B_device[k, m]"))
+    state.add_memlet_path(read_b_tasklet, read_b_exit, B_pipe_out, src_conn="s", memlet=dace.Memlet("B_pipe[0]"))
 
-    sdfg.add_array("output_buffer", [M],
-                   dtype=dace.float32,
-                   transient=True,
-                   storage=dace.StorageType.FPGA_Local)
-    sdfg.add_array("A_reg", [1],
-                   dtype=dace.float32,
-                   transient=True,
-                   storage=dace.StorageType.FPGA_Local)
+    state.add_memlet_path(C_pipe_in, C, src_conn="mem", memlet=dace.Memlet("C_device"))
+
+    ###########################################################################
+
+    n_entry, n_exit = state.add_map("outer_map", {"n": "0:N"}, schedule=dace.ScheduleType.FPGA_Device)
+    km_entry, km_exit = state.add_map("inner_map", {"k": "0:K", "m": "0:M"}, schedule=dace.ScheduleType.FPGA_Device)
+
+    sdfg.add_array("output_buffer", [M], dtype=dace.float32, transient=True, storage=dace.StorageType.FPGA_Local)
+    sdfg.add_array("A_reg", [1], dtype=dace.float32, transient=True, storage=dace.StorageType.FPGA_Local)
     output_buffer_read = state.add_read("output_buffer")
     output_buffer_write = state.add_write("output_buffer")
     read_a_reg = state.add_read("A_reg")
     write_a_reg = state.add_write("A_reg")
 
     tasklet = state.add_tasklet(
-        "multiply_accumulate", {"a_mem", "a_reg_in", "b", "c_in"},
-        {"a_reg_out", "c_out"}, """\
+        "multiply_accumulate", {"a_mem", "a_reg_in", "b", "c_in"}, {"a_reg_out", "c_out"}, """\
 a = a_mem if m == 0 else a_reg_in
 a_reg_out = a
 prev = 0 if k == 0 else c_in
@@ -162,19 +111,9 @@ c_out = prev + a * b""")
                           dst_conn="a_mem",
                           memlet=dace.Memlet("A_pipe[0]", dynamic=True))
 
-    state.add_memlet_path(B_pipe_in,
-                          n_entry,
-                          km_entry,
-                          tasklet,
-                          dst_conn="b",
-                          memlet=dace.Memlet("B_pipe[0]"))
+    state.add_memlet_path(B_pipe_in, n_entry, km_entry, tasklet, dst_conn="b", memlet=dace.Memlet("B_pipe[0]"))
 
-    state.add_memlet_path(read_a_reg,
-                          n_entry,
-                          km_entry,
-                          tasklet,
-                          dst_conn="a_reg_in",
-                          memlet=dace.Memlet("A_reg[0]"))
+    state.add_memlet_path(read_a_reg, n_entry, km_entry, tasklet, dst_conn="a_reg_in", memlet=dace.Memlet("A_reg[0]"))
 
     state.add_memlet_path(output_buffer_read,
                           km_entry,
@@ -191,17 +130,9 @@ c_out = prev + a * b""")
                           src_conn="c_out",
                           memlet=dace.Memlet("output_buffer[m]"))
 
-    state.add_memlet_path(tasklet,
-                          km_exit,
-                          n_exit,
-                          write_a_reg,
-                          src_conn="a_reg_out",
-                          memlet=dace.Memlet("A_reg[0]"))
+    state.add_memlet_path(tasklet, km_exit, n_exit, write_a_reg, src_conn="a_reg_out", memlet=dace.Memlet("A_reg[0]"))
 
-    state.add_memlet_path(output_buffer_write,
-                          n_exit,
-                          C_pipe_out,
-                          memlet=dace.Memlet("output_buffer[0:M]"))
+    state.add_memlet_path(output_buffer_write, n_exit, C_pipe_out, memlet=dace.Memlet("output_buffer[0:M]"))
 
     return state
 
@@ -209,8 +140,7 @@ c_out = prev + a * b""")
 def make_sdfg(specialized):
 
     if specialized:
-        sdfg = dace.SDFG("mm_fpga_stream_{}x{}x{}".format(
-            N.get(), K.get(), M.get()))
+        sdfg = dace.SDFG("mm_fpga_stream_{}x{}x{}".format(N.get(), K.get(), M.get()))
     else:
         sdfg = dace.SDFG("mm_fpga_stream_NxKx{}".format(M.get()))
 
@@ -251,8 +181,8 @@ if __name__ == "__main__":
         sdfg = make_sdfg(True)
         sdfg.specialize(dict(M=M, N=N, K=K))
 
-    print("Matrix multiplication {}x{}x{} ({}specialized)".format(
-        M.get(), N.get(), K.get(), "" if args["specialize"] else "not "))
+    print("Matrix multiplication {}x{}x{} ({}specialized)".format(M.get(), N.get(), K.get(),
+                                                                  "" if args["specialize"] else "not "))
 
     # Initialize arrays: Randomize A and B, zero C
     A = np.ndarray([N.get(), K.get()], dtype=dace.float32.type)

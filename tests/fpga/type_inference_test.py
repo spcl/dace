@@ -29,9 +29,7 @@ def make_sdfg():
     device_output = copy_out_state.add_read("device_output")
     host_output = copy_out_state.add_write("output")
 
-    copy_out_state.add_memlet_path(device_output,
-                                   host_output,
-                                   memlet=dace.Memlet(f"{host_output}[0:N]"))
+    copy_out_state.add_memlet_path(device_output, host_output, memlet=dace.Memlet(f"{host_output}[0:N]"))
 
     ########################################################################
     # FPGA, First State
@@ -41,21 +39,15 @@ def make_sdfg():
     fpga_state = sdfg.add_state("fpga_state")
 
     out = fpga_state.add_write("device_output")
-    map_entry, map_exit = fpga_state.add_map(
-        "increment_map", {"i": "0:N"}, schedule=dace.ScheduleType.FPGA_Device)
+    map_entry, map_exit = fpga_state.add_map("increment_map", {"i": "0:N"}, schedule=dace.ScheduleType.FPGA_Device)
 
     # Force type inference for constant array
-    tasklet = fpga_state.add_tasklet(
-        "increment_tasklet", {}, {"out"}, "incr = constant_value\n"
-        "tmp = constant_array[i]\n"
-        "out = tmp + incr")
+    tasklet = fpga_state.add_tasklet("increment_tasklet", {}, {"out"}, "incr = constant_value\n"
+                                     "tmp = constant_array[i]\n"
+                                     "out = tmp + incr")
 
     fpga_state.add_memlet_path(map_entry, tasklet, memlet=dace.Memlet())
-    fpga_state.add_memlet_path(tasklet,
-                               map_exit,
-                               out,
-                               src_conn="out",
-                               memlet=dace.Memlet("device_output[i]"))
+    fpga_state.add_memlet_path(tasklet, map_exit, out, src_conn="out", memlet=dace.Memlet("device_output[i]"))
 
     sdfg.add_edge(fpga_state, copy_out_state, dace.sdfg.sdfg.InterstateEdge())
     sdfg.fill_scope_connectors()
@@ -74,8 +66,7 @@ def type_inference(x: dace.float32[N], y: dace.float32[N]):
         # computes y[i]=(int)x[i] + ((int)y[i])*2.1
         var1 = int(in_x)
         var2: int = in_y
-        var3 = 2.1 if (i > 1
-                       and i < 10) else 2.1  # Just for the sake of testing
+        var3 = 2.1 if (i > 1 and i < 10) else 2.1  # Just for the sake of testing
         res = var1 + var3 * var2
         out = res
 

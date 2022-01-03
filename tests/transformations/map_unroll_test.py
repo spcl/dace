@@ -13,10 +13,7 @@ def test_map_unroll():
 
     read = outer_state.add_read("input_array")
     write = outer_state.add_write("output_array")
-    entry_outer, exit_outer = outer_state.add_map("map_outer", {
-        "i": "0:3",
-        "j": "0:1"
-    })
+    entry_outer, exit_outer = outer_state.add_map("map_outer", {"i": "0:3", "j": "0:1"})
     entry_inner, exit_inner = outer_state.add_map("map_inner", {"k": "0:2"})
     nsdfg = dace.SDFG("unroll_nested")
     nsdfg_node = outer_state.add_nested_sdfg(nsdfg, sdfg, {"x"}, {"y"})
@@ -39,14 +36,8 @@ def test_map_unroll():
     tasklet = inner_state.add_tasklet("tasklet", {"_x"}, {"_y"}, "_y = _x + 1")
     read = inner_state.add_read("x")
     write = inner_state.add_write("y")
-    inner_state.add_memlet_path(read,
-                                tasklet,
-                                dst_conn="_x",
-                                memlet=dace.Memlet(f"x[0]"))
-    inner_state.add_memlet_path(tasklet,
-                                write,
-                                src_conn="_y",
-                                memlet=dace.Memlet(f"y[0]"))
+    inner_state.add_memlet_path(read, tasklet, dst_conn="_x", memlet=dace.Memlet(f"x[0]"))
+    inner_state.add_memlet_path(tasklet, write, src_conn="_y", memlet=dace.Memlet(f"y[0]"))
 
     assert sdfg.apply_transformations_repeated(MapUnroll) == 4
 

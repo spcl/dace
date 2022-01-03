@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
+
 W = dace.symbol('W')
 H = dace.symbol('H')
 
@@ -63,8 +64,7 @@ def arr2dtest(A: dace.float64[4, 2]):
 
 
 def test_control_flow_basic():
-    control_flow_test.compile(dace.float32[W, H], dace.float32[H, W],
-                              dace.float32[1])
+    control_flow_test.compile(dace.float32[W, H], dace.float32[H, W], dace.float32[1])
 
 
 def test_function_in_condition():
@@ -95,16 +95,13 @@ def test_2d_access_sdfgapi():
     begin_state = sdfg.add_state()
     state_true = sdfg.add_state()
     state_false = sdfg.add_state()
-    state_true.add_edge(
-        state_true.add_tasklet('assign', {}, {'a'}, 'a = 100.0'), 'a',
-        state_true.add_write('A'), None, dace.Memlet('A[0, 0]'))
-    state_false.add_edge(
-        state_false.add_tasklet('assign', {}, {'a'}, 'a = -100.0'), 'a',
-        state_false.add_write('A'), None, dace.Memlet('A[0, 0]'))
+    state_true.add_edge(state_true.add_tasklet('assign', {}, {'a'}, 'a = 100.0'), 'a', state_true.add_write('A'), None,
+                        dace.Memlet('A[0, 0]'))
+    state_false.add_edge(state_false.add_tasklet('assign', {}, {'a'}, 'a = -100.0'), 'a', state_false.add_write('A'),
+                         None, dace.Memlet('A[0, 0]'))
 
     sdfg.add_edge(begin_state, state_true, dace.InterstateEdge('A[1,1] < 0.5'))
-    sdfg.add_edge(begin_state, state_false,
-                  dace.InterstateEdge('A[1,1] >= 0.5'))
+    sdfg.add_edge(begin_state, state_false, dace.InterstateEdge('A[1,1] >= 0.5'))
 
     # Prepare inputs
     A = np.random.rand(4, 2)
@@ -134,10 +131,9 @@ def test_2d_assignment():
     sdfg.add_array('A', [4, 2], dace.float64)
     state = sdfg.add_state()
     state2 = sdfg.add_state()
-    state2.add_edge(state2.add_tasklet('assign', {}, {'a'}, 'a = i'), 'a',
-                    state2.add_write('A'), None, dace.Memlet('A[0, 0]'))
-    sdfg.add_edge(state, state2,
-                  dace.InterstateEdge(assignments=dict(i='A[1, 1]')))
+    state2.add_edge(state2.add_tasklet('assign', {}, {'a'}, 'a = i'), 'a', state2.add_write('A'), None,
+                    dace.Memlet('A[0, 0]'))
+    sdfg.add_edge(state, state2, dace.InterstateEdge(assignments=dict(i='A[1, 1]')))
 
     A = np.random.rand(4, 2)
     sdfg(A=A)
@@ -194,8 +190,7 @@ def test_dowhile():
     state1 = sdfg.add_state()
     sdfg.add_edge(init, state1, dace.InterstateEdge(assignments={'cond': '1'}))
     state2 = sdfg.add_state()
-    sdfg.add_edge(state1, state2,
-                  dace.InterstateEdge(assignments={'cond': 'cond + 1'}))
+    sdfg.add_edge(state1, state2, dace.InterstateEdge(assignments={'cond': 'cond + 1'}))
     guard = sdfg.add_state_after(state2)
     after = sdfg.add_state()
     sdfg.add_edge(guard, state1, dace.InterstateEdge('cond < 5'))
@@ -315,8 +310,7 @@ def test_fsm():
         sdfg.add_edge(init, state, dace.InterstateEdge(f'nextstate == {case}'))
 
         r = state.add_read('A')
-        t = state.add_tasklet('update', {'ain'}, {'a', 'nstate'},
-                              f'a = ain + {case}; nstate = {fsm[case]}')
+        t = state.add_tasklet('update', {'ain'}, {'a', 'nstate'}, f'a = ain + {case}; nstate = {fsm[case]}')
         w = state.add_write('A')
         ws = state.add_write('nextstate')
         state.add_edge(r, None, t, 'ain', dace.Memlet('A'))

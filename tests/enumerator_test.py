@@ -16,8 +16,7 @@ B = dace.symbol('B')
 
 
 @dace.program
-def p1(in1: dace.float32[W, H, B], in2: dace.float32[W, H],
-       out: dace.float32[W, H]):
+def p1(in1: dace.float32[W, H, B], in2: dace.float32[W, H], out: dace.float32[W, H]):
     tmp1 = np.ndarray([W, H, B], dtype=dace.float32)
     for i, j, k in dace.map[0:W, 0:H, 0:B]:
         with dace.tasklet:

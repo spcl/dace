@@ -40,9 +40,7 @@ def test_state_subgraph():
     nsdfg = dace.SDFG('nsdfg')
     nstate = nsdfg.add_state()
     me, mx = state.add_map('map', dict(i='0:N'))
-    nsdfg = state.add_nested_sdfg(nsdfg,
-                                  None, {}, {},
-                                  symbol_mapping=dict(l=L / 2, i='i'))
+    nsdfg = state.add_nested_sdfg(nsdfg, None, {}, {}, symbol_mapping=dict(l=L / 2, i='i'))
     state.add_nedge(me, nsdfg, dace.Memlet())
     state.add_nedge(nsdfg, mx, dace.Memlet())
 
@@ -50,8 +48,7 @@ def test_state_subgraph():
     assert state.free_symbols == {'L', 'N'}
 
     # Try a subgraph containing only the map contents
-    assert state.scope_subgraph(me, include_entry=False,
-                                include_exit=False).free_symbols == {'L', 'i'}
+    assert state.scope_subgraph(me, include_entry=False, include_exit=False).free_symbols == {'L', 'i'}
 
 
 def test_sdfg():
@@ -59,8 +56,7 @@ def test_sdfg():
     sdfg.coarsen_dataflow()
     # Test each state separately
     for state in sdfg.nodes():
-        assert (state.free_symbols == {'k', 'N', 'M', 'L'}
-                or state.free_symbols == set())
+        assert (state.free_symbols == {'k', 'N', 'M', 'L'} or state.free_symbols == set())
     # The SDFG itself should have another free symbol
     assert sdfg.free_symbols == {'K', 'M', 'N', 'L'}
 
@@ -72,8 +68,7 @@ def test_constants():
     sdfg.add_constant('L', 20)
 
     for state in sdfg.nodes():
-        assert (state.free_symbols == {'k', 'N', 'M'}
-                or state.free_symbols == set())
+        assert (state.free_symbols == {'k', 'N', 'M'} or state.free_symbols == set())
     assert sdfg.free_symbols == {'M', 'N'}
 
 

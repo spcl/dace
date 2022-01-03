@@ -8,8 +8,7 @@ N = dace.symbol('N')
 
 def test_general_einsum():
     @dace.program
-    def einsumtest(A: dace.float64[M, N], B: dace.float64[N, M],
-                   C: dace.float64[M]):
+    def einsumtest(A: dace.float64[M, N], B: dace.float64[N, M], C: dace.float64[M]):
         return np.einsum('ij,ji,i->', A, B, C)
 
     A = np.random.rand(10, 20)
@@ -41,11 +40,9 @@ def test_batch_matmul():
 
 def test_opteinsum_sym():
     @dace.program
-    def einsumtest(A: dace.float64[N, N, N, N], B: dace.float64[N, N, N, N],
-                   C: dace.float64[N, N, N, N], D: dace.float64[N, N, N, N],
-                   E: dace.float64[N, N, N, N]):
-        return np.einsum('bdik,acaj,ikab,ajac,ikbd->', A, B, C, D, E,
-                         optimize=True)
+    def einsumtest(A: dace.float64[N, N, N, N], B: dace.float64[N, N, N, N], C: dace.float64[N, N, N, N],
+                   D: dace.float64[N, N, N, N], E: dace.float64[N, N, N, N]):
+        return np.einsum('bdik,acaj,ikab,ajac,ikbd->', A, B, C, D, E, optimize=True)
 
     A, B, C, D, E = tuple(np.random.rand(10, 10, 10, 10) for _ in range(5))
     try:
@@ -59,16 +56,13 @@ def test_opteinsum():
     N = 10
 
     @dace.program
-    def einsumtest(A: dace.float64[N, N, N, N], B: dace.float64[N, N, N, N],
-                   C: dace.float64[N, N, N, N], D: dace.float64[N, N, N, N],
-                   E: dace.float64[N, N, N, N]):
-        return np.einsum('bdik,acaj,ikab,ajac,ikbd->', A, B, C, D, E,
-                         optimize=True)
+    def einsumtest(A: dace.float64[N, N, N, N], B: dace.float64[N, N, N, N], C: dace.float64[N, N, N, N],
+                   D: dace.float64[N, N, N, N], E: dace.float64[N, N, N, N]):
+        return np.einsum('bdik,acaj,ikab,ajac,ikbd->', A, B, C, D, E, optimize=True)
 
     A, B, C, D, E = tuple(np.random.rand(10, 10, 10, 10) for _ in range(5))
 
-    assert np.allclose(einsumtest(A, B, C, D, E),
-                       np.einsum('bdik,acaj,ikab,ajac,ikbd->', A, B, C, D, E))
+    assert np.allclose(einsumtest(A, B, C, D, E), np.einsum('bdik,acaj,ikab,ajac,ikbd->', A, B, C, D, E))
 
 
 if __name__ == '__main__':

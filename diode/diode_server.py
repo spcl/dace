@@ -29,9 +29,7 @@ app = Flask(__name__)
 
 # Prepare a whitelist of DaCe enumeration types
 enum_list = [
-    typename
-    for typename, dtype in inspect.getmembers(dace.dtypes, inspect.isclass)
-    if issubclass(dtype, aenum.Enum)
+    typename for typename, dtype in inspect.getmembers(dace.dtypes, inspect.isclass) if issubclass(dtype, aenum.Enum)
 ]
 
 es_ref = []
@@ -84,10 +82,8 @@ class ExecutorServer:
     """
     def __init__(self):
 
-        self._command_queue = queue.Queue(
-        )  # Fast command queue. Must be polled often (< 30 ms response time)
-        self._executor_queue = queue.Queue(
-        )  # Run command queue. Latency not critical
+        self._command_queue = queue.Queue()  # Fast command queue. Must be polled often (< 30 ms response time)
+        self._executor_queue = queue.Queue()  # Run command queue. Latency not critical
 
         _self = self
 
@@ -112,8 +108,7 @@ class ExecutorServer:
 
         self._oplock = threading.Lock()
 
-        self._run_cv = threading.Condition(
-        )  # Used to trickle run tasks through (as the tasks are run in a thread)
+        self._run_cv = threading.Condition()  # Used to trickle run tasks through (as the tasks are run in a thread)
         self._slot_available = True  # True if the target machine has a slot for running a program
 
         self._perfdata_available = {}  # Dict mapping client_id => .can-path
@@ -397,13 +392,11 @@ class ExecutorServer:
                     del self._task_dict[runindex]
 
                     # Output instrumentation report, if exists
-                    if (async_executor.running_proc.exitcode == 0
-                            and dace_state.sdfg.is_instrumented()):
+                    if (async_executor.running_proc.exitcode == 0 and dace_state.sdfg.is_instrumented()):
                         report = dace_state.sdfg.get_latest_report()
                         yield '\nInstrumentation report:\n%s\n\n' % report
 
-                    yield ('Run finished with exit code %d' %
-                           async_executor.running_proc.exitcode)
+                    yield ('Run finished with exit code %d' % async_executor.running_proc.exitcode)
 
                     self._slot_available = True
 
@@ -422,9 +415,7 @@ def index(path):
         It serves the files from the 'webclient'-directory to user agents.
         Note: This is NOT intended for production environments and security is disregarded!
     """
-    return send_from_directory(
-        os.path.join(os.path.dirname(os.path.abspath(__file__)), "webclient"),
-        path)
+    return send_from_directory(os.path.join(os.path.dirname(os.path.abspath(__file__)), "webclient"), path)
 
 
 @app.route('/dace/api/v1.0/getPubSSH/', methods=['GET'])
@@ -456,8 +447,7 @@ def getEnum(name):
         print("Enum type '" + str(name) + "' is not in Whitelist")
         abort(400)
 
-    return jsonify(
-        {'enum': [str(e).split(".")[-1] for e in getattr(dace.dtypes, name)]})
+    return jsonify({'enum': [str(e).split(".")[-1] for e in getattr(dace.dtypes, name)]})
 
 
 @app.route('/dace/api/v1.0/getLibImpl/<string:name>', methods=['GET'])
@@ -588,8 +578,7 @@ def applySDFGProperty(sdfg, property_element, step=None):
     except:
         print("[Warning] Prop step was not provided")
         prop_step = 0
-        print("applySDFGProperty: step " + str(step) + ", prop_step: " +
-              str(prop_step))
+        print("applySDFGProperty: step " + str(step) + ", prop_step: " + str(prop_step))
     if step is not None and prop_step != step:
         # Step mismatch; ignore
         return sdfg
@@ -623,8 +612,7 @@ def applyOptPath(sdfg, optpath, useGlobalSuffix=True, sdfg_props=None):
         name = x['name']
         classname = name[:name.index('$')] if name.find('$') >= 0 else name
 
-        transformation = next(t for t in Transformation.extensions().keys()
-                              if t.__name__ == classname)
+        transformation = next(t for t in Transformation.extensions().keys() if t.__name__ == classname)
         matching = optimizer.get_pattern_matches(patterns=[transformation])
 
         # Apply properties (will automatically apply by step-matching)
@@ -649,9 +637,7 @@ def applyOptPath(sdfg, optpath, useGlobalSuffix=True, sdfg_props=None):
                 #if prop['name'] == 'subgraph': continue
                 #set_properties_from_json(pattern, prop, sdfg)
 
-                dace.serialize.set_properties_from_json(pattern,
-                                                        x['params']['props'],
-                                                        context=sdfg)
+                dace.serialize.set_properties_from_json(pattern, x['params']['props'], context=sdfg)
                 pattern.apply_pattern(tsdfg)
 
                 if not useGlobalSuffix:
@@ -674,36 +660,21 @@ def create_DaceState(code, sdfg_dict, errors):
 
     except SyntaxError as se:
         # Syntax error
-        errors.append({
-            'type': "SyntaxError",
-            'line': se.lineno,
-            'offset': se.offset,
-            'text': se.text,
-            'msg': se.msg
-        })
+        errors.append({'type': "SyntaxError", 'line': se.lineno, 'offset': se.offset, 'text': se.text, 'msg': se.msg})
     except ValueError as ve:
         # DACE-Specific error
         tb = traceback.format_exc()
-        errors.append({
-            'type': "ValueError",
-            'stringified': str(ve),
-            'traceback': tb
-        })
+        errors.append({'type': "ValueError", 'stringified': str(ve), 'traceback': tb})
     except Exception as ge:
         # Generic exception
         tb = traceback.format_exc()
-        errors.append({
-            'type': ge.__class__.__name__,
-            'stringified': str(ge),
-            'traceback': tb
-        })
+        errors.append({'type': ge.__class__.__name__, 'stringified': str(ge), 'traceback': tb})
 
     return dace_state
 
 
 def compileProgram(request, language, perfopts=None):
-    if not request.json or (('code' not in request.json) and
-                            ('sdfg' not in request.json)):
+    if not request.json or (('code' not in request.json) and ('sdfg' not in request.json)):
         print("[Error] No input code provided, cannot continue")
         abort(400)
 
@@ -763,11 +734,7 @@ def compileProgram(request, language, perfopts=None):
                         return sdfg_dict[name]
 
                     # Else: This function has to recreate the given sdfg
-                    sdfg_dict[name] = dace.SDFG.from_json(
-                        in_sdfg[name], {
-                            'sdfg': None,
-                            'callback': loader_callback
-                        })
+                    sdfg_dict[name] = dace.SDFG.from_json(in_sdfg[name], {'sdfg': None, 'callback': loader_callback})
                     sdfg_eval_order.append(name)
                     return sdfg_dict[name]
 
@@ -777,11 +744,7 @@ def compileProgram(request, language, perfopts=None):
                     if k in sdfg_dict: continue
                     if isinstance(v, str):
                         v = json.loads(v)
-                    sdfg_dict[k] = dace.SDFG.from_json(
-                        v, {
-                            'sdfg': None,
-                            'callback': loader_callback
-                        })
+                    sdfg_dict[k] = dace.SDFG.from_json(v, {'sdfg': None, 'callback': loader_callback})
                     sdfg_eval_order.append(k)
             else:
                 in_sdfg = dace.SDFG.from_json(in_sdfg)
@@ -819,9 +782,7 @@ def compileProgram(request, language, perfopts=None):
                         sp = None
                     print("Applying opts for " + sdfg_name)
                     print("Dict: " + str(sdfg_dict.keys()))
-                    sdfg_dict[sdfg_name] = applyOptPath(sdfg_dict[sdfg_name],
-                                                        op,
-                                                        sdfg_props=sp)
+                    sdfg_dict[sdfg_name] = applyOptPath(sdfg_dict[sdfg_name], op, sdfg_props=sp)
 
         code_tuple_dict = {}
         # Deep-copy the SDFG (codegen may change the SDFG it operates on)
@@ -829,24 +790,20 @@ def compileProgram(request, language, perfopts=None):
         codegen_sdfgs_dace_state = copy.deepcopy(sdfg_dict)
         if len(errors) == 0:
             if sdfg_eval_order:
-                sdfg_eval = [(n, codegen_sdfgs[n])
-                             for n in reversed(sdfg_eval_order)]
+                sdfg_eval = [(n, codegen_sdfgs[n]) for n in reversed(sdfg_eval_order)]
             else:
                 sdfg_eval = codegen_sdfgs.items()
 
             for n, s in sdfg_eval:
                 try:
-                    if Config.get_bool('diode', 'general',
-                                       'library_autoexpand'):
+                    if Config.get_bool('diode', 'general', 'library_autoexpand'):
                         s.expand_library_nodes()
 
                     code_tuple_dict[n] = codegen.generate_code(s)
                 except dace.sdfg.NodeNotExpandedError as ex:
                     code_tuple_dict[n] = [str(ex)]
                 except Exception:  # Forward exception to output code
-                    code_tuple_dict[n] = [
-                        'Code generation failed:\n' + traceback.format_exc()
-                    ]
+                    code_tuple_dict[n] = ['Code generation failed:\n' + traceback.format_exc()]
 
         if dace_state is None:
             if "code" in request.json:
@@ -854,9 +811,7 @@ def compileProgram(request, language, perfopts=None):
             else:
                 in_code = ""
             dace_state = DaceState(in_code, "tmp.py", remote=remote_execution)
-            dace_state.set_sdfg(
-                list(codegen_sdfgs_dace_state.values())[0],
-                list(codegen_sdfgs_dace_state.keys())[0])
+            dace_state.set_sdfg(list(codegen_sdfgs_dace_state.values())[0], list(codegen_sdfgs_dace_state.keys())[0])
             if len(dace_state.errors) > 0:
                 print("ERRORS: " + str(dace_state.errors))
                 errors.extend(dace_state.errors)
@@ -867,9 +822,7 @@ def compileProgram(request, language, perfopts=None):
             return errors
 
         # Only return top-level SDFG
-        return ({k: v
-                 for k, v in sdfg_dict.items()
-                 if v.parent is None}, code_tuple_dict, dace_state)
+        return ({k: v for k, v in sdfg_dict.items() if v.parent is None}, code_tuple_dict, dace_state)
         #return sdfg_dict, code_tuple_dict, dace_state
 
 
@@ -894,12 +847,7 @@ def get_transformations(sdfgs):
                     nodeids.append([sdfg_id, sid, n])
 
                 properties = dace.serialize.all_properties_to_json(p)
-            optimizations.append({
-                'opt_name': label,
-                'opt_params': properties,
-                'affects': nodeids,
-                'children': []
-            })
+            optimizations.append({'opt_name': label, 'opt_params': properties, 'affects': nodeids, 'children': []})
 
         opt_per_sdfg[sdfg_name] = {'matching_opts': optimizations}
     return opt_per_sdfg
@@ -994,11 +942,7 @@ def run():
     es.addRun(client_id, "start", {})
 
     for pmode in perfmodes:
-        perfopts = {
-            'mode': pmode,
-            'core_counts': corecounts,
-            'repetitions': repetitions
-        }
+        perfopts = {'mode': pmode, 'core_counts': corecounts, 'repetitions': repetitions}
         tmp = compileProgram(request, 'dace', perfopts)
         if len(tmp) > 1:
             sdfgs, code_tuples, dace_state = tmp
@@ -1011,8 +955,7 @@ def run():
 
         more_options = {}
         more_options['perfopts'] = perfopts
-        runner = es.addRun(client_id, (sdfgs, code_tuples, dace_state),
-                           more_options)
+        runner = es.addRun(client_id, (sdfgs, code_tuples, dace_state), more_options)
 
     es.addRun(client_id, "end", {})
 
@@ -1095,12 +1038,9 @@ def compile(language):
         compounds = {}
         for n, s in sdfgs.items():
             compounds[n] = {
-                "sdfg":
-                s.to_json(),
-                "matching_opts":
-                opts[n]['matching_opts'],
-                "generated_code":
-                [*map(lambda x: getattr(x, 'code', str(x)), code_tuples[n])]
+                "sdfg": s.to_json(),
+                "matching_opts": opts[n]['matching_opts'],
+                "generated_code": [*map(lambda x: getattr(x, 'code', str(x)), code_tuples[n])]
             }
         return jsonify({"compounds": compounds})
 
@@ -1140,10 +1080,7 @@ def get_settings(client_id, name="", cv=None, config_path=""):
 
             # A dict contains more elements
             if meta['type'] == 'dict':
-                ret[cname] = {
-                    "value": get_settings(client_id, cname, cval, cpath),
-                    "meta": meta
-                }
+                ret[cname] = {"value": get_settings(client_id, cname, cval, cpath), "meta": meta}
                 continue
             # Other values can be included directly
             ret[cname] = {"value": cval, "meta": meta}
@@ -1198,26 +1135,19 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("-l",
-                        "--localhost",
-                        action="store_true",
-                        help="Bind to localhost only")
+    parser.add_argument("-l", "--localhost", action="store_true", help="Bind to localhost only")
 
     parser.add_argument("-r",
                         "--remotedace",
                         action="store_true",
                         help="Use ssh commands instead of locally running dace")
 
-    parser.add_argument("-rd",
-                        "--restoredace",
-                        action="store_true",
-                        help="Restore the backup file")
+    parser.add_argument("-rd", "--restoredace", action="store_true", help="Restore the backup file")
 
-    parser.add_argument(
-        "-e",
-        "--executor",
-        action="store_true",
-        help="Run as an executor server instead of DIODE server")
+    parser.add_argument("-e",
+                        "--executor",
+                        action="store_true",
+                        help="Run as an executor server instead of DIODE server")
 
     parser.add_argument("-p", "--port", type=int, help="Port to listen on")
 
@@ -1234,10 +1164,7 @@ def main():
     es_ref.append(es)
 
     if not args.executor:
-        app.run(host='localhost' if args.localhost else "0.0.0.0",
-                debug=True,
-                port=args.port,
-                use_reloader=False)
+        app.run(host='localhost' if args.localhost else "0.0.0.0", debug=True, port=args.port, use_reloader=False)
 
         es.stop()
     else:

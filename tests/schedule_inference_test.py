@@ -19,8 +19,5 @@ def test_schedule_inference_simple():
     infer_types.set_default_schedule_and_storage_types(sdfg, None)
     sdfg.apply_transformations_repeated(StateFusion)
 
-    entry = [
-        n for n, _ in sdfg.all_nodes_recursive()
-        if isinstance(n, dace.nodes.MapEntry)
-    ][0]
+    entry = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry)][0]
     assert entry.schedule is dace.ScheduleType.CPU_Multicore

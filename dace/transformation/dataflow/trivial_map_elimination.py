@@ -37,14 +37,12 @@ class TrivialMapElimination(transformation.Transformation):
 
     def apply(self, sdfg):
         graph = sdfg.nodes()[self.state_id]
-        map_entry = graph.nodes()[self.subgraph[
-            TrivialMapElimination._map_entry]]
+        map_entry = graph.nodes()[self.subgraph[TrivialMapElimination._map_entry]]
         map_exit = graph.exit_node(map_entry)
 
         remaining_ranges = []
         remaining_params = []
-        for map_param, ranges in zip(map_entry.map.params,
-                                     map_entry.map.range.ranges):
+        for map_param, ranges in zip(map_entry.map.params, map_entry.map.range.ranges):
             map_from, map_to, _ = ranges
             if map_from == map_to:
                 # Replace the map index variable with the value it obtained
@@ -64,8 +62,7 @@ class TrivialMapElimination(transformation.Transformation):
                 index = path.index(edge)
 
                 # Add an edge directly from the previous source connector to the destination
-                graph.add_edge(path[index - 1].src, path[index - 1].src_conn,
-                               edge.dst, edge.dst_conn, edge.data)
+                graph.add_edge(path[index - 1].src, path[index - 1].src_conn, edge.dst, edge.dst_conn, edge.data)
 
             # Redirect map exit's in edges.
             for edge in graph.in_edges(map_exit):
@@ -74,8 +71,7 @@ class TrivialMapElimination(transformation.Transformation):
 
                 # Add an edge directly from the source to the next destination connector
                 if len(path) > index + 1:
-                    graph.add_edge(edge.src, edge.src_conn, path[index + 1].dst,
-                                   path[index + 1].dst_conn, edge.data)
+                    graph.add_edge(edge.src, edge.src_conn, path[index + 1].dst, path[index + 1].dst_conn, edge.data)
 
             # Remove map
             graph.remove_nodes_from([map_entry, map_exit])

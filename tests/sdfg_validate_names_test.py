@@ -60,8 +60,7 @@ class NameValidationTests(unittest.TestCase):
             state = sdfg.add_state('also_ok')
             _8 = state.add_array('8', [1], dace.float32)
             t = state.add_tasklet('tasklet', {'a'}, {}, 'print(a)')
-            state.add_edge(_8, None, t, 'a',
-                           dace.Memlet.from_array(_8.data, _8.desc(sdfg)))
+            state.add_edge(_8, None, t, 'a', dace.Memlet.from_array(_8.data, _8.desc(sdfg)))
             sdfg.validate()
             self.fail('Failed to detect invalid array name')
         except (dace.sdfg.InvalidSDFGError, NameError) as ex:
@@ -75,10 +74,8 @@ class NameValidationTests(unittest.TestCase):
             A = state.add_array('A', [1], dace.float32)
             B = state.add_array('B', [1], dace.float32)
             t = state.add_tasklet(' tasklet', {'a'}, {'b'}, 'b = a')
-            state.add_edge(A, None, t, 'a',
-                           dace.Memlet.from_array(A.data, A.desc(sdfg)))
-            state.add_edge(t, 'b', B, None,
-                           dace.Memlet.from_array(B.data, B.desc(sdfg)))
+            state.add_edge(A, None, t, 'a', dace.Memlet.from_array(A.data, A.desc(sdfg)))
+            state.add_edge(t, 'b', B, None, dace.Memlet.from_array(B.data, B.desc(sdfg)))
             sdfg.validate()
             self.fail('Failed to detect invalid tasklet name')
         except dace.sdfg.InvalidSDFGNodeError as ex:
@@ -92,10 +89,8 @@ class NameValidationTests(unittest.TestCase):
             A = state.add_array('A', [1], dace.float32)
             B = state.add_array('B', [1], dace.float32)
             t = state.add_tasklet('tasklet', {'$a'}, {' b'}, '')
-            state.add_edge(A, None, t, '$a',
-                           dace.Memlet.from_array(A.data, A.desc(sdfg)))
-            state.add_edge(t, ' b', B, None,
-                           dace.Memlet.from_array(B.data, B.desc(sdfg)))
+            state.add_edge(A, None, t, '$a', dace.Memlet.from_array(A.data, A.desc(sdfg)))
+            state.add_edge(t, ' b', B, None, dace.Memlet.from_array(B.data, B.desc(sdfg)))
             sdfg.validate()
             self.fail('Failed to detect invalid connectors')
         except dace.sdfg.InvalidSDFGError as ex:
@@ -109,12 +104,9 @@ class NameValidationTests(unittest.TestCase):
             A = state.add_array('A', [1], dace.float32)
             B = state.add_array('B', [1], dace.float32)
             t = state.add_tasklet('tasklet', {'a'}, {'b'}, 'b = a')
-            state.add_edge(A, None, t, 'a',
-                           dace.Memlet.from_array(A.data, A.desc(sdfg)))
-            state.add_edge(t, 'b', B, None,
-                           dace.Memlet.from_array(B.data, B.desc(sdfg)))
-            sdfg.add_edge(state, state,
-                          dace.InterstateEdge(assignments={'%5': '1'}))
+            state.add_edge(A, None, t, 'a', dace.Memlet.from_array(A.data, A.desc(sdfg)))
+            state.add_edge(t, 'b', B, None, dace.Memlet.from_array(B.data, B.desc(sdfg)))
+            sdfg.add_edge(state, state, dace.InterstateEdge(assignments={'%5': '1'}))
             sdfg.validate()
             self.fail('Failed to detect invalid interstate edge')
         except dace.sdfg.InvalidSDFGInterstateEdgeError as ex:

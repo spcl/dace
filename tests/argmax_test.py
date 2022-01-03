@@ -16,9 +16,7 @@ def argmax(x: dace.float64[1024]):
     for i in dace.map[0:1024]:
         with dace.tasklet:
             inp << x[i]
-            out >> result(
-                1, lambda x, y: pair(val=max(x.val, y.val),
-                                     idx=(x.idx if x.val > y.val else y.idx)))
+            out >> result(1, lambda x, y: pair(val=max(x.val, y.val), idx=(x.idx if x.val > y.val else y.idx)))
             out = pair(idx=i, val=inp)
 
     return result

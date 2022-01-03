@@ -32,9 +32,7 @@ def test_invalid_for_loop_detection():
     sdfg.add_edge(init, guard, dace.InterstateEdge(assignments=dict(i='0')))
     # Invalid: Edge between guard and loop state must not have assignments
     # This edge will be split in code generation
-    sdfg.add_edge(
-        guard, loop,
-        dace.InterstateEdge(condition='i < 20', assignments=dict(j='i')))
+    sdfg.add_edge(guard, loop, dace.InterstateEdge(condition='i < 20', assignments=dict(j='i')))
     sdfg.add_edge(guard, end, dace.InterstateEdge(condition='i >= 20'))
     sdfg.add_edge(loop, guard, dace.InterstateEdge(assignments=dict(i='i + 1')))
 

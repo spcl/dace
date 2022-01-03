@@ -27,8 +27,7 @@ sizes = [{
     N: 2200,
 }]
 
-args = [([N, M], datatype), ([M], datatype), ([N], datatype), ([M], datatype),
-        ([N], datatype)]
+args = [([N, M], datatype), ([M], datatype), ([N], datatype), ([M], datatype), ([N], datatype)]
 
 
 def init_array(A, s, q, p, r):
@@ -43,8 +42,7 @@ def init_array(A, s, q, p, r):
             A[i, j] = datatype(i * (j + 1) % n) / n
 
 
-@dace.program(datatype[N, M], datatype[M], datatype[N], datatype[M],
-              datatype[N])
+@dace.program(datatype[N, M], datatype[M], datatype[N], datatype[M], datatype[N])
 def bicg(A, s, q, p, r):
     @dace.map
     def reset_s(i: _[0:M]):

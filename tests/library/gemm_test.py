@@ -14,10 +14,10 @@ K = dace.symbol('K')
 N = dace.symbol('N')
 
 
-@pytest.mark.parametrize(('implementation', ),
-                         [('pure', ),
-                          pytest.param('MKL', marks=pytest.mark.mkl),
-                          pytest.param('cuBLAS', marks=pytest.mark.gpu)])
+@pytest.mark.parametrize(
+    ('implementation', ),
+    [('pure', ), pytest.param('MKL', marks=pytest.mark.mkl),
+     pytest.param('cuBLAS', marks=pytest.mark.gpu)])
 def test_gemm_no_c(implementation):
 
     Gemm.default_implementation = implementation
@@ -35,8 +35,7 @@ def test_gemm_no_c(implementation):
     Gemm.default_implementation = None
 
 
-def create_gemm_sdfg(dtype, A_shape, B_shape, C_shape, Y_shape, transA, transB,
-                     alpha, beta, implementation, sdfg_name):
+def create_gemm_sdfg(dtype, A_shape, B_shape, C_shape, Y_shape, transA, transB, alpha, beta, implementation, sdfg_name):
 
     sdfg = dace.SDFG(sdfg_name)
     state = sdfg.add_state()
@@ -48,11 +47,7 @@ def create_gemm_sdfg(dtype, A_shape, B_shape, C_shape, Y_shape, transA, transB,
     rB = state.add_read("B")
     wC = state.add_write("C")
 
-    libnode = Gemm('_Gemm_',
-                   transA=transA,
-                   transB=transB,
-                   alpha=alpha,
-                   beta=beta)
+    libnode = Gemm('_Gemm_', transA=transA, transB=transB, alpha=alpha, beta=beta)
     libnode.implementation = implementation
     state.add_node(libnode)
 
@@ -61,8 +56,7 @@ def create_gemm_sdfg(dtype, A_shape, B_shape, C_shape, Y_shape, transA, transB,
     state.add_edge(libnode, '_c', wC, None, dace.Memlet.from_array(C, C_arr))
     if beta != 0.0:
         rC = state.add_read('C')
-        state.add_edge(rC, None, libnode, '_cin',
-                       dace.Memlet.from_array(C, C_arr))
+        state.add_edge(rC, None, libnode, '_cin', dace.Memlet.from_array(C, C_arr))
 
     return sdfg
 
@@ -83,8 +77,7 @@ def run_test(implementation,
         C_shape = [s if isinstance(s, int) else replace_map[s] for s in C_shape]
 
     # unique name for sdfg
-    C_str = "None" if C_shape is None else (
-        str(C_shape[0]) if len(C_shape) == 1 else f"{C_shape[0]}_{C_shape[1]}")
+    C_str = "None" if C_shape is None else (str(C_shape[0]) if len(C_shape) == 1 else f"{C_shape[0]}_{C_shape[1]}")
     sdfg_name = f"{implementation}_{M}_{N}_{K}_{complex}_{transA}_{transB}_{alpha}_{beta}_{C_str}".replace(
         ".", "_dot_").replace("+", "_plus_").replace("(", "").replace(")", "")
 
@@ -123,9 +116,8 @@ def run_test(implementation,
 
     Y_regression = numpy_gemm(A, B, C, transA, transB, alpha, beta)
 
-    sdfg = create_gemm_sdfg(dace.complex64 if complex else dace.float32,
-                            A_shape, B_shape, C_shape, Y_shape, transA, transB,
-                            alpha, beta, implementation, sdfg_name)
+    sdfg = create_gemm_sdfg(dace.complex64 if complex else dace.float32, A_shape, B_shape, C_shape, Y_shape, transA,
+                            transB, alpha, beta, implementation, sdfg_name)
 
     if C_shape is not None:
         Y[:] = C
@@ -138,9 +130,7 @@ def run_test(implementation,
     assert diff <= 1e-5
 
 
-@pytest.mark.parametrize(('implementation', ),
-                         [('pure', ), ('MKL', ),
-                          pytest.param('cuBLAS', marks=pytest.mark.gpu)])
+@pytest.mark.parametrize(('implementation', ), [('pure', ), ('MKL', ), pytest.param('cuBLAS', marks=pytest.mark.gpu)])
 def test_library_gemm(implementation):
     param_grid_trans = dict(
         transA=[True, False],
@@ -152,10 +142,8 @@ def test_library_gemm(implementation):
     )
     param_grid_complex = dict(
         complex=[True],
-        alpha=[random.random(),
-               complex(random.random(), random.random())],
-        beta=[random.random(),
-              complex(random.random(), random.random())],
+        alpha=[random.random(), complex(random.random(), random.random())],
+        beta=[random.random(), complex(random.random(), random.random())],
     )
 
     param_grid_broadcast_C = dict(
@@ -164,10 +152,7 @@ def test_library_gemm(implementation):
         C_shape=[None, ["M", "N"], ["M", 1], ["N"], [1, "N"]],
     )
 
-    param_grids = [
-        param_grid_trans, param_grid_scalars, param_grid_complex,
-        param_grid_broadcast_C
-    ]
+    param_grids = [param_grid_trans, param_grid_scalars, param_grid_complex, param_grid_broadcast_C]
 
     def params_generator(grid):
         keys, values = zip(*grid.items())
@@ -182,9 +167,8 @@ def test_library_gemm(implementation):
                 print("Testing params:", params)
                 run_test(implementation, **params)
     except (CompilerConfigurationError, CompilationError):
-        warnings.warn(
-            "Configuration/compilation failed, library missing or "
-            "misconfigured, skipping test for {}.".format(implementation))
+        warnings.warn("Configuration/compilation failed, library missing or "
+                      "misconfigured, skipping test for {}.".format(implementation))
 
 
 if __name__ == "__main__":

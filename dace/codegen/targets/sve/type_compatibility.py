@@ -21,8 +21,7 @@ class IncompatibleTypeError(Exception):
         super().__init__(f'{message}; given: {types}')
 
 
-def assert_type_compatibility(defined_symbols: collections.OrderedDict,
-                              types: tuple):
+def assert_type_compatibility(defined_symbols: collections.OrderedDict, types: tuple):
     """
     This method ensures that SVE can work with the given types.
     This is sometimes more, sometimes less restrictive than C standards.
@@ -36,11 +35,7 @@ def assert_type_compatibility(defined_symbols: collections.OrderedDict,
     # TODO: Better way to determine uniqueness
     vec_types = list(set([t for t in types if isinstance(t, dtypes.vector)]))
     ptr_types = list(set([t for t in types if isinstance(t, dtypes.pointer)]))
-    scal_types = list(
-        set([
-            t for t in types
-            if not isinstance(t, (dtypes.vector, dtypes.pointer))
-        ]))
+    scal_types = list(set([t for t in types if not isinstance(t, (dtypes.vector, dtypes.pointer))]))
 
     # Check if we can represent the types in SVE
     for t in types:
@@ -53,5 +48,4 @@ def assert_type_compatibility(defined_symbols: collections.OrderedDict,
 
     # Ensure no mixing of pointers and vectors/scalars ever occurs (totally incompatible)
     if (len(vec_types) != 0 or len(scal_types) != 0) and len(ptr_types) != 0:
-        raise IncompatibleTypeError(
-            'Vectors/scalars are incompatible with pointers', types)
+        raise IncompatibleTypeError('Vectors/scalars are incompatible with pointers', types)

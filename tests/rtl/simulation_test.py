@@ -248,8 +248,7 @@ def test_tasklet_vector():
     # Execute
 
     # init data structures
-    a = np.random.randint(0, 100, dace.symbolic.evaluate(
-        N, sdfg.constants)).astype(np.int32)
+    a = np.random.randint(0, 100, dace.symbolic.evaluate(N, sdfg.constants)).astype(np.int32)
     b = np.array([0]).astype(np.int32)
 
     # call program

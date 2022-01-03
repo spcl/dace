@@ -13,8 +13,7 @@ def test_map_unroll_processing_elements():
     # Grab the systolic GEMM implementation the samples directory
     spec = importlib.util.spec_from_file_location(
         "gemm",
-        Path(__file__).parent.parent.parent / "samples" / "fpga" /
-        "gemm_systolic_vectorized.py")
+        Path(__file__).parent.parent.parent / "samples" / "fpga" / "gemm_systolic_vectorized.py")
     gemm = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(gemm)
 
@@ -27,8 +26,7 @@ def test_map_unroll_processing_elements():
     TM = 128
 
     # Create an SDFG with multiple processing elements
-    sdfg = gemm.make_sdfg("map_unroll_processing_elements",
-                          dace.vector(dace.float32, W))
+    sdfg = gemm.make_sdfg("map_unroll_processing_elements", dace.vector(dace.float32, W))
     sdfg.specialize({"P": P, "W": W, "TN": TN, "TM": TM})
     for state in sdfg.states():
         for node in state.nodes():

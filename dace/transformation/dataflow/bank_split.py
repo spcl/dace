@@ -54,19 +54,16 @@ class BankSplit(transformation.Transformation):
         "where the k-th number describes how many times dimension k is split. "
         "If the k-th number is 1 this means that the array is not split in "
         "the k-th dimension at all. "
-        "If None, then the transform will split the first dimension exactly shape[0] times."
-    )
+        "If None, then the transform will split the first dimension exactly shape[0] times.")
 
     default_to_storage = properties.Property(
         dtype=dtypes.StorageType,
         default=dtypes.StorageType.CPU_Heap,
         allow_none=False,
-        desc=
-        "The storage type of involved arrays will be set to the value of this property if "
+        desc="The storage type of involved arrays will be set to the value of this property if "
         "they have Default storage type. ")
 
-    def _get_split_size(self, virtual_shape: Iterable,
-                        split_count: List[int]) -> List[int]:
+    def _get_split_size(self, virtual_shape: Iterable, split_count: List[int]) -> List[int]:
         """
         :return: the shape of a part-array on one HBMbank
         """
@@ -79,16 +76,14 @@ class BankSplit(transformation.Transformation):
         return new_shape_list
 
     @staticmethod
-    def can_be_applied(graph: Union[SDFG, SDFGState],
-                       candidate: Dict['PatternNode', int], expr_index: int,
-                       sdfg: SDFG, permissive: bool) -> bool:
+    def can_be_applied(graph: Union[SDFG, SDFGState], candidate: Dict['PatternNode', int], expr_index: int, sdfg: SDFG,
+                       permissive: bool) -> bool:
         src = graph.nodes()[candidate[BankSplit._src_node]]
         dst = graph.nodes()[candidate[BankSplit._dst_node]]
         src_array = sdfg.arrays[src.data]
         dst_array = sdfg.arrays[dst.data]
 
-        plain_array = lambda array: isinstance(
-            array, data.Array) and not isinstance(array, data.View)
+        plain_array = lambda array: isinstance(array, data.Array) and not isinstance(array, data.View)
 
         if not plain_array(src_array):
             return False
@@ -98,11 +93,9 @@ class BankSplit(transformation.Transformation):
         # same dimensions means HBM-array needs 1 dimension more
         collect_src = len(src_array.shape) - 1 == len(dst_array.shape)
         distribute_dst = len(src_array.shape) + 1 == len(dst_array.shape)
-        if collect_src and symbolic.issymbolic(src_array.shape[0],
-                                               sdfg.constants):
+        if collect_src and symbolic.issymbolic(src_array.shape[0], sdfg.constants):
             return False
-        elif distribute_dst and symbolic.issymbolic(dst_array.shape[0],
-                                                    sdfg.constants):
+        elif distribute_dst and symbolic.issymbolic(dst_array.shape[0], sdfg.constants):
             return False
         return collect_src or distribute_dst
 
@@ -118,8 +111,7 @@ class BankSplit(transformation.Transformation):
         src_array = sdfg.arrays[src.data]
         dst_array = sdfg.arrays[dst.data]
         collect_src = len(src_array.shape) - 1 == len(
-            dst_array.shape
-        )  # If this is not true we have to distribute to dst (checked in can_apply)
+            dst_array.shape)  # If this is not true we have to distribute to dst (checked in can_apply)
         if collect_src:
             bank_count = int(src_array.shape[0])
             true_size = dst_array.shape
@@ -141,14 +133,11 @@ class BankSplit(transformation.Transformation):
         else:
             split_info = self.split_array_info
             if len(split_info) != ndim:
-                raise RuntimeError(
-                    "Length of split_array_info must match number of "
-                    "dimensions")
+                raise RuntimeError("Length of split_array_info must match number of " "dimensions")
         if functools.reduce(lambda a, b: a * b, split_info) != bank_count:
-            raise RuntimeError(
-                "Splitting is not possible with the selected splits"
-                "and this number of HBM-banks (required number of banks "
-                "!= actual number of banks)")
+            raise RuntimeError("Splitting is not possible with the selected splits"
+                               "and this number of HBM-banks (required number of banks "
+                               "!= actual number of banks)")
 
         # create the copy-subgraph
         ndrange = dict()
@@ -158,14 +147,11 @@ class BankSplit(transformation.Transformation):
         for i in range(ndim):
             ndrange[usable_params[i]] = f"0:{split_info[i]}"
         graph.remove_edge_and_connectors(graph.edges_between(src, dst)[0])
-        copy_map_enter, copy_map_exit = graph.add_map(
-            "hbm_bank_split", ndrange, dtypes.ScheduleType.Unrolled)
+        copy_map_enter, copy_map_exit = graph.add_map("hbm_bank_split", ndrange, dtypes.ScheduleType.Unrolled)
         graph.add_edge(copy_map_enter, None, src, None, memlet.Memlet())
         graph.add_edge(dst, None, copy_map_exit, None, memlet.Memlet())
 
-        target_size = [
-            str(x) for x in self._get_split_size(true_size, split_info)
-        ]
+        target_size = [str(x) for x in self._get_split_size(true_size, split_info)]
         target_hbm_bank = []
         for i in range(ndim):
             target_hbm_bank.append(usable_params[i])
@@ -175,17 +161,13 @@ class BankSplit(transformation.Transformation):
         for i in range(ndim):
             target_offset.append(f"{usable_params[i]}*{target_size[i]}")
 
-        target_size_str = ", ".join(
-            [f"{x}:{y}" for x, y in zip([0] * ndim, target_size)])
+        target_size_str = ", ".join([f"{x}:{y}" for x, y in zip([0] * ndim, target_size)])
         target_hbm_bank_str = "+ ".join(target_hbm_bank)
-        target_offset_str = ", ".join(
-            [f"({x}):({x}+{y})" for x, y in zip(target_offset, target_size)])
+        target_offset_str = ", ".join([f"({x}):({x}+{y})" for x, y in zip(target_offset, target_size)])
         if collect_src:
-            copy_memlet = memlet.Memlet(
-                f"{src.data}[{target_hbm_bank_str}, {target_size_str}]->"
-                f"{target_offset_str}")
+            copy_memlet = memlet.Memlet(f"{src.data}[{target_hbm_bank_str}, {target_size_str}]->"
+                                        f"{target_offset_str}")
         else:
-            copy_memlet = memlet.Memlet(
-                f"{src.data}[{target_offset_str}]->{target_hbm_bank_str}, "
-                f"{target_size_str}")
+            copy_memlet = memlet.Memlet(f"{src.data}[{target_offset_str}]->{target_hbm_bank_str}, "
+                                        f"{target_size_str}")
         graph.add_edge(src, None, dst, None, copy_memlet)

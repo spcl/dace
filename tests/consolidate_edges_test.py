@@ -12,26 +12,10 @@ me, mx = state.add_map('map', dict(i='1:49'))
 t = state.add_tasklet('op', {'a', 'b', 'c'}, {'out'}, 'out = a + b + c')
 w = state.add_write('B')
 
-state.add_memlet_path(r,
-                      me,
-                      t,
-                      dst_conn='a',
-                      memlet=dace.Memlet.simple('A', 'i-1'))
-state.add_memlet_path(r,
-                      me,
-                      t,
-                      dst_conn='b',
-                      memlet=dace.Memlet.simple('A', 'i'))
-state.add_memlet_path(r,
-                      me,
-                      t,
-                      dst_conn='c',
-                      memlet=dace.Memlet.simple('A', 'i+1'))
-state.add_memlet_path(t,
-                      mx,
-                      w,
-                      src_conn='out',
-                      memlet=dace.Memlet.simple('B', 'i-1'))
+state.add_memlet_path(r, me, t, dst_conn='a', memlet=dace.Memlet.simple('A', 'i-1'))
+state.add_memlet_path(r, me, t, dst_conn='b', memlet=dace.Memlet.simple('A', 'i'))
+state.add_memlet_path(r, me, t, dst_conn='c', memlet=dace.Memlet.simple('A', 'i+1'))
+state.add_memlet_path(t, mx, w, src_conn='out', memlet=dace.Memlet.simple('B', 'i-1'))
 
 
 def test_consolidate_edges():

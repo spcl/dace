@@ -40,9 +40,7 @@ def calc_set_image_range(map_idx, map_set, array_range):
         new_range = a_range
         for m_idx, m_range in zip(map_idx, map_set):
             symbol = symbolic.pystr_to_symbolic(m_idx)
-            new_range = [
-                new_range[i].subs(symbol, m_range[i]) for i in range(0, 3)
-            ]
+            new_range = [new_range[i].subs(symbol, m_range[i]) for i in range(0, 3)]
         image.append(new_range)
     return subsets.Range(image)
 
@@ -62,9 +60,7 @@ class StreamTransient(transformation.Transformation):
         transient then acts as a local buffer.
     """
 
-    with_buffer = Property(dtype=bool,
-                           default=True,
-                           desc="Use an intermediate buffer for accumulation")
+    with_buffer = Property(dtype=bool, default=True, desc="Use an intermediate buffer for accumulation")
 
     tasklet = transformation.PatternNode(nodes.Tasklet)
     map_exit = transformation.PatternNode(nodes.MapExit)
@@ -73,21 +69,17 @@ class StreamTransient(transformation.Transformation):
     @staticmethod
     def expressions():
         return [
-            sdutil.node_path_graph(StreamTransient.tasklet,
-                                   StreamTransient.map_exit,
-                                   StreamTransient.outer_map_exit)
+            sdutil.node_path_graph(StreamTransient.tasklet, StreamTransient.map_exit, StreamTransient.outer_map_exit)
         ]
 
     @staticmethod
     def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
         map_exit = graph.nodes()[candidate[StreamTransient.map_exit]]
-        outer_map_exit = graph.nodes()[candidate[
-            StreamTransient.outer_map_exit]]
+        outer_map_exit = graph.nodes()[candidate[StreamTransient.outer_map_exit]]
 
         # Check if there is a streaming output
         for _src, _, dest, _, memlet in graph.out_edges(map_exit):
-            if isinstance(sdfg.arrays[memlet.data],
-                          data.Stream) and dest == outer_map_exit:
+            if isinstance(sdfg.arrays[memlet.data], data.Stream) and dest == outer_map_exit:
                 return True
 
         return False
@@ -98,22 +90,19 @@ class StreamTransient(transformation.Transformation):
         map_exit = candidate[StreamTransient.map_exit]
         outer_map_exit = candidate[StreamTransient.outer_map_exit]
 
-        return ' -> '.join(
-            str(node) for node in [tasklet, map_exit, outer_map_exit])
+        return ' -> '.join(str(node) for node in [tasklet, map_exit, outer_map_exit])
 
     def apply(self, sdfg: SDFG):
         graph = sdfg.nodes()[self.state_id]
         tasklet = graph.nodes()[self.subgraph[StreamTransient.tasklet]]
         map_exit = graph.nodes()[self.subgraph[StreamTransient.map_exit]]
-        outer_map_exit = graph.nodes()[self.subgraph[
-            StreamTransient.outer_map_exit]]
+        outer_map_exit = graph.nodes()[self.subgraph[StreamTransient.outer_map_exit]]
         memlet = None
         edge = None
         for e in graph.out_edges(map_exit):
             memlet = e.data
             # TODO: What if there's more than one?
-            if e.dst == outer_map_exit and isinstance(sdfg.arrays[memlet.data],
-                                                      data.Stream):
+            if e.dst == outer_map_exit and isinstance(sdfg.arrays[memlet.data], data.Stream):
                 edge = e
                 break
         tasklet_memlet = None
@@ -140,8 +129,7 @@ class StreamTransient(transformation.Transformation):
         tasklet_memlet.data = snode.data
 
         if self.with_buffer:
-            newname_arr, _ = sdfg.add_transient('strans_' + dataname,
-                                                [bbox_approx[0]],
+            newname_arr, _ = sdfg.add_transient('strans_' + dataname, [bbox_approx[0]],
                                                 sdfg.arrays[memlet.data].dtype,
                                                 find_new_name=True)
             anode = graph.add_access(newname_arr)
@@ -170,28 +158,21 @@ class AccumulateTransient(transformation.Transformation):
     map_exit = transformation.PatternNode(nodes.MapExit)
     outer_map_exit = transformation.PatternNode(nodes.MapExit)
 
-    array = Property(
-        dtype=str,
-        desc="Array to create local storage for (if empty, first available)",
-        default=None,
-        allow_none=True)
+    array = Property(dtype=str,
+                     desc="Array to create local storage for (if empty, first available)",
+                     default=None,
+                     allow_none=True)
 
-    identity = SymbolicProperty(desc="Identity value to set",
-                                default=None,
-                                allow_none=True)
+    identity = SymbolicProperty(desc="Identity value to set", default=None, allow_none=True)
 
     @staticmethod
     def expressions():
-        return [
-            sdutil.node_path_graph(AccumulateTransient.map_exit,
-                                   AccumulateTransient.outer_map_exit)
-        ]
+        return [sdutil.node_path_graph(AccumulateTransient.map_exit, AccumulateTransient.outer_map_exit)]
 
     @staticmethod
     def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
         map_exit = graph.nodes()[candidate[AccumulateTransient.map_exit]]
-        outer_map_exit = graph.nodes()[candidate[
-            AccumulateTransient.outer_map_exit]]
+        outer_map_exit = graph.nodes()[candidate[AccumulateTransient.outer_map_exit]]
 
         # Check if there is an accumulation output
         for e in graph.edges_between(map_exit, outer_map_exit):
@@ -210,42 +191,36 @@ class AccumulateTransient(transformation.Transformation):
     def apply(self, sdfg: SDFG):
         graph = sdfg.node(self.state_id)
         map_exit = graph.node(self.subgraph[AccumulateTransient.map_exit])
-        outer_map_exit = graph.node(
-            self.subgraph[AccumulateTransient.outer_map_exit])
+        outer_map_exit = graph.node(self.subgraph[AccumulateTransient.outer_map_exit])
 
         # Choose array
         array = self.array
         if array is None or len(array) == 0:
-            array = next(e.data.data
-                         for e in graph.edges_between(map_exit, outer_map_exit)
-                         if e.data.wcr is not None)
+            array = next(e.data.data for e in graph.edges_between(map_exit, outer_map_exit) if e.data.wcr is not None)
 
         # Avoid import loop
         from dace.transformation.dataflow.local_storage import OutLocalStorage
 
-        data_node: nodes.AccessNode = OutLocalStorage.apply_to(
-            sdfg,
-            dict(array=array),
-            verify=False,
-            save=False,
-            node_a=map_exit,
-            node_b=outer_map_exit)
+        data_node: nodes.AccessNode = OutLocalStorage.apply_to(sdfg,
+                                                               dict(array=array),
+                                                               verify=False,
+                                                               save=False,
+                                                               node_a=map_exit,
+                                                               node_b=outer_map_exit)
 
         if self.identity is None:
-            warnings.warn('AccumulateTransient did not properly initialize '
-                          'newly-created transient!')
+            warnings.warn('AccumulateTransient did not properly initialize ' 'newly-created transient!')
             return
 
         sdfg_state: SDFGState = sdfg.node(self.state_id)
 
         map_entry = sdfg_state.entry_node(map_exit)
 
-        nested_sdfg: NestedSDFG = nest_state_subgraph(
-            sdfg=sdfg,
-            state=sdfg_state,
-            subgraph=SubgraphView(
-                sdfg_state, {map_entry, map_exit}
-                | sdfg_state.all_nodes_between(map_entry, map_exit)))
+        nested_sdfg: NestedSDFG = nest_state_subgraph(sdfg=sdfg,
+                                                      state=sdfg_state,
+                                                      subgraph=SubgraphView(
+                                                          sdfg_state, {map_entry, map_exit}
+                                                          | sdfg_state.all_nodes_between(map_entry, map_exit)))
 
         nested_sdfg_state: SDFGState = nested_sdfg.sdfg.nodes()[0]
 
@@ -255,19 +230,14 @@ class AccumulateTransient(transformation.Transformation):
 
         init_state.add_mapped_tasklet(
             name='acctrans_init',
-            map_ranges={
-                '_o%d' % i: '0:%s' % symstr(d)
-                for i, d in enumerate(temp_array.shape)
-            },
+            map_ranges={'_o%d' % i: '0:%s' % symstr(d)
+                        for i, d in enumerate(temp_array.shape)},
             inputs={},
             code='out = %s' % self.identity,
             outputs={
                 'out':
                 dace.Memlet.simple(data=data_node.data,
-                                   subset_str=','.join([
-                                       '_o%d' % i
-                                       for i, _ in enumerate(temp_array.shape)
-                                   ]))
+                                   subset_str=','.join(['_o%d' % i for i, _ in enumerate(temp_array.shape)]))
             },
             external_edges=True)
 

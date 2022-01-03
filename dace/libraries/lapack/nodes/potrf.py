@@ -30,9 +30,7 @@ class ExpandPotrfOpenBLAS(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
-        (desc_x, stride_x, rows_x,
-         cols_x), desc_result = node.validate(
-             parent_sdfg, parent_state)
+        (desc_x, stride_x, rows_x, cols_x), desc_result = node.validate(parent_sdfg, parent_state)
         dtype = desc_x.dtype.base_type
         lapack_dtype = blas_helpers.to_blastype(dtype.type).lower()
         if desc_x.dtype.veclen > 1:
@@ -66,9 +64,7 @@ class ExpandPotrfCuSolverDn(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
-        (desc_x, stride_x, rows_x,
-         cols_x), desc_result = node.validate(
-             parent_sdfg, parent_state)
+        (desc_x, stride_x, rows_x, cols_x), desc_result = node.validate(parent_sdfg, parent_state)
         dtype = desc_x.dtype.base_type
         veclen = desc_x.dtype.veclen
 
@@ -80,8 +76,7 @@ class ExpandPotrfCuSolverDn(ExpandTransformation):
             n /= veclen
         uplo = "CUBLAS_FILL_MODE_LOWER" if node._lower else "CUBLAS_FILL_MODE_UPPER"
 
-        code = (environments.cusolverdn.cuSolverDn.handle_setup_code(node) +
-                f"""
+        code = (environments.cusolverdn.cuSolverDn.handle_setup_code(node) + f"""
                 int __dace_workspace_size = 0;
                 {cuda_type}* __dace_workspace;
                 cusolverDn{func}_bufferSize(
@@ -102,8 +97,7 @@ class ExpandPotrfCuSolverDn(ExpandTransformation):
                                           code,
                                           language=dace.dtypes.Language.CPP)
         conn = tasklet.out_connectors
-        conn = {c: (dtypes.pointer(dace.int32) if c == '_res' else t)
-                for c, t in conn.items()}
+        conn = {c: (dtypes.pointer(dace.int32) if c == '_res' else t) for c, t in conn.items()}
         tasklet.out_connectors = conn
 
         return tasklet
@@ -113,22 +107,14 @@ class ExpandPotrfCuSolverDn(ExpandTransformation):
 class Potrf(dace.sdfg.nodes.LibraryNode):
 
     # Global properties
-    implementations = {
-        "OpenBLAS": ExpandPotrfOpenBLAS,
-        "MKL": ExpandPotrfMKL,
-        "cuSolverDn": ExpandPotrfCuSolverDn
-    }
+    implementations = {"OpenBLAS": ExpandPotrfOpenBLAS, "MKL": ExpandPotrfMKL, "cuSolverDn": ExpandPotrfCuSolverDn}
     default_implementation = None
 
     # Object fields
     n = dace.properties.SymbolicProperty(allow_none=True, default=None)
 
     def __init__(self, name, lower=True, n=None, *args, **kwargs):
-        super().__init__(name,
-                         *args,
-                         inputs={"_xin"},
-                         outputs={"_xout", "_res"},
-                         **kwargs)
+        super().__init__(name, *args, inputs={"_xin"}, outputs={"_xout", "_res"}, **kwargs)
         self._lower = lower
 
     def validate(self, sdfg, state):
@@ -142,8 +128,7 @@ class Potrf(dace.sdfg.nodes.LibraryNode):
         in_memlets = [in_edges[0].data]
         out_edges = state.out_edges(self)
         if len(out_edges) != 2:
-            raise ValueError(
-                "Expected exactly two outputs from potrf product")
+            raise ValueError("Expected exactly two outputs from potrf product")
         out_memlet = out_edges[0].data
 
         # Squeeze input memlets

@@ -35,10 +35,7 @@ sdfg.add_edge(estate, rst1, dp.sdfg.InterstateEdge('fsz0 > 0', {'d': 'd+1'}))
 ######################
 # Initialization state
 
-frontiersize1 = istate.add_scalar('fsz0',
-                                  dtype=dp.uint32,
-                                  storage=storage,
-                                  transient=True)
+frontiersize1 = istate.add_scalar('fsz0', dtype=dp.uint32, storage=storage, transient=True)
 frontier = istate.add_transient('frontier', [V], dtype=vtype, storage=storage)
 depth = istate.add_array('depth', [V], dtype=vtype, storage=storage)
 
@@ -49,23 +46,17 @@ ofsz = 1
 """)
 istate.add_edge(itask, 'd', depth, None, dp.Memlet.simple(depth, 'srcnode'))
 istate.add_edge(itask, 'f', frontier, None, dp.Memlet.simple(frontier, '0'))
-istate.add_edge(itask, 'ofsz', frontiersize1, None,
-                dp.Memlet.from_array('fsz0', frontiersize1.desc(sdfg)))
+istate.add_edge(itask, 'ofsz', frontiersize1, None, dp.Memlet.from_array('fsz0', frontiersize1.desc(sdfg)))
 
 ######################
 # Reset states
 
 
 def create_reset_state(state, frontier_index):
-    frontiersize = state.add_scalar('fsz%d' % frontier_index,
-                                    dtype=dp.uint32,
-                                    storage=storage,
-                                    transient=True)
-    rtask = state.add_tasklet('reset_%d' % frontier_index, set(), {'ofsz'},
-                              'ofsz = 0')
-    state.add_edge(
-        rtask, 'ofsz', frontiersize, None,
-        dp.Memlet.from_array('fsz%d' % frontier_index, frontiersize.desc(sdfg)))
+    frontiersize = state.add_scalar('fsz%d' % frontier_index, dtype=dp.uint32, storage=storage, transient=True)
+    rtask = state.add_tasklet('reset_%d' % frontier_index, set(), {'ofsz'}, 'ofsz = 0')
+    state.add_edge(rtask, 'ofsz', frontiersize, None,
+                   dp.Memlet.from_array('fsz%d' % frontier_index, frontiersize.desc(sdfg)))
 
 
 create_reset_state(rst0, 0)
@@ -76,10 +67,7 @@ create_reset_state(rst1, 1)
 
 
 def create_computation_state(dstate, in_frontier, out_frontier, frontier_index):
-    frontiersize = dstate.add_scalar('fsz%d' % frontier_index,
-                                     dtype=dp.uint32,
-                                     storage=storage,
-                                     transient=True)
+    frontiersize = dstate.add_scalar('fsz%d' % frontier_index, dtype=dp.uint32, storage=storage, transient=True)
     depth = dstate.add_array('depth', [V], dtype=vtype, storage=storage)
     out_frontiersize = dstate.add_scalar('fsz%d' % (1 - frontier_index),
                                          dtype=dp.uint32,
@@ -88,97 +76,51 @@ def create_computation_state(dstate, in_frontier, out_frontier, frontier_index):
     out_depth = dstate.add_array('depth', [V], dtype=vtype, storage=storage)
     G_row = dstate.add_array('G_row', [V + 1], dtype=vtype, storage=storage)
     G_col = dstate.add_array('G_col', [E], dtype=vtype, storage=storage)
-    out_frontier_stream = dstate.add_stream('out_stream%d' % frontier_index,
-                                            vtype,
-                                            1,
-                                            transient=True)
+    out_frontier_stream = dstate.add_stream('out_stream%d' % frontier_index, vtype, 1, transient=True)
 
     me, mx = dstate.add_map('frontiermap', dict(f='0:fsz%d' % frontier_index))
-    me.in_connectors = {
-        'IN_F': None,
-        'IN_R': None,
-        'IN_C': None,
-        'IN_D': None,
-        'fsz%d' % frontier_index: None
-    }
-    me.out_connectors = {
-        'OUT_F': None,
-        'OUT_R': None,
-        'OUT_C': None,
-        'OUT_D': None
-    }
+    me.in_connectors = {'IN_F': None, 'IN_R': None, 'IN_C': None, 'IN_D': None, 'fsz%d' % frontier_index: None}
+    me.out_connectors = {'OUT_F': None, 'OUT_R': None, 'OUT_C': None, 'OUT_D': None}
     mx.in_connectors = {'IN_F': None, 'IN_FSZ': None, 'IN_D': None}
     mx.out_connectors = {'OUT_F': None, 'OUT_FSZ': None, 'OUT_D': None}
 
     # Map inputs
-    dstate.add_edge(
-        frontiersize, None, me, 'fsz%d' % frontier_index,
-        dp.Memlet.from_array('fsz%d' % frontier_index, frontiersize.desc(sdfg)))
-    dstate.add_edge(
-        in_frontier, None, me, 'IN_F',
-        dp.Memlet.from_array(in_frontier.data, in_frontier.desc(sdfg)))
-    dstate.add_edge(G_row, None, me, 'IN_R',
-                    dp.Memlet.from_array('G_row', G_row.desc(sdfg)))
-    dstate.add_edge(G_col, None, me, 'IN_C',
-                    dp.Memlet.from_array('G_col', G_col.desc(sdfg)))
-    dstate.add_edge(depth, None, me, 'IN_D',
-                    dp.Memlet.from_array('depth', depth.desc(sdfg)))
+    dstate.add_edge(frontiersize, None, me, 'fsz%d' % frontier_index,
+                    dp.Memlet.from_array('fsz%d' % frontier_index, frontiersize.desc(sdfg)))
+    dstate.add_edge(in_frontier, None, me, 'IN_F', dp.Memlet.from_array(in_frontier.data, in_frontier.desc(sdfg)))
+    dstate.add_edge(G_row, None, me, 'IN_R', dp.Memlet.from_array('G_row', G_row.desc(sdfg)))
+    dstate.add_edge(G_col, None, me, 'IN_C', dp.Memlet.from_array('G_col', G_col.desc(sdfg)))
+    dstate.add_edge(depth, None, me, 'IN_D', dp.Memlet.from_array('depth', depth.desc(sdfg)))
 
     # Map contents
-    rowb = dstate.add_scalar('rowb%d' % frontier_index,
-                             vtype,
-                             storage,
-                             transient=True)
-    rowe = dstate.add_scalar('rowe%d' % frontier_index,
-                             vtype,
-                             storage,
-                             transient=True)
-    indirection = dstate.add_tasklet(
-        'indirection', {'in_f', 'in_row'}, {'ob', 'oe'},
-        'ob = in_row[in_f]; oe = in_row[in_f + 1]')
-    dstate.add_edge(me, 'OUT_F', indirection, 'in_f',
-                    dp.Memlet.simple(in_frontier, 'f'))
-    dstate.add_edge(
-        me, 'OUT_R', indirection, 'in_row',
-        dp.Memlet.simple('G_row',
-                         dp.subsets.Range.from_array(G_row.desc(sdfg)),
-                         num_accesses=2))
-    dstate.add_edge(
-        indirection, 'ob', rowb, None,
-        dp.Memlet.from_array('rowb%d' % frontier_index, rowb.desc(sdfg)))
-    dstate.add_edge(
-        indirection, 'oe', rowe, None,
-        dp.Memlet.from_array('rowe%d' % frontier_index, rowe.desc(sdfg)))
+    rowb = dstate.add_scalar('rowb%d' % frontier_index, vtype, storage, transient=True)
+    rowe = dstate.add_scalar('rowe%d' % frontier_index, vtype, storage, transient=True)
+    indirection = dstate.add_tasklet('indirection', {'in_f', 'in_row'}, {'ob', 'oe'},
+                                     'ob = in_row[in_f]; oe = in_row[in_f + 1]')
+    dstate.add_edge(me, 'OUT_F', indirection, 'in_f', dp.Memlet.simple(in_frontier, 'f'))
+    dstate.add_edge(me, 'OUT_R', indirection, 'in_row',
+                    dp.Memlet.simple('G_row', dp.subsets.Range.from_array(G_row.desc(sdfg)), num_accesses=2))
+    dstate.add_edge(indirection, 'ob', rowb, None, dp.Memlet.from_array('rowb%d' % frontier_index, rowb.desc(sdfg)))
+    dstate.add_edge(indirection, 'oe', rowe, None, dp.Memlet.from_array('rowe%d' % frontier_index, rowe.desc(sdfg)))
 
     # Internal neighbor map inputs
-    nme, nmx = dstate.add_map(
-        'neighbormap', dict(nid='rowb{f}:rowe{f}'.format(f=frontier_index)))
-    nme.in_connectors = {
-        'IN_C': None,
-        'IN_D': None,
-        'rowb%d' % frontier_index: None,
-        'rowe%d' % frontier_index: None
-    }
+    nme, nmx = dstate.add_map('neighbormap', dict(nid='rowb{f}:rowe{f}'.format(f=frontier_index)))
+    nme.in_connectors = {'IN_C': None, 'IN_D': None, 'rowb%d' % frontier_index: None, 'rowe%d' % frontier_index: None}
     nme.out_connectors = {'OUT_C': None, 'OUT_D': None}
     nmx.in_connectors = {'IN_D': None, 'IN_FSZ': None, 'IN_F': None}
     nmx.out_connectors = {'OUT_D': None, 'OUT_FSZ': None, 'OUT_F': None}
 
-    dstate.add_edge(
-        rowb, None, nme, 'rowb%d' % frontier_index,
-        dp.Memlet.from_array('rowb%d' % frontier_index, rowb.desc(sdfg)))
-    dstate.add_edge(
-        rowe, None, nme, 'rowe%d' % frontier_index,
-        dp.Memlet.from_array('rowe%d' % frontier_index, rowe.desc(sdfg)))
+    dstate.add_edge(rowb, None, nme, 'rowb%d' % frontier_index,
+                    dp.Memlet.from_array('rowb%d' % frontier_index, rowb.desc(sdfg)))
+    dstate.add_edge(rowe, None, nme, 'rowe%d' % frontier_index,
+                    dp.Memlet.from_array('rowe%d' % frontier_index, rowe.desc(sdfg)))
 
-    dstate.add_edge(me, 'OUT_C', nme, 'IN_C',
-                    dp.Memlet.from_array('G_col', G_col.desc(sdfg)))
-    dstate.add_edge(me, 'OUT_D', nme, 'IN_D',
-                    dp.Memlet.from_array('depth', depth.desc(sdfg)))
+    dstate.add_edge(me, 'OUT_C', nme, 'IN_C', dp.Memlet.from_array('G_col', G_col.desc(sdfg)))
+    dstate.add_edge(me, 'OUT_D', nme, 'IN_D', dp.Memlet.from_array('depth', depth.desc(sdfg)))
 
     # Internal neighbor map contents
     ctask = dstate.add_tasklet(
-        'update_and_push', {'in_col', 'in_depth'},
-        {'out_depth', 'out_fsz', 'out_frontier'}, """
+        'update_and_push', {'in_col', 'in_depth'}, {'out_depth', 'out_fsz', 'out_frontier'}, """
 node = in_col[nid]
 dep = in_depth[node]
 if d < dep:
@@ -188,74 +130,44 @@ if d < dep:
 """)
 
     # Internal inputs
-    dstate.add_edge(
-        nme, 'OUT_C', ctask, 'in_col',
-        dp.Memlet.simple('G_col',
-                         dp.subsets.Range.from_array(G_col.desc(sdfg)),
-                         num_accesses=-1))
-    dstate.add_edge(
-        nme, 'OUT_D', ctask, 'in_depth',
-        dp.Memlet.simple('depth',
-                         dp.subsets.Range.from_array(depth.desc(sdfg)),
-                         num_accesses=-1))
+    dstate.add_edge(nme, 'OUT_C', ctask, 'in_col',
+                    dp.Memlet.simple('G_col', dp.subsets.Range.from_array(G_col.desc(sdfg)), num_accesses=-1))
+    dstate.add_edge(nme, 'OUT_D', ctask, 'in_depth',
+                    dp.Memlet.simple('depth', dp.subsets.Range.from_array(depth.desc(sdfg)), num_accesses=-1))
 
     # Internal outputs
-    dstate.add_edge(
-        ctask, 'out_depth', nmx, 'IN_D',
-        dp.Memlet.simple('depth',
-                         dp.subsets.Range.from_array(depth.desc(sdfg)),
-                         num_accesses=-1))
+    dstate.add_edge(ctask, 'out_depth', nmx, 'IN_D',
+                    dp.Memlet.simple('depth', dp.subsets.Range.from_array(depth.desc(sdfg)), num_accesses=-1))
     dstate.add_edge(
         ctask, 'out_fsz', nmx, 'IN_FSZ',
-        dp.Memlet.simple(out_frontiersize,
-                         dp.subsets.Indices([0]),
-                         num_accesses=-1,
-                         wcr_str='lambda a,b: a+b'))
+        dp.Memlet.simple(out_frontiersize, dp.subsets.Indices([0]), num_accesses=-1, wcr_str='lambda a,b: a+b'))
     dstate.add_edge(
         ctask, 'out_frontier', nmx, 'IN_F',
         dp.Memlet.simple(out_frontier_stream,
-                         dp.subsets.Range.from_array(
-                             out_frontier_stream.desc(sdfg)),
+                         dp.subsets.Range.from_array(out_frontier_stream.desc(sdfg)),
                          num_accesses=-1))
 
     # Internal neighbor map outputs
-    dstate.add_edge(
-        nmx, 'OUT_D', mx, 'IN_D',
-        dp.Memlet.simple(depth,
-                         dp.subsets.Range.from_array(depth.desc(sdfg)),
-                         num_accesses=-1))
+    dstate.add_edge(nmx, 'OUT_D', mx, 'IN_D',
+                    dp.Memlet.simple(depth, dp.subsets.Range.from_array(depth.desc(sdfg)), num_accesses=-1))
     dstate.add_edge(
         nmx, 'OUT_FSZ', mx, 'IN_FSZ',
-        dp.Memlet.simple(out_frontiersize,
-                         dp.subsets.Indices([0]),
-                         num_accesses=-1,
-                         wcr_str='lambda a,b: a+b'))
-    dstate.add_edge(
-        nmx, 'OUT_F', mx, 'IN_F',
-        dp.Memlet.from_array(out_frontier_stream.data,
-                             out_frontier_stream.desc(sdfg)))
+        dp.Memlet.simple(out_frontiersize, dp.subsets.Indices([0]), num_accesses=-1, wcr_str='lambda a,b: a+b'))
+    dstate.add_edge(nmx, 'OUT_F', mx, 'IN_F',
+                    dp.Memlet.from_array(out_frontier_stream.data, out_frontier_stream.desc(sdfg)))
 
     # Map outputs
-    dstate.add_edge(
-        mx, 'OUT_D', out_depth, None,
-        dp.Memlet.simple(depth,
-                         dp.subsets.Range.from_array(depth.desc(sdfg)),
-                         num_accesses=-1))
+    dstate.add_edge(mx, 'OUT_D', out_depth, None,
+                    dp.Memlet.simple(depth, dp.subsets.Range.from_array(depth.desc(sdfg)), num_accesses=-1))
     dstate.add_edge(
         mx, 'OUT_FSZ', out_frontiersize, None,
-        dp.Memlet.simple(out_frontiersize,
-                         dp.subsets.Indices([0]),
-                         num_accesses=-1,
-                         wcr_str='lambda a,b: a+b'))
-    dstate.add_edge(
-        mx, 'OUT_F', out_frontier_stream, None,
-        dp.Memlet.from_array(out_frontier_stream.data,
-                             out_frontier_stream.desc(sdfg)))
+        dp.Memlet.simple(out_frontiersize, dp.subsets.Indices([0]), num_accesses=-1, wcr_str='lambda a,b: a+b'))
+    dstate.add_edge(mx, 'OUT_F', out_frontier_stream, None,
+                    dp.Memlet.from_array(out_frontier_stream.data, out_frontier_stream.desc(sdfg)))
 
     # Stream->Array interface
-    dstate.add_nedge(
-        out_frontier_stream, out_frontier,
-        dp.Memlet.from_array(out_frontier.data, out_frontier.desc(sdfg)))
+    dstate.add_nedge(out_frontier_stream, out_frontier, dp.Memlet.from_array(out_frontier.data,
+                                                                             out_frontier.desc(sdfg)))
 
 
 frontier = dstate.add_transient('frontier', [V], dtype=vtype, storage=storage)
@@ -310,10 +222,7 @@ if __name__ == "__main__":
 
         # Regression
         result = nx.shortest_path(graph, source=srcnode)
-        result = [
-            len(result[v]) - 1 if v in result else INFINITY
-            for v in range(V.get())
-        ]
+        result = [len(result[v]) - 1 if v in result else INFINITY for v in range(V.get())]
         regression = True
 
     print('Data loaded')
