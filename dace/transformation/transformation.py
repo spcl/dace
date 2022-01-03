@@ -1,67 +1,54 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 """
-Contains classes that represent data-centric transformations.
+This file contains classes that describe data-centric transformations.
 
-There are three general types of transformations:
-  * Pattern-matching Transformations (extending Transformation): Transformations
-    that require a certain subgraph structure to match.
-  * Subgraph Transformations (extending SubgraphTransformation): Transformations
-    that can operate on arbitrary subgraphs.
-  * Library node expansions (extending ExpandTransformation): An internal class
-    used for tracking how library nodes were expanded.
+All transformations extend the ``TransformationBase`` class. There are three built-in types of transformations in DaCe:
+  * Pattern-matching Transformations (extending ``PatternTransformation``): Transformations
+    that require a certain subgraph structure to match. Within this abstract class, there are two sub-classes:
+    * ``SingleStateTransformation``: Patterns are limited to a single SDFG state.
+    * ``MultiStateTransformation``: Patterns are given on a subgraph of an SDFG state machine.
+    A pattern-matching must extend at least one of those two classes.
+  * Subgraph Transformations (extending SubgraphTransformation): Transformations that can operate on arbitrary
+    subgraphs.
+  * Library node expansions (extending ExpandTransformation): An internal class used for tracking how library nodes
+    are expanded.
+
+Some transformations are included in the SDFG Dataflow Coarsening pass. In order to declare a transformation as part
+of the dataflow coarsening pass, it should also extend the ``DataflowCoarseningTransformation`` mixin.
 """
 
 import copy
 from dace import dtypes, serialize
 from dace.dtypes import ScheduleType
 from dace.sdfg import SDFG, SDFGState
-from dace.sdfg import nodes as nd, graph as gr, utils as sdutil, propagation, infer_types
+from dace.sdfg import nodes as nd, graph as gr, utils as sdutil, propagation, infer_types, state as st
 from dace.properties import make_properties, Property, DictProperty, SetProperty
-from dace.registry import make_registry
 from typing import Any, Dict, List, Optional, Set, Type, Union
 import pydoc
 
 
 class TransformationBase(object):
-    """ Base class for data-centric transformations. """
+    """
+    Base class for graph rewriting transformations. An instance of a TransformationBase object represents a match
+    of the transformation (i.e., including a specific subgraph candidate to apply the transformation to), as well
+    as properties of the transformation, which may affect if it can apply or not.
+
+    :see: PatternTransformation
+    :see: SubgraphTransformation
+    :see: ExpandTransformation
+    """
     pass
 
 
-@make_registry
 @make_properties
-class Transformation(TransformationBase):
-    """ Base class for pattern-matching transformations, as well as a static
-        registry of transformations, where new transformations can be added in a
-        decentralized manner.
-        An instance of a Transformation represents a match of the transformation
-        on an SDFG, complete with a subgraph candidate and properties.
-
-        New transformations that extend this class must contain static
-        `PatternNode` fields that represent the nodes in the pattern graph, and
-        use them to implement at least three methods:
-          * `expressions`: A method that returns a list of graph
-                           patterns (SDFG or SDFGState objects) that match this
-                           transformation.
-          * `can_be_applied`: A method that, given a subgraph candidate,
-                              checks for additional conditions whether it can
-                              be transformed.
-          * `apply`: A method that applies the transformation
-                     on the given SDFG.
-
-        For more information and optimization opportunities, see the respective
-        methods' documentation.
-
-        In order to be included in lists and apply through the
-        `sdfg.apply_transformations` API, each transformation shouls be
-        registered with ``Transformation.register`` (or, more commonly,
-        the ``@dace.registry.autoregister_params`` class decorator) with two
-        optional boolean keyword arguments: ``singlestate`` (default: False)
-        and ``coarsening`` (default: False).
-        If ``singlestate`` is True, the transformation is matched on subgraphs
-        inside an SDFGState; otherwise, subgraphs of the SDFG state machine are
-        matched.
-        If ``coarsening`` is True, this transformation will be performed automatically
-        as part of SDFG dataflow coarsening.
+class PatternTransformation(TransformationBase):
+    """ 
+    Abstract class for pattern-matching transformations.
+    Please extend either ``SingleStateTransformation`` or ``MultiStateTransformation``.
+    
+    :see: SingleStateTransformation
+    :see: MultiStateTransformation
+    :seealso: PatternNode
     """
 
     # Properties
@@ -374,6 +361,115 @@ class Transformation(TransformationBase):
         return ret
 
 
+@make_properties
+class SingleStateTransformation(PatternTransformation):
+    """
+    Base class for pattern-matching transformations that find matches within a single SDFG state.
+    New transformations that extend this class must contain static ``PatternNode`` fields that represent the nodes
+    in the pattern graph, and use them to implement at least three methods:
+        * ``expressions``: A method that returns a list of graph
+                           patterns (SDFGState objects) that match this
+                           transformation.
+        * ``can_be_applied``: A method that, given a subgraph candidate,
+                              checks for additional conditions whether it can
+                              be transformed.
+        * ``apply``: A method that applies the transformation
+                     on the given SDFG.
+
+    For more information and optimization opportunities, see the respective
+    methods' documentation.
+
+    :seealso: PatternNode
+    :note: Some transformations are included in the SDFG Dataflow Coarsening pass. In order to declare a 
+           transformation as part of the dataflow coarsening pass, it should also extend the 
+           ``DataflowCoarseningTransformation`` mixin.
+    """
+    def expressions(self) -> List[st.StateSubgraphView]:
+        """ Returns a list of SDFG state subgraphs that will be matched in the
+            subgraph isomorphism phase. Used as a pre-pass before calling
+            ``can_be_applied``.
+        """
+        raise NotImplementedError
+
+    def can_be_applied(self,
+                       graph: SDFGState,
+                       candidate: Dict['PatternNode', int],
+                       expr_index: int,
+                       sdfg: SDFG,
+                       permissive: bool = False) -> bool:
+        """ Returns True if this transformation can be applied on the candidate matched subgraph.
+            :param graph: SDFGState object in which the match was found.
+            :param candidate: A mapping between node IDs returned from
+                              ``PatternTransformation.expressions`` and the nodes in
+                              ``graph``.
+            :param expr_index: The list index from ``PatternTransformation.expressions``
+                               that was matched.
+            :param sdfg: The parent SDFG of the matched state.
+            :param permissive: Whether transformation should run in permissive mode.
+            :return: True if the transformation can be applied.
+        """
+        raise NotImplementedError
+
+
+@make_properties
+class MultiStateTransformation(PatternTransformation):
+    """
+    Base class for pattern-matching transformations that find matches within an SDFG state machine.
+    New transformations that extend this class must contain static ``PatternNode`` fields that represent the nodes
+    in the pattern graph, and use them to implement at least three methods:
+        * ``expressions``: A method that returns a list of graph
+                           patterns (SDFG objects) that match this
+                           transformation.
+        * ``can_be_applied``: A method that, given a subgraph candidate,
+                              checks for additional conditions whether it can
+                              be transformed.
+        * ``apply``: A method that applies the transformation
+                     on the given SDFG.
+
+    For more information and optimization opportunities, see the respective
+    methods' documentation.
+
+    :seealso: PatternNode
+    :note: Some transformations are included in the SDFG Dataflow Coarsening pass. In order to declare a 
+           transformation as part of the dataflow coarsening pass, it should also extend the 
+           ``DataflowCoarseningTransformation`` mixin.
+    """
+    def expressions(self) -> List[gr.SubgraphView]:
+        """ Returns a list of SDFG subgraphs that will be matched in the
+            subgraph isomorphism phase. Used as a pre-pass before calling
+            ``can_be_applied``.
+        """
+        raise NotImplementedError
+
+    def can_be_applied(self,
+                       graph: SDFG,
+                       candidate: Dict['PatternNode', int],
+                       expr_index: int,
+                       sdfg: SDFG,
+                       permissive: bool = False) -> bool:
+        """ Returns True if this transformation can be applied on the candidate matched subgraph.
+            :param graph: SDFG object in which the match was found.
+            :param candidate: A mapping between node IDs returned from
+                              ``PatternTransformation.expressions`` and the nodes in
+                              ``graph``.
+            :param expr_index: The list index from ``PatternTransformation.expressions``
+                               that was matched.
+            :param sdfg: The SDFG in which the match was found (equal to ``graph``).
+            :param permissive: Whether transformation should run in permissive mode.
+            :return: True if the transformation can be applied.
+        """
+        raise NotImplementedError
+
+
+class DataflowCoarseningTransformation:
+    """
+    Mixin that includes the given PatternTransformation in the SDFG Dataflow Coarsening pass. This transformation
+    will be automatically applied throughout the SDFG in non-permissive mode as the graph is constructed, or when
+    ``sdfg.coarsen_dataflow()`` is called.
+    """
+    pass
+
+
 class PatternNode(object):
     """
     Static field wrapper of a node or an SDFG state that designates it as part
@@ -382,14 +478,13 @@ class PatternNode(object):
 
     Example use:
     ```
-    @registry.autoregister_params(singlestate=True)
-    class MyTransformation(Transformation):
+    class MyTransformation(SingleStateTransformation):
         some_map_node = PatternNode(nodes.MapEntry)
         array = PatternNode(nodes.AccessNode)
     ```
 
     The two nodes can then be used in the transformation static methods (e.g.,
-    `expressions`, `can_be_applied`) to represent the nodes, and in the instance
+    ``expressions``, ``can_be_applied``) to represent the nodes, and in the instance
     methods to point to the nodes in the parent SDFG.
     """
     def __init__(self, nodeclass: Type[Union[nd.Node, SDFGState]]) -> None:
@@ -399,7 +494,7 @@ class PatternNode(object):
                           or a node type in a state).
         """
         self.node = nodeclass
-        self.match_instance: Optional[Transformation] = None
+        self.match_instance: Optional[PatternTransformation] = None
 
     def __call__(self, sdfg: SDFG) -> Union[nd.Node, SDFGState]:
         """
@@ -425,7 +520,7 @@ class PatternNode(object):
 
 
 @make_properties
-class ExpandTransformation(Transformation):
+class ExpandTransformation(SingleStateTransformation):
     """
     Base class for transformations that simply expand a node into a
     subgraph, and thus needs only simple matching and replacement
@@ -529,7 +624,6 @@ class ExpandTransformation(Transformation):
         return ret
 
 
-@make_registry
 @make_properties
 class SubgraphTransformation(TransformationBase):
     """
@@ -686,7 +780,7 @@ class SubgraphTransformation(TransformationBase):
         return ret
 
 
-def coarsening_transformations() -> List[Type[Transformation]]:
+def coarsening_transformations() -> List[Type[PatternTransformation]]:
     """ :return: List of all registered dataflow coarsening transformations.
     """
-    return [k for k, v in Transformation.extensions().items() if v.get('coarsening', False)]
+    return list(DataflowCoarseningTransformation.__subclasses__)
