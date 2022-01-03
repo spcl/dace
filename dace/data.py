@@ -459,9 +459,6 @@ class Array(Data):
     def to_json(self):
         attrs = serialize.all_properties_to_json(self)
 
-        # Take care of symbolic expressions
-        attrs['strides'] = list(map(str, attrs['strides']))
-
         retdict = {"type": type(self).__name__, "attributes": attrs}
 
         return retdict
@@ -477,13 +474,7 @@ class Array(Data):
             ret.offset = [0] * len(ret.shape)
         if not ret.strides:
             # Default strides are C-ordered
-            ret.strides = [
-                _prod(ret.shape[i + 1:]) for i in range(len(ret.shape))
-            ]
-        else:
-            # TODO: This needs to be reworked (i.e., integrated into the list property)
-            ret.strides = list(map(symbolic.pystr_to_symbolic, ret.strides))
-
+            ret.strides = [_prod(ret.shape[i + 1:]) for i in range(len(ret.shape))]
         if ret.total_size == 0:
             ret.total_size = _prod(ret.shape)
 
