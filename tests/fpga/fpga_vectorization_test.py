@@ -13,6 +13,7 @@ import argparse
 from dace.transformation.dataflow import Vectorization, MapExpansion
 from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
 from tests.fpga.streaming_memory_test import matadd_multistream
+from dace.transformation.auto.fpga import fpga_rr_interleave_containers_to_banks
 
 N = dace.symbol("N")
 M = dace.symbol("M")
@@ -22,8 +23,7 @@ SIZE = 64
 
 
 @dace.program
-def matmul_vec_kernel(A: dace.float32[M, K], B: dace.float32[K, N],
-                      C: dace.float32[M, N]):
+def matmul_vec_kernel(A: dace.float32[M, K], B: dace.float32[K, N], C: dace.float32[M, N]):
     tmp = np.ndarray([M, N, K], dtype=A.dtype)
 
     # Multiply every pair of values to a large 3D temporary array
@@ -40,10 +40,9 @@ def matmul_vec_kernel(A: dace.float32[M, K], B: dace.float32[K, N],
 
 
 @dace.program
-def maporder_vec_kernel(A: dace.float32[N, N, N], B: dace.float32[N, N, N],
-                        C: dace.float32[N, N, N], D: dace.float32[N, N, N],
-                        E: dace.float32[N, N, N], F: dace.float32[N, N, N],
-                        G: dace.float32[N, N]):
+def maporder_vec_kernel(A: dace.float32[N, N, N], B: dace.float32[N, N, N], C: dace.float32[N, N, N],
+                        D: dace.float32[N, N, N], E: dace.float32[N, N, N], F: dace.float32[N, N,
+                                                                                            N], G: dace.float32[N, N]):
     for i, j in dace.map[0:N, 0:N]:
         with dace.tasklet:
             in_A << A[i, j, 0]  # No
@@ -67,8 +66,7 @@ def vecadd_1_non_appl_1_kernel(A: dace.float32[N], B: dace.float32[N]):
 
 
 @dace.program
-def matadd_bad_stride_kernel(A: dace.float32[SIZE + 1, SIZE + 1],
-                             B: dace.float32[SIZE + 1, SIZE + 1],
+def matadd_bad_stride_kernel(A: dace.float32[SIZE + 1, SIZE + 1], B: dace.float32[SIZE + 1, SIZE + 1],
                              C: dace.float32[SIZE + 1, SIZE + 1]):
     C[:] = A + B
 
@@ -83,15 +81,13 @@ def vecadd_1_non_appl_0_kernel(A: dace.float32[N], B: dace.float32[N]):
 
 
 @dace.program
-def matadd_multi_kernel(A: dace.float32[M, N], B: dace.float32[M, N],
-                        C: dace.float32[M, N], D: dace.float32[M, N]):
+def matadd_multi_kernel(A: dace.float32[M, N], B: dace.float32[M, N], C: dace.float32[M, N], D: dace.float32[M, N]):
     C[:] = A + B
     D[:] = A - B
 
 
 @dace.program
-def tensoradd_kernel(A: dace.float32[M, N, K], B: dace.float32[M, N, K],
-                     C: dace.float32[M, N, K]):
+def tensoradd_kernel(A: dace.float32[M, N, K], B: dace.float32[M, N, K], C: dace.float32[M, N, K]):
     C[:] = A + B
 
 
@@ -106,20 +102,17 @@ def add_1_kernel_sym(A: dace.float32[N], B: dace.float32[N]):
 
 
 @dace.program
-def matadd_kernel_sym(A: dace.float32[M, N], B: dace.float32[M, N],
-                      C: dace.float32[M, N]):
+def matadd_kernel_sym(A: dace.float32[M, N], B: dace.float32[M, N], C: dace.float32[M, N]):
     C[:] = A + B
 
 
 @dace.program
-def matadd_kernel(A: dace.float32[SIZE, SIZE], B: dace.float32[SIZE, SIZE],
-                  C: dace.float32[SIZE, SIZE]):
+def matadd_kernel(A: dace.float32[SIZE, SIZE], B: dace.float32[SIZE, SIZE], C: dace.float32[SIZE, SIZE]):
     C[:] = A + B
 
 
 @dace.program
-def two_maps_kernel_legal(A: dace.float32[N], B: dace.float32[N],
-                          C: dace.float32[N], D: dace.float32[N],
+def two_maps_kernel_legal(A: dace.float32[N], B: dace.float32[N], C: dace.float32[N], D: dace.float32[N],
                           E: dace.float32[N]):
     @dace.map
     def sum(i: _[0:N]):
@@ -137,9 +130,8 @@ def two_maps_kernel_legal(A: dace.float32[N], B: dace.float32[N],
 
 
 @dace.program
-def two_maps_nested_kernel_legal(A: dace.float32[N, M], B: dace.float32[N, M],
-                                 C: dace.float32[N, M], D: dace.float32[N, M],
-                                 E: dace.float32[N, M]):
+def two_maps_nested_kernel_legal(A: dace.float32[N, M], B: dace.float32[N, M], C: dace.float32[N, M],
+                                 D: dace.float32[N, M], E: dace.float32[N, M]):
     @dace.map
     def sum(i: _[0:N], j: _[0:M]):
         in_a << A[i, j]
@@ -156,9 +148,8 @@ def two_maps_nested_kernel_legal(A: dace.float32[N, M], B: dace.float32[N, M],
 
 
 @dace.program
-def two_maps_kernel_nested_illegal(A: dace.float32[N, M], B: dace.float32[N, M],
-                                   C: dace.float32[N, M], D: dace.float32[N, M],
-                                   E: dace.float32[N, M]):
+def two_maps_kernel_nested_illegal(A: dace.float32[N, M], B: dace.float32[N, M], C: dace.float32[N, M],
+                                   D: dace.float32[N, M], E: dace.float32[N, M]):
     @dace.map
     def sum(i: _[0:N], j: _[0:M]):
         in_a << A[i, j]
@@ -175,8 +166,7 @@ def two_maps_kernel_nested_illegal(A: dace.float32[N, M], B: dace.float32[N, M],
 
 
 @dace.program
-def two_maps_kernel_illegal(A: dace.float32[N], B: dace.float32[N],
-                            C: dace.float32[N], D: dace.float32[N],
+def two_maps_kernel_illegal(A: dace.float32[N], B: dace.float32[N], C: dace.float32[N], D: dace.float32[N],
                             E: dace.float32[N]):
     @dace.map
     def sum(i: _[0:N]):
@@ -220,13 +210,12 @@ def vec_two_maps(strided_map):
 
     assert sdfg.apply_transformations([FPGATransformSDFG, InlineSDFG]) == 2
 
-    assert sdfg.apply_transformations_repeated(
-        Vectorization,
-        options={
-            'vector_len': 2,
-            'target': dace.ScheduleType.FPGA_Device,
-            'strided_map': strided_map
-        }) == 1
+    assert sdfg.apply_transformations_repeated(Vectorization,
+                                               options={
+                                                   'vector_len': 2,
+                                                   'target': dace.ScheduleType.FPGA_Device,
+                                                   'strided_map': strided_map
+                                               }) == 1
 
     sdfg(A=A, B=B, C=C, D=D, E=E, N=N)
 
@@ -254,13 +243,13 @@ def vec_two_maps_nested(strided_map):
 
     assert sdfg.apply_transformations_repeated(MapExpansion) == 2
 
-    assert sdfg.apply_transformations_repeated(
-        Vectorization,
-        options={
-            'vector_len': 2,
-            'target': dace.ScheduleType.FPGA_Device,
-            'strided_map': strided_map
-        }, print_report=True) == 1
+    assert sdfg.apply_transformations_repeated(Vectorization,
+                                               options={
+                                                   'vector_len': 2,
+                                                   'target': dace.ScheduleType.FPGA_Device,
+                                                   'strided_map': strided_map
+                                               },
+                                               print_report=True) == 1
 
     sdfg(A=A, B=B, C=C, D=D, E=E, N=N, M=M)
 
@@ -288,23 +277,15 @@ def vec_sum(vectorize_first: bool, strided_map: bool):
             dace.transformation.dataflow.vectorization.Vectorization,
             dace.transformation.interstate.fpga_transform_sdfg.FPGATransformSDFG
         ]
-        transformation_options = [{
-            "target": dace.ScheduleType.FPGA_Device,
-            'strided_map': strided_map
-        }, {}]
+        transformation_options = [{"target": dace.ScheduleType.FPGA_Device, 'strided_map': strided_map}, {}]
     else:
         transformations = [
-            dace.transformation.interstate.fpga_transform_sdfg.
-            FPGATransformSDFG,
+            dace.transformation.interstate.fpga_transform_sdfg.FPGATransformSDFG,
             dace.transformation.dataflow.vectorization.Vectorization
         ]
-        transformation_options = [{}, {
-            "target": dace.ScheduleType.FPGA_Device,
-            'strided_map': strided_map
-        }]
+        transformation_options = [{}, {"target": dace.ScheduleType.FPGA_Device, 'strided_map': strided_map}]
 
-    assert sdfg.apply_transformations(transformations,
-                                      transformation_options) == 2
+    assert sdfg.apply_transformations(transformations, transformation_options) == 2
 
     sdfg(x=X, y=Y, z=Z, N=N)
 
@@ -321,8 +302,7 @@ def test_vec_two_maps_illegal():
     assert sdfg.apply_transformations(Vectorization,
                                       options={
                                           'vector_len': 2,
-                                          'target':
-                                          dace.ScheduleType.FPGA_Device,
+                                          'target': dace.ScheduleType.FPGA_Device,
                                       }) == 0
 
 
@@ -334,8 +314,7 @@ def test_vec_two_maps_nested_illegal():
     assert sdfg.apply_transformations(Vectorization,
                                       options={
                                           'vector_len': 2,
-                                          'target':
-                                          dace.ScheduleType.FPGA_Device,
+                                          'target': dace.ScheduleType.FPGA_Device,
                                       }) == 0
 
 
@@ -346,8 +325,7 @@ def vec_matadd(strided_map):
     assert sdfg.apply_transformations(Vectorization,
                                       options={
                                           'vector_len': 2,
-                                          'target':
-                                          dace.ScheduleType.FPGA_Device,
+                                          'target': dace.ScheduleType.FPGA_Device,
                                           'strided_map': strided_map
                                       }) == 1
 
@@ -371,8 +349,7 @@ def vec_matadd_sym(strided_map):
     assert sdfg.apply_transformations(Vectorization,
                                       options={
                                           'vector_len': 2,
-                                          'target':
-                                          dace.ScheduleType.FPGA_Device,
+                                          'target': dace.ScheduleType.FPGA_Device,
                                           'strided_map': strided_map
                                       }) == 1
 
@@ -400,8 +377,7 @@ def vec_add_1(strided_map):
     assert sdfg.apply_transformations(Vectorization,
                                       options={
                                           'vector_len': 2,
-                                          'target':
-                                          dace.ScheduleType.FPGA_Device,
+                                          'target': dace.ScheduleType.FPGA_Device,
                                           'strided_map': strided_map
                                       }) == 1
 
@@ -426,8 +402,7 @@ def vec_add_1_sym(strided_map):
     assert sdfg.apply_transformations(Vectorization,
                                       options={
                                           'vector_len': 2,
-                                          'target':
-                                          dace.ScheduleType.FPGA_Device,
+                                          'target': dace.ScheduleType.FPGA_Device,
                                           'strided_map': strided_map
                                       }) == 1
 
@@ -450,8 +425,7 @@ def tensor_add(strided_map):
     assert sdfg.apply_transformations(Vectorization,
                                       options={
                                           'vector_len': 2,
-                                          'target':
-                                          dace.ScheduleType.FPGA_Device,
+                                          'target': dace.ScheduleType.FPGA_Device,
                                           'strided_map': strided_map
                                       }) == 1
 
@@ -478,8 +452,7 @@ def vec_matadd_multi(strided_map):
     assert sdfg.apply_transformations(Vectorization,
                                       options={
                                           'vector_len': 2,
-                                          'target':
-                                          dace.ScheduleType.FPGA_Device,
+                                          'target': dace.ScheduleType.FPGA_Device,
                                           'strided_map': strided_map
                                       }) == 1
 
@@ -506,16 +479,14 @@ def test_vec_not_applicable():
     assert sdfg2.apply_transformations(Vectorization,
                                        options={
                                            'vector_len': 2,
-                                           'target':
-                                           dace.ScheduleType.FPGA_Device,
+                                           'target': dace.ScheduleType.FPGA_Device,
                                            'strided_map': True
                                        }) == 0
 
     assert sdfg2.apply_transformations(Vectorization,
                                        options={
                                            'vector_len': 2,
-                                           'target':
-                                           dace.ScheduleType.FPGA_Device,
+                                           'target': dace.ScheduleType.FPGA_Device,
                                            'strided_map': False
                                        }) == 0
 
@@ -525,16 +496,14 @@ def test_vec_not_applicable():
     assert sdfg3.apply_transformations(Vectorization,
                                        options={
                                            'vector_len': 2,
-                                           'target':
-                                           dace.ScheduleType.FPGA_Device,
+                                           'target': dace.ScheduleType.FPGA_Device,
                                            'strided_map': False
                                        }) == 0
 
     assert sdfg3.apply_transformations(Vectorization,
                                        options={
                                            'vector_len': 2,
-                                           'target':
-                                           dace.ScheduleType.FPGA_Device,
+                                           'target': dace.ScheduleType.FPGA_Device,
                                            'strided_map': True
                                        }) == 0
 
@@ -544,16 +513,14 @@ def test_vec_not_applicable():
     assert sdfg4.apply_transformations(Vectorization,
                                        options={
                                            'vector_len': 2,
-                                           'target':
-                                           dace.ScheduleType.FPGA_Device,
+                                           'target': dace.ScheduleType.FPGA_Device,
                                            'strided_map': False
                                        }) == 0
 
     assert sdfg4.apply_transformations(Vectorization,
                                        options={
                                            'vector_len': 2,
-                                           'target':
-                                           dace.ScheduleType.FPGA_Device,
+                                           'target': dace.ScheduleType.FPGA_Device,
                                            'strided_map': True
                                        }) == 0
 
@@ -564,16 +531,14 @@ def test_vec_not_applicable():
     assert sdfg5.apply_transformations(Vectorization,
                                        options={
                                            'vector_len': 2,
-                                           'target':
-                                           dace.ScheduleType.FPGA_Device,
+                                           'target': dace.ScheduleType.FPGA_Device,
                                            'strided_map': False
                                        }) == 0
 
     assert sdfg5.apply_transformations(Vectorization,
                                        options={
                                            'vector_len': 2,
-                                           'target':
-                                           dace.ScheduleType.FPGA_Device,
+                                           'target': dace.ScheduleType.FPGA_Device,
                                            'strided_map': True
                                        }) == 0
 
@@ -584,16 +549,14 @@ def test_vec_not_applicable():
     assert sdfg6.apply_transformations(Vectorization,
                                        options={
                                            'vector_len': 2,
-                                           'target':
-                                           dace.ScheduleType.FPGA_Device,
+                                           'target': dace.ScheduleType.FPGA_Device,
                                            'strided_map': False
                                        }) == 0
 
     assert sdfg6.apply_transformations(Vectorization,
                                        options={
                                            'vector_len': 2,
-                                           'target':
-                                           dace.ScheduleType.FPGA_Device,
+                                           'target': dace.ScheduleType.FPGA_Device,
                                            'strided_map': True
                                        }) == 0
 
@@ -607,10 +570,12 @@ def test_vec_two_maps_strided():
 def test_vec_two_maps_non_strided():
     return vec_two_maps(False)
 
+
 # @fpga_test()
 @xilinx_test()
 def test_vec_two_maps_nested_strided():
     return vec_two_maps_nested(True)
+
 
 # @fpga_test()
 @xilinx_test()
@@ -698,6 +663,94 @@ def test_vec_matadd_multi_stride():
     return vec_matadd_multi(True)
 
 
+@dace.program
+def bicg(A: dace.float32[N, M], p: dace.float32[M], r: dace.float32[N]):
+    return r @ A, A @ p
+
+
+@xilinx_test()
+def test_vec_bicg():
+
+    A = np.random.rand(SIZE, SIZE).astype(np.float32)
+    p = np.random.rand(SIZE).astype(np.float32)
+    r = np.random.rand(SIZE).astype(np.float32)
+
+    # Parse SDFG and apply FPGA friendly optimization
+    sdfg = bicg.to_sdfg(strict=True)
+
+    applied = sdfg.apply_transformations([FPGATransformSDFG])
+    assert applied == 1
+
+    fpga_rr_interleave_containers_to_banks(sdfg, num_banks=2)
+
+    # Use FPGA Expansion for lib nodes, and expand them to enable further optimizations
+    from dace.libraries.blas import Gemv
+    Gemv.default_implementation = "FPGA_Accumulate"
+    sdfg.expand_library_nodes()
+    sm_applied = sdfg.apply_transformations_repeated([InlineSDFG], print_report=True)
+    assert sm_applied == 3  # 3 inlines
+
+    sdfg.apply_transformations_repeated(Vectorization,
+                                        options={
+                                            'vector_len': 2,
+                                            'target': dace.ScheduleType.FPGA_Device,
+                                            'strided_map': True
+                                        },
+                                        print_report=True)
+
+    # specialize the SDFG (needed by the GEMV expansion)
+    sdfg.specialize(dict(M=SIZE, N=SIZE))
+
+    # sdfg.instrument = dace.InstrumentationType.FPGA
+
+    # for s in sdfg.states():
+    #     s.instrument = dace.InstrumentationType.FPGA
+
+    res0, res1 = sdfg(A=A, p=p, r=r)
+
+    # Compute ground truth and Validate result
+    res0_ref, res1_ref = bicg.f(A, p, r)
+
+    assert np.allclose(res0_ref, res0)
+    assert np.allclose(res1, res1_ref)
+
+    return sdfg
+
+
+@xilinx_test()
+def test_supported_wcr_sum():
+    @dace.program
+    def program(A: dace.float32[N], B: dace.float32[1]):
+        for i in dace.map[0:N]:
+            with dace.tasklet:
+                a << A[i]
+                b >> B(-1, lambda x, y: x + y)[0]
+                b = a
+
+    sdfg = program.to_sdfg(strict=True)
+    sdfg.apply_transformations([FPGATransformSDFG], print_report=True)
+
+    sdfg.apply_transformations_repeated([InlineSDFG], print_report=True)
+
+    try:
+        sdfg.apply_transformations(Vectorization,
+                                   options={
+                                       'vector_len': 2,
+                                       'target': dace.ScheduleType.FPGA_Device,
+                                       'strided_map': False
+                                   },
+                                   print_report=True)
+    except:
+        sdfg.save("a.sdfg")
+
+    N.set(4)
+    A = np.random.rand(N.get()).astype(np.float32)
+    B = np.zeros(1).astype(np.float32)
+    sdfg(A=A, B=B, N=N.get())
+    assert np.allclose(np.sum(A), B)
+    return sdfg
+
+
 if __name__ == "__main__":
     # test_vec_add_1_stride(None)
     # test_vec_add_1_non_stride(None)
@@ -708,9 +761,9 @@ if __name__ == "__main__":
     # test_vec_two_maps_non_strided(None)
     # test_vec_two_maps_illegal()
 
-    test_vec_two_maps_nested_strided(None)
-    test_vec_two_maps_nested_non_strided(None)
-    test_vec_two_maps_nested_illegal()
+    # test_vec_two_maps_nested_strided(None)
+    # test_vec_two_maps_nested_non_strided(None)
+    # test_vec_two_maps_nested_illegal()
 
     # test_vec_matadd_stride(None)
     # test_vec_matadd_non_stride(None)
@@ -730,3 +783,5 @@ if __name__ == "__main__":
     # test_vec_matadd_multi_stride(None)
 
     # test_vec_not_applicable()
+
+    test_vec_bicg(None)
