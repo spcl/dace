@@ -60,7 +60,11 @@ class PatternTransformation(TransformationBase):
     @classmethod
     def subclasses_recursive(cls) -> Set[Type['PatternTransformation']]:
         """ Returns all subclasses of this class, including subclasses of subclasses. """
-        subclasses = set(cls.__subclasses__())
+        if cls is PatternTransformation:
+            subclasses = set(SingleStateTransformation.__subclasses__()) | set(
+                MultiStateTransformation.__subclasses__())
+        else:
+            subclasses = set(cls.__subclasses__())
         subsubclasses = set()
         for sc in subclasses:
             subsubclasses.update(sc.subclasses_recursive())
@@ -530,7 +534,7 @@ class PatternNode(object):
 
 
 @make_properties
-class ExpandTransformation(SingleStateTransformation):
+class ExpandTransformation(PatternTransformation):
     """
     Base class for transformations that simply expand a node into a
     subgraph, and thus needs only simple matching and replacement

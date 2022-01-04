@@ -141,7 +141,7 @@ def get_transformation_metadata(patterns: List[Type[xf.PatternTransformation]],
     interstate_transformations: TransformationData = []
     for pattern, opts in zip(patterns, options):
         # Find if the transformation is inter-state
-        is_interstate = isinstance(pattern, xf.MultiStateTransformation)
+        is_interstate = issubclass(pattern, xf.MultiStateTransformation)
         for i, expr in enumerate(pattern.expressions()):
             # Make a networkx-version of the match subgraph
             nxpattern = collapse_multigraph_to_nx(expr)
