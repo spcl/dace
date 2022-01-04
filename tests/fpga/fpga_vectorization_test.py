@@ -607,13 +607,13 @@ def test_vec_two_maps_strided():
 def test_vec_two_maps_non_strided():
     return vec_two_maps(False)
 
-
-@fpga_test()
+# @fpga_test()
+@xilinx_test()
 def test_vec_two_maps_nested_strided():
     return vec_two_maps_nested(True)
 
-
-@fpga_test()
+# @fpga_test()
+@xilinx_test()
 def test_vec_two_maps_nested_non_strided():
     return vec_two_maps_nested(False)
 

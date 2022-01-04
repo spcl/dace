@@ -6,7 +6,7 @@ from dace.transformation.dataflow.vectorization import Vectorization
 
 
 def vectorize(program):
-    sdfg: SDFG = program.to_sdfg(strict=True)
+    sdfg: SDFG = program.to_sdfg(coarsen=True)
     sdfg.apply_transformations(Vectorization,
                                {"target": dace.ScheduleType.SVE_Map})
     return sdfg
