@@ -13,16 +13,12 @@ if __name__ == '__main__':
                         metavar="IP",
                         help="Connect to Server IP. Default is localhost.")
 
-    parser.add_argument("-p",
-                        "--port",
-                        default="5000",
-                        help="Set server port. Default is 5000")
+    parser.add_argument("-p", "--port", default="5000", help="Set server port. Default is 5000")
 
-    parser.add_argument(
-        "-compile",
-        "--compile",
-        action="store_true",
-        help="Compiles the SDFG and returns resulting structures.")
+    parser.add_argument("-compile",
+                        "--compile",
+                        action="store_true",
+                        help="Compiles the SDFG and returns resulting structures.")
 
     parser.add_argument(
         "-tf",
@@ -36,38 +32,29 @@ if __name__ == '__main__':
         "-r",
         "--run",
         action="store_true",
-        help=
-        "Executes the SDFG on the target machine specified in Config and prints the execution output (blocking)"
-    )
+        help="Executes the SDFG on the target machine specified in Config and prints the execution output (blocking)")
 
     parser.add_argument(
         "-code",
         "--code",
         action="store_true",
-        help=
-        "Setting this indicates that the input is dace code. Default is false (compile JSON serialization of SDFG)"
+        help="Setting this indicates that the input is dace code. Default is false (compile JSON serialization of SDFG)"
     )
 
     parser.add_argument(
         "-u",
         "--user",
         default="default",
-        help=
-        "Setting this indicates that the input is dace code. Default is false (compile JSON serialization of SDFG)"
+        help="Setting this indicates that the input is dace code. Default is false (compile JSON serialization of SDFG)"
     )
 
-    parser.add_argument("-e",
-                        "--extract",
-                        nargs="+",
-                        choices=[
-                            "txform", "sdfg", "structure", "struct_noprop",
-                            "outcode", "txform_detail", "runnercode"
-                        ])
+    parser.add_argument(
+        "-e",
+        "--extract",
+        nargs="+",
+        choices=["txform", "sdfg", "structure", "struct_noprop", "outcode", "txform_detail", "runnercode"])
 
-    parser.add_argument("-ver",
-                        "--version",
-                        default="1.0",
-                        help="Sets the REST API Version to use.")
+    parser.add_argument("-ver", "--version", default="1.0", help="Sets the REST API Version to use.")
     args = parser.parse_args()
 
     if args.compile or args.run:
@@ -82,8 +69,7 @@ if __name__ == '__main__':
             try:
                 data['sdfg'] = json.loads(stdin_input)['sdfg']
             except:
-                sys.stderr.write("Failed to parse serialized SDFG input, "
-                                 "is it in a correct json format?")
+                sys.stderr.write("Failed to parse serialized SDFG input, " "is it in a correct json format?")
                 sys.stdout.write("Invalid data: " + str(stdin_input))
                 sys.exit(-3)
 
@@ -128,20 +114,12 @@ if __name__ == '__main__':
                     # Key not found
                     continue
             if not txf_found:
-                sys.stderr.write("Could not find a transformation named " +
-                                 args.transform)
+                sys.stderr.write("Could not find a transformation named " + args.transform)
                 sys.exit(-5)
             # Else we have a transform to apply
 
             # Build the format for the transformation manually
-            data['optpath'] = {
-                txform_sdfg: [{
-                    'name': args.transform,
-                    'params': {
-                        'props': txform
-                    }
-                }]
-            }
+            data['optpath'] = {txform_sdfg: [{'name': args.transform, 'params': {'props': txform}}]}
 
         nofail = False
         for i in range(0, 5):
@@ -149,8 +127,7 @@ if __name__ == '__main__':
             try:
                 response = requests.post(uri, json=data)
             except Exception as e:
-                print("Failed to request url '" + uri + "' with error " +
-                      str(e))
+                print("Failed to request url '" + uri + "' with error " + str(e))
                 import time
                 time.sleep(2)
                 continue
@@ -169,8 +146,7 @@ if __name__ == '__main__':
             for i in range(0, 5):
                 import time
                 time.sleep(1)
-                response = requests.post(url + "/dace/api/v" + args.version +
-                                         "/run/status/",
+                response = requests.post(url + "/dace/api/v" + args.version + "/run/status/",
                                          json={'client_id': args.user})
                 try:
                     tmp = json.loads(response.text)
@@ -214,8 +190,7 @@ if __name__ == '__main__':
                         encountered[c['opt_name']] = 0
                     else:
                         encountered[c['opt_name']] += 1
-                    name_str = "" if encountered[c['opt_name']] == 0 else (
-                        "$" + str(encountered[c['opt_name']]))
+                    name_str = "" if encountered[c['opt_name']] == 0 else ("$" + str(encountered[c['opt_name']]))
                     #sys.stdout.write(c['opt_name'] + name_str + '\n')
                     cb(x, c['opt_name'] + name_str, c)
                     if c != l[-1]: sys.stdout.write(',')
@@ -245,8 +220,7 @@ if __name__ == '__main__':
                     # Output available transformations
                     sys.stdout.write('"simple_transform":')
                     sys.stdout.write("{")
-                    get_transformations(
-                        resp_json, lambda a, b, c: sys.stdout.write(b + '\n'))
+                    get_transformations(resp_json, lambda a, b, c: sys.stdout.write(b + '\n'))
                     sys.stdout.write("}")
                     if "txform" != args.extract[-1]: sys.stdout.write(',')
                 if "txform_detail" == elem:
@@ -254,9 +228,8 @@ if __name__ == '__main__':
                     sys.stdout.write('"advanced_transform":')
                     sys.stdout.write("{")
                     get_transformations(
-                        resp_json, lambda a, b, c: sys.stdout.
-                        write('"' + b + '":\n' + json.dumps(c, indent=2) +
-                              '\n\n'))
+                        resp_json,
+                        lambda a, b, c: sys.stdout.write('"' + b + '":\n' + json.dumps(c, indent=2) + '\n\n'))
                     sys.stdout.write("}")
                     if "txform_detail" != args.extract[-1]:
                         sys.stdout.write(',')
@@ -276,11 +249,8 @@ if __name__ == '__main__':
                         sys.stdout.write('"outcode": ')
                         as_json = True
                     if as_json:
-                        sys.stdout.write(
-                            json.dumps({
-                                k: v['generated_code']
-                                for k, v in resp_json['compounds'].items()
-                            }))
+                        sys.stdout.write(json.dumps({k: v['generated_code']
+                                                     for k, v in resp_json['compounds'].items()}))
 
                     else:
                         try:
@@ -314,9 +284,7 @@ if __name__ == '__main__':
                     except:
                         pass
                     if not args.code and runnercode == "":
-                        sys.stderr.write(
-                            "Error: Cannot extract runnercode as it was not in input."
-                        )
+                        sys.stderr.write("Error: Cannot extract runnercode as it was not in input.")
                         sys.exit(-4)
                     elif args.code:
                         # Take stdin_input

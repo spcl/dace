@@ -57,9 +57,7 @@ if __name__ == "__main__":
     filtered = regression(A, ratio)
 
     if len(filtered) != outsize[0]:
-        print(
-            "Difference in number of filtered items: %d (DaCe) vs. %d (numpy)"
-            % (outsize[0], len(filtered)))
+        print("Difference in number of filtered items: %d (DaCe) vs. %d (numpy)" % (outsize[0], len(filtered)))
         totalitems = min(outsize[0], N.get())
         print('DaCe:', B[:totalitems].view(type=np.ndarray))
         print('Regression:', filtered.view(type=np.ndarray))

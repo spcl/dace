@@ -24,29 +24,16 @@ def hermitian_transpose(A: dace.complex128[BS, BS], B: dace.complex128[BS, BS]):
 
 
 @dace.program
-def rgf_dense(HD: dace.complex128[N, BS, BS], HE: dace.complex128[N, BS, BS],
-              HF: dace.complex128[N, BS, BS], sigmaRSD: dace.complex128[N, BS,
-                                                                        BS],
-              sigmaRSE: dace.complex128[N, BS,
-                                        BS], sigmaRSF: dace.complex128[N, BS,
-                                                                       BS],
-              sigmaLSD: dace.complex128[N, BS,
-                                        BS], sigmaLSE: dace.complex128[N, BS,
-                                                                       BS],
-              sigmaLSF: dace.complex128[N, BS,
-                                        BS], sigmaGSD: dace.complex128[N, BS,
-                                                                       BS],
-              sigmaGSE: dace.complex128[N, BS,
-                                        BS], sigmaGSF: dace.complex128[N, BS,
-                                                                       BS],
-              sigRl: dace.complex128[BS, BS], sigRr: dace.complex128[BS, BS],
-              gammaleft: dace.complex128[BS,
-                                         BS], gammaright: dace.complex128[BS,
-                                                                          BS],
-              fl: dace.float64[1], fr: dace.float64[1], GL: dace.complex128[N,
-                                                                            BS,
-                                                                            BS],
-              GG: dace.complex128[N, BS, BS], dTGL: dace.complex128[N]):
+def rgf_dense(HD: dace.complex128[N, BS, BS], HE: dace.complex128[N, BS, BS], HF: dace.complex128[N, BS, BS],
+              sigmaRSD: dace.complex128[N, BS, BS], sigmaRSE: dace.complex128[N, BS, BS],
+              sigmaRSF: dace.complex128[N, BS, BS], sigmaLSD: dace.complex128[N, BS,
+                                                                              BS], sigmaLSE: dace.complex128[N, BS, BS],
+              sigmaLSF: dace.complex128[N, BS, BS], sigmaGSD: dace.complex128[N, BS,
+                                                                              BS], sigmaGSE: dace.complex128[N, BS, BS],
+              sigmaGSF: dace.complex128[N, BS, BS], sigRl: dace.complex128[BS, BS], sigRr: dace.complex128[BS, BS],
+              gammaleft: dace.complex128[BS, BS], gammaright: dace.complex128[BS, BS], fl: dace.float64[1],
+              fr: dace.float64[1], GL: dace.complex128[N, BS, BS], GG: dace.complex128[N, BS,
+                                                                                       BS], dTGL: dace.complex128[N]):
 
     gR = np.ndarray((N, BS, BS), np.complex128)
     gL = np.ndarray((N, BS, BS), np.complex128)
@@ -102,11 +89,9 @@ def rgf_dense(HD: dace.complex128[N, BS, BS], HE: dace.complex128[N, BS, BS],
         # gG[n] = gR[n] @ (HF[n] @ gG[n + 1] @ HE[n + 1] + sigmaGSD[n] - (M - Her(M))) @ Her(gR[n])
         gR[n] = HD[n] - sig
         hermitian_transpose(gR[n], her_gR)
-        gL[n] = gR[n] @ (HF[n] @ gL[n + 1] @ HE[n + 1] + sigmaLSD[n] -
-                         (M - her_M1)) @ her_gR
+        gL[n] = gR[n] @ (HF[n] @ gL[n + 1] @ HE[n + 1] + sigmaLSD[n] - (M - her_M1)) @ her_gR
         M[:] = HF[n] @ gR[n + 1] @ sigmaGSE[n + 1]
-        gG[n] = gR[n] @ (HF[n] @ gG[n + 1] @ HE[n + 1] + sigmaGSD[n] -
-                         (M - her_M1)) @ her_gR
+        gG[n] = gR[n] @ (HF[n] @ gG[n + 1] @ HE[n + 1] + sigmaGSD[n] - (M - her_M1)) @ her_gR
 
     # Solve now the full retarded green function
     M[:] = HF[0] @ gR[1] @ sigmaLSE[1]
@@ -115,18 +100,15 @@ def rgf_dense(HD: dace.complex128[N, BS, BS], HE: dace.complex128[N, BS, BS],
     # GL[0] = GR[0] @ (sigLl + HF[0] @ gL[1] @ HE[1] + sigmaLSD[0] - (M - Her(M))) @ Her(GR[0])
     GR[0] = HD[0] - HF[0] @ gR[1] @ HE[1] - sigRl
     hermitian_transpose(GR[0], her_GR)
-    GL[0] = GR[0] @ (sigLl + HF[0] @ gL[1] @ HE[1] + sigmaLSD[0] -
-                     (M - her_M1)) @ her_GR
+    GL[0] = GR[0] @ (sigLl + HF[0] @ gL[1] @ HE[1] + sigmaLSD[0] - (M - her_M1)) @ her_GR
 
     M[:] = HF[0] @ gR[1] @ sigmaGSE[1]
     hermitian_transpose(M, her_M1)
     # GG[0] = GR[0] @ (sigGl + HF[0] @ gG[1] @ HE[1] + sigmaGSD[0] - (M - Her(M))) @ Her(GR[0])
     # GLnd[0] = -GL[0] @ HF[0] @ Her(gR[1]) - GR[0] @ HF[0] @ gL[1] + GR[0] @ sigmaLSF[0] @ Her(gR[1])
     hermitian_transpose(gR[1], her_gR)
-    GG[0] = GR[0] @ (sigGl + HF[0] @ gG[1] @ HE[1] + sigmaGSD[0] -
-                     (M - her_M1)) @ her_GR
-    GLnd[0] = (-GL[0] @ HF[0] @ her_gR - GR[0] @ HF[0] @ gL[1] +
-               GR[0] @ sigmaLSF[0] @ her_gR)
+    GG[0] = GR[0] @ (sigGl + HF[0] @ gG[1] @ HE[1] + sigmaGSD[0] - (M - her_M1)) @ her_GR
+    GLnd[0] = (-GL[0] @ HF[0] @ her_gR - GR[0] @ HF[0] @ gL[1] + GR[0] @ sigmaLSF[0] @ her_gR)
 
     for n in range(1, N, 1):
         GR[n] = gR[n] + gR[n] @ HE[n] @ GR[n - 1] @ HF[n - 1] @ gR[n]
@@ -140,8 +122,7 @@ def rgf_dense(HD: dace.complex128[N, BS, BS], HE: dace.complex128[N, BS, BS],
         M2 = gR[n] @ HE[n] @ GR[n - 1] @ sigmaLSF[n - 1] @ her_gR
         hermitian_transpose(M1, her_M1)
         hermitian_transpose(M2, her_M2)
-        GL[n] = gL[n] + gR[n] @ HE[n] @ GL[n - 1] @ HF[n - 1] @ her_gR + (
-            M1 - her_M1) - (M2 - her_M2)
+        GL[n] = gL[n] + gR[n] @ HE[n] @ GL[n - 1] @ HF[n - 1] @ her_gR + (M1 - her_M1) - (M2 - her_M2)
 
         # M1 = gR[n] @ HE[n] @ GR[n - 1] @ HF[n - 1] @ gG[n]
         # M2 = gR[n] @ HE[n] @ GR[n - 1] @ sigmaGSF[n - 1] @ Her(gR[n])
@@ -150,14 +131,12 @@ def rgf_dense(HD: dace.complex128[N, BS, BS], HE: dace.complex128[N, BS, BS],
         M2[:] = gR[n] @ HE[n] @ GR[n - 1] @ sigmaGSF[n - 1] @ her_gR
         hermitian_transpose(M1, her_M1)
         hermitian_transpose(M2, her_M2)
-        GG[n] = gG[n] + gR[n] @ HE[n] @ GG[n - 1] @ HF[n - 1] @ her_gR + (
-            M1 - her_M1) - (M2 - her_M2)
+        GG[n] = gG[n] + gR[n] @ HE[n] @ GG[n - 1] @ HF[n - 1] @ her_gR + (M1 - her_M1) - (M2 - her_M2)
 
         if n != N - 1:
             # GLnd[n] = -GL[n] @ HF[n] @ Her(gR[n + 1]) - GR[n] @ HF[n] @ gL[n + 1] + GR[n] @ sigmaLSF[n] @ Her(gR[n + 1])
             hermitian_transpose(gR[n + 1], her_gR)
-            GLnd[n] = (-GL[n] @ HF[n] @ her_gR - GR[n] @ HF[n] @ gL[n + 1] +
-                       GR[n] @ sigmaLSF[n] @ her_gR)
+            GLnd[n] = (-GL[n] @ HF[n] @ her_gR - GR[n] @ HF[n] @ gL[n + 1] + GR[n] @ sigmaLSF[n] @ her_gR)
 
     for n in range(1, N - 1):
         # dTGL[n] = np.trace(GLnd[n - 1] @ HE[n])

@@ -28,21 +28,9 @@ nstate.add_edge(t2, 'mm', M_localout, None, dace.Memlet.simple('m', '0'))
 ###############
 
 nsdfg_node = state.add_nested_sdfg(nsdfg, None, {'local'}, {'local', 'm'})
-state.add_memlet_path(L_in,
-                      me,
-                      nsdfg_node,
-                      memlet=dace.Memlet.simple('L', 'i'),
-                      dst_conn='local')
-state.add_memlet_path(nsdfg_node,
-                      mx,
-                      L_out,
-                      memlet=dace.Memlet.simple('L', 'i'),
-                      src_conn='local')
-state.add_memlet_path(nsdfg_node,
-                      mx,
-                      M_out,
-                      memlet=dace.Memlet.simple('M', 'i'),
-                      src_conn='m')
+state.add_memlet_path(L_in, me, nsdfg_node, memlet=dace.Memlet.simple('L', 'i'), dst_conn='local')
+state.add_memlet_path(nsdfg_node, mx, L_out, memlet=dace.Memlet.simple('L', 'i'), src_conn='local')
+state.add_memlet_path(nsdfg_node, mx, M_out, memlet=dace.Memlet.simple('M', 'i'), src_conn='m')
 
 
 def test():

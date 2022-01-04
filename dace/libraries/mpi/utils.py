@@ -30,8 +30,7 @@ def MPI_DDT(dtype):
 
 def is_access_contiguous(memlet, data):
     if memlet.other_subset is not None:
-        raise ValueError(
-            "Other subset must be None, reshape in send not supported")
+        raise ValueError("Other subset must be None, reshape in send not supported")
     # to be contiguous, in every dimension the memlet range must have the same size
     # than the data, except in the last dim, iff all other dims are only one element
 
@@ -68,7 +67,6 @@ def create_vector_ddt(memlet, data):
     ddt = dict()
     ddt["blocklen"] = str(memlet.subset.size_exact()[-1])
     ddt["oldtype"] = str(MPI_DDT(data))
-    ddt["count"] = "(" + str(
-        memlet.subset.num_elements_exact()) + ")" + "/" + str(ddt['blocklen'])
+    ddt["count"] = "(" + str(memlet.subset.num_elements_exact()) + ")" + "/" + str(ddt['blocklen'])
     ddt["stride"] = str(data.strides[0])
     return ddt

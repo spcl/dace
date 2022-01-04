@@ -22,9 +22,7 @@ def test_flat():
 
 
 def test_flat_noncontiguous():
-    with dace.config.set_temporary('compiler',
-                                   'allow_view_arguments',
-                                   value=True):
+    with dace.config.set_temporary('compiler', 'allow_view_arguments', value=True):
 
         @dace.program
         def indexing_test(A):
@@ -83,15 +81,12 @@ def test_newaxis():
 def test_multiple_newaxis():
     @dace.program
     def indexing_test(A: dace.float64[10, 20, 30]):
-        return A[np.newaxis, :, np.newaxis, np.newaxis, :, np.newaxis, :,
-                 np.newaxis]
+        return A[np.newaxis, :, np.newaxis, np.newaxis, :, np.newaxis, :, np.newaxis]
 
     A = np.random.rand(10, 20, 30)
     res = indexing_test(A)
     assert res.shape == (1, 10, 1, 1, 20, 1, 30, 1)
-    assert np.allclose(
-        A[np.newaxis, :, np.newaxis, np.newaxis, :, np.newaxis, :, np.newaxis],
-        res)
+    assert np.allclose(A[np.newaxis, :, np.newaxis, np.newaxis, :, np.newaxis, :, np.newaxis], res)
 
 
 def test_index_intarr_1d():
@@ -142,12 +137,10 @@ def test_index_intarr_1d_multi():
 
 def test_index_intarr_nd():
     @dace.program
-    def indexing_test(A: dace.float64[4, 3], rows: dace.int64[2, 2],
-                      columns: dace.int64[2, 2]):
+    def indexing_test(A: dace.float64[4, 3], rows: dace.int64[2, 2], columns: dace.int64[2, 2]):
         return A[rows, columns]
 
-    A = np.array([[0, 1, 2], [3, 4, 5], [6, 7, 8], [9, 10, 11]],
-                 dtype=np.float64)
+    A = np.array([[0, 1, 2], [3, 4, 5], [6, 7, 8], [9, 10, 11]], dtype=np.float64)
     rows = np.array([[0, 0], [3, 3]], dtype=np.intp)
     columns = np.array([[0, 2], [0, 2]], dtype=np.intp)
     expected = A[rows, columns]

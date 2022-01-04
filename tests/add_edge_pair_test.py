@@ -14,11 +14,7 @@ b = state.add_write('B')
 me, mx = state.add_map('m', dict(i='0:31'))
 
 # Add edges
-state.add_edge_pair(me,
-                    t,
-                    a,
-                    dace.Memlet.simple(a, 'i'),
-                    internal_connector='a')
+state.add_edge_pair(me, t, a, dace.Memlet.simple(a, 'i'), internal_connector='a')
 state.add_edge_pair(mx,
                     t,
                     b,

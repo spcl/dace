@@ -80,8 +80,7 @@ def test_different_block_sizes_nesting():
         nested(V, v1)
 
     @dace.program
-    def diffblocks(V: dace.float64[130], v1: dace.float64[4],
-                   v2: dace.float64[128]):
+    def diffblocks(V: dace.float64[130], v1: dace.float64[4], v2: dace.float64[128]):
         for bi in dace.map[1:129:32]:
             for i in dace.map[0:32]:
                 with dace.tasklet:
@@ -92,8 +91,7 @@ def test_different_block_sizes_nesting():
             nested2(V[bi - 1:bi + 33], v1[bi // 32:bi // 32 + 1])
 
     sdfg = diffblocks.to_sdfg()
-    assert sdfg.apply_transformations(GPUTransformSDFG,
-                                      dict(sequential_innermaps=False)) == 1
+    assert sdfg.apply_transformations(GPUTransformSDFG, dict(sequential_innermaps=False)) == 1
     V = np.random.rand(130)
     v1 = np.zeros([4], np.float64)
     v2 = np.random.rand(128)

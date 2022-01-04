@@ -23,27 +23,16 @@ class DetectLoop(transformation.Transformation):
 
         # Case 1: Loop with one state
         sdfg = sd.SDFG('_')
-        sdfg.add_nodes_from([
-            DetectLoop._loop_guard, DetectLoop._loop_begin,
-            DetectLoop._exit_state
-        ])
-        sdfg.add_edge(DetectLoop._loop_guard, DetectLoop._loop_begin,
-                      sd.InterstateEdge())
-        sdfg.add_edge(DetectLoop._loop_guard, DetectLoop._exit_state,
-                      sd.InterstateEdge())
-        sdfg.add_edge(DetectLoop._loop_begin, DetectLoop._loop_guard,
-                      sd.InterstateEdge())
+        sdfg.add_nodes_from([DetectLoop._loop_guard, DetectLoop._loop_begin, DetectLoop._exit_state])
+        sdfg.add_edge(DetectLoop._loop_guard, DetectLoop._loop_begin, sd.InterstateEdge())
+        sdfg.add_edge(DetectLoop._loop_guard, DetectLoop._exit_state, sd.InterstateEdge())
+        sdfg.add_edge(DetectLoop._loop_begin, DetectLoop._loop_guard, sd.InterstateEdge())
 
         # Case 2: Loop with multiple states (no back-edge from state)
         msdfg = sd.SDFG('_')
-        msdfg.add_nodes_from([
-            DetectLoop._loop_guard, DetectLoop._loop_begin,
-            DetectLoop._exit_state
-        ])
-        msdfg.add_edge(DetectLoop._loop_guard, DetectLoop._loop_begin,
-                       sd.InterstateEdge())
-        msdfg.add_edge(DetectLoop._loop_guard, DetectLoop._exit_state,
-                       sd.InterstateEdge())
+        msdfg.add_nodes_from([DetectLoop._loop_guard, DetectLoop._loop_begin, DetectLoop._exit_state])
+        msdfg.add_edge(DetectLoop._loop_guard, DetectLoop._loop_begin, sd.InterstateEdge())
+        msdfg.add_edge(DetectLoop._loop_guard, DetectLoop._exit_state, sd.InterstateEdge())
 
         return [sdfg, msdfg]
 
@@ -72,15 +61,12 @@ class DetectLoop(transformation.Transformation):
             return False
 
         # Outgoing edges must be a negation of each other
-        if guard_outedges[0].data.condition_sympy() != (sp.Not(
-                guard_outedges[1].data.condition_sympy())):
+        if guard_outedges[0].data.condition_sympy() != (sp.Not(guard_outedges[1].data.condition_sympy())):
             return False
 
         # All nodes inside loop must be dominated by loop guard
-        dominators = nx.dominance.immediate_dominators(sdfg.nx,
-                                                       sdfg.start_state)
-        loop_nodes = sdutil.dfs_conditional(
-            sdfg, sources=[begin], condition=lambda _, child: child != guard)
+        dominators = nx.dominance.immediate_dominators(sdfg.nx, sdfg.start_state)
+        loop_nodes = sdutil.dfs_conditional(sdfg, sources=[begin], condition=lambda _, child: child != guard)
         backedge = None
         for node in loop_nodes:
             for e in graph.out_edges(node):
@@ -118,8 +104,7 @@ class DetectLoop(transformation.Transformation):
         sexit = graph.node(candidate[DetectLoop._exit_state])
         ind = list(graph.in_edges(guard)[0].data.assignments.keys())[0]
 
-        return (' -> '.join(state.label for state in [guard, begin, sexit]) +
-                ' (for loop over "%s")' % ind)
+        return (' -> '.join(state.label for state in [guard, begin, sexit]) + ' (for loop over "%s")' % ind)
 
     def apply(self, sdfg):
         pass
@@ -130,9 +115,8 @@ def find_for_loop(
     guard: sd.SDFGState,
     entry: sd.SDFGState,
     itervar: Optional[str] = None
-) -> Optional[Tuple[AnyStr, Tuple[symbolic.SymbolicType, symbolic.SymbolicType,
-                                  symbolic.SymbolicType], Tuple[
-                                      List[sd.SDFGState], sd.SDFGState]]]:
+) -> Optional[Tuple[AnyStr, Tuple[symbolic.SymbolicType, symbolic.SymbolicType, symbolic.SymbolicType], Tuple[
+        List[sd.SDFGState], sd.SDFGState]]]:
     """
     Finds loop range from state machine.
     :param guard: State from which the outgoing edges detect whether to exit
@@ -182,8 +166,7 @@ def find_for_loop(
 
     # Get the init expression and the stride.
     start = symbolic.pystr_to_symbolic(init_assignment)
-    stride = (symbolic.pystr_to_symbolic(step_edge.data.assignments[itervar]) -
-              itersym)
+    stride = (symbolic.pystr_to_symbolic(step_edge.data.assignments[itervar]) - itersym)
 
     # Get a list of the last states before the loop and a reference to the last
     # loop state.

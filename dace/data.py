@@ -10,10 +10,8 @@ from typing import Set, Sequence, Tuple
 import dace.dtypes as dtypes
 from dace.codegen import cppunparse
 from dace import symbolic, serialize
-from dace.properties import (EnumProperty, Property, make_properties,
-                             DictProperty, ReferenceProperty, ShapeProperty,
-                             SubsetProperty, SymbolicProperty,
-                             TypeClassProperty, DebugInfoProperty, CodeProperty,
+from dace.properties import (EnumProperty, Property, make_properties, DictProperty, ReferenceProperty, ShapeProperty,
+                             SubsetProperty, SymbolicProperty, TypeClassProperty, DebugInfoProperty, CodeProperty,
                              ListProperty)
 
 
@@ -33,28 +31,18 @@ def create_datadescriptor(obj):
             obj = numpy.array(obj)
 
         if obj.dtype.fields is not None:  # Struct
-            dtype = dtypes.struct(
-                'unnamed', **{
-                    k: dtypes.typeclass(v[0].type)
-                    for k, v in obj.dtype.fields.items()
-                })
+            dtype = dtypes.struct('unnamed', **{k: dtypes.typeclass(v[0].type) for k, v in obj.dtype.fields.items()})
         else:
             dtype = dtypes.typeclass(obj.dtype.type)
-        return Array(dtype=dtype,
-                     strides=tuple(s // obj.itemsize for s in obj.strides),
-                     shape=obj.shape)
+        return Array(dtype=dtype, strides=tuple(s // obj.itemsize for s in obj.strides), shape=obj.shape)
     # special case for torch tensors. Maybe __array__ could be used here for a more
     # general solution, but torch doesn't support __array__ for cuda tensors.
     elif type(obj).__module__ == "torch" and type(obj).__name__ == "Tensor":
         try:
             import torch
-            return Array(dtype=dtypes.TORCH_DTYPE_TO_TYPECLASS[obj.dtype],
-                         strides=obj.stride(),
-                         shape=tuple(obj.shape))
+            return Array(dtype=dtypes.TORCH_DTYPE_TO_TYPECLASS[obj.dtype], strides=obj.stride(), shape=tuple(obj.shape))
         except ImportError:
-            raise ValueError(
-                "Attempted to convert a torch.Tensor, but torch could not be imported"
-            )
+            raise ValueError("Attempted to convert a torch.Tensor, but torch could not be imported")
     elif dtypes.is_gpu_array(obj):
         interface = obj.__cuda_array_interface__
         dtype = dtypes.typeclass(numpy.dtype(interface['typestr']).type)
@@ -63,15 +51,13 @@ def create_datadescriptor(obj):
             return Scalar(dtype, storage=dtypes.StorageType.GPU_Global)
         return Array(dtype=dtype,
                      shape=interface['shape'],
-                     strides=(tuple(s // itemsize for s in interface['strides'])
-                              if interface['strides'] else None),
+                     strides=(tuple(s // itemsize for s in interface['strides']) if interface['strides'] else None),
                      storage=dtypes.StorageType.GPU_Global)
     elif symbolic.issymbolic(obj):
         return Scalar(symbolic.symtype(obj))
     elif isinstance(obj, dtypes.typeclass):
         return Scalar(obj)
-    elif (obj is int or obj is float or obj is complex or obj is bool
-          or obj is None):
+    elif (obj is int or obj is float or obj is complex or obj is bool or obj is None):
         return Scalar(dtypes.typeclass(obj))
     elif isinstance(obj, type) and issubclass(obj, numpy.number):
         return Scalar(dtypes.typeclass(obj))
@@ -83,10 +69,9 @@ def create_datadescriptor(obj):
     elif isinstance(obj, str):
         return Scalar(dtypes.string())
 
-    raise TypeError(
-        f'Could not create a DaCe data descriptor from object {obj}. '
-        'If this is a custom object, consider creating a `__descriptor__` '
-        'adaptor method to the type hint or object itself.')
+    raise TypeError(f'Could not create a DaCe data descriptor from object {obj}. '
+                    'If this is a custom object, consider creating a `__descriptor__` '
+                    'adaptor method to the type hint or object itself.')
 
 
 def find_new_name(name: str, existing_names: Sequence[str]) -> str:
@@ -142,20 +127,14 @@ class Data(object):
     dtype = TypeClassProperty(default=dtypes.int32, choices=dtypes.Typeclasses)
     shape = ShapeProperty(default=[])
     transient = Property(dtype=bool, default=False)
-    storage = EnumProperty(dtype=dtypes.StorageType,
-                           desc="Storage location",
-                           default=dtypes.StorageType.Default)
+    storage = EnumProperty(dtype=dtypes.StorageType, desc="Storage location", default=dtypes.StorageType.Default)
     lifetime = EnumProperty(dtype=dtypes.AllocationLifetime,
                             desc='Data allocation span',
                             default=dtypes.AllocationLifetime.Scope)
-    location = DictProperty(
-        key_type=str,
-        value_type=str,
-        desc='Full storage location identifier (e.g., rank, GPU ID)')
+    location = DictProperty(key_type=str, value_type=str, desc='Full storage location identifier (e.g., rank, GPU ID)')
     debuginfo = DebugInfoProperty(allow_none=True)
 
-    def __init__(self, dtype, shape, transient, storage, location, lifetime,
-                 debuginfo):
+    def __init__(self, dtype, shape, transient, storage, location, lifetime, debuginfo):
         self.dtype = dtype
         self.shape = shape
         self.transient = transient
@@ -174,10 +153,8 @@ class Data(object):
     # class can call `_validate()` without calling the subclasses'
     # `validate` function.
     def _validate(self):
-        if any(not isinstance(s, (int, symbolic.SymExpr, symbolic.symbol,
-                                  symbolic.sympy.Basic)) for s in self.shape):
-            raise TypeError('Shape must be a list or tuple of integer values '
-                            'or symbols')
+        if any(not isinstance(s, (int, symbolic.SymExpr, symbolic.symbol, symbolic.sympy.Basic)) for s in self.shape):
+            raise TypeError('Shape must be a list or tuple of integer values ' 'or symbols')
         return True
 
     def to_json(self):
@@ -192,8 +169,7 @@ class Data(object):
         return self.lifetime is not dtypes.AllocationLifetime.Scope
 
     def copy(self):
-        raise RuntimeError(
-            'Data descriptors are unique and should not be copied')
+        raise RuntimeError('Data descriptors are unique and should not be copied')
 
     def is_equivalent(self, other):
         """ Check for equivalence (shape and type) of two data descriptors. """
@@ -254,8 +230,7 @@ class Data(object):
         for dim in dimensions:
             strides[dim] = total_size
             if not only_first_aligned or first:
-                dimsize = (((self.shape[dim] + alignment - 1) // alignment) *
-                           alignment)
+                dimsize = (((self.shape[dim] + alignment - 1) // alignment) * alignment)
             else:
                 dimsize = self.shape[dim]
             total_size *= dimsize
@@ -279,10 +254,9 @@ class Data(object):
                                    with ``alignment``. Otherwise all dimensions
                                    are.
         """
-        strides, totalsize = self.strides_from_layout(
-            *dimensions,
-            alignment=alignment,
-            only_first_aligned=only_first_aligned)
+        strides, totalsize = self.strides_from_layout(*dimensions,
+                                                      alignment=alignment,
+                                                      only_first_aligned=only_first_aligned)
         self.strides = strides
         self.total_size = totalsize
 
@@ -303,8 +277,7 @@ class Scalar(Data):
                  debuginfo=None):
         self.allow_conflicts = allow_conflicts
         shape = [1]
-        super(Scalar, self).__init__(dtype, shape, transient, storage, location,
-                                     lifetime, debuginfo)
+        super(Scalar, self).__init__(dtype, shape, transient, storage, location, lifetime, debuginfo)
 
     @staticmethod
     def from_json(json_obj, context=None):
@@ -321,8 +294,7 @@ class Scalar(Data):
         return 'Scalar (dtype=%s)' % self.dtype
 
     def clone(self):
-        return Scalar(self.dtype, self.transient, self.storage,
-                      self.allow_conflicts, self.location, self.lifetime,
+        return Scalar(self.dtype, self.transient, self.storage, self.allow_conflicts, self.location, self.lifetime,
                       self.debuginfo)
 
     @property
@@ -376,12 +348,11 @@ class Array(Data):
     """ Array/constant descriptor (dimensions, type and other properties). """
 
     # Properties
-    allow_conflicts = Property(
-        dtype=bool,
-        default=False,
-        desc='If enabled, allows more than one '
-        'memlet to write to the same memory location without conflict '
-        'resolution.')
+    allow_conflicts = Property(dtype=bool,
+                               default=False,
+                               desc='If enabled, allows more than one '
+                               'memlet to write to the same memory location without conflict '
+                               'resolution.')
 
     strides = ShapeProperty(
         # element_type=symbolic.pystr_to_symbolic,
@@ -389,10 +360,7 @@ class Array(Data):
         'skip in order to obtain the next element in '
         'that dimension.')
 
-    total_size = SymbolicProperty(
-        default=0,
-        desc='The total allocated size of the array. Can be used for'
-        ' padding.')
+    total_size = SymbolicProperty(default=0, desc='The total allocated size of the array. Can be used for' ' padding.')
 
     offset = ShapeProperty(desc='Initial offset to translate all indices by.')
 
@@ -401,10 +369,7 @@ class Array(Data):
                          desc='This pointer may alias with other pointers in '
                          'the same function')
 
-    alignment = Property(dtype=int,
-                         default=0,
-                         desc='Allocation alignment in bytes (0 uses '
-                         'compiler-default)')
+    alignment = Property(dtype=int, default=0, desc='Allocation alignment in bytes (0 uses ' 'compiler-default)')
 
     def __init__(self,
                  dtype,
@@ -421,8 +386,7 @@ class Array(Data):
                  debuginfo=None,
                  total_size=None):
 
-        super(Array, self).__init__(dtype, shape, transient, storage, location,
-                                    lifetime, debuginfo)
+        super(Array, self).__init__(dtype, shape, transient, storage, location, lifetime, debuginfo)
 
         if shape is None:
             raise IndexError('Shape must not be None')
@@ -446,14 +410,11 @@ class Array(Data):
         self.validate()
 
     def __repr__(self):
-        return '%s (dtype=%s, shape=%s)' % (type(self).__name__, self.dtype,
-                                            self.shape)
+        return '%s (dtype=%s, shape=%s)' % (type(self).__name__, self.dtype, self.shape)
 
     def clone(self):
-        return type(self)(self.dtype, self.shape, self.transient,
-                          self.allow_conflicts, self.storage, self.location,
-                          self.strides, self.offset, self.may_alias,
-                          self.lifetime, self.alignment, self.debuginfo,
+        return type(self)(self.dtype, self.shape, self.transient, self.allow_conflicts, self.storage, self.location,
+                          self.strides, self.offset, self.may_alias, self.lifetime, self.alignment, self.debuginfo,
                           self.total_size)
 
     def to_json(self):
@@ -487,10 +448,8 @@ class Array(Data):
         if len(self.strides) != len(self.shape):
             raise TypeError('Strides must be the same size as shape')
 
-        if any(not isinstance(s, (int, symbolic.SymExpr, symbolic.symbol,
-                                  symbolic.sympy.Basic)) for s in self.strides):
-            raise TypeError('Strides must be a list or tuple of integer '
-                            'values or symbols')
+        if any(not isinstance(s, (int, symbolic.SymExpr, symbolic.symbol, symbolic.sympy.Basic)) for s in self.strides):
+            raise TypeError('Strides must be a list or tuple of integer ' 'values or symbols')
 
         if len(self.offset) != len(self.shape):
             raise TypeError('Offset must be the same size as shape')
@@ -561,10 +520,7 @@ class Array(Data):
         return str(self.dtype.ctype) + ' * __restrict__ ' + arrname
 
     def sizes(self):
-        return [
-            d.name if isinstance(d, symbolic.symbol) else str(d)
-            for d in self.shape
-        ]
+        return [d.name if isinstance(d, symbolic.symbol) else str(d) for d in self.shape]
 
     @property
     def free_symbols(self):
@@ -612,8 +568,7 @@ class Stream(Data):
         else:
             self.offset = [0] * len(shape)
 
-        super(Stream, self).__init__(dtype, shape, transient, storage, location,
-                                     lifetime, debuginfo)
+        super(Stream, self).__init__(dtype, shape, transient, storage, location, lifetime, debuginfo)
 
     def to_json(self):
         attrs = serialize.all_properties_to_json(self)
@@ -631,8 +586,7 @@ class Stream(Data):
         return ret
 
     def __repr__(self):
-        return '%s (dtype=%s, shape=%s)' % (type(self).__name__, self.dtype,
-                                            self.shape)
+        return '%s (dtype=%s, shape=%s)' % (type(self).__name__, self.dtype, self.shape)
 
     @property
     def total_size(self):
@@ -643,8 +597,7 @@ class Stream(Data):
         return [_prod(self.shape[i + 1:]) for i in range(len(self.shape))]
 
     def clone(self):
-        return type(self)(self.dtype, self.buffer_size, self.shape,
-                          self.transient, self.storage, self.location,
+        return type(self)(self.dtype, self.buffer_size, self.shape, self.transient, self.storage, self.location,
                           self.offset, self.lifetime, self.debuginfo)
 
     # Checks for equivalent shape and type
@@ -668,24 +621,17 @@ class Stream(Data):
 
     def as_arg(self, with_types=True, for_call=False, name=None):
         if not with_types or for_call: return name
-        if self.storage in [
-                dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared
-        ]:
+        if self.storage in [dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared]:
             return 'dace::GPUStream<%s, %s> %s' % (str(
-                self.dtype.ctype), 'true' if sp.log(
-                    self.buffer_size, 2).is_Integer else 'false', name)
+                self.dtype.ctype), 'true' if sp.log(self.buffer_size, 2).is_Integer else 'false', name)
 
         return 'dace::Stream<%s> %s' % (str(self.dtype.ctype), name)
 
     def sizes(self):
-        return [
-            d.name if isinstance(d, symbolic.symbol) else str(d)
-            for d in self.shape
-        ]
+        return [d.name if isinstance(d, symbolic.symbol) else str(d) for d in self.shape]
 
     def size_string(self):
-        return (" * ".join(
-            [cppunparse.pyexpr2cpp(symbolic.symstr(s)) for s in self.shape]))
+        return (" * ".join([cppunparse.pyexpr2cpp(symbolic.symstr(s)) for s in self.shape]))
 
     def is_stream_array(self):
         return _prod(self.shape) != 1
@@ -768,8 +714,7 @@ class View(Array):
         # We ensure that allocation lifetime is always set to Scope, since the
         # view is generated upon "allocation"
         if self.lifetime != dtypes.AllocationLifetime.Scope:
-            raise ValueError('Only Scope allocation lifetime is supported for '
-                             'Views')
+            raise ValueError('Only Scope allocation lifetime is supported for ' 'Views')
 
     def as_array(self):
         copy = cp.deepcopy(self)

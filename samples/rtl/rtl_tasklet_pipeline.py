@@ -149,6 +149,4 @@ if __name__ == '__main__':
 
     assert b[
         0] == 100  # TODO: implement detection of #elements to process, s.t. we can extend the assertion to the whole array
-    assert np.all(map(
-        (lambda x: x == 0),
-        b[1:-1]))  # should still be at the init value (for the moment)
+    assert np.all(map((lambda x: x == 0), b[1:-1]))  # should still be at the init value (for the moment)

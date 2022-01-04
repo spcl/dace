@@ -46,8 +46,7 @@ class ExpandBlockCyclicScatterMKL(ExpandTransformation):
         conn = tasklet.in_connectors
         conn = {
             c: (
-                dtypes.pointer(dace.int32)
-                if c == '_block_sizes'  # and not isinstance(t, dtypes.pointer)
+                dtypes.pointer(dace.int32) if c == '_block_sizes'  # and not isinstance(t, dtypes.pointer)
                 else t)
             for c, t in conn.items()
         }
@@ -159,11 +158,7 @@ class BlockCyclicGather(dace.sdfg.nodes.LibraryNode):
     default_implementation = "MKL"
 
     def __init__(self, name, *args, **kwargs):
-        super().__init__(name,
-                         *args,
-                         inputs={"_inbuffer", "_block_sizes"},
-                         outputs={"_outbuffer"},
-                         **kwargs)
+        super().__init__(name, *args, inputs={"_inbuffer", "_block_sizes"}, outputs={"_outbuffer"}, **kwargs)
 
     def validate(self, sdfg, state):
         """

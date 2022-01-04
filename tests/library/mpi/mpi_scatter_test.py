@@ -28,10 +28,7 @@ def make_sdfg(dtype):
                           scatter_node,
                           dst_conn="_inbuffer",
                           memlet=Memlet.simple(inbuf, "0:n*p", num_accesses=n))
-    state.add_memlet_path(root,
-                          scatter_node,
-                          dst_conn="_root",
-                          memlet=Memlet.simple(root, "0:1", num_accesses=1))
+    state.add_memlet_path(root, scatter_node, dst_conn="_root", memlet=Memlet.simple(root, "0:1", num_accesses=1))
     state.add_memlet_path(scatter_node,
                           outbuf,
                           src_conn="_outbuffer",
@@ -55,8 +52,7 @@ def test_mpi(implementation, dtype):
     commsize = comm.Get_size()
     mpi_sdfg = None
     if commsize < 2:
-        raise ValueError(
-            "This test is supposed to be run with at least two processes!")
+        raise ValueError("This test is supposed to be run with at least two processes!")
     for r in range(0, commsize):
         if r == rank:
             sdfg = make_sdfg(dtype)
@@ -95,8 +91,7 @@ def test_dace_scatter_gather():
     commsize = comm.Get_size()
     mpi_sdfg = None
     if commsize < 2:
-        raise ValueError(
-            "This test is supposed to be run with at least two processes!")
+        raise ValueError("This test is supposed to be run with at least two processes!")
     for r in range(0, commsize):
         if r == rank:
             mpi_sdfg = dace_scatter_gather.compile()
@@ -111,8 +106,7 @@ def test_dace_scatter_gather():
     mpi_sdfg(A=A, N=length, P=commsize)
 
     if rank == 0:
-        assert (np.allclose(
-            A, np.full([length * commsize], np.pi, dtype=np.float32)))
+        assert (np.allclose(A, np.full([length * commsize], np.pi, dtype=np.float32)))
     else:
         assert (True)
 

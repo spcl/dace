@@ -9,8 +9,7 @@ from mpi4py import MPI
 from dace.codegen.compiled_sdfg import CompiledSDFG, ReloadableDLL
 from dace.transformation.dataflow import ElementWiseArrayOperation2D, RedundantComm2D
 
-NI, NJ, NK = (dc.symbol(s, dtype=dc.int64, integer=True, positive=True)
-              for s in ('NI', 'NJ', 'NK'))
+NI, NJ, NK = (dc.symbol(s, dtype=dc.int64, integer=True, positive=True) for s in ('NI', 'NJ', 'NK'))
 
 
 def relerr(ref, val):
@@ -18,8 +17,7 @@ def relerr(ref, val):
 
 
 @dc.program
-def gemm(alpha: dc.float64, beta: dc.float64, C: dc.float64[NI, NJ],
-         A: dc.float64[NI, NK], B: dc.float64[NK, NJ]):
+def gemm(alpha: dc.float64, beta: dc.float64, C: dc.float64[NI, NJ], A: dc.float64[NI, NK], B: dc.float64[NK, NJ]):
 
     C[:] = alpha * A @ B + beta * C
 
@@ -28,15 +26,9 @@ def init_data(NI, NJ, NK, datatype):
 
     alpha = datatype(1.5)
     beta = datatype(1.2)
-    C = np.fromfunction(lambda i, j: ((i * j + 1) % NI) / NI,
-                        shape=(NI, NJ),
-                        dtype=datatype)
-    A = np.fromfunction(lambda i, k: (i * (k + 1) % NK) / NK,
-                        shape=(NI, NK),
-                        dtype=datatype)
-    B = np.fromfunction(lambda k, j: (k * (j + 2) % NJ) / NJ,
-                        shape=(NK, NJ),
-                        dtype=datatype)
+    C = np.fromfunction(lambda i, j: ((i * j + 1) % NI) / NI, shape=(NI, NJ), dtype=datatype)
+    A = np.fromfunction(lambda i, k: (i * (k + 1) % NK) / NK, shape=(NI, NK), dtype=datatype)
+    B = np.fromfunction(lambda k, j: (k * (j + 2) % NJ) / NJ, shape=(NK, NJ), dtype=datatype)
 
     return alpha, beta, C, A, B
 
@@ -68,17 +60,7 @@ if __name__ == "__main__":
     comm.Barrier()
 
     Px = Py = int(np.sqrt(size))
-    mpi_func(A=A,
-             B=B,
-             C=C,
-             alpha=alpha,
-             beta=beta,
-             NI=NI,
-             NJ=NJ,
-             NK=NK,
-             commsize=size,
-             Px=Px,
-             Py=Py)
+    mpi_func(A=A, B=B, C=C, alpha=alpha, beta=beta, NI=NI, NJ=NJ, NK=NK, commsize=size, Px=Px, Py=Py)
 
     comm.Barrier()
 

@@ -25,10 +25,8 @@ def create_deeply_nested_sdfg(mem_type):
 
     nsdfg = dace.SDFG("nest")
     nstate = nsdfg.add_state("nested_state")
-    x_read = nstate.add_array("xin", [4, 10], dace.float32,
-                              dtypes.StorageType.FPGA_Global)
-    x_write = nstate.add_array("xout", [4, 10], dace.float32,
-                               dtypes.StorageType.FPGA_Global)
+    x_read = nstate.add_array("xin", [4, 10], dace.float32, dtypes.StorageType.FPGA_Global)
+    x_write = nstate.add_array("xout", [4, 10], dace.float32, dtypes.StorageType.FPGA_Global)
     nsdfg.arrays["xin"].location["memorytype"] = mem_type
     nsdfg.arrays["xin"].location["bank"] = "0:4"
     nsdfg.arrays["xout"].location["memorytype"] = mem_type
@@ -36,24 +34,12 @@ def create_deeply_nested_sdfg(mem_type):
     map_entry, map_exit = nstate.add_map("map1", dict(w="0:2"))
     map_entry.schedule = dtypes.ScheduleType.Unrolled
     imap_entry, imap_exit = nstate.add_map("map2", dict(i="0:10"))
-    nope = nstate.add_tasklet("nop", dict(_in=None), dict(_out=None),
-                              "_out = _in")
+    nope = nstate.add_tasklet("nop", dict(_in=None), dict(_out=None), "_out = _in")
     input_mem = mem.Memlet("xin[2*k+w, i]")
     output_mem = mem.Memlet("xout[2*k+w, i]")
-    nstate.add_memlet_path(x_read,
-                           map_entry,
-                           imap_entry,
-                           nope,
-                           memlet=input_mem,
-                           dst_conn="_in")
-    nstate.add_memlet_path(nope,
-                           imap_exit,
-                           map_exit,
-                           x_write,
-                           memlet=output_mem,
-                           src_conn="_out")
-    nsdfg_node = state.add_nested_sdfg(nsdfg, state, set(["xin"]),
-                                       set(['xout']))
+    nstate.add_memlet_path(x_read, map_entry, imap_entry, nope, memlet=input_mem, dst_conn="_in")
+    nstate.add_memlet_path(nope, imap_exit, map_exit, x_write, memlet=output_mem, src_conn="_out")
+    nsdfg_node = state.add_nested_sdfg(nsdfg, state, set(["xin"]), set(['xout']))
 
     state.add_memlet_path(xarr,
                           top_map_entry,

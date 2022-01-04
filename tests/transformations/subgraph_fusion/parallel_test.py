@@ -11,12 +11,9 @@ N, M, O, P, Q, R = [dace.symbol(s) for s in ['N', 'M', 'O', 'P', 'Q', 'R']]
 
 
 @dace.program
-def subgraph_fusion_parallel(A: dace.float64[N], B: dace.float64[M],
-                             C: dace.float64[O], D: dace.float64[M],
-                             E: dace.float64[N], F: dace.float64[P],
-                             G: dace.float64[M], H: dace.float64[P],
-                             I: dace.float64[N], J: dace.float64[R],
-                             X: dace.float64[N], Y: dace.float64[M],
+def subgraph_fusion_parallel(A: dace.float64[N], B: dace.float64[M], C: dace.float64[O], D: dace.float64[M],
+                             E: dace.float64[N], F: dace.float64[P], G: dace.float64[M], H: dace.float64[P],
+                             I: dace.float64[N], J: dace.float64[R], X: dace.float64[N], Y: dace.float64[M],
                              Z: dace.float64[P]):
 
     tmp1 = np.ndarray([N, M, O], dtype=dace.float64)

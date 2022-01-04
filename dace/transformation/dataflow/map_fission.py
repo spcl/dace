@@ -51,18 +51,15 @@ class MapFission(transformation.Transformation):
         ]
 
     @staticmethod
-    def _components(
-            subgraph: gr.SubgraphView) -> List[Tuple[nodes.Node, nodes.Node]]:
+    def _components(subgraph: gr.SubgraphView) -> List[Tuple[nodes.Node, nodes.Node]]:
         """
         Returns the list of tuples non-array components in this subgraph.
         Each element in the list is a 2 tuple of (input node, output node) of
         the component.
         """
-        graph = (subgraph
-                 if isinstance(subgraph, sd.SDFGState) else subgraph.graph)
+        graph = (subgraph if isinstance(subgraph, sd.SDFGState) else subgraph.graph)
         schildren = subgraph.scope_children()
-        ns = [(n, graph.exit_node(n)) if isinstance(n, nodes.EntryNode) else
-              (n, n) for n in schildren[None]
+        ns = [(n, graph.exit_node(n)) if isinstance(n, nodes.EntryNode) else (n, n) for n in schildren[None]
               if isinstance(n, (nodes.CodeNode, nodes.EntryNode))]
 
         return ns
@@ -76,11 +73,9 @@ class MapFission(transformation.Transformation):
         subset = gr.SubgraphView(parent, schildren[None])
         if nested:
             return set(node.data for node in subset.nodes()
-                       if isinstance(node, nodes.AccessNode)
-                       and sdfg.arrays[node.data].transient)
+                       if isinstance(node, nodes.AccessNode) and sdfg.arrays[node.data].transient)
         else:
-            return set(node.data for node in subset.nodes()
-                       if isinstance(node, nodes.AccessNode))
+            return set(node.data for node in subset.nodes() if isinstance(node, nodes.AccessNode))
 
     @staticmethod
     def _internal_border_arrays(total_components, subgraphs):
@@ -121,11 +116,7 @@ class MapFission(transformation.Transformation):
             return False
 
         if expr_index == 0:  # Map with subgraph
-            subgraphs = [
-                graph.scope_subgraph(map_node,
-                                     include_entry=False,
-                                     include_exit=False)
-            ]
+            subgraphs = [graph.scope_subgraph(map_node, include_entry=False, include_exit=False)]
         else:  # Map with nested SDFG
             nsdfg_node = graph.node(candidate[MapFission._nested_sdfg])
             # Make sure there are no other internal nodes in the map
@@ -145,9 +136,8 @@ class MapFission(transformation.Transformation):
 
             # Test that the components are connected by transients that are not
             # used anywhere else
-            border_arrays |= MapFission._border_arrays(
-                nsdfg_node.sdfg if expr_index == 1 else sdfg,
-                sg if expr_index == 1 else graph, sg)
+            border_arrays |= MapFission._border_arrays(nsdfg_node.sdfg if expr_index == 1 else sdfg,
+                                                       sg if expr_index == 1 else graph, sg)
             total_components.append(components)
 
             # In nested SDFGs and subgraphs, ensure none of the border
@@ -165,12 +155,10 @@ class MapFission(transformation.Transformation):
             # in other scopes or states
             if expr_index == 0:
                 # Find all nodes not in subgraph
-                not_subgraph = set(
-                    n.data for n in graph.nodes()
-                    if n not in snodes and isinstance(n, nodes.AccessNode))
+                not_subgraph = set(n.data for n in graph.nodes() if n not in snodes and isinstance(n, nodes.AccessNode))
                 not_subgraph.update(
-                    set(n.data for s in sdfg.nodes() if s != graph
-                        for n in s.nodes() if isinstance(n, nodes.AccessNode)))
+                    set(n.data for s in sdfg.nodes() if s != graph for n in s.nodes()
+                        if isinstance(n, nodes.AccessNode)))
 
                 for _, component_out in components:
                     for e in sg.out_edges(component_out):
@@ -181,9 +169,7 @@ class MapFission(transformation.Transformation):
         # Fail if there are arrays inside the map that are not a direct
         # output of a computational component
         # TODO(later): Support this case? Ambiguous array sizes and memlets
-        external_arrays = (
-            border_arrays -
-            MapFission._internal_border_arrays(total_components, subgraphs))
+        external_arrays = (border_arrays - MapFission._internal_border_arrays(total_components, subgraphs))
         if len(external_arrays) > 0:
             return False
 
@@ -202,10 +188,7 @@ class MapFission(transformation.Transformation):
 
         # Obtain subgraph to perform fission to
         if self.expr_index == 0:  # Map with subgraph
-            subgraphs = [(graph,
-                          graph.scope_subgraph(map_entry,
-                                               include_entry=False,
-                                               include_exit=False))]
+            subgraphs = [(graph, graph.scope_subgraph(map_entry, include_entry=False, include_exit=False))]
             parent = sdfg
         else:  # Map with nested SDFG
             nsdfg_node = graph.node(self.subgraph[MapFission._nested_sdfg])
@@ -232,8 +215,7 @@ class MapFission(transformation.Transformation):
                     continue
                 if symname not in nsdfg_node.symbol_mapping.keys():
                     nsdfg_node.symbol_mapping[symname] = sym
-                    nsdfg_node.sdfg.symbols[symname] = graph.symbols_defined_at(
-                        nsdfg_node)[symname]
+                    nsdfg_node.sdfg.symbols[symname] = graph.symbols_defined_at(nsdfg_node)[symname]
 
             # Remove map symbols from nested mapping
             for name in outer_map.params:
@@ -254,13 +236,11 @@ class MapFission(transformation.Transformation):
             else:
                 external_edges_entry = [
                     e for e in subgraph.edges()
-                    if (isinstance(e.src, nodes.AccessNode)
-                        and not nsdfg_node.sdfg.arrays[e.src.data].transient)
+                    if (isinstance(e.src, nodes.AccessNode) and not nsdfg_node.sdfg.arrays[e.src.data].transient)
                 ]
                 external_edges_exit = [
                     e for e in subgraph.edges()
-                    if (isinstance(e.dst, nodes.AccessNode)
-                        and not nsdfg_node.sdfg.arrays[e.dst.data].transient)
+                    if (isinstance(e.dst, nodes.AccessNode) and not nsdfg_node.sdfg.arrays[e.dst.data].transient)
                 ]
 
             # Map external edges to outer memlets
@@ -273,8 +253,7 @@ class MapFission(transformation.Transformation):
                     edge_to_outer[edge] = path[eindex - 1]
                 else:
                     # Nested SDFGs use the internal map edges of the node
-                    outer_edge = next(e for e in graph.in_edges(nsdfg_node)
-                                      if e.dst_conn == edge.src.data)
+                    outer_edge = next(e for e in graph.in_edges(nsdfg_node) if e.dst_conn == edge.src.data)
                     edge_to_outer[edge] = outer_edge
 
             for edge in external_edges_exit:
@@ -284,14 +263,11 @@ class MapFission(transformation.Transformation):
                     edge_to_outer[edge] = path[eindex + 1]
                 else:
                     # Nested SDFGs use the internal map edges of the node
-                    outer_edge = next(e for e in graph.out_edges(nsdfg_node)
-                                      if e.src_conn == edge.dst.data)
+                    outer_edge = next(e for e in graph.out_edges(nsdfg_node) if e.src_conn == edge.dst.data)
                     edge_to_outer[edge] = outer_edge
 
             # Collect all border arrays and code->code edges
-            arrays = MapFission._border_arrays(
-                nsdfg_node.sdfg if self.expr_index == 1 else sdfg, state,
-                subgraph)
+            arrays = MapFission._border_arrays(nsdfg_node.sdfg if self.expr_index == 1 else sdfg, state, subgraph)
             scalars = defaultdict(list)
             for _, component_out in components:
                 for e in subgraph.out_edges(component_out):
@@ -302,15 +278,14 @@ class MapFission(transformation.Transformation):
             for scalar, edges in scalars.items():
                 desc = parent.arrays[scalar]
                 del parent.arrays[scalar]
-                name, newdesc = parent.add_transient(
-                    scalar,
-                    mapsize,
-                    desc.dtype,
-                    desc.storage,
-                    lifetime=desc.lifetime,
-                    debuginfo=desc.debuginfo,
-                    allow_conflicts=desc.allow_conflicts,
-                    find_new_name=True)
+                name, newdesc = parent.add_transient(scalar,
+                                                     mapsize,
+                                                     desc.dtype,
+                                                     desc.storage,
+                                                     lifetime=desc.lifetime,
+                                                     debuginfo=desc.debuginfo,
+                                                     allow_conflicts=desc.allow_conflicts,
+                                                     find_new_name=True)
 
                 # Add extra nodes in component boundaries
                 for edge in edges:
@@ -318,25 +293,16 @@ class MapFission(transformation.Transformation):
                     sbs = subsets.Range.from_string(','.join(outer_map.params))
                     # Offset memlet by map range begin (to fit the transient)
                     sbs.offset([r[0] for r in outer_map.range], True)
-                    state.add_edge(
-                        edge.src, edge.src_conn, anode, None,
-                        mm.Memlet.simple(
-                            name,
-                            sbs,
-                            num_accesses=outer_map.range.num_elements()))
-                    state.add_edge(
-                        anode, None, edge.dst, edge.dst_conn,
-                        mm.Memlet.simple(
-                            name,
-                            sbs,
-                            num_accesses=outer_map.range.num_elements()))
+                    state.add_edge(edge.src, edge.src_conn, anode, None,
+                                   mm.Memlet.simple(name, sbs, num_accesses=outer_map.range.num_elements()))
+                    state.add_edge(anode, None, edge.dst, edge.dst_conn,
+                                   mm.Memlet.simple(name, sbs, num_accesses=outer_map.range.num_elements()))
                     state.remove_edge(edge)
 
             # Add extra maps around components
             new_map_entries = []
             for component_in, component_out in components:
-                me, mx = state.add_map(outer_map.label + '_fission',
-                                       [(p, '0:1') for p in outer_map.params],
+                me, mx = state.add_map(outer_map.label + '_fission', [(p, '0:1') for p in outer_map.params],
                                        outer_map.schedule,
                                        unroll=outer_map.unroll,
                                        debuginfo=outer_map.debuginfo)
@@ -354,12 +320,10 @@ class MapFission(transformation.Transformation):
                     state.add_edge(me, None, e.dst, e.dst_conn, dcpy(e.data))
                     # Reconnect inner edges at source directly to external nodes
                     if self.expr_index == 0 and e in external_edges_entry:
-                        state.add_edge(edge_to_outer[e].src,
-                                       edge_to_outer[e].src_conn, me, None,
+                        state.add_edge(edge_to_outer[e].src, edge_to_outer[e].src_conn, me, None,
                                        dcpy(edge_to_outer[e].data))
                     else:
-                        state.add_edge(e.src, e.src_conn, me, None,
-                                       dcpy(e.data))
+                        state.add_edge(e.src, e.src_conn, me, None, dcpy(e.data))
                     state.remove_edge(e)
                 # Empty memlet edge in nested SDFGs
                 if state.in_degree(component_in) == 0:
@@ -369,12 +333,10 @@ class MapFission(transformation.Transformation):
                     state.add_edge(e.src, e.src_conn, mx, None, dcpy(e.data))
                     # Reconnect inner edges at sink directly to external nodes
                     if self.expr_index == 0 and e in external_edges_exit:
-                        state.add_edge(mx, None, edge_to_outer[e].dst,
-                                       edge_to_outer[e].dst_conn,
+                        state.add_edge(mx, None, edge_to_outer[e].dst, edge_to_outer[e].dst_conn,
                                        dcpy(edge_to_outer[e].data))
                     else:
-                        state.add_edge(mx, None, e.dst, e.dst_conn,
-                                       dcpy(e.data))
+                        state.add_edge(mx, None, e.dst, e.dst_conn, dcpy(e.data))
                     state.remove_edge(e)
                 # Empty memlet edge in nested SDFGs
                 if state.out_degree(component_out) == 0:
@@ -387,17 +349,14 @@ class MapFission(transformation.Transformation):
                         for edge in state.in_edges(node):
                             outer_edge = edge_to_outer[edge]
                             memlet = dcpy(edge.data)
-                            memlet.subset = subsets.Range(
-                                outer_map.range.ranges + memlet.subset.ranges)
-                            state.add_edge(outer_edge.src, outer_edge.src_conn,
-                                           edge.dst, edge.dst_conn, memlet)
+                            memlet.subset = subsets.Range(outer_map.range.ranges + memlet.subset.ranges)
+                            state.add_edge(outer_edge.src, outer_edge.src_conn, edge.dst, edge.dst_conn, memlet)
 
                 for node in sinks:
                     if isinstance(node, nodes.AccessNode):
                         for edge in state.out_edges(node):
                             outer_edge = edge_to_outer[edge]
-                            state.add_edge(edge.src, edge.src_conn,
-                                           outer_edge.dst, outer_edge.dst_conn,
+                            state.add_edge(edge.src, edge.src_conn, outer_edge.dst, outer_edge.dst_conn,
                                            dcpy(outer_edge.data))
 
             # Augment arrays by prepending map dimensions
@@ -419,8 +378,7 @@ class MapFission(transformation.Transformation):
             # Correct connectors and memlets in nested SDFGs to account for
             # missing outside map
             if self.expr_index == 1:
-                to_correct = ([(e, e.src) for e in external_edges_entry] +
-                              [(e, e.dst) for e in external_edges_exit])
+                to_correct = ([(e, e.src) for e in external_edges_entry] + [(e, e.dst) for e in external_edges_exit])
                 corrected_nodes = set()
                 for edge, node in to_correct:
                     if isinstance(node, nodes.AccessNode):
@@ -445,8 +403,7 @@ class MapFission(transformation.Transformation):
                         for internal_edge in state.all_edges(node):
                             for e in state.memlet_tree(internal_edge):
                                 e.data.subset.offset(desc.offset, False)
-                                e.data.subset = helpers.unsqueeze_memlet(
-                                    e.data, outer_edge.data).subset
+                                e.data.subset = helpers.unsqueeze_memlet(e.data, outer_edge.data).subset
 
                         # Only after offsetting memlets we can modify the
                         # overall offset
@@ -460,11 +417,9 @@ class MapFission(transformation.Transformation):
                     for edge in state.all_edges(node):
                         for e in state.memlet_tree(edge):
                             # Prepend map dimensions to memlet
-                            e.data.subset = subsets.Range(
-                                [(pystr_to_symbolic(d) - r[0],
-                                  pystr_to_symbolic(d) - r[0], 1) for d, r in
-                                 zip(outer_map.params, outer_map.range)] +
-                                e.data.subset.ranges)
+                            e.data.subset = subsets.Range([(pystr_to_symbolic(d) - r[0], pystr_to_symbolic(d) - r[0], 1)
+                                                           for d, r in zip(outer_map.params, outer_map.range)] +
+                                                          e.data.subset.ranges)
 
         # If nested SDFG, reconnect nodes around map and modify memlets
         if self.expr_index == 1:
@@ -478,11 +433,9 @@ class MapFission(transformation.Transformation):
                 edge.data.num_accesses = edge.data.subset.num_elements()
 
                 # Find matching edge inside map
-                inner_edge = next(
-                    e for e in graph.out_edges(map_entry)
-                    if e.src_conn and e.src_conn[4:] == edge.dst_conn[3:])
-                graph.add_edge(edge.src, edge.src_conn, nsdfg_node,
-                               inner_edge.dst_conn, dcpy(edge.data))
+                inner_edge = next(e for e in graph.out_edges(map_entry)
+                                  if e.src_conn and e.src_conn[4:] == edge.dst_conn[3:])
+                graph.add_edge(edge.src, edge.src_conn, nsdfg_node, inner_edge.dst_conn, dcpy(edge.data))
 
             for edge in graph.out_edges(map_exit):
                 # Modify edge coming out of nested SDFG to include entire array
@@ -490,10 +443,8 @@ class MapFission(transformation.Transformation):
                 edge.data.subset = subsets.Range.from_array(desc)
 
                 # Find matching edge inside map
-                inner_edge = next(e for e in graph.in_edges(map_exit)
-                                  if e.dst_conn[3:] == edge.src_conn[4:])
-                graph.add_edge(nsdfg_node, inner_edge.src_conn, edge.dst,
-                               edge.dst_conn, dcpy(edge.data))
+                inner_edge = next(e for e in graph.in_edges(map_exit) if e.dst_conn[3:] == edge.src_conn[4:])
+                graph.add_edge(nsdfg_node, inner_edge.src_conn, edge.dst, edge.dst_conn, dcpy(edge.data))
 
         # Remove outer map
         graph.remove_nodes_from([map_entry, map_exit])

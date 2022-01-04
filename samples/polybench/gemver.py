@@ -11,9 +11,8 @@ datatype = dace.float64
 # Dataset sizes
 sizes = [{N: 40}, {N: 120}, {N: 400}, {N: 2000}, {N: 4000}]
 
-args = [([N, N], datatype), ([N], datatype), ([N], datatype), ([N], datatype),
-        ([N], datatype), ([N], datatype), ([N], datatype), ([N], datatype),
-        ([N], datatype), ([1], datatype), ([1], datatype)]
+args = [([N, N], datatype), ([N], datatype), ([N], datatype), ([N], datatype), ([N], datatype), ([N], datatype),
+        ([N], datatype), ([N], datatype), ([N], datatype), ([1], datatype), ([1], datatype)]
 
 outputs = [(5, 'w')]
 
@@ -37,9 +36,8 @@ def init_array(A, u1, v1, u2, v2, w, x, y, z, alpha, beta):
             A[i, j] = datatype(i * j % n) / n
 
 
-@dace.program(datatype[N, N], datatype[N], datatype[N], datatype[N],
-              datatype[N], datatype[N], datatype[N], datatype[N], datatype[N],
-              datatype[1], datatype[1])
+@dace.program(datatype[N, N], datatype[N], datatype[N], datatype[N], datatype[N], datatype[N], datatype[N], datatype[N],
+              datatype[N], datatype[1], datatype[1])
 def gemver(A, u1, v1, u2, v2, w, x, y, z, alpha, beta):
     @dace.map
     def add_uv(i: _[0:N], j: _[0:N]):

@@ -19,8 +19,7 @@ M.set(30)
 
 
 @dace.program
-def reduction_test_3(A: dace.float64[M, N], B: dace.float64[M, N],
-                     C: dace.float64[N]):
+def reduction_test_3(A: dace.float64[M, N], B: dace.float64[M, N], C: dace.float64[N]):
 
     tmp = dace.reduce(lambda a, b: max(a, b), A, identity=-9999999, axis=0)
     tmp2 = dace.reduce(lambda a, b: a + b, B, identity=0, axis=0)
@@ -51,10 +50,7 @@ def test_p3(in_transient, out_transient):
     csdfg(A=A, B=B, C=C1, N=N, M=M)
     del csdfg
 
-    expand_reduce(sdfg,
-                  state,
-                  create_in_transient=in_transient,
-                  create_out_transient=out_transient)
+    expand_reduce(sdfg, state, create_in_transient=in_transient, create_out_transient=out_transient)
     csdfg = sdfg.compile()
     csdfg(A=A, B=B, C=C2, N=N, M=M)
     del csdfg

@@ -54,7 +54,7 @@ def indirection_scalar_nsdfg(A: dc.float32[10], x: dc.int32[10]):
 
 def test_indirection_scalar_nsdfg():
     A = np.random.randn(10).astype(np.float32)
-    x = np.random.randint(0, 10, size=(10,), dtype=np.int32)
+    x = np.random.randint(0, 10, size=(10, ), dtype=np.int32)
     res = indirection_scalar_nsdfg(A, x)
     assert (np.allclose(res, A[x]))
 
@@ -71,7 +71,7 @@ def indirection_scalar_assign_nsdfg(A: dc.float32[10], x: dc.int32[10]):
 
 def test_indirection_scalar_assign_nsdfg():
     A = np.random.randn(10).astype(np.float32)
-    x = np.random.randint(0, 10, size=(10,), dtype=np.int32)
+    x = np.random.randint(0, 10, size=(10, ), dtype=np.int32)
     res = indirection_scalar_assign_nsdfg(A, x)
     assert (np.allclose(res[x], A[x]))
 
@@ -88,7 +88,7 @@ def indirection_scalar_augassign_nsdfg(A: dc.float32[10], x: dc.int32[10]):
 
 def test_indirection_scalar_augassign_nsdfg():
     A = np.random.randn(10).astype(np.float32)
-    x = np.random.randint(0, 10, size=(10,), dtype=np.int32)
+    x = np.random.randint(0, 10, size=(10, ), dtype=np.int32)
     res = indirection_scalar_augassign_nsdfg(A, x)
     assert (np.allclose(res, indirection_scalar_augassign_nsdfg.f(A, x)))
 
@@ -108,9 +108,7 @@ def test_indirection_scalar_multi():
 
 
 @dc.program
-def indirection_scalar_multi_nsdfg(A: dc.float32[10, 10],
-                                   x: dc.int32[10, 10],
-                                   y: dc.int32[10, 10]):
+def indirection_scalar_multi_nsdfg(A: dc.float32[10, 10], x: dc.int32[10, 10], y: dc.int32[10, 10]):
     B = np.empty_like(A)
     for i, j in dc.map[0:10, 0:10]:
         i0 = x[i, j]
@@ -130,7 +128,7 @@ def test_indirection_scalar_multi_nsdfg():
 @dc.program
 def indirection_scalar_op(A: dc.float32[10]):
     i = 0
-    return A[i+5]
+    return A[i + 5]
 
 
 def test_indirection_scalar_op():
@@ -145,15 +143,15 @@ def indirection_scalar_op_nsdfg(A: dc.float32[10], x: dc.int32[10]):
     # TODO: This doesn't work with 0:A.shape[0]
     for i in dc.map[0:10]:
         a = x[i]
-        B[i] = A[a+5]
+        B[i] = A[a + 5]
     return B
 
 
 def test_indirection_scalar_op_nsdfg():
     A = np.random.randn(10).astype(np.float32)
-    x = np.random.randint(0, 5, size=(10,), dtype=np.int32)
+    x = np.random.randint(0, 5, size=(10, ), dtype=np.int32)
     res = indirection_scalar_op_nsdfg(A, x)
-    assert (np.allclose(res, A[x+5]))
+    assert (np.allclose(res, A[x + 5]))
 
 
 @dc.program
@@ -175,19 +173,19 @@ def indirection_scalar_range_nsdfg(A: dc.float32[10], x: dc.int32[11]):
     B = np.empty_like(A)
     # TODO: This doesn't work with 0:A.shape[0]
     for i in dc.map[0:10]:
-        i0 = min(x[i], x[i+1])
-        i1 = max(x[i], x[i+1]) + 1
+        i0 = min(x[i], x[i + 1])
+        i1 = max(x[i], x[i + 1]) + 1
         B[i] = np.sum(A[i0:i1])
     return B
 
 
 def test_indirection_scalar_range_nsdfg():
     A = np.random.randn(10).astype(np.float32)
-    x = np.random.randint(0, 9, size=(11,), dtype=np.int32)
+    x = np.random.randint(0, 9, size=(11, ), dtype=np.int32)
     res = indirection_scalar_range_nsdfg(A, x)
     for i in range(10):
-        i0 = min(x[i], x[i+1])
-        i1 = max(x[i], x[i+1]) + 1
+        i0 = min(x[i], x[i + 1])
+        i1 = max(x[i], x[i + 1]) + 1
         assert (np.allclose(res[i], np.sum(A[i0:i1])))
 
 
@@ -199,7 +197,7 @@ def indirection_array(A: dc.float32[10], x: dc.int32[10]):
 
 def test_indirection_array():
     A = np.random.randn(10).astype(np.float32)
-    x = np.random.randint(0, 10, size=(10,), dtype=np.int32)
+    x = np.random.randint(0, 10, size=(10, ), dtype=np.int32)
     res = indirection_array(A, x)[0]
     assert (res == A[x[0]])
 
@@ -215,7 +213,7 @@ def indirection_array_nsdfg(A: dc.float32[10], x: dc.int32[10]):
 
 def test_indirection_array_nsdfg():
     A = np.random.randn(10).astype(np.float32)
-    x = np.random.randint(0, 10, size=(10,), dtype=np.int32)
+    x = np.random.randint(0, 10, size=(10, ), dtype=np.int32)
     res = indirection_array_nsdfg(A, x)
     assert (np.allclose(res, A[x]))
 
@@ -229,15 +227,13 @@ def indirection_array_multi(A: dc.float32[10, 10], x: dc.int32[10]):
 
 def test_indirection_array_multi():
     A = np.random.randn(10, 10).astype(np.float32)
-    x = np.random.randint(0, 10, size=(10,), dtype=np.int32)
+    x = np.random.randint(0, 10, size=(10, ), dtype=np.int32)
     res = indirection_array_multi(A, x)[0]
     assert (res == A[x[0], x[9]])
 
 
 @dc.program
-def indirection_array_multi_nsdfg(A: dc.float32[10, 10],
-                                   x: dc.int32[10, 10],
-                                   y: dc.int32[10, 10]):
+def indirection_array_multi_nsdfg(A: dc.float32[10, 10], x: dc.int32[10, 10], y: dc.int32[10, 10]):
     B = np.empty_like(A)
     for i, j in dc.map[0:10, 0:10]:
         B[i, j] = A[x[i, j], y[i, j]]
@@ -260,7 +256,7 @@ def indirection_array_op(A: dc.float32[10], x: dc.int32[10]):
 
 def test_indirection_array_op():
     A = np.random.randn(10).astype(np.float32)
-    x = np.random.randint(0, 8, size=(10,), dtype=np.int32)
+    x = np.random.randint(0, 8, size=(10, ), dtype=np.int32)
     res = indirection_array_op(A, x)[0]
     assert (res == A[x[0] + 2])
 
@@ -276,7 +272,7 @@ def indirection_array_op_nsdfg(A: dc.float32[10], x: dc.int32[10]):
 
 def test_indirection_array_op_nsdfg():
     A = np.random.randn(10).astype(np.float32)
-    x = np.random.randint(0, 5, size=(10,), dtype=np.int32)
+    x = np.random.randint(0, 5, size=(10, ), dtype=np.int32)
     res = indirection_array_op_nsdfg(A, x)
     assert (np.allclose(res, A[x + 5]))
 
@@ -284,14 +280,14 @@ def test_indirection_array_op_nsdfg():
 @dc.program
 def indirection_array_range(A: dc.float32[10], x: dc.int32[10]):
     i = 5
-    return np.sum(A[x[i]:x[i]+1])
+    return np.sum(A[x[i]:x[i] + 1])
 
 
 def test_indirection_array_range():
     A = np.random.randn(10).astype(np.float32)
-    x = np.random.randint(0, 9, size=(10,), dtype=np.int32)
+    x = np.random.randint(0, 9, size=(10, ), dtype=np.int32)
     res = indirection_array_range(A, x)[0]
-    assert (np.allclose(res, np.sum(A[x[5]:x[5]+1])))
+    assert (np.allclose(res, np.sum(A[x[5]:x[5] + 1])))
 
 
 @dc.program
@@ -299,13 +295,13 @@ def indirection_array_range_nsdfg(A: dc.float32[10], x: dc.int32[10]):
     B = np.empty_like(A)
     # TODO: This doesn't work with 0:A.shape[0]
     for i in dc.map[0:10]:
-        B[i] = np.sum(A[x[i]:x[i]+1])
+        B[i] = np.sum(A[x[i]:x[i] + 1])
     return B
 
 
 def test_indirection_array_range_nsdfg():
     A = np.random.randn(10).astype(np.float32)
-    x = np.random.randint(0, 9, size=(10,), dtype=np.int32)
+    x = np.random.randint(0, 9, size=(10, ), dtype=np.int32)
     res = indirection_array_range_nsdfg(A, x)
     assert (np.allclose(res, A[x]))
 
@@ -318,7 +314,7 @@ def indirection_array_nested(A: dc.float32[10], x: dc.int32[10]):
 
 def test_indirection_array_nested():
     A = np.random.randn(10).astype(np.float32)
-    x = np.random.randint(0, 10, size=(10,), dtype=np.int32)
+    x = np.random.randint(0, 10, size=(10, ), dtype=np.int32)
     res = indirection_array_nested(A, x)[0]
     assert (res == A[x[x[0]]])
 
@@ -334,7 +330,7 @@ def indirection_array_nested_nsdfg(A: dc.float32[10], x: dc.int32[10]):
 
 def test_indirection_array_nested_nsdfg():
     A = np.random.randn(10).astype(np.float32)
-    x = np.random.randint(0, 10, size=(10,), dtype=np.int32)
+    x = np.random.randint(0, 10, size=(10, ), dtype=np.int32)
     res = indirection_array_nested_nsdfg(A, x)
     assert (np.allclose(res, A[x[x]]))
 
@@ -353,9 +349,7 @@ def spmv(A_row, A_col, A_val, x):
 
 def test_spmv():
 
-    with dc.config.set_temporary('compiler',
-                                 'allow_view_arguments',
-                                 value=True):
+    with dc.config.set_temporary('compiler', 'allow_view_arguments', value=True):
 
         M, N, nnz = 1000, 1000, 100
 
@@ -366,12 +360,7 @@ def test_spmv():
 
         from scipy.sparse import random
 
-        matrix = random(M,
-                        N,
-                        density=nnz / (M * N),
-                        format='csr',
-                        dtype=np.float64,
-                        random_state=rng)
+        matrix = random(M, N, density=nnz / (M * N), format='csr', dtype=np.float64, random_state=rng)
         rows = np.uint32(matrix.indptr)
         cols = np.uint32(matrix.indices)
         vals = matrix.data

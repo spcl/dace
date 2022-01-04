@@ -29,10 +29,8 @@ def test_map_interchange():
 
     # Apply map interchange
     state = sdfg.node(0)
-    ome = next(n for n in state.nodes()
-               if isinstance(n, dace.nodes.MapEntry) and n.map.params[0] == 'j')
-    ime = next(n for n in state.nodes()
-               if isinstance(n, dace.nodes.MapEntry) and n.map.params[0] == 'k')
+    ome = next(n for n in state.nodes() if isinstance(n, dace.nodes.MapEntry) and n.map.params[0] == 'j')
+    ime = next(n for n in state.nodes() if isinstance(n, dace.nodes.MapEntry) and n.map.params[0] == 'k')
     MapInterchange.apply_to(sdfg, outer_map_entry=ome, inner_map_entry=ime)
 
     # Validate memlets

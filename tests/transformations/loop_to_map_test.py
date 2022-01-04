@@ -7,11 +7,9 @@ import tempfile
 from dace.transformation.interstate import LoopToMap
 
 
-def make_sdfg(with_wcr, map_in_guard, reverse_loop, use_variable, assign_after,
-              log_path):
+def make_sdfg(with_wcr, map_in_guard, reverse_loop, use_variable, assign_after, log_path):
 
-    sdfg = dace.SDFG(f"loop_to_map_test_{with_wcr}_{map_in_guard}_"
-                     f"{reverse_loop}_{use_variable}_{assign_after}")
+    sdfg = dace.SDFG(f"loop_to_map_test_{with_wcr}_{map_in_guard}_" f"{reverse_loop}_{use_variable}_{assign_after}")
     sdfg.set_global_code("#include <fstream>\n#include <mutex>")
 
     init = sdfg.add_state("init")
@@ -26,18 +24,13 @@ def make_sdfg(with_wcr, map_in_guard, reverse_loop, use_variable, assign_after,
         sdfg.add_edge(init, guard, dace.InterstateEdge(assignments={"i": "0"}))
         sdfg.add_edge(guard, body, dace.InterstateEdge(condition="i < N"))
         sdfg.add_edge(guard, after, dace.InterstateEdge(condition="i >= N"))
-        sdfg.add_edge(body, guard,
-                      dace.InterstateEdge(assignments={"i": "i + 1"}))
+        sdfg.add_edge(body, guard, dace.InterstateEdge(assignments={"i": "i + 1"}))
     else:
-        sdfg.add_edge(init, guard,
-                      dace.InterstateEdge(assignments={"i": "N - 1"}))
+        sdfg.add_edge(init, guard, dace.InterstateEdge(assignments={"i": "N - 1"}))
         sdfg.add_edge(guard, body, dace.InterstateEdge(condition="i >= 0"))
         sdfg.add_edge(guard, after, dace.InterstateEdge(condition="i < 0"))
-        sdfg.add_edge(body, guard,
-                      dace.InterstateEdge(assignments={"i": "i - 1"}))
-    sdfg.add_edge(
-        after, post,
-        dace.InterstateEdge(assignments={"i": "N"} if assign_after else None))
+        sdfg.add_edge(body, guard, dace.InterstateEdge(assignments={"i": "i - 1"}))
+    sdfg.add_edge(after, post, dace.InterstateEdge(assignments={"i": "N"} if assign_after else None))
 
     sdfg.add_array("A", [N], dace.float64)
     sdfg.add_array("B", [N], dace.float64)
@@ -53,16 +46,14 @@ def make_sdfg(with_wcr, map_in_guard, reverse_loop, use_variable, assign_after,
     if map_in_guard:
         guard_read = guard.add_read("C")
         guard_write = guard.add_write("C")
-        guard.add_mapped_tasklet("write_self", {"i": "0:N"},
-                                 {"c_in": dace.Memlet("C[i]")},
+        guard.add_mapped_tasklet("write_self", {"i": "0:N"}, {"c_in": dace.Memlet("C[i]")},
                                  "c_out = c_in", {"c_out": dace.Memlet("C[i]")},
                                  external_edges=True,
                                  input_nodes={"C": guard_read},
                                  output_nodes={"C": guard_write})
 
     tasklet0 = body.add_tasklet("tasklet0", {"a"}, {"c"}, "c = 1/a")
-    tasklet1 = body.add_tasklet("tasklet1", {"a", "b"}, {"d"},
-                                "d = sqrt(a**2 + b**2)")
+    tasklet1 = body.add_tasklet("tasklet1", {"a", "b"}, {"d"}, "d = sqrt(a**2 + b**2)")
 
     tasklet2 = body.add_tasklet("tasklet2", {}, {},
                                 f"""\
@@ -76,26 +67,18 @@ of << i << "\\n";""",
     body.add_memlet_path(tasklet0,
                          c,
                          src_conn="c",
-                         memlet=dace.Memlet(
-                             "C[i]",
-                             wcr="lambda a, b: a + b" if with_wcr else None))
+                         memlet=dace.Memlet("C[i]", wcr="lambda a, b: a + b" if with_wcr else None))
 
     body.add_memlet_path(a, tasklet1, dst_conn="a", memlet=dace.Memlet("A[i]"))
     body.add_memlet_path(b, tasklet1, dst_conn="b", memlet=dace.Memlet("B[i]"))
     body.add_memlet_path(tasklet1,
                          d,
                          src_conn="d",
-                         memlet=dace.Memlet(
-                             "D[i]",
-                             wcr="lambda a, b: a + b" if with_wcr else None))
+                         memlet=dace.Memlet("D[i]", wcr="lambda a, b: a + b" if with_wcr else None))
 
     e = post.add_write("E")
-    post_tasklet = post.add_tasklet("post", {}, {"e"},
-                                    "e = i" if use_variable else "e = N")
-    post.add_memlet_path(post_tasklet,
-                         e,
-                         src_conn="e",
-                         memlet=dace.Memlet("E[0]"))
+    post_tasklet = post.add_tasklet("post", {}, {"e"}, "e = i" if use_variable else "e = N")
+    post.add_memlet_path(post_tasklet, e, src_conn="e", memlet=dace.Memlet("E[0]"))
 
     return sdfg
 

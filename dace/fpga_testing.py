@@ -88,10 +88,7 @@ def raise_error(message):
     raise TestFailed(message)
 
 
-def _run_fpga_test(vendor: str,
-                   test_function: Callable,
-                   run_synthesis: bool = True,
-                   assert_ii_1: bool = True):
+def _run_fpga_test(vendor: str, test_function: Callable, run_synthesis: bool = True, assert_ii_1: bool = True):
     path = Path(inspect.getfile(test_function))
     base_name = f"{path.stem}::{Colors.UNDERLINE}{test_function.__name__}{Colors.END}"
     with temporary_config():
@@ -107,10 +104,7 @@ def _run_fpga_test(vendor: str,
             # Simulation in software
             print_status(f"{base_name} [Xilinx]: Running simulation.")
             if "rtl" in path.parts:
-                Config.set("compiler",
-                           "xilinx",
-                           "mode",
-                           value="hardware_emulation")
+                Config.set("compiler", "xilinx", "mode", value="hardware_emulation")
                 if "LIBRARY_PATH" not in os.environ:
                     os.environ["LIBRARY_PATH"] = ""
                     library_path_backup = None
@@ -132,21 +126,18 @@ def _run_fpga_test(vendor: str,
             for sdfg in sdfgs:
                 build_folder = Path(sdfg.build_folder) / "build"
                 if not build_folder.exists():
-                    raise_error(f"Build folder {build_folder} "
-                                f"not found for {base_name}.")
+                    raise_error(f"Build folder {build_folder} " f"not found for {base_name}.")
 
                 # High-level synthesis
                 if run_synthesis:
-                    print_status(f"{base_name} [Xilinx]: Running high-level "
-                                 f"synthesis for {sdfg.name}.")
+                    print_status(f"{base_name} [Xilinx]: Running high-level " f"synthesis for {sdfg.name}.")
                     try:
                         proc = sp.Popen(["make", "synthesis"],
                                         cwd=build_folder,
                                         stdout=sp.PIPE,
                                         stderr=sp.PIPE,
                                         encoding="utf=8")
-                        syn_out, syn_err = proc.communicate(
-                            timeout=TEST_TIMEOUT)
+                        syn_out, syn_err = proc.communicate(timeout=TEST_TIMEOUT)
                     except sp.TimeoutExpired:
                         dump_logs(proc)
                         raise_error(f"{base_name} [Xilinx]: High-level "
@@ -154,11 +145,8 @@ def _run_fpga_test(vendor: str,
                                     f"{TEST_TIMEOUT} seconds.")
                     if proc.returncode != 0:
                         dump_logs(proc)
-                        raise_error(f"{base_name} [Xilinx]: High-level "
-                                    f"synthesis failed.")
-                    print_success(f"{base_name} [Xilinx]: High-level "
-                                  f"synthesis successful for "
-                                  f"{sdfg.name}.")
+                        raise_error(f"{base_name} [Xilinx]: High-level " f"synthesis failed.")
+                    print_success(f"{base_name} [Xilinx]: High-level " f"synthesis successful for " f"{sdfg.name}.")
                     open(build_folder / "synthesis.out", "w").write(syn_out)
                     open(build_folder / "synthesis.err", "w").write(syn_err)
 
@@ -170,21 +158,17 @@ def _run_fpga_test(vendor: str,
                                 hls_log = f
                                 break
                         else:
-                            raise_error(f"{base_name} [Xilinx]: HLS "
-                                        f"log file not found.")
+                            raise_error(f"{base_name} [Xilinx]: HLS " f"log file not found.")
                         hls_log = open(hls_log, "r").read()
                         for m in re.finditer(r"Final II = ([0-9]+)", hls_log):
                             loops_found = True
                             if int(m.group(1)) != 1:
                                 dump_logs((syn_out, syn_err))
-                                raise_error(f"{base_name} [Xilinx]: "
-                                            f"Failed to achieve II=1.")
+                                raise_error(f"{base_name} [Xilinx]: " f"Failed to achieve II=1.")
                         if not loops_found:
                             dump_logs((syn_out, syn_err))
-                            raise_error(f"{base_name} [Xilinx]: No "
-                                        f"pipelined loops found.")
-                        print_success(f"{base_name} [Xilinx]: II=1 "
-                                      f"achieved.")
+                            raise_error(f"{base_name} [Xilinx]: No " f"pipelined loops found.")
+                        print_success(f"{base_name} [Xilinx]: II=1 " f"achieved.")
 
         elif vendor == "intel_fpga":
             # Set environment variables
@@ -195,16 +179,12 @@ def _run_fpga_test(vendor: str,
             # Simulation in software
             print_status(f"{base_name} [Intel FPGA]: Running " f"emulation.")
             test_function()
-            print_success(f"{base_name} [Intel FPGA]: Emulation "
-                          f"successful.")
+            print_success(f"{base_name} [Intel FPGA]: Emulation " f"successful.")
         else:
             raise ValueError(f"Unrecognized vendor {vendor}.")
 
 
-def fpga_test(run_synthesis: bool = True,
-              assert_ii_1: bool = True,
-              xilinx: bool = True,
-              intel: bool = True):
+def fpga_test(run_synthesis: bool = True, assert_ii_1: bool = True, xilinx: bool = True, intel: bool = True):
     """
     Decorator to run an FPGA test with pytest, setting the appropriate
     variables and performing additional checks, such as running HLS and
@@ -232,15 +212,12 @@ def fpga_test(run_synthesis: bool = True,
         def wrapper(vendor: Optional[str]):
             if vendor == None:
                 vendor = Config.get("compiler", "fpga", "vendor")
-            p = FPGATestProcess(target=_run_fpga_test,
-                                args=(vendor, test_function, run_synthesis,
-                                      assert_ii_1))
+            p = FPGATestProcess(target=_run_fpga_test, args=(vendor, test_function, run_synthesis, assert_ii_1))
             p.start()
             p.join(timeout=TEST_TIMEOUT)
             if p.is_alive():
                 p.kill()
-                raise_error(f"Test {Colors.UNDERLINE}{test_function.__name__}"
-                            f"{Colors.END} timed out.")
+                raise_error(f"Test {Colors.UNDERLINE}{test_function.__name__}" f"{Colors.END} timed out.")
             if p.exception:
                 raise p.exception
 

@@ -18,8 +18,7 @@ O.set(70)
 
 
 @dace.program
-def program1(A: dace.float64[M, N], B: dace.float64[M, N], C: dace.float64[M,
-                                                                           N]):
+def program1(A: dace.float64[M, N], B: dace.float64[M, N], C: dace.float64[M, N]):
     for i, j in dace.map[0:M, 0:N]:
         with dace.tasklet:
             in1 << A[i, j]
@@ -44,8 +43,7 @@ def program1(A: dace.float64[M, N], B: dace.float64[M, N], C: dace.float64[M,
 
 
 @dace.program
-def program2(A: dace.float64[M, N], B: dace.float64[M, N], C: dace.float64[M,
-                                                                           N]):
+def program2(A: dace.float64[M, N], B: dace.float64[M, N], C: dace.float64[M, N]):
     tmp = np.ndarray(shape=(M, N), dtype=np.float64)
     for i, j in dace.map[0:M, 0:N]:
         with dace.tasklet:

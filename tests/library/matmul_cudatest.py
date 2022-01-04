@@ -13,10 +13,7 @@ import pytest
 ###############################################################################
 
 
-def make_sdfg(implementation,
-              dtype,
-              storage=dace.StorageType.Default,
-              data_layout='CCC'):
+def make_sdfg(implementation, dtype, storage=dace.StorageType.Default, data_layout='CCC'):
     m = dace.symbol("m")
     n = dace.symbol("n")
     k = dace.symbol("k")
@@ -33,21 +30,9 @@ def make_sdfg(implementation,
     ystrides = (n, 1) if data_layout[1] == 'C' else (1, k)
     zstrides = (n, 1) if data_layout[2] == 'C' else (1, m)
 
-    sdfg.add_array("x" + suffix, [m, k],
-                   dtype,
-                   storage=storage,
-                   transient=transient,
-                   strides=xstrides)
-    sdfg.add_array("y" + suffix, [k, n],
-                   dtype,
-                   storage=storage,
-                   transient=transient,
-                   strides=ystrides)
-    sdfg.add_array("result" + suffix, [m, n],
-                   dtype,
-                   storage=storage,
-                   transient=transient,
-                   strides=zstrides)
+    sdfg.add_array("x" + suffix, [m, k], dtype, storage=storage, transient=transient, strides=xstrides)
+    sdfg.add_array("y" + suffix, [k, n], dtype, storage=storage, transient=transient, strides=ystrides)
+    sdfg.add_array("result" + suffix, [m, n], dtype, storage=storage, transient=transient, strides=zstrides)
 
     x = state.add_read("x" + suffix)
     y = state.add_read("y" + suffix)
@@ -55,18 +40,9 @@ def make_sdfg(implementation,
 
     node = blas.nodes.matmul.MatMul("matmul")
 
-    state.add_memlet_path(x,
-                          node,
-                          dst_conn="_a",
-                          memlet=Memlet.simple(x, "0:m, 0:k"))
-    state.add_memlet_path(y,
-                          node,
-                          dst_conn="_b",
-                          memlet=Memlet.simple(y, "0:k, 0:n"))
-    state.add_memlet_path(node,
-                          result,
-                          src_conn="_c",
-                          memlet=Memlet.simple(result, "0:m, 0:n"))
+    state.add_memlet_path(x, node, dst_conn="_a", memlet=Memlet.simple(x, "0:m, 0:k"))
+    state.add_memlet_path(y, node, dst_conn="_b", memlet=Memlet.simple(y, "0:k, 0:n"))
+    state.add_memlet_path(node, result, src_conn="_c", memlet=Memlet.simple(result, "0:m, 0:n"))
 
     if storage != dace.StorageType.Default:
         sdfg.add_array("x", [m, k], dtype, strides=xstrides)
@@ -80,22 +56,15 @@ def make_sdfg(implementation,
         y_host = init_state.add_read("y")
         x_device = init_state.add_write("x" + suffix)
         y_device = init_state.add_write("y" + suffix)
-        init_state.add_memlet_path(x_host,
-                                   x_device,
-                                   memlet=Memlet.simple(x_host, "0:m, 0:k"))
-        init_state.add_memlet_path(y_host,
-                                   y_device,
-                                   memlet=Memlet.simple(y_host, "0:k, 0:n"))
+        init_state.add_memlet_path(x_host, x_device, memlet=Memlet.simple(x_host, "0:m, 0:k"))
+        init_state.add_memlet_path(y_host, y_device, memlet=Memlet.simple(y_host, "0:k, 0:n"))
 
         finalize_state = sdfg.add_state("copy_to_host")
         sdfg.add_edge(state, finalize_state, dace.InterstateEdge())
 
         result_device = finalize_state.add_write("result" + suffix)
         result_host = finalize_state.add_read("result")
-        finalize_state.add_memlet_path(result_device,
-                                       result_host,
-                                       memlet=Memlet.simple(
-                                           result_device, "0:m, 0:n"))
+        finalize_state.add_memlet_path(result_device, result_host, memlet=Memlet.simple(result_device, "0:m, 0:n"))
 
     return sdfg
 
@@ -103,12 +72,7 @@ def make_sdfg(implementation,
 ###############################################################################
 
 
-def _test_matmul(implementation,
-                 dtype,
-                 impl_name,
-                 storage,
-                 data_layout='CCC',
-                 eps=1e-4):
+def _test_matmul(implementation, dtype, impl_name, storage, data_layout='CCC', eps=1e-4):
     sdfg = make_sdfg(impl_name, dtype, storage, data_layout)
     csdfg = sdfg.compile()
 
@@ -127,8 +91,7 @@ def _test_matmul(implementation,
     ref = np.dot(x, y)
 
     if dtype == dace.float16 and np.linalg.norm(z) == 0:
-        print('No computation performed, half-precision probably not '
-              'supported, skipping test.')
+        print('No computation performed, half-precision probably not ' 'supported, skipping test.')
         return
 
     diff = np.linalg.norm(ref - z)
@@ -141,23 +104,10 @@ def _test_matmul(implementation,
 def test_types():
     with change_default(blas, "cuBLAS"):
         # Try different data types
-        _test_matmul('cuBLAS double',
-                     dace.float64,
-                     'cuBLAS',
-                     dace.StorageType.GPU_Global,
-                     eps=1e-6)
-        _test_matmul('cuBLAS half',
-                     dace.float16,
-                     'cuBLAS',
-                     dace.StorageType.GPU_Global,
-                     eps=1)
-        _test_matmul('cuBLAS scmplx', dace.complex64, 'cuBLAS',
-                     dace.StorageType.GPU_Global)
-        _test_matmul('cuBLAS dcmplx',
-                     dace.complex128,
-                     'cuBLAS',
-                     dace.StorageType.GPU_Global,
-                     eps=1e-6)
+        _test_matmul('cuBLAS double', dace.float64, 'cuBLAS', dace.StorageType.GPU_Global, eps=1e-6)
+        _test_matmul('cuBLAS half', dace.float16, 'cuBLAS', dace.StorageType.GPU_Global, eps=1)
+        _test_matmul('cuBLAS scmplx', dace.complex64, 'cuBLAS', dace.StorageType.GPU_Global)
+        _test_matmul('cuBLAS dcmplx', dace.complex128, 'cuBLAS', dace.StorageType.GPU_Global, eps=1e-6)
 
 
 # Try all data layouts
@@ -168,11 +118,7 @@ LAYOUTS = map(lambda t: ''.join(t), itertools.product(*([['C', 'F']] * 3)))
 @pytest.mark.parametrize('dl', LAYOUTS)
 def test_layouts(dl):
     with change_default(blas, "cuBLAS"):
-        _test_matmul('cuBLAS float ' + dl,
-                     dace.float32,
-                     'cuBLAS',
-                     dace.StorageType.GPU_Global,
-                     data_layout=dl)
+        _test_matmul('cuBLAS float ' + dl, dace.float32, 'cuBLAS', dace.StorageType.GPU_Global, data_layout=dl)
 
 
 @pytest.mark.gpu
@@ -182,8 +128,7 @@ def test_batchmm():
     with change_default(blas, "cuBLAS"):
 
         @dace.program
-        def bmmtest(A: dace.float64[b, m, k], B: dace.float64[b, k, n],
-                    C: dace.float64[b, m, n]):
+        def bmmtest(A: dace.float64[b, m, k], B: dace.float64[b, k, n], C: dace.float64[b, m, n]):
             C[:] = A @ B
 
         sdfg = bmmtest.to_sdfg()
@@ -224,8 +169,7 @@ def test_default_stream_blas_node():
             sdfg.apply_gpu_transformations()
             sdfg.expand_library_nodes()
 
-            all_tasklets = (n for n, _ in sdfg.all_nodes_recursive()
-                            if isinstance(n, dace.nodes.Tasklet))
+            all_tasklets = (n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet))
             environments = {env for n in all_tasklets for env in n.environments}
 
             assert blas.environments.cuBLAS.full_class_path() in environments

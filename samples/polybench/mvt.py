@@ -21,8 +21,7 @@ sizes = [{
     N: 4000,
 }]
 
-args = [([N], datatype), ([N], datatype), ([N], datatype), ([N], datatype),
-        ([N, N], datatype)]
+args = [([N], datatype), ([N], datatype), ([N], datatype), ([N], datatype), ([N, N], datatype)]
 
 
 def init_array(x1, x2, y_1, y_2, A):
@@ -37,8 +36,7 @@ def init_array(x1, x2, y_1, y_2, A):
             A[i, j] = datatype(i * j % n) / n
 
 
-@dace.program(datatype[N], datatype[N], datatype[N], datatype[N],
-              datatype[N, N])
+@dace.program(datatype[N], datatype[N], datatype[N], datatype[N], datatype[N, N])
 def mvt(x1, x2, y_1, y_2, A):
     @dace.map
     def compute(i: _[0:N], j: _[0:N]):

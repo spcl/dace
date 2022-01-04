@@ -116,21 +116,26 @@ def multibank_unsound_location(mem_type_1, mem_type_2):
 def test_multibank_deep_scope_hbm():
     multibank_deep_scope("hbm")
 
+
 def test_multibank_deep_scope_ddr():
     multibank_deep_scope("ddr")
+
 
 def test_multibank_multi_tasklet_hbm():
     multibank_multi_tasklet("hbm")
 
+
 def test_multibank_multi_tasklet_ddr():
     multibank_multi_tasklet("ddr")
-    
+
 
 def test_multibank_unsound_location_hmb2ddr():
     multibank_unsound_location("hbm", "ddr")
 
+
 def test_multibank_unsound_location():
     multibank_unsound_location("ddr", "hbm")
+
 
 if __name__ == "__main__":
     test_multibank_deep_scope_hbm()
@@ -139,4 +144,3 @@ if __name__ == "__main__":
     test_multibank_multi_tasklet_ddr()
     test_multibank_unsound_location_hmb2ddr()
     test_multibank_unsound_location()
-

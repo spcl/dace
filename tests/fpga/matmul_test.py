@@ -38,11 +38,7 @@ def create_gemm_sdfg(sdfg_name,
 
     # Create data containers
     sdfg.add_array('A', A_shape, dtype)
-    sdfg.add_array("A_device",
-                   shape=A_shape,
-                   dtype=dtype,
-                   storage=dace.dtypes.StorageType.FPGA_Global,
-                   transient=True)
+    sdfg.add_array("A_device", shape=A_shape, dtype=dtype, storage=dace.dtypes.StorageType.FPGA_Global, transient=True)
     sdfg.add_array("B", [K, M / vec_width], dtype=vec_type)
     sdfg.add_array("B_device", [K, M / vec_width],
                    dtype=vec_type,
@@ -58,25 +54,17 @@ def create_gemm_sdfg(sdfg_name,
     # Copy A
     in_host_A = copy_in_state.add_read("A")
     in_device_A = copy_in_state.add_write("A_device")
-    copy_in_state.add_memlet_path(in_host_A,
-                                  in_device_A,
-                                  memlet=dace.Memlet(f"A[0:{N}, 0:{K}]"))
+    copy_in_state.add_memlet_path(in_host_A, in_device_A, memlet=dace.Memlet(f"A[0:{N}, 0:{K}]"))
 
     # Copy B
     in_host_B = copy_in_state.add_read("B")
     in_device_B = copy_in_state.add_write("B_device")
-    copy_in_state.add_memlet_path(
-        in_host_B,
-        in_device_B,
-        memlet=dace.Memlet(f"B[0:{K}, 0:{M}/{vec_width}]"))
+    copy_in_state.add_memlet_path(in_host_B, in_device_B, memlet=dace.Memlet(f"B[0:{K}, 0:{M}/{vec_width}]"))
 
     # Copy C
     in_host_C = copy_in_state.add_read("C")
     in_device_C = copy_in_state.add_write("C_device")
-    copy_in_state.add_memlet_path(
-        in_host_C,
-        in_device_C,
-        memlet=dace.Memlet(f"C[0:{N}, 0:{M}/{vec_width}]"))
+    copy_in_state.add_memlet_path(in_host_C, in_device_C, memlet=dace.Memlet(f"C[0:{N}, 0:{M}/{vec_width}]"))
 
     ###########################################################################
     # Copy data from FPGA
@@ -84,10 +72,7 @@ def create_gemm_sdfg(sdfg_name,
 
     out_device = copy_out_state.add_read("C_device")
     out_host = copy_out_state.add_write("C")
-    copy_out_state.add_memlet_path(
-        out_device,
-        out_host,
-        memlet=dace.Memlet(f"C[0:{N}, 0:{M}//{vec_width}]"))
+    copy_out_state.add_memlet_path(out_device, out_host, memlet=dace.Memlet(f"C[0:{N}, 0:{M}//{vec_width}]"))
 
     ########################################################################
     # FPGA State
@@ -98,32 +83,22 @@ def create_gemm_sdfg(sdfg_name,
     in_C = fpga_state.add_read("C_device")
     out_C = fpga_state.add_read("C_device")
 
-    gemm_node = blas.Gemm("gemm",
-                          transA=transA,
-                          transB=transB,
-                          alpha=alpha,
-                          beta=beta)
+    gemm_node = blas.Gemm("gemm", transA=transA, transB=transB, alpha=alpha, beta=beta)
     gemm_node.implementation = "FPGA1DSystolic"
 
-    fpga_state.add_memlet_path(in_A,
+    fpga_state.add_memlet_path(in_A, gemm_node, dst_conn="_a", memlet=dace.Memlet(f"A_device[0:{N}, 0:{K}]"))
+    fpga_state.add_memlet_path(in_B,
                                gemm_node,
-                               dst_conn="_a",
-                               memlet=dace.Memlet(f"A_device[0:{N}, 0:{K}]"))
-    fpga_state.add_memlet_path(
-        in_B,
-        gemm_node,
-        dst_conn="_b",
-        memlet=dace.Memlet(f"B_device[0:{K}, 0:{M}/{vec_width}]"))
-    fpga_state.add_memlet_path(
-        in_C,
-        gemm_node,
-        dst_conn="_cin",
-        memlet=dace.Memlet(f"C_device[0:{N}, 0:{M}/{vec_width}]"))
-    fpga_state.add_memlet_path(
-        gemm_node,
-        out_C,
-        src_conn="_c",
-        memlet=dace.Memlet(f"C_device[0:{N}, 0:{M}/{vec_width}]"))
+                               dst_conn="_b",
+                               memlet=dace.Memlet(f"B_device[0:{K}, 0:{M}/{vec_width}]"))
+    fpga_state.add_memlet_path(in_C,
+                               gemm_node,
+                               dst_conn="_cin",
+                               memlet=dace.Memlet(f"C_device[0:{N}, 0:{M}/{vec_width}]"))
+    fpga_state.add_memlet_path(gemm_node,
+                               out_C,
+                               src_conn="_c",
+                               memlet=dace.Memlet(f"C_device[0:{N}, 0:{M}/{vec_width}]"))
 
     ######################################
     # Interstate edges
@@ -174,14 +149,7 @@ def test_gemm_vectorized():
     alpha = 2.1
     beta = 1.5
     vec_width = 4
-    sdfg = create_gemm_sdfg("gemm_vectorized",
-                            alpha,
-                            beta,
-                            A,
-                            B,
-                            C,
-                            dace.float32,
-                            vec_width=vec_width)
+    sdfg = create_gemm_sdfg("gemm_vectorized", alpha, beta, A, B, C, dace.float32, vec_width=vec_width)
     sdfg.expand_library_nodes()
     sdfg.apply_transformations_repeated([InlineSDFG])
     # Compute ground truth
@@ -199,14 +167,7 @@ def test_gemm_size_not_multiples_of():
     B = np.random.rand(128, 128).astype(np.float32)
     C = np.random.rand(120, 128).astype(np.float32)
     expansion_args = {"tile_size_m": 50, "num_pes": 7}
-    sdfg = create_gemm_sdfg("gemm_not_multiple_of",
-                            1,
-                            1,
-                            A,
-                            B,
-                            C,
-                            dace.float32,
-                            expansion_args=expansion_args)
+    sdfg = create_gemm_sdfg("gemm_not_multiple_of", 1, 1, A, B, C, dace.float32, expansion_args=expansion_args)
     sdfg.expand_library_nodes()
     sdfg.apply_transformations_repeated([InlineSDFG])
     # compute ground truth
@@ -220,8 +181,7 @@ def test_gemm_size_not_multiples_of():
 def test_matmul_np():
     # Test with numpy matmul, and double precision
     @dace.program
-    def matmul_np(A: dace.float64[128, 64], B: dace.float64[64, 32],
-                  C: dace.float64[128, 32]):
+    def matmul_np(A: dace.float64[128, 64], B: dace.float64[64, 32], C: dace.float64[128, 32]):
         C[:] = A @ B
 
     A = np.random.rand(128, 64).astype(np.float64)
