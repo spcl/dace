@@ -75,7 +75,19 @@ def collect_maps_to_vectorize(sdfg: SDFG, state, map_entry):
     results = set()
     for m in entries_exits_to_vectorize:
         if isinstance(m, nodes.MapEntry):
-            results.add(m)
+
+            is_ok = True
+            subgraph_contents = state.scope_subgraph(m,
+                                                     include_entry=False,
+                                                     include_exit=False)
+
+            # Ensure only Tasklets and AccessNodes are within the map
+            for node, _ in subgraph_contents.all_nodes_recursive():
+                if not isinstance(node, (nodes.Tasklet, nodes.AccessNode)):
+                    is_ok = False
+
+            if is_ok:
+                results.add(m)
 
     return results, data_descriptors_to_vectorize
 

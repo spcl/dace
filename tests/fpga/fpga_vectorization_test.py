@@ -10,7 +10,7 @@ from dace.fpga_testing import fpga_test
 from dace.fpga_testing import xilinx_test
 import numpy as np
 import argparse
-from dace.transformation.dataflow import Vectorization
+from dace.transformation.dataflow import Vectorization, MapExpansion
 from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
 from tests.fpga.streaming_memory_test import matadd_multistream
 
@@ -137,6 +137,44 @@ def two_maps_kernel_legal(A: dace.float32[N], B: dace.float32[N],
 
 
 @dace.program
+def two_maps_nested_kernel_legal(A: dace.float32[N, M], B: dace.float32[N, M],
+                                 C: dace.float32[N, M], D: dace.float32[N, M],
+                                 E: dace.float32[N, M]):
+    @dace.map
+    def sum(i: _[0:N], j: _[0:M]):
+        in_a << A[i, j]
+        in_b << B[i, j]
+        out >> D[i, j]
+        out = in_a + in_b
+
+    @dace.map
+    def sum(i: _[0:N], j: _[0:M]):
+        in_b << B[i, j]
+        in_c << C[i, j]
+        out >> E[i, j]
+        out = in_b + in_c
+
+
+@dace.program
+def two_maps_kernel_nested_illegal(A: dace.float32[N, M], B: dace.float32[N, M],
+                                   C: dace.float32[N, M], D: dace.float32[N, M],
+                                   E: dace.float32[N, M]):
+    @dace.map
+    def sum(i: _[0:N], j: _[0:M]):
+        in_a << A[i, j]
+        in_b << B[i, j]
+        out >> D[i, j]
+        out = in_a + in_b
+
+    @dace.map
+    def sum(i: _[0:N:2], j: _[0:M:2]):
+        in_b << B[i, j]
+        in_c << C[i, j]
+        out >> E[i, j]
+        out = in_b + in_c
+
+
+@dace.program
 def two_maps_kernel_illegal(A: dace.float32[N], B: dace.float32[N],
                             C: dace.float32[N], D: dace.float32[N],
                             E: dace.float32[N]):
@@ -198,6 +236,40 @@ def vec_two_maps(strided_map):
     return sdfg
 
 
+def vec_two_maps_nested(strided_map):
+    N.set(24)
+    M.set(24)
+    A = np.random.rand(N.get(), M.get()).astype(dace.float32.type)
+    B = np.random.rand(N.get(), M.get()).astype(dace.float32.type)
+    C = np.random.rand(N.get(), M.get()).astype(dace.float32.type)
+    D = np.random.rand(N.get(), M.get()).astype(dace.float32.type)
+    E = np.random.rand(N.get(), M.get()).astype(dace.float32.type)
+
+    D_exp = A + B
+    E_exp = B + C
+
+    sdfg: dace.SDFG = two_maps_nested_kernel_legal.to_sdfg()
+
+    assert sdfg.apply_transformations([FPGATransformSDFG, InlineSDFG]) == 2
+
+    assert sdfg.apply_transformations_repeated(MapExpansion) == 2
+
+    assert sdfg.apply_transformations_repeated(
+        Vectorization,
+        options={
+            'vector_len': 2,
+            'target': dace.ScheduleType.FPGA_Device,
+            'strided_map': strided_map
+        }, print_report=True) == 1
+
+    sdfg(A=A, B=B, C=C, D=D, E=E, N=N, M=M)
+
+    assert np.allclose(D, D_exp)
+    assert np.allclose(E, E_exp)
+
+    return sdfg
+
+
 def vec_sum(vectorize_first: bool, strided_map: bool):
 
     N.set(24)
@@ -245,6 +317,19 @@ def vec_sum(vectorize_first: bool, strided_map: bool):
 
 def test_vec_two_maps_illegal():
     sdfg = two_maps_kernel_illegal.to_sdfg()
+
+    assert sdfg.apply_transformations(Vectorization,
+                                      options={
+                                          'vector_len': 2,
+                                          'target':
+                                          dace.ScheduleType.FPGA_Device,
+                                      }) == 0
+
+
+def test_vec_two_maps_nested_illegal():
+    sdfg = two_maps_kernel_nested_illegal.to_sdfg()
+
+    assert sdfg.apply_transformations_repeated(MapExpansion) == 2
 
     assert sdfg.apply_transformations(Vectorization,
                                       options={
@@ -524,6 +609,16 @@ def test_vec_two_maps_non_strided():
 
 
 @fpga_test()
+def test_vec_two_maps_nested_strided():
+    return vec_two_maps_nested(True)
+
+
+@fpga_test()
+def test_vec_two_maps_nested_non_strided():
+    return vec_two_maps_nested(False)
+
+
+@fpga_test()
 def test_vec_sum_vectorize_first_strided():
     return vec_sum(True, True)
 
@@ -613,6 +708,10 @@ if __name__ == "__main__":
     # test_vec_two_maps_non_strided(None)
     # test_vec_two_maps_illegal()
 
+    test_vec_two_maps_nested_strided(None)
+    test_vec_two_maps_nested_non_strided(None)
+    test_vec_two_maps_nested_illegal()
+
     # test_vec_matadd_stride(None)
     # test_vec_matadd_non_stride(None)
 
@@ -630,4 +729,4 @@ if __name__ == "__main__":
     # test_vec_matadd_multi_non_stride(None)
     # test_vec_matadd_multi_stride(None)
 
-    test_vec_not_applicable()
+    # test_vec_not_applicable()
