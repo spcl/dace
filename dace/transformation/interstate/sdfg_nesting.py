@@ -726,7 +726,7 @@ class InlineTransients(transformation.SingleStateTransformation):
         return True
 
     @classmethod
-    def expressions():
+    def expressions(cls):
         return [sdutil.node_path_graph(cls.nsdfg)]
 
     @staticmethod
@@ -884,7 +884,7 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
         return True
 
     @classmethod
-    def expressions():
+    def expressions(cls):
         return [sdutil.node_path_graph(cls.nsdfg)]
 
     @staticmethod

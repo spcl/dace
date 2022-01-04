@@ -7,7 +7,7 @@ import typing
 from typing import AnyStr, Optional, Tuple, List
 
 from dace import sdfg as sd, symbolic
-from dace.sdfg import utils as sdutil
+from dace.sdfg import graph as gr, utils as sdutil
 from dace.transformation import transformation
 
 
@@ -22,14 +22,14 @@ class DetectLoop(transformation.PatternTransformation):
     @classmethod
     def expressions(cls):
         # Case 1: Loop with one state
-        sdfg = sd.SDFG('_')
+        sdfg = gr.OrderedDiGraph()
         sdfg.add_nodes_from([cls.loop_guard, cls.loop_begin, cls.exit_state])
         sdfg.add_edge(cls.loop_guard, cls.loop_begin, sd.InterstateEdge())
         sdfg.add_edge(cls.loop_guard, cls.exit_state, sd.InterstateEdge())
         sdfg.add_edge(cls.loop_begin, cls.loop_guard, sd.InterstateEdge())
 
         # Case 2: Loop with multiple states (no back-edge from state)
-        msdfg = sd.SDFG('_')
+        msdfg = gr.OrderedDiGraph()
         msdfg.add_nodes_from([cls.loop_guard, cls.loop_begin, cls.exit_state])
         msdfg.add_edge(cls.loop_guard, cls.loop_begin, sd.InterstateEdge())
         msdfg.add_edge(cls.loop_guard, cls.exit_state, sd.InterstateEdge())

@@ -1,7 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains the MPITransformMap transformation. """
 
-from dace import dtypes, registry
+from dace import dtypes
 from dace.sdfg import has_dynamic_map_inputs
 from dace.sdfg import utils as sdutil
 from dace.sdfg import nodes
@@ -99,7 +99,7 @@ class MPITransformMap(transformation.SingleStateTransformation):
 
         # Avoiding import loops
         from dace.transformation.dataflow.strip_mining import StripMining
-        from dace.transformation.dataflow.local_storage import LocalStorage
+        from dace.transformation.dataflow.local_storage import InLocalStorage, OutLocalStorage, LocalStorage
 
         rangeexpr = str(map_entry.map.range.num_elements())
 
@@ -128,7 +128,7 @@ class MPITransformMap(transformation.SingleStateTransformation):
                 LocalStorage.node_b: self.subgraph[MPITransformMap.map_entry]
             }
             sdfg_id = sdfg.sdfg_id
-            in_local_storage = LocalStorage(sdfg, sdfg_id, self.state_id, in_local_storage_subgraph, self.expr_index)
+            in_local_storage = InLocalStorage(sdfg, sdfg_id, self.state_id, in_local_storage_subgraph, self.expr_index)
             in_local_storage.array = e.data.data
             in_local_storage.apply(graph, sdfg)
 
@@ -143,6 +143,6 @@ class MPITransformMap(transformation.SingleStateTransformation):
                 LocalStorage.node_b: graph.node_id(out_map_exit)
             }
             sdfg_id = sdfg.sdfg_id
-            outlocalstorage = LocalStorage(sdfg, sdfg_id, self.state_id, outlocalstorage_subgraph, self.expr_index)
+            outlocalstorage = OutLocalStorage(sdfg, sdfg_id, self.state_id, outlocalstorage_subgraph, self.expr_index)
             outlocalstorage.array = name
             outlocalstorage.apply(graph, sdfg)

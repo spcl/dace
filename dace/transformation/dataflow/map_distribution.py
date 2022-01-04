@@ -236,7 +236,7 @@ class ElementWiseArrayOperation2D(pm.SingleStateTransformation):
     map_entry = pm.PatternNode(nodes.MapEntry)
 
     @classmethod
-    def expressions():
+    def expressions(cls):
         return [sdutil.node_path_graph(cls.map_entry)]
 
     def can_be_applied(self, graph: dace.SDFGState, expr_index: int, sdfg: dace.SDFG, permissive: bool = False):

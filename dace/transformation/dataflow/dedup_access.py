@@ -8,7 +8,7 @@ from typing import List, Set
 
 from dace import data, dtypes, sdfg as sd, subsets, symbolic
 from dace.memlet import Memlet
-from dace.sdfg import nodes
+from dace.sdfg import nodes, graph as gr
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation as xf
 import dace.transformation.helpers as helpers
@@ -29,7 +29,7 @@ class DeduplicateAccess(xf.SingleStateTransformation):
 
     @classmethod
     def expressions(cls):
-        state = sd.SDFGState()
+        state = gr.OrderedMultiDiConnectorGraph()
         state.add_nedge(cls.map_entry, cls.node1, Memlet())
         state.add_nedge(cls.map_entry, cls.node2, Memlet())
         return [state]
