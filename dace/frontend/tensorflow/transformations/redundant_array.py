@@ -18,20 +18,15 @@ class TensorflowRedundantArray(pm.Transformation):
 
     @staticmethod
     def expressions():
-        return [
-            sdutil.node_path_graph(TensorflowRedundantArray._in_array,
-                                   TensorflowRedundantArray._out_array)
-        ]
+        return [sdutil.node_path_graph(TensorflowRedundantArray._in_array, TensorflowRedundantArray._out_array)]
 
     @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
         in_array = graph.nodes()[candidate[TensorflowRedundantArray._in_array]]
-        out_array = graph.nodes()[candidate[
-            TensorflowRedundantArray._out_array]]
+        out_array = graph.nodes()[candidate[TensorflowRedundantArray._out_array]]
 
         # Just to be sure, check for the OP name in the out array
-        if not ("ReadVariable" in out_array.data
-                or "control_dependency" in out_array.data):
+        if not ("ReadVariable" in out_array.data or "control_dependency" in out_array.data):
             return False
 
         # Make sure that the candidate is a transient variable
@@ -43,18 +38,16 @@ class TensorflowRedundantArray(pm.Transformation):
             return False
 
         # Only apply if arrays are of same shape (no need to modify subset)
-        if len(in_array.desc(sdfg).shape) != len(
-                out_array.desc(sdfg).shape) or any(i != o for i, o in zip(
-                    in_array.desc(sdfg).shape,
-                    out_array.desc(sdfg).shape)):
+        if len(in_array.desc(sdfg).shape) != len(out_array.desc(sdfg).shape) or any(
+                i != o for i, o in zip(in_array.desc(sdfg).shape,
+                                       out_array.desc(sdfg).shape)):
             return False
 
         return True
 
     @staticmethod
     def match_to_str(graph, candidate):
-        out_array = graph.nodes()[candidate[
-            TensorflowRedundantArray._out_array]]
+        out_array = graph.nodes()[candidate[TensorflowRedundantArray._out_array]]
 
         return "Remove " + str(out_array)
 

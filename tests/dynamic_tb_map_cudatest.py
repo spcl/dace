@@ -10,8 +10,7 @@ H = dace.symbol('H')
 nnz = dace.symbol('nnz')
 
 
-@dace.program(dace.uint32[H + 1], dace.uint32[nnz], dace.float32[nnz],
-              dace.float32[W], dace.float32[H])
+@dace.program(dace.uint32[H + 1], dace.uint32[nnz], dace.float32[nnz], dace.float32[W], dace.float32[H])
 def spmv(A_row, A_col, A_val, x, b):
     @dace.mapscope(_[0:H])
     def compute_row(i):
@@ -47,27 +46,17 @@ def test_dynamic_map():
     # Column data
     A_col = dace.ndarray([A_row[height]], dtype=dace.uint32)
     for i in range(height):
-        A_col[A_row[i]:A_row[i + 1]] = np.sort(
-            np.random.choice(width, A_row[i + 1] - A_row[i], replace=False))
+        A_col[A_row[i]:A_row[i + 1]] = np.sort(np.random.choice(width, A_row[i + 1] - A_row[i], replace=False))
 
     # values
     A_val = np.random.rand(A_row[height]).astype(dace.float32.type)
 
-    A_sparse = scipy.sparse.csr_matrix((A_val, A_col, A_row),
-                                       dtype=dace.float32.type,
-                                       shape=(1024, 1024))
+    A_sparse = scipy.sparse.csr_matrix((A_val, A_col, A_row), dtype=dace.float32.type, shape=(1024, 1024))
 
     x = np.random.rand(width).astype(dace.float32.type)
     b = np.zeros(height, dtype=dace.float32.type)
 
-    sdfg(A_row=A_row,
-         A_col=A_col,
-         A_val=A_val,
-         x=x,
-         b=b,
-         H=A_sparse.shape[0],
-         W=A_sparse.shape[1],
-         nnz=A_sparse.nnz)
+    sdfg(A_row=A_row, A_col=A_col, A_val=A_val, x=x, b=b, H=A_sparse.shape[0], W=A_sparse.shape[1], nnz=A_sparse.nnz)
 
     diff = np.linalg.norm(A_sparse.dot(x) - b) / float(height)
     print("Difference:", diff)

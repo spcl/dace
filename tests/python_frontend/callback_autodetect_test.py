@@ -29,8 +29,7 @@ def scale(C, beta):
 
 def test_automatic_callback():
     @dace.program
-    def autocallback(A: dace.float64[N, N], B: dace.float64[N, N],
-                     C: dace.float64[N, N], beta: dace.float64):
+    def autocallback(A: dace.float64[N, N], B: dace.float64[N, N], C: dace.float64[N, N], beta: dace.float64):
         tmp: dace.float64[N, N] = almost_gemm(A, 0.5, B)
         scale(C, beta)
         C += tmp
@@ -48,8 +47,7 @@ def test_automatic_callback():
 
 def test_automatic_callback_2():
     @dace.program
-    def autocallback(A: dace.float64[N, N], B: dace.float64[N, N],
-                     C: dace.float64[N, N], beta: dace.float64):
+    def autocallback(A: dace.float64[N, N], B: dace.float64[N, N], C: dace.float64[N, N], beta: dace.float64):
         tmp: dace.float64[N, N]
         tmp2: dace.float64
         tmp, tmp2 = almost_gemm_2(A, 0.5, B)
@@ -69,8 +67,7 @@ def test_automatic_callback_2():
 
 def test_automatic_callback_inference():
     @dace.program
-    def autocallback_ret(A: dace.float64[N, N], B: dace.float64[N, N],
-                         C: dace.float64[N, N], beta: dace.float64):
+    def autocallback_ret(A: dace.float64[N, N], B: dace.float64[N, N], C: dace.float64[N, N], beta: dace.float64):
         tmp = np.ndarray([N, N], dace.float64)
         tmp[:] = almost_gemm(A, 0.5, B)
         scale(C, beta)
@@ -89,8 +86,7 @@ def test_automatic_callback_inference():
 
 def test_automatic_callback_inference_2():
     @dace.program
-    def autocallback_ret(A: dace.float64[N, N], B: dace.float64[N, N],
-                         C: dace.float64[N, N], beta: dace.float64):
+    def autocallback_ret(A: dace.float64[N, N], B: dace.float64[N, N], C: dace.float64[N, N], beta: dace.float64):
         tmp = np.ndarray([N, N], dace.float64)
         tmp2 = np.float64(0.0)
         tmp[:], tmp2 = almost_gemm_2(A, 0.5, B)
@@ -170,8 +166,7 @@ def test_callback_tasklet():
 
 def test_view_callback():
     @dace.program
-    def autocallback(A: dace.float64[2 * N, N], B: dace.float64[N, N],
-                     C: dace.float64[N, N], beta: dace.float64):
+    def autocallback(A: dace.float64[2 * N, N], B: dace.float64[N, N], C: dace.float64[N, N], beta: dace.float64):
         A[N:, :] = almost_gemm(A[:N, :], 0.5, B)
         scale(C, beta)
         C += A[N:, :]
@@ -304,7 +299,7 @@ def test_callback_samename():
         call_b()
         call_a()
 
-    sdfg = same_name_nested.to_sdfg(strict=False)
+    sdfg = same_name_nested.to_sdfg(coarsen=False)
     assert list(sdfg.arrays.keys()) == ['__pystate']
 
     same_name_nested()
@@ -324,9 +319,7 @@ def test_gpu_callback():
 
     @dace.program
     def gpucallback(A):
-        tmp = dace.ndarray([20],
-                           dace.float64,
-                           storage=dace.StorageType.GPU_Global)
+        tmp = dace.ndarray([20], dace.float64, storage=dace.StorageType.GPU_Global)
         tmp[:] = A
         cb_with_gpu(tmp)
         A[:] = tmp
@@ -357,6 +350,61 @@ def test_bad_closure():
     assert np.all(B > A) and np.all(A > now)
 
 
+def test_object_with_nested_callback():
+    c = np.random.rand(20)
+
+    @dace_inhibitor
+    def call_another_function(a, b):
+        nonlocal c
+        c[:] = a + b
+
+    class MyObject:
+        def __call__(self, a, b):
+            c = dict(a=a, b=b)
+            call_another_function(**c)
+
+    obj = MyObject()
+
+    @dace.program
+    def callobj(a, b):
+        obj(a, b)
+
+    a = np.random.rand(20)
+    b = np.random.rand(20)
+    callobj(a, b)
+    assert np.allclose(c, a + b)
+
+
+def test_two_parameters_same_name():
+    @dace_inhibitor
+    def add(a, b):
+        return a + b
+
+    @dace.program
+    def calladd(A: dace.float64[20], B: dace.float64[20]):
+        B[:] = add(A, A)
+
+    a = np.random.rand(20)
+    b = np.random.rand(20)
+    calladd(a, b)
+    assert np.allclose(b, a + a)
+
+
+def test_inout_same_name():
+    @dace_inhibitor
+    def add(a, b):
+        return a + b
+
+    @dace.program
+    def calladd(A: dace.float64[20]):
+        A[:] = add(A, A)
+
+    a = np.random.rand(20)
+    expected = a + a
+    calladd(a)
+    assert np.allclose(expected, a)
+
+
 if __name__ == '__main__':
     test_automatic_callback()
     test_automatic_callback_2()
@@ -372,3 +420,6 @@ if __name__ == '__main__':
     test_callback_samename()
     # test_gpu_callback()
     test_bad_closure()
+    test_object_with_nested_callback()
+    test_two_parameters_same_name()
+    test_inout_same_name()

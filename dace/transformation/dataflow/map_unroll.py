@@ -27,7 +27,7 @@ class MapUnroll(transformation.Transformation):
         return [sdutil.node_path_graph(MapUnroll._map_entry)]
 
     @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
         map_entry = graph.nodes()[candidate[MapUnroll._map_entry]]
         # Must be top-level map
         if graph.scope_dict()[map_entry] is not None:
@@ -67,10 +67,8 @@ class MapUnroll(transformation.Transformation):
 
         # Check for local memories that need to be replicated
         local_memories = [
-            name for name in sdutil.local_transients(
-                sdfg, subgraph, entry_node=map_entry, include_nested=True)
-            if not isinstance(sdfg.arrays[name], dt.Stream)
-            and not isinstance(sdfg.arrays[name], dt.View)
+            name for name in sdutil.local_transients(sdfg, subgraph, entry_node=map_entry, include_nested=True)
+            if not isinstance(sdfg.arrays[name], dt.Stream) and not isinstance(sdfg.arrays[name], dt.View)
         ]
 
         params = map_entry.map.params
@@ -112,14 +110,12 @@ class MapUnroll(transformation.Transformation):
                     if node == map_entry:
                         # Fix the map bounds to only this iteration
                         unrolled_node.map.range = [(i, i, 1) for i in t]
-                    if (isinstance(node, nodes.AccessNode)
-                            and node.data in local_memories):
+                    if (isinstance(node, nodes.AccessNode) and node.data in local_memories):
                         # If this is a local memory only used in this subgraph,
                         # we need to replicate it for each new subgraph
                         unrolled_name = node.data + suffix
                         if unrolled_name not in sdfg.arrays:
-                            unrolled_desc = copy.deepcopy(
-                                sdfg.arrays[node.data])
+                            unrolled_desc = copy.deepcopy(sdfg.arrays[node.data])
                             sdfg.add_datadesc(unrolled_name, unrolled_desc)
                         unrolled_node.data = unrolled_name
                 state.add_node(unrolled_node)
@@ -133,12 +129,11 @@ class MapUnroll(transformation.Transformation):
                     memlet.data = memlet.data + suffix
                 state.add_edge(src, src_conn, dst, dst_conn, memlet)
             # Eliminate the now trivial map
-            TrivialMapElimination.apply_to(
-                sdfg,
-                verify=False,
-                annotate=False,
-                save=False,
-                _map_entry=node_to_unrolled[map_entry])
+            TrivialMapElimination.apply_to(sdfg,
+                                           verify=False,
+                                           annotate=False,
+                                           save=False,
+                                           _map_entry=node_to_unrolled[map_entry])
 
         # Now we can delete the original subgraph. This implicitly also remove
         # memlets between nodes

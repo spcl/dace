@@ -33,6 +33,7 @@ def test_nested_negative_index():
 def negative_range(A: dace.int64[10]):
     return A[-5:-1]
 
+
 def test_negative_range():
     A = np.random.randint(0, 100, size=10, dtype=np.int64)
     out = negative_range(A)
@@ -43,7 +44,7 @@ def test_negative_range():
 def nested_negative_range(A: dace.int64[10]):
     out = np.ndarray([10], dtype=np.int64)
     for i in dace.map[0:2]:
-        out[i*5:i*5+5] = A[-6:-1]
+        out[i * 5:i * 5 + 5] = A[-6:-1]
     return out
 
 
@@ -57,10 +58,8 @@ def test_nested_negative_range():
 @dace.program
 def jacobi_2d(A: dace.float64[10, 10], B: dace.float64[10, 10]):
     for t in range(1, 10):
-        B[1:-1, 1:-1] = 0.2 * (A[1:-1, 1:-1] + A[1:-1, :-2] +
-                                 A[1:-1, 2:] + A[2:, 1:-1] + A[:-2, 1:-1])
-        A[1:-1, 1:-1] = 0.2 * (B[1:-1, 1:-1] + B[1:-1, :-2] +
-                                 B[1:-1, 2:] + B[2:, 1:-1] + B[:-2, 1:-1])
+        B[1:-1, 1:-1] = 0.2 * (A[1:-1, 1:-1] + A[1:-1, :-2] + A[1:-1, 2:] + A[2:, 1:-1] + A[:-2, 1:-1])
+        A[1:-1, 1:-1] = 0.2 * (B[1:-1, 1:-1] + B[1:-1, :-2] + B[1:-1, 2:] + B[2:, 1:-1] + B[:-2, 1:-1])
 
 
 def test_jacobi_2d():
@@ -70,13 +69,10 @@ def test_jacobi_2d():
     Br = np.ones([10, 10], dtype=np.float64)
     jacobi_2d(A, B)
     for t in range(1, 10):
-        Br[1:-1, 1:-1] = 0.2 * (Ar[1:-1, 1:-1] + Ar[1:-1, :-2] +
-                                Ar[1:-1, 2:] + Ar[2:, 1:-1] + Ar[:-2, 1:-1])
-        Ar[1:-1, 1:-1] = 0.2 * (Br[1:-1, 1:-1] + Br[1:-1, :-2] +
-                                Br[1:-1, 2:] + Br[2:, 1:-1] + Br[:-2, 1:-1])
+        Br[1:-1, 1:-1] = 0.2 * (Ar[1:-1, 1:-1] + Ar[1:-1, :-2] + Ar[1:-1, 2:] + Ar[2:, 1:-1] + Ar[:-2, 1:-1])
+        Ar[1:-1, 1:-1] = 0.2 * (Br[1:-1, 1:-1] + Br[1:-1, :-2] + Br[1:-1, 2:] + Br[2:, 1:-1] + Br[:-2, 1:-1])
     assert np.allclose(A, Ar)
     assert np.allclose(B, Br)
-
 
 
 if __name__ == '__main__':

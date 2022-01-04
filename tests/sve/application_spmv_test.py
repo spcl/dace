@@ -10,14 +10,12 @@ import scipy
 import tests.sve.common as common
 import pytest
 
-
 W = dace.symbol('W')
 H = dace.symbol('H')
 nnz = dace.symbol('nnz')
 
 
-@dace.program(dace.uint32[H + 1], dace.uint32[nnz], dace.float32[nnz],
-              dace.float32[W], dace.float32[H])
+@dace.program(dace.uint32[H + 1], dace.uint32[nnz], dace.float32[nnz], dace.float32[W], dace.float32[H])
 def spmv(A_row, A_col, A_val, x, b):
     @dace.mapscope(_[0:H])
     def compute_row(i):
@@ -36,8 +34,7 @@ def test_spmv():
     H.set(64)
     nnz.set(640)
 
-    print('Sparse Matrix-Vector Multiplication %dx%d (%d non-zero elements)' %
-          (W.get(), H.get(), nnz.get()))
+    print('Sparse Matrix-Vector Multiplication %dx%d (%d non-zero elements)' % (W.get(), H.get(), nnz.get()))
 
     A_row = dace.ndarray([H + 1], dtype=dace.uint32)
     A_col = dace.ndarray([nnz], dtype=dace.uint32)
@@ -64,8 +61,7 @@ def test_spmv():
         A_col[nnz_per_row*i:nnz_per_row*(i+1)] = \
             np.sort(np.random.choice(W.get(), nnz_per_row, replace=False))
     # Fill column data for last row
-    A_col[nnz_per_row * (H.get() - 1):] = np.sort(
-        np.random.choice(W.get(), nnz_last_row, replace=False))
+    A_col[nnz_per_row * (H.get() - 1):] = np.sort(np.random.choice(W.get(), nnz_last_row, replace=False))
 
     A_val[:] = np.random.rand(nnz.get()).astype(dace.float32.type)
     #########################
@@ -74,8 +70,7 @@ def test_spmv():
     b[:] = dace.float32(0)
 
     # Setup regression
-    A_sparse = scipy.sparse.csr_matrix((A_val, A_col, A_row),
-                                       shape=(H.get(), W.get()))
+    A_sparse = scipy.sparse.csr_matrix((A_val, A_col, A_row), shape=(H.get(), W.get()))
 
     sdfg = common.vectorize(spmv)
 

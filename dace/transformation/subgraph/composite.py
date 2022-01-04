@@ -3,7 +3,6 @@
     Subgraph Fusion - Stencil Tiling Transformation
 """
 
-
 import dace
 from dace.transformation.subgraph import stencil_tiling
 
@@ -20,6 +19,7 @@ from dace.sdfg.graph import SubgraphView
 import copy
 import warnings
 
+
 @registry.autoregister_params(singlestate=True)
 @make_properties
 class CompositeFusion(transformation.SubgraphTransformation):
@@ -28,80 +28,67 @@ class CompositeFusion(transformation.SubgraphTransformation):
         transformation before fusion.
     """
 
-    debug = Property(desc="Debug mode", dtype=bool, default = False)
+    debug = Property(desc="Debug mode", dtype=bool, default=False)
 
-    allow_expansion = Property(desc="Allow MultiExpansion first",
-                               dtype = bool,
-                               default = True)
+    allow_expansion = Property(desc="Allow MultiExpansion first", dtype=bool, default=True)
 
-    allow_tiling = Property(desc="Allow StencilTiling (after MultiExpansion)",
-                            dtype = bool,
-                            default = False)
+    allow_tiling = Property(desc="Allow StencilTiling (after MultiExpansion)", dtype=bool, default=False)
 
-    transient_allocation = EnumProperty(
-        desc="Storage Location to push transients to that are "
-             "fully contained within the subgraph.",
-        dtype=dtypes.StorageType,
-        default=dtypes.StorageType.Default)
+    transient_allocation = EnumProperty(desc="Storage Location to push transients to that are "
+                                        "fully contained within the subgraph.",
+                                        dtype=dtypes.StorageType,
+                                        default=dtypes.StorageType.Default)
 
     schedule_innermaps = Property(desc="Schedule of inner fused maps",
                                   dtype=dtypes.ScheduleType,
-                                  default=None,  
+                                  default=None,
                                   allow_none=True)
 
-    stencil_unroll_loops = Property(desc="Unroll inner stencil loops if they have size > 1",
-                                    dtype=bool,
-                                    default=False)
-    stencil_strides = ShapeProperty(dtype=tuple,
-                                    default=(1, ),
-                                    desc="Stencil tile stride")
+    stencil_unroll_loops = Property(desc="Unroll inner stencil loops if they have size > 1", dtype=bool, default=False)
+    stencil_strides = ShapeProperty(dtype=tuple, default=(1, ), desc="Stencil tile stride")
 
-    expansion_split = Property(desc="Allow MultiExpansion to split up maps, if enabled",
-                               dtype = bool,
-                               default = True)
+    expansion_split = Property(desc="Allow MultiExpansion to split up maps, if enabled", dtype=bool, default=True)
 
     def can_be_applied(self, sdfg: SDFG, subgraph: SubgraphView) -> bool:
         graph = subgraph.graph
         if self.allow_expansion == True:
             subgraph_fusion = SubgraphFusion(subgraph)
             if subgraph_fusion.can_be_applied(sdfg, subgraph):
-                # try w/o copy first 
-                return True 
-            
-            expansion = MultiExpansion(subgraph) 
+                # try w/o copy first
+                return True
+
+            expansion = MultiExpansion(subgraph)
             expansion.permutation_only = not self.expansion_split
             if expansion.can_be_applied(sdfg, subgraph):
                 # deepcopy
-                graph_indices = [i for (i,n) in enumerate(graph.nodes()) if n in subgraph]
+                graph_indices = [i for (i, n) in enumerate(graph.nodes()) if n in subgraph]
                 sdfg_copy = copy.deepcopy(sdfg)
                 graph_copy = sdfg_copy.nodes()[sdfg.nodes().index(graph)]
-                subgraph_copy = SubgraphView(graph_copy,
-                [graph_copy.nodes()[i] for i in graph_indices])
+                subgraph_copy = SubgraphView(graph_copy, [graph_copy.nodes()[i] for i in graph_indices])
                 expansion.sdfg_id = sdfg_copy.sdfg_id
-            
-                
+
                 ##sdfg_copy.apply_transformations(MultiExpansion, states=[graph])
                 #expansion = MultiExpansion(subgraph_copy)
                 expansion.apply(sdfg_copy)
 
                 subgraph_fusion = SubgraphFusion(subgraph_copy)
                 if subgraph_fusion.can_be_applied(sdfg_copy, subgraph_copy):
-                    return True 
-               
+                    return True
+
                 stencil_tiling = StencilTiling(subgraph_copy)
                 if self.allow_tiling and stencil_tiling.can_be_applied(sdfg_copy, subgraph_copy):
-                    return True 
+                    return True
 
         else:
             subgraph_fusion = SubgraphFusion(subgraph)
             if subgraph_fusion.can_be_applied(sdfg, subgraph):
                 return True
-        
+
         if self.allow_tiling == True:
             stencil_tiling = StencilTiling(subgraph)
             if stencil_tiling.can_be_applied(sdfg, subgraph):
                 return True
-                
+
         return False
 
     def apply(self, sdfg):
@@ -112,7 +99,7 @@ class CompositeFusion(transformation.SubgraphTransformation):
         first_entry = next(iter(map_entries))
 
         if self.allow_expansion:
-            expansion = MultiExpansion(subgraph, self.sdfg_id, self.state_id) 
+            expansion = MultiExpansion(subgraph, self.sdfg_id, self.state_id)
             expansion.permutation_only = not self.expansion_split
             if expansion.can_be_applied(sdfg, subgraph):
                 expansion.apply(sdfg)
@@ -125,15 +112,15 @@ class CompositeFusion(transformation.SubgraphTransformation):
             sf.schedule_innermaps = self.schedule_innermaps
             sf.apply(sdfg)
             self._global_map_entry = sf._global_map_entry
-            return 
-        
+            return
+
         elif self.allow_tiling == True:
             st = StencilTiling(subgraph, self.sdfg_id, self.state_id)
             if st.can_be_applied(sdfg, self.subgraph_view(sdfg)):
                 # set StencilTiling properties
                 st.debug = self.debug
                 st.unroll_loops = self.stencil_unroll_loops
-                st.strides= self.stencil_strides
+                st.strides = self.stencil_strides
                 st.apply(sdfg)
                 # StencilTiling: update nodes
                 new_entries = st._outer_entries
@@ -146,8 +133,6 @@ class CompositeFusion(transformation.SubgraphTransformation):
 
                 sf.apply(sdfg)
                 self._global_map_entry = sf._global_map_entry
-                return 
-
+                return
 
         warnings.warn("CompositeFusion::Apply did not perform as expected")
-

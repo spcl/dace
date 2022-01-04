@@ -15,14 +15,12 @@ TMAX, NX, NY = (dc.symbol(s, dtype=dc.int32) for s in ('TMAX', 'NX', 'NY'))
 
 
 @dc.program
-def kernel(ex: dc.float32[NX, NY], ey: dc.float32[NX, NY],
-           hz: dc.float32[NX, NY], _fict_: dc.float32[TMAX]):
+def kernel(ex: dc.float32[NX, NY], ey: dc.float32[NX, NY], hz: dc.float32[NX, NY], _fict_: dc.float32[TMAX]):
     for t in range(TMAX):
         ey[0, :] = _fict_[t]
         ey[1:, :] -= 0.5 * (hz[1:, :] - hz[:-1, :])
         ex[:, 1:] -= 0.5 * (hz[:, 1:] - hz[:, :-1])
-        hz[:-1, :-1] -= 0.7 * (ex[:-1, 1:] - ex[:-1, :-1] +
-                               ey[1:, :-1] - ey[:-1, :-1])
+        hz[:-1, :-1] -= 0.7 * (ex[:-1, 1:] - ex[:-1, :-1] + ey[1:, :-1] - ey[:-1, :-1])
 
 
 def init_data(TMAX, NX, NY):
@@ -48,8 +46,8 @@ def ground_truth(TMAX, NX, NY, ex, ey, hz, _fict_):
         ey[0, :] = _fict_[t]
         ey[1:, :] -= 0.5 * (hz[1:, :] - hz[:NX - 1, :])
         ex[:, 1:] -= 0.5 * (hz[:, 1:] - hz[:, :NY - 1])
-        hz[:NX - 1, :NY - 1] -= 0.7 * (ex[:NX - 1, 1:] - ex[:NX - 1, :NY - 1] +
-                                       ey[1:, :NY - 1] - ey[:NX - 1, :NY - 1])
+        hz[:NX - 1, :NY - 1] -= 0.7 * (ex[:NX - 1, 1:] - ex[:NX - 1, :NY - 1] + ey[1:, :NY - 1] - ey[:NX - 1, :NY - 1])
+
 
 def run_fdtd_2d(device_type: dace.dtypes.DeviceType):
     '''
@@ -70,17 +68,16 @@ def run_fdtd_2d(device_type: dace.dtypes.DeviceType):
         sdfg(ex=ex, ey=ey, hz=hz, _fict_=_fict_, TMAX=TMAX, NX=NX, NY=NY)
     elif device_type == dace.dtypes.DeviceType.FPGA:
         # Parse SDFG and apply FPGA friendly optimization
-        sdfg = kernel.to_sdfg(strict=True)
+        sdfg = kernel.to_sdfg(coarsen=True)
         sdfg.apply_transformations_repeated([MapFusion])
         applied = sdfg.apply_transformations([FPGATransformSDFG])
         assert applied == 1
 
-        sm_applied = sdfg.apply_transformations_repeated(
-            [InlineSDFG, StreamingMemory],
-            [{}, {
-                'storage': dace.StorageType.FPGA_Local
-            }],
-            print_report=True)
+        sm_applied = sdfg.apply_transformations_repeated([InlineSDFG, StreamingMemory],
+                                                         [{}, {
+                                                             'storage': dace.StorageType.FPGA_Local
+                                                         }],
+                                                         print_report=True)
 
         assert sm_applied == 2
 
@@ -105,7 +102,6 @@ def run_fdtd_2d(device_type: dace.dtypes.DeviceType):
     return sdfg
 
 
-
 def test_cpu():
     run_fdtd_2d(dace.dtypes.DeviceType.CPU)
 
@@ -123,12 +119,7 @@ def test_fpga():
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "-t",
-        "--target",
-        default='cpu',
-        choices=['cpu', 'gpu', 'fpga'],
-        help='Target platform')
+    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu', 'fpga'], help='Target platform')
 
     args = vars(parser.parse_args())
     target = args["target"]

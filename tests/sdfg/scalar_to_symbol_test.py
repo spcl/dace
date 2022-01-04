@@ -32,7 +32,7 @@ def test_find_promotable():
             j += 1
             i += j
 
-    sdfg: dace.SDFG = testprog1.to_sdfg(strict=False)
+    sdfg: dace.SDFG = testprog1.to_sdfg(coarsen=False)
     scalars = scalar_to_symbol.find_promotable_scalars(sdfg)
     assert 'i' in scalars
     assert 'j' in scalars
@@ -45,7 +45,7 @@ def test_promote_simple():
         j = 5
         A[:] += j
 
-    sdfg: dace.SDFG = testprog2.to_sdfg(strict=False)
+    sdfg: dace.SDFG = testprog2.to_sdfg(coarsen=False)
     assert scalar_to_symbol.find_promotable_scalars(sdfg) == {'j'}
     scalar_to_symbol.promote_scalars_to_symbols(sdfg)
     sdfg.apply_transformations_repeated(isxf.StateFusion)
@@ -55,8 +55,7 @@ def test_promote_simple():
     assert sdfg.number_of_nodes() == 2
     assert sdfg.source_nodes()[0].number_of_nodes() == 0
     assert sdfg.sink_nodes()[0].number_of_nodes() == 5
-    tasklet = next(n for n in sdfg.sink_nodes()[0]
-                   if isinstance(n, dace.nodes.Tasklet))
+    tasklet = next(n for n in sdfg.sink_nodes()[0] if isinstance(n, dace.nodes.Tasklet))
     assert '+ j' in tasklet.code.as_string
 
     # Program should produce correct result
@@ -92,7 +91,7 @@ def test_promote_simple_c():
             """
             kout >> k
 
-    sdfg: dace.SDFG = testprog3.to_sdfg(strict=False)
+    sdfg: dace.SDFG = testprog3.to_sdfg(coarsen=False)
     scalars = scalar_to_symbol.find_promotable_scalars(sdfg)
     assert scalars == {'i'}
     scalar_to_symbol.promote_scalars_to_symbols(sdfg)
@@ -102,8 +101,7 @@ def test_promote_simple_c():
     assert sdfg.number_of_nodes() == 3
     src_state = sdfg.source_nodes()[0]
     sink_state = sdfg.sink_nodes()[0]
-    middle_state = next(s for s in sdfg.nodes()
-                        if s not in [src_state, sink_state])
+    middle_state = next(s for s in sdfg.nodes() if s not in [src_state, sink_state])
     assert src_state.number_of_nodes() == 0
     assert middle_state.number_of_nodes() == 2
     assert sink_state.number_of_nodes() == 5
@@ -116,7 +114,7 @@ def test_promote_disconnect():
         j = 5
         A[:] = j
 
-    sdfg: dace.SDFG = testprog4.to_sdfg(strict=False)
+    sdfg: dace.SDFG = testprog4.to_sdfg(coarsen=False)
     assert scalar_to_symbol.find_promotable_scalars(sdfg) == {'j'}
     scalar_to_symbol.promote_scalars_to_symbols(sdfg)
     sdfg.apply_transformations_repeated(isxf.StateFusion)
@@ -143,16 +141,15 @@ def test_promote_copy():
     sdfg.add_transient('i', [1], dace.int32)
     sdfg.add_transient('j', [1], dace.int32)
     state = sdfg.add_state()
-    state.add_edge(state.add_tasklet('seti', {}, {'out'}, 'out = 0'), 'out',
-                   state.add_write('i'), None, dace.Memlet('i'))
+    state.add_edge(state.add_tasklet('seti', {}, {'out'}, 'out = 0'), 'out', state.add_write('i'), None,
+                   dace.Memlet('i'))
     state = sdfg.add_state_after(state)
-    state.add_edge(state.add_tasklet('setj', {}, {'out'}, 'out = 5'), 'out',
-                   state.add_write('j'), None, dace.Memlet('j'))
+    state.add_edge(state.add_tasklet('setj', {}, {'out'}, 'out = 5'), 'out', state.add_write('j'), None,
+                   dace.Memlet('j'))
     state = sdfg.add_state_after(state)
     state.add_nedge(state.add_read('j'), state.add_write('i'), dace.Memlet('i'))
     state = sdfg.add_state_after(state)
-    state.add_nedge(state.add_read('i'), state.add_write('A'),
-                    dace.Memlet('A[5, 5]'))
+    state.add_nedge(state.add_read('i'), state.add_write('A'), dace.Memlet('A[5, 5]'))
 
     assert scalar_to_symbol.find_promotable_scalars(sdfg) == {'i', 'j'}
     scalar_to_symbol.promote_scalars_to_symbols(sdfg)
@@ -163,8 +160,7 @@ def test_promote_copy():
     assert sdfg.number_of_nodes() == 3
     src_state = sdfg.source_nodes()[0]
     sink_state = sdfg.sink_nodes()[0]
-    middle_state = next(s for s in sdfg.nodes()
-                        if s not in [src_state, sink_state])
+    middle_state = next(s for s in sdfg.nodes() if s not in [src_state, sink_state])
     assert src_state.number_of_nodes() == 0
     assert middle_state.number_of_nodes() == 0
     assert sink_state.number_of_nodes() == 2
@@ -185,7 +181,7 @@ def test_promote_array_assignment():
         if j >= 0.0:
             A[:] += j
 
-    sdfg: dace.SDFG = testprog6.to_sdfg(strict=False)
+    sdfg: dace.SDFG = testprog6.to_sdfg(coarsen=False)
     assert scalar_to_symbol.find_promotable_scalars(sdfg) == {'j'}
     scalar_to_symbol.promote_scalars_to_symbols(sdfg)
     sdfg.apply_transformations_repeated(isxf.StateFusion)
@@ -216,7 +212,7 @@ def test_promote_array_assignment_tasklet():
             out = inp
         A[:] += j
 
-    sdfg: dace.SDFG = testprog7.to_sdfg(strict=False)
+    sdfg: dace.SDFG = testprog7.to_sdfg(coarsen=False)
     assert scalar_to_symbol.find_promotable_scalars(sdfg) == {'j'}
     scalar_to_symbol.promote_scalars_to_symbols(sdfg)
     sdfg.apply_transformations_repeated(isxf.StateFusion)
@@ -238,9 +234,8 @@ def test_promote_array_assignment_tasklet():
 class LoopTester(ld.DetectLoop):
     """ Tester method that sets loop index on a guard state. """
     @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict):
-        if not ld.DetectLoop.can_be_applied(graph, candidate, expr_index, sdfg,
-                                            strict):
+    def can_be_applied(graph, candidate, expr_index, sdfg, permissive):
+        if not ld.DetectLoop.can_be_applied(graph, candidate, expr_index, sdfg, permissive):
             return False
         guard = graph.node(candidate[ld.DetectLoop._loop_guard])
         if hasattr(guard, '_LOOPINDEX'):
@@ -266,10 +261,10 @@ def test_promote_loop():
             A += i
             i += 2
 
-    sdfg: dace.SDFG = testprog8.to_sdfg(strict=False)
+    sdfg: dace.SDFG = testprog8.to_sdfg(coarsen=False)
     assert 'i' in scalar_to_symbol.find_promotable_scalars(sdfg)
     scalar_to_symbol.promote_scalars_to_symbols(sdfg)
-    sdfg.apply_strict_transformations()
+    sdfg.coarsen_dataflow()
     # TODO: LoopDetection does not apply to loops with a multi-state guard
     # assert sdfg.apply_transformations_repeated(LoopTester) == 1
 
@@ -290,12 +285,12 @@ def test_promote_loops():
                     k += 1
             i += 2
 
-    sdfg: dace.SDFG = testprog9.to_sdfg(strict=False)
+    sdfg: dace.SDFG = testprog9.to_sdfg(coarsen=False)
     scalars = scalar_to_symbol.find_promotable_scalars(sdfg)
     assert 'i' in scalars
     assert 'k' in scalars
     scalar_to_symbol.promote_scalars_to_symbols(sdfg)
-    sdfg.apply_strict_transformations()
+    sdfg.coarsen_dataflow()
     # TODO: LoopDetection does not apply to loops with a multi-state guard
     # xfh.split_interstate_edges(sdfg)
     # assert sdfg.apply_transformations_repeated(LoopTester) == 3
@@ -328,17 +323,16 @@ def test_promote_indirection():
                 b1 >> B[m]
                 b2 >> B[m + 2]
 
-    sdfg: dace.SDFG = testprog10.to_sdfg(strict=False)
+    sdfg: dace.SDFG = testprog10.to_sdfg(coarsen=False)
     assert scalar_to_symbol.find_promotable_scalars(sdfg) == {'i', 'j', 'k'}
     scalar_to_symbol.promote_scalars_to_symbols(sdfg)
     for cursdfg in sdfg.all_sdfgs_recursive():
         scalar_to_symbol.remove_symbol_indirection(cursdfg)
-    sdfg.apply_strict_transformations()
+    sdfg.coarsen_dataflow()
 
     assert sdfg.number_of_nodes() == 1
     assert all(e.data.subset.num_elements() == 1 for e in sdfg.node(0).edges()
-               if isinstance(e.src, dace.nodes.Tasklet)
-               or isinstance(e.dst, dace.nodes.Tasklet))
+               if isinstance(e.src, dace.nodes.Tasklet) or isinstance(e.dst, dace.nodes.Tasklet))
 
     # Check result
     A = np.random.rand(2, 3, 4, 5)
@@ -363,10 +357,10 @@ def test_promote_output_indirection():
             a[ii] = ii
             a[ii + 1] = ii + 1
 
-    sdfg: dace.SDFG = testprog11.to_sdfg(strict=False)
+    sdfg: dace.SDFG = testprog11.to_sdfg(coarsen=False)
     assert scalar_to_symbol.find_promotable_scalars(sdfg) == {'i'}
     scalar_to_symbol.promote_scalars_to_symbols(sdfg)
-    sdfg.apply_strict_transformations()
+    sdfg.coarsen_dataflow()
 
     assert sdfg.number_of_nodes() == 1
 
@@ -394,12 +388,12 @@ def test_promote_indirection_c():
             aout[ii + 1] = ii + 1;
             '''
 
-    sdfg: dace.SDFG = testprog12.to_sdfg(strict=False)
+    sdfg: dace.SDFG = testprog12.to_sdfg(coarsen=False)
     assert scalar_to_symbol.find_promotable_scalars(sdfg) == {'i'}
     scalar_to_symbol.promote_scalars_to_symbols(sdfg)
     assert all('i' in e.data.free_symbols for e in sdfg.sink_nodes()[0].edges())
 
-    sdfg.apply_strict_transformations()
+    sdfg.coarsen_dataflow()
     assert sdfg.number_of_nodes() == 1
 
     # Check result
@@ -423,10 +417,10 @@ def test_promote_indirection_impossible():
             out >> A(1)[:, :]
             out[i, s] = a[s, i]
 
-    sdfg: dace.SDFG = testprog13.to_sdfg(strict=False)
+    sdfg: dace.SDFG = testprog13.to_sdfg(coarsen=False)
     assert scalar_to_symbol.find_promotable_scalars(sdfg) == {'i'}
     scalar_to_symbol.promote_scalars_to_symbols(sdfg)
-    sdfg.apply_strict_transformations()
+    sdfg.coarsen_dataflow()
 
     # [A,scal->Tasklet->A]
     assert sdfg.number_of_nodes() == 1
@@ -451,8 +445,7 @@ def test_nested_promotion_connector(with_subscript):
     sdfg.add_array('B', [1], dace.float64)
     sdfg.add_transient('scal', [1], dace.int32)
     initstate = sdfg.add_state()
-    initstate.add_edge(initstate.add_tasklet('do', {}, {'out'}, 'out = 5'),
-                       'out', initstate.add_write('scal'), None,
+    initstate.add_edge(initstate.add_tasklet('do', {}, {'out'}, 'out = 5'), 'out', initstate.add_write('scal'), None,
                        dace.Memlet('scal'))
     state = sdfg.add_state_after(initstate)
 
@@ -463,10 +456,7 @@ def test_nested_promotion_connector(with_subscript):
     nsdfg.add_symbol('s2', dace.int32)
     nstate1 = nsdfg.add_state()
     nstate2 = nsdfg.add_state()
-    nsdfg.add_edge(
-        nstate1, nstate2,
-        dace.InterstateEdge(assignments=dict(
-            s2='s[0]' if with_subscript else 's')))
+    nsdfg.add_edge(nstate1, nstate2, dace.InterstateEdge(assignments=dict(s2='s[0]' if with_subscript else 's')))
     a = nstate2.add_read('a')
     t = nstate2.add_tasklet('do', {'inp'}, {'out'}, 'out = inp')
     b = nstate2.add_write('b')
@@ -485,7 +475,7 @@ def test_nested_promotion_connector(with_subscript):
     # Promotion
     assert scalar_to_symbol.find_promotable_scalars(sdfg) == {'scal'}
     scalar_to_symbol.promote_scalars_to_symbols(sdfg)
-    sdfg.apply_strict_transformations()
+    sdfg.coarsen_dataflow()
 
     assert sdfg.number_of_nodes() == 1
     assert sdfg.node(0).number_of_nodes() == 3

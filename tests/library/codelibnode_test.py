@@ -10,15 +10,12 @@ from typing import Dict
 
 @make_properties
 class MyNode(CodeLibraryNode):
-    value_to_add = Property(dtype=int,
-                            default=5,
-                            desc="Value to add in custom code")
+    value_to_add = Property(dtype=int, default=5, desc="Value to add in custom code")
 
     def __init__(self, *args, **kwargs):
         super().__init__(input_names=['inp'], output_names=['out'])
 
-    def generate_code(self, inputs: Dict[str, Array], outputs: Dict[str,
-                                                                    Array]):
+    def generate_code(self, inputs: Dict[str, Array], outputs: Dict[str, Array]):
         assert len(inputs) == 1
         assert len(outputs) == 1
         inarr = inputs['inp']
@@ -31,10 +28,8 @@ class MyNode(CodeLibraryNode):
             code += f'for (int i{dim} = 0; i{dim} < {shp}; ++i{dim}) {{\n'
 
         # Construct index expressions
-        output_expr = ' + '.join(f'i{dim} * {stride}'
-                                 for dim, stride in enumerate(outarr.strides))
-        input_expr = ' + '.join(f'i{dim} * {stride}'
-                                for dim, stride in enumerate(inarr.strides))
+        output_expr = ' + '.join(f'i{dim} * {stride}' for dim, stride in enumerate(outarr.strides))
+        input_expr = ' + '.join(f'i{dim} * {stride}' for dim, stride in enumerate(inarr.strides))
 
         code += \
             f'out[{output_expr}] = inp[{input_expr}] + {self.value_to_add};\n'
@@ -48,15 +43,12 @@ class MyNode(CodeLibraryNode):
 
 @make_properties
 class MyNode2(CodeLibraryNode):
-    value_to_mul = Property(dtype=int,
-                            default=2,
-                            desc="Value to mul in custom code")
+    value_to_mul = Property(dtype=int, default=2, desc="Value to mul in custom code")
 
     def __init__(self, *args, **kwargs):
         super().__init__(input_names=['inp'], output_names=['out'])
 
-    def generate_code(self, inputs: Dict[str, Array], outputs: Dict[str,
-                                                                    Array]):
+    def generate_code(self, inputs: Dict[str, Array], outputs: Dict[str, Array]):
         assert len(inputs) == 1
         assert len(outputs) == 1
         inarr = inputs['inp']
@@ -69,10 +61,8 @@ class MyNode2(CodeLibraryNode):
             code += f'for (int i{dim} = 0; i{dim} < {shp}; ++i{dim}) {{\n'
 
         # Construct index expressions
-        output_expr = ' + '.join(f'i{dim} * {stride}'
-                                 for dim, stride in enumerate(outarr.strides))
-        input_expr = ' + '.join(f'i{dim} * {stride}'
-                                for dim, stride in enumerate(inarr.strides))
+        output_expr = ' + '.join(f'i{dim} * {stride}' for dim, stride in enumerate(outarr.strides))
+        input_expr = ' + '.join(f'i{dim} * {stride}' for dim, stride in enumerate(inarr.strides))
 
         code += \
             f'out[{output_expr}] = inp[{input_expr}] * {self.value_to_mul};\n'
@@ -97,8 +87,7 @@ def test_custom_code_node():
     b = state.add_access('B')
     node2 = MyNode2()
     c = state.add_write('C')
-    state.add_edge(a, None, node, 'inp',
-                   dace.Memlet.simple('A', '10:20, 10:30'))
+    state.add_edge(a, None, node, 'inp', dace.Memlet.simple('A', '10:20, 10:30'))
     state.add_edge(node, 'out', b, None, dace.Memlet.simple('B', '0:10, 0:20'))
 
     state.add_edge(b, None, node2, 'inp', dace.Memlet.simple('B', '0:10, 0:20'))

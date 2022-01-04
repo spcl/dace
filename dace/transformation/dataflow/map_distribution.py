@@ -32,7 +32,7 @@ class ElementWiseArrayOperation(pm.Transformation):
                        candidate: Dict[pm.PatternNode, int],
                        expr_index: int,
                        sdfg: dace.SDFG,
-                       strict: bool = False):
+                       permissive: bool = False):
 
         map_entry = graph.node(candidate[ElementWiseArrayOperation._map_entry])
         map_exit = graph.exit_node(map_entry)
@@ -62,7 +62,7 @@ class ElementWiseArrayOperation(pm.Transformation):
             if desc not in inputs.keys():
                 inputs[desc] = []
             inputs[desc].append(m.subset)
-        
+
         for desc, accesses in inputs.items():
             if isinstance(desc, dace.data.Scalar):
                 continue
@@ -90,7 +90,7 @@ class ElementWiseArrayOperation(pm.Transformation):
             if desc not in outputs.keys():
                 outputs[desc] = []
             outputs[desc].append(m.subset)
-        
+
         for desc, accesses in outputs.items():
             if isinstance(desc, (dace.data.Array, dace.data.View)):
                 for a in accesses:
@@ -109,11 +109,9 @@ class ElementWiseArrayOperation(pm.Transformation):
         return True
 
     @staticmethod
-    def match_to_str(graph: dace.SDFGState, candidate: Dict[pm.PatternNode,
-                                                            int]) -> str:
+    def match_to_str(graph: dace.SDFGState, candidate: Dict[pm.PatternNode, int]) -> str:
         map_entry = graph.node(candidate[ElementWiseArrayOperation._map_entry])
         return map_entry.map.label + ': ' + str(map_entry.map.params)
-
 
     def apply(self, sdfg: dace.SDFG):
         graph = sdfg.nodes()[self.state_id]
@@ -128,22 +126,20 @@ class ElementWiseArrayOperation(pm.Transformation):
         # NOTE: Maps with step in their ranges are currently not supported
         if len(map_entry.map.params) == 1:
             params = map_entry.map.params
-            ranges = [(0, (e-b+1)/sz - 1, 1) for b, e, _ in map_entry.map.range]
+            ranges = [(0, (e - b + 1) / sz - 1, 1) for b, e, _ in map_entry.map.range]
             strides = [1]
         else:
             params = ['__iflat']
             sizes = map_entry.map.range.size_exact()
             total_size = _prod(sizes)
-            ranges = [(0, (total_size)/sz - 1, 1)]
+            ranges = [(0, (total_size) / sz - 1, 1)]
             strides = [_prod(sizes[i + 1:]) for i in range(len(sizes))]
 
         root_name = sdfg.temp_data_name()
         sdfg.add_scalar(root_name, dace.int32, transient=True)
         root_node = graph.add_access(root_name)
-        root_tasklet = graph.add_tasklet('_set_root_', {}, {'__out'},
-                                         '__out = 0')
-        graph.add_edge(root_tasklet, '__out', root_node, None,
-                       dace.Memlet.simple(root_name, '0'))
+        root_tasklet = graph.add_tasklet('_set_root_', {}, {'__out'}, '__out = 0')
+        graph.add_edge(root_tasklet, '__out', root_node, None, dace.Memlet.simple(root_name, '0'))
 
         from dace.libraries.mpi import Bcast, Scatter, Gather
 
@@ -167,28 +163,22 @@ class ElementWiseArrayOperation(pm.Transformation):
             if isinstance(desc, data.Scalar):
                 local_access = graph.add_access(inp.data)
                 bcast_node = Bcast('_Bcast_')
-                graph.add_edge(inp, None, bcast_node, '_inbuffer',
-                               dace.Memlet.from_array(inp.data, desc))
-                graph.add_edge(root_node, None, bcast_node, '_root',
-                               dace.Memlet.simple(root_name, '0'))
-                graph.add_edge(bcast_node, '_outbuffer', local_access, None,
-                               dace.Memlet.from_array(inp.data, desc))
+                graph.add_edge(inp, None, bcast_node, '_inbuffer', dace.Memlet.from_array(inp.data, desc))
+                graph.add_edge(root_node, None, bcast_node, '_root', dace.Memlet.simple(root_name, '0'))
+                graph.add_edge(bcast_node, '_outbuffer', local_access, None, dace.Memlet.from_array(inp.data, desc))
                 for e in graph.edges_between(inp, map_entry):
-                    graph.add_edge(local_access, None, map_entry, e.dst_conn,
-                                   dace.Memlet.from_array(inp.data, desc))
+                    graph.add_edge(local_access, None, map_entry, e.dst_conn, dace.Memlet.from_array(inp.data, desc))
                     graph.remove_edge(e)
 
             elif isinstance(desc, data.Array):
 
-                local_name, local_arr = sdfg.add_temp_transient(
-                    [(desc.total_size) // sz], dtype=desc.dtype,
-                    storage=desc.storage)
+                local_name, local_arr = sdfg.add_temp_transient([(desc.total_size) // sz],
+                                                                dtype=desc.dtype,
+                                                                storage=desc.storage)
                 local_access = graph.add_access(local_name)
                 scatter_node = Scatter('_Scatter_')
-                graph.add_edge(inp, None, scatter_node, '_inbuffer',
-                               dace.Memlet.from_array(inp.data, desc))
-                graph.add_edge(root_node, None, scatter_node, '_root',
-                               dace.Memlet.simple(root_name, '0'))
+                graph.add_edge(inp, None, scatter_node, '_inbuffer', dace.Memlet.from_array(inp.data, desc))
+                graph.add_edge(root_node, None, scatter_node, '_root', dace.Memlet.simple(root_name, '0'))
                 graph.add_edge(scatter_node, '_outbuffer', local_access, None,
                                dace.Memlet.from_array(local_name, local_arr))
                 for e in graph.edges_between(inp, map_entry):
@@ -228,17 +218,15 @@ class ElementWiseArrayOperation(pm.Transformation):
             if isinstance(desc, data.Scalar):
                 raise NotImplementedError
             elif isinstance(desc, data.Array):
-                local_name, local_arr = sdfg.add_temp_transient(
-                    [(desc.total_size) // sz], dtype=desc.dtype,
-                    storage=desc.storage)
+                local_name, local_arr = sdfg.add_temp_transient([(desc.total_size) // sz],
+                                                                dtype=desc.dtype,
+                                                                storage=desc.storage)
                 local_access = graph.add_access(local_name)
                 scatter_node = Gather('_Gather_')
                 graph.add_edge(local_access, None, scatter_node, '_inbuffer',
                                dace.Memlet.from_array(local_name, local_arr))
-                graph.add_edge(root_node, None, scatter_node, '_root',
-                               dace.Memlet.simple(root_name, '0'))
-                graph.add_edge(scatter_node, '_outbuffer', out, None,
-                               dace.Memlet.from_array(out.data, desc))
+                graph.add_edge(root_node, None, scatter_node, '_root', dace.Memlet.simple(root_name, '0'))
+                graph.add_edge(scatter_node, '_outbuffer', out, None, dace.Memlet.from_array(out.data, desc))
                 for e in graph.edges_between(map_exit, out):
                     graph.add_edge(map_exit, e.src_conn, local_access, None,
                                    dace.Memlet.from_array(local_name, local_arr))
@@ -269,7 +257,7 @@ class ElementWiseArrayOperation2D(pm.Transformation):
                        candidate: Dict[pm.PatternNode, int],
                        expr_index: int,
                        sdfg: dace.SDFG,
-                       strict: bool = False):
+                       permissive: bool = False):
 
         map_entry = graph.node(candidate[ElementWiseArrayOperation2D._map_entry])
         map_exit = graph.exit_node(map_entry)
@@ -292,7 +280,7 @@ class ElementWiseArrayOperation2D(pm.Transformation):
             if desc not in inputs.keys():
                 inputs[desc] = []
             inputs[desc].append(m.subset)
-        
+
         for desc, accesses in inputs.items():
             if isinstance(desc, dace.data.Scalar):
                 continue
@@ -322,7 +310,7 @@ class ElementWiseArrayOperation2D(pm.Transformation):
             if desc not in outputs.keys():
                 outputs[desc] = []
             outputs[desc].append(m.subset)
-        
+
         for desc, accesses in outputs.items():
             if isinstance(desc, (dace.data.Array, dace.data.View)):
                 if len(desc.shape) != 2:
@@ -343,11 +331,9 @@ class ElementWiseArrayOperation2D(pm.Transformation):
         return True
 
     @staticmethod
-    def match_to_str(graph: dace.SDFGState, candidate: Dict[pm.PatternNode,
-                                                            int]) -> str:
+    def match_to_str(graph: dace.SDFGState, candidate: Dict[pm.PatternNode, int]) -> str:
         map_entry = graph.node(candidate[ElementWiseArrayOperation2D._map_entry])
         return map_entry.map.label + ': ' + str(map_entry.map.params)
-
 
     def apply(self, sdfg: dace.SDFG):
         graph = sdfg.nodes()[self.state_id]
@@ -366,24 +352,22 @@ class ElementWiseArrayOperation2D(pm.Transformation):
             params = map_entry.map.params
             ranges = [None] * 2
             b, e, _ = map_entry.map.range[0]
-            ranges[0] = (0, (e-b+1)/Px - 1, 1)
+            ranges[0] = (0, (e - b + 1) / Px - 1, 1)
             b, e, _ = map_entry.map.range[1]
-            ranges[1] = (0, (e-b+1)/Py - 1, 1)
+            ranges[1] = (0, (e - b + 1) / Py - 1, 1)
             strides = [1]
         else:
             params = ['__iflat']
             sizes = map_entry.map.range.size_exact()
             total_size = _prod(sizes)
-            ranges = [(0, (total_size)/sz - 1, 1)]
+            ranges = [(0, (total_size) / sz - 1, 1)]
             strides = [_prod(sizes[i + 1:]) for i in range(len(sizes))]
 
         root_name = sdfg.temp_data_name()
         sdfg.add_scalar(root_name, dace.int32, transient=True)
         root_node = graph.add_access(root_name)
-        root_tasklet = graph.add_tasklet('_set_root_', {}, {'__out'},
-                                         '__out = 0')
-        graph.add_edge(root_tasklet, '__out', root_node, None,
-                       dace.Memlet.simple(root_name, '0'))
+        root_tasklet = graph.add_tasklet('_set_root_', {}, {'__out'}, '__out = 0')
+        graph.add_edge(root_tasklet, '__out', root_node, None, dace.Memlet.simple(root_name, '0'))
 
         from dace.libraries.mpi import Bcast
         from dace.libraries.pblas import BlockCyclicScatter, BlockCyclicGather
@@ -408,42 +392,32 @@ class ElementWiseArrayOperation2D(pm.Transformation):
             if isinstance(desc, data.Scalar):
                 local_access = graph.add_access(inp.data)
                 bcast_node = Bcast('_Bcast_')
-                graph.add_edge(inp, None, bcast_node, '_inbuffer',
-                               dace.Memlet.from_array(inp.data, desc))
-                graph.add_edge(root_node, None, bcast_node, '_root',
-                               dace.Memlet.simple(root_name, '0'))
-                graph.add_edge(bcast_node, '_outbuffer', local_access, None,
-                               dace.Memlet.from_array(inp.data, desc))
+                graph.add_edge(inp, None, bcast_node, '_inbuffer', dace.Memlet.from_array(inp.data, desc))
+                graph.add_edge(root_node, None, bcast_node, '_root', dace.Memlet.simple(root_name, '0'))
+                graph.add_edge(bcast_node, '_outbuffer', local_access, None, dace.Memlet.from_array(inp.data, desc))
                 for e in graph.edges_between(inp, map_entry):
-                    graph.add_edge(local_access, None, map_entry, e.dst_conn,
-                                   dace.Memlet.from_array(inp.data, desc))
+                    graph.add_edge(local_access, None, map_entry, e.dst_conn, dace.Memlet.from_array(inp.data, desc))
                     graph.remove_edge(e)
 
             elif isinstance(desc, data.Array):
 
-                local_name, local_arr = sdfg.add_temp_transient(
-                    [(desc.shape[0]) // Px, (desc.shape[1]) // Py],
-                    dtype=desc.dtype, storage=desc.storage)
+                local_name, local_arr = sdfg.add_temp_transient([(desc.shape[0]) // Px, (desc.shape[1]) // Py],
+                                                                dtype=desc.dtype,
+                                                                storage=desc.storage)
                 local_access = graph.add_access(local_name)
-                bsizes_name, bsizes_arr = sdfg.add_temp_transient(
-                    (2,), dtype=dace.int32)
+                bsizes_name, bsizes_arr = sdfg.add_temp_transient((2, ), dtype=dace.int32)
                 bsizes_access = graph.add_access(bsizes_name)
                 bsizes_tasklet = nodes.Tasklet(
-                    '_set_bsizes_',
-                    {}, {'__out'},
-                    "__out[0] = {x}; __out[1] = {y}".format(
-                        x=(desc.shape[0]) // Px, y=(desc.shape[1]) // Py))
+                    '_set_bsizes_', {}, {'__out'}, "__out[0] = {x}; __out[1] = {y}".format(x=(desc.shape[0]) // Px,
+                                                                                           y=(desc.shape[1]) // Py))
                 graph.add_edge(bsizes_tasklet, '__out', bsizes_access, None,
                                dace.Memlet.from_array(bsizes_name, bsizes_arr))
-                gdesc_name, gdesc_arr = sdfg.add_temp_transient(
-                    (9,), dtype=dace.int32)
+                gdesc_name, gdesc_arr = sdfg.add_temp_transient((9, ), dtype=dace.int32)
                 gdesc_access = graph.add_access(gdesc_name)
-                ldesc_name, ldesc_arr = sdfg.add_temp_transient(
-                    (9,), dtype=dace.int32)
+                ldesc_name, ldesc_arr = sdfg.add_temp_transient((9, ), dtype=dace.int32)
                 ldesc_access = graph.add_access(ldesc_name)
                 scatter_node = BlockCyclicScatter('_Scatter_')
-                graph.add_edge(inp, None, scatter_node, '_inbuffer',
-                               dace.Memlet.from_array(inp.data, desc))
+                graph.add_edge(inp, None, scatter_node, '_inbuffer', dace.Memlet.from_array(inp.data, desc))
                 graph.add_edge(bsizes_access, None, scatter_node, '_block_sizes',
                                dace.Memlet.from_array(bsizes_name, bsizes_arr))
                 graph.add_edge(scatter_node, '_outbuffer', local_access, None,
@@ -489,18 +463,15 @@ class ElementWiseArrayOperation2D(pm.Transformation):
             if isinstance(desc, data.Scalar):
                 raise NotImplementedError
             elif isinstance(desc, data.Array):
-                local_name, local_arr = sdfg.add_temp_transient(
-                    [(desc.shape[0]) // Px, (desc.shape[1]) // Py],
-                    dtype=desc.dtype, storage=desc.storage)
+                local_name, local_arr = sdfg.add_temp_transient([(desc.shape[0]) // Px, (desc.shape[1]) // Py],
+                                                                dtype=desc.dtype,
+                                                                storage=desc.storage)
                 local_access = graph.add_access(local_name)
-                bsizes_name, bsizes_arr = sdfg.add_temp_transient(
-                    (2,), dtype=dace.int32)
+                bsizes_name, bsizes_arr = sdfg.add_temp_transient((2, ), dtype=dace.int32)
                 bsizes_access = graph.add_access(bsizes_name)
                 bsizes_tasklet = nodes.Tasklet(
-                    '_set_bsizes_',
-                    {}, {'__out'},
-                    "__out[0] = {x}; __out[1] = {y}".format(
-                        x=(desc.shape[0]) // Px, y=(desc.shape[1]) // Py))
+                    '_set_bsizes_', {}, {'__out'}, "__out[0] = {x}; __out[1] = {y}".format(x=(desc.shape[0]) // Px,
+                                                                                           y=(desc.shape[1]) // Py))
                 graph.add_edge(bsizes_tasklet, '__out', bsizes_access, None,
                                dace.Memlet.from_array(bsizes_name, bsizes_arr))
                 scatter_node = BlockCyclicGather('_Gather_')
@@ -508,8 +479,7 @@ class ElementWiseArrayOperation2D(pm.Transformation):
                                dace.Memlet.from_array(local_name, local_arr))
                 graph.add_edge(bsizes_access, None, scatter_node, '_block_sizes',
                                dace.Memlet.from_array(bsizes_name, bsizes_arr))
-                graph.add_edge(scatter_node, '_outbuffer', out, None,
-                               dace.Memlet.from_array(out.data, desc))
+                graph.add_edge(scatter_node, '_outbuffer', out, None, dace.Memlet.from_array(out.data, desc))
 
                 for e in graph.edges_between(map_exit, out):
                     graph.add_edge(map_exit, e.src_conn, local_access, None,
@@ -525,7 +495,7 @@ class ElementWiseArrayOperation2D(pm.Transformation):
         map_entry.map.range = subsets.Range(ranges)
 
 
-@registry.autoregister_params(singlestate=True, strict=False)
+@registry.autoregister_params(singlestate=True)
 class RedundantComm2D(pm.Transformation):
     """ Implements the redundant communication removal transformation,
         applied when data are scattered and immediately gathered,
@@ -540,15 +510,12 @@ class RedundantComm2D(pm.Transformation):
     @staticmethod
     def expressions():
         return [
-            sdutil.node_path_graph(RedundantComm2D.in_array,
-                                   RedundantComm2D.gather,
-                                   RedundantComm2D.mid_array,
-                                   RedundantComm2D.scatter,
-                                   RedundantComm2D.out_array)
+            sdutil.node_path_graph(RedundantComm2D.in_array, RedundantComm2D.gather, RedundantComm2D.mid_array,
+                                   RedundantComm2D.scatter, RedundantComm2D.out_array)
         ]
 
     @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
         gather = graph.nodes()[candidate[RedundantComm2D.gather]]
         if '_block_sizes' not in gather.in_connectors:
             return False
@@ -592,15 +559,14 @@ class RedundantComm2D(pm.Transformation):
                 if graph.in_degree(e.dst) == 1 and graph.out_degree(e.dst) == 0:
                     graph.remove_edge(e)
                     graph.remove_node(e.dst)
-        
+
         for e in graph.out_edges(out_array):
             path = graph.memlet_tree(e)
             for e2 in path:
                 if e2.data.data == out_array.data:
                     e2.data.data = in_array.data
             graph.remove_edge(e)
-            graph.add_edge(in_array, None, e.dst, e.dst_conn,
-                           dace.Memlet.from_array(in_array, in_desc))
+            graph.add_edge(in_array, None, e.dst, e.dst_conn, dace.Memlet.from_array(in_array, in_desc))
 
         graph.remove_node(gather)
         graph.remove_node(mid_array)
@@ -624,7 +590,7 @@ class StencilOperation(pm.Transformation):
                        candidate: Dict[pm.PatternNode, int],
                        expr_index: int,
                        sdfg: dace.SDFG,
-                       strict: bool = False):
+                       permissive: bool = False):
 
         map_entry = graph.node(candidate[StencilOperation.map_entry])
         map_exit = graph.exit_node(map_entry)
@@ -638,7 +604,7 @@ class StencilOperation(pm.Transformation):
             if desc not in inputs.keys():
                 inputs[desc] = []
             inputs[desc].append(m.subset)
-        
+
         stencil_found = False
         for desc, accesses in inputs.items():
             if isinstance(desc, dace.data.Scalar):
@@ -686,7 +652,7 @@ class StencilOperation(pm.Transformation):
             if desc not in outputs.keys():
                 outputs[desc] = []
             outputs[desc].append(m.subset)
-        
+
         for desc, accesses in outputs.items():
             if isinstance(desc, (dace.data.Array, dace.data.View)):
                 for a in accesses:
@@ -713,8 +679,7 @@ class StencilOperation(pm.Transformation):
         return stencil_found
 
     @staticmethod
-    def match_to_str(graph: dace.SDFGState, candidate: Dict[pm.PatternNode,
-                                                            int]) -> str:
+    def match_to_str(graph: dace.SDFGState, candidate: Dict[pm.PatternNode, int]) -> str:
         map_entry = graph.node(candidate[StencilOperation.map_entry])
         return map_entry.map.label + ': ' + str(map_entry.map.params)
 
@@ -738,7 +703,7 @@ class OuterProductOperation(pm.Transformation):
                        candidate: Dict[pm.PatternNode, int],
                        expr_index: int,
                        sdfg: dace.SDFG,
-                       strict: bool = False):
+                       permissive: bool = False):
 
         map_entry = graph.node(candidate[OuterProductOperation.map_entry])
         map_exit = graph.exit_node(map_entry)
@@ -752,7 +717,7 @@ class OuterProductOperation(pm.Transformation):
             if desc not in inputs.keys():
                 inputs[desc] = []
             inputs[desc].append(m.subset)
-        
+
         outer_product_found = False
         for desc, accesses in inputs.items():
             if isinstance(desc, dace.data.Scalar):
@@ -782,7 +747,7 @@ class OuterProductOperation(pm.Transformation):
             if desc not in outputs.keys():
                 outputs[desc] = []
             outputs[desc].append(m.subset)
-        
+
         for desc, accesses in outputs.items():
             if isinstance(desc, (dace.data.Array, dace.data.View)):
                 for a in accesses:
@@ -801,8 +766,7 @@ class OuterProductOperation(pm.Transformation):
         return outer_product_found
 
     @staticmethod
-    def match_to_str(graph: dace.SDFGState, candidate: Dict[pm.PatternNode,
-                                                            int]) -> str:
+    def match_to_str(graph: dace.SDFGState, candidate: Dict[pm.PatternNode, int]) -> str:
         map_entry = graph.node(candidate[OuterProductOperation.map_entry])
         return map_entry.map.label + ': ' + str(map_entry.map.params)
 
@@ -826,7 +790,7 @@ class Reduction1Operation(pm.Transformation):
                        candidate: Dict[pm.PatternNode, int],
                        expr_index: int,
                        sdfg: dace.SDFG,
-                       strict: bool = False):
+                       permissive: bool = False):
 
         map_entry = graph.node(candidate[Reduction1Operation.map_entry])
         map_exit = graph.exit_node(map_entry)
@@ -840,7 +804,7 @@ class Reduction1Operation(pm.Transformation):
             if desc not in outputs.keys():
                 outputs[desc] = []
             outputs[desc].append(m.subset)
-        
+
         for desc, accesses in outputs.items():
             if isinstance(desc, dace.data.Scalar):
                 continue
@@ -854,8 +818,7 @@ class Reduction1Operation(pm.Transformation):
         return True
 
     @staticmethod
-    def match_to_str(graph: dace.SDFGState, candidate: Dict[pm.PatternNode,
-                                                            int]) -> str:
+    def match_to_str(graph: dace.SDFGState, candidate: Dict[pm.PatternNode, int]) -> str:
         map_entry = graph.node(candidate[Reduction1Operation.map_entry])
         return map_entry.map.label + ': ' + str(map_entry.map.params)
 
@@ -879,7 +842,7 @@ class ReductionNOperation(pm.Transformation):
                        candidate: Dict[pm.PatternNode, int],
                        expr_index: int,
                        sdfg: dace.SDFG,
-                       strict: bool = False):
+                       permissive: bool = False):
 
         map_entry = graph.node(candidate[ReductionNOperation.map_entry])
         map_exit = graph.exit_node(map_entry)
@@ -910,7 +873,7 @@ class ReductionNOperation(pm.Transformation):
             if desc not in outputs.keys():
                 outputs[desc] = []
             outputs[desc].append(m.subset)
-        
+
         for desc, accesses in outputs.items():
             if isinstance(desc, (dace.data.Array, dace.data.View)):
                 for a in accesses:
@@ -929,8 +892,7 @@ class ReductionNOperation(pm.Transformation):
         return True
 
     @staticmethod
-    def match_to_str(graph: dace.SDFGState, candidate: Dict[pm.PatternNode,
-                                                            int]) -> str:
+    def match_to_str(graph: dace.SDFGState, candidate: Dict[pm.PatternNode, int]) -> str:
         map_entry = graph.node(candidate[ReductionNOperation.map_entry])
         return map_entry.map.label + ': ' + str(map_entry.map.params)
 

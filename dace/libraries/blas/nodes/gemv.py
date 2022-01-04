@@ -10,6 +10,7 @@ from dace.libraries.blas.nodes.matmul import _get_matmul_operands
 from dace.libraries.blas import blas_helpers
 from dace.frontend.common import op_repository as oprepo
 from dace.libraries.blas import environments
+from dace.sdfg import nodes, utils as sdutils
 import numpy as np
 import warnings
 
@@ -23,15 +24,13 @@ class ExpandGemvPure(ExpandTransformation):
     def expansion(node, parent_state, parent_sdfg, **kwargs):
         node.validate(parent_sdfg, parent_state)
         sdfg = dace.SDFG(node.label + "_sdfg")
-        ((edge_a, outer_array_a, shape_a, strides_a), (edge_x, outer_array_x,
-                                                       shape_x, strides_x),
-         (edge_y, outer_array_y, shape_y,
-          strides_y)) = _get_matmul_operands(node,
-                                             parent_state,
-                                             parent_sdfg,
-                                             name_lhs="_A",
-                                             name_rhs="_x",
-                                             name_out="_y")
+        ((edge_a, outer_array_a, shape_a, strides_a), (edge_x, outer_array_x, shape_x, strides_x),
+         (edge_y, outer_array_y, shape_y, strides_y)) = _get_matmul_operands(node,
+                                                                             parent_state,
+                                                                             parent_sdfg,
+                                                                             name_lhs="_A",
+                                                                             name_rhs="_x",
+                                                                             name_out="_y")
         dtype_a = outer_array_a.dtype.type
         dtype_x = outer_array_x.dtype.type
         dtype_y = outer_array_y.dtype.type
@@ -45,9 +44,7 @@ class ExpandGemvPure(ExpandTransformation):
             trans_shape_a = shape_a
 
         if trans_shape_a[1] != shape_x[0]:
-            raise SyntaxError(
-                "Matrix-vector product size mismatch: {} vs. {}".format(
-                    trans_shape_a[1], shape_x[0]))
+            raise SyntaxError("Matrix-vector product size mismatch: {} vs. {}".format(trans_shape_a[1], shape_x[0]))
 
         N, M = trans_shape_a[0], trans_shape_a[1]
 
@@ -55,21 +52,9 @@ class ExpandGemvPure(ExpandTransformation):
             raise ValueError("Input matrices must have same storage")
         storage = outer_array_a.storage
 
-        _, array_a = sdfg.add_array("_A",
-                                    shape_a,
-                                    dtype_a,
-                                    strides=strides_a,
-                                    storage=storage)
-        _, array_x = sdfg.add_array("_x",
-                                    shape_x,
-                                    dtype_x,
-                                    strides=strides_x,
-                                    storage=storage)
-        _, array_y = sdfg.add_array("_y",
-                                    shape_y,
-                                    dtype_y,
-                                    strides=strides_y,
-                                    storage=storage)
+        _, array_a = sdfg.add_array("_A", shape_a, dtype_a, strides=strides_a, storage=storage)
+        _, array_x = sdfg.add_array("_x", shape_x, dtype_x, strides=strides_x, storage=storage)
+        _, array_y = sdfg.add_array("_y", shape_y, dtype_y, strides=strides_y, storage=storage)
 
         mul_program = "__out = {} * __A * __x".format(node.alpha)
 
@@ -80,42 +65,27 @@ class ExpandGemvPure(ExpandTransformation):
             mul_out, mul_out_array = "_y", array_y
             output_nodes = None
         else:
-            mul_out, mul_out_array = tmp, array_tmp = sdfg.add_temp_transient(
-                shape_y, dtype_y, storage=storage)
+            mul_out, mul_out_array = tmp, array_tmp = sdfg.add_temp_transient(shape_y, dtype_y, storage=storage)
 
             access_tmp = state.add_read(tmp)
             output_nodes = {mul_out: access_tmp}
 
         # Initialization map
         init_state.add_mapped_tasklet(
-            "gemv_init", {
-                "_o%d" % i: "0:%s" % symbolic.symstr(d)
-                for i, d in enumerate(shape_y)
-            }, {},
-            "out = 0", {
-                "out":
-                dace.Memlet("{}[{}]".format(
-                    mul_out, ",".join(["_o%d" % i
-                                       for i in range(len(shape_y))])))
-            },
+            "gemv_init", {"_o%d" % i: "0:%s" % symbolic.symstr(d)
+                          for i, d in enumerate(shape_y)}, {},
+            "out = 0",
+            {"out": dace.Memlet("{}[{}]".format(mul_out, ",".join(["_o%d" % i for i in range(len(shape_y))])))},
             external_edges=True)
 
         # Multiplication map
-        state.add_mapped_tasklet("_GEMV_", {
-            "__i%d" % i: "0:%s" % s
-            for i, s in enumerate([N, M])
-        }, {
-            "__A":
-            dace.Memlet(
-                "_A[{}]".format("__i1, __i0" if node.transA else "__i0, __i1")),
-            "__x":
-            dace.Memlet("_x[__i1]")
-        },
-                                 mul_program, {
-                                     "__out":
-                                     dace.Memlet(f"{mul_out}[__i0]",
-                                                 wcr="lambda x, y: x + y")
+        state.add_mapped_tasklet("_GEMV_", {"__i%d" % i: "0:%s" % s
+                                            for i, s in enumerate([N, M])},
+                                 {
+                                     "__A": dace.Memlet("_A[{}]".format("__i1, __i0" if node.transA else "__i0, __i1")),
+                                     "__x": dace.Memlet("_x[__i1]")
                                  },
+                                 mul_program, {"__out": dace.Memlet(f"{mul_out}[__i0]", wcr="lambda x, y: x + y")},
                                  external_edges=True,
                                  output_nodes=output_nodes)
 
@@ -129,8 +99,7 @@ class ExpandGemvPure(ExpandTransformation):
                 "__y_in": dace.Memlet(f"_y[{memlet_idx}]"),
                 "__tmp": dace.Memlet(f"{mul_out}[__i]"),
             },
-                                     add_program,
-                                     {"__y_out": dace.Memlet("_y[__i]")},
+                                     add_program, {"__y_out": dace.Memlet("_y[__i]")},
                                      external_edges=True,
                                      input_nodes={mul_out: access_tmp})
 
@@ -158,12 +127,7 @@ class ExpandGemvFpgaAccumulate(ExpandTransformation):
     environments = []
 
     @staticmethod
-    def expansion(node,
-                  parent_state,
-                  parent_sdfg,
-                  tile_size_x=None,
-                  tile_size_y=None,
-                  num_partial_sums=16):
+    def expansion(node, parent_state, parent_sdfg, tile_size_x=None, tile_size_y=None, num_partial_sums=16):
         """
         :param node: Node to expand.
         :param parent_state: State that the node is in.
@@ -183,35 +147,43 @@ class ExpandGemvFpgaAccumulate(ExpandTransformation):
 
         node.validate(parent_sdfg, parent_state)
 
-        for e in parent_state.in_edges(node):
-            if e.dst_conn == "_A":
-                desc_a = parent_sdfg.arrays[e.data.data]
-            elif e.dst_conn == "_x":
-                desc_x = parent_sdfg.arrays[e.data.data]
-        for e in parent_state.out_edges(node):
-            if e.src_conn == "_y":
-                desc_y = parent_sdfg.arrays[e.data.data]
-
         sdfg = dace.SDFG("gemv")
         state = sdfg.add_state("gemv")
 
         alpha = node.alpha
         beta = node.beta
 
-        # Create local versions of input data nodes
-        desc_a = desc_a.clone()
-        desc_a.transient = False
-        sdfg.add_datadesc("_A", desc_a)
-        desc_x = desc_x.clone()
-        desc_x.transient = False
-        sdfg.add_datadesc("_x", desc_x)
-        desc_y = desc_y.clone()
-        desc_y.transient = False
-        sdfg.add_datadesc("_y", desc_y)
+        # Get input/output data (the method considers also the presence of view nodes)
+        ((edge_a, desc_a, shape_a, strides_a), (edge_x, desc_x, shape_x, strides_x),
+         (edge_y, desc_y, shape_y, strides_y)) = _get_matmul_operands(node,
+                                                                      parent_state,
+                                                                      parent_sdfg,
+                                                                      name_lhs="_A",
+                                                                      name_rhs="_x",
+                                                                      name_out="_y")
+
+        # Create local versions of input/output data nodes
+        _, desc_a = sdfg.add_array("_A",
+                                   shape_a,
+                                   desc_a.dtype,
+                                   strides=strides_a,
+                                   storage=desc_a.storage,
+                                   transient=False)
+        _, desc_x = sdfg.add_array("_x",
+                                   shape_x,
+                                   desc_x.dtype,
+                                   strides=strides_x,
+                                   storage=desc_x.storage,
+                                   transient=False)
+        _, desc_y_y = sdfg.add_array("_y",
+                                     shape_y,
+                                     desc_y.dtype,
+                                     strides=strides_y,
+                                     storage=desc_y.storage,
+                                     transient=False)
 
         if node.transA and desc_a.dtype.veclen > 1:
-            raise NotImplementedError(
-                "Vectorization not implemented for transposed A.")
+            raise NotImplementedError("Vectorization not implemented for transposed A.")
 
         # Create accesses
         read_a = state.add_read("_A")
@@ -232,33 +204,25 @@ class ExpandGemvFpgaAccumulate(ExpandTransformation):
         veclen = desc_a.dtype.veclen
 
         # Create tile map
-        y_tile_entry, y_tile_exit = state.add_map(
-            "y_tiles", {"ty": f"0:{num_tiles_y}"},
-            schedule=dace.ScheduleType.FPGA_Device)
-        x_tile_entry, x_tile_exit = state.add_map(
-            "x_tiles", {"tx": f"0:{num_tiles_x}"},
-            schedule=dace.ScheduleType.FPGA_Device)
+        y_tile_entry, y_tile_exit = state.add_map("y_tiles", {"ty": f"0:{num_tiles_y}"},
+                                                  schedule=dace.ScheduleType.FPGA_Device)
+        x_tile_entry, x_tile_exit = state.add_map("x_tiles", {"tx": f"0:{num_tiles_x}"},
+                                                  schedule=dace.ScheduleType.FPGA_Device)
 
         # Create y map
-        y_entry, y_exit = state.add_map("y", {"iy": f"0:{tile_size_y}"},
-                                        schedule=dace.ScheduleType.FPGA_Device)
+        y_entry, y_exit = state.add_map("y", {"iy": f"0:{tile_size_y}"}, schedule=dace.ScheduleType.FPGA_Device)
 
         # Create x map
-        x_entry, x_exit = state.add_map("x", {"ix": f"0:{tile_size_x}"},
-                                        schedule=dace.ScheduleType.FPGA_Device)
+        x_entry, x_exit = state.add_map("x", {"ix": f"0:{tile_size_x}"}, schedule=dace.ScheduleType.FPGA_Device)
 
         # Local buffer of x
-        sdfg.add_array("x_local", (tile_size_x, ),
-                       desc_x.dtype,
-                       storage=dace.StorageType.FPGA_Local,
-                       transient=True)
+        sdfg.add_array("x_local", (tile_size_x, ), desc_x.dtype, storage=dace.StorageType.FPGA_Local, transient=True)
         x_local_access = state.add_read("x_local")
 
         if beta != 0:
             raise NotImplementedError("Not yet implemented.")
 
-        multiply_tasklet = state.add_tasklet("multiply", {"A_in", "x_in"},
-                                             {f"product": desc_a.dtype},
+        multiply_tasklet = state.add_tasklet("multiply", {"A_in", "x_in"}, {f"product": desc_a.dtype},
                                              "product = A_in * x_in")
 
         if isinstance(desc_a, dt.Stream):
@@ -275,13 +239,10 @@ class ExpandGemvFpgaAccumulate(ExpandTransformation):
                               multiply_tasklet,
                               dst_conn="A_in",
                               memlet=dace.Memlet(f"_A[{subset}]"))
-        read_x_entry, read_x_exit = state.add_map(
-            "read_x", {"ix": f"0:{tile_size_x}"},
-            schedule=dace.ScheduleType.FPGA_Device)
-        subset = ("0" if isinstance(desc_x, dt.Stream) else
-                  f"tx*{tile_size_x} + ix")
-        read_x_tasklet = state.add_tasklet("read_x", {"x_memory"}, {"x_buffer"},
-                                           "x_buffer = x_memory")
+        read_x_entry, read_x_exit = state.add_map("read_x", {"ix": f"0:{tile_size_x}"},
+                                                  schedule=dace.ScheduleType.FPGA_Device)
+        subset = ("0" if isinstance(desc_x, dt.Stream) else f"tx*{tile_size_x} + ix")
+        read_x_tasklet = state.add_tasklet("read_x", {"x_memory"}, {"x_buffer"}, "x_buffer = x_memory")
         state.add_memlet_path(read_x,
                               y_tile_entry,
                               x_tile_entry,
@@ -302,10 +263,7 @@ class ExpandGemvFpgaAccumulate(ExpandTransformation):
                               memlet=dace.Memlet(f"x_local[ix]"))
 
         # Write to buffer
-        sdfg.add_array("product_vector", (1, ),
-                       desc_a.dtype,
-                       transient=True,
-                       storage=dace.StorageType.FPGA_Local)
+        sdfg.add_array("product_vector", (1, ), desc_a.dtype, transient=True, storage=dace.StorageType.FPGA_Local)
         product_vector = state.add_access("product_vector")
         state.add_memlet_path(multiply_tasklet,
                               product_vector,
@@ -320,18 +278,15 @@ class ExpandGemvFpgaAccumulate(ExpandTransformation):
         product_scalar = state.add_access("product_scalar")
         state.add_memlet_path(product_vector,
                               product_scalar,
-                              memlet=dace.Memlet(f"product_vector[0]",
-                                                 other_subset=f"0:{veclen}"))
+                              memlet=dace.Memlet(f"product_vector[0]", other_subset=f"0:{veclen}"))
 
         # Now we need to collapse this
-        reduce_vector_entry, reduce_vector_exit = state.add_map(
-            "reduce_vector", {"u": f"0:{veclen}"},
-            schedule=dace.ScheduleType.FPGA_Device,
-            unroll=True)
+        reduce_vector_entry, reduce_vector_exit = state.add_map("reduce_vector", {"u": f"0:{veclen}"},
+                                                                schedule=dace.ScheduleType.FPGA_Device,
+                                                                unroll=True)
 
-        reduce_vector_tasklet = state.add_tasklet(
-            "reduce_vector", {"product_in", "acc_in"}, {"acc_out"},
-            "acc_out = product_in + acc_in")
+        reduce_vector_tasklet = state.add_tasklet("reduce_vector", {"product_in", "acc_in"}, {"acc_out"},
+                                                  "acc_out = product_in + acc_in")
         state.add_memlet_path(product_scalar,
                               reduce_vector_entry,
                               reduce_vector_tasklet,
@@ -347,12 +302,8 @@ class ExpandGemvFpgaAccumulate(ExpandTransformation):
         accumulate_product_write = state.add_access("accumulate_product")
 
         # Initialize it to zero
-        init_reduce_vector_tasklet = state.add_tasklet("init_reduce_vector", {},
-                                                       {"acc_out"},
-                                                       "acc_out = 0")
-        state.add_memlet_path(x_entry,
-                              init_reduce_vector_tasklet,
-                              memlet=dace.Memlet())
+        init_reduce_vector_tasklet = state.add_tasklet("init_reduce_vector", {}, {"acc_out"}, "acc_out = 0")
+        state.add_memlet_path(x_entry, init_reduce_vector_tasklet, memlet=dace.Memlet())
         state.add_memlet_path(init_reduce_vector_tasklet,
                               accumulate_product_read,
                               src_conn="acc_out",
@@ -379,10 +330,7 @@ class ExpandGemvFpgaAccumulate(ExpandTransformation):
         partial_sum_write = state.add_access("partial_sums")
 
         # Output array
-        sdfg.add_array("y_local", (tile_size_y, ),
-                       desc_y.dtype,
-                       storage=dace.StorageType.FPGA_Local,
-                       transient=True)
+        sdfg.add_array("y_local", (tile_size_y, ), desc_y.dtype, storage=dace.StorageType.FPGA_Local, transient=True)
 
         # Now we need to actually accumulate into a local register of y
         y_local_read = state.add_read("y_local")
@@ -395,39 +343,30 @@ acc_out = prev + y_in""")
                               update_y_tasklet,
                               dst_conn="y_in",
                               memlet=dace.Memlet(f"accumulate_product[0]"))
-        state.add_memlet_path(
-            partial_sum_read,
-            x_entry,
-            update_y_tasklet,
-            dst_conn="acc_in",
-            memlet=dace.Memlet(f"partial_sums[ix%{num_partial_sums}]"))
+        state.add_memlet_path(partial_sum_read,
+                              x_entry,
+                              update_y_tasklet,
+                              dst_conn="acc_in",
+                              memlet=dace.Memlet(f"partial_sums[ix%{num_partial_sums}]"))
         state.add_memlet_path(y_tile_entry, y_local_read, memlet=dace.Memlet())
         state.add_memlet_path(y_entry, partial_sum_read, memlet=dace.Memlet())
-        state.add_memlet_path(
-            update_y_tasklet,
-            x_exit,
-            partial_sum_write,
-            src_conn="acc_out",
-            memlet=dace.Memlet(f"partial_sums[ix%{num_partial_sums}]"))
+        state.add_memlet_path(update_y_tasklet,
+                              x_exit,
+                              partial_sum_write,
+                              src_conn="acc_out",
+                              memlet=dace.Memlet(f"partial_sums[ix%{num_partial_sums}]"))
 
         # Reduce the partial sums
-        reduce_sums_entry, reduce_sums_exit = state.add_map(
-            "reduce_partial_sums", {"u": f"0:{num_partial_sums}"},
-            schedule=dace.ScheduleType.FPGA_Device,
-            unroll=True)
-        reduce_sums_tasklet = state.add_tasklet(
-            "reduce_partial_sums", {"sum_in", "val_in"}, {"sum_out"}, """
+        reduce_sums_entry, reduce_sums_exit = state.add_map("reduce_partial_sums", {"u": f"0:{num_partial_sums}"},
+                                                            schedule=dace.ScheduleType.FPGA_Device,
+                                                            unroll=True)
+        reduce_sums_tasklet = state.add_tasklet("reduce_partial_sums", {"sum_in", "val_in"}, {"sum_out"}, """
 prev = sum_in if u > 0 else 0
 sum_out = prev + val_in""")
-        sdfg.add_array("accumulate_sum", (1, ),
-                       desc_y.dtype,
-                       transient=True,
-                       storage=dace.StorageType.FPGA_Local)
+        sdfg.add_array("accumulate_sum", (1, ), desc_y.dtype, transient=True, storage=dace.StorageType.FPGA_Local)
         accumulate_sum_read = state.add_access("accumulate_sum")
         accumulate_sum_write = state.add_access("accumulate_sum")
-        state.add_memlet_path(y_entry,
-                              accumulate_sum_read,
-                              memlet=dace.Memlet())
+        state.add_memlet_path(y_entry, accumulate_sum_read, memlet=dace.Memlet())
         state.add_memlet_path(accumulate_sum_read,
                               reduce_sums_entry,
                               reduce_sums_tasklet,
@@ -445,8 +384,7 @@ sum_out = prev + val_in""")
                               memlet=dace.Memlet("partial_sums[u]"))
 
         # Combine with y buffer
-        combine_tasklet = state.add_tasklet(
-            "combine_y", {"val", "buffer_in"}, {"buffer_out"}, """\
+        combine_tasklet = state.add_tasklet("combine_y", {"val", "buffer_in"}, {"buffer_out"}, """\
 prev = buffer_in if tx > 0 else 0
 buffer_out = prev + val""")
         state.add_memlet_path(accumulate_sum_write,
@@ -467,13 +405,10 @@ buffer_out = prev + val""")
                               src_conn="buffer_out",
                               memlet=dace.Memlet(f"y_local[iy]"))
 
-        subset = ("0" if isinstance(desc_y, dt.Stream) else
-                  f"ty*{tile_size_y} + iy")
-        write_y_entry, write_y_exit = state.add_map(
-            "write_y", {"iy": f"0:{tile_size_y}"},
-            schedule=dace.ScheduleType.FPGA_Device)
-        write_y_tasklet = state.add_tasklet("write_y", {"y_buffer"},
-                                            {"y_memory"}, "y_memory = y_buffer")
+        subset = ("0" if isinstance(desc_y, dt.Stream) else f"ty*{tile_size_y} + iy")
+        write_y_entry, write_y_exit = state.add_map("write_y", {"iy": f"0:{tile_size_y}"},
+                                                    schedule=dace.ScheduleType.FPGA_Device)
+        write_y_tasklet = state.add_tasklet("write_y", {"y_buffer"}, {"y_memory"}, "y_memory = y_buffer")
         state.add_memlet_path(y_local_write,
                               write_y_entry,
                               write_y_tasklet,
@@ -551,8 +486,7 @@ class ExpandGemvFpgaTilesByColumn(ExpandTransformation):
         sdfg.add_datadesc("_y", desc_y)
 
         if not node.transA and desc_a.dtype.veclen > 1:
-            raise NotImplementedError(
-                "Vectorization not implemented for non-transposed A.")
+            raise NotImplementedError("Vectorization not implemented for non-transposed A.")
 
         # Create accesses
         read_a = state.add_read("_A")
@@ -571,30 +505,24 @@ class ExpandGemvFpgaTilesByColumn(ExpandTransformation):
         num_tiles_x = f"{size_x}/{tile_size_x}"
 
         # Create y tile map
-        y_tile_entry, y_tile_exit = state.add_map(
-            "y_tiles", {"ty": f"0:{num_tiles_y}"},
-            schedule=dace.ScheduleType.FPGA_Device)
+        y_tile_entry, y_tile_exit = state.add_map("y_tiles", {"ty": f"0:{num_tiles_y}"},
+                                                  schedule=dace.ScheduleType.FPGA_Device)
 
         # Create buffer
-        sdfg.add_array("y_local", (tile_size_y, ),
-                       desc_y.dtype,
-                       storage=dace.StorageType.FPGA_Local,
-                       transient=True)
+        sdfg.add_array("y_local", (tile_size_y, ), desc_y.dtype, storage=dace.StorageType.FPGA_Local, transient=True)
         y_local = state.add_access("y_local")
         y_local_write = state.add_access("y_local")
 
         # Initialize buffer
-        init_entry, init_exit = state.add_map(
-            "init", {"iy": f"0:{tile_size_y}"},
-            schedule=dace.ScheduleType.FPGA_Device)
+        init_entry, init_exit = state.add_map("init", {"iy": f"0:{tile_size_y}"},
+                                              schedule=dace.ScheduleType.FPGA_Device)
         if beta != 0:
             if isinstance(desc_y, dt.Stream):
                 subset = "0"
             else:
                 subset = f"ty*{tile_size_y}+iy"
-            init_tasklet = state.add_tasklet(
-                "init", {"y_in"}, {"y_out"},
-                f"y_out = {desc_y.dtype.base_type.ctype}({beta}) * y_in")
+            init_tasklet = state.add_tasklet("init", {"y_in"}, {"y_out"},
+                                             f"y_out = {desc_y.dtype.base_type.ctype}({beta}) * y_in")
             state.add_memlet_path(read_y,
                                   y_tile_entry,
                                   init_entry,
@@ -607,46 +535,26 @@ class ExpandGemvFpgaTilesByColumn(ExpandTransformation):
                                   src_conn="y_out",
                                   memlet=dace.Memlet(f"y_local[iy]"))
         else:
-            state.add_memlet_path(y_tile_entry,
-                                  init_entry,
-                                  memlet=dace.Memlet())
+            state.add_memlet_path(y_tile_entry, init_entry, memlet=dace.Memlet())
             init_tasklet = state.add_tasklet("init", {}, {"y_out"}, "y_out = 0")
-            state.add_memlet_path(init_entry,
-                                  init_tasklet,
-                                  memlet=dace.Memlet())
-            state.add_memlet_path(init_tasklet,
-                                  init_exit,
-                                  y_local,
-                                  src_conn="y_out",
-                                  memlet=dace.Memlet("y_local[iy]"))
+            state.add_memlet_path(init_entry, init_tasklet, memlet=dace.Memlet())
+            state.add_memlet_path(init_tasklet, init_exit, y_local, src_conn="y_out", memlet=dace.Memlet("y_local[iy]"))
 
         # Create x tile map
-        x_tile_entry, x_tile_exit = state.add_map(
-            "x_tiles", {"tx": f"0:{num_tiles_x}"},
-            schedule=dace.ScheduleType.FPGA_Device)
+        x_tile_entry, x_tile_exit = state.add_map("x_tiles", {"tx": f"0:{num_tiles_x}"},
+                                                  schedule=dace.ScheduleType.FPGA_Device)
 
         # Create loop over tile size in x
-        x_entry, x_exit = state.add_map("x", {"ix": f"0:{tile_size_x}"},
-                                        schedule=dace.ScheduleType.FPGA_Device)
+        x_entry, x_exit = state.add_map("x", {"ix": f"0:{tile_size_x}"}, schedule=dace.ScheduleType.FPGA_Device)
 
         # Buffer a scalar value of x
-        sdfg.add_array("x_local", (1, ),
-                       desc_x.dtype,
-                       transient=True,
-                       storage=dace.StorageType.FPGA_Local)
+        sdfg.add_array("x_local", (1, ), desc_x.dtype, transient=True, storage=dace.StorageType.FPGA_Local)
         x_local = state.add_access("x_local")
-        subset = "0" if isinstance(desc_x,
-                                   dt.Stream) else f"tx*{tile_size_x}+ix"
-        state.add_memlet_path(read_x,
-                              y_tile_entry,
-                              x_tile_entry,
-                              x_entry,
-                              x_local,
-                              memlet=dace.Memlet(f"_x[{subset}]"))
+        subset = "0" if isinstance(desc_x, dt.Stream) else f"tx*{tile_size_x}+ix"
+        state.add_memlet_path(read_x, y_tile_entry, x_tile_entry, x_entry, x_local, memlet=dace.Memlet(f"_x[{subset}]"))
 
         # Create loop over tile size in y
-        y_entry, y_exit = state.add_map("y", {"iy": f"0:{tile_size_y}"},
-                                        schedule=dace.ScheduleType.FPGA_Device)
+        y_entry, y_exit = state.add_map("y", {"iy": f"0:{tile_size_y}"}, schedule=dace.ScheduleType.FPGA_Device)
 
         # Do computation
         tasklet = state.add_tasklet("gemv", {"A_in", "x_in", "y_in"}, {"y_out"},
@@ -658,11 +566,7 @@ class ExpandGemvFpgaTilesByColumn(ExpandTransformation):
                               tasklet,
                               dst_conn="y_in",
                               memlet=dace.Memlet("y_local[iy]"))
-        state.add_memlet_path(x_local,
-                              y_entry,
-                              tasklet,
-                              dst_conn="x_in",
-                              memlet=dace.Memlet("x_local[0]"))
+        state.add_memlet_path(x_local, y_entry, tasklet, dst_conn="x_in", memlet=dace.Memlet("x_local[0]"))
         state.add_memlet_path(tasklet,
                               y_exit,
                               x_exit,
@@ -686,13 +590,10 @@ class ExpandGemvFpgaTilesByColumn(ExpandTransformation):
                               memlet=dace.Memlet(f"_A[{subset}]"))
 
         # Write out tile of y
-        write_y_entry, write_y_exit = state.add_map(
-            "write_y", {"iy": f"0:{tile_size_y}"},
-            schedule=dace.ScheduleType.FPGA_Device)
-        write_y_tasklet = state.add_tasklet("write_y", {"y_in"}, {"y_out"},
-                                            "y_out = y_in")
-        subset = ("0" if isinstance(desc_y, dt.Stream) else
-                  f"ty * {tile_size_y} + iy")
+        write_y_entry, write_y_exit = state.add_map("write_y", {"iy": f"0:{tile_size_y}"},
+                                                    schedule=dace.ScheduleType.FPGA_Device)
+        write_y_tasklet = state.add_tasklet("write_y", {"y_in"}, {"y_out"}, "y_out = y_in")
+        subset = ("0" if isinstance(desc_y, dt.Stream) else f"ty * {tile_size_y} + iy")
         state.add_memlet_path(y_local_write,
                               write_y_entry,
                               write_y_tasklet,
@@ -717,15 +618,13 @@ class ExpandGemvCuBLAS(ExpandTransformation):
     def expansion(node: 'Gemv', state, sdfg, m=None, n=None, **kwargs):
         node.validate(sdfg, state)
 
-        ((edge_a, outer_array_a, shape_a, strides_a), (edge_x, outer_array_x,
-                                                       shape_x, strides_x),
-         (edge_y, outer_array_y, shape_y,
-          strides_y)) = _get_matmul_operands(node,
-                                             state,
-                                             sdfg,
-                                             name_lhs="_A",
-                                             name_rhs="_x",
-                                             name_out="_y")
+        ((edge_a, outer_array_a, shape_a, strides_a), (edge_x, outer_array_x, shape_x, strides_x),
+         (edge_y, outer_array_y, shape_y, strides_y)) = _get_matmul_operands(node,
+                                                                             state,
+                                                                             sdfg,
+                                                                             name_lhs="_A",
+                                                                             name_rhs="_x",
+                                                                             name_out="_y")
         dtype_a = outer_array_a.dtype.type
         dtype = outer_array_x.dtype.base_type
         veclen = outer_array_x.dtype.veclen
@@ -743,14 +642,8 @@ class ExpandGemvCuBLAS(ExpandTransformation):
         elif strides_a[1] == 1:
             lda = strides_a[0]
         else:
-            warnings.warn('Matrix must be contiguous in at least '
-                          'one dimension. Falling back to pure expansion.')
-            return ExpandGemvPure.expansion(node,
-                                            state,
-                                            sdfg,
-                                            m=m,
-                                            n=n,
-                                            **kwargs)
+            warnings.warn('Matrix must be contiguous in at least ' 'one dimension. Falling back to pure expansion.')
+            return ExpandGemvPure.expansion(node, state, sdfg, m=m, n=n, **kwargs)
 
         trans = 'CUBLAS_OP_N' if transA else 'CUBLAS_OP_T'
         if not node.transA:
@@ -758,12 +651,7 @@ class ExpandGemvCuBLAS(ExpandTransformation):
 
         if veclen != 1:
             warnings.warn('Vector GEMV not supported, falling back to pure')
-            return ExpandGemvPure.expansion(node,
-                                            state,
-                                            sdfg,
-                                            m=m,
-                                            n=n,
-                                            **kwargs)
+            return ExpandGemvPure.expansion(node, state, sdfg, m=m, n=n, **kwargs)
 
         func, ctype, runtimetype = blas_helpers.cublas_type_metadata(dtype)
         func += 'gemv'
@@ -772,10 +660,8 @@ class ExpandGemvCuBLAS(ExpandTransformation):
 
         # Handle alpha / beta
         constants = {
-            1.0:
-            f"__state->cublas_handle.Constants(__dace_cuda_device).{runtimetype}Pone()",
-            0.0:
-            f"__state->cublas_handle.Constants(__dace_cuda_device).{runtimetype}Zero()",
+            1.0: f"__state->cublas_handle.Constants(__dace_cuda_device).{runtimetype}Pone()",
+            0.0: f"__state->cublas_handle.Constants(__dace_cuda_device).{runtimetype}Zero()",
         }
         if node.alpha not in constants or node.beta not in constants:
             # Deal with complex input constants
@@ -829,15 +715,13 @@ class ExpandGemvOpenBLAS(ExpandTransformation):
 
         node.validate(sdfg, state)
 
-        ((edge_a, outer_array_a, shape_a, strides_a), (edge_x, outer_array_x,
-                                                       shape_x, strides_x),
-         (edge_y, outer_array_y, shape_y,
-          strides_y)) = _get_matmul_operands(node,
-                                             state,
-                                             sdfg,
-                                             name_lhs="_A",
-                                             name_rhs="_x",
-                                             name_out="_y")
+        ((edge_a, outer_array_a, shape_a, strides_a), (edge_x, outer_array_x, shape_x, strides_x),
+         (edge_y, outer_array_y, shape_y, strides_y)) = _get_matmul_operands(node,
+                                                                             state,
+                                                                             sdfg,
+                                                                             name_lhs="_A",
+                                                                             name_rhs="_x",
+                                                                             name_out="_y")
         dtype_a = outer_array_a.dtype.type
         dtype = outer_array_x.dtype.base_type
         veclen = outer_array_x.dtype.veclen
@@ -855,14 +739,8 @@ class ExpandGemvOpenBLAS(ExpandTransformation):
         elif strides_a[1] == 1:
             lda = strides_a[0]
         else:
-            warnings.warn('Matrix must be contiguous in at least '
-                          'one dimension. Falling back to pure expansion.')
-            return ExpandGemvPure.expansion(node,
-                                            state,
-                                            sdfg,
-                                            m=m,
-                                            n=n,
-                                            **kwargs)
+            warnings.warn('Matrix must be contiguous in at least ' 'one dimension. Falling back to pure expansion.')
+            return ExpandGemvPure.expansion(node, state, sdfg, m=m, n=n, **kwargs)
 
         layout = 'CblasColMajor'
         trans = 'CblasNoTrans' if transA else 'CblasTrans'
@@ -871,12 +749,7 @@ class ExpandGemvOpenBLAS(ExpandTransformation):
 
         if veclen != 1:
             warnings.warn('Vector GEMV not supported, falling back to pure.')
-            return ExpandGemvPure.expansion(node,
-                                            state,
-                                            sdfg,
-                                            m=m,
-                                            n=n,
-                                            **kwargs)
+            return ExpandGemvPure.expansion(node, state, sdfg, m=m, n=n, **kwargs)
 
         func, ctype, runtimetype = blas_helpers.cublas_type_metadata(dtype)
         func = func.lower() + 'gemv'
@@ -910,15 +783,13 @@ class ExpandGemvPBLAS(ExpandTransformation):
     @staticmethod
     def expansion(node: 'Gemv', state, sdfg, m=None, n=None, **kwargs):
         node.validate(sdfg, state)
-        ((edge_a, outer_array_a, shape_a, strides_a), (edge_x, outer_array_x,
-                                                       shape_x, strides_x),
-         (edge_y, outer_array_y, shape_y,
-          strides_y)) = _get_matmul_operands(node,
-                                             state,
-                                             sdfg,
-                                             name_lhs="_A",
-                                             name_rhs="_x",
-                                             name_out="_y")
+        ((edge_a, outer_array_a, shape_a, strides_a), (edge_x, outer_array_x, shape_x, strides_x),
+         (edge_y, outer_array_y, shape_y, strides_y)) = _get_matmul_operands(node,
+                                                                             state,
+                                                                             sdfg,
+                                                                             name_lhs="_A",
+                                                                             name_rhs="_x",
+                                                                             name_out="_y")
         dtype_a = outer_array_a.dtype.type
         dtype = outer_array_x.dtype.base_type
         veclen = outer_array_x.dtype.veclen
@@ -961,10 +832,10 @@ class ExpandGemvPBLAS(ExpandTransformation):
         # in ValueError: Node type "BlockCyclicScatter" not supported for
         # promotion
         if transA:
-            sdfg = _gemTv_pblas.to_sdfg(strict=False)
+            sdfg = _gemTv_pblas.to_sdfg(coarsen=False)
         else:
-            sdfg = _gemNv_pblas.to_sdfg(strict=False)
-        sdfg.apply_strict_transformations()
+            sdfg = _gemNv_pblas.to_sdfg(coarsen=False)
+        sdfg.coarsen_dataflow()
         return sdfg
 
 
@@ -987,18 +858,16 @@ class Gemv(dace.sdfg.nodes.LibraryNode):
     alpha = properties.SymbolicProperty(allow_none=False, default=1)
     beta = properties.SymbolicProperty(allow_none=False, default=0)
 
-    transA = properties.Property(
-        dtype=bool, desc="Whether to transpose A before multiplying")
+    transA = properties.Property(dtype=bool, desc="Whether to transpose A before multiplying")
 
     n = properties.SymbolicProperty(allow_none=True, default=None)
     m = properties.SymbolicProperty(allow_none=True, default=None)
 
     def __init__(self, name, location=None, transA=False, alpha=1, beta=0):
-        super().__init__(
-            name,
-            location=location,
-            inputs={"_A", "_x", "_y"} if beta != 0 else {"_A", "_x"},
-            outputs={"_y"})
+        super().__init__(name,
+                         location=location,
+                         inputs={"_A", "_x", "_y"} if beta != 0 else {"_A", "_x"},
+                         outputs={"_y"})
         self.transA = transA
         self.alpha = alpha
         self.beta = beta
@@ -1023,20 +892,17 @@ class Gemv(dace.sdfg.nodes.LibraryNode):
                 size_y_in = subset.size()
 
         if len(size_a) != 2 or len(size_x) != 1:
-            raise ValueError(
-                "Matrix-vector product only supported on matrix-vector input")
+            raise ValueError("Matrix-vector product only supported on matrix-vector input")
 
         a_cols = size_a[1] if not self.transA else size_a[0]
         a_rows = size_a[0] if not self.transA else size_a[1]
 
         if a_cols != size_x[0]:
-            raise ValueError(f"Columns of A ({a_cols}) don't match "
-                             f"size of x ({size_x[0]}).")
+            raise ValueError(f"Columns of A ({a_cols}) don't match " f"size of x ({size_x[0]}).")
 
         out_edges = state.out_edges(self)
         if len(out_edges) != 1:
-            raise ValueError(
-                "Expected exactly one output from matrix-vector product")
+            raise ValueError("Expected exactly one output from matrix-vector product")
         out_memlet = out_edges[0].data
 
         out_subset = copy.deepcopy(out_memlet.subset)
@@ -1051,15 +917,7 @@ class Gemv(dace.sdfg.nodes.LibraryNode):
 # Numpy replacement
 @oprepo.replaces('dace.libraries.blas.gemv')
 @oprepo.replaces('dace.libraries.blas.Gemv')
-def gemv_libnode(pv: 'ProgramVisitor',
-                 sdfg: SDFG,
-                 state: SDFGState,
-                 A,
-                 x,
-                 y,
-                 alpha,
-                 beta,
-                 trans=None):
+def gemv_libnode(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, A, x, y, alpha, beta, trans=None):
     # Get properties
     if trans is None:
         trans = (sdfg.arrays[x].shape[0] == sdfg.arrays[A].shape[0])

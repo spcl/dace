@@ -19,17 +19,9 @@ def mystate(state, src, dst):
     tasklet = state.add_tasklet('aaa2', {'a'}, {'b'}, 'b = a')
 
     # input path (src->me->tasklet[a])
-    state.add_memlet_path(src_node,
-                          me,
-                          tasklet,
-                          dst_conn='a',
-                          memlet=dace.Memlet.simple(src, 'i'))
+    state.add_memlet_path(src_node, me, tasklet, dst_conn='a', memlet=dace.Memlet.simple(src, 'i'))
     # output path (tasklet[b]->mx->dst)
-    state.add_memlet_path(tasklet,
-                          mx,
-                          dst_node,
-                          src_conn='b',
-                          memlet=dace.Memlet.simple(dst, 'i'))
+    state.add_memlet_path(tasklet, mx, dst_node, src_conn='b', memlet=dace.Memlet.simple(dst, 'i'))
 
 
 # End state contents
@@ -70,8 +62,7 @@ sdfg.add_edge(guard, loopstate0, dace.InterstateEdge('k < T'))
 sdfg.add_edge(guard, state2, dace.InterstateEdge('k >= T'))
 
 # Loop incrementation (k++)
-sdfg.add_edge(loopstate1, guard,
-              dace.InterstateEdge(assignments=dict(k='k+1')))
+sdfg.add_edge(loopstate1, guard, dace.InterstateEdge(assignments=dict(k='k+1')))
 
 # Loop-internal interstate edges
 sdfg.add_edge(loopstate0, loopstate1, dace.InterstateEdge())
@@ -80,7 +71,7 @@ sdfg.add_edge(loopstate0, loopstate1, dace.InterstateEdge())
 sdfg.validate()
 
 # Fuses redundant states and removes unnecessary transient arrays
-sdfg.apply_strict_transformations()
+sdfg.coarsen_dataflow()
 
 ######################################
 if __name__ == '__main__':

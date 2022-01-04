@@ -9,7 +9,7 @@ import ast
 
 
 class TestTypeInference(unittest.TestCase):
-    def testSimpleAssignement(self):
+    def testSimpleAssignment(self):
         # simple assignment tests
 
         #bool
@@ -48,6 +48,14 @@ class TestTypeInference(unittest.TestCase):
         inf_symbols = type_inference.infer_types(code_str)
         self.assertEqual(inf_symbols["value"], dtypes.typeclass(int))
 
+        code_str = "value : dace.int32  = 1"
+        inf_symbols = type_inference.infer_types(code_str)
+        self.assertEqual(inf_symbols["value"], dtypes.int32)
+
+        code_str = "value : numpy.float64  = 1"
+        inf_symbols = type_inference.infer_types(code_str)
+        self.assertEqual(inf_symbols["value"], dtypes.float64)
+
         code_str = "value : str"
         inf_symbols = type_inference.infer_types(code_str)
         self.assertEqual(inf_symbols["value"], dtypes.pointer(dtypes.int8))
@@ -57,6 +65,14 @@ class TestTypeInference(unittest.TestCase):
         code_str = "value = int(1.1)"
         inf_symbols = type_inference.infer_types(code_str)
         self.assertEqual(inf_symbols["value"], dtypes.typeclass(np.int))
+
+        code_str = "value = int32(1.1)"
+        inf_symbols = type_inference.infer_types(code_str)
+        self.assertEqual(inf_symbols["value"], dtypes.int32)
+
+        code_str = "value = dace.float64(1.1)"
+        inf_symbols = type_inference.infer_types(code_str)
+        self.assertEqual(inf_symbols["value"], dtypes.float64)
 
         code_str = "value = float(1)"
         inf_symbols = type_inference.infer_types(code_str)
@@ -75,8 +91,7 @@ class TestTypeInference(unittest.TestCase):
 
         #invalid code
         code_str = "a = 5 + 3.5"
-        self.assertRaises(TypeError,
-                          lambda: type_inference.infer_expr_type(code_str))
+        self.assertRaises(TypeError, lambda: type_inference.infer_expr_type(code_str))
 
     def testExpressionAssignment(self):
 
@@ -99,8 +114,7 @@ class TestTypeInference(unittest.TestCase):
 
     def testArrayAccess(self):
         code_str = "tmp = array[i]"
-        symbols = type_inference.infer_types(code_str,
-                                             {"array": dtypes.typeclass(float)})
+        symbols = type_inference.infer_types(code_str, {"array": dtypes.typeclass(float)})
         self.assertEqual(symbols["tmp"], dtypes.typeclass(float))
 
     def testAssignmentIf(self):
@@ -140,10 +154,7 @@ res = var1 + var3 * var2
 
         #create AST
         tree = ast.parse(code_str)
-        defined_symbols = {
-            "in_x": dtypes.typeclass(np.float32),
-            "in_y": dtypes.typeclass(np.float32)
-        }
+        defined_symbols = {"in_x": dtypes.typeclass(np.float32), "in_y": dtypes.typeclass(np.float32)}
         inf_symbols = type_inference.infer_types(code_str, defined_symbols)
         self.assertEqual(inf_symbols["var1"], dtypes.typeclass(int))
         self.assertEqual(inf_symbols["var2"], dtypes.typeclass(int))
@@ -155,8 +166,7 @@ res = var1 + var3 * var2
         code1 = "var1 = x + 1.1"
         code2 = "var2 = var1 + 2"
         defined_symbols = {"x": dtypes.typeclass(int)}
-        inf_symbols = type_inference.infer_types([code1, code2],
-                                                 defined_symbols)
+        inf_symbols = type_inference.infer_types([code1, code2], defined_symbols)
         self.assertEqual(inf_symbols["var1"], dtypes.typeclass(float))
         self.assertEqual(inf_symbols["var2"], dtypes.typeclass(float))
 
@@ -181,10 +191,7 @@ res = var1 + var3 * var2
         inf_symbol = type_inference.infer_expr_type(n * 5.01, defined_symbols)
         self.assertEqual(inf_symbol, dtypes.typeclass(float))
 
-        defined_symbols = {
-            'n': dtypes.typeclass(np.int8),
-            'm': dtypes.typeclass(np.float32)
-        }
+        defined_symbols = {'n': dtypes.typeclass(np.int8), 'm': dtypes.typeclass(np.float32)}
         inf_symbol = type_inference.infer_expr_type(n * m + n, defined_symbols)
         self.assertEqual(inf_symbol, dtypes.typeclass(np.float32))
 
@@ -256,12 +263,10 @@ value3=5000000000"""
         inf_symbols = type_inference.infer_types(code_str)
         if config_data_types.lower() == "python":
             self.assertEqual(inf_symbols["value1"], dtypes.typeclass(np.int64))
-            self.assertEqual(inf_symbols["value2"],
-                             dtypes.typeclass(np.float64))
+            self.assertEqual(inf_symbols["value2"], dtypes.typeclass(np.float64))
         elif config_data_types.lower() == "c":
             self.assertEqual(inf_symbols["value1"], dtypes.typeclass(np.int32))
-            self.assertEqual(inf_symbols["value2"],
-                             dtypes.typeclass(np.float32))
+            self.assertEqual(inf_symbols["value2"], dtypes.typeclass(np.float32))
 
         # in any case, value3 needs uint64
         self.assertEqual(inf_symbols["value3"], dtypes.typeclass(np.uint64))
@@ -275,11 +280,10 @@ value3=5000000000"""
         # corresponding memlet is dynamic, the OpenCL Keyword Remover, will update the code to be "target = *rhs"
         # In a similar situation the type inference should not consider the leading *
         stmt = ast.parse("value = float_var")
-        stmt.body[0].value.id="*float_var" # effect of OpenCL Keyword Remover
+        stmt.body[0].value.id = "*float_var"  # effect of OpenCL Keyword Remover
         prev_symbols = {"float_var": dtypes.typeclass(float)}
         inf_symbols = type_inference.infer_types(stmt, prev_symbols)
         self.assertEqual(inf_symbols["value"], dtypes.typeclass(float))
-
 
 
 if __name__ == "__main__":

@@ -42,7 +42,7 @@ class PythonLHSExtractor(ast.NodeVisitor):
             self.assignments.add(node.targets[0].id)
 
 
-@registry.autoregister_params(singlestate=True, strict=False)
+@registry.autoregister_params(singlestate=True, coarsening=False)
 class SimpleTaskletFusion(pm.Transformation):
     """ Fuses two connected Tasklets.
         It is recommended that this transformation is used on Tasklets that
@@ -122,17 +122,14 @@ class SimpleTaskletFusion(pm.Transformation):
 
     @staticmethod
     def expressions():
-        return [
-            sdutil.node_path_graph(SimpleTaskletFusion.t1,
-                                   SimpleTaskletFusion.t2)
-        ]
+        return [sdutil.node_path_graph(SimpleTaskletFusion.t1, SimpleTaskletFusion.t2)]
 
     @staticmethod
     def can_be_applied(graph: dace.SDFGState,
                        candidate: Dict[pm.PatternNode, int],
                        expr_index: int,
                        sdfg: dace.SDFG,
-                       strict: bool = False):
+                       permissive: bool = False):
 
         t1 = graph.node(candidate[SimpleTaskletFusion.t1])
         t2 = graph.node(candidate[SimpleTaskletFusion.t2])
@@ -154,8 +151,7 @@ class SimpleTaskletFusion(pm.Transformation):
         return True
 
     @staticmethod
-    def match_to_str(graph: dace.SDFGState, candidate: Dict[pm.PatternNode,
-                                                            int]) -> str:
+    def match_to_str(graph: dace.SDFGState, candidate: Dict[pm.PatternNode, int]) -> str:
         t1 = graph.node(candidate[SimpleTaskletFusion.t1])
         t2 = graph.node(candidate[SimpleTaskletFusion.t2])
         return f'fuse({t1.label}, {t2.label})'
@@ -187,21 +183,17 @@ class SimpleTaskletFusion(pm.Transformation):
                     repl.visit(stmt)
             elif tasklet.language is dtypes.Language.CPP:
                 for old, new in repl_dict.items():
-                    tasklet.code.code = re.sub(r'\b%s\b' % re.escape(old), new,
-                                               tasklet.code.as_string)
+                    tasklet.code.code = re.sub(r'\b%s\b' % re.escape(old), new, tasklet.code.as_string)
 
         def replace_lhs(tasklet, repl_dict):
             """ Replaces assignments' LHS based on the input replacement
                 dictionary. This is used only on CPP tasklets.
             """
             if tasklet.language is dtypes.Language.Python:
-                raise ValueError(
-                    "This method should only be used with CPP Tasklets")
+                raise ValueError("This method should only be used with CPP Tasklets")
             elif tasklet.language is dtypes.Language.CPP:
                 for old, new in repl_dict.items():
-                    tasklet.code.code = re.sub(
-                        r'(?<!auto\s)%s[\s\t]*=' % re.escape(old), new,
-                        tasklet.code.as_string)
+                    tasklet.code.code = re.sub(r'(?<!auto\s)%s[\s\t]*=' % re.escape(old), new, tasklet.code.as_string)
 
         def extract_lhs(tasklet) -> Set[str]:
             """ Returns the LHS of assignments in Tasklet code.
@@ -213,8 +205,7 @@ class SimpleTaskletFusion(pm.Transformation):
                 return extr.assignments
             elif tasklet.language is dtypes.Language.CPP:
                 rhs = set()
-                for match in re.findall('[\s\t\n\r]*([\w]*)[\s\t]*=',
-                                        tasklet.code.code):
+                for match in re.findall('[\s\t\n\r]*([\w]*)[\s\t]*=', tasklet.code.code):
                     rhs.add(match)
                 return rhs
 

@@ -10,10 +10,7 @@ import dace
 from dace.library import change_default
 from dace.libraries import blas
 
-MKL_AND_CUBLAS = [
-    pytest.param("cuBLAS", marks=pytest.mark.gpu),
-    pytest.param("MKL", marks=pytest.mark.mkl)
-]
+MKL_AND_CUBLAS = [pytest.param("cuBLAS", marks=pytest.mark.gpu), pytest.param("MKL", marks=pytest.mark.mkl)]
 
 
 def test_change_default():
@@ -32,8 +29,7 @@ def assert_used_environment(sdfg, impl):
         "MKL": blas.environments.IntelMKL.full_class_path(),
         "cuBLAS": blas.environments.cuBLAS.full_class_path()
     }
-    all_tasklets = (n for n, _ in sdfg.all_nodes_recursive()
-                    if isinstance(n, dace.nodes.Tasklet))
+    all_tasklets = (n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet))
     environments = {env for n in all_tasklets for env in n.environments}
 
     assert implementation_to_env[impl] in environments
@@ -46,8 +42,7 @@ def test_gemm_fails_storage_mkl():
         with pytest.raises(ValueError) as info:
 
             @dace.program
-            def test_failing_mkl(A: dace.float32[10, 5], B: dace.float32[5, 3],
-                                 C: dace.float32[10, 3]):
+            def test_failing_mkl(A: dace.float32[10, 5], B: dace.float32[5, 3], C: dace.float32[10, 3]):
                 C[:] = A @ B
 
             sdfg = test_failing_mkl.to_sdfg()

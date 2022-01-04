@@ -41,44 +41,17 @@ def mapfission_sdfg():
 
     # Edges
     state.add_nedge(ome, scalar, dace.Memlet())
-    state.add_memlet_path(rnode,
-                          ome,
-                          t1,
-                          memlet=dace.Memlet.simple('A', '2*i:2*i+2'),
-                          dst_conn='a')
-    state.add_memlet_path(rnode,
-                          ome,
-                          ime2,
-                          t2,
-                          memlet=dace.Memlet.simple('A', '2*i+j'),
-                          dst_conn='a')
-    state.add_memlet_path(t2,
-                          imx2,
-                          s24node,
-                          memlet=dace.Memlet.simple('s2', 'j'),
-                          src_conn='b')
-    state.add_memlet_path(rnode,
-                          ome,
-                          ime3,
-                          t3,
-                          memlet=dace.Memlet.simple('A', '2*i:2*i+2'),
-                          dst_conn='a')
-    state.add_memlet_path(t3,
-                          imx3,
-                          s34node,
-                          memlet=dace.Memlet.simple('s3out', '0'),
-                          src_conn='b')
+    state.add_memlet_path(rnode, ome, t1, memlet=dace.Memlet.simple('A', '2*i:2*i+2'), dst_conn='a')
+    state.add_memlet_path(rnode, ome, ime2, t2, memlet=dace.Memlet.simple('A', '2*i+j'), dst_conn='a')
+    state.add_memlet_path(t2, imx2, s24node, memlet=dace.Memlet.simple('s2', 'j'), src_conn='b')
+    state.add_memlet_path(rnode, ome, ime3, t3, memlet=dace.Memlet.simple('A', '2*i:2*i+2'), dst_conn='a')
+    state.add_memlet_path(t3, imx3, s34node, memlet=dace.Memlet.simple('s3out', '0'), src_conn='b')
 
     state.add_edge(t1, 'b', t4, 'ione', dace.Memlet.simple('s1', '0'))
     state.add_edge(s24node, None, t4, 'itwo', dace.Memlet.simple('s2', '0:2'))
-    state.add_edge(s34node, None, t4, 'ithree',
-                   dace.Memlet.simple('s3out', '0'))
+    state.add_edge(s34node, None, t4, 'ithree', dace.Memlet.simple('s3out', '0'))
     state.add_edge(scalar, 'out', t4, 'sc', dace.Memlet.simple('scal', '0'))
-    state.add_memlet_path(t4,
-                          omx,
-                          wnode,
-                          memlet=dace.Memlet.simple('B', 'i'),
-                          src_conn='out')
+    state.add_memlet_path(t4, omx, wnode, memlet=dace.Memlet.simple('B', 'i'), src_conn='out')
 
     sdfg.validate()
     return sdfg
@@ -110,30 +83,13 @@ def test_inputs_outputs():
     out1 = state.add_write('out1')
     out2 = state.add_write('out2')
     me, mx = state.add_map('outer', dict(i='0:2'))
-    t1 = state.add_tasklet('t1', {'i1'}, {'o1', 'o2'},
-                           'o1 = i1 * 2; o2 = i1 * 5')
+    t1 = state.add_tasklet('t1', {'i1'}, {'o1', 'o2'}, 'o1 = i1 * 2; o2 = i1 * 5')
     t2 = state.add_tasklet('t2', {'i1', 'i2'}, {'o1'}, 'o1 = i1 * i2')
-    state.add_memlet_path(in1,
-                          me,
-                          t1,
-                          dst_conn='i1',
-                          memlet=dace.Memlet.simple('in1', 'i'))
-    state.add_memlet_path(in2,
-                          me,
-                          t2,
-                          dst_conn='i2',
-                          memlet=dace.Memlet.simple('in2', 'i'))
+    state.add_memlet_path(in1, me, t1, dst_conn='i1', memlet=dace.Memlet.simple('in1', 'i'))
+    state.add_memlet_path(in2, me, t2, dst_conn='i2', memlet=dace.Memlet.simple('in2', 'i'))
     state.add_edge(t1, 'o1', t2, 'i1', dace.Memlet.simple('tmp', '0'))
-    state.add_memlet_path(t2,
-                          mx,
-                          out1,
-                          src_conn='o1',
-                          memlet=dace.Memlet.simple('out1', 'i'))
-    state.add_memlet_path(t1,
-                          mx,
-                          out2,
-                          src_conn='o2',
-                          memlet=dace.Memlet.simple('out2', 'i'))
+    state.add_memlet_path(t2, mx, out1, src_conn='o1', memlet=dace.Memlet.simple('out1', 'i'))
+    state.add_memlet_path(t1, mx, out2, src_conn='o2', memlet=dace.Memlet.simple('out2', 'i'))
     sdfg.apply_transformations(MapFission)
     dace.sdfg.propagation.propagate_memlets_sdfg(sdfg)
     # Test

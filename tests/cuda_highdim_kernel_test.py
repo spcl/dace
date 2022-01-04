@@ -18,8 +18,7 @@ U = dace.symbol('U')
 
 
 @dace.program
-def highdim(A: dace.uint64[N, M, K, L, X, Y, Z, W, U], B: dace.uint64[N, M, K,
-                                                                      L]):
+def highdim(A: dace.uint64[N, M, K, L, X, Y, Z, W, U], B: dace.uint64[N, M, K, L]):
     @dace.mapscope
     def kernel(i: _[5:N - 5], j: _[0:M], k: _[7:K - 1], l: _[0:L]):
         @dace.map
@@ -59,8 +58,7 @@ def _test(sdfg):
 
     # Equivalent python code
     for i, j, k, l in dace.ndrange(makendrange(5, N - 5, 0, M, 7, K - 1, 0, L)):
-        for a, b, c, d, e in dace.ndrange(
-                makendrange(0, X, 0, Y, 1, Z, 2, W - 2, 0, U)):
+        for a, b, c, d, e in dace.ndrange(makendrange(0, X, 0, Y, 1, Z, 2, W - 2, 0, U)):
             B_regression[i, j, k, l] += A[i, j, k, l, a, b, c, d, e]
 
     sdfg(A=A, B=B, N=N, M=M, K=K, L=L, X=X, Y=Y, Z=Z, W=W, U=U)
@@ -77,8 +75,7 @@ def test_cpu():
 @pytest.mark.gpu
 def test_gpu():
     sdfg = highdim.to_sdfg()
-    assert sdfg.apply_transformations(GPUTransformMap,
-                                      options=dict(fullcopy=True)) == 1
+    assert sdfg.apply_transformations(GPUTransformMap, options=dict(fullcopy=True)) == 1
     _test(sdfg)
 
 

@@ -21,28 +21,17 @@ class AugAssignToWCR(transformation.Transformation):
     map_exit = transformation.PatternNode(nodes.MapExit)
 
     _EXPRESSIONS = ['+', '-', '*', '^', '%']  #, '/']
-    _EXPR_MAP = {
-        '-': ('+', '-({expr})'),
-        '/': ('*', '((decltype({expr}))1)/({expr})')
-    }
-    _PYOP_MAP = {
-        ast.Add: '+',
-        ast.Sub: '-',
-        ast.Mult: '*',
-        ast.BitXor: '^',
-        ast.Mod: '%',
-        ast.Div: '/'
-    }
+    _EXPR_MAP = {'-': ('+', '-({expr})'), '/': ('*', '((decltype({expr}))1)/({expr})')}
+    _PYOP_MAP = {ast.Add: '+', ast.Sub: '-', ast.Mult: '*', ast.BitXor: '^', ast.Mod: '%', ast.Div: '/'}
 
     @staticmethod
     def expressions():
         return [
-            sdutil.node_path_graph(AugAssignToWCR.input, AugAssignToWCR.tasklet,
-                                   AugAssignToWCR.output),
+            sdutil.node_path_graph(AugAssignToWCR.input, AugAssignToWCR.tasklet, AugAssignToWCR.output),
         ]
 
     @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
         inarr = graph.node(candidate[AugAssignToWCR.input])
         tasklet: nodes.Tasklet = graph.node(candidate[AugAssignToWCR.tasklet])
         outarr = graph.node(candidate[AugAssignToWCR.output])
@@ -60,8 +49,7 @@ class AugAssignToWCR(transformation.Transformation):
                 return False
 
             # Make sure augmented assignment can be fissioned as necessary
-            if any(not isinstance(e.src, nodes.AccessNode)
-                   for e in graph.in_edges(tasklet)):
+            if any(not isinstance(e.src, nodes.AccessNode) for e in graph.in_edges(tasklet)):
                 return False
             if graph.in_degree(inarr) > 0 and graph.out_degree(outarr) > 0:
                 return False
@@ -91,8 +79,7 @@ class AugAssignToWCR(transformation.Transformation):
         # Get relevant output connector
         outconn = outedge.src_conn
 
-        ops = '[%s]' % ''.join(
-            re.escape(o) for o in AugAssignToWCR._EXPRESSIONS)
+        ops = '[%s]' % ''.join(re.escape(o) for o in AugAssignToWCR._EXPRESSIONS)
 
         if tasklet.language is dtypes.Language.Python:
             # Match a single assignment with a binary operation as RHS
@@ -122,10 +109,8 @@ class AugAssignToWCR(transformation.Transformation):
             for edge in inedges:
                 # Try to match a single C assignment that can be converted to WCR
                 inconn = edge.dst_conn
-                lhs = r'^\s*%s\s*=\s*%s\s*%s.*;$' % (re.escape(outconn),
-                                                     re.escape(inconn), ops)
-                rhs = r'^\s*%s\s*=\s*.*%s\s*%s;$' % (re.escape(outconn), ops,
-                                                     re.escape(inconn))
+                lhs = r'^\s*%s\s*=\s*%s\s*%s.*;$' % (re.escape(outconn), re.escape(inconn), ops)
+                rhs = r'^\s*%s\s*=\s*.*%s\s*%s;$' % (re.escape(outconn), ops, re.escape(inconn))
                 if re.match(lhs, cstr) is None:
                     continue
                 # Same memlet
@@ -134,9 +119,8 @@ class AugAssignToWCR(transformation.Transformation):
 
                 # If in map, only match if the subset is independent of any
                 # map indices (otherwise no conflict)
-                if (expr_index == 1
-                        and len(outedge.data.subset.free_symbols
-                                & set(me.map.params)) == len(me.map.params)):
+                if (expr_index == 1 and len(outedge.data.subset.free_symbols
+                                            & set(me.map.params)) == len(me.map.params)):
                     continue
 
                 return True
@@ -153,8 +137,7 @@ class AugAssignToWCR(transformation.Transformation):
         state: SDFGState = sdfg.node(self.state_id)
 
         # If state fission is necessary to keep semantics, do it first
-        if (self.expr_index == 0 and state.in_degree(input) > 0
-                and state.out_degree(output) == 0):
+        if (self.expr_index == 0 and state.in_degree(input) > 0 and state.out_degree(output) == 0):
             newstate = sdfg.add_state_after(state)
             newstate.add_node(tasklet)
             new_input, new_output = None, None
@@ -202,8 +185,7 @@ class AugAssignToWCR(transformation.Transformation):
         # Get relevant output connector
         outconn = outedge.src_conn
 
-        ops = '[%s]' % ''.join(
-            re.escape(o) for o in AugAssignToWCR._EXPRESSIONS)
+        ops = '[%s]' % ''.join(re.escape(o) for o in AugAssignToWCR._EXPRESSIONS)
 
         # Change tasklet code
         if tasklet.language is dtypes.Language.Python:
@@ -218,17 +200,14 @@ class AugAssignToWCR(transformation.Transformation):
                     inedge = inedges[inconns.index(n.id)]
                 else:
                     new_rhs = n
-            new_node = ast.copy_location(
-                ast.Assign(targets=[lhs], value=new_rhs), ast_node)
+            new_node = ast.copy_location(ast.Assign(targets=[lhs], value=new_rhs), ast_node)
             tasklet.code.code = [new_node]
-            
+
         elif tasklet.language is dtypes.Language.CPP:
             cstr = tasklet.code.as_string.strip()
             for edge in inedges:
                 inconn = edge.dst_conn
-                match = re.match(
-                    r'^\s*%s\s*=\s*%s\s*(%s)(.*);$' %
-                    (re.escape(outconn), re.escape(inconn), ops), cstr)
+                match = re.match(r'^\s*%s\s*=\s*%s\s*(%s)(.*);$' % (re.escape(outconn), re.escape(inconn), ops), cstr)
                 if match is None:
                     # match = re.match(
                     #     r'^\s*%s\s*=\s*(.*)\s*(%s)\s*%s;$' %
@@ -243,7 +222,6 @@ class AugAssignToWCR(transformation.Transformation):
 
                 if edge.data.subset != outedge.data.subset:
                     continue
-
 
                 # Map asymmetric WCRs to symmetric ones if possible
                 if op in AugAssignToWCR._EXPR_MAP:
@@ -271,13 +249,11 @@ class AugAssignToWCR(transformation.Transformation):
         # If outedge leads to non-transient, and this is a nested SDFG,
         # propagate outwards
         sd = sdfg
-        while (not sd.arrays[outedge.data.data].transient
-               and sd.parent_nsdfg_node is not None):
+        while (not sd.arrays[outedge.data.data].transient and sd.parent_nsdfg_node is not None):
             nsdfg = sd.parent_nsdfg_node
             nstate = sd.parent
             sd = sd.parent_sdfg
-            outedge = next(
-                iter(nstate.out_edges_by_connector(nsdfg, outedge.data.data)))
+            outedge = next(iter(nstate.out_edges_by_connector(nsdfg, outedge.data.data)))
             for outedge in nstate.memlet_path(outedge):
                 outedge.data.wcr = f'lambda a,b: a {op} b'
             # At this point we are leading to an access node again and can

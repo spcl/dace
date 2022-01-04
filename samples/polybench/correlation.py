@@ -10,25 +10,9 @@ N = dace.symbol('N')
 datatype = dace.float64
 
 # Dataset sizes
-sizes = [{
-    M: 28,
-    N: 32
-}, {
-    M: 80,
-    N: 100
-}, {
-    M: 240,
-    N: 260
-}, {
-    M: 1200,
-    N: 1400
-}, {
-    M: 2600,
-    N: 3000
-}]
+sizes = [{M: 28, N: 32}, {M: 80, N: 100}, {M: 240, N: 260}, {M: 1200, N: 1400}, {M: 2600, N: 3000}]
 
-args = [([N, M], datatype), ([M, M], datatype), ([M], datatype),
-        ([M], datatype), M, N]
+args = [([N, M], datatype), ([M, M], datatype), ([M], datatype), ([M], datatype), M, N]
 
 
 def init_array(data, corr, mean, stddev, M, N):

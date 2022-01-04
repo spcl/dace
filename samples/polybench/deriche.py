@@ -35,8 +35,7 @@ args = [
 # Constants
 alpha = datatype(0.25)
 k = (datatype(1.0) - math.exp(-alpha)) * (datatype(1.0) - math.exp(-alpha)) / (
-    datatype(1.0) + datatype(2.0) * alpha * math.exp(-alpha) -
-    math.exp(datatype(2.0) * alpha))
+    datatype(1.0) + datatype(2.0) * alpha * math.exp(-alpha) - math.exp(datatype(2.0) * alpha))
 a1 = a5 = k
 a2 = a6 = k * math.exp(-alpha) * (alpha - datatype(1.0))
 a3 = a7 = k * math.exp(-alpha) * (alpha + datatype(1.0))

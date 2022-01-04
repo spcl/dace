@@ -30,9 +30,7 @@ class ExpandGetrfOpenBLAS(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
-        (desc_x, stride_x, rows_x,
-         cols_x), desc_ipiv, desc_result = node.validate(
-             parent_sdfg, parent_state)
+        (desc_x, stride_x, rows_x, cols_x), desc_ipiv, desc_result = node.validate(parent_sdfg, parent_state)
         dtype = desc_x.dtype.base_type
         lapack_dtype = blas_helpers.to_blastype(dtype.type).lower()
         cast = ""
@@ -60,9 +58,7 @@ class ExpandGetrfMKL(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
-        (desc_x, stride_x, rows_x,
-         cols_x), desc_ipiv, desc_result = node.validate(
-             parent_sdfg, parent_state)
+        (desc_x, stride_x, rows_x, cols_x), desc_ipiv, desc_result = node.validate(parent_sdfg, parent_state)
         dtype = desc_x.dtype.base_type
         lapack_dtype = blas_helpers.to_blastype(dtype.type).lower()
         cast = ""
@@ -90,9 +86,7 @@ class ExpandGetrfCuSolverDn(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
-        (desc_x, stride_x, rows_x,
-         cols_x), desc_ipiv, desc_result = node.validate(
-             parent_sdfg, parent_state)
+        (desc_x, stride_x, rows_x, cols_x), desc_ipiv, desc_result = node.validate(parent_sdfg, parent_state)
         dtype = desc_x.dtype.base_type
         veclen = desc_x.dtype.veclen
 
@@ -103,8 +97,7 @@ class ExpandGetrfCuSolverDn(ExpandTransformation):
         if veclen != 1:
             n /= veclen
 
-        code = (environments.cusolverdn.cuSolverDn.handle_setup_code(node) +
-                f"""
+        code = (environments.cusolverdn.cuSolverDn.handle_setup_code(node) + f"""
                 int __dace_workspace_size = 0;
                 {cuda_type}* __dace_workspace;
                 cusolverDn{func}_bufferSize(
@@ -125,8 +118,7 @@ class ExpandGetrfCuSolverDn(ExpandTransformation):
                                           code,
                                           language=dace.dtypes.Language.CPP)
         conn = tasklet.out_connectors
-        conn = {c: (dtypes.pointer(dace.int32) if c == '_res' else t)
-                for c, t in conn.items()}
+        conn = {c: (dtypes.pointer(dace.int32) if c == '_res' else t) for c, t in conn.items()}
         tasklet.out_connectors = conn
 
         return tasklet
@@ -136,22 +128,14 @@ class ExpandGetrfCuSolverDn(ExpandTransformation):
 class Getrf(dace.sdfg.nodes.LibraryNode):
 
     # Global properties
-    implementations = {
-        "OpenBLAS": ExpandGetrfOpenBLAS,
-        "MKL": ExpandGetrfMKL,
-        "cuSolverDn": ExpandGetrfCuSolverDn
-    }
+    implementations = {"OpenBLAS": ExpandGetrfOpenBLAS, "MKL": ExpandGetrfMKL, "cuSolverDn": ExpandGetrfCuSolverDn}
     default_implementation = None
 
     # Object fields
     n = dace.properties.SymbolicProperty(allow_none=True, default=None)
 
     def __init__(self, name, n=None, *args, **kwargs):
-        super().__init__(name,
-                         *args,
-                         inputs={"_xin"},
-                         outputs={"_xout", "_ipiv", "_res"},
-                         **kwargs)
+        super().__init__(name, *args, inputs={"_xin"}, outputs={"_xout", "_ipiv", "_res"}, **kwargs)
 
     def validate(self, sdfg, state):
         """
@@ -164,8 +148,7 @@ class Getrf(dace.sdfg.nodes.LibraryNode):
         in_memlets = [in_edges[0].data]
         out_edges = state.out_edges(self)
         if len(out_edges) != 3:
-            raise ValueError(
-                "Expected exactly three outputs from getrf product")
+            raise ValueError("Expected exactly three outputs from getrf product")
         out_memlet = out_edges[0].data
 
         # Squeeze input memlets

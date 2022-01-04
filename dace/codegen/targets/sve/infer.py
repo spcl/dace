@@ -45,8 +45,7 @@ def _IfExp(t, symbols, inferred_symbols):
     type_body = _dispatch(t.body, symbols, inferred_symbols)
     type_orelse = _dispatch(t.orelse, symbols, inferred_symbols)
     res_type = dtypes.result_type_of(type_body, type_orelse)
-    if isinstance(type_test, dtypes.vector) and not isinstance(
-            res_type, (dtypes.vector, dtypes.pointer)):
+    if isinstance(type_test, dtypes.vector) and not isinstance(res_type, (dtypes.vector, dtypes.pointer)):
         # If we test on a vector, the result should be a vector aswell
         # so we can do a selection based on the test predicate
         res_type = dtypes.vector(res_type, type_test.veclen)

@@ -53,8 +53,7 @@ def printmatrix(mat, image_width=20, aspect_ratio=0.5):
     # Subsampling
     for y in range(image_height):
         for x in range(image_width):
-            printcolor((mat[int(y / (ratio * aspect_ratio)),
-                            int(x / ratio)] - mn) / float(mx - mn))
+            printcolor((mat[int(y / (ratio * aspect_ratio)), int(x / ratio)] - mn) / float(mx - mn))
         sys.stdout.write('\n')
     sys.stdout.flush()
 
@@ -65,18 +64,14 @@ if __name__ == "__main__":
     parser.add_argument("W", type=int, nargs="?", default=64)
     parser.add_argument("H", type=int, nargs="?", default=64)
     parser.add_argument("MAXITER", type=int, nargs="?", default=1000)
-    parser.add_argument("--fpga",
-                        dest="fpga",
-                        action="store_true",
-                        default=False)
+    parser.add_argument("--fpga", dest="fpga", action="store_true", default=False)
     args = vars(parser.parse_args())
 
     W.set(args["W"])
     H.set(args["H"])
     MAXITER.set(args["MAXITER"])
 
-    print('Mandelbrot %dx%d (iterations=%d)' %
-          (W.get(), H.get(), MAXITER.get()))
+    print('Mandelbrot %dx%d (iterations=%d)' % (W.get(), H.get(), MAXITER.get()))
 
     out = dace.ndarray([H, W], dtype=dace.uint16)
     out[:] = dace.uint32(0)

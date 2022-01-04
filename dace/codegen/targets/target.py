@@ -47,8 +47,7 @@ class TargetCodeGenerator(object):
             function that should be called on finalization. """
         return False
 
-    def generate_state(self, sdfg: SDFG, state: SDFGState,
-                       function_stream: CodeIOStream,
+    def generate_state(self, sdfg: SDFG, state: SDFGState, function_stream: CodeIOStream,
                        callsite_stream: CodeIOStream) -> None:
         """ Generates code for an SDFG state, outputting it to the given
             code streams.
@@ -63,8 +62,7 @@ class TargetCodeGenerator(object):
         """
         pass
 
-    def generate_scope(self, sdfg: SDFG, dfg_scope: ScopeSubgraphView,
-                       state_id: int, function_stream: CodeIOStream,
+    def generate_scope(self, sdfg: SDFG, dfg_scope: ScopeSubgraphView, state_id: int, function_stream: CodeIOStream,
                        callsite_stream: CodeIOStream) -> None:
         """ Generates code for an SDFG state scope (from a scope-entry node
             to its corresponding scope-exit node), outputting it to the given
@@ -81,8 +79,7 @@ class TargetCodeGenerator(object):
         """
         raise NotImplementedError('Abstract class')
 
-    def generate_node(self, sdfg: SDFG, dfg: SDFGState, state_id: int,
-                      node: nodes.Node, function_stream: CodeIOStream,
+    def generate_node(self, sdfg: SDFG, dfg: SDFGState, state_id: int, node: nodes.Node, function_stream: CodeIOStream,
                       callsite_stream: CodeIOStream) -> None:
         """ Generates code for a single node, outputting it to the given
             code streams.
@@ -99,10 +96,8 @@ class TargetCodeGenerator(object):
         """
         raise NotImplementedError('Abstract class')
 
-    def declare_array(self, sdfg: SDFG, dfg: SDFGState, state_id: int,
-                      node: nodes.Node, nodedesc: dt.Data,
-                      global_stream: CodeIOStream,
-                      declaration_stream: CodeIOStream) -> None:
+    def declare_array(self, sdfg: SDFG, dfg: SDFGState, state_id: int, node: nodes.Node, nodedesc: dt.Data,
+                      global_stream: CodeIOStream, declaration_stream: CodeIOStream) -> None:
         """ Generates code for declaring an array without allocating it,
             outputting to the given code streams.
             :param sdfg: The SDFG to generate code from.
@@ -118,10 +113,8 @@ class TargetCodeGenerator(object):
         """
         raise NotImplementedError('Abstract class')
 
-    def allocate_array(self, sdfg: SDFG, dfg: SDFGState, state_id: int,
-                       node: nodes.Node, nodedesc: dt.Data,
-                       global_stream: CodeIOStream,
-                       declaration_stream: CodeIOStream,
+    def allocate_array(self, sdfg: SDFG, dfg: SDFGState, state_id: int, node: nodes.Node, nodedesc: dt.Data,
+                       global_stream: CodeIOStream, declaration_stream: CodeIOStream,
                        allocation_stream: CodeIOStream) -> None:
         """ Generates code for allocating an array, outputting to the given
             code streams.
@@ -140,10 +133,8 @@ class TargetCodeGenerator(object):
         """
         raise NotImplementedError('Abstract class')
 
-    def deallocate_array(self, sdfg: SDFG, dfg: SDFGState, state_id: int,
-                         node: nodes.Node, nodedesc: dt.Data,
-                         function_stream: CodeIOStream,
-                         callsite_stream: CodeIOStream) -> None:
+    def deallocate_array(self, sdfg: SDFG, dfg: SDFGState, state_id: int, node: nodes.Node, nodedesc: dt.Data,
+                         function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
         """ Generates code for deallocating an array, outputting to the given
             code streams.
             :param sdfg: The SDFG to generate code from.
@@ -160,10 +151,8 @@ class TargetCodeGenerator(object):
         """
         raise NotImplementedError('Abstract class')
 
-    def copy_memory(self, sdfg: SDFG, dfg: SDFGState, state_id: int,
-                    src_node: nodes.Node, dst_node: nodes.Node,
-                    edge: gr.MultiConnectorEdge[mm.Memlet],
-                    function_stream: CodeIOStream,
+    def copy_memory(self, sdfg: SDFG, dfg: SDFGState, state_id: int, src_node: nodes.Node, dst_node: nodes.Node,
+                    edge: gr.MultiConnectorEdge[mm.Memlet], function_stream: CodeIOStream,
                     callsite_stream: CodeIOStream) -> None:
         """ Generates code for copying memory, either from a data access
             node (array/stream) to another, a code node (tasklet/nested
@@ -189,10 +178,8 @@ class TargetCodeGenerator(object):
 class IllegalCopy(TargetCodeGenerator):
     """ A code generator that is triggered when invalid copies are specified
         by the SDFG. Only raises an exception on failure. """
-    def copy_memory(self, sdfg, dfg, state_id, src_node, dst_node, edge,
-                    function_stream, callsite_stream):
-        raise TypeError('Illegal copy! (from ' + str(src_node) + ' to ' +
-                        str(dst_node) + ')')
+    def copy_memory(self, sdfg, dfg, state_id, src_node, dst_node, edge, function_stream, callsite_stream):
+        raise TypeError('Illegal copy! (from ' + str(src_node) + ' to ' + str(dst_node) + ')')
 
 
 def make_absolute(path: str) -> str:

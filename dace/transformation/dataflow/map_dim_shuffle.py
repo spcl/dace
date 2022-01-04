@@ -21,16 +21,14 @@ class MapDimShuffle(transformation.Transformation):
     _map_entry = transformation.PatternNode(nodes.MapEntry)
 
     # Properties
-    parameters = ShapeProperty(dtype=list,
-                            default=None,
-                            desc="Desired order of map parameters")
+    parameters = ShapeProperty(dtype=list, default=None, desc="Desired order of map parameters")
 
     @staticmethod
     def expressions():
         return [sdutil.node_path_graph(MapDimShuffle._map_entry)]
 
     @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
         return True
 
     @staticmethod
@@ -44,9 +42,9 @@ class MapDimShuffle(transformation.Transformation):
 
         if set(self.parameters) != set(map_entry.map.params):
             return
-        
-        map_entry.range.ranges = [r
-            for list_param in self.parameters
-            for map_param, r in zip(map_entry.map.params, map_entry.range.ranges)
-            if list_param == map_param]
+
+        map_entry.range.ranges = [
+            r for list_param in self.parameters for map_param, r in zip(map_entry.map.params, map_entry.range.ranges)
+            if list_param == map_param
+        ]
         map_entry.map.params = self.parameters

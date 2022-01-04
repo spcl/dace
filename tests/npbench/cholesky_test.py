@@ -66,13 +66,13 @@ def run_cholesky(device_type: dace.dtypes.DeviceType):
         sdfg(A=A, N=N)
     elif device_type == dace.dtypes.DeviceType.FPGA:
         # Parse SDFG and apply FPGA friendly optimization
-        sdfg = kernel.to_sdfg(strict=True)
+        sdfg = kernel.to_sdfg(coarsen=True)
         applied = sdfg.apply_transformations([FPGATransformSDFG])
         assert applied == 1
 
         # Use FPGA Expansion for lib nodes, and expand them to enable further optimizations
         from dace.libraries.blas import Dot
-        platform = dace.config.Config.get("compiler", "fpga" ,"vendor")
+        platform = dace.config.Config.get("compiler", "fpga", "vendor")
         if platform == "intel_fpga":
             Dot.default_implementation = "FPGA_Accumulate"
         else:
@@ -102,15 +102,11 @@ def test_gpu():
 def test_fpga():
     return run_cholesky(dace.dtypes.DeviceType.FPGA)
 
+
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "-t",
-        "--target",
-        default='cpu',
-        choices=['cpu', 'gpu', 'fpga'],
-        help='Target platform')
+    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu', 'fpga'], help='Target platform')
 
     args = vars(parser.parse_args())
     target = args["target"]

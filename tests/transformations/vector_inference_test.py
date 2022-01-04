@@ -29,25 +29,18 @@ def find_map_entry(sdfg: SDFG):
 
 
 def vectorize(sdfg: SDFG) -> vector_inference.VectorInferenceGraph:
-    return vector_inference.infer_vectors(sdfg,
-                                          sdfg.start_state,
-                                          find_map_entry(sdfg),
-                                          -1,
-                                          apply=False)
+    return vector_inference.infer_vectors(sdfg, sdfg.start_state, find_map_entry(sdfg), -1, apply=False)
 
 
-def is_vector_connector(inf: vector_inference.VectorInferenceGraph, conn: str,
-                        is_in: bool):
-    return inf.get_constraint((find_tasklet_by_connector(inf.sdfg, conn), conn,
-                               is_in)) == vector_inference.InferenceNode.Vector
+def is_vector_connector(inf: vector_inference.VectorInferenceGraph, conn: str, is_in: bool):
+    return inf.get_constraint((find_tasklet_by_connector(inf.sdfg,
+                                                         conn), conn, is_in)) == vector_inference.InferenceNode.Vector
 
 
 def has_vector_accessnode(inf: vector_inference.VectorInferenceGraph):
     for node, _ in inf.sdfg.start_state.all_nodes_recursive():
-        if isinstance(node, nodes.AccessNode) and isinstance(
-                node.desc(inf.sdfg), data.Scalar):
-            return inf.get_constraint(
-                node) == vector_inference.InferenceNode.Vector
+        if isinstance(node, nodes.AccessNode) and isinstance(node.desc(inf.sdfg), data.Scalar):
+            return inf.get_constraint(node) == vector_inference.InferenceNode.Vector
     return False
 
 
@@ -60,7 +53,7 @@ def test_simple():
                 b >> B[i]
                 b = a
 
-    sdfg = program.to_sdfg(strict=True)
+    sdfg = program.to_sdfg(coarsen=True)
     inf = vectorize(sdfg)
     assert is_vector_connector(inf, 'a', True)
     assert is_vector_connector(inf, 'b', False)
@@ -75,7 +68,7 @@ def test_always_scalar_output():
                 b >> B[i]
                 b = 0.0  # looks like b is a scalar (but isn't)
 
-    sdfg = program.to_sdfg(strict=True)
+    sdfg = program.to_sdfg(coarsen=True)
     inf = vectorize(sdfg)
 
     assert is_vector_connector(inf, 'a', True)
@@ -98,7 +91,7 @@ def test_scalar_accessnode_vector():
                 b >> B[i]
                 b = x_in
 
-    sdfg = program.to_sdfg(strict=True)
+    sdfg = program.to_sdfg(coarsen=True)
     inf = vectorize(sdfg)
 
     assert is_vector_connector(inf, 'a', True)
@@ -123,7 +116,7 @@ def test_scalar_accessnode_scalar():
                 b >> B[i]
                 b = x_in
 
-    sdfg = program.to_sdfg(strict=True)
+    sdfg = program.to_sdfg(coarsen=True)
     inf = vectorize(sdfg)
 
     # Except for b every connector is scalar
@@ -150,7 +143,7 @@ def test_array_accessnode_scalar():
                 b >> B[i]
                 b = x_in
 
-    sdfg = program.to_sdfg(strict=True)
+    sdfg = program.to_sdfg(coarsen=True)
     inf = vectorize(sdfg)
 
     # Again except for b every connector is scalar
@@ -176,7 +169,7 @@ def test_array_accessnode_violation():
                 b >> B[i]
                 b = x_in
 
-    sdfg = program.to_sdfg(strict=True)
+    sdfg = program.to_sdfg(coarsen=True)
     with pytest.raises(vector_inference.VectorInferenceException):
         vectorize(sdfg)
 
@@ -202,7 +195,7 @@ def test_array_accessnode_complicated():
     # The challenge here is that one Tasklet writes a vector into an Array access node
     # But the other Tasklet then reads a scalar from it (is okay because its an Array)
 
-    sdfg = program.to_sdfg(strict=True)
+    sdfg = program.to_sdfg(coarsen=True)
     inf = vectorize(sdfg)
 
     assert not is_vector_connector(inf, 'a', True)
@@ -233,7 +226,7 @@ def test_multi_input():
 
     # x_in, y_in and z_in are vectors
 
-    sdfg = program.to_sdfg(strict=True)
+    sdfg = program.to_sdfg(coarsen=True)
     inf = vectorize(sdfg)
 
     assert is_vector_connector(inf, 'a', True)
@@ -264,11 +257,9 @@ def test_multi_input_violation():
 
     # This is an artificial constraint test where z_in wants scal as
     # a scalar instead of a vector
-    sdfg = program.to_sdfg(strict=True)
-    inf = vector_inference.VectorInferenceGraph(sdfg, sdfg.start_state,
-                                                find_map_entry(sdfg), -1)
-    inf.set_constraint((find_tasklet_by_connector(sdfg, 'z_in'), 'z_in', True),
-                       vector_inference.InferenceNode.Scalar)
+    sdfg = program.to_sdfg(coarsen=True)
+    inf = vector_inference.VectorInferenceGraph(sdfg, sdfg.start_state, find_map_entry(sdfg), -1)
+    inf.set_constraint((find_tasklet_by_connector(sdfg, 'z_in'), 'z_in', True), vector_inference.InferenceNode.Scalar)
 
     # It has to fail because the access node will be inferred as vector
     # (since someone writes a vector into it)

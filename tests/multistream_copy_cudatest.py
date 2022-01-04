@@ -9,25 +9,13 @@ import pytest
 def test_multistream_copy():
     sdfg = dace.SDFG('multistream')
 
-    _, A = sdfg.add_array('A', [2],
-                          dace.float32,
-                          storage=dace.StorageType.CPU_Pinned)
-    _, B = sdfg.add_array('B', [2],
-                          dace.float32,
-                          storage=dace.StorageType.CPU_Pinned)
-    _, C = sdfg.add_array('C', [2],
-                          dace.float32,
-                          storage=dace.StorageType.CPU_Pinned)
+    _, A = sdfg.add_array('A', [2], dace.float32, storage=dace.StorageType.CPU_Pinned)
+    _, B = sdfg.add_array('B', [2], dace.float32, storage=dace.StorageType.CPU_Pinned)
+    _, C = sdfg.add_array('C', [2], dace.float32, storage=dace.StorageType.CPU_Pinned)
 
-    gA = sdfg.add_transient('gA', [2],
-                            dace.float32,
-                            storage=dace.StorageType.GPU_Global)
-    gB = sdfg.add_transient('gB', [2],
-                            dace.float32,
-                            storage=dace.StorageType.GPU_Global)
-    gC = sdfg.add_transient('gC', [2],
-                            dace.float32,
-                            storage=dace.StorageType.GPU_Global)
+    gA = sdfg.add_transient('gA', [2], dace.float32, storage=dace.StorageType.GPU_Global)
+    gB = sdfg.add_transient('gB', [2], dace.float32, storage=dace.StorageType.GPU_Global)
+    gC = sdfg.add_transient('gC', [2], dace.float32, storage=dace.StorageType.GPU_Global)
 
     state = sdfg.add_state('s0')
 
@@ -66,10 +54,7 @@ def test_multistream_copy():
 def test_copy_sync():
     sdfg = dace.SDFG('h2dsync')
     sdfg.add_scalar('scal_outer', dace.float32)
-    sdfg.add_scalar('gpu_scal_outer',
-                    dace.float32,
-                    dace.StorageType.GPU_Global,
-                    transient=True)
+    sdfg.add_scalar('gpu_scal_outer', dace.float32, dace.StorageType.GPU_Global, transient=True)
     sdfg.add_array('output_outer', [1], dace.float32)
 
     nsdfg = dace.SDFG('nested')
@@ -95,8 +80,7 @@ def test_copy_sync():
     ro = state.add_read('gpu_scal_outer')
     wo = state.add_write('output_outer')
     nsdfg_node = state.add_nested_sdfg(nsdfg, None, {'gpu_scal'}, {'output'})
-    state.add_edge(ro, None, nsdfg_node, 'gpu_scal',
-                   dace.Memlet('gpu_scal_outer'))
+    state.add_edge(ro, None, nsdfg_node, 'gpu_scal', dace.Memlet('gpu_scal_outer'))
     state.add_edge(nsdfg_node, 'output', wo, None, dace.Memlet('output_outer'))
 
     out = np.random.rand(1).astype(np.float32)

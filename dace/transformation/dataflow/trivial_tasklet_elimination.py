@@ -23,12 +23,13 @@ class TrivialTaskletElimination(transformation.Transformation):
 
     @staticmethod
     def expressions():
-        return [sdutil.node_path_graph(TrivialTaskletElimination.read,
-                                       TrivialTaskletElimination.tasklet,
-                                       TrivialTaskletElimination.write)]
+        return [
+            sdutil.node_path_graph(TrivialTaskletElimination.read, TrivialTaskletElimination.tasklet,
+                                   TrivialTaskletElimination.write)
+        ]
 
     @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
         read = graph.nodes()[candidate[TrivialTaskletElimination.read]]
         tasklet = graph.nodes()[candidate[TrivialTaskletElimination.tasklet]]
         write = graph.nodes()[candidate[TrivialTaskletElimination.write]]
@@ -46,12 +47,12 @@ class TrivialTaskletElimination(transformation.Transformation):
         if len(tasklet.in_connectors) != 1:
             return False
         if len(tasklet.out_connectors) != 1:
-            return False   
+            return False
         in_conn = list(tasklet.in_connectors.keys())[0]
         out_conn = list(tasklet.out_connectors.keys())[0]
         if tasklet.code.as_string != f'{out_conn} = {in_conn}':
             return False
-        
+
         return True
 
     @staticmethod

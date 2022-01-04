@@ -20,8 +20,9 @@ def test():
 
     assert results == [0, 1, 2, 3, 4, 5, 10, 11, 12, 13, 14, 15]
 
+
 def test_consume_python():
-    inputs = [1,2,3,5,1]
+    inputs = [1, 2, 3, 5, 1]
     S = dace.stream(inputs)
     result = []
     for s in dace.consume(S):

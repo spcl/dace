@@ -17,8 +17,7 @@ def addunk(A):
 
 
 @dace.program
-def gemm(A: dace.float32[M, K], B: dace.float32[K, N], C: dace.float32[M, N],
-         alpha: dace.float32, beta: dace.float32):
+def gemm(A: dace.float32[M, K], B: dace.float32[K, N], C: dace.float32[M, N], alpha: dace.float32, beta: dace.float32):
     C[:] = alpha * A @ B + beta * C
 
 
@@ -31,8 +30,7 @@ def test_add():
     assert np.allclose(result, A + A)
 
     # Check map sequence
-    me = next(n for n, _ in sdfg.all_nodes_recursive()
-              if isinstance(n, dace.nodes.MapEntry))
+    me = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry))
     assert me.map.range == Range([(0, 23, 1), (0, 24, 1)])
 
 
@@ -45,10 +43,8 @@ def test_add_11dim():
     assert np.allclose(result, A + A)
 
     # Check map sequence
-    me = next(n for n, _ in sdfg.all_nodes_recursive()
-              if isinstance(n, dace.nodes.MapEntry))
-    assert me.map.range == Range([(0, 1, 1) if i < 9 else (0, 2, 1)
-                                  for i in range(11)])
+    me = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry))
+    assert me.map.range == Range([(0, 1, 1) if i < 9 else (0, 2, 1) for i in range(11)])
 
 
 def test_gemm():

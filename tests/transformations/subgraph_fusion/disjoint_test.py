@@ -81,7 +81,7 @@ def disjoint_test_3(A: dace.float64[M]):
 
 def test_p1():
     sdfg = disjoint_test_1.to_sdfg()
-    sdfg.apply_strict_transformations()
+    sdfg.coarsen_dataflow()
     state = sdfg.nodes()[0]
     assert len(sdfg.nodes()) == 1
     A = np.random.rand(M.get(), 2).astype(np.float64)
@@ -106,7 +106,7 @@ def test_p1():
 
 def test_p2():
     sdfg = disjoint_test_2.to_sdfg()
-    sdfg.apply_strict_transformations()
+    sdfg.coarsen_dataflow()
     state = sdfg.nodes()[0]
     assert len(sdfg.nodes()) == 1
 
@@ -117,7 +117,7 @@ def test_p2():
 
 def test_p3():
     sdfg = disjoint_test_3.to_sdfg()
-    sdfg.apply_strict_transformations()
+    sdfg.coarsen_dataflow()
     state = sdfg.nodes()[0]
     assert len(sdfg.nodes()) == 1
 

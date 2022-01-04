@@ -14,7 +14,7 @@ class TransientReuse(transformation.Transformation):
         decides for a valid combination and changes sdfg accordingly.
     """
     @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
         return True
 
     @staticmethod
@@ -33,8 +33,7 @@ class TransientReuse(transformation.Transformation):
         memory_before = 0
         arrays = {}
         for a in sdfg.arrays:
-            memory_before += sdfg.arrays[a].total_size * sdfg.arrays[
-                a].dtype.bytes
+            memory_before += sdfg.arrays[a].total_size * sdfg.arrays[a].dtype.bytes
             if sdfg.arrays[a].transient:
                 arrays[a] = 0
 
@@ -61,9 +60,7 @@ class TransientReuse(transformation.Transformation):
             scope_children = state.scope_children()
             for n in scope_children[None]:
                 if isinstance(n, nodes.EntryNode):
-                    G.add_edges_from([
-                        (n, x) for (y, x) in G.out_edges(state.exit_node(n))
-                    ])
+                    G.add_edges_from([(n, x) for (y, x) in G.out_edges(state.exit_node(n))])
                     G.remove_nodes_from(scope_children[n])
 
             # Remove all nodes that are not AccessNodes or have incoming wcr edges
@@ -102,8 +99,7 @@ class TransientReuse(transformation.Transformation):
                     if n is not m and n.data in transients and m.data in transients:
                         if n.data == m.data:
                             transients.remove(n.data)
-                        if (sdfg.arrays[n.data].is_equivalent(
-                                sdfg.arrays[m.data]) and n in ancestors[m]
+                        if (sdfg.arrays[n.data].is_equivalent(sdfg.arrays[m.data]) and n in ancestors[m]
                                 and successors[n].issubset(ancestors[m])):
                             mappings[n.data].add(m.data)
 
@@ -138,9 +134,7 @@ class TransientReuse(transformation.Transformation):
             for i in range(len(buckets)):
                 if len(buckets[i]) > 1:
                     array = sdfg.arrays[buckets[i][0]]
-                    name = sdfg.add_datadesc("transient_reuse",
-                                             array.clone(),
-                                             find_new_name=True)
+                    name = sdfg.add_datadesc("transient_reuse", array.clone(), find_new_name=True)
                     buckets[i].insert(0, name)
 
             # Construct final mapping (transient_reuse_i, some_transient)
@@ -173,8 +167,7 @@ class TransientReuse(transformation.Transformation):
         # Analyze memory savings and output them
         memory_after = 0
         for a in sdfg.arrays:
-            memory_after += sdfg.arrays[a].total_size * sdfg.arrays[
-                a].dtype.bytes
+            memory_after += sdfg.arrays[a].total_size * sdfg.arrays[a].dtype.bytes
 
         print('memory before: ', memory_before, 'B')
         print('memory after: ', memory_after, 'B')

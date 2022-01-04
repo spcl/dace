@@ -48,18 +48,8 @@ def create_tiled_sdfg():
     t = state.add_tasklet('tasklet', {'a'}, {'b'}, 'b = a * 2')
     A = state.add_read('A')
     B = state.add_write('B')
-    state.add_memlet_path(A,
-                          ome,
-                          ime,
-                          t,
-                          dst_conn='a',
-                          memlet=dace.Memlet.simple('A', 'i*2 + j'))
-    state.add_memlet_path(t,
-                          imx,
-                          omx,
-                          B,
-                          src_conn='b',
-                          memlet=dace.Memlet.simple('B', 'i*2 + j'))
+    state.add_memlet_path(A, ome, ime, t, dst_conn='a', memlet=dace.Memlet.simple('A', 'i*2 + j'))
+    state.add_memlet_path(t, imx, omx, B, src_conn='b', memlet=dace.Memlet.simple('B', 'i*2 + j'))
     return sdfg, state
 
 
@@ -69,7 +59,7 @@ def test_simple_program():
         a *= 2
         a *= 3
 
-    sdfg = multiply.to_sdfg(strict=True)
+    sdfg = multiply.to_sdfg(coarsen=True)
     for state in sdfg.nodes():
         if any(isinstance(node, Tasklet) for node in state.nodes()):
             break
@@ -94,13 +84,10 @@ def test_simple_sdfg():
 
 def test_index_propagation_in_tiled_sdfg():
     sdfg, state, t, me, mx = create_sdfg_4()
-    tiling.MapTiling.apply_to(sdfg=sdfg,
-                              options={'tile_sizes': (2, )},
-                              map_entry=me)
+    tiling.MapTiling.apply_to(sdfg=sdfg, options={'tile_sizes': (2, )}, map_entry=me)
     nested_me = state.in_edges(t)[0].src
     nested_mx = state.out_edges(t)[0].dst
-    nest_state_subgraph(sdfg, state,
-                        SubgraphView(state, [nested_me, t, nested_mx]))
+    nest_state_subgraph(sdfg, state, SubgraphView(state, [nested_me, t, nested_mx]))
     sdfg.validate()
     sdfg.compile()
 

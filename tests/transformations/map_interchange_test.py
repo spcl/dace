@@ -24,15 +24,13 @@ def test_map_interchange():
     dace.Config.set('experimental', 'validate_undefs', value=True)
 
     sdfg = miprog.to_sdfg()
-    sdfg.apply_strict_transformations()
+    sdfg.coarsen_dataflow()
     sdfg.validate()
 
     # Apply map interchange
     state = sdfg.node(0)
-    ome = next(n for n in state.nodes()
-               if isinstance(n, dace.nodes.MapEntry) and n.map.params[0] == 'j')
-    ime = next(n for n in state.nodes()
-               if isinstance(n, dace.nodes.MapEntry) and n.map.params[0] == 'k')
+    ome = next(n for n in state.nodes() if isinstance(n, dace.nodes.MapEntry) and n.map.params[0] == 'j')
+    ime = next(n for n in state.nodes() if isinstance(n, dace.nodes.MapEntry) and n.map.params[0] == 'k')
     MapInterchange.apply_to(sdfg, outer_map_entry=ome, inner_map_entry=ime)
 
     # Validate memlets

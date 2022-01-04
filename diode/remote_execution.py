@@ -84,12 +84,10 @@ class Executor(object):
 
         if self.remote:
             self.show_output("Executing DaCe program " + sdfg.name + " on " +
-                             self.config_get("execution", "general", "host") +
-                             "\n")
+                             self.config_get("execution", "general", "host") + "\n")
             self.run_remote(sdfg, dace_state, fail_on_nonzero)
         else:
-            self.show_output("Executing DaCe program " + sdfg.name +
-                             " locally\n")
+            self.show_output("Executing DaCe program " + sdfg.name + " locally\n")
             self.run_local(sdfg, dace_state.get_dace_tmpfile())
 
     def run_local(self, sdfg: SDFG, driver_file: str):
@@ -144,15 +142,11 @@ class Executor(object):
         use_mpi = Executor._use_mpi(code_objects)
         remote_workdir = self.config_get("execution", "general", "workdir")
         remote_base_path = self.config_get('default_build_folder')
-        remote_dace_dir = os.path.join(remote_workdir, remote_base_path,
-                                       dace_progname)
+        remote_dace_dir = os.path.join(remote_workdir, remote_base_path, dace_progname)
 
         try:
             tmpfolder = tempfile.mkdtemp()
-            generate_program_folder(sdfg,
-                                    code_objects,
-                                    tmpfolder,
-                                    config=self._config)
+            generate_program_folder(sdfg, code_objects, tmpfolder, config=self._config)
             self.create_remote_directory(remote_dace_dir)
             self.copy_folder_to_remote(tmpfolder, remote_dace_dir)
 
@@ -161,20 +155,16 @@ class Executor(object):
 
             # copy the input file and the .so file (with the right name)
             # to remote_dace_dir
-            so_name = "lib" + dace_progname + "." + self.config_get(
-                'compiler', 'library_extension')
-            self.copy_file_from_remote(
-                os.path.join(remote_dace_dir, 'build', so_name),
-                os.path.join(tmpfolder, so_name))
-            self.copy_file_to_remote(os.path.join(tmpfolder, so_name),
-                                     remote_dace_dir)
+            so_name = "lib" + dace_progname + "." + self.config_get('compiler', 'library_extension')
+            self.copy_file_from_remote(os.path.join(remote_dace_dir, 'build', so_name),
+                                       os.path.join(tmpfolder, so_name))
+            self.copy_file_to_remote(os.path.join(tmpfolder, so_name), remote_dace_dir)
 
             dace_file = dace_state.get_dace_tmpfile()
             if dace_file is None:
                 raise ValueError("Dace file is None!")
 
-            remote_dace_file = os.path.join(remote_workdir,
-                                            os.path.basename(dace_file))
+            remote_dace_file = os.path.join(remote_workdir, os.path.basename(dace_file))
             self.copy_file_to_remote(dace_file, remote_dace_file)
 
             self.remote_exec_dace(remote_workdir,
@@ -186,15 +176,13 @@ class Executor(object):
             self.show_output("Execution Terminated\n")
 
             try:
-                self.copy_file_from_remote(remote_workdir + "/results.log",
-                                           ".")
+                self.copy_file_from_remote(remote_workdir + "/results.log", ".")
             except RuntimeError:
                 pass
 
             # Copy back the instrumentation and vectorization results
             try:
-                self.copy_folder_from_remote(
-                    os.path.join(remote_dace_dir, 'perf'), ".")
+                self.copy_folder_from_remote(os.path.join(remote_dace_dir, 'perf'), ".")
             except RuntimeError:
                 pass
 
@@ -227,16 +215,12 @@ class Executor(object):
 
     def remote_delete_file(self, delfile):
         s = Template(self.config_get("execution", "general", "execcmd"))
-        cmd = s.substitute(host=self.config_get("execution", "general",
-                                                "host"),
-                           command="rm " + delfile)
+        cmd = s.substitute(host=self.config_get("execution", "general", "host"), command="rm " + delfile)
         self.exec_cmd_and_show_output(cmd)
 
     def remote_delete_dir(self, deldir):
         s = Template(self.config_get("execution", "general", "execcmd"))
-        cmd = s.substitute(host=self.config_get("execution", "general",
-                                                "host"),
-                           command="rm -r " + deldir)
+        cmd = s.substitute(host=self.config_get("execution", "general", "host"), command="rm -r " + deldir)
         self.exec_cmd_and_show_output(cmd)
 
     def delete_local_folder(self, path):
@@ -258,15 +242,13 @@ class Executor(object):
         else:
             nprocs = 1
 
-        repetitions = (repetitions or self.config_get("execution", "general",
-                                                      "repetitions"))
+        repetitions = (repetitions or self.config_get("execution", "general", "repetitions"))
 
         omp_num_threads_str = ""
         omp_num_threads_unset_str = ""
         perf_instrumentation_result_marker = ""
         if omp_num_threads is not None:
-            omp_num_threads_str = "export OMP_NUM_THREADS=" + str(
-                omp_num_threads) + "\n"
+            omp_num_threads_str = "export OMP_NUM_THREADS=" + str(omp_num_threads) + "\n"
             omp_num_threads_unset_str = "unset OMP_NUM_THREADS\n"
             perf_instrumentation_result_marker = "echo '# ;%s; Running in multirun config' >> %s/instrumentation_results.txt\n" % (
                 omp_num_threads_str.replace("\n", ""), remote_workdir)
@@ -293,10 +275,8 @@ class Executor(object):
         start_sh += cmd + "\n"
         start_sh += "export RETVAL=$?\n"
         start_sh += (
-            "unset DACE_compiler_use_cache\n" +
-            "unset DACE_optimizer_interface\n" + "unset DACE_treps\n" +
-            "unset DACE_profiling\n" + omp_num_threads_unset_str +
-            miscoptresetstring +
+            "unset DACE_compiler_use_cache\n" + "unset DACE_optimizer_interface\n" + "unset DACE_treps\n" +
+            "unset DACE_profiling\n" + omp_num_threads_unset_str + miscoptresetstring +
             # TODO: separate program error and system error
             "exit $RETVAL\n")
         tempdir = tempfile.mkdtemp()
@@ -309,25 +289,18 @@ class Executor(object):
 
         workdir = self.config_get("execution", "general", "workdir")
 
-        self.copy_file_to_remote(
-            startsh_file,
-            self.config_get("execution", "general", "workdir") + "/start.sh")
+        self.copy_file_to_remote(startsh_file, self.config_get("execution", "general", "workdir") + "/start.sh")
 
         s = Template(self.config_get("execution", "general", "execcmd"))
-        cmd = s.substitute(host=self.config_get("execution", "general",
-                                                "host"),
-                           command=workdir + "/start.sh")
+        cmd = s.substitute(host=self.config_get("execution", "general", "host"), command=workdir + "/start.sh")
         self.exec_cmd_and_show_output(cmd, fail_on_nonzero)
 
         self.remote_delete_file(workdir + "/start.sh")
 
     def remote_compile(self, rem_path, dace_progname):
-        compile_cmd = "python3 -m dace.codegen.compiler " + str(
-            rem_path) + " " + dace_progname
+        compile_cmd = "python3 -m dace.codegen.compiler " + str(rem_path) + " " + dace_progname
         s = Template(self.config_get("execution", "general", "execcmd"))
-        cmd = s.substitute(host=self.config_get("execution", "general",
-                                                "host"),
-                           command=compile_cmd)
+        cmd = s.substitute(host=self.config_get("execution", "general", "host"), command=compile_cmd)
         self.exec_cmd_and_show_output(cmd)
 
     def create_remote_directory(self, path):
@@ -337,17 +310,12 @@ class Executor(object):
         """
         mkdircmd = "mkdir -p " + path
         s = Template(self.config_get("execution", "general", "execcmd"))
-        cmd = s.substitute(host=self.config_get("execution", "general",
-                                                "host"),
-                           command=mkdircmd)
+        cmd = s.substitute(host=self.config_get("execution", "general", "host"), command=mkdircmd)
         self.exec_cmd_and_show_output(cmd)
 
     def copy_file_to_remote(self, src, dst):
         s = Template(self.config_get("execution", "general", "copycmd_l2r"))
-        cmd = s.substitute(host=self.config_get("execution", "general",
-                                                "host"),
-                           srcfile=src,
-                           dstfile=dst)
+        cmd = s.substitute(host=self.config_get("execution", "general", "host"), srcfile=src, dstfile=dst)
         self.exec_cmd_and_show_output(cmd)
 
     def copy_folder_to_remote(self, src, dst):
@@ -357,32 +325,22 @@ class Executor(object):
                 self.copy_file_to_remote(file_path, dst + "/" + filename)
             for subdir in subdirs:
                 self.create_remote_directory(dst + "/" + str(subdir))
-                self.copy_folder_to_remote(src + "/" + str(subdir),
-                                           dst + "/" + str(subdir))
+                self.copy_folder_to_remote(src + "/" + str(subdir), dst + "/" + str(subdir))
             return
 
     def copy_folder_from_remote(self, src: str, dst: str):
         s = Template(self.config_get("execution", "general", "copycmd_r2l"))
-        cmd = s.substitute(host=self.config_get("execution", "general",
-                                                "host"),
-                           srcfile="-r " + src,
-                           dstfile=dst)
+        cmd = s.substitute(host=self.config_get("execution", "general", "host"), srcfile="-r " + src, dstfile=dst)
         self.exec_cmd_and_show_output(cmd)
 
     def copy_file_from_remote(self, src, dst):
         s = Template(self.config_get("execution", "general", "copycmd_r2l"))
-        cmd = s.substitute(host=self.config_get("execution", "general",
-                                                "host"),
-                           srcfile=src,
-                           dstfile=dst)
+        cmd = s.substitute(host=self.config_get("execution", "general", "host"), srcfile=src, dstfile=dst)
         self.exec_cmd_and_show_output(cmd)
 
     def exec_cmd_and_show_output(self, cmd, fail_on_nonzero=True):
         self.show_output(cmd + "\n")
-        p = subprocess.Popen(cmd,
-                             shell=True,
-                             stdout=subprocess.PIPE,
-                             stderr=subprocess.STDOUT)
+        p = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
 
         while True:
             out = p.stdout.read(1)
@@ -431,17 +389,14 @@ class AsyncExecutor:
             return
 
         # Use multiple processes to handle crashing processes
-        self.running_proc = multiprocessing.Process(target=_task,
-                                                    args=(self, ))
+        self.running_proc = multiprocessing.Process(target=_task, args=(self, ))
         self.running_proc.start()
 
         self.append_run_async(dace_state, fail_on_nonzero=False)
 
     def append_run_async(self, dace_state, fail_on_nonzero=False):
-        self.to_proc_message_queue.put(
-            ("run", (dace_state.dace_code, dace_state.dace_filename,
-                     dace_state.source_code, dace_state.sdfg.to_json(),
-                     dace_state.remote), fail_on_nonzero))
+        self.to_proc_message_queue.put(("run", (dace_state.dace_code, dace_state.dace_filename, dace_state.source_code,
+                                                dace_state.sdfg.to_json(), dace_state.remote), fail_on_nonzero))
 
     def add_async_task(self, task):
         self.to_proc_message_queue.put(("execute_task", self, task))
@@ -458,8 +413,7 @@ class AsyncExecutor:
         elif name == "run":
             # Convert arguments back to dace_state, deserializing the SDFG
             from diode.DaceState import DaceState
-            dace_state = DaceState(args[0][0], args[0][1], args[0][2],
-                                   SDFG.from_json(args[0][3]), args[0][4])
+            dace_state = DaceState(args[0][0], args[0][1], args[0][2], SDFG.from_json(args[0][3]), args[0][4])
             args = (dace_state, *args[1:])
 
         return getattr(obj, name)(*args)

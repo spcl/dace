@@ -28,27 +28,16 @@ nstate.add_edge(t2, 'mm', M_localout, None, dace.Memlet.simple('m', '0'))
 ###############
 
 nsdfg_node = state.add_nested_sdfg(nsdfg, None, {'local'}, {'local', 'm'})
-state.add_memlet_path(L_in,
-                      me,
-                      nsdfg_node,
-                      memlet=dace.Memlet.simple('L', 'i'),
-                      dst_conn='local')
-state.add_memlet_path(nsdfg_node,
-                      mx,
-                      L_out,
-                      memlet=dace.Memlet.simple('L', 'i'),
-                      src_conn='local')
-state.add_memlet_path(nsdfg_node,
-                      mx,
-                      M_out,
-                      memlet=dace.Memlet.simple('M', 'i'),
-                      src_conn='m')
+state.add_memlet_path(L_in, me, nsdfg_node, memlet=dace.Memlet.simple('L', 'i'), dst_conn='local')
+state.add_memlet_path(nsdfg_node, mx, L_out, memlet=dace.Memlet.simple('L', 'i'), src_conn='local')
+state.add_memlet_path(nsdfg_node, mx, M_out, memlet=dace.Memlet.simple('M', 'i'), src_conn='m')
+
 
 def test():
     L = np.random.rand(2).astype(np.float32)
     M = np.random.rand(2).astype(np.float32)
 
-    sdfg.apply_strict_transformations()
+    sdfg.coarsen_dataflow()
     sdfg(L=L, M=M)
 
     expected = np.array([2.0, 2.0, 7.0, 7.0])
@@ -56,6 +45,7 @@ def test():
     diff = np.linalg.norm(expected - result)
     print('Difference:', diff)
     assert diff <= 1e-5
+
 
 if __name__ == "__main__":
     test()

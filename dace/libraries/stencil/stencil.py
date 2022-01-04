@@ -53,11 +53,10 @@ class Stencil(dace.library.LibraryNode):
     }
     default_implementation = "pure"
 
-    code = dace.properties.CodeProperty(
-        desc=("Stencil code accessing all the input connector at constant "
-              "offsets relative to the center, e.g.: "
-              "c[0, 0, 0] = 0.1 * a[-1, 0, 1] + 0.9 * b[0, 0, 1]"),
-        default=dace.properties.CodeBlock(""))
+    code = dace.properties.CodeProperty(desc=("Stencil code accessing all the input connector at constant "
+                                              "offsets relative to the center, e.g.: "
+                                              "c[0, 0, 0] = 0.1 * a[-1, 0, 1] + 0.9 * b[0, 0, 1]"),
+                                        default=dace.properties.CodeBlock(""))
     iterator_mapping = dace.properties.DictProperty(
         str,
         tuple,
@@ -78,7 +77,6 @@ class Stencil(dace.library.LibraryNode):
                  boundary_conditions: Dict[str, Dict] = {},
                  **kwargs):
         super().__init__(label, **kwargs)
-        self.code = type(self).code.from_string(code,
-                                                dace.dtypes.Language.Python)
+        self.code = type(self).code.from_string(code, dace.dtypes.Language.Python)
         self.iterator_mapping = iterator_mapping
         self.boundary_conditions = boundary_conditions

@@ -21,8 +21,7 @@ def test_redundant_array_removal():
 
     data_accesses = {
         n.data
-        for n, _ in test_redundant_array_removal.to_sdfg(
-            strict=True).all_nodes_recursive()
+        for n, _ in test_redundant_array_removal.to_sdfg(coarsen=True).all_nodes_recursive()
         if isinstance(n, dace.nodes.AccessNode)
     }
     assert "A_reshaped" not in data_accesses
@@ -42,7 +41,7 @@ def test_libnode_expansion():
     sdfg = test_broken_matmul.to_sdfg()
     sdfg.expand_library_nodes()
     sdfg.apply_gpu_transformations()
-    sdfg.apply_strict_transformations()
+    sdfg.coarsen_dataflow()
 
     A = np.random.rand(8, 2, 4).astype(np.float64)
     B = np.random.rand(4, 3).astype(np.float64)
@@ -51,8 +50,7 @@ def test_libnode_expansion():
     assert np.allclose(A @ B, C)
 
 
-@pytest.mark.parametrize(["copy_subset", "nonstrict"],
-                         list(itertools.product(["O", "T"], [False, True])))
+@pytest.mark.parametrize(["copy_subset", "nonstrict"], list(itertools.product(["O", "T"], [False, True])))
 def test_redundant_array_1_into_2_dims(copy_subset, nonstrict):
     sdfg = dace.SDFG("testing")
     state = sdfg.add_state()
@@ -68,19 +66,15 @@ def test_redundant_array_1_into_2_dims(copy_subset, nonstrict):
                              dict(out=dace.Memlet("T[i]")),
                              external_edges=True)
     copy_state = sdfg.add_state_after(state)
-    copy_state.add_edge(copy_state.add_read("T"), None,
-                        copy_state.add_write("O"), None,
+    copy_state.add_edge(copy_state.add_read("T"), None, copy_state.add_write("O"), None,
                         sdfg.make_array_memlet(copy_subset))
 
-    sdfg.apply_strict_transformations()
+    sdfg.coarsen_dataflow()
     if nonstrict:
-        sdfg.apply_transformations_repeated(RedundantArray)
+        sdfg.apply_transformations_repeated(RedundantArray, permissive=True)
 
         # Ensure a view is created
-        assert (len([
-            n for n in sdfg.node(0).data_nodes()
-            if type(n.desc(sdfg)) is data.Array
-        ]) == 2)
+        assert (len([n for n in sdfg.node(0).data_nodes() if type(n.desc(sdfg)) is data.Array]) == 2)
 
     I = np.ones((9, )).astype(np.float32)
     O = np.zeros((3, 3)).astype(np.float32)
@@ -88,8 +82,7 @@ def test_redundant_array_1_into_2_dims(copy_subset, nonstrict):
     assert np.allclose(O.flatten(), I + 1)
 
 
-@pytest.mark.parametrize(["copy_subset", "nonstrict"],
-                         list(itertools.product(["O", "T"], [False, True])))
+@pytest.mark.parametrize(["copy_subset", "nonstrict"], list(itertools.product(["O", "T"], [False, True])))
 def test_redundant_array_2_into_1_dim(copy_subset, nonstrict):
     sdfg = dace.SDFG("testing")
     state = sdfg.add_state()
@@ -105,19 +98,15 @@ def test_redundant_array_2_into_1_dim(copy_subset, nonstrict):
                              dict(out=dace.Memlet("T[i, j]")),
                              external_edges=True)
     copy_state = sdfg.add_state_after(state)
-    copy_state.add_edge(copy_state.add_read("T"), None,
-                        copy_state.add_write("O"), None,
+    copy_state.add_edge(copy_state.add_read("T"), None, copy_state.add_write("O"), None,
                         sdfg.make_array_memlet(copy_subset))
 
-    sdfg.apply_strict_transformations()
+    sdfg.coarsen_dataflow()
     if nonstrict:
-        sdfg.apply_transformations_repeated(RedundantArray)
+        sdfg.apply_transformations_repeated(RedundantArray, permissive=True)
 
         # Ensure a view is created
-        assert (len([
-            n for n in sdfg.node(0).data_nodes()
-            if type(n.desc(sdfg)) is data.Array
-        ]) == 2)
+        assert (len([n for n in sdfg.node(0).data_nodes() if type(n.desc(sdfg)) is data.Array]) == 2)
 
     I = np.ones((3, 3)).astype(np.float32)
     O = np.zeros((9, )).astype(np.float32)
@@ -133,8 +122,7 @@ def test_unsqueeze_view_removal():
     sdfg.add_array("O", [1, 9, 1], dtype=dace.float32, transient=False)
 
     tnode = state.add_access("T")
-    state.add_edge(tnode, None, state.add_write("O"), None,
-                   sdfg.make_array_memlet("O"))
+    state.add_edge(tnode, None, state.add_write("O"), None, sdfg.make_array_memlet("O"))
     state.add_mapped_tasklet("set_one",
                              dict(i="0:9"), {},
                              "out = 1",
@@ -145,10 +133,7 @@ def test_unsqueeze_view_removal():
     sdfg.apply_transformations_repeated(UnsqueezeViewRemove)
 
     # Ensure view is removed
-    assert (len([
-        n for n in sdfg.node(0).data_nodes()
-        if isinstance(n.desc(sdfg), data.View)
-    ]) == 0)
+    assert (len([n for n in sdfg.node(0).data_nodes() if isinstance(n.desc(sdfg), data.View)]) == 0)
 
     O = np.zeros((1, 9, 1)).astype(np.float32)
     sdfg(O=O)

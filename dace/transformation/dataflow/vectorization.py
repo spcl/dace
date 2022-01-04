@@ -112,7 +112,6 @@ class Vectorization(transformation.Transformation):
   """
 
     vector_len = Property(desc="Vector length", dtype=int, default=4)
-
     strided_map = Property(desc="Use strided map range (jump by vector length)"
                            " instead of modifying memlets",
                            dtype=bool,
@@ -150,7 +149,7 @@ class Vectorization(transformation.Transformation):
                        candidate,
                        expr_index,
                        sdfg: SDFG,
-                       strict=False) -> bool:
+                       permissive=False) -> bool:
 
         # Check if supported!
         supported_targets = [
@@ -318,7 +317,7 @@ class Vectorization(transformation.Transformation):
                 self._map_entry = m
 
                 if not self.can_be_applied(state, candidate, expr_index, sdfg,
-                                           strict):
+                                           permissive):
                     return False
 
             # Check alls strideds of the arrays
@@ -457,14 +456,12 @@ class Vectorization(transformation.Transformation):
         if self.preamble is not None:
             create_preamble = self.preamble
         else:
-            create_preamble = not ((dim_from % vector_size == 0) == True
-                                   or dim_from == 0)
+            create_preamble = not ((dim_from % vector_size == 0) == True or dim_from == 0)
         if self.postamble is not None:
             create_postamble = self.postamble
         else:
             if isinstance(dim_to, symbolic.SymExpr):
-                create_postamble = (((dim_to.approx + 1) %
-                                     vector_size == 0) == False)
+                create_postamble = (((dim_to.approx + 1) % vector_size == 0) == False)
             else:
                 create_postamble = (((dim_to + 1) % vector_size == 0) == False)
 
@@ -473,8 +470,7 @@ class Vectorization(transformation.Transformation):
         # Create preamble non-vectorized map (replacing the original map)
         if create_preamble and self.target == dtypes.ScheduleType.Default:
             old_scope = graph.scope_subgraph(map_entry, True, True)
-            new_scope: ScopeSubgraphView = replicate_scope(
-                sdfg, graph, old_scope)
+            new_scope: ScopeSubgraphView = replicate_scope(sdfg, graph, old_scope)
             new_begin = dim_from + (vector_size - (dim_from % vector_size))
             map_entry.map.range[-1] = (dim_from, new_begin - 1, dim_skip)
             # Replace map_entry with the replicated scope (so that the preamble
@@ -488,9 +484,7 @@ class Vectorization(transformation.Transformation):
             new_scope: ScopeSubgraphView = replicate_scope(
                 sdfg, graph, graph.scope_subgraph(map_entry, True, True))
             dim_to_ex = dim_to + 1
-            new_scope.entry.map.range[-1] = (dim_to_ex -
-                                             (dim_to_ex % vector_size), dim_to,
-                                             dim_skip)
+            new_scope.entry.map.range[-1] = (dim_to_ex - (dim_to_ex % vector_size), dim_to, dim_skip)
 
         # Change the step of the inner-most dimension.
         map_entry.map.range[-1] = tuple(new_range)
@@ -558,8 +552,7 @@ class Vectorization(transformation.Transformation):
 
                     # Change type and shape to vector
                     if not isinstance(dtype, dtypes.vector):
-                        cursdfg.arrays[arrname].dtype = dtypes.vector(
-                            dtype, vector_size)
+                        cursdfg.arrays[arrname].dtype = dtypes.vector(dtype, vector_size)
                         new_shape = list(cursdfg.arrays[arrname].shape)
                         contigidx = cursdfg.arrays[arrname].strides.index(1)
                         new_shape[contigidx] /= vector_size

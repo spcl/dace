@@ -39,8 +39,7 @@ def make_sdfg(implementation,
               overwrite=False,
               getri=True):
 
-    sdfg = dace.SDFG("linalg_inv_{}_{}_{}".format(implementation,
-                                                  dtype.__name__, id))
+    sdfg = dace.SDFG("linalg_inv_{}_{}_{}".format(implementation, dtype.__name__, id))
     sdfg.add_symbol("n", dace.int64)
     state = sdfg.add_state("dataflow")
 
@@ -57,225 +56,178 @@ def make_sdfg(implementation,
     inv_node = Inv("inv", overwrite_a=overwrite, use_getri=getri)
     inv_node.implementation = implementation
 
-    state.add_memlet_path(xin,
-                          inv_node,
-                          dst_conn="_ain",
-                          memlet=Memlet.simple(xin,
-                                               in_subset,
-                                               num_accesses=n * n))
-    state.add_memlet_path(inv_node,
-                          xout,
-                          src_conn="_aout",
-                          memlet=Memlet.simple(xout,
-                                               out_subset,
-                                               num_accesses=n * n))
+    state.add_memlet_path(xin, inv_node, dst_conn="_ain", memlet=Memlet.simple(xin, in_subset, num_accesses=n * n))
+    state.add_memlet_path(inv_node, xout, src_conn="_aout", memlet=Memlet.simple(xout, out_subset, num_accesses=n * n))
 
     return sdfg
 
 
-@pytest.mark.parametrize(
-    "implementation, dtype, size, shape, overwrite, getri", [
-        pytest.param('MKL',
-                     np.float32,
-                     4, [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]],
-                     False,
-                     True,
-                     marks=pytest.mark.mkl),
-        pytest.param('MKL',
-                     np.float64,
-                     4, [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]],
-                     False,
-                     True,
-                     marks=pytest.mark.mkl),
-        pytest.param(
-            'MKL',
-            np.float32,
-            4, [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]],
-            False,
-            True,
-            marks=pytest.mark.mkl),
-        pytest.param(
-            'MKL',
-            np.float64,
-            4, [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]],
-            False,
-            True,
-            marks=pytest.mark.mkl),
-        pytest.param(
-            'MKL',
-            np.float32,
-            4, [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]],
-            True,
-            True,
-            marks=pytest.mark.mkl),
-        pytest.param(
-            'MKL',
-            np.float64,
-            4, [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]],
-            True,
-            True,
-            marks=pytest.mark.mkl),
-        pytest.param('MKL',
-                     np.float32,
-                     4, [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]],
-                     False,
-                     False,
-                     marks=pytest.mark.mkl),
-        pytest.param('MKL',
-                     np.float64,
-                     4, [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]],
-                     False,
-                     False,
-                     marks=pytest.mark.mkl),
-        pytest.param(
-            'MKL',
-            np.float32,
-            4, [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]],
-            False,
-            False,
-            marks=pytest.mark.mkl),
-        pytest.param(
-            'MKL',
-            np.float64,
-            4, [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]],
-            False,
-            False,
-            marks=pytest.mark.mkl),
-        pytest.param(
-            'MKL',
-            np.float32,
-            4, [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]],
-            True,
-            False,
-            marks=pytest.mark.mkl),
-        pytest.param(
-            'MKL',
-            np.float64,
-            4, [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]],
-            True,
-            False,
-            marks=pytest.mark.mkl),
-        pytest.param('OpenBLAS',
-                     np.float32,
-                     4, [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]],
-                     False,
-                     True,
-                     marks=pytest.mark.lapack),
-        pytest.param('OpenBLAS',
-                     np.float64,
-                     4, [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]],
-                     False,
-                     True,
-                     marks=pytest.mark.lapack),
-        pytest.param(
-            'OpenBLAS',
-            np.float32,
-            4, [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]],
-            False,
-            True,
-            marks=pytest.mark.lapack),
-        pytest.param(
-            'OpenBLAS',
-            np.float64,
-            4, [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]],
-            False,
-            True,
-            marks=pytest.mark.lapack),
-        pytest.param(
-            'OpenBLAS',
-            np.float32,
-            4, [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]],
-            True,
-            True,
-            marks=pytest.mark.lapack),
-        pytest.param(
-            'OpenBLAS',
-            np.float64,
-            4, [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]],
-            True,
-            True,
-            marks=pytest.mark.lapack),
-        pytest.param('OpenBLAS',
-                     np.float32,
-                     4, [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]],
-                     False,
-                     False,
-                     marks=pytest.mark.lapack),
-        pytest.param('OpenBLAS',
-                     np.float64,
-                     4, [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]],
-                     False,
-                     False,
-                     marks=pytest.mark.lapack),
-        pytest.param(
-            'OpenBLAS',
-            np.float32,
-            4, [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]],
-            False,
-            False,
-            marks=pytest.mark.lapack),
-        pytest.param(
-            'OpenBLAS',
-            np.float64,
-            4, [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]],
-            False,
-            False,
-            marks=pytest.mark.lapack),
-        pytest.param(
-            'OpenBLAS',
-            np.float32,
-            4, [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]],
-            True,
-            False,
-            marks=pytest.mark.lapack),
-        pytest.param(
-            'OpenBLAS',
-            np.float64,
-            4, [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]],
-            True,
-            False,
-            marks=pytest.mark.lapack),
-        pytest.param('cuSolverDn',
-                     np.float32,
-                     4, [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]],
-                     False,
-                     False,
-                     marks=pytest.mark.gpu),
-        pytest.param('cuSolverDn',
-                     np.float64,
-                     4, [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]],
-                     False,
-                     False,
-                     marks=pytest.mark.gpu),
-        pytest.param(
-            'cuSolverDn',
-            np.float32,
-            4, [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]],
-            False,
-            False,
-            marks=pytest.mark.gpu),
-        pytest.param(
-            'cuSolverDn',
-            np.float64,
-            4, [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]],
-            False,
-            False,
-            marks=pytest.mark.gpu),
-        pytest.param(
-            'cuSolverDn',
-            np.float32,
-            4, [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]],
-            True,
-            False,
-            marks=pytest.mark.gpu),
-        pytest.param(
-            'cuSolverDn',
-            np.float64,
-            4, [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]],
-            True,
-            False,
-            marks=pytest.mark.gpu)
-    ])
+@pytest.mark.parametrize("implementation, dtype, size, shape, overwrite, getri", [
+    pytest.param(
+        'MKL', np.float32, 4, [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]], False, True, marks=pytest.mark.mkl),
+    pytest.param(
+        'MKL', np.float64, 4, [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]], False, True, marks=pytest.mark.mkl),
+    pytest.param('MKL',
+                 np.float32,
+                 4, [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]],
+                 False,
+                 True,
+                 marks=pytest.mark.mkl),
+    pytest.param('MKL',
+                 np.float64,
+                 4, [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]],
+                 False,
+                 True,
+                 marks=pytest.mark.mkl),
+    pytest.param('MKL',
+                 np.float32,
+                 4, [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]],
+                 True,
+                 True,
+                 marks=pytest.mark.mkl),
+    pytest.param('MKL',
+                 np.float64,
+                 4, [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]],
+                 True,
+                 True,
+                 marks=pytest.mark.mkl),
+    pytest.param(
+        'MKL', np.float32, 4, [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]], False, False, marks=pytest.mark.mkl),
+    pytest.param(
+        'MKL', np.float64, 4, [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]], False, False, marks=pytest.mark.mkl),
+    pytest.param('MKL',
+                 np.float32,
+                 4, [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]],
+                 False,
+                 False,
+                 marks=pytest.mark.mkl),
+    pytest.param('MKL',
+                 np.float64,
+                 4, [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]],
+                 False,
+                 False,
+                 marks=pytest.mark.mkl),
+    pytest.param('MKL',
+                 np.float32,
+                 4, [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]],
+                 True,
+                 False,
+                 marks=pytest.mark.mkl),
+    pytest.param('MKL',
+                 np.float64,
+                 4, [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]],
+                 True,
+                 False,
+                 marks=pytest.mark.mkl),
+    pytest.param('OpenBLAS',
+                 np.float32,
+                 4, [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]],
+                 False,
+                 True,
+                 marks=pytest.mark.lapack),
+    pytest.param('OpenBLAS',
+                 np.float64,
+                 4, [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]],
+                 False,
+                 True,
+                 marks=pytest.mark.lapack),
+    pytest.param('OpenBLAS',
+                 np.float32,
+                 4, [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]],
+                 False,
+                 True,
+                 marks=pytest.mark.lapack),
+    pytest.param('OpenBLAS',
+                 np.float64,
+                 4, [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]],
+                 False,
+                 True,
+                 marks=pytest.mark.lapack),
+    pytest.param('OpenBLAS',
+                 np.float32,
+                 4, [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]],
+                 True,
+                 True,
+                 marks=pytest.mark.lapack),
+    pytest.param('OpenBLAS',
+                 np.float64,
+                 4, [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]],
+                 True,
+                 True,
+                 marks=pytest.mark.lapack),
+    pytest.param('OpenBLAS',
+                 np.float32,
+                 4, [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]],
+                 False,
+                 False,
+                 marks=pytest.mark.lapack),
+    pytest.param('OpenBLAS',
+                 np.float64,
+                 4, [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]],
+                 False,
+                 False,
+                 marks=pytest.mark.lapack),
+    pytest.param('OpenBLAS',
+                 np.float32,
+                 4, [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]],
+                 False,
+                 False,
+                 marks=pytest.mark.lapack),
+    pytest.param('OpenBLAS',
+                 np.float64,
+                 4, [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]],
+                 False,
+                 False,
+                 marks=pytest.mark.lapack),
+    pytest.param('OpenBLAS',
+                 np.float32,
+                 4, [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]],
+                 True,
+                 False,
+                 marks=pytest.mark.lapack),
+    pytest.param('OpenBLAS',
+                 np.float64,
+                 4, [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]],
+                 True,
+                 False,
+                 marks=pytest.mark.lapack),
+    pytest.param('cuSolverDn',
+                 np.float32,
+                 4, [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]],
+                 False,
+                 False,
+                 marks=pytest.mark.gpu),
+    pytest.param('cuSolverDn',
+                 np.float64,
+                 4, [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]],
+                 False,
+                 False,
+                 marks=pytest.mark.gpu),
+    pytest.param('cuSolverDn',
+                 np.float32,
+                 4, [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]],
+                 False,
+                 False,
+                 marks=pytest.mark.gpu),
+    pytest.param('cuSolverDn',
+                 np.float64,
+                 4, [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]],
+                 False,
+                 False,
+                 marks=pytest.mark.gpu),
+    pytest.param('cuSolverDn',
+                 np.float32,
+                 4, [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]],
+                 True,
+                 False,
+                 marks=pytest.mark.gpu),
+    pytest.param('cuSolverDn',
+                 np.float64,
+                 4, [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]],
+                 True,
+                 False,
+                 marks=pytest.mark.gpu)
+])
 def test_inv(implementation, dtype, size, shape, overwrite, getri):
     global id
     id += 1
@@ -291,46 +243,32 @@ def test_inv(implementation, dtype, size, shape, overwrite, getri):
     assert np.all(np.array(out_shape)[out_dims] >= size)
     assert np.all(np.array(in_offset) < size)
     assert np.all(np.array(out_offset) < size)
-    assert np.all(
-        np.array(in_offset)[in_dims] + size <= np.array(in_shape)[in_dims])
-    assert np.all(
-        np.array(out_offset)[out_dims] + size <= np.array(out_shape)[out_dims])
+    assert np.all(np.array(in_offset)[in_dims] + size <= np.array(in_shape)[in_dims])
+    assert np.all(np.array(out_offset)[out_dims] + size <= np.array(out_shape)[out_dims])
 
-    in_subset = tuple([
-        slice(o, o + size) if i in in_dims else o
-        for i, o in enumerate(in_offset)
-    ])
+    in_subset = tuple([slice(o, o + size) if i in in_dims else o for i, o in enumerate(in_offset)])
     if overwrite:
         out_subset = in_subset
     else:
-        out_subset = tuple([
-            slice(o, o + size) if i in out_dims else o
-            for i, o in enumerate(out_offset)
-        ])
+        out_subset = tuple([slice(o, o + size) if i in out_dims else o for i, o in enumerate(out_offset)])
 
-    in_subset_str = ','.join([
-        "{b}:{e}".format(b=o, e=o + size) if i in in_dims else str(o)
-        for i, o in enumerate(in_offset)
-    ])
+    in_subset_str = ','.join(
+        ["{b}:{e}".format(b=o, e=o + size) if i in in_dims else str(o) for i, o in enumerate(in_offset)])
     if overwrite:
         out_subset_str = in_subset_str
     else:
-        out_subset_str = ','.join([
-            "{b}:{e}".format(b=o, e=o + size) if i in out_dims else str(o)
-            for i, o in enumerate(out_offset)
-        ])
+        out_subset_str = ','.join(
+            ["{b}:{e}".format(b=o, e=o + size) if i in out_dims else str(o) for i, o in enumerate(out_offset)])
 
-    sdfg = make_sdfg(implementation, dtype, id, in_shape, out_shape,
-                     in_subset_str, out_subset_str, overwrite, getri)
+    sdfg = make_sdfg(implementation, dtype, id, in_shape, out_shape, in_subset_str, out_subset_str, overwrite, getri)
     if implementation == 'cuSolverDn':
         sdfg.apply_gpu_transformations()
-        sdfg.apply_strict_transformations()
+        sdfg.coarsen_dataflow()
     try:
         inv_sdfg = sdfg.compile()
     except (CompilerConfigurationError, CompilationError):
-        warnings.warn(
-            'Configuration/compilation failed, library missing or '
-            'misconfigured, skipping test for {}.'.format(implementation))
+        warnings.warn('Configuration/compilation failed, library missing or '
+                      'misconfigured, skipping test for {}.'.format(implementation))
         return
 
     A0 = np.zeros(in_shape, dtype=dtype)
@@ -361,51 +299,21 @@ def test_inv(implementation, dtype, size, shape, overwrite, getri):
 ###############################################################################
 
 if __name__ == "__main__":
-    test_inv('MKL', np.float32, 4,
-             [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]], False, True)
-    test_inv('MKL', np.float64, 4,
-             [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]], False, True)
-    test_inv('MKL', np.float32, 4,
-             [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]],
-             False, True)
-    test_inv('MKL', np.float64, 4,
-             [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]],
-             False, True)
-    test_inv('MKL', np.float32, 4,
-             [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]], True,
-             True)
-    test_inv('MKL', np.float64, 4,
-             [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]], True,
-             True)
-    test_inv('MKL', np.float32, 4,
-             [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]], False, False)
-    test_inv('MKL', np.float64, 4,
-             [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]], False, False)
-    test_inv('MKL', np.float32, 4,
-             [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]],
-             False, False)
-    test_inv('MKL', np.float64, 4,
-             [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]],
-             False, False)
-    test_inv('MKL', np.float32, 4,
-             [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]], True,
-             False)
-    test_inv('MKL', np.float64, 4,
-             [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]], True,
-             False)
-    test_inv('cuSolverDn', np.float32, 4,
-             [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]], False, False)
-    test_inv('cuSolverDn', np.float64, 4,
-             [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]], False, False)
-    test_inv('cuSolverDn', np.float32, 4,
-             [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]],
-             False, False)
-    test_inv('cuSolverDn', np.float64, 4,
-             [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]],
-             False, False)
-    test_inv('cuSolverDn', np.float32, 4,
-             [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]], True,
-             False)
-    test_inv('cuSolverDn', np.float64, 4,
-             [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]], True,
-             False)
+    test_inv('MKL', np.float32, 4, [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]], False, True)
+    test_inv('MKL', np.float64, 4, [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]], False, True)
+    test_inv('MKL', np.float32, 4, [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]], False, True)
+    test_inv('MKL', np.float64, 4, [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]], False, True)
+    test_inv('MKL', np.float32, 4, [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]], True, True)
+    test_inv('MKL', np.float64, 4, [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]], True, True)
+    test_inv('MKL', np.float32, 4, [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]], False, False)
+    test_inv('MKL', np.float64, 4, [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]], False, False)
+    test_inv('MKL', np.float32, 4, [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]], False, False)
+    test_inv('MKL', np.float64, 4, [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]], False, False)
+    test_inv('MKL', np.float32, 4, [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]], True, False)
+    test_inv('MKL', np.float64, 4, [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]], True, False)
+    test_inv('cuSolverDn', np.float32, 4, [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]], False, False)
+    test_inv('cuSolverDn', np.float64, 4, [[4, 4], [4, 4], [0, 0], [0, 0], [0, 1], [0, 1]], False, False)
+    test_inv('cuSolverDn', np.float32, 4, [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]], False, False)
+    test_inv('cuSolverDn', np.float64, 4, [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]], False, False)
+    test_inv('cuSolverDn', np.float32, 4, [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]], True, False)
+    test_inv('cuSolverDn', np.float64, 4, [[5, 5, 5], [5, 5, 5], [1, 3, 0], [2, 0, 1], [0, 2], [1, 2]], True, False)

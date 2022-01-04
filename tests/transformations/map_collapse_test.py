@@ -19,7 +19,7 @@ def tocollapse(A: dace.float64[3, 3], B: dace.float64[2, 2]):
 
 def test_mapcollapse_tree():
     sdfg: dace.SDFG = tocollapse.to_sdfg()
-    sdfg.apply_strict_transformations()
+    sdfg.coarsen_dataflow()
     sdfg.validate()
     assert sdfg.apply_transformations(MapCollapse) == 1
     sdfg.validate()
@@ -27,7 +27,7 @@ def test_mapcollapse_tree():
 
 def test_mapcollapse_consolidated():
     sdfg: dace.SDFG = tocollapse.to_sdfg()
-    sdfg.apply_strict_transformations()
+    sdfg.coarsen_dataflow()
     consolidate_edges(sdfg)
     sdfg.validate()
     assert sdfg.apply_transformations(MapCollapse) == 1

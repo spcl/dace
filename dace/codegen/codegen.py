@@ -22,10 +22,7 @@ def generate_headers(sdfg: SDFG) -> str:
     """ Generate a header file for the SDFG """
     proto = ""
     proto += "#include <dace/dace.h>\n"
-    init_params = (sdfg.name, sdfg.name,
-                   sdfg.signature(with_types=True,
-                                  for_call=False,
-                                  with_arrays=False))
+    init_params = (sdfg.name, sdfg.name, sdfg.signature(with_types=True, for_call=False, with_arrays=False))
     call_params = sdfg.signature(with_types=True, for_call=False)
     if len(call_params) > 0:
         call_params = ', ' + call_params
@@ -44,9 +41,7 @@ def generate_dummy(sdfg: SDFG) -> str:
         the right types and and guess values for scalars.
     """
     al = sdfg.arglist()
-    init_params = sdfg.signature(with_types=False,
-                                 for_call=True,
-                                 with_arrays=False)
+    init_params = sdfg.signature(with_types=False, for_call=True, with_arrays=False)
     params = sdfg.signature(with_types=False, for_call=True)
     if len(params) > 0:
         params = ', ' + params
@@ -57,20 +52,15 @@ def generate_dummy(sdfg: SDFG) -> str:
     # first find all scalars and set them to 42
     for argname, arg in al.items():
         if isinstance(arg, data.Scalar):
-            allocations += ("    " +
-                            str(arg.as_arg(name=argname, with_types=True)) +
-                            " = 42;\n")
+            allocations += ("    " + str(arg.as_arg(name=argname, with_types=True)) + " = 42;\n")
 
     # allocate the array args using calloc
     for argname, arg in al.items():
         if isinstance(arg, data.Array):
-            dims_mul = cpp.sym2cpp(
-                functools.reduce(lambda a, b: a * b, arg.shape, 1))
+            dims_mul = cpp.sym2cpp(functools.reduce(lambda a, b: a * b, arg.shape, 1))
             basetype = str(arg.dtype)
-            allocations += ("    " +
-                            str(arg.as_arg(name=argname, with_types=True)) +
-                            " = (" + basetype + "*) calloc(" + dims_mul +
-                            ", sizeof(" + basetype + ")" + ");\n")
+            allocations += ("    " + str(arg.as_arg(name=argname, with_types=True)) + " = (" + basetype + "*) calloc(" +
+                            dims_mul + ", sizeof(" + basetype + ")" + ");\n")
             deallocations += "    free(" + argname + ");\n"
 
     return f'''#include <cstdlib>
@@ -116,8 +106,7 @@ def generate_code(sdfg, validate=True) -> List[CodeObject]:
             if not filecmp.cmp(f'{tmp_dir}/test.sdfg', f'{tmp_dir}/test2.sdfg'):
                 shutil.move(f"{tmp_dir}/test.sdfg", "test.sdfg")
                 shutil.move(f"{tmp_dir}/test2.sdfg", "test2.sdfg")
-                raise RuntimeError(
-                    'SDFG serialization failed - files do not match')
+                raise RuntimeError('SDFG serialization failed - files do not match')
 
         # Run with the deserialized version
         # NOTE: This means that all subsequent modifications to `sdfg`
@@ -152,14 +141,12 @@ def generate_code(sdfg, validate=True) -> List[CodeObject]:
     # Instantiate the rest of the targets
     targets.update({
         v['name']: k(frame, sdfg)
-        for k, v in target.TargetCodeGenerator.extensions().items()
-        if v['name'] not in targets
+        for k, v in target.TargetCodeGenerator.extensions().items() if v['name'] not in targets
     })
 
     # Instantiate all instrumentation providers in SDFG
     provider_mapping = InstrumentationProvider.get_provider_mapping()
-    frame._dispatcher.instrumentation[
-        dtypes.InstrumentationType.No_Instrumentation] = None
+    frame._dispatcher.instrumentation[dtypes.InstrumentationType.No_Instrumentation] = None
     for node, _ in sdfg.all_nodes_recursive():
         if hasattr(node, 'instrument'):
             frame._dispatcher.instrumentation[node.instrument] = \
@@ -179,8 +166,7 @@ def generate_code(sdfg, validate=True) -> List[CodeObject]:
     }
 
     # Generate frame code (and the rest of the code)
-    (global_code, frame_code, used_targets,
-     used_environments) = frame.generate_code(sdfg, None)
+    (global_code, frame_code, used_targets, used_environments) = frame.generate_code(sdfg, None)
     target_objects = [
         CodeObject(sdfg.name,
                    global_code + frame_code,
@@ -205,8 +191,7 @@ def generate_code(sdfg, validate=True) -> List[CodeObject]:
                        linkable=False)
     target_objects.append(dummy)
 
-    for env in dace.library.get_environments_and_dependencies(
-            used_environments):
+    for env in dace.library.get_environments_and_dependencies(used_environments):
         if hasattr(env, "codeobjects"):
             target_objects.extend(env.codeobjects)
 

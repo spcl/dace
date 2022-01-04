@@ -32,18 +32,14 @@ class MatrixProductTranspose(transformation.Transformation):
         graph.add_node(MatrixProductTranspose._transpose_b)
         graph.add_node(MatrixProductTranspose._bt)
         graph.add_node(MatrixProductTranspose._a_times_b)
-        graph.add_edge(MatrixProductTranspose._transpose_a,
-                       MatrixProductTranspose._at, None)
-        graph.add_edge(MatrixProductTranspose._at,
-                       MatrixProductTranspose._a_times_b, None)
-        graph.add_edge(MatrixProductTranspose._transpose_b,
-                       MatrixProductTranspose._bt, None)
-        graph.add_edge(MatrixProductTranspose._bt,
-                       MatrixProductTranspose._a_times_b, None)
+        graph.add_edge(MatrixProductTranspose._transpose_a, MatrixProductTranspose._at, None)
+        graph.add_edge(MatrixProductTranspose._at, MatrixProductTranspose._a_times_b, None)
+        graph.add_edge(MatrixProductTranspose._transpose_b, MatrixProductTranspose._bt, None)
+        graph.add_edge(MatrixProductTranspose._bt, MatrixProductTranspose._a_times_b, None)
         return [graph]
 
     @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
         _at = graph.nodes()[candidate[MatrixProductTranspose._at]]
         _a_times_b = graph.nodes()[candidate[MatrixProductTranspose._a_times_b]]
         edges = graph.edges_between(_at, _a_times_b)
@@ -57,23 +53,18 @@ class MatrixProductTranspose(transformation.Transformation):
 
     @staticmethod
     def match_to_str(graph, candidate):
-        transpose_a = graph.nodes()[candidate[
-            MatrixProductTranspose._transpose_a]]
-        transpose_b = graph.nodes()[candidate[
-            MatrixProductTranspose._transpose_b]]
+        transpose_a = graph.nodes()[candidate[MatrixProductTranspose._transpose_a]]
+        transpose_b = graph.nodes()[candidate[MatrixProductTranspose._transpose_b]]
         a_times_b = graph.nodes()[candidate[MatrixProductTranspose._a_times_b]]
         return f"{transpose_a.name} -> {a_times_b.name} <- {transpose_b.name}"
 
     def apply(self, sdfg):
         graph = sdfg.nodes()[self.state_id]
-        transpose_a = graph.nodes()[self.subgraph[
-            MatrixProductTranspose._transpose_a]]
+        transpose_a = graph.nodes()[self.subgraph[MatrixProductTranspose._transpose_a]]
         _at = graph.nodes()[self.subgraph[MatrixProductTranspose._at]]
-        transpose_b = graph.nodes()[self.subgraph[
-            MatrixProductTranspose._transpose_b]]
+        transpose_b = graph.nodes()[self.subgraph[MatrixProductTranspose._transpose_b]]
         _bt = graph.nodes()[self.subgraph[MatrixProductTranspose._bt]]
-        a_times_b = graph.nodes()[self.subgraph[
-            MatrixProductTranspose._a_times_b]]
+        a_times_b = graph.nodes()[self.subgraph[MatrixProductTranspose._a_times_b]]
 
         for src, src_conn, _, _, memlet in graph.in_edges(transpose_a):
             graph.add_edge(src, src_conn, a_times_b, '_b', memlet)
@@ -97,7 +88,5 @@ class MatrixProductTranspose(transformation.Transformation):
             _, _, dst, dst_conn, memlet = edge
             graph.remove_edge(edge)
             graph.add_edge(transpose_c, '_out', dst, dst_conn, memlet)
-        graph.add_edge(a_times_b, '_c', tmp_acc, None,
-                       dace.Memlet.from_array(tmp_name, tmp_arr))
-        graph.add_edge(tmp_acc, None, transpose_c, '_inp',
-                       dace.Memlet.from_array(tmp_name, tmp_arr))
+        graph.add_edge(a_times_b, '_c', tmp_acc, None, dace.Memlet.from_array(tmp_name, tmp_arr))
+        graph.add_edge(tmp_acc, None, transpose_c, '_inp', dace.Memlet.from_array(tmp_name, tmp_arr))

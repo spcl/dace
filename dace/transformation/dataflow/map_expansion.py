@@ -35,15 +35,14 @@ class MapExpansion(pm.Transformation):
                        candidate: Dict[pm.PatternNode, int],
                        expr_index: int,
                        sdfg: dace.SDFG,
-                       strict: bool = False):
+                       permissive: bool = False):
         # A candidate subgraph matches the map-expansion pattern when it
         # includes an N-dimensional map, with N greater than one.
         map_entry = graph.node(candidate[MapExpansion.map_entry])
         return map_entry.map.get_param_num() > 1
 
     @staticmethod
-    def match_to_str(graph: dace.SDFGState, candidate: Dict[pm.PatternNode,
-                                                            int]) -> str:
+    def match_to_str(graph: dace.SDFGState, candidate: Dict[pm.PatternNode, int]) -> str:
         map_entry = graph.node(candidate[MapExpansion.map_entry])
         return map_entry.map.label + ': ' + str(map_entry.map.params)
 
@@ -58,8 +57,8 @@ class MapExpansion(pm.Transformation):
         new_maps = [
             nodes.Map(current_map.label + '_' + str(param), [param],
                       subsets.Range([param_range]),
-                      schedule=dtypes.ScheduleType.Sequential) for param,
-            param_range in zip(current_map.params[1:], current_map.range[1:])
+                      schedule=dtypes.ScheduleType.Sequential)
+            for param, param_range in zip(current_map.params[1:], current_map.range[1:])
         ]
         current_map.params = [current_map.params[0]]
         current_map.range = subsets.Range([current_map.range[0]])
@@ -92,8 +91,7 @@ class MapExpansion(pm.Transformation):
             path = []
             for mapnode in [map_entry] + entries:
                 path.append(mapnode)
-                if any(edge.dst_conn in map(str, symbolic.symlist(r))
-                       for r in mapnode.map.range):
+                if any(edge.dst_conn in map(str, symbolic.symlist(r)) for r in mapnode.map.range):
                     graph.add_memlet_path(edge.src,
                                           *path,
                                           memlet=edge.data,

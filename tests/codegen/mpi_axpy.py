@@ -34,8 +34,7 @@ if __name__ == "__main__":
     ranks = comm.Get_size()
 
     if rank == 0:
-        print('Scalar-vector multiplication %d (MPI, ranks = %d)' %
-              (N.get(), ranks))
+        print('Scalar-vector multiplication %d (MPI, ranks = %d)' % (N.get(), ranks))
     else:
         dace.Config.set('debugprint', value=False)
 

@@ -20,8 +20,7 @@ class Subset(object):
             try:
                 # TODO: Fix in symbol definition, not here
                 for sym in list(expr.free_symbols):
-                    expr = expr.subs(
-                        {sym: sp.Symbol(sym.name, nonnegative=True)})
+                    expr = expr.subs({sym: sp.Symbol(sym.name, nonnegative=True)})
                 return expr
             except AttributeError:  # No free_symbols in expr
                 return expr
@@ -30,36 +29,26 @@ class Subset(object):
 
         if not symbolic_positive:
             try:
-                return all([
-                    (symbolic.simplify_ext(nng(rb)) <= symbolic.simplify_ext(
-                        nng(orb))) == True and (symbolic.simplify_ext(
-                            nng(re)) >= symbolic.simplify_ext(nng(ore))) == True
-                    for rb, re, orb, ore in zip(
-                        self.min_element_approx(), self.max_element_approx(),
-                        other.min_element_approx(), other.max_element_approx())
-                ])
+                return all([(symbolic.simplify_ext(nng(rb)) <= symbolic.simplify_ext(nng(orb))) == True
+                            and (symbolic.simplify_ext(nng(re)) >= symbolic.simplify_ext(nng(ore))) == True
+                            for rb, re, orb, ore in zip(self.min_element_approx(), self.max_element_approx(),
+                                                        other.min_element_approx(), other.max_element_approx())])
             except TypeError:
                 return False
 
         else:
             try:
-                for rb, re, orb, ore in zip(self.min_element_approx(),
-                                            self.max_element_approx(),
-                                            other.min_element_approx(),
-                                            other.max_element_approx()):
+                for rb, re, orb, ore in zip(self.min_element_approx(), self.max_element_approx(),
+                                            other.min_element_approx(), other.max_element_approx()):
 
                     # lower bound: first check whether symbolic positive condition applies
-                    if not (len(rb.free_symbols) == 0
-                            and len(orb.free_symbols) == 1):
-                        if not symbolic.simplify_ext(
-                                nng(rb)) <= symbolic.simplify_ext(nng(orb)):
+                    if not (len(rb.free_symbols) == 0 and len(orb.free_symbols) == 1):
+                        if not symbolic.simplify_ext(nng(rb)) <= symbolic.simplify_ext(nng(orb)):
                             return False
 
                     # upper bound: first check whether symbolic positive condition applies
-                    if not (len(re.free_symbols) == 1
-                            and len(ore.free_symbols) == 0):
-                        if not symbolic.simplify_ext(
-                                nng(re)) >= symbolic.simplify_ext(nng(ore)):
+                    if not (len(re.free_symbols) == 1 and len(ore.free_symbols) == 0):
+                        if not symbolic.simplify_ext(nng(re)) >= symbolic.simplify_ext(nng(ore)):
                             return False
             except TypeError:
                 return False
@@ -104,8 +93,7 @@ class Subset(object):
     @property
     def free_symbols(self) -> Set[str]:
         """ Returns a set of undefined symbols in this subset. """
-        raise NotImplementedError('free_symbols not implemented by "%s"' %
-                                  type(self).__name__)
+        raise NotImplementedError('free_symbols not implemented by "%s"' % type(self).__name__)
 
 
 def _simplified_str(val):
@@ -131,8 +119,7 @@ def _approx(val):
 
 
 def _tuple_to_symexpr(val):
-    return (symbolic.SymExpr(val[0], val[1])
-            if isinstance(val, tuple) else symbolic.pystr_to_symbolic(val))
+    return (symbolic.SymExpr(val[0], val[1]) if isinstance(val, tuple) else symbolic.pystr_to_symbolic(val))
 
 
 @dace.serialize.serializable
@@ -144,9 +131,7 @@ class Range(Subset):
         for r in ranges:
             if len(r) != 3 and len(r) != 4:
                 raise ValueError("Expected 3-tuple or 4-tuple")
-            parsed_ranges.append(
-                (_tuple_to_symexpr(r[0]), _tuple_to_symexpr(r[1]),
-                 _tuple_to_symexpr(r[2])))
+            parsed_ranges.append((_tuple_to_symexpr(r[0]), _tuple_to_symexpr(r[1]), _tuple_to_symexpr(r[2])))
             if len(r) == 3:
                 parsed_tiles.append(symbolic.pystr_to_symbolic(1))
             else:
@@ -185,12 +170,7 @@ class Range(Subset):
 
         # TODO: Check if approximations should also be saved
         for (start, end, step), tile in zip(self.ranges, self.tile_sizes):
-            ret.append({
-                'start': a2s(start),
-                'end': a2s(end),
-                'step': a2s(step),
-                'tile': a2s(tile)
-            })
+            ret.append({'start': a2s(start), 'end': a2s(end), 'step': a2s(step), 'tile': a2s(tile)})
 
         return {'type': 'Range', 'ranges': ret}
 
@@ -213,8 +193,7 @@ class Range(Subset):
                 return symbolic.SymExpr(pts(x['main']), pts(x['approx']))
 
         for r in ranges:
-            tuples.append((p2s(r['start']), p2s(r['end']), p2s(r['step']),
-                           p2s(r['tile'])))
+            tuples.append((p2s(r['start']), p2s(r['end']), p2s(r['step']), p2s(r['tile'])))
 
         return Range(tuples)
 
@@ -243,35 +222,25 @@ class Range(Subset):
         if for_codegen == True:
             int_ceil = sp.Function('int_ceil')
             return [
-                ts * int_ceil(
-                    ((iMax.approx if isinstance(iMax, symbolic.SymExpr) else
-                      iMax) + off - (iMin.approx if isinstance(
-                          iMin, symbolic.SymExpr) else iMin)),
-                    (step.approx
-                     if isinstance(step, symbolic.SymExpr) else step))
-                for (iMin, iMax,
-                     step), off, ts in zip(self.ranges, offset, self.tile_sizes)
+                ts * int_ceil(((iMax.approx if isinstance(iMax, symbolic.SymExpr) else iMax) + off -
+                               (iMin.approx if isinstance(iMin, symbolic.SymExpr) else iMin)),
+                              (step.approx if isinstance(step, symbolic.SymExpr) else step))
+                for (iMin, iMax, step), off, ts in zip(self.ranges, offset, self.tile_sizes)
             ]
         else:
             return [
-                ts * sp.ceiling(
-                    ((iMax.approx
-                      if isinstance(iMax, symbolic.SymExpr) else iMax) + off -
-                     (iMin.approx if isinstance(iMin, symbolic.SymExpr) else
-                      iMin)) / (step.approx if isinstance(
-                          step, symbolic.SymExpr) else step))
-                for (iMin, iMax,
-                     step), off, ts in zip(self.ranges, offset, self.tile_sizes)
+                ts * sp.ceiling(((iMax.approx if isinstance(iMax, symbolic.SymExpr) else iMax) + off -
+                                 (iMin.approx if isinstance(iMin, symbolic.SymExpr) else iMin)) /
+                                (step.approx if isinstance(step, symbolic.SymExpr) else step))
+                for (iMin, iMax, step), off, ts in zip(self.ranges, offset, self.tile_sizes)
             ]
 
     def size_exact(self):
         """ Returns the number of elements in each dimension. """
         return [
-            ts * sp.ceiling(
-                ((iMax.expr if isinstance(iMax, symbolic.SymExpr) else iMax) +
-                 1 -
-                 (iMin.expr if isinstance(iMin, symbolic.SymExpr) else iMin)) /
-                (step.expr if isinstance(step, symbolic.SymExpr) else step))
+            ts * sp.ceiling(((iMax.expr if isinstance(iMax, symbolic.SymExpr) else iMax) + 1 -
+                             (iMin.expr if isinstance(iMin, symbolic.SymExpr) else iMin)) /
+                            (step.expr if isinstance(step, symbolic.SymExpr) else step))
             for (iMin, iMax, step), ts in zip(self.ranges, self.tile_sizes)
         ]
 
@@ -279,9 +248,8 @@ class Range(Subset):
         """ Returns the size of a bounding box around this range. """
         return [
             # sp.floor((iMax - iMin) / step) - iMin
-            ts *
-            ((iMax.approx if isinstance(iMax, symbolic.SymExpr) else iMax) -
-             (iMin.approx if isinstance(iMin, symbolic.SymExpr) else iMin) + 1)
+            ts * ((iMax.approx if isinstance(iMax, symbolic.SymExpr) else iMax) -
+                  (iMin.approx if isinstance(iMin, symbolic.SymExpr) else iMin) + 1)
             for (iMin, iMax, step), ts in zip(self.ranges, self.tile_sizes)
         ]
 
@@ -319,9 +287,7 @@ class Range(Subset):
 
         i = i[:len(self.ranges)]
 
-        return tuple(
-            _expr(rb) + k * _expr(rs)
-            for k, (rb, _, rs) in zip(i, self.ranges)) + tuple(ti)
+        return tuple(_expr(rb) + k * _expr(rs) for k, (rb, _, rs) in zip(i, self.ranges)) + tuple(ti)
 
     def at(self, i, strides):
         """ Returns the absolute index (1D memory layout) of this subset at
@@ -339,13 +305,12 @@ class Range(Subset):
         # Return i0 + i1*size0 + i2*size1*size0 + ....
         # Cancel out stride since we determine the initial offset only here
         return sum(
-            _expr(s) * _expr(astr) / _expr(rs) for s, (_, _, rs), astr in zip(
-                coord, self.ranges, self.absolute_strides(strides)))
+            _expr(s) * _expr(astr) / _expr(rs)
+            for s, (_, _, rs), astr in zip(coord, self.ranges, self.absolute_strides(strides)))
 
     def data_dims(self):
-        return (sum(1 if (re - rb + 1) != 1 else 0
-                    for rb, re, _ in self.ranges) +
-                sum(1 if ts != 1 else 0 for ts in self.tile_sizes))
+        return (sum(1 if (re - rb + 1) != 1 else 0 for rb, re, _ in self.ranges) + sum(1 if ts != 1 else 0
+                                                                                       for ts in self.tile_sizes))
 
     def offset(self, other, negative, indices=None):
         if not isinstance(other, Subset):
@@ -371,8 +336,7 @@ class Range(Subset):
         if indices is None:
             indices = set(range(len(self.ranges)))
         off = other.min_element()
-        return Range([(self.ranges[i][0] + mult * off[i],
-                       self.ranges[i][1] + mult * off[i], self.ranges[i][2])
+        return Range([(self.ranges[i][0] + mult * off[i], self.ranges[i][1] + mult * off[i], self.ranges[i][2])
                       for i in indices])
 
     def dims(self):
@@ -383,11 +347,8 @@ class Range(Subset):
             dimension. Size of the list is equal to `data_dims()`, which may
             be larger than `dims()` depending on tile sizes. """
         # ..., stride2*size1*size0, stride1*size0, stride0, ..., tile strides
-        return [
-            rs * global_shape[i] for i, (_, _, rs) in enumerate(self.ranges)
-        ] + [
-            global_shape[i] for i, ts in enumerate(self.tile_sizes) if ts != 1
-        ]
+        return [rs * global_shape[i] for i, (_, _, rs) in enumerate(self.ranges)
+                ] + [global_shape[i] for i, ts in enumerate(self.tile_sizes) if ts != 1]
 
     def strides(self):
         return [rs for _, _, rs in self.ranges]
@@ -508,8 +469,7 @@ class Range(Subset):
             # treat as range of size 1
             if len(uni_dim_tokens) < 2:
                 ranges.append(
-                    (symbolic.pystr_to_symbolic(uni_dim_tokens[0]),
-                     symbolic.pystr_to_symbolic(uni_dim_tokens[0]), 1))
+                    (symbolic.pystr_to_symbolic(uni_dim_tokens[0]), symbolic.pystr_to_symbolic(uni_dim_tokens[0]), 1))
                 continue
                 #return Range(ranges)
             # If dimension has more than 4 tokens, the range is invalid
@@ -524,8 +484,7 @@ class Range(Subset):
                 elif len(expr) == 2:
                     tokens.append((expr[0], expr[1]))
                 else:
-                    raise SyntaxError(
-                        "Invalid range: {}".format(multi_dim_tokens))
+                    raise SyntaxError("Invalid range: {}".format(multi_dim_tokens))
             # Parse tokens
             try:
                 if isinstance(tokens[0], tuple):
@@ -564,8 +523,7 @@ class Range(Subset):
     def ndslice_to_string(slice, tile_sizes=None):
         if tile_sizes is None:
             return ", ".join([Range.dim_to_string(s) for s in slice])
-        return ", ".join(
-            [Range.dim_to_string(s, t) for s, t in zip(slice, tile_sizes)])
+        return ", ".join([Range.dim_to_string(s, t) for s, t in zip(slice, tile_sizes)])
 
     @staticmethod
     def ndslice_to_string_list(slice, tile_sizes=None):
@@ -597,8 +555,7 @@ class Range(Subset):
         if len(self.ranges) != len(other.ranges):
             return False
         return all([(rb == orb and re == ore and rs == ors)
-                    for (rb, re, rs), (orb, ore,
-                                       ors) in zip(self.ranges, other.ranges)])
+                    for (rb, re, rs), (orb, ore, ors) in zip(self.ranges, other.ranges)])
 
     def __ne__(self, other):
         return not self.__eq__(other)
@@ -620,17 +577,14 @@ class Range(Subset):
                         new_subset.append((rb, re, rs, rt))
                 else:
                     if isinstance(other[idx], tuple):
-                        new_subset.append(
-                            (rb + rs * other[idx][0], rb + rs * other[idx][1],
-                             rs * other[idx][2], rt))
+                        new_subset.append((rb + rs * other[idx][0], rb + rs * other[idx][1], rs * other[idx][2], rt))
                     else:
                         new_subset.append(rb + rs * other[idx])
                     idx += 1
         elif self.dims() == other.dims():
             # case 2: subsets have the same dimensions (but possibly different
             # data_dims) -> all non-data dims remain
-            for idx, ((rb, re, rs),
-                      rt) in enumerate(zip(self.ranges, self.tile_sizes)):
+            for idx, ((rb, re, rs), rt) in enumerate(zip(self.ranges, self.tile_sizes)):
                 if re - rb == 0:
                     if isinstance(other, Indices):
                         new_subset.append(rb)
@@ -638,15 +592,10 @@ class Range(Subset):
                         new_subset.append((rb, re, rs, rt))
                 else:
                     if isinstance(other[idx], tuple):
-                        new_subset.append(
-                            (rb + rs * other[idx][0], rb + rs * other[idx][1],
-                             rs * other[idx][2], rt))
+                        new_subset.append((rb + rs * other[idx][0], rb + rs * other[idx][1], rs * other[idx][2], rt))
                     else:
                         new_subset.append(rb + rs * other[idx])
-        elif (other.data_dims() == 0 and all([
-                r == (0, 0, 1) if isinstance(other, Range) else r == 0
-                for r in other
-        ])):
+        elif (other.data_dims() == 0 and all([r == (0, 0, 1) if isinstance(other, Range) else r == 0 for r in other])):
             # NOTE: This is a special case where the other subset is the
             # (potentially multidimensional) index zero.
             # For example, A[i, j] -> tmp[0]. The result of such a
@@ -732,9 +681,7 @@ class Range(Subset):
                 new_ranges.append(self.ranges[i])
                 new_tsizes.append(self.tile_sizes[i])
         if not new_ranges:
-            new_ranges = [(symbolic.pystr_to_symbolic(0),
-                           symbolic.pystr_to_symbolic(0),
-                           symbolic.pystr_to_symbolic(1))]
+            new_ranges = [(symbolic.pystr_to_symbolic(0), symbolic.pystr_to_symbolic(0), symbolic.pystr_to_symbolic(1))]
             new_tsizes = [symbolic.pystr_to_symbolic(1)]
         self.ranges = new_ranges
         self.tile_sizes = new_tsizes
@@ -743,20 +690,16 @@ class Range(Subset):
         return Range.ndslice_to_string_list(self.ranges, self.tile_sizes)
 
     def replace(self, repl_dict):
-        for i, ((rb, re, rs), ts) in enumerate(zip(self.ranges,
-                                                   self.tile_sizes)):
-            self.ranges[i] = (
-                rb.subs(repl_dict) if symbolic.issymbolic(rb) else rb,
-                re.subs(repl_dict) if symbolic.issymbolic(re) else re,
-                rs.subs(repl_dict) if symbolic.issymbolic(rs) else rs)
-            self.tile_sizes[i] = (ts.subs(repl_dict)
-                                  if symbolic.issymbolic(ts) else ts)
+        for i, ((rb, re, rs), ts) in enumerate(zip(self.ranges, self.tile_sizes)):
+            self.ranges[i] = (rb.subs(repl_dict) if symbolic.issymbolic(rb) else rb,
+                              re.subs(repl_dict) if symbolic.issymbolic(re) else re,
+                              rs.subs(repl_dict) if symbolic.issymbolic(rs) else rs)
+            self.tile_sizes[i] = (ts.subs(repl_dict) if symbolic.issymbolic(ts) else ts)
 
     def intersects(self, other: 'Range'):
         type_error = False
         for i, (rng, orng) in enumerate(zip(self.ranges, other.ranges)):
-            if (rng[2] != 1 or orng[2] != 1 or self.tile_sizes[i] != 1
-                    or other.tile_sizes[i] != 1):
+            if (rng[2] != 1 or orng[2] != 1 or self.tile_sizes[i] != 1 or other.tile_sizes[i] != 1):
                 # TODO: This function does not consider strides or tiles
                 return None
 
@@ -790,12 +733,9 @@ class Indices(Subset):
         N-dimensional data descriptor. """
     def __init__(self, indices):
         if indices is None or len(indices) == 0:
-            raise TypeError('Expected an array of index expressions: got empty'
-                            ' array or None')
+            raise TypeError('Expected an array of index expressions: got empty' ' array or None')
         if isinstance(indices, str):
             raise TypeError("Expected collection of index expression: got str")
-        if isinstance(indices, tuple):
-            self.indices = symbolic.SymExpr(indices[0], indices[1])
         elif isinstance(indices, symbolic.SymExpr):
             self.indices = indices
         else:
@@ -887,10 +827,7 @@ class Indices(Subset):
             else:
                 other = Indices([other for _ in self.indices])
         mult = -1 if negative else 1
-        return Indices([
-            self.indices[i] + mult * off
-            for i, off in enumerate(other.min_element())
-        ])
+        return Indices([self.indices[i] + mult * off for i, off in enumerate(other.min_element())])
 
     def coord_at(self, i):
         """ Returns the offseted coordinates of this subset at
@@ -935,10 +872,7 @@ class Indices(Subset):
 
     @staticmethod
     def from_string(s):
-        return Indices([
-            symbolic.pystr_to_symbolic(m.group(0))
-            for m in re.finditer("[^,;:]+", s)
-        ])
+        return Indices([symbolic.pystr_to_symbolic(m.group(0)) for m in re.finditer("[^,;:]+", s)])
 
     def __iter__(self):
         return iter(self.indices)
@@ -1018,8 +952,7 @@ class Indices(Subset):
 
     def replace(self, repl_dict):
         for i, ind in enumerate(self.indices):
-            self.indices[i] = (ind.subs(repl_dict)
-                               if symbolic.issymbolic(ind) else ind)
+            self.indices[i] = (ind.subs(repl_dict) if symbolic.issymbolic(ind) else ind)
 
     def pop(self, dimensions):
         new_indices = []
@@ -1029,8 +962,7 @@ class Indices(Subset):
         self.indices = new_indices
 
     def intersects(self, other: 'Indices'):
-        return all(ind == oind
-                   for ind, oind in zip(self.indices, other.indices))
+        return all(ind == oind for ind, oind in zip(self.indices, other.indices))
 
     def intersection(self, other: 'Indices'):
         if self.intersects(other):
@@ -1038,8 +970,7 @@ class Indices(Subset):
         return None
 
 
-def _union_special_cases(arb: symbolic.SymbolicType, brb: symbolic.SymbolicType,
-                         are: symbolic.SymbolicType,
+def _union_special_cases(arb: symbolic.SymbolicType, brb: symbolic.SymbolicType, are: symbolic.SymbolicType,
                          bre: symbolic.SymbolicType):
     """ 
     Special cases of subset unions. If case found, returns pair of 
@@ -1055,8 +986,7 @@ def _union_special_cases(arb: symbolic.SymbolicType, brb: symbolic.SymbolicType,
 def bounding_box_union(subset_a: Subset, subset_b: Subset) -> Range:
     """ Perform union by creating a bounding-box of two subsets. """
     if subset_a.dims() != subset_b.dims():
-        raise ValueError('Dimension mismatch between %s and %s' %
-                         (str(subset_a), str(subset_b)))
+        raise ValueError('Dimension mismatch between %s and %s' % (str(subset_a), str(subset_b)))
 
     # Check whether all expressions containing a symbolic value should
     # always be evaluated to positive. If so, union will yield
@@ -1064,10 +994,8 @@ def bounding_box_union(subset_a: Subset, subset_b: Subset) -> Range:
     symbolic_positive = Config.get('optimizer', 'symbolic_positive')
 
     result = []
-    for arb, brb, are, bre in zip(subset_a.min_element_approx(),
-                                  subset_b.min_element_approx(),
-                                  subset_a.max_element_approx(),
-                                  subset_b.max_element_approx()):
+    for arb, brb, are, bre in zip(subset_a.min_element_approx(), subset_b.min_element_approx(),
+                                  subset_a.max_element_approx(), subset_b.max_element_approx()):
         # Special case
         spcase = _union_special_cases(arb, brb, are, bre)
         if spcase is not None:
@@ -1133,9 +1061,8 @@ def union(subset_a: Subset, subset_b: Subset) -> Subset:
             # TODO(later): More involved Strided-Tiled Range union
             return bounding_box_union(subset_a, subset_b)
         else:
-            warnings.warn(
-                'Unrecognized Subset type %s in union, degenerating to'
-                ' bounding box' % type(subset_a).__name__)
+            warnings.warn('Unrecognized Subset type %s in union, degenerating to'
+                          ' bounding box' % type(subset_a).__name__)
             return bounding_box_union(subset_a, subset_b)
     except TypeError:  # cannot determine truth value of Relational
         return None

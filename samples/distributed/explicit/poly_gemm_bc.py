@@ -26,15 +26,15 @@ def relerr(ref, val):
 
 
 @dc.program
-def gemm_shared(alpha: dc.float64, beta: dc.float64, C: dc.float64[NI, NJ],
-                A: dc.float64[NI, NK], B: dc.float64[NK, NJ]):
+def gemm_shared(alpha: dc.float64, beta: dc.float64, C: dc.float64[NI, NJ], A: dc.float64[NI, NK], B: dc.float64[NK,
+                                                                                                                 NJ]):
 
     C[:] = alpha * A @ B + beta * C
 
 
 @dc.program
-def gemm_distr(alpha: dc.float64, beta: dc.float64, C: dc.float64[NI, NJ],
-               A: dc.float64[NI, NK], B: dc.float64[NK, NJ]):
+def gemm_distr(alpha: dc.float64, beta: dc.float64, C: dc.float64[NI, NJ], A: dc.float64[NI, NK], B: dc.float64[NK,
+                                                                                                                NJ]):
 
     lA = np.empty((lNI, lNKa), dtype=A.dtype)
     lB = np.empty((lNKb, lNJ), dtype=B.dtype)
@@ -59,16 +59,16 @@ def gemm_distr(alpha: dc.float64, beta: dc.float64, C: dc.float64[NI, NJ],
 
 
 @dc.program
-def gemm_distr2(alpha: dc.float64, beta: dc.float64, C: dc.float64[lNI, lNJ],
-                A: dc.float64[lNI, lNKa], B: dc.float64[lNKb, lNJ]):
+def gemm_distr2(alpha: dc.float64, beta: dc.float64, C: dc.float64[lNI, lNJ], A: dc.float64[lNI, lNKa],
+                B: dc.float64[lNKb, lNJ]):
 
     tmp = distr.MatMult(A, B, (lNI * Px, lNJ * Py, NK))
     C[:] = alpha * tmp + beta * C
 
 
 @dc.program
-def gemm_distr3(alpha: dc.float64, beta: dc.float64, C: dc.float64[lNI, lNJ],
-                A: dc.float64[lNI, lNKa], B: dc.float64[lNKb, lNJ]):
+def gemm_distr3(alpha: dc.float64, beta: dc.float64, C: dc.float64[lNI, lNJ], A: dc.float64[lNI, lNKa],
+                B: dc.float64[lNKb, lNJ]):
 
     tmp = distr.MatMult(A, B, (lNI * Px, lNJ * Py, NK), (Bx, By), (Bx, By))
     C[:] = alpha * tmp + beta * C
@@ -134,8 +134,7 @@ if __name__ == "__main__":
                     for lj in range(BKa):
                         si = (pi + li * Px) * Bx
                         sj = (pj + lj * Py) * By
-                        A2[pi, pj, li * Bx:li * Bx + Bx,
-                           lj * By:lj * By + By] = A[si:si + Bx, sj:sj + By]
+                        A2[pi, pj, li * Bx:li * Bx + Bx, lj * By:lj * By + By] = A[si:si + Bx, sj:sj + By]
 
         B2 = np.empty((Px, Py, lNKb, lNJ), dtype=np.float64)
         for pi in range(Px):
@@ -144,8 +143,7 @@ if __name__ == "__main__":
                     for lj in range(BJ):
                         si = (pi + li * Px) * Bx
                         sj = (pj + lj * Py) * By
-                        B2[pi, pj, li * Bx:li * Bx + Bx,
-                           lj * By:lj * By + By] = B[si:si + Bx, sj:sj + By]
+                        B2[pi, pj, li * Bx:li * Bx + Bx, lj * By:lj * By + By] = B[si:si + Bx, sj:sj + By]
 
         C2 = np.empty((Px, Py, lNI, lNJ), dtype=np.float64)
         for pi in range(Px):
@@ -154,8 +152,7 @@ if __name__ == "__main__":
                     for lj in range(BJ):
                         si = (pi + li * Px) * Bx
                         sj = (pj + lj * Py) * By
-                        C2[pi, pj, li * Bx:li * Bx + Bx,
-                           lj * By:lj * By + By] = C[si:si + Bx, sj:sj + By]
+                        C2[pi, pj, li * Bx:li * Bx + Bx, lj * By:lj * By + By] = C[si:si + Bx, sj:sj + By]
 
     comm.Scatter(A2, lA)
     comm.Scatter(B2, lB)
@@ -165,14 +162,13 @@ if __name__ == "__main__":
 
     mpi_sdfg = None
     if rank == 0:
-        mpi_sdfg = gemm_distr3.to_sdfg(strict=False)
-        mpi_sdfg.apply_strict_transformations()
+        mpi_sdfg = gemm_distr3.to_sdfg(coarsen=False)
+        mpi_sdfg.coarsen_dataflow()
         mpi_func = mpi_sdfg.compile()
     comm.Barrier()
     if rank > 0:
         build_folder = dc.Config.get('default_build_folder')
-        mpi_func = load_precompiled_sdfg(
-            os.path.join(build_folder, gemm_distr3.name))
+        mpi_func = load_precompiled_sdfg(os.path.join(build_folder, gemm_distr3.name))
 
     ldict = locals()
 
@@ -203,9 +199,7 @@ if __name__ == "__main__":
                     for lj in range(BJ):
                         si = (pi + li * Px) * Bx
                         sj = (pj + lj * Py) * By
-                        C[si:si + Bx,
-                          sj:sj + By] = C2[pi, pj, li * Bx:li * Bx + Bx,
-                                           lj * By:lj * By + By]
+                        C[si:si + Bx, sj:sj + By] = C2[pi, pj, li * Bx:li * Bx + Bx, lj * By:lj * By + By]
 
     comm.Barrier()
 
@@ -215,11 +209,7 @@ if __name__ == "__main__":
     setup = "tC = np.copy(lC); comm.Barrier()"
     repeat = 10
 
-    raw_time_list = timeit.repeat(stmt,
-                                  setup=setup,
-                                  repeat=repeat,
-                                  number=1,
-                                  globals=ldict)
+    raw_time_list = timeit.repeat(stmt, setup=setup, repeat=repeat, number=1, globals=ldict)
     raw_time = np.median(raw_time_list)
 
     comm.Barrier()

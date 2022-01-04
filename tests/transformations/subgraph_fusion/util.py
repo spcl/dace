@@ -25,14 +25,8 @@ def expand_reduce(sdfg: dace.SDFG,
         for node in sg.nodes():
             if isinstance(node, stdlib.Reduce):
                 if not ReduceExpansion.can_be_applied(
-                        graph=graph,
-                        candidate={
-                            ReduceExpansion._reduce: graph.node_id(node)
-                        },
-                        expr_index=0,
-                        sdfg=sdfg):
-                    print(f"WARNING: Cannot expand reduce node {node}:"
-                          "can_be_applied() failed.")
+                        graph=graph, candidate={ReduceExpansion._reduce: graph.node_id(node)}, expr_index=0, sdfg=sdfg):
+                    print(f"WARNING: Cannot expand reduce node {node}:" "can_be_applied() failed.")
                     continue
                 reduce_nodes.append(node)
 
@@ -66,10 +60,7 @@ def expand_maps(sdfg: dace.SDFG,
         trafo_expansion.expand(sdfg, graph, map_entries)
 
 
-def fusion(sdfg: dace.SDFG,
-           graph: dace.SDFGState,
-           subgraph: Union[SubgraphView, List[SubgraphView]] = None,
-           **kwargs):
+def fusion(sdfg: dace.SDFG, graph: dace.SDFGState, subgraph: Union[SubgraphView, List[SubgraphView]] = None, **kwargs):
 
     subgraph = graph if not subgraph else subgraph
     if not isinstance(subgraph, list):

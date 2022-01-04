@@ -62,7 +62,7 @@ class MPITransformMap(transformation.Transformation):
         return [sdutil.node_path_graph(MPITransformMap._map_entry)]
 
     @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
         map_entry = graph.nodes()[candidate[MPITransformMap._map_entry]]
 
         # Check if the map is one-dimensional
@@ -75,9 +75,7 @@ class MPITransformMap(transformation.Transformation):
 
         # We cannot transform a map which is already inside a MPI map, or in
         # another device
-        schedule_whitelist = [
-            dtypes.ScheduleType.Default, dtypes.ScheduleType.Sequential
-        ]
+        schedule_whitelist = [dtypes.ScheduleType.Default, dtypes.ScheduleType.Sequential]
         sdict = graph.scope_dict()
         parent = sdict[map_entry]
         while parent is not None:
@@ -113,12 +111,9 @@ class MPITransformMap(transformation.Transformation):
 
         rangeexpr = str(map_entry.map.range.num_elements())
 
-        stripmine_subgraph = {
-            StripMining._map_entry: self.subgraph[MPITransformMap._map_entry]
-        }
+        stripmine_subgraph = {StripMining._map_entry: self.subgraph[MPITransformMap._map_entry]}
         sdfg_id = sdfg.sdfg_id
-        stripmine = StripMining(sdfg_id, self.state_id, stripmine_subgraph,
-                                self.expr_index)
+        stripmine = StripMining(sdfg_id, self.state_id, stripmine_subgraph, self.expr_index)
         stripmine.dim_idx = -1
         stripmine.new_dim_prefix = "mpi"
         stripmine.tile_size = "(" + rangeexpr + "/__dace_comm_size)"
@@ -127,10 +122,7 @@ class MPITransformMap(transformation.Transformation):
 
         # Find all in-edges that lead to candidate[MPITransformMap._map_entry]
         outer_map = None
-        edges = [
-            e for e in graph.in_edges(map_entry)
-            if isinstance(e.src, nodes.EntryNode)
-        ]
+        edges = [e for e in graph.in_edges(map_entry) if isinstance(e.src, nodes.EntryNode)]
 
         outer_map = edges[0].src
 
@@ -144,9 +136,7 @@ class MPITransformMap(transformation.Transformation):
                 LocalStorage.node_b: self.subgraph[MPITransformMap._map_entry]
             }
             sdfg_id = sdfg.sdfg_id
-            in_local_storage = LocalStorage(sdfg_id, self.state_id,
-                                            in_local_storage_subgraph,
-                                            self.expr_index)
+            in_local_storage = LocalStorage(sdfg_id, self.state_id, in_local_storage_subgraph, self.expr_index)
             in_local_storage.array = e.data.data
             in_local_storage.apply(sdfg)
 
@@ -161,8 +151,6 @@ class MPITransformMap(transformation.Transformation):
                 LocalStorage.node_b: graph.node_id(out_map_exit)
             }
             sdfg_id = sdfg.sdfg_id
-            outlocalstorage = LocalStorage(sdfg_id, self.state_id,
-                                           outlocalstorage_subgraph,
-                                           self.expr_index)
+            outlocalstorage = LocalStorage(sdfg_id, self.state_id, outlocalstorage_subgraph, self.expr_index)
             outlocalstorage.array = name
             outlocalstorage.apply(sdfg)

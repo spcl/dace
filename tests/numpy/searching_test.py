@@ -2,7 +2,6 @@
 import dace
 import numpy as np
 
-
 N = 100
 
 
@@ -13,7 +12,7 @@ def test_numpy_where():
 
     for _ in range(10):
         A = np.random.randn(N)
-        assert(np.allclose(numpy_where(A), np.where(A > 0.5, A, 0.0)))
+        assert (np.allclose(numpy_where(A), np.where(A > 0.5, A, 0.0)))
 
 
 if __name__ == "__main__":

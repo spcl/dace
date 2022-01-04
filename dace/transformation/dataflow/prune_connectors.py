@@ -9,7 +9,7 @@ from dace.sdfg import nodes, utils
 from dace.sdfg.analysis import cfg
 
 
-@registry.autoregister_params(singlestate=True, strict=True)
+@registry.autoregister_params(singlestate=True, coarsening=True)
 @properties.make_properties
 class PruneConnectors(pm.Transformation):
     """ Removes unused connectors from nested SDFGs, as well as their memlets
@@ -20,10 +20,9 @@ class PruneConnectors(pm.Transformation):
 
     nsdfg = pm.PatternNode(nodes.NestedSDFG)
 
-    remove_unused_containers = properties.Property(
-        dtype=bool,
-        default=False,
-        desc='If True, remove unused containers from parent SDFG.')
+    remove_unused_containers = properties.Property(dtype=bool,
+                                                   default=False,
+                                                   desc='If True, remove unused containers from parent SDFG.')
 
     @staticmethod
     def expressions():
@@ -34,7 +33,7 @@ class PruneConnectors(pm.Transformation):
                        candidate: Dict[pm.PatternNode, int],
                        expr_index: int,
                        sdfg: SDFG,
-                       strict: bool = False) -> bool:
+                       permissive: bool = False) -> bool:
 
         nsdfg = graph.node(candidate[PruneConnectors.nsdfg])
 
@@ -53,17 +52,13 @@ class PruneConnectors(pm.Transformation):
         # Add WCR outputs to "do not prune" input list
         for e in graph.out_edges(nsdfg):
             if e.data.wcr is not None and e.src_conn in prune_in:
-                if (graph.in_degree(
-                        next(
-                            iter(graph.in_edges_by_connector(
-                                nsdfg, e.src_conn))).src) > 0):
+                if (graph.in_degree(next(iter(graph.in_edges_by_connector(nsdfg, e.src_conn))).src) > 0):
                     prune_in.remove(e.src_conn)
         has_before = all(
-            graph.in_degree(graph.memlet_path(e)[0].src) > 0
-            for e in graph.in_edges(nsdfg) if e.dst_conn in prune_in)
+            graph.in_degree(graph.memlet_path(e)[0].src) > 0 for e in graph.in_edges(nsdfg) if e.dst_conn in prune_in)
         has_after = all(
-            graph.out_degree(graph.memlet_path(e)[-1].dst) > 0
-            for e in graph.out_edges(nsdfg) if e.src_conn in prune_out)
+            graph.out_degree(graph.memlet_path(e)[-1].dst) > 0 for e in graph.out_edges(nsdfg)
+            if e.src_conn in prune_out)
         if has_before and has_after:
             return False
         if len(prune_in) > 0 or len(prune_out) > 0:
@@ -86,16 +81,13 @@ class PruneConnectors(pm.Transformation):
         # Add WCR outputs to "do not prune" input list
         for e in state.out_edges(nsdfg):
             if e.data.wcr is not None and e.src_conn in prune_in:
-                if (state.in_degree(
-                        next(
-                            iter(state.in_edges_by_connector(
-                                nsdfg, e.src_conn))).src) > 0):
+                if (state.in_degree(next(iter(state.in_edges_by_connector(nsdfg, e.src_conn))).src) > 0):
                     prune_in.remove(e.src_conn)
         do_not_prune = set()
         for conn in prune_in:
             if any(
-                    state.in_degree(state.memlet_path(e)[0].src) > 0
-                    for e in state.in_edges(nsdfg) if e.dst_conn == conn):
+                    state.in_degree(state.memlet_path(e)[0].src) > 0 for e in state.in_edges(nsdfg)
+                    if e.dst_conn == conn):
                 do_not_prune.add(conn)
                 continue
             for e in state.in_edges_by_connector(nsdfg, conn):
@@ -103,8 +95,8 @@ class PruneConnectors(pm.Transformation):
 
         for conn in prune_out:
             if any(
-                    state.out_degree(state.memlet_path(e)[-1].dst) > 0
-                    for e in state.out_edges(nsdfg) if e.src_conn == conn):
+                    state.out_degree(state.memlet_path(e)[-1].dst) > 0 for e in state.out_edges(nsdfg)
+                    if e.src_conn == conn):
                 do_not_prune.add(conn)
                 continue
             for e in state.out_edges_by_connector(nsdfg, conn):
@@ -132,7 +124,7 @@ class PruneConnectors(pm.Transformation):
                         break
 
 
-@registry.autoregister_params(singlestate=True, strict=True)
+@registry.autoregister_params(singlestate=True, coarsening=True)
 class PruneSymbols(pm.Transformation):
     """ 
     Removes unused symbol mappings from nested SDFGs, as well as internal
@@ -160,11 +152,9 @@ class PruneSymbols(pm.Transformation):
 
             # Try to be conservative with C++ tasklets
             for node in nstate.nodes():
-                if (isinstance(node, nodes.Tasklet)
-                        and node.language is dtypes.Language.CPP):
+                if (isinstance(node, nodes.Tasklet) and node.language is dtypes.Language.CPP):
                     for candidate in candidates:
-                        if re.findall(r'\b%s\b' % re.escape(candidate),
-                                      node.code.as_string):
+                        if re.findall(r'\b%s\b' % re.escape(candidate), node.code.as_string):
                             state_syms.add(candidate)
 
             # Any symbol used in this state is considered used
@@ -177,13 +167,10 @@ class PruneSymbols(pm.Transformation):
             local_ignore = None
             for e in nsdfg.sdfg.out_edges(nstate):
                 # Look for symbols in condition
-                candidates -= (set(
-                    map(str, symbolic.symbols_in_ast(e.data.condition.code[0])))
-                               - ignore)
+                candidates -= (set(map(str, symbolic.symbols_in_ast(e.data.condition.code[0]))) - ignore)
 
                 for assign in e.data.assignments.values():
-                    candidates -= (symbolic.free_symbols_and_functions(assign) -
-                                   ignore)
+                    candidates -= (symbolic.free_symbols_and_functions(assign) - ignore)
 
                 if local_ignore is None:
                     local_ignore = set(e.data.assignments.keys())
@@ -199,7 +186,7 @@ class PruneSymbols(pm.Transformation):
                        candidate: Dict[pm.PatternNode, int],
                        expr_index: int,
                        sdfg: SDFG,
-                       strict: bool = False) -> bool:
+                       permissive: bool = False) -> bool:
 
         nsdfg: nodes.NestedSDFG = graph.node(candidate[PruneSymbols.nsdfg])
 

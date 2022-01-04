@@ -19,16 +19,11 @@ me, mx = state.add_map('par', dict(i='0:N'))
 tasklet = state.add_tasklet('arange', set(), {'a'}, 'a = i')
 
 state.add_nedge(me, tasklet, Memlet())
-state.add_edge(tasklet, 'a', localstream, None,
-               Memlet.from_array(localstream.data, localstream.desc(sdfg)))
-state.add_nedge(localstream, localarr,
-                Memlet.from_array(localarr.data, localarr.desc(sdfg)))
-state.add_nedge(localarr, mx,
-                Memlet.from_array(globalstream.data, globalstream.desc(sdfg)))
-state.add_nedge(mx, globalstream,
-                Memlet.from_array(globalstream.data, globalstream.desc(sdfg)))
-state.add_nedge(globalstream, globalarr,
-                Memlet.from_array(globalarr.data, globalarr.desc(sdfg)))
+state.add_edge(tasklet, 'a', localstream, None, Memlet.from_array(localstream.data, localstream.desc(sdfg)))
+state.add_nedge(localstream, localarr, Memlet.from_array(localarr.data, localarr.desc(sdfg)))
+state.add_nedge(localarr, mx, Memlet.from_array(globalstream.data, globalstream.desc(sdfg)))
+state.add_nedge(mx, globalstream, Memlet.from_array(globalstream.data, globalstream.desc(sdfg)))
+state.add_nedge(globalstream, globalarr, Memlet.from_array(globalarr.data, globalarr.desc(sdfg)))
 
 sdfg.fill_scope_connectors()
 

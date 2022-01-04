@@ -25,10 +25,10 @@ class TrivialMapRangeElimination(transformation.Transformation):
         return [sdutil.node_path_graph(TrivialMapRangeElimination._map_entry)]
 
     @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
         map_entry = graph.nodes()[candidate[TrivialMapRangeElimination._map_entry]]
         if len(map_entry.map.range) <= 1:
-            return False # only acts on multi-dimensional maps
+            return False  # only acts on multi-dimensional maps
         return any(frm == to for frm, to, _ in map_entry.map.range)
 
     @staticmethod

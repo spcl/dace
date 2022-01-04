@@ -56,13 +56,12 @@ class Transformation(TransformationBase):
         registered with ``Transformation.register`` (or, more commonly,
         the ``@dace.registry.autoregister_params`` class decorator) with two
         optional boolean keyword arguments: ``singlestate`` (default: False)
-        and ``strict`` (default: False).
+        and ``coarsening`` (default: False).
         If ``singlestate`` is True, the transformation is matched on subgraphs
         inside an SDFGState; otherwise, subgraphs of the SDFG state machine are
         matched.
-        If ``strict`` is True, this transformation will be considered strict
-        (i.e., always beneficial to perform) and will be performed automatically
-        as part of SDFG strict transformations.
+        If ``coarsening`` is True, this transformation will be performed automatically
+        as part of SDFG dataflow coarsening.
     """
 
     # Properties
@@ -91,7 +90,7 @@ class Transformation(TransformationBase):
                        candidate: Dict['PatternNode', int],
                        expr_index: int,
                        sdfg: SDFG,
-                       strict: bool = False) -> bool:
+                       permissive: bool = False) -> bool:
         """ Returns True if this transformation can be applied on the candidate
             matched subgraph.
             :param graph: SDFGState object if this Transformation is
@@ -103,7 +102,7 @@ class Transformation(TransformationBase):
                                that was matched.
             :param sdfg: If `graph` is an SDFGState, its parent SDFG. Otherwise
                          should be equal to `graph`.
-            :param strict: Whether transformation should run in strict mode.
+            :param permissive: Whether transformation should run in permissive mode.
             :return: True if the transformation can be applied.
         """
         raise NotImplementedError
@@ -117,8 +116,7 @@ class Transformation(TransformationBase):
         """
         raise NotImplementedError
 
-    def match_to_str(self, graph: Union[SDFG, SDFGState],
-                     candidate: Dict['PatternNode', int]) -> str:
+    def match_to_str(self, graph: Union[SDFG, SDFGState], candidate: Dict['PatternNode', int]) -> str:
         """ Returns a string representation of the pattern match on the
             candidate subgraph. Used when identifying matches in the console
             UI.
@@ -158,10 +156,7 @@ class Transformation(TransformationBase):
             expr = self.expressions()[expr_index]
             for value in subgraph.values():
                 if not isinstance(value, int):
-                    raise TypeError('All values of '
-                                    'subgraph'
-                                    ' dictionary must be '
-                                    'instances of int.')
+                    raise TypeError('All values of ' 'subgraph' ' dictionary must be ' 'instances of int.')
             self._subgraph = {expr.node_id(k): v for k, v in subgraph.items()}
         else:
             self._subgraph = {-1: -1}
@@ -173,8 +168,7 @@ class Transformation(TransformationBase):
         # instance.
         for pname, pval in self._get_pattern_nodes().items():
             # Create new pattern node from existing field
-            new_pnode = PatternNode(
-                pval.node if isinstance(pval, PatternNode) else type(pval))
+            new_pnode = PatternNode(pval.node if isinstance(pval, PatternNode) else type(pval))
             new_pnode.match_instance = self
 
             # Append existing values in subgraph dictionary
@@ -193,10 +187,7 @@ class Transformation(TransformationBase):
     def subgraph(self):
         return self._subgraph_user
 
-    def apply_pattern(self,
-                      sdfg: SDFG,
-                      append: bool = True,
-                      annotate: bool = True) -> Union[Any, None]:
+    def apply_pattern(self, sdfg: SDFG, append: bool = True, annotate: bool = True) -> Union[Any, None]:
         """
         Applies this transformation on the given SDFG, using the transformation
         instance to find the right SDFG object (based on SDFG ID), and applying
@@ -263,9 +254,8 @@ class Transformation(TransformationBase):
         """
         return {
             k: getattr(cls, k)
-            for k in dir(cls)
-            if isinstance(getattr(cls, k), PatternNode) or (k.startswith(
-                '_') and isinstance(getattr(cls, k), (nd.Node, SDFGState)))
+            for k in dir(cls) if isinstance(getattr(cls, k), PatternNode) or (
+                k.startswith('_') and isinstance(getattr(cls, k), (nd.Node, SDFGState)))
         }
 
     @classmethod
@@ -275,7 +265,7 @@ class Transformation(TransformationBase):
                  expr_index: int = 0,
                  verify: bool = True,
                  annotate: bool = True,
-                 strict: bool = False,
+                 permissive: bool = False,
                  save: bool = True,
                  **where: Union[nd.Node, SDFGState]):
         """
@@ -297,7 +287,7 @@ class Transformation(TransformationBase):
         :param expr_index: The pattern expression index to try to match with.
         :param verify: Check that `can_be_applied` returns True before applying.
         :param annotate: Run memlet propagation after application if necessary.
-        :param strict: Apply transformation in strict mode.
+        :param permissive: Apply transformation in permissive mode.
         :param save: Save transformation as part of the SDFG file. Set to
                      False if composing transformations.
         :param where: A dictionary of node names (from the transformation) to
@@ -317,41 +307,32 @@ class Transformation(TransformationBase):
             graph = next(s for s in sdfg.nodes() if sample_node in s.nodes())
             state_id = sdfg.node_id(graph)
         else:
-            raise TypeError('Invalid node type "%s"' %
-                            type(sample_node).__name__)
+            raise TypeError('Invalid node type "%s"' % type(sample_node).__name__)
 
         # Check that all nodes in the pattern are set
         required_nodes = cls.expressions()[expr_index].nodes()
         required_node_names = {
             pname: pval
-            for pname, pval in cls._get_pattern_nodes().items()
-            if pval in required_nodes
+            for pname, pval in cls._get_pattern_nodes().items() if pval in required_nodes
         }
         required = set(required_node_names.keys())
         intersection = required & set(where.keys())
         if len(required - intersection) > 0:
-            raise ValueError('Missing nodes for transformation subgraph: %s' %
-                             (required - intersection))
+            raise ValueError('Missing nodes for transformation subgraph: %s' % (required - intersection))
 
         # Construct subgraph and instantiate transformation
-        subgraph = {
-            required_node_names[k]: graph.node_id(where[k])
-            for k in required
-        }
+        subgraph = {required_node_names[k]: graph.node_id(where[k]) for k in required}
         instance = cls(sdfg.sdfg_id, state_id, subgraph, expr_index)
 
         # Construct transformation parameters
         for optname, optval in options.items():
             if not optname in cls.__properties__:
-                raise ValueError('Property "%s" not found in transformation' %
-                                 optname)
+                raise ValueError('Property "%s" not found in transformation' % optname)
             setattr(instance, optname, optval)
 
         if verify:
-            if not instance.can_be_applied(
-                    graph, subgraph, expr_index, sdfg, strict=strict):
-                raise ValueError('Transformation cannot be applied on the '
-                                 'given subgraph ("can_be_applied" failed)')
+            if not instance.can_be_applied(graph, subgraph, expr_index, sdfg, permissive=permissive):
+                raise ValueError('Transformation cannot be applied on the ' 'given subgraph ("can_be_applied" failed)')
 
         # Apply to SDFG
         return instance.apply_pattern(sdfg, annotate=annotate, append=save)
@@ -364,8 +345,7 @@ class Transformation(TransformationBase):
             given SDFG. Used for printing matches in the console UI.
         """
         if not isinstance(sdfg, SDFG):
-            raise TypeError("Expected SDFG, got: {}".format(
-                type(sdfg).__name__))
+            raise TypeError("Expected SDFG, got: {}".format(type(sdfg).__name__))
         if self.state_id == -1:
             graph = sdfg
         else:
@@ -379,35 +359,21 @@ class Transformation(TransformationBase):
 
     def to_json(self, parent=None) -> Dict[str, Any]:
         props = serialize.all_properties_to_json(self)
-        return {
-            'type': 'Transformation',
-            'transformation': type(self).__name__,
-            **props
-        }
+        return {'type': 'Transformation', 'transformation': type(self).__name__, **props}
 
     @staticmethod
-    def from_json(json_obj: Dict[str, Any],
-                  context: Dict[str, Any] = None) -> 'Transformation':
-        xform = next(ext for ext in Transformation.extensions().keys()
-                     if ext.__name__ == json_obj['transformation'])
+    def from_json(json_obj: Dict[str, Any], context: Dict[str, Any] = None) -> 'Transformation':
+        xform = next(ext for ext in Transformation.extensions().keys() if ext.__name__ == json_obj['transformation'])
 
         # Recreate subgraph
         expr = xform.expressions()[json_obj['expr_index']]
-        subgraph = {
-            expr.node(int(k)): int(v)
-            for k, v in json_obj['_subgraph'].items()
-        }
+        subgraph = {expr.node(int(k)): int(v) for k, v in json_obj['_subgraph'].items()}
 
         # Reconstruct transformation
-        ret = xform(json_obj['sdfg_id'], json_obj['state_id'], subgraph,
-                    json_obj['expr_index'])
+        ret = xform(json_obj['sdfg_id'], json_obj['state_id'], subgraph, json_obj['expr_index'])
         context = context or {}
         context['transformation'] = ret
-        serialize.set_properties_from_json(
-            ret,
-            json_obj,
-            context=context,
-            ignore_properties={'transformation', 'type'})
+        serialize.set_properties_from_json(ret, json_obj, context=context, ignore_properties={'transformation', 'type'})
         return ret
 
 
@@ -449,8 +415,7 @@ class PatternNode(object):
         :raise ValueError: If the transformation match instance is not set.
         """
         if self.match_instance is None:
-            raise ValueError('Cannot query matched node. Transformation '
-                             'instance not initialized')
+            raise ValueError('Cannot query matched node. Transformation ' 'instance not initialized')
         node_id: int = self.match_instance.subgraph[self]
         state_id: int = self.match_instance.state_id
 
@@ -481,13 +446,12 @@ class ExpandTransformation(Transformation):
                        candidate: Dict[nd.Node, int],
                        expr_index: int,
                        sdfg,
-                       strict: bool = False):
+                       permissive: bool = False):
         # All we need is the correct node
         return True
 
     @classmethod
-    def match_to_str(clc, graph: gr.OrderedMultiDiConnectorGraph,
-                     candidate: Dict[nd.Node, int]):
+    def match_to_str(clc, graph: gr.OrderedMultiDiConnectorGraph, candidate: Dict[nd.Node, int]):
         node = graph.nodes()[candidate[clc._match_node]]
         return str(node)
 
@@ -532,12 +496,9 @@ class ExpandTransformation(Transformation):
 
         # Fix nested schedules
         if isinstance(expansion, nd.NestedSDFG):
-            infer_types._set_default_schedule_types(expansion.sdfg,
-                                                    expansion.schedule, True)
+            infer_types._set_default_schedule_types(expansion.sdfg, expansion.schedule, True)
 
-        expansion.environments = copy.copy(
-            set(map(lambda a: a.full_class_path(),
-                    type(self).environments)))
+        expansion.environments = copy.copy(set(map(lambda a: a.full_class_path(), type(self).environments)))
         sdutil.change_edge_dest(state, node, expansion)
         sdutil.change_edge_src(state, node, expansion)
         state.remove_node(node)
@@ -557,27 +518,21 @@ class ExpandTransformation(Transformation):
         }
 
     @staticmethod
-    def from_json(json_obj: Dict[str, Any],
-                  context: Dict[str, Any] = None) -> 'ExpandTransformation':
+    def from_json(json_obj: Dict[str, Any], context: Dict[str, Any] = None) -> 'ExpandTransformation':
         xform = pydoc.locate(json_obj['classpath'])
 
         # Recreate subgraph
         expr = xform.expressions()[json_obj['expr_index']]
-        subgraph = {
-            expr.node(int(k)): int(v)
-            for k, v in json_obj['_subgraph'].items()
-        }
+        subgraph = {expr.node(int(k)): int(v) for k, v in json_obj['_subgraph'].items()}
 
         # Reconstruct transformation
-        ret = xform(json_obj['sdfg_id'], json_obj['state_id'], subgraph,
-                    json_obj['expr_index'])
+        ret = xform(json_obj['sdfg_id'], json_obj['state_id'], subgraph, json_obj['expr_index'])
         context = context or {}
         context['transformation'] = ret
-        serialize.set_properties_from_json(
-            ret,
-            json_obj,
-            context=context,
-            ignore_properties={'transformation', 'type', 'classpath'})
+        serialize.set_properties_from_json(ret,
+                                           json_obj,
+                                           context=context,
+                                           ignore_properties={'transformation', 'type', 'classpath'})
         return ret
 
 
@@ -594,30 +549,20 @@ class SubgraphTransformation(TransformationBase):
     """
 
     sdfg_id = Property(dtype=int, desc='ID of SDFG to transform')
-    state_id = Property(
-        dtype=int,
-        desc='ID of state to transform subgraph within, or -1 to transform the '
-        'SDFG')
-    subgraph = SetProperty(element_type=int,
-                           desc='Subgraph in transformation instance')
+    state_id = Property(dtype=int, desc='ID of state to transform subgraph within, or -1 to transform the ' 'SDFG')
+    subgraph = SetProperty(element_type=int, desc='Subgraph in transformation instance')
 
-    def __init__(self,
-                 subgraph: Union[Set[int], gr.SubgraphView],
-                 sdfg_id: int = None,
-                 state_id: int = None):
-        if (not isinstance(subgraph, (gr.SubgraphView, SDFG, SDFGState))
-                and (sdfg_id is None or state_id is None)):
-            raise TypeError(
-                'Subgraph transformation either expects a SubgraphView or a '
-                'set of node IDs, SDFG ID and state ID (or -1).')
+    def __init__(self, subgraph: Union[Set[int], gr.SubgraphView], sdfg_id: int = None, state_id: int = None):
+        if (not isinstance(subgraph, (gr.SubgraphView, SDFG, SDFGState)) and (sdfg_id is None or state_id is None)):
+            raise TypeError('Subgraph transformation either expects a SubgraphView or a '
+                            'set of node IDs, SDFG ID and state ID (or -1).')
 
         # An entire graph is given as a subgraph
         if isinstance(subgraph, (SDFG, SDFGState)):
             subgraph = gr.SubgraphView(subgraph, subgraph.nodes())
 
         if isinstance(subgraph, gr.SubgraphView):
-            self.subgraph = set(
-                subgraph.graph.node_id(n) for n in subgraph.nodes())
+            self.subgraph = set(subgraph.graph.node_id(n) for n in subgraph.nodes())
 
             if isinstance(subgraph.graph, SDFGState):
                 sdfg = subgraph.graph.parent
@@ -627,8 +572,7 @@ class SubgraphTransformation(TransformationBase):
                 self.sdfg_id = subgraph.graph.sdfg_id
                 self.state_id = -1
             else:
-                raise TypeError('Unrecognized graph type "%s"' %
-                                type(subgraph.graph).__name__)
+                raise TypeError('Unrecognized graph type "%s"' % type(subgraph.graph).__name__)
         else:
             self.subgraph = subgraph
             self.sdfg_id = sdfg_id
@@ -638,8 +582,7 @@ class SubgraphTransformation(TransformationBase):
         graph = sdfg.sdfg_list[self.sdfg_id]
         if self.state_id != -1:
             graph = graph.node(self.state_id)
-        return gr.SubgraphView(graph,
-                               [graph.node(idx) for idx in self.subgraph])
+        return gr.SubgraphView(graph, [graph.node(idx) for idx in self.subgraph])
 
     def can_be_applied(self, sdfg: SDFG, subgraph: gr.SubgraphView) -> bool:
         """
@@ -708,12 +651,10 @@ class SubgraphTransformation(TransformationBase):
                 graph = sdfg
                 state_id = -1
             elif isinstance(sample_node, nd.Node):
-                graph = next(s for s in sdfg.nodes()
-                             if sample_node in s.nodes())
+                graph = next(s for s in sdfg.nodes() if sample_node in s.nodes())
                 state_id = sdfg.node_id(graph)
             else:
-                raise TypeError('Invalid node type "%s"' %
-                                type(sample_node).__name__)
+                raise TypeError('Invalid node type "%s"' % type(sample_node).__name__)
 
             # Construct subgraph and instantiate transformation
             subgraph = gr.SubgraphView(graph, where)
@@ -725,14 +666,12 @@ class SubgraphTransformation(TransformationBase):
         # Construct transformation parameters
         for optname, optval in options.items():
             if not optname in cls.__properties__:
-                raise ValueError('Property "%s" not found in transformation' %
-                                 optname)
+                raise ValueError('Property "%s" not found in transformation' % optname)
             setattr(instance, optname, optval)
 
         if verify:
             if not instance.can_be_applied(sdfg, subgraph):
-                raise ValueError('Transformation cannot be applied on the '
-                                 'given subgraph ("can_be_applied" failed)')
+                raise ValueError('Transformation cannot be applied on the ' 'given subgraph ("can_be_applied" failed)')
 
         # Apply to SDFG
         return instance.apply(sdfg)
@@ -742,35 +681,22 @@ class SubgraphTransformation(TransformationBase):
         
     def to_json(self, parent=None):
         props = serialize.all_properties_to_json(self)
-        return {
-            'type': 'SubgraphTransformation',
-            'transformation': type(self).__name__,
-            **props
-        }
+        return {'type': 'SubgraphTransformation', 'transformation': type(self).__name__, **props}
 
     @staticmethod
-    def from_json(json_obj: Dict[str, Any],
-                  context: Dict[str, Any] = None) -> 'SubgraphTransformation':
+    def from_json(json_obj: Dict[str, Any], context: Dict[str, Any] = None) -> 'SubgraphTransformation':
         xform = next(ext for ext in SubgraphTransformation.extensions().keys()
                      if ext.__name__ == json_obj['transformation'])
 
         # Reconstruct transformation
-        ret = xform(json_obj['subgraph'], json_obj['sdfg_id'],
-                    json_obj['state_id'])
+        ret = xform(json_obj['subgraph'], json_obj['sdfg_id'], json_obj['state_id'])
         context = context or {}
         context['transformation'] = ret
-        serialize.set_properties_from_json(
-            ret,
-            json_obj,
-            context=context,
-            ignore_properties={'transformation', 'type'})
+        serialize.set_properties_from_json(ret, json_obj, context=context, ignore_properties={'transformation', 'type'})
         return ret
 
 
-def strict_transformations() -> List[Type[Transformation]]:
-    """ :return: List of all registered strict transformations.
+def coarsening_transformations() -> List[Type[Transformation]]:
+    """ :return: List of all registered dataflow coarsening transformations.
     """
-    return [
-        k for k, v in Transformation.extensions().items()
-        if v.get('strict', False)
-    ]
+    return [k for k, v in Transformation.extensions().items() if v.get('coarsening', False)]

@@ -12,8 +12,7 @@ N = dace.symbol('N')
 
 
 @dace.program
-def subgraph_fusion_sequential(A: dace.float64[N], B: dace.float64[N],
-                               C: dace.float64[N]):
+def subgraph_fusion_sequential(A: dace.float64[N], B: dace.float64[N], C: dace.float64[N]):
 
     for i in dace.map[0:N]:
         with dace.tasklet:
