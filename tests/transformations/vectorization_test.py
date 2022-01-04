@@ -202,7 +202,7 @@ def test_diagonal_stride():
 
 #     N.set(64)
 #     A = np.random.rand(N.get()).astype(np.float32)
-#     B = np.random.rand(1).astype(np.float32)
+#     B = np.zeros(1).astype(np.float32)
 #     sdfg(A=A, B=B, N=N.get())
 #     assert allclose(np.sum(A), B)
 
@@ -220,7 +220,7 @@ def test_diagonal_stride():
 
 #     N.set(64)
 #     A = np.random.rand(N.get()).astype(np.float32)
-#     B = np.random.rand(1).astype(np.float32)
+#     B = np.zeros(1).astype(np.float32)
 #     sdfg(A=A, B=B, N=N.get())
 #     assert allclose(np.max(A), B)
 
@@ -238,7 +238,7 @@ def test_diagonal_stride():
 
 #     N.set(64)
 #     A = np.random.rand(N.get()).astype(np.float32)
-#     B = np.random.rand(1).astype(np.float32)
+#     B = np.zeros(1).astype(np.float32)
 #     sdfg(A=A, B=B, N=N.get())
 #     assert allclose(np.min(A), B)
 
