@@ -41,8 +41,8 @@ class BankSplit(transformation.SingleStateTransformation):
     the other way around.
     """
 
-    _src_node = nd.AccessNode("")
-    _dst_node = nd.AccessNode("")
+    src_node = transformation.PatternNode(nd.AccessNode)
+    dst_node = transformation.PatternNode(nd.AccessNode)
 
     # dtype=List[int]
     split_array_info = properties.Property(
@@ -74,11 +74,9 @@ class BankSplit(transformation.SingleStateTransformation):
                 new_shape_list.append(virtual_shape[d])
         return new_shape_list
 
-    @staticmethod
-    def can_be_applied(graph: Union[SDFG, SDFGState], candidate: Dict['PatternNode', int], expr_index: int, sdfg: SDFG,
-                       permissive: bool) -> bool:
-        src = graph.nodes()[candidate[BankSplit._src_node]]
-        dst = graph.nodes()[candidate[BankSplit._dst_node]]
+    def can_be_applied(self, graph: SDFGState, expr_index: int, sdfg: SDFG, permissive: bool) -> bool:
+        src = self.src_node
+        dst = self.dst_node
         src_array = sdfg.arrays[src.data]
         dst_array = sdfg.arrays[dst.data]
 
@@ -98,15 +96,14 @@ class BankSplit(transformation.SingleStateTransformation):
             return False
         return collect_src or distribute_dst
 
-    @staticmethod
-    def expressions():
-        return [utils.node_path_graph(BankSplit._src_node, BankSplit._dst_node)]
+    @classmethod
+    def expressions(cls):
+        return [utils.node_path_graph(cls.src_node, cls.dst_node)]
 
-    def apply(self, sdfg: SDFG) -> Union[Any, None]:
+    def apply(self, graph: SDFGState, sdfg: SDFG) -> Union[Any, None]:
         # Load/parse infos from the SDFG
-        graph = sdfg.nodes()[self.state_id]
-        src = graph.nodes()[self.subgraph[BankSplit._src_node]]
-        dst = graph.nodes()[self.subgraph[BankSplit._dst_node]]
+        src = self.src_node
+        dst = self.dst_node
         src_array = sdfg.arrays[src.data]
         dst_array = sdfg.arrays[dst.data]
         collect_src = len(src_array.shape) - 1 == len(

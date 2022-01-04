@@ -5,6 +5,8 @@ from dace import data, dtypes, sdfg as sd
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import SubgraphView
+from dace.sdfg.sdfg import SDFG
+from dace.sdfg.state import SDFGState
 from dace.transformation import transformation, helpers
 from dace.properties import Property, make_properties
 
@@ -25,19 +27,18 @@ class GPUTransformMap(transformation.SingleStateTransformation):
 
     sequential_innermaps = Property(desc="Make all internal maps Sequential", dtype=bool, default=False)
 
-    _map_entry = nodes.MapEntry(nodes.Map("", [], []))
+    map_entry = transformation.PatternNode(nodes.MapEntry)
 
     import dace.libraries.standard as stdlib  # Avoid import loop
-    _reduce = stdlib.Reduce('lambda: None', None)
+    reduce = transformation.PatternNode(stdlib.Reduce)
 
-    @staticmethod
-    def expressions():
-        return [sdutil.node_path_graph(GPUTransformMap._map_entry), sdutil.node_path_graph(GPUTransformMap._reduce)]
+    @classmethod
+    def expressions(cls):
+        return [sdutil.node_path_graph(cls.map_entry), sdutil.node_path_graph(cls.reduce)]
 
-    @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
+    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
         if expr_index == 0:
-            map_entry = graph.nodes()[candidate[GPUTransformMap._map_entry]]
+            map_entry = self.map_entry
             candidate_map = map_entry.map
 
             # Map schedules that are disallowed to transform to GPUs
@@ -67,7 +68,7 @@ class GPUTransformMap(transformation.SingleStateTransformation):
 
             return True
         elif expr_index == 1:
-            reduce = graph.nodes()[candidate[GPUTransformMap._reduce]]
+            reduce = self.reduce
 
             # Disallow GPU transformation if already in device-level code
             if sd.is_devicelevel_gpu(sdfg, graph, reduce):
@@ -75,33 +76,31 @@ class GPUTransformMap(transformation.SingleStateTransformation):
 
             return True
 
-    @staticmethod
-    def match_to_str(graph, candidate):
-        if GPUTransformMap._reduce in candidate:
-            return str(graph.nodes()[candidate[GPUTransformMap._reduce]])
+    def match_to_str(self, graph):
+        if self.expr_index == 1:
+            return str(self.reduce)
         else:
-            return str(graph.nodes()[candidate[GPUTransformMap._map_entry]])
+            return str(self.map_entry)
 
-    def apply(self, sdfg):
-        graph = sdfg.nodes()[self.state_id]
+    def apply(self, graph: SDFGState, sdfg: SDFG):
         if self.expr_index == 0:
-            map_entry = graph.nodes()[self.subgraph[GPUTransformMap._map_entry]]
+            map_entry = self.map_entry
             nsdfg_node = helpers.nest_state_subgraph(sdfg,
                                                      graph,
                                                      graph.scope_subgraph(map_entry),
                                                      full_data=self.fullcopy)
         else:
-            cnode = graph.nodes()[self.subgraph[GPUTransformMap._reduce]]
+            cnode = self.reduce
             nsdfg_node = helpers.nest_state_subgraph(sdfg, graph, SubgraphView(graph, [cnode]), full_data=self.fullcopy)
 
         # Avoiding import loops
         from dace.transformation.interstate import GPUTransformSDFG
-        transformation = GPUTransformSDFG(0, 0, {}, 0)
+        transformation = GPUTransformSDFG(sdfg, 0, -1, {}, 0)
         transformation.register_trans = self.register_trans
         transformation.sequential_innermaps = self.sequential_innermaps
         transformation.toplevel_trans = self.toplevel_trans
 
-        transformation.apply(nsdfg_node.sdfg)
+        transformation.apply(nsdfg_node.sdfg, nsdfg_node.sdfg)
 
         # Inline back as necessary
         sdfg.coarsen_dataflow()

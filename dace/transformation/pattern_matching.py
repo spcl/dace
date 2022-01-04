@@ -105,8 +105,8 @@ def _try_to_match_transformation(graph: Union[SDFG, SDFGState], collapsed_graph:
     }
 
     try:
-        match = xform(sdfg.sdfg_id, state_id, subgraph, expr_idx, options=options)
-        match_found = match.can_be_applied(graph, subgraph, expr_idx, sdfg, permissive=permissive)
+        match = xform(sdfg, sdfg.sdfg_id, state_id, subgraph, expr_idx, options=options)
+        match_found = match.can_be_applied(graph, expr_idx, sdfg, permissive=permissive)
     except Exception as e:
         if Config.get_bool('optimizer', 'match_exception'):
             raise

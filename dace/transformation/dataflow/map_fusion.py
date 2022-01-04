@@ -3,6 +3,7 @@
 """
 
 from copy import deepcopy as dcpy
+from dace.sdfg.sdfg import SDFG
 from dace.sdfg.state import SDFGState
 from dace import data, dtypes, symbolic, subsets
 from dace.sdfg import nodes
@@ -47,13 +48,9 @@ class MapFusion(transformation.SingleStateTransformation):
     def annotates_memlets():
         return False
 
-    @staticmethod
-    def expressions():
-        return [sdutil.node_path_graph(
-            MapFusion.first_map_exit,
-            MapFusion.array,
-            MapFusion.second_map_entry,
-        )]
+    @classmethod
+    def expressions(cls):
+        return [sdutil.node_path_graph(cls.first_map_exit, cls.array, cls.second_map_entry)]
 
     @staticmethod
     def find_permutation(first_map: nodes.Map, second_map: nodes.Map) -> Union[List[int], None]:
@@ -86,11 +83,10 @@ class MapFusion(transformation.SingleStateTransformation):
 
         return result
 
-    @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
-        first_map_exit = graph.nodes()[candidate[MapFusion.first_map_exit]]
+    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
+        first_map_exit = self.first_map_exit
         first_map_entry = graph.entry_node(first_map_exit)
-        second_map_entry = graph.nodes()[candidate[MapFusion.second_map_entry]]
+        second_map_entry = self.second_map_entry
         second_map_exit = graph.exit_node(second_map_entry)
 
         for _in_e in graph.in_edges(first_map_exit):
@@ -116,7 +112,7 @@ class MapFusion(transformation.SingleStateTransformation):
             else:
                 return False
         # Check map ranges
-        perm = MapFusion.find_permutation(first_map_entry.map, second_map_entry.map)
+        perm = self.find_permutation(first_map_entry.map, second_map_entry.map)
         if perm is None:
             return False
 
@@ -250,14 +246,7 @@ class MapFusion(transformation.SingleStateTransformation):
         # Success
         return True
 
-    @staticmethod
-    def match_to_str(graph, candidate):
-        first_exit = graph.nodes()[candidate[MapFusion.first_map_exit]]
-        second_entry = graph.nodes()[candidate[MapFusion.second_map_entry]]
-
-        return " -> ".join(entry.map.label + ": " + str(entry.map.params) for entry in [first_exit, second_entry])
-
-    def apply(self, sdfg):
+    def apply(self, graph: SDFGState, sdfg: SDFG):
         """
             This method applies the mapfusion transformation.
             Other than the removal of the second map entry node (SME), and the first
@@ -278,10 +267,9 @@ class MapFusion(transformation.SingleStateTransformation):
                 adjacent to the new map entry node post fusion.
 
         """
-        graph: SDFGState = sdfg.nodes()[self.state_id]
-        first_exit = graph.nodes()[self.subgraph[MapFusion.first_map_exit]]
+        first_exit = self.first_map_exit
         first_entry = graph.entry_node(first_exit)
-        second_entry = graph.nodes()[self.subgraph[MapFusion.second_map_entry]]
+        second_entry = self.second_map_entry
         second_exit = graph.exit_node(second_entry)
 
         intermediate_nodes = set()
@@ -307,7 +295,7 @@ class MapFusion(transformation.SingleStateTransformation):
                             break
 
         # Find permutation between first and second scopes
-        perm = MapFusion.find_permutation(first_entry.map, second_entry.map)
+        perm = self.find_permutation(first_entry.map, second_entry.map)
         params_dict = {}
         for index, param in enumerate(first_entry.map.params):
             params_dict[param] = second_entry.map.params[perm[index]]

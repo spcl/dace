@@ -101,20 +101,18 @@ class StreamingMemory(xf.SingleStateTransformation):
                                       desc='Set storage type for the newly-created stream',
                                       default=dtypes.StorageType.Default)
 
-    @staticmethod
-    def expressions() -> List[gr.SubgraphView]:
+    @classmethod
+    def expressions(cls) -> List[gr.SubgraphView]:
         return [
-            sdutil.node_path_graph(StreamingMemory.access, StreamingMemory.entry),
-            sdutil.node_path_graph(StreamingMemory.exit, StreamingMemory.access),
+            sdutil.node_path_graph(cls.access, cls.entry),
+            sdutil.node_path_graph(cls.exit, cls.access),
         ]
 
-    @staticmethod
-    def can_be_applied(graph: SDFGState,
-                       candidate: Dict[xf.PatternNode, int],
+    def can_be_applied(self, graph: SDFGState,
                        expr_index: int,
                        sdfg: SDFG,
                        permissive: bool = False) -> bool:
-        access = graph.node(candidate[StreamingMemory.access])
+        access = self.access
         # Make sure the access node is only accessed once (read or write),
         # and not at the same time
         if graph.out_degree(access) > 0 and graph.in_degree(access) > 0:
@@ -165,17 +163,16 @@ class StreamingMemory(xf.SingleStateTransformation):
 
         # If already applied on this memlet and this is the I/O component, skip
         if expr_index == 0:
-            other_node = graph.node(candidate[StreamingMemory.entry])
+            other_node = self.entry
         else:
-            other_node = graph.node(candidate[StreamingMemory.exit])
+            other_node = self.exit
             other_node = graph.entry_node(other_node)
         if other_node.label.startswith('__s'):
             return False
 
         return True
 
-    def apply(self, sdfg: SDFG) -> nodes.AccessNode:
-        state = sdfg.node(self.state_id)
+    def apply(self, state: SDFGState, sdfg: SDFG) -> nodes.AccessNode:
         dnode: nodes.AccessNode = self.access(sdfg)
         if self.expr_index == 0:
             edges = state.out_edges(dnode)
@@ -335,19 +332,17 @@ class StreamingComposition(xf.SingleStateTransformation):
                                       desc='Set storage type for the newly-created stream',
                                       default=dtypes.StorageType.Default)
 
-    @staticmethod
-    def expressions() -> List[gr.SubgraphView]:
+    @classmethod
+    def expressions(cls) -> List[gr.SubgraphView]:
         return [
-            sdutil.node_path_graph(StreamingComposition.first, StreamingComposition.access, StreamingComposition.second)
+            sdutil.node_path_graph(cls.first, cls.access, cls.second)
         ]
 
-    @staticmethod
-    def can_be_applied(graph: SDFGState,
-                       candidate: Dict[xf.PatternNode, int],
+    def can_be_applied(self, graph: SDFGState,
                        expr_index: int,
                        sdfg: SDFG,
                        permissive: bool = False) -> bool:
-        access = graph.node(candidate[StreamingComposition.access])
+        access = self.access
         # Make sure the access node is only accessed once (read or write),
         # and not at the same time
         if graph.in_degree(access) > 1 or graph.out_degree(access) > 1:
@@ -419,9 +414,8 @@ class StreamingComposition(xf.SingleStateTransformation):
 
         return True
 
-    def apply(self, sdfg: SDFG) -> nodes.AccessNode:
-        state = sdfg.node(self.state_id)
-        access: nodes.AccessNode = self.access(sdfg)
+    def apply(self, state: SDFGState, sdfg: SDFG) -> nodes.AccessNode:
+        access: nodes.AccessNode = self.access
 
         # Get memlet paths
         first_edge = state.in_edges(access)[0]

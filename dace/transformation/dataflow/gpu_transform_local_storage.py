@@ -40,11 +40,8 @@ class GPUTransformLocalStorage(transformation.SingleStateTransformation):
         Similar to GPUTransformMap, but takes multiple maps leading from the
         same data node into account, creating a local storage for each range.
 
-        @see: GPUTransformMap
+        :seealso: GPUTransformMap
     """
-
-    _arrays_removed = 0
-    _maps_transformed = 0
 
     fullcopy = Property(desc="Copy whole arrays rather than used subset", dtype=bool, default=False)
 
@@ -56,22 +53,21 @@ class GPUTransformLocalStorage(transformation.SingleStateTransformation):
         default=True,
     )
 
-    _map_entry = nodes.MapEntry(nodes.Map("", [], []))
+    map_entry = transformation.PatternNode(nodes.MapEntry)
 
     import dace.libraries.standard as stdlib  # Avoid import loop
-    _reduce = stdlib.Reduce("lambda: None", None)
+    reduce = transformation.PatternNode(stdlib.Reduce)
 
-    @staticmethod
-    def expressions():
+    @classmethod
+    def expressions(cls):
         return [
-            sdutil.node_path_graph(GPUTransformLocalStorage._map_entry),
-            sdutil.node_path_graph(GPUTransformLocalStorage._reduce),
+            sdutil.node_path_graph(cls.map_entry),
+            sdutil.node_path_graph(cls.reduce),
         ]
 
-    @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
+    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
         if expr_index == 0:
-            map_entry = graph.nodes()[candidate[GPUTransformLocalStorage._map_entry]]
+            map_entry = self.map_entry
             candidate_map = map_entry.map
 
             # Disallow GPUTransform on nested maps in permissive mode
@@ -116,7 +112,7 @@ class GPUTransformLocalStorage(transformation.SingleStateTransformation):
 
             return True
         elif expr_index == 1:
-            reduce = graph.nodes()[candidate[GPUTransformLocalStorage._reduce]]
+            reduce = self.reduce
 
             # Recursively check parent for GPU schedules
             sdict = graph.scope_dict()
@@ -129,29 +125,24 @@ class GPUTransformLocalStorage(transformation.SingleStateTransformation):
 
             return True
 
-    @staticmethod
-    def match_to_str(graph, candidate):
-        if GPUTransformLocalStorage._reduce in candidate:
-            return str(graph.nodes()[candidate[GPUTransformLocalStorage._reduce]])
+    def match_to_str(self, graph):
+        if self.expr_index == 1:
+            return str(self.reduce)
         else:
-            map_entry = graph.nodes()[candidate[GPUTransformLocalStorage._map_entry]]
-            return str(map_entry)
+            return str(self.map_entry)
 
-    def apply(self, sdfg):
-        graph = sdfg.nodes()[self.state_id]
+    def apply(self, graph, sdfg):
         if self.expr_index == 0:
-            cnode: nodes.MapEntry = graph.nodes()[self.subgraph[GPUTransformLocalStorage._map_entry]]
+            cnode: nodes.MapEntry = self.map_entry
             # Change schedule
             cnode.schedule = dtypes.ScheduleType.GPU_Device
             exit_node = graph.exit_node(cnode)
         else:
-            cnode: nodes.LibraryNode = graph.nodes()[self.subgraph[GPUTransformLocalStorage._reduce]]
+            cnode: nodes.LibraryNode = self.reduce
             # Change schedule
             cnode.schedule = dtypes.ScheduleType.GPU_Default
             exit_node = cnode
 
-        if Config.get_bool("debugprint"):
-            GPUTransformLocalStorage._maps_transformed += 1
         # If nested graph is designated as sequential, transform schedules and
         # storage from Default to Sequential/Register
         if self.nested_seq and self.expr_index == 0:
@@ -185,9 +176,6 @@ class GPUTransformLocalStorage(transformation.SingleStateTransformation):
             data_node = sd.find_output_arraynode(graph, e)
             if data_node.desc(sdfg).storage not in gpu_storage_types:
                 out_arrays_to_clone.add((data_node, e.data))
-
-        if Config.get_bool("debugprint"):
-            GPUTransformLocalStorage._arrays_removed += len(in_arrays_to_clone) + len(out_arrays_to_clone)
 
         # Second, create a GPU clone of each array
         # TODO: Overapproximate union of memlets

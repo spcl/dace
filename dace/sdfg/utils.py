@@ -1010,10 +1010,10 @@ def fuse_states(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> 
 
                 if u in skip_nodes or v in skip_nodes:
                     continue
-                candidate = {StateFusion.first_state: u, StateFusion.second_state: v}
-                sf = StateFusion(id, -1, candidate, 0, override=True)
-                if sf.can_be_applied(sd, candidate, 0, sd, permissive=permissive):
-                    sf.apply(sd)
+                candidate = {StateFusion.first_state: sd.node_id(u), StateFusion.second_state: sd.node_id(v)}
+                sf = StateFusion(sd, id, -1, candidate, 0, override=True)
+                if sf.can_be_applied(sd, 0, sd, permissive=permissive):
+                    sf.apply(sd, sd)
                     applied += 1
                     counter += 1
                     if progress:
@@ -1075,20 +1075,20 @@ def inline_sdfgs(sdfg: SDFG, permissive: bool = False, progress: bool = None, mu
                     candidate = {
                         InlineMultistateSDFG.nested_sdfg: node_id,
                     }
-                    inliner = InlineMultistateSDFG(id, state_id, candidate, 0, override=True)
-                    if inliner.can_be_applied(state, candidate, 0, sd, permissive=permissive):
-                        inliner.apply(sd)
+                    inliner = InlineMultistateSDFG(sd, id, state_id, candidate, 0, override=True)
+                    if inliner.can_be_applied(state, 0, sd, permissive=permissive):
+                        inliner.apply(state, sd)
                         counter += 1
                         if progress:
                             pbar.update(1)
                         continue
 
                 candidate = {
-                    InlineSDFG._nested_sdfg: node_id,
+                    InlineSDFG.nested_sdfg: node_id,
                 }
-                inliner = InlineSDFG(id, state_id, candidate, 0, override=True)
-                if inliner.can_be_applied(state, candidate, 0, sd, permissive=permissive):
-                    inliner.apply(sd)
+                inliner = InlineSDFG(sd, id, state_id, candidate, 0, override=True)
+                if inliner.can_be_applied(state, 0, sd, permissive=permissive):
+                    inliner.apply(state, sd)
                     counter += 1
                     if progress:
                         pbar.update(1)

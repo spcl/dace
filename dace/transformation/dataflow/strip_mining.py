@@ -132,7 +132,7 @@ class StripMining(transformation.SingleStateTransformation):
         range of the tile size, with the same step as before.
     """
 
-    _map_entry = nodes.MapEntry(nodes.Map("", [], []))
+    map_entry = transformation.PatternNode(nodes.MapEntry)
 
     # Properties
     dim_idx = Property(dtype=int, default=-1, desc="Index of dimension to be strip-mined")
@@ -162,50 +162,20 @@ class StripMining(transformation.SingleStateTransformation):
     def annotates_memlets():
         return True
 
-    @staticmethod
-    def expressions():
-        return [sdutil.node_path_graph(StripMining._map_entry)
-                # kStripMining._tasklet, StripMining._map_exit)
-                ]
+    @classmethod
+    def expressions(cls):
+        return [sdutil.node_path_graph(cls.map_entry)]
 
-    @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
+    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
         return True
 
-    @staticmethod
-    def match_to_str(graph, candidate):
-        map_entry = graph.nodes()[candidate[StripMining._map_entry]]
-        return map_entry.map.label + ': ' + str(map_entry.map.params)
+    def match_to_str(self, graph: SDFGState) -> str:
+        return self.map_entry.map.label + ': ' + str(self.map_entry.map.params)
 
-    def apply(self, sdfg: SDFG) -> nodes.Map:
-        graph = sdfg.nodes()[self.state_id]
+    def apply(self, graph: SDFGState, sdfg: SDFG) -> nodes.Map:
         # Strip-mine selected dimension.
-        _, _, new_map = self._stripmine(sdfg, graph, self.subgraph)
+        _, _, new_map = self._stripmine(sdfg, graph, self.map_entry)
         return new_map
-
-    # def __init__(self, tag=True):
-    def __init__(self, *args, **kwargs):
-        self._entry = nodes.EntryNode()
-        self._tasklet = nodes.Tasklet('_')
-        self._exit = nodes.ExitNode()
-        super().__init__(*args, **kwargs)
-        # self.tag = tag
-
-    @property
-    def entry(self):
-        return self._entry
-
-    @property
-    def exit(self):
-        return self._exit
-
-    @property
-    def tasklet(self):
-        return self._tasklet
-
-    def print_match_pattern(self, candidate):
-        gentry = candidate[self.entry]
-        return str(gentry.map.params[-1])
 
     def _find_new_dim(self, sdfg: SDFG, state: SDFGState, entry: nodes.MapEntry, prefix: str, target_dim: str):
         """ Finds a variable that is not already defined in scope. """
@@ -363,9 +333,8 @@ class StripMining(transformation.SingleStateTransformation):
         td_step_new = td_step
         return new_dim, new_map, (td_from_new, td_to_new, td_step_new)
 
-    def _stripmine(self, sdfg, graph, candidate):
+    def _stripmine(self, sdfg: SDFG, graph: SDFGState, map_entry: nodes.MapEntry):
         # Retrieve map entry and exit nodes.
-        map_entry = graph.nodes()[candidate[StripMining._map_entry]]
         map_exit = graph.exit_node(map_entry)
 
         # Retrieve transformation properties.

@@ -1991,8 +1991,9 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             except StopIteration:
                 continue
             sdfg = self.sdfg_list[match.sdfg_id]
+            graph = sdfg.node(match.state_id) if match.state_id >= 0 else sdfg
 
-            match.apply(sdfg)
+            match.apply(graph, sdfg)
             applied_transformations[type(match).__name__] += 1
             if validate_all:
                 self.validate()
@@ -2068,12 +2069,13 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         params_by_xform = {x: o for x, o in zip(xforms, options)}
 
         # Helper function for applying and validating a transformation
-        def _apply_and_validate(match):
+        def _apply_and_validate(match: PatternTransformation):
             sdfg = self.sdfg_list[match.sdfg_id]
+            graph = sdfg.node(match.state_id) if match.state_id >= 0 else sdfg
             if validate_all:
                 match_name = match.print_match(sdfg)
 
-            match.apply(sdfg)
+            match.apply(graph, sdfg)
             applied_transformations[type(match).__name__] += 1
             if progress or (progress is None and (time.time() - start) > 5):
                 print('Applied {}.\r'.format(', '.join(['%d %s' % (v, k) for k, v in applied_transformations.items()])),

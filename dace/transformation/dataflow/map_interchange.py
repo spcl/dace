@@ -19,20 +19,19 @@ class MapInterchange(transformation.SingleStateTransformation):
     outer_map_entry = transformation.PatternNode(nodes.MapEntry)
     inner_map_entry = transformation.PatternNode(nodes.MapEntry)
 
-    @staticmethod
-    def expressions():
-        return [sdutil.node_path_graph(MapInterchange.outer_map_entry, MapInterchange.inner_map_entry)]
+    @classmethod
+    def expressions(cls):
+        return [sdutil.node_path_graph(cls.outer_map_entry, cls.inner_map_entry)]
 
-    @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
+    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
         # TODO: Assuming that the subsets on the edges between the two map
         # entries/exits are the union of separate inner subsets, is it possible
         # that inverting these edges breaks the continuity of union? What about
         # the opposite?
 
         # Check the edges between the entries of the two maps.
-        outer_map_entry = graph.nodes()[candidate[MapInterchange.outer_map_entry]]
-        inner_map_entry = graph.nodes()[candidate[MapInterchange.inner_map_entry]]
+        outer_map_entry = self.outer_map_entry
+        inner_map_entry = self.inner_map_entry
 
         # Check that inner map range is independent of outer range
         map_deps = set()
@@ -77,19 +76,10 @@ class MapInterchange(transformation.SingleStateTransformation):
 
         return True
 
-    @staticmethod
-    def match_to_str(graph, candidate):
-        outer_map_entry = graph.nodes()[candidate[MapInterchange.outer_map_entry]]
-        inner_map_entry = graph.nodes()[candidate[MapInterchange.inner_map_entry]]
-
-        return ' -> '.join(entry.map.label + ': ' + str(entry.map.params)
-                           for entry in [outer_map_entry, inner_map_entry])
-
-    def apply(self, sdfg: SDFG):
+    def apply(self, graph: SDFGState, sdfg: SDFG):
         # Extract the parameters and ranges of the inner/outer maps.
-        graph: SDFGState = sdfg.nodes()[self.state_id]
-        outer_map_entry = graph.nodes()[self.subgraph[MapInterchange.outer_map_entry]]
-        inner_map_entry = graph.nodes()[self.subgraph[MapInterchange.inner_map_entry]]
+        outer_map_entry = self.outer_map_entry
+        inner_map_entry = self.inner_map_entry
         inner_map_exit = graph.exit_node(inner_map_entry)
         outer_map_exit = graph.exit_node(outer_map_entry)
 

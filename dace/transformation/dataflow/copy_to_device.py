@@ -28,7 +28,7 @@ class CopyToDevice(transformation.SingleStateTransformation):
         the nested SDFG to that storage.
     """
 
-    _nested_sdfg = nodes.NestedSDFG("", graph.OrderedDiGraph(), {}, {})
+    nested_sdfg = transformation.PatternNode(nodes.NestedSDFG)
 
     storage = properties.EnumProperty(dtype=dtypes.StorageType,
                                       desc="Nested SDFG storage",
@@ -38,13 +38,12 @@ class CopyToDevice(transformation.SingleStateTransformation):
     def annotates_memlets():
         return True
 
-    @staticmethod
-    def expressions():
-        return [sdutil.node_path_graph(CopyToDevice._nested_sdfg)]
+    @classmethod
+    def expressions(cls):
+        return [sdutil.node_path_graph(cls.nested_sdfg)]
 
-    @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
-        nested_sdfg = graph.nodes()[candidate[CopyToDevice._nested_sdfg]]
+    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
+        nested_sdfg = self.nested_sdfg
 
         for edge in graph.all_edges(nested_sdfg):
             # Stream inputs/outputs not allowed
@@ -59,14 +58,8 @@ class CopyToDevice(transformation.SingleStateTransformation):
 
         return True
 
-    @staticmethod
-    def match_to_str(graph, candidate):
-        nested_sdfg = graph.nodes()[candidate[CopyToDevice._nested_sdfg]]
-        return nested_sdfg.label
-
-    def apply(self, sdfg):
-        state = sdfg.nodes()[self.state_id]
-        nested_sdfg = state.nodes()[self.subgraph[CopyToDevice._nested_sdfg]]
+    def apply(self, state, sdfg):
+        nested_sdfg = self.nested_sdfg
         storage = self.storage
         created_arrays = set()
 

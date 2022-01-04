@@ -35,9 +35,9 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation, transformat
     def annotates_memlets():
         return True
 
-    @staticmethod
-    def expressions():
-        return [sdutil.node_path_graph(InlineMultistateSDFG.nested_sdfg)]
+    @classmethod
+    def expressions(cls):
+        return [sdutil.node_path_graph(cls.nested_sdfg)]
 
     @staticmethod
     def _check_strides(inner_strides: List[symbolic.SymbolicType], outer_strides: List[symbolic.SymbolicType],
@@ -76,8 +76,8 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation, transformat
 
         return all(istr == ostr for istr, ostr in zip(istrides, ostrides))
 
-    def can_be_applied(self, state: SDFGState, candidate, expr_index, sdfg, permissive=False):
-        nested_sdfg = self.nested_sdfg(sdfg)
+    def can_be_applied(self, state: SDFGState, expr_index, sdfg, permissive=False):
+        nested_sdfg = self.nested_sdfg
         if nested_sdfg.no_inline:
             return False
 
@@ -133,13 +133,8 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation, transformat
 
         return True
 
-    @staticmethod
-    def match_to_str(graph, candidate):
-        return graph.label
-
-    def apply(self, sdfg: SDFG):
-        outer_state: SDFGState = sdfg.nodes()[self.state_id]
-        nsdfg_node = self.nested_sdfg(sdfg)
+    def apply(self, outer_state: SDFGState, sdfg: SDFG):
+        nsdfg_node = self.nested_sdfg
         nsdfg: SDFG = nsdfg_node.sdfg
 
         if nsdfg_node.schedule is not dtypes.ScheduleType.Default:

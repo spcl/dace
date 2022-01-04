@@ -19,37 +19,29 @@ class MapToForLoop(transformation.SingleStateTransformation):
         a state-machine of a for-loop. Creates a nested SDFG, if necessary.
     """
 
-    _map_entry = nodes.MapEntry(nodes.Map("", [], []))
+    map_entry = transformation.PatternNode(nodes.MapEntry)
 
     @staticmethod
     def annotates_memlets():
         return True
 
-    @staticmethod
-    def expressions():
-        return [sdutil.node_path_graph(MapToForLoop._map_entry)]
+    @classmethod
+    def expressions(cls):
+        return [sdutil.node_path_graph(cls.map_entry)]
 
-    @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
+    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
         # Only uni-dimensional maps are accepted.
-        map_entry = graph.nodes()[candidate[MapToForLoop._map_entry]]
-        if len(map_entry.map.params) > 1:
+        if len(self.map_entry.map.params) > 1:
             return False
 
         return True
 
-    @staticmethod
-    def match_to_str(graph, candidate):
-        map_entry = graph.nodes()[candidate[MapToForLoop._map_entry]]
-        return map_entry.map.label + ': ' + str(map_entry.map.params)
-
-    def apply(self, sdfg) -> Tuple[nodes.NestedSDFG, SDFGState]:
+    def apply(self, graph: SDFGState, sdfg: SDFG) -> Tuple[nodes.NestedSDFG, SDFGState]:
         """ Applies the transformation and returns a tuple with the new nested
             SDFG node and the main state in the for-loop. """
 
         # Retrieve map entry and exit nodes.
-        graph = sdfg.nodes()[self.state_id]
-        map_entry = graph.nodes()[self.subgraph[MapToForLoop._map_entry]]
+        map_entry = self.map_entry
         map_exit = graph.exit_node(map_entry)
 
         loop_idx = map_entry.map.params[0]

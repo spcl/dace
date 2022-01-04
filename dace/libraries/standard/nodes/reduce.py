@@ -773,13 +773,13 @@ class ExpandReduceCUDABlockAll(pm.ExpandTransformation):
         local_storage = LocalStorage(sdfg.sdfg_id, sdfg.nodes().index(state), in_local_storage_subgraph, 0)
 
         local_storage.array = in_edge.data.data
-        local_storage.apply(sdfg)
+        local_storage.apply(graph, sdfg)
         in_transient = local_storage._data_node
         sdfg.data(in_transient.data).storage = dtypes.StorageType.Register
 
         local_storage = LocalStorage(sdfg.sdfg_id, sdfg.nodes().index(state), out_local_storage_subgraph, 0)
         local_storage.array = out_edge.data.data
-        local_storage.apply(sdfg)
+        local_storage.apply(graph, sdfg)
         out_transient = local_storage._data_node
         sdfg.data(out_transient.data).storage = dtypes.StorageType.Register
 

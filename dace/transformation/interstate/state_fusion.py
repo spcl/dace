@@ -45,9 +45,9 @@ class StateFusion(transformation.MultiStateTransformation, transformation.Datafl
     def annotates_memlets():
         return False
 
-    @staticmethod
-    def expressions():
-        return [sdutil.node_path_graph(StateFusion.first_state, StateFusion.second_state)]
+    @classmethod
+    def expressions(cls):
+        return [sdutil.node_path_graph(cls.first_state, cls.second_state)]
 
     @staticmethod
     def find_fused_components(first_cc_input, first_cc_output, second_cc_input, second_cc_output) -> List[CCDesc]:
@@ -117,15 +117,9 @@ class StateFusion(transformation.MultiStateTransformation, transformation.Datafl
                     return True
         return False
 
-    @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
-        # Workaround for supporting old and new conventions
-        if isinstance(candidate[StateFusion.first_state], SDFGState):
-            first_state: SDFGState = candidate[StateFusion.first_state]
-            second_state: SDFGState = candidate[StateFusion.second_state]
-        else:
-            first_state: SDFGState = graph.node(candidate[StateFusion.first_state])
-            second_state: SDFGState = graph.node(candidate[StateFusion.second_state])
+    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
+        first_state: SDFGState = self.first_state
+        second_state: SDFGState = self.second_state
 
         out_edges = graph.out_edges(first_state)
         in_edges = graph.in_edges(first_state)
@@ -421,20 +415,9 @@ class StateFusion(transformation.MultiStateTransformation, transformation.Datafl
 
         return True
 
-    @staticmethod
-    def match_to_str(graph, candidate):
-        first_state = graph.nodes()[candidate[StateFusion.first_state]]
-        second_state = graph.nodes()[candidate[StateFusion.second_state]]
-
-        return " -> ".join(state.label for state in [first_state, second_state])
-
-    def apply(self, sdfg):
-        if isinstance(self.subgraph[StateFusion.first_state], SDFGState):
-            first_state: SDFGState = self.subgraph[StateFusion.first_state]
-            second_state: SDFGState = self.subgraph[StateFusion.second_state]
-        else:
-            first_state: SDFGState = sdfg.node(self.subgraph[StateFusion.first_state])
-            second_state: SDFGState = sdfg.node(self.subgraph[StateFusion.second_state])
+    def apply(self, _, sdfg):
+        first_state: SDFGState = self.first_state
+        second_state: SDFGState = self.second_state
 
         # Remove interstate edge(s)
         edges = sdfg.edges_between(first_state, second_state)

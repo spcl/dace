@@ -17,25 +17,18 @@ class TrivialMapElimination(transformation.SingleStateTransformation):
         Example: Map[i=0  ,j=7] -> nothing
     """
 
-    _map_entry = nodes.MapEntry(nodes.Map("", [], []))
+    map_entry = transformation.PatternNode(nodes.MapEntry)
 
-    @staticmethod
-    def expressions():
-        return [sdutil.node_path_graph(TrivialMapElimination._map_entry)]
+    @classmethod
+    def expressions(cls):
+        return [sdutil.node_path_graph(cls.map_entry)]
 
-    @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
-        map_entry = graph.nodes()[candidate[TrivialMapElimination._map_entry]]
+    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
+        map_entry = self.map_entry
         return any(r[0] == r[1] for r in map_entry.map.range)
 
-    @staticmethod
-    def match_to_str(graph, candidate):
-        map_entry = graph.nodes()[candidate[TrivialMapElimination._map_entry]]
-        return map_entry.map.label + ': ' + str(map_entry.map.params)
-
-    def apply(self, sdfg):
-        graph = sdfg.nodes()[self.state_id]
-        map_entry = graph.nodes()[self.subgraph[TrivialMapElimination._map_entry]]
+    def apply(self, graph, sdfg):
+        map_entry = self.map_entry
         map_exit = graph.exit_node(map_entry)
 
         remaining_ranges = []

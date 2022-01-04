@@ -25,30 +25,21 @@ class MapExpansion(pm.SingleStateTransformation):
 
     map_entry = pm.PatternNode(nodes.MapEntry)
 
-    @staticmethod
-    def expressions():
-        return [sdutil.node_path_graph(MapExpansion.map_entry)]
+    @classmethod
+    def expressions(cls):
+        return [sdutil.node_path_graph(cls.map_entry)]
 
-    @staticmethod
-    def can_be_applied(graph: dace.SDFGState,
-                       candidate: Dict[pm.PatternNode, int],
+    def can_be_applied(self, graph: dace.SDFGState,
                        expr_index: int,
                        sdfg: dace.SDFG,
                        permissive: bool = False):
         # A candidate subgraph matches the map-expansion pattern when it
         # includes an N-dimensional map, with N greater than one.
-        map_entry = graph.node(candidate[MapExpansion.map_entry])
-        return map_entry.map.get_param_num() > 1
+        return self.map_entry.map.get_param_num() > 1
 
-    @staticmethod
-    def match_to_str(graph: dace.SDFGState, candidate: Dict[pm.PatternNode, int]) -> str:
-        map_entry = graph.node(candidate[MapExpansion.map_entry])
-        return map_entry.map.label + ': ' + str(map_entry.map.params)
-
-    def apply(self, sdfg: dace.SDFG):
+    def apply(self, graph: dace.SDFGState, sdfg: dace.SDFG):
         # Extract the map and its entry and exit nodes.
-        graph = sdfg.node(self.state_id)
-        map_entry = self.map_entry(sdfg)
+        map_entry = self.map_entry
         map_exit = graph.exit_node(map_entry)
         current_map = map_entry.map
 

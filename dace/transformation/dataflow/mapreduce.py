@@ -27,28 +27,24 @@ class MapReduceFusion(pm.SingleStateTransformation):
                        desc='If enabled, does not create initialization states '
                        'for reduce nodes with identity')
 
-    _tasklet = nodes.Tasklet('_')
-    _tmap_exit = nodes.MapExit(nodes.Map("", [], []))
-    _in_array = nodes.AccessNode('_')
+    tasklet = pm.PatternNode(nodes.Tasklet)
+    tmap_exit = pm.PatternNode(nodes.MapExit)
+    in_array = pm.PatternNode(nodes.AccessNode)
 
     import dace.libraries.standard as stdlib  # Avoid import loop
-    _reduce = stdlib.Reduce()
+    reduce = pm.PatternNode(stdlib.Reduce)
 
-    _out_array = nodes.AccessNode('_')
+    out_array = pm.PatternNode(nodes.AccessNode)
 
-    @staticmethod
-    def expressions():
-        return [
-            sdutil.node_path_graph(MapReduceFusion._tasklet, MapReduceFusion._tmap_exit, MapReduceFusion._in_array,
-                                   MapReduceFusion._reduce, MapReduceFusion._out_array)
-        ]
+    @classmethod
+    def expressions(cls):
+        return [sdutil.node_path_graph(cls.tasklet, cls.tmap_exit, cls.in_array, cls.reduce, cls.out_array)]
 
-    @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
-        tmap_exit = graph.nodes()[candidate[MapReduceFusion._tmap_exit]]
-        in_array = graph.nodes()[candidate[MapReduceFusion._in_array]]
-        reduce_node = graph.nodes()[candidate[MapReduceFusion._reduce]]
-        tasklet = graph.nodes()[candidate[MapReduceFusion._tasklet]]
+    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
+        tmap_exit = self.tmap_exit
+        in_array = self.in_array
+        reduce_node = self.reduce
+        tasklet = self.tasklet
 
         # Make sure that the array is only accessed by the map and the reduce
         if any([src != tmap_exit for src, _, _, _, memlet in graph.in_edges(in_array)]):
@@ -78,20 +74,14 @@ class MapReduceFusion(pm.SingleStateTransformation):
 
         return True
 
-    @staticmethod
-    def match_to_str(graph, candidate):
-        tasklet = candidate[MapReduceFusion._tasklet]
-        map_exit = candidate[MapReduceFusion._tmap_exit]
-        reduce = candidate[MapReduceFusion._reduce]
+    def match_to_str(self, graph):
+        return ' -> '.join(str(node) for node in [self.tasklet, self.tmap_exit, self.reduce])
 
-        return ' -> '.join(str(node) for node in [tasklet, map_exit, reduce])
-
-    def apply(self, sdfg: SDFG):
-        graph = sdfg.nodes()[self.state_id]
-        tmap_exit = graph.nodes()[self.subgraph[MapReduceFusion._tmap_exit]]
-        in_array = graph.nodes()[self.subgraph[MapReduceFusion._in_array]]
-        reduce_node = graph.nodes()[self.subgraph[MapReduceFusion._reduce]]
-        out_array = graph.nodes()[self.subgraph[MapReduceFusion._out_array]]
+    def apply(self, graph: SDFGState, sdfg: SDFG):
+        tmap_exit = self.tmap_exit
+        in_array = self.in_array
+        reduce_node = self.reduce
+        out_array = self.out_array
 
         # Set nodes to remove according to the expression index
         nodes_to_remove = [in_array]
@@ -162,31 +152,28 @@ class MapWCRFusion(pm.SingleStateTransformation):
         reduction is divided to two maps with a WCR, denoting partial reduction.
     """
 
-    _tasklet = nodes.Tasklet('_')
-    _tmap_exit = nodes.MapExit(nodes.Map("", [], []))
-    _in_array = nodes.AccessNode('_')
-    _rmap_in_entry = nodes.MapEntry(nodes.Map("", [], []))
-    _rmap_in_tasklet = nodes.Tasklet('_')
-    _rmap_in_cr = nodes.MapExit(nodes.Map("", [], []))
-    _rmap_out_entry = nodes.MapEntry(nodes.Map("", [], []))
-    _rmap_out_exit = nodes.MapExit(nodes.Map("", [], []))
-    _out_array = nodes.AccessNode('_')
+    tasklet = pm.PatternNode(nodes.Tasklet)
+    tmap_exit = pm.PatternNode(nodes.MapExit)
+    in_array = pm.PatternNode(nodes.AccessNode)
+    rmap_in_entry = pm.PatternNode(nodes.MapEntry)
+    rmap_in_tasklet = pm.PatternNode(nodes.Tasklet)
+    rmap_in_cr = pm.PatternNode(nodes.MapExit)
+    rmap_out_entry = pm.PatternNode(nodes.MapEntry)
+    rmap_out_exit = pm.PatternNode(nodes.MapExit)
+    out_array = pm.PatternNode(nodes.AccessNode)
 
-    @staticmethod
-    def expressions():
+    @classmethod
+    def expressions(cls):
         return [
             # Map, then partial reduction of axes
-            sdutil.node_path_graph(MapWCRFusion._tasklet, MapWCRFusion._tmap_exit, MapWCRFusion._in_array,
-                                   MapWCRFusion._rmap_out_entry, MapWCRFusion._rmap_in_entry,
-                                   MapWCRFusion._rmap_in_tasklet, MapWCRFusion._rmap_in_cr, MapWCRFusion._rmap_out_exit,
-                                   MapWCRFusion._out_array)
+            sdutil.node_path_graph(cls.tasklet, cls.tmap_exit, cls.in_array, cls.rmap_out_entry, cls.rmap_in_entry,
+                                   cls.rmap_in_tasklet, cls.rmap_in_cr, cls.rmap_out_exit, cls.out_array)
         ]
 
-    @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
-        tmap_exit = graph.nodes()[candidate[MapWCRFusion._tmap_exit]]
-        in_array = graph.nodes()[candidate[MapWCRFusion._in_array]]
-        rmap_entry = graph.nodes()[candidate[MapWCRFusion._rmap_out_entry]]
+    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
+        tmap_exit = self.tmap_exit
+        in_array = self.in_array
+        rmap_entry = self.rmap_out_entry
 
         # Make sure that the array is only accessed by the map and the reduce
         if any([src != tmap_exit for src, _, _, _, memlet in graph.in_edges(in_array)]):
@@ -195,7 +182,7 @@ class MapWCRFusion(pm.SingleStateTransformation):
             return False
 
         # Make sure that there is a reduction in the second map
-        rmap_cr = graph.nodes()[candidate[MapWCRFusion._rmap_in_cr]]
+        rmap_cr = self.rmap_in_cr
         reduce_edge = graph.in_edges(rmap_cr)[0]
         if reduce_edge.data.wcr is None:
             return False
@@ -215,28 +202,20 @@ class MapWCRFusion(pm.SingleStateTransformation):
 
         return True
 
-    @staticmethod
-    def match_to_str(graph, candidate):
-        tasklet = candidate[MapWCRFusion._tasklet]
-        map_exit = candidate[MapWCRFusion._tmap_exit]
-        reduce = candidate[MapWCRFusion._rmap_in_cr]
+    def match_to_str(self, graph):
+        return ' -> '.join(str(node) for node in [self.tasklet, self.tmap_exit, self.rmap_in_cr])
 
-        return ' -> '.join(str(node) for node in [tasklet, map_exit, reduce])
-
-    def apply(self, sdfg):
-        graph = sdfg.node(self.state_id)
-
+    def apply(self, graph: SDFGState, sdfg: SDFG):
         # To apply, collapse the second map and then fuse the two resulting maps
         map_collapse = MapCollapse(
-            self.sdfg_id, self.state_id, {
-                MapCollapse._outer_map_entry: self.subgraph[MapWCRFusion._rmap_out_entry],
-                MapCollapse._inner_map_entry: self.subgraph[MapWCRFusion._rmap_in_entry]
+            sdfg, self.sdfg_id, self.state_id, {
+                MapCollapse.outer_map_entry: graph.node_id(self.rmap_out_entry),
+                MapCollapse.inner_map_entry: graph.node_id(self.rmap_in_entry),
             }, 0)
-        map_entry, _ = map_collapse.apply(sdfg)
+        map_entry, _ = map_collapse.apply(graph, sdfg)
 
-        map_fusion = MapFusion(
-            self.sdfg_id, self.state_id, {
-                MapFusion.first_map_exit: self.subgraph[MapWCRFusion._tmap_exit],
-                MapFusion.second_map_entry: graph.node_id(map_entry)
-            }, 0)
-        map_fusion.apply(sdfg)
+        map_fusion = MapFusion(sdfg, self.sdfg_id, self.state_id, {
+            MapFusion.first_map_exit: graph.node_id(self.tmap_exit),
+            MapFusion.second_map_entry: graph.node_id(map_entry),
+        }, 0)
+        map_fusion.apply(graph, sdfg)

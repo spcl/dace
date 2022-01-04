@@ -1,6 +1,8 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains classes that implement the map-collapse transformation. """
 
+from dace.sdfg.sdfg import SDFG
+from dace.sdfg.state import SDFGState
 from dace.symbolic import symlist
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
@@ -17,21 +19,17 @@ class MapCollapse(transformation.SingleStateTransformation):
         and collapses them to a single M+N dimensional map.
     """
 
-    _outer_map_entry = nodes.MapEntry(nodes.Map("", [], []))
-    _inner_map_entry = nodes.MapEntry(nodes.Map("", [], []))
+    outer_map_entry = transformation.PatternNode(nodes.MapEntry)
+    inner_map_entry = transformation.PatternNode(nodes.MapEntry)
 
-    @staticmethod
-    def expressions():
-        return [sdutil.node_path_graph(
-            MapCollapse._outer_map_entry,
-            MapCollapse._inner_map_entry,
-        )]
+    @classmethod
+    def expressions(cls):
+        return [sdutil.node_path_graph(cls.outer_map_entry, cls.inner_map_entry)]
 
-    @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
+    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
         # Check the edges between the entries of the two maps.
-        outer_map_entry: nodes.MapEntry = graph.nodes()[candidate[MapCollapse._outer_map_entry]]
-        inner_map_entry: nodes.MapEntry = graph.nodes()[candidate[MapCollapse._inner_map_entry]]
+        outer_map_entry: nodes.MapEntry = self.outer_map_entry
+        inner_map_entry: nodes.MapEntry = self.inner_map_entry
 
         # Check that inner map range is independent of outer range
         map_deps = set()
@@ -83,24 +81,22 @@ class MapCollapse(transformation.SingleStateTransformation):
 
         return True
 
-    @staticmethod
-    def match_to_str(graph, candidate):
-        outer_map_entry = graph.nodes()[candidate[MapCollapse._outer_map_entry]]
-        inner_map_entry = graph.nodes()[candidate[MapCollapse._inner_map_entry]]
+    def match_to_str(self, graph):
+        outer_map_entry = self.outer_map_entry
+        inner_map_entry = self.inner_map_entry
 
         return ' -> '.join(entry.map.label + ': ' + str(entry.map.params)
                            for entry in [outer_map_entry, inner_map_entry])
 
-    def apply(self, sdfg) -> Tuple[nodes.MapEntry, nodes.MapExit]:
+    def apply(self, graph: SDFGState, sdfg: SDFG) -> Tuple[nodes.MapEntry, nodes.MapExit]:
         """
         Collapses two maps into one.
         :param sdfg: The SDFG to apply the transformation to.
         :return: A 2-tuple of the new map entry and exit nodes.
         """
         # Extract the parameters and ranges of the inner/outer maps.
-        graph = sdfg.nodes()[self.state_id]
-        outer_map_entry = graph.nodes()[self.subgraph[MapCollapse._outer_map_entry]]
-        inner_map_entry = graph.nodes()[self.subgraph[MapCollapse._inner_map_entry]]
+        outer_map_entry = self.outer_map_entry
+        inner_map_entry = self.inner_map_entry
         inner_map_exit = graph.exit_node(inner_map_entry)
         outer_map_exit = graph.exit_node(outer_map_entry)
 

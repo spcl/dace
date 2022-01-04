@@ -31,15 +31,14 @@ def fpga_update(sdfg, state, depth):
 class FPGATransformState(transformation.MultiStateTransformation):
     """ Implements the FPGATransformState transformation. """
 
-    _state = sd.SDFGState()
+    state = transformation.PatternNode(sd.SDFGState)
 
-    @staticmethod
-    def expressions():
-        return [sdutil.node_path_graph(FPGATransformState._state)]
+    @classmethod
+    def expressions(cls):
+        return [sdutil.node_path_graph(cls.state)]
 
-    @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
-        state = graph.nodes()[candidate[FPGATransformState._state]]
+    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
+        state = self.state
 
         for node, graph in state.all_nodes_recursive():
             # Consume scopes are currently unsupported
@@ -98,14 +97,8 @@ class FPGATransformState(transformation.MultiStateTransformation):
 
         return True
 
-    @staticmethod
-    def match_to_str(graph, candidate):
-        state = graph.nodes()[candidate[FPGATransformState._state]]
-
-        return state.label
-
-    def apply(self, sdfg):
-        state = sdfg.nodes()[self.subgraph[FPGATransformState._state]]
+    def apply(self, _, sdfg):
+        state = self.state
 
         # Find source/sink (data) nodes that are relevant outside this FPGA
         # kernel

@@ -18,25 +18,24 @@ class BufferTiling(transformation.SingleStateTransformation):
         Commonly used to make use of shared memory on GPUs.
     """
 
-    _map1_exit = nodes.MapExit(nodes.Map('', [], []))
-    _array = nodes.AccessNode('')
-    _map2_entry = nodes.MapEntry(nodes.Map('', [], []))
+    map1_exit = transformation.PatternNode(nodes.MapExit)
+    array = transformation.PatternNode(nodes.AccessNode)
+    map2_entry = transformation.PatternNode(nodes.MapEntry)
 
     tile_sizes = ShapeProperty(dtype=tuple, default=(128, 128, 128), desc="Tile size per dimension")
 
     # Returns a list of graphs that represent the pattern
-    @staticmethod
-    def expressions():
+    @classmethod
+    def expressions(cls):
         return [sdutil.node_path_graph(
-            BufferTiling._map1_exit,
-            BufferTiling._array,
-            BufferTiling._map2_entry,
+            cls.map1_exit,
+            cls.array,
+            cls.map2_entry
         )]
 
-    @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
-        map1_exit = graph.nodes()[candidate[BufferTiling._map1_exit]]
-        map2_entry = graph.nodes()[candidate[BufferTiling._map2_entry]]
+    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
+        map1_exit = self.map1_exit
+        map2_entry = self.map2_entry
 
         for buf in graph.all_nodes_between(map1_exit, map2_entry):
             # Check that buffers are AccessNodes.
@@ -71,18 +70,10 @@ class BufferTiling(transformation.SingleStateTransformation):
                 return False
         return True
 
-    @staticmethod
-    def match_to_str(graph, candidate):
-        map1_exit = graph.nodes()[candidate[BufferTiling._map1_exit]]
-        map2_entry = graph.nodes()[candidate[BufferTiling._map2_entry]]
-
-        return " -> ".join(entry.map.label + ": " + str(entry.map.params) for entry in [map1_exit, map2_entry])
-
-    def apply(self, sdfg):
-        graph = sdfg.nodes()[self.state_id]
-        map1_exit = graph.nodes()[self.subgraph[self._map1_exit]]
+    def apply(self, graph, sdfg):
+        map1_exit = self.map1_exit
         map1_entry = graph.entry_node(map1_exit)
-        map2_entry = graph.nodes()[self.subgraph[self._map2_entry]]
+        map2_entry = self.map2_entry
         buffers = graph.all_nodes_between(map1_exit, map2_entry)
         # Situation:
         # -> map1_entry -> ... -> map1_exit -> buffers -> map2_entry -> ...
@@ -121,6 +112,6 @@ class BufferTiling(transformation.SingleStateTransformation):
 
         if any(ts == 1 for ts in self.tile_sizes):
             if any(r[0] == r[1] for r in map1_entry.map.range):
-                TrivialMapElimination.apply_to(sdfg, _map_entry=map1_entry)
+                TrivialMapElimination.apply_to(sdfg, map_entry=map1_entry)
             if any(r[0] == r[1] for r in map2_entry.map.range):
-                TrivialMapElimination.apply_to(sdfg, _map_entry=map2_entry)
+                TrivialMapElimination.apply_to(sdfg, map_entry=map2_entry)

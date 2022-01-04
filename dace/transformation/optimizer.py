@@ -233,6 +233,7 @@ class SDFGOptimizer(Optimizer):
 
             match_id = (str(occurrence) if pattern_name is None else '%s$%d' % (pattern_name, occurrence))
             sdfg = self.sdfg.sdfg_list[pattern_match.sdfg_id]
+            graph = sdfg.node(pattern_match.state_id) if pattern_match >= 0 else sdfg
             print('You selected (%s) pattern %s with parameters %s' %
                   (match_id, pattern_match.print_match(sdfg), str(param_dict)))
 
@@ -240,7 +241,7 @@ class SDFGOptimizer(Optimizer):
             for k, v in param_dict.items():
                 setattr(pattern_match, k, v)
 
-            pattern_match.apply(sdfg)
+            pattern_match.apply(graph, sdfg)
             self.applied_patterns.add(type(pattern_match))
 
             if SAVE_INTERMEDIATE:

@@ -6,6 +6,8 @@ from dace import registry, symbolic
 from dace.properties import make_properties, Property, ShapeProperty
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
+from dace.sdfg.sdfg import SDFG
+from dace.sdfg.state import SDFGState
 from dace.transformation import transformation
 
 
@@ -16,7 +18,6 @@ class MapTiling(transformation.SingleStateTransformation):
         Orthogonal tiling is a type of nested map fission that creates tiles
         in every dimension of the matched Map.
     """
-
     map_entry = transformation.PatternNode(nodes.MapEntry)
 
     # Properties
@@ -36,31 +37,23 @@ class MapTiling(transformation.SingleStateTransformation):
     def annotates_memlets():
         return True
 
-    @staticmethod
-    def expressions():
-        return [sdutil.node_path_graph(MapTiling.map_entry)]
+    @classmethod
+    def expressions(cls):
+        return [sdutil.node_path_graph(cls.map_entry)]
 
-    @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
+    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
         return True
 
-    @staticmethod
-    def match_to_str(graph, candidate):
-        map_entry = graph.nodes()[candidate[MapTiling.map_entry]]
-        return map_entry.map.label + ': ' + str(map_entry.map.params)
-
-    def apply(self, sdfg):
-        graph = sdfg.nodes()[self.state_id]
-
+    def apply(self, graph: SDFGState, sdfg: SDFG):
         tile_strides = self.tile_sizes
         if self.strides is not None and len(self.strides) == len(tile_strides):
             tile_strides = self.strides
 
         # Retrieve map entry and exit nodes.
-        map_entry = graph.nodes()[self.subgraph[MapTiling.map_entry]]
+        map_entry = self.map_entry
         from dace.transformation.dataflow.map_collapse import MapCollapse
         from dace.transformation.dataflow.strip_mining import StripMining
-        stripmine_subgraph = {StripMining._map_entry: self.subgraph[MapTiling.map_entry]}
+        stripmine_subgraph = {StripMining.map_entry: self.subgraph[MapTiling.map_entry]}
         sdfg_id = sdfg.sdfg_id
         last_map_entry = None
         removed_maps = 0
@@ -88,7 +81,7 @@ class MapTiling(transformation.SingleStateTransformation):
             if tile_size == map_entry.map.range.size()[dim_idx]:
                 continue
 
-            stripmine = StripMining(sdfg_id, self.state_id, stripmine_subgraph, self.expr_index)
+            stripmine = StripMining(sdfg, sdfg_id, self.state_id, stripmine_subgraph, self.expr_index)
 
             # Special case: Tile size of 1 should be omitted from inner map
             if tile_size == 1 and tile_stride == 1 and self.tile_trivial == False:
@@ -98,7 +91,7 @@ class MapTiling(transformation.SingleStateTransformation):
                 stripmine.tile_stride = str(tile_stride)
                 stripmine.divides_evenly = True
                 stripmine.tile_offset = str(offset)
-                stripmine.apply(sdfg)
+                stripmine.apply(graph, sdfg)
                 removed_maps += 1
             else:
                 stripmine.dim_idx = dim_idx
@@ -107,7 +100,7 @@ class MapTiling(transformation.SingleStateTransformation):
                 stripmine.tile_stride = str(tile_stride)
                 stripmine.divides_evenly = self.divides_evenly
                 stripmine.tile_offset = str(offset)
-                stripmine.apply(sdfg)
+                stripmine.apply(graph, sdfg)
 
             # apply to the new map the schedule of the original one
             map_entry.schedule = original_schedule
@@ -115,10 +108,10 @@ class MapTiling(transformation.SingleStateTransformation):
             if last_map_entry:
                 new_map_entry = graph.in_edges(map_entry)[0].src
                 mapcollapse_subgraph = {
-                    MapCollapse._outer_map_entry: graph.node_id(last_map_entry),
-                    MapCollapse._inner_map_entry: graph.node_id(new_map_entry)
+                    MapCollapse.outer_map_entry: graph.node_id(last_map_entry),
+                    MapCollapse.inner_map_entry: graph.node_id(new_map_entry)
                 }
-                mapcollapse = MapCollapse(sdfg_id, self.state_id, mapcollapse_subgraph, 0)
-                mapcollapse.apply(sdfg)
+                mapcollapse = MapCollapse(sdfg, sdfg_id, self.state_id, mapcollapse_subgraph, 0)
+                mapcollapse.apply(graph, sdfg)
             last_map_entry = graph.in_edges(map_entry)[0].src
         return last_map_entry

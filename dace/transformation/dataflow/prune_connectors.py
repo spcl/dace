@@ -1,6 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from os import stat
-from typing import Any, AnyStr, Dict, Set, Tuple, Union
+from typing import Any, AnyStr, Dict, Optional, Set, Tuple, Union
 import re
 
 from dace import dtypes, registry, SDFG, SDFGState, symbolic, properties
@@ -23,18 +23,13 @@ class PruneConnectors(pm.SingleStateTransformation, pm.DataflowCoarseningTransfo
                                                    default=False,
                                                    desc='If True, remove unused containers from parent SDFG.')
 
-    @staticmethod
-    def expressions():
-        return [utils.node_path_graph(PruneConnectors.nsdfg)]
+    @classmethod
+    def expressions(cls):
+        return [utils.node_path_graph(cls.nsdfg)]
 
-    @staticmethod
-    def can_be_applied(graph: Union[SDFG, SDFGState],
-                       candidate: Dict[pm.PatternNode, int],
-                       expr_index: int,
-                       sdfg: SDFG,
-                       permissive: bool = False) -> bool:
+    def can_be_applied(self, graph: SDFGState, expr_index: int, sdfg: SDFG, permissive: bool = False) -> bool:
 
-        nsdfg = graph.node(candidate[PruneConnectors.nsdfg])
+        nsdfg = self.nsdfg
 
         read_set, write_set = nsdfg.sdfg.read_and_write_sets()
         prune_in = nsdfg.in_connectors.keys() - read_set
@@ -65,10 +60,8 @@ class PruneConnectors(pm.SingleStateTransformation, pm.DataflowCoarseningTransfo
 
         return False
 
-    def apply(self, sdfg: SDFG) -> Union[Any, None]:
-
-        state = sdfg.node(self.state_id)
-        nsdfg = self.nsdfg(sdfg)
+    def apply(self, state: SDFGState, sdfg: SDFG):
+        nsdfg = self.nsdfg
 
         read_set, write_set = nsdfg.sdfg.read_and_write_sets()
         prune_in = nsdfg.in_connectors.keys() - read_set
@@ -131,9 +124,9 @@ class PruneSymbols(pm.SingleStateTransformation, pm.DataflowCoarseningTransforma
 
     nsdfg = pm.PatternNode(nodes.NestedSDFG)
 
-    @staticmethod
-    def expressions():
-        return [utils.node_path_graph(PruneSymbols.nsdfg)]
+    @classmethod
+    def expressions(cls):
+        return [utils.node_path_graph(cls.nsdfg)]
 
     @staticmethod
     def _candidates(nsdfg: nodes.NestedSDFG) -> Set[str]:
@@ -179,22 +172,17 @@ class PruneSymbols(pm.SingleStateTransformation, pm.DataflowCoarseningTransforma
 
         return candidates
 
-    @staticmethod
-    def can_be_applied(graph: Union[SDFG, SDFGState],
-                       candidate: Dict[pm.PatternNode, int],
-                       expr_index: int,
-                       sdfg: SDFG,
-                       permissive: bool = False) -> bool:
+    def can_be_applied(self, graph: SDFGState, expr_index: int, sdfg: SDFG, permissive: bool = False) -> bool:
 
-        nsdfg: nodes.NestedSDFG = graph.node(candidate[PruneSymbols.nsdfg])
+        nsdfg: nodes.NestedSDFG = self.nsdfg
 
         if len(PruneSymbols._candidates(nsdfg)) > 0:
             return True
 
         return False
 
-    def apply(self, sdfg: SDFG) -> Union[Any, None]:
-        nsdfg = self.nsdfg(sdfg)
+    def apply(self, graph: SDFGState, sdfg: SDFG):
+        nsdfg = self.nsdfg
 
         candidates = PruneSymbols._candidates(nsdfg)
         for candidate in candidates:

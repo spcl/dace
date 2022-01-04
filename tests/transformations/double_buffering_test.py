@@ -38,7 +38,7 @@ def test_double_buffering():
     sdfg.coarsen_dataflow()
     for i in range(2):
         for match in reversed(list(match_patterns(sdfg, InLocalStorage, states=[sdfg.node(0)]))):
-            match.apply(sdfg)
+            match.apply(sdfg.node(0), sdfg)
             break
         else:
             raise ValueError('Local storage transformation not applied')

@@ -2,6 +2,7 @@
 """ Tests the scalar to symbol promotion functionality. """
 import dace
 from dace.sdfg.analysis import scalar_to_symbol
+from dace.sdfg.state import SDFGState
 from dace.transformation import transformation as xf, interstate as isxf
 from dace.transformation.interstate import loop_detection as ld
 from dace import registry
@@ -232,17 +233,16 @@ def test_promote_array_assignment_tasklet():
 
 class LoopTester(ld.DetectLoop, xf.MultiStateTransformation):
     """ Tester method that sets loop index on a guard state. """
-    @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, permissive):
-        if not ld.DetectLoop.can_be_applied(graph, candidate, expr_index, sdfg, permissive):
+    def can_be_applied(self, graph, expr_index, sdfg, permissive):
+        if super().can_be_applied(graph, expr_index, sdfg, permissive):
             return False
-        guard = graph.node(candidate[ld.DetectLoop._loop_guard])
+        guard = self.loop_guard
         if hasattr(guard, '_LOOPINDEX'):
             return False
         return True
 
-    def apply(self, sdfg: dace.SDFG):
-        guard = sdfg.node(self.subgraph[ld.DetectLoop._loop_guard])
+    def apply(self, graph: dace.SDFGState, sdfg: dace.SDFG):
+        guard = self.loop_guard
         edge = sdfg.in_edges(guard)[0]
         loopindex = next(iter(edge.data.assignments.keys()))
         guard._LOOPINDEX = loopindex

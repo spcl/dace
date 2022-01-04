@@ -23,17 +23,16 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
     _EXPR_MAP = {'-': ('+', '-({expr})'), '/': ('*', '((decltype({expr}))1)/({expr})')}
     _PYOP_MAP = {ast.Add: '+', ast.Sub: '-', ast.Mult: '*', ast.BitXor: '^', ast.Mod: '%', ast.Div: '/'}
 
-    @staticmethod
-    def expressions():
+    @classmethod
+    def expressions(cls):
         return [
-            sdutil.node_path_graph(AugAssignToWCR.input, AugAssignToWCR.tasklet, AugAssignToWCR.output),
+            sdutil.node_path_graph(cls.input, cls.tasklet, cls.output),
         ]
 
-    @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
-        inarr = graph.node(candidate[AugAssignToWCR.input])
-        tasklet: nodes.Tasklet = graph.node(candidate[AugAssignToWCR.tasklet])
-        outarr = graph.node(candidate[AugAssignToWCR.output])
+    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
+        inarr = self.input
+        tasklet = self.tasklet
+        outarr = self.output
         if inarr.data != outarr.data:
             return False
 
@@ -55,8 +54,8 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
 
             outedge = graph.edges_between(tasklet, outarr)[0]
         else:  # Free map
-            me: nodes.MapEntry = graph.node(candidate[AugAssignToWCR.map_entry])
-            mx = graph.node(candidate[AugAssignToWCR.map_exit])
+            me = self.map_entry
+            mx = self.map_exit
 
             # Only free maps supported for now
             if graph.entry_node(me) is not None:
@@ -129,11 +128,10 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
 
         return False
 
-    def apply(self, sdfg: SDFG):
-        input: nodes.AccessNode = self.input(sdfg)
-        tasklet: nodes.Tasklet = self.tasklet(sdfg)
-        output: nodes.AccessNode = self.output(sdfg)
-        state: SDFGState = sdfg.node(self.state_id)
+    def apply(self, state: SDFGState, sdfg: SDFG):
+        input: nodes.AccessNode = self.input
+        tasklet: nodes.Tasklet = self.tasklet
+        output: nodes.AccessNode = self.output
 
         # If state fission is necessary to keep semantics, do it first
         if (self.expr_index == 0 and state.in_degree(input) > 0 and state.out_degree(output) == 0):

@@ -192,8 +192,8 @@ class PatternTransformation(TransformationBase):
                  to pass analysis data out, or nothing.
         """
         if append:
-            self.sdfg.append_transformation(self)
-        tsdfg: SDFG = self.sdfg.sdfg_list[self.sdfg_id]
+            self._sdfg.append_transformation(self)
+        tsdfg: SDFG = self._sdfg.sdfg_list[self.sdfg_id]
         tgraph = tsdfg.node(self.state_id) if self.state_id >= 0 else tsdfg
         retval = self.apply(tgraph, tsdfg)
         if annotate and not self.annotates_memlets():
@@ -328,7 +328,7 @@ class PatternTransformation(TransformationBase):
                 raise ValueError('Transformation cannot be applied on the ' 'given subgraph ("can_be_applied" failed)')
 
         # Apply to SDFG
-        return instance.apply_pattern(sdfg, annotate=annotate, append=save)
+        return instance.apply_pattern(annotate=annotate, append=save)
 
     def __str__(self) -> str:
         return type(self).__name__
@@ -361,7 +361,7 @@ class PatternTransformation(TransformationBase):
         subgraph = {expr.node(int(k)): int(v) for k, v in json_obj['_subgraph'].items()}
 
         # Reconstruct transformation
-        ret = xform(json_obj['sdfg_id'], json_obj['state_id'], subgraph, json_obj['expr_index'])
+        ret = xform(None, json_obj['sdfg_id'], json_obj['state_id'], subgraph, json_obj['expr_index'])
         context = context or {}
         context['transformation'] = ret
         serialize.set_properties_from_json(ret, json_obj, context=context, ignore_properties={'transformation', 'type'})
@@ -569,9 +569,8 @@ class ExpandTransformation(PatternTransformation):
     def postprocessing(sdfg, state, expansion):
         pass
 
-    def apply(self, sdfg, *args, **kwargs):
-        state = sdfg.nodes()[self.state_id]
-        node = state.nodes()[self.subgraph[type(self)._match_node]]
+    def apply(self, state, sdfg, *args, **kwargs):
+        node = state.node(self.subgraph[type(self)._match_node])
         expansion = type(self).expansion(node, state, sdfg, *args, **kwargs)
         if isinstance(expansion, SDFG):
             expansion = state.add_nested_sdfg(expansion,
