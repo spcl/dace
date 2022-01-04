@@ -58,9 +58,12 @@ class PatternTransformation(TransformationBase):
     expr_index = Property(dtype=int, category="(Debug)")
 
     @classmethod
-    def subclasses_recursive(cls) -> Set[Type['PatternTransformation']]:
-        """ Returns all subclasses of this class, including subclasses of subclasses. """
-        if cls is PatternTransformation:
+    def subclasses_recursive(cls, all_subclasses: bool = False) -> Set[Type['PatternTransformation']]:
+        """
+        Returns all subclasses of this class, including subclasses of subclasses. 
+        :param all_subclasses: Include all subclasses (e.g., including ``ExpandTransformation``).
+        """
+        if not all_subclasses and cls is PatternTransformation:
             subclasses = set(SingleStateTransformation.__subclasses__()) | set(
                 MultiStateTransformation.__subclasses__())
         else:
@@ -356,11 +359,11 @@ class PatternTransformation(TransformationBase):
 
     def to_json(self, parent=None) -> Dict[str, Any]:
         props = serialize.all_properties_to_json(self)
-        return {'type': 'Transformation', 'transformation': type(self).__name__, **props}
+        return {'type': 'PatternTransformation', 'transformation': type(self).__name__, **props}
 
     @staticmethod
     def from_json(json_obj: Dict[str, Any], context: Dict[str, Any] = None) -> 'PatternTransformation':
-        xform = next(ext for ext in PatternTransformation.subclasses_recursive()
+        xform = next(ext for ext in PatternTransformation.subclasses_recursive(all_subclasses=True)
                      if ext.__name__ == json_obj['transformation'])
 
         # Recreate subgraph
