@@ -571,13 +571,11 @@ def test_vec_two_maps_non_strided():
     return vec_two_maps(False)
 
 
-# @fpga_test()
 @xilinx_test()
 def test_vec_two_maps_nested_strided():
     return vec_two_maps_nested(True)
 
 
-# @fpga_test()
 @xilinx_test()
 def test_vec_two_maps_nested_non_strided():
     return vec_two_maps_nested(False)
@@ -716,37 +714,38 @@ def test_vec_bicg():
 
     return sdfg
 
+
 if __name__ == "__main__":
-    # test_vec_add_1_stride(None)
-    # test_vec_add_1_non_stride(None)
-    # test_vec_add_1_stride_sym(None)
-    # test_vec_add_1_non_stride_sym(None)
+    test_vec_add_1_stride(None)
+    test_vec_add_1_non_stride(None)
+    test_vec_add_1_stride_sym(None)
+    test_vec_add_1_non_stride_sym(None)
 
-    # test_vec_two_maps_strided(None)
-    # test_vec_two_maps_non_strided(None)
-    # test_vec_two_maps_illegal()
+    test_vec_two_maps_strided(None)
+    test_vec_two_maps_non_strided(None)
+    test_vec_two_maps_illegal()
 
-    # test_vec_two_maps_nested_strided(None)
-    # test_vec_two_maps_nested_non_strided(None)
-    # test_vec_two_maps_nested_illegal()
+    test_vec_two_maps_nested_strided(None)
+    test_vec_two_maps_nested_non_strided(None)
+    test_vec_two_maps_nested_illegal()
 
-    # test_vec_matadd_stride(None)
-    # test_vec_matadd_non_stride(None)
+    test_vec_matadd_stride(None)
+    test_vec_matadd_non_stride(None)
 
-    # test_vec_matadd_stride_sym(None)
-    # test_vec_matadd_non_stride_sym(None)
+    test_vec_matadd_stride_sym(None)
+    test_vec_matadd_non_stride_sym(None)
 
-    # test_vec_sum_vectorize_first_strided(None)
-    # test_vec_sum_vectorize_first_non_strided(None)
-    # test_vec_sum_fpga_transform_first_strided(None)
-    # test_vec_sum_fpga_transform_first_non_strided(None)
+    test_vec_sum_vectorize_first_strided(None)
+    test_vec_sum_vectorize_first_non_strided(None)
+    test_vec_sum_fpga_transform_first_strided(None)
+    test_vec_sum_fpga_transform_first_non_strided(None)
 
-    # test_vec_tensor_add_stride(None)
-    # test_vec_tensor_add_non_stride(None)
+    test_vec_tensor_add_stride(None)
+    test_vec_tensor_add_non_stride(None)
 
-    # test_vec_matadd_multi_non_stride(None)
-    # test_vec_matadd_multi_stride(None)
+    test_vec_matadd_multi_non_stride(None)
+    test_vec_matadd_multi_stride(None)
 
-    # test_vec_not_applicable()
+    test_vec_not_applicable()
 
     test_vec_bicg(None)
