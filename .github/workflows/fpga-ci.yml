@@ -26,7 +26,9 @@ jobs:
     - name: Run FPGA Tests
       run: |
         export COVERAGE_RCFILE=`pwd`/.coveragerc
-        pytest -n auto --cov-report=xml --cov=dace --tb=short -m "fpga"
+        # Due to an internal bug in the Xilinx tools, where the current datetime is passed as an integer
+        # nad overflowed at the year 2022, run the FPGA tests pretending like it's January 1st 2021.
+        faketime -f "@2021-01-01 00:00:00" pytest -n auto --cov-report=xml --cov=dace --tb=short -m "fpga"
         coverage report
         coverage xml
         codecov
