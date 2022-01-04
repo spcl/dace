@@ -716,41 +716,6 @@ def test_vec_bicg():
 
     return sdfg
 
-
-@xilinx_test()
-def test_supported_wcr_sum():
-    @dace.program
-    def program(A: dace.float32[N], B: dace.float32[1]):
-        for i in dace.map[0:N]:
-            with dace.tasklet:
-                a << A[i]
-                b >> B(-1, lambda x, y: x + y)[0]
-                b = a
-
-    sdfg = program.to_sdfg(strict=True)
-    sdfg.apply_transformations([FPGATransformSDFG], print_report=True)
-
-    sdfg.apply_transformations_repeated([InlineSDFG], print_report=True)
-
-    try:
-        sdfg.apply_transformations(Vectorization,
-                                   options={
-                                       'vector_len': 2,
-                                       'target': dace.ScheduleType.FPGA_Device,
-                                       'strided_map': False
-                                   },
-                                   print_report=True)
-    except:
-        sdfg.save("a.sdfg")
-
-    N.set(4)
-    A = np.random.rand(N.get()).astype(np.float32)
-    B = np.zeros(1).astype(np.float32)
-    sdfg(A=A, B=B, N=N.get())
-    assert np.allclose(np.sum(A), B)
-    return sdfg
-
-
 if __name__ == "__main__":
     # test_vec_add_1_stride(None)
     # test_vec_add_1_non_stride(None)
