@@ -17,13 +17,14 @@ Some transformations are included in the SDFG Dataflow Coarsening pass. In order
 of the dataflow coarsening pass, it should also extend the ``DataflowCoarseningTransformation`` mixin.
 """
 
+import abc
 import copy
 from dace import dtypes, serialize
 from dace.dtypes import ScheduleType
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg import nodes as nd, graph as gr, utils as sdutil, propagation, infer_types, state as st
 from dace.properties import make_properties, Property, DictProperty, SetProperty
-from typing import Any, Dict, List, Optional, Set, Type, Union
+from typing import Any, Dict, Generic, List, Optional, Set, Type, TypeVar, Union
 import pydoc
 
 
@@ -80,7 +81,8 @@ class PatternTransformation(TransformationBase):
         """
         return False
 
-    def expressions(self) -> List[gr.SubgraphView]:
+    @classmethod
+    def expressions(cls) -> List[gr.SubgraphView]:
         """ Returns a list of Graph objects that will be matched in the
             subgraph isomorphism phase. Used as a pre-pass before calling
             `can_be_applied`.
@@ -90,7 +92,6 @@ class PatternTransformation(TransformationBase):
 
     def can_be_applied(self,
                        graph: Union[SDFG, SDFGState],
-                       candidate: Dict['PatternNode', int],
                        expr_index: int,
                        sdfg: SDFG,
                        permissive: bool = False) -> bool:
@@ -98,9 +99,6 @@ class PatternTransformation(TransformationBase):
             matched subgraph.
             :param graph: SDFGState object if this transformation is
                           single-state, or SDFG object otherwise.
-            :param candidate: A mapping between node IDs returned from
-                              `PatternTransformation.expressions` and the nodes in
-                              `graph`.
             :param expr_index: The list index from `PatternTransformation.expressions`
                                that was matched.
             :param sdfg: If `graph` is an SDFGState, its parent SDFG. Otherwise
@@ -110,7 +108,7 @@ class PatternTransformation(TransformationBase):
         """
         raise NotImplementedError
 
-    def apply(self, sdfg: SDFG) -> Union[Any, None]:
+    def apply(self, graph: Union[SDFG, SDFGState], sdfg: SDFG) -> Union[Any, None]:
         """
         Applies this transformation instance on the matched pattern graph.
         :param sdfg: The SDFG to apply the transformation to.
@@ -119,14 +117,18 @@ class PatternTransformation(TransformationBase):
         """
         raise NotImplementedError
 
-    def match_to_str(self, graph: Union[SDFG, SDFGState], candidate: Dict['PatternNode', int]) -> str:
+    def match_to_str(self, graph: Union[SDFG, SDFGState]) -> str:
         """ Returns a string representation of the pattern match on the
             candidate subgraph. Used when identifying matches in the console
             UI.
         """
-        return str(list(candidate.values()))
+        candidate = []
+        for cname in self._get_pattern_nodes().keys():
+            candidate.append(getattr(self, cname))
+        return str(candidate)
 
     def __init__(self,
+                 sdfg: SDFG,
                  sdfg_id: int,
                  state_id: int,
                  subgraph: Dict['PatternNode', int],
@@ -153,6 +155,7 @@ class PatternTransformation(TransformationBase):
                               PatternNode : int.
         """
 
+        self._sdfg = sdfg
         self.sdfg_id = sdfg_id
         self.state_id = state_id
         if not override:
@@ -167,20 +170,6 @@ class PatternTransformation(TransformationBase):
         self._subgraph_user = copy.copy(subgraph)
         self.expr_index = expr_index
 
-        # Ease-of-use API: Set new pattern-nodes with information about this
-        # instance.
-        for pname, pval in self._get_pattern_nodes().items():
-            # Create new pattern node from existing field
-            new_pnode = PatternNode(pval.node if isinstance(pval, PatternNode) else type(pval))
-            new_pnode.match_instance = self
-
-            # Append existing values in subgraph dictionary
-            if pval in self._subgraph_user:
-                self._subgraph_user[new_pnode] = self._subgraph_user[pval]
-
-            # Override static field with the new node in this instance only
-            setattr(self, pname, new_pnode)
-
         # Set properties
         if options is not None:
             for optname, optval in options.items():
@@ -190,7 +179,7 @@ class PatternTransformation(TransformationBase):
     def subgraph(self):
         return self._subgraph_user
 
-    def apply_pattern(self, sdfg: SDFG, append: bool = True, annotate: bool = True) -> Union[Any, None]:
+    def apply_pattern(self, append: bool = True, annotate: bool = True) -> Union[Any, None]:
         """
         Applies this transformation on the given SDFG, using the transformation
         instance to find the right SDFG object (based on SDFG ID), and applying
@@ -203,9 +192,10 @@ class PatternTransformation(TransformationBase):
                  to pass analysis data out, or nothing.
         """
         if append:
-            sdfg.append_transformation(self)
-        tsdfg: SDFG = sdfg.sdfg_list[self.sdfg_id]
-        retval = self.apply(tsdfg)
+            self.sdfg.append_transformation(self)
+        tsdfg: SDFG = self.sdfg.sdfg_list[self.sdfg_id]
+        tgraph = tsdfg.node(self.state_id) if self.state_id >= 0 else tsdfg
+        retval = self.apply(tgraph, tsdfg)
         if annotate and not self.annotates_memlets():
             propagation.propagate_memlets_sdfg(tsdfg)
         return retval
@@ -325,7 +315,7 @@ class PatternTransformation(TransformationBase):
 
         # Construct subgraph and instantiate transformation
         subgraph = {required_node_names[k]: graph.node_id(where[k]) for k in required}
-        instance = cls(sdfg.sdfg_id, state_id, subgraph, expr_index)
+        instance = cls(sdfg, sdfg.sdfg_id, state_id, subgraph, expr_index)
 
         # Construct transformation parameters
         for optname, optval in options.items():
@@ -334,7 +324,7 @@ class PatternTransformation(TransformationBase):
             setattr(instance, optname, optval)
 
         if verify:
-            if not instance.can_be_applied(graph, subgraph, expr_index, sdfg, permissive=permissive):
+            if not instance.can_be_applied(graph, expr_index, sdfg, permissive=permissive):
                 raise ValueError('Transformation cannot be applied on the ' 'given subgraph ("can_be_applied" failed)')
 
         # Apply to SDFG
@@ -379,11 +369,11 @@ class PatternTransformation(TransformationBase):
 
 
 @make_properties
-class SingleStateTransformation(PatternTransformation):
+class SingleStateTransformation(PatternTransformation, abc.ABC):
     """
     Base class for pattern-matching transformations that find matches within a single SDFG state.
-    New transformations that extend this class must contain static ``PatternNode`` fields that represent the nodes
-    in the pattern graph, and use them to implement at least three methods:
+    New transformations that extend this class must contain static ``PatternNode`` fields that represent the
+    nodes in the pattern graph, and use them to implement at least three methods:
         * ``expressions``: A method that returns a list of graph
                            patterns (SDFGState objects) that match this
                            transformation.
@@ -393,6 +383,17 @@ class SingleStateTransformation(PatternTransformation):
         * ``apply``: A method that applies the transformation
                      on the given SDFG.
 
+    For example:
+    ```
+    class MyTransformation(SingleStateTransformation):
+        node_a = PatternNode(nodes.AccessNode)
+        node_b = PatternNode(nodes.MapEntry)
+
+        @classmethod
+        def expressions(cls):
+            return [node_path_graph(cls.node_a, cls.node_b)]
+    ```
+
     For more information and optimization opportunities, see the respective
     methods' documentation.
 
@@ -401,19 +402,17 @@ class SingleStateTransformation(PatternTransformation):
            transformation as part of the dataflow coarsening pass, it should also extend the 
            ``DataflowCoarseningTransformation`` mixin.
     """
-    def expressions(self) -> List[st.StateSubgraphView]:
+    @classmethod
+    @abc.abstractmethod
+    def expressions(cls) -> List[st.StateSubgraphView]:
         """ Returns a list of SDFG state subgraphs that will be matched in the
             subgraph isomorphism phase. Used as a pre-pass before calling
             ``can_be_applied``.
         """
-        raise NotImplementedError
+        pass
 
-    def can_be_applied(self,
-                       graph: SDFGState,
-                       candidate: Dict['PatternNode', int],
-                       expr_index: int,
-                       sdfg: SDFG,
-                       permissive: bool = False) -> bool:
+    @abc.abstractmethod
+    def can_be_applied(self, graph: SDFGState, expr_index: int, sdfg: SDFG, permissive: bool = False) -> bool:
         """ Returns True if this transformation can be applied on the candidate matched subgraph.
             :param graph: SDFGState object in which the match was found.
             :param candidate: A mapping between node IDs returned from
@@ -425,15 +424,15 @@ class SingleStateTransformation(PatternTransformation):
             :param permissive: Whether transformation should run in permissive mode.
             :return: True if the transformation can be applied.
         """
-        raise NotImplementedError
+        pass
 
 
 @make_properties
-class MultiStateTransformation(PatternTransformation):
+class MultiStateTransformation(PatternTransformation, abc.ABC):
     """
     Base class for pattern-matching transformations that find matches within an SDFG state machine.
-    New transformations that extend this class must contain static ``PatternNode`` fields that represent the nodes
-    in the pattern graph, and use them to implement at least three methods:
+    New transformations that extend this class must contain static ``PatternNode``-annotated fields that represent the
+    nodes in the pattern graph, and use them to implement at least three methods:
         * ``expressions``: A method that returns a list of graph
                            patterns (SDFG objects) that match this
                            transformation.
@@ -443,6 +442,17 @@ class MultiStateTransformation(PatternTransformation):
         * ``apply``: A method that applies the transformation
                      on the given SDFG.
 
+    For example:
+    ```
+    class MyTransformation(MultiStateTransformation):
+        state_a = PatternNode(SDFGState)
+        state_b = PatternNode(SDFGState)
+
+        @classmethod
+        def expressions(cls):
+            return [node_path_graph(cls.state_a, cls.state_b)]
+    ```
+
     For more information and optimization opportunities, see the respective
     methods' documentation.
 
@@ -451,19 +461,17 @@ class MultiStateTransformation(PatternTransformation):
            transformation as part of the dataflow coarsening pass, it should also extend the 
            ``DataflowCoarseningTransformation`` mixin.
     """
-    def expressions(self) -> List[gr.SubgraphView]:
+    @classmethod
+    @abc.abstractmethod
+    def expressions(cls) -> List[gr.SubgraphView]:
         """ Returns a list of SDFG subgraphs that will be matched in the
             subgraph isomorphism phase. Used as a pre-pass before calling
             ``can_be_applied``.
         """
-        raise NotImplementedError
+        pass
 
-    def can_be_applied(self,
-                       graph: SDFG,
-                       candidate: Dict['PatternNode', int],
-                       expr_index: int,
-                       sdfg: SDFG,
-                       permissive: bool = False) -> bool:
+    @abc.abstractmethod
+    def can_be_applied(self, graph: SDFG, expr_index: int, sdfg: SDFG, permissive: bool = False) -> bool:
         """ Returns True if this transformation can be applied on the candidate matched subgraph.
             :param graph: SDFG object in which the match was found.
             :param candidate: A mapping between node IDs returned from
@@ -475,7 +483,7 @@ class MultiStateTransformation(PatternTransformation):
             :param permissive: Whether transformation should run in permissive mode.
             :return: True if the transformation can be applied.
         """
-        raise NotImplementedError
+        pass
 
 
 class DataflowCoarseningTransformation:
@@ -487,7 +495,10 @@ class DataflowCoarseningTransformation:
     pass
 
 
-class PatternNode(object):
+T = TypeVar("T")
+
+
+class PatternNode(Generic[T]):
     """
     Static field wrapper of a node or an SDFG state that designates it as part
     of a subgraph pattern. These objects are used in subclasses of
@@ -504,36 +515,29 @@ class PatternNode(object):
     ``expressions``, ``can_be_applied``) to represent the nodes, and in the instance
     methods to point to the nodes in the parent SDFG.
     """
-    def __init__(self, nodeclass: Type[Union[nd.Node, SDFGState]]) -> None:
+    def __init__(self, nodeclass: Type[T]) -> None:
         """
         Initializes a pattern-matching node.
         :param nodeclass: The class of the node to match (can either be a state
                           or a node type in a state).
         """
         self.node = nodeclass
-        self.match_instance: Optional[PatternTransformation] = None
 
-    def __call__(self, sdfg: SDFG) -> Union[nd.Node, SDFGState]:
-        """
-        Returns the matched node corresponding to this pattern node in the
-        given SDFG. Requires the match (PatternTransformation class) instance to
-        be set.
-        :param sdfg: The SDFG on which the transformation was applied.
-        :return: The SDFG state or node that corresponds to this pattern node
-                 in the given SDFG.
-        :raise ValueError: If the transformation match instance is not set.
-        """
-        if self.match_instance is None:
-            raise ValueError('Cannot query matched node. Transformation ' 'instance not initialized')
-        node_id: int = self.match_instance.subgraph[self]
-        state_id: int = self.match_instance.state_id
+    def __get__(self, instance: Optional[PatternTransformation], owner) -> T:
+        if instance is None:
+            # Static methods (e.g., expressions()) get the pattern node itself
+            return self
+
+        # If an instance is used, we return the matched node
+        node_id: int = instance.subgraph[self]
+        state_id: int = instance.state_id
 
         # Inter-state transformation
         if state_id == -1:
-            return sdfg.node(node_id)
+            return instance._sdfg.node(node_id)
 
         # Single-state transformation
-        return sdfg.node(state_id).node(node_id)
+        return instance._sdfg.node(state_id).node(node_id)
 
 
 @make_properties
@@ -550,19 +554,12 @@ class ExpandTransformation(PatternTransformation):
     def expressions(clc):
         return [sdutil.node_path_graph(clc._match_node)]
 
-    @staticmethod
-    def can_be_applied(graph: gr.OrderedMultiDiConnectorGraph,
-                       candidate: Dict[nd.Node, int],
-                       expr_index: int,
-                       sdfg,
-                       permissive: bool = False):
+    def can_be_applied(self, graph: gr.OrderedMultiDiConnectorGraph, expr_index: int, sdfg, permissive: bool = False):
         # All we need is the correct node
         return True
 
-    @classmethod
-    def match_to_str(clc, graph: gr.OrderedMultiDiConnectorGraph, candidate: Dict[nd.Node, int]):
-        node = graph.nodes()[candidate[clc._match_node]]
-        return str(node)
+    def match_to_str(self, graph: gr.OrderedMultiDiConnectorGraph):
+        return str(self._match_node)
 
     @staticmethod
     def expansion(node):
