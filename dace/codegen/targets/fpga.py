@@ -724,9 +724,16 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
             for n in subgraph.source_nodes():
                 # Check if the node is connected to an RTL tasklet, in which
                 # case it should be an external stream
-                if rtl_subgraph:
+                external = rtl_subgraph
+                is_output = True
+                if not external and self._num_kernels > 1:
+                    if is_external_stream(n, subgraph):
+                        external = True
+                        is_output = False
+
+                if external:
                     external_streams |= {
-                        (True, e.data.data, subsdfg.arrays[e.data.data], None)
+                        (is_output, e.data.data, subsdfg.arrays[e.data.data], None)
                         for e in state.out_edges(n)
                         if isinstance(subsdfg.arrays[e.data.data], dt.Stream)
                     }
@@ -735,9 +742,16 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
             for n in subgraph.sink_nodes():
                 # Check if the node is connected to an RTL tasklet, in which
                 # case it should be an external stream
-                if rtl_subgraph:
+                external = rtl_subgraph
+                is_output = False
+                if not external and self._num_kernels > 1:
+                    if is_external_stream(n, subgraph):
+                        external = True
+                        is_output = True
+
+                if external:
                     external_streams |= {
-                        (False, e.data.data, subsdfg.arrays[e.data.data], None)
+                        (is_output, e.data.data, subsdfg.arrays[e.data.data], None)
                         for e in state.in_edges(n)
                         if isinstance(subsdfg.arrays[e.data.data], dt.Stream)
                     }
