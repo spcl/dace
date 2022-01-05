@@ -367,8 +367,6 @@ def test_numpynumber_condition():
     assert np.allclose(a, 0)
 
 
-# Skipped until constant propagation is in place
-@pytest.mark.skip
 def test_constant_propagation():
     @dace.program
     def conditional_val(A: dace.float64[20], val: dace.constant):
@@ -412,4 +410,4 @@ if __name__ == '__main__':
     test_boolglobal()
     test_intglobal()
     test_numpynumber_condition()
-    # test_constant_propagation()
+    test_constant_propagation()

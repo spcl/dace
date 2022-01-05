@@ -6,10 +6,11 @@ import networkx as nx
 from typing import Dict, List, Set
 
 from dace import data as dt, dtypes, registry, sdfg, symbolic
+from dace.properties import CodeBlock
 from dace.sdfg import nodes, SDFG, SDFGState, InterstateEdge
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation
-from dace.config import Config
+from dace.sdfg.analysis import cfg
 
 
 @registry.autoregister_params(coarsening=True)
@@ -122,12 +123,14 @@ class StartStateElimination(transformation.Transformation):
         sdfg.remove_node(state)
 
 
-def _assignments_to_consider(sdfg, edge):
+def _assignments_to_consider(sdfg, edge, is_constant=False):
     assignments_to_consider = {}
     for var, assign in edge.data.assignments.items():
         as_symbolic = symbolic.pystr_to_symbolic(assign)
         if isinstance(as_symbolic, bool):
             as_symbolic = symbolic.pystr_to_symbolic(as_symbolic)
+        if is_constant and as_symbolic.free_symbols:
+            continue
         # Assignments cannot access a data container
         if not symbolic.contains_sympy_functions(as_symbolic):  # via subscript
             # Assignments cannot use scalar values
@@ -229,6 +232,99 @@ class StateAssignElimination(transformation.Transformation):
         def _str_repl(s, d):
             for k, v in d.items():
                 s.replace(str(k), str(v))
+
+        if repl_dict:
+            symbolic.safe_replace(repl_dict, lambda m: _str_repl(sdfg, m))
+
+
+@registry.autoregister_params(coarsening=True)
+class ConstantPropagation(transformation.Transformation):
+    """
+    Removes constant assignments in interstate edges and replaces them in successor states.
+    """
+
+    _end_state = sdfg.SDFGState()
+
+    @staticmethod
+    def expressions():
+        return [sdutil.node_path_graph(ConstantPropagation._end_state)]
+
+    @staticmethod
+    def can_be_applied(graph, candidate, expr_index, sdfg: SDFG, permissive=False):
+        state = graph.nodes()[candidate[ConstantPropagation._end_state]]
+
+        out_edges = graph.out_edges(state)
+        in_edges = graph.in_edges(state)
+
+        # We only match states with one source and at least one assignment
+        if len(in_edges) != 1:
+            return False
+        edge = in_edges[0]
+        assignments_to_consider = _assignments_to_consider(sdfg, edge, True)
+
+        # No assignments to eliminate
+        if len(assignments_to_consider) == 0:
+            return False
+
+        # If this is an end state, there are no other edges to consider
+        if len(out_edges) == 0:
+            return True
+
+        # Otherwise, ensure the symbols are never set/used again in edges
+        akeys = set(assignments_to_consider.keys())
+        for e in sdfg.bfs_edges(state):
+            if e is edge:
+                continue
+            if e.data.assignments.keys() & akeys:
+                return False
+
+        return True
+
+    @staticmethod
+    def match_to_str(graph, candidate):
+        state = graph.nodes()[candidate[ConstantPropagation._end_state]]
+        return state.label
+
+    def apply(self, sdfg: SDFG):
+        state = sdfg.nodes()[self.subgraph[ConstantPropagation._end_state]]
+        edge = sdfg.in_edges(state)[0]
+        # Since inter-state assignments that use an assigned value leads to
+        # undefined behavior (e.g., {m: n, n: m}), we can replace each
+        # assignment separately.
+        assignments_to_consider = _assignments_to_consider(sdfg, edge, True)
+
+        def _str_repl(s, d, **kwargs):
+            for k, v in d.items():
+                s.replace(str(k), str(v), **kwargs)
+
+        # Replace in state, and all successors
+        symbolic.safe_replace(assignments_to_consider, lambda m: _str_repl(state, m))
+        visited = {edge}
+        for isedge in sdfg.bfs_edges(state):
+            if isedge not in visited:
+                symbolic.safe_replace(assignments_to_consider, lambda m: _str_repl(isedge.data, m, replace_keys=False))
+                visited.add(isedge)
+            if isedge.dst not in visited:
+                symbolic.safe_replace(assignments_to_consider, lambda m: _str_repl(isedge.dst, m))
+                visited.add(isedge.dst)
+
+        repl_dict = {}
+
+        for varname in assignments_to_consider.keys():
+            # Remove assignments from edge
+            del edge.data.assignments[varname]
+
+            for e in sdfg.edges():
+                if varname in e.data.free_symbols:
+                    break
+            else:
+                # If removed assignment does not appear in any other edge,
+                # replace and remove symbol
+                if varname in sdfg.symbols:
+                    sdfg.remove_symbol(varname)
+                # if assignments_to_consider[varname] in sdfg.symbols:
+                if varname in sdfg.free_symbols:
+                    repl_dict[varname] = assignments_to_consider[varname]
 
         if repl_dict:
             symbolic.safe_replace(repl_dict, lambda m: _str_repl(sdfg, m))
@@ -507,3 +603,83 @@ class HoistState(transformation.Transformation):
 
         # Set new starting state
         nsdfg.sdfg.start_state = nsdfg.sdfg.node_id(nisedge.dst)
+
+
+@registry.autoregister_params(coarsening=True)
+class DeadStateElimination(transformation.Transformation):
+    """
+    Dead state elimination removes an unreachable state and all of its dominated
+    states.
+    """
+
+    end_state = transformation.PatternNode(sdfg.SDFGState)
+
+    @classmethod
+    def expressions(cls):
+        return [sdutil.node_path_graph(cls.end_state)]
+
+    def can_be_applied(self, graph: SDFG, candidate, expr_index, sdfg: SDFG, permissive=False):
+        state: SDFGState = self.end_state(sdfg)
+        in_edges = graph.in_edges(state)
+
+        # We only match end states with one source and at least one assignment
+        if len(in_edges) != 1:
+            return False
+        edge = in_edges[0]
+
+        if edge.data.assignments:
+            return False
+        if edge.data.is_unconditional():
+            return False
+
+        # Evaluate condition
+        scond = edge.data.condition_sympy()
+        if scond == False:
+            return True
+
+        return False
+
+    def apply(self, sdfg: SDFG):
+        # Remove state and all dominated states
+        state = self.end_state(sdfg)
+
+        domset = cfg.all_dominators(sdfg)
+        states_to_remove = {k for k, v in domset.items() if state in v}
+        states_to_remove.add(state)
+        sdfg.remove_nodes_from(states_to_remove)
+
+
+@registry.autoregister_params(coarsening=True)
+class TrueConditionElimination(transformation.Transformation):
+    """
+    If a state transition condition is always true, removes condition from edge.
+    """
+
+    state_a = transformation.PatternNode(sdfg.SDFGState)
+    state_b = transformation.PatternNode(sdfg.SDFGState)
+
+    @classmethod
+    def expressions(cls):
+        return [sdutil.node_path_graph(cls.state_a, cls.state_b)]
+
+    def can_be_applied(self, graph: SDFG, candidate, expr_index, sdfg: SDFG, permissive=False):
+        a: SDFGState = self.state_a(sdfg)
+        b: SDFGState = self.state_b(sdfg)
+        # Directed graph has only one edge between two nodes
+        edge = graph.edges_between(a, b)[0]
+
+        if edge.data.is_unconditional():
+            return False
+
+        # Evaluate condition
+        scond = edge.data.condition_sympy()
+        if scond == True:
+            return True
+
+        return False
+
+    def apply(self, sdfg: SDFG):
+        a: SDFGState = self.state_a(sdfg)
+        b: SDFGState = self.state_b(sdfg)
+        edge = sdfg.edges_between(a, b)[0]
+        edge.data.condition = CodeBlock("1")
