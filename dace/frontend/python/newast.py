@@ -6,6 +6,7 @@ import itertools
 import inspect
 import re
 import sys
+import time
 from os import path
 import warnings
 from numbers import Number
@@ -47,6 +48,7 @@ Shape = Union[ShapeTuple, ShapeList]
 class SkipCall(Exception):
     """ Exception used to skip calls to functions that cannot be parsed. """
     pass
+
 
 def until(val, substr):
     """ Helper function that returns the substring of a string until a certain pattern. """
@@ -138,7 +140,8 @@ def parse_dace_program(name: str,
                        constants: Dict[str, Any],
                        closure: SDFGClosure,
                        coarsen: Optional[bool] = None,
-                       save=True) -> SDFG:
+                       save: bool = True,
+                       progress: Optional[bool] = None) -> SDFG:
     """ Parses a `@dace.program` function into an SDFG.
         :param src_ast: The AST of the Python program to parse.
         :param visitor: A ProgramVisitor object returned from 
@@ -146,8 +149,32 @@ def parse_dace_program(name: str,
         :param closure: An object that contains the @dace.program closure.
         :param coarsen: If True, dataflow coarsening will be performed.
         :param save: If True, saves source mapping data for this SDFG.
+        :param progress: If True, prints a progress bar of the parsing process. 
+                         If None (default), prints after 5 seconds of parsing. 
+                         If False, never prints progress.
         :return: A 2-tuple of SDFG and its reduced (used) closure.
     """
+    # Progress bar handling (pre-parse)
+    teardown_progress = False
+    if progress is None or progress is True:
+        try:
+            from tqdm import tqdm
+        except (ImportError, ModuleNotFoundError):
+            progress = False
+
+        if progress is not False and ProgramVisitor.progress_bar is None:
+            ctl = closure.call_tree_length()
+            teardown_progress = True  # First parser should teardown progress bar
+            ProgramVisitor.start_time = time.time()
+            if progress is True:
+                ProgramVisitor.progress_bar = tqdm(total=ctl, desc='Parsing Python program')
+            else:
+                ProgramVisitor.progress_bar = (0, ctl)  # Make a counter instead (tqdm cannot be enabled mid-progress)
+    if progress is None and (time.time() - ProgramVisitor.start_time) >= 5:
+        initial, total = ProgramVisitor.progress_bar
+        ProgramVisitor.progress_bar = tqdm(total=total, initial=initial, desc='Parsing Python program')
+    # End of progress bar
+
     visitor = ProgramVisitor(name=name,
                              filename=preprocessed_ast.filename,
                              line_offset=preprocessed_ast.src_line,
@@ -187,6 +214,22 @@ def parse_dace_program(name: str,
         end_line=visitor.src_line + len(preprocessed_ast.src.split("\n")) - 1,
         filename=path.abspath(preprocessed_ast.filename),
     )
+
+    # Progress bar handling (post-parse)
+    if progress is None and (time.time() - ProgramVisitor.start_time) >= 5:
+        initial, total = ProgramVisitor.progress_bar
+        ProgramVisitor.progress_bar = tqdm(total=total, initial=initial, desc='Parsing Python program')
+    if ProgramVisitor.progress_bar is not None:
+        if isinstance(ProgramVisitor.progress_bar, tuple):
+            i, t = ProgramVisitor.progress_bar
+            ProgramVisitor.progress_bar = (i + 1, t)
+        else:
+            ProgramVisitor.progress_bar.update(1)
+    if teardown_progress:
+        if not isinstance(ProgramVisitor.progress_bar, tuple):
+            ProgramVisitor.progress_bar.close()
+        ProgramVisitor.progress_bar = None
+        ProgramVisitor.start_time = 0
 
     return sdfg
 
@@ -944,6 +987,9 @@ class ProgramVisitor(ExtNodeVisitor):
     """ A visitor that traverses a data-centric Python program AST and
         constructs an SDFG.
     """
+    progress_bar = None
+    start_time: float = 0
+
     def __init__(self,
                  name: str,
                  filename: str,
