@@ -682,10 +682,13 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
         global_symbols = copy.deepcopy(sdfg.symbols)
         global_symbols.update({aname: arr.dtype for aname, arr in sdfg.arrays.items()})
         interstate_symbols = {}
-        for e in sdfg.edges():
+        for e in sdfg.dfs_edges(sdfg.start_state):
             symbols = e.data.new_symbols(sdfg, global_symbols)
-            # Inferred symbols only take precedence if global symbol not defined
-            symbols = {k: v if k not in global_symbols else global_symbols[k] for k, v in symbols.items()}
+            # Inferred symbols only take precedence if global symbol not defined or None
+            symbols = {
+                k: v if (k not in global_symbols or global_symbols[k] is None) else global_symbols[k]
+                for k, v in symbols.items()
+            }
             interstate_symbols.update(symbols)
             global_symbols.update(symbols)
 
