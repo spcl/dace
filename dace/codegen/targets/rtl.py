@@ -227,7 +227,7 @@ class RTLCodeGen(target.TargetCodeGenerator):
         for scalar, (is_output, total_size) in scalars.items():
             inputs += [f', {"output" if is_output else "input"} [{total_size-1}:0] {scalar}']
 
-        for bus, (_, is_output, total_size, vec_len) in buses.items():
+        for bus, (_, is_output, total_size, vec_len, volume) in buses.items():
             if is_output:
                 inputs += self.generate_padded_axis(True, bus, total_size, vec_len)
             else:
@@ -272,39 +272,53 @@ class RTLCodeGen(target.TargetCodeGenerator):
         inputs = {}
         outputs = {}
 
-        for name, (arr, is_output, bytes, veclen) in buses.items():
+        for name, (arr, is_output, bytes, veclen, volume) in buses.items():
             if is_output:
                 conn = tasklet.out_connectors[name]
-                if isinstance(conn, dtypes.pointer):
-                    outputs[name] = f'{arr}[out_ptr_{name}[i]++] = (int)(models[i]->m_axis_{name}_tdata);'
-                elif isinstance(conn, dtypes.vector):
+                if isinstance(conn, dtypes.vector) or (isinstance(conn, dtypes.pointer) and isinstance(conn.base_type, dtypes.vector)):
                     outputs[name] = f'''int idx = i*N + (out_ptr_{name}[i]++);
 for(int j = 0; j < {veclen}; j++) {{
     {arr}[idx][j] = (int)(models[i]->m_axis_{name}_tdata[j]);
 }}'''
+                elif isinstance(conn, dtypes.pointer):
+                    outputs[name] = f'{arr}[out_ptr_{name}[i]++] = (int)(models[i]->m_axis_{name}_tdata);'
                 else:
                     outputs[name] = f'{arr}[out_ptr_{name}[i]++] = (int)(models[i]->m_axis_{name}_tdata);'
 
             else: # input
                 conn = tasklet.in_connectors[name]
-                if isinstance(conn, dtypes.pointer):
-                    inputs[name] = f'models[i]->s_axis_{name}_tdata = {arr}[in_ptr_{name}[i]++];'
-                elif isinstance(conn, dtypes.vector):
+                if isinstance(conn, dtypes.vector) or (isinstance(conn, dtypes.pointer) and isinstance(conn.base_type, dtypes.vector)):
                     inputs[name] = f'''int idx = i*N + (in_ptr_{name}[i]++);
 for(int j = 0; j < {veclen}; j++) {{
     models[i]->s_axis_{name}_tdata[j] = {arr}[idx][j];
 }}'''
+                elif isinstance(conn, dtypes.pointer):
+                    inputs[name] = f'models[i]->s_axis_{name}_tdata = {arr}[in_ptr_{name}[i]++];'
                 else:
                     inputs[name] = f'models[i]->s_axis_{name}_tdata = {arr}[0];'
 
         return inputs, outputs
 
     def generate_cpp_vector_init(self, tasklet):
-        return "\n".join([f'''for (int j = 0; j < {tasklet.in_connectors[name].veclen}; j++) {{
+        inits = []
+        for name in tasklet.in_connectors:
+            conn = tasklet.in_connectors[name]
+            if isinstance(conn, dtypes.pointer):
+                conn = conn.base_type
+            if isinstance(conn, dtypes.vector):
+                inits.append(f'''for (int j = 0; j < {tasklet.in_connectors[name].veclen}; j++) {{
     models[i]->s_axis_{name}_tdata[j] = 0;
-}}''' if isinstance(tasklet.in_connectors[name], dtypes.vector) else "" for name in tasklet.in_connectors])
+}}''')
 
-    def generate_cpp_num_elements(self, tasklet):
+        return "\n".join(inits)
+
+    def generate_cpp_num_elements(self, buses):
+        return [f'''int num_elements_{name}[{self.n_unrolled}];
+for (int i = 0; i < {self.n_unrolled}; i++) {{
+    num_elements_{name}[i] = {volume};
+}}'''
+        for name, (arr, is_output, bytes, veclen, volume) in buses.items()]
+
         # TODO: compute num_elements=#elements that enter/leave the pipeline, for now we assume in_elem=out_elem (i.e. no reduction)
         ins = [f'''int num_elements_{name}[{self.n_unrolled}];
 for (int i = 0; i < {self.n_unrolled}; i++) {{
@@ -445,41 +459,47 @@ for (int i = 0; i < {self.n_unrolled}; i++) {{
         scalars = {}
         for edge in state.in_edges(tasklet):
             arr = sdfg.arrays[edge.data.data]
+            conn = tasklet.in_connectors[edge.dst_conn]
+            if isinstance(conn, dtypes.pointer):
+                conn = conn.base_type
+
             # catch symbolic (compile time variables)
-            check_issymbolic([tasklet.in_connectors[edge.dst_conn].veclen, tasklet.in_connectors[edge.dst_conn].bytes],
-                             sdfg)
+            check_issymbolic([conn.veclen, conn.bytes], sdfg)
 
             # extract parameters
-            vec_len = int(symbolic.evaluate(tasklet.in_connectors[edge.dst_conn].veclen, sdfg.constants))
-            total_size = int(symbolic.evaluate(tasklet.in_connectors[edge.dst_conn].bytes, sdfg.constants))
+            vec_len = int(symbolic.evaluate(conn.veclen, sdfg.constants))
+            total_size = int(symbolic.evaluate(conn.bytes, sdfg.constants))
             if isinstance(arr, data.Array):
                 if self.hardware_target:
-                    raise NotImplementedError('Array input for hardware* not implemented')
+                    raise NotImplementedError('Array input for RTL hardware* targets not implemented')
                 else:
-                    buses[edge.dst_conn] = (edge.data.data, False, total_size, vec_len)
+                    buses[edge.dst_conn] = (edge.data.data, False, total_size, vec_len, edge.data.volume)
             elif isinstance(arr, data.Stream):
-                buses[edge.dst_conn] = (edge.data.data, False, total_size, vec_len)
+                buses[edge.dst_conn] = (edge.data.data, False, total_size, vec_len, edge.data.volume)
             elif isinstance(arr, data.Scalar):
-                scalars[edge.dst_conn] = (edge.data.data, False, total_size * 8)
+                scalars[edge.dst_conn] = (edge.data.data, False, total_size, 1, edge.data.volume)
 
         for edge in state.out_edges(tasklet):
             arr = sdfg.arrays[edge.data.data]
+            conn = tasklet.out_connectors[edge.src_conn]
+            if isinstance(conn, dtypes.pointer):
+                conn = conn.base_type
+
             # catch symbolic (compile time variables)
-            check_issymbolic(
-                [tasklet.out_connectors[edge.src_conn].veclen, tasklet.out_connectors[edge.src_conn].bytes], sdfg)
+            check_issymbolic([conn.veclen, conn.bytes], sdfg)
 
             # extract parameters
-            vec_len = int(symbolic.evaluate(tasklet.out_connectors[edge.src_conn].veclen, sdfg.constants))
-            total_size = int(symbolic.evaluate(tasklet.out_connectors[edge.src_conn].bytes, sdfg.constants))
+            vec_len = int(symbolic.evaluate(conn.veclen, sdfg.constants))
+            total_size = int(symbolic.evaluate(conn.bytes, sdfg.constants))
             if isinstance(arr, data.Array):
                 if self.hardware_target:
-                    raise NotImplementedError('Array input for hardware* not implemented')
+                    raise NotImplementedError('Array input for RTL hardware* targets not implemented')
                 else:
-                    buses[edge.src_conn] = (edge.data.data, True, total_size, vec_len)
+                    buses[edge.src_conn] = (edge.data.data, True, total_size, vec_len, edge.data.volume)
             elif isinstance(arr, data.Stream):
-                buses[edge.src_conn] = (edge.data.data, True, total_size, vec_len)
+                buses[edge.src_conn] = (edge.data.data, True, total_size, vec_len, edge.data.volume)
             elif isinstance(arr, data.Scalar):
-                print('Scalar output not implemented')
+                raise NotImplementedError('Scalar output from RTL kernels not implemented')
 
         # generate system verilog module components
         parameter_string: str = self.generate_rtl_parameters(sdfg.constants)
@@ -506,10 +526,10 @@ for (int i = 0; i < {self.n_unrolled}; i++) {{
                     "name": unique_name,
                     "buses": {
                         name: ('m_axis' if is_output else 's_axis', vec_len)
-                        for name, (_, is_output, _, vec_len) in buses.items()
+                        for name, (_, is_output, _, vec_len, _) in buses.items()
                     },
                     "params": {
-                        "scalars": {name: total_size
+                        "scalars": {name: total_size*8 # width in bits
                                     for name, (_, total_size) in scalars.items()},
                         "memory": {}
                     },
@@ -567,7 +587,7 @@ for (int i = 0; i < {self.n_unrolled}; i++) {{
             inputs, outputs = self.generate_cpp_inputs_outputs(tasklet, buses) # TODO i don't know if i want to do it differently.
             valid_zeros, ready_zeros = self.generate_cpp_zero_inits(tasklet)
             vector_init = self.generate_cpp_vector_init(tasklet)
-            num_elements = self.generate_cpp_num_elements(tasklet)
+            num_elements = self.generate_cpp_num_elements(buses)
             internal_state_str, internal_state_var = self.generate_cpp_internal_state(tasklet)
             read_input_hs = self.generate_input_hs(tasklet)
             feed_elements = self.generate_feeding(tasklet, inputs)

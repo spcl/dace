@@ -458,9 +458,9 @@ end''',
     B = state.add_read('B')
     C = state.add_write('C')
 
-    state.add_memlet_path(A, mentry, tasklet, memlet=dace.Memlet('A[k,0]'), dst_conn='a')
-    state.add_memlet_path(B, mentry, tasklet, memlet=dace.Memlet('B[k,0]'), dst_conn='b')
-    state.add_memlet_path(tasklet, mexit, C, memlet=dace.Memlet('C[k,0]'), src_conn='c')
+    state.add_memlet_path(A, mentry, tasklet, memlet=dace.Memlet('A[k,0:N]'), dst_conn='a')
+    state.add_memlet_path(B, mentry, tasklet, memlet=dace.Memlet('B[k,0:N]'), dst_conn='b')
+    state.add_memlet_path(tasklet, mexit, C, memlet=dace.Memlet('C[k,0:N]'), src_conn='c')
 
     sdfg.specialize({'M': M, 'N': N, 'W': W})
     sdfg.validate()
