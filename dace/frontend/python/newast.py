@@ -170,7 +170,8 @@ def parse_dace_program(name: str,
                 ProgramVisitor.progress_bar = tqdm(total=ctl, desc='Parsing Python program')
             else:
                 ProgramVisitor.progress_bar = (0, ctl)  # Make a counter instead (tqdm cannot be enabled mid-progress)
-    if progress is None and (time.time() - ProgramVisitor.start_time) >= 5:
+    if (progress is None and isinstance(ProgramVisitor.progress_bar, tuple)
+            and (time.time() - ProgramVisitor.start_time) >= 5):
         initial, total = ProgramVisitor.progress_bar
         ProgramVisitor.progress_bar = tqdm(total=total, initial=initial, desc='Parsing Python program')
     # End of progress bar
@@ -216,7 +217,8 @@ def parse_dace_program(name: str,
     )
 
     # Progress bar handling (post-parse)
-    if progress is None and (time.time() - ProgramVisitor.start_time) >= 5:
+    if (progress is None and isinstance(ProgramVisitor.progress_bar, tuple)
+            and (time.time() - ProgramVisitor.start_time) >= 5):
         initial, total = ProgramVisitor.progress_bar
         ProgramVisitor.progress_bar = tqdm(total=total, initial=initial, desc='Parsing Python program')
     if ProgramVisitor.progress_bar is not None:
