@@ -507,8 +507,6 @@ class GlobalResolver(ast.NodeTransformer):
                 else:
                     newnode = ast.Num(n=value)
 
-            newnode.oldnode = copy.deepcopy(parent_node)
-
         elif detect_callables and hasattr(value, '__call__') and hasattr(value.__call__, '__sdfg__'):
             return self.global_value_to_node(value.__call__, parent_node, qualname, recurse, detect_callables)
         elif isinstance(value, numpy.ndarray):
@@ -566,6 +564,9 @@ class GlobalResolver(ast.NodeTransformer):
                     parsed.objname = inspect.getfullargspec(value).args[0]
 
                 res = self.global_value_to_node(parsed, parent_node, qualname, recurse, detect_callables)
+
+                res.oldnode = copy.deepcopy(parent_node)
+
                 # Keep callback in callbacks in case of parsing failure
                 # del self.closure.callbacks[cbname]
                 return res
