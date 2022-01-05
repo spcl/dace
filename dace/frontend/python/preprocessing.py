@@ -544,7 +544,10 @@ class GlobalResolver(ast.NodeTransformer):
                     pass
 
                 # Store the handle to the original callable, in case parsing fails
-                cbqualname = astutils.rname(parent_node)
+                if isinstance(parent_node, ast.Call):
+                    cbqualname = astutils.unparse(parent_node.func)
+                else:
+                    cbqualname = astutils.rname(parent_node)
                 cbname = self._qualname_to_array_name(cbqualname, prefix='')
                 self.closure.callbacks[cbname] = (cbqualname, value, False)
 
@@ -897,10 +900,26 @@ def preprocess_dace_program(f: Callable[..., Any],
 
         closure_resolver.closure.callstack = parent_closure.callstack + [fid]
 
-    src_ast = closure_resolver.visit(src_ast)
-    src_ast = LoopUnroller(resolved, src_file).visit(src_ast)
-    src_ast = ConditionalCodeResolver(resolved).visit(src_ast)
-    src_ast = DeadCodeEliminator().visit(src_ast)
+    passes = int(Config.get('frontend', 'preprocessing_passes'))
+    if passes >= 0:
+        gen = range(passes)
+    else:  # Run until the code stops changing
+        def check_code(src_ast):
+            old_src = ast.dump(src_ast)
+            while True:
+                yield 0
+                new_src = ast.dump(src_ast)
+                if new_src == old_src:
+                    return
+                old_src = new_src
+        gen = check_code(src_ast)
+
+    for _ in gen:
+        src_ast = closure_resolver.visit(src_ast)
+        src_ast = LoopUnroller(resolved, src_file).visit(src_ast)
+        src_ast = ConditionalCodeResolver(resolved).visit(src_ast)
+        src_ast = DeadCodeEliminator().visit(src_ast)
+
     try:
         ctr = CallTreeResolver(closure_resolver.closure, resolved)
         ctr.visit(src_ast)

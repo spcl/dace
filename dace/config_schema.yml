@@ -802,6 +802,14 @@ required:
                     Prints out the preprocessed unparsed AST in case of a parsing
                     error.
 
+            preprocessing_passes:
+                type: int
+                title: Number of preprocessing passes on Python code
+                default: 5
+                description: >
+                    Number of times to run the Python preprocessing passes (e.g., constant
+                    folding) on the input code. Set to zero to disable preprocessing
+                    optimizations, set to -1 to run until the code has not changed.
 
     #############################################
     # General settings

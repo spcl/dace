@@ -367,6 +367,41 @@ def test_numpynumber_condition():
     assert np.allclose(a, 0)
 
 
+def test_constant_list_number():
+    something = [1, 2, 3]
+    n = len(something)
+
+    @dace.program
+    def sometest(A):
+        for i in dace.unroll(range(n)):
+            A += something[i]
+
+    A = np.random.rand(20)
+    sometest.to_sdfg(A)
+
+
+def test_constant_list_function():
+    def a(A):
+        A += 1
+
+    def b(A):
+        A += 2
+
+    def c(A):
+        A += 3
+
+    something = [a, b, c]
+    n = len(something)
+
+    @dace.program
+    def sometest(A):
+        for i in dace.unroll(range(n)):
+            something[i](A)
+
+    A = np.random.rand(20)
+    sometest.to_sdfg(A)
+
+
 def test_constant_propagation():
     @dace.program
     def conditional_val(A: dace.float64[20], val: dace.constant):
@@ -410,4 +445,6 @@ if __name__ == '__main__':
     test_boolglobal()
     test_intglobal()
     test_numpynumber_condition()
+    test_constant_list_number()
+    test_constant_list_function()
     test_constant_propagation()
