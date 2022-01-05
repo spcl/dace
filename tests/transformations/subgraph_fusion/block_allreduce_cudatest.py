@@ -37,7 +37,7 @@ def test_blockallreduce():
     state_id = 0
     subgraph = {ReduceExpansion.reduce: graph.node_id(reduce_node)}
     # expand first
-    transform = ReduceExpansion(sdfg_id, state_id, subgraph, 0)
+    transform = ReduceExpansion(sdfg, sdfg_id, state_id, subgraph, 0)
     transform.reduce_implementation = 'CUDA (block allreduce)'
     transform.apply(sdfg.node(0), sdfg)
     csdfg = sdfg.compile()
