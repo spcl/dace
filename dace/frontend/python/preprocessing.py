@@ -806,7 +806,9 @@ class CallTreeResolver(ast.NodeVisitor):
         except DaceRecursionError:  # Parsing failed in a nested context, raise
             raise
         except Exception as ex:  # Parsing failed (anything can happen here)
-            warnings.warn(f'Parsing SDFGConvertible {value} failed: {ex}')
+            warnings.warn(f'Preprocessing SDFGConvertible {value} failed: {ex}')
+            if Config.get_bool('frontend', 'raise_nested_parsing_errors'):
+                raise ex
             if qualname in self.closure.closure_sdfgs:
                 del self.closure.closure_sdfgs[qualname]
             # Return old call AST instead

@@ -690,7 +690,14 @@ class DaceProgram(pycommon.SDFGConvertible):
             cached = True
         else:
             cached = False
-            sdfg = newast.parse_dace_program(self.name, parsed_ast, argtypes, self.dec_kwargs, closure, coarsen=coarsen)
+            try:
+                sdfg = newast.parse_dace_program(self.name, parsed_ast, argtypes, self.dec_kwargs, closure, coarsen=coarsen)
+            except Exception:
+                if Config.get_bool('frontend', 'verbose_errors'):
+                    from dace.frontend.python import astutils
+                    print('VERBOSE: Failed to parse the following program:')
+                    print(astutils.unparse(parsed_ast.preprocessed_ast))
+                raise
 
             # Set SDFG argument names, filtering out constants
             sdfg.arg_names = [a for a in self.argnames if a in argtypes]

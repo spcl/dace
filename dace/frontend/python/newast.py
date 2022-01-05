@@ -48,7 +48,6 @@ class SkipCall(Exception):
     """ Exception used to skip calls to functions that cannot be parsed. """
     pass
 
-
 def until(val, substr):
     """ Helper function that returns the substring of a string until a certain pattern. """
     if substr not in val:
@@ -3257,12 +3256,19 @@ class ProgramVisitor(ExtNodeVisitor):
                     kwargs = [(k, v) for k, v in kwargs if k in required_args]
                     args = posargs + kwargs
 
-            except:  # Parsing failure
+            except Exception as ex:  # Parsing failure
+                # If error should propagate outwards, do not try to parse as callback
+                if getattr(ex, '__noskipcall__', False):
+                    raise
+
                 # If parsing fails in an auto-parsed context, exit silently
                 if hasattr(node.func, 'oldnode'):
                     raise SkipCall
                 else:
-                    raise
+                    # Propagate error outwards
+                    if Config.get_bool('frontend', 'raise_nested_parsing_errors'):
+                        ex.__noskipcall__ = True
+                    raise ex
 
             funcname = sdfg.name
             all_args = required_args
