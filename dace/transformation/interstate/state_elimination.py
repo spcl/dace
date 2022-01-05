@@ -137,8 +137,6 @@ def _assignments_to_consider(sdfg, edge, is_constant=False):
             for sym in as_symbolic.free_symbols:
                 if str(sym) in sdfg.arrays:
                     break
-                if str(sym) in edge.data.assignments:
-                    break
             else:
                 assignments_to_consider[var] = assign
     return assignments_to_consider
