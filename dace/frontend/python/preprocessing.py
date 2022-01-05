@@ -727,6 +727,10 @@ class GlobalResolver(ast.NodeTransformer):
                           ' be checked in DaCe program, skipping check.')
         return None
 
+    def visit_Raise(self, node: ast.Raise) -> Any:
+        warnings.warn(f'Runtime exception at line {node.lineno} is not supported and will be skipped.')
+        return None
+
     def visit_JoinedStr(self, node: ast.JoinedStr) -> Any:
         try:
             global_val = astutils.evalnode(node, self.globals)
