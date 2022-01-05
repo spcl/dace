@@ -227,7 +227,7 @@ class ReduceExpansion(transformation.SingleStateTransformation):
         # inline fuse back our nested SDFG
         from dace.transformation.interstate import InlineSDFG
         inline_sdfg = InlineSDFG(sdfg.sdfg_list.index(sdfg),
-                                 sdfg.nodes().index(graph), {InlineSDFG._nested_sdfg: graph.nodes().index(nsdfg)}, 0)
+                                 sdfg.nodes().index(graph), {InlineSDFG.nested_sdfg: graph.node_id(nsdfg)}, 0)
         inline_sdfg.apply(graph, sdfg)
 
         new_schedule = dtypes.ScheduleType.Default

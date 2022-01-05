@@ -122,7 +122,7 @@ class MapUnroll(transformation.SingleStateTransformation):
                                            verify=False,
                                            annotate=False,
                                            save=False,
-                                           _map_entry=node_to_unrolled[map_entry])
+                                           map_entry=node_to_unrolled[map_entry])
 
         # Now we can delete the original subgraph. This implicitly also remove
         # memlets between nodes

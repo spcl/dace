@@ -460,7 +460,7 @@ class FPGACodeGen(TargetCodeGenerator):
                 if isinstance(n, dace.sdfg.nodes.MapEntry) and n.schedule == dtypes.ScheduleType.Unrolled
             ]
             for map_entry in top_level_unrolled:
-                MapUnroll.apply_to(sdfg, _map_entry=map_entry)
+                MapUnroll.apply_to(sdfg, map_entry=map_entry)
 
             kernels = []  # List of tuples (subgraph, kernel_id)
 

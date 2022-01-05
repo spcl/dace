@@ -683,7 +683,7 @@ def tile(sdfg: SDFG, map_entry: nodes.MapEntry, divides_evenly: bool, skew: bool
                                   tile_size=str(v),
                                   divides_evenly=divides_evenly,
                                   skew=skew),
-                             _map_entry=map_entry)
+                             map_entry=map_entry)
 
 
 def permute_map(map_entry: nodes.MapEntry, perm: List[int]):
@@ -714,8 +714,8 @@ def extract_map_dims(sdfg: SDFG, map_entry: nodes.MapEntry, dims: List[int]) -> 
         for idx in range(len(dims) - 1):
             extracted_map, _ = MapCollapse.apply_to(
                 sdfg,
-                _outer_map_entry=extracted_map,
-                _inner_map_entry=entries[idx + 1],
+                outer_map_entry=extracted_map,
+                inner_map_entry=entries[idx + 1],
                 permissive=True,  # Since MapExpansion creates sequential maps
             )
 
@@ -724,8 +724,8 @@ def extract_map_dims(sdfg: SDFG, map_entry: nodes.MapEntry, dims: List[int]) -> 
         for idx in range(len(dims), len(entries) - 1):
             map_to_collapse, _ = MapCollapse.apply_to(
                 sdfg,
-                _outer_map_entry=map_to_collapse,
-                _inner_map_entry=entries[idx + 1],
+                outer_map_entry=map_to_collapse,
+                inner_map_entry=entries[idx + 1],
                 permissive=True,  # Since MapExpansion creates sequential maps
             )
     else:

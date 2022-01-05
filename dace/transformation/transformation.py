@@ -627,7 +627,7 @@ class ExpandTransformation(PatternTransformation):
         subgraph = {expr.node(int(k)): int(v) for k, v in json_obj['_subgraph'].items()}
 
         # Reconstruct transformation
-        ret = xform(json_obj['sdfg_id'], json_obj['state_id'], subgraph, json_obj['expr_index'])
+        ret = xform(None, json_obj['sdfg_id'], json_obj['state_id'], subgraph, json_obj['expr_index'])
         context = context or {}
         context['transformation'] = ret
         serialize.set_properties_from_json(ret,
