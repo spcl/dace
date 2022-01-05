@@ -35,7 +35,7 @@ class TransformationTester(Optimizer):
             :param halt_on_exception: If True, stops when a transformation
                                       raises an exception.
         """
-        super().__init__(sdfg)
+        super().__init__(sdfg, inplace=False)
         self.depth = depth
         self.validate = validate
         self.generate_code = generate_code

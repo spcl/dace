@@ -178,14 +178,14 @@ class ReduceExpansion(transformation.SingleStateTransformation):
             # create an out transient between inner and outer map exit
             array_out = nstate.out_edges(outer_exit)[0].data.data
 
-            from dace.transformation.dataflow.local_storage import LocalStorage
+            from dace.transformation.dataflow.local_storage import LocalStorage, OutLocalStorage
             local_storage_subgraph = {
                 LocalStorage.node_a: nsdfg.sdfg.nodes()[0].nodes().index(inner_exit),
                 LocalStorage.node_b: nsdfg.sdfg.nodes()[0].nodes().index(outer_exit)
             }
             nsdfg_id = nsdfg.sdfg.sdfg_list.index(nsdfg.sdfg)
             nstate_id = 0
-            local_storage = LocalStorage(nsdfg_id, nstate_id, local_storage_subgraph, 0)
+            local_storage = OutLocalStorage(nsdfg.sdfg, nsdfg_id, nstate_id, local_storage_subgraph, 0)
             local_storage.array = array_out
             local_storage.apply(graph, nsdfg.sdfg)
             out_transient_node_inner = local_storage._data_node
@@ -208,7 +208,7 @@ class ReduceExpansion(transformation.SingleStateTransformation):
             # create an in-transient between inner and outer map entry
             array_in = nstate.in_edges(outer_entry)[0].data.data
 
-            from dace.transformation.dataflow.local_storage import LocalStorage
+            from dace.transformation.dataflow.local_storage import LocalStorage, InLocalStorage
             local_storage_subgraph = {
                 LocalStorage.node_a: nsdfg.sdfg.nodes()[0].nodes().index(outer_entry),
                 LocalStorage.node_b: nsdfg.sdfg.nodes()[0].nodes().index(inner_entry)
@@ -216,7 +216,7 @@ class ReduceExpansion(transformation.SingleStateTransformation):
 
             nsdfg_id = nsdfg.sdfg.sdfg_list.index(nsdfg.sdfg)
             nstate_id = 0
-            local_storage = LocalStorage(nsdfg_id, nstate_id, local_storage_subgraph, 0)
+            local_storage = InLocalStorage(nsdfg.sdfg, nsdfg_id, nstate_id, local_storage_subgraph, 0)
             local_storage.array = array_in
             local_storage.apply(graph, nsdfg.sdfg)
             in_transient_node_inner = local_storage._data_node
@@ -226,8 +226,8 @@ class ReduceExpansion(transformation.SingleStateTransformation):
 
         # inline fuse back our nested SDFG
         from dace.transformation.interstate import InlineSDFG
-        inline_sdfg = InlineSDFG(sdfg.sdfg_list.index(sdfg),
-                                 sdfg.nodes().index(graph), {InlineSDFG.nested_sdfg: graph.node_id(nsdfg)}, 0)
+        inline_sdfg = InlineSDFG(sdfg, sdfg.sdfg_id,
+                                 sdfg.node_id(graph), {InlineSDFG.nested_sdfg: graph.node_id(nsdfg)}, 0)
         inline_sdfg.apply(graph, sdfg)
 
         new_schedule = dtypes.ScheduleType.Default

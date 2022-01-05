@@ -31,7 +31,7 @@ def expand_reduce(sdfg: dace.SDFG,
                     continue
                 reduce_nodes.append(node)
 
-        trafo_reduce = ReduceExpansion(0, 0, {}, 0)
+        trafo_reduce = ReduceExpansion(sdfg, sdfg.sdfg_id, sdfg.node_id(graph), {}, 0)
         for (property, val) in kwargs.items():
             setattr(trafo_reduce, property, val)
 
@@ -39,7 +39,7 @@ def expand_reduce(sdfg: dace.SDFG,
             trafo_reduce.expand(sdfg, graph, reduce_node)
             if isinstance(sg, SubgraphView):
                 sg.nodes().remove(reduce_node)
-                sg.nodes().append(trafo_reduce._reduce)
+                sg.nodes().append(trafo_reduce.reduce)
                 sg.nodes().append(trafo_reduce._outer_entry)
 
 

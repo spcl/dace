@@ -24,7 +24,7 @@ class Optimizer(object):
         graph representation, by matching patterns and applying 
         transformations on it.
     """
-    def __init__(self, sdfg, inplace=False):
+    def __init__(self, sdfg, inplace=True):
         """ Constructs an SDFG optimizer.
             :param sdfg: The SDFG to transform.
             :param inplace: If True, performs transformations on the given SDFG

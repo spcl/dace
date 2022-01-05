@@ -496,7 +496,7 @@ class StencilTiling(transformation.SubgraphTransformation):
                 range_tuple = (map.range[dim_idx][0] + self.tile_offset_lower[-1],
                                map.range[dim_idx][1] - self.tile_offset_upper[-1], map.range[dim_idx][2])
                 map.range[dim_idx] = range_tuple
-                stripmine = StripMining(sdfg_id, self.state_id, stripmine_subgraph, 0)
+                stripmine = StripMining(sdfg, sdfg_id, self.state_id, stripmine_subgraph, 0)
 
                 stripmine.tiling_type = dtypes.TilingType.CeilRange
                 stripmine.dim_idx = dim_idx
@@ -536,7 +536,7 @@ class StencilTiling(transformation.SubgraphTransformation):
                         MapCollapse.outer_map_entry: graph.node_id(last_map_entry),
                         MapCollapse.inner_map_entry: graph.node_id(new_map_entry)
                     }
-                    mapcollapse = MapCollapse(sdfg_id, self.state_id, mapcollapse_subgraph, 0)
+                    mapcollapse = MapCollapse(sdfg, sdfg_id, self.state_id, mapcollapse_subgraph, 0)
                     mapcollapse.apply(graph, sdfg)
                 last_map_entry = graph.in_edges(map_entry)[0].src
             # add last instance of map entries to _outer_entries
@@ -554,7 +554,7 @@ class StencilTiling(transformation.SubgraphTransformation):
                 l = len(map_entry.params)
                 if l > 1:
                     subgraph = {MapExpansion.map_entry: graph.node_id(map_entry)}
-                    trafo_expansion = MapExpansion(sdfg.sdfg_id, sdfg.nodes().index(graph), subgraph, 0)
+                    trafo_expansion = MapExpansion(sdfg, sdfg.sdfg_id, sdfg.nodes().index(graph), subgraph, 0)
                     trafo_expansion.apply(graph, sdfg)
                 maps = [map_entry]
                 for _ in range(l - 1):
@@ -564,7 +564,7 @@ class StencilTiling(transformation.SubgraphTransformation):
                 for map in reversed(maps):
                     # MapToForLoop
                     subgraph = {MapToForLoop.map_entry: graph.node_id(map)}
-                    trafo_for_loop = MapToForLoop(sdfg.sdfg_id, sdfg.nodes().index(graph), subgraph, 0)
+                    trafo_for_loop = MapToForLoop(sdfg, sdfg.sdfg_id, sdfg.nodes().index(graph), subgraph, 0)
                     trafo_for_loop.apply(graph, sdfg)
                     nsdfg = trafo_for_loop.nsdfg
 
@@ -579,7 +579,7 @@ class StencilTiling(transformation.SubgraphTransformation):
                         DetectLoop.loop_begin: nsdfg.node_id(begin),
                         DetectLoop.exit_state: nsdfg.node_id(end)
                     }
-                    transformation = LoopUnroll(0, 0, subgraph, 0)
+                    transformation = LoopUnroll(nsdfg, 0, -1, subgraph, 0)
                     transformation.apply(nsdfg, nsdfg)
 
             elif self.unroll_loops:
