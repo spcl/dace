@@ -239,7 +239,7 @@ def test_tasklet_vector():
     B = state.add_write('B')
 
     # connect input/output array with the tasklet
-    state.add_edge(A, None, tasklet, 'a', dace.Memlet('A[0:N-1]'))
+    state.add_edge(A, None, tasklet, 'a', dace.Memlet('A[0:N]'))
     state.add_edge(tasklet, 'b', B, None, dace.Memlet('B[0]'))
 
     # validate sdfg

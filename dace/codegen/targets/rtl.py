@@ -104,7 +104,8 @@ class RTLCodeGen(target.TargetCodeGenerator):
             # TODO works for one kernel, but might break with several.
             self.n_unrolled = symbolic.evaluate(edge.src.map.range[0][1] + 1, sdfg.constants)
             # TODO properly implement for software target
-            line: str = '// Copy from map handled in xilinx codegen'
+            #line: str = '// Copy from map handled in xilinx codegen'
+            line: str = f'{dst_node.in_connectors[edge.dst_conn]} {edge.dst_conn} = &{edge.data.data}[{edge.src.map.params[0]}*{edge.data.volume}];'
         else:
             raise RuntimeError("Not handling copy_memory case of type {} -> {}.".format(type(edge.src), type(edge.dst)))
         # write accessor to file
@@ -132,7 +133,8 @@ class RTLCodeGen(target.TargetCodeGenerator):
         elif isinstance(edge.src, nodes.Tasklet) and isinstance(
                 edge.dst, nodes.MapExit) and edge.dst.map.unroll:
             # TODO properly implement for software target
-            line: str = '// Copy to map handled in xilinx codegen'
+            #line: str = '// Copy to map handled in xilinx codegen'
+            line: str = f'{src_node.out_connectors[edge.src_conn].ctype} {edge.src_conn} = &{edge.data.data}[{edge.dst.map.params[0]}*{edge.data.volume}];'
         else:
             raise RuntimeError("Not handling define_out_memlet case of type {} -> {}.".format(
                 type(edge.src), type(edge.dst)))
@@ -275,10 +277,10 @@ class RTLCodeGen(target.TargetCodeGenerator):
         for name, (arr, is_output, bytes, veclen, volume) in buses.items():
             if is_output:
                 conn = tasklet.out_connectors[name]
-                if isinstance(conn, dtypes.vector) or (isinstance(conn, dtypes.pointer) and isinstance(conn.base_type, dtypes.vector)):
-                    outputs[name] = f'''int idx = i*N + (out_ptr_{name}[i]++);
+                if isinstance(conn, dtypes.vector):# or (isinstance(conn, dtypes.pointer) and isinstance(conn.base_type, dtypes.vector)):
+                    outputs[name] = f'''int idx = out_ptr_{name}[i]++;
 for(int j = 0; j < {veclen}; j++) {{
-    {arr}[idx][j] = (int)(models[i]->m_axis_{name}_tdata[j]);
+    {name}[idx][j] = (int)(models[i]->m_axis_{name}_tdata[j]);
 }}'''
                 elif isinstance(conn, dtypes.pointer):
                     outputs[name] = f'{arr}[out_ptr_{name}[i]++] = (int)(models[i]->m_axis_{name}_tdata);'
@@ -288,7 +290,7 @@ for(int j = 0; j < {veclen}; j++) {{
             else: # input
                 conn = tasklet.in_connectors[name]
                 if isinstance(conn, dtypes.vector) or (isinstance(conn, dtypes.pointer) and isinstance(conn.base_type, dtypes.vector)):
-                    inputs[name] = f'''int idx = i*N + (in_ptr_{name}[i]++);
+                    inputs[name] = f'''int idx = i*{volume} + (in_ptr_{name}[i]++);
 for(int j = 0; j < {veclen}; j++) {{
     models[i]->s_axis_{name}_tdata[j] = {arr}[idx][j];
 }}'''
@@ -313,23 +315,12 @@ for(int j = 0; j < {veclen}; j++) {{
         return "\n".join(inits)
 
     def generate_cpp_num_elements(self, buses):
+        # TODO: compute num_elements=#elements that enter/leave the pipeline, for now we assume in_elem=out_elem (i.e. no reduction)
         return [f'''int num_elements_{name}[{self.n_unrolled}];
 for (int i = 0; i < {self.n_unrolled}; i++) {{
     num_elements_{name}[i] = {volume};
 }}'''
         for name, (arr, is_output, bytes, veclen, volume) in buses.items()]
-
-        # TODO: compute num_elements=#elements that enter/leave the pipeline, for now we assume in_elem=out_elem (i.e. no reduction)
-        ins = [f'''int num_elements_{name}[{self.n_unrolled}];
-for (int i = 0; i < {self.n_unrolled}; i++) {{
-    num_elements_{name}[i] = N;
-}}''' for name in tasklet.in_connectors]
-
-        outs = [f'''int num_elements_{name}[{self.n_unrolled}];
-for (int i = 0; i < {self.n_unrolled}; i++) {{
-    num_elements_{name}[i] = N;
-}}''' for name in tasklet.out_connectors]
-        return ins + outs
 
     def generate_cpp_internal_state(self, tasklet):
         internal_state_str = " ".join(
