@@ -493,7 +493,7 @@ def swalk(expr, enter_functions=False):
 
 
 _builtin_userfunctions = {
-    'int_floor', 'int_ceil', 'min', 'Min', 'max', 'Max', 'not', 'Not', 'Eq', 'NotEq', 'Ne', 'AND', 'OR'
+    'int_floor', 'int_ceil', 'abs', 'Abs', 'min', 'Min', 'max', 'Max', 'not', 'Not', 'Eq', 'NotEq', 'Ne', 'AND', 'OR'
 }
 
 
@@ -749,6 +749,7 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None):
 
     symbol_map = symbol_map or {}
     locals = {
+        'abs': sympy.Abs,
         'min': sympy.Min,
         'max': sympy.Max,
         'True': sympy.true,
@@ -852,7 +853,7 @@ def symstr(sym, arrayexprs: Optional[Set[str]] = None) -> str:
     :return: C++-compilable expression.
     """
     def repstr(s):
-        return s.replace('Min', 'min').replace('Max', 'max')
+        return s.replace('Min', 'min').replace('Max', 'max').replace('Abs', 'abs')
 
     if isinstance(sym, SymExpr):
         return symstr(sym.expr, arrayexprs)
