@@ -1758,11 +1758,15 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             warnings.warn('SDFG "%s" is already loaded by another object, '
                           'recompiling under a different name.' % self.name)
 
-        # Fill in scope entry/exit connectors
-        sdfg.fill_scope_connectors()
+        try:
+            # Fill in scope entry/exit connectors
+            sdfg.fill_scope_connectors()
 
-        # Generate code for the program by traversing the SDFG state by state
-        program_objects = codegen.generate_code(sdfg, validate=validate)
+            # Generate code for the program by traversing the SDFG state by state
+            program_objects = codegen.generate_code(sdfg, validate=validate)
+        except Exception:
+            self.save('_dacegraphs', 'failing.sdfg')
+            raise
 
         # Generate the program folder and write the source files
         program_folder = compiler.generate_program_folder(sdfg, program_objects, build_folder)
