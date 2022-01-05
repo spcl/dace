@@ -413,6 +413,9 @@ def test_constant_propagation():
 
     # Ensure condition was folded
     sdfg = conditional_val.to_sdfg(val=3, coarsen=True)
+    from dace.transformation.interstate.state_elimination import DeadStateElimination, ConstantPropagation
+    sdfg.apply_transformations_repeated([ConstantPropagation, DeadStateElimination])
+    sdfg.coarsen_dataflow()
     assert sdfg.number_of_nodes() == 1
 
     a = np.random.rand(20)

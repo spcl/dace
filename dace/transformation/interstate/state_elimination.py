@@ -137,6 +137,8 @@ def _assignments_to_consider(sdfg, edge, is_constant=False):
             for sym in as_symbolic.free_symbols:
                 if str(sym) in sdfg.arrays:
                     break
+                if str(sym) in edge.data.assignments:
+                    break
             else:
                 assignments_to_consider[var] = assign
     return assignments_to_consider
@@ -237,7 +239,7 @@ class StateAssignElimination(transformation.Transformation):
             symbolic.safe_replace(repl_dict, lambda m: _str_repl(sdfg, m))
 
 
-@registry.autoregister_params(coarsening=True)
+@registry.autoregister
 class ConstantPropagation(transformation.Transformation):
     """
     Removes constant assignments in interstate edges and replaces them in successor states.
@@ -605,7 +607,7 @@ class HoistState(transformation.Transformation):
         nsdfg.sdfg.start_state = nsdfg.sdfg.node_id(nisedge.dst)
 
 
-@registry.autoregister_params(coarsening=True)
+@registry.autoregister
 class DeadStateElimination(transformation.Transformation):
     """
     Dead state elimination removes an unreachable state and all of its dominated
