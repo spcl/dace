@@ -95,7 +95,8 @@ def rname(node):
     if isinstance(node, ast.Call):  # form @dace.attr(...)
         if isinstance(node.func, ast.Name):
             return node.func.id
-        # Assuming isinstance(node.func, ast.Attribute) == True
+        if not isinstance(node.func, ast.Attribute):
+            raise TypeError(f'Unexpected call expression type {type(node.func).__name__}: {unparse(node.func)}')
         name = node.func.attr
         # Handle calls with submodules and methods, e.g. numpy.add.reduce
         value = node.func.value

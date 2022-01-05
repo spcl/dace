@@ -3335,10 +3335,18 @@ class ProgramVisitor(ExtNodeVisitor):
                 raise DaceSyntaxError(self, node, 'Invalid keyword argument "%s" in call to '
                                       '"%s"' % (aname, funcname))
         if len(args) != len(required_args):
-            raise DaceSyntaxError(
-                self, node, 'Argument number mismatch in'
-                ' call to "%s" (expected %d,'
-                ' got %d)' % (funcname, len(required_args), len(args)))
+            if len(args) > len(required_args):
+                extra = set(args) - set(required_args)
+                raise DaceSyntaxError(
+                    self, node, 'Argument number mismatch in'
+                    ' call to "%s" (expected %d,'
+                    ' got %d). Extra arguments provided: %s' % (funcname, len(required_args), len(args), extra))
+            else:
+                missing = set(required_args) - set(args)
+                raise DaceSyntaxError(
+                    self, node, 'Argument number mismatch in'
+                    ' call to "%s" (expected %d,'
+                    ' got %d). Missing arguments: %s' % (funcname, len(required_args), len(args), missing))
 
         # Remove newly-defined symbols from arguments
         if mapping is not None:
@@ -4461,7 +4469,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 except (TypeError, ValueError):
                     pass  # Passthrough to exception
 
-            raise DaceSyntaxError(self, node.value, 'Subscripted object cannot ' 'be a tuple')
+            raise DaceSyntaxError(self, node.value, 'Subscripted object cannot be a tuple')
         array, arrtype = node_parsed[0]
         if arrtype == 'str' or arrtype in dtypes._CTYPES:
             raise DaceSyntaxError(self, node, 'Type "%s" cannot be sliced' % arrtype)
