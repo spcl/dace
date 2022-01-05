@@ -187,7 +187,7 @@ class ReduceExpansion(transformation.SingleStateTransformation):
             nstate_id = 0
             local_storage = OutLocalStorage(nsdfg.sdfg, nsdfg_id, nstate_id, local_storage_subgraph, 0)
             local_storage.array = array_out
-            local_storage.apply(graph, nsdfg.sdfg)
+            local_storage.apply(nsdfg.sdfg.node(0), nsdfg.sdfg)
             out_transient_node_inner = local_storage._data_node
 
             # push to register
@@ -218,7 +218,7 @@ class ReduceExpansion(transformation.SingleStateTransformation):
             nstate_id = 0
             local_storage = InLocalStorage(nsdfg.sdfg, nsdfg_id, nstate_id, local_storage_subgraph, 0)
             local_storage.array = array_in
-            local_storage.apply(graph, nsdfg.sdfg)
+            local_storage.apply(nsdfg.sdfg.node(0), nsdfg.sdfg)
             in_transient_node_inner = local_storage._data_node
 
             # push to register
