@@ -160,7 +160,7 @@ class ElementWiseArrayOperation(pm.SingleStateTransformation):
 
             elif isinstance(desc, data.Array):
 
-                local_name, local_arr = sdfg.add_temp_transient([(desc.total_size) // sz],
+                local_name, local_arr = sdfg.add_temp_transient([sympy.floor(desc.total_size / sz)],
                                                                 dtype=desc.dtype,
                                                                 storage=desc.storage)
                 local_access = graph.add_access(local_name)
@@ -206,7 +206,7 @@ class ElementWiseArrayOperation(pm.SingleStateTransformation):
             if isinstance(desc, data.Scalar):
                 raise NotImplementedError
             elif isinstance(desc, data.Array):
-                local_name, local_arr = sdfg.add_temp_transient([(desc.total_size) // sz],
+                local_name, local_arr = sdfg.add_temp_transient([sympy.floor(desc.total_size / sz)],
                                                                 dtype=desc.dtype,
                                                                 storage=desc.storage)
                 local_access = graph.add_access(local_name)
