@@ -173,8 +173,8 @@ class AugAssignToWCR(transformation.SingleStateTransformation):
             inedges = state.edges_between(input, tasklet)
             outedge = state.edges_between(tasklet, output)[0]
         else:
-            me = self.map_entry(sdfg)
-            mx = self.map_exit(sdfg)
+            me = self.map_entry
+            mx = self.map_exit
 
             inedges = state.edges_between(me, tasklet)
             outedge = state.edges_between(tasklet, mx)[0]

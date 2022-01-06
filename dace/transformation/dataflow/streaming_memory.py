@@ -173,7 +173,7 @@ class StreamingMemory(xf.SingleStateTransformation):
         return True
 
     def apply(self, state: SDFGState, sdfg: SDFG) -> nodes.AccessNode:
-        dnode: nodes.AccessNode = self.access(sdfg)
+        dnode: nodes.AccessNode = self.access
         if self.expr_index == 0:
             edges = state.out_edges(dnode)
         else:
