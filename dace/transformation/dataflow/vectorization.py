@@ -19,17 +19,16 @@ import dace.sdfg.analysis.vector_inference as vector_inference
 import dace.codegen.targets.sve.util as sve_util
 import dace.frontend.operations
 
+
 # Find the state in which the node is
 # There is probably a better solution than this
 def get_state_for_node(sdfg: SDFG, node):
-    for s, _ in sdfg.all_nodes_recursive():
-        if not isinstance(s, SDFGState):
-            continue
-        for n, _ in s.all_nodes_recursive():
+    for s in sdfg.states():
+        for n, state in s.all_nodes_recursive():
             if n == node:
-                return s
+                return state
 
-    return None
+    raise Exception("State for the node {n} not found".format(n=node))
 
 
 def collect_maps_to_vectorize(sdfg: SDFG, state, map_entry):
@@ -75,7 +74,6 @@ def collect_maps_to_vectorize(sdfg: SDFG, state, map_entry):
             for e in correct_state.all_edges(n):
                 possible_edges.add(e)
 
-
             for e in possible_edges:
                 if e.data.data in data_descriptors_to_vectorize or n.map in maps_to_vectorize:
                     add_map = True
@@ -90,7 +88,6 @@ def collect_maps_to_vectorize(sdfg: SDFG, state, map_entry):
                 for e in possible_edges:
                     data_descriptors_to_vectorize.add(e.data.data)
                 break
-
     # Only interested in map entries
     results = set()
     for m in entries_exits_to_vectorize:
@@ -306,7 +303,6 @@ class Vectorization(transformation.Transformation):
 
         # Check if it is possible to vectorize data container
         if self.target == dtypes.ScheduleType.FPGA_Device and self._level == 0:
-
             maps_to_vectorize, data_descriptors_to_vectorize = collect_maps_to_vectorize(sdfg, state, map_entry)
 
             old_map_entry = self._map_entry
@@ -315,7 +311,7 @@ class Vectorization(transformation.Transformation):
             for m in maps_to_vectorize:
                 self._map_entry = m
 
-                correct_state = get_state_for_node(sdfg,m)
+                correct_state = get_state_for_node(sdfg, m)
 
                 if not self.can_be_applied(correct_state, candidate, expr_index, sdfg, permissive):
                     return False
@@ -380,7 +376,6 @@ class Vectorization(transformation.Transformation):
 
     def apply(self, sdfg: SDFG):
 
-        
         # To support recursivity in the FPGA case, see below
         if isinstance(self._map_entry, nodes.MapEntry):
             map_entry = self._map_entry
@@ -388,7 +383,6 @@ class Vectorization(transformation.Transformation):
         else:
             map_entry = self._map_entry(sdfg)
             state = sdfg.node(self.state_id)
-            
 
         if self.target == dtypes.ScheduleType.FPGA_Device and self._level == 0:
 
