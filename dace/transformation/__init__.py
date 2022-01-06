@@ -1,2 +1,2 @@
-from .transformation import (coarsening_transformations, SingleStateTransformation, MultiStateTransformation,
+from .transformation import (simplification_transformations, SingleStateTransformation, MultiStateTransformation,
                              SubgraphTransformation, ExpandTransformation)

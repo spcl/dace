@@ -12,7 +12,7 @@ jobs:
     strategy:
       matrix:
         python-version: [3.7,'3.10']
-        coarsening: [0,1,autoopt]
+        simplify: [0,1,autoopt]
 
     steps:
     - uses: actions/checkout@v2
@@ -43,12 +43,12 @@ jobs:
         export DACE_testing_serialization=1
         export DACE_cache=unique
         export DACE_optimizer_interface=" "
-        if [ "${{ matrix.coarsening }}" = "autoopt" ]; then
-            export DACE_optimizer_automatic_dataflow_coarsening=1
+        if [ "${{ matrix.simplify }}" = "autoopt" ]; then
+            export DACE_optimizer_automatic_simplification=1
             export DACE_optimizer_autooptimize=1
             echo "Auto-optimization heuristics"
         else
-            export DACE_optimizer_automatic_dataflow_coarsening=${{ matrix.coarsening }}
+            export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
         fi
         pytest -n auto --cov-report=xml --cov=dace --tb=short -m "not gpu and not verilator and not tensorflow and not mkl and not sve and not papi and not mlir and not lapack and not fpga and not mpi"
         codecov
@@ -59,12 +59,12 @@ jobs:
         export DACE_testing_serialization=1
         export DACE_cache=unique
         export DACE_optimizer_interface=" "
-        if [ "${{ matrix.coarsening }}" = "autoopt" ]; then
-            export DACE_optimizer_automatic_dataflow_coarsening=1
+        if [ "${{ matrix.simplify }}" = "autoopt" ]; then
+            export DACE_optimizer_automatic_simplification=1
             export DACE_optimizer_autooptimize=1
             echo "Auto-optimization heuristics"
         else
-            export DACE_optimizer_automatic_dataflow_coarsening=${{ matrix.coarsening }}
+            export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
         fi
         pytest -n 1 --cov-report=xml --cov=dace --tb=short -m "lapack"
         codecov
@@ -74,7 +74,7 @@ jobs:
         export NOSTATUSBAR=1
         export DACE_testing_serialization=1
         export DACE_cache=single
-        export DACE_optimizer_automatic_dataflow_coarsening=${{ matrix.coarsening }}
+        export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
         export PYTHON_BINARY="coverage run --source=dace --parallel-mode"
         ./tests/polybench_test.sh
         ./tests/xform_test.sh

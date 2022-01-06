@@ -59,8 +59,8 @@ def test_regression_reshape_unsqueeze():
     def test_reshape_unsqueeze(A: dace.float64[3, 3], B: dace.float64[9]):
         nsdfg(input=A, output=B)
 
-    sdfg = test_reshape_unsqueeze.to_sdfg(coarsen=False)
-    sdfg.coarsen_dataflow()
+    sdfg = test_reshape_unsqueeze.to_sdfg(simplify=False)
+    sdfg.simplify()
     sdfg.validate()
 
     a = np.random.rand(3, 3)
@@ -107,7 +107,7 @@ def test_empty_memlets():
     state.add_edge(nsdfg1_node, None, nsdfg2_node, None, dace.Memlet())
 
     sdfg.validate()
-    sdfg.coarsen_dataflow()
+    sdfg.simplify()
 
 
 def test_multistate_inline():
@@ -120,7 +120,7 @@ def test_multistate_inline():
     def outerprog(A: dace.float64[20]):
         nested(A)
 
-    sdfg = outerprog.to_sdfg(coarsen=True)
+    sdfg = outerprog.to_sdfg(simplify=True)
     from dace.transformation.interstate import InlineMultistateSDFG
     sdfg.apply_transformations(InlineMultistateSDFG)
     assert sdfg.number_of_nodes() in (4, 5)
@@ -144,7 +144,7 @@ def test_multistate_inline_samename():
         for i in range(5):
             nested(A)
 
-    sdfg = outerprog.to_sdfg(coarsen=True)
+    sdfg = outerprog.to_sdfg(simplify=True)
     from dace.transformation.interstate import InlineMultistateSDFG
     sdfg.apply_transformations(InlineMultistateSDFG)
     assert sdfg.number_of_nodes() in (7, 8)

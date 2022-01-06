@@ -21,7 +21,7 @@ def outer_scope(A: dace.float64[3, 3], B: dace.float64[3, 3]):
 def test_regression_transient_not_allocated():
     inp = np.zeros((3, 3)).astype(np.float64)
 
-    sdfg: dace.SDFG = outer_scope.to_sdfg(coarsen=False)
+    sdfg: dace.SDFG = outer_scope.to_sdfg(simplify=False)
     result = np.zeros_like(inp)
     sdfg(A=inp.copy(), B=result)
 

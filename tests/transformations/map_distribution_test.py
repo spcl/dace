@@ -25,7 +25,7 @@ def test_eao_mpi():
         raise ValueError("This test is supposed to be run with at least two processes!")
     for r in range(0, commsize):
         if r == rank:
-            mpi_sdfg = eao_mpi.to_sdfg(coarsen=True)
+            mpi_sdfg = eao_mpi.to_sdfg(simplify=True)
             mpi_sdfg.apply_transformations(ElementWiseArrayOperation)
             mpi_exec = mpi_sdfg.compile()
         comm.Barrier()

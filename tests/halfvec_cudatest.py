@@ -27,7 +27,7 @@ def _test_half(veclen):
     A = np.random.rand(24).astype(np.float16)
     B = np.random.rand(24).astype(np.float16)
     sdfg = halftest.to_sdfg()
-    sdfg.coarsen_dataflow()
+    sdfg.simplify()
     sdfg.apply_gpu_transformations()
 
     # Apply vectorization on each map and count applied

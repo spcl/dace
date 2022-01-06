@@ -12,7 +12,7 @@ def test_schedule_inference_simple():
     def simple_schedule_inference(A: dace.float64[3, 3]):
         return nested_call(A)
 
-    sdfg: dace.SDFG = simple_schedule_inference.to_sdfg(coarsen=False)
+    sdfg: dace.SDFG = simple_schedule_inference.to_sdfg(simplify=False)
 
     infer_types.infer_connector_types(sdfg)
 

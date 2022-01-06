@@ -86,12 +86,12 @@ required:
                 title: Save intermediate SDFGs
                 description: Save SDFG files after every transformation.
 
-            automatic_dataflow_coarsening:
+            automatic_simplification:
                 type: bool
                 default: true
-                title: Automatic dataflow coarsening
+                title: Automatic SDFG simplification
                 description: >
-                    Automatically performs dataflow coarsening on programs.
+                    Automatically performs SDFG simplification on programs.
 
             detect_control_flow:
                 type: bool

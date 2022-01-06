@@ -10,7 +10,7 @@ from dace.sdfg import utils as sdutil
 from dace.transformation import transformation
 
 
-class EndStateElimination(transformation.MultiStateTransformation, transformation.DataflowCoarseningTransformation):
+class EndStateElimination(transformation.MultiStateTransformation, transformation.SimplifyPass):
     """
     End-state elimination removes a redundant state that has one incoming edge
     and no contents.
@@ -123,7 +123,7 @@ def _assignments_to_consider(sdfg, edge):
     return assignments_to_consider
 
 
-class StateAssignElimination(transformation.MultiStateTransformation, transformation.DataflowCoarseningTransformation):
+class StateAssignElimination(transformation.MultiStateTransformation, transformation.SimplifyPass):
     """
     State assign elimination removes all assignments into the final state
     and subsumes the assigned value into its contents.
@@ -219,7 +219,7 @@ def _alias_assignments(sdfg, edge):
     return assignments_to_consider
 
 
-class SymbolAliasPromotion(transformation.MultiStateTransformation, transformation.DataflowCoarseningTransformation):
+class SymbolAliasPromotion(transformation.MultiStateTransformation, transformation.SimplifyPass):
     """
     SymbolAliasPromotion moves inter-state assignments that create symbolic
     aliases to the previous inter-state edge according to the topological order.

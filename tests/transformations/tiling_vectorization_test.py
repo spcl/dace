@@ -28,7 +28,7 @@ def test_tiling_vectorization():
         Z = aligned_ndarray(np.zeros_like(Y))
 
         sdfg = multiply.to_sdfg()
-        sdfg.coarsen_dataflow()
+        sdfg.simplify()
         sdfg.apply_transformations([StripMining, Vectorization],
                                    options=[{
                                        'tile_size': str(vector_len)

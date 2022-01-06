@@ -110,7 +110,7 @@ FPGA programming:
 SDFG interactive transformation:
  * `DACE_optimizer_transform_on_call` (default: False): Uses the transformation command line interface every time a `@dace` function is called.
  * `DACE_optimizer_interface` (default: `dace.transformation.optimizer.SDFGOptimizer`): Controls the SDFG optimization process if `transform_on_call` is enabled. By default, uses the transformation command line interface.
- * `DACE_optimizer_automatic_dataflow_coarsening` (default: True): If False, skips automatic dataflow coarsening in the Python frontend (see transformations tutorial for more information).
+ * `DACE_optimizer_automatic_simplification` (default: True): If False, skips automatic simplification in the Python frontend (see transformations tutorial for more information).
  
 Profiling:
  * `DACE_profiling` (default: False): Enables profiling measurement of the DaCe program runtime in milliseconds. Produces a log file and prints out median runtime.

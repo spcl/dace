@@ -66,7 +66,7 @@ def run_cholesky(device_type: dace.dtypes.DeviceType):
         sdfg(A=A, N=N)
     elif device_type == dace.dtypes.DeviceType.FPGA:
         # Parse SDFG and apply FPGA friendly optimization
-        sdfg = kernel.to_sdfg(coarsen=True)
+        sdfg = kernel.to_sdfg(simplify=True)
         applied = sdfg.apply_transformations([FPGATransformSDFG])
         assert applied == 1
 

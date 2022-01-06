@@ -103,4 +103,4 @@ class GPUTransformMap(transformation.SingleStateTransformation):
         transformation.apply(nsdfg_node.sdfg, nsdfg_node.sdfg)
 
         # Inline back as necessary
-        sdfg.coarsen_dataflow()
+        sdfg.simplify()

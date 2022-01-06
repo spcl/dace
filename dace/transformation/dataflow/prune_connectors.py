@@ -10,7 +10,7 @@ from dace.sdfg.analysis import cfg
 
 
 @properties.make_properties
-class PruneConnectors(pm.SingleStateTransformation, pm.DataflowCoarseningTransformation):
+class PruneConnectors(pm.SingleStateTransformation, pm.SimplifyPass):
     """ Removes unused connectors from nested SDFGs, as well as their memlets
         in the outer scope, replacing them with empty memlets if necessary.
 
@@ -116,7 +116,7 @@ class PruneConnectors(pm.SingleStateTransformation, pm.DataflowCoarseningTransfo
                         break
 
 
-class PruneSymbols(pm.SingleStateTransformation, pm.DataflowCoarseningTransformation):
+class PruneSymbols(pm.SingleStateTransformation, pm.SimplifyPass):
     """ 
     Removes unused symbol mappings from nested SDFGs, as well as internal
     symbols if necessary.

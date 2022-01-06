@@ -33,7 +33,7 @@ def onetest(instrumentation: dace.InstrumentationType, size=128):
 
     sdfg: dace.SDFG = slowmm.to_sdfg()
     sdfg.name = f"instrumentation_test_{instrumentation.name}"
-    sdfg.coarsen_dataflow()
+    sdfg.simplify()
 
     # Set instrumentation both on the state and the map
     for node, state in sdfg.all_nodes_recursive():
