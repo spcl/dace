@@ -2,6 +2,7 @@
 """ Contains classes that implement the vectorization transformation. """
 from re import M
 import re
+from numpy import core
 import sympy
 
 from numpy.lib.arraysetops import isin
@@ -358,11 +359,20 @@ class Vectorization(transformation.Transformation):
             # Check all edges
             for m in maps_to_vectorize:
 
-                map_subset = m.map.params
-                edge_subset = [a_tuple[0] for a_tuple in list(e.data.subset)]
+                correct_state = get_state_for_node(sdfg, m)
 
-                if isinstance(edge_subset[-1], symbol) and str(edge_subset[-1]) != map_subset[-1]:
-                    return False
+                edges = correct_state.all_edges(m)
+
+                map_subset = m.map.params
+
+                if e is None or e.data is None:
+                    continue
+
+                for e in edges:
+                    edge_subset = [a_tuple[0] for a_tuple in list(e.data.subset)]
+
+                    if isinstance(edge_subset[-1], symbol) and str(edge_subset[-1]) != map_subset[-1]:
+                        return False
 
             self._map_entry = old_map_entry
             self._level = 0
