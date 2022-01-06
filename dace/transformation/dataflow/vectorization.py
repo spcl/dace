@@ -23,6 +23,8 @@ import dace.frontend.operations
 # There is probably a better solution than this
 def get_state_for_node(sdfg: SDFG, node):
     for s, _ in sdfg.all_nodes_recursive():
+        if not isinstance(s, SDFGState):
+            continue
         for n, _ in s.all_nodes_recursive():
             if n == node:
                 return s
