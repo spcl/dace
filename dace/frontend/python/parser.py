@@ -175,6 +175,21 @@ class DaceProgram(pycommon.SDFGConvertible):
         self.closure_array_keys: Set[str] = set()
         self.closure_constant_keys: Set[str] = set()
 
+    # A modified version of deepcopy that reuses the closure as-is
+    def __deepcopy__(self, memo):
+        import copy
+        cls = self.__class__
+        result = cls.__new__(cls)
+        memo[id(self)] = result
+        for k, v in self.__dict__.items():
+            if k == 'f' or k == '_methodobj':
+                setattr(result, k, v)
+            elif k == 'global_vars':
+                setattr(result, k, copy.copy(v))
+            else:
+                setattr(result, k, copy.deepcopy(v, memo))
+        return result
+
     def _auto_optimize(self, sdfg: SDFG, symbols: Dict[str, int] = None) -> SDFG:
         """ Invoke automatic optimization heuristics on internal program. """
         # Avoid import loop
@@ -691,7 +706,12 @@ class DaceProgram(pycommon.SDFGConvertible):
         else:
             cached = False
             try:
-                sdfg = newast.parse_dace_program(self.name, parsed_ast, argtypes, self.dec_kwargs, closure, coarsen=coarsen)
+                sdfg = newast.parse_dace_program(self.name,
+                                                 parsed_ast,
+                                                 argtypes,
+                                                 self.dec_kwargs,
+                                                 closure,
+                                                 coarsen=coarsen)
             except Exception:
                 if Config.get_bool('frontend', 'verbose_errors'):
                     from dace.frontend.python import astutils
