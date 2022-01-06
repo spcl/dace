@@ -35,7 +35,7 @@ class TransformationTester(Optimizer):
             :param halt_on_exception: If True, stops when a transformation
                                       raises an exception.
         """
-        super().__init__(sdfg, inplace=False)
+        super().__init__(sdfg)
         self.depth = depth
         self.validate = validate
         self.generate_code = generate_code
@@ -69,6 +69,7 @@ class TransformationTester(Optimizer):
 
                 tsdfg: SDFG = new_sdfg.sdfg_list[match.sdfg_id]
                 tgraph = tsdfg.node(match.state_id) if match.state_id >= 0 else tsdfg
+                match._sdfg = tsdfg
                 match.apply(tgraph, tsdfg)
 
                 sdfg.save(os.path.join('_dacegraphs', 'program.sdfg'))

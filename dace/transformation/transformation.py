@@ -72,7 +72,12 @@ class PatternTransformation(TransformationBase):
         subsubclasses = set()
         for sc in subclasses:
             subsubclasses.update(sc.subclasses_recursive())
-        return subclasses | subsubclasses
+
+        # Ignore abstract classes
+        result = subclasses | subsubclasses
+        result = set(sc for sc in result if not getattr(sc, '__abstractmethods__', False))
+
+        return result
 
     def annotates_memlets(self) -> bool:
         """ Indicates whether the transformation annotates the edges it creates
