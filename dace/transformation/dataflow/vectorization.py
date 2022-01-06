@@ -380,12 +380,15 @@ class Vectorization(transformation.Transformation):
 
     def apply(self, sdfg: SDFG):
 
-        state = sdfg.node(self.state_id)
+        
         # To support recursivity in the FPGA case, see below
         if isinstance(self._map_entry, nodes.MapEntry):
             map_entry = self._map_entry
+            state = get_state_for_node(sdfg, map_entry)
         else:
             map_entry = self._map_entry(sdfg)
+            state = sdfg.node(self.state_id)
+            
 
         if self.target == dtypes.ScheduleType.FPGA_Device and self._level == 0:
 
