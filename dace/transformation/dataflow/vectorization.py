@@ -379,7 +379,7 @@ class Vectorization(transformation.Transformation):
 
                 map_subset = m.map.params
 
-                if e is None or e.data is None:
+                if e is None or e.data is None or e.data.subset is None:
                     continue
 
                 for e in edges:
@@ -542,6 +542,9 @@ class Vectorization(transformation.Transformation):
         if self.target == dtypes.ScheduleType.FPGA_Device:
 
             for edge, _ in subgraph.all_edges_recursive():
+
+                if edge is None or edge.data is None or edge.data.data is None:
+                    continue
 
                 desc = sdfg.arrays[edge.data.data]
                 contigidx = desc.strides.index(1)
