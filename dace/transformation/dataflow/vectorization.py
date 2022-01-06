@@ -70,7 +70,6 @@ def collect_maps_to_vectorize(sdfg: SDFG, state, map_entry):
 
             # Get all out/in edges of the map
             correct_state = get_state_for_node(sdfg, n)
-            print(correct_state)
 
             possible_edges = set()
             for e in correct_state.all_edges(n):
