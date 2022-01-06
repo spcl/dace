@@ -693,6 +693,9 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
             global_symbols.update(symbols)
 
         for isvarName, isvarType in interstate_symbols.items():
+            if isvarType is None:
+                raise TypeError(f'Type inference failed for symbol {isvarName}')
+
             isvar = data.Scalar(isvarType)
             callsite_stream.write('%s;\n' % (isvar.as_arg(with_types=True, name=isvarName)), sdfg)
             self.dispatcher.defined_vars.add(isvarName, disp.DefinedType.Scalar, isvarType.ctype)
