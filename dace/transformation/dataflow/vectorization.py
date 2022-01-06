@@ -87,9 +87,7 @@ def collect_maps_to_vectorize(sdfg: SDFG, state, map_entry):
         if isinstance(m, nodes.MapEntry):
 
             is_ok = True
-            subgraph_contents = state.scope_subgraph(m,
-                                                     include_entry=False,
-                                                     include_exit=False)
+            subgraph_contents = state.scope_subgraph(m, include_entry=False, include_exit=False)
 
             # Ensure only Tasklets and AccessNodes are within the map
             for node, _ in subgraph_contents.all_nodes_recursive():
@@ -130,17 +128,13 @@ class Vectorization(transformation.Transformation):
         dtype=bool,
         default=None,
         allow_none=True,
-        desc=
-        'Force creation or skipping a preamble map without vectors. Only available if target == Default'
-    )
+        desc='Force creation or skipping a preamble map without vectors. Only available if target == Default')
 
     postamble = Property(
         dtype=bool,
         default=None,
         allow_none=True,
-        desc=
-        'Force creation or skipping a postamble map without vectors. Only available if target == Default'
-    )
+        desc='Force creation or skipping a postamble map without vectors. Only available if target == Default')
 
     _map_entry = nodes.MapEntry(nodes.Map("", [], []))
 
@@ -154,18 +148,10 @@ class Vectorization(transformation.Transformation):
     def expressions():
         return [sdutil.node_path_graph(Vectorization._map_entry)]
 
-    def can_be_applied(self,
-                       state: SDFGState,
-                       candidate,
-                       expr_index,
-                       sdfg: SDFG,
-                       permissive=False) -> bool:
+    def can_be_applied(self, state: SDFGState, candidate, expr_index, sdfg: SDFG, permissive=False) -> bool:
 
         # Check if supported!
-        supported_targets = [
-            dtypes.ScheduleType.Default, dtypes.ScheduleType.SVE_Map,
-            dtypes.ScheduleType.FPGA_Device
-        ]
+        supported_targets = [dtypes.ScheduleType.Default, dtypes.ScheduleType.SVE_Map, dtypes.ScheduleType.FPGA_Device]
 
         if self.target not in supported_targets:
             return False
@@ -177,9 +163,7 @@ class Vectorization(transformation.Transformation):
             map_entry = self._map_entry(sdfg)
 
         subgraph = state.scope_subgraph(map_entry)
-        subgraph_contents = state.scope_subgraph(map_entry,
-                                                 include_entry=False,
-                                                 include_exit=False)
+        subgraph_contents = state.scope_subgraph(map_entry, include_entry=False, include_exit=False)
 
         # Prevent infinite repeats
         if map_entry.map.schedule == dtypes.ScheduleType.SVE_Map:
@@ -242,8 +226,7 @@ class Vectorization(transformation.Transformation):
             # Check for unsupported WCR
             if e.data.wcr is not None:
                 # Unsupported reduction type
-                reduction_type = dace.frontend.operations.detect_reduction_type(
-                    e.data.wcr)
+                reduction_type = dace.frontend.operations.detect_reduction_type(e.data.wcr)
                 if reduction_type not in sve_util.REDUCTION_TYPE_TO_SVE and self.target == dtypes.ScheduleType.SVE_Map:
                     return False
 
@@ -254,8 +237,7 @@ class Vectorization(transformation.Transformation):
                 # vreduce is not supported
                 dst_node = state.memlet_path(e)[-1].dst
                 if isinstance(dst_node, nodes.Tasklet):
-                    if isinstance(dst_node.in_connectors[e.dst_conn],
-                                  dtypes.vector):
+                    if isinstance(dst_node.in_connectors[e.dst_conn], dtypes.vector):
                         return False
 
                 elif isinstance(dst_node, nodes.AccessNode):
@@ -301,24 +283,20 @@ class Vectorization(transformation.Transformation):
                 # Check for valid copies from other tasklets and/or streams
                 if e.data.data is not None:
                     src_node = state.memlet_path(e)[0].src
-                    if not isinstance(src_node,
-                                      (nodes.Tasklet, nodes.AccessNode)):
+                    if not isinstance(src_node, (nodes.Tasklet, nodes.AccessNode)):
                         # Make sure we only have Code->Code copies and from arrays
                         return False
 
                     if isinstance(src_node, nodes.AccessNode):
                         src_desc = src_node.desc(sdfg)
-                        if isinstance(
-                                src_desc, data.Stream
-                        ) and self.target == dtypes.ScheduleType.SVE_Map:
+                        if isinstance(src_desc, data.Stream) and self.target == dtypes.ScheduleType.SVE_Map:
                             # Stream pops are not implemented
                             return False
 
         # Check if it is possible to vectorize data container
         if self.target == dtypes.ScheduleType.FPGA_Device and self._level == 0:
 
-            maps_to_vectorize, data_descriptors_to_vectorize = collect_maps_to_vectorize(
-                sdfg, state, map_entry)
+            maps_to_vectorize, data_descriptors_to_vectorize = collect_maps_to_vectorize(sdfg, state, map_entry)
 
             old_map_entry = self._map_entry
             self._level = 1  # To prevent infinte loop
@@ -326,8 +304,7 @@ class Vectorization(transformation.Transformation):
             for m in maps_to_vectorize:
                 self._map_entry = m
 
-                if not self.can_be_applied(state, candidate, expr_index, sdfg,
-                                           permissive):
+                if not self.can_be_applied(state, candidate, expr_index, sdfg, permissive):
                     return False
 
             # Check alls strideds of the arrays
@@ -349,8 +326,7 @@ class Vectorization(transformation.Transformation):
                 real_map: nodes.Map = m.map
                 ranges_list = list(real_map.range)
 
-                if isInt(ranges_list[-1][1]
-                         ) and (ranges_list[-1][1] + 1) % self.vector_len != 0:
+                if isInt(ranges_list[-1][1]) and (ranges_list[-1][1] + 1) % self.vector_len != 0:
                     return False
 
                 if ranges_list[-1][2] != 1:
@@ -363,8 +339,7 @@ class Vectorization(transformation.Transformation):
             map_subset = map_entry.map.params
             edge_subset = [a_tuple[0] for a_tuple in list(e.data.subset)]
 
-            if isinstance(edge_subset[-1],
-                          symbol) and str(edge_subset[-1]) != map_subset[-1]:
+            if isinstance(edge_subset[-1], symbol) and str(edge_subset[-1]) != map_subset[-1]:
                 return False
 
             self._map_entry = old_map_entry
@@ -372,15 +347,14 @@ class Vectorization(transformation.Transformation):
 
             # Run the vector inference algorithm to check if vectorization is feasible
         try:
-            vector_inference.infer_vectors(
-                sdfg,
-                state,
-                map_entry,
-                self.vector_len,
-                flags=vector_inference.VectorInferenceFlags.Allow_Stride,
-                strided_map=self.strided_map
-                or self.target == dtypes.ScheduleType.FPGA_Device,
-                apply=False)
+            vector_inference.infer_vectors(sdfg,
+                                           state,
+                                           map_entry,
+                                           self.vector_len,
+                                           flags=vector_inference.VectorInferenceFlags.Allow_Stride,
+                                           strided_map=self.strided_map
+                                           or self.target == dtypes.ScheduleType.FPGA_Device,
+                                           apply=False)
         except vector_inference.VectorInferenceException as ex:
             return False
 
@@ -402,8 +376,7 @@ class Vectorization(transformation.Transformation):
 
         if self.target == dtypes.ScheduleType.FPGA_Device and self._level == 0:
 
-            maps_to_vectorize, data_descriptors_to_vectorize = collect_maps_to_vectorize(
-                sdfg, state, map_entry)
+            maps_to_vectorize, data_descriptors_to_vectorize = collect_maps_to_vectorize(sdfg, state, map_entry)
 
             old_map_entry = self._map_entry
             self._level = 1  # To prevent infinte loop
@@ -414,8 +387,7 @@ class Vectorization(transformation.Transformation):
                 self.apply(sdfg)
 
             # Change the subset in the post state that copies the data back to the host
-            if len(sdfg.states()) < 3 or not sdfg.states()[-1].name.startswith(
-                    'post_'):
+            if len(sdfg.states()) < 3 or not sdfg.states()[-1].name.startswith('post_'):
                 # FPGA Transformation not yet applied
                 return
 
@@ -427,9 +399,7 @@ class Vectorization(transformation.Transformation):
                     contigidx = desc.strides.index(1)
                     lastindex = e.data.subset[contigidx]
                     i, j, k = lastindex
-                    e.data.subset[contigidx] = (i,
-                                                (j + 1) / self.vector_len - 1,
-                                                k)
+                    e.data.subset[contigidx] = (i, (j + 1) / self.vector_len - 1, k)
 
             # Change strides of all arrays involved
             for a in data_descriptors_to_vectorize:
@@ -437,9 +407,7 @@ class Vectorization(transformation.Transformation):
                 new_strides = list(array.strides)
 
                 for i in range(len(new_strides)):
-                    if i == len(
-                            new_strides
-                    ) - 1:  # Skip last dimension since it is always 1
+                    if i == len(new_strides) - 1:  # Skip last dimension since it is always 1
                         continue
                     new_strides[i] = new_strides[i] / self.vector_len
                 sdfg.arrays[a].strides = new_strides
@@ -454,10 +422,7 @@ class Vectorization(transformation.Transformation):
         if self.strided_map:
             new_range = [dim_from, dim_to - vector_size + 1, vector_size]
         else:
-            new_range = [
-                dim_from // vector_size, ((dim_to + 1) // vector_size) - 1,
-                dim_skip
-            ]
+            new_range = [dim_from // vector_size, ((dim_to + 1) // vector_size) - 1, dim_skip]
 
         if self.target == dtypes.ScheduleType.SVE_Map:
             new_range = [new_range[0], new_range[1], dim_skip]
@@ -491,8 +456,7 @@ class Vectorization(transformation.Transformation):
 
         # Create postamble non-vectorized map
         if create_postamble and self.target == dtypes.ScheduleType.Default:
-            new_scope: ScopeSubgraphView = replicate_scope(
-                sdfg, graph, graph.scope_subgraph(map_entry, True, True))
+            new_scope: ScopeSubgraphView = replicate_scope(sdfg, graph, graph.scope_subgraph(map_entry, True, True))
             dim_to_ex = dim_to + 1
             new_scope.entry.map.range[-1] = (dim_to_ex - (dim_to_ex % vector_size), dim_to, dim_skip)
 
@@ -501,8 +465,8 @@ class Vectorization(transformation.Transformation):
 
         # Expand the innermost map if multidimensional
         if len(map_entry.map.params) > 1:
-            ext, rem = dace.transformation.helpers.extract_map_dims(
-                sdfg, map_entry, list(range(len(map_entry.map.params) - 1)))
+            ext, rem = dace.transformation.helpers.extract_map_dims(sdfg, map_entry,
+                                                                    list(range(len(map_entry.map.params) - 1)))
             map_entry = rem
 
         subgraph = state.scope_subgraph(map_entry)
@@ -522,8 +486,7 @@ class Vectorization(transformation.Transformation):
             map_entry,
             self.vector_len,
             flags=vector_inference.VectorInferenceFlags.Allow_Stride,
-            strided_map=self.strided_map
-            or self.target == dtypes.ScheduleType.FPGA_Device,
+            strided_map=self.strided_map or self.target == dtypes.ScheduleType.FPGA_Device,
             apply=True,
         )
 
@@ -547,8 +510,7 @@ class Vectorization(transformation.Transformation):
                 # Modify memlet subset to match vector length
                 rb = newlist[contigidx][0]
                 if self.strided_map:
-                    newlist[contigidx] = (rb / self.vector_len,
-                                          rb / self.vector_len, 1)
+                    newlist[contigidx] = (rb / self.vector_len, rb / self.vector_len, 1)
                 else:
                     newlist[contigidx] = (rb, rb, 1)
 
@@ -579,11 +541,6 @@ class Vectorization(transformation.Transformation):
                     if nsdfg is None:
                         break
                     tstate = cursdfg.parent
-                    curedge = ([
-                        e
-                        for e in tstate.in_edges(nsdfg) if e.dst_conn == arrname
-                    ] + [
-                        e for e in tstate.out_edges(nsdfg)
-                        if e.src_conn == arrname
-                    ])[0]
+                    curedge = ([e for e in tstate.in_edges(nsdfg) if e.dst_conn == arrname] +
+                               [e for e in tstate.out_edges(nsdfg) if e.src_conn == arrname])[0]
                     cursdfg = cursdfg.parent_sdfg
