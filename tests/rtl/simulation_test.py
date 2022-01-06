@@ -4,7 +4,6 @@ import dace
 import numpy as np
 import pytest
 
-
 @pytest.mark.verilator
 def test_tasklet_scalar():
     """
@@ -365,9 +364,9 @@ def test_tasklet_map():
         Test the unrolled map support for M tasklets on N vectors of size W.
     '''
     # add symbols
-    n = 1024
+    n = 512
     m = 8
-    w = 8
+    w = 4
     N = dace.symbol('N')
     M = dace.symbol('M')
     W = dace.symbol('W')

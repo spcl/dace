@@ -313,7 +313,7 @@ for (int j = 0; j < {veclen}; j++) {{
             if isinstance(conn, dtypes.pointer):
                 conn = conn.base_type
             if isinstance(conn, dtypes.vector):
-                inits.append(f'''for (int j = 0; j < {tasklet.in_connectors[name].veclen}; j++) {{
+                inits.append(f'''for (int j = 0; j < {conn.veclen}; j++) {{
     model->s_axis_{name}_tdata[j] = 0;
 }}''')
 
@@ -420,7 +420,7 @@ for (int j = 0; j < {veclen}; j++) {{
         # condition, as the amount of input and output elements might not be
         # equal to each other.
         evals = ' && '.join([f'out_ptr_{name} < num_elements_{name}' for name in tasklet.out_connectors])
-        return f'''cnd = {evals};'''
+        return evals
 
     def unparse_tasklet(self, sdfg: sdfg.SDFG, dfg: state.StateSubgraphView, state_id: int, node: nodes.Node,
                         function_stream: prettycode.CodeIOStream, callsite_stream: prettycode.CodeIOStream):
@@ -670,8 +670,7 @@ model->eval();
 {out_ptrs}
 {num_elements}
 
-bool {running_condition}
-while (cnd) {{
+while ({running_condition}) {{
     // increment time
     main_time++;
 
@@ -699,7 +698,6 @@ while (cnd) {{
     // negative clock edge
     model->ap_aclk = !(model->ap_aclk);
     model->eval();
-{running_condition}
 }} {debug_internal_state}
 
 // final model cleanup
