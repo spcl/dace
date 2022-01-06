@@ -817,7 +817,10 @@ class CallTreeResolver(ast.NodeVisitor):
         except DaceRecursionError:  # Parsing failed in a nested context, raise
             raise
         except Exception as ex:  # Parsing failed (anything can happen here)
-            warnings.warn(f'Preprocessing SDFGConvertible {value} failed: {ex}')
+            optional_qname = ''
+            if qualname is not None:
+                optional_qname = f' ("{qualname}")'
+            warnings.warn(f'Preprocessing SDFGConvertible {value}{optional_qname} failed: {ex}')
             if Config.get_bool('frontend', 'raise_nested_parsing_errors'):
                 raise ex
             if qualname in self.closure.closure_sdfgs:
@@ -911,20 +914,28 @@ def preprocess_dace_program(f: Callable[..., Any],
 
         def check_code(src_ast):
             old_src = ast.dump(src_ast)
+            i = 0
             while True:
-                yield 0
+                yield i
                 new_src = ast.dump(src_ast)
                 if new_src == old_src:
                     return
                 old_src = new_src
+                i += 1
 
         gen = check_code(src_ast)
 
-    for _ in gen:
-        src_ast = closure_resolver.visit(src_ast)
-        src_ast = LoopUnroller(resolved, src_file).visit(src_ast)
-        src_ast = ConditionalCodeResolver(resolved).visit(src_ast)
-        src_ast = DeadCodeEliminator().visit(src_ast)
+    for pass_num in gen:
+        try:
+            src_ast = closure_resolver.visit(src_ast)
+            src_ast = LoopUnroller(resolved, src_file).visit(src_ast)
+            src_ast = ConditionalCodeResolver(resolved).visit(src_ast)
+            src_ast = DeadCodeEliminator().visit(src_ast)
+        except Exception:
+            if Config.get_bool('frontend', 'verbose_errors'):
+                print(f'VERBOSE: Failed to preprocess (pass #{pass_num}) the following program:')
+                print(astutils.unparse(src_ast))
+            raise
 
     try:
         ctr = CallTreeResolver(closure_resolver.closure, resolved)
