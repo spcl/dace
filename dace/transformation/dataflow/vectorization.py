@@ -18,7 +18,6 @@ import dace.transformation.dataflow.vectorization_infer_types as infer_types
 import dace.sdfg.analysis.vector_inference as vector_inference
 import dace.codegen.targets.sve.util as sve_util
 import dace.frontend.operations
-from tests.fpga.fpga_vectorization_test import N
 
 
 def collect_maps_to_vectorize(sdfg: SDFG, state, map_entry):
