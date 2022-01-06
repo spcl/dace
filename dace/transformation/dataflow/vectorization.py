@@ -19,13 +19,23 @@ import dace.sdfg.analysis.vector_inference as vector_inference
 import dace.codegen.targets.sve.util as sve_util
 import dace.frontend.operations
 
+# Find the state in which the node is
+# There is probably a better solution than this
+def get_state_for_node(sdfg: SDFG, node):
+    for s, _ in sdfg.all_nodes_recursive():
+        for n, _ in s.all_nodes_recursive():
+            if n == node:
+                return s
+
+    return None
+
 
 def collect_maps_to_vectorize(sdfg: SDFG, state, map_entry):
     """
     Collect all maps and the corresponding data descriptors that have to be vectorized
     if target == FPGA.
     """
-    # Collect all possible and maps 
+    # Collect all possible and maps
     all_maps_entries_exits = set()
 
     for n, s in sdfg.all_nodes_recursive():
@@ -57,14 +67,13 @@ def collect_maps_to_vectorize(sdfg: SDFG, state, map_entry):
             add_map = False
 
             # Get all out/in edges of the map
-            # TODO: solve this without exception...
+            correct_state = get_state_for_node(sdfg, n)
+            print(correct_state)
+
             possible_edges = set()
-            for s in sdfg.states():
-                try:
-                    for e in s.all_edges(n):
-                        possible_edges.add(e)
-                except:
-                    pass
+            for e in correct_state.all_edges(n):
+                possible_edges.add(e)
+
 
             for e in possible_edges:
                 if e.data.data in data_descriptors_to_vectorize or n.map in maps_to_vectorize:
@@ -87,7 +96,8 @@ def collect_maps_to_vectorize(sdfg: SDFG, state, map_entry):
         if isinstance(m, nodes.MapEntry):
 
             is_ok = True
-            subgraph_contents = state.scope_subgraph(m, include_entry=False, include_exit=False)
+            correct_state = get_state_for_node(sdfg, m)
+            subgraph_contents = correct_state.scope_subgraph(m, include_entry=False, include_exit=False)
 
             # Ensure only Tasklets and AccessNodes are within the map
             for node, _ in subgraph_contents.all_nodes_recursive():
