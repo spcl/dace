@@ -379,10 +379,11 @@ class Vectorization(transformation.Transformation):
 
                 map_subset = m.map.params
 
-                if e is None or e.data is None or e.data.subset is None:
-                    continue
-
                 for e in edges:
+
+                    if e is None or e.data is None or e.data.subset is None:
+                        continue
+
                     edge_subset = [a_tuple[0] for a_tuple in list(e.data.subset)]
 
                     if isinstance(edge_subset[-1], symbol) and str(edge_subset[-1]) != map_subset[-1]:
