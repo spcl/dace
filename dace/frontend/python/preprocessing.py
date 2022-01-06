@@ -639,6 +639,10 @@ class GlobalResolver(ast.NodeTransformer):
         return self.visit_Attribute(node)
 
     def visit_Call(self, node: ast.Call) -> Any:
+        if hasattr(node.func, 'n') and isinstance(node.func.n, SDFGConvertible):
+            # Skip already-parsed calls
+            return self.generic_visit(node)
+
         try:
             global_func = astutils.evalnode(node.func, self.globals)
             if self.resolve_functions:
@@ -904,6 +908,7 @@ def preprocess_dace_program(f: Callable[..., Any],
     if passes >= 0:
         gen = range(passes)
     else:  # Run until the code stops changing
+
         def check_code(src_ast):
             old_src = ast.dump(src_ast)
             while True:
@@ -912,6 +917,7 @@ def preprocess_dace_program(f: Callable[..., Any],
                 if new_src == old_src:
                     return
                 old_src = new_src
+
         gen = check_code(src_ast)
 
     for _ in gen:
