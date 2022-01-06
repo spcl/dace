@@ -203,6 +203,7 @@ class SDFGOptimizer(Optimizer):
             ui_options_idx = 0
             for pattern_match in ui_options:
                 sdfg = self.sdfg.sdfg_list[pattern_match.sdfg_id]
+                pattern_match._sdfg = sdfg
                 print('%d. Transformation %s' % (ui_options_idx, pattern_match.print_match(sdfg)))
                 ui_options_idx += 1
 
@@ -233,7 +234,8 @@ class SDFGOptimizer(Optimizer):
 
             match_id = (str(occurrence) if pattern_name is None else '%s$%d' % (pattern_name, occurrence))
             sdfg = self.sdfg.sdfg_list[pattern_match.sdfg_id]
-            graph = sdfg.node(pattern_match.state_id) if pattern_match >= 0 else sdfg
+            graph = sdfg.node(pattern_match.state_id) if pattern_match.state_id >= 0 else sdfg
+            pattern_match._sdfg = sdfg
             print('You selected (%s) pattern %s with parameters %s' %
                   (match_id, pattern_match.print_match(sdfg), str(param_dict)))
 
