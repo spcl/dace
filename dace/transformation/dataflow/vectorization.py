@@ -31,6 +31,14 @@ def get_state_for_node(sdfg: SDFG, node):
     raise Exception("State for the node {n} not found".format(n=node))
 
 
+def get_array_for_desc(sdfg: SDFG, desc):
+    for s, arr_name, arr in sdfg.arrays_recursive():
+        if arr_name == desc:
+            return arr
+
+    raise Exception("Array not found {n}".format(n=desc))
+
+
 def collect_maps_to_vectorize(sdfg: SDFG, state, map_entry):
     """
     Collect all maps and the corresponding data descriptors that have to be vectorized
@@ -225,7 +233,8 @@ class Vectorization(transformation.Transformation):
             # Cases that do not matter for vectorization
             if e.data.data is None:  # Empty memlets
                 continue
-            if isinstance(sdfg.arrays[e.data.data], data.Stream):  # Streams
+
+            if isinstance(get_array_for_desc(sdfg, e.data.data), data.Stream):  # Streams
                 continue
 
             # Check for unsupported strides
@@ -269,7 +278,7 @@ class Vectorization(transformation.Transformation):
 
             if self.target != dtypes.ScheduleType.SVE_Map:
                 subset = e.data.subset
-                array = sdfg.arrays[e.data.data]
+                array = get_array_for_desc(sdfg, e.data.data)
                 param = symbolic.pystr_to_symbolic(map_entry.map.params[-1])
 
                 try:
@@ -321,7 +330,7 @@ class Vectorization(transformation.Transformation):
 
             # Check alls strideds of the arrays
             for a in data_descriptors_to_vectorize:
-                array = sdfg.arrays.get(a)
+                array = get_array_for_desc(sdfg, a)
                 strides_list = list(array.strides)
 
                 if strides_list[-1] != 1:
@@ -408,7 +417,7 @@ class Vectorization(transformation.Transformation):
 
                 if e.data.data in data_descriptors_to_vectorize:
 
-                    desc = sdfg.arrays[e.data.data]
+                    desc = get_array_for_desc(sdfg, e.data.data)
                     contigidx = desc.strides.index(1)
                     lastindex = e.data.subset[contigidx]
                     i, j, k = lastindex
@@ -423,7 +432,7 @@ class Vectorization(transformation.Transformation):
                     if i == len(new_strides) - 1:  # Skip last dimension since it is always 1
                         continue
                     new_strides[i] = new_strides[i] / self.vector_len
-                sdfg.arrays[a].strides = new_strides
+                get_array_for_desc(sdfg, a).strides = new_strides
 
             self._map_entry = old_map_entry
             self._level = 0
@@ -509,7 +518,7 @@ class Vectorization(transformation.Transformation):
 
             for edge, _ in subgraph.all_edges_recursive():
 
-                desc = sdfg.arrays[edge.data.data]
+                desc = get_array_for_desc(sdfg, edge.data.data)
                 contigidx = desc.strides.index(1)
 
                 newlist = []
@@ -533,19 +542,20 @@ class Vectorization(transformation.Transformation):
                 curedge = edge
                 while cursdfg is not None:
                     arrname = curedge.data.data
-                    dtype = cursdfg.arrays[arrname].dtype
+                    arr = get_array_for_desc(cursdfg, arrname)
+                    dtype =  arr.dtype
 
                     # Change type and shape to vector
                     if not isinstance(dtype, dtypes.vector):
-                        cursdfg.arrays[arrname].dtype = dtypes.vector(dtype, vector_size)
-                        new_shape = list(cursdfg.arrays[arrname].shape)
-                        contigidx = cursdfg.arrays[arrname].strides.index(1)
+                        arr.dtype = dtypes.vector(dtype, vector_size)
+                        new_shape = list(arr.shape)
+                        contigidx = arr.strides.index(1)
                         new_shape[contigidx] /= vector_size
                         try:
                             new_shape[contigidx] = int(new_shape[contigidx])
                         except TypeError:
                             pass
-                        cursdfg.arrays[arrname].shape = new_shape
+                        arr.shape = new_shape
 
                     propagation.propagate_memlets_sdfg(cursdfg)
 
