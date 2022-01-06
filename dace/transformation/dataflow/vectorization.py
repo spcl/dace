@@ -88,6 +88,7 @@ def collect_maps_to_vectorize(sdfg: SDFG, state, map_entry):
                 for e in possible_edges:
                     data_descriptors_to_vectorize.add(e.data.data)
                 break
+
     # Only interested in map entries
     results = set()
     for m in entries_exits_to_vectorize:
@@ -167,8 +168,10 @@ class Vectorization(transformation.Transformation):
         # To support recursivity in the FPGA case, see below
         if isinstance(self._map_entry, nodes.MapEntry):
             map_entry = self._map_entry
+            state = get_state_for_node(sdfg, map_entry)
         else:
             map_entry = self._map_entry(sdfg)
+            state = sdfg.node(self.state_id)
 
         subgraph = state.scope_subgraph(map_entry)
         subgraph_contents = state.scope_subgraph(map_entry, include_entry=False, include_exit=False)
