@@ -31,12 +31,13 @@ def get_state_for_node(sdfg: SDFG, node):
     raise Exception("State for the node {n} not found".format(n=node))
 
 
-def get_array_for_desc(sdfg: SDFG, desc):
-    for s, arr_name, arr in sdfg.arrays_recursive():
-        if arr_name == desc:
-            return arr
-
-    raise Exception("Array not found {n}".format(n=desc))
+def get_sdfg_for_node(sdfg: SDFG, node):
+    for s in sdfg.all_sdfgs_recursive():    #sdfg
+        for n in s.nodes():                 # states
+            for i in n.nodes():             # nodes
+                if node == i:
+                    return s
+    raise Exception("sdfg for the node {n} not found".format(n=node))
 
 
 def collect_maps_to_vectorize(sdfg: SDFG, state, map_entry):
@@ -234,7 +235,7 @@ class Vectorization(transformation.Transformation):
             if e.data.data is None:  # Empty memlets
                 continue
 
-            if isinstance(get_array_for_desc(sdfg, e.data.data), data.Stream):  # Streams
+            if isinstance(sdfg.arrays[e.data.data], data.Stream):  # Streams
                 continue
 
             # Check for unsupported strides
@@ -278,7 +279,7 @@ class Vectorization(transformation.Transformation):
 
             if self.target != dtypes.ScheduleType.SVE_Map:
                 subset = e.data.subset
-                array = get_array_for_desc(sdfg, e.data.data)
+                array = sdfg.arrays[e.data.data]
                 param = symbolic.pystr_to_symbolic(map_entry.map.params[-1])
 
                 try:
@@ -325,12 +326,13 @@ class Vectorization(transformation.Transformation):
 
                 correct_state = get_state_for_node(sdfg, m)
 
-                if not self.can_be_applied(correct_state, candidate, expr_index, sdfg, permissive):
+                if not self.can_be_applied(correct_state, candidate, expr_index, get_sdfg_for_node(sdfg, m),
+                                           permissive):
                     return False
 
             # Check alls strideds of the arrays
             for a in data_descriptors_to_vectorize:
-                array = get_array_for_desc(sdfg, a)
+                array = sdfg.arrays[a]
                 strides_list = list(array.strides)
 
                 if strides_list[-1] != 1:
@@ -406,7 +408,7 @@ class Vectorization(transformation.Transformation):
             for m in maps_to_vectorize:
                 self._map_entry = m
 
-                self.apply(sdfg)
+                self.apply(get_sdfg_for_node(sdfg, m))
 
             # Change the subset in the post state that copies the data back to the host
             if len(sdfg.states()) < 3 or not sdfg.states()[-1].name.startswith('post_'):
@@ -417,7 +419,7 @@ class Vectorization(transformation.Transformation):
 
                 if e.data.data in data_descriptors_to_vectorize:
 
-                    desc = get_array_for_desc(sdfg, e.data.data)
+                    desc = sdfg.arrays[e.data.data]
                     contigidx = desc.strides.index(1)
                     lastindex = e.data.subset[contigidx]
                     i, j, k = lastindex
@@ -432,7 +434,7 @@ class Vectorization(transformation.Transformation):
                     if i == len(new_strides) - 1:  # Skip last dimension since it is always 1
                         continue
                     new_strides[i] = new_strides[i] / self.vector_len
-                get_array_for_desc(sdfg, a).strides = new_strides
+                sdfg.arrays[a].strides = new_strides
 
             self._map_entry = old_map_entry
             self._level = 0
@@ -518,7 +520,7 @@ class Vectorization(transformation.Transformation):
 
             for edge, _ in subgraph.all_edges_recursive():
 
-                desc = get_array_for_desc(sdfg, edge.data.data)
+                desc = sdfg.arrays[edge.data.data]
                 contigidx = desc.strides.index(1)
 
                 newlist = []
@@ -542,8 +544,8 @@ class Vectorization(transformation.Transformation):
                 curedge = edge
                 while cursdfg is not None:
                     arrname = curedge.data.data
-                    arr = get_array_for_desc(cursdfg, arrname)
-                    dtype =  arr.dtype
+                    arr = cursdfg.arrays[arrname]
+                    dtype = arr.dtype
 
                     # Change type and shape to vector
                     if not isinstance(dtype, dtypes.vector):
