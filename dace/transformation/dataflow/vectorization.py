@@ -59,7 +59,6 @@ def collect_maps_to_vectorize(sdfg: SDFG, state, map_entry):
             # Get all out/in edges of the map
             # TODO: solve this without exception...
             possible_edges = set()
-            n :nodes.MapEntry = n
             for s in sdfg.states():
                 try:
                     for e in s.all_edges(n):
