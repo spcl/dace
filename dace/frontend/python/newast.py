@@ -3268,7 +3268,7 @@ class ProgramVisitor(ExtNodeVisitor):
         from dace.frontend.python.parser import DaceProgram
 
         if func is None:
-            func = self.closure.closure_sdfgs[funcname]
+            raise TypeError('Tried to parse a None function')
         if isinstance(func, SDFG):
             sdfg = copy.deepcopy(func)
             funcname = sdfg.name
@@ -3914,7 +3914,7 @@ class ProgramVisitor(ExtNodeVisitor):
                         funcname = candidate
 
         # If the function exists as a global SDFG or @dace.program, use it
-        if func or funcname in self.closure.closure_sdfgs:
+        if func is not None:
             try:
                 return self._parse_sdfg_call(funcname, func, node)
             except SkipCall as ex:

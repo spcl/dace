@@ -492,7 +492,7 @@ class GlobalResolver(ast.NodeTransformer):
         elif (dtypes.isconstant(value) or isinstance(value, SDFG) or hasattr(value, '__sdfg__')):
             # Could be a constant, an SDFG, or SDFG-convertible object
             if isinstance(value, SDFG) or hasattr(value, '__sdfg__'):
-                self.closure.closure_sdfgs[qualname] = value
+                self.closure.closure_sdfgs[id(value)] = (qualname, value)
             else:
                 self.closure.closure_constants[qualname] = value
 
@@ -506,6 +506,8 @@ class GlobalResolver(ast.NodeTransformer):
                     newnode = ast.Str(s=value)
                 else:
                     newnode = ast.Num(n=value)
+
+            newnode.qualname = qualname
 
         elif detect_callables and hasattr(value, '__call__') and hasattr(value.__call__, '__sdfg__'):
             return self.global_value_to_node(value.__call__, parent_node, qualname, recurse, detect_callables)
@@ -808,7 +810,10 @@ class CallTreeResolver(ast.NodeVisitor):
         # Resolve nested closure as necessary
         qualname = None
         try:
-            qualname = next(k for k, v in self.closure.closure_sdfgs.items() if v is value)
+            if id(value) in self.closure.closure_sdfgs:
+                qualname, _ = self.closure.closure_sdfgs[id(value)]
+            elif hasattr(node.func, 'qualname'):
+                qualname = node.func.qualname
             self.seen_calls.add(qualname)
             if hasattr(value, 'closure_resolver'):
                 self.closure.nested_closures.append((qualname, value.closure_resolver(constant_args, self.closure)))
@@ -820,12 +825,15 @@ class CallTreeResolver(ast.NodeVisitor):
             optional_qname = ''
             if qualname is not None:
                 optional_qname = f' ("{qualname}")'
-            warnings.warn(f'Preprocessing SDFGConvertible {value}{optional_qname} failed: {ex}')
+            warnings.warn(
+                f'Preprocessing SDFGConvertible {value}{optional_qname} failed with {type(ex).__name__}: {ex}')
             if Config.get_bool('frontend', 'raise_nested_parsing_errors'):
-                raise ex
-            if qualname in self.closure.closure_sdfgs:
-                del self.closure.closure_sdfgs[qualname]
+                raise
+            if id(value) in self.closure.closure_sdfgs:
+                del self.closure.closure_sdfgs[id(value)]
             # Return old call AST instead
+            if not hasattr(node.func, 'oldnode'):
+                raise
             node.func = node.func.oldnode.func
 
             return self.generic_visit(node)
