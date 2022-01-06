@@ -53,7 +53,7 @@ class StructTransformer(ast.NodeTransformer):
 
     def visit_Call(self, node: ast.Call):
         # Struct initializer
-        name = astutils.rname(node.func)
+        name = astutils.unparse(node.func)
         if name not in self._structs:
             return self.generic_visit(node)
 
@@ -788,11 +788,11 @@ class CallTreeResolver(ast.NodeVisitor):
     def visit_Call(self, node: ast.Call):
         # Only parse calls to parsed SDFGConvertibles
         if not isinstance(node.func, (ast.Num, ast.Constant)):
-            self.seen_calls.add(astutils.rname(node.func))
+            self.seen_calls.add(astutils.unparse(node.func))
             return self.generic_visit(node)
         if hasattr(node.func, 'oldnode'):
             if isinstance(node.func.oldnode, ast.Call):
-                self.seen_calls.add(astutils.rname(node.func.oldnode.func))
+                self.seen_calls.add(astutils.unparse(node.func.oldnode.func))
             else:
                 self.seen_calls.add(astutils.rname(node.func.oldnode))
         if isinstance(node.func, ast.Num):
