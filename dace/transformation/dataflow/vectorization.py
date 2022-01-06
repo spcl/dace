@@ -32,9 +32,9 @@ def get_state_for_node(sdfg: SDFG, node):
 
 
 def get_sdfg_for_node(sdfg: SDFG, node):
-    for s in sdfg.all_sdfgs_recursive():    #sdfg
-        for n in s.nodes():                 # states
-            for i in n.nodes():             # nodes
+    for s in sdfg.all_sdfgs_recursive():  #sdfg
+        for n in s.nodes():  # states
+            for i in n.nodes():  # nodes
                 if node == i:
                     return s
     raise Exception("sdfg for the node {n} not found".format(n=node))
@@ -357,13 +357,12 @@ class Vectorization(transformation.Transformation):
 
             # Check all edges
             for m in maps_to_vectorize:
-                subgraph = state.scope_subgraph(m)
 
-            map_subset = map_entry.map.params
-            edge_subset = [a_tuple[0] for a_tuple in list(e.data.subset)]
+                map_subset = m.map.params
+                edge_subset = [a_tuple[0] for a_tuple in list(e.data.subset)]
 
-            if isinstance(edge_subset[-1], symbol) and str(edge_subset[-1]) != map_subset[-1]:
-                return False
+                if isinstance(edge_subset[-1], symbol) and str(edge_subset[-1]) != map_subset[-1]:
+                    return False
 
             self._map_entry = old_map_entry
             self._level = 0
