@@ -21,9 +21,9 @@ import dace.codegen.targets.sve.util as sve_util
 import dace.frontend.operations
 
 
-# Find the state in which the node is
+# Find the innermost state in which the node is
 # There is probably a better solution than this
-def get_state_for_node(sdfg: SDFG, node):
+def get_innermost_state_for_node(sdfg: SDFG, node):
     for s in sdfg.states():
         for n, state in s.all_nodes_recursive():
             if n == node:
@@ -32,13 +32,24 @@ def get_state_for_node(sdfg: SDFG, node):
     raise Exception("State for the node {n} not found".format(n=node))
 
 
-def get_sdfg_for_node(sdfg: SDFG, node):
+# Find the innermost sdfg in which the node is
+# There is probably a better solution than this
+def get_innermost_sdfg_for_node(sdfg: SDFG, node):
     for s in sdfg.all_sdfgs_recursive():  #sdfg
         for n in s.nodes():  # states
             for i in n.nodes():  # nodes
                 if node == i:
                     return s
     raise Exception("sdfg for the node {n} not found".format(n=node))
+
+
+# Find the innermost sdfg in which the array is
+# There is probably a better solution than this
+def get_innermost_sdfg_for_array(sdfg: SDFG, array):
+    for s in sdfg.all_sdfgs_recursive():  #sdfg
+        if array in s.arrays:
+            return s
+    raise Exception("sdfg for the array {n} not found".format(n=array))
 
 
 def collect_maps_to_vectorize(sdfg: SDFG, state, map_entry):
@@ -78,7 +89,7 @@ def collect_maps_to_vectorize(sdfg: SDFG, state, map_entry):
             add_map = False
 
             # Get all out/in edges of the map
-            correct_state = get_state_for_node(sdfg, n)
+            correct_state = get_innermost_state_for_node(sdfg, n)
 
             possible_edges = set()
             for e in correct_state.all_edges(n):
@@ -96,7 +107,8 @@ def collect_maps_to_vectorize(sdfg: SDFG, state, map_entry):
                 all_maps_entries_exits.remove(n)
 
                 for e in possible_edges:
-                    data_descriptors_to_vectorize.add(e.data.data)
+                    if e.data.data is not None:
+                        data_descriptors_to_vectorize.add(e.data.data)
                 break
 
     # Only interested in map entries
@@ -105,7 +117,7 @@ def collect_maps_to_vectorize(sdfg: SDFG, state, map_entry):
         if isinstance(m, nodes.MapEntry):
 
             is_ok = True
-            correct_state = get_state_for_node(sdfg, m)
+            correct_state = get_innermost_state_for_node(sdfg, m)
             subgraph_contents = correct_state.scope_subgraph(m, include_entry=False, include_exit=False)
 
             # Ensure only Tasklets and AccessNodes are within the map
@@ -178,7 +190,7 @@ class Vectorization(transformation.Transformation):
         # To support recursivity in the FPGA case, see below
         if isinstance(self._map_entry, nodes.MapEntry):
             map_entry = self._map_entry
-            state = get_state_for_node(sdfg, map_entry)
+            state = get_innermost_state_for_node(sdfg, map_entry)
         else:
             map_entry = self._map_entry(sdfg)
             state = sdfg.node(self.state_id)
@@ -325,15 +337,17 @@ class Vectorization(transformation.Transformation):
             for m in maps_to_vectorize:
                 self._map_entry = m
 
-                correct_state = get_state_for_node(sdfg, m)
+                correct_state = get_innermost_state_for_node(sdfg, m)
 
-                if not self.can_be_applied(correct_state, candidate, expr_index, get_sdfg_for_node(sdfg, m),
+                if not self.can_be_applied(correct_state, candidate, expr_index, get_innermost_sdfg_for_node(sdfg, m),
                                            permissive):
                     return False
 
             # Check alls strideds of the arrays
             for a in data_descriptors_to_vectorize:
-                array = sdfg.arrays[a]
+
+                correct_sdfg = get_innermost_sdfg_for_array(sdfg, a)
+                array = correct_sdfg.arrays[a]
                 strides_list = list(array.strides)
 
                 if strides_list[-1] != 1:
@@ -359,7 +373,7 @@ class Vectorization(transformation.Transformation):
             # Check all edges
             for m in maps_to_vectorize:
 
-                correct_state = get_state_for_node(sdfg, m)
+                correct_state = get_innermost_state_for_node(sdfg, m)
 
                 edges = correct_state.all_edges(m)
 
@@ -402,7 +416,7 @@ class Vectorization(transformation.Transformation):
         # To support recursivity in the FPGA case, see below
         if isinstance(self._map_entry, nodes.MapEntry):
             map_entry = self._map_entry
-            state = get_state_for_node(sdfg, map_entry)
+            state = get_innermost_state_for_node(sdfg, map_entry)
         else:
             map_entry = self._map_entry(sdfg)
             state = sdfg.node(self.state_id)
@@ -417,7 +431,7 @@ class Vectorization(transformation.Transformation):
             for m in maps_to_vectorize:
                 self._map_entry = m
 
-                self.apply(get_sdfg_for_node(sdfg, m))
+                self.apply(get_innermost_sdfg_for_node(sdfg, m))
 
             # Change the subset in the post state that copies the data back to the host
             if len(sdfg.states()) < 3 or not sdfg.states()[-1].name.startswith('post_'):
