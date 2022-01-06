@@ -315,7 +315,9 @@ class Vectorization(transformation.Transformation):
             for m in maps_to_vectorize:
                 self._map_entry = m
 
-                if not self.can_be_applied(state, candidate, expr_index, sdfg, permissive):
+                correct_state = get_state_for_node(sdfg,m)
+
+                if not self.can_be_applied(correct_state, candidate, expr_index, sdfg, permissive):
                     return False
 
             # Check alls strideds of the arrays
