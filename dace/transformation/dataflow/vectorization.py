@@ -18,6 +18,7 @@ import dace.transformation.dataflow.vectorization_infer_types as infer_types
 import dace.sdfg.analysis.vector_inference as vector_inference
 import dace.codegen.targets.sve.util as sve_util
 import dace.frontend.operations
+from tests.fpga.fpga_vectorization_test import N
 
 
 def collect_maps_to_vectorize(sdfg: SDFG, state, map_entry):
@@ -56,7 +57,18 @@ def collect_maps_to_vectorize(sdfg: SDFG, state, map_entry):
 
             add_map = False
 
-            for e in state.all_edges(n):
+            # Get all out/in edges of the map
+            # TODO: solve this without exception...
+            possible_edges = set()
+            n :nodes.MapEntry = n
+            for s in sdfg.states():
+                try:
+                    for e in s.all_edges(n):
+                        possible_edges.add(e)
+                except:
+                    pass
+
+            for e in possible_edges:
                 if e.data.data in data_descriptors_to_vectorize or n.map in maps_to_vectorize:
                     add_map = True
                     collected_all = False
@@ -67,7 +79,7 @@ def collect_maps_to_vectorize(sdfg: SDFG, state, map_entry):
                 entries_exits_to_vectorize.add(n)
                 all_maps_entries_exits.remove(n)
 
-                for e in state.all_edges(n):
+                for e in possible_edges:
                     data_descriptors_to_vectorize.add(e.data.data)
                 break
 
