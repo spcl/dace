@@ -4,6 +4,7 @@ import dace
 import numpy as np
 import pytest
 import time
+from dace import config
 
 N = dace.symbol('N')
 
@@ -405,6 +406,26 @@ def test_inout_same_name():
     assert np.allclose(expected, a)
 
 
+def test_inhibit_state_fusion():
+    """ Tests that state fusion is inhibited around callbacks if configured as such. """
+    @dace_inhibitor
+    def add(a, b):
+        return a + b
+
+    @dace.program
+    def calladd(A: dace.float64[20], B: dace.float64[20], C: dace.float64[20], D: dace.float64[20]):
+        A[:] = add(B, C)
+        D[:] = add(A, C)
+
+    with config.set_temporary('frontend', 'dont_fuse_callbacks', value=True):
+        sdfg = calladd.to_sdfg(coarsen=True)
+        assert sdfg.number_of_nodes() == 5
+
+    with config.set_temporary('frontend', 'dont_fuse_callbacks', value=False):
+        sdfg = calladd.to_sdfg(coarsen=True)
+        assert sdfg.number_of_nodes() == 1
+
+
 if __name__ == '__main__':
     test_automatic_callback()
     test_automatic_callback_2()
@@ -423,3 +444,4 @@ if __name__ == '__main__':
     test_object_with_nested_callback()
     test_two_parameters_same_name()
     test_inout_same_name()
+    test_inhibit_state_fusion()

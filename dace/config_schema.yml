@@ -811,6 +811,14 @@ required:
                     folding) on the input code. Set to zero to disable preprocessing
                     optimizations, set to -1 to run until the code has not changed.
 
+            dont_fuse_callbacks:
+                type: bool
+                title: Do not fuse callbacks
+                default: false
+                description: >
+                    Stricter mode of operation where callbacks into Python don't participate
+                    in state fusion transformations.
+
     #############################################
     # General settings
 
