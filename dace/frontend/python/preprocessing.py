@@ -638,6 +638,27 @@ class GlobalResolver(ast.NodeTransformer):
     def visit_Subscript(self, node: ast.Subscript) -> Any:
         # First visit the subscripted value alone, then the whole subscript
         node.value = self.visit(node.value)
+        
+        # Try to evaluate literal lists/dicts/tuples directly
+        if isinstance(node.value, (ast.List, ast.Dict, ast.Tuple)):
+            # First evaluate key
+            try:
+                gslice = astutils.evalnode(node.slice, self.globals)
+            except SyntaxError:
+                return self.generic_visit(node)
+            
+            # Then query for the right value
+            if isinstance(node.value, ast.Dict):
+                for k, v in zip(node.value.keys, node.value.values):
+                    try:
+                        gkey = astutils.evalnode(k, self.globals)
+                    except SyntaxError:
+                        continue
+                    if gkey == gslice:
+                        return self.visit_Attribute(v)
+            else: # List or Tuple
+                return self.visit_Attribute(node.value.elts[gslice])
+
         return self.visit_Attribute(node)
 
     def visit_Call(self, node: ast.Call) -> Any:
