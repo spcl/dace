@@ -25,7 +25,7 @@ def collect_maps_to_vectorize(sdfg: SDFG, state, map_entry):
     Collect all maps and the corresponding data descriptors that have to be vectorized
     if target == FPGA.
     """
-    # Collect all possible and maps
+    # Collect all possible and maps 
     all_maps_entries_exits = set()
 
     for n, s in sdfg.all_nodes_recursive():
