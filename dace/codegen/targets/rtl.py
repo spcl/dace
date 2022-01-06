@@ -100,11 +100,9 @@ class RTLCodeGen(target.TargetCodeGenerator):
                 line: str = "{}* {} = &{}[0];".format(
                     dst_node.in_connectors[edge.dst_conn].ctype, edge.dst_conn,
                     edge.src.data)
-        elif isinstance(edge.src, nodes.MapEntry) and isinstance(edge.dst, nodes.Tasklet) and edge.src.map.unroll:
-            # TODO works for one kernel, but might break with several.
+        elif isinstance(edge.src, nodes.MapEntry) and isinstance(edge.dst, nodes.Tasklet):
+            # TODO works for one kernel, but might break with several. Also only handles if the scope and tasklet are directly connected.
             self.n_unrolled = symbolic.evaluate(edge.src.map.range[0][1] + 1, sdfg.constants)
-            # TODO properly implement for software target
-            #line: str = '// Copy from map handled in xilinx codegen'
             line: str = f'{dst_node.in_connectors[edge.dst_conn]} {edge.dst_conn} = &{edge.data.data}[{edge.src.map.params[0]}*{edge.data.volume}];'
         else:
             raise RuntimeError("Not handling copy_memory case of type {} -> {}.".format(type(edge.src), type(edge.dst)))
@@ -130,10 +128,7 @@ class RTLCodeGen(target.TargetCodeGenerator):
                 line: str = "{}* {} = &{}[0];".format(
                     src_node.out_connectors[edge.src_conn].ctype, edge.src_conn,
                     edge.dst.data)
-        elif isinstance(edge.src, nodes.Tasklet) and isinstance(
-                edge.dst, nodes.MapExit) and edge.dst.map.unroll:
-            # TODO properly implement for software target
-            #line: str = '// Copy to map handled in xilinx codegen'
+        elif isinstance(edge.src, nodes.Tasklet) and isinstance(edge.dst, nodes.MapExit):
             line: str = f'{src_node.out_connectors[edge.src_conn].ctype} {edge.src_conn} = &{edge.data.data}[{edge.dst.map.params[0]}*{edge.data.volume}];'
         else:
             raise RuntimeError("Not handling define_out_memlet case of type {} -> {}.".format(
@@ -241,8 +236,8 @@ class RTLCodeGen(target.TargetCodeGenerator):
         """
         Generate zero initialization statements
         """
-        valids = [f'models[i]->s_axis_{name}_tvalid = 0;' for name in tasklet.in_connectors]
-        readys = [f'models[i]->m_axis_{name}_tready = 0;' for name in tasklet.out_connectors]
+        valids = [f'model->s_axis_{name}_tvalid = 0;' for name in tasklet.in_connectors]
+        readys = [f'model->m_axis_{name}_tready = 0;' for name in tasklet.out_connectors]
         return valids, readys
 
     def generate_cpp_inputs_outputs(self, tasklet, buses):
@@ -277,27 +272,37 @@ class RTLCodeGen(target.TargetCodeGenerator):
         for name, (arr, is_output, bytes, veclen, volume) in buses.items():
             if is_output:
                 conn = tasklet.out_connectors[name]
-                if isinstance(conn, dtypes.vector):# or (isinstance(conn, dtypes.pointer) and isinstance(conn.base_type, dtypes.vector)):
-                    outputs[name] = f'''int idx = out_ptr_{name}[i]++;
-for(int j = 0; j < {veclen}; j++) {{
-    {name}[idx][j] = (int)(models[i]->m_axis_{name}_tdata[j]);
+                if isinstance(conn, dtypes.vector):
+                    outputs[name] = f'''for (int j = 0; j < {veclen}; j++) {{
+    {name}[j] = (int)(model->m_axis_{name}_tdata[j]);
 }}'''
                 elif isinstance(conn, dtypes.pointer):
-                    outputs[name] = f'{arr}[out_ptr_{name}[i]++] = (int)(models[i]->m_axis_{name}_tdata);'
+                    if isinstance(conn.base_type, dtypes.vector):
+                        outputs[name] = f'''int idx = out_ptr_{name}++;
+for (int j = 0; j < {veclen}; j++) {{
+    {name}[idx][j] = (int)(model->m_axis_{name}_tdata[j]);
+}}'''
+                    else:
+                        outputs[name] = f'{name}[out_ptr_{name}++] = (int)(model->m_axis_{name}_tdata);'
                 else:
-                    outputs[name] = f'{arr}[out_ptr_{name}[i]++] = (int)(models[i]->m_axis_{name}_tdata);'
+                    outputs[name] = f'{name}[out_ptr_{name}++] = (int)(model->m_axis_{name}_tdata);'
 
             else: # input
                 conn = tasklet.in_connectors[name]
-                if isinstance(conn, dtypes.vector) or (isinstance(conn, dtypes.pointer) and isinstance(conn.base_type, dtypes.vector)):
-                    inputs[name] = f'''int idx = i*{volume} + (in_ptr_{name}[i]++);
-for(int j = 0; j < {veclen}; j++) {{
-    models[i]->s_axis_{name}_tdata[j] = {arr}[idx][j];
+                if isinstance(conn, dtypes.vector):
+                    inputs[name] = f'''for (int j = 0; j < {veclen}; j++) {{
+    model->s_axis_{name}_tdata[j] = {name}[j];
 }}'''
                 elif isinstance(conn, dtypes.pointer):
-                    inputs[name] = f'models[i]->s_axis_{name}_tdata = {arr}[in_ptr_{name}[i]++];'
+                    if isinstance(conn.base_type, dtypes.vector):
+                        inputs[name] = f'''int idx = in_ptr_{name}++;
+for (int j = 0; j < {veclen}; j++) {{
+    model->s_axis_{name}_tdata[j] = (int){name}[idx][j];
+}}'''
+                    else:
+                        inputs[name] = f'model->s_axis_{name}_tdata = {name}[in_ptr_{name}++];'
                 else:
-                    inputs[name] = f'models[i]->s_axis_{name}_tdata = {arr}[0];'
+                    inputs[name] = f'model->s_axis_{name}_tdata = {name}[0];'
 
         return inputs, outputs
 
@@ -309,17 +314,14 @@ for(int j = 0; j < {veclen}; j++) {{
                 conn = conn.base_type
             if isinstance(conn, dtypes.vector):
                 inits.append(f'''for (int j = 0; j < {tasklet.in_connectors[name].veclen}; j++) {{
-    models[i]->s_axis_{name}_tdata[j] = 0;
+    model->s_axis_{name}_tdata[j] = 0;
 }}''')
 
         return "\n".join(inits)
 
     def generate_cpp_num_elements(self, buses):
         # TODO: compute num_elements=#elements that enter/leave the pipeline, for now we assume in_elem=out_elem (i.e. no reduction)
-        return [f'''int num_elements_{name}[{self.n_unrolled}];
-for (int i = 0; i < {self.n_unrolled}; i++) {{
-    num_elements_{name}[i] = {volume};
-}}'''
+        return [f'''int num_elements_{name} = {volume};'''
         for name, (arr, is_output, bytes, veclen, volume) in buses.items()]
 
     def generate_cpp_internal_state(self, tasklet):
@@ -329,7 +331,7 @@ for (int i = 0; i < {self.n_unrolled}; i++) {{
                 **tasklet.out_connectors
             }])
         internal_state_var = ", ".join( # TODO fix
-            ["models[i]->{}".format(var_name) for var_name in {
+            ["model->{}".format(var_name) for var_name in {
                 **tasklet.in_connectors,
                 **tasklet.out_connectors
             }])
@@ -339,8 +341,8 @@ for (int i = 0; i < {self.n_unrolled}; i++) {{
         """
         Generate checking whether input to the tasklet has been consumed
         """
-        return [f'''if (models[i]->s_axis_{name}_tready == 1 && models[i]->s_axis_{name}_tvalid == 1) {{
-                read_input_hs_{name}[i] = true;
+        return [f'''if (model->s_axis_{name}_tready == 1 && model->s_axis_{name}_tvalid == 1) {{
+                read_input_hs_{name} = true;
             }}''' for name in tasklet.in_connectors]
 
     def generate_feeding(self, tasklet, inputs):
@@ -348,23 +350,17 @@ for (int i = 0; i < {self.n_unrolled}; i++) {{
         Generate statements for feeding into a streaming AXI bus
         """
         debug_feed_element = "std::cout << \"feed new element\" << std::endl;\n" if self.verilator_debug else ""
-        return [f'''if (models[i]->s_axis_{name}_tvalid == 0 && in_ptr_{name}[i] < num_elements_{name}[i]) {{
+        return [f'''if (model->s_axis_{name}_tvalid == 0 && in_ptr_{name} < num_elements_{name}) {{
             {debug_feed_element}{inputs[name]}
-            models[i]->s_axis_{name}_tvalid = 1;
+            model->s_axis_{name}_tvalid = 1;
         }}''' for name in tasklet.in_connectors]
 
     def generate_ptrs(self, tasklet):
         """
         Generate pointers for the transaction counters
         """
-        ins = [f'''int in_ptr_{name}[{self.n_unrolled}];
-for (int i = 0; i < {self.n_unrolled}; i++) {{
-    in_ptr_{name}[i] = 0;
-}}''' for name in tasklet.in_connectors]
-        outs = [f'''int out_ptr_{name}[{self.n_unrolled}];
-for (int i = 0; i < {self.n_unrolled}; i++) {{
-    out_ptr_{name}[i] = 0;
-}}''' for name in tasklet.out_connectors]
+        ins = [f'''int in_ptr_{name} = 0;''' for name in tasklet.in_connectors]
+        outs = [f'''int out_ptr_{name} = 0;''' for name in tasklet.out_connectors]
         return ins, outs
 
     def generate_exporting(self, tasklet, outputs):
@@ -372,31 +368,25 @@ for (int i = 0; i < {self.n_unrolled}; i++) {{
         Generate statements for whether an element output by the tasklet is ready.
         """
         debug_export_element = "std::cout << \"export element\" << std::endl;\n" if self.verilator_debug else ""
-        return [f'''if (models[i]->m_axis_{name}_tvalid == 1) {{
+        return [f'''if (model->m_axis_{name}_tvalid == 1) {{
             {debug_export_element}{outputs[name]}
-            models[i]->m_axis_{name}_tready = 1;
+            model->m_axis_{name}_tready = 1;
         }}''' for name in tasklet.out_connectors]
 
     def generate_write_output_hs(self, tasklet):
         """
         Generate check for whether an element has been consumed from the output of a tasklet.
         """
-        return [f'''if (models[i]->m_axis_{name}_tready && models[i]->m_axis_{name}_tvalid == 1) {{
-            write_output_hs_{name}[i] = true;
+        return [f'''if (model->m_axis_{name}_tready && model->m_axis_{name}_tvalid == 1) {{
+            write_output_hs_{name} = true;
         }}''' for name in tasklet.out_connectors]
 
     def generate_hs_flags(self, tasklet):
         """
         Generate flags
         """
-        ins = [f'''bool read_input_hs_{name}[{self.n_unrolled}];
-for (int i = 0; i < {self.n_unrolled}; i++) {{
-    read_input_hs_{name}[i] = false;
-}}''' for name in tasklet.in_connectors]
-        outs = [f'''bool write_output_hs_{name}[{self.n_unrolled}];
-for (int i = 0; i < {self.n_unrolled}; i++) {{
-    write_output_hs_{name}[i] = false;
-}}''' for name in tasklet.out_connectors]
+        ins = [f'''bool read_input_hs_{name} = false;''' for name in tasklet.in_connectors]
+        outs = [f'''bool write_output_hs_{name} = false;''' for name in tasklet.out_connectors]
         return ins + outs
 
     def generate_input_hs_toggle(self, tasklet):
@@ -404,10 +394,10 @@ for (int i = 0; i < {self.n_unrolled}; i++) {{
         Generate statements for toggling input flags.
         """
         debug_read_input_hs = "\nstd::cout << \"remove read_input_hs flag\" << std::endl;" if self.verilator_debug else ""
-        return [f'''if (read_input_hs_{name}[i]) {{
+        return [f'''if (read_input_hs_{name}) {{
             // remove valid flag {debug_read_input_hs}
-            models[i]->s_axis_{name}_tvalid = 0;
-            read_input_hs_{name}[i] = false;
+            model->s_axis_{name}_tvalid = 0;
+            read_input_hs_{name} = false;
         }}''' for name in tasklet.in_connectors]
 
     def generate_output_hs_toggle(self, tasklet):
@@ -415,10 +405,10 @@ for (int i = 0; i < {self.n_unrolled}; i++) {{
         Generate statements for toggling output flags.
         """
         debug_write_output_hs = "\nstd::cout << \"remove write_output_hs flag\" << std::endl;" if self.verilator_debug else ""
-        return [f'''if (write_output_hs_{name}[i]) {{
+        return [f'''if (write_output_hs_{name}) {{
             // remove ready flag {debug_write_output_hs}
-            models[i]->m_axis_{name}_tready = 0;
-            write_output_hs_{name}[i] = false;
+            model->m_axis_{name}_tready = 0;
+            write_output_hs_{name} = false;
         }}''' for name in tasklet.out_connectors]
 
     def generate_running_condition(self, tasklet):
@@ -429,11 +419,8 @@ for (int i = 0; i < {self.n_unrolled}; i++) {{
         # one element is supported. Additionally, this should not be used as
         # condition, as the amount of input and output elements might not be
         # equal to each other.
-        evals = ' && '.join([f'out_ptr_{name}[i] < num_elements_{name}[i]' for name in tasklet.out_connectors])
-        return f'''cnd = true;
-for (int i = 0; i < {self.n_unrolled}; i++) {{
-    cnd &= {evals};
-}}'''
+        evals = ' && '.join([f'out_ptr_{name} < num_elements_{name}' for name in tasklet.out_connectors])
+        return f'''cnd = {evals};'''
 
     def unparse_tasklet(self, sdfg: sdfg.SDFG, dfg: state.StateSubgraphView, state_id: int, node: nodes.Node,
                         function_stream: prettycode.CodeIOStream, callsite_stream: prettycode.CodeIOStream):
@@ -652,56 +639,30 @@ for (int i = 0; i < {self.n_unrolled}; i++) {{
 vluint64_t main_time = 0;
 
 // instantiate model(s)
-V{name}* models[{unroll}];
-for (int i = 0; i < {unroll}; i++) {{
-    models[i] = new V{name};
+V{name}* model = new V{name};
 
-    // apply initial input values
-    models[i]->ap_areset = 0;  // no reset
-    models[i]->ap_aclk = 0; // neg clock
-    {valid_zeros}
-    {ready_zeros}
-}}
+// apply initial input values
+model->ap_areset = 0;  // no reset
+model->ap_aclk = 0; // neg clock
+{valid_zeros}
+{ready_zeros}
 
-for (int i = 0; i < {unroll}; i++) {{
-    models[i]->eval();
-}}
+model->eval();
 
 // Initialize vectors
-for (int i = 0; i < {unroll}; i++) {{
-    {vector_init}
-}}
+{vector_init}
 
 // reset design
-for (int i = 0; i < {unroll}; i++) {{
-    models[i]->ap_areset = 1;
-    models[i]->ap_aclk = 1; // rising
-}}
-for (int i = 0; i < {unroll}; i++) {{
-    models[i]->eval();
-}}
-
-for (int i = 0; i < {unroll}; i++) {{
-    models[i]->ap_aclk = 0; // falling
-}}
-for (int i = 0; i < {unroll}; i++) {{
-    models[i]->eval();
-}}
-
-for (int i = 0; i < {unroll}; i++) {{
-    models[i]->ap_areset = 0;
-    models[i]->ap_aclk = 1; // rising
-}}
-for (int i = 0; i < {unroll}; i++) {{
-    models[i]->eval();
-}}
-
-for (int i = 0; i < {unroll}; i++) {{
-    models[i]->ap_aclk = 0; // falling
-}}
-for (int i = 0; i < {unroll}; i++) {{
-    models[i]->eval();
-}}
+model->ap_areset = 1;
+model->ap_aclk = 1; // rising
+model->eval();
+model->ap_aclk = 0; // falling
+model->eval();
+model->ap_areset = 0;
+model->ap_aclk = 1; // rising
+model->eval();
+model->ap_aclk = 0; // falling
+model->eval();
 
 // simulate until in_handshakes = out_handshakes = num_elements
 {hs_flags}
@@ -714,49 +675,40 @@ while (cnd) {{
     // increment time
     main_time++;
 
-    for (int i = 0; i < {unroll}; i++) {{
-        // feed elements
+    // feed elements
 {feed_elements}
-        // export elements
+    // export elements
 {export_elements}
 
-        // check if valid and ready have been asserted at the rising clock edge -> input read handshake
+    // check if valid and ready have been asserted at the rising clock edge -> input read handshake
 {read_input_hs}
-        // check if valid and ready have been asserted at the rising clock edge -> output write handshake
+    // check if valid and ready have been asserted at the rising clock edge -> output write handshake
 {write_output_hs}
 
-        // positive clock edge
-        models[i]->ap_aclk = !(models[i]->ap_aclk);
-    }}
+    // positive clock edge
+    model->ap_aclk = !(model->ap_aclk);
 
-    for (int i = 0; i < {unroll}; i++) {{
-        models[i]->eval();
-    }} {debug_internal_state}
+    model->eval(); {debug_internal_state}
 
-    for (int i = 0; i < {unroll}; i++) {{
-        // check if valid_i and ready_o have been asserted at the rising clock edge
+    // check if valid_i and ready_o have been asserted at the rising clock edge
 {input_hs_toggle}
 
-        // check if valid_o and ready_i have been asserted at the rising clock edge
+    // check if valid_o and ready_i have been asserted at the rising clock edge
 {output_hs_toggle}
 
-        // negative clock edge
-        models[i]->ap_aclk = !(models[i]->ap_aclk);
-    }}
-    for (int i = 0; i < {unroll}; i++) {{
-        models[i]->eval();
-    }}
+    // negative clock edge
+    model->ap_aclk = !(model->ap_aclk);
+    model->eval();
 {running_condition}
 }} {debug_internal_state}
 
-for (int i = 0; i < {unroll}; i++) {{
-    // final model cleanup
-    models[i]->final();
+// final model cleanup
+model->final();
 
-    // clean up resources
-    delete models[i];
-    models[i] = NULL;
-}} {debug_sim_end}"""
+// clean up resources
+delete model;
+model = NULL;
+{debug_sim_end}"""
 
     RTL_HEADER = """\
 module {name}

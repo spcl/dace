@@ -386,7 +386,7 @@ def test_tasklet_map():
     sdfg.add_array('B', [M,N], dtype=dace.vector(dace.int32, W.get()))
     sdfg.add_array('C', [M,N], dtype=dace.vector(dace.int32, W.get()))
 
-    mentry, mexit = state.add_map('compute_map', {'k': '0:M'}, schedule=dace.ScheduleType.Sequential, unroll=True)
+    mentry, mexit = state.add_map('compute_map', {'k': '0:M'})
 
     tasklet = state.add_tasklet(name='rtl_tasklet1',
                                  inputs={'a','b'},
@@ -477,8 +477,8 @@ end''',
     assert (c == a + b).all()
 
 if __name__ == '__main__':
-    #test_multi_tasklet()
+    test_multi_tasklet()
     test_tasklet_map()
-    #test_tasklet_parameter()
-    #test_tasklet_scalar()
-    #test_tasklet_vector()
+    test_tasklet_parameter()
+    test_tasklet_scalar()
+    test_tasklet_vector()
