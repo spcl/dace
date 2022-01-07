@@ -915,7 +915,7 @@ def safe_replace(mapping: Dict[Union[SymbolicType, str], Union[SymbolicType, str
             pass
 
         # If not found in outputs, safe to replace unsafely
-        if not any(re.findall(r'\b%s\b' % re.escape(str(k)), str(v)) for v in mapping.values()):
+        if not any(re.findall(r'\b%s\b' % re.escape(str(k)), str(v)) for v in (mapping.values() | mapping.keys())):
             repl[k] = v
             continue
 
