@@ -200,10 +200,10 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                 if (len(incoming_edge_memlet_ranges) > 0):
                     sorted(incoming_edge_memlet_ranges)
                     prev_max = incoming_edge_memlet_ranges[0][1]
-                    for p in incoming_edge_memlet_ranges[1 : ]:
+                    for p in incoming_edge_memlet_ranges[1:]:
                         if (p[0] - prev_max < 0):
                             warnings.warn('WARNING: Memlet range overlap while writing in "%s" in state %s' %
-                                      (node, state.label))
+                                          (node, state.label))
                             break
                         prev_max = p[1]
 
