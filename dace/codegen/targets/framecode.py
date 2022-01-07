@@ -36,7 +36,7 @@ class DaCeCodeGenerator(object):
     """ DaCe code generator class that writes the generated code for SDFG
         state machines, and uses a dispatcher to generate code for
         individual states based on the target. """
-    def __init__(self, *args, **kwargs):
+    def __init__(self, sdfg: SDFG):
         self._dispatcher = disp.TargetDispatcher(self)
         self._dispatcher.register_state_dispatcher(self)
         self._initcode = CodeIOStream()
@@ -45,6 +45,9 @@ class DaCeCodeGenerator(object):
         self.environments: List[Any] = []
         self.to_allocate: DefaultDict[Union[SDFG, SDFGState, nodes.EntryNode],
                                       List[Tuple[int, int, nodes.AccessNode]]] = collections.defaultdict(list)
+        self.free_symbols: Dict[int, Set[str]] = {}
+        self.arglist = sdfg.arglist(scalars_only=False)
+        self.arglist_scalars_only = sdfg.arglist(scalars_only=True)
 
     ##################################################################
     # Target registry
@@ -159,10 +162,10 @@ struct {sdfg.name}_t {{
         """
         import dace.library
         fname = sdfg.name
-        params = sdfg.signature()
-        paramnames = sdfg.signature(False, for_call=True)
-        initparams = sdfg.signature(with_arrays=False)
-        initparamnames = sdfg.signature(False, for_call=True, with_arrays=False)
+        params = sdfg.signature(arglist=self.arglist)
+        paramnames = sdfg.signature(False, for_call=True, arglist=self.arglist)
+        initparams = sdfg.signature(with_arrays=False, arglist=self.arglist_scalars_only)
+        initparamnames = sdfg.signature(False, for_call=True, with_arrays=False, arglist=self.arglist_scalars_only)
 
         # Invoke all instrumentation providers
         for instr in self._dispatcher.instrumentation.values():
@@ -740,7 +743,7 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
             self.generate_header(sdfg, header_global_stream, header_stream)
 
             # Open program function
-            params = sdfg.signature()
+            params = sdfg.signature(arglist=self.arglist)
             if params:
                 params = ', ' + params
             function_signature = ('void __program_%s_internal(%s_t *__state%s)\n{\n' % (sdfg.name, sdfg.name, params))

@@ -57,7 +57,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
         # Keeps track of generated connectors, so we know how to access them in
         # nested scopes
-        for name, arg_type in sdfg.arglist().items():
+        for name, arg_type in self._frame.arglist.items():
             if isinstance(arg_type, data.Scalar):
                 # GPU global memory is only accessed via pointers
                 # TODO(later): Fix workaround somehow

@@ -18,12 +18,16 @@ from dace.codegen.targets import cpp, cpu
 from dace.codegen.instrumentation import InstrumentationProvider
 
 
-def generate_headers(sdfg: SDFG) -> str:
+def generate_headers(sdfg: SDFG, frame: framecode.DaCeCodeGenerator) -> str:
     """ Generate a header file for the SDFG """
     proto = ""
     proto += "#include <dace/dace.h>\n"
-    init_params = (sdfg.name, sdfg.name, sdfg.signature(with_types=True, for_call=False, with_arrays=False))
-    call_params = sdfg.signature(with_types=True, for_call=False)
+    init_params = (sdfg.name, sdfg.name,
+                   sdfg.signature(with_types=True,
+                                  for_call=False,
+                                  with_arrays=False,
+                                  arglist=frame.arglist_scalars_only))
+    call_params = sdfg.signature(with_types=True, for_call=False, arglist=frame.arglist)
     if len(call_params) > 0:
         call_params = ', ' + call_params
     params = (sdfg.name, sdfg.name, call_params)
@@ -35,14 +39,14 @@ def generate_headers(sdfg: SDFG) -> str:
     return proto
 
 
-def generate_dummy(sdfg: SDFG) -> str:
+def generate_dummy(sdfg: SDFG, frame: framecode.DaCeCodeGenerator) -> str:
     """ Generates a C program calling this SDFG. Since we do not
         know the purpose/semantics of the program, we allocate
         the right types and and guess values for scalars.
     """
-    al = sdfg.arglist()
-    init_params = sdfg.signature(with_types=False, for_call=True, with_arrays=False)
-    params = sdfg.signature(with_types=False, for_call=True)
+    al = frame.arglist
+    init_params = sdfg.signature(with_types=False, for_call=True, with_arrays=False, arglist=frame.arglist_scalars_only)
+    params = sdfg.signature(with_types=False, for_call=True, arglist=frame.arglist)
     if len(params) > 0:
         params = ', ' + params
 
@@ -125,7 +129,7 @@ def generate_code(sdfg, validate=True) -> List[CodeObject]:
     infer_types.infer_connector_types(sdfg)
     infer_types.set_default_schedule_and_storage_types(sdfg, None)
 
-    frame = framecode.DaCeCodeGenerator()
+    frame = framecode.DaCeCodeGenerator(sdfg)
 
     # Instantiate CPU first (as it is used by the other code generators)
     # TODO: Refactor the parts used by other code generators out of CPU
@@ -181,7 +185,7 @@ def generate_code(sdfg, validate=True) -> List[CodeObject]:
 
     # add a header file for calling the SDFG
     dummy = CodeObject(sdfg.name,
-                       generate_headers(sdfg),
+                       generate_headers(sdfg, frame),
                        'h',
                        cpu.CPUCodeGen,
                        'CallHeader',
@@ -195,7 +199,7 @@ def generate_code(sdfg, validate=True) -> List[CodeObject]:
 
     # add a dummy main function to show how to call the SDFG
     dummy = CodeObject(sdfg.name + "_main",
-                       generate_dummy(sdfg),
+                       generate_dummy(sdfg, frame),
                        'cpp',
                        cpu.CPUCodeGen,
                        'SampleMain',

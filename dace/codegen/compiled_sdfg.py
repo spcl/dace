@@ -179,8 +179,8 @@ class CompiledSDFG(object):
         self._return_arrays: List[np.ndarray] = []
 
         # Cache SDFG argument properties
-        self._sig = self._sdfg.signature_arglist(with_types=False)
         self._typedict = self._sdfg.arglist()
+        self._sig = self._sdfg.signature_arglist(with_types=False, arglist=self._typedict)
         self.argnames = argnames
 
     def get_state_struct(self) -> ctypes.Structure:
