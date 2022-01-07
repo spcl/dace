@@ -8,7 +8,7 @@ import sympy
 from numpy.lib.arraysetops import isin
 from dace import data, dtypes, registry, symbolic, subsets, symbol
 from dace.frontend.octave.lexer import raise_exception
-from dace.sdfg import nodes, SDFG, SDFGState, propagation
+from dace.sdfg import nodes, SDFG, SDFGState, propagation, InterstateEdge
 from dace.sdfg import utils as sdutil
 from dace.sdfg.scope import ScopeSubgraphView
 from dace.transformation import transformation
@@ -388,6 +388,17 @@ class Vectorization(transformation.Transformation):
 
                     if isinstance(edge_subset[-1], symbol) and str(edge_subset[-1]) != map_subset[-1]:
                         return False
+
+            # Not possible to handle interstate edges at the moment
+
+            for e, _ in sdfg.all_edges_recursive():
+
+                if isinstance(e.data, InterstateEdge):
+                    print(e.data, e.data.assignments, e.data.condition)
+
+                    if e.data.assignments != {} or e.data.condition.as_string != "1":
+                        return False
+
 
             self._map_entry = old_map_entry
             self._level = 0
