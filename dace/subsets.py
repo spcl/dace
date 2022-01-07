@@ -193,6 +193,12 @@ class Range(Subset):
         sum_ranges = self.ranges + other.ranges
         return Range(sum_ranges)
 
+    def __lt__(self, other):
+        if (self.max_element() < other.max_element()):
+            return 1
+        else:
+            return 0
+
     def num_elements(self):
         return reduce(sp.Mul, self.size(), 1)
 

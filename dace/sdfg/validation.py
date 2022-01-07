@@ -195,17 +195,13 @@ def validate_state(state: 'dace.sdfg.SDFGState',
             if isinstance(node, nd.AccessNode):
                 incoming_edge_memlet_ranges = []
                 for e in state.in_edges(node):
-                    memlet_range = str(e.data.subset).split(':')
-                    incoming_edge_memlet_ranges.append([int(memlet_range[0]), int(memlet_range[1])])
+                    incoming_edge_memlet_ranges.append(e.data.subset)
                 if (len(incoming_edge_memlet_ranges) > 0):
                     sorted(incoming_edge_memlet_ranges)
-                    prev_max = incoming_edge_memlet_ranges[0][1]
-                    for p in incoming_edge_memlet_ranges[1:]:
-                        if (p[0] - prev_max < 0):
-                            warnings.warn('WARNING: Memlet range overlap while writing in "%s" in state %s' %
+                    for i in range(1, len(incoming_edge_memlet_ranges)):
+                        if (incoming_edge_memlet_ranges[i].intersects(incoming_edge_memlet_ranges[i-1])):
+                            warnings.warn('Memlet range overlap while writing in "%s" in state %s' %
                                           (node, state.label))
-                            break
-                        prev_max = p[1]
 
         # Isolated nodes
         ########################################
