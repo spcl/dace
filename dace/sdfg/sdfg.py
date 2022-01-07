@@ -106,6 +106,14 @@ class InterstateEdge(object):
         else:
             self.condition = condition
         self.assignments = {k: InterstateEdge._convert_assignment(v) for k, v in assignments.items()}
+        self._cond_sympy = None
+        self._uncond = None
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if name == 'condition' or name == '_condition':
+            super().__setattr__('_cond_sympy', None)
+            super().__setattr__('_uncond', None)
+        return super().__setattr__(name, value)
 
     @staticmethod
     def _convert_assignment(assignment) -> str:
@@ -115,11 +123,17 @@ class InterstateEdge(object):
 
     def is_unconditional(self):
         """ Returns True if the state transition is unconditional. """
-        return (self.condition is None or InterstateEdge.condition.to_string(self.condition).strip() == "1"
-                or self.condition.as_string == "")
+        if self._uncond is not None:
+            return self._uncond
+        self._uncond = (self.condition is None or InterstateEdge.condition.to_string(self.condition).strip() == "1"
+                        or self.condition.as_string == "")
+        return self._uncond
 
     def condition_sympy(self):
-        return symbolic.pystr_to_symbolic(self.condition.as_string)
+        if self._cond_sympy is not None:
+            return self._cond_sympy
+        self._cond_sympy = symbolic.pystr_to_symbolic(self.condition.as_string)
+        return self._cond_sympy
 
     @property
     def free_symbols(self) -> Set[str]:
