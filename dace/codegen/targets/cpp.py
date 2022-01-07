@@ -59,7 +59,7 @@ def copy_expr(
     defined_types = None
     # Non-free symbol dependent Arrays due to their shape
     dependent_shape = (isinstance(data_desc, data.Array) and not isinstance(data_desc, data.View) and any(
-        str(s) not in dispatcher.frame.ymbols_and_constants(sdfg) for s in dispatcher.frame.free_symbols(data_desc)))
+        str(s) not in dispatcher.frame.symbols_and_constants(sdfg) for s in dispatcher.frame.free_symbols(data_desc)))
     try:
         # NOTE: It is hard to get access to the view-edge here, so always check
         # the declared-arrays dictionary for Views.
