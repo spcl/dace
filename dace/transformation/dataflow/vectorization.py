@@ -389,7 +389,7 @@ class Vectorization(transformation.Transformation):
                     if isinstance(edge_subset[-1], symbol) and str(edge_subset[-1]) != map_subset[-1]:
                         return False
 
-            # Not possible to handle interstate edges at the moment
+            # Not possible to handle interstate edges
 
             for e, _ in sdfg.all_edges_recursive():
 
