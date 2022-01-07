@@ -819,6 +819,12 @@ required:
         title: Store SDFG transformation history
         description: Store the history of transformations on the SDFG file.
 
+    check_race_conditions:
+        type: bool
+        default: false
+        title: Check race conditions 
+        description: Check for probable race conditions during the program's execution.
+
     default_build_folder:
         type: str
         default: .dacecache
