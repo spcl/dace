@@ -29,6 +29,7 @@ from dace.sdfg.propagation import propagate_memlet, propagate_subset
 from dace.memlet import Memlet
 from dace.properties import LambdaProperty, CodeBlock
 from dace.sdfg import SDFG, SDFGState
+from dace.sdfg.replace import replace_datadesc_names
 from dace.symbolic import pystr_to_symbolic
 
 import numpy
@@ -230,6 +231,7 @@ def parse_dace_program(name: str,
     if teardown_progress:
         if not isinstance(ProgramVisitor.progress_bar, tuple):
             ProgramVisitor.progress_bar.close()
+            print('Parsing complete.')
         ProgramVisitor.progress_bar = None
         ProgramVisitor.start_time = 0
 
@@ -3414,6 +3416,7 @@ class ProgramVisitor(ExtNodeVisitor):
         # Change connector names
         updated_args = []
         arrays_before = list(sdfg.arrays.items())
+        names_to_replace: Dict[str, str] = {}
         for i, (conn, arg) in enumerate(args):
             if (conn in self.scope_vars.keys() or conn in self.sdfg.arrays.keys() or conn in self.sdfg.symbols):
                 if self.sdfg._temp_transients > sdfg._temp_transients:
@@ -3422,14 +3425,14 @@ class ProgramVisitor(ExtNodeVisitor):
                     new_conn = sdfg.temp_data_name()
                 # warnings.warn("Renaming nested SDFG connector {c} to "
                 #               "{n}".format(c=conn, n=new_conn))
-                sdfg.replace(conn, new_conn)
+                names_to_replace[conn] = new_conn
                 updated_args.append((new_conn, arg))
                 # Rename the connector's Views
                 for arrname, array in arrays_before:
                     if (isinstance(array, data.View) and len(arrname) > len(conn)
                             and arrname[:len(conn) + 1] == f'{conn}_'):
                         new_name = f'{new_conn}{arrname[len(conn):]}'
-                        sdfg.replace(arrname, new_name)
+                        names_to_replace[arrname] = new_name
             else:
                 updated_args.append((conn, arg))
         args = updated_args
@@ -3443,9 +3446,10 @@ class ProgramVisitor(ExtNodeVisitor):
                         new_name = self.sdfg.temp_data_name()
                     else:
                         new_name = sdfg.temp_data_name()
-                    sdfg.replace(arrname, new_name)
+                    names_to_replace[arrname] = new_name
         self.sdfg._temp_transients = max(self.sdfg._temp_transients, sdfg._temp_transients)
         sdfg._temp_transients = self.sdfg._temp_transients
+        replace_datadesc_names(sdfg, names_to_replace)
 
         # TODO: This workaround needs to be formalized (pass-by-assignment)
         slice_state = None

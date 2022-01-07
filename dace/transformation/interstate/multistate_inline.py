@@ -16,6 +16,7 @@ from dace.sdfg import nodes, propagation
 from dace.sdfg.graph import MultiConnectorEdge, SubgraphView
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg import utils as sdutil, infer_types, propagation
+from dace.sdfg.replace import replace_datadesc_names
 from dace.transformation import transformation, helpers
 from dace.properties import make_properties, Property
 from dace import data
@@ -254,7 +255,7 @@ class InlineMultistateSDFG(transformation.Transformation):
         repldict.update(transients)
         repldict.update({k: v.data.data for k, v in itertools.chain(inputs.items(), outputs.items())})
 
-        symbolic.safe_replace(repldict, nsdfg.replace_dict, value_as_string=True)
+        symbolic.safe_replace(repldict, lambda m: replace_datadesc_names(nsdfg, m), value_as_string=True)
 
         # Add views whenever reshapes are necessary
         # for dname in reshapes:

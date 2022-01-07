@@ -737,7 +737,7 @@ class SympyBooleanConverter(ast.NodeTransformer):
         return self.visit_Constant(node)
 
 
-@lru_cache(2048)
+@lru_cache(16384)
 def pystr_to_symbolic(expr, symbol_map=None, simplify=None):
     """ Takes a Python string and converts it into a symbolic expression. """
     from dace.frontend.python.astutils import unparse  # Avoid import loops
@@ -914,25 +914,32 @@ def safe_replace(mapping: Dict[Union[SymbolicType, str], Union[SymbolicType, str
         except (TypeError, ValueError, AttributeError):
             pass
 
+        # If not found in outputs, safe to replace unsafely
+        if not any(re.findall(r'\b%s\b' % re.escape(str(k)), str(v)) for v in mapping.values()):
+            repl[k] = v
+            continue
+
         # Otherwise, symbolic replacement
         repl[k] = f'__dacesym_{k}'
         invrepl[f'__dacesym_{k}'] = v
 
+    if len(repl) == 0:
+        return
+
     # Make the two-step replacement
     replace_callback(repl)
+    if len(invrepl) == 0:
+        return
     replace_callback(invrepl)
 
 
+@lru_cache(16384)
 def _spickle(obj):
-    return str(obj), {s.name: (s.dtype, s._assumptions) for s in symlist(obj).values()}
+    return str(obj)
 
 
 def _sunpickle(obj):
-    s, slist = obj
-    # Create symbols
-    for sname, (stype, assumptions) in slist.items():
-        symbol(sname, stype, **assumptions)
-    return pystr_to_symbolic(s)
+    return pystr_to_symbolic(obj)
 
 
 class SympyAwarePickler(pickle.Pickler):
