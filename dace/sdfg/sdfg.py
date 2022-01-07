@@ -169,6 +169,8 @@ class InterstateEdge(object):
         newc = astutils.unparse(condition)
         if newc != condition:
             self.condition.as_string = newc
+            self._uncond = None
+            self._cond_sympy = None
 
     def new_symbols(self, sdfg, symbols) -> Dict[str, dtypes.typeclass]:
         """
