@@ -901,7 +901,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
             # Order by name
             subgraph_parameters[subgraph] = list(sorted(subgraph_parameters[subgraph], key=sort_func))
             # Append symbols used in this subgraph
-            for k in sorted(subgraph.free_symbols):
+            for k in sorted(self._frame.free_symbols(subgraph)):
                 if k not in sdfg.constants:
                     param = all_symbols[k]
                     subgraph_parameters[subgraph].append(param)
@@ -950,7 +950,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
 
     def declare_array(self, sdfg, dfg, state_id, node, nodedesc, function_stream, declaration_stream):
 
-        fsymbols = sdfg.free_symbols.union(sdfg.constants.keys())
+        fsymbols = self._frame.symbols_and_constants(sdfg)
         if not utils.is_nonfree_sym_dependent(node, nodedesc, dfg, fsymbols):
             raise NotImplementedError("The declare_array method should only be used for variables "
                                       "that must have their declaration and allocation separate.")

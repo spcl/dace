@@ -199,7 +199,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
     def declare_array(self, sdfg, dfg, state_id, node, nodedesc, function_stream, declaration_stream):
 
-        fsymbols = sdfg.free_symbols.union(sdfg.constants.keys())
+        fsymbols = self._frame.symbols_and_constants(sdfg)
         if not sdutils.is_nonfree_sym_dependent(node, nodedesc, dfg, fsymbols):
             raise NotImplementedError("The declare_array method should only be used for variables "
                                       "that must have their declaration and allocation separate.")
@@ -1051,7 +1051,7 @@ class CPUCodeGen(TargetCodeGenerator):
         types = None
         # Non-free symbol dependent Arrays due to their shape
         dependent_shape = (isinstance(desc, data.Array) and not isinstance(desc, data.View) and any(
-            str(s) not in sdfg.free_symbols.union(sdfg.constants.keys()) for s in desc.free_symbols))
+            str(s) not in self._frame.symbols_and_constants(sdfg) for s in self._frame.free_symbols(desc)))
         try:
             # NOTE: It is hard to get access to the view-edge here, so always
             # check the declared-arrays dictionary for Views.

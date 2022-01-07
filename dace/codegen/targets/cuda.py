@@ -312,7 +312,7 @@ void __dace_exit_cuda({sdfg.name}_t *__state) {{
 
     def declare_array(self, sdfg, dfg, state_id, node, nodedesc, function_stream, declaration_stream):
 
-        fsymbols = sdfg.free_symbols.union(sdfg.constants.keys())
+        fsymbols = self._frame.symbols_and_constants(sdfg)
         if not sdutil.is_nonfree_sym_dependent(node, nodedesc, dfg, fsymbols):
             raise NotImplementedError("The declare_array method should only be used for variables "
                                       "that must have their declaration and allocation separate.")
@@ -1181,7 +1181,8 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                                                        dtypes.AllocationLifetime.Persistent)
                     # Non-free symbol dependent Arrays due to their shape
                     dependent_shape = (isinstance(data_desc, dt.Array) and not isinstance(data_desc, dt.View) and any(
-                        str(s) not in sdfg.free_symbols.union(sdfg.constants.keys()) for s in data_desc.free_symbols))
+                        str(s) not in self._frame.symbols_and_constants(sdfg)
+                        for s in self._frame.free_symbols(data_desc)))
                     try:
                         # NOTE: It is hard to get access to the view-edge here,
                         # so always check the declared-arrays dictionary for

@@ -45,9 +45,26 @@ class DaCeCodeGenerator(object):
         self.environments: List[Any] = []
         self.to_allocate: DefaultDict[Union[SDFG, SDFGState, nodes.EntryNode],
                                       List[Tuple[int, int, nodes.AccessNode]]] = collections.defaultdict(list)
-        self.free_symbols: Dict[int, Set[str]] = {}
+        self.fsyms: Dict[int, Set[str]] = {}
+        self._symbols_and_constants: Dict[int, Set[str]] = {}
         self.arglist = sdfg.arglist(scalars_only=False)
         self.arglist_scalars_only = sdfg.arglist(scalars_only=True)
+
+    # Cached fields
+    def symbols_and_constants(self, sdfg: SDFG):
+        if sdfg.sdfg_id in self._symbols_and_constants:
+            return self._symbols_and_constants[sdfg.sdfg_id]
+        result = sdfg.free_symbols.union(sdfg.constants.keys())
+        self._symbols_and_constants[sdfg.sdfg_id] = result
+        return result
+
+    def free_symbols(self, obj: Any):
+        k = id(obj)
+        if k in self.fsyms:
+            return self.fsyms[k]
+        result = obj.free_symbols
+        self.fsyms[k] = result
+        return result
 
     ##################################################################
     # Target registry
@@ -401,7 +418,7 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
         last_instance: Dict[int, Dict[str, Tuple[int, nodes.AccessNode]]] = {}
         for sdfg in top_sdfg.all_sdfgs_recursive():
             shared_transients[sdfg.sdfg_id] = sdfg.shared_transients(check_toplevel=False)
-            fsyms[sdfg.sdfg_id] = sdfg.free_symbols.union(sdfg.constants.keys())
+            fsyms[sdfg.sdfg_id] = self.symbols_and_constants(sdfg)
 
             # Possibly confusing control flow below finds the first/last state
             # and node of the data descriptor
@@ -510,7 +527,7 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
 
                 # Does the array appear in inter-state edges?
                 for isedge in sdfg.edges():
-                    if name in isedge.data.free_symbols:
+                    if name in self.free_symbols(isedge.data):
                         multistate = True
 
                 for state in sdfg.nodes():
