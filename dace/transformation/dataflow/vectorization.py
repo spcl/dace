@@ -394,11 +394,9 @@ class Vectorization(transformation.Transformation):
             for e, _ in sdfg.all_edges_recursive():
 
                 if isinstance(e.data, InterstateEdge):
-                    print(e.data, e.data.assignments, e.data.condition)
 
                     if e.data.assignments != {} or e.data.condition.as_string != "1":
                         return False
-
 
             self._map_entry = old_map_entry
             self._level = 0
