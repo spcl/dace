@@ -70,6 +70,8 @@ solver_db_path = "dace/transformation/estimator/soap/solver_cache/solver_cache.t
 # ----------------------------------------
 # initialization and launch configurations
 # ----------------------------------------
+# TODO: take input arguments instead of relying on the Config
+# TODO: path to SDFG folders
 def get_kernels():
     kernels = []
     if Config.get("soap", "tests", "suite_name") == "einsum": #params.suiteName == "einsum":

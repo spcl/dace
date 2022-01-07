@@ -10,6 +10,9 @@ import os
 
 os.environ['SYMPY_USE_CACHE'] = 'no'
 
+#TODO: @pytest.mark.parametrize(["map_splits"], [[True], [False]])
+# def test_greedy(map_splits):
+# matmul_cudatest
 
 def test_manual_polybench_kernels():
     Config.set("soap", "tests", "suite_name", value="manual_polybench")
