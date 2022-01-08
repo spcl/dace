@@ -197,7 +197,7 @@ def dfs_conditional(G, sources=None, condition=None):
             continue
         yield start
         visited.add(start)
-        stack = [(start, iter(G.neighbors(start)))]
+        stack = [(start, iter(G.successors(start)))]
         while stack:
             parent, children = stack[-1]
             try:
@@ -206,7 +206,7 @@ def dfs_conditional(G, sources=None, condition=None):
                     visited.add(child)
                     if condition is None or condition(parent, child):
                         yield child
-                        stack.append((child, iter(G.neighbors(child))))
+                        stack.append((child, iter(G.successors(child))))
             except StopIteration:
                 stack.pop()
 
