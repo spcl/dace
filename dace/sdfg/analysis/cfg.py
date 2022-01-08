@@ -104,12 +104,15 @@ def state_parent_tree(sdfg: SDFG) -> Dict[SDFGState, SDFGState]:
             continue
 
         oa, ob = out_edges[0].dst, out_edges[1].dst
-        loop_states_cand_a = set(sdutil.dfs_conditional(sdfg, sources=[oa], condition=lambda p, _: p != guard))
-        loop_states_cand_b = set(sdutil.dfs_conditional(sdfg, sources=[ob], condition=lambda p, _: p != guard))
+        loop_states_cand_a = set(n for p in nx.all_simple_paths(sdfg.nx, oa, guard) for n in p)
+        loop_states_cand_b = set(n for p in nx.all_simple_paths(sdfg.nx, ob, guard) for n in p)
 
         # Check which candidate states lead back to guard
         is_a_begin = guard in loop_states_cand_a
         is_b_begin = guard in loop_states_cand_b
+        if is_a_begin and is_b_begin:
+            # Not a natural loop
+            continue
 
         # Make sure the entire cycle is dominated by this node. If not,
         # we're looking at a guard for a nested cycle, which we ignore for
