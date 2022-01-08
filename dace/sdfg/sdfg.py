@@ -1001,7 +1001,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             write_set |= ws.keys()
         return read_set, write_set
 
-    def arglist(self, scalars_only=False) -> Dict[str, dt.Data]:
+    def arglist(self, scalars_only=False, free_symbols=None) -> Dict[str, dt.Data]:
         """
         Returns an ordered dictionary of arguments (names and types) required
         to invoke this SDFG.
@@ -1030,13 +1030,14 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         }
 
         # Add global free symbols to scalar arguments
-        scalar_args.update({k: dt.Scalar(self.symbols[k]) for k in self.free_symbols if not k.startswith('__dace')})
+        free_symbols = free_symbols if free_symbols is not None else self.free_symbols
+        scalar_args.update({k: dt.Scalar(self.symbols[k]) for k in free_symbols if not k.startswith('__dace')})
 
         # Fill up ordered dictionary
         result = collections.OrderedDict()
-        for k, v in itertools.chain(sorted(data_args.items()), sorted(scalar_args.items())):
-            result[k] = v
-
+        result.update(sorted(data_args.items()))
+        result.update(sorted(scalar_args.items()))
+        
         return result
 
     def signature_arglist(self, with_types=True, for_call=False, with_arrays=True, arglist=None) -> List[str]:

@@ -47,8 +47,9 @@ class DaCeCodeGenerator(object):
                                       List[Tuple[int, int, nodes.AccessNode]]] = collections.defaultdict(list)
         self.fsyms: Dict[int, Set[str]] = {}
         self._symbols_and_constants: Dict[int, Set[str]] = {}
-        self.arglist = sdfg.arglist(scalars_only=False)
-        self.arglist_scalars_only = sdfg.arglist(scalars_only=True)
+        fsyms = self.free_symbols(sdfg)
+        self.arglist = sdfg.arglist(scalars_only=False, free_symbols=fsyms)
+        self.arglist_scalars_only = sdfg.arglist(scalars_only=True, free_symbols=fsyms)
 
     # Cached fields
     def symbols_and_constants(self, sdfg: SDFG):
