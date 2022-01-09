@@ -104,8 +104,11 @@ def state_parent_tree(sdfg: SDFG) -> Dict[SDFGState, SDFGState]:
             continue
 
         oa, ob = out_edges[0].dst, out_edges[1].dst
-        loop_states_cand_a = set(n for p in nx.all_simple_paths(sdfg.nx, oa, guard) for n in p)
-        loop_states_cand_b = set(n for p in nx.all_simple_paths(sdfg.nx, ob, guard) for n in p)
+        # Commented conditional version turned out slower
+        loop_states_cand_a = sdutil.nodes_in_all_simple_paths(sdfg.nx, oa, guard)
+        #lambda n: n is guard or oa in alldoms[n])
+        loop_states_cand_b = sdutil.nodes_in_all_simple_paths(sdfg.nx, ob, guard)
+        #lambda n: n is guard or ob in alldoms[n])
 
         # Check which candidate states lead back to guard
         is_a_begin = guard in loop_states_cand_a

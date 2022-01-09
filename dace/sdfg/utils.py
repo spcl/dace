@@ -16,7 +16,7 @@ from dace.sdfg.scope import ScopeSubgraphView
 from dace.sdfg import nodes as nd, graph as gr
 from dace import config, data as dt, dtypes, memlet as mm, subsets as sbs, symbolic
 from string import ascii_uppercase
-from typing import Callable, Dict, List, Optional, Set, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
 
 
 def node_path_graph(*args):
@@ -209,6 +209,64 @@ def dfs_conditional(G, sources=None, condition=None):
                         stack.append((child, iter(G.successors(child))))
             except StopIteration:
                 stack.pop()
+
+
+def nodes_in_all_simple_paths(G, source, target, condition: Callable[[Any], bool] = None) -> Set[Any]:
+    """
+    Returns a set of nodes that appear in any of the paths from ``source``
+    to ``targets``. Optionally, a condition can be given to control traversal.
+    
+    :param G: The graph to traverse.
+    :param source: Source node.
+    :param targets: 
+
+    Notes
+    -----
+    This algorithm uses a modified depth-first search, adapted from 
+    networkx.all_simple_paths.
+    
+    The algorithm is written for directed _graphs_. For multigraphs, use
+    networkx.all_simple_paths!
+
+    References
+    ----------
+    .. [1] R. Sedgewick, "Algorithms in C, Part 5: Graph Algorithms",
+       Addison Wesley Professional, 3rd ed., 2001.
+    """
+
+    cutoff = len(G) - 1
+    result = set()
+    visited = dict.fromkeys([source])
+    targets = {target}
+    stack = [iter(G[source])]
+    while stack:
+        children = stack[-1]
+        child = next(children, None)
+        if condition is not None:
+            while child is not None and not condition(child):
+                child = next(children, None)
+        if child is None:
+            stack.pop()
+            visited.popitem()
+        elif len(visited) < cutoff:
+            if child in visited:
+                continue
+            if child is target:
+                result.update(list(visited))
+                result.add(child)
+            visited[child] = None
+            if targets - set(visited.keys()):  # expand stack until find all targets
+                stack.append(iter(G[child]))
+            else:
+                visited.popitem()  # maybe other ways to child
+        else:  # len(visited) == cutoff:
+            for tgt in (targets & (set(children) | {child})) - set(visited.keys()):
+                result.update(list(visited))
+                result.add(tgt)
+            stack.pop()
+            visited.popitem()
+
+    return result
 
 
 def change_edge_dest(graph: gr.OrderedDiGraph, node_a: Union[nd.Node, gr.OrderedMultiDiConnectorGraph],
