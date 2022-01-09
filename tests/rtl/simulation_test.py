@@ -213,16 +213,88 @@ def test_tasklet_parameter():
 
 
 @pytest.mark.verilator
-def test_tasklet_vector():
+def test_tasklet_vector_add():
     """
         Test rtl tasklet vector support.
+    """
+
+    # add symbol
+    W = dace.symbol('W')
+
+    # add sdfg
+    sdfg = dace.SDFG('rtl_tasklet_vector_add')
+
+    # define compile-time constant
+    sdfg.specialize(dict(W=4))
+
+    # add state
+    state = sdfg.add_state()
+
+    # add arrays
+    sdfg.add_array('A', [1], dtype=dace.vector(dace.int32, dace.symbolic.evaluate(W, sdfg.constants)))
+    sdfg.add_array('B', [1], dtype=dace.vector(dace.int32, dace.symbolic.evaluate(W, sdfg.constants)))
+
+    # add custom cpp tasklet
+    tasklet = state.add_tasklet(name='rtl_tasklet',
+                                inputs={'a'},
+                                outputs={'b'},
+                                code='''
+    always@(posedge ap_aclk) begin
+        if (ap_areset) begin
+            s_axis_a_tready <= 1;
+            m_axis_b_tvalid <= 0;
+            m_axis_b_tdata <= 0;
+        end else if (s_axis_a_tvalid && s_axis_a_tready) begin
+            s_axis_a_tready <= 0;
+            m_axis_b_tvalid <= 1;
+            for (int i = 0; i < W; i++) begin
+                m_axis_b_tdata[i] <= s_axis_a_tdata[i] + 42;
+            end
+        end else if (m_axis_b_tvalid && m_axis_b_tready) begin
+            s_axis_a_tready <= 1;
+            m_axis_b_tvalid <= 0;
+            m_axis_b_tdata <= 0;
+        end
+    end
+        ''',
+                                language=dace.Language.SystemVerilog)
+
+    # add input/output array
+    A = state.add_read('A')
+    B = state.add_write('B')
+
+    # connect input/output array with the tasklet
+    state.add_edge(A, None, tasklet, 'a', dace.Memlet('A[0]'))
+    state.add_edge(tasklet, 'b', B, None, dace.Memlet('B[0]'))
+
+    # validate sdfg
+    sdfg.validate()
+
+    # Execute
+
+    # init data structures
+    a = np.random.randint(0, 100, (dace.symbolic.evaluate(W, sdfg.constants),)).astype(np.int32)
+    b = np.zeros((dace.symbolic.evaluate(W, sdfg.constants),)).astype(np.int32)
+
+    # call program
+    sdfg(A=a, B=b)
+
+    # check result
+    print (a)
+    print (b)
+    assert (b == a + 42).all()
+
+@pytest.mark.verilator
+def test_tasklet_vector_conversion():
+    """
+        Test rtl tasklet vector conversion support.
     """
 
     # add symbol
     N = dace.symbol('N')
 
     # add sdfg
-    sdfg = dace.SDFG('rtl_tasklet_vector')
+    sdfg = dace.SDFG('rtl_tasklet_vector_conversion')
 
     # define compile-time constant
     sdfg.specialize(dict(N=4))
@@ -519,9 +591,10 @@ end''',
     assert (c == a + b).all()
 
 if __name__ == '__main__':
-    test_multi_tasklet()
-    test_tasklet_array()
-    test_tasklet_map()
-    test_tasklet_parameter()
-    test_tasklet_scalar()
-    test_tasklet_vector()
+    #test_multi_tasklet()
+    #test_tasklet_array()
+    #test_tasklet_map()
+    #test_tasklet_parameter()
+    #test_tasklet_scalar()
+    test_tasklet_vector_add()
+    #test_tasklet_vector_conversion()

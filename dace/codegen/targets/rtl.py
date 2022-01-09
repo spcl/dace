@@ -125,7 +125,7 @@ class RTLCodeGen(target.TargetCodeGenerator):
                 line: str = "{} {} = &{}[0];".format(src_node.out_connectors[edge.src_conn].ctype, edge.src_conn,
                                                      edge.dst.data)
             elif isinstance(src_node.out_connectors[edge.src_conn], dtypes.vector):  # vector accessor
-                line: str = "{} {} = *({} *)(&{}[0]);".format(src_node.out_connectors[edge.src_conn].ctype,
+                line: str = "{}* {} = ({} *)(&{}[0]);".format(src_node.out_connectors[edge.src_conn].ctype,
                                                               edge.src_conn,
                                                               src_node.out_connectors[edge.src_conn].ctype,
                                                               edge.dst.data)
@@ -285,8 +285,9 @@ class RTLCodeGen(target.TargetCodeGenerator):
             if is_output:
                 conn = tasklet.out_connectors[name]
                 if isinstance(conn, dtypes.vector):
-                    outputs[name] = f'''for (int j = 0; j < {veclen}; j++) {{
-    {name}[j] = (int)(model->m_axis_{name}_tdata[j]);
+                    outputs[name] = f'''out_ptr_{name}++;
+for (int j = 0; j < {veclen}; j++) {{
+    {name}[0][j] = (int)(model->m_axis_{name}_tdata[j]);
 }}'''
                 elif isinstance(conn, dtypes.pointer):
                     if isinstance(conn.base_type, dtypes.vector):
@@ -302,7 +303,8 @@ for (int j = 0; j < {veclen}; j++) {{
             else: # input
                 conn = tasklet.in_connectors[name]
                 if isinstance(conn, dtypes.vector):
-                    inputs[name] = f'''for (int j = 0; j < {veclen}; j++) {{
+                    inputs[name] = f'''in_ptr_{name}++;
+for (int j = 0; j < {veclen}; j++) {{
     model->s_axis_{name}_tdata[j] = {name}[j];
 }}'''
                 elif isinstance(conn, dtypes.pointer):
@@ -314,7 +316,8 @@ for (int j = 0; j < {veclen}; j++) {{
                     else:
                         inputs[name] = f'model->s_axis_{name}_tdata = {name}[in_ptr_{name}++];'
                 else:
-                    inputs[name] = f'model->s_axis_{name}_tdata = {name}[0];'
+                    inputs[name] = f'''in_ptr_{name}++;
+model->s_axis_{name}_tdata = {name}[0];'''
 
         return inputs, outputs
 
