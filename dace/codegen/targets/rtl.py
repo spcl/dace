@@ -97,9 +97,14 @@ class RTLCodeGen(target.TargetCodeGenerator):
                                                               dst_node.in_connectors[edge.dst_conn].ctype,
                                                               edge.src.data)
             else:  # scalar accessor
-                line: str = "{}* {} = &{}[0];".format(
-                    dst_node.in_connectors[edge.dst_conn].ctype, edge.dst_conn,
-                    edge.src.data)
+                arr = sdfg.arrays[edge.data.data]
+                if isinstance(arr, data.Array):
+                    line: str = "{}* {} = &{}[0];".format(dst_node.in_connectors[edge.dst_conn].ctype, edge.dst_conn,
+                                                      edge.src.data)
+                elif isinstance(arr, data.Scalar):
+                    line: str = "{} {} = {};".format(
+                        dst_node.in_connectors[edge.dst_conn].ctype, edge.dst_conn,
+                        edge.src.data)
         elif isinstance(edge.src, nodes.MapEntry) and isinstance(edge.dst, nodes.Tasklet):
             # TODO works for one kernel, but might break with several. Also only handles if the scope and tasklet are directly connected.
             self.n_unrolled = symbolic.evaluate(edge.src.map.range[0][1] + 1, sdfg.constants)
@@ -232,13 +237,20 @@ class RTLCodeGen(target.TargetCodeGenerator):
 
         return inputs, outputs
 
-    def generate_cpp_zero_inits(self, tasklet):
+    def generate_cpp_zero_inits(self, buses, scalars):
         """
         Generate zero initialization statements
         """
-        valids = [f'model->s_axis_{name}_tvalid = 0;' for name in tasklet.in_connectors]
-        readys = [f'model->m_axis_{name}_tready = 0;' for name in tasklet.out_connectors]
-        return valids, readys
+        valids = []
+        readys = []
+        for name, (arr, is_output, bytes, veclen, volume) in buses.items():
+            if is_output:
+                readys.append(f'model->m_axis_{name}_tready = 0;')
+            else:
+                valids.append(f'model->s_axis_{name}_tvalid = 0;')
+
+        scals = [f'model->{name} = {name};' for name, _ in scalars.items()]
+        return valids, readys, scals
 
     def generate_cpp_inputs_outputs(self, tasklet, buses):
 
@@ -337,13 +349,13 @@ for (int j = 0; j < {veclen}; j++) {{
             }])
         return internal_state_str, internal_state_var
 
-    def generate_input_hs(self, tasklet):
+    def generate_input_hs(self, buses):
         """
         Generate checking whether input to the tasklet has been consumed
         """
         return [f'''if (model->s_axis_{name}_tready == 1 && model->s_axis_{name}_tvalid == 1) {{
                 read_input_hs_{name} = true;
-            }}''' for name in tasklet.in_connectors]
+            }}''' for name, (arr, is_output, bytes, veclen, volume) in buses.items() if not is_output]
 
     def generate_feeding(self, tasklet, inputs):
         """
@@ -353,7 +365,7 @@ for (int j = 0; j < {veclen}; j++) {{
         return [f'''if (model->s_axis_{name}_tvalid == 0 && in_ptr_{name} < num_elements_{name}) {{
             {debug_feed_element}{inputs[name]}
             model->s_axis_{name}_tvalid = 1;
-        }}''' for name in tasklet.in_connectors]
+        }}''' for name in inputs]
 
     def generate_ptrs(self, tasklet):
         """
@@ -381,15 +393,13 @@ for (int j = 0; j < {veclen}; j++) {{
             write_output_hs_{name} = true;
         }}''' for name in tasklet.out_connectors]
 
-    def generate_hs_flags(self, tasklet):
+    def generate_hs_flags(self, buses):
         """
         Generate flags
         """
-        ins = [f'''bool read_input_hs_{name} = false;''' for name in tasklet.in_connectors]
-        outs = [f'''bool write_output_hs_{name} = false;''' for name in tasklet.out_connectors]
-        return ins + outs
+        return [f'bool {"write_out" if is_output else "read_in"}put_hs_{name} = false;' for name, (arr, is_output, bytes, veclen, volume) in buses.items()]
 
-    def generate_input_hs_toggle(self, tasklet):
+    def generate_input_hs_toggle(self, buses):
         """
         Generate statements for toggling input flags.
         """
@@ -398,9 +408,9 @@ for (int j = 0; j < {veclen}; j++) {{
             // remove valid flag {debug_read_input_hs}
             model->s_axis_{name}_tvalid = 0;
             read_input_hs_{name} = false;
-        }}''' for name in tasklet.in_connectors]
+        }}''' for name, (arr, is_output, bytes, veclen, volume) in buses.items() if not is_output]
 
-    def generate_output_hs_toggle(self, tasklet):
+    def generate_output_hs_toggle(self, buses):
         """
         Generate statements for toggling output flags.
         """
@@ -409,7 +419,7 @@ for (int j = 0; j < {veclen}; j++) {{
             // remove ready flag {debug_write_output_hs}
             model->m_axis_{name}_tready = 0;
             write_output_hs_{name} = false;
-        }}''' for name in tasklet.out_connectors]
+        }}''' for name, (arr, is_output, bytes, veclen, volume) in buses.items() if is_output]
 
     def generate_running_condition(self, tasklet):
         """
@@ -455,7 +465,7 @@ for (int j = 0; j < {veclen}; j++) {{
             elif isinstance(arr, data.Stream):
                 buses[edge.dst_conn] = (edge.data.data, False, total_size, vec_len, edge.data.volume)
             elif isinstance(arr, data.Scalar):
-                scalars[edge.dst_conn] = (edge.data.data, False, total_size, 1, edge.data.volume)
+                scalars[edge.dst_conn] = (False, total_size) #(edge.data.data, False, total_size, 1, edge.data.volume)
 
         for edge in state.out_edges(tasklet):
             arr = sdfg.arrays[edge.data.data]
@@ -563,18 +573,18 @@ for (int j = 0; j < {veclen}; j++) {{
         else:  # not hardware_target
             # generate verilator simulation cpp code components
             inputs, outputs = self.generate_cpp_inputs_outputs(tasklet, buses) # TODO i don't know if i want to do it differently.
-            valid_zeros, ready_zeros = self.generate_cpp_zero_inits(tasklet)
+            valid_zeros, ready_zeros, scalar_zeros = self.generate_cpp_zero_inits(buses, scalars)
             vector_init = self.generate_cpp_vector_init(tasklet)
             num_elements = self.generate_cpp_num_elements(buses)
             internal_state_str, internal_state_var = self.generate_cpp_internal_state(tasklet)
-            read_input_hs = self.generate_input_hs(tasklet)
+            read_input_hs = self.generate_input_hs(buses)
             feed_elements = self.generate_feeding(tasklet, inputs)
             in_ptrs, out_ptrs = self.generate_ptrs(tasklet)
             export_elements = self.generate_exporting(tasklet, outputs)
             write_output_hs = self.generate_write_output_hs(tasklet)
-            hs_flags = self.generate_hs_flags(tasklet)
-            input_hs_toggle = self.generate_input_hs_toggle(tasklet)
-            output_hs_toggle = self.generate_output_hs_toggle(tasklet)
+            hs_flags = self.generate_hs_flags(buses)
+            input_hs_toggle = self.generate_input_hs_toggle(buses)
+            output_hs_toggle = self.generate_output_hs_toggle(buses)
             running_condition = self.generate_running_condition(tasklet)
 
             # add header code to stream
@@ -593,6 +603,7 @@ for (int j = 0; j < {veclen}; j++) {{
                 vector_init=vector_init,
                 valid_zeros=str.join('\n', valid_zeros),
                 ready_zeros=str.join('\n', ready_zeros),
+                scalar_zeros=str.join('\n', scalar_zeros),
                 read_input_hs=str.join('\n', read_input_hs),
                 feed_elements=str.join('\n', feed_elements),
                 in_ptrs=str.join('\n', in_ptrs),
@@ -646,6 +657,7 @@ model->ap_areset = 0;  // no reset
 model->ap_aclk = 0; // neg clock
 {valid_zeros}
 {ready_zeros}
+{scalar_zeros}
 
 model->eval();
 
@@ -689,10 +701,10 @@ while ({running_condition}) {{
 
     model->eval(); {debug_internal_state}
 
-    // check if valid_i and ready_o have been asserted at the rising clock edge
+    // check if valid and ready has been asserted for each input at the rising clock edge
 {input_hs_toggle}
 
-    // check if valid_o and ready_i have been asserted at the rising clock edge
+    // check if valid and ready haæ been asserted for each output at the rising clock edge
 {output_hs_toggle}
 
     // negative clock edge

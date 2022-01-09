@@ -5,6 +5,71 @@ import numpy as np
 import pytest
 
 @pytest.mark.verilator
+def test_tasklet_array():
+    """
+        Test the simple array execution sample.
+    """
+
+    n = 128
+    N = dace.symbol('N')
+    N.set(n)
+
+    # add sdfg
+    sdfg = dace.SDFG('rtl_tasklet_array')
+
+    # add state
+    state = sdfg.add_state()
+
+    # add arrays
+    sdfg.add_array('A', [N], dtype=dace.int32)
+    sdfg.add_array('B', [N], dtype=dace.int32)
+
+    # add custom cpp tasklet
+    tasklet = state.add_tasklet(name='rtl_tasklet',
+                                inputs={'a'},
+                                outputs={'b'},
+                                code='''
+        always@(posedge ap_aclk) begin
+            if (ap_areset) begin
+                s_axis_a_tready <= 1;
+                m_axis_b_tvalid <= 0;
+                m_axis_b_tdata <= 0;
+            end else if (s_axis_a_tvalid && s_axis_a_tready) begin
+                s_axis_a_tready <= 0;
+                m_axis_b_tvalid <= 1;
+                m_axis_b_tdata <= s_axis_a_tdata + 42;
+            end else if (m_axis_b_tvalid && m_axis_b_tready) begin
+                s_axis_a_tready <= 1;
+                m_axis_b_tvalid <= 0;
+                m_axis_b_tdata <= 0;
+            end
+        end
+        ''',
+                                language=dace.Language.SystemVerilog)
+
+    # add input/output array
+    A = state.add_read('A')
+    B = state.add_write('B')
+
+    # connect input/output array with the tasklet
+    state.add_edge(A, None, tasklet, 'a', dace.Memlet('A[0:N]'))
+    state.add_edge(tasklet, 'b', B, None, dace.Memlet('B[0:N]'))
+
+    # validate sdfg
+    sdfg.specialize({'N': N.get()})
+    sdfg.validate()
+
+    # init data structures
+    a = np.random.randint(0, 100, N.get()).astype(np.int32)
+    b = np.zeros((N.get(),)).astype(np.int32)
+
+    # call program
+    sdfg(A=a, B=b)
+
+    # check result
+    assert (b == a + 42).all()
+
+@pytest.mark.verilator
 def test_tasklet_scalar():
     """
         Test the simple scalar execution sample.
@@ -17,7 +82,7 @@ def test_tasklet_scalar():
     state = sdfg.add_state()
 
     # add arrays
-    sdfg.add_array('A', [1], dtype=dace.int32)
+    sdfg.add_scalar('A', dtype=dace.int32)
     sdfg.add_array('B', [1], dtype=dace.int32)
 
     # add custom cpp tasklet
@@ -25,39 +90,17 @@ def test_tasklet_scalar():
                                 inputs={'a'},
                                 outputs={'b'},
                                 code='''
-        /*
-            Convention:
-               |---------------------------------------------------------------------|
-            -->| ap_aclk (clock input)                                               |
-            -->| ap_areset (reset input, rst on high)                                |
-               |                                                                     |
-            -->| {inputs}                                              reg {outputs} |-->
-               |                                                                     |
-            <--| s_axis_a_tready (ready for data)       (data avail) m_axis_b_tvalid |-->
-            -->| s_axis_a_tvalid (new data avail)    (data consumed) m_axis_b_tready |<--
-               |---------------------------------------------------------------------|
-        */
-
-        typedef enum [1:0] {READY, BUSY, DONE} state_e;
-        state_e state;
-
         always@(posedge ap_aclk) begin
             if (ap_areset) begin // case: reset
+                m_axis_b_tvalid <= 0;
                 m_axis_b_tdata <= 0;
-                s_axis_a_tready <= 1'b1;
-                state <= READY;
-            end else if (s_axis_a_tvalid && state == READY) begin // case: load a
-                m_axis_b_tdata <= s_axis_a_tdata;
-                s_axis_a_tready <= 1'b0;
-                state <= BUSY;
-            end else if (m_axis_b_tdata < 100) // case: increment counter b
+            end else if (m_axis_b_tdata < a) begin // case: increment counter b
+                m_axis_b_tvalid <= 0;
                 m_axis_b_tdata <= m_axis_b_tdata + 1;
-            else
-                m_axis_b_tdata <= m_axis_b_tdata;
-                state <= DONE;
+            end else begin
+                m_axis_b_tvalid <= 1;
+            end
         end
-
-        assign m_axis_b_tvalid = (m_axis_b_tdata >= 100) ? 1'b1:1'b0;
         ''',
                                 language=dace.Language.SystemVerilog)
 
@@ -76,13 +119,13 @@ def test_tasklet_scalar():
 
     # init data structures
     a = np.random.randint(0, 100, 1).astype(np.int32)
-    b = np.random.randint(0, 100, 1).astype(np.int32)
+    b = np.zeros((1,)).astype(np.int32)
 
     # call program
-    sdfg(A=a, B=b)
+    sdfg(A=a[0], B=b)
 
     # check result
-    assert b == 100
+    assert b[0] == a[0]
 
 
 @pytest.mark.verilator
@@ -477,6 +520,7 @@ end''',
 
 if __name__ == '__main__':
     test_multi_tasklet()
+    test_tasklet_array()
     test_tasklet_map()
     test_tasklet_parameter()
     test_tasklet_scalar()
