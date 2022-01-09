@@ -198,6 +198,23 @@ class SoapStatement:
             a = 1
         self.Q = self.V / self.rhoOpts
 
+        
+        # if we analyze memory-independent bounds (infinite private memory), we use an x-partition size
+        # (varsOpt) as a function of X, and not S. Then, we divide the whole iteration domain by this to 
+        # solve for X
+        if Config.get("soap", "decomposition", "chosen_par_setup") == "memory_independent":
+            X = sp.symbols('X')
+            p = sp.symbols('p')
+            loc_domain_size = sp.prod(self.varsOpt[0])
+            X_opt = solve(self.V - (p * loc_domain_size), X)[0]
+            # absolutely horrible hack, but sp.sympify is broken - we cannot specify assumptions that 
+            # all the symbols are positive and the solution also has to be positive. So we need to manually
+            # flip the sign if needed.
+            if str(X_opt)[0] == "-":
+                X_opt = X_opt * (-1)
+            self.outer_tile = [tile_size.subs(X, X_opt) for tile_size in self.varsOpt[0]]
+            self.Q = X_opt
+
 
     def parse_solution(self, input : str):
         data = input
