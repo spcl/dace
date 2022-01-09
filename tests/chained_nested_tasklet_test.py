@@ -90,7 +90,7 @@ def test_nested_sdfg():
     print("Difference:", diff)
     assert diff <= 1e-5
 
-    mysdfg.coarsen_dataflow()
+    mysdfg.simplify()
 
     mysdfg(A=input, B=output, N=N)
 

@@ -12,7 +12,7 @@ def tile_twice_test(a: dace.float64[200]):
 
 def test():
     sdfg = tile_twice_test.to_sdfg()
-    sdfg.coarsen_dataflow()
+    sdfg.simplify()
     sdfg.apply_transformations(MapTiling, options={'tile_sizes': (5, )})
     for i, match in enumerate(match_patterns(sdfg, MapTiling, states=[sdfg.node(0)])):
         if i == 0:  # Match the first map again

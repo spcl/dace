@@ -25,7 +25,7 @@ from dace import data
 
 
 @make_properties
-class InlineSDFG(transformation.SingleStateTransformation, transformation.DataflowCoarseningTransformation):
+class InlineSDFG(transformation.SingleStateTransformation, transformation.SimplifyPass):
     """ Inlines a single-state nested SDFG into a top-level SDFG.
 
         In particular, the steps taken are:
@@ -1063,7 +1063,6 @@ class NestSDFG(transformation.MultiStateTransformation):
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
         return True
 
-    
     def apply(self, _, sdfg: SDFG):
         outer_sdfg = sdfg
         nested_sdfg = dc(sdfg)

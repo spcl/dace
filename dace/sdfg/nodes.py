@@ -489,7 +489,7 @@ class NestedSDFG(CodeNode):
 
     no_inline = Property(dtype=bool,
                          desc="If True, this nested SDFG will not be inlined during "
-                         "dataflow coarsening",
+                         "simplification",
                          default=False)
 
     unique_name = Property(dtype=str, desc="Unique name of the SDFG", default="")

@@ -24,7 +24,7 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
           5. Global tasklets are wrapped with a map of size 1
           6. Global Maps are re-scheduled to use the GPU
           7. Make data ready for interstate edges that use them
-          8. Re-apply dataflow coarsening to get rid of extra states and
+          8. Re-apply simplification to get rid of extra states and
              transients
     """
 
@@ -39,7 +39,7 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                                     dtype=bool,
                                     default=True)
 
-    coarsen = Property(desc='Reapply dataflow coarsening after modifying graph', dtype=bool, default=True)
+    simplify = Property(desc='Reapply simplification after modifying graph', dtype=bool, default=True)
 
     exclude_copyin = Property(desc="Exclude these arrays from being copied into the device "
                               "(comma-separated)",
@@ -312,8 +312,8 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                                        memlet.Memlet.from_array(dst_array.data, dst_array.desc(sdfg)))
 
         #######################################################
-        # Step 8: Dataflow coarsening
-        if not self.coarsen:
+        # Step 8: Simplify
+        if not self.simplify:
             return
 
-        sdfg.coarsen_dataflow()
+        sdfg.simplify()

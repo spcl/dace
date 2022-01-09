@@ -59,7 +59,7 @@ def test_sftw():
     A = np.random.rand(20)
     expected = 2 * A + 7
     sdfg = sftw.to_sdfg()
-    sdfg.coarsen_dataflow()
+    sdfg.simplify()
 
     # Ensure almost all states were fused
     assert len(sdfg.nodes()) == 2

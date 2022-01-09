@@ -107,7 +107,7 @@ def test_solve(implementation, dtype, size, shape):
     sdfg = make_sdfg(implementation, dtype, id, in_shape, out_shape, in_subset_str, out_subset_str)
     if implementation == 'cuSolverDn':
         sdfg.apply_gpu_transformations()
-        sdfg.coarsen_dataflow()
+        sdfg.simplify()
     solve_sdfg = sdfg.compile()
 
     A0 = np.zeros(in_shape, dtype=dtype)

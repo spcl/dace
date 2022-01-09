@@ -15,7 +15,7 @@ def inline_symbol(D: dace.float32[E, F]):
 
 
 def test_inline_symbol():
-    sdfg = inline_symbol.to_sdfg(coarsen=False)
+    sdfg = inline_symbol.to_sdfg(simplify=False)
     oldval = dace.Config.get_bool('experimental', 'validate_undefs')
     dace.Config.set('experimental', 'validate_undefs', value=True)
     sdfg.validate()

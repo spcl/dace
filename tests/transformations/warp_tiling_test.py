@@ -32,14 +32,14 @@ def softmax(x):
 @pytest.mark.gpu
 def test_warp_softmax(vector_length=1):
     # Get SDFG
-    sdfg = softmax_fwd.to_sdfg(coarsen=True)
+    sdfg = softmax_fwd.to_sdfg(simplify=True)
 
     # Apply transformations
     sdfg.apply_transformations_repeated(ReduceExpansion)
     MultiExpansion.apply_to(sdfg, sdfg.node(0).nodes())
     SubgraphFusion.apply_to(sdfg, sdfg.node(0).nodes())
     sdfg.expand_library_nodes()
-    sdfg.coarsen_dataflow()
+    sdfg.simplify()
     sdfg.apply_transformations_repeated([TrivialMapElimination, MapFusion])
     sdfg.apply_transformations(GPUTransformSDFG)
     assert sdfg.apply_transformations(WarpTiling) == 1

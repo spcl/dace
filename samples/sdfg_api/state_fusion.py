@@ -42,7 +42,7 @@ for i in range(len(nodes) - 1):
 sdfg.validate()
 
 # Fuses redundant states and removes unnecessary transient arrays
-sdfg.coarsen_dataflow()
+sdfg.simplify()
 
 ######################################
 if __name__ == '__main__':

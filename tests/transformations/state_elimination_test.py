@@ -10,7 +10,7 @@ def test_eliminate_end_state():
     state3 = sdfg.add_state()
     sdfg.add_edge(state1, state2, dace.InterstateEdge(assignments=dict(k=1)))
     sdfg.add_edge(state2, state3, dace.InterstateEdge(assignments=dict(k='k + 1')))
-    sdfg.coarsen_dataflow()
+    sdfg.simplify()
     assert sdfg.number_of_nodes() == 1
 
 
@@ -36,7 +36,7 @@ def test_state_assign_elimination():
 
     # Applying transformations again should yield one state
     assert sdfg.apply_transformations_repeated(StateAssignElimination) == 1
-    sdfg.coarsen_dataflow()
+    sdfg.simplify()
     assert sdfg.number_of_nodes() == 1
     assert str(sdfg.nodes()[-1].edges()[0].data.subset) == '2'
 

@@ -22,7 +22,7 @@ def jacobi1d_half(TMAX: dace.int32, A: dace.float32[12], B: dace.float32[12]):
 
 
 def test_read_slice():
-    sdfg = jacobi1d_half.to_sdfg(coarsen=False)
+    sdfg = jacobi1d_half.to_sdfg(simplify=False)
     num_views_before = _count_views(sdfg)
     if num_views_before != 3:
         warnings.Warn("Incorrect number of Views detected. Please ensure that "
@@ -39,7 +39,7 @@ def jacobi1d_half2(TMAX: dace.int32, A: dace.float32[12, 12, 12], B: dace.float3
 
 
 def test_read_slice2():
-    sdfg = jacobi1d_half2.to_sdfg(coarsen=False)
+    sdfg = jacobi1d_half2.to_sdfg(simplify=False)
     num_views_before = _count_views(sdfg)
     if num_views_before != 3:
         warnings.Warn("Incorrect number of Views detected. Please ensure that "
@@ -56,7 +56,7 @@ def write_slice(A: dace.float32[10]):
 
 
 def test_write_slice():
-    sdfg = write_slice.to_sdfg(coarsen=False)
+    sdfg = write_slice.to_sdfg(simplify=False)
     num_views_before = _count_views(sdfg)
     if num_views_before == 0:
         warnings.Warn("Incorrect number of Views detected. Please ensure that "
@@ -77,7 +77,7 @@ def write_slice2(A: dace.float32[10, 10, 10]):
 
 
 def test_write_slice2():
-    sdfg = write_slice2.to_sdfg(coarsen=False)
+    sdfg = write_slice2.to_sdfg(simplify=False)
     num_views_before = _count_views(sdfg)
     if num_views_before == 0:
         warnings.Warn("Incorrect number of Views detected. Please ensure that "

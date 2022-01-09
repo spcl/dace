@@ -1896,18 +1896,17 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
     def apply_strict_transformations(self, validate=True, validate_all=False):
         """
-        This method is DEPRECATED in favor of ``coarsen_dataflow``.
+        This method is DEPRECATED in favor of ``simplify``.
         Applies safe transformations (that will surely increase the
         performance) on the SDFG. For example, this fuses redundant states
         (safely) and removes redundant arrays.
 
         B{Note:} This is an in-place operation on the SDFG.
         """
-        warnings.warn('SDFG.apply_strict_transformations is deprecated, use SDFG.coarsen_dataflow instead.',
-                      DeprecationWarning)
-        return self.coarsen_dataflow(validate, validate_all)
+        warnings.warn('SDFG.apply_strict_transformations is deprecated, use SDFG.simplify instead.', DeprecationWarning)
+        return self.simplify(validate, validate_all)
 
-    def coarsen_dataflow(self, validate=True, validate_all=False):
+    def simplify(self, validate=True, validate_all=False):
         """ Applies safe transformations (that will surely increase the
             performance) on the SDFG. For example, this fuses redundant states
             (safely) and removes redundant arrays.
@@ -1919,7 +1918,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         from dace.transformation.dataflow import RedundantReadSlice, RedundantWriteSlice
         from dace.sdfg import utils as sdutil
         # This is imported here to avoid an import loop
-        from dace.transformation.transformation import coarsening_transformations
+        from dace.transformation.transformation import simplification_transformations
 
         # First step is to apply multi-state inline, before any state fusion can
         # occur
@@ -1930,7 +1929,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                                             validate=validate,
                                             permissive=False,
                                             validate_all=validate_all)
-        self.apply_transformations_repeated(coarsening_transformations(),
+        self.apply_transformations_repeated(simplification_transformations(),
                                             validate=validate,
                                             permissive=False,
                                             validate_all=validate_all)
@@ -2141,7 +2140,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             generate GPU code.
             :note: It is recommended to apply redundant array removal
             transformation after this transformation. Alternatively,
-            you can coarsen_dataflow() after this transformation.
+            you can simplify() after this transformation.
             :note: This is an in-place operation on the SDFG.
         """
         # Avoiding import loops

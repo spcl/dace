@@ -13,8 +13,8 @@ All transformations extend the ``TransformationBase`` class. There are three bui
   * Library node expansions (extending ExpandTransformation): An internal class used for tracking how library nodes
     are expanded.
 
-Some transformations are included in the SDFG Dataflow Coarsening pass. In order to declare a transformation as part
-of the dataflow coarsening pass, it should also extend the ``DataflowCoarseningTransformation`` mixin.
+Some transformations are included in the SDFG simplification pass. In order to declare a transformation as part
+of the simplification pass, it should also extend the ``SimplifyPass`` mixin.
 """
 
 import abc
@@ -405,9 +405,9 @@ class SingleStateTransformation(PatternTransformation, abc.ABC):
     methods' documentation.
 
     :seealso: PatternNode
-    :note: Some transformations are included in the SDFG Dataflow Coarsening pass. In order to declare a 
-           transformation as part of the dataflow coarsening pass, it should also extend the 
-           ``DataflowCoarseningTransformation`` mixin.
+    :note: Some transformations are included in the SDFG simplification pass. In order to declare a 
+           transformation as part of the simplification pass, it should also extend the 
+           ``SimplifyPass`` mixin.
     """
     @classmethod
     @abc.abstractmethod
@@ -464,9 +464,9 @@ class MultiStateTransformation(PatternTransformation, abc.ABC):
     methods' documentation.
 
     :seealso: PatternNode
-    :note: Some transformations are included in the SDFG Dataflow Coarsening pass. In order to declare a 
-           transformation as part of the dataflow coarsening pass, it should also extend the 
-           ``DataflowCoarseningTransformation`` mixin.
+    :note: Some transformations are included in the SDFG simplification pass. In order to declare a 
+           transformation as part of the simplification pass, it should also extend the 
+           ``SimplifyPass`` mixin.
     """
     @classmethod
     @abc.abstractmethod
@@ -493,11 +493,11 @@ class MultiStateTransformation(PatternTransformation, abc.ABC):
         pass
 
 
-class DataflowCoarseningTransformation:
+class SimplifyPass:
     """
-    Mixin that includes the given PatternTransformation in the SDFG Dataflow Coarsening pass. This transformation
+    Mixin that includes the given PatternTransformation in the SDFG simplification pass. This transformation
     will be automatically applied throughout the SDFG in non-permissive mode as the graph is constructed, or when
-    ``sdfg.coarsen_dataflow()`` is called.
+    ``sdfg.simplify()`` is called.
     """
     pass
 
@@ -800,7 +800,7 @@ class SubgraphTransformation(TransformationBase):
         return ret
 
 
-def coarsening_transformations() -> List[Type[PatternTransformation]]:
-    """ :return: List of all registered dataflow coarsening transformations.
+def simplification_transformations() -> List[Type[PatternTransformation]]:
+    """ :return: List of all registered simplification transformations.
     """
-    return list(DataflowCoarseningTransformation.__subclasses__())
+    return list(SimplifyPass.__subclasses__())

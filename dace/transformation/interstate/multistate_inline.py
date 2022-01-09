@@ -22,7 +22,7 @@ from dace import data
 
 
 @make_properties
-class InlineMultistateSDFG(transformation.SingleStateTransformation, transformation.DataflowCoarseningTransformation):
+class InlineMultistateSDFG(transformation.SingleStateTransformation, transformation.SimplifyPass):
     """
     Inlines a multi-state nested SDFG into a top-level SDFG. This only happens
     if the state has the nested SDFG node isolated (i.e., only containing it

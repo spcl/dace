@@ -57,7 +57,7 @@ def test_greedy(map_splits):
     ret = np.zeros([w, h], dtype=np.float32)
 
     sdfg = p1.to_sdfg()
-    sdfg.coarsen_dataflow()
+    sdfg.simplify()
     graph = sdfg.nodes()[0]
 
     sdfg.apply_transformations_repeated(ReduceExpansion)
@@ -85,7 +85,7 @@ def test_connected(map_splits):
     ret = np.zeros([w, h], dtype=np.float32)
 
     sdfg = p1.to_sdfg()
-    sdfg.coarsen_dataflow()
+    sdfg.simplify()
     graph = sdfg.nodes()[0]
 
     sdfg.apply_transformations_repeated(ReduceExpansion)
@@ -114,7 +114,7 @@ def test_brute_force(map_splits):
     ret = np.zeros([w, h], dtype=np.float32)
 
     sdfg = p1.to_sdfg()
-    sdfg.coarsen_dataflow()
+    sdfg.simplify()
     graph = sdfg.nodes()[0]
 
     sdfg.apply_transformations_repeated(ReduceExpansion)

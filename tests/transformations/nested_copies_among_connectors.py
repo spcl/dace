@@ -4,9 +4,9 @@ import numpy as np
 
 from dace.transformation import dataflow, interstate, subgraph
 from dace.transformation.interstate import InlineSDFG
-from dace.transformation.transformation import coarsening_transformations
+from dace.transformation.transformation import simplification_transformations
 
-xforms = coarsening_transformations()
+xforms = simplification_transformations()
 xforms.remove(InlineSDFG)
 
 
@@ -22,7 +22,7 @@ def test_inconn_self_copy():
         loop_body(A, B)
         return B
 
-    sdfg = inconn_self_copy.to_sdfg(coarsen=False)
+    sdfg = inconn_self_copy.to_sdfg(simplify=False)
     sdfg.apply_transformations_repeated(xforms)
     sdfg.save('test_pre_is.sdfg')
     sdfg.apply_transformations(InlineSDFG)
@@ -51,7 +51,7 @@ def test_outconn_self_copy():
         loop_body(A, B)
         return B
 
-    sdfg = outconn_self_copy.to_sdfg(coarsen=False)
+    sdfg = outconn_self_copy.to_sdfg(simplify=False)
     sdfg.apply_transformations_repeated(xforms)
     sdfg.save('test_pre_is.sdfg')
     sdfg.apply_transformations(InlineSDFG)
@@ -81,7 +81,7 @@ def test_in_out_inconn_copy():
         loop_body(A, B)
         return B
 
-    sdfg = in_out_inconn_copy.to_sdfg(coarsen=False)
+    sdfg = in_out_inconn_copy.to_sdfg(simplify=False)
     sdfg.apply_transformations_repeated(xforms)
     sdfg.save('test_pre_is.sdfg')
     sdfg.apply_transformations(InlineSDFG)
@@ -117,7 +117,7 @@ def test_intermediate_copies():
         loop_body(A, B)
         return B
 
-    sdfg = intermediate_copies.to_sdfg(coarsen=False)
+    sdfg = intermediate_copies.to_sdfg(simplify=False)
     sdfg.apply_transformations_repeated(xforms)
     sdfg.save('test_pre_is.sdfg')
     sdfg.apply_transformations(InlineSDFG)
