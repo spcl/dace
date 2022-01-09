@@ -24,13 +24,14 @@ def expand_reduce(sdfg: dace.SDFG,
         reduce_nodes = []
         for node in sg.nodes():
             if isinstance(node, stdlib.Reduce):
-                if not ReduceExpansion.can_be_applied(
-                        graph=graph, candidate={ReduceExpansion._reduce: graph.node_id(node)}, expr_index=0, sdfg=sdfg):
+                rexp = ReduceExpansion(sdfg, sdfg.sdfg_id, sdfg.node_id(graph),
+                                       {ReduceExpansion.reduce: graph.node_id(node)}, 0)
+                if not rexp.can_be_applied(graph, 0, sdfg):
                     print(f"WARNING: Cannot expand reduce node {node}:" "can_be_applied() failed.")
                     continue
                 reduce_nodes.append(node)
 
-        trafo_reduce = ReduceExpansion(0, 0, {}, 0)
+        trafo_reduce = ReduceExpansion(sdfg, sdfg.sdfg_id, sdfg.node_id(graph), {}, 0)
         for (property, val) in kwargs.items():
             setattr(trafo_reduce, property, val)
 

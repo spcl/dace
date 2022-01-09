@@ -10,9 +10,8 @@ from collections import defaultdict
 from typing import Dict
 
 
-@registry.autoregister
 @make_properties
-class GPUTransformSDFG(transformation.Transformation):
+class GPUTransformSDFG(transformation.MultiStateTransformation):
     """ Implements the GPUTransformSDFG transformation.
 
         Transforms a whole SDFG to run on the GPU:
@@ -62,13 +61,12 @@ class GPUTransformSDFG(transformation.Transformation):
         # Skip memlet propagation for now
         return True
 
-    @staticmethod
-    def expressions():
+    @classmethod
+    def expressions(cls):
         # Matches anything
         return [sd.SDFG('_')]
 
-    @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
+    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
         for node, _ in sdfg.all_nodes_recursive():
             # Consume scopes are currently unsupported
             if isinstance(node, (nodes.ConsumeEntry, nodes.ConsumeExit)):
@@ -84,11 +82,7 @@ class GPUTransformSDFG(transformation.Transformation):
                     return False
         return True
 
-    @staticmethod
-    def match_to_str(graph, candidate):
-        return graph.label
-
-    def apply(self, sdfg: sd.SDFG):
+    def apply(self, _, sdfg: sd.SDFG):
 
         #######################################################
         # Step 0: SDFG metadata

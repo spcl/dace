@@ -759,7 +759,7 @@ class ExpandReduceCUDABlockAll(pm.ExpandTransformation):
         graph.add_edge(u=reduce_node, u_connector=None, v=new_exit, v_connector=None, memlet=memlet_out)
 
         ### add in and out local storage
-        from dace.transformation.dataflow.local_storage import LocalStorage
+        from dace.transformation.dataflow.local_storage import LocalStorage, InLocalStorage, OutLocalStorage
 
         in_local_storage_subgraph = {
             LocalStorage.node_a: graph.nodes().index(new_entry),
@@ -770,16 +770,16 @@ class ExpandReduceCUDABlockAll(pm.ExpandTransformation):
             LocalStorage.node_b: graph.nodes().index(new_exit)
         }
 
-        local_storage = LocalStorage(sdfg.sdfg_id, sdfg.nodes().index(state), in_local_storage_subgraph, 0)
+        local_storage = InLocalStorage(sdfg, sdfg.sdfg_id, sdfg.nodes().index(state), in_local_storage_subgraph, 0)
 
         local_storage.array = in_edge.data.data
-        local_storage.apply(sdfg)
+        local_storage.apply(graph, sdfg)
         in_transient = local_storage._data_node
         sdfg.data(in_transient.data).storage = dtypes.StorageType.Register
 
-        local_storage = LocalStorage(sdfg.sdfg_id, sdfg.nodes().index(state), out_local_storage_subgraph, 0)
+        local_storage = OutLocalStorage(sdfg, sdfg.sdfg_id, sdfg.nodes().index(state), out_local_storage_subgraph, 0)
         local_storage.array = out_edge.data.data
-        local_storage.apply(sdfg)
+        local_storage.apply(graph, sdfg)
         out_transient = local_storage._data_node
         sdfg.data(out_transient.data).storage = dtypes.StorageType.Register
 
@@ -823,7 +823,7 @@ class ExpandReduceCUDABlockAll(pm.ExpandTransformation):
         # finally, change the implementation to cuda (block)
         # itself and expand again.
         reduce_node.implementation = 'CUDA (block)'
-        sub_expansion = ExpandReduceCUDABlock(0, 0, {}, 0)
+        sub_expansion = ExpandReduceCUDABlock(sdfg, sdfg.sdfg_id, sdfg.node_id(state), {}, 0)
         return sub_expansion.expansion(node=node, state=state, sdfg=sdfg)
         #return reduce_node.expand(sdfg, state)
 

@@ -34,7 +34,7 @@ def _test_half(veclen):
     applied = 0
     for xform in Optimizer(sdfg).get_pattern_matches(patterns=Vectorization,
                                                      options=dict(vector_len=veclen, postamble=False)):
-        xform.apply(sdfg)
+        xform.apply(sdfg.node(xform.state_id), sdfg)
         applied += 1
     assert applied == 2
 

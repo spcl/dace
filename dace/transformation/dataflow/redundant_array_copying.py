@@ -4,36 +4,29 @@
 from dace import registry
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
+from dace.sdfg.sdfg import SDFG
+from dace.sdfg.state import SDFGState
 from dace.transformation import transformation as pm
 from dace.config import Config
 
 
-@registry.autoregister_params(singlestate=True, coarsening=False)
-class RedundantArrayCopyingIn(pm.Transformation):
+class RedundantArrayCopyingIn(pm.SingleStateTransformation):
     """ Implements the redundant array removal transformation. Removes the first and second access nodeds
         in pattern A -> B -> A
     """
 
-    _arrays_removed = 0
-    _in_array = nodes.AccessNode("_")
-    _med_array = nodes.AccessNode("_")
-    _out_array = nodes.AccessNode("_")
+    in_array = pm.PatternNode(nodes.AccessNode)
+    med_array = pm.PatternNode(nodes.AccessNode)
+    out_array = pm.PatternNode(nodes.AccessNode)
 
-    @staticmethod
-    def expressions():
-        return [
-            sdutil.node_path_graph(
-                RedundantArrayCopying._in_array,
-                RedundantArrayCopying._med_array,
-                RedundantArrayCopying._out_array,
-            )
-        ]
+    @classmethod
+    def expressions(cls):
+        return [sdutil.node_path_graph(cls.in_array, cls.med_array, cls.out_array)]
 
-    @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
-        in_array = graph.nodes()[candidate[RedundantArrayCopying._in_array]]
-        med_array = graph.nodes()[candidate[RedundantArrayCopying._med_array]]
-        out_array = graph.nodes()[candidate[RedundantArrayCopying._out_array]]
+    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
+        in_array = self.in_array
+        med_array = self.med_array
+        out_array = self.out_array
 
         # Safety first (could be relaxed)
         if not (graph.out_degree(in_array) == 1 and graph.in_degree(med_array) == 1 and graph.out_degree(med_array)):
@@ -55,21 +48,10 @@ class RedundantArrayCopyingIn(pm.Transformation):
 
         return True
 
-    @staticmethod
-    def match_to_str(graph, candidate):
-        in_array = graph.nodes()[candidate[RedundantArrayCopying._in_array]]
-        med_array = graph.nodes()[candidate[RedundantArrayCopying._med_array]]
-
-        return "Remove " + str(in_array) + " and " + str(med_array)
-
-    def apply(self, sdfg):
-        def gnode(nname):
-            return graph.nodes()[self.subgraph[nname]]
-
-        graph = sdfg.nodes()[self.state_id]
-        in_array = gnode(RedundantArrayCopying._in_array)
-        med_array = gnode(RedundantArrayCopying._med_array)
-        out_array = gnode(RedundantArrayCopying._out_array)
+    def apply(self, graph: SDFGState, sdfg: SDFG):
+        in_array = self.in_array
+        med_array = self.med_array
+        out_array = self.out_array
 
         # Modify all edges that point to in_array to point to out_array
         for in_edge in graph.in_edges(in_array):
@@ -88,32 +70,23 @@ class RedundantArrayCopyingIn(pm.Transformation):
         graph.remove_node(in_array)
 
 
-@registry.autoregister_params(singlestate=True, coarsening=False)
-class RedundantArrayCopying(pm.Transformation):
+class RedundantArrayCopying(pm.SingleStateTransformation):
     """ Implements the redundant array removal transformation. Removes the last access node
         in pattern A -> B -> A, and the second (if possible)
     """
 
-    _arrays_removed = 0
-    _in_array = nodes.AccessNode("_")
-    _med_array = nodes.AccessNode("_")
-    _out_array = nodes.AccessNode("_")
+    in_array = pm.PatternNode(nodes.AccessNode)
+    med_array = pm.PatternNode(nodes.AccessNode)
+    out_array = pm.PatternNode(nodes.AccessNode)
 
-    @staticmethod
-    def expressions():
-        return [
-            sdutil.node_path_graph(
-                RedundantArrayCopying._in_array,
-                RedundantArrayCopying._med_array,
-                RedundantArrayCopying._out_array,
-            )
-        ]
+    @classmethod
+    def expressions(cls):
+        return [sdutil.node_path_graph(cls.in_array, cls.med_array, cls.out_array)]
 
-    @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
-        in_array = graph.nodes()[candidate[RedundantArrayCopying._in_array]]
-        med_array = graph.nodes()[candidate[RedundantArrayCopying._med_array]]
-        out_array = graph.nodes()[candidate[RedundantArrayCopying._out_array]]
+    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
+        in_array = self.in_array
+        med_array = self.med_array
+        out_array = self.out_array
 
         # Ensure out degree is one (only one target, which is out_array)
         if graph.out_degree(in_array) != 1:
@@ -152,21 +125,10 @@ class RedundantArrayCopying(pm.Transformation):
 
         return True
 
-    @staticmethod
-    def match_to_str(graph, candidate):
-        med_array = graph.nodes()[candidate[RedundantArrayCopying._med_array]]
-        out_array = graph.nodes()[candidate[RedundantArrayCopying._out_array]]
-
-        return "Remove " + str(out_array) + " and (maybe) " + str(med_array)
-
-    def apply(self, sdfg):
-        def gnode(nname):
-            return graph.nodes()[self.subgraph[nname]]
-
-        graph = sdfg.nodes()[self.state_id]
-        in_array = gnode(RedundantArrayCopying._in_array)
-        med_array = gnode(RedundantArrayCopying._med_array)
-        out_array = gnode(RedundantArrayCopying._out_array)
+    def apply(self, graph, sdfg):
+        in_array = self.in_array
+        med_array = self.med_array
+        out_array = self.out_array
 
         med_edges = len(graph.out_edges(med_array))
         med_out_edges = 0
@@ -192,27 +154,22 @@ class RedundantArrayCopying(pm.Transformation):
             for e in graph.edges_between(in_array, med_array):
                 graph.remove_edge(e)
             graph.remove_node(med_array)
-            if Config.get_bool("debugprint"):
-                RedundantArrayCopying._arrays_removed += 1
 
 
-@registry.autoregister_params(singlestate=True)
-class RedundantArrayCopying2(pm.Transformation):
+class RedundantArrayCopying2(pm.SingleStateTransformation):
     """ Implements the redundant array removal transformation. Removes
         multiples of array B in pattern A -> B.
     """
-    _arrays_removed = 0
-    _in_array = nodes.AccessNode("_")
-    _out_array = nodes.AccessNode("_")
+    in_array = pm.PatternNode(nodes.AccessNode)
+    out_array = pm.PatternNode(nodes.AccessNode)
 
-    @staticmethod
-    def expressions():
-        return [sdutil.node_path_graph(RedundantArrayCopying2._in_array, RedundantArrayCopying2._out_array)]
+    @classmethod
+    def expressions(cls):
+        return [sdutil.node_path_graph(cls.in_array, cls.out_array)]
 
-    @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
-        in_array = graph.nodes()[candidate[RedundantArrayCopying2._in_array]]
-        out_array = graph.nodes()[candidate[RedundantArrayCopying2._out_array]]
+    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
+        in_array = self.in_array
+        out_array = self.out_array
 
         # Ensure out degree is one (only one target, which is out_array)
         found = 0
@@ -222,19 +179,9 @@ class RedundantArrayCopying2(pm.Transformation):
 
         return found > 0
 
-    @staticmethod
-    def match_to_str(graph, candidate):
-        out_array = graph.nodes()[candidate[RedundantArrayCopying2._out_array]]
-
-        return "Remove " + str(out_array)
-
-    def apply(self, sdfg):
-        def gnode(nname):
-            return graph.nodes()[self.subgraph[nname]]
-
-        graph = sdfg.nodes()[self.state_id]
-        in_array = gnode(RedundantArrayCopying2._in_array)
-        out_array = gnode(RedundantArrayCopying2._out_array)
+    def apply(self, graph, sdfg):
+        in_array = self.in_array
+        out_array = self.out_array
 
         for e1 in graph.out_edges(in_array):
             dst = e1.dst
@@ -244,28 +191,23 @@ class RedundantArrayCopying2(pm.Transformation):
                     graph.remove_edge(e2)
                 graph.remove_edge(e1)
                 graph.remove_node(dst)
-                if Config.get_bool("debugprint"):
-                    RedundantArrayCopying2._arrays_removed += 1
 
 
-@registry.autoregister_params(singlestate=True)
-class RedundantArrayCopying3(pm.Transformation):
+class RedundantArrayCopying3(pm.SingleStateTransformation):
     """ Implements the redundant array removal transformation. Removes multiples
         of array B in pattern MapEntry -> B.
     """
 
-    _arrays_removed = 0
-    _map_entry = nodes.MapEntry(nodes.Map("", [], []))
-    _out_array = nodes.AccessNode("_")
+    map_entry = pm.PatternNode(nodes.MapEntry)
+    out_array = pm.PatternNode(nodes.AccessNode)
 
-    @staticmethod
-    def expressions():
-        return [sdutil.node_path_graph(RedundantArrayCopying3._map_entry, RedundantArrayCopying3._out_array)]
+    @classmethod
+    def expressions(cls):
+        return [sdutil.node_path_graph(cls.map_entry, cls.out_array)]
 
-    @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
-        map_entry = graph.nodes()[candidate[RedundantArrayCopying3._map_entry]]
-        out_array = graph.nodes()[candidate[RedundantArrayCopying3._out_array]]
+    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
+        map_entry = self.map_entry
+        out_array = self.out_array
 
         # Ensure out degree is one (only one target, which is out_array)
         found = 0
@@ -275,19 +217,9 @@ class RedundantArrayCopying3(pm.Transformation):
 
         return found > 0
 
-    @staticmethod
-    def match_to_str(graph, candidate):
-        out_array = graph.nodes()[candidate[RedundantArrayCopying3._out_array]]
-
-        return "Remove " + str(out_array)
-
-    def apply(self, sdfg):
-        def gnode(nname):
-            return graph.nodes()[self.subgraph[nname]]
-
-        graph = sdfg.nodes()[self.state_id]
-        map_entry = gnode(RedundantArrayCopying3._map_entry)
-        out_array = gnode(RedundantArrayCopying3._out_array)
+    def apply(self, graph, sdfg):
+        map_entry = self.map_entry
+        out_array = self.out_array
 
         for e1 in graph.out_edges(map_entry):
             dst = e1.dst
@@ -297,5 +229,3 @@ class RedundantArrayCopying3(pm.Transformation):
                     graph.remove_edge(e2)
                 graph.remove_edge(e1)
                 graph.remove_node(dst)
-                if Config.get_bool("debugprint"):
-                    RedundantArrayCopying3._arrays_removed += 1

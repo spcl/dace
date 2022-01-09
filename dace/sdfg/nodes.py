@@ -1209,11 +1209,11 @@ class LibraryNode(CodeNode):
         sdfg_id = sdfg.sdfg_id
         state_id = sdfg.nodes().index(state)
         subgraph = {transformation_type._match_node: state.node_id(self)}
-        transformation = transformation_type(sdfg_id, state_id, subgraph, 0)
-        if not transformation.can_be_applied(state, self, 0, sdfg):
+        transformation = transformation_type(sdfg, sdfg_id, state_id, subgraph, 0)
+        if not transformation.can_be_applied(state, 0, sdfg):
             raise RuntimeError("Library node " "expansion applicability check failed.")
         sdfg.append_transformation(transformation)
-        transformation.apply(sdfg, *args, **kwargs)
+        transformation.apply(state, sdfg, *args, **kwargs)
         return implementation
 
     @classmethod

@@ -52,9 +52,8 @@ def calc_set_image(map_idx, map_set, array_set):
         return calc_set_image_index(map_idx, map_set, array_set)
 
 
-@registry.autoregister_params(singlestate=True)
 @make_properties
-class StreamTransient(transformation.Transformation):
+class StreamTransient(transformation.SingleStateTransformation):
     """ Implements the StreamTransient transformation, which adds a transient
         and stream nodes between nested maps that lead to a stream. The
         transient then acts as a local buffer.
@@ -66,16 +65,13 @@ class StreamTransient(transformation.Transformation):
     map_exit = transformation.PatternNode(nodes.MapExit)
     outer_map_exit = transformation.PatternNode(nodes.MapExit)
 
-    @staticmethod
-    def expressions():
-        return [
-            sdutil.node_path_graph(StreamTransient.tasklet, StreamTransient.map_exit, StreamTransient.outer_map_exit)
-        ]
+    @classmethod
+    def expressions(cls):
+        return [sdutil.node_path_graph(cls.tasklet, cls.map_exit, cls.outer_map_exit)]
 
-    @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
-        map_exit = graph.nodes()[candidate[StreamTransient.map_exit]]
-        outer_map_exit = graph.nodes()[candidate[StreamTransient.outer_map_exit]]
+    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
+        map_exit = self.map_exit
+        outer_map_exit = self.outer_map_exit
 
         # Check if there is a streaming output
         for _src, _, dest, _, memlet in graph.out_edges(map_exit):
@@ -84,19 +80,10 @@ class StreamTransient(transformation.Transformation):
 
         return False
 
-    @staticmethod
-    def match_to_str(graph, candidate):
-        tasklet = candidate[StreamTransient.tasklet]
-        map_exit = candidate[StreamTransient.map_exit]
-        outer_map_exit = candidate[StreamTransient.outer_map_exit]
-
-        return ' -> '.join(str(node) for node in [tasklet, map_exit, outer_map_exit])
-
-    def apply(self, sdfg: SDFG):
-        graph = sdfg.nodes()[self.state_id]
-        tasklet = graph.nodes()[self.subgraph[StreamTransient.tasklet]]
-        map_exit = graph.nodes()[self.subgraph[StreamTransient.map_exit]]
-        outer_map_exit = graph.nodes()[self.subgraph[StreamTransient.outer_map_exit]]
+    def apply(self, graph: SDFGState, sdfg: SDFG):
+        tasklet = self.tasklet
+        map_exit = self.map_exit
+        outer_map_exit = self.outer_map_exit
         memlet = None
         edge = None
         for e in graph.out_edges(map_exit):
@@ -147,9 +134,8 @@ class StreamTransient(transformation.Transformation):
         return
 
 
-@registry.autoregister_params(singlestate=True)
 @make_properties
-class AccumulateTransient(transformation.Transformation):
+class AccumulateTransient(transformation.SingleStateTransformation):
     """ Implements the AccumulateTransient transformation, which adds
         transient stream and data nodes between nested maps that lead to a
         stream. The transient data nodes then act as a local accumulator.
@@ -165,14 +151,13 @@ class AccumulateTransient(transformation.Transformation):
 
     identity = SymbolicProperty(desc="Identity value to set", default=None, allow_none=True)
 
-    @staticmethod
-    def expressions():
-        return [sdutil.node_path_graph(AccumulateTransient.map_exit, AccumulateTransient.outer_map_exit)]
+    @classmethod
+    def expressions(cls):
+        return [sdutil.node_path_graph(cls.map_exit, cls.outer_map_exit)]
 
-    @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
-        map_exit = graph.nodes()[candidate[AccumulateTransient.map_exit]]
-        outer_map_exit = graph.nodes()[candidate[AccumulateTransient.outer_map_exit]]
+    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
+        map_exit = self.map_exit
+        outer_map_exit = self.outer_map_exit
 
         # Check if there is an accumulation output
         for e in graph.edges_between(map_exit, outer_map_exit):
@@ -181,17 +166,9 @@ class AccumulateTransient(transformation.Transformation):
 
         return False
 
-    @staticmethod
-    def match_to_str(graph, candidate):
-        map_exit = candidate[AccumulateTransient.map_exit]
-        outer_map_exit = candidate[AccumulateTransient.outer_map_exit]
-
-        return ' -> '.join(str(node) for node in [map_exit, outer_map_exit])
-
-    def apply(self, sdfg: SDFG):
-        graph = sdfg.node(self.state_id)
-        map_exit = graph.node(self.subgraph[AccumulateTransient.map_exit])
-        outer_map_exit = graph.node(self.subgraph[AccumulateTransient.outer_map_exit])
+    def apply(self, graph: SDFGState, sdfg: SDFG):
+        map_exit = self.map_exit
+        outer_map_exit = self.outer_map_exit
 
         # Choose array
         array = self.array

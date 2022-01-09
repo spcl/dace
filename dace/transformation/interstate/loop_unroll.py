@@ -2,21 +2,18 @@
 """ Loop unroll transformation """
 
 import copy
-import sympy as sp
-import networkx as nx
-from typing import List, Optional, Tuple
+from typing import List
 
-from dace import dtypes, registry, sdfg as sd, symbolic
+from dace import sdfg as sd, symbolic
 from dace.properties import Property, make_properties
-from dace.sdfg import graph as gr, nodes
+from dace.sdfg import graph as gr
 from dace.sdfg import utils as sdutil
 from dace.frontend.python.astutils import ASTFindReplace
 from dace.transformation.interstate.loop_detection import (DetectLoop, find_for_loop)
+from dace.transformation import transformation as xf
 
-
-@registry.autoregister
 @make_properties
-class LoopUnroll(DetectLoop):
+class LoopUnroll(DetectLoop, xf.MultiStateTransformation):
     """ Unrolls a state machine for-loop into multiple states """
 
     count = Property(
@@ -26,14 +23,13 @@ class LoopUnroll(DetectLoop):
         'iterations (loop must be constant-sized for 0)',
     )
 
-    @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
+    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
         # Is this even a loop
-        if not DetectLoop.can_be_applied(graph, candidate, expr_index, sdfg, permissive):
+        if not super().can_be_applied(graph, expr_index, sdfg, permissive):
             return False
 
-        guard = graph.node(candidate[DetectLoop._loop_guard])
-        begin = graph.node(candidate[DetectLoop._loop_begin])
+        guard = self.loop_guard
+        begin = self.loop_begin
         found = find_for_loop(graph, guard, begin)
 
         # If loop cannot be detected, fail
@@ -49,11 +45,11 @@ class LoopUnroll(DetectLoop):
             return False
         return True
 
-    def apply(self, sdfg):
+    def apply(self, _, sdfg):
         # Obtain loop information
-        guard: sd.SDFGState = sdfg.node(self.subgraph[DetectLoop._loop_guard])
-        begin: sd.SDFGState = sdfg.node(self.subgraph[DetectLoop._loop_begin])
-        after_state: sd.SDFGState = sdfg.node(self.subgraph[DetectLoop._exit_state])
+        guard: sd.SDFGState = self.loop_guard
+        begin: sd.SDFGState = self.loop_begin
+        after_state: sd.SDFGState = self.exit_state
 
         # Obtain iteration variable, range, and stride, together with the last
         # state(s) before the loop and the last loop state.

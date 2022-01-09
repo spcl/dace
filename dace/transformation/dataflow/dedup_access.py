@@ -6,9 +6,9 @@ import copy
 import itertools
 from typing import List, Set
 
-from dace import data, dtypes, sdfg as sd, subsets, symbolic, registry
+from dace import data, dtypes, sdfg as sd, subsets, symbolic
 from dace.memlet import Memlet
-from dace.sdfg import nodes
+from dace.sdfg import nodes, graph as gr
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation as xf
 import dace.transformation.helpers as helpers
@@ -16,32 +16,30 @@ import dace.transformation.helpers as helpers
 import warnings
 
 
-@registry.autoregister_params(singlestate=True)
-class DeduplicateAccess(xf.Transformation):
+class DeduplicateAccess(xf.SingleStateTransformation):
     """ 
     This transformation takes a node that is connected to multiple destinations
     with overlapping memlets, and consolidates those accesses through a 
     transient array or scalar.
     """
 
-    _map_entry = nodes.MapEntry(nodes.Map('_', [], []))
-    _node1 = nodes.Node()
-    _node2 = nodes.Node()
+    map_entry = xf.PatternNode(nodes.MapEntry)
+    node1 = xf.PatternNode(nodes.Node)
+    node2 = xf.PatternNode(nodes.Node)
 
-    @staticmethod
-    def expressions():
-        state = sd.SDFGState()
-        state.add_nedge(DeduplicateAccess._map_entry, DeduplicateAccess._node1, Memlet())
-        state.add_nedge(DeduplicateAccess._map_entry, DeduplicateAccess._node2, Memlet())
+    @classmethod
+    def expressions(cls):
+        state = gr.OrderedMultiDiConnectorGraph()
+        state.add_nedge(cls.map_entry, cls.node1, Memlet())
+        state.add_nedge(cls.map_entry, cls.node2, Memlet())
         return [state]
 
-    @staticmethod
-    def can_be_applied(graph: sd.SDFGState, candidate, expr_index, sdfg, permissive=False):
-        map_entry = graph.node(candidate[DeduplicateAccess._map_entry])
-        nid1 = candidate[DeduplicateAccess._node1]
-        node1 = graph.node(nid1)
-        nid2 = candidate[DeduplicateAccess._node2]
-        node2 = graph.node(nid2)
+    def can_be_applied(self, graph: sd.SDFGState, expr_index, sdfg, permissive=False):
+        map_entry = self.map_entry
+        nid1 = graph.node_id(self.node1)
+        node1 = self.node1
+        nid2 = graph.node_id(self.node2)
+        node2 = self.node2
 
         # Two nodes must be ordered (avoid duplicates/nondeterminism)
         if nid1 >= nid2:
@@ -83,15 +81,10 @@ class DeduplicateAccess(xf.Transformation):
 
         return True
 
-    @staticmethod
-    def match_to_str(graph, candidate):
-        return str(graph.node(candidate[DeduplicateAccess._map_entry]))
-
-    def apply(self, sdfg: sd.SDFG):
-        graph: sd.SDFGState = sdfg.nodes()[self.state_id]
-        map_entry = graph.node(self.subgraph[DeduplicateAccess._map_entry])
-        node1 = graph.node(self.subgraph[DeduplicateAccess._node1])
-        node2 = graph.node(self.subgraph[DeduplicateAccess._node2])
+    def apply(self, graph: sd.SDFGState, sdfg: sd.SDFG):
+        map_entry = self.map_entry
+        node1 = self.node1
+        node2 = self.node2
 
         # Steps:
         # 1. Find unique subsets
@@ -110,8 +103,6 @@ class DeduplicateAccess(xf.Transformation):
         # Get original data descriptor
         dname = edges[0].data.data
         desc = sdfg.arrays[edges[0].data.data]
-        if isinstance(edges[0].dst, nodes.AccessNode) and '15' in edges[0].dst.data:
-            sdfg.save('faulty_dedup.sdfg')
 
         # Get unique subsets
         unique_subsets = set(e.data.subset for e in edges)

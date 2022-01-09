@@ -2,10 +2,11 @@
 """ This module contains classes that implement the reduce-map transformation.
 """
 
-from dace import dtypes, registry, symbolic, subsets
-from dace.sdfg import SDFG, nodes, utils
+from dace import dtypes
+from dace.sdfg import SDFG, nodes, utils, graph
 from dace.memlet import Memlet
 from dace.sdfg.scope import ScopeTree
+from dace.sdfg.state import SDFGState
 from dace.transformation import transformation
 from dace.properties import make_properties, Property
 from dace.symbolic import symstr
@@ -17,15 +18,13 @@ from dace.sdfg.propagation import propagate_memlets_scope
 from copy import deepcopy as dcpy
 from typing import List
 
-import dace.libraries.standard as stdlib
 import numpy as np
 
 import timeit
 
 
-@registry.autoregister_params(singlestate=True)
 @make_properties
-class ReduceExpansion(transformation.Transformation):
+class ReduceExpansion(transformation.SingleStateTransformation):
     """ Implements the ReduceExpansion transformation.
         Expands a Reduce node into inner and outer map components,
         where the outer map consists of the axes not being reduced.
@@ -35,7 +34,9 @@ class ReduceExpansion(transformation.Transformation):
         on the fly.
     """
 
-    _reduce = stdlib.Reduce()
+    import dace.libraries.standard as stdlib  # Avoid slow imports
+
+    reduce = transformation.PatternNode(stdlib.Reduce)
 
     debug = Property(desc="Debug Info", dtype=bool, default=False)
 
@@ -74,13 +75,12 @@ class ReduceExpansion(transformation.Transformation):
         dtypes.ReductionType.Logical_Or: False
     }
 
-    @staticmethod
-    def expressions():
-        return [utils.node_path_graph(ReduceExpansion._reduce)]
+    @classmethod
+    def expressions(cls):
+        return [utils.node_path_graph(cls.reduce)]
 
-    @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
-        reduce_node = graph.nodes()[candidate[ReduceExpansion._reduce]]
+    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
+        reduce_node = self.reduce
         inedge = graph.in_edges(reduce_node)[0]
         input_dims = inedge.data.subset.dims()
         axes = reduce_node.axes
@@ -97,23 +97,16 @@ class ReduceExpansion(transformation.Transformation):
 
         return True
 
-    @staticmethod
-    def match_to_str(graph, candidate):
-        reduce = candidate[ReduceExpansion._reduce]
-        return str(reduce)
-
-    def apply(self, sdfg: SDFG):
+    def apply(self, graph: SDFGState, sdfg: SDFG):
         """ Splits the data dimension into an inner and outer dimension,
             where the inner dimension are the reduction axes and the
             outer axes the complement. Pushes the reduce inside a new
             map consisting of the complement axes.
         """
-
-        graph = sdfg.nodes()[self.state_id]
-        reduce_node = graph.nodes()[self.subgraph[ReduceExpansion._reduce]]
+        reduce_node = self.reduce
         self.expand(sdfg, graph, reduce_node)
 
-    def expand(self, sdfg, graph, reduce_node):
+    def expand(self, sdfg: SDFG, graph: SDFGState, reduce_node):
         """ Splits the data dimension into an inner and outer dimension,
             where the inner dimension are the reduction axes and the
             outer axes the complement. Pushes the reduce inside a new
@@ -185,16 +178,16 @@ class ReduceExpansion(transformation.Transformation):
             # create an out transient between inner and outer map exit
             array_out = nstate.out_edges(outer_exit)[0].data.data
 
-            from dace.transformation.dataflow.local_storage import LocalStorage
+            from dace.transformation.dataflow.local_storage import LocalStorage, OutLocalStorage
             local_storage_subgraph = {
                 LocalStorage.node_a: nsdfg.sdfg.nodes()[0].nodes().index(inner_exit),
                 LocalStorage.node_b: nsdfg.sdfg.nodes()[0].nodes().index(outer_exit)
             }
             nsdfg_id = nsdfg.sdfg.sdfg_list.index(nsdfg.sdfg)
             nstate_id = 0
-            local_storage = LocalStorage(nsdfg_id, nstate_id, local_storage_subgraph, 0)
+            local_storage = OutLocalStorage(nsdfg.sdfg, nsdfg_id, nstate_id, local_storage_subgraph, 0)
             local_storage.array = array_out
-            local_storage.apply(nsdfg.sdfg)
+            local_storage.apply(nsdfg.sdfg.node(0), nsdfg.sdfg)
             out_transient_node_inner = local_storage._data_node
 
             # push to register
@@ -215,7 +208,7 @@ class ReduceExpansion(transformation.Transformation):
             # create an in-transient between inner and outer map entry
             array_in = nstate.in_edges(outer_entry)[0].data.data
 
-            from dace.transformation.dataflow.local_storage import LocalStorage
+            from dace.transformation.dataflow.local_storage import LocalStorage, InLocalStorage
             local_storage_subgraph = {
                 LocalStorage.node_a: nsdfg.sdfg.nodes()[0].nodes().index(outer_entry),
                 LocalStorage.node_b: nsdfg.sdfg.nodes()[0].nodes().index(inner_entry)
@@ -223,9 +216,9 @@ class ReduceExpansion(transformation.Transformation):
 
             nsdfg_id = nsdfg.sdfg.sdfg_list.index(nsdfg.sdfg)
             nstate_id = 0
-            local_storage = LocalStorage(nsdfg_id, nstate_id, local_storage_subgraph, 0)
+            local_storage = InLocalStorage(nsdfg.sdfg, nsdfg_id, nstate_id, local_storage_subgraph, 0)
             local_storage.array = array_in
-            local_storage.apply(nsdfg.sdfg)
+            local_storage.apply(nsdfg.sdfg.node(0), nsdfg.sdfg)
             in_transient_node_inner = local_storage._data_node
 
             # push to register
@@ -233,9 +226,9 @@ class ReduceExpansion(transformation.Transformation):
 
         # inline fuse back our nested SDFG
         from dace.transformation.interstate import InlineSDFG
-        inline_sdfg = InlineSDFG(sdfg.sdfg_list.index(sdfg),
-                                 sdfg.nodes().index(graph), {InlineSDFG._nested_sdfg: graph.nodes().index(nsdfg)}, 0)
-        inline_sdfg.apply(sdfg)
+        inline_sdfg = InlineSDFG(sdfg, sdfg.sdfg_id,
+                                 sdfg.node_id(graph), {InlineSDFG.nested_sdfg: graph.node_id(nsdfg)}, 0)
+        inline_sdfg.apply(graph, sdfg)
 
         new_schedule = dtypes.ScheduleType.Default
         new_implementation = self.reduce_implementation \

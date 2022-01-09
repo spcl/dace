@@ -109,7 +109,7 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
                     for node in graph.nodes():
                         if isinstance(node, dace.libraries.standard.nodes.Reduce):
                             try:
-                                ReduceExpansion.apply_to(sdfg, _reduce=node)
+                                ReduceExpansion.apply_to(sdfg, reduce=node)
                             except ValueError as e:
                                 pass
             # permutation settings
