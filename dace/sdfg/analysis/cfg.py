@@ -103,28 +103,19 @@ def state_parent_tree(sdfg: SDFG) -> Dict[SDFGState, SDFGState]:
         if out_edges[0].data.condition_sympy() != (sp.Not(out_edges[1].data.condition_sympy())):
             continue
 
+        # Find all nodes that are between each branch and the guard.
+        # Condition makes sure the entire cycle is dominated by this node.
+        # If not, we're looking at a guard for a nested cycle, which we ignore for
+        # this cycle.
         oa, ob = out_edges[0].dst, out_edges[1].dst
-        # Commented conditional version turned out slower
-        loop_states_cand_a = sdutil.nodes_in_all_simple_paths(sdfg.nx, oa, guard)
-        #lambda n: n is guard or oa in alldoms[n])
-        loop_states_cand_b = sdutil.nodes_in_all_simple_paths(sdfg.nx, ob, guard)
-        #lambda n: n is guard or ob in alldoms[n])
+        loop_states_cand_a = sdutil.nodes_in_all_simple_paths(
+            sdfg.nx, oa, guard, lambda n: n is not ob and (n is guard or oa in alldoms[n]))
+        loop_states_cand_b = sdutil.nodes_in_all_simple_paths(
+            sdfg.nx, ob, guard, lambda n: n is not oa and (n is guard or ob in alldoms[n]))
 
-        # Check which candidate states lead back to guard
+        # Check which candidate states led back to guard
         is_a_begin = guard in loop_states_cand_a
         is_b_begin = guard in loop_states_cand_b
-
-        # Make sure the entire cycle is dominated by this node. If not,
-        # we're looking at a guard for a nested cycle, which we ignore for
-        # this cycle.
-        if is_a_begin:
-            loop_states_cand_a -= {guard, oa}
-            if any(oa not in alldoms[u] for u in loop_states_cand_a):
-                is_a_begin = False
-        if is_b_begin:
-            loop_states_cand_b -= {guard, ob}
-            if any(ob not in alldoms[u] for u in loop_states_cand_b):
-                is_b_begin = False
 
         loop_state = None
         exit_state = None
