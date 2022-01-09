@@ -783,6 +783,8 @@ class ReductionNOperation(pm.SingleStateTransformation):
 
         outputs = dict()
         for _, _, _, _, m in graph.in_edges(map_exit):
+            if m.is_empty():
+                continue
             desc = sdfg.arrays[m.data]
             if not m.wcr:
                 if desc not in inputs.keys():

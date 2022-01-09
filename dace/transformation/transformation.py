@@ -128,7 +128,9 @@ class PatternTransformation(TransformationBase):
             UI.
         """
         candidate = []
-        for cname in self._get_pattern_nodes().keys():
+        node_to_name = {v: k for k, v in self._get_pattern_nodes().items()}
+        for cnode in self.subgraph.keys():
+            cname = node_to_name[cnode]
             candidate.append(getattr(self, cname))
         return str(candidate)
 
