@@ -188,6 +188,14 @@ class GeneralBlock(ControlFlow):
     # loop, for example.
     gotos_to_ignore: Sequence[Edge[InterstateEdge]]
 
+    # List or set of edges to generate `continue;` statements in lieu of goto.
+    # This is used for loop blocks.
+    gotos_to_continue: Sequence[Edge[InterstateEdge]]
+
+    # List or set of edges to generate `break;` statements in lieu of goto.
+    # This is used for loop blocks.
+    gotos_to_break: Sequence[Edge[InterstateEdge]]
+
     # List or set of edges to not generate inter-state assignments for.
     assignments_to_ignore: Sequence[Edge[InterstateEdge]]
 
@@ -209,9 +217,14 @@ class GeneralBlock(ControlFlow):
                             successor = self.elements[i + 1].first_state
 
                         expr += elem.generate_transition(sdfg, e, successor)
-                    elif e not in self.assignments_to_ignore:
-                        # Need to generate assignments but not gotos
-                        expr += elem.generate_transition(sdfg, e, assignments_only=True)
+                    else:
+                        if e not in self.assignments_to_ignore:
+                            # Need to generate assignments but not gotos
+                            expr += elem.generate_transition(sdfg, e, assignments_only=True)
+                        if e in self.gotos_to_break:
+                            expr += 'break;\n'
+                        elif e in self.gotos_to_continue:
+                            expr += 'continue;\n'
                 # Add exit goto as necessary
                 if elem.last_state:
                     continue
@@ -450,7 +463,7 @@ def _loop_from_structure(sdfg: SDFG, guard: SDFGState, enter_edge: Edge[Intersta
     set of states. Can construct for or while loops.
     """
 
-    body = GeneralBlock(dispatch_state, [], [], [])
+    body = GeneralBlock(dispatch_state, [], [], [], [], [])
 
     guard_inedges = sdfg.in_edges(guard)
     increment_edges = [e for e in guard_inedges if e in back_edges]
@@ -463,7 +476,7 @@ def _loop_from_structure(sdfg: SDFG, guard: SDFGState, enter_edge: Edge[Intersta
     increment_edge = increment_edges[0]
 
     # Increment edge goto to be ignored in body
-    body.gotos_to_ignore.append(increment_edge)
+    body.gotos_to_continue.append(increment_edge)
 
     # Outgoing edges must be a negation of each other
     if enter_edge.data.condition_sympy() != (sp.Not(leave_edge.data.condition_sympy())):
@@ -637,7 +650,7 @@ def _structured_control_flow_traversal(sdfg: SDFG,
             # Parse all outgoing edges recursively first
             cblocks: Dict[Edge[InterstateEdge], GeneralBlock] = {}
             for branch in oe:
-                cblocks[branch] = GeneralBlock(dispatch_state, [], [], [])
+                cblocks[branch] = GeneralBlock(dispatch_state, [], [], [], [], [])
                 visited |= _structured_control_flow_traversal(sdfg,
                                                               branch.dst,
                                                               ptree,
@@ -768,7 +781,7 @@ def structured_control_flow_tree(sdfg: SDFG, dispatch_state: Callable[[SDFGState
         if len(common_frontier) == 1:
             branch_merges[state] = next(iter(common_frontier))
 
-    root_block = GeneralBlock(dispatch_state, [], [], [])
+    root_block = GeneralBlock(dispatch_state, [], [], [], [], [])
     _structured_control_flow_traversal(sdfg, sdfg.start_state, ptree, branch_merges, back_edges, dispatch_state,
                                        root_block)
     return root_block
