@@ -429,7 +429,7 @@ class DaceProgram(pycommon.SDFGConvertible):
             if Config.get_bool('debugprint') and len(promoted) > 0:
                 print('Promoted scalars {%s} to symbols.' % ', '.join(p for p in sorted(promoted)))
 
-            sdfg.coarsen_dataflow()
+            sdfg.coarsen_dataflow(validate=False)
 
             # Split back edges with assignments and conditions to allow richer
             # control flow detection in code generation
