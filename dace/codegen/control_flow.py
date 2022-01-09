@@ -317,6 +317,13 @@ class IfElseChain(ControlFlow):
     def children(self) -> List[ControlFlow]:
         return [block for _, block in self.body]
 
+def _clean_loop_body(body: str) -> str:
+    """ Cleans loop body from extraneous statements. """
+    # Remove extraneous "continue" statement for code clarity
+    if body.endswith('continue;\n'):
+        body = body[:-len('continue;\n')]
+    return body
+
 
 @dataclass
 class ForScope(ControlFlow):
@@ -360,7 +367,7 @@ class ForScope(ControlFlow):
             update = f'{self.itervar} = {self.update}'
 
         expr = f'{preinit}\nfor ({init}; {cond}; {update}) {{\n'
-        expr += self.body.as_cpp(defined_vars, symbols)
+        expr += _clean_loop_body(self.body.as_cpp(defined_vars, symbols))
         expr += '\n}\n'
         return expr
 
@@ -388,7 +395,7 @@ class WhileScope(ControlFlow):
             test = 'true'
 
         expr = f'while ({test}) {{\n'
-        expr += self.body.as_cpp(defined_vars, symbols)
+        expr += _clean_loop_body(self.body.as_cpp(defined_vars, symbols))
         expr += '\n}\n'
         return expr
 
@@ -415,7 +422,7 @@ class DoWhileScope(ControlFlow):
             test = 'true'
 
         expr = 'do {\n'
-        expr += self.body.as_cpp(defined_vars, symbols)
+        expr += _clean_loop_body(self.body.as_cpp(defined_vars, symbols))
         expr += f'\n}} while ({test});\n'
         return expr
 
