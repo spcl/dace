@@ -337,10 +337,8 @@ class Vectorization(transformation.Transformation):
             for m in maps_to_vectorize:
                 self._map_entry = m
 
-                correct_state = get_innermost_state_for_node(sdfg, m)
-
-                if not self.can_be_applied(correct_state, candidate, expr_index, get_innermost_sdfg_for_node(sdfg, m),
-                                           permissive):
+                if not self.can_be_applied(get_innermost_state_for_node(sdfg, m), candidate, expr_index,
+                                           get_innermost_sdfg_for_node(sdfg, m), permissive):
                     return False
 
             # Check alls strideds of the arrays
@@ -460,14 +458,16 @@ class Vectorization(transformation.Transformation):
 
             # Change strides of all arrays involved
             for a in data_descriptors_to_vectorize:
-                array = sdfg.arrays.get(a)
+
+                correct_sdfg = get_innermost_sdfg_for_array(sdfg, a)
+                array = correct_sdfg.arrays.get(a)
                 new_strides = list(array.strides)
 
                 for i in range(len(new_strides)):
                     if i == len(new_strides) - 1:  # Skip last dimension since it is always 1
                         continue
                     new_strides[i] = new_strides[i] / self.vector_len
-                sdfg.arrays[a].strides = new_strides
+                correct_sdfg.arrays[a].strides = new_strides
 
             self._map_entry = old_map_entry
             self._level = 0
