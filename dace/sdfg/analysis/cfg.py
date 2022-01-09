@@ -110,9 +110,6 @@ def state_parent_tree(sdfg: SDFG) -> Dict[SDFGState, SDFGState]:
         # Check which candidate states lead back to guard
         is_a_begin = guard in loop_states_cand_a
         is_b_begin = guard in loop_states_cand_b
-        if is_a_begin and is_b_begin:
-            # Not a natural loop
-            continue
 
         # Make sure the entire cycle is dominated by this node. If not,
         # we're looking at a guard for a nested cycle, which we ignore for

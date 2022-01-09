@@ -476,6 +476,7 @@ def _loop_from_structure(sdfg: SDFG, guard: SDFGState, enter_edge: Edge[Intersta
     increment_edge = increment_edges[0]
 
     # Increment edge goto to be ignored in body
+    body.gotos_to_ignore.append(increment_edge)
     body.gotos_to_continue.append(increment_edge)
 
     # Outgoing edges must be a negation of each other
