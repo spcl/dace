@@ -377,7 +377,7 @@ def unsqueeze_memlet(internal_memlet: Memlet,
     """
     internal_subset = _get_internal_subset(internal_memlet, external_memlet, use_src_subset, use_dst_subset)
     result = Memlet(data=external_memlet.data,
-                    subset=Range(internal_subset.ranges[:]),
+                    subset=Range(internal_subset.ndrange()),
                     other_subset=None,
                     volume=internal_memlet.volume,
                     dynamic=internal_memlet.dynamic,
