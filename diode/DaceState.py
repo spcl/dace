@@ -30,12 +30,7 @@ class DaceState:
 
     # TODO: rewrite this class to use in-memory code.
 
-    def __init__(self,
-                 dace_code,
-                 fake_fname,
-                 source_code=None,
-                 sdfg=None,
-                 remote=False):
+    def __init__(self, dace_code, fake_fname, source_code=None, sdfg=None, remote=False):
 
         self.compiled = False
         self.dace_tmpfile = None
@@ -49,8 +44,7 @@ class DaceState:
         self.source_code = source_code
         self.remote = remote
         self.repetitions = None
-        self.errors = [
-        ]  # Any errors that arise from compilation are placed here to show
+        self.errors = []  # Any errors that arise from compilation are placed here to show
         # them once the sdfg is rendered
 
         self.has_multiple_eligible_sdfgs = False
@@ -77,11 +71,9 @@ class DaceState:
                 self.errors.append(ex)
 
             # Find dace programs
-            self.sdfgs = [(name, obj.parse())
-                          for name, obj in gen_module.items()
+            self.sdfgs = [(name, obj.parse()) for name, obj in gen_module.items()
                           if isinstance(obj, parser.DaceProgram)]
-            self.sdfgs += [(name, obj) for name, obj in gen_module.items()
-                           if isinstance(obj, SDFG)]
+            self.sdfgs += [(name, obj) for name, obj in gen_module.items() if isinstance(obj, SDFG)]
             try:
                 self.sdfg = self.sdfgs[0][1]
             except IndexError:
@@ -101,9 +93,7 @@ class DaceState:
             raise ValueError("Need an SDFG to produce initializers")
         data = set()
         for state in sdfg.nodes():
-            data.update(
-                set((n.data, n.desc(sdfg)) for n in state.nodes()
-                    if isinstance(n, dace.sdfg.nodes.AccessNode)))
+            data.update(set((n.data, n.desc(sdfg)) for n in state.nodes() if isinstance(n, dace.sdfg.nodes.AccessNode)))
 
         sym_args = list(sdfg.symbols.keys())
         data_args = [d for d in data if not d[1].transient]
@@ -122,9 +112,7 @@ class DaceState:
             raise ValueError("Need an SDFG to produce call arguments")
         data = set()
         for state in sdfg.nodes():
-            data.update(
-                set((n.data, n.desc(sdfg)) for n in state.nodes()
-                    if isinstance(n, dace.sdfg.nodes.AccessNode)))
+            data.update(set((n.data, n.desc(sdfg)) for n in state.nodes() if isinstance(n, dace.sdfg.nodes.AccessNode)))
 
         sym_args = list(sdfg.symbols.keys())
         data_args = [d for d in data if not d[1].transient]

@@ -16,8 +16,6 @@ TESTPREFIX=""
 TOTAL_TESTS=0
 PYTHON_BINARY="${PYTHON_BINARY:-python3}"
 
-DACE_optimizer_detect_control_flow=${DACE_automatic_strict_transformations}
-
 TIMEOUTCMD="timeout -s9 30"
 
 RED='\033[0;31m'

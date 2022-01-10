@@ -65,14 +65,12 @@ class TransformationTester(Optimizer):
                 sys.stdout = output
                 sys.stderr = output
 
-                print('    ' * depth,
-                      type(match).__name__,
-                      '- ',
-                      end='',
-                      file=self.stdout)
+                print('    ' * depth, type(match).__name__, '- ', end='', file=self.stdout)
 
                 tsdfg: SDFG = new_sdfg.sdfg_list[match.sdfg_id]
-                match.apply(tsdfg)
+                tgraph = tsdfg.node(match.state_id) if match.state_id >= 0 else tsdfg
+                match._sdfg = tsdfg
+                match.apply(tgraph, tsdfg)
 
                 sdfg.save(os.path.join('_dacegraphs', 'program.sdfg'))
 
@@ -116,9 +114,8 @@ class TransformationTester(Optimizer):
         self._optimize_recursive(self.sdfg, 0)
 
         if self.failed_tests > 0:
-            raise RuntimeError(
-                '%d / %d transformations passed' %
-                (self.passed_tests, self.passed_tests + self.failed_tests))
+            raise RuntimeError('%d / %d transformations passed' %
+                               (self.passed_tests, self.passed_tests + self.failed_tests))
 
         return self.sdfg
 
@@ -135,5 +132,4 @@ if __name__ == '__main__':
     tt = TransformationTester(sdfg, 2, halt_on_exception=True)
     tt.optimize()
 
-    print('SUMMARY: %d / %d tests passed' %
-          (tt.passed_tests, tt.passed_tests + tt.failed_tests))
+    print('SUMMARY: %d / %d tests passed' % (tt.passed_tests, tt.passed_tests + tt.failed_tests))

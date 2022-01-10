@@ -15,32 +15,26 @@ num_classes = 10
 def random_batch(batch_size):
     shape = (batch_size, 224, 224, 3)
     images = np.random.uniform(size=shape).astype(np.float32)
-    labels = np.random.randint(low=0, high=num_classes,
-                               size=(batch_size)).astype(np.int32)
+    labels = np.random.randint(low=0, high=num_classes, size=(batch_size)).astype(np.int32)
     # print(labels.shape)
     return images, labels
 
 
-input_placeholder = tf.placeholder(dtype=tf.float32,
-                                   shape=(batch_size, 224, 224, 3))
+input_placeholder = tf.placeholder(dtype=tf.float32, shape=(batch_size, 224, 224, 3))
 label_placeholder = tf.placeholder(dtype=tf.int32, shape=(batch_size))
 
 
 def build_resnet(images, labels):
     # Graph building
-    myresnet = resnet50.ResNet50("channels_last",
-                                 classes=num_classes)  # trainable=False)
+    myresnet = resnet50.ResNet50("channels_last", classes=num_classes)  # trainable=False)
     logits = myresnet(images)
-    softmax = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=labels,
-                                                             logits=logits)
+    softmax = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=labels, logits=logits)
     loss = tf.reduce_mean(softmax, name="loss")
-    gradients = tf.train.GradientDescentOptimizer(
-        learning_rate).compute_gradients(loss)
+    gradients = tf.train.GradientDescentOptimizer(learning_rate).compute_gradients(loss)
     gradient_tensors = []
     for tup in gradients:
         gradient_tensors.append(tup[0])
-    update_op = tf.train.GradientDescentOptimizer(
-        learning_rate).apply_gradients(gradients)
+    update_op = tf.train.GradientDescentOptimizer(learning_rate).apply_gradients(gradients)
 
     return logits, update_op
 

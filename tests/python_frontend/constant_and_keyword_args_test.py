@@ -177,9 +177,7 @@ def test_optional_argument_jit_kwarg():
 
 def test_optional_argument():
     @dace.program
-    def linear(x: dace.float64[13, 14],
-               w: dace.float64[10, 14],
-               bias: dace.float64[10] = None):
+    def linear(x: dace.float64[13, 14], w: dace.float64[10, 14], bias: dace.float64[10] = None):
         """ Linear layer with weights w applied to x, and optional bias. """
         if bias is not None:
             return np.dot(x, w.T) + bias
@@ -251,8 +249,7 @@ def test_constant_argument_object():
         return A[cfg.p]
 
     @dace.program
-    def constant_parameter(cfg: dace.constant, cfg2: dace.constant,
-                           A: dace.float64[20]):
+    def constant_parameter(cfg: dace.constant, cfg2: dace.constant, A: dace.float64[20]):
         A[cfg.q] = nested_func(cfg, A)
         A[cfg.get_random_number] = nested_func(cfg2, A)
 
@@ -276,8 +273,7 @@ def test_none_field():
         def method(self, A):
             if (self.field_or_none is None) and (self.field_or_none is None):
                 A[...] = 7.0
-            if (self.field_or_none is not None) and (self.field_or_none
-                                                     is not None):
+            if (self.field_or_none is not None) and (self.field_or_none is not None):
                 A[...] += self.field_or_none
 
     A = np.ones((10, ))
@@ -361,7 +357,7 @@ def test_numpynumber_condition():
             A[:] = 1
 
     # Ensure condition was folded
-    sdfg = conditional_val.to_sdfg(val=np.int64(3), strict=True)
+    sdfg = conditional_val.to_sdfg(val=np.int64(3), simplify=True)
     assert sdfg.number_of_nodes() == 1
 
     a = np.random.rand(20)
@@ -383,7 +379,7 @@ def test_constant_propagation():
             A[:] = 1
 
     # Ensure condition was folded
-    sdfg = conditional_val.to_sdfg(val=3, strict=True)
+    sdfg = conditional_val.to_sdfg(val=3, simplify=True)
     assert sdfg.number_of_nodes() == 1
 
     a = np.random.rand(20)

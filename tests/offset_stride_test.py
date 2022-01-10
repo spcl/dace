@@ -19,16 +19,8 @@ def test():
     # Construct SDFG
     mysdfg = SDFG('offset_stride')
     state = mysdfg.add_state()
-    A_ = state.add_array('A', [6, 6],
-                         dp.float32,
-                         offset=[2, 3],
-                         strides=[N, 1],
-                         total_size=N * N)
-    B_ = state.add_array('B', [3, 2],
-                         dp.float32,
-                         offset=[-1, -1],
-                         strides=[3, 1],
-                         total_size=12)
+    A_ = state.add_array('A', [6, 6], dp.float32, offset=[2, 3], strides=[N, 1], total_size=N * N)
+    B_ = state.add_array('B', [3, 2], dp.float32, offset=[-1, -1], strides=[3, 1], total_size=12)
 
     map_entry, map_exit = state.add_map('mymap', [('i', '1:4'), ('j', '1:3')])
     tasklet = state.add_tasklet('mytasklet', {'a'}, {'b'}, 'b = a')

@@ -27,8 +27,7 @@ out1 = np.ndarray((N.get(), M.get(), O.get()), np.float64)
 
 
 @dace.program
-def invariant_dimension(A: dace.float64[N, M, O], B: dace.float64[N, M, O],
-                        C: dace.float64[N, M, O]):
+def invariant_dimension(A: dace.float64[N, M, O], B: dace.float64[N, M, O], C: dace.float64[N, M, O]):
     for i, j in dace.map[0:N, 0:M]:
         with dace.tasklet:
             in1 << A[i, j, 0]
@@ -65,8 +64,7 @@ def fix_sdfg(sdfg, graph):
     for node in graph.nodes():
         if isinstance(node, dace.sdfg.nodes.NestedSDFG):
             nested_original = node
-            for edge in itertools.chain(graph.in_edges(node),
-                                        graph.out_edges(node)):
+            for edge in itertools.chain(graph.in_edges(node), graph.out_edges(node)):
                 for e in graph.memlet_tree(edge):
                     if 'z' in e.data.subset.free_symbols:
                         new_subset = str(e.data.subset)
@@ -128,7 +126,7 @@ def _test_quantitatively(sdfg, graph):
 
 def test_invariant_dim():
     sdfg = invariant_dimension.to_sdfg()
-    sdfg.apply_strict_transformations()
+    sdfg.simplify()
     graph = sdfg.nodes()[0]
     fix_sdfg(sdfg, graph)
     _test_quantitatively(sdfg, graph)

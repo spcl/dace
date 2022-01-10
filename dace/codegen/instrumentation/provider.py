@@ -9,8 +9,7 @@ class InstrumentationProvider(object):
     """ Instrumentation provider for SDFGs, states, scopes, and memlets. Emits
         code on event. """
     @staticmethod
-    def get_provider_mapping(
-    ) -> Dict[InstrumentationType, Type['InstrumentationProvider']]:
+    def get_provider_mapping() -> Dict[InstrumentationType, Type['InstrumentationProvider']]:
         """
         Returns a dictionary that maps instrumentation types to provider
         class types, given the currently-registered extensions of this class.
@@ -68,8 +67,7 @@ class InstrumentationProvider(object):
         """
         pass
 
-    def on_scope_entry(self, sdfg, state, node, outer_stream, inner_stream,
-                       global_stream):
+    def on_scope_entry(self, sdfg, state, node, outer_stream, inner_stream, global_stream):
         """ Event called at the beginning of a scope (on generating an
             EntryNode).
             :param sdfg: The generated SDFG object.
@@ -83,8 +81,7 @@ class InstrumentationProvider(object):
         """
         pass
 
-    def on_scope_exit(self, sdfg, state, node, outer_stream, inner_stream,
-                      global_stream):
+    def on_scope_exit(self, sdfg, state, node, outer_stream, inner_stream, global_stream):
         """ Event called at the end of a scope (on generating an ExitNode).
             :param sdfg: The generated SDFG object.
             :param state: The generated SDFGState object.
@@ -97,8 +94,8 @@ class InstrumentationProvider(object):
         """
         pass
 
-    def on_copy_begin(self, sdfg, state, src_node, dst_node, edge, local_stream,
-                      global_stream, copy_shape, src_strides, dst_strides):
+    def on_copy_begin(self, sdfg, state, src_node, dst_node, edge, local_stream, global_stream, copy_shape, src_strides,
+                      dst_strides):
         """ Event called at the beginning of generating a copy operation.
             :param sdfg: The generated SDFG object.
             :param state: The generated SDFGState object.
@@ -113,8 +110,7 @@ class InstrumentationProvider(object):
         """
         pass
 
-    def on_copy_end(self, sdfg, state, src_node, dst_node, edge, local_stream,
-                    global_stream):
+    def on_copy_end(self, sdfg, state, src_node, dst_node, edge, local_stream, global_stream):
         """ Event called at the end of generating a copy operation.
             :param sdfg: The generated SDFG object.
             :param state: The generated SDFGState object.
@@ -126,8 +122,7 @@ class InstrumentationProvider(object):
         """
         pass
 
-    def on_node_begin(self, sdfg, state, node, outer_stream, inner_stream,
-                      global_stream):
+    def on_node_begin(self, sdfg, state, node, outer_stream, inner_stream, global_stream):
         """ Event called at the beginning of generating a node.
             :param sdfg: The generated SDFG object.
             :param state: The generated SDFGState object.
@@ -140,8 +135,7 @@ class InstrumentationProvider(object):
         """
         pass
 
-    def on_node_end(self, sdfg, state, node, outer_stream, inner_stream,
-                    global_stream):
+    def on_node_end(self, sdfg, state, node, outer_stream, inner_stream, global_stream):
         """ Event called at the end of generating a node.
             :param sdfg: The generated SDFG object.
             :param state: The generated SDFGState object.

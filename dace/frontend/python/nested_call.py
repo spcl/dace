@@ -27,12 +27,9 @@ class NestedCall():
 
     def __call__(self, func):
         def nested(*args, **kwargs):
-            result = func(
-                self.pv,
-                self.sdfg,
-                self.add_state("{}_nested_call_{}_{}".format(
-                    self.state.label, self.count, func.__name__)), *args,
-                **kwargs)
+            result = func(self.pv, self.sdfg,
+                          self.add_state("{}_nested_call_{}_{}".format(self.state.label, self.count, func.__name__)),
+                          *args, **kwargs)
             if isinstance(result, tuple) and type(result[0]) is NestedCall:
                 self.last_state = result[0].last_state
                 result = result[1]

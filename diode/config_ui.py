@@ -2,6 +2,7 @@
 from dace.config import Config
 
 import gi
+
 gi.require_version('Gtk', '3.0')
 from gi.repository import Gtk, Pango
 
@@ -51,8 +52,7 @@ class DIODEConfig:
             label.set_label(meta['title'])
 
         entry = None
-        if (meta['type'] == "str" or meta['type'] == "int"
-                or meta['type'] == "float"):
+        if (meta['type'] == "str" or meta['type'] == "int" or meta['type'] == "float"):
 
             entry = Gtk.Entry()
             entry.set_text(str(cval))

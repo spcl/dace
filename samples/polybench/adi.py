@@ -56,18 +56,12 @@ def adi(u: datatype[N, N]):
         out_d >> D
         out_e >> E
         out_f >> F
-        out_a = -(datatype(2) * (datatype(1) / tsteps) /
-                  (datatype(1) / (N * N))) / datatype(2)
-        out_b = datatype(1) + (datatype(2) * (datatype(1) / tsteps) /
-                               (datatype(1) / (N * N)))
-        out_c = -(datatype(2) * (datatype(1) / tsteps) /
-                  (datatype(1) / (N * N))) / datatype(2)
-        out_d = -(datatype(1) * (datatype(1) / tsteps) /
-                  (datatype(1) / (N * N))) / datatype(2)
-        out_e = datatype(1) + (datatype(1) * (datatype(1) / tsteps) /
-                               (datatype(1) / (N * N)))
-        out_f = -(datatype(1) * (datatype(1) / tsteps) /
-                  (datatype(1) / (N * N))) / datatype(2)
+        out_a = -(datatype(2) * (datatype(1) / tsteps) / (datatype(1) / (N * N))) / datatype(2)
+        out_b = datatype(1) + (datatype(2) * (datatype(1) / tsteps) / (datatype(1) / (N * N)))
+        out_c = -(datatype(2) * (datatype(1) / tsteps) / (datatype(1) / (N * N))) / datatype(2)
+        out_d = -(datatype(1) * (datatype(1) / tsteps) / (datatype(1) / (N * N))) / datatype(2)
+        out_e = datatype(1) + (datatype(1) * (datatype(1) / tsteps) / (datatype(1) / (N * N)))
+        out_f = -(datatype(1) * (datatype(1) / tsteps) / (datatype(1) / (N * N))) / datatype(2)
 
     for t in range(tsteps):
         # Column Sweep
@@ -96,8 +90,7 @@ def adi(u: datatype[N, N]):
                     qij >> q[i, j]
 
                     pij = -c / (a * pjm1 + b)
-                    qij = (-d * uim1 + (1.0 + 2.0 * d) * uji - f * uip1 -
-                           a * qjm1) / (a * pjm1 + b)
+                    qij = (-d * uim1 + (1.0 + 2.0 * d) * uji - f * uip1 - a * qjm1) / (a * pjm1 + b)
             with dace.tasklet:
                 out >> u[i, N - 1]
                 out = 1.0
@@ -135,8 +128,7 @@ def adi(u: datatype[N, N]):
                     qij >> q[i, j]
 
                     pij = -f / (d * pjm1 + e)
-                    qij = (-a * vim1 + (1.0 + 2.0 * a) * vij - c * vip1 -
-                           d * qjm1) / (d * pjm1 + e)
+                    qij = (-a * vim1 + (1.0 + 2.0 * a) * vij - c * vip1 - d * qjm1) / (d * pjm1 + e)
             with dace.tasklet:
                 out >> u[i, N - 1]
                 out = 1.0

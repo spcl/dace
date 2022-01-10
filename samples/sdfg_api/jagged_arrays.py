@@ -24,8 +24,7 @@ lenT = state.add_access('len_ind')
 
 me, mx = state.add_map('readlen', dict(i='0:num_arrays'))
 
-indt = state.add_tasklet('indirection', {'offs'}, {'off', 'len'},
-                         'off = offs[i]; len = offs[i+1]')
+indt = state.add_tasklet('indirection', {'offs'}, {'off', 'len'}, 'off = offs[i]; len = offs[i+1]')
 
 ime, imx = state.add_map('addone', dict(j='off_ind:len_ind'))
 ime.add_in_connector('off_ind')
@@ -35,33 +34,22 @@ task = state.add_tasklet('add1', {'a'}, {'b'}, 'b = a + 10*(i+1)')
 state.add_memlet_path(read_joff,
                       me,
                       indt,
-                      memlet=dace.Memlet.simple('JaggedOffsets',
-                                                '0:num_arrays+1'),
+                      memlet=dace.Memlet.simple('JaggedOffsets', '0:num_arrays+1'),
                       dst_conn='offs')
-state.add_memlet_path(read_jarr,
-                      me,
-                      ime,
-                      task,
-                      memlet=dace.Memlet.simple('JaggedArray', 'j'),
-                      dst_conn='a')
+state.add_memlet_path(read_jarr, me, ime, task, memlet=dace.Memlet.simple('JaggedArray', 'j'), dst_conn='a')
 state.add_edge(indt, 'off', offT, None, dace.Memlet.simple('off_ind', '0'))
 state.add_edge(indt, 'len', lenT, None, dace.Memlet.simple('len_ind', '0'))
 
 state.add_edge(offT, None, ime, 'off_ind', dace.Memlet.simple('off_ind', '0'))
 state.add_edge(lenT, None, ime, 'len_ind', dace.Memlet.simple('len_ind', '0'))
 
-state.add_memlet_path(task,
-                      imx,
-                      mx,
-                      write_jarr,
-                      src_conn='b',
-                      memlet=dace.Memlet.simple('JaggedArray', 'j'))
+state.add_memlet_path(task, imx, mx, write_jarr, src_conn='b', memlet=dace.Memlet.simple('JaggedArray', 'j'))
 
 # Validate correctness of initial SDFG
 sdfg.validate()
 
 # Fuses redundant states and removes unnecessary transient arrays
-sdfg.apply_strict_transformations()
+sdfg.simplify()
 
 ######################################
 if __name__ == '__main__':

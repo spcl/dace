@@ -11,8 +11,8 @@ datatype = dace.float64
 # Dataset sizes
 sizes = [{N: 30}, {N: 90}, {N: 250}, {N: 1300}, {N: 2800}]
 
-args = [([N, N], datatype), ([N, N], datatype), ([N], datatype),
-        ([N], datatype), ([N], datatype), ([1], datatype), ([1], datatype)]
+args = [([N, N], datatype), ([N, N], datatype), ([N], datatype), ([N], datatype), ([N], datatype), ([1], datatype),
+        ([1], datatype)]
 
 outputs = [(4, 'y')]
 
@@ -30,8 +30,7 @@ def init_array(A, B, tmp, x, y, alpha, beta):
             B[i, j] = datatype((i * j + 2) % n) / n
 
 
-@dace.program(datatype[N, N], datatype[N, N], datatype[N], datatype[N],
-              datatype[N], datatype[1], datatype[1])
+@dace.program(datatype[N, N], datatype[N, N], datatype[N], datatype[N], datatype[N], datatype[1], datatype[1])
 def gesummv(A, B, tmp, x, y, alpha, beta):
     @dace.map
     def compute_ty(i: _[0:N], j: _[0:N]):

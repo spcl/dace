@@ -15,8 +15,7 @@ from dace.sdfg import SDFG, SDFGState, InterstateEdge
 from dace.sdfg import utils as sdutil
 from dace.sdfg.analysis import cfg
 from dace.frontend.python.astutils import ASTFindReplace
-from dace.transformation.interstate.loop_detection import (DetectLoop,
-                                                           find_for_loop)
+from dace.transformation.interstate.loop_detection import (DetectLoop, find_for_loop)
 import dace.transformation.helpers as helpers
 from dace.transformation import transformation as xf
 
@@ -57,29 +56,26 @@ def _dependent_indices(itervar: str, subset: subsets.Subset) -> Set[int]:
     if isinstance(subset, subsets.Indices):
         return {
             i
-            for i, idx in enumerate(subset) if symbolic.issymbolic(idx)
-            and itervar in {str(s)
-                            for s in idx.free_symbols}
+            for i, idx in enumerate(subset)
+            if symbolic.issymbolic(idx) and itervar in {str(s)
+                                                        for s in idx.free_symbols}
         }
     else:
         return {
             i
             for i, rng in enumerate(subset) if any(
-                symbolic.issymbolic(t)
-                and itervar in {str(s)
-                                for s in t.free_symbols} for t in rng)
+                symbolic.issymbolic(t) and itervar in {str(s)
+                                                       for s in t.free_symbols} for t in rng)
         }
 
 
-def _sanitize_by_index(indices: Set[int],
-                       subset: subsets.Subset) -> subsets.Range:
+def _sanitize_by_index(indices: Set[int], subset: subsets.Subset) -> subsets.Range:
     """ Keeps the indices or ranges of subsets that are in `indices`. """
     return type(subset)([t for i, t in enumerate(subset) if i in indices])
 
 
-@registry.autoregister
 @make_properties
-class LoopToMap(DetectLoop):
+class LoopToMap(DetectLoop, xf.MultiStateTransformation):
     """Convert a control flow loop into a dataflow map. Currently only supports
        the simple case where there is no overlap between inputs and outputs in
        the body of the loop, and where the loop body only consists of a single
@@ -93,14 +89,13 @@ class LoopToMap(DetectLoop):
         desc='The name of the iteration variable (optional).',
     )
 
-    def can_be_applied(self, graph, candidate, expr_index, sdfg, strict=False):
+    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
         # Is this even a loop
-        if not DetectLoop.can_be_applied(graph, candidate, expr_index, sdfg,
-                                         strict):
+        if not super().can_be_applied(graph, expr_index, sdfg, permissive):
             return False
 
-        guard = graph.node(candidate[DetectLoop._loop_guard])
-        begin = graph.node(candidate[DetectLoop._loop_begin])
+        guard = self.loop_guard
+        begin = self.loop_begin
 
         # Guard state should not contain any dataflow
         if len(guard.nodes()) != 0:
@@ -129,7 +124,7 @@ class LoopToMap(DetectLoop):
                     to_visit.append(dst)
             states.add(state)
 
-        assert(body_end in states)
+        assert (body_end in states)
 
         write_set = set()
         for state in states:
@@ -141,12 +136,10 @@ class LoopToMap(DetectLoop):
         for state in sdfg.nodes():
             if state in states:
                 continue
-            other_access_nodes |= set(n.data for n in state.data_nodes()
-                                      if sdfg.arrays[n.data].transient)
+            other_access_nodes |= set(n.data for n in state.data_nodes() if sdfg.arrays[n.data].transient)
         # Add non-transient nodes from loop state
         for state in states:
-            other_access_nodes |= set(n.data for n in state.data_nodes()
-                                      if not sdfg.arrays[n.data].transient)
+            other_access_nodes |= set(n.data for n in state.data_nodes() if not sdfg.arrays[n.data].transient)
 
         write_memlets = defaultdict(list)
 
@@ -170,8 +163,7 @@ class LoopToMap(DetectLoop):
                         # variable. The iteration variable must be used.
                         if e.data.wcr is None:
                             dst_subset = e.data.get_dst_subset(e, state)
-                            if not (dst_subset and _check_range(
-                                        dst_subset, a, itersym, b, step)):
+                            if not (dst_subset and _check_range(dst_subset, a, itersym, b, step)):
                                 return False
                         # End of check
 
@@ -190,18 +182,15 @@ class LoopToMap(DetectLoop):
                     for e in state.out_edges(dn):
                         # If the same container is both read and written, only match if
                         # it read and written at locations that will not create data races
-                        if (e.data.dynamic
-                                and e.data.src_subset.num_elements() != 1):
+                        if (e.data.dynamic and e.data.src_subset.num_elements() != 1):
                             # If pointers are involved, give up
                             return False
                         src_subset = e.data.get_src_subset(e, state)
                         if not _check_range(src_subset, a, itersym, b, step):
                             return False
 
-                        pread = propagate_subset([e.data], sdfg.arrays[data],
-                                                 [itervar],
-                                                 subsets.Range([(start, end,
-                                                                 step)]))
+                        pread = propagate_subset([e.data], sdfg.arrays[data], [itervar],
+                                                 subsets.Range([(start, end, step)]))
                         for candidate in write_memlets[data]:
                             # Simple case: read and write are in the same subset
                             read = src_subset
@@ -219,11 +208,9 @@ class LoopToMap(DetectLoop):
                                 continue
                             # Propagated read does not overlap with propagated write
                             pwrite = propagate_subset([candidate],
-                                                      sdfg.arrays[data],
-                                                      [itervar],
-                                                      subsets.Range([
-                                                          (start, end, step)
-                                                      ]), use_dst=True)
+                                                      sdfg.arrays[data], [itervar],
+                                                      subsets.Range([(start, end, step)]),
+                                                      use_dst=True)
                             t_pread = _sanitize_by_index(indices, pread.src_subset)
                             pwrite = _sanitize_by_index(indices, pwrite.dst_subset)
                             if subsets.intersects(t_pread, pwrite) is False:
@@ -247,33 +234,19 @@ class LoopToMap(DetectLoop):
             # Don't continue in this direction, as the variable has
             # now been reassigned
             # TODO: Handle case of subset of out_edges
-            if all(itervar in e.data.assignments
-                   for e in sdfg.out_edges(state)):
+            if all(itervar in e.data.assignments for e in sdfg.out_edges(state)):
                 break
 
         return True
 
-    @staticmethod
-    def match_to_str(graph, candidate):
-        guard = graph.node(candidate[DetectLoop._loop_guard])
-        begin = graph.node(candidate[DetectLoop._loop_begin])
-        sexit = graph.node(candidate[DetectLoop._exit_state])
-
-        return (' -> '.join(state.label
-                            for state in [guard, begin, sexit]) + ' (for loop)')
-
-    def apply(self, sdfg: sd.SDFG):
+    def apply(self, _, sdfg: sd.SDFG):
         # Obtain loop information
-        guard: sd.SDFGState = sdfg.node(self.subgraph[DetectLoop._loop_guard])
-        body: sd.SDFGState = sdfg.node(self.subgraph[DetectLoop._loop_begin])
-        after: sd.SDFGState = sdfg.node(self.subgraph[DetectLoop._exit_state])
+        guard: sd.SDFGState = self.loop_guard
+        body: sd.SDFGState = self.loop_begin
+        after: sd.SDFGState = self.exit_state
 
         # Obtain iteration variable, range, and stride
-        itervar, (start, end,
-                  step), (_, body_end) = find_for_loop(sdfg,
-                                                       guard,
-                                                       body,
-                                                       itervar=self.itervar)
+        itervar, (start, end, step), (_, body_end) = find_for_loop(sdfg, guard, body, itervar=self.itervar)
 
         # Find all loop-body states
         states = set()
@@ -325,24 +298,15 @@ class LoopToMap(DetectLoop):
                     if state in states:
                         continue
                     for node in state.nodes():
-                        if (isinstance(node, nodes.AccessNode)
-                                and node.data == name):
+                        if (isinstance(node, nodes.AccessNode) and node.data == name):
                             found = True
                             break
                 if not found:
                     unique_set.add(name)
 
             # Find NestedSDFG's connectors
-            read_set = {
-                n
-                for n in read_set
-                if n not in unique_set or not sdfg.arrays[n].transient
-            }
-            write_set = {
-                n
-                for n in write_set
-                if n not in unique_set or not sdfg.arrays[n].transient
-            }
+            read_set = {n for n in read_set if n not in unique_set or not sdfg.arrays[n].transient}
+            write_set = {n for n in write_set if n not in unique_set or not sdfg.arrays[n].transient}
 
             # Create NestedSDFG and add all loop-body states and edges
             # Also, find defined symbols in NestedSDFG
@@ -362,10 +326,7 @@ class LoopToMap(DetectLoop):
                 if state is body:
                     continue
                 for src, dst, data in sdfg.in_edges(state):
-                    nsymbols.update({
-                        s: sdfg.symbols[s]
-                        for s in data.assignments.keys() if s in sdfg.symbols
-                    })
+                    nsymbols.update({s: sdfg.symbols[s] for s in data.assignments.keys() if s in sdfg.symbols})
                     nsdfg.add_edge(src, dst, data)
             nsdfg.add_edge(body_end, exit_state, InterstateEdge())
 
@@ -399,14 +360,10 @@ class LoopToMap(DetectLoop):
                         nsdfg.add_symbol(s, sdfg.symbols[s])
             for name in read_set:
                 r = new_body.add_read(name)
-                new_body.add_edge(
-                    r, None, cnode, name,
-                    memlet.Memlet.from_array(name, sdfg.arrays[name]))
+                new_body.add_edge(r, None, cnode, name, memlet.Memlet.from_array(name, sdfg.arrays[name]))
             for name in write_set:
                 w = new_body.add_write(name)
-                new_body.add_edge(
-                    cnode, name, w, None,
-                    memlet.Memlet.from_array(name, sdfg.arrays[name]))
+                new_body.add_edge(cnode, name, w, None, memlet.Memlet.from_array(name, sdfg.arrays[name]))
 
             # Fix SDFG symbols
             for sym in sdfg.free_symbols - fsymbols:
@@ -426,8 +383,7 @@ class LoopToMap(DetectLoop):
         isedge = sdfg.edges_between(guard, body)[0]
         symbols_to_remove = set()
         if len(isedge.data.assignments) > 0:
-            nsdfg = helpers.nest_state_subgraph(
-                sdfg, body, gr.SubgraphView(body, body.nodes()))
+            nsdfg = helpers.nest_state_subgraph(sdfg, body, gr.SubgraphView(body, body.nodes()))
             for sym in isedge.data.free_symbols:
                 if sym in nsdfg.symbol_mapping or sym in nsdfg.in_connectors:
                     continue
@@ -470,32 +426,21 @@ class LoopToMap(DetectLoop):
             # can_be_applied makes sure there are no sympy functions in each of
             # the loop expresions
             access_node = body.add_read(rd)
-            body.add_memlet_path(access_node,
-                                 entry,
-                                 dst_conn=rd,
-                                 memlet=memlet.Memlet(rd))
+            body.add_memlet_path(access_node, entry, dst_conn=rd, memlet=memlet.Memlet(rd))
 
         # Reroute all memlets through the entry and exit nodes
         for n in source_nodes:
             if isinstance(n, nodes.AccessNode):
                 for e in body.out_edges(n):
                     body.remove_edge(e)
-                    body.add_edge_pair(entry,
-                                       e.dst,
-                                       n,
-                                       e.data,
-                                       internal_connector=e.dst_conn)
+                    body.add_edge_pair(entry, e.dst, n, e.data, internal_connector=e.dst_conn)
             else:
                 body.add_nedge(entry, n, memlet.Memlet())
         for n in sink_nodes:
             if isinstance(n, nodes.AccessNode):
                 for e in body.in_edges(n):
                     body.remove_edge(e)
-                    body.add_edge_pair(exit,
-                                       e.src,
-                                       n,
-                                       e.data,
-                                       internal_connector=e.src_conn)
+                    body.add_edge_pair(exit, e.src, n, e.data, internal_connector=e.src_conn)
             else:
                 body.add_nedge(n, exit, memlet.Memlet())
 
@@ -517,9 +462,7 @@ class LoopToMap(DetectLoop):
 
         # Route body directly to after state, maintaining any other assignments
         # it might have had
-        sdfg.add_edge(
-            body, after,
-            sd.InterstateEdge(assignments=after_edge.data.assignments))
+        sdfg.add_edge(body, after, sd.InterstateEdge(assignments=after_edge.data.assignments))
 
         # If this had made the iteration variable a free symbol, we can remove
         # it from the SDFG symbols

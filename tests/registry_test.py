@@ -36,8 +36,7 @@ class RegistryTests(unittest.TestCase):
     def test_class_registry_args(self):
         ExtensibleClass.register(Extension, a=True, b=1, c=2)
         self.assertTrue(Extension in ExtensibleClass.extensions())
-        self.assertEqual(ExtensibleClass.extensions()[Extension],
-                         dict(a=True, b=1, c=2))
+        self.assertEqual(ExtensibleClass.extensions()[Extension], dict(a=True, b=1, c=2))
         ExtensibleClass.unregister(Extension)
         self.assertTrue(Extension not in ExtensibleClass.extensions())
 
@@ -47,8 +46,7 @@ class RegistryTests(unittest.TestCase):
             pass
 
         self.assertTrue(Extension3 in ExtensibleClass.extensions())
-        self.assertEqual(ExtensibleClass.extensions()[Extension3],
-                         dict(a=False, b=0))
+        self.assertEqual(ExtensibleClass.extensions()[Extension3], dict(a=False, b=0))
 
     def test_autoregister_fail(self):
         with self.assertRaises(TypeError):

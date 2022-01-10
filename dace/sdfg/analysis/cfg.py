@@ -7,8 +7,7 @@ import sympy as sp
 from typing import Dict, Iterator, List, Set
 
 
-def acyclic_dominance_frontier(sdfg: SDFG,
-                               idom=None) -> Dict[SDFGState, Set[SDFGState]]:
+def acyclic_dominance_frontier(sdfg: SDFG, idom=None) -> Dict[SDFGState, Set[SDFGState]]:
     """
     Finds the dominance frontier for an SDFG while ignoring any back edges.
 
@@ -41,10 +40,7 @@ def acyclic_dominance_frontier(sdfg: SDFG,
     return dom_frontiers
 
 
-def all_dominators(
-    sdfg: SDFG,
-    idom: Dict[SDFGState, SDFGState] = None
-) -> Dict[SDFGState, Set[SDFGState]]:
+def all_dominators(sdfg: SDFG, idom: Dict[SDFGState, SDFGState] = None) -> Dict[SDFGState, Set[SDFGState]]:
     """ Returns a mapping between each state and all its dominators. """
     idom = idom or nx.immediate_dominators(sdfg.nx, sdfg.start_state)
     # Create a dictionary of all dominators of each node by using the
@@ -62,10 +58,7 @@ def all_dominators(
     return alldoms
 
 
-def back_edges(
-    sdfg: SDFG,
-    idom: Dict[SDFGState, SDFGState] = None
-) -> List[gr.Edge[InterstateEdge]]:
+def back_edges(sdfg: SDFG, idom: Dict[SDFGState, SDFGState] = None) -> List[gr.Edge[InterstateEdge]]:
     """ Returns a list of back-edges in an SDFG. """
     alldoms = all_dominators(sdfg, idom)
     return [e for e in sdfg.edges() if e.dst in alldoms[e.src]]
@@ -106,8 +99,7 @@ def state_parent_tree(sdfg: SDFG) -> Dict[SDFGState, SDFGState]:
                 continue
 
             # The outgoing edges must be negations of one another.
-            if out_edges[0].data.condition_sympy() != (sp.Not(
-                    out_edges[1].data.condition_sympy())):
+            if out_edges[0].data.condition_sympy() != (sp.Not(out_edges[1].data.condition_sympy())):
                 continue
 
             # Make sure the entire cycle is dominated by this node. If not,
@@ -197,21 +189,13 @@ def _stateorder_topological_sort(sdfg: SDFG,
         elif len(oe) == 2:  # Loop or branch
             # If loop, traverse body, then exit
             if ptree[oe[0].dst] == node and ptree[oe[1].dst] != node:
-                for s in _stateorder_topological_sort(sdfg,
-                                                      oe[0].dst,
-                                                      ptree,
-                                                      branch_merges,
-                                                      stop=node):
+                for s in _stateorder_topological_sort(sdfg, oe[0].dst, ptree, branch_merges, stop=node):
                     yield s
                     visited.add(s)
                 stack.append(oe[1].dst)
                 continue
             elif ptree[oe[1].dst] == node and ptree[oe[0].dst] != node:
-                for s in _stateorder_topological_sort(sdfg,
-                                                      oe[1].dst,
-                                                      ptree,
-                                                      branch_merges,
-                                                      stop=node):
+                for s in _stateorder_topological_sort(sdfg, oe[1].dst, ptree, branch_merges, stop=node):
                     yield s
                     visited.add(s)
                 stack.append(oe[0].dst)
@@ -220,11 +204,7 @@ def _stateorder_topological_sort(sdfg: SDFG,
         # Branch
         mergestate = branch_merges[node]
         for branch in oe:
-            for s in _stateorder_topological_sort(sdfg,
-                                                  branch.dst,
-                                                  ptree,
-                                                  branch_merges,
-                                                  stop=mergestate):
+            for s in _stateorder_topological_sort(sdfg, branch.dst, ptree, branch_merges, stop=mergestate):
                 yield s
                 visited.add(s)
         if mergestate != stop:
@@ -251,9 +231,8 @@ def stateorder_topological_sort(sdfg: SDFG) -> Iterator[SDFGState]:
         if len(oedges) <= 1:
             continue
         # Skip if natural loop
-        if len(oedges) == 2 and (
-            (ptree[oedges[0].dst] == state and ptree[oedges[1].dst] != state) or
-            (ptree[oedges[1].dst] == state and ptree[oedges[0].dst] != state)):
+        if len(oedges) == 2 and ((ptree[oedges[0].dst] == state and ptree[oedges[1].dst] != state) or
+                                 (ptree[oedges[1].dst] == state and ptree[oedges[0].dst] != state)):
             continue
 
         common_frontier = set()
@@ -265,5 +244,4 @@ def stateorder_topological_sort(sdfg: SDFG) -> Iterator[SDFGState]:
         if len(common_frontier) == 1:
             branch_merges[state] = next(iter(common_frontier))
 
-    yield from _stateorder_topological_sort(sdfg, sdfg.start_state, ptree,
-                                            branch_merges)
+    yield from _stateorder_topological_sort(sdfg, sdfg.start_state, ptree, branch_merges)

@@ -11,8 +11,7 @@ K = dace.symbol("K")
 def make_sdfg(specialized):
 
     if specialized:
-        sdfg = dace.SDFG("mm_fpga_pipelined_{}x{}x{}".format(
-            N.get(), K.get(), M.get()))
+        sdfg = dace.SDFG("mm_fpga_pipelined_{}x{}x{}".format(N.get(), K.get(), M.get()))
     else:
         sdfg = dace.SDFG("mm_fpga_pipelined_NxKx{}".format(M.get()))
 
@@ -38,12 +37,9 @@ def make_sdfg(specialized):
                                    transient=True,
                                    storage=dace.dtypes.StorageType.FPGA_Global)
 
-    pre_state.add_edge(A_host, None, A_device, None,
-                       dace.memlet.Memlet.simple(A_device, "0:N, 0:K"))
-    pre_state.add_edge(B_host, None, B_device, None,
-                       dace.memlet.Memlet.simple(B_device, "0:K, 0:M"))
-    pre_state.add_edge(C_host, None, C_device, None,
-                       dace.memlet.Memlet.simple(C_device, "0:N, 0:M"))
+    pre_state.add_edge(A_host, None, A_device, None, dace.memlet.Memlet.simple(A_device, "0:N, 0:K"))
+    pre_state.add_edge(B_host, None, B_device, None, dace.memlet.Memlet.simple(B_device, "0:K, 0:M"))
+    pre_state.add_edge(C_host, None, C_device, None, dace.memlet.Memlet.simple(C_device, "0:N, 0:M"))
 
     ###########################################################################
     # Compute
@@ -73,12 +69,9 @@ def make_sdfg(specialized):
                                    transient=True,
                                    storage=dace.dtypes.StorageType.FPGA_Local)
 
-    n_entry, n_exit = state.add_map(
-        "Map_N", {"n": "0:N"}, schedule=dace.dtypes.ScheduleType.FPGA_Device)
-    k_entry, k_exit = state.add_map(
-        "Map_K", {"k": "0:K"}, schedule=dace.dtypes.ScheduleType.FPGA_Device)
-    m_entry, m_exit = state.add_map(
-        "Map_M", {"m": "0:M"}, schedule=dace.dtypes.ScheduleType.FPGA_Device)
+    n_entry, n_exit = state.add_map("Map_N", {"n": "0:N"}, schedule=dace.dtypes.ScheduleType.FPGA_Device)
+    k_entry, k_exit = state.add_map("Map_K", {"k": "0:K"}, schedule=dace.dtypes.ScheduleType.FPGA_Device)
+    m_entry, m_exit = state.add_map("Map_M", {"m": "0:M"}, schedule=dace.dtypes.ScheduleType.FPGA_Device)
 
     state.add_nedge(n_entry, C_buffer_in, dace.memlet.Memlet())
 
@@ -94,38 +87,27 @@ def make_sdfg(specialized):
     nested_sdfg.add_edge(
         if_state, then_state,
         dace.sdfg.InterstateEdge(
-            condition=dace.properties.CodeProperty.from_string(
-                "k == 0", language=dace.dtypes.Language.Python)))
+            condition=dace.properties.CodeProperty.from_string("k == 0", language=dace.dtypes.Language.Python)))
     nested_sdfg.add_edge(
         if_state, else_state,
         dace.sdfg.InterstateEdge(
-            condition=dace.properties.CodeProperty.from_string(
-                "k != 0", language=dace.dtypes.Language.Python)))
+            condition=dace.properties.CodeProperty.from_string("k != 0", language=dace.dtypes.Language.Python)))
     nested_sdfg.add_edge(then_state, end_state, dace.sdfg.InterstateEdge())
     nested_sdfg.add_edge(else_state, end_state, dace.sdfg.InterstateEdge())
 
     # These are identical, they only differ in their confres
-    then_tasklet = then_state.add_tasklet("multiply", {"a", "b"}, {"c_out"},
-                                          "c_out = a * b")
-    else_tasklet = else_state.add_tasklet("multiply", {"a", "b", "c_in"},
-                                          {"c_out"}, "c_out = c_in + a * b")
+    then_tasklet = then_state.add_tasklet("multiply", {"a", "b"}, {"c_out"}, "c_out = a * b")
+    else_tasklet = else_state.add_tasklet("multiply", {"a", "b", "c_in"}, {"c_out"}, "c_out = c_in + a * b")
 
     # Add scalar I/O
-    then_A_val = then_state.add_scalar(
-        "A_val", dtype=dace.float32, storage=dace.dtypes.StorageType.FPGA_Local)
-    then_B_val = then_state.add_scalar(
-        "B_val", dtype=dace.float32, storage=dace.dtypes.StorageType.FPGA_Local)
-    then_C_out = then_state.add_scalar(
-        "C_out", dtype=dace.float32, storage=dace.dtypes.StorageType.FPGA_Local)
+    then_A_val = then_state.add_scalar("A_val", dtype=dace.float32, storage=dace.dtypes.StorageType.FPGA_Local)
+    then_B_val = then_state.add_scalar("B_val", dtype=dace.float32, storage=dace.dtypes.StorageType.FPGA_Local)
+    then_C_out = then_state.add_scalar("C_out", dtype=dace.float32, storage=dace.dtypes.StorageType.FPGA_Local)
 
-    else_A_val = else_state.add_scalar(
-        "A_val", dtype=dace.float32, storage=dace.dtypes.StorageType.FPGA_Local)
-    else_B_val = else_state.add_scalar(
-        "B_val", dtype=dace.float32, storage=dace.dtypes.StorageType.FPGA_Local)
-    else_C_in = else_state.add_scalar(
-        "C_in", dtype=dace.float32, storage=dace.dtypes.StorageType.FPGA_Local)
-    else_C_out = else_state.add_scalar(
-        "C_out", dtype=dace.float32, storage=dace.dtypes.StorageType.FPGA_Local)
+    else_A_val = else_state.add_scalar("A_val", dtype=dace.float32, storage=dace.dtypes.StorageType.FPGA_Local)
+    else_B_val = else_state.add_scalar("B_val", dtype=dace.float32, storage=dace.dtypes.StorageType.FPGA_Local)
+    else_C_in = else_state.add_scalar("C_in", dtype=dace.float32, storage=dace.dtypes.StorageType.FPGA_Local)
+    else_C_out = else_state.add_scalar("C_out", dtype=dace.float32, storage=dace.dtypes.StorageType.FPGA_Local)
 
     # Memlets
     then_a_val_memlet = dace.memlet.Memlet.simple(then_A_val, "0")
@@ -138,38 +120,16 @@ def make_sdfg(specialized):
     else_c_out_memlet = dace.memlet.Memlet.simple(else_C_out, "0")
 
     # Draw paths within each state
-    then_state.add_memlet_path(then_A_val,
-                               then_tasklet,
-                               memlet=then_a_val_memlet,
-                               dst_conn="a")
-    then_state.add_memlet_path(then_B_val,
-                               then_tasklet,
-                               memlet=then_b_val_memlet,
-                               dst_conn="b")
-    then_state.add_memlet_path(then_tasklet,
-                               then_C_out,
-                               memlet=then_c_out_memlet,
-                               src_conn="c_out")
+    then_state.add_memlet_path(then_A_val, then_tasklet, memlet=then_a_val_memlet, dst_conn="a")
+    then_state.add_memlet_path(then_B_val, then_tasklet, memlet=then_b_val_memlet, dst_conn="b")
+    then_state.add_memlet_path(then_tasklet, then_C_out, memlet=then_c_out_memlet, src_conn="c_out")
 
-    else_state.add_memlet_path(else_A_val,
-                               else_tasklet,
-                               memlet=else_a_val_memlet,
-                               dst_conn="a")
-    else_state.add_memlet_path(else_B_val,
-                               else_tasklet,
-                               memlet=else_b_val_memlet,
-                               dst_conn="b")
-    else_state.add_memlet_path(else_C_in,
-                               else_tasklet,
-                               memlet=else_c_in_memlet,
-                               dst_conn="c_in")
-    else_state.add_memlet_path(else_tasklet,
-                               else_C_out,
-                               memlet=else_c_out_memlet,
-                               src_conn="c_out")
+    else_state.add_memlet_path(else_A_val, else_tasklet, memlet=else_a_val_memlet, dst_conn="a")
+    else_state.add_memlet_path(else_B_val, else_tasklet, memlet=else_b_val_memlet, dst_conn="b")
+    else_state.add_memlet_path(else_C_in, else_tasklet, memlet=else_c_in_memlet, dst_conn="c_in")
+    else_state.add_memlet_path(else_tasklet, else_C_out, memlet=else_c_out_memlet, src_conn="c_out")
 
-    tasklet = state.add_nested_sdfg(nested_sdfg, sdfg,
-                                    {"A_val", "B_val", "C_in"}, {"C_out"})
+    tasklet = state.add_nested_sdfg(nested_sdfg, sdfg, {"A_val", "B_val", "C_in"}, {"C_out"})
 
     ###########################################################################
     # Compute continued
@@ -180,35 +140,13 @@ def make_sdfg(specialized):
     read_b_memlet = dace.memlet.Memlet.simple(B, "k, m")
     read_c_memlet = dace.memlet.Memlet.simple(C_buffer_in, "m")
 
-    state.add_memlet_path(A,
-                          n_entry,
-                          k_entry,
-                          m_entry,
-                          tasklet,
-                          memlet=read_a_memlet,
-                          dst_conn="A_val")
-    state.add_memlet_path(B,
-                          n_entry,
-                          k_entry,
-                          m_entry,
-                          tasklet,
-                          memlet=read_b_memlet,
-                          dst_conn="B_val")
-    state.add_memlet_path(C_buffer_in,
-                          k_entry,
-                          m_entry,
-                          tasklet,
-                          memlet=read_c_memlet,
-                          dst_conn="C_in")
+    state.add_memlet_path(A, n_entry, k_entry, m_entry, tasklet, memlet=read_a_memlet, dst_conn="A_val")
+    state.add_memlet_path(B, n_entry, k_entry, m_entry, tasklet, memlet=read_b_memlet, dst_conn="B_val")
+    state.add_memlet_path(C_buffer_in, k_entry, m_entry, tasklet, memlet=read_c_memlet, dst_conn="C_in")
 
     write_buffer_memlet = dace.memlet.Memlet.simple(C_buffer_out, "m")
 
-    state.add_memlet_path(tasklet,
-                          m_exit,
-                          k_exit,
-                          C_buffer_out,
-                          memlet=write_buffer_memlet,
-                          src_conn="C_out")
+    state.add_memlet_path(tasklet, m_exit, k_exit, C_buffer_out, memlet=write_buffer_memlet, src_conn="C_out")
 
     write_c_memlet = dace.memlet.Memlet.simple(C, "n, 0:M")
 
@@ -227,8 +165,7 @@ def make_sdfg(specialized):
 
     C_host = post_state.add_array("C", [N, M], dtype=dace.float32)
 
-    post_state.add_edge(C_device, None, C_host, None,
-                        dace.memlet.Memlet.simple(C_device, "0:N, 0:M"))
+    post_state.add_edge(C_device, None, C_host, None, dace.memlet.Memlet.simple(C_device, "0:N, 0:M"))
 
     return sdfg
 
@@ -260,8 +197,8 @@ if __name__ == "__main__":
         sdfg = make_sdfg(True)
         sdfg.specialize(dict(M=M, N=N, K=K))
 
-    print("Matrix multiplication {}x{}x{} ({}specialized)".format(
-        M.get(), N.get(), K.get(), "" if args["specialize"] else "not "))
+    print("Matrix multiplication {}x{}x{} ({}specialized)".format(M.get(), N.get(), K.get(),
+                                                                  "" if args["specialize"] else "not "))
 
     # Initialize arrays: Randomize A and B, zero C
     A = np.ndarray([N.get(), K.get()], dtype=dace.float32.type)

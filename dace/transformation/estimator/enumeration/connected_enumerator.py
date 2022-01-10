@@ -23,9 +23,7 @@ class ConnectedEnumerator(MapScoringEnumerator):
     backtracking occurs over this link.
     '''
 
-    prune = Property(desc="Perform pruning during enumeration",
-                     default=True,
-                     dtype=bool)
+    prune = Property(desc="Perform pruning during enumeration", default=True, dtype=bool)
 
     def __init__(self,
                  sdfg: SDFG,
@@ -35,22 +33,19 @@ class ConnectedEnumerator(MapScoringEnumerator):
                  scoring_function=None):
 
         # initialize base class
-        super().__init__(sdfg, graph, subgraph, condition_function,
-                         scoring_function)
+        super().__init__(sdfg, graph, subgraph, condition_function, scoring_function)
 
         self.calculate_topology(subgraph)
 
     def traverse(self, current: List, forbidden: Set):
         if len(current) > 0:
             # get current subgraph we are inspecting
-            current_subgraph = helpers.subgraph_from_maps(
-                self._sdfg, self._graph, current, self._scope_children)
+            current_subgraph = helpers.subgraph_from_maps(self._sdfg, self._graph, current, self._scope_children)
 
             # evaluate condition if specified
             conditional_eval = True
             if self._condition_function:
-                conditional_eval = self._condition_function(
-                    self._sdfg, current_subgraph)
+                conditional_eval = self._condition_function(self._sdfg, current_subgraph)
             # evaluate score if possible
             score = 0
             if conditional_eval and self._scoring_function:
@@ -61,17 +56,14 @@ class ConnectedEnumerator(MapScoringEnumerator):
             go_next = list()
             if conditional_eval or self.prune == False or len(current) == 1:
                 go_next = list(
-                    set(m for c in current for m in self._adjacency_list[c]
-                        if m not in current and m not in forbidden))
+                    set(m for c in current for m in self._adjacency_list[c] if m not in current and m not in forbidden))
 
                 # for determinism and correctness during pruning
                 go_next.sort(key=lambda me: self._labels[me])
 
             # yield element if condition is True
             if conditional_eval:
-                yield (tuple(current),
-                       score) if self.mode == 'map_entries' else (
-                           current_subgraph, score)
+                yield (tuple(current), score) if self.mode == 'map_entries' else (current_subgraph, score)
 
         else:
             # special case at very beginning: explore every node
