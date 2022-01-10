@@ -2,7 +2,7 @@
 from dace.transformation import transformation
 from dace import memlet, registry
 from dace.sdfg import nodes
-from dace.sdfg import SDFGState
+from dace.sdfg.graph import OrderedDiGraph
 from dace.sdfg.propagation import propagate_memlet
 
 
@@ -21,12 +21,12 @@ class InMergeArrays(transformation.Transformation):
         #   |  |
         # /======\
 
-        g = SDFGState()
+        g = OrderedDiGraph()
         g.add_node(InMergeArrays._array1)
         g.add_node(InMergeArrays._array2)
         g.add_node(InMergeArrays._map_entry)
-        g.add_edge(InMergeArrays._array1, None, InMergeArrays._map_entry, None, memlet.Memlet())
-        g.add_edge(InMergeArrays._array2, None, InMergeArrays._map_entry, None, memlet.Memlet())
+        g.add_edge(InMergeArrays._array1, InMergeArrays._map_entry, None)
+        g.add_edge(InMergeArrays._array2, InMergeArrays._map_entry, None)
         return [g]
 
     @staticmethod
@@ -129,12 +129,12 @@ class OutMergeArrays(transformation.Transformation):
         #   |  |
         #   o  o
 
-        g = SDFGState()
+        g = OrderedDiGraph()
         g.add_node(OutMergeArrays._array1)
         g.add_node(OutMergeArrays._array2)
         g.add_node(OutMergeArrays._map_exit)
-        g.add_edge(OutMergeArrays._map_exit, None, OutMergeArrays._array1, None, memlet.Memlet())
-        g.add_edge(OutMergeArrays._map_exit, None, OutMergeArrays._array2, None, memlet.Memlet())
+        g.add_edge(OutMergeArrays._map_exit, OutMergeArrays._array1, None)
+        g.add_edge(OutMergeArrays._map_exit, OutMergeArrays._array2, None)
         return [g]
 
     @staticmethod
@@ -228,7 +228,7 @@ class MergeSourceSinkArrays(transformation.Transformation):
         # Matching
         #   o  o
 
-        g = SDFGState()
+        g = OrderedDiGraph()
         g.add_node(MergeSourceSinkArrays._array1)
         return [g]
 

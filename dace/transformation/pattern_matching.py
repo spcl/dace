@@ -19,7 +19,7 @@ def collapse_multigraph_to_nx(graph: Union[gr.MultiDiGraph, gr.OrderedMultiDiGra
 
         :param graph: Directed multigraph object to be collapsed.
         :return: Collapsed directed graph object.
-  """
+    """
 
     # Create the digraph nodes.
     digraph_nodes: List[Tuple[int, Dict[str, nd.Node]]] = ([None] * graph.number_of_nodes())
