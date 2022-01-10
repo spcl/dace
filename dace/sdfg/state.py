@@ -435,9 +435,7 @@ class StateGraphView(object):
                     defined_syms[str(sym)] = sym.dtype
 
         # Add inter-state symbols
-        # NOTE: A DFS such as in validate_sdfg can be invoked here, but may
-        #       be time consuming.
-        for edge in sdfg.edges():
+        for edge in sdfg.dfs_edges(sdfg.start_state):
             update_if_not_none(defined_syms, edge.data.new_symbols(sdfg, defined_syms))
 
         # Add scope symbols all the way to the subgraph
