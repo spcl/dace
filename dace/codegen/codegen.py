@@ -7,7 +7,7 @@ import dace
 from dace import dtypes
 from dace import data
 from dace.sdfg import SDFG
-from dace.codegen.targets import framecode, target
+from dace.codegen.targets import framecode
 from dace.codegen.codeobject import CodeObject
 from dace.config import Config
 from dace.sdfg import infer_types
@@ -16,6 +16,7 @@ from dace.sdfg import infer_types
 from dace.codegen.targets import cpp, cpu
 
 from dace.codegen.instrumentation import InstrumentationProvider
+from dace.sdfg.state import SDFGState
 
 
 def generate_headers(sdfg: SDFG) -> str:
@@ -81,12 +82,70 @@ int main(int argc, char **argv) {{
 '''
 
 
+def _get_codegen_targets(sdfg: SDFG, frame: framecode.DaCeCodeGenerator):
+    """
+    Queries all code generation targets in this SDFG and all nested SDFGs,
+    as well as instrumentation providers, and stores them in the frame code generator.
+    """
+    disp = frame._dispatcher
+    provider_mapping = InstrumentationProvider.get_provider_mapping()
+    disp.instrumentation[dtypes.InstrumentationType.No_Instrumentation] = None
+    for node, parent in sdfg.all_nodes_recursive():
+        # Query nodes and scopes
+        if isinstance(node, SDFGState):
+            frame.targets.add(disp.get_state_dispatcher(parent, node))
+        elif isinstance(node, dace.nodes.EntryNode):
+            frame.targets.add(disp.get_scope_dispatcher(node.schedule))
+        elif isinstance(node, dace.nodes.Node):
+            state: SDFGState = parent
+            nsdfg = state.parent
+            frame.targets.add(disp.get_node_dispatcher(nsdfg, state, node))
+
+        # Copies and memlets - via access nodes and tasklets
+        # To avoid duplicate checks, only look at outgoing edges of access nodes and tasklets
+        if isinstance(node, (dace.nodes.AccessNode, dace.nodes.Tasklet)):
+            state: SDFGState = parent
+            for e in state.out_edges(node):
+                if e.data.is_empty():
+                    continue
+                mtree = state.memlet_tree(e)
+                if mtree.downwards:
+                    # Rooted at src_node
+                    for leaf_e in mtree.leaves():
+                        dst_node = leaf_e.dst
+                        if leaf_e.data.is_empty():
+                            continue
+                        frame.targets.add(disp.get_copy_dispatcher(node, dst_node, leaf_e, state.parent, state))
+                else:
+                    # Rooted at dst_node
+                    dst_node = mtree.root().edge.dst
+                    frame.targets.add(disp.get_copy_dispatcher(node, dst_node, e, state.parent, state))
+
+        # Instrumentation-related query
+        if hasattr(node, 'instrument'):
+            disp.instrumentation[node.instrument] = provider_mapping[node.instrument]
+        elif hasattr(node, 'consume'):
+            disp.instrumentation[node.consume.instrument] = provider_mapping[node.consume.instrument]
+        elif hasattr(node, 'map'):
+            disp.instrumentation[node.map.instrument] = provider_mapping[node.map.instrument]
+
+    # Query all targets for handling array allocation
+    for _, _, arr in sdfg.arrays_recursive():
+        frame.targets.add(disp.get_array_dispatcher(arr.storage))
+
+    # Query instrumentation provider of SDFG
+    if sdfg.instrument != dtypes.InstrumentationType.No_Instrumentation:
+        disp.instrumentation[sdfg.instrument] = provider_mapping[sdfg.instrument]
+
+
 def generate_code(sdfg, validate=True) -> List[CodeObject]:
     """ Generates code as a list of code objects for a given SDFG.
         :param sdfg: The SDFG to use
         :param validate: If True, validates the SDFG before generating the code.
         :return: List of code objects that correspond to files to compile.
     """
+    from dace.codegen.targets.target import TargetCodeGenerator  # Avoid import loop
+
     # Before compiling, validate SDFG correctness
     if validate:
         sdfg.validate()
@@ -130,38 +189,31 @@ def generate_code(sdfg, validate=True) -> List[CodeObject]:
     # Instantiate CPU first (as it is used by the other code generators)
     # TODO: Refactor the parts used by other code generators out of CPU
     default_target = cpu.CPUCodeGen
-    for k, v in target.TargetCodeGenerator.extensions().items():
+    for k, v in TargetCodeGenerator.extensions().items():
         # If another target has already been registered as CPU, use it instead
         if v['name'] == 'cpu':
             default_target = k
     targets = {'cpu': default_target(frame, sdfg)}
 
     # Instantiate the rest of the targets
-    targets.update({
-        v['name']: k(frame, sdfg)
-        for k, v in target.TargetCodeGenerator.extensions().items() if v['name'] not in targets
-    })
+    targets.update(
+        {v['name']: k(frame, sdfg)
+         for k, v in TargetCodeGenerator.extensions().items() if v['name'] not in targets})
 
-    # Instantiate all instrumentation providers in SDFG
-    provider_mapping = InstrumentationProvider.get_provider_mapping()
-    frame._dispatcher.instrumentation[dtypes.InstrumentationType.No_Instrumentation] = None
-    for node, _ in sdfg.all_nodes_recursive():
-        if hasattr(node, 'instrument'):
-            frame._dispatcher.instrumentation[node.instrument] = \
-                provider_mapping[node.instrument]
-        elif hasattr(node, 'consume'):
-            frame._dispatcher.instrumentation[node.consume.instrument] = \
-                provider_mapping[node.consume.instrument]
-        elif hasattr(node, 'map'):
-            frame._dispatcher.instrumentation[node.map.instrument] = \
-                provider_mapping[node.map.instrument]
-    if sdfg.instrument != dtypes.InstrumentationType.No_Instrumentation:
-        frame._dispatcher.instrumentation[sdfg.instrument] = \
-            provider_mapping[sdfg.instrument]
+    # Query all code generation targets and instrumentation providers in SDFG
+    _get_codegen_targets(sdfg, frame)
+
+    # Preprocess SDFG
+    for target in frame.targets:
+        target.preprocess(sdfg)
+
+    # Instantiate instrumentation providers
     frame._dispatcher.instrumentation = {
         k: v() if v is not None else None
         for k, v in frame._dispatcher.instrumentation.items()
     }
+
+    # NOTE: THE SDFG IS ASSUMED TO BE FROZEN (not change) FROM THIS POINT ONWARDS
 
     # Generate frame code (and the rest of the code)
     (global_code, frame_code, used_targets, used_environments) = frame.generate_code(sdfg, None)
@@ -178,6 +230,9 @@ def generate_code(sdfg, validate=True) -> List[CodeObject]:
     # Create code objects for each target
     for tgt in used_targets:
         target_objects.extend(tgt.get_generated_codeobjects())
+
+    # Ensure that no new targets were dynamically added
+    assert frame._dispatcher.used_targets == (frame.targets - {frame})
 
     # add a header file for calling the SDFG
     dummy = CodeObject(sdfg.name,
