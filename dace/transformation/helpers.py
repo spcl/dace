@@ -376,11 +376,17 @@ def unsqueeze_memlet(internal_memlet: Memlet,
         :return: Offset Memlet to set on the resulting graph.
     """
     internal_subset = _get_internal_subset(internal_memlet, external_memlet, use_src_subset, use_dst_subset)
-    result = copy.deepcopy(internal_memlet)
-    result.data = external_memlet.data
-    result.other_subset = None
-    result.subset = copy.deepcopy(internal_subset)
-
+    result = Memlet(data=external_memlet.data,
+                    subset=Range(internal_subset.ranges[:]),
+                    other_subset=None,
+                    volume=internal_memlet.volume,
+                    dynamic=internal_memlet.dynamic,
+                    wcr=internal_memlet.wcr,
+                    debuginfo=copy.copy(internal_memlet.debuginfo),
+                    wcr_nonatomic=internal_memlet.wcr_nonatomic,
+                    allow_oob=internal_memlet.allow_oob)
+    result._is_data_src = internal_memlet._is_data_src
+    
     shape = external_memlet.subset.size()
     if len(internal_subset) < len(external_memlet.subset):
         ones = [i for i, d in enumerate(shape) if d == 1]
