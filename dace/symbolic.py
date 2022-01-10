@@ -843,7 +843,7 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         except ValueError:
             return "dace::math::pow({f}, {s})".format(f=self._print(expr.args[0]), s=self._print(expr.args[1]))
 
-
+@lru_cache(maxsize=16384)
 def symstr(sym, arrayexprs: Optional[Set[str]] = None) -> str:
     """ 
     Convert a symbolic expression to a C++ compilable expression. 

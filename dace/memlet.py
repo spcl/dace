@@ -32,7 +32,7 @@ class Memlet(object):
                        dtype=bool,
                        desc='Is the number of elements moved determined at '
                        'runtime (e.g., data dependent)')
-    subset = SubsetProperty(allow_none=True, desc='Subset of elements to move from the data ' 'attached to this edge.')
+    subset = SubsetProperty(allow_none=True, desc='Subset of elements to move from the data attached to this edge.')
     other_subset = SubsetProperty(allow_none=True,
                                   desc='Subset of elements after reindexing to the data not attached '
                                   'to this edge (e.g., for offsets and reshaping).')
@@ -44,7 +44,7 @@ class Memlet(object):
                          'value, and returns the value after resolution')
 
     # Code generation and validation hints
-    debuginfo = DebugInfoProperty(desc='Line information to track source and ' 'generated code')
+    debuginfo = DebugInfoProperty(desc='Line information to track source and generated code')
     wcr_nonatomic = Property(dtype=bool,
                              default=False,
                              desc='If True, always generates non-conflicting '

@@ -90,8 +90,9 @@ def replace_properties(node: Any, symrepl: Dict[symbolic.symbol, symbolic.Symbol
                         warnings.warn('Replacement of %s with %s was not made '
                                       'for string tasklet code of language %s' % (name, new_name, lang))
             elif propval.code is not None:
+                afr = ASTFindReplace({name: symbolic.symstr(new_name)})
                 for stmt in propval.code:
-                    ASTFindReplace({name: symbolic.symstr(new_name)}).visit(stmt)
+                    afr.visit(stmt)
         elif (isinstance(propclass, properties.DictProperty) and pname == 'symbol_mapping'):
             # Symbol mappings for nested SDFGs
             for symname, sym_mapping in propval.items():
