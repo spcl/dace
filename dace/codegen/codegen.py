@@ -115,11 +115,15 @@ def _get_codegen_targets(sdfg: SDFG, frame: framecode.DaCeCodeGenerator):
                         dst_node = leaf_e.dst
                         if leaf_e.data.is_empty():
                             continue
-                        frame.targets.add(disp.get_copy_dispatcher(node, dst_node, leaf_e, state.parent, state))
+                        tgt = disp.get_copy_dispatcher(node, dst_node, leaf_e, state.parent, state)
+                        if tgt is not None:
+                            frame.targets.add(tgt)
                 else:
                     # Rooted at dst_node
                     dst_node = mtree.root().edge.dst
-                    frame.targets.add(disp.get_copy_dispatcher(node, dst_node, e, state.parent, state))
+                    tgt = disp.get_copy_dispatcher(node, dst_node, e, state.parent, state)
+                    if tgt is not None:
+                        frame.targets.add(tgt)
 
         # Instrumentation-related query
         if hasattr(node, 'instrument'):
