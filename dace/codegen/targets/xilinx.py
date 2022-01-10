@@ -404,7 +404,6 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         module_stream.write("""#include <dace/xilinx/device.h>
 #include <dace/math.h>
 #include <dace/complex.h>""", sdfg)
-        self._frame.generate_fileheader(sdfg, module_stream, 'xilinx_device')
         module_stream.write("\n", sdfg)
 
         argname_to_bank_assignment = {}
