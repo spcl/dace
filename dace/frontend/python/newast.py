@@ -4241,7 +4241,11 @@ class ProgramVisitor(ExtNodeVisitor):
 
     def _gettype(self, opnode: ast.AST) -> List[Tuple[str, str]]:
         """ Returns an operand and its type as a 2-tuple of strings. """
-        operands = self.visit(opnode)
+        if isinstance(opnode, ast.AST):
+            operands = self.visit(opnode)
+        else:
+            operands = opnode
+
         if isinstance(operands, (list, tuple)):
             if len(operands) == 0:
                 raise DaceSyntaxError(self, opnode, 'Operand has no return value')
