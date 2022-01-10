@@ -481,7 +481,7 @@ class TargetDispatcher(object):
             src_storage = src_node.desc(sdfg).storage
             src_is_data = True
 
-        if isinstance(dst_node, nodes.CodeNode):
+        if isinstance(dst_node, (nodes.CodeNode, nodes.EntryNode)):
             dst_storage = dtypes.StorageType.Register
         else:
             dst_storage = dst_node.desc(sdfg).storage

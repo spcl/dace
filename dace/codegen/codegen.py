@@ -1,7 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import functools
 import os
-from typing import List
+from typing import List, Set
 
 import dace
 from dace import dtypes
@@ -101,6 +101,13 @@ def _get_codegen_targets(sdfg: SDFG, frame: framecode.DaCeCodeGenerator):
             nsdfg = state.parent
             frame.targets.add(disp.get_node_dispatcher(nsdfg, state, node))
 
+        # Array allocation
+        if isinstance(node, dace.nodes.AccessNode):
+            state: SDFGState = parent
+            nsdfg = state.parent
+            desc = node.desc(nsdfg)
+            frame.targets.add(disp.get_array_dispatcher(desc.storage))
+
         # Copies and memlets - via access nodes and tasklets
         # To avoid duplicate checks, only look at outgoing edges of access nodes and tasklets
         if isinstance(node, (dace.nodes.AccessNode, dace.nodes.Tasklet)):
@@ -132,10 +139,6 @@ def _get_codegen_targets(sdfg: SDFG, frame: framecode.DaCeCodeGenerator):
             disp.instrumentation[node.consume.instrument] = provider_mapping[node.consume.instrument]
         elif hasattr(node, 'map'):
             disp.instrumentation[node.map.instrument] = provider_mapping[node.map.instrument]
-
-    # Query all targets for handling array allocation
-    for _, _, arr in sdfg.arrays_recursive():
-        frame.targets.add(disp.get_array_dispatcher(arr.storage))
 
     # Query instrumentation provider of SDFG
     if sdfg.instrument != dtypes.InstrumentationType.No_Instrumentation:
