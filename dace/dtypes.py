@@ -146,7 +146,7 @@ class AccessType(aenum.AutoNumberEnum):
 @extensible_enum
 class InstrumentationType(aenum.AutoNumberEnum):
     """ Types of instrumentation providers.
-        @note: Might be determined automatically in future versions.
+        :note: Might be determined automatically in future versions.
     """
 
     No_Instrumentation = ()

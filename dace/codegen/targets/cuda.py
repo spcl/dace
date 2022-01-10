@@ -1363,9 +1363,9 @@ void  *{kname}_args[] = {{ {kargs} }};
                     dynamically-sized blocks that are bounded by a
                     predefined size).
 
-            @note: Kernel dimensions are separate from the map
+            :note: Kernel dimensions are separate from the map
                    variables, and they should be treated as such.
-            @note: To make use of the grid/block 3D registers, we use multi-
+            :note: To make use of the grid/block 3D registers, we use multi-
                    dimensional kernels up to 3 dimensions, and flatten the
                    rest into the third dimension.
         """

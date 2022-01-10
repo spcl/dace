@@ -467,7 +467,7 @@ class NestedSDFG(CodeNode):
         It is encouraged to use nested SDFGs instead of coarse-grained tasklets
         since they are analyzable with respect to transformations.
 
-        @note: A nested SDFG cannot create recursion (one of its parent SDFGs).
+        :note: A nested SDFG cannot create recursion (one of its parent SDFGs).
     """
 
     # NOTE: We cannot use SDFG as the type because of an import loop

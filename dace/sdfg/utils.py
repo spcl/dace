@@ -114,10 +114,10 @@ def dfs_topological_sort(G, sources=None, condition=None):
                     edges in the component reachable from source.
     :return: A generator of nodes in the lastvisit depth-first-search.
 
-    @note: Based on http://www.ics.uci.edu/~eppstein/PADS/DFS.py
+    :note: Based on http://www.ics.uci.edu/~eppstein/PADS/DFS.py
     by D. Eppstein, July 2004.
 
-    @note: If a source is not specified then a source is chosen arbitrarily and
+    :note: If a source is not specified then a source is chosen arbitrarily and
     repeatedly until all components in the graph are searched.
 
     """
@@ -174,10 +174,10 @@ def dfs_conditional(G, sources=None, condition=None):
                     edges in the component reachable from source.
     :return: A generator of edges in the lastvisit depth-first-search.
 
-    @note: Based on http://www.ics.uci.edu/~eppstein/PADS/DFS.py
+    :note: Based on http://www.ics.uci.edu/~eppstein/PADS/DFS.py
     by D. Eppstein, July 2004.
 
-    @note: If a source is not specified then a source is chosen arbitrarily and
+    :note: If a source is not specified then a source is chosen arbitrarily and
     repeatedly until all components in the graph are searched.
 
     """

@@ -955,7 +955,7 @@ class DaCeKeywordRemover(ExtNodeTransformer):
         Used for unparsing Python tasklets into C++ that uses the DaCe
         runtime.
 
-        @note: Assumes that the DaCe syntax is correct (as verified by the
+        :note: Assumes that the DaCe syntax is correct (as verified by the
                Python frontend).
     """
     def __init__(self, sdfg, memlets, constants, codegen):

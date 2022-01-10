@@ -2230,8 +2230,6 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         # Fill in scope entry/exit connectors
         sdfg.fill_scope_connectors()
 
-        sdfg.save(os.path.join('_dacegraphs', 'program.sdfg'))
-
         # Generate code for the program by traversing the SDFG state by state
         program_code = codegen.generate_code(sdfg)
 
@@ -2252,7 +2250,7 @@ def _get_optimizer_class(class_override):
         class_override argument. Empty string, False, or failure to find the
         class skips the process.
 
-        @note: This method uses pydoc to locate the class.
+        :note: This method uses pydoc to locate the class.
     """
     clazz = class_override
     if class_override is None:

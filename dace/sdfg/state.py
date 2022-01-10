@@ -94,7 +94,7 @@ class StateGraphView(object):
         """ Given one edge, returns a list of edges representing a path
             between its source and sink nodes. Used for memlet tracking.
 
-            @note: Behavior is undefined when there is more than one path
+            :note: Behavior is undefined when there is more than one path
                    involving this edge.
             :param edge: An edge within this state.
             :return: A list of edges from a source node to a destination node.
