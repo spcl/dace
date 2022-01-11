@@ -464,7 +464,7 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
         #reset list of needed converters
         self.converters_to_generate = set()
 
-        kernel_header_stream.write("#include <dace/intel_fpga/device.h>\n\n", sdfg)
+        kernel_header_stream.write("#include <dace/fpga_device.h>\n\n", sdfg)
         self.generate_constants(sdfg, kernel_header_stream)
         kernel_header_stream.write("\n", sdfg)
 

@@ -401,7 +401,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                                         kernel_stream, external_streams):
 
         # Write header
-        module_stream.write("""#include <dace/xilinx/device.h>
+        module_stream.write("""#include <dace/fpga_device.h>
 #include <dace/math.h>
 #include <dace/complex.h>""", sdfg)
         self._frame.generate_fileheader(sdfg, module_stream, 'xilinx_device')
