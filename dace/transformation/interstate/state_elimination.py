@@ -609,7 +609,7 @@ class DeadStateElimination(transformation.MultiStateTransformation):
         sdfg.remove_nodes_from(states_to_remove)
 
 
-class TrueConditionElimination(transformation.MultiStateTransformation):
+class TrueConditionElimination(transformation.MultiStateTransformation, transformation.SimplifyPass):
     """
     If a state transition condition is always true, removes condition from edge.
     """
