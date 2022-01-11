@@ -597,7 +597,7 @@ def promote_scalars_to_symbols(sdfg: sd.SDFG, ignore: Optional[Set[str]] = None)
             sdfg.add_symbol(scalar, desc.dtype)
 
     # Step 6: Inter-state edge cleanup
-    cleanup_re = {s: re.compile(fr'\b{re.escape(scalar)}\[.*?\]') for s in to_promote}
+    cleanup_re = {s: re.compile(fr'\b{re.escape(s)}\[.*?\]') for s in to_promote}
     for edge in sdfg.edges():
         ise: InterstateEdge = edge.data
         for scalar in to_promote:
@@ -611,7 +611,7 @@ def promote_scalars_to_symbols(sdfg: sd.SDFG, ignore: Optional[Set[str]] = None)
                     ise.condition = cleanup_re[scalar].sub(scalar, ise.condition.as_string)
             # Assignments
             for aname, assignment in ise.assignments.items():
-                ise.assignments[aname] = cleanup_re[scalar].sub(scalar, assignment)
+                ise.assignments[aname] = cleanup_re[scalar].sub(scalar, assignment.strip())
 
     # Step 7: Indirection
     remove_symbol_indirection(sdfg)
