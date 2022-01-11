@@ -418,11 +418,11 @@ def test_inhibit_state_fusion():
         D[:] = add(A, C)
 
     with config.set_temporary('frontend', 'dont_fuse_callbacks', value=True):
-        sdfg = calladd.to_sdfg(coarsen=True)
+        sdfg = calladd.to_sdfg(simplify=True)
         assert sdfg.number_of_nodes() == 5
 
     with config.set_temporary('frontend', 'dont_fuse_callbacks', value=False):
-        sdfg = calladd.to_sdfg(coarsen=True)
+        sdfg = calladd.to_sdfg(simplify=True)
         assert sdfg.number_of_nodes() == 1
 
 

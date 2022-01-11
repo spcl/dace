@@ -215,21 +215,19 @@ class StateAssignElimination(transformation.MultiStateTransformation, transforma
             symbolic.safe_replace(repl_dict, lambda m: _str_repl(sdfg, m))
 
 
-@registry.autoregister
-class ConstantPropagation(transformation.Transformation):
+class ConstantPropagation(transformation.MultiStateTransformation):
     """
     Removes constant assignments in interstate edges and replaces them in successor states.
     """
 
-    _end_state = sdfg.SDFGState()
+    end_state = transformation.PatternNode(sdfg.SDFGState)
 
-    @staticmethod
-    def expressions():
-        return [sdutil.node_path_graph(ConstantPropagation._end_state)]
+    @classmethod
+    def expressions(cls):
+        return [sdutil.node_path_graph(cls.end_state)]
 
-    @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg: SDFG, permissive=False):
-        state = graph.nodes()[candidate[ConstantPropagation._end_state]]
+    def can_be_applied(self, graph, expr_index, sdfg: SDFG, permissive=False):
+        state = self.end_state
 
         out_edges = graph.out_edges(state)
         in_edges = graph.in_edges(state)
@@ -258,13 +256,8 @@ class ConstantPropagation(transformation.Transformation):
 
         return True
 
-    @staticmethod
-    def match_to_str(graph, candidate):
-        state = graph.nodes()[candidate[ConstantPropagation._end_state]]
-        return state.label
-
-    def apply(self, sdfg: SDFG):
-        state = sdfg.nodes()[self.subgraph[ConstantPropagation._end_state]]
+    def apply(self, _, sdfg: SDFG):
+        state = self.end_state
         edge = sdfg.in_edges(state)[0]
         # Since inter-state assignments that use an assigned value leads to
         # undefined behavior (e.g., {m: n, n: m}), we can replace each
@@ -573,8 +566,7 @@ class HoistState(transformation.SingleStateTransformation):
         nsdfg.sdfg.start_state = nsdfg.sdfg.node_id(nisedge.dst)
 
 
-@registry.autoregister
-class DeadStateElimination(transformation.Transformation):
+class DeadStateElimination(transformation.MultiStateTransformation):
     """
     Dead state elimination removes an unreachable state and all of its dominated
     states.
@@ -586,8 +578,8 @@ class DeadStateElimination(transformation.Transformation):
     def expressions(cls):
         return [sdutil.node_path_graph(cls.end_state)]
 
-    def can_be_applied(self, graph: SDFG, candidate, expr_index, sdfg: SDFG, permissive=False):
-        state: SDFGState = self.end_state(sdfg)
+    def can_be_applied(self, graph: SDFG, expr_index, sdfg: SDFG, permissive=False):
+        state: SDFGState = self.end_state
         in_edges = graph.in_edges(state)
 
         # We only match end states with one source and at least one assignment
@@ -607,9 +599,9 @@ class DeadStateElimination(transformation.Transformation):
 
         return False
 
-    def apply(self, sdfg: SDFG):
+    def apply(self, _, sdfg: SDFG):
         # Remove state and all dominated states
-        state = self.end_state(sdfg)
+        state = self.end_state
 
         domset = cfg.all_dominators(sdfg)
         states_to_remove = {k for k, v in domset.items() if state in v}
@@ -617,8 +609,7 @@ class DeadStateElimination(transformation.Transformation):
         sdfg.remove_nodes_from(states_to_remove)
 
 
-@registry.autoregister_params(coarsening=True)
-class TrueConditionElimination(transformation.Transformation):
+class TrueConditionElimination(transformation.MultiStateTransformation):
     """
     If a state transition condition is always true, removes condition from edge.
     """
@@ -630,9 +621,9 @@ class TrueConditionElimination(transformation.Transformation):
     def expressions(cls):
         return [sdutil.node_path_graph(cls.state_a, cls.state_b)]
 
-    def can_be_applied(self, graph: SDFG, candidate, expr_index, sdfg: SDFG, permissive=False):
-        a: SDFGState = self.state_a(sdfg)
-        b: SDFGState = self.state_b(sdfg)
+    def can_be_applied(self, graph: SDFG, expr_index, sdfg: SDFG, permissive=False):
+        a: SDFGState = self.state_a
+        b: SDFGState = self.state_b
         # Directed graph has only one edge between two nodes
         edge = graph.edges_between(a, b)[0]
 
@@ -646,8 +637,8 @@ class TrueConditionElimination(transformation.Transformation):
 
         return False
 
-    def apply(self, sdfg: SDFG):
-        a: SDFGState = self.state_a(sdfg)
-        b: SDFGState = self.state_b(sdfg)
+    def apply(self, _, sdfg: SDFG):
+        a: SDFGState = self.state_a
+        b: SDFGState = self.state_b
         edge = sdfg.edges_between(a, b)[0]
         edge.data.condition = CodeBlock("1")
