@@ -8,15 +8,7 @@
 #include <iostream>
 #include <unordered_map>
 
-namespace dace {
-
-namespace fpga {
-
-class Context {
- public:
-  Context() = default;
-  ~Context() = default;
-
+struct dace_fpga_context {
   inline hlslib::ocl::Context &Get(int device_id = 0) {
     auto c = contexts_.find(device_id);
     if (c != contexts_.end()) {
@@ -29,15 +21,10 @@ class Context {
 
  private:
   // Don't allow copying or moving
-  Context(Context const &) = delete;
-  Context(Context &&) = delete;
-  Context &operator=(Context const &) = delete;
-  Context &operator=(Context &&) = delete;
+  dace_fpga_context(dace_fpga_context const &) = delete;
+  dace_fpga_context(dace_fpga_context &&) = delete;
+  dace_fpga_context &operator=(dace_fpga_context const &) = delete;
+  dace_fpga_context &operator=(dace_fpga_context &&) = delete;
 
   std::unordered_map<int, hlslib::ocl::Context> contexts_;
 };
-
-}  // namespace fpga
-
-}  // namespace dace
-

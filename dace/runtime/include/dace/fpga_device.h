@@ -9,7 +9,6 @@
 #include "intel_fpga/device.h"
 #endif
 
-namespace dace {  namespace fpga {
-  class Context;
-}  // namespace fpga
-}  // namespace dace
+// Defined as a struct rather than a class for C compatibility with OpenCL
+// For definition, see fpga_host.h
+struct dace_fpga_context;
