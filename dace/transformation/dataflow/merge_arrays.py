@@ -1,42 +1,39 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from dace.transformation import transformation
-from dace import memlet, registry
-from dace.sdfg import nodes
+from dace import memlet
 from dace.sdfg.graph import OrderedDiGraph
+from dace import memlet
+from dace.sdfg import nodes, utils, graph as gr
+from dace.sdfg import SDFGState
 from dace.sdfg.propagation import propagate_memlet
 
 
-@registry.autoregister_params(singlestate=True, coarsening=True)
-class InMergeArrays(transformation.Transformation):
+class InMergeArrays(transformation.SingleStateTransformation, transformation.SimplifyPass):
     """ Merge duplicate arrays connected to the same scope entry. """
 
-    _array1 = nodes.AccessNode("_")
-    _array2 = nodes.AccessNode("_")
-    _map_entry = nodes.EntryNode()
+    array1 = transformation.PatternNode(nodes.AccessNode)
+    array2 = transformation.PatternNode(nodes.AccessNode)
+    map_entry = transformation.PatternNode(nodes.EntryNode)
 
-    @staticmethod
-    def expressions():
+    @classmethod
+    def expressions(cls):
         # Matching
         #   o  o
         #   |  |
         # /======\
 
         g = OrderedDiGraph()
-        g.add_node(InMergeArrays._array1)
-        g.add_node(InMergeArrays._array2)
-        g.add_node(InMergeArrays._map_entry)
-        g.add_edge(InMergeArrays._array1, InMergeArrays._map_entry, None)
-        g.add_edge(InMergeArrays._array2, InMergeArrays._map_entry, None)
+        g.add_node(cls.array1)
+        g.add_node(cls.array2)
+        g.add_node(cls.map_entry)
+        g.add_edge(cls.array1, cls.map_entry, None)
+        g.add_edge(cls.array2, cls.map_entry, None)
         return [g]
 
-    @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
-        arr1_id = candidate[InMergeArrays._array1]
-        arr2_id = candidate[InMergeArrays._array2]
-
+    def can_be_applied(self, graph: SDFGState, expr_index, sdfg, permissive=False):
         # Ensure both arrays contain the same data
-        arr1 = graph.node(arr1_id)
-        arr2 = graph.node(arr2_id)
+        arr1 = self.array1
+        arr2 = self.array2
         if arr1.data != arr2.data:
             return False
 
@@ -45,10 +42,12 @@ class InMergeArrays(transformation.Transformation):
             return False
 
         # Ensure arr1 and arr2's node IDs are ordered (avoid duplicates)
+        arr1_id = graph.node_id(self.array1)
+        arr2_id = graph.node_id(self.array2)
         if (graph.in_degree(arr1) == 0 and graph.in_degree(arr2) == 0 and arr1_id >= arr2_id):
             return False
 
-        map = graph.node(candidate[InMergeArrays._map_entry])
+        map = self.map_entry
 
         # If array's connector leads directly to map, skip it
         if all(e.dst_conn and not e.dst_conn.startswith('IN_') for e in graph.edges_between(arr1, map)):
@@ -69,17 +68,15 @@ class InMergeArrays(transformation.Transformation):
 
         return True
 
-    @staticmethod
-    def match_to_str(graph, candidate):
-        arr = graph.node(candidate[InMergeArrays._array1])
-        map = graph.node(candidate[InMergeArrays._map_entry])
-        return '%s (%d, %d) -> %s' % (arr.data, candidate[InMergeArrays._array1], candidate[InMergeArrays._array2],
-                                      map.label)
+    def match_to_str(self, graph):
+        arr = self.array1
+        map = self.map_entry
+        nid1, nid2 = graph.node_id(self.array1), graph.node_id(self.array2)
+        return '%s (%d, %d) -> %s' % (arr.data, nid1, nid2, map.label)
 
-    def apply(self, sdfg):
-        graph = sdfg.node(self.state_id)
-        array = graph.node(self.subgraph[InMergeArrays._array1])
-        map = graph.node(self.subgraph[InMergeArrays._map_entry])
+    def apply(self, graph, sdfg):
+        array = self.array1
+        map = self.map_entry
         map_edge = next(e for e in graph.out_edges(array) if e.dst == map)
         result_connector = map_edge.dst_conn[3:]
 
@@ -114,37 +111,35 @@ class InMergeArrays(transformation.Transformation):
                                           union_inner_edges=True)
 
 
-@registry.autoregister_params(singlestate=True, coarsening=True)
-class OutMergeArrays(transformation.Transformation):
+class OutMergeArrays(transformation.SingleStateTransformation, transformation.SimplifyPass):
     """ Merge duplicate arrays connected to the same scope entry. """
 
-    _array1 = nodes.AccessNode("_")
-    _array2 = nodes.AccessNode("_")
-    _map_exit = nodes.ExitNode()
+    array1 = transformation.PatternNode(nodes.AccessNode)
+    array2 = transformation.PatternNode(nodes.AccessNode)
+    map_exit = transformation.PatternNode(nodes.ExitNode)
 
-    @staticmethod
-    def expressions():
+    @classmethod
+    def expressions(cls):
         # Matching
         # \======/
         #   |  |
         #   o  o
 
         g = OrderedDiGraph()
-        g.add_node(OutMergeArrays._array1)
-        g.add_node(OutMergeArrays._array2)
-        g.add_node(OutMergeArrays._map_exit)
-        g.add_edge(OutMergeArrays._map_exit, OutMergeArrays._array1, None)
-        g.add_edge(OutMergeArrays._map_exit, OutMergeArrays._array2, None)
+        g.add_node(cls.array1)
+        g.add_node(cls.array2)
+        g.add_node(cls.map_exit)
+        g.add_edge(cls.map_exit, cls.array1, None)
+        g.add_edge(cls.map_exit, cls.array2, None)
         return [g]
 
-    @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
-        arr1_id = candidate[OutMergeArrays._array1]
-        arr2_id = candidate[OutMergeArrays._array2]
+    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
+        arr1_id = self.subgraph[OutMergeArrays.array1]
+        arr2_id = self.subgraph[OutMergeArrays.array2]
 
         # Ensure both arrays contain the same data
-        arr1 = graph.node(arr1_id)
-        arr2 = graph.node(arr2_id)
+        arr1 = self.array1
+        arr2 = self.array2
         if arr1.data != arr2.data:
             return False
 
@@ -156,7 +151,7 @@ class OutMergeArrays(transformation.Transformation):
         if (graph.out_degree(arr1) == 0 and graph.out_degree(arr2) == 0 and arr1_id >= arr2_id):
             return False
 
-        map = graph.node(candidate[OutMergeArrays._map_exit])
+        map = self.map_exit
 
         if (any(e.src != map for e in graph.in_edges(arr1)) or any(e.src != map for e in graph.in_edges(arr2))):
             return False
@@ -172,17 +167,15 @@ class OutMergeArrays(transformation.Transformation):
 
         return True
 
-    @staticmethod
-    def match_to_str(graph, candidate):
-        arr = graph.node(candidate[OutMergeArrays._array1])
-        map = graph.node(candidate[OutMergeArrays._map_exit])
-        return '%s (%d, %d) -> %s' % (arr.data, candidate[OutMergeArrays._array1], candidate[OutMergeArrays._array2],
-                                      map.label)
+    def match_to_str(self, graph):
+        arr = self.array1
+        map = self.map_exit
+        nid1, nid2 = graph.node_id(self.array1), graph.node_id(self.array2)
+        return '%s (%d, %d) -> %s' % (arr.data, nid1, nid2, map.label)
 
-    def apply(self, sdfg):
-        graph = sdfg.node(self.state_id)
-        array = graph.node(self.subgraph[OutMergeArrays._array1])
-        map = graph.node(self.subgraph[OutMergeArrays._map_exit])
+    def apply(self, graph, sdfg):
+        array = self.array1
+        map = self.map_exit
         map_edge = next(e for e in graph.in_edges(array) if e.src == map)
         result_connector = map_edge.src_conn[4:]
 
@@ -217,25 +210,24 @@ class OutMergeArrays(transformation.Transformation):
                                           union_inner_edges=True)
 
 
-@registry.autoregister_params(singlestate=True, coarsening=True)
-class MergeSourceSinkArrays(transformation.Transformation):
+class MergeSourceSinkArrays(transformation.SingleStateTransformation, transformation.SimplifyPass):
     """ Merge duplicate arrays that are source/sink nodes. """
 
-    _array1 = nodes.AccessNode("_")
+    array1 = transformation.PatternNode(nodes.AccessNode)
 
-    @staticmethod
-    def expressions():
+    @classmethod
+    def expressions(cls):
         # Matching
         #   o  o
+        return [utils.node_path_graph(cls.array1)]
 
         g = OrderedDiGraph()
         g.add_node(MergeSourceSinkArrays._array1)
         return [g]
 
-    @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
-        arr1_id = candidate[MergeSourceSinkArrays._array1]
-        arr1 = graph.node(arr1_id)
+    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
+        arr1_id = self.subgraph[MergeSourceSinkArrays.array1]
+        arr1 = self.array1
 
         # Ensure array is either a source or sink node
         src_nodes = graph.source_nodes()
@@ -262,18 +254,8 @@ class MergeSourceSinkArrays(transformation.Transformation):
 
         return True
 
-    @staticmethod
-    def match_to_str(graph, candidate):
-        arr = graph.node(candidate[MergeSourceSinkArrays._array1])
-        if arr in graph.source_nodes():
-            place = 'source'
-        else:
-            place = 'sink'
-        return '%s array %s' % (place, arr.data)
-
-    def apply(self, sdfg):
-        graph = sdfg.node(self.state_id)
-        array = graph.node(self.subgraph[MergeSourceSinkArrays._array1])
+    def apply(self, graph, sdfg):
+        array = self.array1
         if array in graph.source_nodes():
             src_node = True
             nodes_to_consider = graph.source_nodes()

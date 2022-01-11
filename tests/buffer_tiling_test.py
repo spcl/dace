@@ -73,7 +73,7 @@ def _semantic_eq(tile_sizes, program):
 
     sdfg = program.to_sdfg()
     sdfg.name = f"{sdfg.name}_{'_'.join(map(str, tile_sizes))}"
-    sdfg.coarsen_dataflow()
+    sdfg.simplify()
     sdfg(w3=w3, w5=w5, A=A, B=B1, I=A.shape[0], J=A.shape[1])
 
     count = sdfg.apply_transformations(BufferTiling, options={'tile_sizes': tile_sizes})

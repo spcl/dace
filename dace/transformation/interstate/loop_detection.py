@@ -7,39 +7,38 @@ import typing
 from typing import AnyStr, Optional, Tuple, List
 
 from dace import sdfg as sd, symbolic
-from dace.sdfg import utils as sdutil
+from dace.sdfg import graph as gr, utils as sdutil
 from dace.transformation import transformation
 
 
-class DetectLoop(transformation.Transformation):
+# NOTE: This class extends PatternTransformation directly in order to not show up in the matches
+class DetectLoop(transformation.PatternTransformation):
     """ Detects a for-loop construct from an SDFG. """
 
-    _loop_guard = sd.SDFGState()
-    _loop_begin = sd.SDFGState()
-    _exit_state = sd.SDFGState()
+    loop_guard = transformation.PatternNode(sd.SDFGState)
+    loop_begin = transformation.PatternNode(sd.SDFGState)
+    exit_state = transformation.PatternNode(sd.SDFGState)
 
-    @staticmethod
-    def expressions():
-
+    @classmethod
+    def expressions(cls):
         # Case 1: Loop with one state
-        sdfg = sd.SDFG('_')
-        sdfg.add_nodes_from([DetectLoop._loop_guard, DetectLoop._loop_begin, DetectLoop._exit_state])
-        sdfg.add_edge(DetectLoop._loop_guard, DetectLoop._loop_begin, sd.InterstateEdge())
-        sdfg.add_edge(DetectLoop._loop_guard, DetectLoop._exit_state, sd.InterstateEdge())
-        sdfg.add_edge(DetectLoop._loop_begin, DetectLoop._loop_guard, sd.InterstateEdge())
+        sdfg = gr.OrderedDiGraph()
+        sdfg.add_nodes_from([cls.loop_guard, cls.loop_begin, cls.exit_state])
+        sdfg.add_edge(cls.loop_guard, cls.loop_begin, sd.InterstateEdge())
+        sdfg.add_edge(cls.loop_guard, cls.exit_state, sd.InterstateEdge())
+        sdfg.add_edge(cls.loop_begin, cls.loop_guard, sd.InterstateEdge())
 
         # Case 2: Loop with multiple states (no back-edge from state)
-        msdfg = sd.SDFG('_')
-        msdfg.add_nodes_from([DetectLoop._loop_guard, DetectLoop._loop_begin, DetectLoop._exit_state])
-        msdfg.add_edge(DetectLoop._loop_guard, DetectLoop._loop_begin, sd.InterstateEdge())
-        msdfg.add_edge(DetectLoop._loop_guard, DetectLoop._exit_state, sd.InterstateEdge())
+        msdfg = gr.OrderedDiGraph()
+        msdfg.add_nodes_from([cls.loop_guard, cls.loop_begin, cls.exit_state])
+        msdfg.add_edge(cls.loop_guard, cls.loop_begin, sd.InterstateEdge())
+        msdfg.add_edge(cls.loop_guard, cls.exit_state, sd.InterstateEdge())
 
         return [sdfg, msdfg]
 
-    @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
-        guard = graph.node(candidate[DetectLoop._loop_guard])
-        begin = graph.node(candidate[DetectLoop._loop_begin])
+    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
+        guard = self.loop_guard
+        begin = self.loop_begin
 
         # A for-loop guard only has two incoming edges (init and increment)
         guard_inedges = graph.in_edges(guard)
@@ -97,16 +96,7 @@ class DetectLoop(transformation.Transformation):
 
         return True
 
-    @staticmethod
-    def match_to_str(graph, candidate):
-        guard = graph.node(candidate[DetectLoop._loop_guard])
-        begin = graph.node(candidate[DetectLoop._loop_begin])
-        sexit = graph.node(candidate[DetectLoop._exit_state])
-        ind = list(graph.in_edges(guard)[0].data.assignments.keys())[0]
-
-        return (' -> '.join(state.label for state in [guard, begin, sexit]) + ' (for loop over "%s")' % ind)
-
-    def apply(self, sdfg):
+    def apply(self, _, sdfg):
         pass
 
 

@@ -140,7 +140,7 @@ def parse_dace_program(name: str,
                        argtypes: Dict[str, data.Data],
                        constants: Dict[str, Any],
                        closure: SDFGClosure,
-                       coarsen: Optional[bool] = None,
+                       simplify: Optional[bool] = None,
                        save: bool = True,
                        progress: Optional[bool] = None) -> SDFG:
     """ Parses a `@dace.program` function into an SDFG.
@@ -148,7 +148,7 @@ def parse_dace_program(name: str,
         :param visitor: A ProgramVisitor object returned from 
                         ``preprocess_dace_program``.
         :param closure: An object that contains the @dace.program closure.
-        :param coarsen: If True, dataflow coarsening will be performed.
+        :param simplify: If True, simplification pass will be performed.
         :param save: If True, saves source mapping data for this SDFG.
         :param progress: If True, prints a progress bar of the parsing process. 
                          If None (default), prints after 5 seconds of parsing. 
@@ -186,7 +186,7 @@ def parse_dace_program(name: str,
                              scope_arrays=argtypes,
                              scope_vars={},
                              closure=closure,
-                             coarsen=coarsen)
+                             simplify=simplify)
 
     sdfg, _, _, _ = visitor.parse_program(preprocessed_ast.preprocessed_ast.body[0])
     sdfg.set_sourcecode(preprocessed_ast.src, 'python')
@@ -1008,7 +1008,7 @@ class ProgramVisitor(ExtNodeVisitor):
                  closure: SDFGClosure = None,
                  nested: bool = False,
                  tmp_idx: int = 0,
-                 coarsen: Optional[bool] = None):
+                 simplify: Optional[bool] = None):
         """ ProgramVisitor init method
 
         Arguments:
@@ -1021,7 +1021,7 @@ class ProgramVisitor(ExtNodeVisitor):
             scope_arrays {Dict[str, data.Data]} -- Scope arrays
             scope_vars {Dict[str, str]} -- Scope variables
             closure {SDFGClosure} -- The closure of this program
-            coarsen {bool} -- Whether to apply dataflow coarsening after parsing nested dace programs
+            simplify {bool} -- Whether to apply simplification pass after parsing nested dace programs
 
         Keyword Arguments:
             nested {bool} -- True, if SDFG is nested (default: {False})
@@ -1040,7 +1040,7 @@ class ProgramVisitor(ExtNodeVisitor):
         self.globals = global_vars
         self.closure = closure
         self.nested = nested
-        self.coarsen = coarsen
+        self.simplify = simplify
 
         # Keeps track of scope arrays, numbers, variables and accesses
         self.scope_arrays = OrderedDict()
@@ -3297,7 +3297,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
                 if isinstance(fcopy, DaceProgram):
                     fcopy.signature = copy.deepcopy(func.signature)
-                    sdfg = fcopy.to_sdfg(*fargs, **fkwargs, coarsen=self.coarsen, save=False)
+                    sdfg = fcopy.to_sdfg(*fargs, **fkwargs, simplify=self.simplify, save=False)
                 else:
                     sdfg = fcopy.__sdfg__(*fargs, **fkwargs)
 

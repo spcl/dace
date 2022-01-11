@@ -2,15 +2,9 @@
 """
     SVE Vectorization: This module offers all functionality to vectorize an SDFG for the Arm SVE codegen.
 """
-import dace.codegen.tools.type_inference as type_inference
-from sympy.codegen.ast import Scope
-from dace.memlet import Memlet
-from dace.sdfg.graph import MultiConnectorEdge
-from dace.codegen.targets.cpp import is_write_conflicted_with_reason
-from dace.sdfg.scope import ScopeSubgraphView
 from dace.sdfg.state import SDFGState
-from dace import registry, symbolic, subsets
-from dace.properties import make_properties, Property, SymbolicProperty
+from dace import symbolic
+from dace.properties import make_properties, SymbolicProperty
 from dace.sdfg import nodes, SDFG, SDFGState
 import dace.sdfg
 from dace.sdfg import utils as sdutil
@@ -18,9 +12,7 @@ from dace.transformation import transformation
 import dace.dtypes
 import dace.sdfg.infer_types
 import dace.transformation.dataflow
-from dace.transformation.optimizer import Optimizer
 import dace.transformation.helpers
-import copy
 import dace.codegen.targets.sve as sve
 import dace.codegen.targets.sve.util as util
 import dace.frontend.operations
@@ -30,9 +22,8 @@ import dace.transformation.dataflow.sve.infer_types as infer_types
 import dace.sdfg.analysis.vector_inference as vector_inference
 
 
-@registry.autoregister_params(singlestate=True)
 @make_properties
-class SVEVectorization(transformation.Transformation):
+class SVEVectorization(transformation.SingleStateTransformation):
     """ Implements the Arm SVE vectorization transform.
 
         Takes a map entry of a possibly multidimensional map and enforces a
@@ -47,8 +38,8 @@ class SVEVectorization(transformation.Transformation):
     def expressions(cls):
         return [sdutil.node_path_graph(cls.map_entry)]
 
-    def can_be_applied(self, state: SDFGState, candidate, expr_index, sdfg: SDFG, permissive=False) -> bool:
-        map_entry = self.map_entry(sdfg)
+    def can_be_applied(self, state: SDFGState, expr_index, sdfg: SDFG, permissive=False) -> bool:
+        map_entry = self.map_entry
         current_map = map_entry.map
         subgraph = state.scope_subgraph(map_entry)
         subgraph_contents = state.scope_subgraph(map_entry, include_entry=False, include_exit=False)
@@ -151,9 +142,8 @@ class SVEVectorization(transformation.Transformation):
 
         return True
 
-    def apply(self, sdfg: SDFG):
-        state = sdfg.node(self.state_id)
-        map_entry = self.map_entry(sdfg)
+    def apply(self, state: SDFGState, sdfg: SDFG):
+        map_entry = self.map_entry
         current_map = map_entry.map
 
         # Expand the innermost map if multidimensional

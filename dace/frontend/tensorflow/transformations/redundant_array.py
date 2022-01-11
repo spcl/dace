@@ -8,22 +8,20 @@ from dace.transformation import transformation as pm
 from dace.config import Config
 
 
-class TensorflowRedundantArray(pm.Transformation):
+class TensorflowRedundantArray(pm.SingleStateTransformation):
     """ Implements the redundant array removal transformation, applied
         to remove ReadVariableOps and control dependencies. """
 
-    _arrays_removed = 0
-    _in_array = nodes.AccessNode("_")
-    _out_array = nodes.AccessNode("_")
+    in_array = pm.PatternNode(nodes.AccessNode)
+    out_array = pm.PatternNode(nodes.AccessNode)
 
-    @staticmethod
-    def expressions():
-        return [sdutil.node_path_graph(TensorflowRedundantArray._in_array, TensorflowRedundantArray._out_array)]
+    @classmethod
+    def expressions(cls):
+        return [sdutil.node_path_graph(cls.in_array, cls.out_array)]
 
-    @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
-        in_array = graph.nodes()[candidate[TensorflowRedundantArray._in_array]]
-        out_array = graph.nodes()[candidate[TensorflowRedundantArray._out_array]]
+    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
+        in_array = self.in_array
+        out_array = self.out_array
 
         # Just to be sure, check for the OP name in the out array
         if not ("ReadVariable" in out_array.data or "control_dependency" in out_array.data):
@@ -45,19 +43,12 @@ class TensorflowRedundantArray(pm.Transformation):
 
         return True
 
-    @staticmethod
-    def match_to_str(graph, candidate):
-        out_array = graph.nodes()[candidate[TensorflowRedundantArray._out_array]]
+    def match_to_str(self, graph):
+        return "Remove " + str(self.out_array)
 
-        return "Remove " + str(out_array)
-
-    def apply(self, sdfg):
-        def gnode(nname):
-            return graph.nodes()[self.subgraph[nname]]
-
-        graph = sdfg.nodes()[self.state_id]
-        in_array = gnode(TensorflowRedundantArray._in_array)
-        out_array = gnode(TensorflowRedundantArray._out_array)
+    def apply(self, graph, sdfg):
+        in_array = self.in_array
+        out_array = self.out_array
 
         for e in graph.out_edges(out_array):
             # Modify all outgoing edges to point to in_array
@@ -82,5 +73,4 @@ class TensorflowRedundantArray(pm.Transformation):
 
         # Finally, remove out_array node
         graph.remove_node(out_array)
-        if Config.get_bool("debugprint"):
-            TensorflowRedundantArray._arrays_removed += 1
+

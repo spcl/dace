@@ -1,7 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ State elimination transformations """
 
-import copy
 import networkx as nx
 from typing import Dict, List, Set
 
@@ -13,22 +12,20 @@ from dace.transformation import transformation
 from dace.sdfg.analysis import cfg
 
 
-@registry.autoregister_params(coarsening=True)
-class EndStateElimination(transformation.Transformation):
+class EndStateElimination(transformation.MultiStateTransformation, transformation.SimplifyPass):
     """
     End-state elimination removes a redundant state that has one incoming edge
     and no contents.
     """
 
-    _end_state = sdfg.SDFGState()
+    end_state = transformation.PatternNode(SDFGState)
 
-    @staticmethod
-    def expressions():
-        return [sdutil.node_path_graph(EndStateElimination._end_state)]
+    @classmethod
+    def expressions(cls):
+        return [sdutil.node_path_graph(cls.end_state)]
 
-    @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
-        state = graph.nodes()[candidate[EndStateElimination._end_state]]
+    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
+        state = self.end_state
 
         out_edges = graph.out_edges(state)
         in_edges = graph.in_edges(state)
@@ -50,13 +47,8 @@ class EndStateElimination(transformation.Transformation):
 
         return True
 
-    @staticmethod
-    def match_to_str(graph, candidate):
-        state = graph.nodes()[candidate[EndStateElimination._end_state]]
-        return state.label
-
-    def apply(self, sdfg):
-        state = sdfg.nodes()[self.subgraph[EndStateElimination._end_state]]
+    def apply(self, _, sdfg):
+        state = self.end_state
         # Handle orphan symbols (due to the deletion the incoming edge)
         edge = sdfg.in_edges(state)[0]
         sym_assign = edge.data.assignments.keys()
@@ -67,22 +59,20 @@ class EndStateElimination(transformation.Transformation):
                 sdfg.remove_symbol(sym)
 
 
-@registry.autoregister_params(coarsening=False)
-class StartStateElimination(transformation.Transformation):
+class StartStateElimination(transformation.MultiStateTransformation):
     """
     Start-state elimination removes a redundant state that has one outgoing edge
     and no contents. This transformation applies only to nested SDFGs.
     """
 
-    start_state = sdfg.SDFGState()
+    start_state = transformation.PatternNode(SDFGState)
 
-    @staticmethod
-    def expressions():
-        return [sdutil.node_path_graph(StartStateElimination.start_state)]
+    @classmethod
+    def expressions(cls):
+        return [sdutil.node_path_graph(cls.start_state)]
 
-    @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
-        state = graph.nodes()[candidate[StartStateElimination.start_state]]
+    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
+        state = self.start_state
 
         # The transformation applies only to nested SDFGs
         if not graph.parent:
@@ -108,13 +98,8 @@ class StartStateElimination(transformation.Transformation):
 
         return True
 
-    @staticmethod
-    def match_to_str(graph, candidate):
-        state = graph.nodes()[candidate[StartStateElimination.start_state]]
-        return state.label
-
-    def apply(self, sdfg):
-        state = sdfg.nodes()[self.subgraph[StartStateElimination.start_state]]
+    def apply(self, _, sdfg):
+        state = self.start_state
         # Move assignments to the nested SDFG node's symbol mappings
         node = sdfg.parent_nsdfg_node
         edge = sdfg.out_edges(state)[0]
@@ -142,22 +127,20 @@ def _assignments_to_consider(sdfg, edge, is_constant=False):
     return assignments_to_consider
 
 
-@registry.autoregister_params(coarsening=True)
-class StateAssignElimination(transformation.Transformation):
+class StateAssignElimination(transformation.MultiStateTransformation, transformation.SimplifyPass):
     """
     State assign elimination removes all assignments into the final state
     and subsumes the assigned value into its contents.
     """
 
-    _end_state = sdfg.SDFGState()
+    end_state = transformation.PatternNode(SDFGState)
 
-    @staticmethod
-    def expressions():
-        return [sdutil.node_path_graph(StateAssignElimination._end_state)]
+    @classmethod
+    def expressions(cls):
+        return [sdutil.node_path_graph(cls.end_state)]
 
-    @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
-        state = graph.nodes()[candidate[StateAssignElimination._end_state]]
+    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
+        state = self.end_state
 
         out_edges = graph.out_edges(state)
         in_edges = graph.in_edges(state)
@@ -194,13 +177,8 @@ class StateAssignElimination(transformation.Transformation):
 
         return True
 
-    @staticmethod
-    def match_to_str(graph, candidate):
-        state = graph.nodes()[candidate[StateAssignElimination._end_state]]
-        return state.label
-
-    def apply(self, sdfg):
-        state = sdfg.nodes()[self.subgraph[StateAssignElimination._end_state]]
+    def apply(self, _, sdfg):
+        state = self.end_state
         edge = sdfg.in_edges(state)[0]
         # Since inter-state assignments that use an assigned value leads to
         # undefined behavior (e.g., {m: n, n: m}), we can replace each
@@ -338,8 +316,7 @@ def _alias_assignments(sdfg, edge):
     return assignments_to_consider
 
 
-@registry.autoregister_params(coarsening=True)
-class SymbolAliasPromotion(transformation.Transformation):
+class SymbolAliasPromotion(transformation.MultiStateTransformation, transformation.SimplifyPass):
     """
     SymbolAliasPromotion moves inter-state assignments that create symbolic
     aliases to the previous inter-state edge according to the topological order.
@@ -347,17 +324,16 @@ class SymbolAliasPromotion(transformation.Transformation):
     together, so that true duplicates can be easily removed.
     """
 
-    _first_state = sdfg.SDFGState()
-    _second_state = sdfg.SDFGState()
+    first_state = transformation.PatternNode(SDFGState)
+    second_state = transformation.PatternNode(SDFGState)
 
-    @staticmethod
-    def expressions():
-        return [sdutil.node_path_graph(SymbolAliasPromotion._first_state, SymbolAliasPromotion._second_state)]
+    @classmethod
+    def expressions(cls):
+        return [sdutil.node_path_graph(cls.first_state, cls.second_state)]
 
-    @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
-        fstate = graph.nodes()[candidate[SymbolAliasPromotion._first_state]]
-        sstate = graph.nodes()[candidate[SymbolAliasPromotion._second_state]]
+    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
+        fstate = self.first_state
+        sstate = self.second_state
 
         # For the topological order to be unambiguous:
         # 1. First state must have unique input edge.
@@ -407,14 +383,9 @@ class SymbolAliasPromotion(transformation.Transformation):
 
         return True
 
-    @staticmethod
-    def match_to_str(graph, candidate):
-        state = graph.nodes()[candidate[SymbolAliasPromotion._second_state]]
-        return state.label
-
-    def apply(self, sdfg):
-        fstate = sdfg.nodes()[self.subgraph[SymbolAliasPromotion._first_state]]
-        sstate = sdfg.nodes()[self.subgraph[SymbolAliasPromotion._second_state]]
+    def apply(self, _, sdfg):
+        fstate = self.first_state
+        sstate = self.second_state
 
         edge = sdfg.edges_between(fstate, sstate)[0].data
         in_edge = sdfg.in_edges(fstate)[0].data
@@ -449,18 +420,16 @@ class SymbolAliasPromotion(transformation.Transformation):
             in_edge.assignments[k] = v
 
 
-@registry.autoregister_params(singlestate=True)
-class HoistState(transformation.Transformation):
+class HoistState(transformation.SingleStateTransformation):
     """ Move a state out of a nested SDFG """
     nsdfg = transformation.PatternNode(nodes.NestedSDFG)
 
-    @staticmethod
-    def expressions():
-        return [sdutil.node_path_graph(HoistState.nsdfg)]
+    @classmethod
+    def expressions(cls):
+        return [sdutil.node_path_graph(cls.nsdfg)]
 
-    @staticmethod
-    def can_be_applied(graph: SDFGState, candidate, expr_index, sdfg, permissive=False):
-        nsdfg: nodes.NestedSDFG = graph.node(candidate[HoistState.nsdfg])
+    def can_be_applied(self, graph: SDFGState, expr_index, sdfg, permissive=False):
+        nsdfg = self.nsdfg
 
         # Must be a free nested SDFG
         if graph.entry_node(nsdfg) is not None:
@@ -540,9 +509,8 @@ class HoistState(transformation.Transformation):
 
         return True
 
-    def apply(self, sdfg: SDFG):
-        nsdfg: nodes.NestedSDFG = self.nsdfg(sdfg)
-        state = sdfg.node(self.state_id)
+    def apply(self, state: SDFGState, sdfg: SDFG):
+        nsdfg: nodes.NestedSDFG = self.nsdfg
 
         new_state = sdfg.add_state_before(state)
         isedge = sdfg.edges_between(new_state, state)[0]

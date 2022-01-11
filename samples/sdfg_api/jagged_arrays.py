@@ -49,7 +49,7 @@ state.add_memlet_path(task, imx, mx, write_jarr, src_conn='b', memlet=dace.Memle
 sdfg.validate()
 
 # Fuses redundant states and removes unnecessary transient arrays
-sdfg.coarsen_dataflow()
+sdfg.simplify()
 
 ######################################
 if __name__ == '__main__':

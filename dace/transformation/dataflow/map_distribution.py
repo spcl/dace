@@ -7,7 +7,7 @@ from numbers import Number
 from typing import Dict, List
 import dace
 import sympy
-from dace import data, dtypes, registry, subsets, symbolic
+from dace import data, dtypes, subsets, symbolic
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import OrderedMultiDiConnectorGraph
@@ -16,25 +16,19 @@ from dace.transformation.subgraph.helpers import subgraph_from_maps
 from functools import reduce
 
 
-@registry.autoregister_params(singlestate=True)
-class ElementWiseArrayOperation(pm.Transformation):
+class ElementWiseArrayOperation(pm.SingleStateTransformation):
     """ Distributes element-wise array operations.
     """
 
-    _map_entry = pm.PatternNode(nodes.MapEntry)
+    map_entry = pm.PatternNode(nodes.MapEntry)
 
-    @staticmethod
-    def expressions():
-        return [sdutil.node_path_graph(ElementWiseArrayOperation._map_entry)]
+    @classmethod
+    def expressions(cls):
+        return [sdutil.node_path_graph(cls.map_entry)]
 
-    @staticmethod
-    def can_be_applied(graph: dace.SDFGState,
-                       candidate: Dict[pm.PatternNode, int],
-                       expr_index: int,
-                       sdfg: dace.SDFG,
-                       permissive: bool = False):
+    def can_be_applied(self, graph: dace.SDFGState, expr_index: int, sdfg: dace.SDFG, permissive: bool = False):
 
-        map_entry = graph.node(candidate[ElementWiseArrayOperation._map_entry])
+        map_entry = self.map_entry
         map_exit = graph.exit_node(map_entry)
         params = [dace.symbol(p) for p in map_entry.map.params]
 
@@ -108,14 +102,8 @@ class ElementWiseArrayOperation(pm.Transformation):
 
         return True
 
-    @staticmethod
-    def match_to_str(graph: dace.SDFGState, candidate: Dict[pm.PatternNode, int]) -> str:
-        map_entry = graph.node(candidate[ElementWiseArrayOperation._map_entry])
-        return map_entry.map.label + ': ' + str(map_entry.map.params)
-
-    def apply(self, sdfg: dace.SDFG):
-        graph = sdfg.nodes()[self.state_id]
-        map_entry = graph.nodes()[self.subgraph[self._map_entry]]
+    def apply(self, graph: dace.SDFGState, sdfg: dace.SDFG):
+        map_entry = self.map_entry
         map_exit = graph.exit_node(map_entry)
 
         sz = dace.symbol('commsize', dtype=dace.int32)
@@ -172,7 +160,7 @@ class ElementWiseArrayOperation(pm.Transformation):
 
             elif isinstance(desc, data.Array):
 
-                local_name, local_arr = sdfg.add_temp_transient([(desc.total_size) // sz],
+                local_name, local_arr = sdfg.add_temp_transient([sympy.floor(desc.total_size / sz)],
                                                                 dtype=desc.dtype,
                                                                 storage=desc.storage)
                 local_access = graph.add_access(local_name)
@@ -218,7 +206,7 @@ class ElementWiseArrayOperation(pm.Transformation):
             if isinstance(desc, data.Scalar):
                 raise NotImplementedError
             elif isinstance(desc, data.Array):
-                local_name, local_arr = sdfg.add_temp_transient([(desc.total_size) // sz],
+                local_name, local_arr = sdfg.add_temp_transient([sympy.floor(desc.total_size / sz)],
                                                                 dtype=desc.dtype,
                                                                 storage=desc.storage)
                 local_access = graph.add_access(local_name)
@@ -241,25 +229,19 @@ class ElementWiseArrayOperation(pm.Transformation):
         map_entry.map.range = subsets.Range(ranges)
 
 
-@registry.autoregister_params(singlestate=True)
-class ElementWiseArrayOperation2D(pm.Transformation):
+class ElementWiseArrayOperation2D(pm.SingleStateTransformation):
     """ Distributes element-wise array operations.
     """
 
-    _map_entry = pm.PatternNode(nodes.MapEntry)
+    map_entry = pm.PatternNode(nodes.MapEntry)
 
-    @staticmethod
-    def expressions():
-        return [sdutil.node_path_graph(ElementWiseArrayOperation2D._map_entry)]
+    @classmethod
+    def expressions(cls):
+        return [sdutil.node_path_graph(cls.map_entry)]
 
-    @staticmethod
-    def can_be_applied(graph: dace.SDFGState,
-                       candidate: Dict[pm.PatternNode, int],
-                       expr_index: int,
-                       sdfg: dace.SDFG,
-                       permissive: bool = False):
+    def can_be_applied(self, graph: dace.SDFGState, expr_index: int, sdfg: dace.SDFG, permissive: bool = False):
 
-        map_entry = graph.node(candidate[ElementWiseArrayOperation2D._map_entry])
+        map_entry = self.map_entry
         map_exit = graph.exit_node(map_entry)
         params = [dace.symbol(p) for p in map_entry.map.params]
         if len(params) != 2:
@@ -330,22 +312,15 @@ class ElementWiseArrayOperation2D(pm.Transformation):
 
         return True
 
-    @staticmethod
-    def match_to_str(graph: dace.SDFGState, candidate: Dict[pm.PatternNode, int]) -> str:
-        map_entry = graph.node(candidate[ElementWiseArrayOperation2D._map_entry])
-        return map_entry.map.label + ': ' + str(map_entry.map.params)
-
-    def apply(self, sdfg: dace.SDFG):
-        graph = sdfg.nodes()[self.state_id]
-        map_entry = graph.nodes()[self.subgraph[self._map_entry]]
+    def apply(self, graph: dace.SDFGState, sdfg: dace.SDFG):
+        map_entry = self.map_entry
         map_exit = graph.exit_node(map_entry)
 
         sz = dace.symbol('commsize', dtype=dace.int32, integer=True, positive=True)
         Px = dace.symbol('Px', dtype=dace.int32, integer=True, positive=True)
         Py = dace.symbol('Py', dtype=dace.int32, integer=True, positive=True)
 
-        def _prod(sequence):
-            return reduce(lambda a, b: a * b, sequence, 1)
+        from dace.data import _prod
 
         # NOTE: Maps with step in their ranges are currently not supported
         if len(map_entry.map.params) == 2:
@@ -495,8 +470,7 @@ class ElementWiseArrayOperation2D(pm.Transformation):
         map_entry.map.range = subsets.Range(ranges)
 
 
-@registry.autoregister_params(singlestate=True)
-class RedundantComm2D(pm.Transformation):
+class RedundantComm2D(pm.SingleStateTransformation):
     """ Implements the redundant communication removal transformation,
         applied when data are scattered and immediately gathered,
         but never used anywhere else. """
@@ -507,23 +481,19 @@ class RedundantComm2D(pm.Transformation):
     scatter = pm.PatternNode(nodes.Tasklet)
     out_array = pm.PatternNode(nodes.AccessNode)
 
-    @staticmethod
-    def expressions():
-        return [
-            sdutil.node_path_graph(RedundantComm2D.in_array, RedundantComm2D.gather, RedundantComm2D.mid_array,
-                                   RedundantComm2D.scatter, RedundantComm2D.out_array)
-        ]
+    @classmethod
+    def expressions(cls):
+        return [sdutil.node_path_graph(cls.in_array, cls.gather, cls.mid_array, cls.scatter, cls.out_array)]
 
-    @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
-        gather = graph.nodes()[candidate[RedundantComm2D.gather]]
+    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
+        gather = self.gather
         if '_block_sizes' not in gather.in_connectors:
             return False
-        scatter = graph.nodes()[candidate[RedundantComm2D.scatter]]
+        scatter = self.scatter
         if '_gdescriptor' not in scatter.out_connectors:
             return False
-        in_array = graph.nodes()[candidate[RedundantComm2D.in_array]]
-        out_array = graph.nodes()[candidate[RedundantComm2D.out_array]]
+        in_array = self.in_array
+        out_array = self.out_array
         in_desc = in_array.desc(sdfg)
         out_desc = out_array.desc(sdfg)
         if len(in_desc.shape) != 2:
@@ -532,19 +502,12 @@ class RedundantComm2D(pm.Transformation):
             return True
         return False
 
-    @staticmethod
-    def match_to_str(graph, candidate):
-        in_array = graph.nodes()[candidate[RedundantComm2D.in_array]]
-
-        return "Remove " + str(in_array)
-
-    def apply(self, sdfg):
-        graph = sdfg.nodes()[self.state_id]
-        in_array = self.in_array(sdfg)
-        gather = self.gather(sdfg)
-        mid_array = self.mid_array(sdfg)
-        scatter = self.scatter(sdfg)
-        out_array = self.out_array(sdfg)
+    def apply(self, graph, sdfg):
+        in_array = self.in_array
+        gather = self.gather
+        mid_array = self.mid_array
+        scatter = self.scatter
+        out_array = self.out_array
 
         in_desc = sdfg.arrays[in_array.data]
         out_desc = sdfg.arrays[out_array.data]
@@ -574,25 +537,19 @@ class RedundantComm2D(pm.Transformation):
         graph.remove_node(out_array)
 
 
-@registry.autoregister_params(singlestate=True)
-class StencilOperation(pm.Transformation):
+class StencilOperation(pm.SingleStateTransformation):
     """ Detects stencil operations.
     """
 
     map_entry = pm.PatternNode(nodes.MapEntry)
 
-    @staticmethod
-    def expressions():
-        return [sdutil.node_path_graph(StencilOperation.map_entry)]
+    @classmethod
+    def expressions(cls):
+        return [sdutil.node_path_graph(cls.map_entry)]
 
-    @staticmethod
-    def can_be_applied(graph: dace.SDFGState,
-                       candidate: Dict[pm.PatternNode, int],
-                       expr_index: int,
-                       sdfg: dace.SDFG,
-                       permissive: bool = False):
+    def can_be_applied(self, graph: dace.SDFGState, expr_index: int, sdfg: dace.SDFG, permissive: bool = False):
 
-        map_entry = graph.node(candidate[StencilOperation.map_entry])
+        map_entry = self.map_entry
         map_exit = graph.exit_node(map_entry)
         params = [dace.symbol(p) for p in map_entry.map.params]
 
@@ -678,34 +635,23 @@ class StencilOperation(pm.Transformation):
 
         return stencil_found
 
-    @staticmethod
-    def match_to_str(graph: dace.SDFGState, candidate: Dict[pm.PatternNode, int]) -> str:
-        map_entry = graph.node(candidate[StencilOperation.map_entry])
-        return map_entry.map.label + ': ' + str(map_entry.map.params)
-
-    def apply(self, sdfg: dace.SDFG):
+    def apply(self, graph: dace.SDFGState, sdfg: dace.SDFG):
         pass
 
 
-@registry.autoregister_params(singlestate=True)
-class OuterProductOperation(pm.Transformation):
+class OuterProductOperation(pm.SingleStateTransformation):
     """ Detects outer-product operations.
     """
 
     map_entry = pm.PatternNode(nodes.MapEntry)
 
-    @staticmethod
-    def expressions():
-        return [sdutil.node_path_graph(OuterProductOperation.map_entry)]
+    @classmethod
+    def expressions(cls):
+        return [sdutil.node_path_graph(cls.map_entry)]
 
-    @staticmethod
-    def can_be_applied(graph: dace.SDFGState,
-                       candidate: Dict[pm.PatternNode, int],
-                       expr_index: int,
-                       sdfg: dace.SDFG,
-                       permissive: bool = False):
+    def can_be_applied(self, graph: dace.SDFGState, expr_index: int, sdfg: dace.SDFG, permissive: bool = False):
 
-        map_entry = graph.node(candidate[OuterProductOperation.map_entry])
+        map_entry = self.map_entry
         map_exit = graph.exit_node(map_entry)
         params = [dace.symbol(p) for p in map_entry.map.params]
 
@@ -765,34 +711,23 @@ class OuterProductOperation(pm.Transformation):
 
         return outer_product_found
 
-    @staticmethod
-    def match_to_str(graph: dace.SDFGState, candidate: Dict[pm.PatternNode, int]) -> str:
-        map_entry = graph.node(candidate[OuterProductOperation.map_entry])
-        return map_entry.map.label + ': ' + str(map_entry.map.params)
-
-    def apply(self, sdfg: dace.SDFG):
+    def apply(self, graph: dace.SDFGState, sdfg: dace.SDFG):
         pass
 
 
-@registry.autoregister_params(singlestate=True)
-class Reduction1Operation(pm.Transformation):
+class Reduction1Operation(pm.SingleStateTransformation):
     """ Detects reduction1 operations.
     """
 
     map_entry = pm.PatternNode(nodes.MapEntry)
 
-    @staticmethod
-    def expressions():
-        return [sdutil.node_path_graph(Reduction1Operation.map_entry)]
+    @classmethod
+    def expressions(cls):
+        return [sdutil.node_path_graph(cls.map_entry)]
 
-    @staticmethod
-    def can_be_applied(graph: dace.SDFGState,
-                       candidate: Dict[pm.PatternNode, int],
-                       expr_index: int,
-                       sdfg: dace.SDFG,
-                       permissive: bool = False):
+    def can_be_applied(self, graph: dace.SDFGState, expr_index: int, sdfg: dace.SDFG, permissive: bool = False):
 
-        map_entry = graph.node(candidate[Reduction1Operation.map_entry])
+        map_entry = self.map_entry
         map_exit = graph.exit_node(map_entry)
         params = [dace.symbol(p) for p in map_entry.map.params]
 
@@ -817,34 +752,23 @@ class Reduction1Operation(pm.Transformation):
 
         return True
 
-    @staticmethod
-    def match_to_str(graph: dace.SDFGState, candidate: Dict[pm.PatternNode, int]) -> str:
-        map_entry = graph.node(candidate[Reduction1Operation.map_entry])
-        return map_entry.map.label + ': ' + str(map_entry.map.params)
-
-    def apply(self, sdfg: dace.SDFG):
+    def apply(self, graph: dace.SDFGState, sdfg: dace.SDFG):
         pass
 
 
-@registry.autoregister_params(singlestate=True)
-class ReductionNOperation(pm.Transformation):
+class ReductionNOperation(pm.SingleStateTransformation):
     """ Detects reductionN operations.
     """
 
     map_entry = pm.PatternNode(nodes.MapEntry)
 
-    @staticmethod
-    def expressions():
-        return [sdutil.node_path_graph(ReductionNOperation.map_entry)]
+    @classmethod
+    def expressions(cls):
+        return [sdutil.node_path_graph(cls.map_entry)]
 
-    @staticmethod
-    def can_be_applied(graph: dace.SDFGState,
-                       candidate: Dict[pm.PatternNode, int],
-                       expr_index: int,
-                       sdfg: dace.SDFG,
-                       permissive: bool = False):
+    def can_be_applied(self, graph: dace.SDFGState, expr_index: int, sdfg: dace.SDFG, permissive: bool = False):
 
-        map_entry = graph.node(candidate[ReductionNOperation.map_entry])
+        map_entry = self.map_entry
         map_exit = graph.exit_node(map_entry)
         params = [dace.symbol(p) for p in map_entry.map.params]
 
@@ -859,6 +783,8 @@ class ReductionNOperation(pm.Transformation):
 
         outputs = dict()
         for _, _, _, _, m in graph.in_edges(map_exit):
+            if m.is_empty():
+                continue
             desc = sdfg.arrays[m.data]
             if not m.wcr:
                 if desc not in inputs.keys():
@@ -891,10 +817,5 @@ class ReductionNOperation(pm.Transformation):
 
         return True
 
-    @staticmethod
-    def match_to_str(graph: dace.SDFGState, candidate: Dict[pm.PatternNode, int]) -> str:
-        map_entry = graph.node(candidate[ReductionNOperation.map_entry])
-        return map_entry.map.label + ': ' + str(map_entry.map.params)
-
-    def apply(self, sdfg: dace.SDFG):
+    def apply(self, graph: dace.SDFGState, sdfg: dace.SDFG):
         pass

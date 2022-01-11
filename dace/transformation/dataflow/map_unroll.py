@@ -1,15 +1,13 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-from dace import data as dt, dtypes, registry, symbolic, SDFG
+from dace import data as dt, symbolic, SDFG
 from dace.sdfg import nodes, utils as sdutil
+from dace.sdfg.state import SDFGState
 from dace.transformation import transformation
-from dace.properties import make_properties
 import copy
 import itertools
 
 
-@registry.autoregister_params(singlestate=True)
-@make_properties
-class MapUnroll(transformation.Transformation):
+class MapUnroll(transformation.SingleStateTransformation):
     """
     Unrolls a map with constant ranges in the top-level scope of an SDFG by
     replicating its subgraph for each iteration. If there are local data
@@ -20,15 +18,14 @@ class MapUnroll(transformation.Transformation):
     that will be inferred as processing elements in an FPGA kernel.
     """
 
-    _map_entry = nodes.MapEntry(nodes.Map("", [], []))
+    map_entry = transformation.PatternNode(nodes.MapEntry)
 
-    @staticmethod
-    def expressions():
-        return [sdutil.node_path_graph(MapUnroll._map_entry)]
+    @classmethod
+    def expressions(cls):
+        return [sdutil.node_path_graph(cls.map_entry)]
 
-    @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
-        map_entry = graph.nodes()[candidate[MapUnroll._map_entry]]
+    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
+        map_entry = self.map_entry
         # Must be top-level map
         if graph.scope_dict()[map_entry] is not None:
             return False
@@ -42,18 +39,11 @@ class MapUnroll(transformation.Transformation):
             return False
         return True
 
-    @staticmethod
-    def match_to_str(graph, candidate):
-        map_entry = graph.nodes()[candidate[MapUnroll._map_entry]]
-        return map_entry.map.label + ': ' + str(map_entry.map.params)
-
-    def apply(self, sdfg):
-
+    
+    def apply(self, state: SDFGState, sdfg: SDFG):
         from dace.transformation.dataflow import TrivialMapElimination
 
-        state = sdfg.nodes()[self.state_id]
-        map_entry = state.nodes()[self.subgraph[MapUnroll._map_entry]]
-        map_exit = state.exit_node(map_entry)
+        map_entry = self.map_entry
 
         # Collect all nodes in this weakly connected component
         subgraph = sdutil.weakly_connected_component(state, map_entry)
@@ -71,7 +61,6 @@ class MapUnroll(transformation.Transformation):
             if not isinstance(sdfg.arrays[name], dt.Stream) and not isinstance(sdfg.arrays[name], dt.View)
         ]
 
-        params = map_entry.map.params
         ranges = map_entry.map.range.ranges
         constant_ranges = []
         for r in ranges:
@@ -133,7 +122,7 @@ class MapUnroll(transformation.Transformation):
                                            verify=False,
                                            annotate=False,
                                            save=False,
-                                           _map_entry=node_to_unrolled[map_entry])
+                                           map_entry=node_to_unrolled[map_entry])
 
         # Now we can delete the original subgraph. This implicitly also remove
         # memlets between nodes

@@ -156,8 +156,8 @@ def rgf_dense(HD: dace.complex128[N, BS, BS], HE: dace.complex128[N, BS, BS], HF
 if __name__ == '__main__':
 
     print("=== Generating SDFG ===")
-    sdfg = rgf_dense.to_sdfg(coarsen=False)
-    print("=== Applying dataflow coarsening ===")
-    sdfg.coarsen_dataflow()
+    sdfg = rgf_dense.to_sdfg(simplify=False)
+    print("=== Applying simplification pass ===")
+    sdfg.simplify()
     print("=== Compiling ===")
     sdfg.compile()

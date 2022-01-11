@@ -56,7 +56,7 @@ def test_conditional_full_merge():
                 c = 1
         c += 1
 
-    sdfg = conditional_full_merge.to_sdfg(coarsen=False)
+    sdfg = conditional_full_merge.to_sdfg(simplify=False)
     propagate_states(sdfg)
 
     # Check start state.
@@ -125,7 +125,7 @@ def test_while_inside_for():
             while j < 20:
                 a += 5
 
-    sdfg = while_inside_for.to_sdfg(coarsen=False)
+    sdfg = while_inside_for.to_sdfg(simplify=False)
     propagate_states(sdfg)
 
     # Check start state.
@@ -188,7 +188,7 @@ def test_for_with_nested_full_merge_branch():
             else:
                 a += 1
 
-    sdfg = for_with_nested_full_merge_branch.to_sdfg(coarsen=False)
+    sdfg = for_with_nested_full_merge_branch.to_sdfg(simplify=False)
     propagate_states(sdfg)
 
     # Check start state.
@@ -330,7 +330,7 @@ def test_while_with_nested_full_merge_branch():
             else:
                 a += 1
 
-    sdfg = while_with_nested_full_merge_branch.to_sdfg(coarsen=False)
+    sdfg = while_with_nested_full_merge_branch.to_sdfg(simplify=False)
     propagate_states(sdfg)
 
     # Check start state.
@@ -400,7 +400,7 @@ def test_3_fold_nested_loop_with_symbolic_bounds():
                 for k in range(K):
                     a += 5
 
-    sdfg = nested_3_symbolic.to_sdfg(coarsen=False)
+    sdfg = nested_3_symbolic.to_sdfg(simplify=False)
     propagate_states(sdfg)
 
     # Check start state.
@@ -481,7 +481,7 @@ def test_3_fold_nested_loop():
                 for k in range(i, j):
                     A[k, j] += 5
 
-    sdfg = nested_3.to_sdfg(coarsen=False)
+    sdfg = nested_3.to_sdfg(simplify=False)
     propagate_states(sdfg)
 
     # Check start state.

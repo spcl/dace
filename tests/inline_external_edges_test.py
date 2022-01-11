@@ -37,7 +37,7 @@ def test():
     L = np.random.rand(2).astype(np.float32)
     M = np.random.rand(2).astype(np.float32)
 
-    sdfg.coarsen_dataflow()
+    sdfg.simplify()
     sdfg(L=L, M=M)
 
     expected = np.array([2.0, 2.0, 7.0, 7.0])

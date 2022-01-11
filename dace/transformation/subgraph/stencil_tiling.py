@@ -32,7 +32,6 @@ from collections import defaultdict
 from dace.transformation.subgraph import helpers
 
 
-@registry.autoregister_params(singlestate=True)
 @make_properties
 class StencilTiling(transformation.SubgraphTransformation):
     """ Operates on top level maps of the given subgraph.
@@ -306,7 +305,7 @@ class StencilTiling(transformation.SubgraphTransformation):
         return True
 
     def apply(self, sdfg):
-        graph = sdfg.nodes()[self.state_id]
+        graph = sdfg.node(self.state_id)
         subgraph = self.subgraph_view(sdfg)
         map_entries = helpers.get_outermost_scope_maps(sdfg, graph, subgraph)
 
@@ -429,7 +428,7 @@ class StencilTiling(transformation.SubgraphTransformation):
             # Retrieve map entry and exit nodes.
             map = map_entry.map
 
-            stripmine_subgraph = {StripMining._map_entry: graph.nodes().index(map_entry)}
+            stripmine_subgraph = {StripMining.map_entry: graph.node_id(map_entry)}
 
             sdfg_id = sdfg.sdfg_id
             last_map_entry = None
@@ -497,7 +496,7 @@ class StencilTiling(transformation.SubgraphTransformation):
                 range_tuple = (map.range[dim_idx][0] + self.tile_offset_lower[-1],
                                map.range[dim_idx][1] - self.tile_offset_upper[-1], map.range[dim_idx][2])
                 map.range[dim_idx] = range_tuple
-                stripmine = StripMining(sdfg_id, self.state_id, stripmine_subgraph, 0)
+                stripmine = StripMining(sdfg, sdfg_id, self.state_id, stripmine_subgraph, 0)
 
                 stripmine.tiling_type = dtypes.TilingType.CeilRange
                 stripmine.dim_idx = dim_idx
@@ -506,7 +505,7 @@ class StencilTiling(transformation.SubgraphTransformation):
                 # the inner tiles later
                 stripmine.tile_size = str(tile_stride)
                 stripmine.tile_stride = str(tile_stride)
-                outer_map = stripmine.apply(sdfg)
+                outer_map = stripmine.apply(graph, sdfg)
                 outer_map.schedule = original_schedule
 
                 # if tile stride is 1, we can make a nice simplification by just
@@ -534,11 +533,11 @@ class StencilTiling(transformation.SubgraphTransformation):
                 if last_map_entry:
                     new_map_entry = graph.in_edges(map_entry)[0].src
                     mapcollapse_subgraph = {
-                        MapCollapse._outer_map_entry: graph.node_id(last_map_entry),
-                        MapCollapse._inner_map_entry: graph.node_id(new_map_entry)
+                        MapCollapse.outer_map_entry: graph.node_id(last_map_entry),
+                        MapCollapse.inner_map_entry: graph.node_id(new_map_entry)
                     }
-                    mapcollapse = MapCollapse(sdfg_id, self.state_id, mapcollapse_subgraph, 0)
-                    mapcollapse.apply(sdfg)
+                    mapcollapse = MapCollapse(sdfg, sdfg_id, self.state_id, mapcollapse_subgraph, 0)
+                    mapcollapse.apply(graph, sdfg)
                 last_map_entry = graph.in_edges(map_entry)[0].src
             # add last instance of map entries to _outer_entries
             if last_map_entry:
@@ -554,9 +553,9 @@ class StencilTiling(transformation.SubgraphTransformation):
                                                                                for s in map_entry.range.size()):
                 l = len(map_entry.params)
                 if l > 1:
-                    subgraph = {MapExpansion.map_entry: graph.nodes().index(map_entry)}
-                    trafo_expansion = MapExpansion(sdfg.sdfg_id, sdfg.nodes().index(graph), subgraph, 0)
-                    trafo_expansion.apply(sdfg)
+                    subgraph = {MapExpansion.map_entry: graph.node_id(map_entry)}
+                    trafo_expansion = MapExpansion(sdfg, sdfg.sdfg_id, sdfg.nodes().index(graph), subgraph, 0)
+                    trafo_expansion.apply(graph, sdfg)
                 maps = [map_entry]
                 for _ in range(l - 1):
                     map_entry = graph.out_edges(map_entry)[0].dst
@@ -564,9 +563,9 @@ class StencilTiling(transformation.SubgraphTransformation):
 
                 for map in reversed(maps):
                     # MapToForLoop
-                    subgraph = {MapToForLoop._map_entry: graph.nodes().index(map)}
-                    trafo_for_loop = MapToForLoop(sdfg.sdfg_id, sdfg.nodes().index(graph), subgraph, 0)
-                    trafo_for_loop.apply(sdfg)
+                    subgraph = {MapToForLoop.map_entry: graph.node_id(map)}
+                    trafo_for_loop = MapToForLoop(sdfg, sdfg.sdfg_id, sdfg.nodes().index(graph), subgraph, 0)
+                    trafo_for_loop.apply(graph, sdfg)
                     nsdfg = trafo_for_loop.nsdfg
 
                     # LoopUnroll
@@ -576,12 +575,12 @@ class StencilTiling(transformation.SubgraphTransformation):
                     begin = next(e.dst for e in nsdfg.out_edges(guard) if e.dst != end)
 
                     subgraph = {
-                        DetectLoop._loop_guard: nsdfg.nodes().index(guard),
-                        DetectLoop._loop_begin: nsdfg.nodes().index(begin),
-                        DetectLoop._exit_state: nsdfg.nodes().index(end)
+                        DetectLoop.loop_guard: nsdfg.node_id(guard),
+                        DetectLoop.loop_begin: nsdfg.node_id(begin),
+                        DetectLoop.exit_state: nsdfg.node_id(end)
                     }
-                    transformation = LoopUnroll(0, 0, subgraph, 0)
-                    transformation.apply(nsdfg)
+                    transformation = LoopUnroll(nsdfg, 0, -1, subgraph, 0)
+                    transformation.apply(nsdfg, nsdfg)
 
             elif self.unroll_loops:
                 warnings.warn("StencilTiling::Did not unroll loops. Either all ranges are equal to "

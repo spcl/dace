@@ -38,7 +38,6 @@ def offset_map(state, map_entry):
     map_entry.map.range.offset(offsets, negative=True)
 
 
-@registry.autoregister_params(singlestate=True)
 @make_properties
 class MultiExpansion(transformation.SubgraphTransformation):
     ''' 

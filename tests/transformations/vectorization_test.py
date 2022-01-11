@@ -50,7 +50,7 @@ def test_vectorization_uneven():
     sdfg(A=A, N=20)
     assert np.allclose(A, result)
 
-    sdfg.coarsen_dataflow()
+    sdfg.simplify()
     assert sdfg.apply_transformations(Vectorization, options={'vector_len': 2}) == 1
     assert 'vec<double, 2>' in sdfg.generate_code()[0].code
 
@@ -61,7 +61,7 @@ def test_vectorization_uneven():
 
 def test_vectorization_postamble():
     sdfg: dace.SDFG = tovec_sym.to_sdfg()
-    sdfg.coarsen_dataflow()
+    sdfg.simplify()
     assert sdfg.apply_transformations(Vectorization) == 1
     assert 'vec<float, 4>' in sdfg.generate_code()[0].code
     csdfg = sdfg.compile()

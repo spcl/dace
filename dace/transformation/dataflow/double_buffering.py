@@ -2,10 +2,8 @@
 """Contains classes that implement the double buffering pattern. """
 
 import copy
-import itertools
 
-from dace import data, dtypes, sdfg as sd, subsets, symbolic, registry
-from dace.memlet import Memlet
+from dace import data, sdfg as sd, subsets, symbolic
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation
@@ -13,8 +11,7 @@ from dace.transformation import transformation
 from dace.transformation.dataflow.map_for_loop import MapToForLoop
 
 
-@registry.autoregister_params(singlestate=True)
-class DoubleBuffering(transformation.Transformation):
+class DoubleBuffering(transformation.SingleStateTransformation):
     """ Implements the double buffering pattern, which pipelines reading
         and processing data by creating a second copy of the memory.
         In particular, the transformation takes a 1D map and all internal
@@ -23,25 +20,25 @@ class DoubleBuffering(transformation.Transformation):
         double-buffered manner. Other memlets will not be transformed.
     """
 
-    _map_entry = nodes.MapEntry(nodes.Map('_', [], []))
-    _transient = nodes.AccessNode('_')
+    map_entry = transformation.PatternNode(nodes.MapEntry)
+    transient = transformation.PatternNode(nodes.AccessNode)
 
-    @staticmethod
-    def expressions():
-        return [sdutil.node_path_graph(DoubleBuffering._map_entry, DoubleBuffering._transient)]
+    @classmethod
+    def expressions(cls):
+        return [sdutil.node_path_graph(cls.map_entry, cls.transient)]
 
-    @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
-        map_entry = graph.nodes()[candidate[DoubleBuffering._map_entry]]
-        transient = graph.nodes()[candidate[DoubleBuffering._transient]]
+    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
+        map_entry = self.map_entry
+        transient = self.transient
 
         # Only one dimensional maps are allowed
         if len(map_entry.map.params) != 1:
             return False
 
         # Verify the map can be transformed to a for-loop
-        if not MapToForLoop.can_be_applied(graph, {MapToForLoop._map_entry: candidate[DoubleBuffering._map_entry]},
-                                           expr_index, sdfg, permissive):
+        m2for = MapToForLoop(sdfg, sdfg.sdfg_id, self.state_id,
+                             {MapToForLoop.map_entry: self.subgraph[DoubleBuffering.map_entry]}, expr_index)
+        if not m2for.can_be_applied(graph, expr_index, sdfg, permissive):
             return False
 
         # Verify that all directly-connected internal access nodes point to
@@ -60,13 +57,8 @@ class DoubleBuffering(transformation.Transformation):
 
         return True
 
-    @staticmethod
-    def match_to_str(graph, candidate):
-        return str(graph.node(candidate[DoubleBuffering._map_entry]))
-
-    def apply(self, sdfg: sd.SDFG):
-        graph: sd.SDFGState = sdfg.nodes()[self.state_id]
-        map_entry = graph.node(self.subgraph[DoubleBuffering._map_entry])
+    def apply(self, graph: sd.SDFGState, sdfg: sd.SDFG):
+        map_entry = self.map_entry
 
         map_param = map_entry.map.params[0]  # Assuming one dimensional
 
@@ -116,9 +108,9 @@ class DoubleBuffering(transformation.Transformation):
 
         ##############################
         # Turn map into for loop
-        map_to_for = MapToForLoop(self.sdfg_id, self.state_id,
-                                  {MapToForLoop._map_entry: self.subgraph[DoubleBuffering._map_entry]}, self.expr_index)
-        nsdfg_node, nstate = map_to_for.apply(sdfg)
+        map_to_for = MapToForLoop(sdfg, self.sdfg_id, self.state_id,
+                                  {MapToForLoop.map_entry: graph.node_id(self.map_entry)}, self.expr_index)
+        nsdfg_node, nstate = map_to_for.apply(graph, sdfg)
 
         ##############################
         # Gather node copies and remove memlets

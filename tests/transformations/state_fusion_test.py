@@ -160,7 +160,7 @@ def test_write_write_path():
         tmp = A + 2
         A[:] = tmp + 3
 
-    sdfg = state_fusion_test.to_sdfg(coarsen=False)
+    sdfg = state_fusion_test.to_sdfg(simplify=False)
     sdfg.apply_transformations_repeated(StateFusion)
     assert len(sdfg.nodes()) == 1
 
@@ -176,7 +176,7 @@ def test_write_write_no_overlap():
         A[0:N - 1, :] = 1
         A[N - 1, :] = 2
 
-    sdfg = state_fusion_test.to_sdfg(coarsen=False)
+    sdfg = state_fusion_test.to_sdfg(simplify=False)
     sdfg.apply_transformations_repeated(StateFusion)
     assert len(sdfg.nodes()) == 1
 
@@ -193,7 +193,7 @@ def test_read_write_no_overlap():
         A[:, 5:N] = 1
         B[:, 3:6] = A[:, 0:3]
 
-    sdfg = state_fusion_test.to_sdfg(coarsen=False)
+    sdfg = state_fusion_test.to_sdfg(simplify=False)
     sdfg.apply_transformations_repeated(StateFusion)
     assert len(sdfg.nodes()) == 1
 
@@ -373,8 +373,8 @@ def test_inout_second_state_2():
                 ao >> A[i, j]
                 ao = 2 * ai
 
-    sdfg = func.to_sdfg(coarsen=False)
-    sdfg.coarsen_dataflow()
+    sdfg = func.to_sdfg(simplify=False)
+    sdfg.simplify()
     assert sdfg.number_of_nodes() == 2
 
 

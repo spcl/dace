@@ -13,7 +13,7 @@ def rw_data_race(A: dace.float32[10, 10], B: dace.float32[10, 10]):
 
 
 def test_rw_data_race():
-    sdfg = rw_data_race.to_sdfg(coarsen=True)
+    sdfg = rw_data_race.to_sdfg(simplify=True)
     sdfg.apply_transformations_repeated(MapFusion)
     map_entry_nodes = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry)]
     assert (len(map_entry_nodes) > 1)

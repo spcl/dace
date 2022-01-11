@@ -12,8 +12,7 @@ from dace.transformation import transformation, helpers
 from typing import List, Optional, Tuple
 
 
-@registry.autoregister_params(singlestate=True)
-class MapFission(transformation.Transformation):
+class MapFission(transformation.SingleStateTransformation):
     """ Implements the MapFission transformation.
         Map fission refers to subsuming a map scope into its internal subgraph,
         essentially replicating the map into maps in all of its internal
@@ -33,21 +32,18 @@ class MapFission(transformation.Transformation):
         the case (1) above, and MapFission must be invoked again on the maps
         with the nested SDFGs in question.
     """
-    _map_entry = nodes.EntryNode()
-    _nested_sdfg = nodes.NestedSDFG("", OrderedDiGraph(), {}, {})
+    map_entry = transformation.PatternNode(nodes.EntryNode)
+    nested_sdfg = transformation.PatternNode(nodes.NestedSDFG)
 
     @staticmethod
     def annotates_memlets():
         return False
 
-    @staticmethod
-    def expressions():
+    @classmethod
+    def expressions(cls):
         return [
-            sdutil.node_path_graph(MapFission._map_entry, ),
-            sdutil.node_path_graph(
-                MapFission._map_entry,
-                MapFission._nested_sdfg,
-            )
+            sdutil.node_path_graph(cls.map_entry),
+            sdutil.node_path_graph(cls.map_entry, cls.nested_sdfg),
         ]
 
     @staticmethod
@@ -105,9 +101,8 @@ class MapFission(transformation.Transformation):
             node = scope_dict[node]
         return True
 
-    @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
-        map_node = graph.node(candidate[MapFission._map_entry])
+    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
+        map_node = self.map_entry
         nsdfg_node = None
 
         # If the map is dynamic-ranged, the resulting border arrays would be
@@ -118,7 +113,7 @@ class MapFission(transformation.Transformation):
         if expr_index == 0:  # Map with subgraph
             subgraphs = [graph.scope_subgraph(map_node, include_entry=False, include_exit=False)]
         else:  # Map with nested SDFG
-            nsdfg_node = graph.node(candidate[MapFission._nested_sdfg])
+            nsdfg_node = self.nested_sdfg
             # Make sure there are no other internal nodes in the map
             if len(set(e.dst for e in graph.out_edges(map_node))) > 1:
                 return False
@@ -128,7 +123,7 @@ class MapFission(transformation.Transformation):
         border_arrays = set()
         total_components = []
         for sg in subgraphs:
-            components = MapFission._components(sg)
+            components = self._components(sg)
             snodes = sg.nodes()
             # Test that the subgraphs have more than one computational component
             if expr_index == 0 and len(snodes) > 0 and len(components) <= 1:
@@ -136,8 +131,8 @@ class MapFission(transformation.Transformation):
 
             # Test that the components are connected by transients that are not
             # used anywhere else
-            border_arrays |= MapFission._border_arrays(nsdfg_node.sdfg if expr_index == 1 else sdfg,
-                                                       sg if expr_index == 1 else graph, sg)
+            border_arrays |= self._border_arrays(nsdfg_node.sdfg if expr_index == 1 else sdfg,
+                                                 sg if expr_index == 1 else graph, sg)
             total_components.append(components)
 
             # In nested SDFGs and subgraphs, ensure none of the border
@@ -169,20 +164,14 @@ class MapFission(transformation.Transformation):
         # Fail if there are arrays inside the map that are not a direct
         # output of a computational component
         # TODO(later): Support this case? Ambiguous array sizes and memlets
-        external_arrays = (border_arrays - MapFission._internal_border_arrays(total_components, subgraphs))
+        external_arrays = (border_arrays - self._internal_border_arrays(total_components, subgraphs))
         if len(external_arrays) > 0:
             return False
 
         return True
 
-    @staticmethod
-    def match_to_str(graph, candidate):
-        map_entry = graph.node(candidate[MapFission._map_entry])
-        return map_entry.map.label
-
-    def apply(self, sdfg: sd.SDFG):
-        graph: sd.SDFGState = sdfg.nodes()[self.state_id]
-        map_entry = graph.node(self.subgraph[MapFission._map_entry])
+    def apply(self, graph: sd.SDFGState, sdfg: sd.SDFG):
+        map_entry = self.map_entry
         map_exit = graph.exit_node(map_entry)
         nsdfg_node: Optional[nodes.NestedSDFG] = None
 
@@ -191,7 +180,7 @@ class MapFission(transformation.Transformation):
             subgraphs = [(graph, graph.scope_subgraph(map_entry, include_entry=False, include_exit=False))]
             parent = sdfg
         else:  # Map with nested SDFG
-            nsdfg_node = graph.node(self.subgraph[MapFission._nested_sdfg])
+            nsdfg_node = self.nested_sdfg
             subgraphs = [(state, state) for state in nsdfg_node.sdfg.nodes()]
             parent = nsdfg_node.sdfg
         modified_arrays = set()

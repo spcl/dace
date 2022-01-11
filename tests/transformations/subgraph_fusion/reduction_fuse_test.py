@@ -38,7 +38,7 @@ settings = [[False, False], [True, False], [False, True]]
 @pytest.mark.parametrize(["in_transient", "out_transient"], settings)
 def test_p3(in_transient, out_transient):
     sdfg = reduction_test_3.to_sdfg()
-    sdfg.coarsen_dataflow()
+    sdfg.simplify()
     state = sdfg.nodes()[0]
     A = np.random.rand(M.get(), N.get()).astype(np.float64)
     B = np.random.rand(M.get(), N.get()).astype(np.float64)

@@ -38,11 +38,11 @@ def test():
 
     sdfg(A=input, B=output)
     diff1 = np.linalg.norm(output - input * 5)
-    print("Difference (without dataflow coarsening):", diff1)
+    print("Difference (without simplification):", diff1)
 
     output = np.zeros(shape=(2, 3, 4), dtype=np.float32)
 
-    sdfg.coarsen_dataflow()
+    sdfg.simplify()
     sdfg(A=input, B=output)
     diff2 = np.linalg.norm(output - input * 5)
     print("Difference:", diff2)

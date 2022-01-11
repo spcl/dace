@@ -10,9 +10,8 @@ from collections import defaultdict
 from typing import Dict
 
 
-@registry.autoregister
 @make_properties
-class GPUTransformSDFG(transformation.Transformation):
+class GPUTransformSDFG(transformation.MultiStateTransformation):
     """ Implements the GPUTransformSDFG transformation.
 
         Transforms a whole SDFG to run on the GPU:
@@ -25,7 +24,7 @@ class GPUTransformSDFG(transformation.Transformation):
           5. Global tasklets are wrapped with a map of size 1
           6. Global Maps are re-scheduled to use the GPU
           7. Make data ready for interstate edges that use them
-          8. Re-apply dataflow coarsening to get rid of extra states and
+          8. Re-apply simplification to get rid of extra states and
              transients
     """
 
@@ -40,7 +39,7 @@ class GPUTransformSDFG(transformation.Transformation):
                                     dtype=bool,
                                     default=True)
 
-    coarsen = Property(desc='Reapply dataflow coarsening after modifying graph', dtype=bool, default=True)
+    simplify = Property(desc='Reapply simplification after modifying graph', dtype=bool, default=True)
 
     exclude_copyin = Property(desc="Exclude these arrays from being copied into the device "
                               "(comma-separated)",
@@ -62,13 +61,12 @@ class GPUTransformSDFG(transformation.Transformation):
         # Skip memlet propagation for now
         return True
 
-    @staticmethod
-    def expressions():
+    @classmethod
+    def expressions(cls):
         # Matches anything
         return [sd.SDFG('_')]
 
-    @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
+    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
         for node, _ in sdfg.all_nodes_recursive():
             # Consume scopes are currently unsupported
             if isinstance(node, (nodes.ConsumeEntry, nodes.ConsumeExit)):
@@ -84,11 +82,7 @@ class GPUTransformSDFG(transformation.Transformation):
                     return False
         return True
 
-    @staticmethod
-    def match_to_str(graph, candidate):
-        return graph.label
-
-    def apply(self, sdfg: sd.SDFG):
+    def apply(self, _, sdfg: sd.SDFG):
 
         #######################################################
         # Step 0: SDFG metadata
@@ -318,8 +312,8 @@ class GPUTransformSDFG(transformation.Transformation):
                                        memlet.Memlet.from_array(dst_array.data, dst_array.desc(sdfg)))
 
         #######################################################
-        # Step 8: Dataflow coarsening
-        if not self.coarsen:
+        # Step 8: Simplify
+        if not self.simplify:
             return
 
-        sdfg.coarsen_dataflow()
+        sdfg.simplify()

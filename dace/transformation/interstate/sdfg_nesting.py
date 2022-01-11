@@ -24,9 +24,8 @@ from dace.properties import make_properties, Property
 from dace import data
 
 
-@registry.autoregister_params(singlestate=True, coarsening=True)
 @make_properties
-class InlineSDFG(transformation.Transformation):
+class InlineSDFG(transformation.SingleStateTransformation, transformation.SimplifyPass):
     """ Inlines a single-state nested SDFG into a top-level SDFG.
 
         In particular, the steps taken are:
@@ -46,15 +45,15 @@ class InlineSDFG(transformation.Transformation):
 
     """
 
-    _nested_sdfg = nodes.NestedSDFG('_', sd.SDFG('_'), {}, {})
+    nested_sdfg = transformation.PatternNode(nodes.NestedSDFG)
 
     @staticmethod
     def annotates_memlets():
         return True
 
-    @staticmethod
-    def expressions():
-        return [sdutil.node_path_graph(InlineSDFG._nested_sdfg)]
+    @classmethod
+    def expressions(cls):
+        return [sdutil.node_path_graph(cls.nested_sdfg)]
 
     @staticmethod
     def _check_strides(inner_strides: List[symbolic.SymbolicType], outer_strides: List[symbolic.SymbolicType],
@@ -93,9 +92,8 @@ class InlineSDFG(transformation.Transformation):
 
         return all(istr == ostr for istr, ostr in zip(istrides, ostrides))
 
-    @staticmethod
-    def can_be_applied(graph: SDFGState, candidate, expr_index, sdfg, permissive=False):
-        nested_sdfg = graph.nodes()[candidate[InlineSDFG._nested_sdfg]]
+    def can_be_applied(self, graph: SDFGState, expr_index, sdfg, permissive=False):
+        nested_sdfg = self.nested_sdfg
         if nested_sdfg.no_inline:
             return False
         if len(nested_sdfg.sdfg.nodes()) != 1:
@@ -173,10 +171,6 @@ class InlineSDFG(transformation.Transformation):
 
         return True
 
-    @staticmethod
-    def match_to_str(graph, candidate):
-        return graph.label
-
     def _remove_edge_path(self,
                           state: SDFGState,
                           edge_map: Dict[str, MultiConnectorEdge],
@@ -230,9 +224,8 @@ class InlineSDFG(transformation.Transformation):
 
         return result
 
-    def apply(self, sdfg: SDFG):
-        state: SDFGState = sdfg.nodes()[self.state_id]
-        nsdfg_node = state.nodes()[self.subgraph[InlineSDFG._nested_sdfg]]
+    def apply(self, state: SDFGState, sdfg: SDFG):
+        nsdfg_node = self.nested_sdfg
         nsdfg: SDFG = nsdfg_node.sdfg
         nstate: SDFGState = nsdfg.nodes()[0]
 
@@ -719,9 +712,8 @@ class InlineSDFG(transformation.Transformation):
                 state.add_edge(node, None, edge.dst, edge.dst_conn, edge.data)
 
 
-@registry.autoregister_params(singlestate=True)
 @make_properties
-class InlineTransients(transformation.Transformation):
+class InlineTransients(transformation.SingleStateTransformation):
     """
     Inlines all transient arrays that are not used anywhere else into a
     nested SDFG.
@@ -733,9 +725,9 @@ class InlineTransients(transformation.Transformation):
     def annotates_memlets():
         return True
 
-    @staticmethod
-    def expressions():
-        return [sdutil.node_path_graph(InlineTransients.nsdfg)]
+    @classmethod
+    def expressions(cls):
+        return [sdutil.node_path_graph(cls.nsdfg)]
 
     @staticmethod
     def _candidates(sdfg: SDFG, graph: SDFGState, nsdfg: nodes.NestedSDFG) -> Dict[str, str]:
@@ -792,13 +784,8 @@ class InlineTransients(transformation.Transformation):
 
         return candidates
 
-    @staticmethod
-    def can_be_applied(graph: SDFGState,
-                       candidate: Dict[transformation.PatternNode, int],
-                       expr_index: int,
-                       sdfg: SDFG,
-                       permissive: bool = False):
-        nsdfg = graph.node(candidate[InlineTransients.nsdfg])
+    def can_be_applied(self, graph: SDFGState, expr_index: int, sdfg: SDFG, permissive: bool = False):
+        nsdfg = self.nsdfg
 
         # Not every schedule is supported
         if not permissive:
@@ -809,13 +796,8 @@ class InlineTransients(transformation.Transformation):
         candidates = InlineTransients._candidates(sdfg, graph, nsdfg)
         return len(candidates) > 0
 
-    @staticmethod
-    def match_to_str(graph, candidate):
-        return graph.label
-
-    def apply(self, sdfg):
-        state: SDFGState = sdfg.nodes()[self.state_id]
-        nsdfg_node: nodes.NestedSDFG = self.nsdfg(sdfg)
+    def apply(self, state: SDFGState, sdfg: SDFG):
+        nsdfg_node: nodes.NestedSDFG = self.nsdfg
         nsdfg: SDFG = nsdfg_node.sdfg
         toremove = InlineTransients._candidates(sdfg, state, nsdfg_node)
 
@@ -870,9 +852,8 @@ class ASTRefiner(ast.NodeTransformer):
         return self.generic_visit(node)
 
 
-@registry.autoregister_params(singlestate=True)
 @make_properties
-class RefineNestedAccess(transformation.Transformation):
+class RefineNestedAccess(transformation.SingleStateTransformation):
     """
     Reduces memlet shape when a memlet is connected to a nested SDFG, but not
     using all of the contents. Makes the outer memlet smaller in shape and
@@ -902,9 +883,9 @@ class RefineNestedAccess(transformation.Transformation):
     def annotates_memlets():
         return True
 
-    @staticmethod
-    def expressions():
-        return [sdutil.node_path_graph(RefineNestedAccess.nsdfg)]
+    @classmethod
+    def expressions(cls):
+        return [sdutil.node_path_graph(cls.nsdfg)]
 
     @staticmethod
     def _candidates(
@@ -1011,23 +992,13 @@ class RefineNestedAccess(transformation.Transformation):
                  if k not in ignore}, {k: (dc(v), ind)
                                        for k, (v, _, ind) in out_candidates.items() if k not in ignore})
 
-    @staticmethod
-    def can_be_applied(graph: SDFGState,
-                       candidate: Dict[transformation.PatternNode, int],
-                       expr_index: int,
-                       sdfg: SDFG,
-                       permissive: bool = False):
-        nsdfg = graph.node(candidate[RefineNestedAccess.nsdfg])
+    def can_be_applied(self, graph: SDFGState, expr_index: int, sdfg: SDFG, permissive: bool = False):
+        nsdfg = self.nsdfg
         ic, oc = RefineNestedAccess._candidates(graph, nsdfg)
         return (len(ic) + len(oc)) > 0
 
-    @staticmethod
-    def match_to_str(graph, candidate):
-        return graph.label
-
-    def apply(self, sdfg):
-        state: SDFGState = sdfg.nodes()[self.state_id]
-        nsdfg_node: nodes.NestedSDFG = self.nsdfg(sdfg)
+    def apply(self, state: SDFGState, sdfg: SDFG):
+        nsdfg_node: nodes.NestedSDFG = self.nsdfg
         nsdfg: SDFG = nsdfg_node.sdfg
         torefine_in, torefine_out = RefineNestedAccess._candidates(state, nsdfg_node)
 
@@ -1073,9 +1044,8 @@ class RefineNestedAccess(transformation.Transformation):
         propagation.propagate_memlets_state(sdfg, state)
 
 
-@registry.autoregister
 @make_properties
-class NestSDFG(transformation.Transformation):
+class NestSDFG(transformation.MultiStateTransformation):
     """ Implements SDFG Nesting, taking an SDFG as an input and creating a
         nested SDFG node from it. """
 
@@ -1085,21 +1055,15 @@ class NestSDFG(transformation.Transformation):
     def annotates_memlets():
         return True
 
-    @staticmethod
-    def expressions():
+    @classmethod
+    def expressions(cls):
         # Matches anything
         return [nx.DiGraph()]
 
-    @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
+    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
         return True
 
-    @staticmethod
-    def match_to_str(graph, candidate):
-        return graph.label
-
-    def apply(self, sdfg):
-
+    def apply(self, _, sdfg: SDFG):
         outer_sdfg = sdfg
         nested_sdfg = dc(sdfg)
 

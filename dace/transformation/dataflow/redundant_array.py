@@ -3,11 +3,10 @@
 """
 
 import copy
-import functools
 import networkx as nx
 import typing
 
-from dace import data, registry, subsets, symbolic, dtypes, memlet as mm
+from dace import data, subsets, symbolic, dtypes, memlet as mm
 from dace.sdfg import nodes, SDFGState, SDFG
 from dace.sdfg import utils as sdutil
 from dace.sdfg import graph
@@ -162,8 +161,7 @@ def compose_and_push_back(first, second, dims=None, popped=None):
 ##############################################################################
 
 
-@registry.autoregister_params(singlestate=True, coarsening=True)
-class RedundantArray(pm.Transformation):
+class RedundantArray(pm.SingleStateTransformation, pm.SimplifyPass):
     """ Implements the redundant array removal transformation, applied
         when a transient array is copied to and from (to another array),
         but never used anywhere else. """
@@ -171,14 +169,13 @@ class RedundantArray(pm.Transformation):
     in_array = pm.PatternNode(nodes.AccessNode)
     out_array = pm.PatternNode(nodes.AccessNode)
 
-    @staticmethod
-    def expressions():
-        return [sdutil.node_path_graph(RedundantArray.in_array, RedundantArray.out_array)]
+    @classmethod
+    def expressions(cls):
+        return [sdutil.node_path_graph(cls.in_array, cls.out_array)]
 
-    @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
-        in_array = graph.nodes()[candidate[RedundantArray.in_array]]
-        out_array = graph.nodes()[candidate[RedundantArray.out_array]]
+    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
+        in_array = self.in_array
+        out_array = self.out_array
 
         in_desc = in_array.desc(sdfg)
         out_desc = out_array.desc(sdfg)
@@ -384,12 +381,6 @@ class RedundantArray(pm.Transformation):
 
         return True
 
-    @staticmethod
-    def match_to_str(graph, candidate):
-        in_array = graph.nodes()[candidate[RedundantArray.in_array]]
-
-        return "Remove " + str(in_array)
-
     def _make_view(self, sdfg: SDFG, graph: SDFGState, in_array: nodes.AccessNode, out_array: nodes.AccessNode,
                    e1: graph.MultiConnectorEdge[mm.Memlet], b_subset: subsets.Subset, b_dims_to_pop: typing.List[int]):
         in_desc = sdfg.arrays[in_array.data]
@@ -423,10 +414,9 @@ class RedundantArray(pm.Transformation):
                                                out_desc.may_alias, dtypes.AllocationLifetime.Scope, in_desc.alignment,
                                                in_desc.debuginfo, in_desc.total_size)
 
-    def apply(self, sdfg):
-        graph = sdfg.nodes()[self.state_id]
-        in_array = self.in_array(sdfg)
-        out_array = self.out_array(sdfg)
+    def apply(self, graph, sdfg):
+        in_array = self.in_array
+        out_array = self.out_array
         in_desc = sdfg.arrays[in_array.data]
         out_desc = sdfg.arrays[out_array.data]
 
@@ -570,25 +560,22 @@ class RedundantArray(pm.Transformation):
             pass
 
 
-@registry.autoregister_params(singlestate=True, coarsening=True)
-class RedundantSecondArray(pm.Transformation):
+class RedundantSecondArray(pm.SingleStateTransformation, pm.SimplifyPass):
     """ Implements the redundant array removal transformation, applied
         when a transient array is copied from and to (from another array),
         but never used anywhere else. This transformation removes the second
         array. """
 
-    _arrays_removed = 0
-    _in_array = nodes.AccessNode("_")
-    _out_array = nodes.AccessNode("_")
+    in_array = pm.PatternNode(nodes.AccessNode)
+    out_array = pm.PatternNode(nodes.AccessNode)
 
-    @staticmethod
-    def expressions():
-        return [sdutil.node_path_graph(RedundantSecondArray._in_array, RedundantSecondArray._out_array)]
+    @classmethod
+    def expressions(cls):
+        return [sdutil.node_path_graph(cls.in_array, cls.out_array)]
 
-    @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
-        in_array = graph.nodes()[candidate[RedundantSecondArray._in_array]]
-        out_array = graph.nodes()[candidate[RedundantSecondArray._out_array]]
+    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
+        in_array = self.in_array
+        out_array = self.out_array
 
         in_desc = in_array.desc(sdfg)
         out_desc = out_array.desc(sdfg)
@@ -792,19 +779,9 @@ class RedundantSecondArray(pm.Transformation):
 
         return True
 
-    @staticmethod
-    def match_to_str(graph, candidate):
-        out_array = graph.nodes()[candidate[RedundantSecondArray._out_array]]
-
-        return "Remove " + str(out_array)
-
-    def apply(self, sdfg):
-        def gnode(nname):
-            return graph.nodes()[self.subgraph[nname]]
-
-        graph: SDFGState = sdfg.nodes()[self.state_id]
-        in_array = gnode(RedundantSecondArray._in_array)
-        out_array = gnode(RedundantSecondArray._out_array)
+    def apply(self, graph: SDFGState, sdfg: SDFG):
+        in_array = self.in_array
+        out_array = self.out_array
         in_desc = sdfg.arrays[in_array.data]
         out_desc = sdfg.arrays[out_array.data]
 
@@ -913,18 +890,17 @@ class RedundantSecondArray(pm.Transformation):
             graph.remove_node(in_array)
 
 
-@registry.autoregister_params(singlestate=True, coarsening=True)
-class SqueezeViewRemove(pm.Transformation):
+class SqueezeViewRemove(pm.SingleStateTransformation, pm.SimplifyPass):
     in_array = pm.PatternNode(nodes.AccessNode)
     out_array = pm.PatternNode(nodes.AccessNode)
 
-    @staticmethod
-    def expressions():
-        return [sdutil.node_path_graph(SqueezeViewRemove.in_array, SqueezeViewRemove.out_array)]
+    @classmethod
+    def expressions(cls):
+        return [sdutil.node_path_graph(cls.in_array, cls.out_array)]
 
-    def can_be_applied(self, state: SDFGState, candidate, expr_index: int, sdfg: SDFG, permissive: bool = False):
-        in_array = self.in_array(sdfg)
-        out_array = self.out_array(sdfg)
+    def can_be_applied(self, state: SDFGState, expr_index: int, sdfg: SDFG, permissive: bool = False):
+        in_array = self.in_array
+        out_array = self.out_array
 
         in_desc = in_array.desc(sdfg)
         out_desc = out_array.desc(sdfg)
@@ -963,10 +939,9 @@ class SqueezeViewRemove(pm.Transformation):
 
         return True
 
-    def apply(self, sdfg: SDFG):
-        state: SDFGState = sdfg.node(self.state_id)
-        in_array = self.in_array(sdfg)
-        out_array = self.out_array(sdfg)
+    def apply(self, state: SDFGState, sdfg: SDFG):
+        in_array = self.in_array
+        out_array = self.out_array
         out_desc = out_array.desc(sdfg)
 
         vedge = state.out_edges(out_array)[0]
@@ -994,18 +969,17 @@ class SqueezeViewRemove(pm.Transformation):
             pass
 
 
-@registry.autoregister_params(singlestate=True, coarsening=True)
-class UnsqueezeViewRemove(pm.Transformation):
+class UnsqueezeViewRemove(pm.SingleStateTransformation, pm.SimplifyPass):
     in_array = pm.PatternNode(nodes.AccessNode)
     out_array = pm.PatternNode(nodes.AccessNode)
 
-    @staticmethod
-    def expressions():
-        return [sdutil.node_path_graph(UnsqueezeViewRemove.in_array, UnsqueezeViewRemove.out_array)]
+    @classmethod
+    def expressions(cls):
+        return [sdutil.node_path_graph(cls.in_array, cls.out_array)]
 
-    def can_be_applied(self, state: SDFGState, candidate, expr_index: int, sdfg: SDFG, permissive: bool = False):
-        in_array = self.in_array(sdfg)
-        out_array = self.out_array(sdfg)
+    def can_be_applied(self, state: SDFGState, expr_index: int, sdfg: SDFG, permissive: bool = False):
+        in_array = self.in_array
+        out_array = self.out_array
 
         in_desc = in_array.desc(sdfg)
         out_desc = out_array.desc(sdfg)
@@ -1044,14 +1018,11 @@ class UnsqueezeViewRemove(pm.Transformation):
 
         return True
 
-    def apply(self, sdfg: SDFG):
-        state: SDFGState = sdfg.node(self.state_id)
-        in_array = self.in_array(sdfg)
-        out_array = self.out_array(sdfg)
-        out_desc = out_array.desc(sdfg)
+    def apply(self, state: SDFGState, sdfg: SDFG):
+        in_array = self.in_array
+        out_array = self.out_array
 
         vedge = state.in_edges(in_array)[0]
-        view_subset = copy.deepcopy(vedge.data.subset)
 
         aedge = state.edges_between(in_array, out_array)[0]
         array_subset = copy.deepcopy(aedge.data.subset)
@@ -1112,22 +1083,20 @@ def _sliced_dims(adesc: data.Array, vdesc: data.View) -> typing.List[int]:
     return [adesc.strides.index(s) for s in vdesc.strides]
 
 
-@registry.autoregister_params(singlestate=True, coarsening=True)
-class RedundantReadSlice(pm.Transformation):
+class RedundantReadSlice(pm.SingleStateTransformation, pm.SimplifyPass):
     """ Detects patterns of the form Array -> View(Array) and removes
     the View if it is a slice. """
 
     in_array = pm.PatternNode(nodes.AccessNode)
     out_array = pm.PatternNode(nodes.AccessNode)
 
-    @staticmethod
-    def expressions():
-        return [sdutil.node_path_graph(RedundantReadSlice.in_array, RedundantReadSlice.out_array)]
+    @classmethod
+    def expressions(cls):
+        return [sdutil.node_path_graph(cls.in_array, cls.out_array)]
 
-    @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
-        in_array = graph.nodes()[candidate[RedundantReadSlice.in_array]]
-        out_array = graph.nodes()[candidate[RedundantReadSlice.out_array]]
+    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
+        in_array = self.in_array
+        out_array = self.out_array
 
         in_desc = in_array.desc(sdfg)
         out_desc = out_array.desc(sdfg)
@@ -1180,19 +1149,9 @@ class RedundantReadSlice(pm.Transformation):
 
         return True
 
-    @staticmethod
-    def match_to_str(graph, candidate):
-        out_array = graph.nodes()[candidate[RedundantReadSlice.out_array]]
-
-        return "Remove " + str(out_array)
-
-    def apply(self, sdfg):
-        def gnode(nname):
-            return graph.nodes()[self.subgraph[nname]]
-
-        graph = sdfg.nodes()[self.state_id]
-        in_array = gnode(RedundantReadSlice.in_array)
-        out_array = gnode(RedundantReadSlice.out_array)
+    def apply(self, graph, sdfg):
+        in_array = self.in_array
+        out_array = self.out_array
         in_desc = sdfg.arrays[in_array.data]
         out_desc = sdfg.arrays[out_array.data]
 
@@ -1256,22 +1215,20 @@ class RedundantReadSlice(pm.Transformation):
                 pass
 
 
-@registry.autoregister_params(singlestate=True, coarsening=True)
-class RedundantWriteSlice(pm.Transformation):
+class RedundantWriteSlice(pm.SingleStateTransformation, pm.SimplifyPass):
     """ Detects patterns of the form View(Array) -> Array and removes
     the View if it is a slice. """
 
     in_array = pm.PatternNode(nodes.AccessNode)
     out_array = pm.PatternNode(nodes.AccessNode)
 
-    @staticmethod
-    def expressions():
-        return [sdutil.node_path_graph(RedundantWriteSlice.in_array, RedundantWriteSlice.out_array)]
+    @classmethod
+    def expressions(cls):
+        return [sdutil.node_path_graph(cls.in_array, cls.out_array)]
 
-    @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
-        in_array = graph.nodes()[candidate[RedundantWriteSlice.in_array]]
-        out_array = graph.nodes()[candidate[RedundantWriteSlice.out_array]]
+    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
+        in_array = self.in_array
+        out_array = self.out_array
 
         in_desc = in_array.desc(sdfg)
         out_desc = out_array.desc(sdfg)
@@ -1330,19 +1287,9 @@ class RedundantWriteSlice(pm.Transformation):
 
         return True
 
-    @staticmethod
-    def match_to_str(graph, candidate):
-        in_array = graph.nodes()[candidate[RedundantWriteSlice.in_array]]
-
-        return "Remove " + str(in_array)
-
-    def apply(self, sdfg):
-        def gnode(nname):
-            return graph.nodes()[self.subgraph[nname]]
-
-        graph = sdfg.nodes()[self.state_id]
-        in_array = gnode(RedundantWriteSlice.in_array)
-        out_array = gnode(RedundantWriteSlice.out_array)
+    def apply(self, graph, sdfg):
+        in_array = self.in_array
+        out_array = self.out_array
         in_desc = sdfg.arrays[in_array.data]
         out_desc = sdfg.arrays[out_array.data]
 

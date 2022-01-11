@@ -142,7 +142,7 @@ def test_needs_copy():
             for j in range(1, 4):
                 nested(q, i, j)
 
-    sdfg = selfcopy.to_sdfg(coarsen=False)
+    sdfg = selfcopy.to_sdfg(simplify=False)
     found_copy = False
     for s in sdfg.all_sdfgs_recursive():
         found_copy |= any(

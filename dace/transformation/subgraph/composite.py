@@ -20,7 +20,6 @@ import copy
 import warnings
 
 
-@registry.autoregister_params(singlestate=True)
 @make_properties
 class CompositeFusion(transformation.SubgraphTransformation):
     """ MultiExpansion + SubgraphFusion in one Transformation
@@ -121,7 +120,7 @@ class CompositeFusion(transformation.SubgraphTransformation):
                 st.debug = self.debug
                 st.unroll_loops = self.stencil_unroll_loops
                 st.strides = self.stencil_strides
-                st.apply(sdfg)
+                st.apply(graph, sdfg)
                 # StencilTiling: update nodes
                 new_entries = st._outer_entries
                 subgraph = helpers.subgraph_from_maps(sdfg, graph, new_entries)
