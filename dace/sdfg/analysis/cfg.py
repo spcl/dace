@@ -86,6 +86,7 @@ def state_parent_tree(sdfg: SDFG) -> Dict[SDFGState, SDFGState]:
     # First, annotate loops
     for be in back_edges(sdfg, idom, alldoms):
         guard = be.dst
+        laststate = be.src
         if loopexits[guard] is not None:
             continue
 
@@ -108,14 +109,49 @@ def state_parent_tree(sdfg: SDFG) -> Dict[SDFGState, SDFGState]:
         # If not, we're looking at a guard for a nested cycle, which we ignore for
         # this cycle.
         oa, ob = out_edges[0].dst, out_edges[1].dst
-        loop_states_cand_a = sdutil.nodes_in_all_simple_paths(
-            sdfg.nx, oa, guard, lambda n: n is not ob and (n is guard or oa in alldoms[n]))
-        loop_states_cand_b = sdutil.nodes_in_all_simple_paths(
-            sdfg.nx, ob, guard, lambda n: n is not oa and (n is guard or ob in alldoms[n]))
+
+        reachable_a = False
+        a_reached_guard = False
+        def cond_a(parent, child):
+            nonlocal reachable_a
+            nonlocal a_reached_guard
+            if reachable_a:  # If last state has been reached, stop traversal
+                return False
+            if parent is laststate or child is laststate:  # Reached back edge
+                reachable_a = True
+                a_reached_guard = True
+                return False
+            if oa not in alldoms[child]:  # Traversed outside of the loop
+                return False
+            if child is guard: # Traversed back to guard
+                a_reached_guard = True
+                return False
+            return True  # Keep traversing
+
+        reachable_b = False
+        b_reached_guard = False
+        def cond_b(parent, child):
+            nonlocal reachable_b
+            nonlocal b_reached_guard
+            if reachable_b:  # If last state has been reached, stop traversal
+                return False
+            if parent is laststate or child is laststate:  # Reached back edge
+                reachable_b = True
+                b_reached_guard = True
+                return False
+            if ob not in alldoms[child]:  # Traversed outside of the loop
+                return False
+            if child is guard:  # Traversed back to guard
+                b_reached_guard = True
+                return False
+            return True  # Keep traversing
+
+        list(sdutil.dfs_conditional(sdfg, (oa,), cond_a))
+        list(sdutil.dfs_conditional(sdfg, (ob,), cond_b))
 
         # Check which candidate states led back to guard
-        is_a_begin = guard in loop_states_cand_a
-        is_b_begin = guard in loop_states_cand_b
+        is_a_begin = a_reached_guard and reachable_a
+        is_b_begin = b_reached_guard and reachable_b
 
         loop_state = None
         exit_state = None

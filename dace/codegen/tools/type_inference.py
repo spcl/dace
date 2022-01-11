@@ -429,7 +429,7 @@ def _Call(t, symbols, inferred_symbols):
     if name == 'read_channel_intel':
         return arg_types[0]
 
-    if name == 'abs':
+    if name in ('abs', 'log'):
         return arg_types[0]
 
     # dtypes (dace.int32, np.float64) can be used as functions
