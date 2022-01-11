@@ -227,7 +227,7 @@ class RTLCodeGen(target.TargetCodeGenerator):
         inputs = []
         outputs = []
         for scalar, (is_output, total_size) in scalars.items():
-            inputs += [f', {"output" if is_output else "input"} [{total_size-1}:0] {scalar}']
+            inputs += [f', {"output" if is_output else "input"} [{(total_size*8)-1}:0] {scalar}']
 
         for bus, (_, is_output, total_size, vec_len, volume) in buses.items():
             if is_output:
