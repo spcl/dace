@@ -1153,31 +1153,6 @@ TYPECLASS_TO_STRING = {
     complex128: "dace::complex128"
 }
 
-# If torch is importable, define translations between typeclasses and torch types. These are reused by daceml.
-try:
-    import torch
-
-    # conversion happens here in pytorch:
-    # https://github.com/pytorch/pytorch/blob/143ef016ee1b6a39cf69140230d7c371de421186/torch/csrc/utils/tensor_numpy.cpp#L237
-    TYPECLASS_TO_TORCH_DTYPE = {
-        bool_: torch.bool,
-        int8: torch.int8,
-        int16: torch.int16,
-        int32: torch.int32,
-        int64: torch.int64,
-        uint8: torch.uint8,
-        float16: torch.float16,
-        float32: torch.float32,
-        float64: torch.float64,
-        complex64: torch.complex64,
-        complex128: torch.complex128,
-    }
-
-    TORCH_DTYPE_TO_TYPECLASS = {v: k for k, v in TYPECLASS_TO_TORCH_DTYPE.items()}
-
-except ImportError:
-    pass
-
 TYPECLASS_STRINGS = [
     "int", "float", "complex", "bool", "bool_", "int8", "int16", "int32", "int64", "uint8", "uint16", "uint32",
     "uint64", "float16", "float32", "float64", "complex64", "complex128"
