@@ -8,3 +8,8 @@
 #ifdef DACE_INTELFPGA
 #include "intel_fpga/device.h"
 #endif
+
+namespace dace {  namespace fpga {
+  class Context;
+}  // namespace fpga
+}  // namespace dace
