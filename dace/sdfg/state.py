@@ -172,7 +172,7 @@ class StateGraphView(object):
                 assert curedge.dst_conn.startswith('IN_')
                 cname = curedge.dst_conn[3:]
                 curedge = next(e for e in state.out_edges(curedge.dst) if e.src_conn == 'OUT_%s' % cname)
-        tree_root = mm.MemletTree(curedge)
+        tree_root = mm.MemletTree(curedge, downwards=propagate_forward)
 
         # Collect children (recursively)
         def add_children(treenode):
@@ -182,7 +182,7 @@ class StateGraphView(object):
                     return
                 conn = treenode.edge.dst_conn[3:]
                 treenode.children = [
-                    mm.MemletTree(e, parent=treenode) for e in state.out_edges(treenode.edge.dst)
+                    mm.MemletTree(e, downwards=True, parent=treenode) for e in state.out_edges(treenode.edge.dst)
                     if e.src_conn == 'OUT_%s' % conn
                 ]
             elif propagate_backward:
@@ -190,7 +190,7 @@ class StateGraphView(object):
                     return
                 conn = treenode.edge.src_conn[4:]
                 treenode.children = [
-                    mm.MemletTree(e, parent=treenode) for e in state.in_edges(treenode.edge.src)
+                    mm.MemletTree(e, downwards=False, parent=treenode) for e in state.in_edges(treenode.edge.src)
                     if e.dst_conn == 'IN_%s' % conn
                 ]
 

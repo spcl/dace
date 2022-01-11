@@ -43,6 +43,7 @@ class DaCeCodeGenerator(object):
         self._exitcode = CodeIOStream()
         self.statestruct: List[str] = []
         self.environments: List[Any] = []
+        self.targets: Set[TargetCodeGenerator] = set()
         self.to_allocate: DefaultDict[Union[SDFG, SDFGState, nodes.EntryNode],
                                       List[Tuple[int, int, nodes.AccessNode]]] = collections.defaultdict(list)
         self.fsyms: Dict[int, Set[str]] = {}
@@ -76,6 +77,14 @@ class DaCeCodeGenerator(object):
 
     ##################################################################
     # Code generation
+
+    def preprocess(self, sdfg: SDFG) -> None:
+        """
+        Called before code generation. Used for making modifications on the SDFG prior to code generation.
+        :note: Post-conditions assume that the SDFG will NOT be changed after this point.
+        :param sdfg: The SDFG to modify in-place.
+        """
+        pass
 
     def generate_constants(self, sdfg: SDFG, callsite_stream: CodeIOStream):
         # Write constants
@@ -743,11 +752,6 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
         # Now that we have all the information about dependencies, generate
         # header and footer
         if is_top_level:
-            # Let each target append code to frame code state before generating
-            # header and footer
-            for target in self._dispatcher.used_targets:
-                target.on_target_used()
-
             header_stream = CodeIOStream()
             header_global_stream = CodeIOStream()
             footer_stream = CodeIOStream()
