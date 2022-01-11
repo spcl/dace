@@ -502,7 +502,10 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                 for bank, _ in fpga.iterate_multibank_interface_ids(p, interface_ids):
                     kernel_args.append(p.as_arg(False, name=fpga.fpga_ptr(name, p, sdfg, bank)))
             elif isinstance(p, dt.Stream) and name in self._defined_external_streams:
-                kernel_args.append(f" hlslib::ocl::SimulationOnly({p.as_arg(False, name=name)})")
+                if p.is_stream_array():
+                    kernel_args.append(f" hlslib::ocl::SimulationOnly(&{p.as_arg(False, name=name)}[0])")
+                else:
+                    kernel_args.append(f" hlslib::ocl::SimulationOnly({p.as_arg(False, name=name)})")
             else:
                 kernel_args.append(p.as_arg(False, name=name))
 
@@ -720,11 +723,11 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
 
         for is_output, argname, arg, interface_id in parameters:
             for bank, _ in fpga.iterate_multibank_interface_ids(arg, interface_id):
-
                 if isinstance(arg, dt.Stream) and argname in self._external_streams:
                     # This is an external stream being passed to the module
                     # Add this to defined vars
-                    self._dispatcher.defined_vars.add(argname, DefinedType.Stream, arg.ctype)
+                    if not self._dispatcher.defined_vars.has(argname):
+                        self._dispatcher.defined_vars.add(argname, DefinedType.Stream, arg.ctype)
                     continue
 
                 if (not (isinstance(arg, dt.Array) and arg.storage == dace.dtypes.StorageType.FPGA_Global)):
@@ -797,13 +800,14 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
 
         # We need to pass external streams as parameters to module
         # (unless they are already there. This could be case of inter-PE intra-kernel streams)
-        for k, v in subgraph_parameters.items():
-            for stream_is_out, stream_name, stream_desc, stream_iid in external_streams:
-                for is_output, data_name, desc, interface_id in v:
-                    if data_name == stream_name and stream_desc == desc:
-                        break
-                else:
-                    v.append((stream_is_out, stream_name, stream_desc, stream_iid))
+        # TODO why? It doesn't break RTL, but the streams are passed to sub kernels that don't need the streams.
+        #for k, v in subgraph_parameters.items():
+        #    for stream_is_out, stream_name, stream_desc, stream_iid in external_streams:
+        #        for is_output, data_name, desc, interface_id in v:
+        #            if data_name == stream_name and stream_desc == desc:
+        #                break
+        #        else:
+        #            v.append((stream_is_out, stream_name, stream_desc, stream_iid))
 
         # Xilinx does not like external streams name with leading underscores to be used as port names
         # We remove them, and we check that they are not defined anywhere else
@@ -852,8 +856,8 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
             # TODO find better way to extract num kernels, rather than the shape of the streams
             num_kernels = dace.symbolic.evaluate(node.shape[0], sdfg.constants)
             self._dispatcher.defined_vars.add_global(name, DefinedType.Stream, node.ctype)
-            if name not in self._stream_connections:
-                self._stream_connections[name] = [None, None]
+            #if name not in self._stream_connections:
+            #    self._stream_connections[name] = [None, None]
             key = 0 if is_output else 1
             val = '{}_1.{}'.format(kernel_name, name)
 
@@ -867,12 +871,12 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                 streams = [f'{name}_{i}' for i in range(num_kernels)]
             else:  # _num should not be appended, when there is only one kernel
                 streams = [name]
-            for stream in streams:
-                if stream not in self._defined_external_streams:
-                    self.define_stream(node.dtype, node.buffer_size, stream,
+                if name not in self._defined_external_streams:
+                    self.define_stream(node.dtype, node.buffer_size, name,
                                     node.total_size, None,
                                     state_host_body_stream, sdfg)
-                    self._defined_external_streams.add(stream)
+                    self._defined_external_streams.add(name)
+            for stream in streams:
                 if stream not in self._stream_connections:
                     self._stream_connections[stream] = [None, None]
                 val = '{}_1.{}'.format(kernel_name, stream)
