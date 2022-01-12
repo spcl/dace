@@ -141,7 +141,7 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
 
         host_code.write("""
 DACE_EXPORTED int __dace_init_intel_fpga({sdfg.name}_t *__state{signature}) {{{emulation_flag}
-    __state->fpga_context = new dace::fpga::Context();
+    __state->fpga_context = new dace_fpga_context();
     __state->fpga_context->Get().MakeProgram({kernel_file_name});
     return 0;
 }}

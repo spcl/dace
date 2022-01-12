@@ -134,7 +134,7 @@ class XilinxCodeGen(fpga.FPGACodeGen):
 DACE_EXPORTED int __dace_init_xilinx({sdfg.name}_t *__state{signature}) {{
     {environment_variables}
 
-    __state->fpga_context = new dace::fpga::Context();
+    __state->fpga_context = new dace_fpga_context();
     __state->fpga_context->Get().MakeProgram({kernel_file_name});
     return 0;
 }}
