@@ -141,7 +141,7 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
 
         host_code.write("""
 DACE_EXPORTED int __dace_init_intel_fpga({sdfg.name}_t *__state{signature}) {{{emulation_flag}
-    __state->fpga_context = new dace::fpga::Context();
+    __state->fpga_context = new dace_fpga_context();
     __state->fpga_context->Get().MakeProgram({kernel_file_name});
     return 0;
 }}
@@ -464,7 +464,7 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
         #reset list of needed converters
         self.converters_to_generate = set()
 
-        kernel_header_stream.write("#include <dace/intel_fpga/device.h>\n\n", sdfg)
+        kernel_header_stream.write("#include <dace/fpga_device.h>\n\n", sdfg)
         self.generate_constants(sdfg, kernel_header_stream)
         kernel_header_stream.write("\n", sdfg)
 

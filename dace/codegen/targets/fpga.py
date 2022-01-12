@@ -373,9 +373,9 @@ class FPGACodeGen(TargetCodeGenerator):
     def has_finalizer(self):
         return False
 
-    def on_target_used(self) -> None:
+    def preprocess(self, sdfg: SDFG) -> None:
         # Right before finalizing code, write FPGA context to state structure
-        self._frame.statestruct.append('dace::fpga::Context *fpga_context;')
+        self._frame.statestruct.append('dace_fpga_context *fpga_context;')
 
     def _kernels_subgraphs(self, graph: Union[dace.sdfg.SDFGState, ScopeSubgraphView], dependencies: dict):
         '''
@@ -461,6 +461,9 @@ class FPGACodeGen(TargetCodeGenerator):
             ]
             for map_entry in top_level_unrolled:
                 MapUnroll.apply_to(sdfg, map_entry=map_entry)
+            if top_level_unrolled:
+                disp = self._dispatcher.get_scope_dispatcher(dtypes.ScheduleType.Unrolled)
+                self._dispatcher._used_targets.add(disp)
 
             kernels = []  # List of tuples (subgraph, kernel_id)
 
