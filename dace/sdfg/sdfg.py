@@ -1037,7 +1037,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         result = collections.OrderedDict()
         result.update(sorted(data_args.items()))
         result.update(sorted(scalar_args.items()))
-        
+
         return result
 
     def signature_arglist(self, with_types=True, for_call=False, with_arrays=True, arglist=None) -> List[str]:
@@ -1230,17 +1230,13 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                                    state.
             :return: A new SDFGState object.
         """
-        if label is None or any([s.label == label for s in self.nodes()]):
-            i = len(self)
-            base = "state" if label is None else label
-            while True:
-                # Append a number. If the state already exists, increment the
-                # number until it doesn't
-                label = "{}_{}".format(base, i)
-                if any([s.label == label for s in self.nodes()]):
-                    i += 1
-                else:
-                    break
+        if label is None:
+            label = f'state_{self.number_of_nodes()}'
+        else:
+            existing_labels = set(s.label for s in self.nodes())
+            if label in existing_labels:
+                base = "state" if label is None else label
+                label = dt.find_new_name(base, existing_labels)
         state = SDFGState(label, self)
 
         self.add_node(state, is_start_state=is_start_state)
