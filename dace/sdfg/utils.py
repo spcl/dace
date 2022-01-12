@@ -16,7 +16,7 @@ from dace.sdfg.scope import ScopeSubgraphView
 from dace.sdfg import nodes as nd, graph as gr
 from dace import config, data as dt, dtypes, memlet as mm, subsets as sbs, symbolic
 from string import ascii_uppercase
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
+from typing import Any, Callable, Dict, Generator, List, Optional, Set, Tuple, Union
 
 
 def node_path_graph(*args):
@@ -1246,3 +1246,65 @@ def is_nonfree_sym_dependent(node: nd.AccessNode, desc: dt.Data, state: SDFGStat
         if any(str(s) not in fsymbols for s in desc.free_symbols):
             return True
     return False
+
+
+def _tswds_state(
+        sdfg: SDFG, state: SDFGState,
+        symbols: Dict[str,
+                      dtypes.typeclass]) -> Generator[Tuple[SDFGState, Node, Dict[str, dtypes.typeclass]], None, None]:
+    """
+    Helper function for ``traverse_sdfg_with_defined_symbols``.
+    :see: traverse_sdfg_with_defined_symbols.
+    """
+    # Traverse state by scopes
+    sdict = state.scope_children()
+
+    def _traverse(scope: Node, symbols: Dict[str, dtypes.typeclass]):
+        for node in sdict[scope]:
+            yield state, node, symbols
+            # Traverse inside scopes
+            if node in sdict:
+                inner_syms = {}.update(symbols)
+                inner_syms.update(node.new_symbols(sdfg, state, inner_syms))
+                yield from _traverse(node, inner_syms)
+
+    # Start with top-level nodes
+    yield from _traverse(None, symbols)
+
+
+def traverse_sdfg_with_defined_symbols(
+        sdfg: SDFG) -> Generator[Tuple[SDFGState, Node, Dict[str, dtypes.typeclass]], None, None]:
+    """
+    Traverses the SDFG, its states and nodes, yielding the defined symbols and their types at each node.
+    :return: A generator that yields tuples of (state, node in state, currently-defined symbols)
+    """
+    # Start with global symbols
+    symbols = copy.copy(sdfg.symbols)
+    symbols.update({k: dt.create_datadescriptor(v).dtype for k, v in sdfg.constants.items()})
+    for desc in sdfg.arrays.values():
+        symbols.update({str(s): s.dtype for s in desc.free_symbols})
+
+    # Add symbols from inter-state edges along the state machine
+    start_state = sdfg.start_state
+    visited = set()
+    visited_edges = set()
+    for edge in sdfg.dfs_edges(start_state):
+        # Source -> inter-state definition -> Destination
+        visited_edges.add(edge)
+        # Source
+        if edge.src not in visited:
+            visited.add(edge.src)
+            yield from _tswds_state(sdfg, edge.src, symbols)
+
+        # Add edge symbols into defined symbols
+        issyms = edge.data.new_symbols(sdfg, symbols)
+        symbols.update(issyms)
+
+        # Destination
+        if edge.dst not in visited:
+            visited.add(edge.dst)
+            yield from _tswds_state(sdfg, edge.dst, symbols)
+
+    # If there is only one state, the DFS will miss it
+    if start_state not in visited:
+        yield from _tswds_state(sdfg, start_state, symbols)

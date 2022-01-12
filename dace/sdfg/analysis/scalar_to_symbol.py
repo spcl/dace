@@ -9,6 +9,7 @@ from dace.sdfg.sdfg import InterstateEdge
 from dace import (dtypes, nodes, sdfg as sd, data as dt, properties as props, memlet as mm, subsets)
 from dace.sdfg import graph as gr
 from dace.frontend.python import astutils
+from dace.sdfg import utils as sdutils
 from dace.transformation import helpers as xfh
 import re
 from typing import Any, DefaultDict, Dict, List, Optional, Set, Tuple, Union
@@ -411,41 +412,37 @@ def remove_symbol_indirection(sdfg: sd.SDFG):
     :param sdfg: The SDFG to run the pass on.
     :note: Operates in-place.
     """
-    for state in sdfg.nodes():
-        for node in state.nodes():
-            if not isinstance(node, nodes.Tasklet):
-                continue
-            # Strip subscripts one by one
-            changed = True
-            # NOTE: Might be slow
-            defined_syms = set(state.symbols_defined_at(node).keys())
-            while True:
-                in_mapping = {}
-                out_mapping = {}
-                do_not_remove = {}
-                if node.code.language is dtypes.Language.Python:
-                    promo = TaskletIndirectionPromoter(set(node.in_connectors.keys()), set(node.out_connectors.keys()),
-                                                       sdfg, defined_syms)
-                    for stmt in node.code.code:
-                        promo.visit(stmt)
-                    in_mapping = promo.in_mapping
-                    out_mapping = promo.out_mapping
-                    do_not_remove = promo.do_not_remove
-                elif node.code.language is dtypes.Language.CPP:
-                    (node.code.code, in_mapping, out_mapping,
-                     do_not_remove) = _cpp_indirection_promoter(node.code.as_string,
-                                                                {e.dst_conn: e.data
-                                                                 for e in state.in_edges(node)},
-                                                                {e.src_conn: e.data
-                                                                 for e in state.out_edges(node)}, sdfg, defined_syms)
+    for state, node, defined_syms in sdutils.traverse_sdfg_with_defined_symbols(sdfg):
+        if not isinstance(node, nodes.Tasklet):
+            continue
+        # Strip subscripts one by one
+        while True:
+            in_mapping = {}
+            out_mapping = {}
+            do_not_remove = {}
+            if node.code.language is dtypes.Language.Python:
+                promo = TaskletIndirectionPromoter(set(node.in_connectors.keys()), set(node.out_connectors.keys()),
+                                                   sdfg, defined_syms.keys())
+                for stmt in node.code.code:
+                    promo.visit(stmt)
+                in_mapping = promo.in_mapping
+                out_mapping = promo.out_mapping
+                do_not_remove = promo.do_not_remove
+            elif node.code.language is dtypes.Language.CPP:
+                (node.code.code, in_mapping, out_mapping,
+                 do_not_remove) = _cpp_indirection_promoter(node.code.as_string,
+                                                            {e.dst_conn: e.data
+                                                             for e in state.in_edges(node)},
+                                                            {e.src_conn: e.data
+                                                             for e in state.out_edges(node)}, sdfg, defined_syms.keys())
 
-                # Nothing more to do
-                if len(in_mapping) + len(out_mapping) == 0:
-                    break
+            # Nothing more to do
+            if len(in_mapping) + len(out_mapping) == 0:
+                break
 
-                # Handle input/output connectors
-                _handle_connectors(state, node, in_mapping, do_not_remove, True)
-                _handle_connectors(state, node, out_mapping, do_not_remove, False)
+            # Handle input/output connectors
+            _handle_connectors(state, node, in_mapping, do_not_remove, True)
+            _handle_connectors(state, node, out_mapping, do_not_remove, False)
 
 
 def remove_scalar_reads(sdfg: sd.SDFG, array_names: Dict[str, str]):
