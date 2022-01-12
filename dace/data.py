@@ -419,7 +419,11 @@ class Array(Data):
         else:
             self.strides = [_prod(shape[i + 1:]) for i in range(len(shape))]
 
-        self.total_size = total_size or _prod(shape)
+        if strides is not None and shape is not None and total_size is None:
+            # Compute the minimal total_size that could be used with strides and shape
+            self.total_size = sum(((shp - 1) * s for shp, s in zip(shape, strides))) + 1
+        else:
+            self.total_size = total_size or _prod(shape)
 
         if offset is not None:
             self.offset = cp.copy(offset)
