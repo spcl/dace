@@ -9,6 +9,9 @@
 #include <unordered_map>
 
 struct dace_fpga_context {
+  dace_fpga_context() = default;
+  ~dace_fpga_context() = default;
+
   inline hlslib::ocl::Context &Get(int device_id = 0) {
     auto c = contexts_.find(device_id);
     if (c != contexts_.end()) {
