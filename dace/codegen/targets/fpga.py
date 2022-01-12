@@ -461,6 +461,9 @@ class FPGACodeGen(TargetCodeGenerator):
             ]
             for map_entry in top_level_unrolled:
                 MapUnroll.apply_to(sdfg, map_entry=map_entry)
+            if top_level_unrolled:
+                disp = self._dispatcher.get_scope_dispatcher(dtypes.ScheduleType.Unrolled)
+                self._dispatcher._used_targets.add(disp)
 
             kernels = []  # List of tuples (subgraph, kernel_id)
 
