@@ -1264,7 +1264,8 @@ def _tswds_state(
             yield state, node, symbols
             # Traverse inside scopes
             if node in sdict:
-                inner_syms = {}.update(symbols)
+                inner_syms = {}
+                inner_syms.update(symbols)
                 inner_syms.update(node.new_symbols(sdfg, state, inner_syms))
                 yield from _traverse(node, inner_syms)
 
