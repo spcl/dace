@@ -224,6 +224,34 @@ class TaskletPromoter(ast.NodeTransformer):
         return self.generic_visit(node)
 
 
+class TaskletPromoterDict(ast.NodeTransformer):
+    """
+    Promotes scalars to symbols in Tasklets.
+    If connector name is used in tasklet as subscript, modifies to symbol name.
+    If connector is used as a standard name, modify tasklet code to use symbol.
+    """
+    def __init__(self, conn_to_sym: Dict[str, str]) -> None:
+        """
+        Initializes AST transformer.
+        :param conn_to_sym: Connector name (replacement source) to symbol name (replacement target)
+                            replacement dictionary.
+        """
+        self.conn_to_sym = conn_to_sym
+
+    def visit_Name(self, node: ast.Name) -> Any:
+        # Convert connector to symbol
+        if node.id in self.conn_to_sym:
+            node.id = self.conn_to_sym[node.id]
+        return self.generic_visit(node)
+
+    def visit_Subscript(self, node: ast.Subscript) -> Any:
+        # Convert subscript to symbol name
+        node_name = astutils.rname(node)
+        if node_name in self.conn_to_sym:
+            return ast.copy_location(ast.Name(id=self.conn_to_sym[node_name], ctx=ast.Load()), node)
+        return self.generic_visit(node)
+
+
 class TaskletIndirectionPromoter(ast.NodeTransformer):
     """
     Promotes indirect memory access in Tasklets to symbolic memlets.
@@ -598,20 +626,24 @@ def promote_scalars_to_symbols(sdfg: sd.SDFG, ignore: Optional[Set[str]] = None)
 
     # Step 6: Inter-state edge cleanup
     cleanup_re = {s: re.compile(fr'\b{re.escape(s)}\[.*?\]') for s in to_promote}
+    promo = TaskletPromoterDict({k: k for k in to_promote})
     for edge in sdfg.edges():
         ise: InterstateEdge = edge.data
-        for scalar in to_promote:
-            # Condition
-            if not edge.data.is_unconditional():
-                if ise.condition.language is dtypes.Language.Python:
-                    promo = TaskletPromoter(scalar, scalar)
-                    for stmt in ise.condition.code:
-                        promo.visit(stmt)
-                elif ise.condition.language is dtypes.Language.CPP:
+        # Condition
+        if not edge.data.is_unconditional():
+            if ise.condition.language is dtypes.Language.Python:
+                for stmt in ise.condition.code:
+                    promo.visit(stmt)
+            elif ise.condition.language is dtypes.Language.CPP:
+                for scalar in to_promote:
                     ise.condition = cleanup_re[scalar].sub(scalar, ise.condition.as_string)
-            # Assignments
-            for aname, assignment in ise.assignments.items():
-                ise.assignments[aname] = cleanup_re[scalar].sub(scalar, assignment.strip())
+
+
+        # Assignments
+        for aname, assignment in ise.assignments.items():
+            for scalar in to_promote:
+                if scalar in assignment:
+                    ise.assignments[aname] = cleanup_re[scalar].sub(scalar, assignment.strip())
 
     # Step 7: Indirection
     remove_symbol_indirection(sdfg)
