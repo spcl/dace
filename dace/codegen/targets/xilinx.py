@@ -568,8 +568,6 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                         host_stream, instrumentation_stream):
         """Generates a module that will run as a dataflow function in the FPGA
            kernel."""
-        import pdb
-        pdb.set_trace()
         state_id = sdfg.node_id(state)
         dfg = sdfg.nodes()[state_id]
 
