@@ -209,21 +209,23 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
 
                         for variable, value in e.data.assignments.items():
                             expr = ast.parse(value)
-
                             # walk in the expression, get all array names and check whether we need to mangle them
                             for node in ast.walk(expr):
                                 if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name):
                                     arr_name = node.value.id
-                                    if arr_name in graph.arrays and graph.arrays[
+
+                                    if arr_name not in replace_dict and arr_name in graph.arrays and graph.arrays[
                                             arr_name].storage == dace.dtypes.StorageType.FPGA_Global:
+
                                         repl = fpga.fpga_ptr(arr_name, graph.arrays[node.value.id], sdfg, None, False,
                                                              None, None, True)
                                         replace_dict[arr_name] = repl
 
                         # Perform replacement
                         for k, v in replace_dict.items():
-                            e.data.replace(arr_name, repl)
-                            graph.arrays[repl] = graph.arrays[arr_name]
+                            e.data.replace(k, v)
+                            # Copy array description: it will be needed by cpp.cpp_array_expr (called by cotnrol flow)
+                            graph.arrays[v] = graph.arrays[k]
 
     def define_stream(self, dtype, buffer_size, var_name, array_size, function_stream, kernel_stream, sdfg):
         """
