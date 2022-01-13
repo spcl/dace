@@ -23,7 +23,7 @@ def match(b1: dc.int32, b2: dc.int32):
 
 
 @dc.program
-def kernel(seq: dc.int32[N]):
+def nussinov_kernel(seq: dc.int32[N]):
 
     table = np.zeros((N, N), np.int32)
 
@@ -94,13 +94,13 @@ def run_nussinov(device_type: dace.dtypes.DeviceType):
 
     if device_type in {dace.dtypes.DeviceType.CPU, dace.dtypes.DeviceType.GPU}:
         # Parse the SDFG and apply autopot
-        sdfg = kernel.to_sdfg()
+        sdfg = nussinov_kernel.to_sdfg()
         sdfg.simplify()
         dace_res = sdfg(seq=seq, N=N)
 
     elif device_type == dace.dtypes.DeviceType.FPGA:
         # Parse SDFG and apply FPGA friendly optimization
-        sdfg = kernel.to_sdfg(simplify=True)
+        sdfg = nussinov_kernel.to_sdfg(simplify=True)
         applied = sdfg.apply_transformations([FPGATransformSDFG])
         assert applied == 1
 
@@ -126,7 +126,7 @@ def test_gpu():
     run_nussinov(dace.dtypes.DeviceType.GPU)
 
 
-@fpga_test(assert_ii_1=False, xilinx=False)
+@fpga_test(assert_ii_1=False)
 def test_fpga():
     return run_nussinov(dace.dtypes.DeviceType.FPGA)
 
