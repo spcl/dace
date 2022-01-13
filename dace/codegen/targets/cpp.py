@@ -936,7 +936,14 @@ class InterstateEdgeUnparser(cppunparse.CPPUnparser):
             raise SyntaxError('Range subscripts disallowed in interstate edges')
 
         memlet = mmlt.Memlet(data=target, subset=rng)
-        self.write(cpp_array_expr(self.sdfg, memlet))
+
+        if target not in self.sdfg.arrays:
+            # This could be an FPGA array whose name has been mangled
+            unmangled = fpga.unmangle_fpga_array_name(self.sdfg, target)
+            desc = self.sdfg.arrays[unmangled]
+            self.write(cpp_array_expr(self.sdfg, memlet, referenced_array=desc))
+        else:
+            self.write(cpp_array_expr(self.sdfg, memlet))
 
 
 def unparse_interstate_edge(code_ast: Union[ast.AST, str], sdfg: SDFG, symbols=None) -> str:

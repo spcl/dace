@@ -224,8 +224,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                         # Perform replacement
                         for k, v in replace_dict.items():
                             e.data.replace(k, v)
-                            # Copy array description: it will be needed by cpp.cpp_array_expr (called by cotnrol flow)
-                            graph.arrays[v] = graph.arrays[k]
+
 
     def define_stream(self, dtype, buffer_size, var_name, array_size, function_stream, kernel_stream, sdfg):
         """

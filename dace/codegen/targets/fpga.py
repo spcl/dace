@@ -284,6 +284,22 @@ def fpga_ptr(name: str,
     return name
 
 
+def unmangle_fpga_array_name(sdfg: dace.SDFG, arr_name: str):
+    '''
+    Returns the unmangled array name if it refers to an array interface.
+    Otherwise return it as it is.
+    :param name: array name to unmangle
+    '''
+
+    unmangled = re.sub('_in$|_out$', '', arr_name)
+    unmangled = re.sub('^__', '', unmangled)
+
+    if unmangled not in sdfg.arrays:
+        return arr_name
+    else:
+        return unmangled
+
+
 class FPGACodeGen(TargetCodeGenerator):
     # Set by deriving class
     target_name = None
