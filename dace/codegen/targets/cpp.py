@@ -510,12 +510,15 @@ def cpp_array_expr(sdfg,
     subset = memlet.subset if not use_other_subset else memlet.other_subset
     s = subset if relative_offset else subsets.Indices(offset)
     o = offset if relative_offset else None
+
     desc = (sdfg.arrays[memlet.data] if referenced_array is None else referenced_array)
     offset_cppstr = cpp_offset_expr(desc, s, o, packed_veclen, indices=indices)
 
     if with_brackets:
         if fpga.is_fpga_array(desc):
-            ptrname = fpga.fpga_ptr(memlet.data, desc, sdfg, subset)
+            is_array_interface = desc.storage ==  dace.StorageType.FPGA_Global
+            is_output = False
+            ptrname = fpga.fpga_ptr(memlet.data, desc, sdfg, subset, is_write=is_output, is_array_interface=is_array_interface)
         else:
             ptrname = ptr(memlet.data, desc, sdfg)
         return "%s[%s]" % (ptrname, offset_cppstr)
