@@ -3,7 +3,7 @@ import ast
 from copy import deepcopy as dcpy, copy
 from functools import reduce
 import operator
-from typing import List, Set, Union
+from typing import List, Optional, Set, Union
 import warnings
 
 import dace
@@ -605,12 +605,19 @@ class MemletTree(object):
         multiple inputs from the same access node are used.
     """
     def __init__(self,
-                 edge,
-                 parent=None,
-                 children=None):  # type: (dace.sdfg.graph.MultiConnectorEdge, MemletTree, List[MemletTree]) -> None
+                 edge: 'dace.sdfg.graph.MultiConnectorEdge[Memlet]',
+                 downwards: bool = True,
+                 parent: 'MemletTree' = None,
+                 children: Optional[List['MemletTree']] = None) -> None:
         self.edge = edge
         self.parent = parent
         self.children = children or []
+        self._downwards = downwards
+
+    @property
+    def downwards(self):
+        """ If True, this memlet tree points downwards (rooted at the source node). """
+        return self._downwards
 
     def __iter__(self):
         if self.parent is not None:
@@ -629,6 +636,16 @@ class MemletTree(object):
         while node.parent is not None:
             node = node.parent
         return node
+
+    def leaves(self) -> 'List[dace.sdfg.graph.MultiConnectorEdge[Memlet]]':
+        """ Returns a list of all the leaves of this MemletTree, i.e., the innermost edges. """
+        if not self.children:
+            return [self.edge]
+
+        result = []
+        for child in self.children:
+            result.extend(child.leaves())
+        return result
 
     def traverse_children(self, include_self=False):
         if include_self:

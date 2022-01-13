@@ -66,7 +66,7 @@ class SVECodeGen(TargetCodeGenerator):
         # This dispatcher is required to catch the allocation of Code->Code registers
         # because we want SVE registers instead of dace::vec<>'s.
         # In any other case it will call the default codegen.
-        self.dispatcher.register_array_dispatcher(cpu_storage, self)
+        self.dispatcher.register_array_dispatcher(dtypes.StorageType.SVE_Register, self)
         self.dispatcher.register_copy_dispatcher(dtypes.StorageType.SVE_Register, dtypes.StorageType.CPU_Heap, None,
                                                  self)
 

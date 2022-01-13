@@ -86,8 +86,7 @@ class CUDACodeGen(TargetCodeGenerator):
         self.scope_entry_stream = self._initcode
         self.scope_exit_stream = self._exitcode
 
-        # Annotate CUDA streams and events
-        self._cuda_streams, self._cuda_events = self._compute_cudastreams(sdfg)
+        self._cuda_streams, self._cuda_events = 0, 0
 
         # Register dispatchers
         self._cpu_codegen = dispatcher.get_generic_node_dispatcher()
@@ -134,7 +133,10 @@ class CUDACodeGen(TargetCodeGenerator):
             codestream.write('''DACE_CUDA_CHECK({backend}GetLastError());
             DACE_CUDA_CHECK({backend}DeviceSynchronize());'''.format(backend=self.backend))
 
-    def on_target_used(self) -> None:
+    def preprocess(self, sdfg: SDFG) -> None:
+        # Annotate CUDA streams and events
+        self._cuda_streams, self._cuda_events = self._compute_cudastreams(sdfg)
+
         # Right before finalizing code, write GPU context to state structure
         self._frame.statestruct.append('dace::cuda::Context *gpu_context;')
 

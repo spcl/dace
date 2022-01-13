@@ -27,11 +27,13 @@ class TargetCodeGenerator(object):
         """
         return []
 
-    def on_target_used(self) -> None:
+    def preprocess(self, sdfg: SDFG) -> None:
         """
-        Called before generating frame code (headers / footers) on this target
-        if it was dispatched for any reason. Can be used to set up state struct
-        fields.
+        Called before code generation on any target that will be dispatched.
+        Used for making modifications on the SDFG prior to code generation.
+        :note: Post-conditions assume that the SDFG will NOT be changed after
+               this point.
+        :param sdfg: The SDFG to modify in-place.
         """
         pass
 
