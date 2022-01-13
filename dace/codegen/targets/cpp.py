@@ -516,9 +516,7 @@ def cpp_array_expr(sdfg,
 
     if with_brackets:
         if fpga.is_fpga_array(desc):
-            is_array_interface = desc.storage ==  dace.StorageType.FPGA_Global
-            is_output = False
-            ptrname = fpga.fpga_ptr(memlet.data, desc, sdfg, subset, is_write=is_output, is_array_interface=is_array_interface)
+            ptrname = fpga.fpga_ptr(memlet.data, desc, sdfg, subset)
         else:
             ptrname = ptr(memlet.data, desc, sdfg)
         return "%s[%s]" % (ptrname, offset_cppstr)

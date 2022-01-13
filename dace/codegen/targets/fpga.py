@@ -377,6 +377,9 @@ class FPGACodeGen(TargetCodeGenerator):
         # Right before finalizing code, write FPGA context to state structure
         self._frame.statestruct.append('dace_fpga_context *fpga_context;')
 
+        # Call vendor-specific preprocessing
+        self._internal_preprocess(sdfg)
+
     def _kernels_subgraphs(self, graph: Union[dace.sdfg.SDFGState, ScopeSubgraphView], dependencies: dict):
         '''
             Finds subgraphs of an SDFGState or ScopeSubgraphView that correspond to kernels.
