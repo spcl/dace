@@ -208,9 +208,6 @@ class RedundantArray(pm.SingleStateTransformation, pm.SimplifyPass):
             true_out_array = sdutil.get_last_view_node(graph, out_array)
             if not true_out_array:
                 return False
-            # If the source and the destination are the same array (A -> V(A) -> ... -> A), skip
-            if true_in_array is true_out_array:
-                return False
             true_out_desc = sdfg.arrays[true_out_array.data]
             true_out_subsets = [e.data.get_dst_subset(e, graph) for e in graph.in_edges(true_out_array)]
 
