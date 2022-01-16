@@ -2245,11 +2245,9 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                     raise err
 
         if (len(applied_transformations) > 0
-                and (progress is not False or print_report or
-                     (print_report is None and Config.get_bool('debugprint')))):
-            print('Applied {}.'.format(', '.join([
-                '%d %s' % (v, k) for k, v in applied_transformations.items()
-            ])))
+                and (progress or print_report or
+                     ((progress is None or print_report is None) and Config.get_bool('debugprint')))):
+            print('Applied {}.'.format(', '.join(['%d %s' % (v, k) for k, v in applied_transformations.items()])))
 
         return sum(applied_transformations.values())
 
