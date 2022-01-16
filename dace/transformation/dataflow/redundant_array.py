@@ -431,7 +431,7 @@ class RedundantArray(pm.SingleStateTransformation, pm.SimplifyPass):
         if (isinstance(in_desc, data.View) and isinstance(out_desc, data.View)):
             simple_case = True
             for e in graph.in_edges(in_array):
-                if a1_subset != e.data.dst_subset:
+                if e.data.dst_subset is not None and a1_subset != e.data.dst_subset:
                     simple_case = False
                     break
             if simple_case:
