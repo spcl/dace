@@ -9,6 +9,7 @@ from dace.sdfg.sdfg import InterstateEdge
 from dace import (dtypes, nodes, sdfg as sd, data as dt, properties as props, memlet as mm, subsets)
 from dace.sdfg import graph as gr
 from dace.frontend.python import astutils
+from dace.sdfg import utils as sdutils
 from dace.transformation import helpers as xfh
 import re
 from typing import Any, DefaultDict, Dict, List, Optional, Set, Tuple, Union
@@ -224,6 +225,34 @@ class TaskletPromoter(ast.NodeTransformer):
         return self.generic_visit(node)
 
 
+class TaskletPromoterDict(ast.NodeTransformer):
+    """
+    Promotes scalars to symbols in Tasklets.
+    If connector name is used in tasklet as subscript, modifies to symbol name.
+    If connector is used as a standard name, modify tasklet code to use symbol.
+    """
+    def __init__(self, conn_to_sym: Dict[str, str]) -> None:
+        """
+        Initializes AST transformer.
+        :param conn_to_sym: Connector name (replacement source) to symbol name (replacement target)
+                            replacement dictionary.
+        """
+        self.conn_to_sym = conn_to_sym
+
+    def visit_Name(self, node: ast.Name) -> Any:
+        # Convert connector to symbol
+        if node.id in self.conn_to_sym:
+            node.id = self.conn_to_sym[node.id]
+        return self.generic_visit(node)
+
+    def visit_Subscript(self, node: ast.Subscript) -> Any:
+        # Convert subscript to symbol name
+        node_name = astutils.rname(node)
+        if node_name in self.conn_to_sym:
+            return ast.copy_location(ast.Name(id=self.conn_to_sym[node_name], ctx=ast.Load()), node)
+        return self.generic_visit(node)
+
+
 class TaskletIndirectionPromoter(ast.NodeTransformer):
     """
     Promotes indirect memory access in Tasklets to symbolic memlets.
@@ -383,41 +412,37 @@ def remove_symbol_indirection(sdfg: sd.SDFG):
     :param sdfg: The SDFG to run the pass on.
     :note: Operates in-place.
     """
-    for state in sdfg.nodes():
-        for node in state.nodes():
-            if not isinstance(node, nodes.Tasklet):
-                continue
-            # Strip subscripts one by one
-            changed = True
-            # NOTE: Might be slow
-            defined_syms = set(state.symbols_defined_at(node).keys())
-            while True:
-                in_mapping = {}
-                out_mapping = {}
-                do_not_remove = {}
-                if node.code.language is dtypes.Language.Python:
-                    promo = TaskletIndirectionPromoter(set(node.in_connectors.keys()), set(node.out_connectors.keys()),
-                                                       sdfg, defined_syms)
-                    for stmt in node.code.code:
-                        promo.visit(stmt)
-                    in_mapping = promo.in_mapping
-                    out_mapping = promo.out_mapping
-                    do_not_remove = promo.do_not_remove
-                elif node.code.language is dtypes.Language.CPP:
-                    (node.code.code, in_mapping, out_mapping,
-                     do_not_remove) = _cpp_indirection_promoter(node.code.as_string,
-                                                                {e.dst_conn: e.data
-                                                                 for e in state.in_edges(node)},
-                                                                {e.src_conn: e.data
-                                                                 for e in state.out_edges(node)}, sdfg, defined_syms)
+    for state, node, defined_syms in sdutils.traverse_sdfg_with_defined_symbols(sdfg):
+        if not isinstance(node, nodes.Tasklet):
+            continue
+        # Strip subscripts one by one
+        while True:
+            in_mapping = {}
+            out_mapping = {}
+            do_not_remove = {}
+            if node.code.language is dtypes.Language.Python:
+                promo = TaskletIndirectionPromoter(set(node.in_connectors.keys()), set(node.out_connectors.keys()),
+                                                   sdfg, defined_syms.keys())
+                for stmt in node.code.code:
+                    promo.visit(stmt)
+                in_mapping = promo.in_mapping
+                out_mapping = promo.out_mapping
+                do_not_remove = promo.do_not_remove
+            elif node.code.language is dtypes.Language.CPP:
+                (node.code.code, in_mapping, out_mapping,
+                 do_not_remove) = _cpp_indirection_promoter(node.code.as_string,
+                                                            {e.dst_conn: e.data
+                                                             for e in state.in_edges(node)},
+                                                            {e.src_conn: e.data
+                                                             for e in state.out_edges(node)}, sdfg, defined_syms.keys())
 
-                # Nothing more to do
-                if len(in_mapping) + len(out_mapping) == 0:
-                    break
+            # Nothing more to do
+            if len(in_mapping) + len(out_mapping) == 0:
+                break
 
-                # Handle input/output connectors
-                _handle_connectors(state, node, in_mapping, do_not_remove, True)
-                _handle_connectors(state, node, out_mapping, do_not_remove, False)
+            # Handle input/output connectors
+            _handle_connectors(state, node, in_mapping, do_not_remove, True)
+            _handle_connectors(state, node, out_mapping, do_not_remove, False)
 
 
 def remove_scalar_reads(sdfg: sd.SDFG, array_names: Dict[str, str]):
@@ -597,20 +622,25 @@ def promote_scalars_to_symbols(sdfg: sd.SDFG, ignore: Optional[Set[str]] = None)
             sdfg.add_symbol(scalar, desc.dtype)
 
     # Step 6: Inter-state edge cleanup
+    cleanup_re = {s: re.compile(fr'\b{re.escape(s)}\[.*?\]') for s in to_promote}
+    promo = TaskletPromoterDict({k: k for k in to_promote})
     for edge in sdfg.edges():
         ise: InterstateEdge = edge.data
-        for scalar in to_promote:
-            # Condition
-            if not edge.data.is_unconditional():
-                if ise.condition.language is dtypes.Language.Python:
-                    promo = TaskletPromoter(scalar, scalar)
-                    for stmt in ise.condition.code:
-                        promo.visit(stmt)
-                elif ise.condition.language is dtypes.Language.CPP:
-                    ise.condition = re.sub(r'\b%s\[.*?\]' % re.escape(scalar), scalar, ise.condition.as_string)
-            # Assignments
-            for aname, assignment in ise.assignments.items():
-                ise.assignments[aname] = re.sub(r'\b%s\[.*?\]' % re.escape(scalar), scalar, assignment.strip())
+        # Condition
+        if not edge.data.is_unconditional():
+            if ise.condition.language is dtypes.Language.Python:
+                for stmt in ise.condition.code:
+                    promo.visit(stmt)
+            elif ise.condition.language is dtypes.Language.CPP:
+                for scalar in to_promote:
+                    ise.condition = cleanup_re[scalar].sub(scalar, ise.condition.as_string)
+
+
+        # Assignments
+        for aname, assignment in ise.assignments.items():
+            for scalar in to_promote:
+                if scalar in assignment:
+                    ise.assignments[aname] = cleanup_re[scalar].sub(scalar, assignment.strip())
 
     # Step 7: Indirection
     remove_symbol_indirection(sdfg)

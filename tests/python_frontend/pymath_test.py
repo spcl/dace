@@ -69,6 +69,15 @@ def test_python_max3():
         assert (python_max3(a, b, c)[0] == max(a, b, c))
 
 
+def test_python_abs():
+    @dace.program
+    def python_abs(a: dace.int64):
+        b = abs(a)
+        return b + 1
+
+    assert python_abs(-1) == (abs(-1) + 1)
+
+
 if __name__ == "__main__":
     test_python_min1()
     test_python_max1()
@@ -76,3 +85,4 @@ if __name__ == "__main__":
     test_python_max2()
     test_python_min3()
     test_python_max3()
+    test_python_abs()

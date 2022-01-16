@@ -306,7 +306,7 @@ class Executor(object):
     def create_remote_directory(self, path):
         """ Creates a path on a remote node.
 
-            @note: We use `mkdir -p` for now, which is not portable.
+            :note: We use `mkdir -p` for now, which is not portable.
         """
         mkdircmd = "mkdir -p " + path
         s = Template(self.config_get("execution", "general", "execcmd"))

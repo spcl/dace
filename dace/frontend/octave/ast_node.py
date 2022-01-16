@@ -134,7 +134,7 @@ class AST_Node():
         """ If this node has no name assigned yet, create a new one of the form
             `__tmp_X` where `X` is an integer, such that this node does not yet
             exist in the given SDFG.
-            @note: We assume that we create exactly one SDFG from each AST,
+            :note: We assume that we create exactly one SDFG from each AST,
                    otherwise we need to store the hash of the SDFG the name was
                    created for (would be easy but seems useless at this point).
         """

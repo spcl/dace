@@ -553,7 +553,7 @@ class TFSession:
         """ Produce nodes in a depth-first-search (DFS) on a TensorFlow graph.
             :param source: The source node to start from.
             :return: A generator of nodes in the depth-first-search.
-            @note: Based on http://www.ics.uci.edu/~eppstein/PADS/DFS.py
+            :note: Based on http://www.ics.uci.edu/~eppstein/PADS/DFS.py
                     by D. Eppstein, July 2004.
         """
 

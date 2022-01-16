@@ -39,8 +39,27 @@ def create_datadescriptor(obj):
     # general solution, but torch doesn't support __array__ for cuda tensors.
     elif type(obj).__module__ == "torch" and type(obj).__name__ == "Tensor":
         try:
+            # If torch is importable, define translations between typeclasses and torch types. These are reused by daceml.
+            # conversion happens here in pytorch:
+            # https://github.com/pytorch/pytorch/blob/143ef016ee1b6a39cf69140230d7c371de421186/torch/csrc/utils/tensor_numpy.cpp#L237
             import torch
-            return Array(dtype=dtypes.TORCH_DTYPE_TO_TYPECLASS[obj.dtype], strides=obj.stride(), shape=tuple(obj.shape))
+            TYPECLASS_TO_TORCH_DTYPE = {
+                dtypes.bool_: torch.bool,
+                dtypes.int8: torch.int8,
+                dtypes.int16: torch.int16,
+                dtypes.int32: torch.int32,
+                dtypes.int64: torch.int64,
+                dtypes.uint8: torch.uint8,
+                dtypes.float16: torch.float16,
+                dtypes.float32: torch.float32,
+                dtypes.float64: torch.float64,
+                dtypes.complex64: torch.complex64,
+                dtypes.complex128: torch.complex128,
+            }
+
+            TORCH_DTYPE_TO_TYPECLASS = {v: k for k, v in TYPECLASS_TO_TORCH_DTYPE.items()}
+
+            return Array(dtype=TORCH_DTYPE_TO_TYPECLASS[obj.dtype], strides=obj.stride(), shape=tuple(obj.shape))
         except ImportError:
             raise ValueError("Attempted to convert a torch.Tensor, but torch could not be imported")
     elif dtypes.is_gpu_array(obj):
@@ -400,7 +419,11 @@ class Array(Data):
         else:
             self.strides = [_prod(shape[i + 1:]) for i in range(len(shape))]
 
-        self.total_size = total_size or _prod(shape)
+        if strides is not None and shape is not None and total_size is None:
+            # Compute the minimal total_size that could be used with strides and shape
+            self.total_size = sum(((shp - 1) * s for shp, s in zip(shape, strides))) + 1
+        else:
+            self.total_size = total_size or _prod(shape)
 
         if offset is not None:
             self.offset = cp.copy(offset)

@@ -1,6 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
-from copy import deepcopy as dcpy
+from copy import deepcopy as dcpy, copy
 from functools import reduce
 import operator
 from typing import List, Optional, Set, Union
@@ -32,7 +32,7 @@ class Memlet(object):
                        dtype=bool,
                        desc='Is the number of elements moved determined at '
                        'runtime (e.g., data dependent)')
-    subset = SubsetProperty(allow_none=True, desc='Subset of elements to move from the data ' 'attached to this edge.')
+    subset = SubsetProperty(allow_none=True, desc='Subset of elements to move from the data attached to this edge.')
     other_subset = SubsetProperty(allow_none=True,
                                   desc='Subset of elements after reindexing to the data not attached '
                                   'to this edge (e.g., for offsets and reshaping).')
@@ -44,7 +44,7 @@ class Memlet(object):
                          'value, and returns the value after resolution')
 
     # Code generation and validation hints
-    debuginfo = DebugInfoProperty(desc='Line information to track source and ' 'generated code')
+    debuginfo = DebugInfoProperty(desc='Line information to track source and generated code')
     wcr_nonatomic = Property(dtype=bool,
                              default=False,
                              desc='If True, always generates non-conflicting '
@@ -132,6 +132,22 @@ class Memlet(object):
         self.wcr_nonatomic = wcr_nonatomic
         self.debuginfo = debuginfo
         self.allow_oob = allow_oob
+
+    @staticmethod
+    def from_memlet(memlet: 'Memlet') -> 'Memlet':
+        sbs = subsets.Range(memlet.subset.ndrange()) if memlet.subset is not None else None
+        osbs = subsets.Range(memlet.other_subset.ndrange()) if memlet.other_subset is not None else None
+        result = Memlet(data=memlet.data,
+                        subset=sbs,
+                        other_subset=osbs,
+                        volume=memlet.volume,
+                        dynamic=memlet.dynamic,
+                        wcr=memlet.wcr,
+                        debuginfo=copy(memlet.debuginfo),
+                        wcr_nonatomic=memlet.wcr_nonatomic,
+                        allow_oob=memlet.allow_oob)
+        result._is_data_src = memlet._is_data_src
+        return result
 
     def to_json(self):
         attrs = dace.serialize.all_properties_to_json(self)

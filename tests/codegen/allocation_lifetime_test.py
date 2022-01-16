@@ -55,7 +55,7 @@ def _check_alloc(id, name, codegen, scope):
 
 def test_determine_alloc_scope():
     sdfg, scopes = _test_determine_alloc(dace.AllocationLifetime.Scope)
-    codegen = framecode.DaCeCodeGenerator()
+    codegen = framecode.DaCeCodeGenerator(sdfg)
     codegen.determine_allocation_lifetime(sdfg)
 
     # tmp cannot be allocated within the inner scope because it is GPU_Global
@@ -65,7 +65,7 @@ def test_determine_alloc_scope():
 
 def test_determine_alloc_state():
     sdfg, scopes = _test_determine_alloc(dace.AllocationLifetime.State, unused=True)
-    codegen = framecode.DaCeCodeGenerator()
+    codegen = framecode.DaCeCodeGenerator(sdfg)
     codegen.determine_allocation_lifetime(sdfg)
 
     # Ensure that unused transients are not allocated
@@ -77,7 +77,7 @@ def test_determine_alloc_state():
 
 def test_determine_alloc_sdfg():
     sdfg, scopes = _test_determine_alloc(dace.AllocationLifetime.SDFG)
-    codegen = framecode.DaCeCodeGenerator()
+    codegen = framecode.DaCeCodeGenerator(sdfg)
     codegen.determine_allocation_lifetime(sdfg)
 
     assert _check_alloc(1, 'tmp', codegen, scopes[-3])
@@ -86,7 +86,7 @@ def test_determine_alloc_sdfg():
 
 def test_determine_alloc_global():
     sdfg, scopes = _test_determine_alloc(dace.AllocationLifetime.Global)
-    codegen = framecode.DaCeCodeGenerator()
+    codegen = framecode.DaCeCodeGenerator(sdfg)
     codegen.determine_allocation_lifetime(sdfg)
     assert any('__1_tmp' in field for field in codegen.statestruct)
     assert any('__1_tmp2' in field for field in codegen.statestruct)

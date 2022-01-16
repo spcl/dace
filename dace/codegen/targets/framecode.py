@@ -36,7 +36,7 @@ class DaCeCodeGenerator(object):
     """ DaCe code generator class that writes the generated code for SDFG
         state machines, and uses a dispatcher to generate code for
         individual states based on the target. """
-    def __init__(self, *args, **kwargs):
+    def __init__(self, sdfg: SDFG):
         self._dispatcher = disp.TargetDispatcher(self)
         self._dispatcher.register_state_dispatcher(self)
         self._initcode = CodeIOStream()
@@ -46,6 +46,27 @@ class DaCeCodeGenerator(object):
         self.targets: Set[TargetCodeGenerator] = set()
         self.to_allocate: DefaultDict[Union[SDFG, SDFGState, nodes.EntryNode],
                                       List[Tuple[int, int, nodes.AccessNode]]] = collections.defaultdict(list)
+        self.fsyms: Dict[int, Set[str]] = {}
+        self._symbols_and_constants: Dict[int, Set[str]] = {}
+        fsyms = self.free_symbols(sdfg)
+        self.arglist = sdfg.arglist(scalars_only=False, free_symbols=fsyms)
+        self.arglist_scalars_only = sdfg.arglist(scalars_only=True, free_symbols=fsyms)
+
+    # Cached fields
+    def symbols_and_constants(self, sdfg: SDFG):
+        if sdfg.sdfg_id in self._symbols_and_constants:
+            return self._symbols_and_constants[sdfg.sdfg_id]
+        result = sdfg.free_symbols.union(sdfg.constants.keys())
+        self._symbols_and_constants[sdfg.sdfg_id] = result
+        return result
+
+    def free_symbols(self, obj: Any):
+        k = id(obj)
+        if k in self.fsyms:
+            return self.fsyms[k]
+        result = obj.free_symbols
+        self.fsyms[k] = result
+        return result
 
     ##################################################################
     # Target registry
@@ -168,10 +189,10 @@ struct {sdfg.name}_t {{
         """
         import dace.library
         fname = sdfg.name
-        params = sdfg.signature()
-        paramnames = sdfg.signature(False, for_call=True)
-        initparams = sdfg.signature(with_arrays=False)
-        initparamnames = sdfg.signature(False, for_call=True, with_arrays=False)
+        params = sdfg.signature(arglist=self.arglist)
+        paramnames = sdfg.signature(False, for_call=True, arglist=self.arglist)
+        initparams = sdfg.signature(with_arrays=False, arglist=self.arglist_scalars_only)
+        initparamnames = sdfg.signature(False, for_call=True, with_arrays=False, arglist=self.arglist_scalars_only)
 
         # Invoke all instrumentation providers
         for instr in self._dispatcher.instrumentation.values():
@@ -351,7 +372,7 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
             last = states_topological[-1]
             cft = cflow.GeneralBlock(dispatch_state,
                                      [cflow.SingleState(dispatch_state, s, s is last) for s in states_topological], [],
-                                     [])
+                                     [], [], [])
 
         callsite_stream.write(cft.as_cpp(self.dispatcher.defined_vars, sdfg.symbols), sdfg)
 
@@ -400,10 +421,27 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
         will be allocated/deallocated.
         :param top_sdfg: The top-level SDFG to determine for.
         """
-        # Gather shared transients
+        # Gather shared transients, free symbols, and first/last appearance
         shared_transients = {}
+        fsyms = {}
+        first_instance: Dict[int, Dict[str, Tuple[int, nodes.AccessNode]]] = {}
+        last_instance: Dict[int, Dict[str, Tuple[int, nodes.AccessNode]]] = {}
         for sdfg in top_sdfg.all_sdfgs_recursive():
             shared_transients[sdfg.sdfg_id] = sdfg.shared_transients(check_toplevel=False)
+            fsyms[sdfg.sdfg_id] = self.symbols_and_constants(sdfg)
+
+            # Possibly confusing control flow below finds the first/last state
+            # and node of the data descriptor
+            finst: Dict[str, Tuple[int, nodes.AccessNode]] = {}
+            linst: Dict[str, Tuple[int, nodes.AccessNode]] = {}
+            for state in sdfg.topological_sort():
+                id = sdfg.node_id(state)
+                for node in state.data_nodes():
+                    if node.data not in finst:
+                        finst[node.data] = (id, node)
+                    linst[node.data] = (id, node)
+            first_instance[sdfg.sdfg_id] = finst
+            last_instance[sdfg.sdfg_id] = linst
 
         for sdfg, name, desc in top_sdfg.arrays_recursive():
             if not desc.transient:
@@ -421,28 +459,10 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
             # 5. True if allocation should take place, otherwise False.
             # 6. True if deallocation should take place, otherwise False.
 
-            # Possibly confusing control flow below finds the first state
-            # and node of the data descriptor, or continues the
-            # arrays_recursive() loop
-            first_state_instance: int = None
-            first_node_instance: nodes.AccessNode = None
-            last_state_instance: int = None
-            last_node_instance: nodes.AccessNode = None
-            first = True
-            for state in sdfg.topological_sort():
-                id = sdfg.nodes().index(state)
-                for node in state.data_nodes():
-                    if node.data == name:
-                        if first:
-                            first_state_instance = id
-                            first_node_instance = node
-                            first = False
-                        last_state_instance = id
-                        last_node_instance = node
-                        # break
-                else:
-                    continue
-                break
+            first_state_instance, first_node_instance = \
+                first_instance[sdfg.sdfg_id].get(name, (None, None))
+            last_state_instance, last_node_instance = \
+                last_instance[sdfg.sdfg_id].get(name, (None, None))
 
             # Cases
             if desc.lifetime is dtypes.AllocationLifetime.Persistent:
@@ -517,7 +537,7 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
 
                 # Does the array appear in inter-state edges?
                 for isedge in sdfg.edges():
-                    if name in isedge.data.free_symbols:
+                    if name in self.free_symbols(isedge.data):
                         multistate = True
 
                 for state in sdfg.nodes():
@@ -595,7 +615,7 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
 
             # Check if Array/View is dependent on non-free SDFG symbols
             # NOTE: Tuple is (SDFG, State, Node, declare, allocate, deallocate)
-            fsymbols = sdfg.free_symbols.union(sdfg.constants.keys())
+            fsymbols = fsyms[sdfg.sdfg_id]
             if (not isinstance(curscope, nodes.EntryNode)
                     and utils.is_nonfree_sym_dependent(first_node_instance, desc, alloc_state, fsymbols)):
                 # Declare in current (SDFG) scope
@@ -692,14 +712,20 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
         global_symbols = copy.deepcopy(sdfg.symbols)
         global_symbols.update({aname: arr.dtype for aname, arr in sdfg.arrays.items()})
         interstate_symbols = {}
-        for e in sdfg.edges():
+        for e in sdfg.dfs_edges(sdfg.start_state):
             symbols = e.data.new_symbols(sdfg, global_symbols)
-            # Inferred symbols only take precedence if global symbol not defined
-            symbols = {k: v if k not in global_symbols else global_symbols[k] for k, v in symbols.items()}
+            # Inferred symbols only take precedence if global symbol not defined or None
+            symbols = {
+                k: v if (k not in global_symbols or global_symbols[k] is None) else global_symbols[k]
+                for k, v in symbols.items()
+            }
             interstate_symbols.update(symbols)
             global_symbols.update(symbols)
 
         for isvarName, isvarType in interstate_symbols.items():
+            if isvarType is None:
+                raise TypeError(f'Type inference failed for symbol {isvarName}')
+
             isvar = data.Scalar(isvarType)
             callsite_stream.write('%s;\n' % (isvar.as_arg(with_types=True, name=isvarName)), sdfg)
             self.dispatcher.defined_vars.add(isvarName, disp.DefinedType.Scalar, isvarType.ctype)
@@ -739,7 +765,7 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
             self.generate_header(sdfg, header_global_stream, header_stream)
 
             # Open program function
-            params = sdfg.signature()
+            params = sdfg.signature(arglist=self.arglist)
             if params:
                 params = ', ' + params
             function_signature = ('void __program_%s_internal(%s_t *__state%s)\n{\n' % (sdfg.name, sdfg.name, params))
