@@ -7,7 +7,7 @@ SCRIPTPATH="$( cd "$(dirname "$0")" ; pwd -P )"
 PYTHONPATH=$SCRIPTPATH/..
 
 DACE_debugprint="${DACE_debugprint:-0}"
-DACE_optimizer_automatic_strict_transformations=${DACE_optimizer_automatic_strict_transformations:-1}
+DACE_optimizer_automatic_simplification=${DACE_optimizer_automatic_simplification:-1}
 ERRORS=0
 FAILED_TESTS=""
 TESTS=0

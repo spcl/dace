@@ -93,13 +93,7 @@ def test_return_both():
 
     sdfg.add_array("IN", [10, 5, 3], dace.float64)
 
-    _, (outval, outidx) = _argminmax(None,
-                                     sdfg,
-                                     state,
-                                     "IN",
-                                     1,
-                                     "min",
-                                     return_both=True)
+    _, (outval, outidx) = _argminmax(None, sdfg, state, "IN", 1, "min", return_both=True)
 
     IN = np.random.rand(10, 5, 3)
     OUT_IDX = np.zeros((10, 3), dtype=np.int32)

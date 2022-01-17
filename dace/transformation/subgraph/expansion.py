@@ -27,8 +27,7 @@ import sys
 def offset_map(state, map_entry):
     offsets = []
     subgraph = state.scope_subgraph(map_entry)
-    for i, (p, r) in enumerate(
-            zip(map_entry.map.params, map_entry.map.range.min_element())):
+    for i, (p, r) in enumerate(zip(map_entry.map.params, map_entry.map.range.min_element())):
         if r != 0:
             offsets.append(r)
             replace(subgraph, str(p), f'{p}+{r}')
@@ -39,7 +38,6 @@ def offset_map(state, map_entry):
     map_entry.map.range.offset(offsets, negative=True)
 
 
-@registry.autoregister_params(singlestate=True)
 @make_properties
 class MultiExpansion(transformation.SubgraphTransformation):
     ''' 
@@ -57,20 +55,14 @@ class MultiExpansion(transformation.SubgraphTransformation):
                                     "created during expansion sequential",
                                     default=False)
 
-    check_contiguity = Property(
-        dtype=bool,
-        desc="Don't allow expansion if last (contiguous)"
-        "dimension is partially split",
-        default=False)
+    check_contiguity = Property(dtype=bool,
+                                desc="Don't allow expansion if last (contiguous)"
+                                "dimension is partially split",
+                                default=False)
 
-    permutation_only = Property(
-        dtype=bool,
-        desc="Only allow permutations without inner splits",
-        default=False)
+    permutation_only = Property(dtype=bool, desc="Only allow permutations without inner splits", default=False)
 
-    allow_offset = Property(dtype=bool,
-                            desc="Offset ranges to zero",
-                            default=True)
+    allow_offset = Property(dtype=bool, desc="Offset ranges to zero", default=True)
 
     def can_be_applied(self, sdfg: SDFG, subgraph: SubgraphView) -> bool:
         # get lowest scope maps of subgraph
@@ -106,25 +98,18 @@ class MultiExpansion(transformation.SubgraphTransformation):
         # if there is a map split ocurring with the last contiguous dimension being
         # in the *outer* map, we fail (-> bad data access pattern)
         if self.check_contiguity == True:
-            reassignment = helpers.find_reassignment(map_entries,
-                                                     brng,
-                                                     offset=self.allow_offset)
+            reassignment = helpers.find_reassignment(map_entries, brng, offset=self.allow_offset)
             for map_entry in map_entries:
                 no_common = sum([1 for j in reassignment[map_entry] if j != -1])
                 if no_common != len(map_entry.params):
                     # check every memlet for access
-                    for e in itertools.chain(
-                            graph.out_edges(map_entry),
-                            graph.in_edges(graph.exit_node(map_entry))):
+                    for e in itertools.chain(graph.out_edges(map_entry), graph.in_edges(graph.exit_node(map_entry))):
                         subset = dcpy(e.data.subset)
                         subset.pop([i for i in range(subset.dims() - 1)])
                         for s in subset.free_symbols:
 
-                            if reassignment[map_entry][
-                                    map_entry.map.params.index(s)] != -1:
-                                warnings.warn(
-                                    "MultiExpansion::Contiguity fusion violation detected"
-                                )
+                            if reassignment[map_entry][map_entry.map.params.index(s)] != -1:
+                                warnings.warn("MultiExpansion::Contiguity fusion violation detected")
                                 return False
 
         return True
@@ -161,8 +146,7 @@ class MultiExpansion(transformation.SubgraphTransformation):
         maps = [entry.map for entry in map_entries]
 
         # in case of maps where all params and ranges already conincide, we can skip the whole process
-        if all([m.params == maps[0].params for m in maps]) and all(
-            [m.range == maps[0].range for m in maps]):
+        if all([m.params == maps[0].params for m in maps]) and all([m.range == maps[0].range for m in maps]):
             return
 
         if self.allow_offset:
@@ -184,8 +168,7 @@ class MultiExpansion(transformation.SubgraphTransformation):
             map_base_variables = []
             for rng in map_base_ranges:
                 for i in range(len(maps[0].params)):
-                    if maps[0].range[i] == rng and maps[0].params[
-                            i] not in map_base_variables:
+                    if maps[0].range[i] == rng and maps[0].params[i] not in map_base_variables:
                         map_base_variables.append(maps[0].params[i])
                         break
 
@@ -233,9 +216,7 @@ class MultiExpansion(transformation.SubgraphTransformation):
                 params_dict_map = params_dict[map]
                 # search for parameters in inner maps whose name coincides with one of the outer parameter names
                 inner_params = defaultdict(set)
-                for other_entry in graph.scope_subgraph(map_entry,
-                                                        include_entry=False,
-                                                        include_exit=False):
+                for other_entry in graph.scope_subgraph(map_entry, include_entry=False, include_exit=False):
                     if isinstance(other_entry, nodes.MapEntry):
                         for param in other_entry.map.params:
                             inner_params[param].add(other_entry)
@@ -249,8 +230,7 @@ class MultiExpansion(transformation.SubgraphTransformation):
                         for other_entry in inner_params[secondp]:
                             for (i, p) in enumerate(other_entry.map.params):
                                 if p == secondp:
-                                    other_entry.map.params[
-                                        i] = secondp + '_inner'
+                                    other_entry.map.params[i] = secondp + '_inner'
                     # replace in outer maps as well if not coincidental
                     if firstp != secondp:
                         replace(map_scope, firstp, '__' + firstp + '_fused')
@@ -338,8 +318,7 @@ class MultiExpansion(transformation.SubgraphTransformation):
                 path = []
                 for mapnode in [map_entry, map_entry_inner]:
                     path.append(mapnode)
-                    if any(edge.dst_conn in map(str, symbolic.symlist(r))
-                           for r in mapnode.map.range):
+                    if any(edge.dst_conn in map(str, symbolic.symlist(r)) for r in mapnode.map.range):
                         graph.add_memlet_path(edge.src,
                                               *path,
                                               memlet=edge.data,

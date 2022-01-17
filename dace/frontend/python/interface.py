@@ -6,8 +6,7 @@ import inspect
 from dace import dtypes
 from dace.dtypes import paramdec
 from dace.frontend.python import parser, ndloop, tasklet_runner
-from typing import (Any, Callable, Deque, Dict, Generator, Optional, Tuple,
-                    TypeVar, overload, Union)
+from typing import (Any, Callable, Deque, Dict, Generator, Optional, Tuple, TypeVar, overload, Union)
 
 #############################################
 
@@ -55,8 +54,7 @@ def program(f: F,
 
     # Parses a python @dace.program function and returns an object that can
     # be translated
-    return parser.DaceProgram(f, args, kwargs, auto_optimize, device,
-                              constant_functions)
+    return parser.DaceProgram(f, args, kwargs, auto_optimize, device, constant_functions)
 
 
 function = program
@@ -108,13 +106,7 @@ def method(f: F,
             objid = id(obj)
             if objid in self.wrapped:
                 return self.wrapped[objid]
-            prog = parser.DaceProgram(f,
-                                      args,
-                                      kwargs,
-                                      auto_optimize,
-                                      device,
-                                      constant_functions,
-                                      method=True)
+            prog = parser.DaceProgram(f, args, kwargs, auto_optimize, device, constant_functions, method=True)
             prog.methodobj = obj
             self.wrapped[objid] = prog
             return prog
@@ -129,9 +121,7 @@ def method(f: F,
 class MapMetaclass(type):
     """ Metaclass for map, to enable ``dace.map[0:N]`` syntax. """
     @classmethod
-    def __getitem__(
-            cls, rng: Union[slice,
-                            Tuple[slice]]) -> Generator[Tuple[int], None, None]:
+    def __getitem__(cls, rng: Union[slice, Tuple[slice]]) -> Generator[Tuple[int], None, None]:
         """ 
         Iterates over an N-dimensional region in parallel.
         :param rng: A slice or a tuple of multiple slices, representing the
@@ -151,10 +141,7 @@ class map(metaclass=MapMetaclass):
 
 
 class consume:
-    def __init__(self,
-                 stream: Deque[T],
-                 processing_elements: int = 1,
-                 condition: Optional[Callable[[], bool]] = None):
+    def __init__(self, stream: Deque[T], processing_elements: int = 1, condition: Optional[Callable[[], bool]] = None):
         """ 
         Consume is a scope, like ``Map``, that creates parallel execution.
         Unlike `Map`, it creates a producer-consumer relationship between an
@@ -186,8 +173,7 @@ class TaskletMetaclass(type):
         frame = inspect.stack()[1][0]
         filename = inspect.getframeinfo(frame).filename
         tasklet_ast = tasklet_runner.get_tasklet_ast(frame=frame)
-        tasklet_runner.run_tasklet(tasklet_ast, filename, frame.f_globals,
-                                   frame.f_locals)
+        tasklet_runner.run_tasklet(tasklet_ast, filename, frame.f_globals, frame.f_locals)
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         # Tasklets always raise exceptions (NameError due to the memlet
@@ -210,9 +196,7 @@ class tasklet(metaclass=TaskletMetaclass):
 
     The DaCe framework cannot analyze these tasklets for optimization. 
     """
-    def __init__(self,
-                 language: Union[str,
-                                 dtypes.Language] = dtypes.Language.Python):
+    def __init__(self, language: Union[str, dtypes.Language] = dtypes.Language.Python):
         if isinstance(language, str):
             language = dtypes.Language[language]
         self.language = language
@@ -224,8 +208,7 @@ class tasklet(metaclass=TaskletMetaclass):
         frame = inspect.stack()[1][0]
         filename = inspect.getframeinfo(frame).filename
         tasklet_ast = tasklet_runner.get_tasklet_ast(frame=frame)
-        tasklet_runner.run_tasklet(tasklet_ast, filename, frame.f_globals,
-                                   frame.f_locals)
+        tasklet_runner.run_tasklet(tasklet_ast, filename, frame.f_globals, frame.f_locals)
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         # Tasklets always raise exceptions (NameError due to the memlet

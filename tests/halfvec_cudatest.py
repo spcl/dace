@@ -27,15 +27,14 @@ def _test_half(veclen):
     A = np.random.rand(24).astype(np.float16)
     B = np.random.rand(24).astype(np.float16)
     sdfg = halftest.to_sdfg()
-    sdfg.apply_strict_transformations()
+    sdfg.simplify()
     sdfg.apply_gpu_transformations()
 
     # Apply vectorization on each map and count applied
     applied = 0
-    for xform in Optimizer(sdfg).get_pattern_matches(
-            patterns=Vectorization,
-            options=dict(vector_len=veclen, postamble=False)):
-        xform.apply(sdfg)
+    for xform in Optimizer(sdfg).get_pattern_matches(patterns=Vectorization,
+                                                     options=dict(vector_len=veclen, postamble=False)):
+        xform.apply(sdfg.node(xform.state_id), sdfg)
         applied += 1
     assert applied == 2
 
@@ -139,8 +138,8 @@ def test_gelu_vec():
             with dace.tasklet:
                 a << A[i]
                 o >> out[i]
-                o = dace.float16(0.5) * a * (dace.float16(1) + math.tanh(
-                    dace.float16(s2pi) * (a + dace.float16(0.044715) * (a**3))))
+                o = dace.float16(0.5) * a * (dace.float16(1) +
+                                             math.tanh(dace.float16(s2pi) * (a + dace.float16(0.044715) * (a**3))))
         return out
 
     A = np.random.rand(24).astype(np.float16)
@@ -148,8 +147,7 @@ def test_gelu_vec():
     sdfg.apply_gpu_transformations()
     assert sdfg.apply_transformations(Vectorization, dict(vector_len=4)) == 1
     out = sdfg(A=A, N=24)
-    expected = 0.5 * A * (
-        1 + np.tanh(math.sqrt(2.0 / math.pi) * (A + 0.044715 * (A**3))))
+    expected = 0.5 * A * (1 + np.tanh(math.sqrt(2.0 / math.pi) * (A + 0.044715 * (A**3))))
     assert np.allclose(out, expected, rtol=1e-2, atol=1e-4)
 
 

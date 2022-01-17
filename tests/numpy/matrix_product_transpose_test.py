@@ -6,8 +6,7 @@ M, N, K = 24, 12, 48
 
 
 @dace.program
-def matrix_product_transpose_test(A: dace.float32[K, M], B: dace.float32[N, K],
-                                  C: dace.float32[M, N]):
+def matrix_product_transpose_test(A: dace.float32[K, M], B: dace.float32[N, K], C: dace.float32[M, N]):
     C[:] = np.transpose(A) @ np.transpose(B)
 
 

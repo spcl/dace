@@ -32,15 +32,13 @@ def test():
     # Tasklet 1
     t1 = state.add_tasklet('task1', {'a'}, {'b'}, 'b = a')
     state.add_edge(map_entry, None, t1, 'a', Memlet.simple(A, 'i'))
-    state.add_edge(t1, 'b', map_exit, None,
-                   Memlet.simple(s, '0', wcr_str='lambda a,b: a+b'))
+    state.add_edge(t1, 'b', map_exit, None, Memlet.simple(s, '0', wcr_str='lambda a,b: a+b'))
     state.add_edge(map_exit, None, s, None, Memlet.simple(s, '0'))
 
     # Tasklet 2
     t2 = state.add_tasklet('task2', {'a'}, {'b'}, 'b = a')
     state.add_edge(map_entry, None, t2, 'a', Memlet.simple(A, 'i'))
-    state.add_edge(t2, 'b', map_exit, None,
-                   Memlet.simple(p, '0', wcr_str='lambda a,b: a*b'))
+    state.add_edge(t2, 'b', map_exit, None, Memlet.simple(p, '0', wcr_str='lambda a,b: a*b'))
     state.add_edge(map_exit, None, p, None, Memlet.simple(p, '0'))
 
     mysdfg(A=input, s=sum, p=product, N=N)

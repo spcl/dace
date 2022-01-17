@@ -9,7 +9,7 @@ import numpy as np
 @fpga_test()
 def test_multiple_fusions_fpga():
     sdfg = multiple_fusions.to_sdfg()
-    sdfg.apply_strict_transformations()
+    sdfg.simplify()
     assert sdfg.apply_transformations_repeated(MapFusion) >= 2
     assert sdfg.apply_transformations_repeated(FPGATransformSDFG) == 1
     A = np.random.rand(10, 20).astype(np.float32)
@@ -29,7 +29,7 @@ def test_fusion_with_transient_fpga():
     A = np.random.rand(2, 20)
     expected = A * A * 2
     sdfg = fusion_with_transient.to_sdfg()
-    sdfg.apply_strict_transformations()
+    sdfg.simplify()
     assert sdfg.apply_transformations_repeated(MapFusion) >= 2
     assert sdfg.apply_transformations_repeated(FPGATransformSDFG) == 1
     sdfg(A=A)

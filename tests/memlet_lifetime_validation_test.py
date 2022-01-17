@@ -67,8 +67,7 @@ def test():
     state.add_edge(A, None, map1_entry, 'IN_1', Memlet.simple(A, '0:N'))
     state.add_edge(map1_entry, 'OUT_1', tasklet_gen, 'a', Memlet.simple(A, 'i'))
     state.add_edge(tasklet_gen, 'b', map1_exit, 'IN_1', Memlet.simple(T, 'i'))
-    state.add_edge(map1_exit, 'OUT_1', map2_entry, 'IN_1',
-                   Memlet.simple(T, '0:N'))
+    state.add_edge(map1_exit, 'OUT_1', map2_entry, 'IN_1', Memlet.simple(T, '0:N'))
     state.add_edge(map2_entry, 'OUT_1', T, None, Memlet.simple(T, 'i'))
     state.add_edge(T, None, map2_exit, 'IN_1', Memlet.simple(B, 'i'))
     state.add_edge(map2_exit, 'OUT_1', B, None, Memlet.simple(B, '0:N'))

@@ -15,8 +15,7 @@ M, N = (dc.symbol(s, dtype=dc.int32) for s in ('M', 'N'))
 
 
 @dc.program
-def kernel(alpha: dc.float32, beta: dc.float32, C: dc.float32[N, N],
-           A: dc.float32[N, M]):
+def kernel(alpha: dc.float32, beta: dc.float32, C: dc.float32[N, N], A: dc.float32[N, M]):
 
     for i in range(N):
         C[i, :i + 1] *= beta
@@ -67,7 +66,7 @@ def run_syrk(device_type: dace.dtypes.DeviceType):
 
     elif device_type == dace.dtypes.DeviceType.FPGA:
         # Parse SDFG and apply FPGA friendly optimization
-        sdfg = kernel.to_sdfg(strict=True)
+        sdfg = kernel.to_sdfg(simplify=True)
         applied = sdfg.apply_transformations([FPGATransformSDFG])
         assert applied == 1
 
@@ -100,11 +99,7 @@ def test_fpga():
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("-t",
-                        "--target",
-                        default='cpu',
-                        choices=['cpu', 'gpu', 'fpga'],
-                        help='Target platform')
+    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu', 'fpga'], help='Target platform')
 
     args = vars(parser.parse_args())
     target = args["target"]

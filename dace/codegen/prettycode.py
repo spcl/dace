@@ -38,8 +38,7 @@ class CodeIOStream(StringIO):
                     for i, nid in enumerate(node_id):
                         if not isinstance(nid, int):
                             node_id[i] = sdfg.nodes()[state_id].node_id(nid)
-                    location_identifier += ':' + ','.join(
-                        [str(nid) for nid in node_id])
+                    location_identifier += ':' + ','.join([str(nid) for nid in node_id])
         else:
             location_identifier = ''
 
@@ -75,8 +74,7 @@ class CodeIOStream(StringIO):
             loc_spaces = max(80 - len(codeline), 2)
 
             if location_identifier != '':
-                super(CodeIOStream, self).write(codeline + loc_spaces * ' ' +
-                                                location_identifier + '\n')
+                super(CodeIOStream, self).write(codeline + loc_spaces * ' ' + location_identifier + '\n')
             else:  # avoid ending spaces (useful for OpenCL and multiline macros)
                 super(CodeIOStream, self).write(codeline + '\n')
             if brace_balance > 0:
@@ -84,7 +82,6 @@ class CodeIOStream(StringIO):
 
             # If indentation failed, warn user
             if self._indent < -1:
-                super(CodeIOStream, self).write(
-                    '///WARNING: Indentation failure! This probably ' +
-                    'indicates an error in the SDFG.\n')
+                super(CodeIOStream, self).write('///WARNING: Indentation failure! This probably ' +
+                                                'indicates an error in the SDFG.\n')
                 self._indent = 0

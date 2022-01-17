@@ -29,8 +29,7 @@ class IntelMKLScaLAPACK:
 
     headers = ["mkl.h", "mkl_scalapack.h", "mkl_blacs.h", "mkl_pblas.h"]
     state_fields = [
-        "MKL_INT __mkl_scalapack_context;",
-        "MKL_INT __mkl_scalapack_rank, __mkl_scalapack_size;",
+        "MKL_INT __mkl_scalapack_context;", "MKL_INT __mkl_scalapack_rank, __mkl_scalapack_size;",
         "MKL_INT __mkl_scalapack_prows = 0, __mkl_scalapack_pcols = 0;",
         "MKL_INT __mkl_scalapack_myprow = 0, __mkl_scalapack_mypcol = 0;",
         "MKL_INT __mkl_int_zero = 0, __mkl_int_one = 1, __mkl_int_negone = -1;",
@@ -57,8 +56,7 @@ class IntelMKLScaLAPACK:
     # NOTE: The last library (mkl_avx2) must be set to whatever matches the
     # target hardware, e.g., mkl_avx512
     libraries = [
-        "mkl_scalapack_lp64", "mkl_blacs_intelmpi_lp64", "mkl_intel_lp64",
-        "mkl_gnu_thread", "mkl_core", "mkl_avx2"
+        "mkl_scalapack_lp64", "mkl_blacs_intelmpi_lp64", "mkl_intel_lp64", "mkl_gnu_thread", "mkl_core", "mkl_avx2"
     ]
 
     @staticmethod
@@ -76,11 +74,10 @@ class IntelMKLScaLAPACK:
             candpath = os.path.join(base_path, 'include')
             if os.path.isfile(os.path.join(candpath, 'mkl.h')):
                 return [candpath]
-            warnings.warn(
-                'Anaconda Python is installed but the MKL include directory cannot '
-                'be found. Please install MKL includes with '
-                '"conda install mkl-include" or set the MKLROOT environment '
-                'variable')
+            warnings.warn('Anaconda Python is installed but the MKL include directory cannot '
+                          'be found. Please install MKL includes with '
+                          '"conda install mkl-include" or set the MKLROOT environment '
+                          'variable')
             return []
         else:
             return []
@@ -91,8 +88,7 @@ class IntelMKLScaLAPACK:
             prefix = Config.get('compiler', 'library_prefix')
             suffix = Config.get('compiler', 'library_extension')
             libfiles = [
-                os.path.join(os.environ['MKLROOT'], 'lib',
-                             prefix + name + "." + suffix)
+                os.path.join(os.environ['MKLROOT'], 'lib', prefix + name + "." + suffix)
                 for name in IntelMKLScaLAPACK.libraries
             ]
             if all([os.path.isfile(f) for f in libfiles]):
@@ -103,18 +99,16 @@ class IntelMKLScaLAPACK:
             # Attempt to link on Windows
             if path.endswith('.dll'):
                 libfiles = [
-                    os.path.join(os.path.dirname(os.path.abspath(path)), '..',
-                                 'lib', name + '.lib')
+                    os.path.join(os.path.dirname(os.path.abspath(path)), '..', 'lib', name + '.lib')
                     for name in IntelMKLScaLAPACK.libraries
                 ]
                 if all([os.path.isfile(f) for f in libfiles]):
                     return libfiles
                 elif 'CONDA_PREFIX' in os.environ:
-                    warnings.warn(
-                        'Anaconda Python is installed but the MKL library file '
-                        'cannot be found for linkage. Please install libraries with '
-                        '"conda install mkl-devel" or set the MKLROOT environment '
-                        'variable')
+                    warnings.warn('Anaconda Python is installed but the MKL library file '
+                                  'cannot be found for linkage. Please install libraries with '
+                                  '"conda install mkl-devel" or set the MKLROOT environment '
+                                  'variable')
                     return []
                 else:
                     return []

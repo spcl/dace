@@ -3,11 +3,10 @@
 """
 
 import copy
-import functools
 import networkx as nx
 import typing
 
-from dace import data, registry, subsets, symbolic, dtypes, memlet as mm
+from dace import data, subsets, symbolic, dtypes, memlet as mm
 from dace.sdfg import nodes, SDFGState, SDFG
 from dace.sdfg import utils as sdutil
 from dace.sdfg import graph
@@ -53,11 +52,9 @@ def _validate_subsets(edge: graph.MultiConnectorEdge,
                 src_expr_exact = src_subset.num_elements_exact()
                 dst_expr = dst_subset.num_elements()
                 dst_expr_exact = dst_subset.num_elements_exact()
-                if (src_expr != dst_expr and symbolic.inequal_symbols(
-                        src_expr_exact, dst_expr_exact)):
-                    raise ValueError(
-                        "Source subset is missing (dst_subset: {}, "
-                        "src_shape: {}".format(dst_subset, desc.shape))
+                if (src_expr != dst_expr and symbolic.inequal_symbols(src_expr_exact, dst_expr_exact)):
+                    raise ValueError("Source subset is missing (dst_subset: {}, "
+                                     "src_shape: {}".format(dst_subset, desc.shape))
             else:
                 src_subset = copy.deepcopy(dst_subset)
                 padding = len(desc.shape) - len(src_subset)
@@ -86,11 +83,9 @@ def _validate_subsets(edge: graph.MultiConnectorEdge,
                 src_expr_exact = src_subset.num_elements_exact()
                 dst_expr = dst_subset.num_elements()
                 dst_expr_exact = dst_subset.num_elements_exact()
-                if (src_expr != dst_expr and symbolic.inequal_symbols(
-                        src_expr_exact, dst_expr_exact)):
-                    raise ValueError(
-                        "Destination subset is missing (src_subset: {}, "
-                        "dst_shape: {}".format(src_subset, desc.shape))
+                if (src_expr != dst_expr and symbolic.inequal_symbols(src_expr_exact, dst_expr_exact)):
+                    raise ValueError("Destination subset is missing (src_subset: {}, "
+                                     "dst_shape: {}".format(src_subset, desc.shape))
             else:
                 dst_subset = copy.deepcopy(src_subset)
                 padding = len(desc.shape) - len(dst_subset)
@@ -166,8 +161,7 @@ def compose_and_push_back(first, second, dims=None, popped=None):
 ##############################################################################
 
 
-@registry.autoregister_params(singlestate=True, strict=True)
-class RedundantArray(pm.Transformation):
+class RedundantArray(pm.SingleStateTransformation, pm.SimplifyPass):
     """ Implements the redundant array removal transformation, applied
         when a transient array is copied to and from (to another array),
         but never used anywhere else. """
@@ -175,17 +169,13 @@ class RedundantArray(pm.Transformation):
     in_array = pm.PatternNode(nodes.AccessNode)
     out_array = pm.PatternNode(nodes.AccessNode)
 
-    @staticmethod
-    def expressions():
-        return [
-            sdutil.node_path_graph(RedundantArray.in_array,
-                                   RedundantArray.out_array)
-        ]
+    @classmethod
+    def expressions(cls):
+        return [sdutil.node_path_graph(cls.in_array, cls.out_array)]
 
-    @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
-        in_array = graph.nodes()[candidate[RedundantArray.in_array]]
-        out_array = graph.nodes()[candidate[RedundantArray.out_array]]
+    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
+        in_array = self.in_array
+        out_array = self.out_array
 
         in_desc = in_array.desc(sdfg)
         out_desc = out_array.desc(sdfg)
@@ -219,19 +209,15 @@ class RedundantArray(pm.Transformation):
             if not true_out_array:
                 return False
             true_out_desc = sdfg.arrays[true_out_array.data]
-            true_out_subsets = [
-                e.data.get_dst_subset(e, graph)
-                for e in graph.in_edges(true_out_array)
-            ]
+            true_out_subsets = [e.data.get_dst_subset(e, graph) for e in graph.in_edges(true_out_array)]
 
         # Fail in the case of A -> V(A) or V(A) -> A
-        is_array_to_view = (isinstance(in_desc, data.View)
-                            ^ isinstance(out_desc, data.View))
+        is_array_to_view = (isinstance(in_desc, data.View) ^ isinstance(out_desc, data.View))
         if true_in_array is true_out_array and is_array_to_view:
             return False
 
-        if strict:
-            # In strict mode, make sure the memlet covers the removed array
+        if not permissive:
+            # Make sure the memlet covers the removed array
             subset = copy.deepcopy(e1.data.subset)
             subset.squeeze()
             shape = [sz for sz in in_desc.shape if sz != 1]
@@ -239,7 +225,7 @@ class RedundantArray(pm.Transformation):
                 return False
 
             # NOTE: Library node check
-            # The transformation must not apply in strict mode if in_array is
+            # The transformation must not apply in non-permissive mode if in_array is
             # not a view, is output of a library node, and an access or a view
             # of out_desc is also input to the same library node.
             # The reason is that the application of the transformation will lead
@@ -252,8 +238,7 @@ class RedundantArray(pm.Transformation):
                 for a in graph.in_edges(in_array):
                     if isinstance(a.src, nodes.LibraryNode):
                         edges_to_check.append(a)
-                    elif (isinstance(a.src, nodes.AccessNode)
-                          and isinstance(sdfg.arrays[a.src.data], data.View)):
+                    elif (isinstance(a.src, nodes.AccessNode) and isinstance(sdfg.arrays[a.src.data], data.View)):
                         for b in graph.in_edges(a.src):
                             edges_to_check.append(graph.memlet_path(b)[0])
 
@@ -270,12 +255,12 @@ class RedundantArray(pm.Transformation):
                                     if desc is true_out_desc:
                                         return False
 
-            # In strict mode, check if the state has two or more access nodes
+            # In non-permissive mode, check if the state has two or more access nodes
             # for the output array. Definitely one of them (out_array) is a
             # write access. Therefore, there might be a RW, WR, or WW dependency.
             accesses = [
-                n for n in graph.nodes() if isinstance(n, nodes.AccessNode)
-                and n.desc(sdfg) == true_out_desc and n is not true_out_array
+                n for n in graph.nodes()
+                if isinstance(n, nodes.AccessNode) and n.desc(sdfg) == true_out_desc and n is not true_out_array
             ]
             if len(accesses) > 0:
                 # We need to ensure that a data race will not happen if we
@@ -286,9 +271,7 @@ class RedundantArray(pm.Transformation):
                 for a in accesses:
                     subsets_intersect = False
                     for e in graph.out_edges(a):
-                        subset, _ = _validate_subsets(e,
-                                                      sdfg.arrays,
-                                                      src_name=a.data)
+                        subset, _ = _validate_subsets(e, sdfg.arrays, src_name=a.data)
                         for oset in true_out_subsets:
                             res = subsets.intersects(oset, subset)
                             if res == True or res is None:
@@ -301,13 +284,11 @@ class RedundantArray(pm.Transformation):
                     try:
                         has_bward_path = nx.has_path(G, a, true_out_array)
                     except NodeNotFound:
-                        has_bward_path = nx.has_path(graph.nx, a,
-                                                     true_out_array)
+                        has_bward_path = nx.has_path(graph.nx, a, true_out_array)
                     try:
                         has_fward_path = nx.has_path(G, true_out_array, a)
                     except NodeNotFound:
-                        has_fward_path = nx.has_path(graph.nx, true_out_array,
-                                                     a)
+                        has_fward_path = nx.has_path(graph.nx, true_out_array, a)
                     # If there is no path between the access nodes (disconnected
                     # components), then it is definitely possible to have data
                     # races. Abort.
@@ -353,14 +334,10 @@ class RedundantArray(pm.Transformation):
                 # Otherwise, the application of the transformation will result
                 # in an ambiguous View.
                 view_successors_desc = [
-                    e.dst.desc(sdfg)
-                    if isinstance(e.dst, nodes.AccessNode) else None
+                    e.dst.desc(sdfg) if isinstance(e.dst, nodes.AccessNode) else None
                     for e in graph.out_edges(out_array)
                 ]
-                if any([
-                        not desc or isinstance(desc, data.View)
-                        for desc in view_successors_desc
-                ]):
+                if any([not desc or isinstance(desc, data.View) for desc in view_successors_desc]):
                     return False
             else:
                 # Something else, for example, Stream
@@ -373,10 +350,8 @@ class RedundantArray(pm.Transformation):
         # Find occurrences in this and other states
         occurrences = []
         for state in sdfg.nodes():
-            occurrences.extend([
-                n for n in state.nodes()
-                if isinstance(n, nodes.AccessNode) and n.desc(sdfg) == in_desc
-            ])
+            occurrences.extend(
+                [n for n in state.nodes() if isinstance(n, nodes.AccessNode) and n.desc(sdfg) == in_desc])
         for isedge in sdfg.edges():
             if in_array.data in isedge.data.free_symbols:
                 occurrences.append(isedge)
@@ -400,36 +375,22 @@ class RedundantArray(pm.Transformation):
             for e3 in path:
                 if e3 is not e2:
                     try:
-                        _validate_subsets(e3,
-                                          sdfg.arrays,
-                                          dst_name=in_array.data)
+                        _validate_subsets(e3, sdfg.arrays, dst_name=in_array.data)
                     except NotImplementedError:
                         return False
 
         return True
 
-    @staticmethod
-    def match_to_str(graph, candidate):
-        in_array = graph.nodes()[candidate[RedundantArray.in_array]]
-
-        return "Remove " + str(in_array)
-
-    def _make_view(self, sdfg: SDFG, graph: SDFGState,
-                   in_array: nodes.AccessNode, out_array: nodes.AccessNode,
-                   e1: graph.MultiConnectorEdge[mm.Memlet],
-                   b_subset: subsets.Subset, b_dims_to_pop: typing.List[int]):
+    def _make_view(self, sdfg: SDFG, graph: SDFGState, in_array: nodes.AccessNode, out_array: nodes.AccessNode,
+                   e1: graph.MultiConnectorEdge[mm.Memlet], b_subset: subsets.Subset, b_dims_to_pop: typing.List[int]):
         in_desc = sdfg.arrays[in_array.data]
         out_desc = sdfg.arrays[out_array.data]
         # NOTE: We do not want to create another view, if the immediate
         # ancestors of in_array are views as well. We just remove it.
         in_ancestors_desc = [
-            e.src.desc(sdfg) if isinstance(e.src, nodes.AccessNode) else None
-            for e in graph.in_edges(in_array)
+            e.src.desc(sdfg) if isinstance(e.src, nodes.AccessNode) else None for e in graph.in_edges(in_array)
         ]
-        if all([
-                desc and isinstance(desc, data.View)
-                for desc in in_ancestors_desc
-        ]):
+        if all([desc and isinstance(desc, data.View) for desc in in_ancestors_desc]):
             for e in graph.in_edges(in_array):
                 a_subset, _ = _validate_subsets(e, sdfg.arrays)
                 graph.add_edge(
@@ -446,22 +407,16 @@ class RedundantArray(pm.Transformation):
                 del sdfg.arrays[in_array.data]
             return
         view_strides = in_desc.strides
-        if (b_dims_to_pop and len(b_dims_to_pop)
-                == len(out_desc.shape) - len(in_desc.shape)):
-            view_strides = [
-                s for i, s in enumerate(out_desc.strides)
-                if i not in b_dims_to_pop
-            ]
-        sdfg.arrays[in_array.data] = data.View(
-            in_desc.dtype, in_desc.shape, True, in_desc.allow_conflicts,
-            out_desc.storage, out_desc.location, view_strides, in_desc.offset,
-            out_desc.may_alias, dtypes.AllocationLifetime.Scope,
-            in_desc.alignment, in_desc.debuginfo, in_desc.total_size)
+        if (b_dims_to_pop and len(b_dims_to_pop) == len(out_desc.shape) - len(in_desc.shape)):
+            view_strides = [s for i, s in enumerate(out_desc.strides) if i not in b_dims_to_pop]
+        sdfg.arrays[in_array.data] = data.View(in_desc.dtype, in_desc.shape, True, in_desc.allow_conflicts,
+                                               out_desc.storage, out_desc.location, view_strides, in_desc.offset,
+                                               out_desc.may_alias, dtypes.AllocationLifetime.Scope, in_desc.alignment,
+                                               in_desc.debuginfo, in_desc.total_size)
 
-    def apply(self, sdfg):
-        graph = sdfg.nodes()[self.state_id]
-        in_array = self.in_array(sdfg)
-        out_array = self.out_array(sdfg)
+    def apply(self, graph, sdfg):
+        in_array = self.in_array
+        out_array = self.out_array
         in_desc = sdfg.arrays[in_array.data]
         out_desc = sdfg.arrays[out_array.data]
 
@@ -473,7 +428,7 @@ class RedundantArray(pm.Transformation):
         if (isinstance(in_desc, data.View) and isinstance(out_desc, data.View)):
             simple_case = True
             for e in graph.in_edges(in_array):
-                if a1_subset != e.data.dst_subset:
+                if e.data.dst_subset is not None and a1_subset != e.data.dst_subset:
                     simple_case = False
                     break
             if simple_case:
@@ -487,8 +442,7 @@ class RedundantArray(pm.Transformation):
                     if new_memlet.data == in_array.data:
                         new_memlet.data = out_array.data
                     new_memlet.dst_subset = b_subset
-                    graph.add_edge(e.src, e.src_conn, out_array, e.dst_conn,
-                                   new_memlet)
+                    graph.add_edge(e.src, e.src_conn, out_array, e.dst_conn, new_memlet)
                 graph.remove_node(in_array)
                 try:
                     if in_array.data in sdfg.arrays:
@@ -524,8 +478,7 @@ class RedundantArray(pm.Transformation):
         # create a view.
         if reduction or len(a_dims_to_pop) == len(in_desc.shape) or any(
                 m != a for m, a in zip(a1_subset.size(), in_desc.shape)):
-            self._make_view(sdfg, graph, in_array, out_array, e1, b_subset,
-                            b_dims_to_pop)
+            self._make_view(sdfg, graph, in_array, out_array, e1, b_subset, b_dims_to_pop)
             return
 
         # Validate that subsets are composable. If not, make a view
@@ -536,8 +489,7 @@ class RedundantArray(pm.Transformation):
                 wcr_nonatomic = e1.data.wcr_nonatomic
                 for e3 in path:
                     # 2-a. Extract subsets for array B and others
-                    other_subset, a3_subset = _validate_subsets(
-                        e3, sdfg.arrays, dst_name=in_array.data)
+                    other_subset, a3_subset = _validate_subsets(e3, sdfg.arrays, dst_name=in_array.data)
                     # 2-b. Modify memlet to match array B.
                     dname = out_array.data
                     src_is_data = False
@@ -550,8 +502,7 @@ class RedundantArray(pm.Transformation):
 
                     compose_and_push_back(bset, aset, b_dims_to_pop, popped)
         except (ValueError, NotImplementedError):
-            self._make_view(sdfg, graph, in_array, out_array, e1, b_subset,
-                            b_dims_to_pop)
+            self._make_view(sdfg, graph, in_array, out_array, e1, b_subset, b_dims_to_pop)
             return
 
         # 2. Iterate over the e2 edges and traverse the memlet tree
@@ -561,8 +512,7 @@ class RedundantArray(pm.Transformation):
             wcr_nonatomic = e1.data.wcr_nonatomic
             for e3 in path:
                 # 2-a. Extract subsets for array B and others
-                other_subset, a3_subset = _validate_subsets(
-                    e3, sdfg.arrays, dst_name=in_array.data)
+                other_subset, a3_subset = _validate_subsets(e3, sdfg.arrays, dst_name=in_array.data)
                 # 2-b. Modify memlet to match array B.
                 dname = out_array.data
                 src_is_data = False
@@ -573,8 +523,7 @@ class RedundantArray(pm.Transformation):
                 else:
                     aset = a3_subset
 
-                dst_subset = compose_and_push_back(bset, aset, b_dims_to_pop,
-                                                   popped)
+                dst_subset = compose_and_push_back(bset, aset, b_dims_to_pop, popped)
                 # NOTE: This fixes the following case:
                 # Tasklet ----> A[subset] ----> ... -----> A
                 # Tasklet is not data, so it doesn't have an other subset.
@@ -611,28 +560,22 @@ class RedundantArray(pm.Transformation):
             pass
 
 
-@registry.autoregister_params(singlestate=True, strict=True)
-class RedundantSecondArray(pm.Transformation):
+class RedundantSecondArray(pm.SingleStateTransformation, pm.SimplifyPass):
     """ Implements the redundant array removal transformation, applied
         when a transient array is copied from and to (from another array),
         but never used anywhere else. This transformation removes the second
         array. """
 
-    _arrays_removed = 0
-    _in_array = nodes.AccessNode("_")
-    _out_array = nodes.AccessNode("_")
+    in_array = pm.PatternNode(nodes.AccessNode)
+    out_array = pm.PatternNode(nodes.AccessNode)
 
-    @staticmethod
-    def expressions():
-        return [
-            sdutil.node_path_graph(RedundantSecondArray._in_array,
-                                   RedundantSecondArray._out_array)
-        ]
+    @classmethod
+    def expressions(cls):
+        return [sdutil.node_path_graph(cls.in_array, cls.out_array)]
 
-    @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
-        in_array = graph.nodes()[candidate[RedundantSecondArray._in_array]]
-        out_array = graph.nodes()[candidate[RedundantSecondArray._out_array]]
+    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
+        in_array = self.in_array
+        out_array = self.out_array
 
         in_desc = in_array.desc(sdfg)
         out_desc = out_array.desc(sdfg)
@@ -658,10 +601,7 @@ class RedundantSecondArray(pm.Transformation):
             if not true_in_array:
                 return False
             true_in_desc = sdfg.arrays[true_in_array.data]
-            true_in_subsets = [
-                e.data.get_src_subset(e, graph)
-                for e in graph.out_edges(true_in_array)
-            ]
+            true_in_subsets = [e.data.get_src_subset(e, graph) for e in graph.out_edges(true_in_array)]
         # Find the true out_desc (in case out_array is a view).
         true_out_array = out_array
         true_out_desc = out_desc
@@ -672,13 +612,12 @@ class RedundantSecondArray(pm.Transformation):
             true_out_desc = sdfg.arrays[true_out_array.data]
 
         # Fail in the case of A -> V(A) or V(A) -> A
-        is_array_to_view = (isinstance(in_desc, data.View)
-                            ^ isinstance(out_desc, data.View))
+        is_array_to_view = (isinstance(in_desc, data.View) ^ isinstance(out_desc, data.View))
         if true_in_array is true_out_array and is_array_to_view:
             return False
 
-        if strict:
-            # In strict mode, make sure the memlet covers the removed array
+        if not permissive:
+            # Make sure the memlet covers the removed array
             if not b1_subset:
                 return False
             subset = copy.deepcopy(b1_subset)
@@ -688,7 +627,7 @@ class RedundantSecondArray(pm.Transformation):
                 return False
 
             # NOTE: Library node check
-            # The transformation must not apply in strict mode if out_array is
+            # The transformation must not apply if out_array is
             # not a view, is input to a library node, and an access or a view
             # of in_desc is also output to the same library node.
             # The reason is that the application of the transformation will lead
@@ -701,8 +640,7 @@ class RedundantSecondArray(pm.Transformation):
                 for a in graph.out_edges(out_array):
                     if isinstance(a.dst, nodes.LibraryNode):
                         edges_to_check.append(a)
-                    elif (isinstance(a.dst, nodes.AccessNode)
-                          and isinstance(sdfg.arrays[a.dst.data], data.View)):
+                    elif (isinstance(a.dst, nodes.AccessNode) and isinstance(sdfg.arrays[a.dst.data], data.View)):
                         for b in graph.out_edges(a.dst):
                             edges_to_check.append(graph.memlet_path(b)[-1])
 
@@ -719,16 +657,15 @@ class RedundantSecondArray(pm.Transformation):
                                     if desc is true_in_desc:
                                         return False
 
-            # In strict mode, check if the state has two or more access nodes
+            # Check if the state has two or more access nodes
             # for in_array and at least one of them is a write access. There
             # might be a RW, WR, or WW dependency.
             accesses = [
-                n for n in graph.nodes() if isinstance(n, nodes.AccessNode)
-                and n.desc(sdfg) == true_in_desc and n is not true_in_array
+                n for n in graph.nodes()
+                if isinstance(n, nodes.AccessNode) and n.desc(sdfg) == true_in_desc and n is not true_in_array
             ]
             if len(accesses) > 0:
-                if (graph.in_degree(true_in_array) > 0
-                        or any(graph.in_degree(a) > 0 for a in accesses)):
+                if (graph.in_degree(true_in_array) > 0 or any(graph.in_degree(a) > 0 for a in accesses)):
                     # We need to ensure that a data race will not happen if we
                     # remove in_array.
                     # First, we simplify the graph
@@ -737,9 +674,7 @@ class RedundantSecondArray(pm.Transformation):
                     for a in accesses:
                         subsets_intersect = False
                         for e in graph.in_edges(a):
-                            _, subset = _validate_subsets(e,
-                                                          sdfg.arrays,
-                                                          dst_name=a.data)
+                            _, subset = _validate_subsets(e, sdfg.arrays, dst_name=a.data)
                             for iset in true_in_subsets:
                                 res = subsets.intersects(iset, subset)
                                 if res == True or res is None:
@@ -752,13 +687,11 @@ class RedundantSecondArray(pm.Transformation):
                         try:
                             has_bward_path = nx.has_path(G, a, true_in_array)
                         except NodeNotFound:
-                            has_bward_path = nx.has_path(
-                                graph.nx, a, true_in_array)
+                            has_bward_path = nx.has_path(graph.nx, a, true_in_array)
                         try:
                             has_fward_path = nx.has_path(G, true_in_array, a)
                         except NodeNotFound:
-                            has_fward_path = nx.has_path(
-                                graph.nx, true_in_array, a)
+                            has_fward_path = nx.has_path(graph.nx, true_in_array, a)
                         # If there is no path between the access nodes
                         # (disconnected components), then it is definitely
                         # possible to have data races. Abort.
@@ -767,8 +700,7 @@ class RedundantSecondArray(pm.Transformation):
                         # If there is a forward path then a must not be a direct
                         # successor of the (true) out_array.
                         try:
-                            if has_fward_path and a in G.successors(
-                                    true_out_array):
+                            if has_fward_path and a in G.successors(true_out_array):
                                 return False
                         except NetworkXError:
                             return False
@@ -789,14 +721,9 @@ class RedundantSecondArray(pm.Transformation):
                 # Otherwise, the application of the transformation will result
                 # in an ambiguous View.
                 view_ancestors_desc = [
-                    e.src.desc(sdfg)
-                    if isinstance(e.src, nodes.AccessNode) else None
-                    for e in graph.in_edges(in_array)
+                    e.src.desc(sdfg) if isinstance(e.src, nodes.AccessNode) else None for e in graph.in_edges(in_array)
                 ]
-                if any([
-                        not desc or isinstance(desc, data.View)
-                        for desc in view_ancestors_desc
-                ]):
+                if any([not desc or isinstance(desc, data.View) for desc in view_ancestors_desc]):
                     return False
             elif isinstance(out_desc, data.View):
                 # Case Access -> View
@@ -817,10 +744,8 @@ class RedundantSecondArray(pm.Transformation):
         # Find occurrences in this and other states
         occurrences = []
         for state in sdfg.nodes():
-            occurrences.extend([
-                n for n in state.nodes()
-                if isinstance(n, nodes.AccessNode) and n.desc(sdfg) == out_desc
-            ])
+            occurrences.extend(
+                [n for n in state.nodes() if isinstance(n, nodes.AccessNode) and n.desc(sdfg) == out_desc])
         for isedge in sdfg.edges():
             if out_array.data in isedge.data.free_symbols:
                 occurrences.append(isedge)
@@ -848,27 +773,15 @@ class RedundantSecondArray(pm.Transformation):
             for e3 in path:
                 if e3 is not e2:
                     try:
-                        _validate_subsets(e3,
-                                          sdfg.arrays,
-                                          src_name=out_array.data)
+                        _validate_subsets(e3, sdfg.arrays, src_name=out_array.data)
                     except NotImplementedError:
                         return False
 
         return True
 
-    @staticmethod
-    def match_to_str(graph, candidate):
-        out_array = graph.nodes()[candidate[RedundantSecondArray._out_array]]
-
-        return "Remove " + str(out_array)
-
-    def apply(self, sdfg):
-        def gnode(nname):
-            return graph.nodes()[self.subgraph[nname]]
-
-        graph = sdfg.nodes()[self.state_id]
-        in_array = gnode(RedundantSecondArray._in_array)
-        out_array = gnode(RedundantSecondArray._out_array)
+    def apply(self, graph: SDFGState, sdfg: SDFG):
+        in_array = self.in_array
+        out_array = self.out_array
         in_desc = sdfg.arrays[in_array.data]
         out_desc = sdfg.arrays[out_array.data]
 
@@ -893,19 +806,13 @@ class RedundantSecondArray(pm.Transformation):
                 b_dims_to_pop = find_dims_to_pop(b_size, a_size)
 
         # If the src subset does not cover the removed array, create a view.
-        if a_subset and any(m != a
-                            for m, a in zip(a_subset.size(), out_desc.shape)):
+        if a_subset and any(m != a for m, a in zip(a_subset.size(), out_desc.shape)):
             # NOTE: We do not want to create another view, if the immediate
             # successors of out_array are views as well. We just remove it.
             out_successors_desc = [
-                e.dst.desc(sdfg)
-                if isinstance(e.dst, nodes.AccessNode) else None
-                for e in graph.out_edges(out_array)
+                e.dst.desc(sdfg) if isinstance(e.dst, nodes.AccessNode) else None for e in graph.out_edges(out_array)
             ]
-            if all([
-                    desc and isinstance(desc, data.View)
-                    for desc in out_successors_desc
-            ]):
+            if all([desc and isinstance(desc, data.View) for desc in out_successors_desc]):
                 for e in graph.out_edges(out_array):
                     _, b_subset = _validate_subsets(e, sdfg.arrays)
                     graph.add_edge(
@@ -922,18 +829,12 @@ class RedundantSecondArray(pm.Transformation):
                     del sdfg.arrays[out_array.data]
                 return
             view_strides = out_desc.strides
-            if (a_dims_to_pop and len(a_dims_to_pop)
-                    == len(in_desc.shape) - len(out_desc.shape)):
-                view_strides = [
-                    s for i, s in enumerate(in_desc.strides)
-                    if i not in a_dims_to_pop
-                ]
-            sdfg.arrays[out_array.data] = data.View(
-                out_desc.dtype, out_desc.shape, True, out_desc.allow_conflicts,
-                in_desc.storage, in_desc.location, view_strides,
-                out_desc.offset, in_desc.may_alias,
-                dtypes.AllocationLifetime.Scope, out_desc.alignment,
-                out_desc.debuginfo, out_desc.total_size)
+            if (a_dims_to_pop and len(a_dims_to_pop) == len(in_desc.shape) - len(out_desc.shape)):
+                view_strides = [s for i, s in enumerate(in_desc.strides) if i not in a_dims_to_pop]
+            sdfg.arrays[out_array.data] = data.View(out_desc.dtype, out_desc.shape, True, out_desc.allow_conflicts,
+                                                    in_desc.storage, in_desc.location, view_strides, out_desc.offset,
+                                                    in_desc.may_alias, dtypes.AllocationLifetime.Scope,
+                                                    out_desc.alignment, out_desc.debuginfo, out_desc.total_size)
             return
 
         # 2. Iterate over the e2 edges and traverse the memlet tree
@@ -943,8 +844,7 @@ class RedundantSecondArray(pm.Transformation):
             wcr_nonatomic = e1.data.wcr_nonatomic
             for e3 in path:
                 # 2-a. Extract subsets for array B and others
-                b3_subset, other_subset = _validate_subsets(
-                    e3, sdfg.arrays, src_name=out_array.data)
+                b3_subset, other_subset = _validate_subsets(e3, sdfg.arrays, src_name=out_array.data)
                 # 2-b. Modify memlet to match array A. Example:
                 # A -- (0, a:b)/(c:c+b) --> B -- (c+d)/None --> others
                 # A -- (0, a+d)/None --> others
@@ -958,8 +858,7 @@ class RedundantSecondArray(pm.Transformation):
                 else:
                     bset = b3_subset
 
-                e3.data.subset = compose_and_push_back(aset, bset,
-                                                       a_dims_to_pop, popped)
+                e3.data.subset = compose_and_push_back(aset, bset, a_dims_to_pop, popped)
                 # NOTE: This fixes the following case:
                 # A ----> A[subset] ----> ... -----> Tasklet
                 # Tasklet is not data, so it doesn't have an other subset.
@@ -986,27 +885,22 @@ class RedundantSecondArray(pm.Transformation):
             except ValueError:  # Already in use (e.g., with Views)
                 pass
 
+        # If first node is now isolated, remove it
+        if len(graph.all_edges(in_array)) == 0:
+            graph.remove_node(in_array)
 
-@registry.autoregister_params(singlestate=True, strict=True)
-class SqueezeViewRemove(pm.Transformation):
+
+class SqueezeViewRemove(pm.SingleStateTransformation, pm.SimplifyPass):
     in_array = pm.PatternNode(nodes.AccessNode)
     out_array = pm.PatternNode(nodes.AccessNode)
 
-    @staticmethod
-    def expressions():
-        return [
-            sdutil.node_path_graph(SqueezeViewRemove.in_array,
-                                   SqueezeViewRemove.out_array)
-        ]
+    @classmethod
+    def expressions(cls):
+        return [sdutil.node_path_graph(cls.in_array, cls.out_array)]
 
-    def can_be_applied(self,
-                       state: SDFGState,
-                       candidate,
-                       expr_index: int,
-                       sdfg: SDFG,
-                       strict: bool = False):
-        in_array = self.in_array(sdfg)
-        out_array = self.out_array(sdfg)
+    def can_be_applied(self, state: SDFGState, expr_index: int, sdfg: SDFG, permissive: bool = False):
+        in_array = self.in_array
+        out_array = self.out_array
 
         in_desc = in_array.desc(sdfg)
         out_desc = out_array.desc(sdfg)
@@ -1030,7 +924,7 @@ class SqueezeViewRemove(pm.Transformation):
         vsqdims = view_subset.squeeze()
 
         # View may modify the behavior of a library node
-        if strict and isinstance(vedge.dst, nodes.LibraryNode):
+        if not permissive and isinstance(vedge.dst, nodes.LibraryNode):
             return False
 
         # Check that subsets are equivalent
@@ -1038,20 +932,16 @@ class SqueezeViewRemove(pm.Transformation):
             return False
 
         # Verify strides after squeeze
-        astrides = tuple(
-            in_desc.strides
-        )  #s for i, s in enumerate(in_desc.strides) if i not in asqdims)
-        vstrides = tuple(s for i, s in enumerate(out_desc.strides)
-                         if i in vsqdims)
+        astrides = tuple(in_desc.strides)  #s for i, s in enumerate(in_desc.strides) if i not in asqdims)
+        vstrides = tuple(s for i, s in enumerate(out_desc.strides) if i in vsqdims)
         if astrides != vstrides:
             return False
 
         return True
 
-    def apply(self, sdfg: SDFG):
-        state: SDFGState = sdfg.node(self.state_id)
-        in_array = self.in_array(sdfg)
-        out_array = self.out_array(sdfg)
+    def apply(self, state: SDFGState, sdfg: SDFG):
+        in_array = self.in_array
+        out_array = self.out_array
         out_desc = out_array.desc(sdfg)
 
         vedge = state.out_edges(out_array)[0]
@@ -1069,8 +959,7 @@ class SqueezeViewRemove(pm.Transformation):
 
         # Redirect original edge to point to data
         state.remove_edge(vedge)
-        state.add_edge(in_array, vedge.src_conn, vedge.dst, vedge.dst_conn,
-                       vedge.data)
+        state.add_edge(in_array, vedge.src_conn, vedge.dst, vedge.dst_conn, vedge.data)
 
         # Remove node and descriptor
         state.remove_node(out_array)
@@ -1080,26 +969,17 @@ class SqueezeViewRemove(pm.Transformation):
             pass
 
 
-@registry.autoregister_params(singlestate=True, strict=True)
-class UnsqueezeViewRemove(pm.Transformation):
+class UnsqueezeViewRemove(pm.SingleStateTransformation, pm.SimplifyPass):
     in_array = pm.PatternNode(nodes.AccessNode)
     out_array = pm.PatternNode(nodes.AccessNode)
 
-    @staticmethod
-    def expressions():
-        return [
-            sdutil.node_path_graph(UnsqueezeViewRemove.in_array,
-                                   UnsqueezeViewRemove.out_array)
-        ]
+    @classmethod
+    def expressions(cls):
+        return [sdutil.node_path_graph(cls.in_array, cls.out_array)]
 
-    def can_be_applied(self,
-                       state: SDFGState,
-                       candidate,
-                       expr_index: int,
-                       sdfg: SDFG,
-                       strict: bool = False):
-        in_array = self.in_array(sdfg)
-        out_array = self.out_array(sdfg)
+    def can_be_applied(self, state: SDFGState, expr_index: int, sdfg: SDFG, permissive: bool = False):
+        in_array = self.in_array
+        out_array = self.out_array
 
         in_desc = in_array.desc(sdfg)
         out_desc = out_array.desc(sdfg)
@@ -1123,7 +1003,7 @@ class UnsqueezeViewRemove(pm.Transformation):
         asqdims = array_subset.squeeze()
 
         # View may modify the behavior of a library node
-        if strict and isinstance(vedge.src, nodes.LibraryNode):
+        if not permissive and isinstance(vedge.src, nodes.LibraryNode):
             return False
 
         # Check that subsets are equivalent
@@ -1132,29 +1012,23 @@ class UnsqueezeViewRemove(pm.Transformation):
 
         # Verify strides after squeeze
         vstrides = tuple(in_desc.strides)
-        astrides = tuple(s for i, s in enumerate(out_desc.strides)
-                         if i in asqdims)
+        astrides = tuple(s for i, s in enumerate(out_desc.strides) if i in asqdims)
         if astrides != vstrides:
             return False
 
         return True
 
-    def apply(self, sdfg: SDFG):
-        state: SDFGState = sdfg.node(self.state_id)
-        in_array = self.in_array(sdfg)
-        out_array = self.out_array(sdfg)
-        out_desc = out_array.desc(sdfg)
+    def apply(self, state: SDFGState, sdfg: SDFG):
+        in_array = self.in_array
+        out_array = self.out_array
 
         vedge = state.in_edges(in_array)[0]
-        view_subset = copy.deepcopy(vedge.data.subset)
 
         aedge = state.edges_between(in_array, out_array)[0]
         array_subset = copy.deepcopy(aedge.data.subset)
 
         asqdims = array_subset.squeeze()
-        asqdims_mirror = [
-            i for i in range(aedge.data.subset.dims()) if i not in asqdims
-        ]
+        asqdims_mirror = [i for i in range(aedge.data.subset.dims()) if i not in asqdims]
 
         # Modify data and subset on all outgoing edges
         for e in state.memlet_tree(vedge):
@@ -1167,8 +1041,7 @@ class UnsqueezeViewRemove(pm.Transformation):
 
         # Redirect original edge to point to data
         state.remove_edge(vedge)
-        state.add_edge(vedge.src, vedge.src_conn, out_array, vedge.dst_conn,
-                       vedge.data)
+        state.add_edge(vedge.src, vedge.src_conn, out_array, vedge.dst_conn, vedge.data)
 
         # Remove node and descriptor
         state.remove_node(in_array)
@@ -1210,25 +1083,20 @@ def _sliced_dims(adesc: data.Array, vdesc: data.View) -> typing.List[int]:
     return [adesc.strides.index(s) for s in vdesc.strides]
 
 
-@registry.autoregister_params(singlestate=True, strict=True)
-class RedundantReadSlice(pm.Transformation):
+class RedundantReadSlice(pm.SingleStateTransformation, pm.SimplifyPass):
     """ Detects patterns of the form Array -> View(Array) and removes
     the View if it is a slice. """
 
     in_array = pm.PatternNode(nodes.AccessNode)
     out_array = pm.PatternNode(nodes.AccessNode)
 
-    @staticmethod
-    def expressions():
-        return [
-            sdutil.node_path_graph(RedundantReadSlice.in_array,
-                                   RedundantReadSlice.out_array)
-        ]
+    @classmethod
+    def expressions(cls):
+        return [sdutil.node_path_graph(cls.in_array, cls.out_array)]
 
-    @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
-        in_array = graph.nodes()[candidate[RedundantReadSlice.in_array]]
-        out_array = graph.nodes()[candidate[RedundantReadSlice.out_array]]
+    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
+        in_array = self.in_array
+        out_array = self.out_array
 
         in_desc = in_array.desc(sdfg)
         out_desc = out_array.desc(sdfg)
@@ -1238,8 +1106,7 @@ class RedundantReadSlice(pm.Transformation):
             return False
 
         # The match must be Array -> View
-        if not (isinstance(in_desc, data.Array)
-                and not isinstance(in_desc, data.View)):
+        if not (isinstance(in_desc, data.Array) and not isinstance(in_desc, data.View)):
             return False
         if not isinstance(out_desc, data.View):
             return False
@@ -1282,19 +1149,9 @@ class RedundantReadSlice(pm.Transformation):
 
         return True
 
-    @staticmethod
-    def match_to_str(graph, candidate):
-        out_array = graph.nodes()[candidate[RedundantReadSlice.out_array]]
-
-        return "Remove " + str(out_array)
-
-    def apply(self, sdfg):
-        def gnode(nname):
-            return graph.nodes()[self.subgraph[nname]]
-
-        graph = sdfg.nodes()[self.state_id]
-        in_array = gnode(RedundantReadSlice.in_array)
-        out_array = gnode(RedundantReadSlice.out_array)
+    def apply(self, graph, sdfg):
+        in_array = self.in_array
+        out_array = self.out_array
         in_desc = sdfg.arrays[in_array.data]
         out_desc = sdfg.arrays[out_array.data]
 
@@ -1308,10 +1165,7 @@ class RedundantReadSlice(pm.Transformation):
 
         # Split the dimensions of A to sliced and non-viewed
         sliced_dims = _sliced_dims(in_desc, out_desc)
-        nviewed_dims = [
-            i for i in range(len(in_desc.shape) - 1, -1, -1)
-            if i not in sliced_dims
-        ]
+        nviewed_dims = [i for i in range(len(in_desc.shape) - 1, -1, -1) if i not in sliced_dims]
         aset, popped = pop_dims(a_subset, nviewed_dims)
 
         # Iterate over the e2 edges and traverse the memlet tree
@@ -1321,8 +1175,7 @@ class RedundantReadSlice(pm.Transformation):
             wcr_nonatomic = e1.data.wcr_nonatomic
             for e3 in path:
                 # Extract subsets for view V and others
-                v3_subset, other_subset = _validate_subsets(
-                    e3, sdfg.arrays, src_name=out_array.data)
+                v3_subset, other_subset = _validate_subsets(e3, sdfg.arrays, src_name=out_array.data)
                 # Modify memlet to match array A. Example:
                 # A -- (0, a:b)/(c:c+b) --> V -- (c+d)/None --> others
                 # A -- (0, a+d)/None --> others
@@ -1334,8 +1187,7 @@ class RedundantReadSlice(pm.Transformation):
 
                 vset = v3_subset
 
-                e3.data.src_subset = compose_and_push_back(
-                    aset, vset, nviewed_dims, popped)
+                e3.data.src_subset = compose_and_push_back(aset, vset, nviewed_dims, popped)
                 # NOTE: This fixes the following case:
                 # A ----> A[subset] ----> ... -----> Tasklet
                 # Tasklet is not data, so it doesn't have an other subset.
@@ -1363,25 +1215,20 @@ class RedundantReadSlice(pm.Transformation):
                 pass
 
 
-@registry.autoregister_params(singlestate=True, strict=True)
-class RedundantWriteSlice(pm.Transformation):
+class RedundantWriteSlice(pm.SingleStateTransformation, pm.SimplifyPass):
     """ Detects patterns of the form View(Array) -> Array and removes
     the View if it is a slice. """
 
     in_array = pm.PatternNode(nodes.AccessNode)
     out_array = pm.PatternNode(nodes.AccessNode)
 
-    @staticmethod
-    def expressions():
-        return [
-            sdutil.node_path_graph(RedundantWriteSlice.in_array,
-                                   RedundantWriteSlice.out_array)
-        ]
+    @classmethod
+    def expressions(cls):
+        return [sdutil.node_path_graph(cls.in_array, cls.out_array)]
 
-    @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
-        in_array = graph.nodes()[candidate[RedundantWriteSlice.in_array]]
-        out_array = graph.nodes()[candidate[RedundantWriteSlice.out_array]]
+    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
+        in_array = self.in_array
+        out_array = self.out_array
 
         in_desc = in_array.desc(sdfg)
         out_desc = out_array.desc(sdfg)
@@ -1391,8 +1238,7 @@ class RedundantWriteSlice(pm.Transformation):
             return False
 
         # The match must be View -> Array
-        if not (isinstance(out_desc, data.Array)
-                and not isinstance(out_desc, data.View)):
+        if not (isinstance(out_desc, data.Array) and not isinstance(out_desc, data.View)):
             return False
         if not isinstance(in_desc, data.View):
             return False
@@ -1441,19 +1287,9 @@ class RedundantWriteSlice(pm.Transformation):
 
         return True
 
-    @staticmethod
-    def match_to_str(graph, candidate):
-        in_array = graph.nodes()[candidate[RedundantWriteSlice.in_array]]
-
-        return "Remove " + str(in_array)
-
-    def apply(self, sdfg):
-        def gnode(nname):
-            return graph.nodes()[self.subgraph[nname]]
-
-        graph = sdfg.nodes()[self.state_id]
-        in_array = gnode(RedundantWriteSlice.in_array)
-        out_array = gnode(RedundantWriteSlice.out_array)
+    def apply(self, graph, sdfg):
+        in_array = self.in_array
+        out_array = self.out_array
         in_desc = sdfg.arrays[in_array.data]
         out_desc = sdfg.arrays[out_array.data]
 
@@ -1466,10 +1302,7 @@ class RedundantWriteSlice(pm.Transformation):
 
         # Split the dimensions of A to sliced and non-viewed
         sliced_dims = _sliced_dims(out_desc, in_desc)
-        nviewed_dims = [
-            i for i in range(len(out_desc.shape) - 1, -1, -1)
-            if i not in sliced_dims
-        ]
+        nviewed_dims = [i for i in range(len(out_desc.shape) - 1, -1, -1) if i not in sliced_dims]
         aset, popped = pop_dims(a_subset, nviewed_dims)
 
         # Iterate over the e2 edges and traverse the memlet tree
@@ -1479,8 +1312,7 @@ class RedundantWriteSlice(pm.Transformation):
             wcr_nonatomic = e1.data.wcr_nonatomic
             for e3 in path:
                 # Extract subsets for view V and others
-                other_subset, v3_subset = _validate_subsets(
-                    e3, sdfg.arrays, dst_name=in_array.data)
+                other_subset, v3_subset = _validate_subsets(e3, sdfg.arrays, dst_name=in_array.data)
                 # Modify memlet to match array A.
                 e3.data.data = out_array.data
                 e3.data._is_data_src = False
@@ -1488,8 +1320,7 @@ class RedundantWriteSlice(pm.Transformation):
 
                 vset = v3_subset
 
-                e3.data.dst_subset = compose_and_push_back(
-                    aset, vset, nviewed_dims, popped)
+                e3.data.dst_subset = compose_and_push_back(aset, vset, nviewed_dims, popped)
                 # NOTE: This fixes the following case:
                 # Tasklet ----> A[subset] ----> ... -----> A
                 # Tasklet is not data, so it doesn't have an other subset.

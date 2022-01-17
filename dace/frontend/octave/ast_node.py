@@ -20,12 +20,10 @@ class AST_Node():
         self.parent = newparent
 
     def get_children(self):
-        raise NotImplementedError(
-            str(type(self)) + " does not implement get_children()")
+        raise NotImplementedError(str(type(self)) + " does not implement get_children()")
 
     def replace_child(self, old, new):
-        raise NotImplementedError(
-            str(type(self)) + " does not implement replace_child()")
+        raise NotImplementedError(str(type(self)) + " does not implement replace_child()")
 
     def specialize(self):
         """ Some nodes can be simplified after parsing the complete AST and
@@ -110,13 +108,11 @@ class AST_Node():
 
     def get_datanode(self, sdfg, state):
         try:
-            result = self.find_data_node_in_sdfg_state(
-                sdfg=sdfg,
-                state=state,
-                nodename=self.get_name_in_sdfg(sdfg=sdfg))
+            result = self.find_data_node_in_sdfg_state(sdfg=sdfg,
+                                                       state=state,
+                                                       nodename=self.get_name_in_sdfg(sdfg=sdfg))
         except ValueError:
-            result = sdfg.nodes()[state].add_access(
-                self.get_name_in_sdfg(sdfg=sdfg))
+            result = sdfg.nodes()[state].add_access(self.get_name_in_sdfg(sdfg=sdfg))
         return result
 
     def get_new_tmpvar(self, sdfg):
@@ -138,7 +134,7 @@ class AST_Node():
         """ If this node has no name assigned yet, create a new one of the form
             `__tmp_X` where `X` is an integer, such that this node does not yet
             exist in the given SDFG.
-            @note: We assume that we create exactly one SDFG from each AST,
+            :note: We assume that we create exactly one SDFG from each AST,
                    otherwise we need to store the hash of the SDFG the name was
                    created for (would be easy but seems useless at this point).
         """
@@ -148,9 +144,7 @@ class AST_Node():
         return self.name
 
     def generate_code(self, *args):
-        raise NotImplementedError(
-            "Class " + type(self).__name__ +
-            " does not implement the generate_code method.")
+        raise NotImplementedError("Class " + type(self).__name__ + " does not implement the generate_code method.")
 
     def shortdesc(self):
         ret = str(self)
@@ -161,16 +155,13 @@ class AST_Node():
         ret = ""
         ret += self.shortdesc() + ";\n"
         for c in self.get_children():
-            ret += self.shortdesc() + "->" + c.shortdesc(
-            ) + "[label=\"child\", color=\"red\"] ;\n"
+            ret += self.shortdesc() + "->" + c.shortdesc() + "[label=\"child\", color=\"red\"] ;\n"
             ret += c.print_as_tree()
 
         if self.get_parent() is None:
-            ret += self.shortdesc(
-            ) + " -> \"None\" [label=\"parent\", color=\"blue\"];\n"
+            ret += self.shortdesc() + " -> \"None\" [label=\"parent\", color=\"blue\"];\n"
         else:
-            ret += self.shortdesc() + " -> " + self.get_parent().shortdesc(
-            ) + "[label=\"parent\", color=\"blue\"];\n"
+            ret += self.shortdesc() + " -> " + self.get_parent().shortdesc() + "[label=\"parent\", color=\"blue\"];\n"
 
         if isinstance(self, AST_Statements):
             ret += "{ rank=same; "
@@ -179,11 +170,9 @@ class AST_Node():
             ret += "}\n"
             for c in self.get_children():
                 if c.next is not None:
-                    ret += c.shortdesc() + " -> " + c.next.shortdesc(
-                    ) + "[label=\"next\", color=\"green\"]"
+                    ret += c.shortdesc() + " -> " + c.next.shortdesc() + "[label=\"next\", color=\"green\"]"
                 if c.prev is not None:
-                    ret += c.shortdesc() + " -> " + c.prev.shortdesc(
-                    ) + "[label=\"prev\", color=\"yellow\"]"
+                    ret += c.shortdesc() + " -> " + c.prev.shortdesc() + "[label=\"prev\", color=\"yellow\"]"
 
         return ret
 
@@ -196,9 +185,8 @@ class AST_Statements(AST_Node):
         # we expect stmts to be a list of AST_Node objects
         for s in stmts:
             if not isinstance(s, AST_Node):
-                raise ValueError(
-                    "Expected a list of AST_Nodes, but one of the members is: "
-                    + str(s) + " type " + str(type(s)))
+                raise ValueError("Expected a list of AST_Nodes, but one of the members is: " + str(s) + " type " +
+                                 str(type(s)))
 
     def __repr__(self):
         res = ["Statements:"]
@@ -256,18 +244,14 @@ class AST_Statements(AST_Node):
                     stmts = []
                 elif isinstance(c, AST_EndFunc):
                     func.set_statements(stmts)
-                    self.statements = [
-                        x for x in self.statements if x not in stmts + [c]
-                    ]
+                    self.statements = [x for x in self.statements if x not in stmts + [c]]
                     rerun = True
                 elif func is not None:
                     stmts.append(c)
 
         # Remove NullStatements, they are only useful during parsing
         from .ast_nullstmt import AST_NullStmt
-        self.statements = [
-            x for x in self.statements if not isinstance(x, AST_NullStmt)
-        ]
+        self.statements = [x for x in self.statements if not isinstance(x, AST_NullStmt)]
         self.provide_parents(self.parent)
 
         # Lastly, specialize all children
@@ -289,9 +273,7 @@ class AST_Statements(AST_Node):
             prevstate = None
             for s in self.statements:
                 state = len(sdfg.nodes())
-                newstate = dace.SDFGState("s" + str(state),
-                                          sdfg,
-                                          debuginfo=s.context)
+                newstate = dace.SDFGState("s" + str(state), sdfg, debuginfo=s.context)
                 sdfg.add_node(newstate)
                 last_state = s.generate_code(sdfg, state)
                 if prevstate is not None:
@@ -304,7 +286,6 @@ class AST_Statements(AST_Node):
 
             return sdfg
         else:
-            raise ValueError(
-                "Appending statements to an SDFG is not supported.")
+            raise ValueError("Appending statements to an SDFG is not supported.")
 
     __str__ = __repr__

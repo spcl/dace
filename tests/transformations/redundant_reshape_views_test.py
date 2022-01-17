@@ -24,14 +24,11 @@ def test_inline_reshape_views_work():
         result[:] = np.reshape(nested_add1(A, B), [9])
         return nested_add1(result, B)
 
-    sdfg = test_inline_reshape_views_work.to_sdfg(strict=True)
+    sdfg = test_inline_reshape_views_work.to_sdfg(simplify=True)
 
     arrays = 0
     views = 0
-    sdfg_used_desc = set([
-        n.desc(sdfg) for n, _ in sdfg.all_nodes_recursive()
-        if isinstance(n, dace.nodes.AccessNode)
-    ])
+    sdfg_used_desc = set([n.desc(sdfg) for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.AccessNode)])
     for desc in sdfg_used_desc:
         # View is subclass of Array, so we must do this check first
         if isinstance(desc, dace.data.View):
@@ -45,17 +42,16 @@ def test_inline_reshape_views_work():
 
 def test_views_between_maps_work():
     @dace.program
-    def test_inline_reshape_views_work(A: dace.float64[3, 3],
-                                       B: dace.float64[9]):
+    def test_inline_reshape_views_work(A: dace.float64[3, 3], B: dace.float64[9]):
         result = dace.define_local([9], dace.float64)
         result[:] = nested_add2(A, B)
         result_reshaped = reshape_node(result)
 
         return np.transpose(result_reshaped)
 
-    sdfg = test_inline_reshape_views_work.to_sdfg(strict=False)
+    sdfg = test_inline_reshape_views_work.to_sdfg(simplify=False)
     sdfg.expand_library_nodes()
-    sdfg.apply_strict_transformations()
+    sdfg.simplify()
 
 
 if __name__ == "__main__":

@@ -26,10 +26,8 @@ def run_test(configs, target):
 
         a, veclen, dtype = config
 
-        x = aligned_ndarray(np.random.uniform(0, 100, n).astype(dtype.type),
-                            alignment=256)
-        y = aligned_ndarray(np.random.uniform(0, 100, n).astype(dtype.type),
-                            alignment=256)
+        x = aligned_ndarray(np.random.uniform(0, 100, n).astype(dtype.type), alignment=256)
+        y = aligned_ndarray(np.random.uniform(0, 100, n).astype(dtype.type), alignment=256)
         y_ref = y.copy()
 
         a = dtype(a)
@@ -44,9 +42,7 @@ def run_test(configs, target):
             sdfg = pure_graph(veclen, dtype, "pure", i)
         program = sdfg.compile()
 
-        with dace.config.set_temporary('compiler',
-                                       'allow_view_arguments',
-                                       value=True):
+        with dace.config.set_temporary('compiler', 'allow_view_arguments', value=True):
 
             if target in ["fpga_stream", "fpga_array"]:
                 program(x=x, y=y, a=a, n=np.int32(n))
@@ -89,18 +85,9 @@ def pure_graph(veclen, dtype, implementation, test_case):
     axpy_node = blas.axpy.Axpy("axpy", a)
     axpy_node.implementation = implementation
 
-    test_state.add_memlet_path(x_in,
-                               axpy_node,
-                               dst_conn="_x",
-                               memlet=Memlet(f"x[0:n/{veclen}]"))
-    test_state.add_memlet_path(y_in,
-                               axpy_node,
-                               dst_conn="_y",
-                               memlet=Memlet(f"y[0:n/{veclen}]"))
-    test_state.add_memlet_path(axpy_node,
-                               y_out,
-                               src_conn="_res",
-                               memlet=Memlet(f"y[0:n/{veclen}]"))
+    test_state.add_memlet_path(x_in, axpy_node, dst_conn="_x", memlet=Memlet(f"x[0:n/{veclen}]"))
+    test_state.add_memlet_path(y_in, axpy_node, dst_conn="_y", memlet=Memlet(f"y[0:n/{veclen}]"))
+    test_state.add_memlet_path(axpy_node, y_out, src_conn="_res", memlet=Memlet(f"y[0:n/{veclen}]"))
 
     sdfg.expand_library_nodes()
 
@@ -121,10 +108,7 @@ def fpga_graph(veclen, dtype, test_case, expansion):
 def stream_fpga_graph(veclen, precision, test_case, expansion):
     sdfg = fpga_graph(veclen, precision, test_case, expansion)
     sdfg.expand_library_nodes()
-    sdfg.apply_transformations_repeated(
-        [InlineSDFG, StreamingMemory], [{}, {
-            "storage": dace.StorageType.FPGA_Local
-        }])
+    sdfg.apply_transformations_repeated([InlineSDFG, StreamingMemory], [{}, {"storage": dace.StorageType.FPGA_Local}])
     return sdfg
 
 

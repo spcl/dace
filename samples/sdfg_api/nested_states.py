@@ -14,15 +14,9 @@ def mystate(state, src, dst):
     tasklet = state.add_tasklet('aaa2', {'a'}, {'b'}, 'b = a + 1')
 
     # input path (src->tasklet[a])
-    state.add_memlet_path(src_node,
-                          tasklet,
-                          dst_conn='a',
-                          memlet=dace.Memlet.simple(src, '0'))
+    state.add_memlet_path(src_node, tasklet, dst_conn='a', memlet=dace.Memlet.simple(src, '0'))
     # output path (tasklet[b]->dst)
-    state.add_memlet_path(tasklet,
-                          dst_node,
-                          src_conn='b',
-                          memlet=dace.Memlet.simple(dst, '0'))
+    state.add_memlet_path(tasklet, dst_node, src_conn='b', memlet=dace.Memlet.simple(dst, '0'))
 
 
 # Create nested SDFG
@@ -54,16 +48,8 @@ Ain = state.add_read('A')
 Aout = state.add_write('A')
 
 # Connect dataflow nodes
-state.add_memlet_path(Ain,
-                      me,
-                      nsdfg,
-                      memlet=dace.Memlet.simple('A', 'k'),
-                      dst_conn='sA')
-state.add_memlet_path(nsdfg,
-                      mx,
-                      Aout,
-                      memlet=dace.Memlet.simple('A', 'k'),
-                      src_conn='sC')
+state.add_memlet_path(Ain, me, nsdfg, memlet=dace.Memlet.simple('A', 'k'), dst_conn='sA')
+state.add_memlet_path(nsdfg, mx, Aout, memlet=dace.Memlet.simple('A', 'k'), src_conn='sC')
 ###
 
 # Validate correctness of SDFG

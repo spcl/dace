@@ -70,17 +70,14 @@ if __name__ == "__main__":
     E.set(args['edges'])
     V.set(args['vertices'])
 
-    print('Connected Components (Shiloach-Vishkin) E=%d, V=%d' %
-          (E.get(), V.get()))
+    print('Connected Components (Shiloach-Vishkin) E=%d, V=%d' % (E.get(), V.get()))
 
     graph = nx.gnm_random_graph(V.get(), E.get(), seed=args['seed'])
 
     comp = np.arange(0, V.get(), dtype=np.uint64)
     EL = dace.ndarray([2 * E, 2], dace.uint64)
-    EL[:E.get()] = np.array([[u, v] for u, v, d in nx.to_edgelist(graph)],
-                            dtype=np.uint64)
-    EL[E.get():] = np.array([[v, u] for u, v, d in nx.to_edgelist(graph)],
-                            dtype=np.uint64)
+    EL[:E.get()] = np.array([[u, v] for u, v, d in nx.to_edgelist(graph)], dtype=np.uint64)
+    EL[E.get():] = np.array([[v, u] for u, v, d in nx.to_edgelist(graph)], dtype=np.uint64)
 
     shiloach_vishkin(EL, comp, E=E, V=V)
 

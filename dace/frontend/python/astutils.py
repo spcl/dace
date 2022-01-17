@@ -43,12 +43,11 @@ def function_to_ast(f):
             src_file = '<interpreter>'
             src_line = 0
         except (ImportError, ModuleNotFoundError, TypeError, OSError):
-            raise TypeError(
-                'Cannot obtain source code for dace program. This may '
-                'happen if you are using the "python" default '
-                'interpreter. Please either use the "ipython" '
-                'interpreter, a Jupyter or Colab notebook, or place '
-                'the source code in a file and import it.')
+            raise TypeError('Cannot obtain source code for dace program. This may '
+                            'happen if you are using the "python" default '
+                            'interpreter. Please either use the "ipython" '
+                            'interpreter, a Jupyter or Colab notebook, or place '
+                            'the source code in a file and import it.')
 
     src_ast = ast.parse(_remove_outer_indentation(src))
     ast.increment_lineno(src_ast, src_line)
@@ -66,15 +65,18 @@ def evalnode(node: ast.AST, gvars: Dict[str, Any]) -> Any:
     """
     if not isinstance(node, ast.AST):
         return node
+    if isinstance(node, ast.Index):  # For compatibility
+        node = node.value
     if isinstance(node, ast.Num):  # For compatibility
         return node.n
+    if isinstance(node, ast.Constant):
+        return node.value
     try:
         # Ensure context is load so eval works (e.g., when using value as lhs)
         if not isinstance(getattr(node, 'ctx', False), ast.Load):
             node = copy.deepcopy(node)
             node.ctx = ast.Load()
-        return eval(compile(ast.Expression(node), '<string>', mode='eval'),
-                    gvars)
+        return eval(compile(ast.Expression(node), '<string>', mode='eval'), gvars)
     except:  # Anything can happen here
         raise SyntaxError
 
@@ -97,7 +99,8 @@ def rname(node):
     if isinstance(node, ast.Call):  # form @dace.attr(...)
         if isinstance(node.func, ast.Name):
             return node.func.id
-        # Assuming isinstance(node.func, ast.Attribute) == True
+        if not isinstance(node.func, ast.Attribute):
+            raise TypeError(f'Unexpected call expression type {type(node.func).__name__}: {unparse(node.func)}')
         name = node.func.attr
         # Handle calls with submodules and methods, e.g. numpy.add.reduce
         value = node.func.value
@@ -108,8 +111,7 @@ def rname(node):
             name = value.id + '.' + name
         else:
             raise NotImplementedError("Unsupported AST {n} node nested inside "
-                                      "AST call node: {s}".format(
-                                          n=type(value), s=unparse(value)))
+                                      "AST call node: {s}".format(n=type(value), s=unparse(value)))
         return name
     if isinstance(node, ast.FunctionDef):  # form def func(...)
         return node.name
@@ -245,17 +247,12 @@ def astrange_to_symrange(astrange, arrays, arrname=None):
         # If range is the entire array, use the array descriptor to obtain the
         # entire range
         if astrange is None:
-            return [
-                (symbolic.pystr_to_symbolic(0),
-                 symbolic.pystr_to_symbolic(symbolic.symbol_name_or_value(s)) -
-                 1, symbolic.pystr_to_symbolic(1)) for s in arrdesc.shape
-            ]
+            return [(symbolic.pystr_to_symbolic(0), symbolic.pystr_to_symbolic(symbolic.symbol_name_or_value(s)) - 1,
+                     symbolic.pystr_to_symbolic(1)) for s in arrdesc.shape]
 
         missing_slices = len(arrdesc.shape) - len(astrange)
         if missing_slices < 0:
-            raise ValueError(
-                'Mismatching shape {} - range {} dimensions'.format(
-                    arrdesc.shape, astrange))
+            raise ValueError('Mismatching shape {} - range {} dimensions'.format(arrdesc.shape, astrange))
         for i in range(missing_slices):
             astrange.append((None, None, None))
 
@@ -277,8 +274,7 @@ def astrange_to_symrange(astrange, arrays, arrname=None):
                 if (end < 0) == True:
                     end += arrdesc.shape[i]
             else:
-                end = symbolic.pystr_to_symbolic(
-                    symbolic.symbol_name_or_value(arrdesc.shape[i])) - 1
+                end = symbolic.pystr_to_symbolic(symbolic.symbol_name_or_value(arrdesc.shape[i])) - 1
             if skip is None:
                 skip = symbolic.pystr_to_symbolic(1)
             else:
@@ -315,8 +311,7 @@ def negate_expr(node):
         node = node.code
     if hasattr(node, "__len__"):
         if len(node) > 1:
-            raise ValueError("negate_expr only expects "
-                             "single expressions, got: {}".format(node))
+            raise ValueError("negate_expr only expects " "single expressions, got: {}".format(node))
         expr = node[0]
     else:
         expr = node
@@ -347,8 +342,7 @@ class ExtNodeTransformer(ast.NodeTransformer):
                 new_values = []
                 for value in old_value:
                     if isinstance(value, ast.AST):
-                        if (field == 'body' or field
-                                == 'orelse') and isinstance(value, ast.Expr):
+                        if (field == 'body' or field == 'orelse') and isinstance(value, ast.Expr):
                             value = self.visit_TopLevel(value)
                         else:
                             value = self.visit(value)
@@ -402,10 +396,7 @@ class ASTFindReplace(ast.NodeTransformer):
     def __init__(self, repldict: Dict[str, str]):
         self.repldict = repldict
         # If ast.Names were given, use them as keys as well
-        self.repldict.update({
-            k.id: v
-            for k, v in self.repldict.items() if isinstance(k, ast.Name)
-        })
+        self.repldict.update({k.id: v for k, v in self.repldict.items() if isinstance(k, ast.Name)})
 
     def visit_Name(self, node: ast.Name):
         if node.id in self.repldict:
@@ -413,8 +404,7 @@ class ASTFindReplace(ast.NodeTransformer):
             if isinstance(val, ast.AST):
                 new_node = ast.copy_location(val, node)
             else:
-                new_node = ast.copy_location(
-                    ast.parse(str(self.repldict[node.id])).body[0].value, node)
+                new_node = ast.copy_location(ast.parse(str(self.repldict[node.id])).body[0].value, node)
             return new_node
 
         return self.generic_visit(node)
@@ -465,8 +455,8 @@ class TaskletFreeSymbolVisitor(ast.NodeVisitor):
             self.visit(node.value)
 
     def visit_Name(self, node):
-        if (isinstance(node.ctx, ast.Load) and node.id not in self.defined
-                and isinstance(node.id, str) and node.id not in ('inf', 'nan')):
+        if (isinstance(node.ctx, ast.Load) and node.id not in self.defined and isinstance(node.id, str)
+                and node.id not in ('inf', 'nan')):
             self.free_symbols.add(node.id)
         else:
             self.defined.add(node.id)

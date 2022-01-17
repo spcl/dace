@@ -6,8 +6,7 @@ N = dace.symbol('N')
 
 
 @dace.program
-def slicetest(A: dace.float64[N, N - 1], B: dace.float64[N - 1, N],
-              C: dace.float64[N - 1, N - 1]):
+def slicetest(A: dace.float64[N, N - 1], B: dace.float64[N - 1, N], C: dace.float64[N - 1, N - 1]):
     tmp = A[1:N] * B[:, 0:N - 1]
     for i, j in dace.map[0:4, 0:4]:
         with dace.tasklet:
@@ -88,7 +87,6 @@ def test_slice_member():
     expected[obj.kslice] *= 2
     obj.forward(A)
     assert np.allclose(A, expected)
-
 
 
 if __name__ == '__main__':

@@ -11,8 +11,7 @@ class ExpandPgemvMKL(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, **kwargs):
-        a, b, c, desca, descb, gdescc, ldesc = node.validate(
-            parent_sdfg, parent_state)
+        a, b, c, desca, descb, gdescc, ldesc = node.validate(parent_sdfg, parent_state)
         from dace.libraries.lapack import utils
         lapack_dtype_str = utils.LAPACK_DTYPE_CHR(a.dtype.base_type)
 
@@ -70,12 +69,7 @@ class Pgemv(dace.sdfg.nodes.LibraryNode):
     default_implementation = "MKL"
 
     def __init__(self, name, transa='N', m=None, n=None, *args, **kwargs):
-        super().__init__(
-            name,
-            *args,
-            inputs={"_a", "_b", "_a_block_sizes", "_b_block_sizes"},
-            outputs={"_c"},
-            **kwargs)
+        super().__init__(name, *args, inputs={"_a", "_b", "_a_block_sizes", "_b_block_sizes"}, outputs={"_c"}, **kwargs)
         self._transa = transa
         self._m = m
         self._n = n

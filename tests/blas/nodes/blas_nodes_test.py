@@ -9,11 +9,9 @@ M = dace.symbol('M')
 N = dace.symbol('N')
 
 
-@pytest.mark.parametrize(('implementation', ),
-                         [('pure', ),
-                          pytest.param('MKL', marks=pytest.mark.mkl),
-                          ('OpenBLAS', ),
-                          pytest.param('cuBLAS', marks=pytest.mark.gpu)])
+@pytest.mark.parametrize(('implementation', ), [('pure', ),
+                                                pytest.param('MKL', marks=pytest.mark.mkl), ('OpenBLAS', ),
+                                                pytest.param('cuBLAS', marks=pytest.mark.gpu)])
 def test_gemv_strided(implementation):
     @dace.program
     def gemv(A: dace.float64[M, N], x: dace.float64[N, N]):
@@ -54,11 +52,9 @@ def test_dot_subset():
     assert np.allclose(daceres, reference)
 
 
-@pytest.mark.parametrize(('implementation', ),
-                         [('pure', ),
-                          pytest.param('MKL', marks=pytest.mark.mkl),
-                          ('OpenBLAS', ),
-                          pytest.param('cuBLAS', marks=pytest.mark.gpu)])
+@pytest.mark.parametrize(('implementation', ), [('pure', ),
+                                                pytest.param('MKL', marks=pytest.mark.mkl), ('OpenBLAS', ),
+                                                pytest.param('cuBLAS', marks=pytest.mark.gpu)])
 def test_dot_strided(implementation):
     @dace.program
     def dot(x: dace.float64[N, N], y: dace.float64[N, N]):

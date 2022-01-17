@@ -6,8 +6,7 @@ from common import compare_numpy_output
 
 def test_multiassign():
     @dace.program
-    def multiassign(A: dace.float64[20], B: dace.float64[1],
-                    C: dace.float64[2]):
+    def multiassign(A: dace.float64[20], B: dace.float64[1], C: dace.float64[2]):
         tmp = C[0] = A[5]
         B[0] = tmp
 
@@ -91,8 +90,7 @@ def test_assign_wild(A: dace.float32[3, 5, 10, 13], B: dace.float32[2, 1, 4]):
 
 
 @compare_numpy_output(positive=True)
-def test_assign_squeezed(A: dace.float32[3, 5, 10, 20, 13],
-                         B: dace.float32[2, 1, 4]):
+def test_assign_squeezed(A: dace.float32[3, 5, 10, 20, 13], B: dace.float32[2, 1, 4]):
     A[2, 2:4, :, 1, 8:12] = B
     return A
 

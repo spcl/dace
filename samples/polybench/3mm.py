@@ -49,8 +49,7 @@ sizes = [{
     NM: 2400
 }]
 
-args = [([NI, NK], datatype), ([NK, NJ], datatype), ([NJ, NM], datatype),
-        ([NM, NL], datatype), ([NI, NL], datatype)]
+args = [([NI, NK], datatype), ([NK, NJ], datatype), ([NJ, NM], datatype), ([NM, NL], datatype), ([NI, NL], datatype)]
 
 
 def init_array(A, B, C, D, G):
@@ -74,8 +73,7 @@ def init_array(A, B, C, D, G):
             D[i, j] = datatype((i * (j + 2) + 2) % nk) / (5 * nk)
 
 
-@dace.program(datatype[NI, NK], datatype[NK, NJ], datatype[NJ, NM],
-              datatype[NM, NL], datatype[NI, NL])
+@dace.program(datatype[NI, NK], datatype[NK, NJ], datatype[NJ, NM], datatype[NM, NL], datatype[NI, NL])
 def k3mm(A, B, C, D, G):
     E = dace.define_local([NI, NJ], dtype=datatype)
     F = dace.define_local([NJ, NL], dtype=datatype)

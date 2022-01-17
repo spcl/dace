@@ -22,8 +22,9 @@ class ExpandGetriPure(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
-        raise(NotImplementedError)
-  
+        raise (NotImplementedError)
+
+
 @dace.library.expansion
 class ExpandGetriOpenBLAS(ExpandTransformation):
 
@@ -31,8 +32,7 @@ class ExpandGetriOpenBLAS(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
-        (desc_x, stride_x, rows_x, cols_x),  desc_ipiv, desc_result = node.validate(
-            parent_sdfg, parent_state)
+        (desc_x, stride_x, rows_x, cols_x), desc_ipiv, desc_result = node.validate(parent_sdfg, parent_state)
         dtype = desc_x.dtype.base_type
         lapack_dtype = blas_helpers.to_blastype(dtype.type).lower()
         cast = ""
@@ -41,8 +41,7 @@ class ExpandGetriOpenBLAS(ExpandTransformation):
         elif lapack_dtype == 'z':
             cast = "(lapack_complex_double*)"
         if desc_x.dtype.veclen > 1:
-            raise(NotImplementedError)
-
+            raise (NotImplementedError)
 
         n = n or node.n
         code = f"_res = LAPACKE_{lapack_dtype}getri(LAPACK_ROW_MAJOR, {rows_x}, {cast}_xin, {stride_x}, _ipiv);"
@@ -61,8 +60,7 @@ class ExpandGetriMKL(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
-        (desc_x, stride_x, rows_x, cols_x),  desc_ipiv, desc_result = node.validate(
-            parent_sdfg, parent_state)
+        (desc_x, stride_x, rows_x, cols_x), desc_ipiv, desc_result = node.validate(parent_sdfg, parent_state)
         dtype = desc_x.dtype.base_type
         lapack_dtype = blas_helpers.to_blastype(dtype.type).lower()
         cast = ""
@@ -71,8 +69,7 @@ class ExpandGetriMKL(ExpandTransformation):
         elif lapack_dtype == 'z':
             cast = "(MKL_Complex16*)"
         if desc_x.dtype.veclen > 1:
-            raise(NotImplementedError)
-
+            raise (NotImplementedError)
 
         n = n or node.n
         code = f"_res = LAPACKE_{lapack_dtype}getri(LAPACK_ROW_MAJOR, {rows_x}, {cast}_xin, {stride_x}, _ipiv);"
@@ -98,11 +95,7 @@ class Getri(dace.sdfg.nodes.LibraryNode):
     n = dace.properties.SymbolicProperty(allow_none=True, default=None)
 
     def __init__(self, name, n=None, *args, **kwargs):
-        super().__init__(name,
-                         *args,
-                         inputs={"_xin", "_ipiv"},
-                         outputs={"_xout", "_res"},
-                         **kwargs)
+        super().__init__(name, *args, inputs={"_xin", "_ipiv"}, outputs={"_xout", "_res"}, **kwargs)
 
     def validate(self, sdfg, state):
         """
@@ -127,7 +120,7 @@ class Getri(dace.sdfg.nodes.LibraryNode):
                 desc_xout = sdfg.arrays[e.data.data]
             if e.src_conn == "_result":
                 desc_res = sdfg.arrays[e.data.data]
-        
+
         if desc_xin.dtype.base_type != desc_xout.dtype.base_type:
             raise ValueError("Basetype of input and output must be equal!")
         if desc_ipiv.dtype.base_type != dace.dtypes.int32:
@@ -139,7 +132,7 @@ class Getri(dace.sdfg.nodes.LibraryNode):
                 in_memlets[0] = data
             elif conn == '_ipiv':
                 in_memlets[1] = data
-        
+
         # Squeeze input memlets
         squeezed_xin = copy.deepcopy(in_memlets[0].subset)
         dims_xin = squeezed_xin.squeeze()

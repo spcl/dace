@@ -34,10 +34,8 @@ def test_nested_map():
 
     # Add outer edges
     state.add_edge(A_, None, omap_entry, None, Memlet.simple(A_, '0:N'))
-    state.add_edge(omap_entry, None, map_entry, None,
-                   Memlet.simple(A_, 'k*N/2:(k+1)*N/2'))
-    state.add_edge(map_exit, None, omap_exit, None,
-                   Memlet.simple(B_, 'k*N/2:(k+1)*N/2'))
+    state.add_edge(omap_entry, None, map_entry, None, Memlet.simple(A_, 'k*N/2:(k+1)*N/2'))
+    state.add_edge(map_exit, None, omap_exit, None, Memlet.simple(B_, 'k*N/2:(k+1)*N/2'))
     state.add_edge(omap_exit, None, B_, None, Memlet.simple(B_, '0:N'))
 
     # Fill missing connectors
@@ -74,32 +72,16 @@ def test_nested_sdfg():
     b = nstate.add_array('b', [N], dp.int32)
     map_entry, map_exit = nstate.add_map('mymap', dict(i='0:N/2'))
     tasklet = nstate.add_tasklet('mytasklet', {'aa'}, {'bb'}, 'bb = 5*aa')
-    nstate.add_memlet_path(a,
-                           map_entry,
-                           tasklet,
-                           dst_conn='aa',
-                           memlet=Memlet('a[k*N/2+i]'))
+    nstate.add_memlet_path(a, map_entry, tasklet, dst_conn='aa', memlet=Memlet('a[k*N/2+i]'))
     tasklet2 = nstate.add_tasklet('mytasklet2', {'cc'}, {'dd'}, 'dd = 2*cc')
     nstate.add_edge(tasklet, 'bb', tasklet2, 'cc', Memlet())
-    nstate.add_memlet_path(tasklet2,
-                           map_exit,
-                           b,
-                           src_conn='dd',
-                           memlet=Memlet('b[k*N/2+i]'))
+    nstate.add_memlet_path(tasklet2, map_exit, b, src_conn='dd', memlet=Memlet('b[k*N/2+i]'))
 
     # Add outer edges
     omap_entry, omap_exit = state.add_map('omap', dict(k='0:2'))
     nsdfg_node = state.add_nested_sdfg(nsdfg, None, {'a'}, {'b'})
-    state.add_memlet_path(A_,
-                          omap_entry,
-                          nsdfg_node,
-                          dst_conn='a',
-                          memlet=Memlet('A[0:N]'))
-    state.add_memlet_path(nsdfg_node,
-                          omap_exit,
-                          B_,
-                          src_conn='b',
-                          memlet=Memlet('B[0:N]'))
+    state.add_memlet_path(A_, omap_entry, nsdfg_node, dst_conn='a', memlet=Memlet('A[0:N]'))
+    state.add_memlet_path(nsdfg_node, omap_exit, B_, src_conn='b', memlet=Memlet('B[0:N]'))
 
     mysdfg.validate()
     mysdfg(A=input, B=output, N=N)
@@ -108,7 +90,7 @@ def test_nested_sdfg():
     print("Difference:", diff)
     assert diff <= 1e-5
 
-    mysdfg.apply_strict_transformations()
+    mysdfg.simplify()
 
     mysdfg(A=input, B=output, N=N)
 

@@ -17,6 +17,7 @@ import sympy
 import sys
 import dace.frontend.python.astutils
 import inspect
+from typing import Union
 
 
 def infer_types(code, symbols=None):
@@ -117,8 +118,8 @@ def _Assign(t, symbols, inferred_symbols):
             target = target.elts[0]
 
         if not isinstance(
-                target, (ast.Subscript, ast.Attribute)
-        ) and not target.id in symbols and not target.id in inferred_symbols:
+                target,
+            (ast.Subscript, ast.Attribute)) and not target.id in symbols and not target.id in inferred_symbols:
             # the target is not already defined: we should try to infer the type looking at the value
             inferred_type = _dispatch(t.value, symbols, inferred_symbols)
             inferred_symbols[target.id] = inferred_type
@@ -131,8 +132,7 @@ def _AugAssign(t, symbols, inferred_symbols):
     _dispatch(t.target, symbols, inferred_symbols)
     # Operations that require a function call
     if t.op.__class__.__name__ in cppunparse.CPPUnparser.funcops:
-        separator, func = cppunparse.CPPUnparser.funcops[
-            t.op.__class__.__name__]
+        separator, func = cppunparse.CPPUnparser.funcops[t.op.__class__.__name__]
         if not t.target.id in symbols and not t.target.id in inferred_symbols:
             _dispatch(t.target, symbols, inferred_symbols)
             inferred_type = _dispatch(t.value, symbols, inferred_symbols)
@@ -155,7 +155,9 @@ def _AnnAssign(t, symbols, inferred_symbols):
     # Assignment of the form x: int = 0 is converted to int x = (int)0;
     if not target.id in symbols and not target.id in inferred_symbols:
         # get the type indicated into the annotation
-        inferred_type = _dispatch(t.annotation, symbols, inferred_symbols)
+        inferred_type = _infer_dtype(t.annotation)
+        if not inferred_type:
+            inferred_type = _dispatch(t.annotation, symbols, inferred_symbols)
         inferred_symbols[target.id] = inferred_type
 
         _dispatch(t.annotation, symbols, inferred_symbols)
@@ -288,9 +290,7 @@ def _Name(t, symbols, inferred_symbols):
 
 
 def _NameConstant(t, symbols, inferred_symbols):
-    return dtypes.result_type_of(
-        dtypes.typeclass(type(t.value)),
-        dtypes.typeclass(np.min_scalar_type(t.value).name))
+    return dtypes.result_type_of(dtypes.typeclass(type(t.value)), dtypes.typeclass(np.min_scalar_type(t.value).name))
 
 
 def _Constant(t, symbols, inferred_symbols):
@@ -299,16 +299,13 @@ def _Constant(t, symbols, inferred_symbols):
         return dtypes.pointer(dtypes.int8)
 
     # Numeric value
-    return dtypes.result_type_of(
-        dtypes.typeclass(type(t.value)),
-        dtypes.typeclass(np.min_scalar_type(t.value).name))
+    return dtypes.result_type_of(dtypes.typeclass(type(t.value)), dtypes.typeclass(np.min_scalar_type(t.value).name))
 
 
 def _Num(t, symbols, inferred_symbols):
     # get the minimum between the minimum type needed to represent this number and the corresponding default data types
     # e.g., if num=1, then it will be represented by using the default integer type (int32 if C data types are used)
-    return dtypes.result_type_of(dtypes.typeclass(type(t.n)),
-                                 dtypes.typeclass(np.min_scalar_type(t.n).name))
+    return dtypes.result_type_of(dtypes.typeclass(type(t.n)), dtypes.typeclass(np.min_scalar_type(t.n).name))
 
 
 def _IfExp(t, symbols, inferred_symbols):
@@ -330,8 +327,7 @@ def _UnaryOp(t, symbols, inferred_symbols):
 def _BinOp(t, symbols, inferred_symbols):
     # Operations that require a function call
     if t.op.__class__.__name__ in cppunparse.CPPUnparser.funcops:
-        separator, func = cppunparse.CPPUnparser.funcops[
-            t.op.__class__.__name__]
+        separator, func = cppunparse.CPPUnparser.funcops[t.op.__class__.__name__]
 
         # get the type of left and right operands for type inference
         type_left = _dispatch(t.left, symbols, inferred_symbols)
@@ -340,8 +336,7 @@ def _BinOp(t, symbols, inferred_symbols):
         return dtypes.result_type_of(type_left, type_right)
     # Special case for integer power
     elif t.op.__class__.__name__ == 'Pow':
-        if (isinstance(t.right, (ast.Num, ast.Constant))
-                and int(t.right.n) == t.right.n and t.right.n >= 0):
+        if (isinstance(t.right, (ast.Num, ast.Constant)) and int(t.right.n) == t.right.n and t.right.n >= 0):
             if t.right.n != 0:
                 type_left = _dispatch(t.left, symbols, inferred_symbols)
                 for i in range(int(t.right.n) - 1):
@@ -374,8 +369,7 @@ def _Compare(t, symbols, inferred_symbols):
             if vec_len is not None and vec_len != inf_type.veclen:
                 raise SyntaxError('Inconsistent vector lengths in Compare')
             vec_len = inf_type.veclen
-    return dtypes.vector(dace.bool,
-                         vec_len) if vec_len is not None else dtypes.bool
+    return dtypes.vector(dace.bool, vec_len) if vec_len is not None else dtypes.bool
 
 
 def _BoolOp(t, symbols, inferred_symbols):
@@ -388,8 +382,23 @@ def _BoolOp(t, symbols, inferred_symbols):
             if vec_len is not None and vec_len != inf_type.veclen:
                 raise SyntaxError('Inconsistent vector lengths in BoolOp')
             vec_len = inf_type.veclen
-    return dtypes.vector(dace.bool,
-                         vec_len) if vec_len is not None else dtypes.bool
+    return dtypes.vector(dace.bool, vec_len) if vec_len is not None else dtypes.bool
+
+
+def _infer_dtype(t: Union[ast.Name, ast.Attribute]):
+    name = dace.frontend.python.astutils.rname(t)
+    if '.' in name:
+        dtype_str = name[name.rfind('.') + 1:]
+    else:
+        dtype_str = name
+
+    dtype = getattr(dtypes, dtype_str, False)
+    if isinstance(dtype, dtypes.typeclass):
+        return dtype
+    if isinstance(dtype, np.dtype):
+        return dtypes.typeclass(dtype.type)
+
+    return None
 
 
 def _Attribute(t, symbols, inferred_symbols):
@@ -417,8 +426,16 @@ def _Call(t, symbols, inferred_symbols):
         return dtypes.result_type_of(arg_types[0], *arg_types)
 
     # Reading from an Intel channel returns the channel type
-    if name == "read_channel_intel":
+    if name == 'read_channel_intel':
         return arg_types[0]
+
+    if name in ('abs', 'log'):
+        return arg_types[0]
+
+    # dtypes (dace.int32, np.float64) can be used as functions
+    inf_type = _infer_dtype(t)
+    if inf_type:
+        return inf_type
 
     # In any other case simply return None
     return None
@@ -436,8 +453,7 @@ def _Subscript(t, symbols, inferred_symbols):
         return value_type
 
     # A vector as subscript of a pointer returns a vector of the base type
-    if isinstance(value_type, dtypes.pointer) and isinstance(
-            slice_type, dtypes.vector):
+    if isinstance(value_type, dtypes.pointer) and isinstance(slice_type, dtypes.vector):
         if not np.issubdtype(slice_type.type, np.integer):
             raise SyntaxError('Subscript must be some integer type')
         return dtypes.vector(value_type.base_type, slice_type.veclen)

@@ -70,14 +70,8 @@ A = state.add_read('A')
 B = state.add_write('B')
 
 # connect input/output array with the tasklet
-state.add_memlet_path(A,
-                      tasklet,
-                      dst_conn='a',
-                      memlet=dace.Memlet('A[0]'))
-state.add_memlet_path(tasklet,
-                      B,
-                      src_conn='b',
-                      memlet=dace.Memlet('B[0]'))
+state.add_memlet_path(A, tasklet, dst_conn='a', memlet=dace.Memlet('A[0]'))
+state.add_memlet_path(tasklet, B, src_conn='b', memlet=dace.Memlet('B[0]'))
 
 # validate sdfg
 sdfg.validate()

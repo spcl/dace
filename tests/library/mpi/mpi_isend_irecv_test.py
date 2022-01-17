@@ -20,12 +20,8 @@ def make_sdfg(dtype):
     sdfg.add_array("src", [1], dace.dtypes.int32, transient=False)
     sdfg.add_array("dest", [1], dace.dtypes.int32, transient=False)
     sdfg.add_array("tag", [1], dace.dtypes.int32, transient=False)
-    sdfg.add_array("send_req", [1],
-                   dace.dtypes.opaque("MPI_Request"),
-                   transient=True)
-    sdfg.add_array("recv_req", [1],
-                   dace.dtypes.opaque("MPI_Request"),
-                   transient=True)
+    sdfg.add_array("send_req", [1], dace.dtypes.opaque("MPI_Request"), transient=True)
+    sdfg.add_array("recv_req", [1], dace.dtypes.opaque("MPI_Request"), transient=True)
 
     sdfg.add_array("stat_source", [1], dace.dtypes.int32, transient=True)
     sdfg.add_array("stat_count", [1], dace.dtypes.int32, transient=True)
@@ -47,26 +43,14 @@ def make_sdfg(dtype):
     recv_node = mpi.nodes.irecv.Irecv("irecv")
     wait_node = mpi.nodes.wait.Wait("wait")
 
-    state.add_memlet_path(x,
-                          send_node,
-                          dst_conn="_buffer",
-                          memlet=Memlet.simple(x, "0:n", num_accesses=n))
+    state.add_memlet_path(x, send_node, dst_conn="_buffer", memlet=Memlet.simple(x, "0:n", num_accesses=n))
     state.add_memlet_path(send_node,
                           send_req,
                           src_conn="_request",
                           memlet=Memlet.simple(send_req, "0:1", num_accesses=1))
-    state.add_memlet_path(dest,
-                          send_node,
-                          dst_conn="_dest",
-                          memlet=Memlet.simple(dest, "0:1", num_accesses=1))
-    state.add_memlet_path(tag,
-                          send_node,
-                          dst_conn="_tag",
-                          memlet=Memlet.simple(tag, "0:1", num_accesses=1))
-    state.add_memlet_path(recv_node,
-                          y,
-                          src_conn="_buffer",
-                          memlet=Memlet.simple(y, "0:n", num_accesses=n))
+    state.add_memlet_path(dest, send_node, dst_conn="_dest", memlet=Memlet.simple(dest, "0:1", num_accesses=1))
+    state.add_memlet_path(tag, send_node, dst_conn="_tag", memlet=Memlet.simple(tag, "0:1", num_accesses=1))
+    state.add_memlet_path(recv_node, y, src_conn="_buffer", memlet=Memlet.simple(y, "0:n", num_accesses=n))
     state.add_memlet_path(recv_node,
                           recv_req,
                           src_conn="_request",
@@ -83,18 +67,10 @@ def make_sdfg(dtype):
     state.add_memlet_path(wait_node,
                           stat_source,
                           src_conn="_stat_source",
-                          memlet=Memlet.simple(stat_source,
-                                               "0:1",
-                                               num_accesses=1))
+                          memlet=Memlet.simple(stat_source, "0:1", num_accesses=1))
 
-    state.add_memlet_path(src,
-                          recv_node,
-                          dst_conn="_src",
-                          memlet=Memlet.simple(src, "0:1", num_accesses=1))
-    state.add_memlet_path(tag,
-                          recv_node,
-                          dst_conn="_tag",
-                          memlet=Memlet.simple(tag, "0:1", num_accesses=1))
+    state.add_memlet_path(src, recv_node, dst_conn="_src", memlet=Memlet.simple(src, "0:1", num_accesses=1))
+    state.add_memlet_path(tag, recv_node, dst_conn="_tag", memlet=Memlet.simple(tag, "0:1", num_accesses=1))
     return sdfg
 
 
@@ -110,8 +86,7 @@ def _test_mpi(info, sdfg, dtype):
     srank = (rank - 1 + commsize) % commsize
     mpi_sdfg = None
     if commsize < 2:
-        raise ValueError(
-            "This test is supposed to be run with at least two processes!")
+        raise ValueError("This test is supposed to be run with at least two processes!")
     for r in range(0, commsize):
         if r == rank:
             mpi_sdfg = sdfg.compile()
@@ -164,8 +139,7 @@ def test_dace_send_recv():
     commsize = comm.Get_size()
     mpi_sdfg = None
     if commsize < 2:
-        raise ValueError(
-            "This test is supposed to be run with at least two processes!")
+        raise ValueError("This test is supposed to be run with at least two processes!")
     for r in range(0, commsize):
         if r == rank:
             mpi_sdfg = dace_send_recv.compile()

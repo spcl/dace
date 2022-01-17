@@ -24,11 +24,7 @@ def test_strides_alignment():
     perm_strides, perm_size = desc.strides_from_layout(1, 0, 2, alignment=4)
     assert perm_size == 64
     assert perm_strides == (4, 1, 16)
-    perm_strides, perm_size = desc.strides_from_layout(1,
-                                                       0,
-                                                       2,
-                                                       alignment=4,
-                                                       only_first_aligned=True)
+    perm_strides, perm_size = desc.strides_from_layout(1, 0, 2, alignment=4, only_first_aligned=True)
     assert perm_size == 32
     assert perm_strides == (4, 1, 8)
 

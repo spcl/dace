@@ -177,9 +177,7 @@ def test_optional_argument_jit_kwarg():
 
 def test_optional_argument():
     @dace.program
-    def linear(x: dace.float64[13, 14],
-               w: dace.float64[10, 14],
-               bias: dace.float64[10] = None):
+    def linear(x: dace.float64[13, 14], w: dace.float64[10, 14], bias: dace.float64[10] = None):
         """ Linear layer with weights w applied to x, and optional bias. """
         if bias is not None:
             return np.dot(x, w.T) + bias
@@ -251,8 +249,7 @@ def test_constant_argument_object():
         return A[cfg.p]
 
     @dace.program
-    def constant_parameter(cfg: dace.constant, cfg2: dace.constant,
-                           A: dace.float64[20]):
+    def constant_parameter(cfg: dace.constant, cfg2: dace.constant, A: dace.float64[20]):
         A[cfg.q] = nested_func(cfg, A)
         A[cfg.get_random_number] = nested_func(cfg2, A)
 
@@ -276,8 +273,7 @@ def test_none_field():
         def method(self, A):
             if (self.field_or_none is None) and (self.field_or_none is None):
                 A[...] = 7.0
-            if (self.field_or_none is not None) and (self.field_or_none
-                                                     is not None):
+            if (self.field_or_none is not None) and (self.field_or_none is not None):
                 A[...] += self.field_or_none
 
     A = np.ones((10, ))
@@ -361,7 +357,7 @@ def test_numpynumber_condition():
             A[:] = 1
 
     # Ensure condition was folded
-    sdfg = conditional_val.to_sdfg(val=np.int64(3), strict=True)
+    sdfg = conditional_val.to_sdfg(val=np.int64(3), simplify=True)
     assert sdfg.number_of_nodes() == 1
 
     a = np.random.rand(20)
@@ -371,8 +367,41 @@ def test_numpynumber_condition():
     assert np.allclose(a, 0)
 
 
-# Skipped until constant propagation is in place
-@pytest.mark.skip
+def test_constant_list_number():
+    something = [1, 2, 3]
+    n = len(something)
+
+    @dace.program
+    def sometest(A):
+        for i in dace.unroll(range(n)):
+            A += something[i]
+
+    A = np.random.rand(20)
+    sometest.to_sdfg(A)
+
+
+def test_constant_list_function():
+    def a(A):
+        A += 1
+
+    def b(A):
+        A += 2
+
+    def c(A):
+        A += 3
+
+    something = [a, b, c]
+    n = len(something)
+
+    @dace.program
+    def sometest(A):
+        for i in dace.unroll(range(n)):
+            something[i](A)
+
+    A = np.random.rand(20)
+    sometest.to_sdfg(A)
+
+
 def test_constant_propagation():
     @dace.program
     def conditional_val(A: dace.float64[20], val: dace.constant):
@@ -383,7 +412,10 @@ def test_constant_propagation():
             A[:] = 1
 
     # Ensure condition was folded
-    sdfg = conditional_val.to_sdfg(val=3, strict=True)
+    sdfg = conditional_val.to_sdfg(val=3, simplify=True)
+    from dace.transformation.interstate.state_elimination import DeadStateElimination, ConstantPropagation
+    sdfg.apply_transformations_repeated([ConstantPropagation, DeadStateElimination])
+    sdfg.simplify()
     assert sdfg.number_of_nodes() == 1
 
     a = np.random.rand(20)
@@ -416,4 +448,6 @@ if __name__ == '__main__':
     test_boolglobal()
     test_intglobal()
     test_numpynumber_condition()
-    # test_constant_propagation()
+    test_constant_list_number()
+    test_constant_list_function()
+    test_constant_propagation()

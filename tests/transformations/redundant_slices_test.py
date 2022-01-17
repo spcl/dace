@@ -10,8 +10,7 @@ from dace.transformation.dataflow import RedundantReadSlice, RedundantWriteSlice
 def _count_views(sdfg: dace.SDFG) -> int:
     num = 0
     for n, _ in sdfg.all_nodes_recursive():
-        if (isinstance(n, nodes.AccessNode)
-                and isinstance(sdfg.arrays[n.data], data.View)):
+        if (isinstance(n, nodes.AccessNode) and isinstance(sdfg.arrays[n.data], data.View)):
             num += 1
     return num
 
@@ -23,7 +22,7 @@ def jacobi1d_half(TMAX: dace.int32, A: dace.float32[12], B: dace.float32[12]):
 
 
 def test_read_slice():
-    sdfg = jacobi1d_half.to_sdfg(strict=False)
+    sdfg = jacobi1d_half.to_sdfg(simplify=False)
     num_views_before = _count_views(sdfg)
     if num_views_before != 3:
         warnings.Warn("Incorrect number of Views detected. Please ensure that "
@@ -34,14 +33,13 @@ def test_read_slice():
 
 
 @dace.program
-def jacobi1d_half2(TMAX: dace.int32, A: dace.float32[12, 12, 12],
-                   B: dace.float32[12]):
+def jacobi1d_half2(TMAX: dace.int32, A: dace.float32[12, 12, 12], B: dace.float32[12]):
     for _ in range(TMAX):
         B[1:-1] = 0.3333 * (A[:-2, 3, 4] + A[5, 1:-1, 6] + A[7, 8, 2:])
 
 
 def test_read_slice2():
-    sdfg = jacobi1d_half2.to_sdfg(strict=False)
+    sdfg = jacobi1d_half2.to_sdfg(simplify=False)
     num_views_before = _count_views(sdfg)
     if num_views_before != 3:
         warnings.Warn("Incorrect number of Views detected. Please ensure that "
@@ -58,7 +56,7 @@ def write_slice(A: dace.float32[10]):
 
 
 def test_write_slice():
-    sdfg = write_slice.to_sdfg(strict=False)
+    sdfg = write_slice.to_sdfg(simplify=False)
     num_views_before = _count_views(sdfg)
     if num_views_before == 0:
         warnings.Warn("Incorrect number of Views detected. Please ensure that "
@@ -79,7 +77,7 @@ def write_slice2(A: dace.float32[10, 10, 10]):
 
 
 def test_write_slice2():
-    sdfg = write_slice2.to_sdfg(strict=False)
+    sdfg = write_slice2.to_sdfg(simplify=False)
     num_views_before = _count_views(sdfg)
     if num_views_before == 0:
         warnings.Warn("Incorrect number of Views detected. Please ensure that "
