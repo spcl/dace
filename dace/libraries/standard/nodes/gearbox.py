@@ -254,8 +254,7 @@ class Gearbox(dace.sdfg.nodes.LibraryNode):
             raise ValueError(f"Expected only one input edge, found {len(in_edge)} edges.")
         out_edge = state.out_edges(self)
         if len(out_edge) != 1:
-            raise ValueError(
-                f"Expected only one output edge, found {len(out_edge)} edges.")
+            raise ValueError(f"Expected only one output edge, found {len(out_edge)} edges.")
         in_edge = in_edge[0]
         in_desc = sdfg.arrays[in_edge.data.data]
         if not isinstance(in_desc, dace.data.Stream):
@@ -263,8 +262,7 @@ class Gearbox(dace.sdfg.nodes.LibraryNode):
         out_edge = out_edge[0]
         out_desc = sdfg.arrays[out_edge.data.data]
         if not isinstance(out_desc, dace.data.Stream):
-            raise TypeError(
-                f"Expected output to be a stream, got {type(out_desc)}.")
+            raise TypeError(f"Expected output to be a stream, got {type(out_desc)}.")
         # The type of one side must be a vector of the other, or a vector of the
         # same type with a vector size that is a multiple of the other
         if (isinstance(in_desc.dtype, dace.vector) and in_desc.dtype.base_type == out_desc.dtype):

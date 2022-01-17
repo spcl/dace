@@ -8,7 +8,8 @@ import warnings
 import sympy
 
 from dace.transformation import transformation as xf
-from dace import (data, dtypes, nodes, properties, registry, memlet as mm, subsets, symbolic, symbol, Memlet)
+from dace import (data, dtypes, nodes, properties, registry, memlet as mm,
+                  subsets, symbolic, symbol, Memlet)
 from dace.sdfg import SDFG, SDFGState, utils as sdutil, graph as gr
 from dace.libraries.standard import Gearbox
 
@@ -107,16 +108,23 @@ class StreamingMemory(xf.SingleStateTransformation):
 
     buffer_size = properties.Property(dtype=int, default=1, desc='Set buffer size for the newly-created stream')
 
-    storage = properties.EnumProperty(dtype=dtypes.StorageType,
-                                      desc='Set storage type for the newly-created stream',
-                                      default=dtypes.StorageType.Default)
 
-    use_memory_buffering = properties.Property(dtype=bool,
-                                               default=False,
-                                               desc='Set if memory buffering should be used.')
+    storage = properties.EnumProperty(
+        dtype=dtypes.StorageType,
+        desc='Set storage type for the newly-created stream',
+        default=dtypes.StorageType.Default)
+
+    use_memory_buffering = properties.Property(
+        dtype=bool,
+        default=False,
+        desc='Set if memory buffering should be used.')
 
     memory_buffering_target_bytes = properties.Property(
-        dtype=int, default=64, desc='Set bytes read/written from memory if memory buffering is enabled.')
+        dtype=int,
+        default=64,
+        desc='Set bytes read/written from memory if memory buffering is enabled.'
+    )
+
 
     @classmethod
     def expressions(cls) -> List[gr.SubgraphView]:
@@ -577,9 +585,12 @@ class StreamingComposition(xf.SingleStateTransformation):
 
     buffer_size = properties.Property(dtype=int, default=1, desc='Set buffer size for the newly-created stream')
 
-    storage = properties.EnumProperty(dtype=dtypes.StorageType,
-                                      desc='Set storage type for the newly-created stream',
-                                      default=dtypes.StorageType.Default)
+
+    storage = properties.EnumProperty(
+        dtype=dtypes.StorageType,
+        desc='Set storage type for the newly-created stream',
+        default=dtypes.StorageType.Default)
+
 
     @classmethod
     def expressions(cls) -> List[gr.SubgraphView]:
