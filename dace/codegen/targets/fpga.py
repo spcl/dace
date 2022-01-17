@@ -716,9 +716,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
             data_to_node.update(
                 {node.data: node
                  for node in subgraph.nodes() if isinstance(node, dace.sdfg.nodes.AccessNode)})
-            rtl_subgraph = any([
-                isinstance(node, nodes.RTLTasklet) for node in subgraph.nodes()
-            ])
+            rtl_subgraph = any([isinstance(node, nodes.RTLTasklet) for node in subgraph.nodes()])
             subsdfg = subgraph.parent
             candidates = []  # type: List[Tuple[bool,str,Data]]
             # [(is an output, dataname string, data object)]
@@ -735,11 +733,9 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                         is_output = False
 
                 if external:
-                    external_streams |= {
-                        (is_output, e.data.data, subsdfg.arrays[e.data.data], None)
-                        for e in state.out_edges(n)
-                        if isinstance(subsdfg.arrays[e.data.data], dt.Stream)
-                    }
+                    external_streams |= {(is_output, e.data.data, subsdfg.arrays[e.data.data], None)
+                                         for e in state.out_edges(n)
+                                         if isinstance(subsdfg.arrays[e.data.data], dt.Stream)}
                 else:
                     candidates += [(False, e.data.data, subsdfg.arrays[e.data.data]) for e in state.in_edges(n)]
             for n in subgraph.sink_nodes():
@@ -753,11 +749,9 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                         is_output = True
 
                 if external:
-                    external_streams |= {
-                        (is_output, e.data.data, subsdfg.arrays[e.data.data], None)
-                        for e in state.in_edges(n)
-                        if isinstance(subsdfg.arrays[e.data.data], dt.Stream)
-                    }
+                    external_streams |= {(is_output, e.data.data, subsdfg.arrays[e.data.data], None)
+                                         for e in state.in_edges(n)
+                                         if isinstance(subsdfg.arrays[e.data.data], dt.Stream)}
                 else:
                     candidates += [(True, e.data.data, subsdfg.arrays[e.data.data]) for e in state.out_edges(n)]
             # Find other data nodes that are used internally
@@ -865,7 +859,8 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                             trace_type, trace_bank = parse_location_bank(trace_desc)
                             if (bank is not None and bank_type is not None
                                     and (bank != trace_bank or bank_type != trace_type)):
-                                raise cgx.CodegenError("Found inconsistent memory bank " f"specifier for {trace_name}.")
+                                raise cgx.CodegenError("Found inconsistent memory bank "
+                                                       f"specifier for {trace_name}.")
                             bank = trace_bank
                             bank_type = trace_type
 
@@ -1386,7 +1381,8 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
 
             if (not sum(copy_shape) == 1 and
                 (not isinstance(memlet.subset, subsets.Range) or any([step != 1 for _, _, step in memlet.subset]))):
-                raise NotImplementedError("Only contiguous copies currently " "supported for FPGA codegen.")
+                raise NotImplementedError("Only contiguous copies currently "
+                                          "supported for FPGA codegen.")
 
             if host_to_device or device_to_device:
                 host_dtype = sdfg.data(src_node.data).dtype
@@ -1606,7 +1602,8 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
     @staticmethod
     def make_opencl_parameter(name, desc):
         if isinstance(desc, dt.Array):
-            return (f"hlslib::ocl::Buffer<{desc.dtype.ctype}, " f"hlslib::ocl::Access::readWrite> &{name}")
+            return (f"hlslib::ocl::Buffer<{desc.dtype.ctype}, "
+                    f"hlslib::ocl::Access::readWrite> &{name}")
         else:
             return (desc.as_arg(with_types=True, name=name))
 
@@ -1866,7 +1863,8 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                                 elif np.issubdtype(np.dtype(end_type.dtype.type), np.unsignedinteger):
                                     loop_var_type = "size_t"
                     except (UnboundLocalError):
-                        raise UnboundLocalError('Pipeline scopes require ' 'specialized bound values')
+                        raise UnboundLocalError('Pipeline scopes require '
+                                                'specialized bound values')
                     except (TypeError):
                         # Raised when the evaluation of begin or skip fails.
                         # This could occur, for example, if they are defined in terms of other symbols, which

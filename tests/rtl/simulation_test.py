@@ -4,6 +4,7 @@ import dace
 import numpy as np
 import pytest
 
+
 @pytest.mark.verilator
 def test_tasklet_array():
     """
@@ -61,13 +62,14 @@ def test_tasklet_array():
 
     # init data structures
     a = np.random.randint(0, 100, N.get()).astype(np.int32)
-    b = np.zeros((N.get(),)).astype(np.int32)
+    b = np.zeros((N.get(), )).astype(np.int32)
 
     # call program
     sdfg(A=a, B=b)
 
     # check result
     assert (b == a + 42).all()
+
 
 @pytest.mark.verilator
 def test_tasklet_scalar():
@@ -119,7 +121,7 @@ def test_tasklet_scalar():
 
     # init data structures
     a = np.random.randint(0, 100, 1).astype(np.int32)
-    b = np.zeros((1,)).astype(np.int32)
+    b = np.zeros((1, )).astype(np.int32)
 
     # call program
     sdfg(A=a[0], B=b)
@@ -273,16 +275,17 @@ def test_tasklet_vector_add():
     # Execute
 
     # init data structures
-    a = np.random.randint(0, 100, (dace.symbolic.evaluate(W, sdfg.constants),)).astype(np.int32)
-    b = np.zeros((dace.symbolic.evaluate(W, sdfg.constants),)).astype(np.int32)
+    a = np.random.randint(0, 100, (dace.symbolic.evaluate(W, sdfg.constants), )).astype(np.int32)
+    b = np.zeros((dace.symbolic.evaluate(W, sdfg.constants), )).astype(np.int32)
 
     # call program
     sdfg(A=a, B=b)
 
     # check result
-    print (a)
-    print (b)
+    print(a)
+    print(b)
     assert (b == a + 42).all()
+
 
 @pytest.mark.verilator
 def test_tasklet_vector_conversion():
@@ -473,6 +476,7 @@ def test_multi_tasklet():
     assert b == 80
     assert c == 100
 
+
 @pytest.mark.verilator
 def test_tasklet_map():
     '''
@@ -496,16 +500,16 @@ def test_tasklet_map():
     state = sdfg.add_state()
 
     # add arrays
-    sdfg.add_array('A', [M,N], dtype=dace.vector(dace.int32, W.get()))
-    sdfg.add_array('B', [M,N], dtype=dace.vector(dace.int32, W.get()))
-    sdfg.add_array('C', [M,N], dtype=dace.vector(dace.int32, W.get()))
+    sdfg.add_array('A', [M, N], dtype=dace.vector(dace.int32, W.get()))
+    sdfg.add_array('B', [M, N], dtype=dace.vector(dace.int32, W.get()))
+    sdfg.add_array('C', [M, N], dtype=dace.vector(dace.int32, W.get()))
 
     mentry, mexit = state.add_map('compute_map', {'k': '0:M'})
 
     tasklet = state.add_tasklet(name='rtl_tasklet1',
-                                 inputs={'a','b'},
-                                 outputs={'c'},
-                                 code='''
+                                inputs={'a', 'b'},
+                                outputs={'c'},
+                                code='''
 reg [W-1:0][31:0] a_data;
 reg a_valid;
 reg [W-1:0][31:0] b_data;
@@ -566,7 +570,7 @@ always@(posedge ap_aclk) begin
         end
     end
 end''',
-                                 language=dace.Language.SystemVerilog)
+                                language=dace.Language.SystemVerilog)
 
     A = state.add_read('A')
     B = state.add_read('B')
@@ -580,15 +584,16 @@ end''',
     sdfg.validate()
 
     # init data structures
-    a = np.random.randint(0, 100, m*n*w).reshape((m,n,w)).astype(np.int32)
-    b = np.random.randint(0, 100, m*n*w).reshape((m,n,w)).astype(np.int32)
-    c = np.zeros((m,n,w)).astype(np.int32)
+    a = np.random.randint(0, 100, m * n * w).reshape((m, n, w)).astype(np.int32)
+    b = np.random.randint(0, 100, m * n * w).reshape((m, n, w)).astype(np.int32)
+    c = np.zeros((m, n, w)).astype(np.int32)
 
     # call program
     sdfg(A=a, B=b, C=c)
 
     # check result
     assert (c == a + b).all()
+
 
 if __name__ == '__main__':
     #test_multi_tasklet()

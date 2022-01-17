@@ -104,27 +104,25 @@ def make_vadd_sdfg(N, veclen=8):
         ''',
                                     language=dace.Language.SystemVerilog)
 
-    rtl_tasklet.add_ip_core('floating_point_add', 'floating_point',
-                            'xilinx.com', '7.1', {
-                                'CONFIG.Add_Sub_Value': 'Add',
-                                'CONFIG.Has_ARESETn': 'true',
-                                'CONFIG.Axi_Optimize_Goal': 'Performance',
-                                'CONFIG.C_Latency': '14'
-                            })
-    rtl_tasklet.add_ip_core('axis_broadcaster_0', 'axis_broadcaster',
-                            'xilinx.com', '1.1', dict({
-                                'CONFIG.NUM_MI': '16',
-                                'CONFIG.M_TDATA_NUM_BYTES': '4',
-                                'CONFIG.S_TDATA_NUM_BYTES': '64'
-                            }, **{
-                                f'CONFIG.M{i:02}_TDATA_REMAP': f'tdata[{((i+1)*32)-1}:{i*32}]'
-                                for i in range(veclen)
-                            }))
-    rtl_tasklet.add_ip_core('axis_combiner_0', 'axis_combiner',
-                            'xilinx.com', '1.1', {
-                                'CONFIG.TDATA_NUM_BYTES': '4',
-                                'CONFIG.NUM_SI': '16'
-                            })
+    rtl_tasklet.add_ip_core(
+        'floating_point_add', 'floating_point', 'xilinx.com', '7.1', {
+            'CONFIG.Add_Sub_Value': 'Add',
+            'CONFIG.Has_ARESETn': 'true',
+            'CONFIG.Axi_Optimize_Goal': 'Performance',
+            'CONFIG.C_Latency': '14'
+        })
+    rtl_tasklet.add_ip_core(
+        'axis_broadcaster_0', 'axis_broadcaster', 'xilinx.com', '1.1',
+        dict({
+            'CONFIG.NUM_MI': '16',
+            'CONFIG.M_TDATA_NUM_BYTES': '4',
+            'CONFIG.S_TDATA_NUM_BYTES': '64'
+        }, **{f'CONFIG.M{i:02}_TDATA_REMAP': f'tdata[{((i+1)*32)-1}:{i*32}]'
+              for i in range(veclen)}))
+    rtl_tasklet.add_ip_core('axis_combiner_0', 'axis_combiner', 'xilinx.com', '1.1', {
+        'CONFIG.TDATA_NUM_BYTES': '4',
+        'CONFIG.NUM_SI': '16'
+    })
 
     # add read and write tasklets
     read_a = state.add_tasklet('read_a', {'inp'}, {'out'}, 'out = inp')
@@ -186,20 +184,10 @@ def make_vadd_multi_sdfg(N, M):
     state = sdfg.add_state('device_state')
 
     # add arrays
-    sdfg.add_array('A', [N],
-                   dtype=dace.int32,
-                   storage=dace.StorageType.CPU_Heap)
-    sdfg.add_array('B', [N],
-                   dtype=dace.int32,
-                   storage=dace.StorageType.CPU_Heap)
-    sdfg.add_array('fpga_A', [N],
-                   dtype=dace.int32,
-                   transient=True,
-                   storage=dace.StorageType.FPGA_Global)
-    sdfg.add_array('fpga_B', [N],
-                   dtype=dace.int32,
-                   transient=True,
-                   storage=dace.StorageType.FPGA_Global)
+    sdfg.add_array('A', [N], dtype=dace.int32, storage=dace.StorageType.CPU_Heap)
+    sdfg.add_array('B', [N], dtype=dace.int32, storage=dace.StorageType.CPU_Heap)
+    sdfg.add_array('fpga_A', [N], dtype=dace.int32, transient=True, storage=dace.StorageType.FPGA_Global)
+    sdfg.add_array('fpga_B', [N], dtype=dace.int32, transient=True, storage=dace.StorageType.FPGA_Global)
 
     # add streams
     sdfg.add_stream('A_stream',
@@ -262,61 +250,34 @@ def make_vadd_multi_sdfg(N, M):
     write_b = state.add_tasklet('write_b', {'inp'}, {'out'}, 'out = inp')
 
     # add read and write maps
-    read_a_entry, read_a_exit = state.add_map(
-        'read_a_map',
-        dict(i='0:N//M', j='0:M'),
-        schedule=dace.ScheduleType.FPGA_Device)
-    write_b_entry, write_b_exit = state.add_map(
-        'write_b_map',
-        dict(i='0:N//M', j='0:M'),
-        schedule=dace.ScheduleType.FPGA_Device)
-    compute_entry, compute_exit = state.add_map(
-        'compute_map',
-        dict(i='0:N//M'),
-        schedule=dace.ScheduleType.FPGA_Device,
-        unroll=True)
+    read_a_entry, read_a_exit = state.add_map('read_a_map',
+                                              dict(i='0:N//M', j='0:M'),
+                                              schedule=dace.ScheduleType.FPGA_Device)
+    write_b_entry, write_b_exit = state.add_map('write_b_map',
+                                                dict(i='0:N//M', j='0:M'),
+                                                schedule=dace.ScheduleType.FPGA_Device)
+    compute_entry, compute_exit = state.add_map('compute_map',
+                                                dict(i='0:N//M'),
+                                                schedule=dace.ScheduleType.FPGA_Device,
+                                                unroll=True)
 
     # add read_a memlets and access nodes
     read_a_inp = state.add_read('fpga_A')
     read_a_out = state.add_write('A_stream')
-    state.add_memlet_path(read_a_inp,
-                          read_a_entry,
-                          read_a,
-                          dst_conn='inp',
-                          memlet=dace.Memlet('fpga_A[i*M+j]'))
-    state.add_memlet_path(read_a,
-                          read_a_exit,
-                          read_a_out,
-                          src_conn='out',
-                          memlet=dace.Memlet('A_stream[i]'))
+    state.add_memlet_path(read_a_inp, read_a_entry, read_a, dst_conn='inp', memlet=dace.Memlet('fpga_A[i*M+j]'))
+    state.add_memlet_path(read_a, read_a_exit, read_a_out, src_conn='out', memlet=dace.Memlet('A_stream[i]'))
 
     # add tasklet memlets
     A = state.add_read('A_stream')
     B = state.add_write('B_stream')
-    state.add_memlet_path(A,
-                          compute_entry,
-                          rtl_tasklet,
-                          dst_conn='a',
-                          memlet=dace.Memlet('A_stream[i]'))
-    state.add_memlet_path(rtl_tasklet,
-                          compute_exit,
-                          B,
-                          src_conn='b',
-                          memlet=dace.Memlet('B_stream[i]'))
+    state.add_memlet_path(A, compute_entry, rtl_tasklet, dst_conn='a', memlet=dace.Memlet('A_stream[i]'))
+    state.add_memlet_path(rtl_tasklet, compute_exit, B, src_conn='b', memlet=dace.Memlet('B_stream[i]'))
 
     # add write_b memlets and access nodes
     write_b_inp = state.add_read('B_stream')
     write_b_out = state.add_write('fpga_B')
-    state.add_memlet_path(write_b_inp,
-                          write_b_entry,
-                          write_b,
-                          dst_conn='inp',
-                          memlet=dace.Memlet('B_stream[i]'))
-    state.add_memlet_path(write_b,
-                          write_b_exit,
-                          write_b_out,
-                          src_conn='out',
-                          memlet=dace.Memlet('fpga_B[i*M+j]'))
+    state.add_memlet_path(write_b_inp, write_b_entry, write_b, dst_conn='inp', memlet=dace.Memlet('B_stream[i]'))
+    state.add_memlet_path(write_b, write_b_exit, write_b_out, src_conn='out', memlet=dace.Memlet('fpga_B[i*M+j]'))
 
     # add copy to device state
     copy_to_device = sdfg.add_state('copy_to_device')
@@ -344,7 +305,7 @@ def test_hardware_vadd():
     sdfg = make_vadd_sdfg(N, veclen)
     a = np.random.randint(0, 100, N.get()).astype(np.float32)
     # TODO set to 0 due to the scalar argument problem
-    b = np.float32(0) #np.random.randint(1, 100, 1)[0].astype(np.float32)
+    b = np.float32(0)  #np.random.randint(1, 100, 1)[0].astype(np.float32)
     c = np.zeros((N.get(), )).astype(np.float32)
 
     # call program

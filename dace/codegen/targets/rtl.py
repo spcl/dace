@@ -100,11 +100,10 @@ class RTLCodeGen(target.TargetCodeGenerator):
                 arr = sdfg.arrays[edge.data.data]
                 if isinstance(arr, data.Array):
                     line: str = "{}* {} = &{}[0];".format(dst_node.in_connectors[edge.dst_conn].ctype, edge.dst_conn,
-                                                      edge.src.data)
+                                                          edge.src.data)
                 elif isinstance(arr, data.Scalar):
-                    line: str = "{} {} = {};".format(
-                        dst_node.in_connectors[edge.dst_conn].ctype, edge.dst_conn,
-                        edge.src.data)
+                    line: str = "{} {} = {};".format(dst_node.in_connectors[edge.dst_conn].ctype, edge.dst_conn,
+                                                     edge.src.data)
         elif isinstance(edge.src, nodes.MapEntry) and isinstance(edge.dst, nodes.Tasklet):
             # TODO works for one kernel, but might break with several. Also only handles if the scope and tasklet are directly connected.
             self.n_unrolled = symbolic.evaluate(edge.src.map.range[0][1] + 1, sdfg.constants)
@@ -130,9 +129,8 @@ class RTLCodeGen(target.TargetCodeGenerator):
                                                               src_node.out_connectors[edge.src_conn].ctype,
                                                               edge.dst.data)
             else:  # scalar accessor
-                line: str = "{}* {} = &{}[0];".format(
-                    src_node.out_connectors[edge.src_conn].ctype, edge.src_conn,
-                    edge.dst.data)
+                line: str = "{}* {} = &{}[0];".format(src_node.out_connectors[edge.src_conn].ctype, edge.src_conn,
+                                                      edge.dst.data)
         elif isinstance(edge.src, nodes.Tasklet) and isinstance(edge.dst, nodes.MapExit):
             line: str = f'{src_node.out_connectors[edge.src_conn].ctype} {edge.src_conn} = &{edge.data.data}[{edge.dst.map.params[0]}*{edge.data.volume}];'
         else:
@@ -300,7 +298,7 @@ for (int j = 0; j < {veclen}; j++) {{
                 else:
                     outputs[name] = f'{name}[out_ptr_{name}++] = (int)(model->m_axis_{name}_tdata);'
 
-            else: # input
+            else:  # input
                 conn = tasklet.in_connectors[name]
                 if isinstance(conn, dtypes.vector):
                     inputs[name] = f'''in_ptr_{name}++;
@@ -336,8 +334,10 @@ model->s_axis_{name}_tdata = {name}[0];'''
 
     def generate_cpp_num_elements(self, buses):
         # TODO: compute num_elements=#elements that enter/leave the pipeline, for now we assume in_elem=out_elem (i.e. no reduction)
-        return [f'''int num_elements_{name} = {volume};'''
-        for name, (arr, is_output, bytes, veclen, volume) in buses.items()]
+        return [
+            f'''int num_elements_{name} = {volume};'''
+            for name, (arr, is_output, bytes, veclen, volume) in buses.items()
+        ]
 
     def generate_cpp_internal_state(self, tasklet):
         internal_state_str = " ".join(
@@ -345,7 +345,7 @@ model->s_axis_{name}_tdata = {name}[0];'''
                 **tasklet.in_connectors,
                 **tasklet.out_connectors
             }])
-        internal_state_var = ", ".join( # TODO fix
+        internal_state_var = ", ".join(  # TODO fix
             ["model->{}".format(var_name) for var_name in {
                 **tasklet.in_connectors,
                 **tasklet.out_connectors
@@ -356,19 +356,23 @@ model->s_axis_{name}_tdata = {name}[0];'''
         """
         Generate checking whether input to the tasklet has been consumed
         """
-        return [f'''if (model->s_axis_{name}_tready == 1 && model->s_axis_{name}_tvalid == 1) {{
+        return [
+            f'''if (model->s_axis_{name}_tready == 1 && model->s_axis_{name}_tvalid == 1) {{
                 read_input_hs_{name} = true;
-            }}''' for name, (arr, is_output, bytes, veclen, volume) in buses.items() if not is_output]
+            }}''' for name, (arr, is_output, bytes, veclen, volume) in buses.items() if not is_output
+        ]
 
     def generate_feeding(self, tasklet, inputs):
         """
         Generate statements for feeding into a streaming AXI bus
         """
         debug_feed_element = "std::cout << \"feed new element\" << std::endl;\n" if self.verilator_debug else ""
-        return [f'''if (model->s_axis_{name}_tvalid == 0 && in_ptr_{name} < num_elements_{name}) {{
+        return [
+            f'''if (model->s_axis_{name}_tvalid == 0 && in_ptr_{name} < num_elements_{name}) {{
             {debug_feed_element}{inputs[name]}
             model->s_axis_{name}_tvalid = 1;
-        }}''' for name in inputs]
+        }}''' for name in inputs
+        ]
 
     def generate_ptrs(self, tasklet):
         """
@@ -383,46 +387,57 @@ model->s_axis_{name}_tdata = {name}[0];'''
         Generate statements for whether an element output by the tasklet is ready.
         """
         debug_export_element = "std::cout << \"export element\" << std::endl;\n" if self.verilator_debug else ""
-        return [f'''if (model->m_axis_{name}_tvalid == 1) {{
+        return [
+            f'''if (model->m_axis_{name}_tvalid == 1) {{
             {debug_export_element}{outputs[name]}
             model->m_axis_{name}_tready = 1;
-        }}''' for name in tasklet.out_connectors]
+        }}''' for name in tasklet.out_connectors
+        ]
 
     def generate_write_output_hs(self, tasklet):
         """
         Generate check for whether an element has been consumed from the output of a tasklet.
         """
-        return [f'''if (model->m_axis_{name}_tready && model->m_axis_{name}_tvalid == 1) {{
+        return [
+            f'''if (model->m_axis_{name}_tready && model->m_axis_{name}_tvalid == 1) {{
             write_output_hs_{name} = true;
-        }}''' for name in tasklet.out_connectors]
+        }}''' for name in tasklet.out_connectors
+        ]
 
     def generate_hs_flags(self, buses):
         """
         Generate flags
         """
-        return [f'bool {"write_out" if is_output else "read_in"}put_hs_{name} = false;' for name, (arr, is_output, bytes, veclen, volume) in buses.items()]
+        return [
+            f'bool {"write_out" if is_output else "read_in"}put_hs_{name} = false;'
+            for name, (arr, is_output, bytes, veclen, volume) in buses.items()
+        ]
 
     def generate_input_hs_toggle(self, buses):
         """
         Generate statements for toggling input flags.
         """
         debug_read_input_hs = "\nstd::cout << \"remove read_input_hs flag\" << std::endl;" if self.verilator_debug else ""
-        return [f'''if (read_input_hs_{name}) {{
+        return [
+            f'''if (read_input_hs_{name}) {{
             // remove valid flag {debug_read_input_hs}
             model->s_axis_{name}_tvalid = 0;
             read_input_hs_{name} = false;
-        }}''' for name, (arr, is_output, bytes, veclen, volume) in buses.items() if not is_output]
+        }}''' for name, (arr, is_output, bytes, veclen, volume) in buses.items() if not is_output
+        ]
 
     def generate_output_hs_toggle(self, buses):
         """
         Generate statements for toggling output flags.
         """
         debug_write_output_hs = "\nstd::cout << \"remove write_output_hs flag\" << std::endl;" if self.verilator_debug else ""
-        return [f'''if (write_output_hs_{name}) {{
+        return [
+            f'''if (write_output_hs_{name}) {{
             // remove ready flag {debug_write_output_hs}
             model->m_axis_{name}_tready = 0;
             write_output_hs_{name} = false;
-        }}''' for name, (arr, is_output, bytes, veclen, volume) in buses.items() if is_output]
+        }}''' for name, (arr, is_output, bytes, veclen, volume) in buses.items() if is_output
+        ]
 
     def generate_running_condition(self, tasklet):
         """
@@ -446,7 +461,7 @@ model->s_axis_{name}_tdata = {name}[0];'''
         unique_name: str = "{}_{}_{}_{}".format(tasklet.name, sdfg.sdfg_id, sdfg.node_id(state), state.node_id(tasklet))
 
         # Collect all of the input and output connectors into buses and scalars
-        buses = {} # {tasklet_name: (array_name, output_from_rtl, bytes, veclen)}
+        buses = {}  # {tasklet_name: (array_name, output_from_rtl, bytes, veclen)}
         scalars = {}
         for edge in state.in_edges(tasklet):
             arr = sdfg.arrays[edge.data.data]
@@ -468,7 +483,7 @@ model->s_axis_{name}_tdata = {name}[0];'''
             elif isinstance(arr, data.Stream):
                 buses[edge.dst_conn] = (edge.data.data, False, total_size, vec_len, edge.data.volume)
             elif isinstance(arr, data.Scalar):
-                scalars[edge.dst_conn] = (False, total_size) #(edge.data.data, False, total_size, 1, edge.data.volume)
+                scalars[edge.dst_conn] = (False, total_size)  #(edge.data.data, False, total_size, 1, edge.data.volume)
 
         for edge in state.out_edges(tasklet):
             arr = sdfg.arrays[edge.data.data]
@@ -520,8 +535,10 @@ model->s_axis_{name}_tdata = {name}[0];'''
                         for name, (_, is_output, _, vec_len, _) in buses.items()
                     },
                     "params": {
-                        "scalars": {name: total_size*8 # width in bits
-                                    for name, (_, total_size) in scalars.items()},
+                        "scalars": {
+                            name: total_size * 8  # width in bits
+                            for name, (_, total_size) in scalars.items()
+                        },
                         "memory": {}
                     },
                     "unroll": self.n_unrolled,
@@ -575,7 +592,8 @@ model->s_axis_{name}_tdata = {name}[0];'''
                 raise NotImplementedError('Only RTL codegen for Xilinx is implemented')
         else:  # not hardware_target
             # generate verilator simulation cpp code components
-            inputs, outputs = self.generate_cpp_inputs_outputs(tasklet, buses) # TODO i don't know if i want to do it differently.
+            inputs, outputs = self.generate_cpp_inputs_outputs(
+                tasklet, buses)  # TODO i don't know if i want to do it differently.
             valid_zeros, ready_zeros, scalar_zeros = self.generate_cpp_zero_inits(buses, scalars)
             vector_init = self.generate_cpp_vector_init(tasklet)
             num_elements = self.generate_cpp_num_elements(buses)

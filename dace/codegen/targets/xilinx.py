@@ -214,7 +214,8 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         dtype = desc.dtype
         kernel_stream.write("{} {}[{}];\n".format(dtype.ctype, var_name, cpp.sym2cpp(array_size)))
         if desc.storage == dace.dtypes.StorageType.FPGA_Registers:
-            kernel_stream.write("#pragma HLS ARRAY_PARTITION variable={} " "complete\n".format(var_name))
+            kernel_stream.write("#pragma HLS ARRAY_PARTITION variable={} "
+                                "complete\n".format(var_name))
         elif desc.storage == dace.dtypes.StorageType.FPGA_Local:
             pass
         else:
@@ -244,9 +245,8 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                 dtype = data.dtype.base_type
             return "{} *{}".format(dtype.ctype, var_name)
         if isinstance(data, dt.Stream):
-            ctype = "dace::FIFO<{}, {}, {}>".format(
-                data.dtype.base_type.ctype, cpp.sym2cpp(data.dtype.veclen),
-                cpp.sym2cpp(data.buffer_size))
+            ctype = "dace::FIFO<{}, {}, {}>".format(data.dtype.base_type.ctype, cpp.sym2cpp(data.dtype.veclen),
+                                                    cpp.sym2cpp(data.buffer_size))
             if data.shape[0] == 1:
                 return "{} &{}".format(ctype, var_name)
             else:
@@ -468,11 +468,8 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         for _, var_name, node, _ in external_streams:
             arr_len = dace.symbolic.evaluate(node.shape[0], sdfg.constants)
             if arr_len > 1:
-                kernel_stream.write(
-                    "#pragma HLS ARRAY_PARTITION variable={} dim=1 complete".
-                    format(var_name))
-            kernel_stream.write(
-                "#pragma HLS INTERFACE axis port={}".format(var_name))
+                kernel_stream.write("#pragma HLS ARRAY_PARTITION variable={} dim=1 complete".format(var_name))
+            kernel_stream.write("#pragma HLS INTERFACE axis port={}".format(var_name))
 
         # TODO: add special case if there's only one module for niceness
         kernel_stream.write("\n#pragma HLS DATAFLOW")
@@ -602,15 +599,11 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                     # TODO multiple readers accessing a single stream should fail
                     dst = subgraph.out_edges(node)[0].dst
                     if isinstance(dst, dace.nodes.MapEntry) and dst.map.unroll:
-                        unrolled_map_range = dace.symbolic.evaluate(
-                            dst.map.range[0][1] + 1, sdfg.constants)
+                        unrolled_map_range = dace.symbolic.evaluate(dst.map.range[0][1] + 1, sdfg.constants)
                     else:
                         unrolled_map_range = 1
                     if unrolled_map_range > 1:
-                        elements_to_add = [
-                            f'{node.data}_{i}'
-                            for i in range(unrolled_map_range)
-                        ]
+                        elements_to_add = [f'{node.data}_{i}' for i in range(unrolled_map_range)]
                     else:
                         elements_to_add = [node.data]
                     for i in range(unrolled_map_range):
@@ -620,8 +613,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                             self._stream_connections[elem] = [None, None]
                         for edge in subgraph.out_edges(node):
                             rtl_dst = state.memlet_path(edge)[-1].dst_conn
-                            val = '{}_top_1.s_axis_{}{}'.format(
-                                rtl_name, rtl_dst, postfix)
+                            val = '{}_top_1.s_axis_{}{}'.format(rtl_name, rtl_dst, postfix)
                             self._stream_connections[elem][1] = val
 
             for node in subgraph.sink_nodes():
@@ -629,15 +621,11 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                     # TODO multiple writers accessing a single stream should fail
                     src = subgraph.in_edges(node)[0].src
                     if (isinstance(src, dace.nodes.MapExit) and src.map.unroll):
-                        unrolled_map_range = dace.symbolic.evaluate(
-                            src.map.range[0][1] + 1, sdfg.constants)
+                        unrolled_map_range = dace.symbolic.evaluate(src.map.range[0][1] + 1, sdfg.constants)
                     else:
                         unrolled_map_range = 1
                     if unrolled_map_range > 1:
-                        elements_to_add = [
-                            f'{node.data}_{i}'
-                            for i in range(unrolled_map_range)
-                        ]
+                        elements_to_add = [f'{node.data}_{i}' for i in range(unrolled_map_range)]
                     else:
                         elements_to_add = [node.data]
                     for i in range(unrolled_map_range):
@@ -647,9 +635,8 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                             self._stream_connections[elem] = [None, None]
                         for edge in state.in_edges(node):
                             rtl_src = subgraph.memlet_path(edge)[0].src_conn
-                            self._stream_connections[elem][
-                                0] = '{}_top_1.m_axis_{}{}'.format(
-                                    rtl_name, rtl_src, postfix)
+                            self._stream_connections[elem][0] = '{}_top_1.m_axis_{}{}'.format(
+                                rtl_name, rtl_src, postfix)
 
             # Make the dispatcher trigger generation of the RTL module, but
             # ignore the generated code, as the RTL codegen will generate the
@@ -872,9 +859,8 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
             else:  # _num should not be appended, when there is only one kernel
                 streams = [name]
                 if name not in self._defined_external_streams:
-                    self.define_stream(node.dtype, node.buffer_size, name,
-                                    node.total_size, None,
-                                    state_host_body_stream, sdfg)
+                    self.define_stream(node.dtype, node.buffer_size, name, node.total_size, None,
+                                       state_host_body_stream, sdfg)
                     self._defined_external_streams.add(name)
             for stream in streams:
                 if stream not in self._stream_connections:
