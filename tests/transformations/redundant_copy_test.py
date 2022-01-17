@@ -27,7 +27,7 @@ def test_out():
     state.add_edge(C, None, trans, "_inp", sdfg.make_array_memlet("C"))
     state.add_edge(trans, "_out", D, None, sdfg.make_array_memlet("D"))
 
-    sdfg.coarsen_dataflow()
+    sdfg.simplify()
     sdfg.apply_transformations_repeated(RedundantArrayCopying)
     assert len(state.nodes()) == 3
     assert B not in state.nodes()
@@ -68,7 +68,7 @@ def test_out_success():
     state.add_memlet_path(t, mx, E, memlet=dace.Memlet.simple("E", "i, j, k"), src_conn='__out')
 
     sdfg.validate()
-    sdfg.coarsen_dataflow()
+    sdfg.simplify()
     arrays, views = 0, 0
     for n in state.nodes():
         if isinstance(n, dace.nodes.AccessNode):
@@ -112,7 +112,7 @@ def test_out_failure_subset_mismatch():
     state.add_nedge(B, C, dace.Memlet.simple("B", "0:3, 2", other_subset_str="1, 2, 0:3, 4"))
 
     sdfg.validate()
-    sdfg.coarsen_dataflow()
+    sdfg.simplify()
     assert len(state.nodes()) == 3
     assert B in state.nodes()
 
@@ -133,7 +133,7 @@ def test_out_failure_no_overlap():
     state.add_nedge(B, C, dace.Memlet.simple("B", "0:3, 2", other_subset_str="1, 2, 0:3, 4"))
 
     sdfg.validate()
-    sdfg.coarsen_dataflow()
+    sdfg.simplify()
     assert len(state.nodes()) == 3
     assert B in state.nodes()
 
@@ -154,7 +154,7 @@ def test_out_failure_partial_overlap():
     state.add_nedge(B, C, dace.Memlet.simple("B", "4:7, 6", other_subset_str="1, 2, 0:3, 4"))
 
     sdfg.validate()
-    sdfg.coarsen_dataflow()
+    sdfg.simplify()
     assert len(state.nodes()) == 3
     assert B in state.nodes()
 
@@ -179,7 +179,7 @@ def test_in():
     state.add_edge(B, None, C, None, sdfg.make_array_memlet("B"))
     state.add_edge(C, None, D, None, sdfg.make_array_memlet("C"))
 
-    sdfg.coarsen_dataflow()
+    sdfg.simplify()
     sdfg.apply_transformations_repeated(RedundantArrayCopyingIn)
     assert len(state.nodes()) == 3
     assert C not in state.nodes()
@@ -262,7 +262,7 @@ def conv2d(input: dace.float32[N, H, W, C_in], weights: dace.float32[K, K, C_in,
 
 
 def test_conv2d():
-    sdfg = conv2d.to_sdfg(coarsen=True)
+    sdfg = conv2d.to_sdfg(simplify=True)
     access_nodes = [
         n for n, _ in sdfg.all_nodes_recursive()
         if isinstance(n, nodes.AccessNode) and not isinstance(sdfg.arrays[n.data], dace.data.View)

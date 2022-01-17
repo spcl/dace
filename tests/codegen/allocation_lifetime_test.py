@@ -55,7 +55,7 @@ def _check_alloc(id, name, codegen, scope):
 
 def test_determine_alloc_scope():
     sdfg, scopes = _test_determine_alloc(dace.AllocationLifetime.Scope)
-    codegen = framecode.DaCeCodeGenerator()
+    codegen = framecode.DaCeCodeGenerator(sdfg)
     codegen.determine_allocation_lifetime(sdfg)
 
     # tmp cannot be allocated within the inner scope because it is GPU_Global
@@ -65,7 +65,7 @@ def test_determine_alloc_scope():
 
 def test_determine_alloc_state():
     sdfg, scopes = _test_determine_alloc(dace.AllocationLifetime.State, unused=True)
-    codegen = framecode.DaCeCodeGenerator()
+    codegen = framecode.DaCeCodeGenerator(sdfg)
     codegen.determine_allocation_lifetime(sdfg)
 
     # Ensure that unused transients are not allocated
@@ -77,7 +77,7 @@ def test_determine_alloc_state():
 
 def test_determine_alloc_sdfg():
     sdfg, scopes = _test_determine_alloc(dace.AllocationLifetime.SDFG)
-    codegen = framecode.DaCeCodeGenerator()
+    codegen = framecode.DaCeCodeGenerator(sdfg)
     codegen.determine_allocation_lifetime(sdfg)
 
     assert _check_alloc(1, 'tmp', codegen, scopes[-3])
@@ -86,7 +86,7 @@ def test_determine_alloc_sdfg():
 
 def test_determine_alloc_global():
     sdfg, scopes = _test_determine_alloc(dace.AllocationLifetime.Global)
-    codegen = framecode.DaCeCodeGenerator()
+    codegen = framecode.DaCeCodeGenerator(sdfg)
     codegen.determine_allocation_lifetime(sdfg)
     assert any('__1_tmp' in field for field in codegen.statestruct)
     assert any('__1_tmp2' in field for field in codegen.statestruct)
@@ -149,7 +149,7 @@ def test_persistent_gpu_transpose_regression():
     sdfg = test_persistent_transpose.to_sdfg()
 
     sdfg.expand_library_nodes()
-    sdfg.coarsen_dataflow()
+    sdfg.simplify()
     sdfg.apply_gpu_transformations()
 
     for _, _, arr in sdfg.arrays_recursive():
@@ -277,7 +277,7 @@ def test_nested_view_samename():
         tmp = dace.ndarray([20], dace.float64, lifetime=dace.AllocationLifetime.Persistent)
         return incall(a, tmp)
 
-    sdfg = top.to_sdfg(coarsen=False)
+    sdfg = top.to_sdfg(simplify=False)
 
     a = np.random.rand(20)
     ref = a.copy()
@@ -296,7 +296,7 @@ def test_nested_persistent():
     def toppers(a: dace.float64[20]):
         return nestpers(a)
 
-    sdfg = toppers.to_sdfg(coarsen=False)
+    sdfg = toppers.to_sdfg(simplify=False)
     for _, _, arr in sdfg.arrays_recursive():
         if arr.transient:
             arr.lifetime = dace.AllocationLifetime.Persistent

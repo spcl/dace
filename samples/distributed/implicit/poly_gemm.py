@@ -44,13 +44,13 @@ if __name__ == "__main__":
     size = comm.Get_size()
 
     if rank == 0:
-        mpi_sdfg = gemm.to_sdfg(coarsen=False)
-        mpi_sdfg.coarsen_dataflow()
+        mpi_sdfg = gemm.to_sdfg(simplify=False)
+        mpi_sdfg.simplify()
         mpi_sdfg.apply_transformations_repeated(ElementWiseArrayOperation2D)
         mpi_sdfg.expand_library_nodes()
-        mpi_sdfg.coarsen_dataflow()
+        mpi_sdfg.simplify()
         mpi_sdfg.apply_transformations_repeated(RedundantComm2D)
-        mpi_sdfg.coarsen_dataflow()
+        mpi_sdfg.simplify()
         mpi_func = mpi_sdfg.compile()
 
     comm.Barrier()

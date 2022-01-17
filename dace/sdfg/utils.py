@@ -16,7 +16,7 @@ from dace.sdfg.scope import ScopeSubgraphView
 from dace.sdfg import nodes as nd, graph as gr
 from dace import config, data as dt, dtypes, memlet as mm, subsets as sbs, symbolic
 from string import ascii_uppercase
-from typing import Callable, Dict, List, Optional, Set, Tuple, Union
+from typing import Any, Callable, Dict, Generator, List, Optional, Set, Tuple, Union
 
 
 def node_path_graph(*args):
@@ -114,10 +114,10 @@ def dfs_topological_sort(G, sources=None, condition=None):
                     edges in the component reachable from source.
     :return: A generator of nodes in the lastvisit depth-first-search.
 
-    @note: Based on http://www.ics.uci.edu/~eppstein/PADS/DFS.py
+    :note: Based on http://www.ics.uci.edu/~eppstein/PADS/DFS.py
     by D. Eppstein, July 2004.
 
-    @note: If a source is not specified then a source is chosen arbitrarily and
+    :note: If a source is not specified then a source is chosen arbitrarily and
     repeatedly until all components in the graph are searched.
 
     """
@@ -174,10 +174,10 @@ def dfs_conditional(G, sources=None, condition=None):
                     edges in the component reachable from source.
     :return: A generator of edges in the lastvisit depth-first-search.
 
-    @note: Based on http://www.ics.uci.edu/~eppstein/PADS/DFS.py
+    :note: Based on http://www.ics.uci.edu/~eppstein/PADS/DFS.py
     by D. Eppstein, July 2004.
 
-    @note: If a source is not specified then a source is chosen arbitrarily and
+    :note: If a source is not specified then a source is chosen arbitrarily and
     repeatedly until all components in the graph are searched.
 
     """
@@ -197,7 +197,7 @@ def dfs_conditional(G, sources=None, condition=None):
             continue
         yield start
         visited.add(start)
-        stack = [(start, iter(G.neighbors(start)))]
+        stack = [(start, iter(G.successors(start)))]
         while stack:
             parent, children = stack[-1]
             try:
@@ -206,9 +206,67 @@ def dfs_conditional(G, sources=None, condition=None):
                     visited.add(child)
                     if condition is None or condition(parent, child):
                         yield child
-                        stack.append((child, iter(G.neighbors(child))))
+                        stack.append((child, iter(G.successors(child))))
             except StopIteration:
                 stack.pop()
+
+
+def nodes_in_all_simple_paths(G, source, target, condition: Callable[[Any], bool] = None) -> Set[Any]:
+    """
+    Returns a set of nodes that appear in any of the paths from ``source``
+    to ``targets``. Optionally, a condition can be given to control traversal.
+    
+    :param G: The graph to traverse.
+    :param source: Source node.
+    :param targets: 
+
+    Notes
+    -----
+    This algorithm uses a modified depth-first search, adapted from 
+    networkx.all_simple_paths.
+    
+    The algorithm is written for directed _graphs_. For multigraphs, use
+    networkx.all_simple_paths!
+
+    References
+    ----------
+    .. [1] R. Sedgewick, "Algorithms in C, Part 5: Graph Algorithms",
+       Addison Wesley Professional, 3rd ed., 2001.
+    """
+
+    cutoff = len(G) - 1
+    result = set()
+    visited = dict.fromkeys([source])
+    targets = {target}
+    stack = [iter(G[source])]
+    while stack:
+        children = stack[-1]
+        child = next(children, None)
+        if condition is not None:
+            while child is not None and not condition(child):
+                child = next(children, None)
+        if child is None:
+            stack.pop()
+            visited.popitem()
+        elif len(visited) < cutoff:
+            if child in visited:
+                continue
+            if child is target:
+                result.update(list(visited))
+                result.add(child)
+            visited[child] = None
+            if targets - set(visited.keys()):  # expand stack until find all targets
+                stack.append(iter(G[child]))
+            else:
+                visited.popitem()  # maybe other ways to child
+        else:  # len(visited) == cutoff:
+            for tgt in (targets & (set(children) | {child})) - set(visited.keys()):
+                result.update(list(visited))
+                result.add(tgt)
+            stack.pop()
+            visited.popitem()
+
+    return result
 
 
 def change_edge_dest(graph: gr.OrderedDiGraph, node_a: Union[nd.Node, gr.OrderedMultiDiConnectorGraph],
@@ -1010,10 +1068,10 @@ def fuse_states(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> 
 
                 if u in skip_nodes or v in skip_nodes:
                     continue
-                candidate = {StateFusion.first_state: u, StateFusion.second_state: v}
-                sf = StateFusion(id, -1, candidate, 0, override=True)
-                if sf.can_be_applied(sd, candidate, 0, sd, permissive=permissive):
-                    sf.apply(sd)
+                candidate = {StateFusion.first_state: sd.node_id(u), StateFusion.second_state: sd.node_id(v)}
+                sf = StateFusion(sd, id, -1, candidate, 0, override=True)
+                if sf.can_be_applied(sd, 0, sd, permissive=permissive):
+                    sf.apply(sd, sd)
                     applied += 1
                     counter += 1
                     if progress:
@@ -1075,20 +1133,20 @@ def inline_sdfgs(sdfg: SDFG, permissive: bool = False, progress: bool = None, mu
                     candidate = {
                         InlineMultistateSDFG.nested_sdfg: node_id,
                     }
-                    inliner = InlineMultistateSDFG(id, state_id, candidate, 0, override=True)
-                    if inliner.can_be_applied(state, candidate, 0, sd, permissive=permissive):
-                        inliner.apply(sd)
+                    inliner = InlineMultistateSDFG(sd, id, state_id, candidate, 0, override=True)
+                    if inliner.can_be_applied(state, 0, sd, permissive=permissive):
+                        inliner.apply(state, sd)
                         counter += 1
                         if progress:
                             pbar.update(1)
                         continue
 
                 candidate = {
-                    InlineSDFG._nested_sdfg: node_id,
+                    InlineSDFG.nested_sdfg: node_id,
                 }
-                inliner = InlineSDFG(id, state_id, candidate, 0, override=True)
-                if inliner.can_be_applied(state, candidate, 0, sd, permissive=permissive):
-                    inliner.apply(sd)
+                inliner = InlineSDFG(sd, id, state_id, candidate, 0, override=True)
+                if inliner.can_be_applied(state, 0, sd, permissive=permissive):
+                    inliner.apply(state, sd)
                     counter += 1
                     if progress:
                         pbar.update(1)
@@ -1188,3 +1246,66 @@ def is_nonfree_sym_dependent(node: nd.AccessNode, desc: dt.Data, state: SDFGStat
         if any(str(s) not in fsymbols for s in desc.free_symbols):
             return True
     return False
+
+
+def _tswds_state(
+        sdfg: SDFG, state: SDFGState,
+        symbols: Dict[str,
+                      dtypes.typeclass]) -> Generator[Tuple[SDFGState, Node, Dict[str, dtypes.typeclass]], None, None]:
+    """
+    Helper function for ``traverse_sdfg_with_defined_symbols``.
+    :see: traverse_sdfg_with_defined_symbols.
+    """
+    # Traverse state by scopes
+    sdict = state.scope_children()
+
+    def _traverse(scope: Node, symbols: Dict[str, dtypes.typeclass]):
+        for node in sdict[scope]:
+            yield state, node, symbols
+            # Traverse inside scopes
+            if node in sdict:
+                inner_syms = {}
+                inner_syms.update(symbols)
+                inner_syms.update(node.new_symbols(sdfg, state, inner_syms))
+                yield from _traverse(node, inner_syms)
+
+    # Start with top-level nodes
+    yield from _traverse(None, symbols)
+
+
+def traverse_sdfg_with_defined_symbols(
+        sdfg: SDFG) -> Generator[Tuple[SDFGState, Node, Dict[str, dtypes.typeclass]], None, None]:
+    """
+    Traverses the SDFG, its states and nodes, yielding the defined symbols and their types at each node.
+    :return: A generator that yields tuples of (state, node in state, currently-defined symbols)
+    """
+    # Start with global symbols
+    symbols = copy.copy(sdfg.symbols)
+    symbols.update({k: dt.create_datadescriptor(v).dtype for k, v in sdfg.constants.items()})
+    for desc in sdfg.arrays.values():
+        symbols.update({str(s): s.dtype for s in desc.free_symbols})
+
+    # Add symbols from inter-state edges along the state machine
+    start_state = sdfg.start_state
+    visited = set()
+    visited_edges = set()
+    for edge in sdfg.dfs_edges(start_state):
+        # Source -> inter-state definition -> Destination
+        visited_edges.add(edge)
+        # Source
+        if edge.src not in visited:
+            visited.add(edge.src)
+            yield from _tswds_state(sdfg, edge.src, symbols)
+
+        # Add edge symbols into defined symbols
+        issyms = edge.data.new_symbols(sdfg, symbols)
+        symbols.update(issyms)
+
+        # Destination
+        if edge.dst not in visited:
+            visited.add(edge.dst)
+            yield from _tswds_state(sdfg, edge.dst, symbols)
+
+    # If there is only one state, the DFS will miss it
+    if start_state not in visited:
+        yield from _tswds_state(sdfg, start_state, symbols)

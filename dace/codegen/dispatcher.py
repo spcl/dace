@@ -10,7 +10,7 @@ from dace import config, data as dt, dtypes, nodes, registry
 from dace.codegen import exceptions as cgx, prettycode
 from dace.codegen.targets import target
 from dace.sdfg import utils as sdutil, SDFG, SDFGState, ScopeSubgraphView
-from typing import Dict, Tuple
+from typing import Dict, Set, Tuple
 
 
 @registry.extensible_enum
@@ -145,7 +145,7 @@ class TargetDispatcher(object):
         from dace.codegen.targets import framecode as fc
 
         self.frame: fc.DaCeCodeGenerator = framecode
-        self._used_targets = set()
+        self._used_targets: Set[target.TargetCodeGenerator] = set()
         self._used_environments = set()
 
         # type: Dict[dace.dtypes.InstrumentationType, InstrumentationProvider]
@@ -324,10 +324,7 @@ class TargetDispatcher(object):
 
         self._copy_dispatchers[dispatcher].append((predicate, func))
 
-    def dispatch_state(self, sdfg, state, function_stream, callsite_stream):
-        """ Dispatches a code generator for an SDFG state. """
-
-        self.defined_vars.enter_scope(state)
+    def get_state_dispatcher(self, sdfg, state):
         # Check if the state satisfies any predicates that delegate to a
         # specific code generator
         satisfied_dispatchers = [
@@ -338,10 +335,16 @@ class TargetDispatcher(object):
             raise RuntimeError("Multiple predicates satisfied for {}: {}".format(
                 state, ", ".join([type(x).__name__ for x in satisfied_dispatchers])))
         elif num_satisfied == 1:
-            satisfied_dispatchers[0].generate_state(sdfg, state, function_stream, callsite_stream)
-        else:  # num_satisfied == 0
-            # Otherwise use the generic code generator (CPU)
-            self._generic_state_dispatcher.generate_state(sdfg, state, function_stream, callsite_stream)
+            return satisfied_dispatchers[0]
+
+        return self._generic_state_dispatcher
+
+    def dispatch_state(self, sdfg, state, function_stream, callsite_stream):
+        """ Dispatches a code generator for an SDFG state. """
+
+        self.defined_vars.enter_scope(state)
+        disp = self.get_state_dispatcher(sdfg, state)
+        disp.generate_state(sdfg, state, function_stream, callsite_stream)
         self.defined_vars.exit_scope(state)
 
     def dispatch_subgraph(self,
@@ -382,6 +385,18 @@ class TargetDispatcher(object):
             else:
                 self.dispatch_node(sdfg, dfg, state_id, v, function_stream, callsite_stream)
 
+    def get_node_dispatcher(self, sdfg, state, node):
+        satisfied_dispatchers = [dispatcher for pred, dispatcher in self._node_dispatchers if pred(sdfg, state, node)]
+        num_satisfied = len(satisfied_dispatchers)
+        if num_satisfied > 1:
+            raise RuntimeError("Multiple predicates satisfied for {}: {}".format(
+                node, ", ".join([type(x).__name__ for x in satisfied_dispatchers])))
+        elif num_satisfied == 1:
+            return satisfied_dispatchers[0]
+        else:  # num_satisfied == 0
+            # Otherwise use the generic code generator
+            return self._generic_node_dispatcher
+
     def dispatch_node(self, sdfg, dfg, state_id, node, function_stream, callsite_stream):
         """ Dispatches a code generator for a single node. """
 
@@ -393,18 +408,12 @@ class TargetDispatcher(object):
         # Check if the node satisfies any predicates that delegate to a
         # specific code generator
         state = sdfg.node(state_id)
-        satisfied_dispatchers = [dispatcher for pred, dispatcher in self._node_dispatchers if pred(sdfg, state, node)]
-        num_satisfied = len(satisfied_dispatchers)
-        if num_satisfied > 1:
-            raise RuntimeError("Multiple predicates satisfied for {}: {}".format(
-                node, ", ".join([type(x).__name__ for x in satisfied_dispatchers])))
-        elif num_satisfied == 1:
-            self._used_targets.add(satisfied_dispatchers[0])
-            satisfied_dispatchers[0].generate_node(sdfg, dfg, state_id, node, function_stream, callsite_stream)
-        else:  # num_satisfied == 0
-            # Otherwise use the generic code generator (CPU)
-            self._used_targets.add(self._generic_node_dispatcher)
-            self._generic_node_dispatcher.generate_node(sdfg, dfg, state_id, node, function_stream, callsite_stream)
+        disp = self.get_node_dispatcher(sdfg, state, node)
+        self._used_targets.add(disp)
+        disp.generate_node(sdfg, dfg, state_id, node, function_stream, callsite_stream)
+
+    def get_scope_dispatcher(self, schedule):
+        return self._map_dispatchers[schedule]
 
     def dispatch_scope(self, map_schedule, sdfg, sub_dfg, state_id, function_stream, callsite_stream):
         """ Dispatches a code generator function for a scope in an SDFG
@@ -415,6 +424,9 @@ class TargetDispatcher(object):
         self._used_targets.add(self._map_dispatchers[map_schedule])
         self._map_dispatchers[map_schedule].generate_scope(sdfg, sub_dfg, state_id, function_stream, callsite_stream)
         self.defined_vars.exit_scope(entry_node)
+
+    def get_array_dispatcher(self, storage: dtypes.StorageType):
+        return self._array_dispatchers[storage]
 
     def dispatch_allocate(self,
                           sdfg: SDFG,
@@ -456,13 +468,12 @@ class TargetDispatcher(object):
                                                                    callsite_stream)
 
     # Dispatches copy code for a memlet
-    def _get_copy_dispatcher(self, src_node, dst_node, edge, sdfg, dfg, state_id, function_stream, output_stream):
+    def get_copy_dispatcher(self, src_node, dst_node, edge, sdfg, state):
         """
         (Internal) Returns a code generator that should be dispatched for a
         memory copy operation.
         """
         src_is_data, dst_is_data = False, False
-        state_dfg = sdfg.node(state_id)
 
         if isinstance(src_node, nodes.CodeNode):
             src_storage = dtypes.StorageType.Register
@@ -470,7 +481,7 @@ class TargetDispatcher(object):
             src_storage = src_node.desc(sdfg).storage
             src_is_data = True
 
-        if isinstance(dst_node, nodes.CodeNode):
+        if isinstance(dst_node, (nodes.CodeNode, nodes.EntryNode)):
             dst_storage = dtypes.StorageType.Register
         else:
             dst_storage = dst_node.desc(sdfg).storage
@@ -478,20 +489,20 @@ class TargetDispatcher(object):
 
         # Skip copies to/from views where edge matches
         if src_is_data and isinstance(src_node.desc(sdfg), dt.View):
-            e = sdutil.get_view_edge(state_dfg, src_node)
+            e = sdutil.get_view_edge(state, src_node)
             if e is edge:
                 return None
         if dst_is_data and isinstance(dst_node.desc(sdfg), dt.View):
-            e = sdutil.get_view_edge(state_dfg, dst_node)
+            e = sdutil.get_view_edge(state, dst_node)
             if e is edge:
                 return None
 
         if (isinstance(src_node, nodes.Tasklet) and not isinstance(dst_node, nodes.Tasklet)):
             # Special case: Copying from a tasklet to an array, schedule of
             # the copy is in the copying tasklet
-            dst_schedule_node = state_dfg.entry_node(src_node)
+            dst_schedule_node = state.entry_node(src_node)
         else:
-            dst_schedule_node = state_dfg.entry_node(dst_node)
+            dst_schedule_node = state.entry_node(dst_node)
 
         if dst_schedule_node is not None:
             dst_schedule = dst_schedule_node.map.schedule
@@ -510,7 +521,7 @@ class TargetDispatcher(object):
             # specific code generator
             satisfied_dispatchers = [
                 dispatcher for pred, dispatcher in self._copy_dispatchers[disp]
-                if pred(sdfg, dfg, src_node, dst_node) is True
+                if pred(sdfg, state, src_node, dst_node) is True
             ]
         else:
             satisfied_dispatchers = []
@@ -534,8 +545,8 @@ class TargetDispatcher(object):
 
     def dispatch_copy(self, src_node, dst_node, edge, sdfg, dfg, state_id, function_stream, output_stream):
         """ Dispatches a code generator for a memory copy operation. """
-        target = self._get_copy_dispatcher(src_node, dst_node, edge, sdfg, dfg, state_id, function_stream,
-                                           output_stream)
+        state = sdfg.node(state_id)
+        target = self.get_copy_dispatcher(src_node, dst_node, edge, sdfg, state)
         if target is None:
             return
 
@@ -546,11 +557,11 @@ class TargetDispatcher(object):
     # Dispatches definition code for a memlet that is outgoing from a tasklet
     def dispatch_output_definition(self, src_node, dst_node, edge, sdfg, dfg, state_id, function_stream, output_stream):
         """
-        Dispatches a code generator for an output memlet definition in a
-        tasklet.
+        Dispatches a code generator for an output memlet definition in a tasklet.
         """
-        target = self._get_copy_dispatcher(src_node, dst_node, edge, sdfg, dfg, state_id, function_stream,
-                                           output_stream)
+        state = sdfg.node(state_id)
+        target = self.get_copy_dispatcher(src_node, dst_node, edge, sdfg, state)
+
         # Dispatch
         self._used_targets.add(target)
         target.define_out_memlet(sdfg, dfg, state_id, src_node, dst_node, edge, function_stream, output_stream)

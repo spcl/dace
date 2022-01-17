@@ -66,7 +66,7 @@ def test_symbol_dependent_heap_array():
     A = np.random.randn(10, 10, 10)
     B = np.ndarray(10, dtype=np.float64)
     sdfg = _make_sdfg("symbol_dependent_heap_array")
-    # Compile manually to avoid dataflow coarsening
+    # Compile manually to avoid simplification
     sdfg_exec = sdfg.compile()
     sdfg_exec(A=A, B=B, N=10)
     del sdfg_exec
@@ -81,7 +81,7 @@ def test_symbol_dependent_register_array():
     A = np.random.randn(10, 10, 10)
     B = np.ndarray(10, dtype=np.float64)
     sdfg = _make_sdfg("symbol_dependent_register_array", storage=dace.dtypes.StorageType.Register)
-    # Compile manually to avoid dataflow coarsening
+    # Compile manually to avoid simplification
     sdfg_exec = sdfg.compile()
     sdfg_exec(A=A, B=B, N=10)
     del sdfg_exec
@@ -96,7 +96,7 @@ def test_symbol_dependent_threadlocal_array():
     A = np.random.randn(10, 10, 10)
     B = np.ndarray(10, dtype=np.float64)
     sdfg = _make_sdfg("symbol_dependent_threadlocal_array", storage=dace.dtypes.StorageType.CPU_ThreadLocal)
-    # Compile manually to avoid dataflow coarsening
+    # Compile manually to avoid simplification
     sdfg_exec = sdfg.compile()
     sdfg_exec(A=A, B=B, N=10)
     del sdfg_exec
@@ -111,7 +111,7 @@ def test_symbol_dependent_cpu_view():
     A = np.random.randn(10, 10, 10)
     B = np.ndarray(10, dtype=np.float64)
     sdfg = _make_sdfg("symbol_dependent_cpu_view", isview=True)
-    # Compile manually to avoid dataflow coarsening
+    # Compile manually to avoid simplification
     sdfg_exec = sdfg.compile()
     sdfg_exec(A=A, B=B, N=10)
     del sdfg_exec
@@ -127,7 +127,7 @@ def test_symbol_dependent_gpu_global_array():
     A = np.random.randn(10, 10, 10)
     B = np.ndarray(10, dtype=np.float64)
     sdfg = _make_sdfg("symbol_dependent_gpu_global_array", storage=dace.dtypes.StorageType.GPU_Global)
-    # Compile manually to avoid dataflow coarsening
+    # Compile manually to avoid simplification
     sdfg_exec = sdfg.compile()
     sdfg_exec(A=A, B=B, N=10)
     del sdfg_exec
@@ -143,7 +143,7 @@ def test_symbol_dependent_pinned_array():
     A = np.random.randn(10, 10, 10)
     B = np.ndarray(10, dtype=np.float64)
     sdfg = _make_sdfg("symbol_dependent_pinned_array", storage=dace.dtypes.StorageType.CPU_Pinned)
-    # Compile manually to avoid dataflow coarsening
+    # Compile manually to avoid simplification
     sdfg_exec = sdfg.compile()
     sdfg_exec(A=A, B=B, N=10)
     del sdfg_exec
@@ -162,7 +162,7 @@ def test_symbol_dependent_gpu_view():
     A = np.random.randn(10, 10, 10)
     B = np.ndarray(10, dtype=np.float64)
     sdfg = _make_sdfg("symbol_dependent_gpu_view", storage=dace.dtypes.StorageType.GPU_Global, isview=True)
-    # Compile manually to avoid dataflow coarsening
+    # Compile manually to avoid simplification
     sdfg_exec = sdfg.compile()
     sdfg_exec(A=A, B=B, N=10)
     del sdfg_exec
@@ -178,7 +178,7 @@ def test_symbol_dependent_fpga_global_array():
     A = np.random.randn(10, 10, 10)
     B = np.ndarray(10, dtype=np.float64)
     sdfg = _make_sdfg("symbol_dependent_fpga_global_array", storage=dace.dtypes.StorageType.FPGA_Global)
-    # Compile manually to avoid dataflow coarsening
+    # Compile manually to avoid simplification
     sdfg_exec = sdfg.compile()
     sdfg_exec(A=A, B=B, N=10)
     del sdfg_exec
@@ -198,8 +198,8 @@ def test_symbol_dependent_array_in_map():
             out[i] = np.sum(tmp)
         return out
 
-    # Compile manually to avoid dataflow coarsening
-    sdfg = symbol_dependent_array_in_map.to_sdfg(coarsen=False)
+    # Compile manually to avoid simplification
+    sdfg = symbol_dependent_array_in_map.to_sdfg(simplify=False)
     sdfg.apply_transformations_repeated(interstate.StateFusion)
     sdfg.apply_transformations_repeated(interstate.InlineSDFG)
     # NOTE: Temporary fix for issue with symbols/free_symbols

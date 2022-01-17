@@ -90,8 +90,9 @@ def replace_properties(node: Any, symrepl: Dict[symbolic.symbol, symbolic.Symbol
                         warnings.warn('Replacement of %s with %s was not made '
                                       'for string tasklet code of language %s' % (name, new_name, lang))
             elif propval.code is not None:
+                afr = ASTFindReplace({name: symbolic.symstr(new_name)})
                 for stmt in propval.code:
-                    ASTFindReplace({name: symbolic.symstr(new_name)}).visit(stmt)
+                    afr.visit(stmt)
         elif (isinstance(propclass, properties.DictProperty) and pname == 'symbol_mapping'):
             # Symbol mappings for nested SDFGs
             for symname, sym_mapping in propval.items():
@@ -104,3 +105,31 @@ def replace_properties(node: Any, symrepl: Dict[symbolic.symbol, symbolic.Symbol
 def replace_properties_dict(node: Any, symrepl: Dict[symbolic.SymbolicType, symbolic.SymbolicType]):
     for k, v in symrepl.items():
         replace_properties(node, {symbolic.pystr_to_symbolic(k): symbolic.pystr_to_symbolic(v)}, str(k), str(v))
+
+
+def replace_datadesc_names(sdfg, repl: Dict[str, str]):
+    """ Reduced form of replace which only replaces data descriptor names. """
+    from dace.sdfg import SDFG  # Avoid import loop
+    sdfg: SDFG = sdfg
+
+    # Replace in descriptor repository
+    for aname, aval in list(sdfg.arrays.items()):
+        if aname in repl:
+            del sdfg.arrays[aname]
+            sdfg.arrays[repl[aname]] = aval
+
+    # Replace in interstate edges
+    for e in sdfg.edges():
+        for k, v in repl.items():
+            e.data.replace(k, v, replace_keys=False)
+
+    for state in sdfg.nodes():
+        # Replace in access nodes
+        for node in state.data_nodes():
+            if node.data in repl:
+                node.data = repl[node.data]
+
+        # Replace in memlets
+        for edge in state.edges():
+            if edge.data.data in repl:
+                edge.data.data = repl[edge.data.data]

@@ -94,7 +94,7 @@ class StateGraphView(object):
         """ Given one edge, returns a list of edges representing a path
             between its source and sink nodes. Used for memlet tracking.
 
-            @note: Behavior is undefined when there is more than one path
+            :note: Behavior is undefined when there is more than one path
                    involving this edge.
             :param edge: An edge within this state.
             :return: A list of edges from a source node to a destination node.
@@ -172,7 +172,7 @@ class StateGraphView(object):
                 assert curedge.dst_conn.startswith('IN_')
                 cname = curedge.dst_conn[3:]
                 curedge = next(e for e in state.out_edges(curedge.dst) if e.src_conn == 'OUT_%s' % cname)
-        tree_root = mm.MemletTree(curedge)
+        tree_root = mm.MemletTree(curedge, downwards=propagate_forward)
 
         # Collect children (recursively)
         def add_children(treenode):
@@ -182,7 +182,7 @@ class StateGraphView(object):
                     return
                 conn = treenode.edge.dst_conn[3:]
                 treenode.children = [
-                    mm.MemletTree(e, parent=treenode) for e in state.out_edges(treenode.edge.dst)
+                    mm.MemletTree(e, downwards=True, parent=treenode) for e in state.out_edges(treenode.edge.dst)
                     if e.src_conn == 'OUT_%s' % conn
                 ]
             elif propagate_backward:
@@ -190,7 +190,7 @@ class StateGraphView(object):
                     return
                 conn = treenode.edge.src_conn[4:]
                 treenode.children = [
-                    mm.MemletTree(e, parent=treenode) for e in state.in_edges(treenode.edge.src)
+                    mm.MemletTree(e, downwards=False, parent=treenode) for e in state.in_edges(treenode.edge.src)
                     if e.dst_conn == 'IN_%s' % conn
                 ]
 
@@ -435,9 +435,7 @@ class StateGraphView(object):
                     defined_syms[str(sym)] = sym.dtype
 
         # Add inter-state symbols
-        # NOTE: A DFS such as in validate_sdfg can be invoked here, but may
-        #       be time consuming.
-        for edge in sdfg.edges():
+        for edge in sdfg.dfs_edges(sdfg.start_state):
             update_if_not_none(defined_syms, edge.data.new_symbols(sdfg, defined_syms))
 
         # Add scope symbols all the way to the subgraph
@@ -910,9 +908,8 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
         # Add symbols from inter-state edges along the path to the state
         try:
             start_state = sdfg.start_state
-            for path in sdfg.all_simple_paths(start_state, self, as_edges=True):
-                for e in path:
-                    symbols.update(e.data.new_symbols(sdfg, symbols))
+            for e in sdfg.predecessor_state_transitions(start_state):
+                symbols.update(e.data.new_symbols(sdfg, symbols))
         except ValueError:
             # Cannot determine starting state (possibly some inter-state edges
             # do not yet exist)

@@ -78,13 +78,13 @@ def test_function_in_condition():
 
 
 def test_2d_access():
-    print("Running without dataflow coarsening...")
+    print("Running without simplification...")
     A = np.random.rand(4, 2)
     expected = A.copy()
     expected[0, 0] = 100.0 if expected[1, 1] < 0.5 else -100.0
 
     # arr2dtest(A)
-    sdfg = arr2dtest.to_sdfg(coarsen=False)
+    sdfg = arr2dtest.to_sdfg(simplify=False)
     sdfg(A=A)
     assert np.allclose(A, expected)
 
@@ -329,6 +329,25 @@ def test_fsm():
         assert 'switch ' in code
 
 
+def test_nested_loop_detection():
+    @dace.program
+    def nestedloop(A: dace.float64[1]):
+        for i in range(5):
+            for j in range(5):
+                A[0] += i + j
+
+    if dace.Config.get_bool('optimizer', 'detect_control_flow'):
+        code = nestedloop.to_sdfg().generate_code()[0].clean_code
+        assert code.count('for ') == 2
+
+    a = np.random.rand(1)
+    expected = np.copy(a)
+    nestedloop.f(expected)
+
+    nestedloop(a)
+    assert np.allclose(a, expected)
+
+
 if __name__ == '__main__':
     test_control_flow_basic()
     test_function_in_condition()
@@ -342,3 +361,4 @@ if __name__ == '__main__':
     test_ifchain_manual()
     test_switchcase()
     test_fsm()
+    test_nested_loop_detection()

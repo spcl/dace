@@ -126,7 +126,7 @@ class XilinxCodeGen(fpga.FPGACodeGen):
 
         self._frame.generate_fileheader(self._global_sdfg, host_code, 'xilinx_host')
 
-        params_comma = self._global_sdfg.signature(with_arrays=False)
+        params_comma = self._global_sdfg.signature(with_arrays=False, arglist=self._frame.arglist_scalars_only)
         if params_comma:
             params_comma = ', ' + params_comma
 
@@ -134,7 +134,7 @@ class XilinxCodeGen(fpga.FPGACodeGen):
 DACE_EXPORTED int __dace_init_xilinx({sdfg.name}_t *__state{signature}) {{
     {environment_variables}
 
-    __state->fpga_context = new dace::fpga::Context();
+    __state->fpga_context = new dace_fpga_context();
     __state->fpga_context->Get().MakeProgram({kernel_file_name});
     return 0;
 }}
@@ -405,7 +405,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                                         kernel_stream, external_streams):
 
         # Write header
-        module_stream.write("""#include <dace/xilinx/device.h>
+        module_stream.write("""#include <dace/fpga_device.h>
 #include <dace/math.h>
 #include <dace/complex.h>""", sdfg)
         self._frame.generate_fileheader(sdfg, module_stream, 'xilinx_device')

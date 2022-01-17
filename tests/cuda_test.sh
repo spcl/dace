@@ -9,7 +9,7 @@ PYTHON_BINARY="${PYTHON_BINARY:-python3}"
 
 DACE_debugprint="${DACE_debugprint:-0}"
 DACE_optimizer_transform_on_call=${DACE_optimizer_transform_on_call:-1}
-DACE_optimizer_automatic_dataflow_coarsening=${DACE_optimizer_automatic_dataflow_coarsening:-1}
+DACE_optimizer_automatic_simplification=${DACE_optimizer_automatic_simplification:-1}
 ERRORS=0
 FAILED_TESTS=""
 TESTS=0

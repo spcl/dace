@@ -5,7 +5,7 @@ from dace.transformation.dataflow.sve.vectorization import SVEVectorization
 
 
 def vectorize(program):
-    sdfg = program.to_sdfg(coarsen=True)
+    sdfg = program.to_sdfg(simplify=True)
     sdfg.apply_transformations(SVEVectorization)
     return sdfg
 

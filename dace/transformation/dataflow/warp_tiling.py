@@ -8,9 +8,8 @@ from dace.transformation import transformation as xf, helpers as xfh
 from dace.sdfg import utils as sdutil
 
 
-@registry.autoregister_params(singlestate=True)
 @properties.make_properties
-class WarpTiling(xf.Transformation):
+class WarpTiling(xf.SingleStateTransformation):
     """ 
     Implements a GPU specialization tiling that takes a GPU kernel map (with 
     nested maps, but without explicit block sizes) and divides its work across
@@ -27,12 +26,12 @@ class WarpTiling(xf.Transformation):
 
     mapentry = xf.PatternNode(nodes.MapEntry)
 
-    @staticmethod
-    def expressions():
-        return [sdutil.node_path_graph(WarpTiling.mapentry)]
+    @classmethod
+    def expressions(cls):
+        return [sdutil.node_path_graph(cls.mapentry)]
 
-    def can_be_applied(self, graph: SDFGState, candidate, expr_index, sdfg: SDFG, permissive) -> bool:
-        me: nodes.MapEntry = self.mapentry(sdfg)
+    def can_be_applied(self, graph: SDFGState, expr_index, sdfg: SDFG, permissive) -> bool:
+        me = self.mapentry
 
         if len(xfh.get_internal_scopes(graph, me, immediate=True)) == 0:
             return False
@@ -40,9 +39,8 @@ class WarpTiling(xf.Transformation):
         # GPU map that has no predefined thread-block maps
         return (me.schedule == dtypes.ScheduleType.GPU_Device and not xfh.gpu_map_has_explicit_threadblocks(graph, me))
 
-    def apply(self, sdfg: SDFG) -> nodes.MapEntry:
-        me: nodes.MapEntry = self.mapentry(sdfg)
-        graph = sdfg.node(self.state_id)
+    def apply(self, graph: SDFGState, sdfg: SDFG) -> nodes.MapEntry:
+        me = self.mapentry
 
         # Add new map within map
         mx = graph.exit_node(me)

@@ -152,7 +152,7 @@ def onetest(program):
     C_regression = A @ B
 
     sdfg = program.to_sdfg()
-    sdfg.coarsen_dataflow()
+    sdfg.simplify()
     sdfg.apply_transformations([MapFusion, MapWCRFusion])
     sdfg(A=A, B=B, C=C, M=M, N=N, K=K)
 
@@ -280,7 +280,7 @@ def test_histogram():
     hist = np.zeros([BINS], dtype=np.uint32)
 
     sdfg = histogram.to_sdfg()
-    sdfg.coarsen_dataflow()
+    sdfg.simplify()
     sdfg.apply_transformations(MapReduceFusion)
     sdfg(A=A, hist=hist, H=H, W=W)
 

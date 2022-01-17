@@ -53,7 +53,7 @@ class StructTransformer(ast.NodeTransformer):
 
     def visit_Call(self, node: ast.Call):
         # Struct initializer
-        name = astutils.rname(node.func)
+        name = astutils.unparse(node.func)
         if name not in self._structs:
             return self.generic_visit(node)
 
@@ -492,7 +492,7 @@ class GlobalResolver(ast.NodeTransformer):
         elif (dtypes.isconstant(value) or isinstance(value, SDFG) or hasattr(value, '__sdfg__')):
             # Could be a constant, an SDFG, or SDFG-convertible object
             if isinstance(value, SDFG) or hasattr(value, '__sdfg__'):
-                self.closure.closure_sdfgs[qualname] = value
+                self.closure.closure_sdfgs[id(value)] = (qualname, value)
             else:
                 self.closure.closure_constants[qualname] = value
 
@@ -507,7 +507,7 @@ class GlobalResolver(ast.NodeTransformer):
                 else:
                     newnode = ast.Num(n=value)
 
-            newnode.oldnode = copy.deepcopy(parent_node)
+            newnode.qualname = qualname
 
         elif detect_callables and hasattr(value, '__call__') and hasattr(value.__call__, '__sdfg__'):
             return self.global_value_to_node(value.__call__, parent_node, qualname, recurse, detect_callables)
@@ -546,7 +546,10 @@ class GlobalResolver(ast.NodeTransformer):
                     pass
 
                 # Store the handle to the original callable, in case parsing fails
-                cbqualname = astutils.rname(parent_node)
+                if isinstance(parent_node, ast.Call):
+                    cbqualname = astutils.unparse(parent_node.func)
+                else:
+                    cbqualname = astutils.rname(parent_node)
                 cbname = self._qualname_to_array_name(cbqualname, prefix='')
                 self.closure.callbacks[cbname] = (cbqualname, value, False)
 
@@ -566,6 +569,9 @@ class GlobalResolver(ast.NodeTransformer):
                     parsed.objname = inspect.getfullargspec(value).args[0]
 
                 res = self.global_value_to_node(parsed, parent_node, qualname, recurse, detect_callables)
+
+                res.oldnode = copy.deepcopy(parent_node)
+
                 # Keep callback in callbacks in case of parsing failure
                 # del self.closure.callbacks[cbname]
                 return res
@@ -632,9 +638,34 @@ class GlobalResolver(ast.NodeTransformer):
     def visit_Subscript(self, node: ast.Subscript) -> Any:
         # First visit the subscripted value alone, then the whole subscript
         node.value = self.visit(node.value)
+        
+        # Try to evaluate literal lists/dicts/tuples directly
+        if isinstance(node.value, (ast.List, ast.Dict, ast.Tuple)):
+            # First evaluate key
+            try:
+                gslice = astutils.evalnode(node.slice, self.globals)
+            except SyntaxError:
+                return self.generic_visit(node)
+            
+            # Then query for the right value
+            if isinstance(node.value, ast.Dict):
+                for k, v in zip(node.value.keys, node.value.values):
+                    try:
+                        gkey = astutils.evalnode(k, self.globals)
+                    except SyntaxError:
+                        continue
+                    if gkey == gslice:
+                        return self.visit_Attribute(v)
+            else: # List or Tuple
+                return self.visit_Attribute(node.value.elts[gslice])
+
         return self.visit_Attribute(node)
 
     def visit_Call(self, node: ast.Call) -> Any:
+        if hasattr(node.func, 'n') and isinstance(node.func.n, SDFGConvertible):
+            # Skip already-parsed calls
+            return self.generic_visit(node)
+
         try:
             global_func = astutils.evalnode(node.func, self.globals)
             if self.resolve_functions:
@@ -726,6 +757,10 @@ class GlobalResolver(ast.NodeTransformer):
                           ' be checked in DaCe program, skipping check.')
         return None
 
+    def visit_Raise(self, node: ast.Raise) -> Any:
+        warnings.warn(f'Runtime exception at line {node.lineno} is not supported and will be skipped.')
+        return None
+
     def visit_JoinedStr(self, node: ast.JoinedStr) -> Any:
         try:
             global_val = astutils.evalnode(node, self.globals)
@@ -776,11 +811,11 @@ class CallTreeResolver(ast.NodeVisitor):
     def visit_Call(self, node: ast.Call):
         # Only parse calls to parsed SDFGConvertibles
         if not isinstance(node.func, (ast.Num, ast.Constant)):
-            self.seen_calls.add(astutils.rname(node.func))
+            self.seen_calls.add(astutils.unparse(node.func))
             return self.generic_visit(node)
         if hasattr(node.func, 'oldnode'):
             if isinstance(node.func.oldnode, ast.Call):
-                self.seen_calls.add(astutils.rname(node.func.oldnode.func))
+                self.seen_calls.add(astutils.unparse(node.func.oldnode.func))
             else:
                 self.seen_calls.add(astutils.rname(node.func.oldnode))
         if isinstance(node.func, ast.Num):
@@ -796,7 +831,10 @@ class CallTreeResolver(ast.NodeVisitor):
         # Resolve nested closure as necessary
         qualname = None
         try:
-            qualname = next(k for k, v in self.closure.closure_sdfgs.items() if v is value)
+            if id(value) in self.closure.closure_sdfgs:
+                qualname, _ = self.closure.closure_sdfgs[id(value)]
+            elif hasattr(node.func, 'qualname'):
+                qualname = node.func.qualname
             self.seen_calls.add(qualname)
             if hasattr(value, 'closure_resolver'):
                 self.closure.nested_closures.append((qualname, value.closure_resolver(constant_args, self.closure)))
@@ -805,10 +843,18 @@ class CallTreeResolver(ast.NodeVisitor):
         except DaceRecursionError:  # Parsing failed in a nested context, raise
             raise
         except Exception as ex:  # Parsing failed (anything can happen here)
-            warnings.warn(f'Parsing SDFGConvertible {value} failed: {ex}')
-            if qualname in self.closure.closure_sdfgs:
-                del self.closure.closure_sdfgs[qualname]
+            optional_qname = ''
+            if qualname is not None:
+                optional_qname = f' ("{qualname}")'
+            warnings.warn(
+                f'Preprocessing SDFGConvertible {value}{optional_qname} failed with {type(ex).__name__}: {ex}')
+            if Config.get_bool('frontend', 'raise_nested_parsing_errors'):
+                raise
+            if id(value) in self.closure.closure_sdfgs:
+                del self.closure.closure_sdfgs[id(value)]
             # Return old call AST instead
+            if not hasattr(node.func, 'oldnode'):
+                raise
             node.func = node.func.oldnode.func
 
             return self.generic_visit(node)
@@ -890,10 +936,36 @@ def preprocess_dace_program(f: Callable[..., Any],
 
         closure_resolver.closure.callstack = parent_closure.callstack + [fid]
 
-    src_ast = closure_resolver.visit(src_ast)
-    src_ast = LoopUnroller(resolved, src_file).visit(src_ast)
-    src_ast = ConditionalCodeResolver(resolved).visit(src_ast)
-    src_ast = DeadCodeEliminator().visit(src_ast)
+    passes = int(Config.get('frontend', 'preprocessing_passes'))
+    if passes >= 0:
+        gen = range(passes)
+    else:  # Run until the code stops changing
+
+        def check_code(src_ast):
+            old_src = ast.dump(src_ast)
+            i = 0
+            while True:
+                yield i
+                new_src = ast.dump(src_ast)
+                if new_src == old_src:
+                    return
+                old_src = new_src
+                i += 1
+
+        gen = check_code(src_ast)
+
+    for pass_num in gen:
+        try:
+            src_ast = closure_resolver.visit(src_ast)
+            src_ast = LoopUnroller(resolved, src_file).visit(src_ast)
+            src_ast = ConditionalCodeResolver(resolved).visit(src_ast)
+            src_ast = DeadCodeEliminator().visit(src_ast)
+        except Exception:
+            if Config.get_bool('frontend', 'verbose_errors'):
+                print(f'VERBOSE: Failed to preprocess (pass #{pass_num}) the following program:')
+                print(astutils.unparse(src_ast))
+            raise
+
     try:
         ctr = CallTreeResolver(closure_resolver.closure, resolved)
         ctr.visit(src_ast)

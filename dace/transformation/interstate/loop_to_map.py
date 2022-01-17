@@ -74,9 +74,8 @@ def _sanitize_by_index(indices: Set[int], subset: subsets.Subset) -> subsets.Ran
     return type(subset)([t for i, t in enumerate(subset) if i in indices])
 
 
-@registry.autoregister
 @make_properties
-class LoopToMap(DetectLoop):
+class LoopToMap(DetectLoop, xf.MultiStateTransformation):
     """Convert a control flow loop into a dataflow map. Currently only supports
        the simple case where there is no overlap between inputs and outputs in
        the body of the loop, and where the loop body only consists of a single
@@ -90,13 +89,13 @@ class LoopToMap(DetectLoop):
         desc='The name of the iteration variable (optional).',
     )
 
-    def can_be_applied(self, graph, candidate, expr_index, sdfg, permissive=False):
+    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
         # Is this even a loop
-        if not DetectLoop.can_be_applied(graph, candidate, expr_index, sdfg, permissive):
+        if not super().can_be_applied(graph, expr_index, sdfg, permissive):
             return False
 
-        guard = graph.node(candidate[DetectLoop._loop_guard])
-        begin = graph.node(candidate[DetectLoop._loop_begin])
+        guard = self.loop_guard
+        begin = self.loop_begin
 
         # Guard state should not contain any dataflow
         if len(guard.nodes()) != 0:
@@ -240,19 +239,11 @@ class LoopToMap(DetectLoop):
 
         return True
 
-    @staticmethod
-    def match_to_str(graph, candidate):
-        guard = graph.node(candidate[DetectLoop._loop_guard])
-        begin = graph.node(candidate[DetectLoop._loop_begin])
-        sexit = graph.node(candidate[DetectLoop._exit_state])
-
-        return (' -> '.join(state.label for state in [guard, begin, sexit]) + ' (for loop)')
-
-    def apply(self, sdfg: sd.SDFG):
+    def apply(self, _, sdfg: sd.SDFG):
         # Obtain loop information
-        guard: sd.SDFGState = sdfg.node(self.subgraph[DetectLoop._loop_guard])
-        body: sd.SDFGState = sdfg.node(self.subgraph[DetectLoop._loop_begin])
-        after: sd.SDFGState = sdfg.node(self.subgraph[DetectLoop._exit_state])
+        guard: sd.SDFGState = self.loop_guard
+        body: sd.SDFGState = self.loop_begin
+        after: sd.SDFGState = self.exit_state
 
         # Obtain iteration variable, range, and stride
         itervar, (start, end, step), (_, body_end) = find_for_loop(sdfg, guard, body, itervar=self.itervar)

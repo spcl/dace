@@ -106,6 +106,14 @@ class InterstateEdge(object):
         else:
             self.condition = condition
         self.assignments = {k: InterstateEdge._convert_assignment(v) for k, v in assignments.items()}
+        self._cond_sympy = None
+        self._uncond = None
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if name == 'condition' or name == '_condition':
+            super().__setattr__('_cond_sympy', None)
+            super().__setattr__('_uncond', None)
+        return super().__setattr__(name, value)
 
     @staticmethod
     def _convert_assignment(assignment) -> str:
@@ -115,11 +123,17 @@ class InterstateEdge(object):
 
     def is_unconditional(self):
         """ Returns True if the state transition is unconditional. """
-        return (self.condition is None or InterstateEdge.condition.to_string(self.condition).strip() == "1"
-                or self.condition.as_string == "")
+        if self._uncond is not None:
+            return self._uncond
+        self._uncond = (self.condition is None or InterstateEdge.condition.to_string(self.condition).strip() == "1"
+                        or self.condition.as_string == "")
+        return self._uncond
 
     def condition_sympy(self):
-        return symbolic.pystr_to_symbolic(self.condition.as_string)
+        if self._cond_sympy is not None:
+            return self._cond_sympy
+        self._cond_sympy = symbolic.pystr_to_symbolic(self.condition.as_string)
+        return self._cond_sympy
 
     @property
     def free_symbols(self) -> Set[str]:
@@ -155,6 +169,8 @@ class InterstateEdge(object):
         newc = astutils.unparse(condition)
         if newc != condition:
             self.condition.as_string = newc
+            self._uncond = None
+            self._cond_sympy = None
 
     def new_symbols(self, sdfg, symbols) -> Dict[str, dtypes.typeclass]:
         """
@@ -985,7 +1001,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             write_set |= ws.keys()
         return read_set, write_set
 
-    def arglist(self, scalars_only=False) -> Dict[str, dt.Data]:
+    def arglist(self, scalars_only=False, free_symbols=None) -> Dict[str, dt.Data]:
         """
         Returns an ordered dictionary of arguments (names and types) required
         to invoke this SDFG.
@@ -1014,16 +1030,17 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         }
 
         # Add global free symbols to scalar arguments
-        scalar_args.update({k: dt.Scalar(self.symbols[k]) for k in self.free_symbols if not k.startswith('__dace')})
+        free_symbols = free_symbols if free_symbols is not None else self.free_symbols
+        scalar_args.update({k: dt.Scalar(self.symbols[k]) for k in free_symbols if not k.startswith('__dace')})
 
         # Fill up ordered dictionary
         result = collections.OrderedDict()
-        for k, v in itertools.chain(sorted(data_args.items()), sorted(scalar_args.items())):
-            result[k] = v
+        result.update(sorted(data_args.items()))
+        result.update(sorted(scalar_args.items()))
 
         return result
 
-    def signature_arglist(self, with_types=True, for_call=False, with_arrays=True) -> List[str]:
+    def signature_arglist(self, with_types=True, for_call=False, with_arrays=True, arglist=None) -> List[str]:
         """ Returns a list of arguments necessary to call this SDFG,
             formatted as a list of C definitions.
             :param with_types: If True, includes argument types in the result.
@@ -1031,14 +1048,13 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                              calling the SDFG.
             :param with_arrays: If True, includes arrays, otherwise,
                                 only symbols and scalars are included.
+            :param arglist: An optional cached argument list.
             :return: A list of strings. For example: `['float *A', 'int b']`.
         """
-        return [
-            v.as_arg(name=k, with_types=with_types, for_call=for_call)
-            for k, v in self.arglist(scalars_only=not with_arrays).items()
-        ]
+        arglist = arglist or self.arglist(scalars_only=not with_arrays)
+        return [v.as_arg(name=k, with_types=with_types, for_call=for_call) for k, v in arglist.items()]
 
-    def signature(self, with_types=True, for_call=False, with_arrays=True) -> str:
+    def signature(self, with_types=True, for_call=False, with_arrays=True, arglist=None) -> str:
         """ Returns a C/C++ signature of this SDFG, used when generating code.
             :param with_types: If True, includes argument types (can be used
                                for a function prototype). If False, only
@@ -1048,8 +1064,9 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                              calling the SDFG.
             :param with_arrays: If True, includes arrays, otherwise,
                                 only symbols and scalars are included.
+            :param arglist: An optional cached argument list.
         """
-        return ", ".join(self.signature_arglist(with_types, for_call, with_arrays))
+        return ", ".join(self.signature_arglist(with_types, for_call, with_arrays, arglist))
 
     def _repr_html_(self):
         """ HTML representation of the SDFG, used mainly for Jupyter
@@ -1213,17 +1230,13 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                                    state.
             :return: A new SDFGState object.
         """
-        if label is None or any([s.label == label for s in self.nodes()]):
-            i = len(self)
-            base = "state" if label is None else label
-            while True:
-                # Append a number. If the state already exists, increment the
-                # number until it doesn't
-                label = "{}_{}".format(base, i)
-                if any([s.label == label for s in self.nodes()]):
-                    i += 1
-                else:
-                    break
+        if label is None:
+            label = f'state_{self.number_of_nodes()}'
+        else:
+            existing_labels = set(s.label for s in self.nodes())
+            if label in existing_labels:
+                base = "state" if label is None else label
+                label = dt.find_new_name(base, existing_labels)
         state = SDFGState(label, self)
 
         self.add_node(state, is_start_state=is_start_state)
@@ -1758,11 +1771,15 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             warnings.warn('SDFG "%s" is already loaded by another object, '
                           'recompiling under a different name.' % self.name)
 
-        # Fill in scope entry/exit connectors
-        sdfg.fill_scope_connectors()
+        try:
+            # Fill in scope entry/exit connectors
+            sdfg.fill_scope_connectors()
 
-        # Generate code for the program by traversing the SDFG state by state
-        program_objects = codegen.generate_code(sdfg, validate=validate)
+            # Generate code for the program by traversing the SDFG state by state
+            program_objects = codegen.generate_code(sdfg, validate=validate)
+        except Exception:
+            self.save(os.path.join('_dacegraphs', 'failing.sdfg'))
+            raise
 
         # Generate the program folder and write the source files
         program_folder = compiler.generate_program_folder(sdfg, program_objects, build_folder)
@@ -1896,18 +1913,17 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
     def apply_strict_transformations(self, validate=True, validate_all=False):
         """
-        This method is DEPRECATED in favor of ``coarsen_dataflow``.
+        This method is DEPRECATED in favor of ``simplify``.
         Applies safe transformations (that will surely increase the
         performance) on the SDFG. For example, this fuses redundant states
         (safely) and removes redundant arrays.
 
         B{Note:} This is an in-place operation on the SDFG.
         """
-        warnings.warn('SDFG.apply_strict_transformations is deprecated, use SDFG.coarsen_dataflow instead.',
-                      DeprecationWarning)
-        return self.coarsen_dataflow(validate, validate_all)
+        warnings.warn('SDFG.apply_strict_transformations is deprecated, use SDFG.simplify instead.', DeprecationWarning)
+        return self.simplify(validate, validate_all)
 
-    def coarsen_dataflow(self, validate=True, validate_all=False):
+    def simplify(self, validate=True, validate_all=False):
         """ Applies safe transformations (that will surely increase the
             performance) on the SDFG. For example, this fuses redundant states
             (safely) and removes redundant arrays.
@@ -1916,10 +1932,10 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         """
         # These are imported in order to update the transformation registry
         from dace.transformation import dataflow, interstate
-        from dace.transformation.dataflow import (RedundantReadSlice, RedundantWriteSlice)
+        from dace.transformation.dataflow import RedundantReadSlice, RedundantWriteSlice
         from dace.sdfg import utils as sdutil
         # This is imported here to avoid an import loop
-        from dace.transformation.transformation import (Transformation, coarsening_transformations)
+        from dace.transformation.transformation import simplification_transformations
 
         # First step is to apply multi-state inline, before any state fusion can
         # occur
@@ -1930,7 +1946,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                                             validate=validate,
                                             permissive=False,
                                             validate_all=validate_all)
-        self.apply_transformations_repeated(coarsening_transformations(),
+        self.apply_transformations_repeated(simplification_transformations(),
                                             validate=validate,
                                             permissive=False,
                                             validate_all=validate_all)
@@ -1945,7 +1961,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                               print_report: Optional[bool] = None) -> int:
         """ This function applies a transformation or a sequence thereof
             consecutively. Operates in-place.
-            :param xforms: A Transformation class or a sequence.
+            :param xforms: A PatternTransformation class or a sequence.
             :param options: An optional dictionary (or sequence of dictionaries)
                             to modify transformation parameters.
             :param validate: If True, validates after all transformations.
@@ -1969,11 +1985,11 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         """
         # Avoiding import loops
         from dace.transformation import optimizer
-        from dace.transformation.transformation import Transformation
+        from dace.transformation.transformation import PatternTransformation
 
         applied_transformations = collections.defaultdict(int)
 
-        if isinstance(xforms, type) and issubclass(xforms, Transformation):
+        if isinstance(xforms, type) and issubclass(xforms, PatternTransformation):
             xforms = [xforms]
 
         if isinstance(options, dict):
@@ -1991,8 +2007,9 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             except StopIteration:
                 continue
             sdfg = self.sdfg_list[match.sdfg_id]
+            graph = sdfg.node(match.state_id) if match.state_id >= 0 else sdfg
 
-            match.apply(sdfg)
+            match.apply(graph, sdfg)
             applied_transformations[type(match).__name__] += 1
             if validate_all:
                 self.validate()
@@ -2018,7 +2035,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                                        progress: Optional[bool] = None) -> int:
         """ This function repeatedly applies a transformation or a set of
             (unique) transformations until none can be found. Operates in-place.
-            :param xforms: A Transformation class or a set thereof.
+            :param xforms: A PatternTransformation class or a set thereof.
             :param options: An optional dictionary (or sequence of dictionaries)
                             to modify transformation parameters.
             :param validate: If True, validates after all transformations.
@@ -2044,13 +2061,13 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         """
         # Avoiding import loops
         from dace.transformation import optimizer
-        from dace.transformation.transformation import Transformation
+        from dace.transformation.transformation import PatternTransformation
 
         start = time.time()
 
         applied_transformations = collections.defaultdict(int)
 
-        if isinstance(xforms, type) and issubclass(xforms, Transformation):
+        if isinstance(xforms, type) and issubclass(xforms, PatternTransformation):
             xforms = [xforms]
 
         # Ensure transformations are unique
@@ -2068,12 +2085,13 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         params_by_xform = {x: o for x, o in zip(xforms, options)}
 
         # Helper function for applying and validating a transformation
-        def _apply_and_validate(match):
+        def _apply_and_validate(match: PatternTransformation):
             sdfg = self.sdfg_list[match.sdfg_id]
+            graph = sdfg.node(match.state_id) if match.state_id >= 0 else sdfg
             if validate_all:
                 match_name = match.print_match(sdfg)
 
-            match.apply(sdfg)
+            match.apply(graph, sdfg)
             applied_transformations[type(match).__name__] += 1
             if progress or (progress is None and (time.time() - start) > 5):
                 print('Applied {}.\r'.format(', '.join(['%d %s' % (v, k) for k, v in applied_transformations.items()])),
@@ -2128,8 +2146,9 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                 else:
                     raise err
 
-        if (len(applied_transformations) > 0 and (progress is not False or print_report or
-                                                  (print_report is None and Config.get_bool('debugprint')))):
+        if (len(applied_transformations) > 0
+                and (progress or print_report or
+                     ((progress is None or print_report is None) and Config.get_bool('debugprint')))):
             print('Applied {}.'.format(', '.join(['%d %s' % (v, k) for k, v in applied_transformations.items()])))
 
         return sum(applied_transformations.values())
@@ -2139,7 +2158,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             generate GPU code.
             :note: It is recommended to apply redundant array removal
             transformation after this transformation. Alternatively,
-            you can coarsen_dataflow() after this transformation.
+            you can simplify() after this transformation.
             :note: This is an in-place operation on the SDFG.
         """
         # Avoiding import loops
@@ -2209,8 +2228,6 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         # Fill in scope entry/exit connectors
         sdfg.fill_scope_connectors()
 
-        sdfg.save(os.path.join('_dacegraphs', 'program.sdfg'))
-
         # Generate code for the program by traversing the SDFG state by state
         program_code = codegen.generate_code(sdfg)
 
@@ -2231,7 +2248,7 @@ def _get_optimizer_class(class_override):
         class_override argument. Empty string, False, or failure to find the
         class skips the process.
 
-        @note: This method uses pydoc to locate the class.
+        :note: This method uses pydoc to locate the class.
     """
     clazz = class_override
     if class_override is None:

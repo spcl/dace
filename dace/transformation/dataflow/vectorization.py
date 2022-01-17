@@ -10,9 +10,8 @@ from dace.properties import Property, make_properties
 import itertools
 
 
-@registry.autoregister_params(singlestate=True)
 @make_properties
-class Vectorization(transformation.Transformation):
+class Vectorization(transformation.SingleStateTransformation):
     """ Implements the vectorization transformation.
 
         Vectorization matches when all the input and output memlets of a 
@@ -36,14 +35,14 @@ class Vectorization(transformation.Transformation):
                          allow_none=True,
                          desc='Force creation or skipping a postamble map without vectors')
 
-    _map_entry = nodes.MapEntry(nodes.Map("", [], []))
+    map_entry = transformation.PatternNode(nodes.MapEntry)
 
-    @staticmethod
-    def expressions():
-        return [sdutil.node_path_graph(Vectorization._map_entry)]
+    @classmethod
+    def expressions(cls):
+        return [sdutil.node_path_graph(cls.map_entry)]
 
-    def can_be_applied(self, graph: SDFGState, candidate, expr_index, sdfg, permissive=False):
-        map_entry = graph.nodes()[candidate[Vectorization._map_entry]]
+    def can_be_applied(self, graph: SDFGState, expr_index, sdfg, permissive=False):
+        map_entry = self.map_entry
 
         # Only accept scopes that have one internal tasklet
         scope = graph.scope_subgraph(map_entry, False, False)
@@ -105,14 +104,8 @@ class Vectorization(transformation.Transformation):
 
         return found
 
-    @staticmethod
-    def match_to_str(graph, candidate):
-        map_entry = candidate[Vectorization._map_entry]
-        return str(map_entry)
-
-    def apply(self, sdfg: SDFG):
-        graph = sdfg.nodes()[self.state_id]
-        map_entry = graph.nodes()[self.subgraph[Vectorization._map_entry]]
+    def apply(self, graph: SDFGState, sdfg: SDFG):
+        map_entry = self.map_entry
         tasklet: nodes.Tasklet = graph.successors(map_entry)[0]
         param = symbolic.pystr_to_symbolic(map_entry.map.params[-1])
 

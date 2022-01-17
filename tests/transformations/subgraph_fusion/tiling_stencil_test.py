@@ -105,7 +105,7 @@ def invoke_stencil(tile_size, offset=False, unroll=False, view=False):
         sdfg = stencil_offset.to_sdfg()
     else:
         sdfg = stencil.to_sdfg()
-    sdfg.coarsen_dataflow()
+    sdfg.simplify()
     graph = sdfg.nodes()[0]
 
     if view:
@@ -133,7 +133,7 @@ def invoke_stencil(tile_size, offset=False, unroll=False, view=False):
     del csdfg
     assert np.allclose(B1, B2)
 
-    sdfg.coarsen_dataflow()
+    sdfg.simplify()
     subgraph = SubgraphView(graph, [n for n in graph.nodes()])
     sf = SubgraphFusion(subgraph)
     assert sf.can_be_applied(sdfg, subgraph)

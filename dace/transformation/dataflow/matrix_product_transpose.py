@@ -3,45 +3,44 @@
 
 from copy import deepcopy as dcpy
 import dace
-from dace.sdfg import nodes
-from dace import registry
+from dace.sdfg import nodes, graph as gr
+from dace.sdfg.sdfg import SDFG
+from dace.sdfg.state import SDFGState
 from dace.transformation import transformation
 from dace.properties import make_properties
-import dace.libraries.blas as blas
 
 
-@registry.autoregister_params(singlestate=True)
 @make_properties
-class MatrixProductTranspose(transformation.Transformation):
+class MatrixProductTranspose(transformation.SingleStateTransformation):
     """ Implements the matrix-matrix product transpose transformation.
 
         T(A) @ T(B) = T(B @ A)
     """
+    import dace.libraries.blas as blas  # Avoid slow imports
 
-    _transpose_a = blas.Transpose("")
-    _at = nodes.AccessNode("")
-    _transpose_b = blas.Transpose("")
-    _bt = nodes.AccessNode("")
-    _a_times_b = blas.MatMul("")
+    transpose_a = transformation.PatternNode(blas.Transpose)
+    at = transformation.PatternNode(nodes.AccessNode)
+    transpose_b = transformation.PatternNode(blas.Transpose)
+    bt = transformation.PatternNode(nodes.AccessNode)
+    a_times_b = transformation.PatternNode(blas.MatMul)
 
-    @staticmethod
-    def expressions():
-        graph = dace.sdfg.graph.OrderedDiGraph()
-        graph.add_node(MatrixProductTranspose._transpose_a)
-        graph.add_node(MatrixProductTranspose._at)
-        graph.add_node(MatrixProductTranspose._transpose_b)
-        graph.add_node(MatrixProductTranspose._bt)
-        graph.add_node(MatrixProductTranspose._a_times_b)
-        graph.add_edge(MatrixProductTranspose._transpose_a, MatrixProductTranspose._at, None)
-        graph.add_edge(MatrixProductTranspose._at, MatrixProductTranspose._a_times_b, None)
-        graph.add_edge(MatrixProductTranspose._transpose_b, MatrixProductTranspose._bt, None)
-        graph.add_edge(MatrixProductTranspose._bt, MatrixProductTranspose._a_times_b, None)
+    @classmethod
+    def expressions(cls):
+        graph = gr.OrderedDiGraph()
+        graph.add_node(cls.transpose_a)
+        graph.add_node(cls.at)
+        graph.add_node(cls.transpose_b)
+        graph.add_node(cls.bt)
+        graph.add_node(cls.a_times_b)
+        graph.add_edge(cls.transpose_a, cls.at, None)
+        graph.add_edge(cls.at, cls.a_times_b, None)
+        graph.add_edge(cls.transpose_b, cls.bt, None)
+        graph.add_edge(cls.bt, cls.a_times_b, None)
         return [graph]
 
-    @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
-        _at = graph.nodes()[candidate[MatrixProductTranspose._at]]
-        _a_times_b = graph.nodes()[candidate[MatrixProductTranspose._a_times_b]]
+    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
+        _at = self.at
+        _a_times_b = self.a_times_b
         edges = graph.edges_between(_at, _a_times_b)
         # Enforce unique match
         if len(edges) != 1:
@@ -51,20 +50,20 @@ class MatrixProductTranspose(transformation.Transformation):
             return False
         return True
 
-    @staticmethod
-    def match_to_str(graph, candidate):
-        transpose_a = graph.nodes()[candidate[MatrixProductTranspose._transpose_a]]
-        transpose_b = graph.nodes()[candidate[MatrixProductTranspose._transpose_b]]
-        a_times_b = graph.nodes()[candidate[MatrixProductTranspose._a_times_b]]
+    def match_to_str(self, graph):
+        transpose_a = self.transpose_a
+        transpose_b = self.transpose_b
+        a_times_b = self.a_times_b
         return f"{transpose_a.name} -> {a_times_b.name} <- {transpose_b.name}"
 
-    def apply(self, sdfg):
-        graph = sdfg.nodes()[self.state_id]
-        transpose_a = graph.nodes()[self.subgraph[MatrixProductTranspose._transpose_a]]
-        _at = graph.nodes()[self.subgraph[MatrixProductTranspose._at]]
-        transpose_b = graph.nodes()[self.subgraph[MatrixProductTranspose._transpose_b]]
-        _bt = graph.nodes()[self.subgraph[MatrixProductTranspose._bt]]
-        a_times_b = graph.nodes()[self.subgraph[MatrixProductTranspose._a_times_b]]
+    def apply(self, graph: SDFGState, sdfg: SDFG):
+        import dace.libraries.blas as blas
+
+        transpose_a = self.transpose_a
+        _at = self.at
+        transpose_b = self.transpose_b
+        _bt = self.bt
+        a_times_b = self.a_times_b
 
         for src, src_conn, _, _, memlet in graph.in_edges(transpose_a):
             graph.add_edge(src, src_conn, a_times_b, '_b', memlet)

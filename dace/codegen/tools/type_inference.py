@@ -426,7 +426,10 @@ def _Call(t, symbols, inferred_symbols):
         return dtypes.result_type_of(arg_types[0], *arg_types)
 
     # Reading from an Intel channel returns the channel type
-    if name == "read_channel_intel":
+    if name == 'read_channel_intel':
+        return arg_types[0]
+
+    if name in ('abs', 'log'):
         return arg_types[0]
 
     # dtypes (dace.int32, np.float64) can be used as functions

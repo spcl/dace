@@ -832,10 +832,10 @@ class ExpandGemvPBLAS(ExpandTransformation):
         # in ValueError: Node type "BlockCyclicScatter" not supported for
         # promotion
         if transA:
-            sdfg = _gemTv_pblas.to_sdfg(coarsen=False)
+            sdfg = _gemTv_pblas.to_sdfg(simplify=False)
         else:
-            sdfg = _gemNv_pblas.to_sdfg(coarsen=False)
-        sdfg.coarsen_dataflow()
+            sdfg = _gemNv_pblas.to_sdfg(simplify=False)
+        sdfg.simplify()
         return sdfg
 
 

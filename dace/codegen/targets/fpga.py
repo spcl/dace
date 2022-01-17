@@ -373,9 +373,9 @@ class FPGACodeGen(TargetCodeGenerator):
     def has_finalizer(self):
         return False
 
-    def on_target_used(self) -> None:
+    def preprocess(self, sdfg: SDFG) -> None:
         # Right before finalizing code, write FPGA context to state structure
-        self._frame.statestruct.append('dace::fpga::Context *fpga_context;')
+        self._frame.statestruct.append('dace_fpga_context *fpga_context;')
 
     def _kernels_subgraphs(self, graph: Union[dace.sdfg.SDFGState, ScopeSubgraphView], dependencies: dict):
         '''
@@ -460,7 +460,10 @@ class FPGACodeGen(TargetCodeGenerator):
                 if isinstance(n, dace.sdfg.nodes.MapEntry) and n.schedule == dtypes.ScheduleType.Unrolled
             ]
             for map_entry in top_level_unrolled:
-                MapUnroll.apply_to(sdfg, _map_entry=map_entry)
+                MapUnroll.apply_to(sdfg, map_entry=map_entry)
+            if top_level_unrolled:
+                disp = self._dispatcher.get_scope_dispatcher(dtypes.ScheduleType.Unrolled)
+                self._dispatcher._used_targets.add(disp)
 
             kernels = []  # List of tuples (subgraph, kernel_id)
 
@@ -897,7 +900,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
             # Order by name
             subgraph_parameters[subgraph] = list(sorted(subgraph_parameters[subgraph], key=sort_func))
             # Append symbols used in this subgraph
-            for k in sorted(subgraph.free_symbols):
+            for k in sorted(self._frame.free_symbols(subgraph)):
                 if k not in sdfg.constants:
                     param = all_symbols[k]
                     subgraph_parameters[subgraph].append(param)
@@ -946,7 +949,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
 
     def declare_array(self, sdfg, dfg, state_id, node, nodedesc, function_stream, declaration_stream):
 
-        fsymbols = sdfg.free_symbols.union(sdfg.constants.keys())
+        fsymbols = self._frame.symbols_and_constants(sdfg)
         if not utils.is_nonfree_sym_dependent(node, nodedesc, dfg, fsymbols):
             raise NotImplementedError("The declare_array method should only be used for variables "
                                       "that must have their declaration and allocation separate.")

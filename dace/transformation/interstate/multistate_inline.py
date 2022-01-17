@@ -16,14 +16,14 @@ from dace.sdfg import nodes, propagation
 from dace.sdfg.graph import MultiConnectorEdge, SubgraphView
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg import utils as sdutil, infer_types, propagation
+from dace.sdfg.replace import replace_datadesc_names
 from dace.transformation import transformation, helpers
 from dace.properties import make_properties, Property
 from dace import data
 
 
-@registry.autoregister_params(singlestate=True, coarsening=True)
 @make_properties
-class InlineMultistateSDFG(transformation.Transformation):
+class InlineMultistateSDFG(transformation.SingleStateTransformation, transformation.SimplifyPass):
     """
     Inlines a multi-state nested SDFG into a top-level SDFG. This only happens
     if the state has the nested SDFG node isolated (i.e., only containing it
@@ -36,9 +36,9 @@ class InlineMultistateSDFG(transformation.Transformation):
     def annotates_memlets():
         return True
 
-    @staticmethod
-    def expressions():
-        return [sdutil.node_path_graph(InlineMultistateSDFG.nested_sdfg)]
+    @classmethod
+    def expressions(cls):
+        return [sdutil.node_path_graph(cls.nested_sdfg)]
 
     @staticmethod
     def _check_strides(inner_strides: List[symbolic.SymbolicType], outer_strides: List[symbolic.SymbolicType],
@@ -77,8 +77,8 @@ class InlineMultistateSDFG(transformation.Transformation):
 
         return all(istr == ostr for istr, ostr in zip(istrides, ostrides))
 
-    def can_be_applied(self, state: SDFGState, candidate, expr_index, sdfg, permissive=False):
-        nested_sdfg = self.nested_sdfg(sdfg)
+    def can_be_applied(self, state: SDFGState, expr_index, sdfg, permissive=False):
+        nested_sdfg = self.nested_sdfg
         if nested_sdfg.no_inline:
             return False
 
@@ -134,13 +134,8 @@ class InlineMultistateSDFG(transformation.Transformation):
 
         return True
 
-    @staticmethod
-    def match_to_str(graph, candidate):
-        return graph.label
-
-    def apply(self, sdfg: SDFG):
-        outer_state: SDFGState = sdfg.nodes()[self.state_id]
-        nsdfg_node = self.nested_sdfg(sdfg)
+    def apply(self, outer_state: SDFGState, sdfg: SDFG):
+        nsdfg_node = self.nested_sdfg
         nsdfg: SDFG = nsdfg_node.sdfg
 
         if nsdfg_node.schedule is not dtypes.ScheduleType.Default:
@@ -172,6 +167,11 @@ class InlineMultistateSDFG(transformation.Transformation):
                                   (cstname, cstval, sdfg.constants[cstname]))
             else:
                 sdfg.add_constant(cstname, cstval)
+
+        # Symbols
+        outer_symbols = {str(k): v for k, v in sdfg.symbols.items()}
+        for ise in sdfg.edges():
+            outer_symbols.update(ise.data.new_symbols(sdfg, outer_symbols))
 
         # Find original source/destination edges (there is only one edge per
         # connector, according to match)
@@ -222,7 +222,7 @@ class InlineMultistateSDFG(transformation.Transformation):
                     datadesc = nsdfg.arrays[node.data]
                     if node.data not in transients and datadesc.transient:
                         new_name = node.data
-                        if (new_name in sdfg.arrays or new_name in sdfg.symbols or new_name in sdfg.constants):
+                        if (new_name in sdfg.arrays or new_name in outer_symbols or new_name in sdfg.constants):
                             new_name = f'{nsdfg.label}_{node.data}'
 
                         name = sdfg.add_datadesc(new_name, datadesc, find_new_name=True)
@@ -235,7 +235,7 @@ class InlineMultistateSDFG(transformation.Transformation):
                         datadesc = nsdfg.arrays[edge.data.data]
                         if edge.data.data not in transients and datadesc.transient:
                             new_name = edge.data.data
-                            if (new_name in sdfg.arrays or new_name in sdfg.symbols or new_name in sdfg.constants):
+                            if (new_name in sdfg.arrays or new_name in outer_symbols or new_name in sdfg.constants):
                                 new_name = f'{nsdfg.label}_{edge.data.data}'
 
                             name = sdfg.add_datadesc(new_name, datadesc, find_new_name=True)
@@ -249,7 +249,7 @@ class InlineMultistateSDFG(transformation.Transformation):
         repldict.update(transients)
         repldict.update({k: v.data.data for k, v in itertools.chain(inputs.items(), outputs.items())})
 
-        symbolic.safe_replace(repldict, nsdfg.replace_dict, value_as_string=True)
+        symbolic.safe_replace(repldict, lambda m: replace_datadesc_names(nsdfg, m), value_as_string=True)
 
         # Add views whenever reshapes are necessary
         # for dname in reshapes:
@@ -316,7 +316,7 @@ class InlineMultistateSDFG(transformation.Transformation):
 
         assignments_to_replace = inner_assignments & outer_assignments
         sym_replacements: Dict[str, str] = {}
-        allnames = set(sdfg.symbols.keys()) | set(sdfg.arrays.keys())
+        allnames = set(outer_symbols.keys()) | set(sdfg.arrays.keys())
         for assign in assignments_to_replace:
             newname = data.find_new_name(assign, allnames)
             allnames.add(newname)

@@ -88,8 +88,8 @@ def run_covariance(device_type: dace.dtypes.DeviceType):
 
     elif device_type == dace.dtypes.DeviceType.FPGA:
         # Parse SDFG and apply FPGA friendly optimization
-        sdfg = covariance_kernel.to_sdfg(coarsen=False)
-        sdfg.coarsen_dataflow()
+        sdfg = covariance_kernel.to_sdfg(simplify=False)
+        sdfg.simplify()
         applied = sdfg.apply_transformations([FPGATransformSDFG])
         assert applied == 1
 
