@@ -195,6 +195,85 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         Vendor-specific SDFG Preprocessing
         '''
 
+        # Make array interface accesses explicit
+
+        # Keep track of global accessed data (set of (access_node, state) tuples to avoid duplicates)
+        read_global_data = set()
+        read_global_data_names = dict()
+        written_global_data = set()
+        written_global_data_names = dict()
+        for node, dfg in sdfg.all_nodes_recursive():
+            if isinstance(node, nodes.Tasklet):
+                # Get all input edges
+                for in_edge in dfg.in_edges(node):
+
+                    # get memlet path
+                    mpath = dfg.memlet_path(in_edge)
+                    src_node = mpath[0].src
+
+                    if isinstance(src_node, nodes.AccessNode):
+                        desc = src_node.desc(dfg)
+                        if desc.storage == dace.StorageType.FPGA_Global:
+                            read_global_data.add((src_node, dfg))
+                            read_global_data_names[src_node.data] = dfg
+
+                # Get all output edges
+                for out_edge in dfg.out_edges(node):
+
+                    # get memlet path
+                    mpath = dfg.memlet_path(out_edge)
+                    dst_node = mpath[-1].dst
+                    if isinstance(dst_node, nodes.AccessNode):
+
+                        if isinstance(dst_node, nodes.AccessNode):
+                            desc = dst_node.desc(dfg)
+                            if desc.storage == dace.StorageType.FPGA_Global:
+                                written_global_data.add((dst_node,dfg))
+                                written_global_data_names[dst_node.data] = dfg
+
+
+        # # at this point, create the explicit name
+        # for read_node, dfg in read_global_data:
+        #     # for out_edge in dfg.out_edges(read_node):
+        #     dfg.replace(read_node.label, read_node.label+"_in")
+        #     print("Renaming ", read_node.label)
+        #
+        # already_done = set ()
+        # for write_node, dfg in written_global_data:
+        #     # for out_edge in dfg.in_edges(write_node):
+        #     # dfg.replace(write_node.label, write_node.label + "_out")
+        #     # print("Renaming ", write_node.label)
+        #
+        #     # TODO recursive
+        #     if write_node not in already_done:
+        #         print("PARENT")
+        #         import pdb
+        #         pdb.set_trace()
+        #         dfg.parent.replace(write_node.label, write_node.label + "_out")
+        #         already_done.add(write_node)
+
+
+        # Attempt with just the data name
+        for read_node, dfg in read_global_data_names.items():
+            dfg =  dfg.parent  if dfg.parent is not None else dfg
+            dfg.replace(read_node, read_node + "_in")
+
+        for write_node, dfg in written_global_data_names.items():
+            print("Renaming ", write_node)
+            dfg = dfg.parent if dfg.parent is not None else dfg
+            dfg.replace(write_node, write_node + "_out")
+
+        # sdfg.view()
+        # import pdb
+        # pdb.set_trace()
+
+
+        # is_write = edge.src is node
+        #
+        # # Allocate the viewed data before the view, if necessary
+        # mpath = dfg.memlet_path(edge)
+
+
         # Preprocess inter state edge assignments:
         # - look at every interstate edge
         # - if any of them accesses an ArrayInterface (Global FPGA memory), mangle it name and replace it

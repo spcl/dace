@@ -258,26 +258,26 @@ def fpga_ptr(name: str,
 
             subset_info = low  #used for arrayinterface name where it must be int
     if is_array_interface:
-        if is_write is None:
-            raise ValueError("is_write must be set for ArrayInterface.")
-        ptr_in = f"__{name}_in"
-        ptr_out = f"__{name}_out"
-        if dispatcher is not None:
-            # DaCe allows reading from an output connector, even though it
-            # is not an input connector. If this occurs, panic and read
-            # from the output interface instead
-            if is_write or not dispatcher.defined_vars.has(ptr_in, ancestor):
-                # Throw a KeyError if this pointer also doesn't exist
-                dispatcher.defined_vars.get(ptr_out, ancestor)
-                # Otherwise use it
-                name = ptr_out
-            else:
-                name = ptr_in
-        else:
-            # We might call this before the variable is even defined (e.g., because
-            # we are about to define it), so if the dispatcher is not passed, just
-            # return the appropriate string
-            name = ptr_out if is_write else ptr_in
+        # if is_write is None:
+        #     raise ValueError("is_write must be set for ArrayInterface.")
+        # ptr_in = f"__{name}_in"
+        # ptr_out = f"__{name}_out"
+        # if dispatcher is not None:
+        #     # DaCe allows reading from an output connector, even though it
+        #     # is not an input connector. If this occurs, panic and read
+        #     # from the output interface instead
+        #     if is_write or not dispatcher.defined_vars.has(ptr_in, ancestor):
+        #         # Throw a KeyError if this pointer also doesn't exist
+        #         dispatcher.defined_vars.get(ptr_out, ancestor)
+        #         # Otherwise use it
+        #         name = ptr_out
+        #     else:
+        #         name = ptr_in
+        # else:
+        #     # We might call this before the variable is even defined (e.g., because
+        #     # we are about to define it), so if the dispatcher is not passed, just
+        #     # return the appropriate string
+        #     name = ptr_out if is_write else ptr_in
         # Append the interface id, if provided
         if interface_id is not None:
             name = f"{name}_{interface_id}"
