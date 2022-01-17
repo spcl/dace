@@ -1,6 +1,8 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from dace.transformation import transformation
 from dace import memlet
+from dace.sdfg.graph import OrderedDiGraph
+from dace import memlet
 from dace.sdfg import nodes, utils, graph as gr
 from dace.sdfg import SDFGState
 from dace.sdfg.propagation import propagate_memlet
@@ -20,12 +22,12 @@ class InMergeArrays(transformation.SingleStateTransformation, transformation.Sim
         #   |  |
         # /======\
 
-        g = gr.OrderedMultiDiConnectorGraph()
+        g = OrderedDiGraph()
         g.add_node(cls.array1)
         g.add_node(cls.array2)
         g.add_node(cls.map_entry)
-        g.add_edge(cls.array1, None, cls.map_entry, None, memlet.Memlet())
-        g.add_edge(cls.array2, None, cls.map_entry, None, memlet.Memlet())
+        g.add_edge(cls.array1, cls.map_entry, None)
+        g.add_edge(cls.array2, cls.map_entry, None)
         return [g]
 
     def can_be_applied(self, graph: SDFGState, expr_index, sdfg, permissive=False):
@@ -123,12 +125,12 @@ class OutMergeArrays(transformation.SingleStateTransformation, transformation.Si
         #   |  |
         #   o  o
 
-        g = gr.OrderedMultiDiConnectorGraph()
+        g = OrderedDiGraph()
         g.add_node(cls.array1)
         g.add_node(cls.array2)
         g.add_node(cls.map_exit)
-        g.add_edge(cls.map_exit, None, cls.array1, None, memlet.Memlet())
-        g.add_edge(cls.map_exit, None, cls.array2, None, memlet.Memlet())
+        g.add_edge(cls.map_exit, cls.array1, None)
+        g.add_edge(cls.map_exit, cls.array2, None)
         return [g]
 
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
@@ -218,6 +220,10 @@ class MergeSourceSinkArrays(transformation.SingleStateTransformation, transforma
         # Matching
         #   o  o
         return [utils.node_path_graph(cls.array1)]
+
+        g = OrderedDiGraph()
+        g.add_node(MergeSourceSinkArrays._array1)
+        return [g]
 
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
         arr1_id = self.subgraph[MergeSourceSinkArrays.array1]

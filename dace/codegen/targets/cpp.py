@@ -59,7 +59,7 @@ def copy_expr(
     defined_types = None
     # Non-free symbol dependent Arrays due to their shape
     dependent_shape = (isinstance(data_desc, data.Array) and not isinstance(data_desc, data.View) and any(
-        str(s) not in sdfg.free_symbols.union(sdfg.constants.keys()) for s in data_desc.free_symbols))
+        str(s) not in dispatcher.frame.symbols_and_constants(sdfg) for s in dispatcher.frame.free_symbols(data_desc)))
     try:
         # NOTE: It is hard to get access to the view-edge here, so always check
         # the declared-arrays dictionary for Views.
@@ -255,7 +255,7 @@ def emit_memlet_reference(dispatcher,
     defined_types = None
     try:
         if (isinstance(desc, data.Array) and not isinstance(desc, data.View)
-                and any(str(s) not in sdfg.free_symbols.union(sdfg.constants.keys()) for s in desc.free_symbols)):
+                and any(str(s) not in dispatcher.frame.symbols_and_constants(sdfg) for s in dispatcher.frame.free_symbols(desc))):
             defined_types = dispatcher.declared_arrays.get(memlet.data, ancestor)
     except KeyError:
         pass
@@ -963,7 +963,7 @@ class DaCeKeywordRemover(ExtNodeTransformer):
         Used for unparsing Python tasklets into C++ that uses the DaCe
         runtime.
 
-        @note: Assumes that the DaCe syntax is correct (as verified by the
+        :note: Assumes that the DaCe syntax is correct (as verified by the
                Python frontend).
     """
     def __init__(self, sdfg, memlets, constants, codegen):
@@ -1017,9 +1017,12 @@ class DaCeKeywordRemover(ExtNodeTransformer):
             dimlen = dtype.veclen if isinstance(dtype, dtypes.vector) else 1
             subset_size = memlet.subset.size()
             indexdims = [i for i, s in enumerate(subset_size) if s == 1]
-            strides = [
-                s for i, s in enumerate(strides) if i not in indexdims and not (s == 1 and subset_size[i] == dimlen)
-            ]
+            # Pointer to a single element can use all strides
+            is_scalar = not isinstance(dtype, dtypes.pointer)
+            if is_scalar or data._prod(subset_size) != 1:
+                strides = [
+                    s for i, s in enumerate(strides) if i not in indexdims and not (s == 1 and subset_size[i] == dimlen)
+                ]
 
         if isinstance(visited_slice, ast.Tuple):
             if len(strides) != len(visited_slice.elts):
@@ -1031,7 +1034,11 @@ class DaCeKeywordRemover(ExtNodeTransformer):
         if len(strides) != 1:
             raise SyntaxError('Missing dimensions in expression (expected %d, ' 'got one)' % len(strides))
 
-        return symbolic.pystr_to_symbolic(unparse(visited_slice)) * strides[0]
+        try:
+            return symbolic.pystr_to_symbolic(unparse(visited_slice)) * strides[0]
+        except (TypeError, sp.SympifyError):
+            # Fallback in case of .pop() or other C++ mannerisms
+            return f'({unparse(visited_slice)}) * {strides[0]}'
 
     def visit_Assign(self, node):
         target = rname(node.targets[-1])
@@ -1152,7 +1159,7 @@ class DaCeKeywordRemover(ExtNodeTransformer):
         except KeyError:
             defined_type = None
         if (self.allow_casts and isinstance(dtype, dtypes.pointer) and memlet.subset.num_elements() == 1):
-            return ast.Name(id="(*{})".format(name), ctx=node.ctx)
+            return ast.Name(id="{}[0]".format(name), ctx=node.ctx)
         elif (self.allow_casts and (defined_type == DefinedType.Stream or defined_type == DefinedType.StreamArray)
               and memlet.dynamic):
             return ast.Name(id=f"{name}.pop()", ctx=node.ctx)

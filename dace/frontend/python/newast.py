@@ -6,6 +6,7 @@ import itertools
 import inspect
 import re
 import sys
+import time
 from os import path
 import warnings
 from numbers import Number
@@ -28,6 +29,7 @@ from dace.sdfg.propagation import propagate_memlet, propagate_subset
 from dace.memlet import Memlet
 from dace.properties import LambdaProperty, CodeBlock
 from dace.sdfg import SDFG, SDFGState
+from dace.sdfg.replace import replace_datadesc_names
 from dace.symbolic import pystr_to_symbolic
 
 import numpy
@@ -139,7 +141,8 @@ def parse_dace_program(name: str,
                        constants: Dict[str, Any],
                        closure: SDFGClosure,
                        simplify: Optional[bool] = None,
-                       save=True) -> SDFG:
+                       save: bool = True,
+                       progress: Optional[bool] = None) -> SDFG:
     """ Parses a `@dace.program` function into an SDFG.
         :param src_ast: The AST of the Python program to parse.
         :param visitor: A ProgramVisitor object returned from 
@@ -147,8 +150,33 @@ def parse_dace_program(name: str,
         :param closure: An object that contains the @dace.program closure.
         :param simplify: If True, simplification pass will be performed.
         :param save: If True, saves source mapping data for this SDFG.
+        :param progress: If True, prints a progress bar of the parsing process. 
+                         If None (default), prints after 5 seconds of parsing. 
+                         If False, never prints progress.
         :return: A 2-tuple of SDFG and its reduced (used) closure.
     """
+    # Progress bar handling (pre-parse)
+    teardown_progress = False
+    if progress is None or progress is True:
+        try:
+            from tqdm import tqdm
+        except (ImportError, ModuleNotFoundError):
+            progress = False
+
+        if progress is not False and ProgramVisitor.progress_bar is None:
+            ctl = closure.call_tree_length()
+            teardown_progress = True  # First parser should teardown progress bar
+            ProgramVisitor.start_time = time.time()
+            if progress is True:
+                ProgramVisitor.progress_bar = tqdm(total=ctl, desc='Parsing Python program')
+            else:
+                ProgramVisitor.progress_bar = (0, ctl)  # Make a counter instead (tqdm cannot be enabled mid-progress)
+    if (progress is None and isinstance(ProgramVisitor.progress_bar, tuple)
+            and (time.time() - ProgramVisitor.start_time) >= 5):
+        initial, total = ProgramVisitor.progress_bar
+        ProgramVisitor.progress_bar = tqdm(total=total, initial=initial, desc='Parsing Python program')
+    # End of progress bar
+
     visitor = ProgramVisitor(name=name,
                              filename=preprocessed_ast.filename,
                              line_offset=preprocessed_ast.src_line,
@@ -188,6 +216,24 @@ def parse_dace_program(name: str,
         end_line=visitor.src_line + len(preprocessed_ast.src.split("\n")) - 1,
         filename=path.abspath(preprocessed_ast.filename),
     )
+
+    # Progress bar handling (post-parse)
+    if (progress is None and isinstance(ProgramVisitor.progress_bar, tuple)
+            and (time.time() - ProgramVisitor.start_time) >= 5):
+        initial, total = ProgramVisitor.progress_bar
+        ProgramVisitor.progress_bar = tqdm(total=total, initial=initial, desc='Parsing Python program')
+    if ProgramVisitor.progress_bar is not None:
+        if isinstance(ProgramVisitor.progress_bar, tuple):
+            i, t = ProgramVisitor.progress_bar
+            ProgramVisitor.progress_bar = (i + 1, t)
+        else:
+            ProgramVisitor.progress_bar.update(1)
+    if teardown_progress:
+        if not isinstance(ProgramVisitor.progress_bar, tuple):
+            ProgramVisitor.progress_bar.close()
+            print('Parsing complete.')
+        ProgramVisitor.progress_bar = None
+        ProgramVisitor.start_time = 0
 
     return sdfg
 
@@ -945,6 +991,9 @@ class ProgramVisitor(ExtNodeVisitor):
     """ A visitor that traverses a data-centric Python program AST and
         constructs an SDFG.
     """
+    progress_bar = None
+    start_time: float = 0
+
     def __init__(self,
                  name: str,
                  filename: str,
@@ -3221,7 +3270,7 @@ class ProgramVisitor(ExtNodeVisitor):
         from dace.frontend.python.parser import DaceProgram
 
         if func is None:
-            func = self.closure.closure_sdfgs[funcname]
+            raise TypeError('Tried to parse a None function')
         if isinstance(func, SDFG):
             sdfg = copy.deepcopy(func)
             funcname = sdfg.name
@@ -3257,12 +3306,19 @@ class ProgramVisitor(ExtNodeVisitor):
                     kwargs = [(k, v) for k, v in kwargs if k in required_args]
                     args = posargs + kwargs
 
-            except:  # Parsing failure
+            except Exception as ex:  # Parsing failure
+                # If error should propagate outwards, do not try to parse as callback
+                if getattr(ex, '__noskipcall__', False):
+                    raise
+
                 # If parsing fails in an auto-parsed context, exit silently
                 if hasattr(node.func, 'oldnode'):
                     raise SkipCall
                 else:
-                    raise
+                    # Propagate error outwards
+                    if Config.get_bool('frontend', 'raise_nested_parsing_errors'):
+                        ex.__noskipcall__ = True
+                    raise ex
 
             funcname = sdfg.name
             all_args = required_args
@@ -3329,10 +3385,18 @@ class ProgramVisitor(ExtNodeVisitor):
                 raise DaceSyntaxError(self, node, 'Invalid keyword argument "%s" in call to '
                                       '"%s"' % (aname, funcname))
         if len(args) != len(required_args):
-            raise DaceSyntaxError(
-                self, node, 'Argument number mismatch in'
-                ' call to "%s" (expected %d,'
-                ' got %d)' % (funcname, len(required_args), len(args)))
+            if len(args) > len(required_args):
+                extra = set(args) - set(required_args)
+                raise DaceSyntaxError(
+                    self, node, 'Argument number mismatch in'
+                    ' call to "%s" (expected %d,'
+                    ' got %d). Extra arguments provided: %s' % (funcname, len(required_args), len(args), extra))
+            else:
+                missing = set(required_args) - set(args)
+                raise DaceSyntaxError(
+                    self, node, 'Argument number mismatch in'
+                    ' call to "%s" (expected %d,'
+                    ' got %d). Missing arguments: %s' % (funcname, len(required_args), len(args), missing))
 
         # Remove newly-defined symbols from arguments
         if mapping is not None:
@@ -3352,6 +3416,7 @@ class ProgramVisitor(ExtNodeVisitor):
         # Change connector names
         updated_args = []
         arrays_before = list(sdfg.arrays.items())
+        names_to_replace: Dict[str, str] = {}
         for i, (conn, arg) in enumerate(args):
             if (conn in self.scope_vars.keys() or conn in self.sdfg.arrays.keys() or conn in self.sdfg.symbols):
                 if self.sdfg._temp_transients > sdfg._temp_transients:
@@ -3360,14 +3425,14 @@ class ProgramVisitor(ExtNodeVisitor):
                     new_conn = sdfg.temp_data_name()
                 # warnings.warn("Renaming nested SDFG connector {c} to "
                 #               "{n}".format(c=conn, n=new_conn))
-                sdfg.replace(conn, new_conn)
+                names_to_replace[conn] = new_conn
                 updated_args.append((new_conn, arg))
                 # Rename the connector's Views
                 for arrname, array in arrays_before:
                     if (isinstance(array, data.View) and len(arrname) > len(conn)
                             and arrname[:len(conn) + 1] == f'{conn}_'):
                         new_name = f'{new_conn}{arrname[len(conn):]}'
-                        sdfg.replace(arrname, new_name)
+                        names_to_replace[arrname] = new_name
             else:
                 updated_args.append((conn, arg))
         args = updated_args
@@ -3381,9 +3446,10 @@ class ProgramVisitor(ExtNodeVisitor):
                         new_name = self.sdfg.temp_data_name()
                     else:
                         new_name = sdfg.temp_data_name()
-                    sdfg.replace(arrname, new_name)
+                    names_to_replace[arrname] = new_name
         self.sdfg._temp_transients = max(self.sdfg._temp_transients, sdfg._temp_transients)
         sdfg._temp_transients = self.sdfg._temp_transients
+        replace_datadesc_names(sdfg, names_to_replace)
 
         # TODO: This workaround needs to be formalized (pass-by-assignment)
         slice_state = None
@@ -3852,7 +3918,7 @@ class ProgramVisitor(ExtNodeVisitor):
                         funcname = candidate
 
         # If the function exists as a global SDFG or @dace.program, use it
-        if func or funcname in self.closure.closure_sdfgs:
+        if func is not None:
             try:
                 return self._parse_sdfg_call(funcname, func, node)
             except SkipCall as ex:
@@ -4175,7 +4241,11 @@ class ProgramVisitor(ExtNodeVisitor):
 
     def _gettype(self, opnode: ast.AST) -> List[Tuple[str, str]]:
         """ Returns an operand and its type as a 2-tuple of strings. """
-        operands = self.visit(opnode)
+        if isinstance(opnode, ast.AST):
+            operands = self.visit(opnode)
+        else:
+            operands = opnode
+
         if isinstance(operands, (list, tuple)):
             if len(operands) == 0:
                 raise DaceSyntaxError(self, opnode, 'Operand has no return value')
@@ -4455,7 +4525,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 except (TypeError, ValueError):
                     pass  # Passthrough to exception
 
-            raise DaceSyntaxError(self, node.value, 'Subscripted object cannot ' 'be a tuple')
+            raise DaceSyntaxError(self, node.value, 'Subscripted object cannot be a tuple')
         array, arrtype = node_parsed[0]
         if arrtype == 'str' or arrtype in dtypes._CTYPES:
             raise DaceSyntaxError(self, node, 'Type "%s" cannot be sliced' % arrtype)

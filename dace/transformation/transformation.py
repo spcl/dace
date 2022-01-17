@@ -685,6 +685,23 @@ class SubgraphTransformation(TransformationBase):
             self.sdfg_id = sdfg_id
             self.state_id = state_id
 
+    @classmethod
+    def subclasses_recursive(cls) -> Set[Type['PatternTransformation']]:
+        """
+        Returns all subclasses of this class, including subclasses of subclasses. 
+        :param all_subclasses: Include all subclasses (e.g., including ``ExpandTransformation``).
+        """
+        subclasses = set(cls.__subclasses__())
+        subsubclasses = set()
+        for sc in subclasses:
+            subsubclasses.update(sc.subclasses_recursive())
+
+        # Ignore abstract classes
+        result = subclasses | subsubclasses
+        result = set(sc for sc in result if not getattr(sc, '__abstractmethods__', False))
+
+        return result
+
     def subgraph_view(self, sdfg: SDFG) -> gr.SubgraphView:
         graph = sdfg.sdfg_list[self.sdfg_id]
         if self.state_id != -1:

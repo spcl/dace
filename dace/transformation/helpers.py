@@ -302,7 +302,7 @@ def nest_state_subgraph(sdfg: SDFG,
     return nested_sdfg
 
 
-def state_fission(sdfg: SDFG, subgraph: graph.SubgraphView) -> SDFGState:
+def state_fission(sdfg: SDFG, subgraph: graph.SubgraphView, label: Optional[str] = None) -> SDFGState:
     '''
     Given a subgraph, adds a new SDFG state before the state that contains it,
     removes the subgraph from the original state, and connects the two states.
@@ -311,7 +311,7 @@ def state_fission(sdfg: SDFG, subgraph: graph.SubgraphView) -> SDFGState:
     '''
 
     state: SDFGState = subgraph.graph
-    newstate = sdfg.add_state_before(state)
+    newstate = sdfg.add_state_before(state, label=label)
 
     # Save edges before removing nodes
     orig_edges = subgraph.edges()
@@ -376,11 +376,11 @@ def unsqueeze_memlet(internal_memlet: Memlet,
         :return: Offset Memlet to set on the resulting graph.
     """
     internal_subset = _get_internal_subset(internal_memlet, external_memlet, use_src_subset, use_dst_subset)
-    result = copy.deepcopy(internal_memlet)
+    result = Memlet.from_memlet(internal_memlet)
     result.data = external_memlet.data
-    result.other_subset = None
-    result.subset = copy.deepcopy(internal_subset)
-
+    result.subset = internal_subset
+    result._is_data_src = internal_memlet._is_data_src
+    
     shape = external_memlet.subset.size()
     if len(internal_subset) < len(external_memlet.subset):
         ones = [i for i, d in enumerate(shape) if d == 1]

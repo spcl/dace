@@ -493,7 +493,7 @@ def swalk(expr, enter_functions=False):
 
 
 _builtin_userfunctions = {
-    'int_floor', 'int_ceil', 'min', 'Min', 'max', 'Max', 'not', 'Not', 'Eq', 'NotEq', 'Ne', 'AND', 'OR'
+    'int_floor', 'int_ceil', 'abs', 'Abs', 'min', 'Min', 'max', 'Max', 'not', 'Not', 'Eq', 'NotEq', 'Ne', 'AND', 'OR'
 }
 
 
@@ -737,7 +737,7 @@ class SympyBooleanConverter(ast.NodeTransformer):
         return self.visit_Constant(node)
 
 
-@lru_cache(2048)
+@lru_cache(16384)
 def pystr_to_symbolic(expr, symbol_map=None, simplify=None):
     """ Takes a Python string and converts it into a symbolic expression. """
     from dace.frontend.python.astutils import unparse  # Avoid import loops
@@ -749,6 +749,7 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None):
 
     symbol_map = symbol_map or {}
     locals = {
+        'abs': sympy.Abs,
         'min': sympy.Min,
         'max': sympy.Max,
         'True': sympy.true,
@@ -774,7 +775,7 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None):
     # TODO: support SymExpr over-approximated expressions
     try:
         return sympy_to_dace(sympy.sympify(expr, locals, evaluate=simplify), symbol_map)
-    except TypeError:  # Symbol object is not subscriptable
+    except (TypeError, sympy.SympifyError):  # Symbol object is not subscriptable
         # Replace subscript expressions with function calls
         expr = expr.replace('[', '(')
         expr = expr.replace(']', ')')
@@ -842,7 +843,7 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         except ValueError:
             return "dace::math::pow({f}, {s})".format(f=self._print(expr.args[0]), s=self._print(expr.args[1]))
 
-
+@lru_cache(maxsize=16384)
 def symstr(sym, arrayexprs: Optional[Set[str]] = None) -> str:
     """ 
     Convert a symbolic expression to a C++ compilable expression. 
@@ -852,7 +853,7 @@ def symstr(sym, arrayexprs: Optional[Set[str]] = None) -> str:
     :return: C++-compilable expression.
     """
     def repstr(s):
-        return s.replace('Min', 'min').replace('Max', 'max')
+        return s.replace('Min', 'min').replace('Max', 'max').replace('Abs', 'abs')
 
     if isinstance(sym, SymExpr):
         return symstr(sym.expr, arrayexprs)
@@ -917,21 +918,23 @@ def safe_replace(mapping: Dict[Union[SymbolicType, str], Union[SymbolicType, str
         repl[k] = f'__dacesym_{k}'
         invrepl[f'__dacesym_{k}'] = v
 
+    if len(repl) == 0:
+        return
+
     # Make the two-step replacement
     replace_callback(repl)
+    if len(invrepl) == 0:
+        return
     replace_callback(invrepl)
 
 
+@lru_cache(16384)
 def _spickle(obj):
-    return str(obj), {s.name: (s.dtype, s._assumptions) for s in symlist(obj).values()}
+    return str(obj)
 
 
 def _sunpickle(obj):
-    s, slist = obj
-    # Create symbols
-    for sname, (stype, assumptions) in slist.items():
-        symbol(sname, stype, **assumptions)
-    return pystr_to_symbolic(s)
+    return pystr_to_symbolic(obj)
 
 
 class SympyAwarePickler(pickle.Pickler):

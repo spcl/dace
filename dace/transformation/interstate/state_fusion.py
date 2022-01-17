@@ -168,6 +168,11 @@ class StateFusion(transformation.MultiStateTransformation, transformation.Simpli
                     return False
 
         if not permissive:
+            # Strict mode that inhibits state fusion if Python callbacks are involved
+            if Config.get_bool('frontend', 'dont_fuse_callbacks'):
+                for node in (first_state.data_nodes() + second_state.data_nodes()):
+                    if node.data == '__pystate':
+                        return False
 
             # NOTE: This is quick fix for MPI Waitall (probably also needed for
             # Wait), until we have a better SDFG representation of the buffer

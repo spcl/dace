@@ -437,7 +437,7 @@ class InlineSDFG(transformation.SingleStateTransformation, transformation.Simpli
         subgraph = SubgraphView(nstate, [n for n in nstate.nodes() if n not in (source_accesses | sink_accesses)])
         state.add_nodes_from(subgraph.nodes())
         for edge in subgraph.edges():
-            state.add_edge(edge.src, edge.src_conn, edge.dst, edge.dst_conn, copy.deepcopy(edge.data))
+            state.add_edge(edge.src, edge.src_conn, edge.dst, edge.dst_conn, Memlet.from_memlet(edge.data))
 
         #######################################################
         # Reconnect inlined SDFG
