@@ -55,7 +55,7 @@ class Node(object):
     def validate(self, sdfg, state):
         pass
 
-    def simplify(self) -> None:
+    def simplify_expr(self) -> None:
         """
         Simplifies all expressions in the state.
         """

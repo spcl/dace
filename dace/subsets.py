@@ -143,7 +143,7 @@ class Range(Subset):
     def from_indices(indices: 'Indices'):
         return Range([(i, i, 1) for i in indices.indices])
 
-    def simplify(self) -> None:
+    def simplify_expr(self) -> None:
         """
         Simplifies all expressions in the Range.
         """
@@ -742,7 +742,7 @@ class Indices(Subset):
             self.indices = [symbolic.pystr_to_symbolic(i) for i in indices]
         self.tile_sizes = [1]
 
-    def simplify(self) -> None:
+    def simplify_expr(self) -> None:
         """
         Simplifies all expressions in the Indices.
         """

@@ -47,7 +47,7 @@ def test():
     red1[:] = dace.float32(0)
     red2[:] = dace.float32(0)
 
-    sdfg = confres_test.to_sdfg(coarsen=True)
+    sdfg = confres_test.to_sdfg(simplify=True)
     sdfg.simplify()
     sdfg.validate()
     sdfg.compile()

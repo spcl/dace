@@ -799,7 +799,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
         if edge.dst_conn in edge.dst.in_connectors:
             edge.dst.remove_in_connector(edge.dst_conn)
 
-    def simplify(self) -> None:
+    def simplify_expr(self) -> None:
         """
         Simplifies all expressions in the state.
         """
@@ -807,10 +807,10 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
         serialize.all_properties_simplify(self)
 
         for e in self.edges():
-            e.simplify()
+            e.simplify_expr()
 
         for n in self.nodes():
-            n.simplify()
+            n.simplify_expr()
 
     def to_json(self, parent=None):
         # Create scope dictionary with a failsafe

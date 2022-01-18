@@ -57,7 +57,7 @@ def diag_stride(A: dace.float32[N, N], B: dace.float32[N, N]):
 @pytest.mark.sve
 def test_basic_stride():
 
-    sdfg = copy_kernel().to_sdfg(coarsen=True)
+    sdfg = copy_kernel().to_sdfg(simplify=True)
     assert sdfg.apply_transformations(
         Vectorization, {"target": dace.ScheduleType.SVE_Map}) == 1
 
@@ -74,7 +74,7 @@ def test_basic_stride():
 @pytest.mark.sve
 def test_basic_stride_vec8():
 
-    sdfg = copy_kernel().to_sdfg(coarsen=True)
+    sdfg = copy_kernel().to_sdfg(simplify=True)
     assert sdfg.apply_transformations(Vectorization, {
         "target": dace.ScheduleType.SVE_Map,
         "vector_len": 8
@@ -93,7 +93,7 @@ def test_basic_stride_vec8():
 @pytest.mark.sve
 def test_basic_stride_matrix():
 
-    sdfg = matrix_copy.to_sdfg(coarsen=True)
+    sdfg = matrix_copy.to_sdfg(simplify=True)
     assert sdfg.apply_transformations(
         Vectorization, {"target": dace.ScheduleType.SVE_Map}) == 1
 
@@ -110,7 +110,7 @@ def test_basic_stride_matrix():
 @pytest.mark.sve
 def test_basic_stride_non_strided_map():
 
-    sdfg = copy_kernel().to_sdfg(coarsen=True)
+    sdfg = copy_kernel().to_sdfg(simplify=True)
     assert sdfg.apply_transformations(Vectorization, {
         "target": dace.ScheduleType.SVE_Map,
         "strided_map": False
@@ -129,7 +129,7 @@ def test_basic_stride_non_strided_map():
 @pytest.mark.sve
 def test_basic_stride_matrix_non_strided_map():
 
-    sdfg = matrix_copy.to_sdfg(coarsen=True)
+    sdfg = matrix_copy.to_sdfg(simplify=True)
     assert sdfg.apply_transformations(Vectorization, {
         "target": dace.ScheduleType.SVE_Map,
         "strided_map": False
@@ -156,7 +156,7 @@ def test_supported_types():
     for t in types:
 
         sdfg = copy_kernel(dace.DTYPE_TO_TYPECLASS[t],
-                           dace.DTYPE_TO_TYPECLASS[t]).to_sdfg(coarsen=True)
+                           dace.DTYPE_TO_TYPECLASS[t]).to_sdfg(simplify=True)
         assert sdfg.apply_transformations(
             Vectorization, {"target": dace.ScheduleType.SVE_Map}) == 1
 
@@ -171,7 +171,7 @@ def test_supported_types():
 
 
 def test_multiple_bit_widths():
-    sdfg = copy_kernel(dace.float32, dace.float64).to_sdfg(coarsen=True)
+    sdfg = copy_kernel(dace.float32, dace.float64).to_sdfg(simplify=True)
     assert sdfg.apply_transformations(
         Vectorization, {"target": dace.ScheduleType.SVE_Map}) == 0
 
@@ -185,7 +185,7 @@ def test_irregular_stride():
                 b >> B[i * i]
                 b = a
 
-    sdfg = program.to_sdfg(coarsen=True)
+    sdfg = program.to_sdfg(simplify=True)
     # [i * i] has a stride of 2i + 1 which is not constant (cannot be vectorized)
     assert sdfg.apply_transformations(
         Vectorization, {"target": dace.ScheduleType.SVE_Map}) == 0
@@ -194,7 +194,7 @@ def test_irregular_stride():
 @pytest.mark.sve
 def test_diagonal_stride():
 
-    sdfg = diag_stride.to_sdfg(coarsen=True)
+    sdfg = diag_stride.to_sdfg(simplify=True)
     # [i, i] has a stride of N + 1, so it is perfectly fine
     assert sdfg.apply_transformations(
         Vectorization, {"target": dace.ScheduleType.SVE_Map}) == 1
@@ -211,7 +211,7 @@ def test_diagonal_stride():
 @pytest.mark.sve
 def test_diagonal_stride_non_strided_map():
 
-    sdfg = diag_stride.to_sdfg(coarsen=True)
+    sdfg = diag_stride.to_sdfg(simplify=True)
     # [i, i] has a stride of N + 1, so it is perfectly fine
     assert sdfg.apply_transformations(Vectorization, {
         "target": dace.ScheduleType.SVE_Map,
@@ -229,21 +229,21 @@ def test_diagonal_stride_non_strided_map():
 
 def test_unsupported_types():
 
-    sdfg = copy_kernel(dace.complex64, dace.complex64).to_sdfg(coarsen=True)
+    sdfg = copy_kernel(dace.complex64, dace.complex64).to_sdfg(simplify=True)
     assert sdfg.apply_transformations(
         Vectorization, {"target": dace.ScheduleType.SVE_Map}) == 0
 
-    sdfg = copy_kernel(dace.float32, dace.complex64).to_sdfg(coarsen=True)
+    sdfg = copy_kernel(dace.float32, dace.complex64).to_sdfg(simplify=True)
     assert sdfg.apply_transformations(
         Vectorization, {"target": dace.ScheduleType.SVE_Map}) == 0
 
     sdfg = copy_kernel(dace.vector(dace.float32, 4),
-                       dace.vector(dace.float32, 4)).to_sdfg(coarsen=True)
+                       dace.vector(dace.float32, 4)).to_sdfg(simplify=True)
     assert sdfg.apply_transformations(
         Vectorization, {"target": dace.ScheduleType.SVE_Map}) == 0
 
     sdfg = copy_kernel(dace.pointer(dace.float32),
-                       dace.pointer(dace.float32)).to_sdfg(coarsen=True)
+                       dace.pointer(dace.float32)).to_sdfg(simplify=True)
     assert sdfg.apply_transformations(
         Vectorization, {"target": dace.ScheduleType.SVE_Map}) == 0
 
@@ -258,7 +258,7 @@ def test_supported_wcr_sum():
                 b >> B(-1, lambda x, y: x + y)[0]
                 b = a
 
-    sdfg = program.to_sdfg(coarsen=True)
+    sdfg = program.to_sdfg(simplify=True)
     assert sdfg.apply_transformations(
         Vectorization, {"target": dace.ScheduleType.SVE_Map}) == 1
 
@@ -279,7 +279,7 @@ def test_supported_wcr_min():
                 b >> B(-1, lambda x, y: min(x, y))[0]
                 b = a
 
-    sdfg = program.to_sdfg(coarsen=True)
+    sdfg = program.to_sdfg(simplify=True)
     assert sdfg.apply_transformations(
         Vectorization, {"target": dace.ScheduleType.SVE_Map}) == 1
 
@@ -300,7 +300,7 @@ def test_supported_wcr_max():
                 b >> B(-1, lambda x, y: max(x, y))[0]
                 b = a
 
-    sdfg = program.to_sdfg(coarsen=True)
+    sdfg = program.to_sdfg(simplify=True)
     assert sdfg.apply_transformations(
         Vectorization, {"target": dace.ScheduleType.SVE_Map}) == 1
 
@@ -320,7 +320,7 @@ def test_unsupported_wcr():
                 b >> B(-1, lambda x, y: x * y)[0]
                 b = a
 
-    sdfg = program.to_sdfg(coarsen=True)
+    sdfg = program.to_sdfg(simplify=True)
     assert sdfg.apply_transformations(
         Vectorization, {"target": dace.ScheduleType.SVE_Map}) == 0
 
@@ -335,7 +335,7 @@ def test_unsupported_wcr_vec():
                 b >> B(-1, lambda x, y: x + y)[0]
                 b = a
 
-    sdfg = program.to_sdfg(coarsen=True)
+    sdfg = program.to_sdfg(simplify=True)
     assert sdfg.apply_transformations(
         Vectorization, {"target": dace.ScheduleType.SVE_Map}) == 0
 
@@ -350,7 +350,7 @@ def test_unsupported_wcr_ptr():
                 b >> B(-1, lambda x, y: x + y)[0]
                 b = a
 
-    sdfg = program.to_sdfg(coarsen=True)
+    sdfg = program.to_sdfg(simplify=True)
     assert sdfg.apply_transformations(
         Vectorization, {"target": dace.ScheduleType.SVE_Map}) == 0
 
@@ -365,7 +365,7 @@ def test_first_level_vectorization():
                 b >> B[j]
                 b = a_vec
 
-    sdfg = program.to_sdfg(coarsen=True)
+    sdfg = program.to_sdfg(simplify=True)
     sdfg.apply_transformations(Vectorization,
                                {"target": dace.ScheduleType.SVE_Map})
 
@@ -386,7 +386,7 @@ def test_stream_push():
                 b = a
         S_out >> B
 
-    sdfg = program.to_sdfg(coarsen=True)
+    sdfg = program.to_sdfg(simplify=True)
     # Stream push is possible
     assert sdfg.apply_transformations(
         Vectorization, {"target": dace.ScheduleType.SVE_Map}) == 1
@@ -403,7 +403,7 @@ def test_stream_pop():
                 b >> B[i]
                 b = a
 
-    sdfg = program.to_sdfg(coarsen=True)
+    sdfg = program.to_sdfg(simplify=True)
     # Stream pop is not implemented yet
     assert sdfg.apply_transformations(
         Vectorization, {"target": dace.ScheduleType.SVE_Map}) == 0
@@ -422,7 +422,7 @@ def test_preamble():
                 b >> B[i]
                 b = a
 
-    sdfg = program.to_sdfg(coarsen=True)
+    sdfg = program.to_sdfg(simplify=True)
     assert sdfg.apply_transformations(Vectorization, {
         "target": dace.ScheduleType.SVE_Map,
     }) == 1

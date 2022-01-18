@@ -288,7 +288,7 @@ class Property(Generic[T]):
     def from_json(self):
         return self._from_json
 
-    def simplify(self, obj, val):
+    def simplify_expr(self, obj, val):
         pass
 
     @property
@@ -461,7 +461,7 @@ def indirect_properties(indirect_class, indirect_function, override=False):
 class OrderedDictProperty(Property):
     """ Property type for ordered dicts
     """
-    def simplify(self, obj, val):
+    def simplify_expr(self, obj, val):
         if val is None:
             return
         for key in val:
@@ -516,7 +516,7 @@ class ListProperty(Property[List[T]]):
     def to_string(l):
         return str(l)
 
-    def simplify(self, obj, val):
+    def simplify_expr(self, obj, val):
         if val is None:
             return
 
@@ -631,7 +631,7 @@ class DictProperty(Property):
     def to_string(d):
         return str(d)
 
-    def simplify(self, obj, val):
+    def simplify_expr(self, obj, val):
         if val is None:
             return
         for key in val:
@@ -720,9 +720,9 @@ class EnumProperty(Property):
 
 
 class SDFGReferenceProperty(Property):
-    def simplify(self, obj, val):
+    def simplify_expr(self, obj, val):
         if val is not None:
-            val.simplify()
+            val.simplify_expr()
 
     def to_json(self, obj):
         if obj is None:
@@ -752,11 +752,11 @@ class RangeProperty(Property):
     def dtype(self):
         return sbs.Range
 
-    def simplify(self, obj, val):
+    def simplify_expr(self, obj, val):
 
         if val is None:
             return
-        val.simplify()
+        val.simplify_expr()
 
     @staticmethod
     def to_string(obj):
@@ -878,7 +878,7 @@ class SetProperty(Property):
     def from_string(s):
         return [eval(i) for i in re.sub(r"[\{\}\(\)\[\]]", "", s).split(",")]
 
-    def simplify(self, obj, val):
+    def simplify_expr(self, obj, val):
 
         if val is None:
             return
@@ -1158,10 +1158,10 @@ class SubsetProperty(Property):
             return 'None'
         raise TypeError
 
-    def simplify(self, obj, val):
+    def simplify_expr(self, obj, val):
 
         if val is not None:
-            val.simplify()
+            val.simplify_expr()
 
     def to_json(self, val):
         if val is None:
@@ -1189,12 +1189,12 @@ class SymbolicProperty(Property):
 
         super(SymbolicProperty, self).__set__(obj, val)
 
-    def simplify(self, obj, val):
+    def simplify_expr(self, obj, val):
 
         if val is None:
             return
 
-        new_val = simplify(val)
+        new_val = simplify_expr(val)
         # TODO: fix this
         # self.__set__(obj, new_val)
 
@@ -1295,7 +1295,7 @@ class ShapeProperty(Property):
     def to_string(obj):
         return ", ".join(map(str, obj))
 
-    def simplify(self, obj, val):
+    def simplify_expr(self, obj, val):
         if val is not None:
             shape_list = list(val)
             for i in range(len(shape_list)):

@@ -176,7 +176,7 @@ class Data(object):
             raise TypeError('Shape must be a list or tuple of integer values ' 'or symbols')
         return True
 
-    def simplify(self) -> None:
+    def simplify_expr(self) -> None:
         """
         Simplifies all expressions in the node.
         """

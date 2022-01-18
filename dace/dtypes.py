@@ -381,7 +381,7 @@ class typeclass(object):
             return True
         return False
 
-    def simplify(self):
+    def simplify_expr(self):
         pass
 
     def to_json(self):

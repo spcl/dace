@@ -135,17 +135,17 @@ class Memlet(object):
         self.debuginfo = debuginfo
         self.allow_oob = allow_oob
 
-    def simplify(self) -> None:
+    def simplify_expr(self) -> None:
         """
         Simplifies all expressions in this memlet.
         """
         dace.serialize.all_properties_simplify(self)
 
         if self.src_subset is not None:
-            self.src_subset.simplify()
+            self.src_subset.simplify_expr()
 
         if self.dst_subset is not None:
-            self.dst_subset.simplify()
+            self.dst_subset.simplify_expr()
 
         self.num_accesses = simplify(self.num_accesses)
     @staticmethod

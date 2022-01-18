@@ -161,7 +161,7 @@ def all_properties_to_json(object_with_properties):
 
 def all_properties_simplify(object_with_properties):
     for x, v in object_with_properties.properties():
-        x.simplify(x, v)
+        x.simplify_expr(x, v)
 
 
 def set_properties_from_json(object_with_properties,

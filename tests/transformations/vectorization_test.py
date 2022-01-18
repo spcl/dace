@@ -78,7 +78,7 @@ def test_vectorization():
 
 def test_basic_stride():
 
-    sdfg = copy_kernel().to_sdfg(coarsen=True)
+    sdfg = copy_kernel().to_sdfg(simplify=True)
     assert sdfg.apply_transformations(Vectorization) == 1
 
     N.set(64)
@@ -91,7 +91,7 @@ def test_basic_stride():
 
 def test_basic_stride_vec2():
 
-    sdfg = copy_kernel().to_sdfg(coarsen=True)
+    sdfg = copy_kernel().to_sdfg(simplify=True)
     assert sdfg.apply_transformations(Vectorization, {"vector_len": 2}) == 1
 
     N.set(64)
@@ -104,7 +104,7 @@ def test_basic_stride_vec2():
 
 def test_basic_stride_matrix():
 
-    sdfg = matrix_copy.to_sdfg(coarsen=True)
+    sdfg = matrix_copy.to_sdfg(simplify=True)
     assert sdfg.apply_transformations(Vectorization) == 1
 
     N.set(64)
@@ -119,7 +119,7 @@ def test_basic_stride_matrix():
 
 def test_basic_stride_non_strided_map():
 
-    sdfg = copy_kernel().to_sdfg(coarsen=True)
+    sdfg = copy_kernel().to_sdfg(simplify=True)
     assert sdfg.apply_transformations(Vectorization,
                                       {"strided_map": False}) == 1
 
@@ -135,7 +135,7 @@ def test_basic_stride_non_strided_map():
 
 def test_basic_stride_matrix_non_strided_map():
 
-    sdfg = matrix_copy.to_sdfg(coarsen=True)
+    sdfg = matrix_copy.to_sdfg(simplify=True)
     assert sdfg.apply_transformations(Vectorization,
                                       {"strided_map": False}) == 1
 
@@ -178,14 +178,14 @@ def test_irregular_stride():
                 b >> B[i * i]
                 b = a
 
-    sdfg = program.to_sdfg(coarsen=True)
+    sdfg = program.to_sdfg(simplify=True)
     # [i * i] has a stride of 2i + 1 which is not constant (cannot be vectorized)
     assert sdfg.apply_transformations(Vectorization) == 0
 
 
 def test_diagonal_stride():
 
-    sdfg = diag_stride.to_sdfg(coarsen=True)
+    sdfg = diag_stride.to_sdfg(simplify=True)
     assert sdfg.apply_transformations(Vectorization) == 0
 
 # def test_supported_wcr_sum():
@@ -197,7 +197,7 @@ def test_diagonal_stride():
 #                 b >> B(-1, lambda x, y: x + y)[0]
 #                 b = a
 
-#     sdfg = program.to_sdfg(coarsen=True)
+#     sdfg = program.to_sdfg(simplify=True)
 #     assert sdfg.apply_transformations(Vectorization) == 1
 
 #     N.set(64)
@@ -215,7 +215,7 @@ def test_diagonal_stride():
 #                 b >> B(-1, lambda x, y: max(x,y))[0]
 #                 b = a
 
-#     sdfg = program.to_sdfg(coarsen=True)
+#     sdfg = program.to_sdfg(simplify=True)
 #     assert sdfg.apply_transformations(Vectorization) == 1
 
 #     N.set(64)
@@ -233,7 +233,7 @@ def test_diagonal_stride():
 #                 b >> B(-1, lambda x, y: min(x,y))[0]
 #                 b = a
 
-#     sdfg = program.to_sdfg(coarsen=True)
+#     sdfg = program.to_sdfg(simplify=True)
 #     assert sdfg.apply_transformations(Vectorization) == 1
 
 #     N.set(64)
@@ -253,7 +253,7 @@ def test_unsupported_wcr_ptr():
                 b >> B(-1, lambda x, y: x + y)[0]
                 b = a
 
-    sdfg = program.to_sdfg(coarsen=True)
+    sdfg = program.to_sdfg(simplify=True)
     assert sdfg.apply_transformations(Vectorization) == 0
 
 
@@ -267,7 +267,7 @@ def test_unsupported_wcr_vec():
                 b >> B(-1, lambda x, y: x + y)[0]
                 b = a
 
-    sdfg = program.to_sdfg(coarsen=True)
+    sdfg = program.to_sdfg(simplify=True)
     assert sdfg.apply_transformations(Vectorization) == 0
 
 
@@ -317,7 +317,7 @@ def test_preamble():
                 b >> B[i]
                 b = a
 
-    sdfg = program.to_sdfg(coarsen=True)
+    sdfg = program.to_sdfg(simplify=True)
     assert sdfg.apply_transformations(Vectorization) == 1
 
     A = np.ndarray([N.get()], dtype=np.float32)
@@ -329,7 +329,7 @@ def test_preamble():
 
 
 def test_propagate_parent_stride():
-    sdfg: dace.SDFG = tovec2.to_sdfg(coarsen=True)
+    sdfg: dace.SDFG = tovec2.to_sdfg(simplify=True)
     assert sdfg.apply_transformations(Vectorization,
                                       options={
                                           'vector_len': 2,
@@ -342,7 +342,7 @@ def test_propagate_parent_stride():
     return sdfg
 
 def test_propagate_parent_non_stride():
-    sdfg: dace.SDFG = tovec.to_sdfg(coarsen=True)
+    sdfg: dace.SDFG = tovec.to_sdfg(simplify=True)
     assert sdfg.apply_transformations(Vectorization,
                                       options={
                                           'vector_len': 2,
@@ -380,7 +380,7 @@ def test_supported_types():
     for t in types:
 
         sdfg = copy_kernel(dace.DTYPE_TO_TYPECLASS[t],
-                           dace.DTYPE_TO_TYPECLASS[t]).to_sdfg(coarsen=True)
+                           dace.DTYPE_TO_TYPECLASS[t]).to_sdfg(simplify=True)
         assert sdfg.apply_transformations(Vectorization, {'vector_len': 2}) == 1
 
         N.set(64)
