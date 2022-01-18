@@ -222,12 +222,7 @@ def parse_dace_program(name: str,
             and (time.time() - ProgramVisitor.start_time) >= 5):
         initial, total = ProgramVisitor.progress_bar
         ProgramVisitor.progress_bar = tqdm(total=total, initial=initial, desc='Parsing Python program')
-    if ProgramVisitor.progress_bar is not None:
-        if isinstance(ProgramVisitor.progress_bar, tuple):
-            i, t = ProgramVisitor.progress_bar
-            ProgramVisitor.progress_bar = (i + 1, t)
-        else:
-            ProgramVisitor.progress_bar.update(1)
+    ProgramVisitor.increment_progress()
     if teardown_progress:
         if not isinstance(ProgramVisitor.progress_bar, tuple):
             ProgramVisitor.progress_bar.close()
@@ -1098,6 +1093,26 @@ class ProgramVisitor(ExtNodeVisitor):
 
         # Indirections
         self.indirections = dict()
+
+    @classmethod
+    def progress_count(cls) -> int:
+        """ Returns the number of parsed SDFGs so far within this run. """
+        if cls.progress_bar is None:
+            return 0
+        if isinstance(cls.progress_bar, tuple):
+            return cls.progress_bar[0]
+        else:
+            return cls.progress_bar.n
+
+    @classmethod
+    def increment_progress(cls, number=1):
+        """ Adds a number of parsed SDFGs to the progress bar (whether visible or not). """
+        if cls.progress_bar is not None:
+            if isinstance(cls.progress_bar, tuple):
+                i, t = cls.progress_bar
+                cls.progress_bar = (i + number, t)
+            else:
+                cls.progress_bar.update(number)
 
     def visit(self, node: ast.AST):
         """Visit a node."""
@@ -3279,6 +3294,7 @@ class ProgramVisitor(ExtNodeVisitor):
             args = posargs + kwargs
             required_args = [a for a in sdfg.arglist().keys() if a not in sdfg.symbols and not a.startswith('__return')]
             all_args = required_args
+            self.increment_progress()
         elif isinstance(func, SDFGConvertible) or self._has_sdfg(func):
             argnames, constant_args = func.__sdfg_signature__()
             posargs = [(aname, self._parse_function_arg(arg)) for aname, arg in zip(argnames, node.args)]
@@ -3291,6 +3307,7 @@ class ProgramVisitor(ExtNodeVisitor):
             if hasattr(fcopy, 'global_vars'):
                 fcopy.global_vars = {**self.globals, **func.global_vars}
 
+            cnt = self.progress_count()
             try:
                 fargs = tuple(self._eval_arg(arg) for _, arg in posargs)
                 fkwargs = {k: self._eval_arg(arg) for k, arg in kwargs}
@@ -3305,6 +3322,11 @@ class ProgramVisitor(ExtNodeVisitor):
                     posargs = [(k, v) for k, v in posargs if k in required_args]
                     kwargs = [(k, v) for k, v in kwargs if k in required_args]
                     args = posargs + kwargs
+
+                # Handle parsing progress bar for non-dace-program SDFG convertibles
+                if cnt == self.progress_count():
+                    self.increment_progress()
+
 
             except Exception as ex:  # Parsing failure
                 # If error should propagate outwards, do not try to parse as callback
