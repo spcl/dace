@@ -1065,8 +1065,8 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                         if bank_high-bank_low > 1:
                             arrsize = dace.symbolic.pystr_to_symbolic(f"int_ceil(({str(arrsize)}) , ({str(bank_high - bank_low)}))")
                         else:
-                            arrsize = dace.symbolic.pystr_to_symbolic(f"({str(arrsize)}) / {str(bank_high - bank_low)}")
-                            
+                            arrsize = dace.symbolic.pystr_to_symbolic(f"({str(arrsize)})")
+
                         bank_offset = bank_low
 
                         if bank_type == "HBM":
