@@ -174,7 +174,6 @@ class Vectorization(transformation.SingleStateTransformation):
 
     _level = 0  # used to prevent infinite loops
 
-
     @classmethod
     def expressions(cls):
         return [sdutil.node_path_graph(cls.map_entry)]
@@ -189,12 +188,11 @@ class Vectorization(transformation.SingleStateTransformation):
             return False
 
         # To support recursivity in the FPGA case, see below
-        if isinstance(self._map_entry, nodes.MapEntry):
-            map_entry = self._map_entry
-            state = get_innermost_state_for_node(sdfg, map_entry)
+
+        if self._level == 0:
+            state = graph
         else:
-            map_entry = self._map_entry(sdfg)
-            state = sdfg.node(self.state_id)
+            state = get_innermost_state_for_node(sdfg, map_entry)
 
         subgraph = state.scope_subgraph(map_entry)
         subgraph_contents = state.scope_subgraph(map_entry, include_entry=False, include_exit=False)
@@ -332,13 +330,13 @@ class Vectorization(transformation.SingleStateTransformation):
         if self.target == dtypes.ScheduleType.FPGA_Device and self._level == 0:
             maps_to_vectorize, data_descriptors_to_vectorize = collect_maps_to_vectorize(sdfg, state, map_entry)
 
-            old_map_entry = self._map_entry
+            old_map_entry = self.map_entry
             self._level = 1  # To prevent infinte loop
 
             for m in maps_to_vectorize:
-                self._map_entry = m
+                self.map_entry = m
 
-                if not self.can_be_applied(get_innermost_state_for_node(sdfg, m), candidate, expr_index,
+                if not self.can_be_applied(get_innermost_state_for_node(sdfg, m), expr_index,
                                            get_innermost_sdfg_for_node(sdfg, m), permissive):
                     return False
 
@@ -397,7 +395,7 @@ class Vectorization(transformation.SingleStateTransformation):
                     if e.data.assignments != {} or e.data.condition.as_string != "1":
                         return False
 
-            self._map_entry = old_map_entry
+            self.map_entry = old_map_entry
             self._level = 0
 
             # Run the vector inference algorithm to check if vectorization is feasible
@@ -421,24 +419,22 @@ class Vectorization(transformation.SingleStateTransformation):
         param = symbolic.pystr_to_symbolic(map_entry.map.params[-1])
 
         # To support recursivity in the FPGA case, see below
-        if isinstance(self._map_entry, nodes.MapEntry):
-            map_entry = self._map_entry
-            state = get_innermost_state_for_node(sdfg, map_entry)
+        if self._level == 0:
+            state = graph
         else:
-            map_entry = self._map_entry(sdfg)
-            state = sdfg.node(self.state_id)
+            state = get_innermost_state_for_node(sdfg, map_entry)
 
         if self.target == dtypes.ScheduleType.FPGA_Device and self._level == 0:
 
             maps_to_vectorize, data_descriptors_to_vectorize = collect_maps_to_vectorize(sdfg, state, map_entry)
 
-            old_map_entry = self._map_entry
+            old_map_entry = self.map_entry
             self._level = 1  # To prevent infinte loop
 
             for m in maps_to_vectorize:
-                self._map_entry = m
+                self.map_entry = m
 
-                self.apply(get_innermost_sdfg_for_node(sdfg, m))
+                self.apply(get_innermost_state_for_node(sdfg, m), get_innermost_sdfg_for_node(sdfg, m))
 
             # Change the subset in the post state that copies the data back to the host
             if len(sdfg.states()) < 3 or not sdfg.states()[-1].name.startswith('post_'):
@@ -468,7 +464,7 @@ class Vectorization(transformation.SingleStateTransformation):
                     new_strides[i] = new_strides[i] / self.vector_len
                 correct_sdfg.arrays[a].strides = new_strides
 
-            self._map_entry = old_map_entry
+            self.map_entry = old_map_entry
             self._level = 0
             return
 
