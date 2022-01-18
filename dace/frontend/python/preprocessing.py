@@ -153,10 +153,10 @@ class ConditionalCodeResolver(ast.NodeTransformer):
             test = RewriteSympyEquality(self.globals).visit(node.test)
             result = astutils.evalnode(test, self.globals)
 
-            if (result is True or (isinstance(result, sympy.Basic) and result == True)):
+            if (isinstance(result, sympy.Basic) and result == True) or result:
                 # Only return "if" body
                 return node.body
-            elif (result is False or (isinstance(result, sympy.Basic) and result == False)):
+            elif (isinstance(result, sympy.Basic) and result == False) or not result:
                 # Only return "else" body
                 return node.orelse
             # Any other case is indeterminate, fall back to generic visit
@@ -226,7 +226,7 @@ class LoopUnroller(ast.NodeTransformer):
         super().__init__()
         self.globals = globals
         self.filename = filename
-        self.threshold = Config.get('frontend', 'unroll_threshold')
+        self.threshold = int(Config.get('frontend', 'unroll_threshold'))
 
     def visit_For(self, node: ast.For) -> Any:
         # Avoid import loops
@@ -511,6 +511,14 @@ class GlobalResolver(ast.NodeTransformer):
             if isinstance(value, SDFG) or hasattr(value, '__sdfg__'):
                 self.closure.closure_sdfgs[id(value)] = (qualname, value)
             else:
+                # If this is a function call to a None function, do not add its result to the closure
+                if isinstance(parent_node, ast.Call):
+                    fqname = getattr(parent_node.func, 'qualname', astutils.rname(parent_node.func))
+                    if fqname in self.closure.closure_constants and self.closure.closure_constants[fqname] is None:
+                        return None
+                    if hasattr(parent_node.func, 'n') and parent_node.func.n is None:
+                        return None
+
                 self.closure.closure_constants[qualname] = value
 
             # Compatibility check since Python changed their AST nodes
