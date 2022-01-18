@@ -3,7 +3,6 @@
     subclasses and values can be registered externally. """
 
 from aenum import Enum, extend_enum
-from copy import deepcopy
 from typing import Dict, Type
 
 

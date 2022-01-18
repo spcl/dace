@@ -24,7 +24,7 @@ def test_map_interchange():
     dace.Config.set('experimental', 'validate_undefs', value=True)
 
     sdfg = miprog.to_sdfg()
-    sdfg.coarsen_dataflow()
+    sdfg.simplify()
     sdfg.validate()
 
     # Apply map interchange

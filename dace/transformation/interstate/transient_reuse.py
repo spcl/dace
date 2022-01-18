@@ -1,34 +1,25 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-from dace import registry, sdfg as sd
+from dace import sdfg as sd
 from dace.sdfg import nodes
 from dace.transformation import transformation
 from dace.properties import make_properties
 import networkx as nx
 
 
-@registry.autoregister
 @make_properties
-class TransientReuse(transformation.Transformation):
+class TransientReuse(transformation.MultiStateTransformation):
     """ Implements the TransientReuse transformation.
         Finds all possible reuses of arrays,
         decides for a valid combination and changes sdfg accordingly.
     """
-    @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
+    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
         return True
 
-    @staticmethod
-    def match_to_str(graph, candidate):
-        return graph.label
-
-    @staticmethod
-    def expressions():
+    @classmethod
+    def expressions(cls):
         return [sd.SDFG('_')]
 
-    def expansion(node):
-        pass
-
-    def apply(self, sdfg):
+    def apply(self, _, sdfg):
 
         memory_before = 0
         arrays = {}

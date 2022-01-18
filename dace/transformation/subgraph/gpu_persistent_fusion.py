@@ -10,7 +10,6 @@ from dace.sdfg.graph import SubgraphView
 from dace.transformation.transformation import SubgraphTransformation
 
 
-@registry.autoregister
 @make_properties
 class GPUPersistentKernel(SubgraphTransformation):
     """

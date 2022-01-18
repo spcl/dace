@@ -1,9 +1,9 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
-from copy import deepcopy as dcpy
+from copy import deepcopy as dcpy, copy
 from functools import reduce
 import operator
-from typing import List, Set, Union
+from typing import List, Optional, Set, Union
 import warnings
 
 import dace
@@ -34,7 +34,7 @@ class Memlet(object):
                        dtype=bool,
                        desc='Is the number of elements moved determined at '
                        'runtime (e.g., data dependent)')
-    subset = SubsetProperty(allow_none=True, desc='Subset of elements to move from the data ' 'attached to this edge.')
+    subset = SubsetProperty(allow_none=True, desc='Subset of elements to move from the data attached to this edge.')
     other_subset = SubsetProperty(allow_none=True,
                                   desc='Subset of elements after reindexing to the data not attached '
                                   'to this edge (e.g., for offsets and reshaping).')
@@ -46,7 +46,7 @@ class Memlet(object):
                          'value, and returns the value after resolution')
 
     # Code generation and validation hints
-    debuginfo = DebugInfoProperty(desc='Line information to track source and ' 'generated code')
+    debuginfo = DebugInfoProperty(desc='Line information to track source and generated code')
     wcr_nonatomic = Property(dtype=bool,
                              default=False,
                              desc='If True, always generates non-conflicting '
@@ -148,6 +148,21 @@ class Memlet(object):
             self.dst_subset.simplify()
 
         self.num_accesses = simplify(self.num_accesses)
+    @staticmethod
+    def from_memlet(memlet: 'Memlet') -> 'Memlet':
+        sbs = subsets.Range(memlet.subset.ndrange()) if memlet.subset is not None else None
+        osbs = subsets.Range(memlet.other_subset.ndrange()) if memlet.other_subset is not None else None
+        result = Memlet(data=memlet.data,
+                        subset=sbs,
+                        other_subset=osbs,
+                        volume=memlet.volume,
+                        dynamic=memlet.dynamic,
+                        wcr=memlet.wcr,
+                        debuginfo=copy(memlet.debuginfo),
+                        wcr_nonatomic=memlet.wcr_nonatomic,
+                        allow_oob=memlet.allow_oob)
+        result._is_data_src = memlet._is_data_src
+        return result
 
     def to_json(self):
         attrs = dace.serialize.all_properties_to_json(self)
@@ -605,12 +620,19 @@ class MemletTree(object):
         multiple inputs from the same access node are used.
     """
     def __init__(self,
-                 edge,
-                 parent=None,
-                 children=None):  # type: (dace.sdfg.graph.MultiConnectorEdge, MemletTree, List[MemletTree]) -> None
+                 edge: 'dace.sdfg.graph.MultiConnectorEdge[Memlet]',
+                 downwards: bool = True,
+                 parent: 'MemletTree' = None,
+                 children: Optional[List['MemletTree']] = None) -> None:
         self.edge = edge
         self.parent = parent
         self.children = children or []
+        self._downwards = downwards
+
+    @property
+    def downwards(self):
+        """ If True, this memlet tree points downwards (rooted at the source node). """
+        return self._downwards
 
     def __iter__(self):
         if self.parent is not None:
@@ -629,6 +651,16 @@ class MemletTree(object):
         while node.parent is not None:
             node = node.parent
         return node
+
+    def leaves(self) -> 'List[dace.sdfg.graph.MultiConnectorEdge[Memlet]]':
+        """ Returns a list of all the leaves of this MemletTree, i.e., the innermost edges. """
+        if not self.children:
+            return [self.edge]
+
+        result = []
+        for child in self.children:
+            result.extend(child.leaves())
+        return result
 
     def traverse_children(self, include_self=False):
         if include_self:

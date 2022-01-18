@@ -6,15 +6,17 @@ import copy
 import warnings
 from abc import ABC
 
-from dace import registry, symbolic, subsets, sdfg as sd
+from dace import symbolic, subsets, sdfg as sd
 from dace.properties import Property, make_properties
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
+from dace.sdfg.sdfg import SDFG
+from dace.sdfg.state import SDFGState
 from dace.transformation import transformation as xf
 
 
 @make_properties
-class LocalStorage(xf.Transformation, ABC):
+class LocalStorage(xf.SingleStateTransformation, ABC):
     """ Implements the Local Storage prototype transformation, which adds a
         transient data node between two nodes.
     """
@@ -41,20 +43,18 @@ class LocalStorage(xf.Transformation, ABC):
         # Skip memlet propagation for now
         return True
 
-    @staticmethod
-    def expressions():
-        return [sdutil.node_path_graph(LocalStorage.node_a, LocalStorage.node_b)]
+    @classmethod
+    def expressions(cls):
+        return [sdutil.node_path_graph(cls.node_a, cls.node_b)]
 
-    @staticmethod
-    def match_to_str(graph, candidate):
-        a = candidate[LocalStorage.node_a]
-        b = candidate[LocalStorage.node_b]
+    def match_to_str(self, graph):
+        a = self.node_a
+        b = self.node_b
         return '%s -> %s' % (a, b)
 
-    def apply(self, sdfg):
-        graph = sdfg.nodes()[self.state_id]
-        node_a = self.node_a(sdfg)
-        node_b = self.node_b(sdfg)
+    def apply(self, graph: SDFGState, sdfg: SDFG):
+        node_a = self.node_a
+        node_b = self.node_b
         prefix = self.prefix
 
         # Determine direction of new memlet
@@ -118,16 +118,14 @@ class LocalStorage(xf.Transformation, ABC):
         return data_node
 
 
-@registry.autoregister_params(singlestate=True)
 @make_properties
 class InLocalStorage(LocalStorage):
     """ Implements the InLocalStorage transformation, which adds a transient
         data node between two scope entry nodes.
     """
-    @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
-        node_a = graph.nodes()[candidate[LocalStorage.node_a]]
-        node_b = graph.nodes()[candidate[LocalStorage.node_b]]
+    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
+        node_a = self.node_a
+        node_b = self.node_b
         if (isinstance(node_a, nodes.EntryNode) and isinstance(node_b, nodes.EntryNode)):
             # Empty memlets cannot match
             for edge in graph.edges_between(node_a, node_b):
@@ -136,16 +134,14 @@ class InLocalStorage(LocalStorage):
         return False
 
 
-@registry.autoregister_params(singlestate=True)
 @make_properties
 class OutLocalStorage(LocalStorage):
     """ Implements the OutLocalStorage transformation, which adds a transient
         data node between two scope exit nodes.
     """
-    @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
-        node_a = graph.nodes()[candidate[LocalStorage.node_a]]
-        node_b = graph.nodes()[candidate[LocalStorage.node_b]]
+    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
+        node_a = self.node_a
+        node_b = self.node_b
 
         if (isinstance(node_a, nodes.ExitNode) and isinstance(node_b, nodes.ExitNode)):
 

@@ -302,7 +302,7 @@ def nest_state_subgraph(sdfg: SDFG,
     return nested_sdfg
 
 
-def state_fission(sdfg: SDFG, subgraph: graph.SubgraphView) -> SDFGState:
+def state_fission(sdfg: SDFG, subgraph: graph.SubgraphView, label: Optional[str] = None) -> SDFGState:
     '''
     Given a subgraph, adds a new SDFG state before the state that contains it,
     removes the subgraph from the original state, and connects the two states.
@@ -311,7 +311,7 @@ def state_fission(sdfg: SDFG, subgraph: graph.SubgraphView) -> SDFGState:
     '''
 
     state: SDFGState = subgraph.graph
-    newstate = sdfg.add_state_before(state)
+    newstate = sdfg.add_state_before(state, label=label)
 
     # Save edges before removing nodes
     orig_edges = subgraph.edges()
@@ -376,11 +376,11 @@ def unsqueeze_memlet(internal_memlet: Memlet,
         :return: Offset Memlet to set on the resulting graph.
     """
     internal_subset = _get_internal_subset(internal_memlet, external_memlet, use_src_subset, use_dst_subset)
-    result = copy.deepcopy(internal_memlet)
+    result = Memlet.from_memlet(internal_memlet)
     result.data = external_memlet.data
-    result.other_subset = None
-    result.subset = copy.deepcopy(internal_subset)
-
+    result.subset = internal_subset
+    result._is_data_src = internal_memlet._is_data_src
+    
     shape = external_memlet.subset.size()
     if len(internal_subset) < len(external_memlet.subset):
         ones = [i for i, d in enumerate(shape) if d == 1]
@@ -683,7 +683,7 @@ def tile(sdfg: SDFG, map_entry: nodes.MapEntry, divides_evenly: bool, skew: bool
                                   tile_size=str(v),
                                   divides_evenly=divides_evenly,
                                   skew=skew),
-                             _map_entry=map_entry)
+                             map_entry=map_entry)
 
 
 def permute_map(map_entry: nodes.MapEntry, perm: List[int]):
@@ -714,8 +714,8 @@ def extract_map_dims(sdfg: SDFG, map_entry: nodes.MapEntry, dims: List[int]) -> 
         for idx in range(len(dims) - 1):
             extracted_map, _ = MapCollapse.apply_to(
                 sdfg,
-                _outer_map_entry=extracted_map,
-                _inner_map_entry=entries[idx + 1],
+                outer_map_entry=extracted_map,
+                inner_map_entry=entries[idx + 1],
                 permissive=True,  # Since MapExpansion creates sequential maps
             )
 
@@ -724,8 +724,8 @@ def extract_map_dims(sdfg: SDFG, map_entry: nodes.MapEntry, dims: List[int]) -> 
         for idx in range(len(dims), len(entries) - 1):
             map_to_collapse, _ = MapCollapse.apply_to(
                 sdfg,
-                _outer_map_entry=map_to_collapse,
-                _inner_map_entry=entries[idx + 1],
+                outer_map_entry=map_to_collapse,
+                inner_map_entry=entries[idx + 1],
                 permissive=True,  # Since MapExpansion creates sequential maps
             )
     else:

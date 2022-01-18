@@ -90,6 +90,7 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG'):
                 symbols[str(sym)] = sym.dtype
         visited = set()
         visited_edges = set()
+        initialized_transients = set()
         # Run through states via DFS, ensuring that only the defined symbols
         # are available for validation
         for edge in sdfg.dfs_edges(start_state):
@@ -167,7 +168,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
     sdfg = sdfg or state.parent
     state_id = state_id or sdfg.node_id(state)
     symbols = symbols or {}
-    initialized_transients = initialized_transients or {'__pystate'}
+    initialized_transients = (initialized_transients if initialized_transients is not None else {'__pystate'})
     scope_local_constants: dict[nd.MapEntry, list[str]] = dict()
     scope = state.scope_dict()
 

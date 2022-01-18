@@ -113,7 +113,7 @@ def optimize_for_cpu(sdfg: dace.SDFG, m: int, n: int, k: int):
         entry_inner, inner_state = find_map_and_state_by_param(sdfg, 'k')
         Vectorization.apply_to(inner_state.parent,
                                dict(vector_len=4, preamble=False, postamble=postamble),
-                               _map_entry=entry_inner)
+                               map_entry=entry_inner)
 
     # Mark outer tile map as sequential to remove atomics
     find_map_by_param(sdfg, 'tile_k').map.schedule = dace.ScheduleType.Sequential
@@ -122,7 +122,7 @@ def optimize_for_cpu(sdfg: dace.SDFG, m: int, n: int, k: int):
     find_map_by_param(sdfg, 'o0').map.collapse = 2
     tile_i = find_map_by_param(sdfg, 'tile_i')
     tile_j = find_map_by_param(sdfg, 'tile_j')
-    MapCollapse.apply_to(sdfg, _outer_map_entry=tile_i, _inner_map_entry=tile_j)
+    MapCollapse.apply_to(sdfg, outer_map_entry=tile_i, inner_map_entry=tile_j)
     tile_ij = find_map_by_param(sdfg, 'tile_i')  # Find newly created map
     tile_ij.map.schedule = dace.ScheduleType.CPU_Multicore
     tile_ij.map.collapse = 2
@@ -152,8 +152,8 @@ def optimize_for_gpu(sdfg: dace.SDFG, m: int, n: int, k: int):
     gtile_j = find_map_by_param(sdfg, 'tile_j')
     btile_i = find_map_by_param(sdfg, 'tile1_i')
     btile_j = find_map_by_param(sdfg, 'tile1_j')
-    MapCollapse.apply_to(sdfg, _outer_map_entry=gtile_i, _inner_map_entry=gtile_j, permissive=True)
-    MapCollapse.apply_to(sdfg, _outer_map_entry=btile_i, _inner_map_entry=btile_j, permissive=True)
+    MapCollapse.apply_to(sdfg, outer_map_entry=gtile_i, inner_map_entry=gtile_j, permissive=True)
+    MapCollapse.apply_to(sdfg, outer_map_entry=btile_i, inner_map_entry=btile_j, permissive=True)
     btile = find_map_by_param(sdfg, 'tile1_i')
     btile.map.schedule = dace.ScheduleType.GPU_ThreadBlock
 
@@ -183,7 +183,7 @@ def optimize_for_gpu(sdfg: dace.SDFG, m: int, n: int, k: int):
     ttile.map.unroll = True
 
     # Apply double-buffering on shared memory
-    DoubleBuffering.apply_to(sdfg, _map_entry=ktile, _transient=smem_a)
+    DoubleBuffering.apply_to(sdfg, map_entry=ktile, transient=smem_a)
 
 
 #####################################################################

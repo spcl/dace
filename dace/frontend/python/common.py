@@ -108,8 +108,8 @@ class SDFGClosure:
     closure_arrays: Dict[str, Tuple[str, data.Data, Callable[[], Any], bool]]
 
     # Nested SDFGs and SDFG-convertible objects that are used in the program
-    # (mapping from name to object)
-    closure_sdfgs: Dict[str, Union[SDFG, SDFGConvertible]]
+    # (mapping from object id to (name, object))
+    closure_sdfgs: Dict[int, Tuple[str, Union[SDFG, SDFGConvertible]]]
 
     # Callbacks to Python callables that are used in the program
     # Mapping from unique names to a 3-tuple of (python name, callable,

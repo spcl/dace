@@ -71,7 +71,7 @@ sdfg.add_edge(loopstate0, loopstate1, dace.InterstateEdge())
 sdfg.validate()
 
 # Fuses redundant states and removes unnecessary transient arrays
-sdfg.coarsen_dataflow()
+sdfg.simplify()
 
 ######################################
 if __name__ == '__main__':

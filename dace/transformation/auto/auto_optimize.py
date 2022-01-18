@@ -54,7 +54,7 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
     debugprint = config.Config.get_bool('debugprint')
     if isinstance(graph_or_subgraph, SDFG):
         # If we have an SDFG, recurse into graphs
-        graph_or_subgraph.coarsen_dataflow(validate_all=validate_all)
+        graph_or_subgraph.simplify(validate_all=validate_all)
         # MapFusion for trivial cases
         graph_or_subgraph.apply_transformations_repeated(MapFusion, validate_all=validate_all)
         # recurse into graphs
@@ -109,7 +109,7 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
                     for node in graph.nodes():
                         if isinstance(node, dace.libraries.standard.nodes.Reduce):
                             try:
-                                ReduceExpansion.apply_to(sdfg, _reduce=node)
+                                ReduceExpansion.apply_to(sdfg, reduce=node)
                             except ValueError as e:
                                 pass
             # permutation settings
@@ -441,7 +441,7 @@ def auto_optimize(sdfg: SDFG,
     """
     Runs a basic sequence of transformations to optimize a given SDFG to decent
     performance. In particular, performs the following:
-        * Dataflow coarsening
+        * Simplify
         * Auto-parallelization (loop-to-map)
         * Greedy application of SubgraphFusion
         * Tiled write-conflict resolution (MapTiling -> AccumulateTransient)
@@ -462,11 +462,11 @@ def auto_optimize(sdfg: SDFG,
     """
     debugprint = config.Config.get_bool('debugprint')
 
-    # Dataflow coarsening and loop parallelization
+    # Simplification and loop parallelization
     transformed = True
     sdfg.apply_transformations_repeated(TrivialMapElimination, validate=validate, validate_all=validate_all)
     while transformed:
-        sdfg.coarsen_dataflow(validate=False, validate_all=validate_all)
+        sdfg.simplify(validate=False, validate_all=validate_all)
         for s in sdfg.sdfg_list:
             xfh.split_interstate_edges(s)
         l2ms = sdfg.apply_transformations_repeated((LoopToMap, RefineNestedAccess),
@@ -475,17 +475,17 @@ def auto_optimize(sdfg: SDFG,
         transformed = l2ms > 0
 
     # Collapse maps and eliminate trivial dimensions
-    sdfg.coarsen_dataflow()
+    sdfg.simplify()
     sdfg.apply_transformations_repeated(MapCollapse, validate=False, validate_all=validate_all)
 
     # Apply GPU transformations and set library node implementations
 
     if device == dtypes.DeviceType.GPU:
         sdfg.apply_gpu_transformations()
-        sdfg.coarsen_dataflow()
+        sdfg.simplify()
 
     # fuse subgraphs greedily
-    sdfg.coarsen_dataflow()
+    sdfg.simplify()
 
     greedy_fuse(sdfg, device=device, validate_all=validate_all)
 

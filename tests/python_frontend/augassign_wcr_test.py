@@ -46,7 +46,7 @@ def test_augassign_wcr():
     B = np.empty((10, ), dtype=np.int32)
     W = np.random.randint(2, size=(10, ), dtype=np.bool_)
 
-    test_sdfg = augassign_wcr.to_sdfg(coarsen=False)
+    test_sdfg = augassign_wcr.to_sdfg(simplify=False)
     wcr_count = 0
     for sdfg in test_sdfg.sdfg_list:
         for state in sdfg.nodes():
@@ -66,7 +66,7 @@ def test_augassign_wcr2():
     C = np.zeros((10, ), dtype=np.int32)
     W = np.random.randint(2, size=(10, 10, 10), dtype=np.bool_)
 
-    test_sdfg = augassign_wcr2.to_sdfg(coarsen=False)
+    test_sdfg = augassign_wcr2.to_sdfg(simplify=False)
     wcr_count = 0
     for sdfg in test_sdfg.sdfg_list:
         for state in sdfg.nodes():
@@ -89,7 +89,7 @@ def test_augassign_wcr3():
     ind = np.random.randint(0, 10, size=(10, ), dtype=np.int32)
     W = np.random.randint(2, size=(10, 10, 10), dtype=np.bool_)
 
-    test_sdfg = augassign_wcr3.to_sdfg(coarsen=False)
+    test_sdfg = augassign_wcr3.to_sdfg(simplify=False)
     wcr_count = 0
     for sdfg in test_sdfg.sdfg_list:
         for state in sdfg.nodes():
@@ -111,7 +111,7 @@ def test_augassign_no_wcr():
     def no_wcr(A: dace.int32[5, 5, 5]):
         A[2, 3, :] += A[3, 2, :]
 
-    sdfg = no_wcr.to_sdfg(coarsen=False)
+    sdfg = no_wcr.to_sdfg(simplify=False)
     sdfg.save('test.sdfg')
     for e, _ in sdfg.all_edges_recursive():
         if hasattr(e.data, 'wcr'):
@@ -129,7 +129,7 @@ def test_augassign_no_wcr2():
     def no_wcr(A: dace.int32[5, 5, 5]):
         A[2, 3, 1:4] += A[2:5, 1, 4]
 
-    sdfg = no_wcr.to_sdfg(coarsen=False)
+    sdfg = no_wcr.to_sdfg(simplify=False)
     sdfg.save('test.sdfg')
     for e, _ in sdfg.all_edges_recursive():
         if hasattr(e.data, 'wcr'):

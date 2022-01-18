@@ -95,12 +95,12 @@ def run_nussinov(device_type: dace.dtypes.DeviceType):
     if device_type in {dace.dtypes.DeviceType.CPU, dace.dtypes.DeviceType.GPU}:
         # Parse the SDFG and apply autopot
         sdfg = kernel.to_sdfg()
-        sdfg.coarsen_dataflow()
+        sdfg.simplify()
         dace_res = sdfg(seq=seq, N=N)
 
     elif device_type == dace.dtypes.DeviceType.FPGA:
         # Parse SDFG and apply FPGA friendly optimization
-        sdfg = kernel.to_sdfg(coarsen=True)
+        sdfg = kernel.to_sdfg(simplify=True)
         applied = sdfg.apply_transformations([FPGATransformSDFG])
         assert applied == 1
 

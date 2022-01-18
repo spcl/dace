@@ -9,7 +9,7 @@ import types
 
 import dace.properties
 from dace.sdfg.nodes import LibraryNode, full_class_path
-from dace.transformation.transformation import (Transformation, ExpandTransformation)
+from dace.transformation.transformation import (PatternTransformation, ExpandTransformation)
 
 
 def register_implementation(implementation_name, expansion_cls, node_cls):
@@ -67,8 +67,8 @@ def register_transformation(transformation_cls, library):
        but this function can be used to add additional transformations from an
        external context."""
 
-    if not issubclass(transformation_cls, Transformation):
-        raise TypeError("Expected Transformation, got: {}".format(transformation_cls.__name__))
+    if not issubclass(transformation_cls, PatternTransformation):
+        raise TypeError("Expected PatternTransformation, got: {}".format(transformation_cls.__name__))
     if not isinstance(library, types.ModuleType):
         raise TypeError("Expected Python module, got: {}".format(type(library).__name__))
     if (hasattr(transformation_cls, "_dace_library_name")
@@ -97,7 +97,7 @@ def register_library(module_name, name):
         if isinstance(value, type):
             if issubclass(value, LibraryNode):
                 register_node(value, module)
-            elif issubclass(value, Transformation) and not issubclass(value, ExpandTransformation):
+            elif issubclass(value, PatternTransformation) and not issubclass(value, ExpandTransformation):
                 register_transformation(value, module)
 
 

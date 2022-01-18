@@ -27,14 +27,14 @@ def _test_half(veclen):
     A = np.random.rand(24).astype(np.float16)
     B = np.random.rand(24).astype(np.float16)
     sdfg = halftest.to_sdfg()
-    sdfg.coarsen_dataflow()
+    sdfg.simplify()
     sdfg.apply_gpu_transformations()
 
     # Apply vectorization on each map and count applied
     applied = 0
     for xform in Optimizer(sdfg).get_pattern_matches(patterns=Vectorization,
                                                      options=dict(vector_len=veclen, postamble=False)):
-        xform.apply(sdfg)
+        xform.apply(sdfg.node(xform.state_id), sdfg)
         applied += 1
     assert applied == 2
 

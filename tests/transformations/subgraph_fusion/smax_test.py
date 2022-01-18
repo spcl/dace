@@ -76,7 +76,7 @@ def get_partition(sdfg, graph):
 def test_2fuse():
     sdfg = softmax.to_sdfg()
     sdfg.name = 'softmax_2part'
-    sdfg.coarsen_dataflow()
+    sdfg.simplify()
     X_in = np.random.rand(H.get(), B.get(), SN.get(), SM.get()).astype(np.float32)
 
     csdfg = sdfg.compile()
@@ -100,7 +100,7 @@ def test_2fuse():
 def test_1fuse():
     sdfg = softmax.to_sdfg()
     sdfg.name = 'softmax_fused'
-    sdfg.coarsen_dataflow()
+    sdfg.simplify()
     X_in = np.random.rand(H.get(), B.get(), SN.get(), SM.get()).astype(np.float32)
 
     csdfg = sdfg.compile()
@@ -125,7 +125,7 @@ def test_1fuse():
 def test_1fuse():
     sdfg = softmax.to_sdfg()
     sdfg.name = 'softmax_fused'
-    sdfg.coarsen_dataflow()
+    sdfg.simplify()
     X_in = np.random.rand(H.get(), B.get(), SN.get(), SM.get()).astype(np.float32)
 
     csdfg = sdfg.compile()

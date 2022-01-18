@@ -14,8 +14,10 @@ import dace.serialize
 from dace.symbolic import SymExpr, pystr_to_symbolic, simplify
 from dace.dtypes import DebugInfo
 from numbers import Integral, Number
-from typing import List, Set, Union
 import sympy
+from typing import List, Set, Type, Union, TypeVar, Generic
+
+T = TypeVar('T')
 
 ###############################################################################
 # External interface to guarantee correct usage
@@ -62,14 +64,14 @@ class PropertyError(Exception):
     pass
 
 
-class Property:
+class Property(Generic[T]):
     """ Class implementing properties of DaCe objects that conform to strong
     typing, and allow conversion to and from strings to be edited. """
     def __init__(
             self,
             getter=None,
             setter=None,
-            dtype=None,
+            dtype: Type[T] = None,
             default=None,
             from_string=None,
             to_string=None,
@@ -175,7 +177,7 @@ class Property:
         else:
             self.__doc__ = "Object property of type %s" % type(self).__name__
 
-    def __get__(self, obj, objtype=None):
+    def __get__(self, obj, objtype=None) -> T:
         if obj is None:
             # Called on the class rather than an instance, so return the
             # property object itself
@@ -485,10 +487,10 @@ class OrderedDictProperty(Property):
         return ret
 
 
-class ListProperty(Property):
+class ListProperty(Property[List[T]]):
     """ Property type for lists.
     """
-    def __init__(self, element_type, *args, **kwargs):
+    def __init__(self, element_type: T, *args, **kwargs):
         """
         Create a List property with a uniform element type.
         :param element_type: The type of each element in the list, or a function
@@ -557,7 +559,7 @@ class TransformationHistProperty(Property):
     """
     def __init__(self, *args, **kwargs):
         """
-        Create a List property with element type Transformation.
+        Create a List property with element type TransformationBase.
         :param args: Other arguments (inherited from Property).
         :param kwargs: Other keyword arguments (inherited from Property).
         """

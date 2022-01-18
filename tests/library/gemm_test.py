@@ -79,7 +79,7 @@ def run_test(implementation,
     # unique name for sdfg
     C_str = "None" if C_shape is None else (str(C_shape[0]) if len(C_shape) == 1 else f"{C_shape[0]}_{C_shape[1]}")
     sdfg_name = f"{implementation}_{M}_{N}_{K}_{complex}_{transA}_{transB}_{alpha}_{beta}_{C_str}".replace(
-        ".", "_dot_").replace("+", "_plus_").replace("(", "").replace(")", "")
+        ".", "_dot_").replace("+", "_plus_").replace("-", "_minus_").replace("(", "").replace(")", "")
 
     # shape of the transposed arrays
     A_shape = trans_A_shape = [M, K]

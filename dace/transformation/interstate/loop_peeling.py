@@ -4,7 +4,7 @@
 import sympy as sp
 from typing import Optional
 
-from dace import registry, sdfg as sd, symbolic
+from dace import sdfg as sd
 from dace.properties import Property, make_properties, CodeBlock
 from dace.sdfg import graph as gr
 from dace.sdfg import utils as sdutil
@@ -13,7 +13,6 @@ from dace.transformation.interstate.loop_detection import (DetectLoop, find_for_
 from dace.transformation.interstate.loop_unroll import LoopUnroll
 
 
-@registry.autoregister
 @make_properties
 class LoopPeeling(LoopUnroll):
     """
@@ -28,13 +27,12 @@ class LoopPeeling(LoopUnroll):
         'iterations), otherwise peels last `count` iterations.',
     )
 
-    @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, permissive=False):
-        if not DetectLoop.can_be_applied(graph, candidate, expr_index, sdfg, permissive):
+    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
+        if not super().can_be_applied(graph, expr_index, sdfg, permissive):
             return False
 
-        guard = graph.node(candidate[DetectLoop._loop_guard])
-        begin = graph.node(candidate[DetectLoop._loop_begin])
+        guard = self.loop_guard
+        begin = self.loop_begin
 
         # If loop cannot be detected, fail
         found = find_for_loop(sdfg, guard, begin)
@@ -75,12 +73,12 @@ class LoopPeeling(LoopUnroll):
         res = str(itersym) + op + str(end)
         return res
 
-    def apply(self, sdfg: sd.SDFG):
+    def apply(self, _, sdfg: sd.SDFG):
         ####################################################################
         # Obtain loop information
-        guard: sd.SDFGState = sdfg.node(self.subgraph[DetectLoop._loop_guard])
-        begin: sd.SDFGState = sdfg.node(self.subgraph[DetectLoop._loop_begin])
-        after_state: sd.SDFGState = sdfg.node(self.subgraph[DetectLoop._exit_state])
+        guard: sd.SDFGState = self.loop_guard
+        begin: sd.SDFGState = self.loop_begin
+        after_state: sd.SDFGState = self.exit_state
 
         # Obtain iteration variable, range, and stride
         condition_edge = sdfg.edges_between(guard, begin)[0]

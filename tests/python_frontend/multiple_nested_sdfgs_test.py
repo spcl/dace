@@ -65,7 +65,7 @@ def test_call_multiple_sdfgs():
 
         out_tmp_div_sum(out_tmp=out_tmp, tmp_sum=tmp_sum, output=output)
 
-    sdfg = multiple_nested_sdfgs.to_sdfg(coarsen=False)
+    sdfg = multiple_nested_sdfgs.to_sdfg(simplify=False)
     state = sdfg.nodes()[-1]
     for n in state.nodes():
         if isinstance(n, dace.sdfg.nodes.AccessNode):

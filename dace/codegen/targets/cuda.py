@@ -86,8 +86,7 @@ class CUDACodeGen(TargetCodeGenerator):
         self.scope_entry_stream = self._initcode
         self.scope_exit_stream = self._exitcode
 
-        # Annotate CUDA streams and events
-        self._cuda_streams, self._cuda_events = self._compute_cudastreams(sdfg)
+        self._cuda_streams, self._cuda_events = 0, 0
 
         # Register dispatchers
         self._cpu_codegen = dispatcher.get_generic_node_dispatcher()
@@ -134,7 +133,10 @@ class CUDACodeGen(TargetCodeGenerator):
             codestream.write('''DACE_CUDA_CHECK({backend}GetLastError());
             DACE_CUDA_CHECK({backend}DeviceSynchronize());'''.format(backend=self.backend))
 
-    def on_target_used(self) -> None:
+    def preprocess(self, sdfg: SDFG) -> None:
+        # Annotate CUDA streams and events
+        self._cuda_streams, self._cuda_events = self._compute_cudastreams(sdfg)
+
         # Right before finalizing code, write GPU context to state structure
         self._frame.statestruct.append('dace::cuda::Context *gpu_context;')
 
@@ -167,7 +169,7 @@ class CUDACodeGen(TargetCodeGenerator):
         else:
             raise NameError('GPU backend "%s" not recognized' % self.backend)
 
-        params_comma = self._global_sdfg.signature(with_arrays=False)
+        params_comma = self._global_sdfg.signature(with_arrays=False, arglist=self._frame.arglist_scalars_only)
         if params_comma:
             params_comma = ', ' + params_comma
 
@@ -312,7 +314,7 @@ void __dace_exit_cuda({sdfg.name}_t *__state) {{
 
     def declare_array(self, sdfg, dfg, state_id, node, nodedesc, function_stream, declaration_stream):
 
-        fsymbols = sdfg.free_symbols.union(sdfg.constants.keys())
+        fsymbols = self._frame.symbols_and_constants(sdfg)
         if not sdutil.is_nonfree_sym_dependent(node, nodedesc, dfg, fsymbols):
             raise NotImplementedError("The declare_array method should only be used for variables "
                                       "that must have their declaration and allocation separate.")
@@ -1181,7 +1183,8 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                                                        dtypes.AllocationLifetime.Persistent)
                     # Non-free symbol dependent Arrays due to their shape
                     dependent_shape = (isinstance(data_desc, dt.Array) and not isinstance(data_desc, dt.View) and any(
-                        str(s) not in sdfg.free_symbols.union(sdfg.constants.keys()) for s in data_desc.free_symbols))
+                        str(s) not in self._frame.symbols_and_constants(sdfg)
+                        for s in self._frame.free_symbols(data_desc)))
                     try:
                         # NOTE: It is hard to get access to the view-edge here,
                         # so always check the declared-arrays dictionary for
@@ -1362,9 +1365,9 @@ void  *{kname}_args[] = {{ {kargs} }};
                     dynamically-sized blocks that are bounded by a
                     predefined size).
 
-            @note: Kernel dimensions are separate from the map
+            :note: Kernel dimensions are separate from the map
                    variables, and they should be treated as such.
-            @note: To make use of the grid/block 3D registers, we use multi-
+            :note: To make use of the grid/block 3D registers, we use multi-
                    dimensional kernels up to 3 dimensions, and flatten the
                    rest into the third dimension.
         """

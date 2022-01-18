@@ -9,7 +9,6 @@ from dace.sdfg import nodes
 from dace.symbolic import pystr_to_symbolic
 
 
-@registry.autoregister_params(singlestate=True)
 @make_properties
 class MapTilingWithOverlap(MapTiling):
     """ Implements the orthogonal tiling transformation with overlap.
@@ -24,18 +23,17 @@ class MapTilingWithOverlap(MapTiling):
     lower_overlap = ShapeProperty(dtype=tuple, default=None, desc="Lower overlap per dimension")
     upper_overlap = ShapeProperty(dtype=tuple, default=None, desc="Upper overlap per dimension")
 
-    def apply(self, sdfg):
+    def apply(self, graph, sdfg):
         if len(self.lower_overlap) == 0:
             return
         if len(self.upper_overlap) == 0:
             return
 
-        graph = sdfg.nodes()[self.state_id]
-        map_entry = graph.nodes()[self.subgraph[self.map_entry]]
+        map_entry = self.map_entry
 
         # Tile the map
         self.tile_trivial = True
-        super().apply(sdfg)
+        super().apply(graph, sdfg)
         tile_map_entry = graph.in_edges(map_entry)[0].src
         tile_map_exit = graph.exit_node(tile_map_entry)
 

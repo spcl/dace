@@ -46,16 +46,14 @@ settings = [[False, False], [True, False], [False, True]]
 @pytest.mark.parametrize(["in_transient", "out_transient"], settings)
 def test_p1(in_transient, out_transient):
     sdfg = reduction_test_1.to_sdfg()
-    sdfg.coarsen_dataflow()
+    sdfg.simplify()
     state = sdfg.nodes()[0]
     for node in state.nodes():
         if isinstance(node, dace.libraries.standard.nodes.Reduce):
             reduce_node = node
 
-    assert ReduceExpansion.can_be_applied(state, \
-                                          {ReduceExpansion._reduce: state.nodes().index(reduce_node)}, \
-                                          0, \
-                                          sdfg) == True
+    rexp = ReduceExpansion(sdfg, sdfg.sdfg_id, 0, {ReduceExpansion.reduce: state.node_id(reduce_node)}, 0)
+    assert rexp.can_be_applied(state, 0, sdfg) == True
 
     A = np.random.rand(M.get(), N.get()).astype(np.float64)
     B = np.random.rand(M.get(), N.get()).astype(np.float64)
@@ -81,7 +79,7 @@ settings = [[False, False], [True, False], [False, True]]
 @pytest.mark.parametrize(["in_transient", "out_transient"], settings)
 def test_p2(in_transient, out_transient):
     sdfg = reduction_test_2.to_sdfg()
-    sdfg.coarsen_dataflow()
+    sdfg.simplify()
     state = sdfg.nodes()[0]
     A = np.random.rand(M.get(), N.get()).astype(np.float64)
     B = np.random.rand(M.get(), N.get()).astype(np.float64)
