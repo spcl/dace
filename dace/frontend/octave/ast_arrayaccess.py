@@ -11,8 +11,7 @@ class AST_ArrayAccess(AST_Node):
         self.accdims = accdims
 
     def __repr__(self):
-        return "AST_ArrayAccess(" + str(self.arrayname) + ", " + str(
-            self.accdims) + ")"
+        return "AST_ArrayAccess(" + str(self.arrayname) + ", " + str(self.accdims) + ")"
 
     def get_children(self):
         ret = [self.arrayname]
@@ -48,42 +47,32 @@ class AST_ArrayAccess(AST_Node):
                 elif isinstance(acc, AST_Matrix):
                     dims.append(len(acc.get_values_row_major()))
                 elif isinstance(acc, AST_RangeExpression):
-                    if isinstance(acc.lhs, AST_Constant) and isinstance(
-                            acc.rhs, AST_Constant):
+                    if isinstance(acc.lhs, AST_Constant) and isinstance(acc.rhs, AST_Constant):
                         l = acc.lhs.get_value()
                         r = acc.rhs.get_value()
                         dims.append(r - l + 1)
                     elif (acc.lhs is None) and (acc.rhs is None):
                         # Get the dims of the array itself
-                        vardef = self.search_vardef_in_scope(
-                            self.arrayname.get_name())
+                        vardef = self.search_vardef_in_scope(self.arrayname.get_name())
                         if vardef is None:
-                            raise ValueError("No definition found for Array " +
-                                             self.arrayname.get_name())
+                            raise ValueError("No definition found for Array " + self.arrayname.get_name())
                         d = vardef.get_dims()
                         dims.append(d[len(dims)])
                     else:
-                        raise NotImplementedError(
-                            "range with non-constant bounds not supported")
+                        raise NotImplementedError("range with non-constant bounds not supported")
                 elif isinstance(acc, AST_Ident):
                     vardef = self.search_vardef_in_scope(acc.get_name())
                     if vardef is None:
-                        raise ValueError("No definition found for " +
-                                         acc.get_name() +
-                                         " which is used in Array Access: " +
-                                         str(self))
-                    if isinstance(vardef, AST_ForLoop) and acc.get_name(
-                    ) == vardef.var.get_name():
+                        raise ValueError("No definition found for " + acc.get_name() +
+                                         " which is used in Array Access: " + str(self))
+                    if isinstance(vardef, AST_ForLoop) and acc.get_name() == vardef.var.get_name():
                         d = vardef.initializer.get_dims()[:-1]
                         if d != [1]:
-                            raise NotImplementedError(
-                                "Complicated slicing not implemented yet.")
+                            raise NotImplementedError("Complicated slicing not implemented yet.")
                         else:
                             dims.append(d[0])
                 else:
-                    raise NotImplementedError(
-                        "unimplemented method of array access (" + str(acc) +
-                        ")")
+                    raise NotImplementedError("unimplemented method of array access (" + str(acc) + ")")
         else:
             raise NotImplementedError("unimplemented method of array access")
 
@@ -101,18 +90,14 @@ class AST_ArrayAccess(AST_Node):
             if isinstance(acc, AST_Constant):
                 rangelist.append((acc.get_value() - 1, acc.get_value() - 1, 1))
             elif isinstance(acc, AST_RangeExpression):
-                if isinstance(acc.lhs, AST_Constant) and isinstance(
-                        acc.rhs, AST_Constant):
+                if isinstance(acc.lhs, AST_Constant) and isinstance(acc.rhs, AST_Constant):
                     l = acc.lhs.get_value()
                     r = acc.rhs.get_value()
                     rangelist.append((l, r, 1))
                 else:
-                    raise NotImplementedError(
-                        "range with non-constant bounds not supported: " +
-                        str(self))
+                    raise NotImplementedError("range with non-constant bounds not supported: " + str(self))
             else:
-                raise NotImplementedError(
-                    "Non-constant array indexing not implemented: " + str(self))
+                raise NotImplementedError("Non-constant array indexing not implemented: " + str(self))
         ret = dace.subsets.Range(rangelist)
         return ret
 
@@ -140,9 +125,7 @@ class AST_ArrayAccess(AST_Node):
 
         if self.is_data_dependent_access() == False:
             msubset = self.make_range_from_accdims()
-            memlet = dace.memlet.Memlet.simple(arrnode,
-                                               msubset,
-                                               debuginfo=self.context)
+            memlet = dace.memlet.Memlet.simple(arrnode, msubset, debuginfo=self.context)
             sdfg.nodes()[state].add_edge(arrnode, None, resnode, None, memlet)
         else:
             # add a map around the access and feed the access dims that are
@@ -153,8 +136,7 @@ class AST_ArrayAccess(AST_Node):
                 if isinstance(acc, AST_Ident):
                     vardef = self.search_vardef_in_scope(acc.get_name())
                     if vardef is None:
-                        raise ValueError('No definition found for ' +
-                                         str(acc.get_name()))
+                        raise ValueError('No definition found for ' + str(acc.get_name()))
                     elif isinstance(vardef, AST_ForLoop):
                         access_data_nodes.add(vardef.var)
                         access_dims.append(vardef.var.get_name())
@@ -183,27 +165,17 @@ class AST_ArrayAccess(AST_Node):
             men, mex = s.add_map('datadepacc', mdict)
             men.add_in_connector('IN_1')
             men.add_out_connector('OUT_1')
-            s.add_edge(arrnode, None, men, 'IN_1',
-                       dace.memlet.Memlet.from_array(arrnode.data, arrdesc))
+            s.add_edge(arrnode, None, men, 'IN_1', dace.memlet.Memlet.from_array(arrnode.data, arrdesc))
             for a in access_data_nodes:
                 aname = a.get_name_in_sdfg(sdfg)
                 men.add_in_connector(aname)
                 datanode = a.get_datanode(sdfg, state)
-                s.add_edge(
-                    datanode, None, men, aname,
-                    dace.memlet.Memlet.from_array(datanode.data,
-                                                  datanode.desc(sdfg)))
-            tasklet = s.add_tasklet('ident', {'in'}, {'out'}, 'in=out;',
-                                    dace.Language.CPP)
-            s.add_edge(
-                men, 'OUT_1', tasklet, 'in',
-                dace.memlet.Memlet.simple(arrnode, ','.join(access_dims)))
-            s.add_edge(
-                tasklet, 'out', mex, None,
-                dace.memlet.Memlet.from_array(resnode.data, resnode.desc(sdfg)))
-            s.add_edge(
-                mex, None, resnode, None,
-                dace.memlet.Memlet.from_array(resnode.data, resnode.desc(sdfg)))
+                s.add_edge(datanode, None, men, aname,
+                           dace.memlet.Memlet.from_array(datanode.data, datanode.desc(sdfg)))
+            tasklet = s.add_tasklet('ident', {'in'}, {'out'}, 'in=out;', dace.Language.CPP)
+            s.add_edge(men, 'OUT_1', tasklet, 'in', dace.memlet.Memlet.simple(arrnode, ','.join(access_dims)))
+            s.add_edge(tasklet, 'out', mex, None, dace.memlet.Memlet.from_array(resnode.data, resnode.desc(sdfg)))
+            s.add_edge(mex, None, resnode, None, dace.memlet.Memlet.from_array(resnode.data, resnode.desc(sdfg)))
 
         print("The result of " + str(self) + " will be stored in " + str(name))
 

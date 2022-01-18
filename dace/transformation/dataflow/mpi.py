@@ -1,17 +1,18 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains the MPITransformMap transformation. """
 
-from dace import dtypes, registry
+from dace import dtypes
 from dace.sdfg import has_dynamic_map_inputs
 from dace.sdfg import utils as sdutil
 from dace.sdfg import nodes
+from dace.sdfg.sdfg import SDFG
+from dace.sdfg.state import SDFGState
 from dace.transformation import transformation
 from dace.properties import make_properties
 
 
-@registry.autoregister_params(singlestate=True)
 @make_properties
-class MPITransformMap(transformation.Transformation):
+class MPITransformMap(transformation.SingleStateTransformation):
     """ Implements the MPI parallelization pattern.
 
         Takes a map and makes it an MPI-scheduled map, introduces transients
@@ -51,19 +52,18 @@ class MPITransformMap(transformation.Transformation):
          * Change all accesses to InputI within R to accesses to transInputI
     """
 
-    _map_entry = nodes.MapEntry(nodes.Map("", [], []))
+    map_entry = transformation.PatternNode(nodes.MapEntry)
 
     @staticmethod
     def annotates_memlets():
         return True
 
-    @staticmethod
-    def expressions():
-        return [sdutil.node_path_graph(MPITransformMap._map_entry)]
+    @classmethod
+    def expressions(cls):
+        return [sdutil.node_path_graph(cls.map_entry)]
 
-    @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
-        map_entry = graph.nodes()[candidate[MPITransformMap._map_entry]]
+    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
+        map_entry = self.map_entry
 
         # Check if the map is one-dimensional
         if map_entry.map.range.dims() != 1:
@@ -75,9 +75,7 @@ class MPITransformMap(transformation.Transformation):
 
         # We cannot transform a map which is already inside a MPI map, or in
         # another device
-        schedule_whitelist = [
-            dtypes.ScheduleType.Default, dtypes.ScheduleType.Sequential
-        ]
+        schedule_whitelist = [dtypes.ScheduleType.Default, dtypes.ScheduleType.Sequential]
         sdict = graph.scope_dict()
         parent = sdict[map_entry]
         while parent is not None:
@@ -96,41 +94,27 @@ class MPITransformMap(transformation.Transformation):
 
         return True
 
-    @staticmethod
-    def match_to_str(graph, candidate):
-        map_entry = graph.nodes()[candidate[MPITransformMap._map_entry]]
-
-        return map_entry.map.label
-
-    def apply(self, sdfg):
-        graph = sdfg.nodes()[self.state_id]
-
-        map_entry = graph.nodes()[self.subgraph[MPITransformMap._map_entry]]
+    def apply(self, graph: SDFGState, sdfg: SDFG):
+        map_entry = self.map_entry
 
         # Avoiding import loops
         from dace.transformation.dataflow.strip_mining import StripMining
-        from dace.transformation.dataflow.local_storage import LocalStorage
+        from dace.transformation.dataflow.local_storage import InLocalStorage, OutLocalStorage, LocalStorage
 
         rangeexpr = str(map_entry.map.range.num_elements())
 
-        stripmine_subgraph = {
-            StripMining._map_entry: self.subgraph[MPITransformMap._map_entry]
-        }
+        stripmine_subgraph = {StripMining.map_entry: self.subgraph[MPITransformMap.map_entry]}
         sdfg_id = sdfg.sdfg_id
-        stripmine = StripMining(sdfg_id, self.state_id, stripmine_subgraph,
-                                self.expr_index)
+        stripmine = StripMining(sdfg, sdfg_id, self.state_id, stripmine_subgraph, self.expr_index)
         stripmine.dim_idx = -1
         stripmine.new_dim_prefix = "mpi"
         stripmine.tile_size = "(" + rangeexpr + "/__dace_comm_size)"
         stripmine.divides_evenly = True
-        stripmine.apply(sdfg)
+        stripmine.apply(graph, sdfg)
 
-        # Find all in-edges that lead to candidate[MPITransformMap._map_entry]
+        # Find all in-edges that lead to the map entry
         outer_map = None
-        edges = [
-            e for e in graph.in_edges(map_entry)
-            if isinstance(e.src, nodes.EntryNode)
-        ]
+        edges = [e for e in graph.in_edges(map_entry) if isinstance(e.src, nodes.EntryNode)]
 
         outer_map = edges[0].src
 
@@ -141,14 +125,12 @@ class MPITransformMap(transformation.Transformation):
         for e in edges:
             in_local_storage_subgraph = {
                 LocalStorage.node_a: graph.node_id(outer_map),
-                LocalStorage.node_b: self.subgraph[MPITransformMap._map_entry]
+                LocalStorage.node_b: self.subgraph[MPITransformMap.map_entry]
             }
             sdfg_id = sdfg.sdfg_id
-            in_local_storage = LocalStorage(sdfg_id, self.state_id,
-                                            in_local_storage_subgraph,
-                                            self.expr_index)
+            in_local_storage = InLocalStorage(sdfg, sdfg_id, self.state_id, in_local_storage_subgraph, self.expr_index)
             in_local_storage.array = e.data.data
-            in_local_storage.apply(sdfg)
+            in_local_storage.apply(graph, sdfg)
 
         # Transform OutLocalStorage for each output of the MPI map
         in_map_exit = graph.exit_node(map_entry)
@@ -161,8 +143,6 @@ class MPITransformMap(transformation.Transformation):
                 LocalStorage.node_b: graph.node_id(out_map_exit)
             }
             sdfg_id = sdfg.sdfg_id
-            outlocalstorage = LocalStorage(sdfg_id, self.state_id,
-                                           outlocalstorage_subgraph,
-                                           self.expr_index)
+            outlocalstorage = OutLocalStorage(sdfg, sdfg_id, self.state_id, outlocalstorage_subgraph, self.expr_index)
             outlocalstorage.array = name
-            outlocalstorage.apply(sdfg)
+            outlocalstorage.apply(graph, sdfg)

@@ -21,15 +21,15 @@ def relerr(ref, val):
 
 
 @dc.program
-def gesummv_shared(alpha: dc.float64, beta: dc.float64, A: dc.float64[M, N],
-                   B: dc.float64[M, N], x: dc.float64[N], y: dc.float64[M]):
+def gesummv_shared(alpha: dc.float64, beta: dc.float64, A: dc.float64[M, N], B: dc.float64[M, N], x: dc.float64[N],
+                   y: dc.float64[M]):
 
     y[:] = alpha * A @ x + beta * B @ x
 
 
 @dc.program
-def gesummv_distr(alpha: dc.float64, beta: dc.float64, A: dc.float64[M, N],
-                  B: dc.float64[M, N], x: dc.float64[N], y: dc.float64[M]):
+def gesummv_distr(alpha: dc.float64, beta: dc.float64, A: dc.float64[M, N], B: dc.float64[M, N], x: dc.float64[N],
+                  y: dc.float64[M]):
 
     lA = np.empty((lM, lN), dtype=A.dtype)
     lB = np.empty((lM, lN), dtype=B.dtype)
@@ -50,9 +50,8 @@ def gesummv_distr(alpha: dc.float64, beta: dc.float64, A: dc.float64[M, N],
 
 
 @dc.program
-def gesummv_distr2(alpha: dc.float64, beta: dc.float64, A: dc.float64[lM, lN],
-                   B: dc.float64[lM,
-                                 lN], x: dc.float64[lN], y: dc.float64[lMy]):
+def gesummv_distr2(alpha: dc.float64, beta: dc.float64, A: dc.float64[lM, lN], B: dc.float64[lM, lN], x: dc.float64[lN],
+                   y: dc.float64[lMy]):
 
     tmp1 = distr.MatMult(A, x, (Px * lM, Py * lN), c_block_sizes=(lMy, 1))
     tmp2 = distr.MatMult(B, x, (M, N), c_block_sizes=(lMy, 1))
@@ -95,8 +94,7 @@ if __name__ == "__main__":
         if rank == 0:
             return init_data(M, N, np.float64)
         else:
-            return (1.5, 1.2, None, None, np.empty((N, ),
-                                                   dtype=np.float64), None)
+            return (1.5, 1.2, None, None, np.empty((N, ), dtype=np.float64), None)
 
     alpha, beta, A, B, x, y = setup_func(rank)
 
@@ -121,30 +119,19 @@ if __name__ == "__main__":
 
     mpi_sdfg = None
     if rank == 0:
-        mpi_sdfg = gesummv_distr2.to_sdfg(strict=False)
-        mpi_sdfg.apply_strict_transformations()
+        mpi_sdfg = gesummv_distr2.to_sdfg(simplify=False)
+        mpi_sdfg.simplify()
         mpi_func = mpi_sdfg.compile()
     comm.Barrier()
     if rank > 0:
         build_folder = dc.Config.get('default_build_folder')
-        mpi_func = load_precompiled_sdfg(
-            os.path.join(build_folder, gesummv_distr2.name))
+        mpi_func = load_precompiled_sdfg(os.path.join(build_folder, gesummv_distr2.name))
 
     ldict = locals()
 
     comm.Barrier()
 
-    mpi_func(A=lA,
-             B=lB,
-             x=lx,
-             alpha=alpha,
-             beta=beta,
-             y=ly,
-             lM=lM,
-             lN=lN,
-             lMy=lMy,
-             Px=Px,
-             Py=Py)
+    mpi_func(A=lA, B=lB, x=lx, alpha=alpha, beta=beta, y=ly, lM=lM, lN=lN, lMy=lMy, Px=Px, Py=Py)
 
     # print(rank, ly)
 
@@ -160,16 +147,11 @@ if __name__ == "__main__":
 
     comm.Barrier()
 
-    stmt = ("mpi_func(A=lA, B=lB, x=lx, alpha=alpha, beta=beta, y=ly, "
-            "lM=lM, lN=lN, lMy=lMy, Px=Px, Py=Py)")
+    stmt = ("mpi_func(A=lA, B=lB, x=lx, alpha=alpha, beta=beta, y=ly, " "lM=lM, lN=lN, lMy=lMy, Px=Px, Py=Py)")
     setup = "comm.Barrier()"
     repeat = 10
 
-    raw_time_list = timeit.repeat(stmt,
-                                  setup=setup,
-                                  repeat=repeat,
-                                  number=1,
-                                  globals=ldict)
+    raw_time_list = timeit.repeat(stmt, setup=setup, repeat=repeat, number=1, globals=ldict)
     raw_time = np.median(raw_time_list)
 
     comm.Barrier()

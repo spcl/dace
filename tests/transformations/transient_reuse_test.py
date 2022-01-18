@@ -11,8 +11,7 @@ N = dace.symbol('N')
 
 
 @dace.program
-def operation(A: dace.float64[M, M], B: dace.float64[M, M],
-              C: dace.float64[M, N], D: dace.float64[M, N]):
+def operation(A: dace.float64[M, M], B: dace.float64[M, M], C: dace.float64[M, N], D: dace.float64[M, N]):
 
     tmp = dace.define_local([M, M, M], dtype=A.dtype)
     E = dace.define_local([M, M], dtype=A.dtype)
@@ -45,8 +44,7 @@ def test_reuse():
     assert sdfg.apply_transformations(TransientReuse) == 1
     sdfg(A=A, B=B, C=C, D=D, M=m, N=n)
 
-    C_regression = np.dot(np.dot(A, np.dot(np.dot(A, B), np.dot(A, B))),
-                          np.dot(B, D))
+    C_regression = np.dot(np.dot(A, np.dot(np.dot(A, B), np.dot(A, B))), np.dot(B, D))
 
     diff = np.linalg.norm(C_regression - C) / (m * n)
     print("Difference:", diff)

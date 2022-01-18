@@ -48,8 +48,7 @@ def test_mpi(implementation, dtype):
     commsize = comm.Get_size()
     mpi_sdfg = None
     if commsize < 2:
-        raise ValueError(
-            "This test is supposed to be run with at least two processes!")
+        raise ValueError("This test is supposed to be run with at least two processes!")
     for r in range(0, commsize):
         if r == rank:
             sdfg = make_sdfg(dtype)
@@ -63,8 +62,7 @@ def test_mpi(implementation, dtype):
     mpi_sdfg(inbuf=A, outbuf=B, root=root, n=size)
     # now B should be an array of size, containing commsize
     if (not np.allclose(B, np.full(size, commsize, dtype=np_dtype))):
-        raise (
-            ValueError("The received values are not what I expected on root."))
+        raise (ValueError("The received values are not what I expected on root."))
 
 
 ###############################################################################

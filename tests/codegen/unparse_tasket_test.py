@@ -14,7 +14,7 @@ def test_integer_power():
                 c = a**3.0
 
     sdfg = powint.to_sdfg()
-    
+
     assert 'pow(' not in sdfg.generate_code()[0].clean_code
 
 

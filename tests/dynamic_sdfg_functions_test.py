@@ -34,9 +34,9 @@ def test_dynamic_sdfg_with_math_functions():
     B = state.add_array('B', [N], dp.float32)
 
     # Easy way to add a tasklet
-    tasklet, map_entry, map_exit = state.add_mapped_tasklet(
-        'mytasklet', dict(i='0:N'), dict(a=Memlet.simple(A, 'i % N')),
-        'b = math.exp(a)', dict(b=Memlet.simple(B, 'i')))
+    tasklet, map_entry, map_exit = state.add_mapped_tasklet('mytasklet', dict(i='0:N'),
+                                                            dict(a=Memlet.simple(A, 'i % N')), 'b = math.exp(a)',
+                                                            dict(b=Memlet.simple(B, 'i')))
 
     # Add outer edges
     state.add_edge(A, None, map_entry, None, Memlet.simple(A, '0:N'))

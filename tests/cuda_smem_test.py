@@ -50,10 +50,7 @@ def test_gpu():
 @pytest.mark.gpu
 def test_gpu_localstorage():
     sdfg = cudahello.to_sdfg()
-    assert sdfg.apply_transformations([GPUTransformMap, InLocalStorage],
-                                      options=[{}, {
-                                          'array': 'gpu_A'
-                                      }]) == 2
+    assert sdfg.apply_transformations([GPUTransformMap, InLocalStorage], options=[{}, {'array': 'gpu_A'}]) == 2
     _test(sdfg)
 
 

@@ -53,12 +53,10 @@ def make_vecAdd_sdfg(sdfg_name: str, dtype=dace.float32):
 
     copy_in_state.add_memlet_path(in_host_x,
                                   in_device_x,
-                                  memlet=Memlet.simple(
-                                      in_host_x, "0:{}/{}".format(n, vecWidth)))
+                                  memlet=Memlet.simple(in_host_x, "0:{}/{}".format(n, vecWidth)))
     copy_in_state.add_memlet_path(in_host_y,
                                   in_device_y,
-                                  memlet=Memlet.simple(
-                                      in_host_y, "0:{}/{}".format(n, vecWidth)))
+                                  memlet=Memlet.simple(in_host_y, "0:{}/{}".format(n, vecWidth)))
 
     ###########################################################################
     # Copy data from FPGA
@@ -75,10 +73,7 @@ def make_vecAdd_sdfg(sdfg_name: str, dtype=dace.float32):
     out_device = copy_out_state.add_read("device_z")
     out_host = copy_out_state.add_write(z_name)
 
-    copy_out_state.add_memlet_path(out_device,
-                                   out_host,
-                                   memlet=Memlet.simple(
-                                       out_host, "0:{}/{}".format(n, vecWidth)))
+    copy_out_state.add_memlet_path(out_device, out_host, memlet=Memlet.simple(out_host, "0:{}/{}".format(n, vecWidth)))
 
     ########################################################################
     # FPGA State
@@ -92,13 +87,11 @@ def make_vecAdd_sdfg(sdfg_name: str, dtype=dace.float32):
     # ---------- ----------
     # COMPUTE
     # ---------- ----------
-    vecMap_entry, vecMap_exit = fpga_state.add_map(
-        'vecAdd_map',
-        dict(i='0:{0}/{1}'.format(n, vecWidth)),
-        schedule=dace.dtypes.ScheduleType.FPGA_Device)
+    vecMap_entry, vecMap_exit = fpga_state.add_map('vecAdd_map',
+                                                   dict(i='0:{0}/{1}'.format(n, vecWidth)),
+                                                   schedule=dace.dtypes.ScheduleType.FPGA_Device)
 
-    vecAdd_tasklet = fpga_state.add_tasklet('vecAdd_task', ['x_con', 'y_con'],
-                                            ['z_con'], 'z_con = x_con + y_con')
+    vecAdd_tasklet = fpga_state.add_tasklet('vecAdd_task', ['x_con', 'y_con'], ['z_con'], 'z_con = x_con + y_con')
 
     fpga_state.add_memlet_path(x,
                                vecMap_entry,
@@ -112,18 +105,12 @@ def make_vecAdd_sdfg(sdfg_name: str, dtype=dace.float32):
                                dst_conn='y_con',
                                memlet=dace.Memlet.simple(y.data, 'i'))
 
-    fpga_state.add_memlet_path(vecAdd_tasklet,
-                               vecMap_exit,
-                               z,
-                               src_conn='z_con',
-                               memlet=dace.Memlet.simple(z.data, 'i'))
+    fpga_state.add_memlet_path(vecAdd_tasklet, vecMap_exit, z, src_conn='z_con', memlet=dace.Memlet.simple(z.data, 'i'))
 
     ######################################
     # Interstate edges
-    vecAdd_sdfg.add_edge(copy_in_state, fpga_state,
-                         dace.sdfg.sdfg.InterstateEdge())
-    vecAdd_sdfg.add_edge(fpga_state, copy_out_state,
-                         dace.sdfg.sdfg.InterstateEdge())
+    vecAdd_sdfg.add_edge(copy_in_state, fpga_state, dace.sdfg.sdfg.InterstateEdge())
+    vecAdd_sdfg.add_edge(fpga_state, copy_out_state, dace.sdfg.sdfg.InterstateEdge())
 
     #########
     # Validate
@@ -157,24 +144,14 @@ def make_nested_sdfg_fpga(unique_names):
     z = state.add_write("z")
 
     # add nested sdfg with symbol mapping
-    nested_sdfg = state.add_nested_sdfg(to_nest, sdfg, {"x", "y"}, {"z"},
-                                        {"size": "n"})
+    nested_sdfg = state.add_nested_sdfg(to_nest, sdfg, {"x", "y"}, {"z"}, {"size": "n"})
 
     if unique_names:
         nested_sdfg.unique_name = sdfg_name
 
-    state.add_memlet_path(x,
-                          nested_sdfg,
-                          dst_conn="x",
-                          memlet=Memlet.simple(x, "0:n", num_accesses=n))
-    state.add_memlet_path(y,
-                          nested_sdfg,
-                          dst_conn="y",
-                          memlet=Memlet.simple(y, "0:n", num_accesses=n))
-    state.add_memlet_path(nested_sdfg,
-                          z,
-                          src_conn="z",
-                          memlet=Memlet.simple(z, "0:n", num_accesses=n))
+    state.add_memlet_path(x, nested_sdfg, dst_conn="x", memlet=Memlet.simple(x, "0:n", num_accesses=n))
+    state.add_memlet_path(y, nested_sdfg, dst_conn="y", memlet=Memlet.simple(y, "0:n", num_accesses=n))
+    state.add_memlet_path(nested_sdfg, z, src_conn="z", memlet=Memlet.simple(z, "0:n", num_accesses=n))
 
     # Build the second axpy: works with v,w and u of m elements, use another state
 
@@ -189,24 +166,14 @@ def make_nested_sdfg_fpga(unique_names):
     w = state2.add_read("w")
     u = state2.add_write("u")
 
-    nested_sdfg = state2.add_nested_sdfg(to_nest, sdfg, {"x", "y"}, {"z"},
-                                         {"size": "m"})
+    nested_sdfg = state2.add_nested_sdfg(to_nest, sdfg, {"x", "y"}, {"z"}, {"size": "m"})
 
     if unique_names:
         nested_sdfg.unique_name = sdfg_name
 
-    state2.add_memlet_path(v,
-                           nested_sdfg,
-                           dst_conn="x",
-                           memlet=Memlet.simple(v, "0:m", num_accesses=m))
-    state2.add_memlet_path(w,
-                           nested_sdfg,
-                           dst_conn="y",
-                           memlet=Memlet.simple(w, "0:m", num_accesses=m))
-    state2.add_memlet_path(nested_sdfg,
-                           u,
-                           src_conn="z",
-                           memlet=Memlet.simple(u, "0:m", num_accesses=m))
+    state2.add_memlet_path(v, nested_sdfg, dst_conn="x", memlet=Memlet.simple(v, "0:m", num_accesses=m))
+    state2.add_memlet_path(w, nested_sdfg, dst_conn="y", memlet=Memlet.simple(w, "0:m", num_accesses=m))
+    state2.add_memlet_path(nested_sdfg, u, src_conn="z", memlet=Memlet.simple(u, "0:m", num_accesses=m))
     ######################################
     # Interstate edges
     sdfg.add_edge(state, state2, dace.sdfg.sdfg.InterstateEdge())
@@ -241,16 +208,8 @@ def test_unique_nested_sdfg_fpga():
 
     # Hash based detection of equivalent SDFGs
     two_axpy_hash = make_nested_sdfg_fpga(False)
-    with dace.config.set_temporary('compiler', 'unique_functions',
-                                   value='hash'):
-        two_axpy_hash(x=x,
-                      y=y,
-                      z=z_hash,
-                      v=v,
-                      w=w,
-                      u=u_hash,
-                      n=size_n,
-                      m=size_m)
+    with dace.config.set_temporary('compiler', 'unique_functions', value='hash'):
+        two_axpy_hash(x=x, y=y, z=z_hash, v=v, w=w, u=u_hash, n=size_n, m=size_m)
 
     diff1 = np.linalg.norm(ref1 - z_hash) / size_n
     diff2 = np.linalg.norm(ref2 - u_hash) / size_m
@@ -261,17 +220,8 @@ def test_unique_nested_sdfg_fpga():
 
     # Unique_name based detection of equivalent SDFGs
     two_axpy_u_name = make_nested_sdfg_fpga(True)
-    with dace.config.set_temporary('compiler',
-                                   'unique_functions',
-                                   value='unique_name'):
-        two_axpy_u_name(x=x,
-                        y=y,
-                        z=z_u_name,
-                        v=v,
-                        w=w,
-                        u=u_u_name,
-                        n=size_n,
-                        m=size_m)
+    with dace.config.set_temporary('compiler', 'unique_functions', value='unique_name'):
+        two_axpy_u_name(x=x, y=y, z=z_u_name, v=v, w=w, u=u_u_name, n=size_n, m=size_m)
 
     diff1 = np.linalg.norm(ref1 - z_u_name) / size_n
     diff2 = np.linalg.norm(ref2 - u_u_name) / size_m

@@ -29,7 +29,6 @@ def relative_error(value, ref):
     return np.linalg.norm(value - ref) / np.linalg.norm(ref)
 
 
-
 @dace.program
 def linalg_inv(A: dace.float64[100, 100]):
     return np.linalg.inv(A)
@@ -39,7 +38,7 @@ def test_linalg_inv():
     A = generate_invertible_matrix(100, np.float64)
     ref = np.linalg.inv(A)
     val = linalg_inv(A)
-    assert relative_error(val, ref) < 1e-12
+    assert relative_error(val, ref) < 1e-10
 
 
 @dace.program
@@ -52,7 +51,7 @@ def test_linalg_solve():
     B = np.random.randn(100, 10)
     ref = np.linalg.solve(A, B)
     val = linalg_solve(A, B)
-    assert relative_error(val, ref) < 1e-12
+    assert relative_error(val, ref) < 1e-10
 
 
 @dace.program
@@ -64,7 +63,7 @@ def test_linalg_cholesky():
     A = generate_positive_semidefinite_matrix(100, np.float64)
     ref = np.linalg.cholesky(A)
     val = linalg_cholesky(A)
-    assert relative_error(val, ref) < 1e-12
+    assert relative_error(val, ref) < 1e-10
 
 
 if __name__ == "__main__":

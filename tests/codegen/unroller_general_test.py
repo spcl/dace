@@ -21,8 +21,7 @@ def create_deeply_nested_sdfg():
     mapEntry, mapExit = nstate.add_map("map1", dict(w="0:2"))
     mapEntry.schedule = dtypes.ScheduleType.Unrolled
     noUnrollEntry, noUnrollExit = nstate.add_map("map2", dict(i="0:100"))
-    nope = nstate.add_tasklet("nop", dict(_in=None), dict(_out=None),
-                              "_out = _in")
+    nope = nstate.add_tasklet("nop", dict(_in=None), dict(_out=None), "_out = _in")
     inputMem = mem.Memlet("xin[2*k+w, i]")
     outputMem = mem.Memlet("xout[2*k+w, i]")
     nstate.add_memlet_path(
@@ -43,8 +42,7 @@ def create_deeply_nested_sdfg():
     )
 
     nstate2 = nsdfg.add_state("second_nest")
-    tasklet = nstate2.add_tasklet("overwrite", set(), set(["_out"]),
-                                  "_out = 15.0")
+    tasklet = nstate2.add_tasklet("overwrite", set(), set(["_out"]), "_out = 15.0")
     xWrite2 = nstate2.add_write("xout")
     nstate2.add_memlet_path(
         tasklet,
@@ -54,8 +52,7 @@ def create_deeply_nested_sdfg():
     )
 
     nsdfg.add_edge(nstate, nstate2, InterstateEdge(None, dict(mpt="k")))
-    nsdfg_node = state.add_nested_sdfg(nsdfg, state, set(["xin"]),
-                                       set(['xout']))
+    nsdfg_node = state.add_nested_sdfg(nsdfg, state, set(["xin"]), set(['xout']))
     nsdfg_node.unique_name = "SomeUniqueName"
 
     state.add_memlet_path(

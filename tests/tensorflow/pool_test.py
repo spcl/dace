@@ -15,23 +15,13 @@ def test_pooling():
     ksize = [1, 3, 3, 1]
     stride = [1, 2, 2, 1]
     # need to fix bug in padding SAME
-    max_pool_outp = tf.nn.max_pool(input_placeholder,
-                                   ksize,
-                                   stride,
-                                   "VALID",
-                                   data_format="NHWC")
-    avg_pool_outp = tf.nn.avg_pool(input_placeholder,
-                                   ksize,
-                                   stride,
-                                   "VALID",
-                                   data_format="NHWC")
+    max_pool_outp = tf.nn.max_pool(input_placeholder, ksize, stride, "VALID", data_format="NHWC")
+    avg_pool_outp = tf.nn.avg_pool(input_placeholder, ksize, stride, "VALID", data_format="NHWC")
     sess_tf = tf.Session()
     sess_dace = TFSession()
     # MAX pool test
-    tf_output = sess_tf.run(max_pool_outp,
-                            feed_dict={input_placeholder: input_tensor})
-    dace_output = sess_dace.run(max_pool_outp,
-                                feed_dict={input_placeholder: input_tensor})
+    tf_output = sess_tf.run(max_pool_outp, feed_dict={input_placeholder: input_tensor})
+    dace_output = sess_dace.run(max_pool_outp, feed_dict={input_placeholder: input_tensor})
     try:
         assert tf.norm(dace_output - tf_output).eval(session=sess_tf) < 1e-10
     except:
@@ -42,10 +32,8 @@ def test_pooling():
     print("Max pool test passed")
 
     # AVG pool test
-    tf_output = sess_tf.run(avg_pool_outp,
-                            feed_dict={input_placeholder: input_tensor})
-    dace_output = sess_dace.run(avg_pool_outp,
-                                feed_dict={input_placeholder: input_tensor})
+    tf_output = sess_tf.run(avg_pool_outp, feed_dict={input_placeholder: input_tensor})
+    dace_output = sess_dace.run(avg_pool_outp, feed_dict={input_placeholder: input_tensor})
     try:
         assert tf.norm(dace_output - tf_output).eval(session=sess_tf) < 1e-5
     except:
@@ -58,18 +46,12 @@ def test_pooling():
     # AVG pool gradient test
     np.random.seed(0)
     loss_placeholder = tf.placeholder(tf.float32, avg_pool_outp.shape)
-    loss_tensor = np.random.uniform(size=avg_pool_outp.shape).astype(
-        np.float32)
-    grads_avg = tf.gradients(avg_pool_outp,
-                             input_placeholder,
-                             grad_ys=loss_placeholder)
-    dace_output = sess_dace.run(grads_avg,
-                                feed_dict={loss_placeholder: loss_tensor})
-    tf_output = sess_tf.run(grads_avg,
-                            feed_dict={loss_placeholder: loss_tensor})
+    loss_tensor = np.random.uniform(size=avg_pool_outp.shape).astype(np.float32)
+    grads_avg = tf.gradients(avg_pool_outp, input_placeholder, grad_ys=loss_placeholder)
+    dace_output = sess_dace.run(grads_avg, feed_dict={loss_placeholder: loss_tensor})
+    tf_output = sess_tf.run(grads_avg, feed_dict={loss_placeholder: loss_tensor})
     try:
-        assert tf.norm(dace_output[0] -
-                       tf_output[0]).eval(session=sess_tf) < 1e-5
+        assert tf.norm(dace_output[0] - tf_output[0]).eval(session=sess_tf) < 1e-5
     except:
         print(dace_output)
         print(tf_output)
@@ -79,11 +61,8 @@ def test_pooling():
     # Max pool gradient test
     loss_placeholder = tf.placeholder(tf.float32, max_pool_outp.shape)
     np.random.seed(0)
-    loss_tensor = np.random.uniform(size=max_pool_outp.shape).astype(
-        np.float32)
-    grads_max = tf.gradients(max_pool_outp,
-                             input_placeholder,
-                             grad_ys=loss_placeholder)
+    loss_tensor = np.random.uniform(size=max_pool_outp.shape).astype(np.float32)
+    grads_max = tf.gradients(max_pool_outp, input_placeholder, grad_ys=loss_placeholder)
     dace_output = sess_dace.run(
         grads_max,
         feed_dict={
@@ -99,8 +78,7 @@ def test_pooling():
         },
     )
     try:
-        assert tf.norm(dace_output[0] -
-                       tf_output[0]).eval(session=sess_tf) < 1e-5
+        assert tf.norm(dace_output[0] - tf_output[0]).eval(session=sess_tf) < 1e-5
     except:
         print(dace_output)
         print(tf_output)

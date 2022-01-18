@@ -20,8 +20,7 @@ def to_blastype(dtype):
     elif dtype == np.complex128:
         return 'Z'
     else:
-        raise TypeError('Type %s not supported in BLAS operations' %
-                        dtype.__name__)
+        raise TypeError('Type %s not supported in BLAS operations' % dtype.__name__)
 
 
 def cublas_type_metadata(dtype: dtypes.typeclass) -> Tuple[str, str, str]:
@@ -42,6 +41,45 @@ def cublas_type_metadata(dtype: dtypes.typeclass) -> Tuple[str, str, str]:
         return 'Z', 'cuDoubleComplex', 'Complex128'
     else:
         raise TypeError('Type %s not supported in BLAS operations' % str(dtype))
+
+
+def dtype_to_cudadatatype(dtype: dtypes.typeclass) -> str:
+    types = {
+        dtypes.float16: 'CUDA_R_16F',
+        dtypes.float32: 'CUDA_R_32F',
+        dtypes.complex64: 'CUDA_C_32F',
+        dtypes.float64: 'CUDA_R_64F',
+        dtypes.complex128: 'CUDA_C_64F',
+        dtypes.int8: 'CUDA_R_8I',
+        dtypes.uint8: 'CUDA_R_8U',
+        dtypes.int32: 'CUDA_R_32I',
+        #dtypes.complex32: 'CUDA_C_16F',
+        #dtypes.bfloat16: 'CUDA_R_16BF',
+        #dtypes.bcomplex32: 'CUDA_C_16BF',
+        #dtypes.icomplex16: 'CUDA_C_8I',
+        #dtypes.iucomplex16: 'CUDA_C_8U',
+        #dtypes.icomplex64: 'CUDA_C_32I',
+    }
+    return types[dtype]
+
+
+def to_cublas_computetype(dtype: dtypes.typeclass) -> str:
+    types = {
+        dtypes.float16: '16F',
+        dtypes.float32: '32F',
+        dtypes.float64: '64F',
+        dtypes.complex64: '32F',
+        dtypes.complex128: '64F',
+        dtypes.int8: '32I',
+        dtypes.int16: '32I',
+        dtypes.int32: '32I',
+        dtypes.int64: '32I',
+        dtypes.uint8: '32I',
+        dtypes.uint16: '32I',
+        dtypes.uint32: '32I',
+        dtypes.uint64: '32I',
+    }
+    return types[dtype]
 
 
 def get_gemm_opts(a_strides, b_strides, c_strides) -> Dict[str, Any]:
@@ -173,5 +211,4 @@ def check_access(schedule: dtypes.ScheduleType, *descs: data.Data):
     """
     for desc in descs:
         if not dtypes.can_access(schedule, desc.storage):
-            raise ValueError(
-                f"Schedule mismatch: {schedule} cannot access {desc.storage}")
+            raise ValueError(f"Schedule mismatch: {schedule} cannot access {desc.storage}")

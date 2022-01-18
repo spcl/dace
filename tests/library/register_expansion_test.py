@@ -28,8 +28,7 @@ def test_register_expansion():
         environments = []
 
         @staticmethod
-        def expansion(node: MyLibNode, state: dace.SDFGState, sdfg: dace.SDFG,
-                      **kwargs):
+        def expansion(node: MyLibNode, state: dace.SDFGState, sdfg: dace.SDFG, **kwargs):
             return dace.nodes.Tasklet('donothing', code='pass')
 
     # After registering the expansion, the code should work

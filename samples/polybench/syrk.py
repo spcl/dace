@@ -10,25 +10,9 @@ N = dace.symbol('N')
 datatype = dace.float64
 
 # Dataset sizes
-sizes = [{
-    M: 20,
-    N: 30
-}, {
-    M: 60,
-    N: 80
-}, {
-    M: 200,
-    N: 240
-}, {
-    M: 1000,
-    N: 1200
-}, {
-    M: 2000,
-    N: 2600
-}]
+sizes = [{M: 20, N: 30}, {M: 60, N: 80}, {M: 200, N: 240}, {M: 1000, N: 1200}, {M: 2000, N: 2600}]
 
-args = [([N, N], datatype), ([N, M], datatype), ([1], datatype),
-        ([1], datatype)]
+args = [([N, N], datatype), ([N, M], datatype), ([1], datatype), ([1], datatype)]
 
 outputs = [(0, 'C')]
 

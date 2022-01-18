@@ -42,8 +42,8 @@ sizes = [{
     NL: 2400
 }]
 
-args = [([NI, NK], datatype), ([NK, NJ], datatype), ([NJ, NL], datatype),
-        ([NI, NL], datatype), ([1], datatype), ([1], datatype)]
+args = [([NI, NK], datatype), ([NK, NJ], datatype), ([NJ, NL], datatype), ([NI, NL], datatype), ([1], datatype),
+        ([1], datatype)]
 
 
 def init_array(A, B, C, D, alpha, beta):
@@ -69,8 +69,7 @@ def init_array(A, B, C, D, alpha, beta):
             D[i, j] = datatype(i * (j + 2) % nk) / nk
 
 
-@dace.program(datatype[NI, NK], datatype[NK, NJ], datatype[NJ, NL],
-              datatype[NI, NL], datatype[1], datatype[1])
+@dace.program(datatype[NI, NK], datatype[NK, NJ], datatype[NJ, NL], datatype[NI, NL], datatype[1], datatype[1])
 def k2mm(A, B, C, D, alpha, beta):
     tmp = dace.define_local([NI, NJ], dtype=datatype)
 

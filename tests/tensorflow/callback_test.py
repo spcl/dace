@@ -11,11 +11,7 @@ def test_callback():
     input_image = tf.constant(0.69, tf.float64, [2, 2, 5, 5, 2])
     conv_filter = tf.constant(0.01, tf.float64, [1, 1, 1, 2, 2])
     tests = []
-    tests.append(
-        tf.nn.conv3d(input_image,
-                     conv_filter,
-                     strides=[1, 1, 1, 1, 1],
-                     padding="VALID"))
+    tests.append(tf.nn.conv3d(input_image, conv_filter, strides=[1, 1, 1, 1, 1], padding="VALID"))
 
     myinput = tf.constant(0.69, tf.float64, [2, 2])
     tests.append(tf.sigmoid(myinput))

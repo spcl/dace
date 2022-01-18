@@ -5,10 +5,7 @@
 """
 
 import ast
-import dace.codegen.targets.sve.util as util
-import dace.codegen.tools.type_inference as infer
-from dace.codegen.targets.cpp import DaCeKeywordRemover
-import dace.frontend.python.astutils as astutils
+from dace.codegen.targets.sve import util as util
 import dace
 import dace.dtypes
 
@@ -65,11 +62,7 @@ class SVEBinOpFuser(ast.NodeTransformer):
             if scalar_args > 1:
                 return self.generic_visit(t)
             # Add the type suffix for internal representation
-            name += util.TYPE_TO_SVE_SUFFIX[util.get_base_type(
-                dace.dtypes.result_type_of(*inferred))]
-            return ast.copy_location(
-                ast.Call(func=ast.Name(name, ast.Load()),
-                         args=args,
-                         keywords=[]), t)
+            name += util.TYPE_TO_SVE_SUFFIX[util.get_base_type(dace.dtypes.result_type_of(*inferred))]
+            return ast.copy_location(ast.Call(func=ast.Name(name, ast.Load()), args=args, keywords=[]), t)
 
         return self.generic_visit(t)

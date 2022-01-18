@@ -5,16 +5,11 @@ import functools
 import dace
 
 flags.DEFINE_bool('simulate', False, 'Use the DaCe python simulator')
-flags.DEFINE_bool(
-    'specialize', True, 'Compile problem with evaluated ' +
-    '(specialized to constant value) symbols')
-flags.DEFINE_bool('sequential', False,
-                  'Automatically change all maps to sequential schedule')
+flags.DEFINE_bool('specialize', True, 'Compile problem with evaluated ' + '(specialized to constant value) symbols')
+flags.DEFINE_bool('sequential', False, 'Automatically change all maps to sequential schedule')
 flags.DEFINE_bool('compile', False, 'Only compile without running')
 flags.DEFINE_bool('save', False, 'Save results to file')
-flags.DEFINE_enum('size', 'large',
-                  ['mini', 'small', 'medium', 'large', 'extralarge'],
-                  'Dataset/problem size')
+flags.DEFINE_enum('size', 'large', ['mini', 'small', 'medium', 'large', 'extralarge'], 'Dataset/problem size')
 _SIZE_TO_IND = {'mini': 0, 'small': 1, 'medium': 2, 'large': 3, 'extralarge': 4}
 
 FLAGS = flags.FLAGS
@@ -28,10 +23,7 @@ def polybench_dump(filename, args, output_args):
         for i, name in output_args:
             fp.write("begin dump: %s\n" % name)
             np.savetxt(fp,
-                       args[i].reshape(
-                           args[i].shape[0],
-                           functools.reduce(lambda a, b: a * b,
-                                            args[i].shape[1:], 1)),
+                       args[i].reshape(args[i].shape[0], functools.reduce(lambda a, b: a * b, args[i].shape[1:], 1)),
                        fmt="%0.7lf")
             fp.write("\nend   dump: %s\n" % name)
 
@@ -69,8 +61,7 @@ def _main(sizes, args, output_args, init_array, func, argv, keywords=None):
     if FLAGS.compile == False:
         print('Initializing arrays...')
         init_array(*args)
-        print('Running %skernel...' %
-              ('specialized ' if FLAGS.specialize else ''))
+        print('Running %skernel...' % ('specialized ' if FLAGS.specialize else ''))
 
         if FLAGS.simulate:
             dace.simulate(func, *args)
@@ -78,9 +69,7 @@ def _main(sizes, args, output_args, init_array, func, argv, keywords=None):
             if isinstance(func, dace.SDFG):
                 compiled_sdfg(**keywords, **psize)
             else:
-                compiled_sdfg(**{n: arg
-                                 for n, arg in zip(func.argnames, args)},
-                              **psize)
+                compiled_sdfg(**{n: arg for n, arg in zip(func.argnames, args)}, **psize)
 
         if FLAGS.save:
             if not isinstance(output_args, list):
@@ -93,5 +82,4 @@ def _main(sizes, args, output_args, init_array, func, argv, keywords=None):
 
 def main(sizes, args, outputs, init_array, func, keywords=None):
     # Pass application arguments and command-line arguments through abseil
-    app.run(lambda argv: _main(sizes, args, outputs, init_array, func, argv,
-                               keywords))
+    app.run(lambda argv: _main(sizes, args, outputs, init_array, func, argv, keywords))

@@ -61,18 +61,10 @@ batchSize = dace.symbol('batchSize')
 
 
 @dace.program
-def attn_fwd(q: dace.float32[batchSize, Qsize,
-                             seqLenQ], k: dace.float32[batchSize, Qsize,
-                                                       seqLenK],
-             v: dace.float32[batchSize, Qsize,
-                             seqLenK], wq: dace.float32[numHeads, projQsize,
-                                                        Qsize],
-             wk: dace.float32[numHeads, projQsize,
-                              Qsize], wv: dace.float32[numHeads, projQsize,
-                                                       Qsize],
-             wo: dace.float32[numHeads, Qsize,
-                              projQsize], out: dace.float32[batchSize, Qsize,
-                                                            seqLenQ]):
+def attn_fwd(q: dace.float32[batchSize, Qsize, seqLenQ], k: dace.float32[batchSize, Qsize, seqLenK],
+             v: dace.float32[batchSize, Qsize, seqLenK], wq: dace.float32[numHeads, projQsize, Qsize],
+             wk: dace.float32[numHeads, projQsize, Qsize], wv: dace.float32[numHeads, projQsize, Qsize],
+             wo: dace.float32[numHeads, Qsize, projQsize], out: dace.float32[batchSize, Qsize, seqLenQ]):
 
     for b in dace.map[0:batchSize]:
 

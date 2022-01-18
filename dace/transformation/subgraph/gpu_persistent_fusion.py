@@ -10,7 +10,6 @@ from dace.sdfg.graph import SubgraphView
 from dace.transformation.transformation import SubgraphTransformation
 
 
-@registry.autoregister
 @make_properties
 class GPUPersistentKernel(SubgraphTransformation):
     """
@@ -81,7 +80,7 @@ class GPUPersistentKernel(SubgraphTransformation):
         # for now exactly one inner and one outer entry state
         entry_states_in, entry_states_out = \
             GPUPersistentKernel.get_entry_states(sdfg, subgraph)
-        if len(entry_states_in) > 1 or len(entry_states_out) > 1:
+        if len(entry_states_in) != 1 or len(entry_states_out) > 1:
             return False
 
         entry_state_in = entry_states_in.pop()
@@ -103,10 +102,7 @@ class GPUPersistentKernel(SubgraphTransformation):
 
         while len(front) > 0:
             current = front.pop(0)
-            unseen = [
-                suc for suc in subgraph.successors(current)
-                if suc not in reachable
-            ]
+            unseen = [suc for suc in subgraph.successors(current) if suc not in reachable]
             front += unseen
             reachable.update(unseen)
 
@@ -118,8 +114,7 @@ class GPUPersistentKernel(SubgraphTransformation):
     def apply(self, sdfg: SDFG):
         subgraph = self.subgraph_view(sdfg)
 
-        entry_states_in, entry_states_out = self.get_entry_states(
-            sdfg, subgraph)
+        entry_states_in, entry_states_out = self.get_entry_states(sdfg, subgraph)
         _, exit_states_out = self.get_exit_states(sdfg, subgraph)
 
         entry_state_in = entry_states_in.pop()
@@ -137,13 +132,9 @@ class GPUPersistentKernel(SubgraphTransformation):
             entry_edge = sdfg.edges_between(entry_state_out, entry_state_in)[0]
             if len(entry_edge.data.assignments) > 0:
                 entry_guard_state = sdfg.add_state(
-                    label='{}kernel_entry_guard'.format(
-                        self.kernel_prefix +
-                        '_' if self.kernel_prefix != '' else ''))
-                sdfg.add_edge(entry_state_out, entry_guard_state,
-                              InterstateEdge(entry_edge.data.condition))
-                sdfg.add_edge(entry_guard_state, entry_state_in,
-                              InterstateEdge(None, entry_edge.data.assignments))
+                    label='{}kernel_entry_guard'.format(self.kernel_prefix + '_' if self.kernel_prefix != '' else ''))
+                sdfg.add_edge(entry_state_out, entry_guard_state, InterstateEdge(entry_edge.data.condition))
+                sdfg.add_edge(entry_guard_state, entry_state_in, InterstateEdge(None, entry_edge.data.assignments))
                 sdfg.remove_edge(entry_edge)
 
                 # Update SubgraphView
@@ -153,17 +144,13 @@ class GPUPersistentKernel(SubgraphTransformation):
 
                 launch_state = sdfg.add_state_before(
                     entry_guard_state,
-                    label='{}kernel_launch'.format(
-                        self.kernel_prefix +
-                        '_' if self.kernel_prefix != '' else ''))
+                    label='{}kernel_launch'.format(self.kernel_prefix + '_' if self.kernel_prefix != '' else ''))
 
         # generate exit guard state
         if exit_state_out is not None:
             exit_guard_state = sdfg.add_state_before(
                 exit_state_out,
-                label='{}kernel_exit_guard'.format(
-                    self.kernel_prefix +
-                    '_' if self.kernel_prefix != '' else ''))
+                label='{}kernel_exit_guard'.format(self.kernel_prefix + '_' if self.kernel_prefix != '' else ''))
 
             # Update SubgraphView
             new_node_list = subgraph.nodes()
@@ -173,22 +160,18 @@ class GPUPersistentKernel(SubgraphTransformation):
             if launch_state is None:
                 launch_state = sdfg.add_state_before(
                     exit_state_out,
-                    label='{}kernel_launch'.format(
-                        self.kernel_prefix +
-                        '_' if self.kernel_prefix != '' else ''))
+                    label='{}kernel_launch'.format(self.kernel_prefix + '_' if self.kernel_prefix != '' else ''))
 
         # If the launch state doesn't exist at this point then there is no other
         # states outside of the kernel, so create a stand alone launch state
         if launch_state is None:
             assert (entry_state_in is None and exit_state_out is None)
-            launch_state = sdfg.add_state(label='{}kernel_launch'.format(
-                self.kernel_prefix + '_' if self.kernel_prefix != '' else ''))
+            launch_state = sdfg.add_state(label='{}kernel_launch'.format(self.kernel_prefix +
+                                                                         '_' if self.kernel_prefix != '' else ''))
 
         # create sdfg for kernel and fill it with states and edges from
         # ssubgraph dfg will be nested at the end
-        kernel_sdfg = SDFG(
-            '{}kernel'.format(self.kernel_prefix +
-                              '_' if self.kernel_prefix != '' else ''))
+        kernel_sdfg = SDFG('{}kernel'.format(self.kernel_prefix + '_' if self.kernel_prefix != '' else ''))
 
         edges = subgraph.edges()
         for edge in edges:
@@ -214,17 +197,15 @@ class GPUPersistentKernel(SubgraphTransformation):
             sdfg.add_edge(launch_state, exit_state_out, InterstateEdge())
 
         # Handle data for kernel
-        kernel_data = set(node.data for state in kernel_sdfg
-                          for node in state.nodes()
+        kernel_data = set(node.data for state in kernel_sdfg for node in state.nodes()
                           if isinstance(node, nodes.AccessNode))
 
         # move Streams and Register data into the nested SDFG
         # normal data will be added as kernel argument
         kernel_args = []
         for data in kernel_data:
-            if (isinstance(sdfg.arrays[data], dace.data.Stream)
-                    or (isinstance(sdfg.arrays[data], dace.data.Array)
-                        and sdfg.arrays[data].storage == StorageType.Register)):
+            if (isinstance(sdfg.arrays[data], dace.data.Stream) or
+                (isinstance(sdfg.arrays[data], dace.data.Array) and sdfg.arrays[data].storage == StorageType.Register)):
                 kernel_sdfg.add_datadesc(data, sdfg.arrays[data])
                 del sdfg.arrays[data]
             else:
@@ -240,8 +221,7 @@ class GPUPersistentKernel(SubgraphTransformation):
         kernel_args_write = set()
         for data in kernel_args:
             data_accesses_read_only = [
-                node.access == dtypes.AccessType.ReadOnly
-                for state in kernel_sdfg for node in state
+                node.access == dtypes.AccessType.ReadOnly for state in kernel_sdfg for node in state
                 if isinstance(node, nodes.AccessNode) and node.data == data
             ]
             if all(data_accesses_read_only):
@@ -255,8 +235,7 @@ class GPUPersistentKernel(SubgraphTransformation):
 
         # Filling launch state with nested SDFG, map and access nodes
         map_entry, map_exit = launch_state.add_map(
-            '{}kernel_launch_map'.format(
-                self.kernel_prefix + '_' if self.kernel_prefix != '' else ''),
+            '{}kernel_launch_map'.format(self.kernel_prefix + '_' if self.kernel_prefix != '' else ''),
             dict(ignore='0'),
             schedule=ScheduleType.GPU_Persistent,
         )
@@ -275,8 +254,7 @@ class GPUPersistentKernel(SubgraphTransformation):
                                          map_entry,
                                          nested_sdfg,
                                          dst_conn=arg,
-                                         memlet=Memlet.from_array(
-                                             arg, sdfg.arrays[arg]))
+                                         memlet=Memlet.from_array(arg, sdfg.arrays[arg]))
 
         # Create and connect writable data access nodes
         for arg in kernel_args_write:
@@ -285,8 +263,7 @@ class GPUPersistentKernel(SubgraphTransformation):
                                          map_exit,
                                          write_node,
                                          src_conn=arg,
-                                         memlet=Memlet.from_array(
-                                             arg, sdfg.arrays[arg]))
+                                         memlet=Memlet.from_array(arg, sdfg.arrays[arg]))
 
         # Transformation is done
         if self.validate:
@@ -317,10 +294,7 @@ class GPUPersistentKernel(SubgraphTransformation):
             ScheduleType.GPU_ThreadBlock_Dynamic,
         ]
 
-        for schedule in [
-                n.map.schedule for n in state.nodes()
-                if isinstance(n, nodes.MapEntry)
-        ]:
+        for schedule in [n.map.schedule for n in state.nodes() if isinstance(n, nodes.MapEntry)]:
             if schedule not in gpu_fused_schedules:
                 return False
 

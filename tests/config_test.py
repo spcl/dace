@@ -9,5 +9,6 @@ def test_set_temporary():
         assert Config.get(*path) == "I'm not a build type"
     assert Config.get(*path) == current_value
 
+
 if __name__ == '__main__':
     test_set_temporary()

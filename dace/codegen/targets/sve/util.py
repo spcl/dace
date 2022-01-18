@@ -7,7 +7,8 @@ import numpy as np
 import dace
 import dace.dtypes as dtypes
 import ast
-import dace.codegen.targets.sve.infer as infer
+import dace.codegen.targets
+from dace.codegen.targets.sve import infer as infer
 import astunparse
 import collections
 import itertools
@@ -49,10 +50,7 @@ class NotSupportedError(Exception):
 REGISTER_BYTE_SIZE = '__SVE_REGISTER_BYTES'
 
 
-def instr(name: str,
-          type: dace.typeclass = None,
-          suffix: bool = True,
-          pred_mode: str = None) -> str:
+def instr(name: str, type: dace.typeclass = None, suffix: bool = True, pred_mode: str = None) -> str:
     """
     Generates the name of the SVE instruction with possibly suffixes and flags.
     param name: Instruction name (without `sv` prefix)
@@ -175,19 +173,9 @@ REDUCTION_TYPE_TO_SVE = {
     dace.dtypes.ReductionType.Min: 'svminv'
 }
 
-MATH_FUNCTION_TO_SVE = {
-    'math.min': 'svmin',
-    'math.max': 'svmax',
-    'math.abs': 'svabs',
-    'math.sqrt': 'svsqrt'
-}
+MATH_FUNCTION_TO_SVE = {'math.min': 'svmin', 'math.max': 'svmax', 'math.abs': 'svabs', 'math.sqrt': 'svsqrt'}
 
-FUSED_OPERATION_TO_SVE = {
-    '__svmad': 'svmad',
-    '__svmla': 'svmla',
-    '__svmsb': 'svmsb',
-    '__svmls': 'svmls'
-}
+FUSED_OPERATION_TO_SVE = {'__svmad': 'svmad', '__svmla': 'svmla', '__svmsb': 'svmsb', '__svmls': 'svmls'}
 
 
 def get_internal_symbols() -> dict:
@@ -197,11 +185,9 @@ def get_internal_symbols() -> dict:
     """
     res = {}
 
-    for func, type in itertools.product(FUSED_OPERATION_TO_SVE,
-                                        TYPE_TO_SVE_SUFFIX):
+    for func, type in itertools.product(FUSED_OPERATION_TO_SVE, TYPE_TO_SVE_SUFFIX):
         res[f'{func}_{TYPE_TO_SVE_SUFFIX[type.type if isinstance(type, dace.dtypes.typeclass) else type]}'] = dtypes.vector(
-            type if isinstance(type, dtypes.typeclass) else
-            dtypes.typeclass(type), SVE_LEN)
+            type if isinstance(type, dtypes.typeclass) else dtypes.typeclass(type), SVE_LEN)
     return res
 
 
@@ -237,8 +223,12 @@ def is_vector(type: dace.typeclass) -> bool:
     return isinstance(type, dtypes.vector)
 
 
+def is_pointer(type: dace.typeclass) -> bool:
+    return isinstance(type, dtypes.pointer)
+
+
 def is_scalar(type: dace.typeclass) -> bool:
-    return not isinstance(type, (dtypes.vector, dtypes.pointer))
+    return not is_vector(type) and not is_pointer(type)
 
 
 def infer_ast(defined_symbols: collections.OrderedDict, *args) -> tuple:
@@ -246,14 +236,12 @@ def infer_ast(defined_symbols: collections.OrderedDict, *args) -> tuple:
     return tuple([infer.infer_expr_type(t, defined_symbols) for t in args])
 
 
-def only_scalars_involed(defined_symbols: collections.OrderedDict,
-                         *terms) -> bool:
+def only_scalars_involed(defined_symbols: collections.OrderedDict, *terms) -> bool:
     """ Takes AST nodes and returns whether only scalars are involved in the subtrees. """
     return all([is_scalar(infer_ast(defined_symbols, t)[0]) for t in terms])
 
 
-def get_sve_scope(sdfg: dace.sdfg.SDFG, state: dace.sdfg.SDFGState,
-                  node: dace.sdfg.nodes.Node) -> dace.nodes.Map:
+def get_sve_scope(sdfg: dace.sdfg.SDFG, state: dace.sdfg.SDFGState, node: dace.sdfg.nodes.Node) -> dace.nodes.Map:
     while sdfg is not None:
         sdict = state.scope_dict()
         scope = sdict[node]
@@ -273,8 +261,7 @@ def get_sve_scope(sdfg: dace.sdfg.SDFG, state: dace.sdfg.SDFGState,
     return None
 
 
-def get_loop_predicate(sdfg: dace.sdfg.SDFG, dfg: dace.sdfg.SDFGState,
-                       node: dace.sdfg.nodes.Node) -> str:
+def get_loop_predicate(sdfg: dace.sdfg.SDFG, dfg: dace.sdfg.SDFGState, node: dace.sdfg.nodes.Node) -> str:
     scope = get_sve_scope(sdfg, dfg, node)
     if scope is None:
         raise NotSupportedError('Not in an SVE scope')

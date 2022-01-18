@@ -14,8 +14,7 @@ class ExpandIsendMPI(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
-        (buffer, count_str, buffer_offset,
-         ddt), dest, tag, req = node.validate(parent_sdfg, parent_state)
+        (buffer, count_str, buffer_offset, ddt), dest, tag, req = node.validate(parent_sdfg, parent_state)
         mpi_dtype_str = dace.libraries.mpi.utils.MPI_DDT(buffer.dtype.base_type)
 
         if buffer.dtype.veclen > 1:
@@ -45,11 +44,7 @@ class ExpandIsendMPI(ExpandTransformation):
                                           code,
                                           language=dace.dtypes.Language.CPP)
         conn = tasklet.out_connectors
-        conn = {
-            c: (dtypes.pointer(dtypes.opaque("MPI_Request"))
-                if c == '_request' else t)
-            for c, t in conn.items()
-        }
+        conn = {c: (dtypes.pointer(dtypes.opaque("MPI_Request")) if c == '_request' else t) for c, t in conn.items()}
         tasklet.out_connectors = conn
         return tasklet
 
@@ -67,11 +62,7 @@ class Isend(dace.sdfg.nodes.LibraryNode):
     n = dace.properties.SymbolicProperty(allow_none=True, default=None)
 
     def __init__(self, name, *args, **kwargs):
-        super().__init__(name,
-                         *args,
-                         inputs={"_buffer", "_dest", "_tag"},
-                         outputs={"_request"},
-                         **kwargs)
+        super().__init__(name, *args, inputs={"_buffer", "_dest", "_tag"}, outputs={"_request"}, **kwargs)
 
     def validate(self, sdfg, state):
         """
@@ -110,10 +101,8 @@ class Isend(dace.sdfg.nodes.LibraryNode):
 
                 # create a ddt which describes the buffer layout IFF the sent data is not contiguous
                 ddt = None
-                if dace.libraries.mpi.utils.is_access_contiguous(
-                        data, sdfg.arrays[data.data]):
+                if dace.libraries.mpi.utils.is_access_contiguous(data, sdfg.arrays[data.data]):
                     pass
                 else:
-                    ddt = dace.libraries.mpi.utils.create_vector_ddt(
-                        data, sdfg.arrays[data.data])
+                    ddt = dace.libraries.mpi.utils.create_vector_ddt(data, sdfg.arrays[data.data])
         return (buffer, count_str, buffer_offset, ddt), dest, tag, req

@@ -1,3 +1,4 @@
+# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
 import astunparse
 import collections
@@ -37,20 +38,16 @@ class ExpandStencilIntelFPGA(dace.library.ExpandTransformation):
         # Add copy boundary conditions
         for field in node.boundary_conditions:
             if node.boundary_conditions[field]["btype"] == "copy":
-                center_index = tuple(0 for _ in range(
-                    len(parent_sdfg.arrays[field_to_data[field]].shape)))
+                center_index = tuple(0 for _ in range(len(parent_sdfg.arrays[field_to_data[field]].shape)))
                 # This will register the renaming
                 converter.convert(field, center_index)
 
         # Replace accesses in the code
-        code = node.code.as_string
-        new_ast = converter.visit(ast.parse(code))
-        code = astunparse.unparse(new_ast)
-        field_accesses = converter.mapping
+        code, field_accesses = parse_accesses(node.code.as_string, outputs)
 
         iterator_mapping = make_iterator_mapping(node, field_accesses, shape)
-        vector_length = validate_vector_lengths(vector_lengths,
-                                                iterator_mapping)
+        vector_length = validate_vector_lengths(vector_lengths, iterator_mapping)
+        shape_vectorized = tuple(s / vector_length if i == len(shape) - 1 else s for i, s in enumerate(shape))
 
         # Extract which fields to read from streams and what to buffer
         buffer_sizes = collections.OrderedDict()
@@ -65,51 +62,42 @@ class ExpandStencilIntelFPGA(dace.library.ExpandTransformation):
                 scalars[field_name] = parent_sdfg.symbols[field_name]
                 sdfg.add_symbol(field_name, parent_sdfg.symbols[field_name])
                 continue
-            abs_indices = ([
-                dim_to_abs_val(i, tuple(s for s, m in zip(shape, dim_mask)
-                                        if m), parent_sdfg) for i in relative
-            ] + ([0] if field_name in node.boundary_conditions
-                 and node.boundary_conditions[field_name]["btype"] == "copy"
-                 else []))
+            abs_indices = (
+                [dim_to_abs_val(i, tuple(s for s, m in zip(shape, dim_mask) if m), parent_sdfg)
+                 for i in relative] + ([0] if field_name in node.boundary_conditions
+                                       and node.boundary_conditions[field_name]["btype"] == "copy" else []))
             max_access = max(abs_indices)
             min_access = min(abs_indices)
             buffer_size = max_access - min_access + vector_lengths[field_name]
             buffer_sizes[field_name] = buffer_size
             # (indices relative to center, buffer indices, center index)
-            buffer_accesses[field_name] = ([tuple(r) for r in relative], [
-                i - min_access for i in abs_indices
-            ], -min_access)
+            buffer_accesses[field_name] = ([tuple(r) for r in relative], [i - min_access
+                                                                          for i in abs_indices], -min_access)
 
         # Create a initialization phase corresponding to the highest distance
         # to the center
-        init_sizes = [
-            (buffer_sizes[key] - vector_lengths[key] - val[2]) // vector_length
-            for key, val in buffer_accesses.items()
-        ]
+        init_sizes = [(buffer_sizes[key] - vector_lengths[key] - val[2]) // vector_length
+                      for key, val in buffer_accesses.items()]
         init_size_max = int(np.max(init_sizes))
 
         parameters = [f"_i{i}" for i in range(len(shape))]
 
         # Dimensions we need to iterate over
         iterator_mask = np.array([s != 0 and s != 1 for s in shape], dtype=bool)
-        iterators = make_iterators(
-            tuple(s for s, m in zip(shape, iterator_mask) if m),
-            parameters=tuple(s for s, m in zip(parameters, iterator_mask) if m),
-            vector_length=vector_length)
+        iterators = make_iterators(tuple(s for s, m in zip(shape_vectorized, iterator_mask) if m),
+                                   parameters=tuple(s for s, m in zip(parameters, iterator_mask) if m))
 
         # Manually add pipeline entry and exit nodes
-        pipeline_range = dace.properties.SubsetProperty.from_string(', '.join(
-            iterators.values()))
-        pipeline = dace.sdfg.nodes.Pipeline(
-            "compute_" + node.label,
-            list(iterators.keys()),
-            pipeline_range,
-            dace.dtypes.ScheduleType.FPGA_Device,
-            False,
-            init_size=init_size_max,
-            init_overlap=False,
-            drain_size=init_size_max,
-            drain_overlap=True)
+        pipeline_range = dace.properties.SubsetProperty.from_string(', '.join(iterators.values()))
+        pipeline = dace.sdfg.nodes.Pipeline("compute_" + node.label,
+                                            list(iterators.keys()),
+                                            pipeline_range,
+                                            dace.dtypes.ScheduleType.FPGA_Device,
+                                            False,
+                                            init_size=init_size_max,
+                                            init_overlap=False,
+                                            drain_size=init_size_max,
+                                            drain_overlap=True)
         entry = dace.sdfg.nodes.PipelineEntry(pipeline)
         exit = dace.sdfg.nodes.PipelineExit(pipeline)
         state.add_nodes_from([entry, exit])
@@ -120,11 +108,10 @@ class ExpandStencilIntelFPGA(dace.library.ExpandTransformation):
             nested_sdfg,
             sdfg,
             # Input connectors
-            [k + "_in" for k in inputs if any(iterator_mapping[k])] +
-            [name + "_buffer_in" for name, _ in buffer_sizes.items()],
+            [k + "_in"
+             for k in inputs if any(iterator_mapping[k])] + [name + "_buffer_in" for name, _ in buffer_sizes.items()],
             # Output connectors
-            [k + "_out" for k in outputs] +
-            [name + "_buffer_out" for name, _ in buffer_sizes.items()],
+            [k + "_out" for k in outputs] + [name + "_buffer_out" for name, _ in buffer_sizes.items()],
             schedule=dace.ScheduleType.FPGA_Device)
         # Propagate symbols
         for sym_name, sym_type in parent_sdfg.symbols.items():
@@ -145,17 +132,15 @@ class ExpandStencilIntelFPGA(dace.library.ExpandTransformation):
         # Implement boundary conditions
         #######################################################################
 
-        boundary_code, oob_cond = generate_boundary_conditions(
-            node, shape, field_accesses, field_to_desc, iterator_mapping)
+        boundary_code, oob_cond = generate_boundary_conditions(node, shape, field_accesses, field_to_desc,
+                                                               iterator_mapping)
 
         #######################################################################
         # Only write if we're in bounds
         #######################################################################
 
         write_code = ("\n".join([
-            "{}_inner_out = {}\n".format(
-                output,
-                field_accesses[output][tuple(0 for _ in range(len(shape)))])
+            "{}_inner_out = {}\n".format(output, field_accesses[output][tuple(0 for _ in range(len(shape)))])
             for output in outputs
         ]))
         if init_size_max > 0 or len(oob_cond) > 0:
@@ -184,27 +169,22 @@ class ExpandStencilIntelFPGA(dace.library.ExpandTransformation):
         # and writes to the output channel(s)
         compute_state = nested_sdfg.add_state(node.label + "_compute")
         compute_inputs = list(
-            itertools.chain.from_iterable(
-                [["_" + v for v in field_accesses[f].values()] for f in inputs
-                 if any(iterator_mapping[f])]))
-        compute_tasklet = compute_state.add_tasklet(
-            node.label + "_compute",
-            compute_inputs, {name + "_inner_out"
-                             for name in outputs},
-            code,
-            language=dace.dtypes.Language.Python)
+            itertools.chain.from_iterable([["_" + v for v in field_accesses[f].values()] for f in inputs
+                                           if any(iterator_mapping[f])]))
+        compute_tasklet = compute_state.add_tasklet(node.label + "_compute",
+                                                    compute_inputs, {name + "_inner_out"
+                                                                     for name in outputs},
+                                                    code,
+                                                    language=dace.dtypes.Language.Python)
         if vector_length > 1:
-            compute_unroll_entry, compute_unroll_exit = compute_state.add_map(
-                compute_state.label + "_unroll",
-                {"i_unroll": f"0:{vector_length}"},
-                schedule=dace.ScheduleType.FPGA_Device,
-                unroll=True)
+            compute_unroll_entry, compute_unroll_exit = compute_state.add_map(compute_state.label + "_unroll",
+                                                                              {"i_unroll": f"0:{vector_length}"},
+                                                                              schedule=dace.ScheduleType.FPGA_Device,
+                                                                              unroll=True)
 
         # Connect the three nested states
-        nested_sdfg.add_edge(shift_state, update_state,
-                             dace.sdfg.InterstateEdge())
-        nested_sdfg.add_edge(update_state, compute_state,
-                             dace.sdfg.InterstateEdge())
+        nested_sdfg.add_edge(shift_state, update_state, dace.sdfg.InterstateEdge())
+        nested_sdfg.add_edge(update_state, compute_state, dace.sdfg.InterstateEdge())
 
         # First, grab scalar variables
         for scalar, scalar_type in scalars.items():
@@ -213,8 +193,7 @@ class ExpandStencilIntelFPGA(dace.library.ExpandTransformation):
         # Code to increment custom iterators
         iterator_code = ""
 
-        for (field_name, size), init_size in zip(buffer_sizes.items(),
-                                                 init_sizes):
+        for (field_name, size), init_size in zip(buffer_sizes.items(), init_sizes):
 
             data_name = field_to_data[field_name]
             connector = field_to_edge[field_name].dst_conn
@@ -236,13 +215,11 @@ class ExpandStencilIntelFPGA(dace.library.ExpandTransformation):
                 else:
                     # Create custom iterators for this array
                     num_dims = sum(mapping, 0)
-                    field_iterators = [(f"_{field_name}_i{i}", shape[i])
-                                       for i in range(num_dims) if mapping[i]]
+                    field_iterators = [(f"_{field_name}_i{i}", shape[i]) for i in range(num_dims) if mapping[i]]
                     start_index = init_size_max - init_size
                     tab = ""
                     if start_index > 0:
-                        iterator_code += (
-                            f"if {pipeline.iterator_str()} >= {start_index}:\n")
+                        iterator_code += (f"if {pipeline.iterator_str()} >= {start_index}:\n")
                         tab += "  "
                     for i, (it, s) in enumerate(reversed(field_iterators)):
                         iterator_code += f"""\
@@ -260,22 +237,57 @@ class ExpandStencilIntelFPGA(dace.library.ExpandTransformation):
             else:
                 field_index = "0"
 
+            # Begin reading according to this field's own buffer size, which is
+            # translated to an index by subtracting it from the maximum buffer
+            # size
+            begin_reading = init_size_max - init_size
+            total_size = functools.reduce(operator.mul, shape_vectorized, 1)
+            end_reading = total_size + init_size_max - init_size
+
             # Outer memory read
             read_node_outer = state.add_read(data_name_outer)
-            if isinstance(desc_outer, dt.Stream):
-                subset = "0"
+            if begin_reading != 0 or end_reading != total_size + init_size_max:
+                sdfg.add_scalar(f"{field_name}_wavefront",
+                                desc_outer.dtype,
+                                storage=dace.StorageType.FPGA_Local,
+                                transient=True)
+                wavefront_access = state.add_access(f"{field_name}_wavefront")
+                condition = []
+                it = pipeline.iterator_str()
+                if begin_reading != 0:
+                    condition.append(f"{it} >= {begin_reading}")
+                if end_reading != total_size + init_size_max:
+                    condition.append(f"{it} < {end_reading}")
+                condition = " and ".join(condition)
+                update_tasklet = state.add_tasklet(f"read_{field_name}", {"wavefront_in"}, {"wavefront_out"},
+                                                   f"if {condition}:\n"
+                                                   "\twavefront_out = wavefront_in\n",
+                                                   language=dace.dtypes.Language.Python)
+                state.add_memlet_path(read_node_outer,
+                                      entry,
+                                      update_tasklet,
+                                      dst_conn="wavefront_in",
+                                      memlet=dace.Memlet(f"{data_name_outer}[{field_index}]", dynamic=True))
+                state.add_memlet_path(update_tasklet,
+                                      wavefront_access,
+                                      src_conn="wavefront_out",
+                                      memlet=dace.Memlet(f"{field_name}_wavefront", dynamic=True))
+                state.add_memlet_path(wavefront_access,
+                                      nested_sdfg_tasklet,
+                                      dst_conn=f"{field_name}_in",
+                                      memlet=dace.Memlet(f"{field_name}_wavefront"))
             else:
-                subset = str(sbs.Range.from_array(desc_outer))
-            state.add_memlet_path(
-                read_node_outer,
-                entry,
-                nested_sdfg_tasklet,
-                dst_conn=data_name_inner,
-                memlet=dace.Memlet(f"{data_name_outer}[{subset}]"))
+                state.add_memlet_path(read_node_outer,
+                                      entry,
+                                      nested_sdfg_tasklet,
+                                      dst_conn=f"{field_name}_in",
+                                      memlet=dace.Memlet(f"{data_name_outer}[{field_index}]"))
 
-            # Create inner memory pipe
-            desc_inner = desc_outer.clone()
-            nested_sdfg.add_datadesc(data_name_inner, desc_inner)
+            # Create inner memory access
+            nested_sdfg.add_scalar(data_name_inner,
+                                   desc_outer.dtype,
+                                   storage=dace.StorageType.FPGA_Local,
+                                   transient=False)
 
             buffer_name_outer = f"{node.label}_{field_name}_buffer"
             buffer_name_inner_read = f"{field_name}_buffer_in"
@@ -283,11 +295,10 @@ class ExpandStencilIntelFPGA(dace.library.ExpandTransformation):
 
             # Create buffer transient in outer SDFG
             field_dtype = parent_sdfg.data(data_name).dtype
-            _, desc_outer = sdfg.add_array(
-                buffer_name_outer, (size, ),
-                field_dtype.base_type,
-                storage=dace.dtypes.StorageType.FPGA_Local,
-                transient=True)
+            _, desc_outer = sdfg.add_array(buffer_name_outer, (size, ),
+                                           field_dtype.base_type,
+                                           storage=dace.dtypes.StorageType.FPGA_Local,
+                                           transient=True)
 
             # Create read and write nodes
             read_node_outer = state.add_read(buffer_name_outer)
@@ -298,18 +309,14 @@ class ExpandStencilIntelFPGA(dace.library.ExpandTransformation):
                                   entry,
                                   nested_sdfg_tasklet,
                                   dst_conn=buffer_name_inner_read,
-                                  memlet=dace.Memlet(
-                                      f"{buffer_name_outer}[0:{size}]",
-                                      dynamic=True))
+                                  memlet=dace.Memlet(f"{buffer_name_outer}[0:{size}]"))
 
             # Outer buffer write
             state.add_memlet_path(nested_sdfg_tasklet,
                                   exit,
                                   write_node_outer,
                                   src_conn=buffer_name_inner_write,
-                                  memlet=dace.Memlet(
-                                      f"{write_node_outer.data}[0:{size}]",
-                                      dynamic=True))
+                                  memlet=dace.Memlet(f"{write_node_outer.data}[0:{size}]", dynamic=True))
 
             # Inner copy
             desc_inner_read = desc_outer.clone()
@@ -324,71 +331,36 @@ class ExpandStencilIntelFPGA(dace.library.ExpandTransformation):
             if size > 1:
                 shift_read = shift_state.add_read(buffer_name_inner_read)
                 shift_write = shift_state.add_write(buffer_name_inner_write)
-                shift_entry, shift_exit = shift_state.add_map(
-                    f"shift_{field_name}",
-                    {"i_shift": f"0:{size} - {vector_lengths[field_name]}"},
-                    schedule=dace.dtypes.ScheduleType.FPGA_Device,
-                    unroll=True)
-                shift_tasklet = shift_state.add_tasklet(
-                    f"shift_{field_name}", {f"{field_name}_shift_in"},
-                    {f"{field_name}_shift_out"},
-                    f"{field_name}_shift_out = {field_name}_shift_in")
-                shift_state.add_memlet_path(
-                    shift_read,
-                    shift_entry,
-                    shift_tasklet,
-                    dst_conn=field_name + "_shift_in",
-                    memlet=dace.Memlet(
-                        f"{shift_read.data}"
-                        f"[i_shift + {vector_lengths[field_name]}]"))
-                shift_state.add_memlet_path(
-                    shift_tasklet,
-                    shift_exit,
-                    shift_write,
-                    src_conn=field_name + "_shift_out",
-                    memlet=dace.Memlet(f"{shift_write.data}[i_shift]"))
+                shift_entry, shift_exit = shift_state.add_map(f"shift_{field_name}",
+                                                              {"i_shift": f"0:{size} - {vector_lengths[field_name]}"},
+                                                              schedule=dace.dtypes.ScheduleType.FPGA_Device,
+                                                              unroll=True)
+                shift_tasklet = shift_state.add_tasklet(f"shift_{field_name}", {f"{field_name}_shift_in"},
+                                                        {f"{field_name}_shift_out"},
+                                                        f"{field_name}_shift_out = {field_name}_shift_in")
+                shift_state.add_memlet_path(shift_read,
+                                            shift_entry,
+                                            shift_tasklet,
+                                            dst_conn=field_name + "_shift_in",
+                                            memlet=dace.Memlet(f"{shift_read.data}"
+                                                               f"[i_shift + {vector_lengths[field_name]}]"))
+                shift_state.add_memlet_path(shift_tasklet,
+                                            shift_exit,
+                                            shift_write,
+                                            src_conn=field_name + "_shift_out",
+                                            memlet=dace.Memlet(f"{shift_write.data}[i_shift]"))
 
-            # Begin reading according to this field's own buffer size, which is
-            # translated to an index by subtracting it from the maximum buffer
-            # size
-            begin_reading = (init_size_max - init_size)
-            end_reading = (
-                functools.reduce(operator.mul, shape, 1) / vector_length +
-                init_size_max - init_size)
-
+            # Make update state
             update_read = update_state.add_read(data_name_inner)
             update_write = update_state.add_write(buffer_name_inner_write)
-            update_tasklet = update_state.add_tasklet(
-                "read_wavefront", {"wavefront_in"}, {"buffer_out"},
-                "if {it} >= {begin} and {it} < {end}:\n"
-                "\tbuffer_out = wavefront_in\n".format(
-                    it=pipeline.iterator_str(),
-                    begin=begin_reading,
-                    end=end_reading),
-                language=dace.dtypes.Language.Python)
-            nested_sdfg_tasklet.symbol_mapping[pipeline.iterator_str()] = (
-                pipeline.iterator_str())
-            iterator_str = pipeline.iterator_str()
-            if iterator_str not in nested_sdfg.symbols:
-                nested_sdfg.add_symbol(iterator_str, dace.int64)
-            update_state.add_memlet_path(update_read,
-                                         update_tasklet,
-                                         memlet=dace.Memlet(
-                                             f"{update_read.data}[{field_index}]",
-                                             dynamic=True),
-                                         dst_conn="wavefront_in")
             subset = f"{size} - {vector_length}:{size}" if size > 1 else "0"
-            update_state.add_memlet_path(update_tasklet,
+            update_state.add_memlet_path(update_read,
                                          update_write,
-                                         memlet=dace.Memlet(
-                                             f"{update_write.data}[{subset}]",
-                                             dynamic=True),
-                                         src_conn="buffer_out")
+                                         memlet=dace.Memlet(f"{update_read.data}", other_subset=f"{subset}"))
 
             # Make compute state
             compute_read = compute_state.add_read(buffer_name_inner_read)
-            for relative, offset in zip(buffer_accesses[field_name][0],
-                                        buffer_accesses[field_name][1]):
+            for relative, offset in zip(buffer_accesses[field_name][0], buffer_accesses[field_name][1]):
                 memlet_name = field_accesses[field_name][tuple(relative)]
                 if vector_length > 1:
                     if vector_lengths[field_name] > 1:
@@ -399,20 +371,15 @@ class ExpandStencilIntelFPGA(dace.library.ExpandTransformation):
                 else:
                     offset = str(offset)
                     path = [compute_read, compute_tasklet]
-                compute_state.add_memlet_path(
-                    *path,
-                    dst_conn="_" + memlet_name,
-                    memlet=dace.Memlet(f"{compute_read.data}[{offset}]"))
+                compute_state.add_memlet_path(*path,
+                                              dst_conn="_" + memlet_name,
+                                              memlet=dace.Memlet(f"{compute_read.data}[{offset}]"))
 
         # Tasklet to update iterators
-        update_iterator_tasklet = state.add_tasklet(
-            f"{node.label}_update_iterators", {}, {}, iterator_code)
-        state.add_memlet_path(nested_sdfg_tasklet,
-                              update_iterator_tasklet,
-                              memlet=dace.Memlet())
-        state.add_memlet_path(update_iterator_tasklet,
-                              exit,
-                              memlet=dace.Memlet())
+        if iterator_code:
+            update_iterator_tasklet = state.add_tasklet(f"{node.label}_update_iterators", {}, {}, iterator_code)
+            state.add_memlet_path(nested_sdfg_tasklet, update_iterator_tasklet, memlet=dace.Memlet())
+            state.add_memlet_path(update_iterator_tasklet, exit, memlet=dace.Memlet())
 
         for field_name in outputs:
 
@@ -431,23 +398,13 @@ class ExpandStencilIntelFPGA(dace.library.ExpandTransformation):
             try:
                 sdfg.add_datadesc(data_name_outer, desc_outer)
             except NameError:  # Already an input
-                parent_sdfg.arrays[data_name].access = (
-                    dace.AccessType.ReadWrite)
-            write_node_outer = state.add_write(data_name_outer)
-            if isinstance(desc_outer, dt.Stream):
-                subset = "0"
-            else:
-                subset = str(sbs.Range.from_array(desc_outer))
-            state.add_memlet_path(
-                nested_sdfg_tasklet,
-                exit,
-                write_node_outer,
-                src_conn=data_name_inner,
-                memlet=dace.Memlet(f"{data_name_outer}[{subset}]"))
+                parent_sdfg.arrays[data_name].access = (dace.AccessType.ReadWrite)
 
-            # Create inner stream
-            desc_inner = desc_outer.clone()
-            nested_sdfg.add_datadesc(data_name_inner, desc_inner)
+            # Create inner access
+            nested_sdfg.add_scalar(data_name_inner,
+                                   desc_outer.dtype,
+                                   storage=dace.StorageType.FPGA_Local,
+                                   transient=False)
 
             # Inner write
             write_node_inner = compute_state.add_write(data_name_inner)
@@ -455,47 +412,55 @@ class ExpandStencilIntelFPGA(dace.library.ExpandTransformation):
             # Intermediate buffer, mostly relevant for vectorization
             output_buffer_name = field_name + "_output_buffer"
             nested_sdfg.add_array(output_buffer_name, (vector_length, ),
-                                  desc_inner.dtype.base_type,
+                                  desc_outer.dtype.base_type,
                                   storage=dace.StorageType.FPGA_Registers,
                                   transient=True)
             output_buffer = compute_state.add_access(output_buffer_name)
 
-            # Condition write tasklet
-            output_tasklet = compute_state.add_tasklet(
-                field_name + "_conditional_write", {f"_{output_buffer_name}"},
-                {f"_{data_name_inner}"},
-                (write_cond + f"_{data_name_inner} = _{output_buffer_name}"))
-
             # If vectorized, we need to pass through the unrolled scope
             if vector_length > 1:
-                compute_state.add_memlet_path(
-                    compute_tasklet,
-                    compute_unroll_exit,
-                    output_buffer,
-                    src_conn=field_name + "_inner_out",
-                    memlet=dace.Memlet(f"{output_buffer_name}[i_unroll]"))
+                compute_state.add_memlet_path(compute_tasklet,
+                                              compute_unroll_exit,
+                                              output_buffer,
+                                              src_conn=field_name + "_inner_out",
+                                              memlet=dace.Memlet(f"{output_buffer_name}[i_unroll]"))
             else:
-                compute_state.add_memlet_path(
-                    compute_tasklet,
-                    output_buffer,
-                    src_conn=field_name + "_inner_out",
-                    memlet=dace.Memlet(f"{output_buffer_name}[0]")),
+                compute_state.add_memlet_path(compute_tasklet,
+                                              output_buffer,
+                                              src_conn=field_name + "_inner_out",
+                                              memlet=dace.Memlet(f"{output_buffer_name}[0]")),
 
             # Final memlet to the output
-            compute_state.add_memlet_path(
-                output_buffer,
-                output_tasklet,
-                dst_conn=f"_{output_buffer_name}",
-                memlet=dace.Memlet(f"{output_buffer.data}[0:{vector_length}]")),
-            if isinstance(desc_inner, dt.Stream):
+            compute_state.add_memlet_path(output_buffer,
+                                          write_node_inner,
+                                          memlet=dace.Memlet(f"{write_node_inner.data}")),
+
+            # Conditional write tasklet
+            sdfg.add_scalar(f"{field_name}_result",
+                            desc_outer.dtype,
+                            storage=dace.StorageType.FPGA_Local,
+                            transient=True)
+            output_access = state.add_access(f"{field_name}_result")
+            state.add_memlet_path(nested_sdfg_tasklet,
+                                  output_access,
+                                  src_conn=data_name_inner,
+                                  memlet=dace.Memlet(f"{field_name}_result"))
+            output_tasklet = state.add_tasklet(f"{field_name}_conditional_write", {f"_{field_name}_result"},
+                                               {f"_{data_name_inner}"},
+                                               (write_cond + f"_{data_name_inner} = _{field_name}_result"))
+            state.add_memlet_path(output_access,
+                                  output_tasklet,
+                                  dst_conn=f"_{field_name}_result",
+                                  memlet=dace.Memlet(f"{field_name}_result"))
+            write_node_outer = state.add_write(data_name_outer)
+            if isinstance(desc_outer, dt.Stream):
                 subset = "0"
             else:
                 subset = array_index
-            compute_state.add_memlet_path(
-                output_tasklet,
-                write_node_inner,
-                src_conn=f"_{data_name_inner}",
-                memlet=dace.Memlet(f"{write_node_inner.data}[{subset}]",
-                                   dynamic=True)),
+            state.add_memlet_path(output_tasklet,
+                                  exit,
+                                  write_node_outer,
+                                  src_conn=f"_{data_name_inner}",
+                                  memlet=dace.Memlet(f"{write_node_outer.data}[{subset}]", dynamic=True)),
 
         return sdfg

@@ -40,18 +40,9 @@ def pure_graph(implementation, dtype, veclen):
     dot_node.implementation = implementation
     dot_node.n = n
 
-    state.add_memlet_path(x,
-                          dot_node,
-                          dst_conn="_x",
-                          memlet=Memlet(f"x[0:{n}/{veclen}]"))
-    state.add_memlet_path(y,
-                          dot_node,
-                          dst_conn="_y",
-                          memlet=Memlet(f"y[0:{n}/{veclen}]"))
-    state.add_memlet_path(dot_node,
-                          result,
-                          src_conn="_result",
-                          memlet=Memlet(f"r[0]"))
+    state.add_memlet_path(x, dot_node, dst_conn="_x", memlet=Memlet(f"x[0:{n}/{veclen}]"))
+    state.add_memlet_path(y, dot_node, dst_conn="_y", memlet=Memlet(f"y[0:{n}/{veclen}]"))
+    state.add_memlet_path(dot_node, result, src_conn="_result", memlet=Memlet(f"r[0]"))
 
     return sdfg
 
@@ -60,10 +51,7 @@ def fpga_graph(implementation, dtype, veclen):
     sdfg = pure_graph(implementation, dtype, veclen)
     sdfg.apply_transformations_repeated([FPGATransformSDFG, InlineSDFG])
     sdfg.expand_library_nodes()
-    sdfg.apply_transformations_repeated(
-        [InlineSDFG, StreamingMemory], [{}, {
-            "storage": dace.StorageType.FPGA_Local
-        }])
+    sdfg.apply_transformations_repeated([InlineSDFG, StreamingMemory], [{}, {"storage": dace.StorageType.FPGA_Local}])
     return sdfg
 
 
@@ -71,10 +59,10 @@ def run_test(target, size, vector_length):
     if target == "pure":
         sdfg = pure_graph("pure", dace.float32, vector_length)
     elif target == "intel_fpga":
-        dace.Config.set("compiler", "fpga_vendor", value="intel_fpga")
+        dace.Config.set("compiler", "fpga", "vendor", value="intel_fpga")
         sdfg = fpga_graph("FPGA_Accumulate", dace.float32, vector_length)
     elif target == "xilinx":
-        dace.Config.set("compiler", "fpga_vendor", value="xilinx")
+        dace.Config.set("compiler", "fpga", "vendor", value="xilinx")
         sdfg = fpga_graph("FPGA_PartialSums", dace.float32, vector_length)
     else:
         print(f"Unsupported target: {target}")
@@ -97,8 +85,7 @@ def run_test(target, size, vector_length):
 
     diff = abs(result[0] - ref)
     if diff >= 1e-6 * ref:
-        raise ValueError("Unexpected result returned from dot product: "
-                         "got {}, expected {}".format(result[0], ref))
+        raise ValueError("Unexpected result returned from dot product: " "got {}, expected {}".format(result[0], ref))
 
     return sdfg
 

@@ -12,7 +12,7 @@ Jinja2==3.0.0a1
 MarkupSafe==2.0.0a1
 mpmath==1.1.0
 networkx==2.5
-numpy==1.19.2
+numpy>=1.21
 packaging==20.4
 ply==3.11
 pyparsing==3.0.0a2

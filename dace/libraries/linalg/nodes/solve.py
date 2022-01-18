@@ -16,11 +16,8 @@ from dace.libraries.blas import environments as blas_environments
 def _make_sdfg_getrs(node, parent_state, parent_sdfg, implementation):
 
     arr_desc = node.validate(parent_sdfg, parent_state)
-    (
-        ain_shape, ain_dtype, ain_strides, 
-        bin_shape, bin_dtype, bin_strides, 
-        out_shape, out_dtype, out_strides, n, rhs
-    ) = arr_desc
+    (ain_shape, ain_dtype, ain_strides, bin_shape, bin_dtype, bin_strides, out_shape, out_dtype, out_strides, n,
+     rhs) = arr_desc
     dtype = ain_dtype
 
     sdfg = dace.SDFG("{l}_sdfg".format(l=node.label))
@@ -72,42 +69,15 @@ def _make_sdfg_getrs(node, parent_state, parent_sdfg, implementation):
     info1 = state.add_write('_info')
     info2 = state.add_write('_info')
 
-    state.add_memlet_path(ainout1,
-                          getrf_node,
-                          dst_conn="_xin",
-                          memlet=Memlet.from_array(*ainout_arr))
-    state.add_memlet_path(getrf_node,
-                          info1,
-                          src_conn="_res",
-                          memlet=Memlet.from_array(*info_arr))
-    state.add_memlet_path(getrf_node,
-                          ipiv,
-                          src_conn="_ipiv",
-                          memlet=Memlet.from_array(*ipiv_arr))
-    state.add_memlet_path(getrf_node,
-                          ainout2,
-                          src_conn="_xout",
-                          memlet=Memlet.from_array(*ainout_arr))
-    state.add_memlet_path(ainout2,
-                          getrs_node,
-                          dst_conn="_a",
-                          memlet=Memlet.from_array(*ainout_arr))
-    state.add_memlet_path(binout1,
-                          getrs_node,
-                          dst_conn="_rhs_in",
-                          memlet=Memlet.from_array(*binout_arr))
-    state.add_memlet_path(ipiv,
-                          getrs_node,
-                          dst_conn="_ipiv",
-                          memlet=Memlet.from_array(*ipiv_arr))
-    state.add_memlet_path(getrs_node,
-                          info2,
-                          src_conn="_res",
-                          memlet=Memlet.from_array(*info_arr))
-    state.add_memlet_path(getrs_node,
-                          binout2,
-                          src_conn="_rhs_out",
-                          memlet=Memlet.from_array(*binout_arr))
+    state.add_memlet_path(ainout1, getrf_node, dst_conn="_xin", memlet=Memlet.from_array(*ainout_arr))
+    state.add_memlet_path(getrf_node, info1, src_conn="_res", memlet=Memlet.from_array(*info_arr))
+    state.add_memlet_path(getrf_node, ipiv, src_conn="_ipiv", memlet=Memlet.from_array(*ipiv_arr))
+    state.add_memlet_path(getrf_node, ainout2, src_conn="_xout", memlet=Memlet.from_array(*ainout_arr))
+    state.add_memlet_path(ainout2, getrs_node, dst_conn="_a", memlet=Memlet.from_array(*ainout_arr))
+    state.add_memlet_path(binout1, getrs_node, dst_conn="_rhs_in", memlet=Memlet.from_array(*binout_arr))
+    state.add_memlet_path(ipiv, getrs_node, dst_conn="_ipiv", memlet=Memlet.from_array(*ipiv_arr))
+    state.add_memlet_path(getrs_node, info2, src_conn="_res", memlet=Memlet.from_array(*info_arr))
+    state.add_memlet_path(getrs_node, binout2, src_conn="_rhs_out", memlet=Memlet.from_array(*binout_arr))
 
     return sdfg
 
@@ -125,8 +95,7 @@ class ExpandSolvePure(ExpandTransformation):
     def expansion(node, state, sdfg):
         node.validate(sdfg, state)
         if node.dtype is None:
-            raise ValueError("Data type must be set to expand " + str(node) +
-                             ".")
+            raise ValueError("Data type must be set to expand " + str(node) + ".")
         return ExpandSolvePure.make_sdfg(node, state, sdfg)
 
 
@@ -164,24 +133,17 @@ class ExpandSolveCuSolverDn(ExpandTransformation):
 class Solve(dace.sdfg.nodes.LibraryNode):
 
     # Global properties
-    implementations = {
-        "OpenBLAS": ExpandSolveOpenBLAS,
-        "MKL": ExpandSolveMKL,
-        "cuSolverDn": ExpandSolveCuSolverDn
-    }
+    implementations = {"OpenBLAS": ExpandSolveOpenBLAS, "MKL": ExpandSolveMKL, "cuSolverDn": ExpandSolveCuSolverDn}
     default_implementation = None
 
     overwrite = dace.properties.Property(dtype=bool, default=False)
 
     # Object fields
     def __init__(self, name, *args, **kwargs):
-        super().__init__(name,
-                         *args,
-                         inputs={"_ain", "_bin"},
-                         outputs={"_bout"},
-                         **kwargs)
+        super().__init__(name, *args, inputs={"_ain", "_bin"}, outputs={"_bout"}, **kwargs)
         # NOTE: We currently do not support overwrite == True
         self.overwrite = False
+
     def validate(self, sdfg, state):
         """
         :return: A four-tuple (ain, aout, ipiv, info) of the three data
@@ -207,7 +169,7 @@ class Solve(dace.sdfg.nodes.LibraryNode):
             if e.src_conn == "_bout":
                 desc_out = sdfg.arrays[e.data.data]
                 out_memlet = e.data
-        
+
         # Squeeze input memlets
         squeezed_ain = copy.deepcopy(ain_memlet.subset)
         dims_ain = squeezed_ain.squeeze()
@@ -217,12 +179,11 @@ class Solve(dace.sdfg.nodes.LibraryNode):
         squeezed_out = copy.deepcopy(out_memlet.subset)
         dims_out = squeezed_out.squeeze()
 
-        if (desc_ain.dtype.base_type != desc_out.dtype.base_type or
-                desc_ain.dtype.base_type != desc_bin.dtype.base_type):
+        if (desc_ain.dtype.base_type != desc_out.dtype.base_type
+                or desc_ain.dtype.base_type != desc_bin.dtype.base_type):
             raise ValueError("Basetype of inputs and output must be equal!")
 
-        if (len(squeezed_ain.size()) != 2 or len(squeezed_bin.size()) > 2 or
-                len(squeezed_out.size()) > 2):
+        if (len(squeezed_ain.size()) != 2 or len(squeezed_bin.size()) > 2 or len(squeezed_out.size()) > 2):
             raise ValueError("linalg.solve only supported with first input a "
                              " matrix and second input vector or matrix")
 
@@ -230,26 +191,20 @@ class Solve(dace.sdfg.nodes.LibraryNode):
         shape_bin = squeezed_bin.size()
         shape_out = squeezed_out.size()
         if shape_ain[0] != shape_ain[1]:
-            raise ValueError("linalg.solve only supported with first input a "
-                             "square matrix")
+            raise ValueError("linalg.solve only supported with first input a " "square matrix")
         if shape_ain[-1] != shape_bin[0]:
-            raise ValueError(
-                "A column must be equal to B rows")
+            raise ValueError("A column must be equal to B rows")
         if not np.array_equal(shape_bin, shape_out):
-            raise ValueError(
-                "Squeezed shape of second input and output must be the same")
+            raise ValueError("Squeezed shape of second input and output must be the same")
 
         strides_ain = np.array(desc_ain.strides)[dims_ain].tolist()
         strides_bin = np.array(desc_bin.strides)[dims_bin].tolist()
         strides_out = np.array(desc_out.strides)[dims_out].tolist()
         if strides_ain[-1] != 1:
-            raise ValueError(
-                "Matrices with column strides greater than 1 are unsupported")
+            raise ValueError("Matrices with column strides greater than 1 are unsupported")
 
         if desc_bin is desc_out:
             raise ValueError("Overwriting input B is not supported")
 
-        return (shape_ain, desc_ain.dtype, strides_ain, 
-                shape_bin, desc_bin.dtype, strides_bin,
-                shape_out, desc_out.dtype, strides_out,
-                shape_out[0], shape_out[1])
+        return (shape_ain, desc_ain.dtype, strides_ain, shape_bin, desc_bin.dtype, strides_bin, shape_out,
+                desc_out.dtype, strides_out, shape_out[0], shape_out[1])
