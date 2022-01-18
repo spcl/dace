@@ -6,7 +6,7 @@ import itertools
 import copy
 import os
 import sympy
-from typing import Any, Callable, Dict, List, Optional, Set, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Optional, Set, Sequence, Tuple, Union, get_origin
 import warnings
 
 from dace import symbolic, dtypes
@@ -517,7 +517,7 @@ class DaceProgram(pycommon.SDFGConvertible):
 
                     # If annotation specifies to skip its data descriptor and favor JIT types
                     try:
-                        if create_datadescriptor(ann) is None:
+                        if get_origin(ann) is Union or create_datadescriptor(ann) is None:
                             curarg = None
                     except (TypeError, ValueError):
                         # Skip for now
