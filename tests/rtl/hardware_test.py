@@ -343,26 +343,26 @@ def test_hardware_add42_single():
 
 # TODO disabled due to problem with array of streams in Vitis 2021.1
 #@xilinx_test()
-def test_hardware_add42_multi():
-    N = dace.symbol('N')
-    M = dace.symbol('M')
-
-    # init data structures
-    N.set(256)  # elements
-    M.set(32)  # elements per kernel
-    a = np.random.randint(0, 100, N.get()).astype(np.int32)
-    b = np.zeros((N.get(), )).astype(np.int32)
-    sdfg = make_vadd_multi_sdfg(N, M)
-    sdfg.specialize(dict(N=N, M=M))
-
-    # call program
-    sdfg(A=a, B=b)
-
-    # check result
-    for i in range(N.get()):
-        assert b[i] == a[i] + 42
-
-    return sdfg
+#def test_hardware_add42_multi():
+#    N = dace.symbol('N')
+#    M = dace.symbol('M')
+#
+#    # init data structures
+#    N.set(256)  # elements
+#    M.set(32)  # elements per kernel
+#    a = np.random.randint(0, 100, N.get()).astype(np.int32)
+#    b = np.zeros((N.get(), )).astype(np.int32)
+#    sdfg = make_vadd_multi_sdfg(N, M)
+#    sdfg.specialize(dict(N=N, M=M))
+#
+#    # call program
+#    sdfg(A=a, B=b)
+#
+#    # check result
+#    for i in range(N.get()):
+#        assert b[i] == a[i] + 42
+#
+#    return sdfg
 
 
 if __name__ == '__main__':
