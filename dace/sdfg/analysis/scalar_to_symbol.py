@@ -140,6 +140,10 @@ def find_promotable_scalars(sdfg: sd.SDFG) -> Set[str]:
                     if (tinput.data.dynamic or tinput.data.subset.num_elements() != 1):
                         candidates.remove(candidate)
                         break
+                    # If input array has inputs of its own (cannot promote within same state), skip
+                    if state.in_degree(tinput.src) > 0:
+                        candidates.remove(candidate)
+                        break
                 else:
                     # Check that tasklets have only one statement
                     cb: props.CodeBlock = edge.src.code
@@ -570,7 +574,6 @@ def promote_scalars_to_symbols(sdfg: sd.SDFG, ignore: Optional[Set[str]] = None)
             input = in_edge.src
 
             # There is only zero or one incoming edges by definition
-
             tasklet_inputs = [e.src for e in state.in_edges(input)]
             # Step 2.1
             new_state = xfh.state_fission(sdfg, gr.SubgraphView(state, set([input, node] + tasklet_inputs)))
