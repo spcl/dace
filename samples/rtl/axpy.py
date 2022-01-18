@@ -326,7 +326,7 @@ if __name__ == '__main__':
 
     # init data structures
     N.set(4096)
-    a = np.random.rand(1)[0].astype(np.float32)
+    a = np.float32(0) #np.random.rand(1)[0].astype(np.float32)
     x = np.random.rand(N.get()).astype(np.float32)
     y = np.random.rand(N.get()).astype(np.float32)
     result = np.zeros((N.get(), )).astype(np.float32)

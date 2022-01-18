@@ -689,13 +689,25 @@ model->eval();
 // reset design
 model->ap_areset = 1;
 model->ap_aclk = 1; // rising
+model->ap_aclk_2 = 1;
+model->eval();
+model->ap_aclk_2 = 0;
 model->eval();
 model->ap_aclk = 0; // falling
+model->ap_aclk_2 = 1;
+model->eval();
+model->ap_aclk_2 = 0;
 model->eval();
 model->ap_areset = 0;
 model->ap_aclk = 1; // rising
+model->ap_aclk_2 = 1;
+model->eval();
+model->ap_aclk_2 = 0;
 model->eval();
 model->ap_aclk = 0; // falling
+model->ap_aclk_2 = 1;
+model->eval();
+model->ap_aclk_2 = 0;
 model->eval();
 
 // simulate until in_handshakes = out_handshakes = num_elements
@@ -721,6 +733,11 @@ while ({running_condition}) {{
     // positive clock edge
     model->ap_aclk = !(model->ap_aclk);
 
+    // Run the double clock
+    model->ap_aclk_2 = !(model->ap_aclk_2);
+    model->eval();
+    model->ap_aclk_2 = !(model->ap_aclk_2);
+
     model->eval(); {debug_internal_state}
 
     // check if valid and ready has been asserted for each input at the rising clock edge
@@ -731,6 +748,12 @@ while ({running_condition}) {{
 
     // negative clock edge
     model->ap_aclk = !(model->ap_aclk);
+
+    // Run the double clock
+    model->ap_aclk_2 = !(model->ap_aclk_2);
+    model->eval();
+    model->ap_aclk_2 = !(model->ap_aclk_2);
+
     model->eval();
 }} {debug_internal_state}
 

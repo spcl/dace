@@ -70,6 +70,91 @@ def test_tasklet_array():
     # check result
     assert (b == a + 42).all()
 
+@pytest.mark.verilator
+def test_tasklet_double_clk_counters():
+    """
+        Test double clock functionality utilizing two counters, one for each clock.
+        The first 16 bits of the result should contain the count from the "slow" clock.
+        The last 16 bits of the result should contain the count from the "fast" clock, i.e. slow count * 2
+    """
+    sdfg = dace.SDFG('rtl_tasklet_double_clk_counters')
+    state = sdfg.add_state()
+    sdfg.add_array('A', [1], dtype=dace.int32)
+    sdfg.add_array('B', [1], dtype=dace.int32)
+
+    tasklet = state.add_tasklet(name='rtl_tasklet',
+                                inputs={'a'},
+                                outputs={'b'},
+                                code='''
+
+    reg [31:0] max_cnt;
+    reg [15:0] s_cnt;
+    reg        s_done;
+    reg [15:0] d_cnt;
+    reg        d_done;
+
+    always @(posedge ap_aclk) begin
+        if (ap_areset) begin
+            s_axis_a_tready <= 1;
+        end else if (s_axis_a_tvalid && s_axis_a_tready) begin
+            max_cnt <= s_axis_a_tdata;
+            s_axis_a_tready <= 0;
+        end else if (m_axis_b_tvalid && m_axis_b_tready) begin
+            s_axis_a_tready <= 1;
+        end
+    end
+
+    always @(posedge ap_aclk) begin
+        if (ap_areset) begin
+            s_cnt <= 0;
+            s_done <= 0;
+        end else if (s_cnt < max_cnt[15:0]) begin
+            s_cnt <= s_cnt + 1;
+            s_done <= 0;
+        end else begin
+            s_done <= max_cnt > 0;
+        end
+    end
+
+    always @(posedge ap_aclk_2) begin
+        if (ap_areset) begin
+            d_cnt <= 0;
+            d_done <= 0;
+        end else if (s_cnt < max_cnt[15:0]) begin
+            d_cnt <= d_cnt + 1;
+            d_done <= 0;
+        end else begin
+            d_done <= max_cnt > 0;
+        end
+    end
+
+    always @(posedge ap_aclk) begin
+        if (ap_areset) begin
+            m_axis_b_tvalid <= 0;
+            m_axis_b_tdata <= 0;
+        end else begin
+            m_axis_b_tvalid <= s_done && d_done;
+            m_axis_b_tdata[15:0]  <= s_cnt;
+            m_axis_b_tdata[31:16] <= d_cnt;
+        end
+    end
+                                ''',
+                                language=dace.Language.SystemVerilog)
+    A = state.add_read('A')
+    B = state.add_write('B')
+
+    state.add_edge(A, None, tasklet, 'a', dace.Memlet('A[0]'))
+    state.add_edge(tasklet, 'b', B, None, dace.Memlet('B[0]'))
+
+    sdfg.validate()
+
+    a = np.random.randint(0, 100, 1).astype(np.int32)
+    b = np.zeros((1,)).astype(np.int32)
+
+    sdfg(A=a, B=b)
+
+    assert b[0] & 0xFFFF == a[0]
+    assert (b[0] >> 16) & 0xFFFF == a[0]*2
 
 @pytest.mark.verilator
 def test_tasklet_scalar():
