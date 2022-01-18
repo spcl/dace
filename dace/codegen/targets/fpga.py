@@ -1062,7 +1062,11 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
 
                         bank_low, bank_high = get_multibank_ranges_from_subset(bank, sdfg)
                         memory_bank_arg_count = bank_high - bank_low
-                        arrsize = dace.symbolic.pystr_to_symbolic(f"({str(arrsize)}) / {str(bank_high - bank_low)}")
+                        if bank_high-bank_low > 1:
+                            arrsize = dace.symbolic.pystr_to_symbolic(f"int_ceil(({str(arrsize)}) , ({str(bank_high - bank_low)}))")
+                        else:
+                            arrsize = dace.symbolic.pystr_to_symbolic(f"({str(arrsize)}) / {str(bank_high - bank_low)}")
+                            
                         bank_offset = bank_low
 
                         if bank_type == "HBM":
@@ -1080,6 +1084,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                                            f"MakeBuffer<{nodedesc.dtype.ctype}, hlslib::ocl::Access::readWrite>"
                                            f"({storage_type_str}, {bank_offset + bank_index}, "
                                            f"{cpp.sym2cpp(arrsize)});\n")
+
                         self._dispatcher.defined_vars.add(
                             alloc_name, DefinedType.Pointer,
                             'hlslib::ocl::Buffer <{}, hlslib::ocl::Access::readWrite>'.format(nodedesc.dtype.ctype))
