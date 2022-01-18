@@ -206,7 +206,8 @@ class LoopUnroller(ast.NodeTransformer):
     compile time and one of the following conditions apply:
         1. `dace.unroll` was explicitly called
         2. looping over compile-time constant tuples/lists/dictionaries
-        3. generator is one of the predetermined "stateless generators".
+        3. generator is one of the predetermined "stateless generators"
+        4. any generator with compile-time size that is lower than the "unroll_threshold" configuration
     """
     STATELESS_GENERATORS = [
         enumerate,
@@ -217,10 +218,15 @@ class LoopUnroller(ast.NodeTransformer):
         dict.items,
     ]
 
+    THRESHOLD_GENERATORS = [
+        range,
+    ]
+
     def __init__(self, globals: Dict[str, Any], filename: str):
         super().__init__()
         self.globals = globals
         self.filename = filename
+        self.threshold = Config.get('frontend', 'unroll_threshold')
 
     def visit_For(self, node: ast.For) -> Any:
         # Avoid import loops
@@ -280,7 +286,10 @@ class LoopUnroller(ast.NodeTransformer):
                 if hasattr(genfunc, '__self__'):
                     genfunc = getattr(type(genfunc.__self__), genfunc.__name__, False)
 
-                if genfunc in LoopUnroller.STATELESS_GENERATORS:
+                if (self.threshold >= 0
+                        and (genfunc not in EXPLICIT_GENERATORS or genfunc in LoopUnroller.THRESHOLD_GENERATORS)):
+                    implicit = True
+                elif genfunc in LoopUnroller.STATELESS_GENERATORS:
                     implicit = True
                 elif genfunc in EXPLICIT_GENERATORS:
                     implicit = False
@@ -317,6 +326,14 @@ class LoopUnroller(ast.NodeTransformer):
             except SyntaxError:
                 # Cannot evaluate generator at compile time
                 return node
+
+        if self.threshold == 0:  # Unroll any loop
+            explicitly_requested = True
+        elif self.threshold > 0:
+            generator = list(generator)
+            if len(generator) > self.threshold:
+                return node
+            explicitly_requested = True
 
         # Too verbose?
         if implicit and not explicitly_requested:
@@ -638,7 +655,7 @@ class GlobalResolver(ast.NodeTransformer):
     def visit_Subscript(self, node: ast.Subscript) -> Any:
         # First visit the subscripted value alone, then the whole subscript
         node.value = self.visit(node.value)
-        
+
         # Try to evaluate literal lists/dicts/tuples directly
         if isinstance(node.value, (ast.List, ast.Dict, ast.Tuple)):
             # First evaluate key
@@ -646,7 +663,7 @@ class GlobalResolver(ast.NodeTransformer):
                 gslice = astutils.evalnode(node.slice, self.globals)
             except SyntaxError:
                 return self.generic_visit(node)
-            
+
             # Then query for the right value
             if isinstance(node.value, ast.Dict):
                 for k, v in zip(node.value.keys, node.value.values):
@@ -656,7 +673,7 @@ class GlobalResolver(ast.NodeTransformer):
                         continue
                     if gkey == gslice:
                         return self.visit_Attribute(v)
-            else: # List or Tuple
+            else:  # List or Tuple
                 return self.visit_Attribute(node.value.elts[gslice])
 
         return self.visit_Attribute(node)
