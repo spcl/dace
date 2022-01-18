@@ -515,6 +515,14 @@ class DaceProgram(pycommon.SDFGConvertible):
                     else:
                         curarg = ann
 
+                    # If annotation specifies to skip its data descriptor and favor JIT types
+                    try:
+                        if create_datadescriptor(ann) is None:
+                            curarg = None
+                    except (TypeError, ValueError):
+                        # Skip for now
+                        pass
+
                 # If no annotation is provided, use given arguments
                 if sig_arg.kind is sig_arg.POSITIONAL_ONLY:
                     if arg_ind >= nargs:
