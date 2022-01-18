@@ -1194,7 +1194,7 @@ class SymbolicProperty(Property):
         if val is None:
             return
 
-        new_val = simplify_expr(val)
+        new_val = simplify(val)
         # TODO: fix this
         # self.__set__(obj, new_val)
 

@@ -167,10 +167,10 @@ def generate_code(sdfg, validate=True) -> List[CodeObject]:
         import shutil
         import tempfile
         with tempfile.TemporaryDirectory() as tmp_dir:
-            sdfg.simplify()
+            sdfg.simplify_expr()
             sdfg.save(f'{tmp_dir}/test.sdfg')
             sdfg2 = SDFG.from_file(f'{tmp_dir}/test.sdfg')
-            sdfg2.simplify()
+            sdfg2.simplify_expr()
             sdfg2.save(f'{tmp_dir}/test2.sdfg')
             print('Testing SDFG serialization...')
             if not filecmp.cmp(f'{tmp_dir}/test.sdfg', f'{tmp_dir}/test2.sdfg'):

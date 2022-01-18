@@ -326,11 +326,11 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         if self.parent_sdfg is None:
             self.reset_sdfg_list()
 
-        super().simplify()
+        super().simplify_expr()
 
         for data_str in self._arrays:
             data = self.data(data_str)
-            data.simplify()
+            data.simplify_expr()
 
     def to_json(self, hash=False):
         """ Serializes this object to JSON format.
