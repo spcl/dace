@@ -188,47 +188,49 @@ def parse_dace_program(name: str,
                              closure=closure,
                              simplify=simplify)
 
-    sdfg, _, _, _ = visitor.parse_program(preprocessed_ast.preprocessed_ast.body[0])
-    sdfg.set_sourcecode(preprocessed_ast.src, 'python')
+    try:
+        sdfg, _, _, _ = visitor.parse_program(preprocessed_ast.preprocessed_ast.body[0])
+        sdfg.set_sourcecode(preprocessed_ast.src, 'python')
 
-    # Combine nested closures with the current one
-    nested_closure_replacements: Dict[str, str] = {}
-    for name, (arr, _) in visitor.nested_closure_arrays.items():
-        # Check if the same array is already passed as part of a nested closure
-        if id(arr) in closure.array_mapping:
-            existing_name = closure.array_mapping[id(arr)]
-            if name != existing_name:
-                nested_closure_replacements[name] = existing_name
+        # Combine nested closures with the current one
+        nested_closure_replacements: Dict[str, str] = {}
+        for name, (arr, _) in visitor.nested_closure_arrays.items():
+            # Check if the same array is already passed as part of a nested closure
+            if id(arr) in closure.array_mapping:
+                existing_name = closure.array_mapping[id(arr)]
+                if name != existing_name:
+                    nested_closure_replacements[name] = existing_name
 
-    # Make safe replacements
-    def repl_callback(repldict):
-        for state in sdfg.nodes():
+        # Make safe replacements
+        def repl_callback(repldict):
+            for state in sdfg.nodes():
+                for name, new_name in repldict.items():
+                    state.replace(name, new_name)
             for name, new_name in repldict.items():
-                state.replace(name, new_name)
-        for name, new_name in repldict.items():
-            sdfg.arrays[new_name] = sdfg.arrays[name]
-            del sdfg.arrays[name]
+                sdfg.arrays[new_name] = sdfg.arrays[name]
+                del sdfg.arrays[name]
 
-    symbolic.safe_replace(nested_closure_replacements, repl_callback, value_as_string=True)
+        symbolic.safe_replace(nested_closure_replacements, repl_callback, value_as_string=True)
 
-    sdfg.debuginfo = dtypes.DebugInfo(
-        visitor.src_line + 1,
-        end_line=visitor.src_line + len(preprocessed_ast.src.split("\n")) - 1,
-        filename=path.abspath(preprocessed_ast.filename),
-    )
+        sdfg.debuginfo = dtypes.DebugInfo(
+            visitor.src_line + 1,
+            end_line=visitor.src_line + len(preprocessed_ast.src.split("\n")) - 1,
+            filename=path.abspath(preprocessed_ast.filename),
+        )
 
-    # Progress bar handling (post-parse)
-    if (progress is None and isinstance(ProgramVisitor.progress_bar, tuple)
-            and (time.time() - ProgramVisitor.start_time) >= 5):
-        initial, total = ProgramVisitor.progress_bar
-        ProgramVisitor.progress_bar = tqdm(total=total, initial=initial, desc='Parsing Python program')
-    ProgramVisitor.increment_progress()
-    if teardown_progress:
-        if not isinstance(ProgramVisitor.progress_bar, tuple):
-            ProgramVisitor.progress_bar.close()
-            print('Parsing complete.')
-        ProgramVisitor.progress_bar = None
-        ProgramVisitor.start_time = 0
+        # Progress bar handling (post-parse)
+        if (progress is None and isinstance(ProgramVisitor.progress_bar, tuple)
+                and (time.time() - ProgramVisitor.start_time) >= 5):
+            initial, total = ProgramVisitor.progress_bar
+            ProgramVisitor.progress_bar = tqdm(total=total, initial=initial, desc='Parsing Python program')
+        ProgramVisitor.increment_progress()
+    finally:
+        if teardown_progress:
+            if not isinstance(ProgramVisitor.progress_bar, tuple):
+                ProgramVisitor.progress_bar.close()
+                print('Parsing complete.')
+            ProgramVisitor.progress_bar = None
+            ProgramVisitor.start_time = 0
 
     return sdfg
 
