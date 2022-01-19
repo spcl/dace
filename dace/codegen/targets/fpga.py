@@ -716,7 +716,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
             data_to_node.update(
                 {node.data: node
                  for node in subgraph.nodes() if isinstance(node, dace.sdfg.nodes.AccessNode)})
-            rtl_subgraph = any([isinstance(node, nodes.RTLTasklet) for node in subgraph.nodes()])
+            is_rtl_subgraph = any([isinstance(node, nodes.RTLTasklet) for node in subgraph.nodes()])
             subsdfg = subgraph.parent
             candidates = []  # type: List[Tuple[bool,str,Data]]
             # [(is an output, dataname string, data object)]
@@ -725,14 +725,14 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
             for n in subgraph.source_nodes():
                 # Check if the node is connected to an RTL tasklet, in which
                 # case it should be an external stream
-                external = rtl_subgraph
+                is_external = is_rtl_subgraph
                 is_output = True
-                if not external and self._num_kernels > 1:
+                if not is_external and self._num_kernels > 1:
                     if is_external_stream(n, subgraph):
-                        external = True
+                        is_external = True
                         is_output = False
 
-                if external:
+                if is_external:
                     external_streams |= {(is_output, e.data.data, subsdfg.arrays[e.data.data], None)
                                          for e in state.out_edges(n)
                                          if isinstance(subsdfg.arrays[e.data.data], dt.Stream)}
@@ -741,14 +741,14 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
             for n in subgraph.sink_nodes():
                 # Check if the node is connected to an RTL tasklet, in which
                 # case it should be an external stream
-                external = rtl_subgraph
+                is_external = is_rtl_subgraph
                 is_output = False
-                if not external and self._num_kernels > 1:
+                if not is_external and self._num_kernels > 1:
                     if is_external_stream(n, subgraph):
-                        external = True
+                        is_external = True
                         is_output = True
 
-                if external:
+                if is_external:
                     external_streams |= {(is_output, e.data.data, subsdfg.arrays[e.data.data], None)
                                          for e in state.in_edges(n)
                                          if isinstance(subsdfg.arrays[e.data.data], dt.Stream)}

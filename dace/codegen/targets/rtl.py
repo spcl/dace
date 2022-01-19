@@ -592,8 +592,7 @@ model->s_axis_{name}_tdata = {name}[0];'''
                 raise NotImplementedError('Only RTL codegen for Xilinx is implemented')
         else:  # not hardware_target
             # generate verilator simulation cpp code components
-            inputs, outputs = self.generate_cpp_inputs_outputs(
-                tasklet, buses)  # TODO i don't know if i want to do it differently.
+            inputs, outputs = self.generate_cpp_inputs_outputs(tasklet, buses)
             valid_zeros, ready_zeros, scalar_zeros = self.generate_cpp_zero_inits(buses, scalars)
             vector_init = self.generate_cpp_vector_init(tasklet)
             num_elements = self.generate_cpp_num_elements(buses)

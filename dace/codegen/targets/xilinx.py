@@ -843,8 +843,6 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
             # TODO find better way to extract num kernels, rather than the shape of the streams
             num_kernels = dace.symbolic.evaluate(node.shape[0], sdfg.constants)
             self._dispatcher.defined_vars.add_global(name, DefinedType.Stream, node.ctype)
-            #if name not in self._stream_connections:
-            #    self._stream_connections[name] = [None, None]
             key = 0 if is_output else 1
             val = '{}_1.{}'.format(kernel_name, name)
 
