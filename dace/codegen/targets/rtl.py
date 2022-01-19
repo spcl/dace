@@ -339,17 +339,19 @@ model->s_axis_{name}_tdata = {name}[0];'''
             for name, (arr, is_output, bytes, veclen, volume) in buses.items()
         ]
 
-    def generate_cpp_internal_state(self, tasklet):
-        internal_state_str = " ".join(
-            ["{}=0x%x".format(var_name) for var_name in {
-                **tasklet.in_connectors,
-                **tasklet.out_connectors
-            }])
-        internal_state_var = ", ".join(  # TODO fix
-            ["model->{}".format(var_name) for var_name in {
-                **tasklet.in_connectors,
-                **tasklet.out_connectors
-            }])
+    def generate_cpp_internal_state(self, buses):
+        internal_state_strs = []
+        internal_state_vars = []
+        for name, (_, is_output, _, veclen, _) in buses.items():
+            prefix = 'm' if is_output else 's'
+            data_format = '0x%x' if veclen == 1 else f'[{" ".join(["0x%x"]*veclen)}]'
+            internal_state_strs.append(f'{name}={data_format} ready=%u valid=%u')
+            data_vars = f'model->{prefix}_axis_{name}_tdata' if veclen == 1 else ', '.join(
+                [f'model->{prefix}_axis_{name}_tdata[{i}]' for i in range(veclen)])
+            internal_state_vars.append(
+                f'{data_vars}, model->{prefix}_axis_{name}_tvalid, model->{prefix}_axis_{name}_tready')
+        internal_state_str = " | ".join(internal_state_strs)
+        internal_state_var = ", ".join(internal_state_vars)
         return internal_state_str, internal_state_var
 
     def generate_input_hs(self, buses):
@@ -596,7 +598,7 @@ model->s_axis_{name}_tdata = {name}[0];'''
             valid_zeros, ready_zeros, scalar_zeros = self.generate_cpp_zero_inits(buses, scalars)
             vector_init = self.generate_cpp_vector_init(tasklet)
             num_elements = self.generate_cpp_num_elements(buses)
-            internal_state_str, internal_state_var = self.generate_cpp_internal_state(tasklet)
+            internal_state_str, internal_state_var = self.generate_cpp_internal_state(buses)
             read_input_hs = self.generate_input_hs(buses)
             feed_elements = self.generate_feeding(tasklet, inputs)
             in_ptrs, out_ptrs = self.generate_ptrs(tasklet)
@@ -638,17 +640,13 @@ model->s_axis_{name}_tdata = {name}[0];'''
                 internal_state_var=internal_state_var,
                 debug_sim_start="std::cout << \"SIM {name} START\" << std::endl;" if self.verilator_debug else "",
                 debug_internal_state=f'''
-
-for (int i = 0; i < {self.n_unrolled}; i++) {{
-    // report internal state
-    //VL_PRINTF("%d, [t=%lu] ap_aclk=%u ap_areset=%u valid_i=%u ready_i=%u valid_o=%u ready_o=%u \\n",
-    //    i, main_time, models[i]->ap_aclk, models[i]->ap_areset,
-    //    models[i]->valid_i, models[i]->ready_i, models[i]->valid_o, models[i]->ready_o);
-    VL_PRINTF("{internal_state_str}\\n", {internal_state_var});
-    std::cout << std::flush;
-}}''' if self.verilator_debug else '',
+// report internal state
+VL_PRINTF("[t=%lu] ap_aclk=%u ap_areset=%u\\n", main_time, model->ap_aclk, model->ap_areset);
+VL_PRINTF("{internal_state_str}\\n", {internal_state_var});
+std::cout << std::flush;
+''' if self.verilator_debug else '',
                 debug_sim_end="\nstd::cout << \"SIM {name} END\" << std::endl;" if self.verilator_debug else "",
-                unroll=self.n_unrolled),
+            ),
                                   sdfg=sdfg,
                                   state_id=state_id,
                                   node_id=node)
