@@ -84,7 +84,6 @@ def evalnode(node: ast.AST, gvars: Dict[str, Any]) -> Any:
     try:
         # Ensure context is load so eval works (e.g., when using value as lhs)
         if not isinstance(getattr(node, 'ctx', False), ast.Load):
-            node = copy.deepcopy(node)
             node.ctx = ast.Load()
         return eval(compile(ast.Expression(node), '<string>', mode='eval'), gvars)
     except:  # Anything can happen here

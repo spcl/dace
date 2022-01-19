@@ -145,13 +145,20 @@ class ConditionalCodeResolver(ast.NodeTransformer):
     """
     def __init__(self, globals: Dict[str, Any]):
         super().__init__()
-        self.globals = globals
+        self.globals_and_locals = copy.copy(globals)
+
+    def visit_Name(self, node: ast.Name):
+        if isinstance(node.ctx, ast.Store):
+            self.globals_and_locals[node.id] = '<SyntaxError>'
+        return self.generic_visit(node)
 
     def visit_If(self, node: ast.If) -> Any:
         node = self.generic_visit(node)
         try:
-            test = RewriteSympyEquality(self.globals).visit(node.test)
-            result = astutils.evalnode(test, self.globals)
+            test = RewriteSympyEquality(self.globals_and_locals).visit(node.test)
+            result = astutils.evalnode(test, self.globals_and_locals)
+            if result == '<SyntaxError>':
+                raise SyntaxError
 
             if (isinstance(result, sympy.Basic) and result == True) or result:
                 # Only return "if" body
