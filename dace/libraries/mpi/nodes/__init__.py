@@ -11,3 +11,4 @@ from .reduce import Reduce
 from .allreduce import Allreduce
 from .allgather import Allgather
 from .dummy import Dummy
+from .redistribute import Redistribute
