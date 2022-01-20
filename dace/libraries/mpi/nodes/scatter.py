@@ -256,8 +256,9 @@ class ExpandBlockScatterMPI2(ExpandTransformation):
             if (__state->{node._scatter_grid}_valid) {{
                 MPI_Scatterv(_inp_buffer, __state->{node._dtype}_counts, __state->{node._dtype}_displs, __state->{node._dtype}, _out_buffer, {symstr(_prod(out_buffer.shape))}, {out_mpi_dtype_str}, 0, __state->{node._scatter_grid}_comm);
             }}
-            MPI_Bcast(_out_buffer, {symstr(_prod(out_buffer.shape))}, {out_mpi_dtype_str}, 0, __state->{node._bcast_grid}_comm);
         """
+        if node._bcast_grid:
+            code += f"MPI_Bcast(_out_buffer, {symstr(_prod(out_buffer.shape))}, {out_mpi_dtype_str}, 0, __state->{node._bcast_grid}_comm);"
 
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,
