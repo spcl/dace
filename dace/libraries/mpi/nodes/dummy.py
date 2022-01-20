@@ -20,7 +20,7 @@ class ExpandDummyMPI(ExpandTransformation):
             inputs={},
             outputs={'__out'},
             code='',
-            state_fields=node._fields)
+            state_fields=node.fields)
         return tasklet
 
 
@@ -33,12 +33,14 @@ class Dummy(dace.sdfg.nodes.LibraryNode):
     }
     default_implementation = "MPI"
 
+    fields = dace.properties.ListProperty(element_type=str)
+
     def __init__(self, name, fields, *args, **kwargs):
         super().__init__(name,
                          *args,
                          outputs={'__out'},
                          **kwargs)
-        self._fields = fields
+        self.fields = fields
 
     def validate(self, sdfg, state):
         return
