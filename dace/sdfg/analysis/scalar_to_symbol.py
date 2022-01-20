@@ -28,7 +28,7 @@ class AttributedCallDetector(ast.NodeVisitor):
         return self.generic_visit(node)
 
 
-def find_promotable_scalars(sdfg: sd.SDFG) -> Set[str]:
+def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integers_only: bool = True) -> Set[str]:
     """
     Finds scalars that can be promoted to symbols in the given SDFG.
     Conditions for matching a scalar for symbol-promotion are as follows:
@@ -45,6 +45,8 @@ def find_promotable_scalars(sdfg: sd.SDFG) -> Set[str]:
     it to be promotable.
 
     :param sdfg: The SDFG to query.
+    :param transients_only: If False, also considers global data descriptors (e.g., arguments).
+    :param integers_only: If False, also considers non-integral descriptors for promotion.
     :return: A set of promotable scalar names.
     """
     # Keep set of active candidates
@@ -52,7 +54,7 @@ def find_promotable_scalars(sdfg: sd.SDFG) -> Set[str]:
 
     # General array checks
     for aname, desc in sdfg.arrays.items():
-        if not desc.transient or isinstance(desc, dt.Stream):
+        if (transients_only and not desc.transient) or isinstance(desc, dt.Stream):
             continue
         if desc.total_size != 1:
             continue
@@ -191,11 +193,11 @@ def find_promotable_scalars(sdfg: sd.SDFG) -> Set[str]:
     for edge in sdfg.edges():
         interstate_symbols |= edge.data.free_symbols
     for candidate in (candidates - interstate_symbols):
-        if sdfg.arrays[candidate].dtype not in dtypes.INTEGER_TYPES:
+        if integers_only and sdfg.arrays[candidate].dtype not in dtypes.INTEGER_TYPES:
             candidates.remove(candidate)
 
     # Only keep candidates that were found in SDFG
-    candidates &= candidates_seen
+    candidates &= (candidates_seen | interstate_symbols)
 
     return candidates
 
@@ -532,7 +534,10 @@ def translate_cpp_tasklet_to_python(code: str):
     return newcode
 
 
-def promote_scalars_to_symbols(sdfg: sd.SDFG, ignore: Optional[Set[str]] = None) -> Set[str]:
+def promote_scalars_to_symbols(sdfg: sd.SDFG,
+                               ignore: Optional[Set[str]] = None,
+                               transients_only: bool = True,
+                               integers_only: bool = True) -> Set[str]:
     """
     Promotes all matching transient scalars to SDFG symbols, changing all
     tasklets to inter-state assignments. This enables the transformed symbols
@@ -542,6 +547,8 @@ def promote_scalars_to_symbols(sdfg: sd.SDFG, ignore: Optional[Set[str]] = None)
 
     :param sdfg: The SDFG to run the pass on.
     :param ignore: An optional set of strings of scalars to ignore.
+    :param transients_only: If False, also considers global data descriptors (e.g., arguments).
+    :param integers_only: If False, also considers non-integral descriptors for promotion.
     :return: Set of promoted scalars.
     :note: Operates in-place.
     """
@@ -558,7 +565,7 @@ def promote_scalars_to_symbols(sdfg: sd.SDFG, ignore: Optional[Set[str]] = None)
     # 5. Remove data descriptors and add symbols to SDFG
     # 6. Replace subscripts in all interstate conditions and assignments
     # 7. Make indirections with symbols a single memlet
-    to_promote = find_promotable_scalars(sdfg)
+    to_promote = find_promotable_scalars(sdfg, transients_only=transients_only, integers_only=integers_only)
     if ignore:
         to_promote -= ignore
     if len(to_promote) == 0:
@@ -637,7 +644,6 @@ def promote_scalars_to_symbols(sdfg: sd.SDFG, ignore: Optional[Set[str]] = None)
             elif ise.condition.language is dtypes.Language.CPP:
                 for scalar in to_promote:
                     ise.condition = cleanup_re[scalar].sub(scalar, ise.condition.as_string)
-
 
         # Assignments
         for aname, assignment in ise.assignments.items():
