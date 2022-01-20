@@ -840,8 +840,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                                                entry_stream)
 
         for is_output, name, node, _ in external_streams:
-            # TODO find better way to extract num kernels, rather than the shape of the streams
-            num_kernels = dace.symbolic.evaluate(node.shape[0], sdfg.constants)
+            num_streams = dace.symbolic.evaluate(node.shape[0], sdfg.constants)
             self._dispatcher.defined_vars.add_global(name, DefinedType.Stream, node.ctype)
             key = 0 if is_output else 1
             val = '{}_1.{}'.format(kernel_name, name)
@@ -852,8 +851,8 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                                    sdfg)
                 self._defined_external_streams.add(name)
 
-            if num_kernels > 1:
-                streams = [f'{name}_{i}' for i in range(num_kernels)]
+            if num_streams > 1:
+                streams = [f'{name}_{i}' for i in range(num_streams)]
             else:  # _num should not be appended, when there is only one kernel
                 streams = [name]
                 if name not in self._defined_external_streams:
