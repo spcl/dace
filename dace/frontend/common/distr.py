@@ -18,11 +18,12 @@ def _bcast(pv: 'ProgramVisitor',
            sdfg: SDFG,
            state: SDFGState,
            buffer: str,
-           root: Union[str, sp.Expr, Number] = 0):
+           root: Union[str, sp.Expr, Number] = 0,
+           grid: str = None):
 
     from dace.libraries.mpi.nodes.bcast import Bcast
 
-    libnode = Bcast('_Bcast_')
+    libnode = Bcast('_Bcast_', grid)
     desc = sdfg.arrays[buffer]
     in_buffer = state.add_read(buffer)
     out_buffer = state.add_write(buffer)
@@ -40,6 +41,63 @@ def _bcast(pv: 'ProgramVisitor',
                    Memlet.from_array(buffer, desc))
     state.add_edge(root_node, None, libnode, '_root',
                    Memlet.simple(root_node.data, '0'))
+    state.add_edge(libnode, '_outbuffer', out_buffer, None,
+                   Memlet.from_array(buffer, desc))
+
+    return None
+
+
+@oprepo.replaces('dace.comm.Reduce')
+def _Reduce(pv: 'ProgramVisitor',
+           sdfg: SDFG,
+           state: SDFGState,
+           buffer: str,
+           op: str,
+           root: Union[str, sp.Expr, Number] = 0,
+           grid: str = None):
+
+    from dace.libraries.mpi.nodes.reduce import Reduce
+
+    libnode = Reduce('_Reduce_', op, grid)
+    desc = sdfg.arrays[buffer]
+    in_buffer = state.add_read(buffer)
+    out_buffer = state.add_write(buffer)
+    if isinstance(root, str) and root in sdfg.arrays.keys():
+        root_node = state.add_read(root)
+    else:
+        storage = desc.storage
+        root_name = _define_local_scalar(pv, sdfg, state, dace.int32, storage)
+        root_node = state.add_access(root_name)
+        root_tasklet = state.add_tasklet('_set_root_', {}, {'__out'},
+                                         '__out = {}'.format(root))
+        state.add_edge(root_tasklet, '__out', root_node, None,
+                       Memlet.simple(root_name, '0'))
+    state.add_edge(in_buffer, None, libnode, '_inbuffer',
+                   Memlet.from_array(buffer, desc))
+    state.add_edge(root_node, None, libnode, '_root',
+                   Memlet.simple(root_node.data, '0'))
+    state.add_edge(libnode, '_outbuffer', out_buffer, None,
+                   Memlet.from_array(buffer, desc))
+
+    return None
+
+
+@oprepo.replaces('dace.comm.Allreduce')
+def _Allreduce(pv: 'ProgramVisitor',
+           sdfg: SDFG,
+           state: SDFGState,
+           buffer: str,
+           op: str,
+           grid: str = None):
+
+    from dace.libraries.mpi.nodes.allreduce import Allreduce
+
+    libnode = Allreduce('_Allreduce_', op, grid)
+    desc = sdfg.arrays[buffer]
+    in_buffer = state.add_read(buffer)
+    out_buffer = state.add_write(buffer)
+    state.add_edge(in_buffer, None, libnode, '_inbuffer',
+                   Memlet.from_array(buffer, desc))
     state.add_edge(libnode, '_outbuffer', out_buffer, None,
                    Memlet.from_array(buffer, desc))
 
