@@ -21,6 +21,19 @@ import dace.codegen.targets.sve.util as sve_util
 import dace.frontend.operations
 
 
+def get_post_state(sdfg: SDFG, state: SDFGState):
+    """ 
+    Returns the post state (the state that copies the data a back from the FGPA device) if there is one.
+    """
+    for s in sdfg.all_sdfgs_recursive():
+        for post_state in s.states():
+
+            if 'post_' + str(state) == str(post_state):
+                return post_state
+
+    return None
+
+
 # Find the innermost state in which the node is
 # There is probably a better solution than this
 def get_innermost_state_for_node(sdfg: SDFG, node):
@@ -131,7 +144,7 @@ def collect_maps_to_vectorize(sdfg: SDFG, state, map_entry):
     return results, data_descriptors_to_vectorize
 
 
-def isInt(i):
+def is_int(i):
     return isinstance(i, int) or isinstance(i, sympy.core.numbers.Integer)
 
 
@@ -353,7 +366,7 @@ class Vectorization(transformation.SingleStateTransformation):
                 strides_list.pop()
 
                 for i in strides_list:
-                    if isInt(i) and i % self.vector_len != 0:
+                    if is_int(i) and i % self.vector_len != 0:
                         return False
 
             # Check all maps
@@ -361,7 +374,7 @@ class Vectorization(transformation.SingleStateTransformation):
                 real_map: nodes.Map = m.map
                 ranges_list = list(real_map.range)
 
-                if isInt(ranges_list[-1][1]) and (ranges_list[-1][1] + 1) % self.vector_len != 0:
+                if is_int(ranges_list[-1][1]) and (ranges_list[-1][1] + 1) % self.vector_len != 0:
                     return False
 
                 if ranges_list[-1][2] != 1:
@@ -436,20 +449,20 @@ class Vectorization(transformation.SingleStateTransformation):
 
                 self.apply(get_innermost_state_for_node(sdfg, m), get_innermost_sdfg_for_node(sdfg, m))
 
-            # Change the subset in the post state that copies the data back to the host
-            if len(sdfg.states()) < 3 or not sdfg.states()[-1].name.startswith('post_'):
-                # FPGA Transformation not yet applied
-                return
+            post_state = get_post_state(sdfg, graph)
 
-            for e in sdfg.states()[-1].edges():
+            if post_state != None:
 
-                if e.data.data in data_descriptors_to_vectorize:
+                for e in post_state.edges():
+                    # Change subset in the post state such that the correct amount of memory is copied back from the device
 
-                    desc = sdfg.arrays[e.data.data]
-                    contigidx = desc.strides.index(1)
-                    lastindex = e.data.subset[contigidx]
-                    i, j, k = lastindex
-                    e.data.subset[contigidx] = (i, (j + 1) / self.vector_len - 1, k)
+                    if e.data.data in data_descriptors_to_vectorize:
+
+                        desc = sdfg.arrays[e.data.data]
+                        contigidx = desc.strides.index(1)
+                        lastindex = e.data.subset[contigidx]
+                        i, j, k = lastindex
+                        e.data.subset[contigidx] = (i, (j + 1) / self.vector_len - 1, k)
 
             # Change strides of all arrays involved
             for a in data_descriptors_to_vectorize:
