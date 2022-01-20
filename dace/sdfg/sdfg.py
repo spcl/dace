@@ -32,7 +32,7 @@ from dace.sdfg import nodes as nd
 from dace.sdfg.graph import OrderedDiGraph, Edge, SubgraphView
 from dace.sdfg.state import SDFGState
 from dace.sdfg.propagation import propagate_memlets_sdfg
-from dace.distr_types import ProcessGrid, SubArray
+from dace.distr_types import ProcessGrid, SubArray, RedistrArray
 from dace.dtypes import validate_name
 from dace.properties import (DebugInfoProperty, EnumProperty, ListProperty, make_properties,
                              Property, CodeProperty, TransformationHistProperty,
@@ -280,6 +280,10 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                           desc="MPI sub-arrays for this SDFG",
                           to_json=_arrays_to_json,
                           from_json=_arrays_from_json)
+    _rdistrarrays = Property(dtype=dict,
+                             desc="Redistribution of MPI sub-arrays for this SDFG",
+                             to_json=_arrays_to_json,
+                             from_json=_arrays_from_json)
 
     def __init__(self,
                  name: str,
@@ -325,6 +329,10 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         # Process grid-related fields
         self._pgrids = {}
         self._pgrids_count = 0
+        self._subarrays = {}
+        self._subarrays_count = 0
+        self._rdistrarrays = {}
+        self._rdistrarrays_count = 0
 
         # Counter to resolve name conflicts
         self._orig_name = name
@@ -456,6 +464,18 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         """ Returns a dictionary of process grids used in this SDFG.
         """
         return self._pgrids
+    
+    @property
+    def subarrays(self):
+        """ Returns a dictionary of sub-arrays used in this SDFG.
+        """
+        return self._subarrays
+    
+    @property
+    def rdistrarrays(self):
+        """ Returns a dictionary of array redistributions used in this SDFG.
+        """
+        return self._rdistrarrays
 
     def data(self, dataname: str):
         """ Looks up a data descriptor from its name, which can be an array, stream, or scalar symbol. """
@@ -1667,7 +1687,6 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
         return name
     
-
     def temp_pgrid_name(self):
         """ Returns a temporary process grid name that can be used in this SDFG. """
 
@@ -1679,7 +1698,6 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
         return name
     
-
     def add_pgrid(self, shape=None, parent_grid=None, color=None,
                   exact_grid=None, root=0):
         if not (shape or parent_grid):
@@ -1697,18 +1715,16 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         self.append_exit_code(self._pgrids[grid_name].exit_code())
         return grid_name
     
-
     def temp_subarray_name(self):
         """ Returns a temporary sub-array name that can be used in this SDFG. """
 
-        name = '__subarray%d' % self._pgrids_count
-        while name in self._pgrids:
-            self._pgrids_count += 1
-            name = '__subarray%d' % self._pgrids_count
-        self._pgrids_count += 1
+        name = '__subarray%d' % self._subarrays_count
+        while name in self._subarrays:
+            self._subarrays_count += 1
+            name = '__subarray%d' % self._subarrays_count
+        self._subarrays_count += 1
 
         return name
-    
 
     def add_subarray(self, dtype, shape, subshape, pgrid, correspondence):
         subarray_name = self.temp_subarray_name()
@@ -1717,6 +1733,25 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         self.append_init_code(self._subarrays[subarray_name].init_code())
         self.append_exit_code(self._subarrays[subarray_name].exit_code())
         return subarray_name
+    
+    def temp_rdistrarray_name(self):
+        """ Returns a temporary redistribution name that can be used in this SDFG. """
+
+        name = '__rdistrarray%d' % self._rdistrarrays_count
+        while name in self._rdistrarrays:
+            self._rdistrarrays_count += 1
+            name = '__rdistrarray%d' % self._rdistrarrays_count
+        self._rdistrarrays_count += 1
+
+        return name
+    
+    def add_rdistrarray(self, array_a, array_b):
+        rdistrarray_name = self.temp_rdistrarray_name()
+        self._rdistrarrays[rdistrarray_name] = RedistrArray(
+            rdistrarray_name, array_a, array_b)
+        self.append_init_code(self._rdistrarrays[rdistrarray_name].init_code(self))
+        self.append_exit_code(self._rdistrarrays[rdistrarray_name].exit_code(self))
+        return rdistrarray_name
 
 
     def add_loop(
