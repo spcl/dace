@@ -21,8 +21,7 @@ K_s = dace.symbol('K_s')
 
 
 @dace.program
-def two_maps_kernel_legal(A: dace.float32[N], B: dace.float32[N],
-                          C: dace.float32[N], D: dace.float32[N],
+def two_maps_kernel_legal(A: dace.float32[N], B: dace.float32[N], C: dace.float32[N], D: dace.float32[N],
                           E: dace.float32[N]):
     @dace.map
     def sum(i: _[0:N]):
@@ -40,8 +39,7 @@ def two_maps_kernel_legal(A: dace.float32[N], B: dace.float32[N],
 
 
 @dace.program
-def two_maps_kernel_illegal(A: dace.float32[N], B: dace.float32[N],
-                            C: dace.float32[N], D: dace.float32[N],
+def two_maps_kernel_illegal(A: dace.float32[N], B: dace.float32[N], C: dace.float32[N], D: dace.float32[N],
                             E: dace.float32[N]):
     @dace.map
     def sum(i: _[0:N]):
@@ -97,8 +95,7 @@ def vecadd_1_streaming_symbol(A: dace.float32[N_s], B: dace.float32[N_s]):
 
 
 @dace.program
-def vecadd_streaming(A: dace.float32[N], B: dace.float32[N],
-                     C: dace.float32[N]):
+def vecadd_streaming(A: dace.float32[N], B: dace.float32[N], C: dace.float32[N]):
     C[:] = A + B
 
 
@@ -116,30 +113,25 @@ def matadd_streaming(A: dace.float32[M, N], B: dace.float32[M, N], C: dace.float
 
 
 @dace.program
-def matadd_streaming_symbol(A: dace.float32[M_s, N_s],
-                            B: dace.float32[M_s, N_s], C: dace.float32[M_s,
-                                                                       N_s]):
+def matadd_streaming_symbol(A: dace.float32[M_s, N_s], B: dace.float32[M_s, N_s], C: dace.float32[M_s, N_s]):
     C[:] = A + B
 
 
 @dace.program
-def matadd_streaming_bad_stride(A: dace.float32[M + 1, N + 1],
-                                B: dace.float32[M + 1, N + 1],
-                                C: dace.float32[M + 1, N + 1]):
+def matadd_streaming_bad_stride(A: dace.float32[M + 1, N + 1], B: dace.float32[M + 1, N + 1], C: dace.float32[M + 1,
+                                                                                                              N + 1]):
     C[:] = A + B
 
 
 @dace.program
-def tensoradd_streaming(A: dace.float32[M, N, K], B: dace.float32[M, N, K],
-                        C: dace.float32[M, N, K]):
+def tensoradd_streaming(A: dace.float32[M, N, K], B: dace.float32[M, N, K], C: dace.float32[M, N, K]):
     C[:] = A + B
 
 
 @dace.program
-def maporder_streaming(A: dace.float32[N, N, N], B: dace.float32[N, N, N],
-                       C: dace.float32[N, N, N], D: dace.float32[N, N, N],
-                       E: dace.float32[N, N, N], F: dace.float32[N, N, N],
-                       G: dace.float32[N, N]):
+def maporder_streaming(A: dace.float32[N, N, N], B: dace.float32[N, N, N], C: dace.float32[N, N, N],
+                       D: dace.float32[N, N, N], E: dace.float32[N, N, N], F: dace.float32[N, N,
+                                                                                           N], G: dace.float32[N, N]):
     for i, j in dace.map[0:N, 0:N]:
         with dace.tasklet:
             in_A << A[i, j, 0]  # No
@@ -154,15 +146,13 @@ def maporder_streaming(A: dace.float32[N, N, N], B: dace.float32[N, N, N],
 
 
 @dace.program
-def matadd_multistream(A: dace.float32[M, N], B: dace.float32[M, N],
-                       C: dace.float32[M, N], D: dace.float32[M, N]):
+def matadd_multistream(A: dace.float32[M, N], B: dace.float32[M, N], C: dace.float32[M, N], D: dace.float32[M, N]):
     C[:] = A + B
     D[:] = A - B
 
 
 @dace.program
-def matmul_streaming(A: dace.float32[M, K], B: dace.float32[K, N],
-                     C: dace.float32[M, N]):
+def matmul_streaming(A: dace.float32[M, K], B: dace.float32[K, N], C: dace.float32[M, N]):
     tmp = np.ndarray([M, N, K], dtype=A.dtype)
 
     # Multiply every pair of values to a large 3D temporary array
@@ -393,10 +383,8 @@ def test_mem_buffer_vec_add_1():
 
     assert sdfg.apply_transformations_repeated(sm.StreamingMemory,
                                                options=[{
-                                                   'use_memory_buffering':
-                                                   True,
-                                                   "storage":
-                                                   dace.StorageType.FPGA_Local
+                                                   'use_memory_buffering': True,
+                                                   "storage": dace.StorageType.FPGA_Local
                                                }]) == 2
 
     # Run verification
@@ -423,10 +411,8 @@ def test_mem_buffer_vec_add_1_symbolic():
 
     assert sdfg.apply_transformations_repeated(sm.StreamingMemory,
                                                options=[{
-                                                   'use_memory_buffering':
-                                                   True,
-                                                   "storage":
-                                                   dace.StorageType.FPGA_Local
+                                                   'use_memory_buffering': True,
+                                                   "storage": dace.StorageType.FPGA_Local
                                                }]) == 2
 
     # Run verification
@@ -453,10 +439,8 @@ def test_mem_buffer_vec_add():
 
     assert sdfg.apply_transformations_repeated(sm.StreamingMemory,
                                                options=[{
-                                                   'use_memory_buffering':
-                                                   True,
-                                                   "storage":
-                                                   dace.StorageType.FPGA_Local
+                                                   'use_memory_buffering': True,
+                                                   "storage": dace.StorageType.FPGA_Local
                                                }]) == 3
 
     # Run verification
@@ -472,11 +456,9 @@ def test_mem_buffer_vec_add():
     return sdfg
 
 
-def mem_buffer_vec_add_types(dace_type0, dace_type1, dace_type2, np_type0,
-                             np_type1, np_type2):
+def mem_buffer_vec_add_types(dace_type0, dace_type1, dace_type2, np_type0, np_type1, np_type2):
 
-    sdfg: dace.SDFG = vecadd_streaming_type(dace_type0, dace_type1,
-                                            dace_type2).to_sdfg()
+    sdfg: dace.SDFG = vecadd_streaming_type(dace_type0, dace_type1, dace_type2).to_sdfg()
 
     sdfg.apply_transformations([
         FPGATransformSDFG,
@@ -485,10 +467,8 @@ def mem_buffer_vec_add_types(dace_type0, dace_type1, dace_type2, np_type0,
 
     assert sdfg.apply_transformations_repeated(sm.StreamingMemory,
                                                options=[{
-                                                   'use_memory_buffering':
-                                                   True,
-                                                   "storage":
-                                                   dace.StorageType.FPGA_Local
+                                                   'use_memory_buffering': True,
+                                                   "storage": dace.StorageType.FPGA_Local
                                                }]) == 3
 
     # Run verification
@@ -506,71 +486,59 @@ def mem_buffer_vec_add_types(dace_type0, dace_type1, dace_type2, np_type0,
 
 # @xilinx_test()
 # def test_mem_buffer_vec_add_float16():
-#     return mem_buffer_vec_add_types(dace.float16, dace.float16,
-#                                          dace.float16, np.float16, np.float16,
-#                                          np.float16)
+#     return mem_buffer_vec_add_types(dace.float16, dace.float16, dace.float16, np.float16, np.float16, np.float16)
 
 
 @xilinx_test()
 def test_mem_buffer_vec_add_float32():
-    return mem_buffer_vec_add_types(dace.float32, dace.float32, dace.float32,
-                                    np.float32, np.float32, np.float32)
+    return mem_buffer_vec_add_types(dace.float32, dace.float32, dace.float32, np.float32, np.float32, np.float32)
 
 
 @xilinx_test()
 def test_mem_buffer_vec_add_float64():
-    return mem_buffer_vec_add_types(dace.float64, dace.float64, dace.float64,
-                                    np.float64, np.float64, np.float64)
+    return mem_buffer_vec_add_types(dace.float64, dace.float64, dace.float64, np.float64, np.float64, np.float64)
 
 
-# @xilinx_test()
-# def test_mem_buffer_vec_add_int8():
-#     return mem_buffer_vec_add_types(dace.int8, dace.int8, dace.int8,
-#                                          np.int8, np.int8, np.int8)
+@xilinx_test()
+def test_mem_buffer_vec_add_int8():
+    return mem_buffer_vec_add_types(dace.int8, dace.int8, dace.int8, np.int8, np.int8, np.int8)
 
 
 @xilinx_test()
 def test_mem_buffer_vec_add_int16():
-    return mem_buffer_vec_add_types(dace.int16, dace.int16, dace.int16,
-                                    np.int16, np.int16, np.int16)
+    return mem_buffer_vec_add_types(dace.int16, dace.int16, dace.int16, np.int16, np.int16, np.int16)
 
 
 @xilinx_test()
 def test_mem_buffer_vec_add_int32():
-    return mem_buffer_vec_add_types(dace.int32, dace.int32, dace.int32,
-                                    np.int32, np.int32, np.int32)
+    return mem_buffer_vec_add_types(dace.int32, dace.int32, dace.int32, np.int32, np.int32, np.int32)
 
 
-# @xilinx_test()
-# def test_mem_buffer_vec_add_int64():
-#     return mem_buffer_vec_add_types(dace.int64, dace.int64, dace.int64,
-#                                          np.int64, np.int64, np.int64)
+@xilinx_test()
+def test_mem_buffer_vec_add_int64():
+    return mem_buffer_vec_add_types(dace.int64, dace.int64, dace.int64, np.int64, np.int64, np.int64)
 
 
 @xilinx_test()
 def test_mem_buffer_vec_add_complex64():
-    return mem_buffer_vec_add_types(dace.complex64, dace.complex64,
-                                    dace.complex64, np.complex64, np.complex64,
+    return mem_buffer_vec_add_types(dace.complex64, dace.complex64, dace.complex64, np.complex64, np.complex64,
                                     np.complex64)
 
 
 @xilinx_test()
 def test_mem_buffer_vec_add_complex128():
-    return mem_buffer_vec_add_types(dace.complex128, dace.complex128,
-                                    dace.complex128, np.complex128,
-                                    np.complex128, np.complex128)
+    return mem_buffer_vec_add_types(dace.complex128, dace.complex128, dace.complex128, np.complex128, np.complex128,
+                                    np.complex128)
 
 
 # @xilinx_test()
 # def test_mem_buffer_vec_add_mixed_float():
-#     return mem_buffer_vec_add_types(dace.float16, dace.float32,
-#                                          dace.float64, np.float16, np.float32,
-#                                          np.float64)
+#     return mem_buffer_vec_add_types(dace.float16, dace.float32, dace.float64, np.float16, np.float32, np.float64)
 
-# @xilinx_test()
-# def test_mem_buffer_vec_add_mixed_int():
-#     return mem_buffer_vec_add_types(dace.int16, dace.int32, dace.int64,
-#                                          np.int16, np.int32, np.int64)
+
+@xilinx_test()
+def test_mem_buffer_vec_add_mixed_int():
+    return mem_buffer_vec_add_types(dace.int16, dace.int32, dace.int64, np.int16, np.int32, np.int64)
 
 
 @xilinx_test()
@@ -582,10 +550,8 @@ def test_mem_buffer_mat_add():
 
     assert sdfg.apply_transformations_repeated(sm.StreamingMemory,
                                                options=[{
-                                                   'use_memory_buffering':
-                                                   True,
-                                                   "storage":
-                                                   dace.StorageType.FPGA_Local
+                                                   'use_memory_buffering': True,
+                                                   "storage": dace.StorageType.FPGA_Local
                                                }]) == 3
 
     # Run verification
@@ -611,10 +577,8 @@ def test_mem_buffer_mat_add_symbol():
 
     assert sdfg.apply_transformations_repeated(sm.StreamingMemory,
                                                options=[{
-                                                   'use_memory_buffering':
-                                                   True,
-                                                   "storage":
-                                                   dace.StorageType.FPGA_Local
+                                                   'use_memory_buffering': True,
+                                                   "storage": dace.StorageType.FPGA_Local
                                                }]) == 3
 
     # Run verification
@@ -640,10 +604,8 @@ def test_mem_buffer_tensor_add():
 
     assert sdfg.apply_transformations_repeated(sm.StreamingMemory,
                                                options=[{
-                                                   'use_memory_buffering':
-                                                   True,
-                                                   "storage":
-                                                   dace.StorageType.FPGA_Local
+                                                   'use_memory_buffering': True,
+                                                   "storage": dace.StorageType.FPGA_Local
                                                }]) == 3
 
     # Run verification
@@ -669,10 +631,8 @@ def test_mem_buffer_mapnests():
 
     assert sdfg.apply_transformations_repeated(sm.StreamingMemory,
                                                options=[{
-                                                   'use_memory_buffering':
-                                                   True,
-                                                   "storage":
-                                                   dace.StorageType.FPGA_Local
+                                                   'use_memory_buffering': True,
+                                                   "storage": dace.StorageType.FPGA_Local
                                                }]) == 3
 
     # Run verification
@@ -697,10 +657,8 @@ def test_mem_buffer_multistream():
 
     assert sdfg.apply_transformations_repeated(sm.StreamingMemory,
                                                options=[{
-                                                   'use_memory_buffering':
-                                                   True,
-                                                   "storage":
-                                                   dace.StorageType.FPGA_Local
+                                                   'use_memory_buffering': True,
+                                                   "storage": dace.StorageType.FPGA_Local
                                                }]) == 4
 
     mainstate = next(s for s in sdfg.nodes() if 'copy' not in s.label)
@@ -730,10 +688,8 @@ def test_mem_buffer_multistream_with_deps():
 
     assert sdfg.apply_transformations_repeated(sm.StreamingMemory,
                                                options=[{
-                                                   'use_memory_buffering':
-                                                   True,
-                                                   "storage":
-                                                   dace.StorageType.FPGA_Local
+                                                   'use_memory_buffering': True,
+                                                   "storage": dace.StorageType.FPGA_Local
                                                }]) == 3
 
     mainstate = next(s for s in sdfg.nodes() if 'copy' not in s.label)
@@ -760,10 +716,8 @@ def test_mem_buffer_mat_mul():
 
     assert sdfg.apply_transformations_repeated(sm.StreamingMemory,
                                                options=[{
-                                                   'use_memory_buffering':
-                                                   True,
-                                                   "storage":
-                                                   dace.StorageType.FPGA_Local
+                                                   'use_memory_buffering': True,
+                                                   "storage": dace.StorageType.FPGA_Local
                                                }]) == 1
 
     # Run verification
@@ -788,10 +742,8 @@ def test_mem_buffer_map_order():
 
     assert sdfg.apply_transformations_repeated(sm.StreamingMemory,
                                                options=[{
-                                                   'use_memory_buffering':
-                                                   True,
-                                                   "storage":
-                                                   dace.StorageType.FPGA_Local
+                                                   'use_memory_buffering': True,
+                                                   "storage": dace.StorageType.FPGA_Local
                                                }]) == 3
 
     # Run verification
@@ -806,8 +758,7 @@ def test_mem_buffer_map_order():
 
     for i in range(N):
         for j in range(N):
-            G_sol[i][j] = A[i, j, 0] + B[i, 0, j] + C[0, i, j] + D[j, i, 0] + E[
-                j, 0, i] + F[0, j, i]
+            G_sol[i][j] = A[i, j, 0] + B[i, 0, j] + C[0, i, j] + D[j, i, 0] + E[j, 0, i] + F[0, j, i]
 
     sdfg(A=A, B=B, C=C, D=D, E=E, F=F, G=G)
 
@@ -822,31 +773,27 @@ def test_mem_buffer_not_applicable():
     sdfg: dace.SDFG = vecadd_1_streaming.to_sdfg()
     sdfg.apply_transformations([FPGATransformSDFG, InlineSDFG])
 
-    assert sdfg.apply_transformations_repeated(
-        sm.StreamingMemory,
-        options=[{
-            'use_memory_buffering': True,
-            "storage": dace.StorageType.FPGA_Local,
-            "memory_buffering_target_bytes": 65
-        }]) == 0
+    assert sdfg.apply_transformations_repeated(sm.StreamingMemory,
+                                               options=[{
+                                                   'use_memory_buffering': True,
+                                                   "storage": dace.StorageType.FPGA_Local,
+                                                   "memory_buffering_target_bytes": 65
+                                               }]) == 0
 
-    assert sdfg.apply_transformations_repeated(
-        sm.StreamingMemory,
-        options=[{
-            'use_memory_buffering': True,
-            "storage": dace.StorageType.FPGA_Local,
-            "memory_buffering_target_bytes": 0
-        }]) == 0
+    assert sdfg.apply_transformations_repeated(sm.StreamingMemory,
+                                               options=[{
+                                                   'use_memory_buffering': True,
+                                                   "storage": dace.StorageType.FPGA_Local,
+                                                   "memory_buffering_target_bytes": 0
+                                               }]) == 0
 
     sdfg2: dace.SDFG = matadd_streaming_bad_stride.to_sdfg()
     sdfg2.apply_transformations([FPGATransformSDFG, InlineSDFG])
 
     assert sdfg2.apply_transformations_repeated(sm.StreamingMemory,
                                                 options=[{
-                                                    'use_memory_buffering':
-                                                    True,
-                                                    "storage":
-                                                    dace.StorageType.FPGA_Local,
+                                                    'use_memory_buffering': True,
+                                                    "storage": dace.StorageType.FPGA_Local,
                                                 }]) == 0
 
     sdfg3: dace.SDFG = vecadd_1_streaming_non_appl_0.to_sdfg()
@@ -854,10 +801,8 @@ def test_mem_buffer_not_applicable():
 
     assert sdfg3.apply_transformations_repeated(sm.StreamingMemory,
                                                 options=[{
-                                                    'use_memory_buffering':
-                                                    True,
-                                                    "storage":
-                                                    dace.StorageType.FPGA_Local,
+                                                    'use_memory_buffering': True,
+                                                    "storage": dace.StorageType.FPGA_Local,
                                                 }]) == 0
 
     sdfg4: dace.SDFG = vecadd_1_streaming_non_appl_1.to_sdfg()
@@ -865,10 +810,8 @@ def test_mem_buffer_not_applicable():
 
     assert sdfg4.apply_transformations_repeated(sm.StreamingMemory,
                                                 options=[{
-                                                    'use_memory_buffering':
-                                                    True,
-                                                    "storage":
-                                                    dace.StorageType.FPGA_Local,
+                                                    'use_memory_buffering': True,
+                                                    "storage": dace.StorageType.FPGA_Local,
                                                 }]) == 0
 
     return []
@@ -891,20 +834,18 @@ def test_mem_buffer_atax():
     from dace.libraries.blas import Gemv
     Gemv.default_implementation = "FPGA_Accumulate"
     sdfg.expand_library_nodes()
-    sm_applied = sdfg.apply_transformations_repeated(
-        [InlineSDFG, sm.StreamingMemory], [{}, {
-            'storage': dace.StorageType.FPGA_Local,
-            'use_memory_buffering': True
-        }],
-        print_report=False)
+    sm_applied = sdfg.apply_transformations_repeated([InlineSDFG, sm.StreamingMemory], [{}, {
+        'storage': dace.StorageType.FPGA_Local,
+        'use_memory_buffering': True
+    }],
+                                                     print_report=False)
     assert sm_applied == 5  # 3 inlines and 2 Streaming memories
 
-    sm_applied = sdfg.apply_transformations_repeated(
-        [InlineSDFG, sm.StreamingMemory], [{}, {
-            'storage': dace.StorageType.FPGA_Local,
-            'use_memory_buffering': False
-        }],
-        print_report=False)
+    sm_applied = sdfg.apply_transformations_repeated([InlineSDFG, sm.StreamingMemory], [{}, {
+        'storage': dace.StorageType.FPGA_Local,
+        'use_memory_buffering': False
+    }],
+                                                     print_report=False)
 
     assert sm_applied == 1  # 1 Streaming memories
 
@@ -938,20 +879,18 @@ def test_mem_buffer_bicg():
     from dace.libraries.blas import Gemv
     Gemv.default_implementation = "FPGA_Accumulate"
     sdfg.expand_library_nodes()
-    sm_applied = sdfg.apply_transformations_repeated(
-        [InlineSDFG, sm.StreamingMemory], [{}, {
-            'storage': dace.StorageType.FPGA_Local,
-            'use_memory_buffering': True
-        }],
-        print_report=True)
+    sm_applied = sdfg.apply_transformations_repeated([InlineSDFG, sm.StreamingMemory], [{}, {
+        'storage': dace.StorageType.FPGA_Local,
+        'use_memory_buffering': True
+    }],
+                                                     print_report=True)
     assert sm_applied == 7  # 3 inlines and 4 Streaming memories
 
-    sm_applied = sdfg.apply_transformations_repeated(
-        [InlineSDFG, sm.StreamingMemory], [{}, {
-            'storage': dace.StorageType.FPGA_Local,
-            'use_memory_buffering': False
-        }],
-        print_report=True)
+    sm_applied = sdfg.apply_transformations_repeated([InlineSDFG, sm.StreamingMemory], [{}, {
+        'storage': dace.StorageType.FPGA_Local,
+        'use_memory_buffering': False
+    }],
+                                                     print_report=True)
 
     assert sm_applied == 1  # 1 Streaming memories
 
@@ -987,10 +926,8 @@ def test_two_maps_legal():
 
     assert sdfg.apply_transformations_repeated(sm.StreamingMemory,
                                                options=[{
-                                                   'use_memory_buffering':
-                                                   True,
-                                                   "storage":
-                                                   dace.StorageType.FPGA_Local
+                                                   'use_memory_buffering': True,
+                                                   "storage": dace.StorageType.FPGA_Local
                                                }]) == 5
 
     sdfg(A=A, B=B, C=C, D=D, E=E)
@@ -1021,10 +958,8 @@ def test_two_maps_illegal():
 
     sdfg.apply_transformations_repeated(sm.StreamingMemory,
                                         options=[{
-                                            'use_memory_buffering':
-                                            True,
-                                            "storage":
-                                            dace.StorageType.FPGA_Local
+                                            'use_memory_buffering': True,
+                                            "storage": dace.StorageType.FPGA_Local
                                         }]) == 2
 
     sdfg(A=A, B=B, C=C, D=D, E=E)
@@ -1061,12 +996,12 @@ if __name__ == "__main__":
     # test_mem_buffer_vec_add_float16(None)
     test_mem_buffer_vec_add_float32(None)
     test_mem_buffer_vec_add_float64(None)
-    # test_mem_buffer_vec_add_int8(None)
+    test_mem_buffer_vec_add_int8(None)
     test_mem_buffer_vec_add_int16(None)
     test_mem_buffer_vec_add_int32(None)
-    # test_mem_buffer_vec_add_int64(None)
+    test_mem_buffer_vec_add_int64(None)
     # test_mem_buffer_vec_add_mixed_float(None)
-    # test_mem_buffer_vec_add_mixed_int(None)
+    test_mem_buffer_vec_add_mixed_int(None)
     test_mem_buffer_vec_add_complex64(None)
     test_mem_buffer_vec_add_complex128(None)
 
