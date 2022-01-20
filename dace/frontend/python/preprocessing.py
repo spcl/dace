@@ -158,13 +158,25 @@ class ConditionalCodeResolver(ast.NodeTransformer):
             test = RewriteSympyEquality(self.globals_and_locals).visit(node.test)
             result = astutils.evalnode(test, self.globals_and_locals)
 
-            if (isinstance(result, sympy.Basic) and result == True) or result:
-                # Only return "if" body
-                return node.body
-            elif (isinstance(result, sympy.Basic) and result == False) or not result:
-                # Only return "else" body
-                return node.orelse
-            # Any other case is indeterminate, fall back to generic visit
+            # Check symbolic conditions separately
+            if isinstance(result, sympy.Basic):
+                if result == True:
+                    # Only return "if" body
+                    return node.body
+                elif result == False:
+                    # Only return "else" body
+                    return node.orelse
+                else:
+                    # Any other case is indeterminate, fall back to generic visit
+                    return node
+            else:  # If not symbolic, check value directly
+                if result:
+                    # Only return "if" body
+                    return node.body
+                elif not result:
+                    # Only return "else" body
+                    return node.orelse
+
         except SyntaxError:
             # Cannot evaluate if condition at compile time
             pass
