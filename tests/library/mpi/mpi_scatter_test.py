@@ -279,6 +279,162 @@ def test_cart():
         print(f"Full array = {A}")
 
 
+def debug3(arra, arrb):
+    from mpi4py import MPI as MPI4PY
+    comm = MPI4PY.COMM_WORLD
+    rank = comm.Get_rank()
+    size = comm.Get_size()
+    for i in range(size):
+        if i == rank:
+            print(f"Rank {rank}:")
+            print(arra)
+            print(arrb, flush=True)
+        comm.barrier()
+    comm.barrier()
+
+
+P0a, P0b, P1a, P1b = (dace.symbol(s) for s in ('P0a', 'P0b', 'P1a', 'P1b'))
+B0a, B0b, B1a, B1b = (dace.symbol(s) for s in ('B0a', 'B0b', 'B1a', 'B1b'))
+
+@dace.program
+def redistribute(A: dace.float32[N, N]):
+    mygrid = dace.comm.Cart_create([P0a, P1a, P2])
+    mygrid2 = dace.comm.Cart_create([P0b, P1b])
+    scatter_grid = dace.comm.Cart_sub(mygrid, [True, True, False], 0)
+    bcast_grid = dace.comm.Cart_sub(mygrid, [False, False, True])
+    lAa = np.empty_like(A, shape=[B0a, B1a])
+    sa = dace.comm.BlockScatter(A, lAa, scatter_grid, bcast_grid, [0, 1])
+    lAb = np.empty_like(A, shape=[B0b, B1b])
+    sb = dace.comm.Redistribute(lAa, lAb, sa, mygrid2, [0, 1])
+    debug(lAa, lAb)
+
+
+def test_redistribute():
+    from mpi4py import MPI as MPI4PY
+    comm = MPI4PY.COMM_WORLD
+    rank = comm.Get_rank()
+    commsize = comm.Get_size()
+    mpi_sdfg = None
+    # if commsize != 8:
+    #     raise ValueError(
+    #         "This test is supposed to be run with eight processes!")
+    for r in range(commsize):
+        if r == rank:
+            mpi_sdfg = redistribute.compile()
+        comm.Barrier()
+    if rank == 0:
+        A = np.arange(64, dtype=np.float32).reshape(8, 8).copy()
+    else:
+        A = np.zeros((1, ), dtype=np.float32)
+    mpi_sdfg(P0a=2, P1a=2, P2=2, P0b=2, P1b=4, N=8, B0a=4, B1a=4, B0b=4, B1b=2, debug=debug3, A=A)
+    # if rank == 0:
+    #     print(f"Full array = {A}")
+
+
+@dace.program
+def redistribute2(A: dace.float32[N, N]):
+    mygrid = dace.comm.Cart_create([P0a, P1a, P2])
+    mygrid2 = dace.comm.Cart_create([P0b, P1b])
+    scatter_grid = dace.comm.Cart_sub(mygrid, [True, True, False], 0)
+    bcast_grid = dace.comm.Cart_sub(mygrid, [False, False, True])
+    lAa = np.empty_like(A, shape=[B0b, B1b])
+    sa = dace.comm.BlockScatter(A, lAa, mygrid2, None, [0, 1])
+    lAb = np.empty_like(A, shape=[B0a, B1a])
+    sb = dace.comm.Redistribute(lAa, lAb, sa, scatter_grid, [0, 1])
+    debug(lAa, lAb)
+
+
+def test_redistribute2():
+    from mpi4py import MPI as MPI4PY
+    comm = MPI4PY.COMM_WORLD
+    rank = comm.Get_rank()
+    commsize = comm.Get_size()
+    mpi_sdfg = None
+    # if commsize != 8:
+    #     raise ValueError(
+    #         "This test is supposed to be run with eight processes!")
+    for r in range(commsize):
+        if r == rank:
+            mpi_sdfg = redistribute2.compile()
+        comm.Barrier()
+    if rank == 0:
+        A = np.arange(64, dtype=np.float32).reshape(8, 8).copy()
+    else:
+        A = np.zeros((1, ), dtype=np.float32)
+    mpi_sdfg(P0a=2, P1a=2, P2=2, P0b=2, P1b=4, N=8, B0a=4, B1a=4, B0b=4, B1b=2, debug=debug3, A=A)
+    # if rank == 0:
+    #     print(f"Full array = {A}")
+
+
+@dace.program
+def redistribute3(A: dace.float32[N, N]):
+    mygrid = dace.comm.Cart_create([P0a, P1a, P2])
+    scatter_grid = dace.comm.Cart_sub(mygrid, [True, True, False], 0)
+    scatter_grid2 = dace.comm.Cart_sub(mygrid, [False, True, True], 0)
+    lAa = np.empty_like(A, shape=[B0a, B1a])
+    sa = dace.comm.BlockScatter(A, lAa, scatter_grid, None, [0, 1])
+    lAb = np.empty_like(A, shape=[B0a, B1a])
+    sb = dace.comm.Redistribute(lAa, lAb, sa, scatter_grid2, [0, 1])
+    debug(lAa, lAb)
+
+
+def test_redistribute3():
+    from mpi4py import MPI as MPI4PY
+    comm = MPI4PY.COMM_WORLD
+    rank = comm.Get_rank()
+    commsize = comm.Get_size()
+    mpi_sdfg = None
+    # if commsize != 8:
+    #     raise ValueError(
+    #         "This test is supposed to be run with eight processes!")
+    for r in range(commsize):
+        if r == rank:
+            mpi_sdfg = redistribute3.compile()
+        comm.Barrier()
+    if rank == 0:
+        A = np.arange(64, dtype=np.float32).reshape(8, 8).copy()
+    else:
+        A = np.zeros((1, ), dtype=np.float32)
+    mpi_sdfg(P0a=2, P1a=2, P2=2, N=8, B0a=4, B1a=4, debug=debug3, A=A)
+    # if rank == 0:
+    #     print(f"Full array = {A}")
+
+
+@dace.program
+def redistribute4(A: dace.float32[N, N]):
+    mygrid = dace.comm.Cart_create([2, 2, 2])
+    mygrid2 = dace.comm.Cart_create([2, 1, 4])
+    scatter_grid = dace.comm.Cart_sub(mygrid, [True, True, False], 0)
+    scatter_grid2 = dace.comm.Cart_sub(mygrid2, [False, True, True], 0)
+    lAa = np.empty_like(A, shape=[4, 4])
+    sa = dace.comm.BlockScatter(A, lAa, scatter_grid, None, [0, 1])
+    lAb = np.empty_like(A, shape=[8, 2])
+    sb = dace.comm.Redistribute(lAa, lAb, sa, scatter_grid2, [0, 1])
+    debug(lAa, lAb)
+
+
+def test_redistribute4():
+    from mpi4py import MPI as MPI4PY
+    comm = MPI4PY.COMM_WORLD
+    rank = comm.Get_rank()
+    commsize = comm.Get_size()
+    mpi_sdfg = None
+    # if commsize != 8:
+    #     raise ValueError(
+    #         "This test is supposed to be run with eight processes!")
+    for r in range(commsize):
+        if r == rank:
+            mpi_sdfg = redistribute4.compile()
+        comm.Barrier()
+    if rank == 0:
+        A = np.arange(64, dtype=np.float32).reshape(8, 8).copy()
+    else:
+        A = np.zeros((1, ), dtype=np.float32)
+    mpi_sdfg(N=8, debug=debug3, A=A)
+    # if rank == 0:
+    #     print(f"Full array = {A}")
+
+
 ###############################################################################
 
 if __name__ == "__main__":
@@ -287,5 +443,6 @@ if __name__ == "__main__":
     # test_dace_scatter_gather()
     # test_dace_block_scatter()
     # test_soap_mm()
-    test_cart()
+    # test_cart()
+    test_redistribute4()
 ###############################################################################
