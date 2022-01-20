@@ -1253,6 +1253,63 @@ class DataProperty(Property):
         return s
 
 
+class SubArrayProperty(Property):
+    """ Custom Property type that represents a link to a sub-array.
+        Needs the SDFG to be passed as an argument to `from_string` and
+        `choices`. """
+    def __init__(self, desc='', default=None, **kwargs):
+        # Data can be None when no data is flowing, e.g., on a memlet with a
+        # map that has no external inputs
+        return super().__init__(dtype=str,
+                                allow_none=True,
+                                desc=desc,
+                                default=default,
+                                **kwargs)
+
+    def typestring(self):
+        return "DataProperty"
+
+    @staticmethod
+    def choices(sdfg=None):
+        if sdfg is None:
+            raise TypeError("Must pass SDFG as second argument to "
+                            "choices method of ArrayProperty")
+        return list(sdfg.subarrays.keys())
+
+    @staticmethod
+    def from_string(s, sdfg=None):
+        if sdfg is None:
+            raise TypeError("Must pass SDFG as second argument to "
+                            "from_string method of ArrayProperty")
+        if s not in sdfg.subarrays:
+            raise ValueError("No data found in SDFG with name: {}".format(s))
+        return s
+
+    @staticmethod
+    def to_string(obj):
+        return str(obj)
+
+    def to_json(self, obj):
+        if obj is None:
+            return None
+        return str(obj)
+
+    def from_json(self, s, context=None):
+        if isinstance(context, dace.SDFG):
+            sdfg = context
+        else:
+            sdfg = context['sdfg']
+        if sdfg is None:
+            raise TypeError("Must pass SDFG as second argument")
+        if s not in sdfg.arrays:
+            if s is None:
+                # This is fine
+                #return "null" # Every SDFG has a 'null' element
+                return None
+            raise ValueError("No data found in SDFG with name: {}".format(s))
+        return s
+
+
 class ReferenceProperty(Property):
     """ Custom Property type that represents a link to another SDFG object.
         Needs the SDFG to be passed as an argument to `from_string`."""
