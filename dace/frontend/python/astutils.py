@@ -8,6 +8,7 @@ import inspect
 import numbers
 import numpy
 import sympy
+import sys
 from typing import Any, Dict, List, Set, Tuple
 
 from dace import dtypes, symbolic
@@ -69,12 +70,20 @@ def evalnode(node: ast.AST, gvars: Dict[str, Any]) -> Any:
         node = node.value
     if isinstance(node, ast.Num):  # For compatibility
         return node.n
-    if isinstance(node, ast.Constant):
-        return node.value
+    if sys.version_info >= (3, 8):
+        if isinstance(node, ast.Constant):
+            return node.value
+
+    # Replace internal constants with their values
+    node = copy.deepcopy(node)
+    cext = ConstantExtractor(gvars)
+    cext.visit(node)
+    gvars = copy.copy(gvars)
+    gvars.update(cext.gvars)
+
     try:
         # Ensure context is load so eval works (e.g., when using value as lhs)
         if not isinstance(getattr(node, 'ctx', False), ast.Load):
-            node = copy.deepcopy(node)
             node.ctx = ast.Load()
         return eval(compile(ast.Expression(node), '<string>', mode='eval'), gvars)
     except:  # Anything can happen here
@@ -467,3 +476,25 @@ class AnnotateTopLevel(ExtNodeTransformer):
     def visit_TopLevel(self, node):
         node.toplevel = True
         return super().visit_TopLevel(node)
+
+
+class ConstantExtractor(ast.NodeTransformer):
+    def __init__(self, globals: Dict[str, Any]):
+        super().__init__()
+        self.id = 0
+        self.globals = globals
+        self.gvars: Dict[str, Any] = {}
+
+    def visit_Name(self, node: ast.Name):
+        if isinstance(node.ctx, ast.Load) and node.id in self.globals and self.globals[node.id] is SyntaxError:
+            raise SyntaxError
+        return self.generic_visit(node)
+
+    def visit_Constant(self, node):
+        return self.visit_Num(node)
+
+    def visit_Num(self, node: ast.Num):
+        newname = f'__uu{self.id}'
+        self.gvars[newname] = node.n
+        self.id += 1
+        return ast.copy_location(ast.Name(id=newname, ctx=ast.Load()), node)
