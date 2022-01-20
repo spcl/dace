@@ -620,6 +620,7 @@ def _cart_create(pv: 'ProgramVisitor',
         [
             f'MPI_Comm {pgrid_name}_comm;',
             f'MPI_Group {pgrid_name}_group;',
+            f'int {pgrid_name}_coords[{len(dims)}];',
             f'int {pgrid_name}_dims[{len(dims)}];',
             f'int {pgrid_name}_rank;',
             f'int {pgrid_name}_size;',
@@ -655,6 +656,7 @@ def _cart_sub(pv: 'ProgramVisitor',
         [
             f'MPI_Comm {pgrid_name}_comm;',
             f'MPI_Group {pgrid_name}_group;',
+            f'int {pgrid_name}_coords[{pgrid_ndims}];',
             f'int {pgrid_name}_dims[{pgrid_ndims}];',
             f'int {pgrid_name}_rank;',
             f'int {pgrid_name}_size;',
@@ -729,7 +731,7 @@ def _block_scatter(pv: 'ProgramVisitor',
     state.add_edge(inbuf_node, None, libnode, '_inp_buffer', inbuf_mem)
     state.add_edge(libnode, '_out_buffer', outbuf_node, None, outbuf_mem)
 
-    return None
+    return subarray_name
 
 
 @oprepo.replaces('dace.comm.BlockGather')
@@ -792,7 +794,79 @@ def _block_gather(pv: 'ProgramVisitor',
     state.add_edge(inbuf_node, None, libnode, '_inp_buffer', inbuf_mem)
     state.add_edge(libnode, '_out_buffer', outbuf_node, None, outbuf_mem)
 
-    return None
+    return subarray_name
+
+
+@oprepo.replaces('dace.comm.Redistribute')
+def _redistribute(pv: 'ProgramVisitor',
+                  sdfg: SDFG,
+                  state: SDFGState,
+                  in_buffer: str,
+                  out_buffer: str,
+                  in_subarray: str,
+                  out_process_grid: str,
+                  out_correspondence: Sequence[Integral]):
+    in_desc = sdfg.arrays[in_buffer]
+    out_desc = sdfg.arrays[out_buffer]
+    in_sarray = sdfg.subarrays[in_subarray]
+    out_subarray_name = sdfg.add_subarray(
+        in_sarray.dtype, in_sarray.shape, out_desc.shape,
+        out_process_grid, out_correspondence)
+    rdistrarray_name = sdfg.add_rdistrarray(in_subarray, out_subarray_name)
+
+    from dace.libraries.mpi import Dummy, Redistribute
+    tasklet = Dummy(
+        out_subarray_name,
+        [
+            f'MPI_Datatype {out_subarray_name};',
+            f'int* {out_subarray_name}_counts;',
+            f'int* {out_subarray_name}_displs;',
+            f'MPI_Datatype {rdistrarray_name};',
+            f'int {rdistrarray_name}_sends;',
+            f'MPI_Datatype* {rdistrarray_name}_send_types;',
+            f'int* {rdistrarray_name}_dst_ranks;',
+            f'int {rdistrarray_name}_recvs;',
+            f'MPI_Datatype* {rdistrarray_name}_recv_types;',
+            f'int* {rdistrarray_name}_src_ranks;'
+        ]
+    )
+    state.add_node(tasklet)
+    _, scal = sdfg.add_scalar(out_subarray_name, dace.int32, transient=True)
+    wnode = state.add_write(out_subarray_name)
+    state.add_edge(tasklet, '__out', wnode, None,
+                   Memlet.from_array(out_subarray_name, scal))
+    
+    libnode = Redistribute('_Redistribute_', rdistrarray_name)
+
+    inbuf_range = None
+    if isinstance(in_buffer, tuple):
+        inbuf_name, inbuf_range = in_buffer
+    else:
+        inbuf_name = in_buffer
+    in_desc = sdfg.arrays[inbuf_name]
+    inbuf_node = state.add_read(inbuf_name)
+
+    outbuf_range = None
+    if isinstance(out_buffer, tuple):
+        outbuf_name, outbuf_range = out_buffer
+    else:
+        outbuf_name = out_buffer
+    out_desc = sdfg.arrays[outbuf_name]
+    outbuf_node = state.add_write(outbuf_name)
+
+    if inbuf_range:
+        inbuf_mem = Memlet.simple(inbuf_name, inbuf_range)
+    else:
+        inbuf_mem = Memlet.from_array(inbuf_name, in_desc)
+    if outbuf_range:
+        outbuf_mem = Memlet.simple(outbuf_name, outbuf_range)
+    else:
+        outbuf_mem = Memlet.from_array(outbuf_name, out_desc)
+
+    state.add_edge(inbuf_node, None, libnode, '_inp_buffer', inbuf_mem)
+    state.add_edge(libnode, '_out_buffer', outbuf_node, None, outbuf_mem)
+    
+    return out_subarray_name
 
 
 # @oprepo.replaces('dace.comm.BlockGather')
