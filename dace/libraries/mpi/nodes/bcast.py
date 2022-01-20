@@ -40,8 +40,12 @@ class ExpandBcastMPI(ExpandTransformation):
         if isinstance(buffer, dace.data.Scalar):
             ref = "&"
 
+        comm = "MPI_COMM_WORLD"
+        if node._grid:
+            comm = f"__state->{node._grid}_comm"
+
         code = f"""
-            MPI_Bcast({ref}_inbuffer, {count_str}, {mpi_dtype_str}, _root, MPI_COMM_WORLD);
+            MPI_Bcast({ref}_inbuffer, {count_str}, {mpi_dtype_str}, _root, {comm});
             _outbuffer = _inbuffer;"""
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,
@@ -60,12 +64,13 @@ class Bcast(dace.sdfg.nodes.LibraryNode):
     }
     default_implementation = "MPI"
 
-    def __init__(self, name, *args, **kwargs):
+    def __init__(self, name, grid, *args, **kwargs):
         super().__init__(name,
                          *args,
                          inputs={"_inbuffer", "_root"},
                          outputs={"_outbuffer"},
                          **kwargs)
+        self._grid = grid
 
     def validate(self, sdfg, state):
         """
