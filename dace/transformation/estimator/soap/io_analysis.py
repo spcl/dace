@@ -65,7 +65,7 @@ class IOAnalysis():
     subgraphs : list[IOAnalysisSubgraph]
 
 
-def perform_soap_analysis(sdfg : Union[SDFG, SubgraphView],
+def perform_soap_analysis(sdfg : Union[SDFG, SubgraphView], decomp_params: List = [],
                     generate_schedule : bool = False) -> IOAnalysis:
     """
     Main interface of the SOAP analysis. 
@@ -74,6 +74,9 @@ def perform_soap_analysis(sdfg : Union[SDFG, SubgraphView],
     sdfg (SDFG): sdfg to be analyzed
     generate_schedule [Optional] (bool): Whether the parallel decomposition should be evaluated for each subgraph.
                                          The decomposition parameters are specified in params.param_values.
+    decomp_params: specifies numerical values of the symbolic parameters as a list of tuples
+                 (e.g., [("p", 64, "Ss", 1024, "N", 128)]). If not specified, default values are taken
+                 from Config.get("soap", "decomposition", "decomposition_params")
 
     Output:
     io_result_subgraph: dataclass containing SOAP analysis results, 
@@ -82,7 +85,7 @@ def perform_soap_analysis(sdfg : Union[SDFG, SubgraphView],
     """
     solver = Solver()
     solver.start_solver()
-    solver.set_timeout(200)
+    solver.set_timeout(10)
         
     sdg = SDG(sdfg, solver)
     # check if the created SDG is correct
@@ -110,14 +113,16 @@ def perform_soap_analysis(sdfg : Union[SDFG, SubgraphView],
 
 
 
-def perform_soap_analysis_einsum(einsum_string : str,
+def perform_soap_analysis_einsum(einsum_string : str, decomp_params: List = [],
             generate_schedule : bool = True) -> IOAnalysis:
     """
     Specialization of the main interface dedicated for the einsum tensor operations.
 
     Input:
     einsum_str: einsum srtring to be analyzed
-
+    decomp_params: specifies numerical values of the symbolic parameters as a list of tuples
+                 (e.g., [("p", 64, "Ss", 1024, "N", 128)]). If not specified, default values are taken
+                 from Config.get("soap", "decomposition", "decomposition_params")
     Output:
     io_result_subgraph: dataclass containing SOAP analysis results, 
     such as I/O lower bound (Q), computational intensity (rho), symbolic directed graph (SDG),
@@ -139,13 +144,14 @@ def perform_soap_analysis_einsum(einsum_string : str,
                     outer_tile = subgr.outer_tile, input_arrays = subgr.phis,
                     tasklets = subgr.tasklet)                    
         if generate_schedule:
-            decomp_list = Config.get("soap", "decomposition", "decomposition_params")
-            decomp_params = list(zip(decomp_list[::2],decomp_list[1::2]))
+            if decomp_params == []:
+                decomp_list = Config.get("soap", "decomposition", "decomposition_params")
+                decomp_params = list(zip(decomp_list[::2],decomp_list[1::2]))
             subgr.init_decomposition(decomp_params)
         
-        io_res_sg.loc_domain_dims = subgr.loc_domain_dims
-        io_res_sg.p_grid = subgr.p_grid
-        io_res_sg.dimensions_ordered = subgr.dimensions_ordered        
+            io_res_sg.loc_domain_dims = subgr.loc_domain_dims
+            io_res_sg.p_grid = subgr.p_grid
+            io_res_sg.dimensions_ordered = subgr.dimensions_ordered        
         subgraphs_res.append(io_res_sg)
     
     return(IOAnalysis(SDFG.__name__, Q, sdg, subgraphs_res))

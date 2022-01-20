@@ -14,10 +14,7 @@ from dace.codegen import control_flow
 from dace.sdfg.nodes import *
 from dace.subsets import Range
 from dace.codegen.control_flow import structured_control_flow_tree
-from typing import Optional, List
-# from dace.sdfg import Scope
-
-from typing import Tuple
+from typing import Optional, List, Set, Tuple
 from dace.symbolic import pystr_to_symbolic, issymbolic
 from dace import subsets
 from warnings import warn
@@ -222,7 +219,7 @@ class SDG:
                 inner_scope = copy.deepcopy(sdg_scope)
                 self._from_SDFG_node(node, state, inner_scope)
             elif isinstance(node, (dace.nodes.AccessNode)):
-                if node.label == "_x":
+                if node.label in ["__return_1", "__tmp4"]:
                     a = 1
                 # if the access node has a single in-edge coming from a different access node, 
                 # then it is a projection. We then add this to the sdfg mapping.
@@ -242,7 +239,10 @@ class SDG:
                     
                     # check if this is an initialization of transient (access_node -> tasklet -> transient access_node)
                     in_node = in_edges[0].src
+
+                    #TODO: to check
                     if sdg_scope.SDFG_arrays[node.data].transient:
+                    # if True:  
                         if isinstance(in_node, dace.nodes.Tasklet):
                             in_edges = state.in_edges(in_node)
                             if len(in_edges) > 0:
@@ -267,6 +267,25 @@ class SDG:
                             if "__tmp2" in sdg_scope.sdfg_mapping.keys():
                                 a = 1
 
+                        # confront: npbench, cholesky_dace. __tmp2 access node should inherit loop ranges [i,j], otherwise,
+                        # this would be an empty memlet
+                        if isinstance(in_node, dace.nodes.NestedSDFG)  \
+                                    and state.in_edges(node)[0].data.wcr is not None \
+                                    and len(sdg_scope.loop_ranges) > 0:
+                            composed_memlet = copy.deepcopy(state.out_edges(node)[0].data)
+                            composed_memlet.subset.ranges += SDG._dict_ranges_to_list(sdg_scope.loop_ranges)
+                            composed_memlet.subset.ranges = [rng for rng in composed_memlet.subset.ranges 
+                                            if len(sp.sympify(rng[0]).free_symbols) > 0]
+                            sdg_scope.sdfg_mapping[composed_memlet.data] = composed_memlet
+
+                        if isinstance(in_node, dace.nodes.AccessNode):
+                            in_edges = state.in_edges(in_node)
+                            if len(in_edges) > 0:
+                                tmp = SDG._fuse_mapping({node.data: in_edges[0].data}, sdg_scope.sdfg_mapping)
+                                if any([len(sp.sympify(i).free_symbols) > 0 for (i,j,k) in list(tmp.values())[0].subset.ranges]):
+                                # sdg_scope.sdfg_mapping = {**sdg_scope.sdfg_mapping, **{node.data: in_edges[0].data}}
+                                    sdg_scope.sdfg_mapping = {**sdg_scope.sdfg_mapping, **tmp}
+
                         
             elif isinstance(node, dace.nodes.EntryNode): 
                 if 'stateFOR31_map' in node.label:
@@ -281,7 +300,7 @@ class SDG:
                 inner_scope.SOAP_executions = num_executions
                 self._from_SDFG_scope(state, node, inner_scope)
             elif isinstance(node, dace.nodes.NestedSDFG):
-                if node.label == '_MatMult_dot':
+                if node.label == '_MatMult_gemvt':
                     a = 1
                 inner_scope = self._add_ranges_and_mappings(state, sdg_scope, node)
                 if "__tmp2" in inner_scope.sdfg_mapping.keys():
@@ -296,7 +315,7 @@ class SDG:
     # the core SDG creation function. The elementary building block for SDG is the SDFG's tasklet
     def _from_SDFG_node(self, node : dace.nodes, 
                 state: dace.SDFGState, sdg_scope : SdgScope) -> None:  
-        if node.label in ['augassign_13_12', 'dot']:
+        if node.label in ['contraction_out1_inp3']:
             a = 1
                   
         if not state.out_edges(node) or not state.in_edges(node):
@@ -383,6 +402,8 @@ class SDG:
             return
         S.numExecutions = sdg_scope.SOAP_executions 
 
+        S.clean_iter_vars()
+
         if len(S.phis) == 0:
             return
         if Config.get("soap", "analysis", "io_analysis") :
@@ -443,7 +464,10 @@ class SDG:
                     vars_to_add_in = vars_to_add + list(map(dace.symbol, [v for v in sdg_scope.loop_ranges.keys()]))
                 else:
                     vars_to_add_in = vars_to_add
-                mem.subset.ranges += [(x, x, 1) for x in vars_to_add_in if str(x) not in mem.subset.free_symbols ]
+                
+                # TODO: controversial new change
+                mem.subset.ranges += [(x, x, 1) for x in vars_to_add_in ]
+                # mem.subset.ranges += [(x, x, 1) for x in vars_to_add_in if str(x) not in mem.subset.free_symbols ]
                 mem.subset = Range(mem.subset.ranges)                
                 
                 # # BUT, we remove empty ranges (0,0,1)
@@ -529,6 +553,11 @@ class SDG:
             return outer_mem.subset
                 
         return outer_mem.subset.compose(inner_mem.subset)
+
+    
+    @staticmethod
+    def _dict_ranges_to_list(ranges : Dict) -> List:
+        return [(dace.symbol(i), dace.symbol(i), 1) for i in ranges.keys()]
 
 
 
@@ -670,7 +699,7 @@ class SDG:
         output_arrays = {}
         if len(sdg_scope.ranges) == 0:
             # then we are not in any parametric range scope            
-            iter_vars = []
+            iter_vars = set()
         else:
             iter_vars = set(map(dace.symbol, [v for v in sdg_scope.ranges.keys()]))
         snodes = state.scope_children()[scope]    
@@ -708,6 +737,23 @@ class SDG:
             elif isinstance(node, dace.nodes.NestedSDFG):
                 inner_scope = self._add_ranges_and_mappings(state, sdg_scope, node)
                 output_arrays = {**output_arrays, **self._get_output_arrays_sdfg(node.sdfg, inner_scope)}
+
+            elif isinstance(node, dace.nodes.AccessNode):
+                if len(state.in_edges(node)) > 0 and len(state.out_edges(node)) == 0:
+
+                    (arrayName, baseAccess, offsets) =  get_access_from_memlet(
+                            SDG._memlet_ranges_to_iters(state.in_edges(node)[0].data), iter_vars)
+                    
+                    # This check is needed to exclude output arrays that do not have any SSA dim. 
+                    # That is, if the arrays dimension (baseAccess) is the same as iteration dimension
+                    # (sdg_scope.ranges), even though it is an output array, we don't include it.
+                    # Otherwise, we might attach to it a wrong SSA_dim later.
+                    if set(sdg_scope.ranges.keys()) != set(baseAccess.split('*')):
+                        if arrayName in output_arrays.keys():
+                            if output_arrays[arrayName][0] == "":
+                                output_arrays[arrayName] = (baseAccess, offsets)    
+                        else:
+                            output_arrays[arrayName] = (baseAccess, offsets)
                                    
         return output_arrays
     
@@ -749,14 +795,15 @@ class SDG:
                 subs_list = [(iter,0) for iter in offset_variables]
 
                 if new_memlet.src_subset is not None:
-                    new_memlet.src_subset.ranges = [(rng[0].subs(subs_list), rng[1].subs(subs_list), rng[2].subs(subs_list)) 
+                    new_memlet.src_subset.ranges = [(rng[0].subs(subs_list), rng[1].subs(subs_list), rng[2]) 
                                                 for rng in new_memlet.src_subset]
                 if new_memlet.dst_subset is not None:
-                    new_memlet.dst_subset.ranges = [(rng[0].subs(subs_list), rng[1].subs(subs_list), rng[2].subs(subs_list)) 
+                    new_memlet.dst_subset.ranges = [(rng[0].subs(subs_list), rng[1].subs(subs_list), rng[2]) 
                                                 for rng in new_memlet.dst_subset]
 
             
             if output:
+                a = 1
                 outer_memlet.subset = outer_memlet.subset.compose(new_memlet.dst_subset)
             else:
                 try:
@@ -870,6 +917,13 @@ class SDG:
         
         return SSA_dim
 
+    @staticmethod
+    def _memlet_ranges_to_iters(memlet : dace.Memlet) -> dace.Memlet:
+        iter_memlet = copy.deepcopy(memlet)
+        iter_ranges = [(y, y, 1) for (x,y,z) in iter_memlet.subset.ranges]
+        iter_memlet.subset.ranges = iter_ranges
+        return iter_memlet
+            
 
     
     # ------------------------------------
@@ -1036,8 +1090,18 @@ class SDG:
                     return shortest_pred
         return shortest_pred
 
+    
+    # we don't add w to existing subgraph SG = (SV,SE), V = {B,C,D...} if there is a path
+    # from w to any v in SV such that any of the vertices in the path is not in SV.
+    # That is, V is a compact set in G (any path between the vertices is in SV is in V)
+    def is_complete_tree(self, new_node: str, existing_nodes: Set[str]) -> bool:
+        new_subgraph = copy.deepcopy(existing_nodes)
+        new_subgraph.add(new_node)
+        paths = list(nx.all_simple_paths(self.graph, new_node, existing_nodes))
+        return all([all([v in new_subgraph for v in path]) for path in paths ])
 
-    def recursive_SDG_subgraphing(self, node, checked_subgraphs : set) -> List[SoapStatement]:
+
+    def recursive_SDG_subgraphing(self, node : str, nodes_so_far : Set[str], checked_subgraphs : set) -> List[SoapStatement]:
         if "all_subgraphs" in self.graph.nodes[node].keys():
             return self.graph.nodes[node]["all_subgraphs"]
         base_st = self.graph.nodes[node]['st']
@@ -1046,6 +1110,11 @@ class SDG:
         S.subgraph = set([node])
         sdg_statements = []
         sdg_statements.append(S)
+        inner_nodes = copy.deepcopy(nodes_so_far)
+        inner_nodes.add(node)
+
+        if node == "__tmp6_1":
+            a = 1
 
         for pred in self.graph.predecessors(node): 
             # merging horizontally - input reuse
@@ -1098,8 +1167,9 @@ class SDG:
                 
                 # if len(par_st.rhoOpts.free_symbols) == 0: 
                 # if not e[2]['wcr']:           # e[2] is the dict of properties of the edge     
-                if self.is_shortest_pred(node, pred):
-                    pred_statements = self.recursive_SDG_subgraphing(pred, checked_subgraphs)   
+                # if all([self.is_shortest_pred(n, pred) for n in inner_nodes]):
+                if self.is_complete_tree(pred, inner_nodes):
+                    pred_statements = self.recursive_SDG_subgraphing(pred, inner_nodes, checked_subgraphs)   
 
                     # perform all-to-all possible mergings
                     sibling_statements = copy.deepcopy(sdg_statements)
@@ -1178,11 +1248,13 @@ class SDG:
             subgraph_opt = SoapStatement()
             subgraph_opt.Q = 0        
             Q_opt_val = 0
-            sdg_subgraphs_statements = self.recursive_SDG_subgraphing(node, checked_subgraphs)
+            sdg_subgraphs_statements = self.recursive_SDG_subgraphing(node, set(), checked_subgraphs)
             # append checked sugraphs from this node to the global set
             checked_subgraphs = checked_subgraphs.union(set([frozenset(sg.subgraph) for sg in sdg_subgraphs_statements]))
 
             for subgraph_st in sdg_subgraphs_statements:    
+                if subgraph_st.name == 'A_1;__tmp8_1;__return_1_2':
+                    a = 1
                 subgraph_st.solve(self.solver)     
                 if subgraph_st.parent_subgraph:
                     [better_subgraph, Q_val] = compare_st(subgraph_st, subgraph_st.parent_subgraph)

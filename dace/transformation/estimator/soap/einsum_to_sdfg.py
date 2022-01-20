@@ -21,7 +21,7 @@ def sdfg_gen(subscripts: str, arrays: List[np.ndarray] = None, inp_dim: int = 30
         inp_dim [Optinal] (int): If arrays are not provided, inp_dim is used to auto-generate them
 
 
-    Re5turns:
+    Returns:
         dace.SDFG: The SDFG implementing the einsum.
     """
 
