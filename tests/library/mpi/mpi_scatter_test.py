@@ -5,6 +5,8 @@ import dace.libraries.mpi as mpi
 import numpy as np
 import pytest
 
+from dace.codegen.compiled_sdfg import CompiledSDFG, ReloadableDLL
+
 ###############################################################################
 
 
@@ -435,6 +437,104 @@ def test_redistribute4():
     #     print(f"Full array = {A}")
 
 
+NIa, NJa, NKa, NJb = (dace.symbol(s) for s in ('NIa', 'NJa', 'NKa', 'NJb'))
+lNIa, lNJa, lNKa, lNJb = (dace.symbol(s) for s in ('lNIa', 'lNJa', 'lNKa', 'lNJb'))
+PIa, PJa, PKa = (dace.symbol(s) for s in ('PIa', 'PJa', 'PKa'))
+PIb, PJb, PKb = (dace.symbol(s) for s in ('PIb', 'PJb', 'PKb'))
+
+
+@dace.program
+def one_mm(lA: dace.float64[lNIa, lNKa], lB: dace.float64[lNKa, lNKa]):
+    parent_grid = dace.comm.Cart_create([PIa, PJa, PKa])
+    a_grid = dace.comm.Cart_sub(parent_grid, [True, False, True], 0)
+    b_grid = dace.comm.Cart_sub(parent_grid, [False, True, True], 0)
+    c_grid = dace.comm.Cart_sub(parent_grid, [True, True, False], 0)
+    dace.comm.Bcast(lA, 0, a_grid)
+    dace.comm.Bcast(lB, 0, b_grid)
+    lC = lA @ lB
+    dace.comm.Reduce(lC, 'MPI_SUM', 0, c_grid)
+    return lC
+
+
+def test_one_mm():
+
+    from mpi4py import MPI as MPI4PY
+    comm = MPI4PY.COMM_WORLD
+    rank = comm.Get_rank()
+    commsize = comm.Get_size()
+
+    mpi_sdfg = None
+    # if rank == 0:
+    #     mpi_sdfg = one_mm.to_sdfg(strict=False)
+    #     mpi_sdfg.apply_strict_transformations()
+    #     mpi_sdfg.apply_strict_transformations()
+    #     mpi_func= mpi_sdfg.compile()
+    # comm.Barrier()
+    # if rank > 0:
+    #     mpi_sdfg = dace.SDFG.from_file(".dacecache/{n}/program.sdfg".format(
+    #         n=one_mm.name))
+    #     mpi_func = CompiledSDFG(mpi_sdfg, ReloadableDLL(
+    #         ".dacecache/{n}/build/lib{n}.so".format(n=one_mm.name),
+    #         one_mm.name))
+    # comm.Barrier()
+    for r in range(commsize):
+        if r == rank:
+            mpi_sdfg = one_mm.compile()
+        comm.Barrier()
+    lA = np.arange(1000000, dtype=np.float64).reshape(1000, 1000).copy()
+    lB = np.arange(1000000, dtype=np.float64).reshape(1000, 1000).copy()
+    lC = mpi_sdfg(lNIa=1000, lNJa=1000, lNKa=1000, PIa=2, PJa=2, PKa=2, lA=lA, lB=lB)
+
+
+@dace.program
+def two_mm(lA: dace.float64[lNIa, lNKa], lB: dace.float64[lNKa, lNKa],
+           lC: dace.float64[lNKa, lNJb]):
+    parent_grid = dace.comm.Cart_create([PIa, PJa, PKa])
+    a_grid = dace.comm.Cart_sub(parent_grid, [True, False, True], 0)
+    b_grid = dace.comm.Cart_sub(parent_grid, [False, True, True], 0)
+    tmp_grid = dace.comm.Cart_sub(parent_grid, [True, True, False], 0)
+    c_grid = b_grid  # but transposed
+    d_grid = tmp_grid
+    dace.comm.Bcast(lA, 0, a_grid)
+    dace.comm.Bcast(lB, 0, b_grid)
+    tmp = lA @ lB
+    dace.comm.Allreduce(tmp, 'MPI_SUM', tmp_grid)
+    lD = tmp @ lC
+    dace.comm.Reduce(lD, 'MPI_SUM', 0, d_grid)
+    return lD
+
+
+def test_two_mm():
+
+    from mpi4py import MPI as MPI4PY
+    comm = MPI4PY.COMM_WORLD
+    rank = comm.Get_rank()
+    commsize = comm.Get_size()
+
+    mpi_sdfg = None
+    # if rank == 0:
+    #     mpi_sdfg = one_mm.to_sdfg(strict=False)
+    #     mpi_sdfg.apply_strict_transformations()
+    #     mpi_sdfg.apply_strict_transformations()
+    #     mpi_func= mpi_sdfg.compile()
+    # comm.Barrier()
+    # if rank > 0:
+    #     mpi_sdfg = dace.SDFG.from_file(".dacecache/{n}/program.sdfg".format(
+    #         n=one_mm.name))
+    #     mpi_func = CompiledSDFG(mpi_sdfg, ReloadableDLL(
+    #         ".dacecache/{n}/build/lib{n}.so".format(n=one_mm.name),
+    #         one_mm.name))
+    # comm.Barrier()
+    for r in range(commsize):
+        if r == rank:
+            mpi_sdfg = two_mm.compile()
+        comm.Barrier()
+    lA = np.arange(1000000, dtype=np.float64).reshape(1000, 1000).copy()
+    lB = np.arange(1000000, dtype=np.float64).reshape(1000, 1000).copy()
+    lC = np.arange(1000000, dtype=np.float64).reshape(1000, 1000).copy()
+    lD = mpi_sdfg(lNIa=1000, lNJa=1000, lNKa=1000, lNJb=1000, PIa=2, PJa=2, PKa=2, lA=lA, lB=lB, lC=lC)
+
+
 ###############################################################################
 
 if __name__ == "__main__":
@@ -444,5 +544,7 @@ if __name__ == "__main__":
     # test_dace_block_scatter()
     # test_soap_mm()
     # test_cart()
-    test_redistribute4()
+    # test_redistribute4()
+    # test_one_mm()
+    test_two_mm()
 ###############################################################################
