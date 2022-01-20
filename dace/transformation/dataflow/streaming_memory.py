@@ -8,13 +8,26 @@ import warnings
 import sympy
 
 from dace.transformation import transformation as xf
-from dace import (data, dtypes, nodes, properties, registry, memlet as mm,
-                  subsets, symbolic, symbol, Memlet)
+from dace import (data, dtypes, nodes, properties, registry, memlet as mm, subsets, symbolic, symbol, Memlet)
 from dace.sdfg import SDFG, SDFGState, utils as sdutil, graph as gr
 from dace.libraries.standard import Gearbox
+from tests.fpga.streaming_memory_test import N
 
 
-def isInt(i):
+def get_post_state(sdfg: SDFG, state: SDFGState):
+    """ 
+    Returns the post state (the state that copies the data a back from the FGPA device) if there is one.
+    """
+    for s in sdfg.all_sdfgs_recursive():
+        for post_state in s.states():
+
+            if 'post_' + str(state) == str(post_state):
+                return post_state
+
+    return None
+
+
+def is_int(i):
     return isinstance(i, int) or isinstance(i, sympy.core.numbers.Integer)
 
 
@@ -97,10 +110,9 @@ class StreamingMemory(xf.SingleStateTransformation):
     Converts a read or a write to streaming memory access, where data is
     read/written to/from a stream in a separate connected component than the
     computation.
-    Optional: The MemoryBuffering transformation allows reading/writing data from memory
+    If 'use_memory_buffering' is True, the transformation reads/writes data from memory
     using a wider data format (e.g. 512 bits), and then convert it
-    on the fly to the right data type used by the computation:
-    A combination of the StreamingMemory transformation and a gearbox node. 
+    on the fly to the right data type used by the computation: 
     """
     access = xf.PatternNode(nodes.AccessNode)
     entry = xf.PatternNode(nodes.EntryNode)
@@ -108,23 +120,16 @@ class StreamingMemory(xf.SingleStateTransformation):
 
     buffer_size = properties.Property(dtype=int, default=1, desc='Set buffer size for the newly-created stream')
 
+    storage = properties.EnumProperty(dtype=dtypes.StorageType,
+                                      desc='Set storage type for the newly-created stream',
+                                      default=dtypes.StorageType.Default)
 
-    storage = properties.EnumProperty(
-        dtype=dtypes.StorageType,
-        desc='Set storage type for the newly-created stream',
-        default=dtypes.StorageType.Default)
-
-    use_memory_buffering = properties.Property(
-        dtype=bool,
-        default=False,
-        desc='Set if memory buffering should be used.')
+    use_memory_buffering = properties.Property(dtype=bool,
+                                               default=False,
+                                               desc='Set if memory buffering should be used.')
 
     memory_buffering_target_bytes = properties.Property(
-        dtype=int,
-        default=64,
-        desc='Set bytes read/written from memory if memory buffering is enabled.'
-    )
-
+        dtype=int, default=64, desc='Set bytes read/written from memory if memory buffering is enabled.')
 
     @classmethod
     def expressions(cls) -> List[gr.SubgraphView]:
@@ -198,6 +203,10 @@ class StreamingMemory(xf.SingleStateTransformation):
             access = self.access
             desc = sdfg.arrays[access.data]
 
+            # Array has to be global array
+            if desc.storage != dtypes.StorageType.FPGA_Global:
+                return False
+
             # Type has to divide target bytes
             if self.memory_buffering_target_bytes % desc.dtype.bytes != 0:
                 return False
@@ -215,13 +224,14 @@ class StreamingMemory(xf.SingleStateTransformation):
             vector_size = int(self.memory_buffering_target_bytes / desc.dtype.bytes)
             strides.pop()  # Remove last element since we already checked it
 
-            # Other strides have to be divisiable by vector size
+            # Other strides have to be divisible by vector size
             for stride in strides:
 
-                if isInt(stride) and stride % vector_size != 0:
+                if is_int(stride) and stride % vector_size != 0:
                     return False
 
             # Check if map has the right access pattern
+            # Stride 1 access by innermost loop, innermost loop counter has to be divisible by vector size
             # Same code as in apply
             state = sdfg.node(self.state_id)
             dnode: nodes.AccessNode = self.access
@@ -254,7 +264,7 @@ class StreamingMemory(xf.SingleStateTransformation):
 
                     # Check is correct access pattern
                     # Correct ranges in map
-                    if isInt(ranges[-1][1]) and (ranges[-1][1] + 1) % vector_size != 0:
+                    if is_int(ranges[-1][1]) and (ranges[-1][1] + 1) % vector_size != 0:
                         return False
 
                     if ranges[-1][2] != 1:
@@ -263,6 +273,7 @@ class StreamingMemory(xf.SingleStateTransformation):
                     # Correct access in array
                     if isinstance(edge_subset[-1], symbol) and str(edge_subset[-1]) == map_subset[-1]:
                         pass
+
                     elif isinstance(edge_subset[-1], sympy.core.add.Add):
 
                         counter: int = 0
@@ -276,10 +287,6 @@ class StreamingMemory(xf.SingleStateTransformation):
 
                     else:
                         return False
-
-            # Array has to be global array
-            if desc.storage != dtypes.StorageType.FPGA_Global:
-                return False
 
         return True
 
@@ -344,13 +351,13 @@ class StreamingMemory(xf.SingleStateTransformation):
                 total_size = edge.data.volume
                 vector_size = int(self.memory_buffering_target_bytes / desc.dtype.bytes)
 
-                if not isInt(sdfg.arrays[dnode.data].shape[-1]):
+                if not is_int(sdfg.arrays[dnode.data].shape[-1]):
                     warnings.warn(
                         "Using the MemoryBuffering transformation is potential unsafe since {sym} is not an integer. There should be no issue if {sym} % {vec} == 0"
                         .format(sym=sdfg.arrays[dnode.data].shape[-1], vec=vector_size))
 
                 for i in sdfg.arrays[dnode.data].strides:
-                    if not isInt(i):
+                    if not is_int(i):
                         warnings.warn(
                             "Using the MemoryBuffering transformation is potential unsafe since {sym} is not an integer. There should be no issue if {sym} % {vec} == 0"
                             .format(sym=i, vec=vector_size))
@@ -470,13 +477,16 @@ class StreamingMemory(xf.SingleStateTransformation):
                 new_strides[i] = new_strides[i] / vector_size
             sdfg.arrays[arrname].strides = new_strides
 
-            # Change subset int the post state
-            for e in sdfg.states()[-1].edges():
-                if e.data.data == self.access.data:
-                    new_subset = list(e.data.subset)
-                    i, j, k = new_subset[-1]
-                    new_subset[-1] = (i, (j + 1) / vector_size - 1, k)
-                    e.data = mm.Memlet(data=str(e.src), subset=subsets.Range(new_subset))
+            post_state = get_post_state(sdfg, state)
+
+            if post_state != None:
+                # Change subset in the post state such that the correct amount of memory is copied back from the device
+                for e in post_state.edges():
+                    if e.data.data == self.access.data:
+                        new_subset = list(e.data.subset)
+                        i, j, k = new_subset[-1]
+                        new_subset[-1] = (i, (j + 1) / vector_size - 1, k)
+                        e.data = mm.Memlet(data=str(e.src), subset=subsets.Range(new_subset))
 
         # Make read/write components
         ionodes = []
@@ -532,7 +542,7 @@ class StreamingMemory(xf.SingleStateTransformation):
                     # Change range of map
                     if isinstance(edge_subset[-1], symbol) and str(edge_subset[-1]) == map.params[-1]:
 
-                        if not isInt(ranges[-1][1][1]):
+                        if not is_int(ranges[-1][1][1]):
 
                             warnings.warn(
                                 "Using the MemoryBuffering transformation is potential unsafe since {sym} is not an integer. There should be no issue if {sym} % {vec} == 0"
@@ -546,7 +556,7 @@ class StreamingMemory(xf.SingleStateTransformation):
                         for arg in edge_subset[-1].args:
                             if isinstance(arg, symbol) and str(arg) == map.params[-1]:
 
-                                if not isInt(ranges[-1][1][1]):
+                                if not is_int(ranges[-1][1][1]):
                                     warnings.warn(
                                         "Using the MemoryBuffering transformation is potential unsafe since {sym} is not an integer. There should be no issue if {sym} % {vec} == 0"
                                         .format(sym=ranges[-1][1][1].args[1], vec=vector_size))
@@ -585,12 +595,9 @@ class StreamingComposition(xf.SingleStateTransformation):
 
     buffer_size = properties.Property(dtype=int, default=1, desc='Set buffer size for the newly-created stream')
 
-
-    storage = properties.EnumProperty(
-        dtype=dtypes.StorageType,
-        desc='Set storage type for the newly-created stream',
-        default=dtypes.StorageType.Default)
-
+    storage = properties.EnumProperty(dtype=dtypes.StorageType,
+                                      desc='Set storage type for the newly-created stream',
+                                      default=dtypes.StorageType.Default)
 
     @classmethod
     def expressions(cls) -> List[gr.SubgraphView]:
