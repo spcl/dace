@@ -521,6 +521,22 @@ def test_constant_propagation():
     assert np.allclose(a, 0)
 
 
+def test_constant_propagation_2():
+    @dace.program
+    def conditional_val(A: dace.float64[20], val: dace.int64):
+        if val:
+            A[:] = 0
+        else:
+            A[:] = 1
+
+    # Ensure condition was folded
+    a = np.random.rand(20)
+    conditional_val(a, 1)
+    assert np.allclose(a, 0)
+    conditional_val(a, 0)
+    assert np.allclose(a, 1)
+
+
 if __name__ == '__main__':
     test_kwargs()
     test_kwargs_jit()
@@ -551,3 +567,4 @@ if __name__ == '__main__':
     test_constant_list_number()
     test_constant_list_function()
     test_constant_propagation()
+    test_constant_propagation_2()

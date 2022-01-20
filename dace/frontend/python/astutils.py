@@ -76,7 +76,7 @@ def evalnode(node: ast.AST, gvars: Dict[str, Any]) -> Any:
 
     # Replace internal constants with their values
     node = copy.deepcopy(node)
-    cext = ConstantExtractor()
+    cext = ConstantExtractor(gvars)
     cext.visit(node)
     gvars = copy.copy(gvars)
     gvars.update(cext.gvars)
@@ -479,10 +479,16 @@ class AnnotateTopLevel(ExtNodeTransformer):
 
 
 class ConstantExtractor(ast.NodeTransformer):
-    def __init__(self):
+    def __init__(self, globals: Dict[str, Any]):
         super().__init__()
         self.id = 0
+        self.globals = globals
         self.gvars: Dict[str, Any] = {}
+
+    def visit_Name(self, node: ast.Name):
+        if isinstance(node.ctx, ast.Load) and node.id in self.globals and self.globals[node.id] is SyntaxError:
+            raise SyntaxError
+        return self.generic_visit(node)
 
     def visit_Constant(self, node):
         return self.visit_Num(node)
