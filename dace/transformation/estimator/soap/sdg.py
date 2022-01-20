@@ -1214,7 +1214,7 @@ class SDG:
 
 
     # structure-aware partitioning
-    def calculate_IO_of_SDG(self) -> Tuple[sp.core.Expr, list[SoapStatement]]:
+    def calculate_IO_of_SDG(self) -> Tuple[sp.core.Expr, List[SoapStatement]]:
         """
         Exhaustively creates all possible subgraphs (using recursive_SDG_subgraphing),
         and then chooses the best (with the lowest I/O cost Q) SDG partition (using compare_st).

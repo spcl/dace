@@ -62,7 +62,7 @@ class IOAnalysis():
     name : int
     Q: sp.Expr
     sdg: SDG
-    subgraphs : list[IOAnalysisSubgraph]
+    subgraphs : List[IOAnalysisSubgraph]
 
 
 def perform_soap_analysis(sdfg : Union[SDFG, SubgraphView], decomp_params: List = [],
