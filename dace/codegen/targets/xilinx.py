@@ -49,6 +49,10 @@ class XilinxCodeGen(fpga.FPGACodeGen):
         # where they are written to file
         self._bank_assignments = {}
 
+        # keep track of arrays that have been duplicated to have explicit array interfaces
+        # Dictionary array_original_name -> (input array interface name, output array interface name)
+        self._array_interfaces = dict()
+
         # Keep track of external streams: original_name -> mangled_name
         self._external_streams = dict()
         self._defined_external_streams = set()
@@ -194,43 +198,104 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         '''
         Vendor-specific SDFG Preprocessing
         '''
-
         # Make array interface accesses explicit
 
         # Keep track of global accessed data (set of (access_node, state) tuples to avoid duplicates)
-        read_global_data = set()
-        read_global_data_names = dict()
-        written_global_data = set()
-        written_global_data_names = dict()
-        for node, dfg in sdfg.all_nodes_recursive():
-            if isinstance(node, nodes.Tasklet):
-                # Get all input edges
-                for in_edge in dfg.in_edges(node):
 
-                    # get memlet path
-                    mpath = dfg.memlet_path(in_edge)
-                    src_node = mpath[0].src
+        # We need to:
+        # - detect all data that is accessed for both reading and writing
+        # - for all of these, create in and out array interface
+        # - make access nodes point to the correct array interface: if the access node is used to both
+        #   read and write, then duplicate it and add an empty edge
 
-                    if isinstance(src_node, nodes.AccessNode):
-                        desc = src_node.desc(dfg)
-                        if desc.storage == dace.StorageType.FPGA_Global:
-                            read_global_data.add((src_node, dfg))
-                            read_global_data_names[src_node.data] = dfg
+        from collections import defaultdict
+        from dace.transformation.helpers import redirect_edge
+        for graph in sdfg.all_sdfgs_recursive():
+            read_global_data = set()
+            # TODO cleanup this part
+            #dictionary data_name -> [access nodes]
+            read_global_data_names = defaultdict(list)
 
-                # Get all output edges
-                for out_edge in dfg.out_edges(node):
+            in_out_data = dict()
+            written_global_data = set()
+            # dictionary data_name -> [access nodes]
+            written_global_data_names = defaultdict(list)
+            for node, dfg in graph.all_nodes_recursive():
+                if isinstance(node, nodes.Tasklet):
+                    # Get all input edges
+                    for in_edge in dfg.in_edges(node):
 
-                    # get memlet path
-                    mpath = dfg.memlet_path(out_edge)
-                    dst_node = mpath[-1].dst
-                    if isinstance(dst_node, nodes.AccessNode):
+                        # get memlet path
+                        mpath = dfg.memlet_path(in_edge)
+                        src_node = mpath[0].src
 
-                        if isinstance(dst_node, nodes.AccessNode):
-                            desc = dst_node.desc(dfg)
+                        if isinstance(src_node, nodes.AccessNode):
+                            desc = src_node.desc(dfg)
                             if desc.storage == dace.StorageType.FPGA_Global:
-                                written_global_data.add((dst_node,dfg))
-                                written_global_data_names[dst_node.data] = dfg
+                                read_global_data.add((src_node, dfg))
+                                read_global_data_names[src_node.data].append((src_node, dfg))
 
+                    # Get all output edges
+                    for out_edge in dfg.out_edges(node):
+
+                        # get memlet path
+                        mpath = dfg.memlet_path(out_edge)
+                        dst_node = mpath[-1].dst
+                        if isinstance(dst_node, nodes.AccessNode):
+
+                            if isinstance(dst_node, nodes.AccessNode):
+                                desc = dst_node.desc(dfg)
+                                if desc.storage == dace.StorageType.FPGA_Global:
+                                    written_global_data.add((dst_node,dfg))
+                                    written_global_data_names[dst_node.data].append((dst_node,dfg))
+
+
+            in_out_data_names = set(read_global_data_names.keys()).intersection(set(written_global_data_names.keys()))
+
+            # TODO: do better tracement of input and outpyut
+            for data in in_out_data_names:
+
+                # Input part
+                for read_node, dfg in read_global_data_names[data]:
+
+                    in_array_name = data + "_in"
+                    # add a new access_node
+                    read_acc_node = dfg.add_access(in_array_name)
+
+                    data_desc = read_node.desc(dfg)
+                    sdfg.add_datadesc(in_array_name, data_desc)
+
+                    for out_edge in dfg.out_edges(read_node):
+                        redirect_edge(dfg, out_edge, new_src=read_acc_node,  new_data=in_array_name)
+
+                for write_node, dfg in written_global_data_names[data]:
+
+                    out_array_name = data + "_out"
+                    # add a new access_node
+                    write_acc_node = dfg.add_access(out_array_name)
+
+                    data_desc = write_node.desc(dfg)
+                    sdfg.add_datadesc(out_array_name, data_desc)
+
+                    for in_edge in dfg.in_edges(write_node):
+                        redirect_edge(dfg, in_edge, new_dst=write_acc_node,  new_data=out_array_name)
+
+
+                dfg.remove_node(write_node)
+                dfg.add_memlet_path(write_acc_node, read_acc_node, memlet=dace.Memlet())
+                self._array_interfaces[data]=(in_array_name, out_array_name)
+
+
+            # for read_node, dfg in read_global_data:
+            #     graph.replace(read_node.label, read_node.label+"_in")
+            #     print("Renaming inp", read_node.label)
+            #
+            # for write_node, dfg in written_global_data:
+            #     graph.replace(write_node.label, write_node.label + "_out")
+            #     print("Renaming out", write_node.label)
+            #
+            # import pdb
+            # pdb.set_trace()
 
         # # at this point, create the explicit name
         # for read_node, dfg in read_global_data:
@@ -254,16 +319,16 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
 
 
         # Attempt with just the data name
-        for read_node, dfg in read_global_data_names.items():
-            dfg =  dfg.parent  if dfg.parent is not None else dfg
-            dfg.replace(read_node, read_node + "_in")
+        # for read_node, dfg in read_global_data_names.items():
+        #     dfg =  dfg.parent  if dfg.parent is not None else dfg
+        #     dfg.replace(read_node, read_node + "_in")
+        #
+        # for write_node, dfg in written_global_data_names.items():
+        #     print("Renaming ", write_node)
+        #     dfg = dfg.parent if dfg.parent is not None else dfg
+        #     dfg.replace(write_node, write_node + "_out")
 
-        for write_node, dfg in written_global_data_names.items():
-            print("Renaming ", write_node)
-            dfg = dfg.parent if dfg.parent is not None else dfg
-            dfg.replace(write_node, write_node + "_out")
 
-        # sdfg.view()
         # import pdb
         # pdb.set_trace()
 
@@ -527,6 +592,9 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         # Build kernel signature
         kernel_args = []
         array_args = []
+
+
+
         for is_output, data_name, data, interface in parameters:
             is_assigned = data_name in bank_assignments and bank_assignments[data_name] is not None
             if is_assigned and isinstance(data, dt.Array):
@@ -801,11 +869,12 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                 ptr_name = fpga.fpga_ptr(argname, arg, sdfg, bank, is_output, None, is_array_interface=True)
                 if not is_output:
                     ctype = f"const {ctype}"
-                self._dispatcher.defined_vars.add(ptr_name, DefinedType.Pointer, ctype)
+                print("PTR NAME: ", ptr_name)
+                # self._dispatcher.defined_vars.add(ptr_name, DefinedType.Pointer, ctype)
                 if argname in interfaces_added:
                     continue
                 interfaces_added.add(argname)
-                self._dispatcher.defined_vars.add(argname, DefinedType.ArrayInterface, ctype, allow_shadowing=True)
+                # self._dispatcher.defined_vars.add(argname, DefinedType.ArrayInterface, ctype, allow_shadowing=True)
         module_body_stream.write("\n")
 
         # Allocate local transients
