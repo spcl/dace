@@ -315,7 +315,7 @@ class SDG:
     # the core SDG creation function. The elementary building block for SDG is the SDFG's tasklet
     def _from_SDFG_node(self, node : dace.nodes, 
                 state: dace.SDFGState, sdg_scope : SdgScope) -> None:  
-        if node.label in ['contraction_out1_inp3']:
+        if node.label in ['dot']:
             a = 1
                   
         if not state.out_edges(node) or not state.in_edges(node):

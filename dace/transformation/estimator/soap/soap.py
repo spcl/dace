@@ -332,7 +332,7 @@ class SoapStatement:
                 correct_decomp = False
                 X_val = X_size.subs(self.param_vals)    
                 while (not correct_decomp):
-                    X_val *= 1.02
+                    X_val = (X_val*1.02).evalf()
                     self.loc_domain_dims = [sp.ceiling(var.subs(X, X_val)) for var in xpart_dims]
                     self.p_grid = [sp.ceiling((v / t).subs(self.param_vals))  for v,t in zip(self.dimensions_ordered, self.loc_domain_dims) ]        
                     if (sp.prod(self.p_grid) <= comm_world):
@@ -503,20 +503,28 @@ class SoapStatement:
         out_degree = len(sp.sympify('+'.join([base_access \
                 for array_accesses in list(stripped_phis.values())  \
                     for base_access in array_accesses.keys()])).free_symbols)
-        # if max_inp_degree < out_degree and \
-        #         all([params.ssa_dim == [] for accesses in stripped_phis.values() for params in accesses.values()]):
-        #     sym_reduction = True
-        # else:
-        #     sym_reduction = False
         
+        # second necessary condition for the symbolic reduction: for a given input array, either 
+        # it does not have any ssa_dim assigned, or all its ssa_dims (temporal dimensions) are part of
+        # the baseAccess of some of the output arrays (spatial diemnsions).
+        # Example 1:
+        # stencils like fdtd2d, input hx[i], ssa_dim = [t].  Output, hz[i,j], ssa_dim = [t].
+        # the temporal dimension t is NOT a spatial dimension of any of the outputs. Therefore there is no symbolic reduction.
+        # Example 2:
+        # chain MMM, where C is the output of one GEMM and the input of the second GEMM. Then,
+        # input C[i,j], ssa_dim = [k]. Output, D[i,k], ssa_dim = [j]. The temporal dimension k is the spatial dimension of the output.
+        # therefore, the symbolic reduction is present.
+        list_of_lists = [params.baseAccess.split('*') for params in self.output_accesses.values()]
+        out_spat_dims = set([var for vars in list_of_lists for var in vars])
         
 
         # iterate over input accesses 
         for array_name, array_accesses in stripped_phis.items():    
 
             if max_inp_degree < out_degree \
-                     and (all([params.ssa_dim == [] for params in array_accesses.values()]) \
-                     or array_name not in self.output_accesses.keys()):
+                     and all([(params.ssa_dim == [] or \
+                         all([str(ssa[0]) in out_spat_dims  for ssa in params.ssa_dim]))  \
+                     for params in array_accesses.values()]):
                 sym_reduction = True
             else:
                 sym_reduction = False
@@ -669,30 +677,46 @@ class SoapStatement:
 
 
     def concatenate_sdg_statements(self, pred, in_S):  
-        if "fc2_1" in in_S.name:
+        if '__tmp6_1;__return_0_1;__return_1_1;nrm_1' in in_S.name:
             a = 1
+        
+        # update iteration vars used by the statements. They are stored in self.all_iter_vars
+        self.find_all_iter_vars()
+        in_S.find_all_iter_vars()
 
-        # If one statement's output is the input of the other statement, then
-        # we have only one "final output" of the subgraph. In this case, we keep
-        # the ranges only from the "final" computation. If not, we keep all ranges.
+         # find matching iteration variables
+        iters_to_merge =  self.match_iter_vars(in_S)
 
-        if pred:
-            not_consumed_prev_outputs = list(in_S.output_accesses.keys())
-            for concatenation_array in in_S.output_accesses.keys():    
-                if concatenation_array in self.phis.keys():                    
-                    self.match_iter_vars(in_S, concatenation_array, True)
-                    not_consumed_prev_outputs.remove(concatenation_array)
+        
 
 
-        # if not pred or len(not_consumed_prev_outputs) > 0:
-        #     # merge ranges of two statements            
-        #     for in_state, in_ranges in in_S.ranges.items():
-        #         if in_state in self.ranges.keys():
-        #             for in_rng in in_ranges:
-        #                 if all(in_rng[0] != rng[0] for rng in self.ranges[in_state]):
-        #                     self.ranges[in_state].append(in_rng)
-        #         else:
-        #             self.ranges[in_state] = in_ranges
+
+        self.name = ';'.join(list(OrderedSet(self.name.split(';')).union(OrderedSet(in_S.name.split(';')))))
+        self.tasklet |= in_S.tasklet
+        self.subgraph = self.subgraph.union(in_S.subgraph)
+        self.output_arrays = {**self.output_arrays, **in_S.output_arrays}
+
+        # # If one statement's output is the input of the other statement, then
+        # # we have only one "final output" of the subgraph. In this case, we keep
+        # # the ranges only from the "final" computation. If not, we keep all ranges.
+
+        # if pred:
+        #     not_consumed_prev_outputs = list(in_S.output_accesses.keys())
+        #     for concatenation_array in in_S.output_accesses.keys():    
+        #         if concatenation_array in self.phis.keys():                    
+        #             self.match_iter_vars(in_S, concatenation_array, True)
+        #             not_consumed_prev_outputs.remove(concatenation_array)
+
+
+        # # if not pred or len(not_consumed_prev_outputs) > 0:
+        # #     # merge ranges of two statements            
+        # #     for in_state, in_ranges in in_S.ranges.items():
+        # #         if in_state in self.ranges.keys():
+        # #             for in_rng in in_ranges:
+        # #                 if all(in_rng[0] != rng[0] for rng in self.ranges[in_state]):
+        # #                     self.ranges[in_state].append(in_rng)
+        # #         else:
+        # #             self.ranges[in_state] = in_ranges
 
         # merge ranges of two statements            
         for in_state, in_ranges in in_S.ranges.items():
@@ -703,22 +727,14 @@ class SoapStatement:
             else:
                 self.ranges[in_state] = in_ranges
       
-        self.name = ';'.join(list(OrderedSet(self.name.split(';')).union(OrderedSet(in_S.name.split(';')))))
-        self.tasklet |= in_S.tasklet
-        self.subgraph = self.subgraph.union(in_S.subgraph)
-        self.output_arrays = {**self.output_arrays, **in_S.output_arrays}
+        
+
+        if '__return_0_1;__return_1_1;nrm_1' in self.name:
+            a = 1
             
         if not self.has_correct_ranges():
             a = 1
-           
 
-                    
-        # matching iteration variables also on input reuse
-        for concatenation_array in in_S.phis.keys():    
-            if concatenation_array in self.phis.keys():
-                self.match_iter_vars(in_S, concatenation_array, False)
-                    
-    
                     
         for array, phi in in_S.phis.items():
             if array in self.phis:
@@ -793,7 +809,7 @@ class SoapStatement:
         self.output_accesses[arrayName] = OutputArrayParams(baseAccess, memlet.wcr is not None, tuple(offsets), ssa_dim)
 
 
-    def match_iter_vars(self, in_S, concatenation_array : str, out_join : bool):
+    def match_iter_vars(self, in_S) -> Dict:
         """"
         here we can also resolve matching iteration variables. E.g., 
         if self.phis[concatenation_array] == A[tmp_for_3] and in_S.output_accessses == A[tmp_for_4],
@@ -801,20 +817,35 @@ class SoapStatement:
         BUT! Their ranges also must match, e.g., temp[i] and temp[j],
         if i in range(N) and j in range(i, N) SHOULD NOT be merged
         """        
-        if out_join:
-            join_base_accesses = [in_S.output_accesses[concatenation_array].baseAccess]
-        else:             
-            join_base_accesses = list(in_S.phis[concatenation_array].keys())
-                
-        iters_to_merge = []
-        for join_access in join_base_accesses:
-            for base_access in self.phis[concatenation_array].keys():
-                if eq_accesses(base_access, join_access):    
-                    # it doesn't make sense to merge identical accesses (e.g., A[i] -> A[i])
-                    # it makes sense only for non-trivial merges, e.g., A[tmp_1] -> A[tmp_2]
-                    if base_access != join_access:                                            
-                        iters_to_merge = dict(zip(base_access.split('*'), join_access.split('*')))                            
-                
+        iters_to_merge = {}
+        for concatenation_array in in_S.phis.keys() + in_S.output_accesses.keys():    
+            if concatenation_array in self.phis.keys():
+                if concatenation_array in in_S.output_accesses.keys():
+                    join_base_accesses = [in_S.output_accesses[concatenation_array].baseAccess]
+                else:             
+                    join_base_accesses = list(in_S.phis[concatenation_array].keys())
+                        
+                for join_access in join_base_accesses:
+                    for base_access in self.phis[concatenation_array].keys():
+                        #TODO: controversial commenting out this check: if eq_accesses(base_access, join_access):    
+                        # it doesn't make sense to merge identical accesses (e.g., A[i] -> A[i])
+                        # it makes sense only for non-trivial merges, e.g., A[tmp_1] -> A[tmp_2]
+                        if base_access != join_access:                                            
+                            its = dict(zip(base_access.split('*'), join_access.split('*')))    
+
+                            # we also don't merge if the iteration variable is also present in another access.
+                            # E.g., S1: A[i,k] can be merged with S2: A[i,j] only if k is not used in S2 and 
+                            # j is not used in S1:
+                            for it1, it2 in copy.copy(its).items():
+                                if it1 in in_S.all_iter_vars or it2 in self.all_iter_vars:
+                                    del its[it1]
+                        
+                            iters_to_merge = {**iters_to_merge, **its}
+
+                return iters_to_merge
+
+    def subs_itervars_names(self, iters_to_merge):
+        for old,new in iters_to_merge.items():
             if iters_to_merge:
                 #   rng_dict = rng_global2dict(self.ranges)
                 for scope, ranges in self.ranges.items():    
@@ -832,14 +863,27 @@ class SoapStatement:
                                 ranges[i] = (dace.symbol(iters_to_merge[str(rng[0])]), rng[1], rng[2])
                 
                 if not out_join:
+                    merged_access = join_access
+                    for k,v in iters_to_merge.items():
+                        merged_access = merged_access.replace(v, k)
                     # merge input reuse access variables
-                    self.phis[concatenation_array][join_access] = self.phis[concatenation_array][base_access]
-                    del self.phis[concatenation_array][base_access]
+                    in_S.phis[concatenation_array][merged_access] = in_S.phis[concatenation_array][join_access]
+                    del in_S.phis[concatenation_array][join_access]
                                 
             if out_join:
                 # TODO: experimental            
                 del self.phis[concatenation_array]
-                
+            
+
+
+    def find_all_iter_vars(self):
+        self.all_iter_vars = set() 
+        for accesses in self.phis.values():
+            for access, params in accesses.items():
+                self.all_iter_vars = self.all_iter_vars.union(set(access.split('*')))
+                self.all_iter_vars = self.all_iter_vars.union(set([str(i) for [i,j,k] in params.ssa_dim]))
+
+
     
     def print_schedule(self):
         print("Kernel:              " + self.name)
@@ -1109,6 +1153,12 @@ class SoapStatement:
             fixed_accesses = defaultdict()
             for access, pars in accesses.items():
                 fixed_access = fixed.sub(r'\g<iter>', access)
+                fixed_ssas = []
+                for ssa in pars.ssa_dim:
+                    fixed_iter = dace.symbol(fixed.sub(r'\g<iter>', str(ssa[0])))
+                    fixed_ssa = [fixed_iter, fixed_iter, 1]
+                    fixed_ssas.append(fixed_ssa)
+                pars.ssa_dim = fixed_ssas
                 fixed_accesses[fixed_access] = pars
             
             self.phis[arr] = fixed_accesses
@@ -1118,17 +1168,23 @@ class SoapStatement:
            
         
         # this changes [xxx][0-9] to [xxx]
-        fixed = re.compile(r'(?P<iter>[a-zA-Z0-9])[0-9]+')
-        for arr, accesses in self.phis.items():
-            fixed_accesses = defaultdict()
-            for access, pars in accesses.items():
-                fixed_access = fixed.sub(r'\g<iter>', access)
-                fixed_accesses[fixed_access] = pars
+        # fixed = re.compile(r'(?P<iter>[a-zA-Z0-9])[0-9]+')
+        # for arr, accesses in self.phis.items():
+        #     fixed_accesses = defaultdict()
+        #     for access, pars in accesses.items():
+        #         fixed_access = fixed.sub(r'\g<iter>', access)
+        #         fixed_ssas = []
+        #         for ssa in pars.ssa_dim:
+        #             fixed_iter = dace.symbol(fixed.sub(r'\g<iter>', str(ssa[0])))
+        #             fixed_ssa = [fixed_iter, fixed_iter, 1]
+        #             fixed_ssas.append(fixed_ssa)
+        #         pars.ssa_dim = fixed_ssas
+        #         fixed_accesses[fixed_access] = pars
             
-            self.phis[arr] = fixed_accesses
+        #     self.phis[arr] = fixed_accesses
 
-        for arr, accesses in self.output_accesses.items():
-            accesses.baseAccess = fixed.sub(r'\g<iter>', accesses.baseAccess)
+        # for arr, accesses in self.output_accesses.items():
+        #     accesses.baseAccess = fixed.sub(r'\g<iter>', accesses.baseAccess)
            
 
 # ------------------------------------
