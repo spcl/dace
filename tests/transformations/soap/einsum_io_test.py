@@ -14,6 +14,7 @@ def test_mttkrp_io():
     einsum_str = 'ik,kj->ij' # 'ijk,jl,kl->il' # 'ik,kj->ij'
     
     soap_result = perform_soap_analysis_einsum(einsum_str, decomp_params=[("p", 8), ("Ss", 1024), ("S0", 200000), ("S1", 2000), ("S2", 2000), ("S3", 2000)], generate_schedule=True)
+    # soap_result = perform_soap_analysis_einsum(einsum_str, decomp_params=[("p", 8), ("Ss", 1024), ("S0", 12800), ("S1", 8800), ("S2", 14400), ("S3", 2000)], generate_schedule=True)
     # test MTTKRP I/O bound
     assert d2sp(soap_result.Q) == sp.sympify('3*S0*S1*S2*S3/Ss**(2/3)')
 
