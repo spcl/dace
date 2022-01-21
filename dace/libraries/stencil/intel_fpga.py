@@ -398,7 +398,7 @@ class ExpandStencilIntelFPGA(dace.library.ExpandTransformation):
             try:
                 sdfg.add_datadesc(data_name_outer, desc_outer)
             except NameError:  # Already an input
-                parent_sdfg.arrays[data_name].access = (dace.AccessType.ReadWrite)
+                pass
 
             # Create inner access
             nested_sdfg.add_scalar(data_name_inner,

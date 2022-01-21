@@ -55,7 +55,7 @@ setup(name='dace',
       install_requires=[
           'numpy', 'networkx >= 2.5', 'astunparse', 'sympy<=1.9', 'pyyaml', 'ply', 'websockets', 'requests', 'flask',
           'scikit-build', 'cmake', 'aenum', 'dataclasses; python_version < "3.7"', 'dill',
-          'pyreadline;platform_system=="Windows"'
+          'pyreadline;platform_system=="Windows"', 'typing-compat; python_version < "3.8"'
       ],
       extras_require={'testing': ['coverage', 'pytest-cov', 'scipy', 'absl-py', 'opt_einsum', 'pymlir', 'click']},
       entry_points={
