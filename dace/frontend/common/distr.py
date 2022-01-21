@@ -729,6 +729,37 @@ def _cart_sub(pv: 'ProgramVisitor',
     return pgrid_name
 
 
+@oprepo.replaces('dace.comm.Subarray')
+def _subarray(pv: 'ProgramVisitor',
+              sdfg: SDFG,
+              state: SDFGState,
+              out_buffer: str,
+              process_grid: str,
+              correspondence: Sequence[Integral],
+              shape: Sequence[Union[sp.Expr, Integral]] = None):
+    out_desc = sdfg.arrays[out_buffer]
+    subarray_name = sdfg.add_subarray(
+        out_desc.dtype, shape if shape else out_desc.shape, out_desc.shape,
+        process_grid, correspondence)
+
+    from dace.libraries.mpi import Dummy
+    tasklet = Dummy(
+        subarray_name,
+        [
+            f'MPI_Datatype {subarray_name};',
+            f'int* {subarray_name}_counts;',
+            f'int* {subarray_name}_displs;'
+        ]
+    )
+    state.add_node(tasklet)
+    _, scal = sdfg.add_scalar(subarray_name, dace.int32, transient=True)
+    wnode = state.add_write(subarray_name)
+    state.add_edge(tasklet, '__out', wnode, None,
+                   Memlet.from_array(subarray_name, scal))
+
+    return subarray_name
+
+
 @oprepo.replaces('dace.comm.BlockScatter')
 def _block_scatter(pv: 'ProgramVisitor',
                    sdfg: SDFG,
@@ -870,6 +901,7 @@ def _redistribute(pv: 'ProgramVisitor',
     out_subarray_name = sdfg.add_subarray(
         in_sarray.dtype, in_sarray.shape, out_desc.shape,
         out_process_grid, out_correspondence)
+
     rdistrarray_name = sdfg.add_rdistrarray(in_subarray, out_subarray_name)
 
     from dace.libraries.mpi import Dummy, Redistribute
