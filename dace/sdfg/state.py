@@ -932,33 +932,36 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
 
     # Dynamic SDFG creation API
     ##############################
-    def add_read(self, array_or_stream_name: str, debuginfo=None) -> nd.AccessNode:
-        """ Adds a read-only access node to this SDFG state.
-            :param array_or_stream_name: The name of the array/stream.
-            :return: An array access node.
+    def add_read(self, array_or_stream_name: str, debuginfo: Optional[dtypes.DebugInfo] = None) -> nd.AccessNode:
+        """
+        Adds an access node to this SDFG state (alias of ``add_access``).
+        :param array_or_stream_name: The name of the array/stream.
+        :param debuginfo: Source line information for this access node.
+        :return: An array access node.
+        :see: add_access
         """
         debuginfo = _getdebuginfo(debuginfo or self._default_lineinfo)
-        node = nd.AccessNode(array_or_stream_name, dtypes.AccessType.ReadOnly, debuginfo=debuginfo)
-        self.add_node(node)
-        return node
+        return self.add_access(array_or_stream_name, debuginfo=debuginfo)
 
-    def add_write(self, array_or_stream_name: str, debuginfo=None) -> nd.AccessNode:
-        """ Adds a write-only access node to this SDFG state.
-            :param array_or_stream_name: The name of the array/stream.
-            :return: An array access node.
+    def add_write(self, array_or_stream_name: str, debuginfo: Optional[dtypes.DebugInfo] = None) -> nd.AccessNode:
+        """
+        Adds an access node to this SDFG state (alias of ``add_access``).
+        :param array_or_stream_name: The name of the array/stream.
+        :param debuginfo: Source line information for this access node.
+        :return: An array access node.
+        :see: add_access
         """
         debuginfo = _getdebuginfo(debuginfo or self._default_lineinfo)
-        node = nd.AccessNode(array_or_stream_name, dtypes.AccessType.WriteOnly, debuginfo=debuginfo)
-        self.add_node(node)
-        return node
+        return self.add_access(array_or_stream_name, debuginfo=debuginfo)
 
-    def add_access(self, array_or_stream_name: str, debuginfo=None) -> nd.AccessNode:
-        """ Adds a general (read/write) access node to this SDFG state.
+    def add_access(self, array_or_stream_name: str, debuginfo: Optional[dtypes.DebugInfo] = None) -> nd.AccessNode:
+        """ Adds an access node to this SDFG state.
             :param array_or_stream_name: The name of the array/stream.
+            :param debuginfo: Source line information for this access node.
             :return: An array access node.
         """
         debuginfo = _getdebuginfo(debuginfo or self._default_lineinfo)
-        node = nd.AccessNode(array_or_stream_name, dtypes.AccessType.ReadWrite, debuginfo=debuginfo)
+        node = nd.AccessNode(array_or_stream_name, debuginfo=debuginfo)
         self.add_node(node)
         return node
 
