@@ -336,6 +336,9 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         if hash:
             tmp['attributes']['hash'] = self.hash_sdfg(tmp)
 
+        if int(self.sdfg_id) == 0:
+            tmp['dace_version'] = dace.__version__
+
         return tmp
 
     @classmethod
