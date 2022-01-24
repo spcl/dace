@@ -488,7 +488,7 @@ model->s_axis_{name}_tdata = {name}[0];'''
             elif isinstance(arr, data.Stream):
                 buses[edge.dst_conn] = (edge.data.data, False, total_size, vec_len, edge.data.volume)
             elif isinstance(arr, data.Scalar):
-                scalars[edge.dst_conn] = (False, total_size)  #(edge.data.data, False, total_size, 1, edge.data.volume)
+                scalars[edge.dst_conn] = (False, total_size)
 
         for edge in state.out_edges(tasklet):
             arr = sdfg.arrays[edge.data.data]
