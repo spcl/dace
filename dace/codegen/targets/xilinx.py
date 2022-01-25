@@ -6,7 +6,7 @@ import itertools
 import os
 import re
 import numpy as np
-
+import ast
 import dace
 from dace import data as dt, registry, dtypes, subsets
 from dace.config import Config
