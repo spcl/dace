@@ -3,7 +3,7 @@ import copy
 import sympy as sp
 import networkx as nx
 import graphviz
-from numpy import nanargmax
+from numpy import nanargmax, outer
 from dace.sdfg.sdfg import SDFG
 from dace.transformation.estimator.soap.soap import AccessParams, SoapStatement
 from dace.transformation.estimator.soap.utils import *
@@ -329,7 +329,7 @@ class SDG:
     # the core SDG creation function. The elementary building block for SDG is the SDFG's tasklet
     def _from_SDFG_node(self, node : dace.nodes, 
                 state: dace.SDFGState, sdg_scope : SdgScope) -> None:  
-        if node.label in ['assign_25_8']:
+        if node.label in ['assign_16_12']:
             a = 1
                   
         if not state.out_edges(node) or not state.in_edges(node):
@@ -354,8 +354,10 @@ class SDG:
                         
 
         for e in input_edges:
+            if node.label in ['_Mult_', '_USub_'] and e.data.data == "temp2":
+                a = 1
             # resolve transients, inner scope mappings, etc. Retreive outermost ranges and array names.
-            outer_memlet = SDG._get_outer_memlet(e.data, sdg_scope, False)
+            outer_memlet = self._get_outer_memlet(e.data, sdg_scope, False)
             
             # check if the resolved memlet exists, is not empty, and is not scalar
             if not outer_memlet or len(outer_memlet.subset.ranges) == 0 \
@@ -396,11 +398,20 @@ class SDG:
             # add this input access to the elementary SOAP statement
             S.add_edge_to_statement(outer_memlet, SSA_dim)            
             
-            
-        
+
+        # # if we have a tasklet with a single transient in edge memlet and single transient out edge memlet,
+        #     # and the in_memlet is in the sdfg mapping, then we also map this to the out memlet   
+        # if len(input_edges) == 1 and  input_edges[0].data.data in sdg_scope.SDFG_arrays.keys() \
+        #             and sdg_scope.SDFG_arrays[input_edges[0].data.data].transient \
+        #             and input_edges[0].data.data in sdg_scope.sdfg_mapping.keys():
+        #     single_in_transient_mapped = sdg_scope.sdfg_mapping[input_edges[0].data.data]
+        # else:
+        #     single_in_transient_mapped = None
+
+
         for e in state.out_edges(node):           
             # resolve transients, inner scope mappings, etc. Retreive outermost ranges and array names.
-            outer_memlet = SDG._get_outer_memlet(e.data, sdg_scope, True)
+            outer_memlet = self._get_outer_memlet(e.data, sdg_scope, True)
             if not outer_memlet or len(outer_memlet.subset.ranges) == 0:
                 continue
             # deterimne the SSA dimension if we have the same input and output access (overwriting the data)
@@ -613,7 +624,13 @@ class SDG:
             
             # iterate over different base accesses to the same array 
             for base_access, access_params in array_accesses.items():       
-                for output_array in output_arrays_vers:            
+                for output_array in output_arrays_vers:    
+                    # another check if the edge is wcr. If the dimension of the output is smaller than the input,
+                    # it is a wcr
+                    out_dim = len(S.output_accesses[strip(output_array)].baseAccess.split('*'))
+                    in_dim = len(base_access.split('*'))
+                    if (out_dim < in_dim) and wcr == False:
+                        wcr = True
                     self.add_edge(input_array_ver, output_array, base_access, access_params, S,
                                   wcr, in_transient, out_transient)
 
@@ -724,7 +741,7 @@ class SDG:
                 inner_scope = copy.deepcopy(sdg_scope)  
                 for e in state.out_edges(node):
                     # resolve transients, inner scope mappings, etc. Resolve outermost ranges and array names
-                    outer_memlet = SDG._get_outer_memlet(e.data, inner_scope, True)
+                    outer_memlet = self._get_outer_memlet(e.data, inner_scope, True)
                     if not outer_memlet or not iter_vars:
                         continue                    
                     (arrayName, baseAccess, offsets) =  get_access_from_memlet(outer_memlet, iter_vars)
@@ -773,12 +790,9 @@ class SDG:
     
     
     
-    # ------------------------------------
-    # static SDG functions
-    # ------------------------------------
 
-    @staticmethod
-    def _get_outer_memlet(inner_memlet : dace.Memlet, sdg_scope : SdgScope, output : bool) -> dace.Memlet:
+    def _get_outer_memlet(self, inner_memlet : dace.Memlet, sdg_scope : SdgScope, 
+                output : bool, single_in_transient_mapped : dace.Memlet = None) -> dace.Memlet:
         """
         Returns an outermost memlet which can be traced from the given inner_memlet
         """
@@ -787,6 +801,12 @@ class SDG:
 
         if new_memlet.data in sdg_scope.sdfg_mapping:
             outer_memlet = copy.deepcopy(sdg_scope.sdfg_mapping[new_memlet.data])
+
+            # needed for transient mapping. Sometimes we add transients from output edges to the SDG,
+            # but then, because of the fused mapping, the input memlets are propagated already to the outer (non-transient) memlets.
+            # In this case, to keep the correct connectivity of the SDG, we keep the node name as the original transient
+            if new_memlet.data in ['_'.join(node.split('_')[:-1]) for node in self.graph.nodes._nodes.keys()]:
+                outer_memlet.data = new_memlet.data
 
             # # The following line is needed if the outer memlet is a View. If so, we need to compose slice ranges
             # outer_memlet.subset = outer_memlet.subset.compose(new_memlet.subset)
@@ -815,20 +835,26 @@ class SDG:
                     new_memlet.dst_subset.ranges = [(rng[0].subs(subs_list), rng[1].subs(subs_list), rng[2]) 
                                                 for rng in new_memlet.dst_subset]
 
-            
-            if output:
-                a = 1
-                outer_memlet.subset = outer_memlet.subset.compose(new_memlet.dst_subset)
-            else:
-                try:
-                    outer_memlet.subset = outer_memlet.subset.compose(new_memlet.src_subset)
-                except:
-                    try:
-                        outer_memlet.subset = outer_memlet.dst_subset.compose(new_memlet.src_subset)
-                    except:
-                        pass
+                        
         else:
-            outer_memlet = new_memlet  
+            # if we have a tasklet with a single transient in edge memlet and single transient out edge memlet,
+            # and the in_memlet is in the sdfg mapping, then we also map this to the out memlet
+            if output and sdg_scope.SDFG_arrays[new_memlet.data].transient and single_in_transient_mapped:
+                outer_memlet = single_in_transient_mapped
+            else:
+                outer_memlet = new_memlet  
+
+        if output:
+            a = 1
+            outer_memlet.subset = outer_memlet.subset.compose(new_memlet.dst_subset)
+        else:
+            try:
+                outer_memlet.subset = outer_memlet.subset.compose(new_memlet.src_subset)
+            except:
+                try:
+                    outer_memlet.subset = outer_memlet.dst_subset.compose(new_memlet.src_subset)
+                except:
+                    pass
 
         if outer_memlet.is_empty():
             return None
@@ -890,6 +916,9 @@ class SDG:
             
         return outer_memlet
     
+    # ------------------------------------
+    # static SDG functions
+    # ------------------------------------
     
     @staticmethod
     def _get_SSA_dim(memlet : dace.Memlet, sdg_scope : SdgScope, 
@@ -1135,8 +1164,9 @@ class SDG:
             for sibling in self.graph.successors(pred):   
                 if sibling != node:
                     # our brother has to diverge from our recursive path
-                    is_divergent = not any([node == n for n in nx.ancestors(self.graph, sibling)]) \
-                                and not any([node == n for n in nx.descendants(self.graph, sibling)])
+                    # is_divergent = not any([node == n for n in nx.ancestors(self.graph, sibling)]) \
+                    #             and not any([node == n for n in nx.descendants(self.graph, sibling)])
+                    is_divergent = self.is_complete_tree(sibling, inner_nodes)
                     if is_divergent:
                         s_st = self.graph.nodes[sibling]['st']
                         s_st.name = sibling
@@ -1146,17 +1176,22 @@ class SDG:
 
                         # if self.graph.nodes[sibling]['transient'] == True: 
                         #     continue
+                        if sibling == "__tmp4_1": # '__tmp9_1;__tmp7_1;__tmp5_1;__tmp4_1'
+                            a = 1
                         
                         # if the brother has no other parents than our shared parent, always add - do not branch
                         if len(list(self.graph.predecessors(sibling))) == 1:
-                            for cur_stat in sdg_statements:                                 
-                                cur_stat.concatenate_sdg_statements(None, s_st)                            
+                            for cur_stat in sdg_statements:  
+                                S = copy.deepcopy(cur_stat)
+                                status = S.concatenate_sdg_statements(None, s_st)
+                                if status == 0:                                
+                                    cur_stat.concatenate_sdg_statements(None, s_st)                            
                         else:
                             sibling_statements = copy.deepcopy(sdg_statements)
                             for sib_stat in sibling_statements:                                 
                                 S = copy.deepcopy(sib_stat)
-                                S.concatenate_sdg_statements(None, s_st)
-                                if S.subgraph not in checked_subgraphs.union(set([frozenset(sg.subgraph) for sg in sdg_statements])):
+                                status = S.concatenate_sdg_statements(None, s_st)
+                                if status == 0 and S.subgraph not in checked_subgraphs.union(set([frozenset(sg.subgraph) for sg in sdg_statements])):
                                     sdg_statements.append(S)    
 
             pred_arr_name = strip(pred)
@@ -1192,8 +1227,8 @@ class SDG:
                             # check if the concatenation crosses a WCR edge
                             if not self.crosses_wcr(pred_stat.name, sib_stat.name):
                                 S = copy.deepcopy(sib_stat)
-                                S.concatenate_sdg_statements(pred, pred_stat)
-                                if S.subgraph not in checked_subgraphs.union(set([frozenset(sg.subgraph) for sg in sdg_statements])):
+                                status = S.concatenate_sdg_statements(pred, pred_stat)
+                                if status == 0 and S.subgraph not in checked_subgraphs.union(set([frozenset(sg.subgraph) for sg in sdg_statements])):
                                     sdg_statements.append(S)    
   
 
@@ -1210,6 +1245,10 @@ class SDG:
             for node_2 in nodes_2:
                 if [node_1, node_2, 0] in self.graph.edges:
                     edge = self.graph.edges[node_1, node_2, 0]
+                    if edge['wcr'] == True:
+                        return True
+                if [node_2, node_1, 0] in self.graph.edges:
+                    edge = self.graph.edges[node_2, node_1, 0]
                     if edge['wcr'] == True:
                         return True
         return False

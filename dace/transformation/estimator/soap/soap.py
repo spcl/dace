@@ -677,7 +677,7 @@ class SoapStatement:
 
 
     def concatenate_sdg_statements(self, pred, in_S):  
-        if '__tmp6_1;__return_0_1;__return_1_1;nrm_1' in in_S.name:
+        if '__tmp3_1' in in_S.name and '__tmp4_1;__tmp5_1' in self.name:
             a = 1
         
         # update iteration vars used by the statements. They are stored in self.all_iter_vars
@@ -685,9 +685,11 @@ class SoapStatement:
         in_S.find_all_iter_vars()
 
          # find matching iteration variables
-        iters_to_merge =  self.match_iter_vars(in_S)
-        
-        self.swap_iter_vars(iters_to_merge, {})
+        iters_to_merge =  self.match_iter_vars(in_S, pred)
+        if len(set(iters_to_merge.values())) != len(list(iters_to_merge.values())):
+            return -1
+
+        in_S.swap_iter_vars(iters_to_merge, {})
 
         # self.swap_iter_vars(self, swaplist, inv_swaplist, solver)
 
@@ -731,7 +733,7 @@ class SoapStatement:
       
         
 
-        if '__tmp8_1;__return_1_2' in self.name:
+        if '__tmp4_1;__tmp5_1' in self.name: # '__tmp9_1;__tmp7_1;__tmp5_1;__tmp4_1'
             a = 1
             
         if not self.has_correct_ranges():
@@ -771,6 +773,8 @@ class SoapStatement:
                             del self.phis[array][access]
                     if len(self.phis[array]) == 0:
                         del self.phis[array]
+        
+        return 0
 
 
     def add_edge_to_statement(self, memlet : dace.Memlet, 
@@ -824,7 +828,7 @@ class SoapStatement:
         self.output_accesses[arrayName] = OutputArrayParams(baseAccess, memlet.wcr is not None, tuple(offsets), ssa_dim)
 
 
-    def match_iter_vars(self, in_S) -> Dict:
+    def match_iter_vars(self, in_S, pred) -> Dict:
         """"
         here we can also resolve matching iteration variables. E.g., 
         if self.phis[concatenation_array] == A[tmp_for_3] and in_S.output_accessses == A[tmp_for_4],
@@ -846,18 +850,18 @@ class SoapStatement:
                         # it doesn't make sense to merge identical accesses (e.g., A[i] -> A[i])
                         # it makes sense only for non-trivial merges, e.g., A[tmp_1] -> A[tmp_2]
                         if base_access != join_access:                                            
-                            its = dict(zip(base_access.split('*'), join_access.split('*')))    
+                            its = dict(zip(join_access.split('*'), base_access.split('*')))    
 
                             # we also don't merge if the iteration variable is also present in another access.
                             # E.g., S1: A[i,k] can be merged with S2: A[i,j] only if k is not used in S2 and 
                             # j is not used in S1:
                             for it1, it2 in copy.copy(its).items():
-                                if it1 in in_S.all_iter_vars or it2 in self.all_iter_vars:
+                                if it2 in in_S.all_iter_vars or (it1 in self.all_iter_vars and pred != None):
                                     del its[it1]
-                        
-                            iters_to_merge = {**iters_to_merge, **its}
 
-                return iters_to_merge
+                            iters_to_merge = {**iters_to_merge, **its}
+            
+        return iters_to_merge
 
     # def subs_itervars_names(self, iters_to_merge):
     #     for old,new in iters_to_merge.items():

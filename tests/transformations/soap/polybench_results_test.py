@@ -17,8 +17,8 @@ all_tests = [(suite_name, kernel_name) for suite_name in ["npbench"] #["manual_p
 "durbin", "fdtd2d", "floyd-warshall", "gemm", "gemver", "gesummv", "gramschmidt", "heat3d", 
 "jacobi1d", "jacobi2d", "lu", "ludcmp", "mvt", "nussinov", "seidel2d", "symm", "syr2k", "syrk", "trmm", "trisolv"]]
 
-all_tests = [(suite_name, kernel_name) for suite_name in ["npbench"] 
-    for kernel_name in ["durbin"]]
+# all_tests = [(suite_name, kernel_name) for suite_name in ["npbench"] 
+#     for kernel_name in ["symm"]]
 
 
 @pytest.mark.parametrize("suite_name, kernel_name", all_tests)
@@ -59,7 +59,7 @@ def test_polybench_kernels(suite_name : str = "manual_polybench", kernel_name : 
             else:
                 sdfg = dace.SDFG.from_file("tmp.sdfg")
 
-            if kernel_name == "deriche":
+            if kernel_name in ["deriche", "symm"]:
                 solver_timeout = 100
             else:
                 solver_timeout = 10
