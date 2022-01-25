@@ -686,8 +686,10 @@ class SoapStatement:
 
          # find matching iteration variables
         iters_to_merge =  self.match_iter_vars(in_S)
-
         
+        self.swap_iter_vars(iters_to_merge, {})
+
+        # self.swap_iter_vars(self, swaplist, inv_swaplist, solver)
 
 
 
@@ -729,13 +731,13 @@ class SoapStatement:
       
         
 
-        if '__return_0_1;__return_1_1;nrm_1' in self.name:
+        if '__tmp8_1;__return_1_2' in self.name:
             a = 1
             
         if not self.has_correct_ranges():
             a = 1
 
-                    
+        # merge inputs            
         for array, phi in in_S.phis.items():
             if array in self.phis:
                 for baseAccess in phi.keys():
@@ -756,6 +758,19 @@ class SoapStatement:
             #if array not in self.phis:
                 self.output_accesses[array] = copy.deepcopy(access)
                 
+        # if exists A such that self.phis[A].base_access == in_S.output_accesses[A].base_access then the output of in_S
+        # is the input of self, so we remove it from phis
+        if pred:
+            array = '_'.join(pred.split('_')[:-1])
+            if array not in in_S.phis.keys():
+                out_access_params = in_S.output_accesses[array]
+                #for array, out_access_params in copy.copy(in_S.output_accesses).items():
+                if array in self.phis.keys():
+                    for access, access_params in copy.copy(self.phis[array]).items():
+                        if access == out_access_params.baseAccess:
+                            del self.phis[array][access]
+                    if len(self.phis[array]) == 0:
+                        del self.phis[array]
 
 
     def add_edge_to_statement(self, memlet : dace.Memlet, 
@@ -818,7 +833,7 @@ class SoapStatement:
         if i in range(N) and j in range(i, N) SHOULD NOT be merged
         """        
         iters_to_merge = {}
-        for concatenation_array in in_S.phis.keys() + in_S.output_accesses.keys():    
+        for concatenation_array in list(in_S.phis.keys()) + list(in_S.output_accesses.keys()):    
             if concatenation_array in self.phis.keys():
                 if concatenation_array in in_S.output_accesses.keys():
                     join_base_accesses = [in_S.output_accesses[concatenation_array].baseAccess]
@@ -844,35 +859,38 @@ class SoapStatement:
 
                 return iters_to_merge
 
-    def subs_itervars_names(self, iters_to_merge):
-        for old,new in iters_to_merge.items():
-            if iters_to_merge:
-                #   rng_dict = rng_global2dict(self.ranges)
-                for scope, ranges in self.ranges.items():    
-                    rng_dict = rng_list2dict(ranges)                        
-                    for i, rng in enumerate(ranges):
-                        if str(rng[0]) in iters_to_merge.keys():
-                            new_it = dace.symbol(iters_to_merge[str(rng[0])])
-                            # check if iteration variable (new_it) is present in our scope to swap it
-                            if new_it not in rng_dict.keys():
-                            #     # and if it is, the ranges must match
-                            #     if rng_dict[new_it][0].free_symbols == rng[1].free_symbols \
-                            #             and rng_dict[new_it][1].free_symbols == rng[2].free_symbols:
-                            #         ranges[i] = (dace.symbol(iters_to_merge[str(rng[0])]), rng[1], rng[2])
-                            # else:
-                                ranges[i] = (dace.symbol(iters_to_merge[str(rng[0])]), rng[1], rng[2])
+    # def subs_itervars_names(self, iters_to_merge):
+    #     for old,new in iters_to_merge.items():
+    #         # renaming ranges
+    #         for scope, ranges in self.ranges.items():    
+    #             rng_dict = rng_list2dict(ranges)                        
+    #             for i, rng in enumerate(ranges):
+    #                 if str(rng[0]) in iters_to_merge.keys():
+    #                     new_it = dace.symbol(iters_to_merge[str(rng[0])])
+    #                     # check if iteration variable (new_it) is present in our scope to swap it
+    #                     if new_it not in rng_dict.keys():
+    #                     #     # and if it is, the ranges must match
+    #                     #     if rng_dict[new_it][0].free_symbols == rng[1].free_symbols \
+    #                     #             and rng_dict[new_it][1].free_symbols == rng[2].free_symbols:
+    #                     #         ranges[i] = (dace.symbol(iters_to_merge[str(rng[0])]), rng[1], rng[2])
+    #                     # else:
+    #                         ranges[i] = (dace.symbol(iters_to_merge[str(rng[0])]), rng[1], rng[2])
                 
-                if not out_join:
-                    merged_access = join_access
-                    for k,v in iters_to_merge.items():
-                        merged_access = merged_access.replace(v, k)
-                    # merge input reuse access variables
-                    in_S.phis[concatenation_array][merged_access] = in_S.phis[concatenation_array][join_access]
-                    del in_S.phis[concatenation_array][join_access]
+    #         # renaming phis
+    #         for accesses in copy.copy(self.phis.values()):
+    #             for access, params in copy.copy(accesses.items()):
+    #                 merged_access = access
+    #                 for k,v in iters_to_merge.items():
+    #                     merged_access = merged_access.replace(v, k)
+    #                 if merged_access != access:
+                        
+    #                 # merge input reuse access variables
+    #                 in_S.phis[concatenation_array][merged_access] = in_S.phis[concatenation_array][join_access]
+    #                 del in_S.phis[concatenation_array][join_access]
                                 
-            if out_join:
-                # TODO: experimental            
-                del self.phis[concatenation_array]
+    #         if out_join:
+    #             # TODO: experimental            
+    #             del self.phis[concatenation_array]
             
 
 
@@ -1103,7 +1121,7 @@ class SoapStatement:
         return [rhoOpts, varsOpt, Xopts]
     
     
-    def swap_iter_vars(self, swaplist, inv_swaplist, solver):
+    def swap_iter_vars(self, swaplist, inv_swaplist, solver = []):
         # used for a loop swap transformation, e.g., interchanging i<->j
         
         # swap inputs (phis)
@@ -1128,7 +1146,8 @@ class SoapStatement:
             self.ranges[st] = new_rngs
         
         # recalculate
-        self.solve(solver)
+        if solver != []:
+            self.solve(solver)
 
     # --------------------------------------------
     # ---------- various helper functions --------

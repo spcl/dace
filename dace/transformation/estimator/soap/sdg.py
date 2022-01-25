@@ -219,7 +219,7 @@ class SDG:
                 inner_scope = copy.deepcopy(sdg_scope)
                 self._from_SDFG_node(node, state, inner_scope)
             elif isinstance(node, (dace.nodes.AccessNode)):
-                if node.label in ["__return_1", "__tmp4"]:
+                if node.label in ["__return_1", "__tmp4", "__tmp8"]:
                     a = 1
                 # if the access node has a single in-edge coming from a different access node, 
                 # then it is a projection. We then add this to the sdfg mapping.
@@ -255,7 +255,7 @@ class SDG:
                                     if any([len(sp.sympify(i).free_symbols) > 0 for (i,j,k) in list(tmp.values())[0].subset.ranges]):
                                     # sdg_scope.sdfg_mapping = {**sdg_scope.sdfg_mapping, **{node.data: in_edges[0].data}}
                                         sdg_scope.sdfg_mapping = {**sdg_scope.sdfg_mapping, **tmp}
-                                    if "__tmp2" in sdg_scope.sdfg_mapping.keys():
+                                    if "__tmp6" in sdg_scope.sdfg_mapping.keys():
                                         a = 1
 
                         if isinstance(in_node, dace.nodes.MapEntry):
@@ -264,7 +264,7 @@ class SDG:
                             tmp = SDG._fuse_mapping({node.data: in_edges[0].data}, sdg_scope.sdfg_mapping)
                             if any([len(sp.sympify(i).free_symbols) > 0 for (i,j,k) in list(tmp.values())[0].subset.ranges]):
                                 sdg_scope.sdfg_mapping = {**sdg_scope.sdfg_mapping, **tmp}
-                            if "__tmp2" in sdg_scope.sdfg_mapping.keys():
+                            if "__tmp6" in sdg_scope.sdfg_mapping.keys():
                                 a = 1
 
                         # confront: npbench, cholesky_dace. __tmp2 access node should inherit loop ranges [i,j], otherwise,
@@ -272,8 +272,16 @@ class SDG:
                         if isinstance(in_node, dace.nodes.NestedSDFG)  \
                                     and state.in_edges(node)[0].data.wcr is not None \
                                     and len(sdg_scope.loop_ranges) > 0:
+                            if node.label == "__tmp6":
+                                a = 1 
                             composed_memlet = copy.deepcopy(state.out_edges(node)[0].data)
-                            composed_memlet.subset.ranges += SDG._dict_ranges_to_list(sdg_scope.loop_ranges)
+                            # if the range of the memlet is empty (it is a scalar), add all ranges.
+                            # if it's not empty, add only loop ranges
+                            if len(composed_memlet.subset.ranges) == 0 or \
+                                    (len(composed_memlet.subset.ranges) == 1 and composed_memlet.subset.ranges[0][0] == 0):
+                                composed_memlet.subset.ranges += SDG._dict_ranges_to_list(sdg_scope.ranges)
+                            else:        
+                                composed_memlet.subset.ranges += SDG._dict_ranges_to_list(sdg_scope.loop_ranges)
                             composed_memlet.subset.ranges = [rng for rng in composed_memlet.subset.ranges 
                                             if len(sp.sympify(rng[0]).free_symbols) > 0]
                             sdg_scope.sdfg_mapping[composed_memlet.data] = composed_memlet
@@ -281,6 +289,12 @@ class SDG:
                         if isinstance(in_node, dace.nodes.AccessNode):
                             in_edges = state.in_edges(in_node)
                             if len(in_edges) > 0:
+                                tmp = SDG._fuse_mapping({node.data: in_edges[0].data}, sdg_scope.sdfg_mapping)
+                                if any([len(sp.sympify(i).free_symbols) > 0 for (i,j,k) in list(tmp.values())[0].subset.ranges]):
+                                # sdg_scope.sdfg_mapping = {**sdg_scope.sdfg_mapping, **{node.data: in_edges[0].data}}
+                                    sdg_scope.sdfg_mapping = {**sdg_scope.sdfg_mapping, **tmp}
+                            else:
+                                in_edges = state.in_edges(node)
                                 tmp = SDG._fuse_mapping({node.data: in_edges[0].data}, sdg_scope.sdfg_mapping)
                                 if any([len(sp.sympify(i).free_symbols) > 0 for (i,j,k) in list(tmp.values())[0].subset.ranges]):
                                 # sdg_scope.sdfg_mapping = {**sdg_scope.sdfg_mapping, **{node.data: in_edges[0].data}}
@@ -315,7 +329,7 @@ class SDG:
     # the core SDG creation function. The elementary building block for SDG is the SDFG's tasklet
     def _from_SDFG_node(self, node : dace.nodes, 
                 state: dace.SDFGState, sdg_scope : SdgScope) -> None:  
-        if node.label in ['dot']:
+        if node.label in ['assign_25_8']:
             a = 1
                   
         if not state.out_edges(node) or not state.in_edges(node):
@@ -851,28 +865,28 @@ class SDG:
             map_ranges = {k: v for k, v in zip(outer_map.params, outer_map.range.ranges) if isinstance(k, str)}
             outer_memlet.subset.ranges += rng_to_subset(map_ranges)
             
-        # if outer_memlet.subset is None or \
-        #                 len(outer_memlet.subset.ranges) == 0 or \
-        #                 len(outer_memlet.subset.ranges[0][0].free_symbols) == 0:
+        if outer_memlet.subset is None or \
+                        len(outer_memlet.subset.ranges) == 0 or \
+                        len(outer_memlet.subset.ranges[0][0].free_symbols) == 0:
                             
-        #     # TODO: New. We now always add these ranges. Before, we filtered out suspicious memlets            
-        #     # I really don't like the following part... Looks hacky
-        #     if outer_memlet.data in sdg_scope.SDFG_arrays.keys() and  \
-        #                 sdg_scope.SDFG_arrays[outer_memlet.data].transient:  
-        #         if len(sdg_scope.map_ranges) == 0:
-        #             outer_memlet.subset.ranges = rng_to_subset(sdg_scope.loop_ranges)
-        #         else:
-        #             outer_memlet.subset.ranges = rng_to_subset(sdg_scope.map_ranges)
-        #     elif outer_memlet.dynamic:
-        #         outer_memlet.subset.ranges = rng_to_subset(sdg_scope.loop_ranges)
-        #     else:  
-        #         warn('Unable to parse memlet ' + str(outer_memlet) 
-        #             + " in state "  + str(sdg_scope.sdfg_path.path[-1]) + "\n")
-        #         # I SUPER dislike this
-        #         return None           
-        #     if len(outer_memlet.subset.ranges) > 0 and \
-        #         len(sp.sympify(outer_memlet.subset.ranges[0][0]).free_symbols) > 0:
-        #         a = 1
+            # TODO: New. We now always add these ranges. Before, we filtered out suspicious memlets            
+            # I really don't like the following part... Looks hacky
+            if outer_memlet.data in sdg_scope.SDFG_arrays.keys() and  \
+                        sdg_scope.SDFG_arrays[outer_memlet.data].transient:  
+                if len(sdg_scope.map_ranges) == 0:
+                    outer_memlet.subset.ranges = rng_to_subset(sdg_scope.loop_ranges)
+                else:
+                    outer_memlet.subset.ranges = rng_to_subset(sdg_scope.map_ranges)
+            elif outer_memlet.dynamic:
+                outer_memlet.subset.ranges = rng_to_subset(sdg_scope.loop_ranges)
+            else:  
+                warn('Unable to parse memlet ' + str(outer_memlet) 
+                    + " in state "  + str(sdg_scope.sdfg_path.path[-1]) + "\n")
+                # I SUPER dislike this
+                return None           
+            if len(outer_memlet.subset.ranges) > 0 and \
+                len(sp.sympify(outer_memlet.subset.ranges[0][0]).free_symbols) > 0:
+                a = 1
             
         return outer_memlet
     
@@ -1130,8 +1144,8 @@ class SDG:
                         if "transient" not in self.graph.nodes[sibling].keys():
                             self.graph.nodes[sibling]['transient'] = False
 
-                        if self.graph.nodes[sibling]['transient'] == True: 
-                            continue
+                        # if self.graph.nodes[sibling]['transient'] == True: 
+                        #     continue
                         
                         # if the brother has no other parents than our shared parent, always add - do not branch
                         if len(list(self.graph.predecessors(sibling))) == 1:

@@ -12,13 +12,13 @@ import pytest
 
 os.environ['SYMPY_USE_CACHE'] = 'no'
 
-all_tests = [(suite_name, kernel_name) for suite_name in ["manual_polybench", "npbench"] 
+all_tests = [(suite_name, kernel_name) for suite_name in ["npbench"] #["manual_polybench", "npbench"] 
     for kernel_name in ["2mm", "3mm", "atax", "bicg", "cholesky", "correlation", "covariance", "deriche", "doitgen", 
 "durbin", "fdtd2d", "floyd-warshall", "gemm", "gemver", "gesummv", "gramschmidt", "heat3d", 
 "jacobi1d", "jacobi2d", "lu", "ludcmp", "mvt", "nussinov", "seidel2d", "symm", "syr2k", "syrk", "trmm", "trisolv"]]
 
 all_tests = [(suite_name, kernel_name) for suite_name in ["npbench"] 
-    for kernel_name in ["gramschmidt"]]
+    for kernel_name in ["durbin"]]
 
 
 @pytest.mark.parametrize("suite_name, kernel_name", all_tests)
@@ -59,7 +59,11 @@ def test_polybench_kernels(suite_name : str = "manual_polybench", kernel_name : 
             else:
                 sdfg = dace.SDFG.from_file("tmp.sdfg")
 
-            soap_result = perform_soap_analysis(sdfg)
+            if kernel_name == "deriche":
+                solver_timeout = 100
+            else:
+                solver_timeout = 10
+            soap_result = perform_soap_analysis(sdfg, solver_timeout= solver_timeout)
             Q = soap_result.Q
         
             if len(Q.free_symbols) > 0:
