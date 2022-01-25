@@ -336,6 +336,9 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         if hash:
             tmp['attributes']['hash'] = self.hash_sdfg(tmp)
 
+        if int(self.sdfg_id) == 0:
+            tmp['dace_version'] = dace.__version__
+
         return tmp
 
     @classmethod
@@ -1230,13 +1233,9 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                                    state.
             :return: A new SDFGState object.
         """
-        if label is None:
-            label = f'state_{self.number_of_nodes()}'
-        else:
-            existing_labels = set(s.label for s in self.nodes())
-            if label in existing_labels:
-                base = "state" if label is None else label
-                label = dt.find_new_name(base, existing_labels)
+        label = label or 'state'
+        existing_labels = set(s.label for s in self.nodes())
+        label = dt.find_new_name(label, existing_labels)
         state = SDFGState(label, self)
 
         self.add_node(state, is_start_state=is_start_state)

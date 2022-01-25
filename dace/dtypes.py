@@ -134,15 +134,6 @@ class Language(aenum.AutoNumberEnum):
 
 
 @undefined_safe_enum
-class AccessType(aenum.AutoNumberEnum):
-    """ Types of access to an `AccessNode`. """
-
-    ReadOnly = ()
-    WriteOnly = ()
-    ReadWrite = ()
-
-
-@undefined_safe_enum
 @extensible_enum
 class InstrumentationType(aenum.AutoNumberEnum):
     """ Types of instrumentation providers.
