@@ -23,8 +23,8 @@ class ExpandReduceMPI(ExpandTransformation):
             raise ValueError("Reduce root must be an integer!")
         
         comm = "MPI_COMM_WORLD"
-        if node._grid:
-            comm = f"__state->{node._grid}_comm"
+        if node.grid:
+            comm = f"__state->{node.grid}_comm"
         
         code = ""
         if in_place:
@@ -36,13 +36,13 @@ class ExpandReduceMPI(ExpandTransformation):
                 """
             else:
                 code += f"""
-                    if (__state->{node._grid}_rank == _root) {{
+                    if (__state->{node.grid}_rank == _root) {{
                 """
             code += f"""
-                    MPI_Reduce(MPI_IN_PLACE, _outbuffer, {count_str}, {mpi_dtype_str}, {node._op}, _root, {comm});
+                    MPI_Reduce(MPI_IN_PLACE, _outbuffer, {count_str}, {mpi_dtype_str}, {node.op}, _root, {comm});
                 }} else {{            
             """
-        code += f"MPI_Reduce(_inbuffer, _outbuffer, {count_str}, {mpi_dtype_str}, {node._op}, _root, {comm});"
+        code += f"MPI_Reduce(_inbuffer, _outbuffer, {count_str}, {mpi_dtype_str}, {node.op}, _root, {comm});"
         if inbuffer == outbuffer:
             code += "}"
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
@@ -62,14 +62,17 @@ class Reduce(dace.sdfg.nodes.LibraryNode):
     }
     default_implementation = "MPI"
 
-    def __init__(self, name, op, grid, *args, **kwargs):
+    op = dace.properties.Property(dtype=str, default='MPI_SUM')
+    grid = dace.properties.Property(dtype=str, allow_none=True, default=None)
+
+    def __init__(self, name, op='MPI_SUM', grid=None, *args, **kwargs):
         super().__init__(name,
                          *args,
                          inputs={"_inbuffer", "_root"},
                          outputs={"_outbuffer"},
                          **kwargs)
-        self._op = op
-        self._grid = grid
+        self.op = op
+        self.grid = grid
 
     def validate(self, sdfg, state):
         """

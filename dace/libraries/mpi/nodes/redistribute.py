@@ -72,13 +72,15 @@ class Redistribute(dace.sdfg.nodes.LibraryNode):
     }
     default_implementation = "MPI"
 
-    def __init__(self, name, redistr, *args, **kwargs):
+    redistr = dace.properties.Property(dtype=str, allow_none=True, default=None)
+
+    def __init__(self, name, redistr=None, *args, **kwargs):
         super().__init__(name,
                          *args,
                          inputs={"_inp_buffer"},
                          outputs={"_out_buffer"},
                          **kwargs)
-        self._redistr = redistr
+        self.redistr = redistr
 
     def validate(self, sdfg, state):
         """

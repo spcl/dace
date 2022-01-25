@@ -21,16 +21,16 @@ class ExpandAllreduceMPI(ExpandTransformation):
             raise (NotImplementedError)
 
         comm = "MPI_COMM_WORLD"
-        if node._grid:
-            comm = f"__state->{node._grid}_comm"
+        if node.grid:
+            comm = f"__state->{node.grid}_comm"
 
         buffer = '_inbuffer'
         if in_place:
-            inbuffer = 'MPI_IN_PLACE'
+            buffer = 'MPI_IN_PLACE'
 
         code = f"""
             MPI_Allreduce({buffer}, _outbuffer, {count_str}, {mpi_dtype_str},
-                          {node._op}, {comm});
+                          {node.op}, {comm});
             """
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,
@@ -49,14 +49,17 @@ class Allreduce(dace.sdfg.nodes.LibraryNode):
     }
     default_implementation = "MPI"
 
-    def __init__(self, name, op, grid, *args, **kwargs):
+    op = dace.properties.Property(dtype=str, default='MPI_SUM')
+    grid = dace.properties.Property(dtype=str, allow_none=True, default=None)
+
+    def __init__(self, name, op='MPI_SUM', grid=None, *args, **kwargs):
         super().__init__(name,
                          *args,
                          inputs={"_inbuffer"},
                          outputs={"_outbuffer"},
                          **kwargs)
-        self._op = op
-        self._grid = grid
+        self.op = op
+        self.grid = grid
 
     def validate(self, sdfg, state):
         """

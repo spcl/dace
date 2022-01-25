@@ -41,8 +41,8 @@ class ExpandBcastMPI(ExpandTransformation):
             ref = "&"
 
         comm = "MPI_COMM_WORLD"
-        if node._grid:
-            comm = f"__state->{node._grid}_comm"
+        if node.grid:
+            comm = f"__state->{node.grid}_comm"
 
         code = f"""
             MPI_Bcast({ref}_inbuffer, {count_str}, {mpi_dtype_str}, _root, {comm});
@@ -64,13 +64,15 @@ class Bcast(dace.sdfg.nodes.LibraryNode):
     }
     default_implementation = "MPI"
 
-    def __init__(self, name, grid, *args, **kwargs):
+    grid = dace.properties.Property(dtype=str, allow_none=True, default=None)
+    
+    def __init__(self, name, grid=None, *args, **kwargs):
         super().__init__(name,
                          *args,
                          inputs={"_inbuffer", "_root"},
                          outputs={"_outbuffer"},
                          **kwargs)
-        self._grid = grid
+        self.grid = grid
 
     def validate(self, sdfg, state):
         """

@@ -37,12 +37,6 @@ class ProcessGrid(object):
         allow_none=True,
         default=None,
         desc="Name of the parent grid (mandatory only if is_subgrid == True).")
-    # correspondence = ListProperty(
-    #     int,
-    #     allow_none=True,
-    #     default=None,
-    #     desc="Correspondence of the sub-grid's indices to parent-grid's "
-    #          "indices (mandatory only if is_subgrid == True).")
     color = ListProperty(
         int,
         allow_none=True,
@@ -56,8 +50,8 @@ class ProcessGrid(object):
              "(optional only if is_subgrid == True).")
     root = SymbolicProperty(default=0, desc="The root rank for collectives.")
 
-    def __init__(self, name, is_subgrid, shape, parent_grid, color, exact_grid,
-                 root):
+    def __init__(self, name, is_subgrid, shape, parent_grid=None, color=None, exact_grid=None,
+                 root=0):
         self.name = name
         self.is_subgrid = is_subgrid
         if is_subgrid:
@@ -102,7 +96,7 @@ class ProcessGrid(object):
     @classmethod
     def from_json(cls, json_obj, context=None):
         # Create dummy object
-        ret = cls(dtypes.int8, ())
+        ret = cls('tmp', False, [])
         serialize.set_properties_from_json(ret, json_obj, context=context)
         # Check validity now
         ret.validate()
@@ -216,7 +210,7 @@ class SubArray(object):
     @classmethod
     def from_json(cls, json_obj, context=None):
         # Create dummy object
-        ret = cls(dtypes.int8, ())
+        ret = cls('tmp', dtypes.int8, [], [], 'tmp', [])
         serialize.set_properties_from_json(ret, json_obj, context=context)
         # Check validity now
         ret.validate()
@@ -321,7 +315,7 @@ class RedistrArray(object):
     @classmethod
     def from_json(cls, json_obj, context=None):
         # Create dummy object
-        ret = cls(dtypes.int8, ())
+        ret = cls('tmp', 'tmp', 'tmp')
         serialize.set_properties_from_json(ret, json_obj, context=context)
         # Check validity now
         ret.validate()
