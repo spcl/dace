@@ -145,21 +145,38 @@ class ConditionalCodeResolver(ast.NodeTransformer):
     """
     def __init__(self, globals: Dict[str, Any]):
         super().__init__()
-        self.globals = globals
+        self.globals_and_locals = copy.copy(globals)
+
+    def visit_Name(self, node: ast.Name):
+        if isinstance(node.ctx, ast.Store):
+            self.globals_and_locals[node.id] = SyntaxError
+        return self.generic_visit(node)
 
     def visit_If(self, node: ast.If) -> Any:
         node = self.generic_visit(node)
         try:
-            test = RewriteSympyEquality(self.globals).visit(node.test)
-            result = astutils.evalnode(test, self.globals)
+            test = RewriteSympyEquality(self.globals_and_locals).visit(node.test)
+            result = astutils.evalnode(test, self.globals_and_locals)
 
-            if (result is True or (isinstance(result, sympy.Basic) and result == True)):
-                # Only return "if" body
-                return node.body
-            elif (result is False or (isinstance(result, sympy.Basic) and result == False)):
-                # Only return "else" body
-                return node.orelse
-            # Any other case is indeterminate, fall back to generic visit
+            # Check symbolic conditions separately
+            if isinstance(result, sympy.Basic):
+                if result == True:
+                    # Only return "if" body
+                    return node.body
+                elif result == False:
+                    # Only return "else" body
+                    return node.orelse
+                else:
+                    # Any other case is indeterminate, fall back to generic visit
+                    return node
+            else:  # If not symbolic, check value directly
+                if result:
+                    # Only return "if" body
+                    return node.body
+                elif not result:
+                    # Only return "else" body
+                    return node.orelse
+
         except SyntaxError:
             # Cannot evaluate if condition at compile time
             pass
@@ -206,7 +223,8 @@ class LoopUnroller(ast.NodeTransformer):
     compile time and one of the following conditions apply:
         1. `dace.unroll` was explicitly called
         2. looping over compile-time constant tuples/lists/dictionaries
-        3. generator is one of the predetermined "stateless generators".
+        3. generator is one of the predetermined "stateless generators"
+        4. any generator with compile-time size that is lower than the "unroll_threshold" configuration
     """
     STATELESS_GENERATORS = [
         enumerate,
@@ -217,10 +235,15 @@ class LoopUnroller(ast.NodeTransformer):
         dict.items,
     ]
 
+    THRESHOLD_GENERATORS = [
+        range,
+    ]
+
     def __init__(self, globals: Dict[str, Any], filename: str):
         super().__init__()
         self.globals = globals
         self.filename = filename
+        self.threshold = int(Config.get('frontend', 'unroll_threshold'))
 
     def visit_For(self, node: ast.For) -> Any:
         # Avoid import loops
@@ -280,7 +303,10 @@ class LoopUnroller(ast.NodeTransformer):
                 if hasattr(genfunc, '__self__'):
                     genfunc = getattr(type(genfunc.__self__), genfunc.__name__, False)
 
-                if genfunc in LoopUnroller.STATELESS_GENERATORS:
+                if (self.threshold >= 0
+                        and (genfunc not in EXPLICIT_GENERATORS or genfunc in LoopUnroller.THRESHOLD_GENERATORS)):
+                    implicit = True
+                elif genfunc in LoopUnroller.STATELESS_GENERATORS:
                     implicit = True
                 elif genfunc in EXPLICIT_GENERATORS:
                     implicit = False
@@ -317,6 +343,14 @@ class LoopUnroller(ast.NodeTransformer):
             except SyntaxError:
                 # Cannot evaluate generator at compile time
                 return node
+
+        if self.threshold == 0:  # Unroll any loop
+            explicitly_requested = True
+        elif self.threshold > 0:
+            generator = list(generator)
+            if len(generator) > self.threshold:
+                return node
+            explicitly_requested = True
 
         # Too verbose?
         if implicit and not explicitly_requested:
@@ -494,6 +528,14 @@ class GlobalResolver(ast.NodeTransformer):
             if isinstance(value, SDFG) or hasattr(value, '__sdfg__'):
                 self.closure.closure_sdfgs[id(value)] = (qualname, value)
             else:
+                # If this is a function call to a None function, do not add its result to the closure
+                if isinstance(parent_node, ast.Call):
+                    fqname = getattr(parent_node.func, 'qualname', astutils.rname(parent_node.func))
+                    if fqname in self.closure.closure_constants and self.closure.closure_constants[fqname] is None:
+                        return None
+                    if hasattr(parent_node.func, 'n') and parent_node.func.n is None:
+                        return None
+
                 self.closure.closure_constants[qualname] = value
 
             # Compatibility check since Python changed their AST nodes
@@ -638,7 +680,7 @@ class GlobalResolver(ast.NodeTransformer):
     def visit_Subscript(self, node: ast.Subscript) -> Any:
         # First visit the subscripted value alone, then the whole subscript
         node.value = self.visit(node.value)
-        
+
         # Try to evaluate literal lists/dicts/tuples directly
         if isinstance(node.value, (ast.List, ast.Dict, ast.Tuple)):
             # First evaluate key
@@ -646,7 +688,7 @@ class GlobalResolver(ast.NodeTransformer):
                 gslice = astutils.evalnode(node.slice, self.globals)
             except SyntaxError:
                 return self.generic_visit(node)
-            
+
             # Then query for the right value
             if isinstance(node.value, ast.Dict):
                 for k, v in zip(node.value.keys, node.value.values):
@@ -656,7 +698,7 @@ class GlobalResolver(ast.NodeTransformer):
                         continue
                     if gkey == gslice:
                         return self.visit_Attribute(v)
-            else: # List or Tuple
+            else:  # List or Tuple
                 return self.visit_Attribute(node.value.elts[gslice])
 
         return self.visit_Attribute(node)
