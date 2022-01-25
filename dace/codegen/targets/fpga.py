@@ -292,13 +292,12 @@ def unqualify_fpga_array_name(sdfg: dace.SDFG, arr_name: str):
     :param name: array name to unqualify
     '''
 
-    unqualified = re.sub('_in$|_out$', '', arr_name)
-    unqualified = re.sub('^__', '', unqualified)
-
-    if unqualified not in sdfg.arrays:
-        return arr_name
-    else:
+    if arr_name in sdfg.arrays and (arr_name.endswith('_in') or arr_name.endswith('out')) and arr_name.startswith('__'):
+        unqualified = re.sub('_in$|_out$', '', arr_name)
+        unqualified = re.sub('^__', '', unqualified)
         return unqualified
+    else:
+        return arr_name
 
 
 class FPGACodeGen(TargetCodeGenerator):
