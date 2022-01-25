@@ -40,7 +40,6 @@ from .tasklet_fusion import SimpleTaskletFusion
 from .trivial_tasklet_elimination import TrivialTaskletElimination
 
 # Device-related
-from .copy_to_device import CopyToDevice
 from .gpu_transform import GPUTransformMap
 from .gpu_transform_local_storage import GPUTransformLocalStorage
 from .mpi import MPITransformMap
