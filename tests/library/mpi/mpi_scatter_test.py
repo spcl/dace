@@ -4,6 +4,7 @@ from dace.memlet import Memlet
 import dace.libraries.mpi as mpi
 import numpy as np
 import pytest
+import time
 
 from dace.codegen.compiled_sdfg import CompiledSDFG, ReloadableDLL
 
@@ -438,17 +439,17 @@ def test_redistribute4():
 
 
 NIa, NJa, NKa, NJb = (dace.symbol(s) for s in ('NIa', 'NJa', 'NKa', 'NJb'))
-lNIa, lNJa, lNKa, lNJb = (dace.symbol(s) for s in ('lNIa', 'lNJa', 'lNKa', 'lNJb'))
+lNIa, lNJa, lNKa, lNIb, lNJb, lNKb = (dace.symbol(s) for s in ('lNIa', 'lNJa', 'lNKa', 'lNIb', 'lNJb', 'lNKb'))
 PIa, PJa, PKa = (dace.symbol(s) for s in ('PIa', 'PJa', 'PKa'))
 PIb, PJb, PKb = (dace.symbol(s) for s in ('PIb', 'PJb', 'PKb'))
 
 
 @dace.program
-def one_mm(lA: dace.float64[lNIa, lNKa], lB: dace.float64[lNKa, lNKa]):
+def one_mm(lA: dace.float64[lNIa, lNKa], lB: dace.float64[lNKa, lNJa]):
     parent_grid = dace.comm.Cart_create([PIa, PJa, PKa])
-    a_grid = dace.comm.Cart_sub(parent_grid, [True, False, True], 0)
-    b_grid = dace.comm.Cart_sub(parent_grid, [False, True, True], 0)
-    c_grid = dace.comm.Cart_sub(parent_grid, [True, True, False], 0)
+    a_grid = dace.comm.Cart_sub(parent_grid, [False, True, False])
+    b_grid = dace.comm.Cart_sub(parent_grid, [True, False, False])
+    c_grid = dace.comm.Cart_sub(parent_grid, [False, False, True])
     dace.comm.Bcast(lA, 0, a_grid)
     dace.comm.Bcast(lB, 0, b_grid)
     lC = lA @ lB
@@ -459,44 +460,73 @@ def one_mm(lA: dace.float64[lNIa, lNKa], lB: dace.float64[lNKa, lNKa]):
 def test_one_mm():
 
     from mpi4py import MPI as MPI4PY
-    comm = MPI4PY.COMM_WORLD
-    rank = comm.Get_rank()
-    commsize = comm.Get_size()
+
+    world_comm = MPI4PY.COMM_WORLD
+    world_rank = world_comm.Get_rank()
+    world_size = world_comm.Get_size()
+
+    p = int(np.cbrt(world_size))
+    comm = world_comm.Create_cart(
+        dims = [p, p, p],
+        periods = [False,False,False],
+        reorder = False)
+    comm_rank = comm.Get_rank()
+    comm_size = comm.Get_size()
 
     mpi_sdfg = None
-    # if rank == 0:
-    #     mpi_sdfg = one_mm.to_sdfg(strict=False)
-    #     mpi_sdfg.apply_strict_transformations()
-    #     mpi_sdfg.apply_strict_transformations()
-    #     mpi_func= mpi_sdfg.compile()
-    # comm.Barrier()
-    # if rank > 0:
-    #     mpi_sdfg = dace.SDFG.from_file(".dacecache/{n}/program.sdfg".format(
-    #         n=one_mm.name))
-    #     mpi_func = CompiledSDFG(mpi_sdfg, ReloadableDLL(
-    #         ".dacecache/{n}/build/lib{n}.so".format(n=one_mm.name),
-    #         one_mm.name))
-    # comm.Barrier()
-    for r in range(commsize):
-        if r == rank:
-            mpi_sdfg = one_mm.compile()
-        comm.Barrier()
-    lA = np.arange(1000000, dtype=np.float64).reshape(1000, 1000).copy()
-    lB = np.arange(1000000, dtype=np.float64).reshape(1000, 1000).copy()
-    lC = mpi_sdfg(lNIa=1000, lNJa=1000, lNKa=1000, PIa=2, PJa=2, PKa=2, lA=lA, lB=lB)
+    if world_rank == 0:
+        mpi_sdfg = one_mm.to_sdfg(strict=False)
+        mpi_sdfg.apply_strict_transformations()
+        mpi_sdfg.apply_strict_transformations()
+        mpi_func= mpi_sdfg.compile()
+    world_comm.Barrier()
+    if world_rank > 0:
+        mpi_sdfg = dace.SDFG.from_file(".dacecache/{n}/program.sdfg".format(
+            n=one_mm.name))
+        mpi_func = CompiledSDFG(mpi_sdfg, ReloadableDLL(
+            ".dacecache/{n}/build/lib{n}.so".format(n=one_mm.name),
+            one_mm.name))
+    world_comm.Barrier()
+
+    size =  1000
+    tmp = np.arange(size * size, dtype=np.float64).reshape(size, size)
+    lA = tmp * (world_rank + 1)
+    lB = tmp * (world_rank + 1)
+    lC = mpi_func(lNIa=size, lNJa=size, lNKa=size, PIa=p, PJa=p, PKa=p, lA=lA, lB=lB)
+
+    if comm_size == 8:
+        a_mult = np.array([[1, 2], [5, 6]])
+        b_mult = np.array([[1, 3], [2, 4]])
+        c_mult = a_mult @ b_mult
+
+        idx = 0
+        for r in range(comm_size):
+            if r in (0, 2, 4, 6):
+                if r == comm_rank and r == world_rank:
+                    if not np.allclose(lC, tmp @ tmp * c_mult.flatten()[idx]):
+                        print(f"""
+                            Error!
+                            Rank: {comm_rank}
+                            multiplier = {c_mult.flatten()[idx]}
+                            result = {lC[:4, :4]}
+                            ref = {(tmp @ tmp * c_mult.flatten()[idx])[:4, :4]}
+                        """, flush=True)
+                idx += 1
+            world_comm.Barrier()
 
 
 @dace.program
-def two_mm(lA: dace.float64[lNIa, lNKa], lB: dace.float64[lNKa, lNKa],
-           lC: dace.float64[lNKa, lNJb]):
+def two_mm(lA: dace.float64[lNIa, lNKa], lB: dace.float64[lNKa, lNJa],
+           lC: dace.float64[lNJa, lNJb]):
     parent_grid = dace.comm.Cart_create([PIa, PJa, PKa])
-    a_grid = dace.comm.Cart_sub(parent_grid, [True, False, True], 0)
-    b_grid = dace.comm.Cart_sub(parent_grid, [False, True, True], 0)
-    tmp_grid = dace.comm.Cart_sub(parent_grid, [True, True, False], 0)
+    a_grid = dace.comm.Cart_sub(parent_grid, [False, True, False])
+    b_grid = dace.comm.Cart_sub(parent_grid, [True, False, False])
+    tmp_grid = dace.comm.Cart_sub(parent_grid, [False, False, True])
     c_grid = b_grid  # but transposed
-    d_grid = tmp_grid
+    d_grid = a_grid
     dace.comm.Bcast(lA, 0, a_grid)
     dace.comm.Bcast(lB, 0, b_grid)
+    dace.comm.Bcast(lC, 0, c_grid)
     tmp = lA @ lB
     dace.comm.Allreduce(tmp, 'MPI_SUM', tmp_grid)
     lD = tmp @ lC
@@ -504,35 +534,286 @@ def two_mm(lA: dace.float64[lNIa, lNKa], lB: dace.float64[lNKa, lNKa],
     return lD
 
 
-def test_two_mm():
+@dace.program
+def two_mm_simple(lA: dace.float64[lNIa, lNKa], lB: dace.float64[lNKa, lNJa],
+                  lC: dace.float64[lNJa, lNJb]):
+    tmp = lA @ lB
+    lD = tmp @ lC
+    return lD
+
+
+def test_two_mm(size = 1000, p = None):
 
     from mpi4py import MPI as MPI4PY
-    comm = MPI4PY.COMM_WORLD
-    rank = comm.Get_rank()
-    commsize = comm.Get_size()
+    
+    world_comm = MPI4PY.COMM_WORLD
+    world_rank = world_comm.Get_rank()
+    world_size = world_comm.Get_size()
+
+    if not p:
+        p = [int(np.cbrt(world_size))] * 3
+    comm = world_comm.Create_cart(
+        dims = p,
+        periods = [False,False,False],
+        reorder = False)
+    comm_rank = comm.Get_rank()
+    comm_size = comm.Get_size()
 
     mpi_sdfg = None
-    # if rank == 0:
-    #     mpi_sdfg = one_mm.to_sdfg(strict=False)
-    #     mpi_sdfg.apply_strict_transformations()
-    #     mpi_sdfg.apply_strict_transformations()
-    #     mpi_func= mpi_sdfg.compile()
-    # comm.Barrier()
-    # if rank > 0:
-    #     mpi_sdfg = dace.SDFG.from_file(".dacecache/{n}/program.sdfg".format(
-    #         n=one_mm.name))
-    #     mpi_func = CompiledSDFG(mpi_sdfg, ReloadableDLL(
-    #         ".dacecache/{n}/build/lib{n}.so".format(n=one_mm.name),
-    #         one_mm.name))
-    # comm.Barrier()
-    for r in range(commsize):
-        if r == rank:
-            mpi_sdfg = two_mm.compile()
-        comm.Barrier()
-    lA = np.arange(1000000, dtype=np.float64).reshape(1000, 1000).copy()
-    lB = np.arange(1000000, dtype=np.float64).reshape(1000, 1000).copy()
-    lC = np.arange(1000000, dtype=np.float64).reshape(1000, 1000).copy()
-    lD = mpi_sdfg(lNIa=1000, lNJa=1000, lNKa=1000, lNJb=1000, PIa=2, PJa=2, PKa=2, lA=lA, lB=lB, lC=lC)
+    if world_rank == 0:
+        mpi_sdfg = two_mm.to_sdfg(strict=False)
+        mpi_sdfg.apply_strict_transformations()
+        mpi_sdfg.apply_strict_transformations()
+        mpi_func= mpi_sdfg.compile()
+    world_comm.Barrier()
+    if world_rank > 0:
+        mpi_sdfg = dace.SDFG.from_file(".dacecache/{n}/program.sdfg".format(
+            n=two_mm.name))
+        mpi_func = CompiledSDFG(mpi_sdfg, ReloadableDLL(
+            ".dacecache/{n}/build/lib{n}.so".format(n=two_mm.name),
+            two_mm.name))
+    world_comm.Barrier()
+
+    if isinstance(size, list):
+        SI, SJ, SK, SJb = size
+        from numpy.random import default_rng
+        rng = default_rng(42)
+        lA = rng.random((SI, SJ))
+        lB = rng.random((SK, SJ))
+        lC = rng.random((SJ, SJb))
+    else:
+        SI, SJ, SK, SJb = [size] * 4
+        tmp = np.arange(size * size, dtype=np.float64).reshape(size, size)
+        lA = tmp * (world_rank + 1)
+        lB = tmp * (world_rank + 1)
+        # lC = tmp * (world_rank + 1)
+        lC = tmp.copy()
+    
+    if world_rank == 0:
+        print(f"Full version: {size}", flush=True)
+    world_comm.Barrier()
+    
+    runtime = []
+    for i in range(10):
+        world_comm.Barrier()
+        tic = time.perf_counter()
+        lD = mpi_func(lNIa=SI, lNJa=SJ, lNKa=SK, lNJb=SJb, PIa=p[0], PJa=p[1], PKa=[2], lA=lA, lB=lB, lC=lC)
+        world_comm.Barrier()
+        toc = time.perf_counter()
+        if world_rank == 0:
+            duration = toc-tic
+            runtime.append(duration)
+            print(f"{i}-th iteration: {(toc-tic) * 1000} ms", flush=True)
+    
+    if world_rank == 0:
+        print(f"Median: {np.median(runtime) * 1000} ms", flush=True)
+    world_comm.Barrier()
+
+
+    if comm_size == 8 and not isinstance(size, list):
+        a_mult = np.array([[1, 2], [5, 6]])
+        b_mult = np.array([[1, 3], [2, 4]])
+        tmp_mult = a_mult @ b_mult
+        # c_mult = np.transpose(b_mult) # difficult to test with this
+        c_mult = np.array([[1, 1], [1, 1]])
+        d_mult = tmp_mult @ c_mult
+
+        idx = 0
+        for r in range(comm_size):
+            if r in (0, 1, 4, 5):
+                if r == comm_rank and r == world_rank:
+                    if not np.allclose(lD, tmp @ tmp @ tmp * d_mult.flatten()[idx]):
+                        print(f"""
+                            Error!
+                            Rank: {comm_rank}
+                            multiplier = {d_mult.flatten()[idx]}
+                            result = {lD[:4, :4]}
+                            ref = {(tmp @ tmp @ tmp * d_mult.flatten()[idx])[:4, :4]}
+                        """, flush=True)
+                idx += 1
+            world_comm.Barrier()
+
+
+def test_two_mm_simple(size = 1000):
+
+    from mpi4py import MPI as MPI4PY
+    
+    world_comm = MPI4PY.COMM_WORLD
+    world_rank = world_comm.Get_rank()
+    world_size = world_comm.Get_size()
+
+    mpi_sdfg = None
+    if world_rank == 0:
+        mpi_sdfg = two_mm_simple.to_sdfg(strict=False)
+        mpi_sdfg.apply_strict_transformations()
+        mpi_sdfg.apply_strict_transformations()
+        mpi_func= mpi_sdfg.compile()
+    world_comm.Barrier()
+    if world_rank > 0:
+        mpi_sdfg = dace.SDFG.from_file(".dacecache/{n}/program.sdfg".format(
+            n=two_mm_simple.name))
+        mpi_func = CompiledSDFG(mpi_sdfg, ReloadableDLL(
+            ".dacecache/{n}/build/lib{n}.so".format(n=two_mm_simple.name),
+            two_mm_simple.name))
+    world_comm.Barrier()
+
+    if isinstance(size, list):
+        SI, SJ, SK, SJb = size
+        from numpy.random import default_rng
+        rng = default_rng(42)
+        lA = rng.random((SI, SJ))
+        lB = rng.random((SK, SJ))
+        lC = rng.random((SJ, SJb))
+    else:
+        SI, SJ, SK, SJb = [size] * 4
+        tmp = np.arange(size * size, dtype=np.float64).reshape(size, size)
+        lA = tmp * (world_rank + 1)
+        lB = tmp * (world_rank + 1)
+        # lC = tmp * (world_rank + 1)
+        lC = tmp.copy()
+
+    if world_rank == 0:
+        print(f"Just compute version: {size}", flush=True)
+    world_comm.Barrier()
+    
+    runtime = []
+    for i in range(10):
+        world_comm.Barrier()
+        tic = time.perf_counter()
+        lD = mpi_func(lNIa=SI, lNJa=SJ, lNKa=SK, lNJb=SJb, lA=lA, lB=lB, lC=lC)
+        world_comm.Barrier()
+        toc = time.perf_counter()
+        if world_rank == 0:
+            duration = toc-tic
+            runtime.append(duration)
+            print(f"{i}-th iteration: {(toc-tic) * 1000} ms", flush=True)
+    
+    if world_rank == 0:
+        print(f"Median: {np.median(runtime) * 1000} ms", flush=True)
+    world_comm.Barrier()
+
+
+@dace.program
+def two_mm_redistr(lA: dace.float64[lNIa, lNKa], lB: dace.float64[lNKa, lNJa],
+                   lC: dace.float64[lNKb, lNJb]):
+    first_grid = dace.comm.Cart_create([PIa, PJa, PKa])
+    second_grid = dace.comm.Cart_create([PIb, PJb, PKb])
+    a_grid = dace.comm.Cart_sub(first_grid, [False, True, False])
+    b_grid = dace.comm.Cart_sub(first_grid, [True, False, False])
+    tmp1_scatter_grid = dace.comm.Cart_sub(first_grid, [True, True, False], 0)
+    tmp1_grid = dace.comm.Cart_sub(first_grid, [False, False, True])
+    tmp2_scatter_grid = dace.comm.Cart_sub(second_grid, [True, False, True], 0)
+    tmp2_grid = dace.comm.Cart_sub(second_grid, [False, True, False])
+    c_grid = dace.comm.Cart_sub(second_grid, [True, False, False])
+    d_grid = dace.comm.Cart_sub(second_grid, [False, False, True])
+    dace.comm.Bcast(lA, 0, a_grid)
+    dace.comm.Bcast(lB, 0, b_grid)
+    dace.comm.Bcast(lC, 0, c_grid)
+    tmp1 = lA @ lB
+    dace.comm.Reduce(tmp1, 'MPI_SUM', 0, tmp1_grid)
+    s1 = dace.comm.Subarray(tmp1, tmp1_scatter_grid, [0, 1], shape=[NIa, NJa])
+    tmp2 = np.ndarray([lNIb, lNKb], np.float64)
+    dace.comm.Redistribute(tmp1, tmp2, s1, tmp2_scatter_grid, [0, 1])
+    dace.comm.Bcast(tmp2, 0, tmp2_grid)
+    lD = tmp2 @ lC
+    dace.comm.Reduce(lD, 'MPI_SUM', 0, d_grid)
+    return lD
+
+
+def test_two_mm_redistr(size = [100, 100, 100, 2500, 200]):
+
+    from mpi4py import MPI as MPI4PY
+    
+    world_comm = MPI4PY.COMM_WORLD
+    world_rank = world_comm.Get_rank()
+    world_size = world_comm.Get_size()
+
+    p = int(np.cbrt(world_size))
+    comm = world_comm.Create_cart(
+        dims = [p, p, p],
+        periods = [False,False,False],
+        reorder = False)
+    comm_rank = comm.Get_rank()
+    comm_size = comm.Get_size()
+
+    mpi_sdfg = None
+    if world_rank == 0:
+        mpi_sdfg = two_mm_redistr.to_sdfg(strict=False)
+        mpi_sdfg.apply_strict_transformations()
+        mpi_sdfg.apply_strict_transformations()
+        mpi_func= mpi_sdfg.compile()
+    world_comm.Barrier()
+    if world_rank > 0:
+        mpi_sdfg = dace.SDFG.from_file(".dacecache/{n}/program.sdfg".format(
+            n=two_mm_redistr.name))
+        mpi_func = CompiledSDFG(mpi_sdfg, ReloadableDLL(
+            ".dacecache/{n}/build/lib{n}.so".format(n=two_mm_redistr.name),
+            two_mm_redistr.name))
+    world_comm.Barrier()
+
+    SI, SJ, SK, SJb, SKb = size
+    # if size != [100, 100, 100, 2500, 200]:
+    from numpy.random import default_rng
+    rng = default_rng(42)
+    lA = rng.random((SI, SJ))
+    lB = rng.random((SK, SJ))
+    lC = rng.random((SKb, SJb))
+    # else:
+    #     tmp = np.arange(size * size, dtype=np.float64).reshape(size, size)
+    #     lA = tmp * (world_rank + 1)
+    #     lB = tmp * (world_rank + 1)
+    #     # lC = tmp * (world_rank + 1)
+    #     lC = tmp.copy()
+    
+    if world_rank == 0:
+        print(f"Redistributing version: {size}", flush=True)
+    world_comm.Barrier()
+    
+    runtime = []
+    for i in range(10):
+        world_comm.Barrier()
+        tic = time.perf_counter()
+        lD = mpi_func(
+            NIa=SI*2, NJa=SJ*2,
+            lNIa=SI, lNJa=SJ, lNKa=SK,
+            lNIb=SI*2, lNJb=SJb, lNKb=SI*2,
+            PIa=p, PJa=p, PKa=p,
+            PIb=1, PJb=comm_size, PKb=1,
+            lA=lA, lB=lB, lC=lC)
+        world_comm.Barrier()
+        toc = time.perf_counter()
+        if world_rank == 0:
+            duration = toc-tic
+            runtime.append(duration)
+            print(f"{i}-th iteration: {(toc-tic) * 1000} ms", flush=True)
+    
+    if world_rank == 0:
+        print(f"Median: {np.median(runtime) * 1000} ms", flush=True)
+    world_comm.Barrier()
+
+
+    # if comm_size == 8 and not isinstance(size, list):
+    #     a_mult = np.array([[1, 2], [5, 6]])
+    #     b_mult = np.array([[1, 3], [2, 4]])
+    #     tmp_mult = a_mult @ b_mult
+    #     # c_mult = np.transpose(b_mult) # difficult to test with this
+    #     c_mult = np.array([[1, 1], [1, 1]])
+    #     d_mult = tmp_mult @ c_mult
+
+    #     idx = 0
+    #     for r in range(comm_size):
+    #         if r in (0, 1, 4, 5):
+    #             if r == comm_rank and r == world_rank:
+    #                 if not np.allclose(lD, tmp @ tmp @ tmp * d_mult.flatten()[idx]):
+    #                     print(f"""
+    #                         Error!
+    #                         Rank: {comm_rank}
+    #                         multiplier = {d_mult.flatten()[idx]}
+    #                         result = {lD[:4, :4]}
+    #                         ref = {(tmp @ tmp @ tmp * d_mult.flatten()[idx])[:4, :4]}
+    #                     """, flush=True)
+    #             idx += 1
+    #         world_comm.Barrier()
 
 
 ###############################################################################
@@ -546,5 +827,15 @@ if __name__ == "__main__":
     # test_cart()
     # test_redistribute4()
     # test_one_mm()
-    test_two_mm()
+    # test_two_mm(size = [6400, 7200, 4400, 4800])
+
+    # for i in (1, 2, 4): #, 'special'):
+    #     if i == 'special':
+    #         size = [6400, 7200, 4400, 4800]
+    #     else:
+    #         size = [1000 * i] * 4
+    #     test_two_mm_simple(size = size)
+    #     test_two_mm(size = size)
+
+    test_two_mm_redistr()
 ###############################################################################
