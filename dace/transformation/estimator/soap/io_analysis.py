@@ -66,7 +66,7 @@ class IOAnalysis():
 
 
 def perform_soap_analysis(sdfg : Union[SDFG, SubgraphView], decomp_params: List = [],
-                    generate_schedule : bool = False) -> IOAnalysis:
+                    generate_schedule : bool = False, solver_timeout : int = 10) -> IOAnalysis:
     """
     Main interface of the SOAP analysis. 
 
@@ -85,7 +85,7 @@ def perform_soap_analysis(sdfg : Union[SDFG, SubgraphView], decomp_params: List 
     """
     solver = Solver()
     solver.start_solver()
-    solver.set_timeout(10)
+    solver.set_timeout(solver_timeout)
         
     sdg = SDG(sdfg, solver)
     # check if the created SDG is correct

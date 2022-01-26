@@ -397,7 +397,7 @@ def compare_st(subgraph_st, subgraph_opt, Q_old_val = -1):
     
     # smaller subgraph must have much smaller Q to be preferable:
     if smaller_sg_Q != 0 and (1.5 * smaller_sg_Q < larger_sg_Q):
-        return [smaller_subgraph, larger_sg_Q]
+        return [smaller_subgraph, smaller_sg_Q]
     else:
         return [larger_subgraph, larger_sg_Q]
 
