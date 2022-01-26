@@ -179,6 +179,14 @@ DACE_EXPORTED void __dace_exit_intel_fpga({sdfg.name}_t *__state) {{
 
         return [host_code_obj] + kernel_code_objs + other_code_objs
 
+
+    def _internal_preprocess(self, sdfg: dace.SDFG):
+        '''
+        Vendor-specific SDFG Preprocessing
+        '''
+        pass
+
+
     def create_mangled_channel_name(self, var_name, kernel_id, external_stream):
         '''
         Memorize and returns the mangled name of a global channel

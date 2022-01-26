@@ -126,7 +126,7 @@ def test_gpu():
     run_nussinov(dace.dtypes.DeviceType.GPU)
 
 
-@fpga_test(assert_ii_1=False, xilinx=False)
+@fpga_test(assert_ii_1=False)
 def test_fpga():
     return run_nussinov(dace.dtypes.DeviceType.FPGA)
 
