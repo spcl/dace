@@ -9,7 +9,6 @@ import dace.dtypes as dtypes
 import ast
 import dace.codegen.targets
 from dace.codegen.targets.sve import infer as infer
-import astunparse
 import collections
 import itertools
 import numpy

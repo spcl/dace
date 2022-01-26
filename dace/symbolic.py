@@ -549,6 +549,26 @@ def sympy_numeric_fix(expr):
     return expr
 
 
+class int_floor(sympy.Function):
+    @classmethod
+    def eval(cls, x, y):
+        if x.is_Number and y.is_Number:
+            return x // y
+
+    def _eval_is_integer(self):
+        return True
+
+
+class int_ceil(sympy.Function):
+    @classmethod
+    def eval(cls, x, y):
+        if x.is_Number and y.is_Number:
+            return sympy.ceiling(x / y)
+
+    def _eval_is_integer(self):
+        return True
+
+
 def sympy_intdiv_fix(expr):
     """ Fix for SymPy printing out reciprocal values when they should be
         integral in "ceiling/floor" sympy functions.
@@ -842,6 +862,7 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
             return res
         except ValueError:
             return "dace::math::pow({f}, {s})".format(f=self._print(expr.args[0]), s=self._print(expr.args[1]))
+
 
 @lru_cache(maxsize=16384)
 def symstr(sym, arrayexprs: Optional[Set[str]] = None) -> str:

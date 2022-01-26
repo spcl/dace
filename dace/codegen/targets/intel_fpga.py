@@ -1,6 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
-import astunparse
 import functools
 import copy
 import itertools
@@ -1335,7 +1334,7 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
             # If this is the case, we try to infer the type, otherwise we fallback to generic visit
             if ((isinstance(node.value, ast.Name) and node.value.id in self.constants)
                     or (isinstance(node.value, ast.Subscript) and node.value.value.id in self.constants)):
-                dtype = infer_expr_type(astunparse.unparse(node.value), self.dtypes)
+                dtype = infer_expr_type(unparse(node.value), self.dtypes)
                 value = cppunparse.cppunparse(self.visit(node.value), expr_semicolon=False)
                 code_str = "{} {} = {};".format(dtype, target, value)
                 updated = ast.Name(id=code_str)
@@ -1350,7 +1349,7 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
 
         veclen_lhs = self.sdfg.data(memlet.data).veclen
         try:
-            dtype_rhs = infer_expr_type(astunparse.unparse(node.value), self.dtypes)
+            dtype_rhs = infer_expr_type(unparse(node.value), self.dtypes)
         except SyntaxError:
             # non-valid python
             dtype_rhs = None

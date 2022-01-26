@@ -11,7 +11,6 @@ from dace.symbolic import SymExpr
 from dace.symbolic import symstr
 import sympy
 import sys
-import astunparse
 
 
 def infer_expr_type(ast, symbols=None):

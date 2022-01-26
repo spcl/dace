@@ -1,6 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
-import astunparse
 import collections
 import copy
 import functools
@@ -9,6 +8,7 @@ import operator
 from typing import Dict, List, Tuple
 
 import dace
+from dace.frontend.python import astutils
 from dace.codegen.targets.cpp import sym2cpp
 from .subscript_converter import SubscriptConverter
 
@@ -130,7 +130,7 @@ def parse_accesses(code, outputs: List[str]):
         converter = SubscriptConverter(offset=tuple(-o for o in offset))
         new_ast = converter.visit(ast.parse(code))
         field_accesses = converter.mapping
-    new_code = astunparse.unparse(new_ast)
+    new_code = astutils.unparse(new_ast)
 
     return new_code, field_accesses
 

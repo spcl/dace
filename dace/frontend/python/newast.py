@@ -199,7 +199,10 @@ def parse_dace_program(name: str,
             if id(arr) in closure.array_mapping:
                 existing_name = closure.array_mapping[id(arr)]
                 if name != existing_name:
-                    nested_closure_replacements[name] = existing_name
+                    if existing_name not in closure.callbacks:
+                        nested_closure_replacements[name] = existing_name
+                    else:  # Callbacks should be replicated
+                        closure.callbacks[name] = closure.callbacks[existing_name]
 
         # Make safe replacements
         def repl_callback(repldict):
@@ -3833,8 +3836,16 @@ class ProgramVisitor(ExtNodeVisitor):
             return_type = None
         callback_type = dace.callback(return_type, *argtypes)
 
-        funcname = self.sdfg.find_new_symbol(funcname)
-        self.sdfg.add_symbol(funcname, callback_type)
+        if funcname not in self.sdfg.symbols:
+            self.sdfg.add_symbol(funcname, callback_type)
+        else:
+            # If callback signature mismatches
+            symtype = self.sdfg.symbols[funcname]
+            if symtype != callback_type:
+                new_funcname = self.sdfg.find_new_symbol(funcname)
+                self.closure.callbacks[new_funcname] = self.closure.callbacks[funcname]
+                self.sdfg.add_symbol(new_funcname, callback_type)
+                funcname = new_funcname
 
         # Create the graph that calls the callback
         if not create_graph:
