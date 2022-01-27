@@ -2,6 +2,7 @@
 """ Tests loop unrolling functionality. """
 import dace
 from dace.frontend.python import astutils
+from dace.frontend.python.common import SDFGConvertible
 from dace.frontend.python.preprocessing import LoopUnroller, DaceSyntaxError
 import numpy as np
 import pytest
@@ -210,6 +211,38 @@ def test_unroll_threshold(thres):
 
         assert np.allclose(A, ref)
 
+
+def test_deepcopy():
+    class Nocopy(SDFGConvertible):
+        def __sdfg__(self, *args, **kwargs):
+            @dace
+            def bla(a: dace.float64[20]):
+                return a
+
+            return bla.to_sdfg()
+
+        def __sdfg_closure__(self, reevaluate=None):
+            return {}
+
+        def __sdfg_signature__(self):
+            return [['a'], []]
+
+        def __deepcopy__(self, memo):
+            raise ValueError('DO NOT COPY ME PLEASE')
+
+    nocopy = Nocopy()
+
+    @dace.program
+    def someprogram(a):
+        for i in dace.unroll(range(3)):
+            a += i * nocopy(a)
+
+    b = np.random.rand(20)
+    expected = 6 * b
+    someprogram(b)
+    assert np.allclose(b, expected)
+
+
 if __name__ == '__main__':
     test_native_unroll()
     test_dace_unroll()
@@ -225,3 +258,4 @@ if __name__ == '__main__':
     test_unroll_threshold(-1)
     test_unroll_threshold(0)
     test_unroll_threshold(5)
+    test_deepcopy()

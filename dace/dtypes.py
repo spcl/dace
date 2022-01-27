@@ -788,7 +788,7 @@ class constant:
     """
     @staticmethod
     def __descriptor__():
-        raise ValueError('All constant arguments must be provided in order ' 'to compile the SDFG ahead-of-time.')
+        raise ValueError('All constant arguments must be provided in order to compile the SDFG ahead-of-time.')
 
 
 ####### Utility function ##############
@@ -802,6 +802,7 @@ def ptrtocupy(ptr, inner_ctype, shape):
     import cupy as cp
     umem = cp.cuda.UnownedMemory(ptr, 0, None)
     return cp.ndarray(shape=shape, dtype=inner_ctype, memptr=cp.cuda.MemoryPointer(umem, 0))
+
 
 class callback(typeclass):
     """ Looks like dace.callback([None, <some_native_type>], *types)"""

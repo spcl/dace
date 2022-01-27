@@ -356,6 +356,33 @@ def negate_expr(node):
     return ast.fix_missing_locations(newexpr)
 
 
+def copy_tree(node: ast.AST) -> ast.AST:
+    """
+    Copies an entire AST without copying the non-AST parts (e.g., constant values).
+    A form of reduced deepcopy.
+    :param node: The tree to copy.
+    :return: The copied tree.
+    """
+    class Copier(ast.NodeTransformer):
+        def visit_Num(self, node):
+            # Ignore n
+            return ast.copy_location(ast.Num(n=node.n), node)
+
+        def visit_Constant(self, node):
+            # Ignore value
+            return ast.copy_location(ast.Constant(value=node.value, kind=node.kind), node)
+        
+        def visit(self, node):
+            if node.__class__.__name__ in {'Num', 'Constant'}:    
+                method = 'visit_' + node.__class__.__name__
+                visitor = getattr(self, method, self.generic_visit)
+                return visitor(node)
+            newnode = copy.copy(node)
+            return self.generic_visit(newnode)
+
+    return Copier().visit(node)
+
+
 class ExtNodeTransformer(ast.NodeTransformer):
     """ A `NodeTransformer` subclass that walks the abstract syntax tree and
         allows modification of nodes. As opposed to `NodeTransformer`,

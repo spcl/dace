@@ -366,7 +366,7 @@ class LoopUnroller(ast.NodeTransformer):
             except (TypeError, ValueError):
                 elem = [elem]
 
-            elembody = copy.deepcopy(node.body)
+            elembody = [astutils.copy_tree(stmt) for stmt in node.body]
             replace = astutils.ASTFindReplace({k: v for k, v in zip(to_replace, elem)})
             for stmt in elembody:
                 new_body.append(replace.visit(stmt))
