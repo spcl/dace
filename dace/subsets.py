@@ -194,10 +194,10 @@ class Range(Subset):
         return Range(sum_ranges)
 
     def __lt__(self, other):
-        if (self.max_element() < other.max_element()):
-            return 1
+        if (self.min_element() != other.min_element()):
+            return self.min_element() < other.min_element()
         else:
-            return 0
+            return self.max_element() < other.max_element()
 
     def num_elements(self):
         return reduce(sp.Mul, self.size(), 1)
