@@ -17,8 +17,8 @@ all_tests = [(suite_name, kernel_name) for suite_name in ["npbench"] #["manual_p
 "durbin", "fdtd2d", "floyd-warshall", "gemm", "gemver", "gesummv", "gramschmidt", "heat3d", 
 "jacobi1d", "jacobi2d", "lu", "ludcmp", "mvt", "nussinov", "seidel2d", "symm", "syr2k", "syrk", "trmm", "trisolv"]]
 
-# all_tests = [(suite_name, kernel_name) for suite_name in ["npbench"] 
-#     for kernel_name in ["symm"]]
+all_tests = [(suite_name, kernel_name) for suite_name in ["npbench"] 
+    for kernel_name in ["gemver"]]
 
 
 @pytest.mark.parametrize("suite_name, kernel_name", all_tests)

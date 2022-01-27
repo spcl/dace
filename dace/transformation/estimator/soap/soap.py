@@ -319,6 +319,9 @@ class SoapStatement:
         
         self.p_grid = [sp.ceiling((v / t).subs(self.param_vals))  for v,t in zip(self.dimensions_ordered, self.loc_domain_dims) ]
         
+        strategy = "squeeze_dims"
+        strategy = "increaseX"
+        strategy = "narrowest_dim_first"
         if (sp.prod(self.p_grid) > comm_world):
             if Config.get("soap", "decomposition", "chosen_par_setup") == "memory_dependent":
                 if self.p_grid[stream_dim_number] == 1:
@@ -328,15 +331,40 @@ class SoapStatement:
                 else:
                     self.p_grid[stream_dim_number] -= 1
             else:
-                # gradually increase X
                 correct_decomp = False
-                X_val = X_size.subs(self.param_vals)    
+                X_val = X_size.subs(self.param_vals)   
                 while (not correct_decomp):
-                    X_val = (X_val*1.02).evalf()
-                    self.loc_domain_dims = [sp.ceiling(var.subs(X, X_val)) for var in xpart_dims]
-                    self.p_grid = [sp.ceiling((v / t).subs(self.param_vals))  for v,t in zip(self.dimensions_ordered, self.loc_domain_dims) ]        
+                    if strategy == "increaseX":
+                        # gradually increase X
+                        X_val = (X_val*1.02).evalf()
+                        self.loc_domain_dims = [sp.ceiling(var.subs(X, X_val)) for var in xpart_dims]
+                        self.p_grid = [sp.ceiling((v / t).subs(self.param_vals))  for v,t in zip(self.dimensions_ordered, self.loc_domain_dims) ]        
+                        
+                    if strategy == "squeeze_dims":
+                        # check in which dimension the squeezing will maintain the shape the best
+                        max_ratio = 0
+                        best_dim = -1
+                        for i in range(len(self.p_grid)):
+                            cur_domain_size = self.dimensions_ordered[i] / self.p_grid[i]
+                            projected_dom_size = self.dimensions_ordered[i] / (self.p_grid[i] - 1)
+                            proj_ratio = cur_domain_size / projected_dom_size
+                            if proj_ratio > max_ratio:
+                                best_dim = i
+                                max_ratio = proj_ratio
+                        self.p_grid[best_dim] -= 1
+
+                    if strategy == "narrowest_dim_first":
+                        # decrease the number of processes in the least populated dimension
+                        dim = np.argmax(self.p_grid)
+                        self.p_grid[dim] 
+                        self.p_grid[dim] -= 1
+
+                    # recalculate the constraint            
                     if (sp.prod(self.p_grid) <= comm_world):
-                        correct_decomp = True
+                            correct_decomp = True
+
+        self.loc_domain_dims = [np.ceil(d/p) for (d,p) in zip(self.dimensions_ordered, self.p_grid)]        
+                
             
         if (sp.prod(self.p_grid) < comm_world):
             print("\n\nWarning!!!\nUsing {} out of {} processors\n\n".format(sp.prod(self.p_grid), comm_world))

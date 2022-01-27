@@ -629,8 +629,8 @@ class SDG:
                     # it is a wcr
                     out_dim = len(S.output_accesses[strip(output_array)].baseAccess.split('*'))
                     in_dim = len(base_access.split('*'))
-                    if (out_dim < in_dim) and wcr == False:
-                        wcr = True
+                    # if (out_dim < in_dim) and wcr == False:
+                    #     wcr = True
                     self.add_edge(input_array_ver, output_array, base_access, access_params, S,
                                   wcr, in_transient, out_transient)
 
