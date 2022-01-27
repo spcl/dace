@@ -555,6 +555,26 @@ def test_constant_proper_use():
     program(arr, scal)
     assert np.allclose(arr, 2)
 
+
+def test_constant_proper_use_2():
+    """ Stress test constants with strings. """
+    @dace.program
+    def good_function(cfg: dace.constant, cfg2: dace.constant, arr):
+        print(cfg)
+        print(cfg2)
+
+    @dace.program
+    def program(arr, cfg: dace.constant):
+        arr[:] = arr[:] * scal
+        good_function(cfg, 'cfg2', arr)
+
+    arr = np.ones((12), np.float64)
+    scal = 2
+
+    program(arr, 'cfg')
+    assert np.allclose(arr, 2)
+
+
 def test_constant_misuse():
     @dace.program
     def bad_function(scal: dace.constant, arr):
@@ -606,4 +626,5 @@ if __name__ == '__main__':
     test_constant_propagation()
     test_constant_propagation_2()
     test_constant_proper_use()
+    test_constant_proper_use_2()
     test_constant_misuse()

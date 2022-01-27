@@ -3308,14 +3308,25 @@ class ProgramVisitor(ExtNodeVisitor):
             args = posargs + kwargs
 
             # Check for proper constant arguments
-            for aname, arg in zip(argnames, node.args):
-                if aname in constant_args and not hasattr(arg, 'n'):
-                    raise DaceSyntaxError(
-                        self, node, f'Argument "{aname}" was defined as dace.constant but was not given a constant')
-            for arg in node.keywords:
-                if arg.arg in constant_args and not hasattr(arg.value, 'n'):
-                    raise DaceSyntaxError(
-                        self, node, f'Argument "{arg.arg}" was defined as dace.constant but was not given a constant')
+            for aname, arg, parsed in zip(argnames, node.args, posargs):
+                if aname in constant_args:
+                    if hasattr(arg, 'n'):
+                        pass
+                    elif not isinstance(parsed[1], str) or parsed[0] != parsed[1]:
+                        pass
+                    else:
+                        raise DaceSyntaxError(
+                            self, node, f'Argument "{aname}" was defined as dace.constant but was not given a constant')
+            for arg, parsed in zip(node.keywords, kwargs):
+                if arg.arg in constant_args:
+                    if hasattr(arg.value, 'n'):
+                        pass
+                    elif not isinstance(parsed[1], str) or parsed[0] != parsed[1]:
+                        pass
+                    else:
+                        raise DaceSyntaxError(
+                            self, node,
+                            f'Argument "{arg.arg}" was defined as dace.constant but was not given a constant')
 
             # fcopy = copy.copy(func)
             fcopy = func
