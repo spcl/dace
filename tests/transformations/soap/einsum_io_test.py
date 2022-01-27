@@ -11,12 +11,30 @@ def test_mttkrp_io():
     Test MTTKRP I/O lower bound Q >= 3*N^4/S**(2/3)
     """
     # get MTTKRP sdfg with auto-generated default tensor sizes  
-    einsum_str = 'ijk,jl,kl->il' 
-    #einsum_str = 'ik,kj->ij'
-    decomp_params=[("p", 17), ("Ss", 1024), ("S0", 256), ("S1", 256), ("S2", 256), ("S3", 256)]
+    # einsum_str = 'ijk,jl,kl->il' 
+    einsum_str = 'ik,kj,jl->il'
+    # decomp_params=[("p", 17), ("Ss", 1024), ("S0", 256), ("S1", 256), ("S2", 256), ("S3", 256)]
+    # decomp_params=[("p", 64), ("Ss", 1024), ("S0", 6400 * 4), ("S1", 4400 * 4), ("S2", 7200 * 4), ("S3", 256)]
+    p = 128
+    NI = 6400
+    NJ = 7200
+    NK = 4400
+    NL = 4800
+    def scale(N: int):
+        return int(np.ceil(int(N * np.cbrt(p)) / 2) * 2)
+    S0 = scale(NI)
+    S1 = scale(NK)
+    S2 = scale(NJ)
+    S3 = scale(NL)
+    decomp_params=[("p", p), ("Ss", 1024), ("S0", S0), ("S1", S1), ("S2", S2), ("S3", S3)]
     soap_result = perform_soap_analysis_einsum(einsum_str, decomp_params, generate_schedule=True)
+    for i, sgraph in enumerate(soap_result.subgraphs):
+        print(f"Subgraph {i}==================================================")
+        print(f"Variables: {sgraph.variables}")
+        print(f"Local domains: {sgraph.loc_domain_dims}")
+        print(f"Grid: {sgraph.p_grid}")
     # test MTTKRP I/O bound
-    assert d2sp(soap_result.Q) == sp.sympify('3*S0*S1*S2*S3/Ss**(2/3)')
+    # assert d2sp(soap_result.Q) == sp.sympify('3*S0*S1*S2*S3/Ss**(2/3)')
 
 
 def test_opt_einsum_example_io():
@@ -31,4 +49,4 @@ def test_opt_einsum_example_io():
 
 if __name__ == "__main__":
     test_mttkrp_io()
-    test_opt_einsum_example_io()
+    # test_opt_einsum_example_io()
