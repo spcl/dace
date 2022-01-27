@@ -22,7 +22,7 @@ import dace
 import dace.serialize
 from dace import (data as dt, memlet as mm, subsets as sbs, dtypes, properties, symbolic)
 from dace.sdfg.scope import ScopeTree
-from dace.sdfg.replace import replace, replace_properties
+from dace.sdfg.replace import replace, replace_properties, replace_properties_dict
 from dace.sdfg.validation import (InvalidSDFGError, validate_sdfg)
 from dace.config import Config
 from dace.frontend.python import wrappers
@@ -48,7 +48,7 @@ def _arrays_from_json(obj, context=None):
     return {k: dace.serialize.from_json(v, context) for k, v in obj.items()}
 
 
-def _replace_dict(d, old, new):
+def _replace_dict_keys(d, old, new):
     if old in d:
         if new in d:
             warnings.warn('"%s" already exists in SDFG' % new)
@@ -144,6 +144,33 @@ class InterstateEdge(object):
 
         return result - set(self.assignments.keys())
 
+    def replace_dict(self, repl: Dict[str, str], replace_keys=True) -> None:
+        """
+        Replaces all given keys with their corresponding values.
+        :param repl: Replacement dictionary.
+        :param replace_keys: If False, skips replacing assignment keys.
+        """
+        # Avoid import loops
+        from dace.frontend.python import astutils
+
+        if replace_keys:
+            for name, new_name in repl.items():
+                _replace_dict_keys(self.assignments, name, new_name)
+
+        for k, v in self.assignments.items():
+            vast = ast.parse(v)
+            vast = astutils.ASTFindReplace(repl).visit(vast)
+            newv = astutils.unparse(vast)
+            if newv != v:
+                self.assignments[k] = newv
+        condition = ast.parse(self.condition.as_string)
+        condition = astutils.ASTFindReplace(repl).visit(condition)
+        newc = astutils.unparse(condition)
+        if newc != condition:
+            self.condition.as_string = newc
+            self._uncond = None
+            self._cond_sympy = None
+
     def replace(self, name: str, new_name: str, replace_keys=True) -> None:
         """
         Replaces all occurrences of ``name`` with ``new_name``.
@@ -151,25 +178,7 @@ class InterstateEdge(object):
         :param new_name: The replacement name.
         :param replace_keys: If False, skips replacing assignment keys.
         """
-        # Avoid import loops
-        from dace.frontend.python import astutils
-
-        if replace_keys:
-            _replace_dict(self.assignments, name, new_name)
-
-        for k, v in self.assignments.items():
-            vast = ast.parse(v)
-            vast = astutils.ASTFindReplace({name: new_name}).visit(vast)
-            newv = astutils.unparse(vast)
-            if newv != v:
-                self.assignments[k] = newv
-        condition = ast.parse(self.condition.as_string)
-        condition = astutils.ASTFindReplace({name: new_name}).visit(condition)
-        newc = astutils.unparse(condition)
-        if newc != condition:
-            self.condition.as_string = newc
-            self._uncond = None
-            self._cond_sympy = None
+        self.replace_dict({name: new_name}, replace_keys)
 
     def new_symbols(self, sdfg, symbols) -> Dict[str, dtypes.typeclass]:
         """
@@ -441,37 +450,39 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         """
         if name == new_name:
             return
+        self.replace_dict({name: new_name})
 
-        symrepl = {
-            symbolic.symbol(name): symbolic.pystr_to_symbolic(new_name) if isinstance(new_name, str) else new_name
-        }
-
-        # Replace in arrays and symbols (if a variable name)
-        if validate_name(new_name):
-            _replace_dict(self._arrays, name, new_name)
-            _replace_dict(self.symbols, name, new_name)
-
-        # Replace inside data descriptors
-        for array in self.arrays.values():
-            replace_properties(array, symrepl, name, new_name)
-
-        # Replace in inter-state edges
-        for edge in self.edges():
-            edge.data.replace(name, new_name)
-
-        # Replace in states
-        for state in self.nodes():
-            state.replace(name, new_name)
-
-    def replace_dict(self, repldict: Dict[str, str]) -> None:
+    def replace_dict(self,
+                     repldict: Dict[str, str],
+                     symrepl: Optional[Dict[symbolic.SymbolicType, symbolic.SymbolicType]] = None) -> None:
         """
         Replaces all occurrences of keys in the given dictionary with the mapped
         values.
         :param repldict: The replacement dictionary.
         :param replace_keys: If False, skips replacing assignment keys.
         """
-        for k, v in repldict.items():
-            self.replace(k, v)
+        symrepl = symrepl or {
+            symbolic.symbol(k): symbolic.pystr_to_symbolic(v) if isinstance(k, str) else v
+            for k, v in repldict.items()
+        }
+
+        # Replace in arrays and symbols (if a variable name)
+        for name, new_name in repldict.items():
+            if validate_name(new_name):
+                _replace_dict_keys(self._arrays, name, new_name)
+                _replace_dict_keys(self.symbols, name, new_name)
+
+        # Replace inside data descriptors
+        for array in self.arrays.values():
+            replace_properties_dict(array, repldict, symrepl)
+
+        # Replace in inter-state edges
+        for edge in self.edges():
+            edge.data.replace_dict(repldict)
+
+        # Replace in states
+        for state in self.nodes():
+            state.replace_dict(repldict, symrepl)
 
     def add_symbol(self, name, stype):
         """ Adds a symbol to the SDFG.
