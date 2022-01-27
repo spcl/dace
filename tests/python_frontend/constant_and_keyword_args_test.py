@@ -4,7 +4,7 @@ import dace
 import numpy as np
 import pytest
 
-from dace.frontend.python.common import SDFGConvertible
+from dace.frontend.python.common import DaceSyntaxError, SDFGConvertible
 
 
 def test_kwargs():
@@ -537,6 +537,43 @@ def test_constant_propagation_2():
     assert np.allclose(a, 1)
 
 
+def test_constant_proper_use():
+    @dace.program
+    def good_function(scal: dace.constant, scal2: dace.constant, arr):
+        a_bool = scal == 1
+        if a_bool:
+            arr[:] = arr[:] + scal2
+
+    @dace.program
+    def program(arr, scal: dace.constant):
+        arr[:] = arr[:] * scal
+        good_function(scal, 3.0, arr)
+
+    arr = np.ones((12), np.float64)
+    scal = 2
+
+    program(arr, scal)
+    assert np.allclose(arr, 2)
+
+def test_constant_misuse():
+    @dace.program
+    def bad_function(scal: dace.constant, arr):
+        a_bool = scal == 1
+        if a_bool:
+            arr[:] = arr[:] + 1
+
+    @dace.program
+    def program(arr, scal):
+        arr[:] = arr[:] * scal
+        bad_function(scal, arr)
+
+    arr = np.ones((12), np.float64)
+    scal = 2
+
+    with pytest.raises(DaceSyntaxError):
+        program(arr, scal)
+
+
 if __name__ == '__main__':
     test_kwargs()
     test_kwargs_jit()
@@ -568,3 +605,5 @@ if __name__ == '__main__':
     test_constant_list_function()
     test_constant_propagation()
     test_constant_propagation_2()
+    test_constant_proper_use()
+    test_constant_misuse()

@@ -1588,17 +1588,13 @@ def _scalar_const_binop(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
 
     if left_operand in sdfg.arrays:
         left_scal = sdfg.arrays[left_operand]
-        left_type = left_scal.dtype
         storage = left_scal.storage
         right_scal = None
-        right_type = dtypes.DTYPE_TO_TYPECLASS[type(right_operand)]
         arguments = [left_scal, right_operand]
         tasklet_args = ['__in1', f'({str(right_operand)})']
     else:
         left_scal = None
-        left_type = dtypes.DTYPE_TO_TYPECLASS[type(left_operand)]
         right_scal = sdfg.arrays[right_operand]
-        right_type = right_scal.dtype
         storage = right_scal.storage
         arguments = [left_operand, right_scal]
         tasklet_args = [f'({str(left_operand)})', '__in2']

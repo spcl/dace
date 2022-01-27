@@ -3307,6 +3307,16 @@ class ProgramVisitor(ExtNodeVisitor):
             required_args = argnames
             args = posargs + kwargs
 
+            # Check for proper constant arguments
+            for aname, arg in zip(argnames, node.args):
+                if aname in constant_args and not hasattr(arg, 'n'):
+                    raise DaceSyntaxError(
+                        self, node, f'Argument "{aname}" was defined as dace.constant but was not given a constant')
+            for arg in node.keywords:
+                if arg.arg in constant_args and not hasattr(arg.value, 'n'):
+                    raise DaceSyntaxError(
+                        self, node, f'Argument "{arg.arg}" was defined as dace.constant but was not given a constant')
+
             # fcopy = copy.copy(func)
             fcopy = func
             if hasattr(fcopy, 'global_vars'):
@@ -3331,7 +3341,6 @@ class ProgramVisitor(ExtNodeVisitor):
                 # Handle parsing progress bar for non-dace-program SDFG convertibles
                 if cnt == self.progress_count():
                     self.increment_progress()
-
 
             except Exception as ex:  # Parsing failure
                 # If error should propagate outwards, do not try to parse as callback
