@@ -3284,6 +3284,29 @@ class ProgramVisitor(ExtNodeVisitor):
             return self.sdfg.symbols[arg]
         return arg
 
+    def _assert_arg_constant(self, node: ast.Call, aname: str, aval: Union[ast.AST, Any], parsed: Tuple[str, Any]):
+        """
+        Checks if given argument is constant. If not, raises a DaceSyntaxError exception.
+        :param node: AST node of the call (used for exception).
+        :param aname: Argument name.
+        :param aval: AST (or visited) value of the argument.
+        :param parsed: A 2-tuple of the parsed argument.
+        :raises: DaceSyntaxError if argument is not constant.
+        """
+        # If constant in AST
+        if sys.version_info < (3, 8):
+            if isinstance(aval, (ast.Str, ast.Num, ast.Bytes, ast.NameConstant, ast.Ellipsis)):
+                return
+        else:
+            if isinstance(aval, ast.Constant):
+                return
+        # If a constant value (non-AST) is given during parsing
+        if not isinstance(parsed[1], str) or parsed[0] != parsed[1]:
+            return
+
+        raise DaceSyntaxError(self, node,
+                              f'Argument "{aname}" was defined as dace.constant but was not given a constant')
+
     def _parse_sdfg_call(self, funcname: str, func: Union[SDFG, SDFGConvertible], node: ast.Call):
         # Avoid import loops
         from dace.frontend.python.common import SDFGConvertible
@@ -3310,23 +3333,10 @@ class ProgramVisitor(ExtNodeVisitor):
             # Check for proper constant arguments
             for aname, arg, parsed in zip(argnames, node.args, posargs):
                 if aname in constant_args:
-                    if hasattr(arg, 'n'):
-                        pass
-                    elif not isinstance(parsed[1], str) or parsed[0] != parsed[1]:
-                        pass
-                    else:
-                        raise DaceSyntaxError(
-                            self, node, f'Argument "{aname}" was defined as dace.constant but was not given a constant')
+                    self._assert_arg_constant(node, aname, arg, parsed)
             for arg, parsed in zip(node.keywords, kwargs):
                 if arg.arg in constant_args:
-                    if hasattr(arg.value, 'n'):
-                        pass
-                    elif not isinstance(parsed[1], str) or parsed[0] != parsed[1]:
-                        pass
-                    else:
-                        raise DaceSyntaxError(
-                            self, node,
-                            f'Argument "{arg.arg}" was defined as dace.constant but was not given a constant')
+                    self._assert_arg_constant(node, arg.arg, arg.value, parsed)
 
             # fcopy = copy.copy(func)
             fcopy = func
