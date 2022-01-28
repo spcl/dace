@@ -803,18 +803,9 @@ def ptrtocupy(ptr, inner_ctype, shape):
     umem = cp.cuda.UnownedMemory(ptr, 0, None)
     return cp.ndarray(shape=shape, dtype=inner_ctype, memptr=cp.cuda.MemoryPointer(umem, 0))
 
-
-def _atomic_counter_generator():
-    ctr = 0
-    while True:
-        ctr += 1
-        yield ctr
-
-
 class callback(typeclass):
     """ Looks like dace.callback([None, <some_native_type>], *types)"""
     def __init__(self, return_types, *variadic_args):
-        self.uid = next(_atomic_counter_generator())
         from dace import data
         if return_types is None:
             return_types = []
@@ -986,7 +977,7 @@ class callback(typeclass):
         return partial(trampoline, pyfunc, inp_arraypos, inp_types_and_sizes, ret_arraypos, ret_types_and_sizes)
 
     def __hash__(self):
-        return hash((self.uid, *self.return_types, *self.input_types))
+        return hash((*self.return_types, *self.input_types))
 
     def to_json(self):
         if self.return_types:
@@ -1018,7 +1009,7 @@ class callback(typeclass):
     def __eq__(self, other):
         if not isinstance(other, callback):
             return False
-        return self.uid == other.uid
+        return self.input_types == other.input_types and self.return_types == other.return_types
 
     def __ne__(self, other):
         return not self.__eq__(other)

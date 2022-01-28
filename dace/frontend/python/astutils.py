@@ -4,6 +4,7 @@ import ast
 import astunparse
 import copy
 from collections import OrderedDict
+from io import StringIO
 import inspect
 import numbers
 import numpy
@@ -202,6 +203,26 @@ def subscript_to_ast_slice_recursive(node):
     return result
 
 
+class ExtUnparser(astunparse.Unparser):
+    def _Subscript(self, t):
+        self.dispatch(t.value)
+        self.write('[')
+        # Compatibility
+        if isinstance(t.slice, ast.Index):
+            slc = t.slice.value
+        else:
+            slc = t.slice
+        # Get rid of the tuple parentheses in expressions like "A[(i, j)]""
+        if isinstance(slc, ast.Tuple):
+            for elt in slc.elts[:-1]:
+                self.dispatch(elt)
+                self.write(', ')
+            self.dispatch(slc.elts[-1])
+        else:
+            self.dispatch(slc)
+        self.write(']')
+
+
 def unparse(node):
     """ Unparses an AST node to a Python string, chomping trailing newline. """
     if node is None:
@@ -215,7 +236,10 @@ def unparse(node):
     # Suport for string
     if isinstance(node, str):
         return node
-    return astunparse.unparse(node).strip()
+
+    v = StringIO()
+    ExtUnparser(node, file=v)
+    return v.getvalue().strip()
 
 
 # Helper function to convert an ND subscript AST node to a list of 3-tuple
