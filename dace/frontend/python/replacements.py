@@ -3,6 +3,7 @@ import dace
 
 import ast
 import copy
+from copy import deepcopy as dcpy
 import itertools
 import warnings
 from functools import reduce
@@ -122,17 +123,21 @@ def _define_literal_ex(pv: 'ProgramVisitor',
         raise NotImplementedError('"like" argument unsupported for numpy.array')
 
     name = sdfg.temp_data_name()
+    if dtype is not None and not isinstance(dtype, dtypes.typeclass):
+        dtype = dtypes.typeclass(dtype)
+
 
     # From existing data descriptor
     if isinstance(obj, str):
-        desc = sdfg.arrays[obj]
-        if dtype:
+        desc = dcpy(sdfg.arrays[obj])
+        if dtype is not None: 
             desc.dtype = dtype
     else:  # From literal / constant
         if dtype is None:
             arr = np.array(obj, copy=copy, order=order, subok=subok, ndmin=ndmin)
         else:
-            arr = np.array(obj, dtype, copy=copy, order=order, subok=subok, ndmin=ndmin)
+            npdtype = dtype.as_numpy_dtype()
+            arr = np.array(obj, npdtype, copy=copy, order=order, subok=subok, ndmin=ndmin)
         desc = data.create_datadescriptor(arr)
 
     # Set extra properties
