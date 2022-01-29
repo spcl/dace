@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Tests constants, optional, and keyword arguments. """
+from types import SimpleNamespace
 import dace
 import numpy as np
 import pytest
@@ -594,6 +595,22 @@ def test_constant_misuse():
         program(arr, scal)
 
 
+def test_constant_field():
+    def function(ctx: dace.constant, arr, somebool):
+        a_bool = ctx.scal == 1
+        if a_bool and somebool:
+            arr[:] = arr[:] + 1
+
+    @dace.program
+    def program(arr, ctx: dace.constant):
+        function(ctx, arr, ctx.scal == 1)
+
+    ns = SimpleNamespace(scal=2)
+    arr = np.ones((12), np.float64)
+
+    program(arr, ns)
+
+
 if __name__ == '__main__':
     test_kwargs()
     test_kwargs_jit()
@@ -628,3 +645,4 @@ if __name__ == '__main__':
     test_constant_proper_use()
     test_constant_proper_use_2()
     test_constant_misuse()
+    test_constant_field()
