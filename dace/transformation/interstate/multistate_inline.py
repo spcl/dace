@@ -158,16 +158,6 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation, transformat
                 if isinstance(node, nodes.CodeNode):
                     node.environments |= nsdfg_node.environments
 
-        # Constants
-        for cstname, cstval in nsdfg.constants.items():
-            if cstname in sdfg.constants:
-                if cstval != sdfg.constants[cstname]:
-                    warnings.warn('Constant value mismatch for "%s" while '
-                                  'inlining SDFG. Inner = %s != %s = outer' %
-                                  (cstname, cstval, sdfg.constants[cstname]))
-            else:
-                sdfg.add_constant(cstname, cstval)
-
         # Symbols
         outer_symbols = {str(k): v for k, v in sdfg.symbols.items()}
         for ise in sdfg.edges():
@@ -240,6 +230,20 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation, transformat
 
                             name = sdfg.add_datadesc(new_name, datadesc, find_new_name=True)
                             transients[edge.data.data] = name
+
+
+        # All constants (and associated transients) become constants of the parent
+        for cstname, (csttype, cstval) in nsdfg.constants_prop.items():
+            if cstname in sdfg.constants:
+                if cstname in transients:
+                    newname = transients[cstname]
+                else:
+                    newname = sdfg.find_new_constant(cstname)
+                    transients[cstname] = newname
+                sdfg.constants_prop[newname] = (csttype, cstval)
+            else:
+                sdfg.constants_prop[cstname] = (csttype, cstval)
+
 
         #######################################################
         # Replace data on inlined SDFG nodes/edges
