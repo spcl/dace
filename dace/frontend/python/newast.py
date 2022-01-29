@@ -2024,6 +2024,9 @@ class ProgramVisitor(ExtNodeVisitor):
             raise DaceSyntaxError(self, node, "Number of indices and ranges of for-loop do not match")
 
         if iterator == 'dace.map':
+            if node.orelse:
+                raise DaceSyntaxError(self, node, '"else" clause not supported on DaCe maps')
+
             state = self._add_state('MapState')
             params = [(k, ':'.join([str(t) for t in v])) for k, v in zip(indices, ranges)]
             params, map_inputs = self._parse_map_inputs('map_%d' % node.lineno, params, node)
@@ -2118,11 +2121,21 @@ class ProgramVisitor(ExtNodeVisitor):
 
             # Add loop to SDFG
             loop_cond = '>' if ((pystr_to_symbolic(ranges[0][2]) < 0) == True) else '<'
+            incr = {indices[0]: '%s + %s' % (indices[0], astutils.unparse(ast_ranges[0][2]))}
             _, loop_guard, loop_end = self.sdfg.add_loop(
                 laststate, first_loop_state, end_loop_state, indices[0], astutils.unparse(ast_ranges[0][0]),
-                '%s %s %s' % (indices[0], loop_cond, astutils.unparse(ast_ranges[0][1])),
-                '%s + %s' % (indices[0], astutils.unparse(ast_ranges[0][2])), last_loop_state)
-            incr = {indices[0]: '%s + %s' % (indices[0], ranges[0][2])}
+                '%s %s %s' % (indices[0], loop_cond, astutils.unparse(ast_ranges[0][1])), incr[indices[0]],
+                last_loop_state)
+
+            # Handle else clause
+            if node.orelse:
+                # Continue visiting body
+                for stmt in node.orelse:
+                    self.visit(stmt)
+
+                # The state that all "break" edges go to
+                loop_end = self._add_state(f'postloop_{node.lineno}')
+
             continue_states = self.continue_states.pop()
             while continue_states:
                 next_state = continue_states.pop()
@@ -2222,6 +2235,15 @@ class ProgramVisitor(ExtNodeVisitor):
             self.sdfg.add_edge(end_guard, e.dst, e.data)
             self.sdfg.remove_edge(e)
         self.sdfg.remove_node(loop_guard)
+
+        # Handle else clause
+        if node.orelse:
+            # Continue visiting body
+            for stmt in node.orelse:
+                self.visit(stmt)
+
+            # The state that all "break" edges go to
+            loop_end = self._add_state(f'postwhile_{node.lineno}')
 
         continue_states = self.continue_states.pop()
         while continue_states:
@@ -3331,7 +3353,6 @@ class ProgramVisitor(ExtNodeVisitor):
                 # Handle parsing progress bar for non-dace-program SDFG convertibles
                 if cnt == self.progress_count():
                     self.increment_progress()
-
 
             except Exception as ex:  # Parsing failure
                 # If error should propagate outwards, do not try to parse as callback
