@@ -212,6 +212,9 @@ def parse_dace_program(name: str,
             for name, new_name in repldict.items():
                 sdfg.arrays[new_name] = sdfg.arrays[name]
                 del sdfg.arrays[name]
+                if name in sdfg.constants_prop:
+                    sdfg.constants_prop[new_name] = sdfg.constants_prop[name]
+                    del sdfg.constants_prop[name]
 
         symbolic.safe_replace(nested_closure_replacements, repl_callback, value_as_string=True)
 

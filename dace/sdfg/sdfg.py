@@ -450,6 +450,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         if validate_name(new_name):
             _replace_dict(self._arrays, name, new_name)
             _replace_dict(self.symbols, name, new_name)
+            _replace_dict(self.constants_prop, name, new_name)
 
         # Replace inside data descriptors
         for array in self.arrays.values():
