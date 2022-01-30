@@ -407,28 +407,10 @@ class Array(Data):
 
         super(Array, self).__init__(dtype, shape, transient, storage, location, lifetime, debuginfo)
 
-        if shape is None:
-            raise IndexError('Shape must not be None')
-
         self.allow_conflicts = allow_conflicts
         self.may_alias = may_alias
         self.alignment = alignment
-
-        if strides is not None:
-            self.strides = cp.copy(strides)
-        else:
-            self.strides = [_prod(shape[i + 1:]) for i in range(len(shape))]
-
-        if strides is not None and shape is not None and total_size is None:
-            # Compute the minimal total_size that could be used with strides and shape
-            self.total_size = sum(((shp - 1) * s for shp, s in zip(shape, strides))) + 1
-        else:
-            self.total_size = total_size or _prod(shape)
-
-        if offset is not None:
-            self.offset = cp.copy(offset)
-        else:
-            self.offset = [0] * len(shape)
+        self._set_shape_dependent_properties(shape, strides, total_size, offset)
 
         self.validate()
 
@@ -559,6 +541,46 @@ class Array(Data):
 
         return result
 
+    def _set_shape_dependent_properties(self, shape, strides, total_size,
+                                        offset):
+        """
+        Used to set properties which depend on the shape of the array
+        either to their default value, which depends on the shape, or
+        if explicitely provided to the given value. For internal use only.
+        """
+        if shape is None:
+            raise IndexError('Shape must not be None')
+
+        if strides is not None:
+            self.strides = cp.copy(strides)
+        else:
+            self.strides = [_prod(shape[i + 1:]) for i in range(len(shape))]
+
+        if strides is not None and shape is not None and total_size is None:
+            # Compute the minimal total_size that could be used with strides and shape
+            self.total_size = sum(((shp - 1) * s for shp, s in zip(shape, strides))) + 1
+        else:
+            self.total_size = total_size or _prod(shape)
+
+        if offset is not None:
+            self.offset = cp.copy(offset)
+        else:
+            self.offset = [0] * len(shape)
+
+    def set_shape(
+        self,
+        new_shape,
+        strides=None,
+        total_size=None,
+        offset=None,
+    ):
+        """
+        Updates the shape of an array.
+        """
+        self.shape = new_shape
+        self._set_shape_dependent_properties(new_shape, strides, total_size,
+                                             offset)
+        self.validate()
 
 @make_properties
 class Stream(Data):
