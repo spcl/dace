@@ -1,5 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-
+ 
 from dace.fpga_testing import xilinx_test 
 from numpy.lib import math
 from dace.sdfg.state import SDFGState
