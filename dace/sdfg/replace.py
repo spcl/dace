@@ -117,6 +117,9 @@ def replace_datadesc_names(sdfg, repl: Dict[str, str]):
         if aname in repl:
             del sdfg.arrays[aname]
             sdfg.arrays[repl[aname]] = aval
+            if aname in sdfg.constants_prop:
+                sdfg.constants_prop[repl[aname]] = sdfg.constants_prop[aname]
+                del sdfg.constants_prop[aname]
 
     # Replace in interstate edges
     for e in sdfg.edges():

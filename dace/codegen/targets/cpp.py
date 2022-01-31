@@ -254,8 +254,9 @@ def emit_memlet_reference(dispatcher,
     # accordingly.
     defined_types = None
     try:
-        if (isinstance(desc, data.Array) and not isinstance(desc, data.View)
-                and any(str(s) not in dispatcher.frame.symbols_and_constants(sdfg) for s in dispatcher.frame.free_symbols(desc))):
+        if (isinstance(desc, data.Array) and not isinstance(desc, data.View) and any(
+                str(s) not in dispatcher.frame.symbols_and_constants(sdfg)
+                for s in dispatcher.frame.free_symbols(desc))):
             defined_types = dispatcher.declared_arrays.get(memlet.data, ancestor)
     except KeyError:
         pass
@@ -935,7 +936,14 @@ class InterstateEdgeUnparser(cppunparse.CPPUnparser):
             raise SyntaxError('Range subscripts disallowed in interstate edges')
 
         memlet = mmlt.Memlet(data=target, subset=rng)
-        self.write(cpp_array_expr(self.sdfg, memlet))
+
+        if target not in self.sdfg.arrays:
+            # This could be an FPGA array whose name has been mangled
+            unqualified = fpga.unqualify_fpga_array_name(self.sdfg, target)
+            desc = self.sdfg.arrays[unqualified]
+            self.write(cpp_array_expr(self.sdfg, memlet, referenced_array=desc))
+        else:
+            self.write(cpp_array_expr(self.sdfg, memlet))
 
 
 def unparse_interstate_edge(code_ast: Union[ast.AST, str], sdfg: SDFG, symbols=None) -> str:

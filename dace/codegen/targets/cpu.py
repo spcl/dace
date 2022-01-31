@@ -1750,21 +1750,21 @@ class CPUCodeGen(TargetCodeGenerator):
 
         # Since consume is an alias node, we create an actual array for the
         # consumed element and modify the outgoing memlet path ("OUT_stream")
-        # TODO: do this before getting to the codegen
+        # TODO: do this before getting to the codegen (preprocess)
         if node.consume.chunksize == 1:
             newname, _ = sdfg.add_scalar("__dace_" + node.consume.label + "_element",
                                          input_streamdesc.dtype,
                                          transient=True,
                                          storage=dtypes.StorageType.Register,
                                          find_new_name=True)
-            ce_node = nodes.AccessNode(newname, dtypes.AccessType.ReadOnly)
+            ce_node = nodes.AccessNode(newname)
         else:
             newname, _ = sdfg.add_array("__dace_" + node.consume.label + '_elements', [node.consume.chunksize],
                                         input_streamdesc.dtype,
                                         transient=True,
                                         storage=dtypes.StorageType.Register,
                                         find_new_name=True)
-            ce_node = nodes.AccessNode(newname, dtypes.AccessType.ReadOnly)
+            ce_node = nodes.AccessNode(newname)
         state_dfg.add_node(ce_node)
         out_memlet_path = state_dfg.memlet_path(output_sedge)
         state_dfg.remove_edge(out_memlet_path[0])

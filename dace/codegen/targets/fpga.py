@@ -258,6 +258,7 @@ def fpga_ptr(name: str,
 
             subset_info = low  #used for arrayinterface name where it must be int
     if is_array_interface:
+        # qualify the name
         if is_write is None:
             raise ValueError("is_write must be set for ArrayInterface.")
         ptr_in = f"__{name}_in"
@@ -282,6 +283,21 @@ def fpga_ptr(name: str,
         if interface_id is not None:
             name = f"{name}_{interface_id}"
     return name
+
+
+def unqualify_fpga_array_name(sdfg: dace.SDFG, arr_name: str):
+    '''
+    Returns the unqualified array name if it refers to an array interface.
+    Otherwise return it as it is.
+    :param name: array name to unqualify
+    '''
+
+    if arr_name not in sdfg.arrays and (arr_name.endswith('_in') or arr_name.endswith('out')) and arr_name.startswith('__'):
+        unqualified = re.sub('_in$|_out$', '', arr_name)
+        unqualified = re.sub('^__', '', unqualified)
+        return unqualified
+    else:
+        return arr_name
 
 
 class FPGACodeGen(TargetCodeGenerator):
@@ -376,6 +392,9 @@ class FPGACodeGen(TargetCodeGenerator):
     def preprocess(self, sdfg: SDFG) -> None:
         # Right before finalizing code, write FPGA context to state structure
         self._frame.statestruct.append('dace_fpga_context *fpga_context;')
+
+        # Call vendor-specific preprocessing
+        self._internal_preprocess(sdfg)
 
     def _kernels_subgraphs(self, graph: Union[dace.sdfg.SDFGState, ScopeSubgraphView], dependencies: dict):
         '''

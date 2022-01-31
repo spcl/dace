@@ -6,7 +6,7 @@ import itertools
 import os
 import re
 import numpy as np
-
+import ast
 import dace
 from dace import data as dt, registry, dtypes, subsets
 from dace.config import Config
@@ -188,6 +188,41 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                 CodeObject(name[0], code.getvalue(), ".".join(name[1:]), XilinxCodeGen, "Xilinx", target_type="device"))
 
         return [host_code_obj] + kernel_code_objs + other_objs
+
+    def _internal_preprocess(self, sdfg: dace.SDFG):
+        '''
+        Vendor-specific SDFG Preprocessing
+        '''
+
+        # Preprocess inter state edge assignments:
+        # - look at every interstate edge
+        # - if any of them accesses an ArrayInterface (Global FPGA memory), qualify its name and replace it
+        #       in the assignment string
+
+        for graph in sdfg.all_sdfgs_recursive():
+            for state in graph.states():
+                out_edges = graph.out_edges(state)
+                for e in out_edges:
+                    if len(e.data.assignments) > 0:
+                        replace_dict = dict()
+
+                        for variable, value in e.data.assignments.items():
+                            expr = ast.parse(value)
+                            # walk in the expression, get all array names and check whether we need to qualify them
+                            for node in ast.walk(expr):
+                                if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name):
+                                    arr_name = node.value.id
+
+                                    if arr_name not in replace_dict and arr_name in graph.arrays and graph.arrays[
+                                        arr_name].storage == dace.dtypes.StorageType.FPGA_Global:
+                                        repl = fpga.fpga_ptr(arr_name, graph.arrays[node.value.id], sdfg, None, False,
+                                                             None, None, True)
+                                        replace_dict[arr_name] = repl
+
+                        # Perform replacement
+                        for k, v in replace_dict.items():
+                            e.data.replace(k, v)
+
 
     def define_stream(self, dtype, buffer_size, var_name, array_size, function_stream, kernel_stream, sdfg):
         """

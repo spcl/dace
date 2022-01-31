@@ -56,5 +56,18 @@ def test():
     assert residual <= 0.05
 
 
+def test_constant_transient():
+    @dace.program
+    def ctrans(a: dace.float64[10]):
+        cst = np.array([1., 2., 3., 4., 5, 6, 7, 8, 9, 10])
+        return a + cst
+
+    a = np.random.rand(10)
+    expected = a + np.arange(1, 11)
+    result = ctrans(a)
+    assert np.allclose(result, expected)
+
+
 if __name__ == "__main__":
     test()
+    test_constant_transient()

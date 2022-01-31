@@ -446,6 +446,9 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
         for sdfg, name, desc in top_sdfg.arrays_recursive():
             if not desc.transient:
                 continue
+            if name in sdfg.constants_prop:
+                # Constants do not need to be allocated
+                continue
 
             # NOTE: In the code below we infer where a transient should be
             # declared, allocated, and deallocated. The information is stored
@@ -707,6 +710,13 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
 
         # Allocate outer-level transients
         self.allocate_arrays_in_scope(sdfg, sdfg, global_stream, callsite_stream)
+
+        # Define constants as top-level-allocated
+        for cname, (ctype, _) in sdfg.constants_prop.items():
+            if isinstance(ctype, data.Array):
+                self.dispatcher.defined_vars.add(cname, disp.DefinedType.Pointer, ctype.dtype.ctype)
+            else:
+                self.dispatcher.defined_vars.add(cname, disp.DefinedType.Scalar, ctype.dtype.ctype)
 
         # Allocate inter-state variables
         global_symbols = copy.deepcopy(sdfg.symbols)
