@@ -3,17 +3,19 @@ import dace
 
 import ast
 import copy
+from copy import deepcopy as dcpy
 import itertools
 import warnings
 from functools import reduce
 from numbers import Number, Integral
-from typing import Any, Callable, Dict, List, Sequence, Set, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple, Union
 
 import dace
 from dace.codegen.tools import type_inference
 from dace.config import Config
 from dace import data, dtypes, subsets, symbolic, sdfg as sd
 from dace.frontend.common import op_repository as oprepo
+from dace.frontend.python.common import DaceSyntaxError
 import dace.frontend.python.memlet_parser as mem_parser
 from dace.frontend.python import astutils
 from dace.frontend.python.nested_call import NestedCall
@@ -99,6 +101,64 @@ def _define_streamarray(pv: 'ProgramVisitor',
     """ Defines a local stream array in a DaCe program. """
     name = sdfg.temp_data_name()
     sdfg.add_stream(name, dtype, shape=shape, buffer_size=buffer_size, transient=True)
+    return name
+
+
+@oprepo.replaces('numpy.array')
+@oprepo.replaces('dace.array')
+def _define_literal_ex(pv: 'ProgramVisitor',
+                       sdfg: SDFG,
+                       state: SDFGState,
+                       obj: Any,
+                       dtype: dace.typeclass = None,
+                       copy: bool = True,
+                       order: str = 'K',
+                       subok: bool = False,
+                       ndmin: int = 0,
+                       like: Any = None,
+                       storage: Optional[dtypes.StorageType] = None,
+                       lifetime: Optional[dtypes.AllocationLifetime] = None):
+    """ Defines a literal array in a DaCe program. """
+    if like is not None:
+        raise NotImplementedError('"like" argument unsupported for numpy.array')
+
+    name = sdfg.temp_data_name()
+    if dtype is not None and not isinstance(dtype, dtypes.typeclass):
+        dtype = dtypes.typeclass(dtype)
+
+
+    # From existing data descriptor
+    if isinstance(obj, str):
+        desc = dcpy(sdfg.arrays[obj])
+        if dtype is not None: 
+            desc.dtype = dtype
+    else:  # From literal / constant
+        if dtype is None:
+            arr = np.array(obj, copy=copy, order=order, subok=subok, ndmin=ndmin)
+        else:
+            npdtype = dtype.as_numpy_dtype()
+            arr = np.array(obj, npdtype, copy=copy, order=order, subok=subok, ndmin=ndmin)
+        desc = data.create_datadescriptor(arr)
+
+    # Set extra properties
+    desc.transient = True
+    if storage is not None:
+        desc.storage = storage
+    if lifetime is not None:
+        desc.lifetime = lifetime
+
+    sdfg.add_datadesc(name, desc)
+
+    # If using existing array, make copy. Otherwise, make constant
+    if isinstance(obj, str):
+        # Make copy
+        rnode = state.add_read(obj)
+        wnode = state.add_write(name)
+        state.add_nedge(rnode, wnode, dace.Memlet.from_array(name, desc))
+    else:
+        # Make constant
+        sdfg.add_constant(name, arr, desc)
+
     return name
 
 

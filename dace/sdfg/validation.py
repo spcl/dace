@@ -82,15 +82,15 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG'):
         # Check every state separately
         start_state = sdfg.start_state
         initialized_transients = {'__pystate'}
+        initialized_transients.update(sdfg.constants_prop.keys())
         symbols = copy.deepcopy(sdfg.symbols)
         symbols.update(sdfg.arrays)
-        symbols.update({k: dt.create_datadescriptor(v) for k, v in sdfg.constants.items()})
+        symbols.update({k: v for k, (v, _) in sdfg.constants_prop.items()})
         for desc in sdfg.arrays.values():
             for sym in desc.free_symbols:
                 symbols[str(sym)] = sym.dtype
         visited = set()
         visited_edges = set()
-        initialized_transients = set()
         # Run through states via DFS, ensuring that only the defined symbols
         # are available for validation
         for edge in sdfg.dfs_edges(start_state):
