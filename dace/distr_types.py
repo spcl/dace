@@ -325,7 +325,7 @@ class RedistrArray(object):
         array_a = sdfg.subarrays[self.array_a]
         array_b = sdfg.subarrays[self.array_b]
         from dace.libraries.mpi import utils
-        tmp = f"""
+        tmp = f"""{{
             __state->{self.name}_sends = 0;
             __state->{self.name}_recvs = 0;
             int max_sends = 1;
@@ -527,6 +527,7 @@ class RedistrArray(object):
             """
         for i in range(len(array_b.shape)):
             tmp += f"}}"
+        tmp += "}"
         tmp += "}"
         return tmp
     
