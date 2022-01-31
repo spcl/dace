@@ -10,7 +10,7 @@ import numbers
 import numpy
 import sympy
 import sys
-from typing import Any, Dict, List, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from dace import dtypes, symbolic
 
@@ -371,15 +371,15 @@ def copy_tree(node: ast.AST) -> ast.AST:
         def visit_Constant(self, node):
             # Ignore value
             return ast.copy_location(ast.Constant(value=node.value, kind=node.kind), node)
-        
+
         def visit(self, node):
-            if node.__class__.__name__ in {'Num', 'Constant'}:    
+            if node.__class__.__name__ in {'Num', 'Constant'}:
                 method = 'visit_' + node.__class__.__name__
                 visitor = getattr(self, method, self.generic_visit)
                 return visitor(node)
             newnode = copy.copy(node)
             return self.generic_visit(newnode)
-        
+
         def generic_visit(self, node):
             for field, old_value in ast.iter_fields(node):
                 if isinstance(old_value, list):
@@ -572,3 +572,65 @@ class ConstantExtractor(ast.NodeTransformer):
         self.gvars[newname] = node.n
         self.id += 1
         return ast.copy_location(ast.Name(id=newname, ctx=ast.Load()), node)
+
+
+class ASTHelperMixin:
+    """ A mixin that adds useful helper functions for AST node transformers and visitors """
+    def generic_visit_filtered(self, node: ast.AST, filter: Optional[Set[str]] = None):
+        """
+        Modification of ast.NodeTransformer.generic_visit that visits all fields without the
+        set of filtered fields.
+        :param node: AST to visit.
+        :param filter: Set of strings of fields to skip.
+        """
+        filter = filter or set()
+        for field, old_value in ast.iter_fields(node):
+            if field in filter:
+                continue
+            if isinstance(old_value, list):
+                new_values = []
+                for value in old_value:
+                    if isinstance(value, ast.AST):
+                        value = self.visit(value)
+                        if value is None:
+                            continue
+                        elif not isinstance(value, ast.AST):
+                            new_values.extend(value)
+                            continue
+                    new_values.append(value)
+                old_value[:] = new_values
+            elif isinstance(old_value, ast.AST):
+                new_node = self.visit(old_value)
+                if new_node is None:
+                    delattr(node, field)
+                else:
+                    setattr(node, field, new_node)
+        return node
+
+    def generic_visit_field(self, node: ast.AST, field: str) -> ast.AST:
+        """
+        Modification of ast.NodeTransformer.generic_visit that only visits one
+        field.
+        :param node: AST to visit.
+        :param field: Field to visit.
+        """
+        old_value = getattr(node, field)
+        if isinstance(old_value, list):
+            new_values = []
+            for value in old_value:
+                if isinstance(value, ast.AST):
+                    value = self.visit(value)
+                    if value is None:
+                        continue
+                    elif not isinstance(value, ast.AST):
+                        new_values.extend(value)
+                        continue
+                new_values.append(value)
+            old_value[:] = new_values
+        elif isinstance(old_value, ast.AST):
+            new_node = self.visit(old_value)
+            if new_node is None:
+                delattr(node, field)
+            else:
+                setattr(node, field, new_node)
+        return node

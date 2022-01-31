@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
 import copy
 from dataclasses import dataclass
@@ -215,6 +215,111 @@ class _FindBreakContinueStmts(ast.NodeVisitor):
     def visit_Continue(self, node):
         self.has_cflow = True
         return self.generic_visit(node)
+
+
+class ContextManagerInliner(ast.NodeTransformer, astutils.ASTHelperMixin):
+    """
+    Since exceptions are disabled in dace programs, AST with ``with`` statements
+    can be replaced with appropriate calls to the ``__enter__``/``__exit__`` calls
+    in the right places, i.e., at the end of the body or when the context is left due to
+    a return statement, or top-level break/continue statements.
+    """
+    def __init__(self) -> None:
+        super().__init__()
+        self.with_statements: List[ast.With] = []
+        self.context_manager_names: Dict[ast.With, List[str]] = {}
+
+    def _visit_node_with_body(self, node):
+        node = self.generic_visit_filtered(node, {'body'})
+        self.with_statements.append(node)
+        node = self.generic_visit_field(node, 'body')
+        self.with_statements.pop()
+        return node
+
+    def _add_exits(self, until_loop_end: bool, only_one: bool = False) -> List[ast.AST]:
+        result = []
+        if len(self.with_statements) == 0:
+            return result
+        for stmt in reversed(self.with_statements):
+            if until_loop_end and not isinstance(stmt, (ast.With, ast.AsyncWith)):
+                break
+            for mgr in reversed(self.context_manager_names[stmt]):
+                # Call __exit__ (without exception management all three arguments are set to None)
+                exit_call = ast.copy_location(ast.parse(f'{mgr}.__exit__(None, None, None)').body[0], stmt)
+                result.append(exit_call)
+            if only_one:
+                break
+
+        return result
+
+    def _add_entries(self, node: ast.With) -> List[ast.AST]:
+        result = []
+        ctx_mgr_names = []
+        for i, item in enumerate(node.items):
+            # Create manager
+            mgr = ast.copy_location(ast.Name(id=f'__with_{node.lineno}_{i}', ctx=ast.Store()), node)
+            create_mgr = ast.copy_location(ast.Assign(targets=[mgr], value=item.context_expr, type_comment=None), node)
+            result.append(create_mgr)
+            ctx_mgr_names.append(mgr.id)
+
+            # Call __enter__
+            enter_call = ast.copy_location(ast.parse(f'{mgr.id}.__enter__()').body[0], node)
+            if item.optional_vars is not None:
+                enter_call = ast.copy_location(
+                    ast.Assign(targets=[item.optional_vars], value=enter_call.value, type_comment=None), node)
+            result.append(enter_call)
+
+        self.context_manager_names[node] = ctx_mgr_names
+
+        return result
+
+    def visit_With(self, node: ast.With):
+        # Beginning and end of body adds __enter__, __exit__ calls for each item
+        self.with_statements.append(node)
+
+        # Make empty block
+        ifnode: ast.If = ast.parse('if True: pass').body[0]
+        ifnode = ast.copy_location(ifnode, node)
+
+        # Make enter calls
+        entries = self._add_entries(node)
+        ifnode.body = entries
+
+        # Visit body
+        node = self.generic_visit_field(node, 'body')
+        ifnode.body += node.body
+
+        # Make exit calls
+        ifnode.body += self._add_exits(True, True)
+
+        # Pop context manager information
+        self.with_statements.pop()
+        del self.context_manager_names[node]
+        return ifnode
+
+    def visit_AsyncWith(self, node):
+        return self.visit_With(node)
+
+    def visit_For(self, node):
+        return self._visit_node_with_body(node)
+
+    def visit_AsyncFor(self, node):
+        return self._visit_node_with_body(node)
+
+    def visit_While(self, node):
+        return self._visit_node_with_body(node)
+
+    def visit_Break(self, node):
+        node = self.generic_visit(node)
+        return self._add_exits(True) + [node]
+
+    def visit_Continue(self, node):
+        node = self.generic_visit(node)
+        return self._add_exits(True) + [node]
+
+    def visit_Return(self, node):
+        node = self.generic_visit(node)
+        return self._add_exits(False) + [node]
 
 
 class LoopUnroller(ast.NodeTransformer):
@@ -460,7 +565,7 @@ def has_replacement(callobj: Callable, parent_object: Optional[Any] = None, node
     return oprepo.Replacements.get(astutils.rname(node)) is not None
 
 
-class GlobalResolver(ast.NodeTransformer):
+class GlobalResolver(ast.NodeTransformer, astutils.ASTHelperMixin):
     """ Resolves global constants and lambda expressions if not
         already defined in the given scope. """
     def __init__(self, globals: Dict[str, Any], resolve_functions: bool = False):
@@ -739,32 +844,6 @@ class GlobalResolver(ast.NodeTransformer):
                 return self.generic_visit(node)
         return self.generic_visit(node)
 
-    def generic_visit_field(self, node: ast.AST, field: str) -> ast.AST:
-        """
-        Modification of ast.NodeTransformer.generic_visit that only visits one
-        field.
-        """
-        old_value = getattr(node, field)
-        if isinstance(old_value, list):
-            new_values = []
-            for value in old_value:
-                if isinstance(value, ast.AST):
-                    value = self.visit(value)
-                    if value is None:
-                        continue
-                    elif not isinstance(value, ast.AST):
-                        new_values.extend(value)
-                        continue
-                new_values.append(value)
-            old_value[:] = new_values
-        elif isinstance(old_value, ast.AST):
-            new_node = self.visit(old_value)
-            if new_node is None:
-                delattr(node, field)
-            else:
-                setattr(node, field, new_node)
-        return node
-
     def visit_For(self, node: ast.For):
         # Special case: for loop generators cannot be dace programs
         oldval = self.do_not_detect_callables
@@ -1000,6 +1079,7 @@ def preprocess_dace_program(f: Callable[..., Any],
         try:
             src_ast = closure_resolver.visit(src_ast)
             src_ast = LoopUnroller(resolved, src_file).visit(src_ast)
+            src_ast = ContextManagerInliner().visit(src_ast)
             src_ast = ConditionalCodeResolver(resolved).visit(src_ast)
             src_ast = DeadCodeEliminator().visit(src_ast)
         except Exception:
