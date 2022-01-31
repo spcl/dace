@@ -7,10 +7,13 @@ coverage:
   round: nearest
   status:
     patch: off
-    project:
-      default:
-        threshold: 1%
+    project: off
+#    project:
+#      default:
+#        threshold: 1%
 
 codecov:
     notify:
         after_n_builds: 8
+
+comment: false
