@@ -212,6 +212,9 @@ def parse_dace_program(name: str,
             for name, new_name in repldict.items():
                 sdfg.arrays[new_name] = sdfg.arrays[name]
                 del sdfg.arrays[name]
+                if name in sdfg.constants_prop:
+                    sdfg.constants_prop[new_name] = sdfg.constants_prop[name]
+                    del sdfg.constants_prop[name]
 
         symbolic.safe_replace(nested_closure_replacements, repl_callback, value_as_string=True)
 
@@ -2979,7 +2982,7 @@ class ProgramVisitor(ExtNodeVisitor):
                         self.variables[name] = true_name
                         defined_vars[name] = true_name
                         continue
-                    elif not result_data.transient:
+                    elif not result_data.transient or result in self.sdfg.constants_prop:
                         true_name, new_data = _add_transient_data(self.sdfg, result_data, dtype)
                         self.variables[name] = true_name
                         defined_vars[name] = true_name
@@ -3002,8 +3005,8 @@ class ProgramVisitor(ExtNodeVisitor):
 
                     # Visit slice contents
                     nslice = self._parse_subscript_slice(true_target.slice)
-                    defined_arrays = {**self.sdfg.arrays, **self.scope_arrays, **self.defined}
 
+                defined_arrays = {**self.sdfg.arrays, **self.scope_arrays, **self.defined}
                 expr: MemletExpr = ParseMemlet(self, defined_arrays, true_target, nslice)
                 rng = expr.subset
                 if isinstance(rng, subsets.Indices):

@@ -416,21 +416,17 @@ def resolve_symbol_to_constant(symb, start_sdfg):
         return None
 
 
-def symbols_in_ast(tree):
+def symbols_in_ast(tree: ast.AST):
     """ Walks an AST and finds all names, excluding function names. """
-    to_visit = list(tree.__dict__.items())
     symbols = []
-    while len(to_visit) > 0:
-        (key, val) = to_visit.pop()
-        if key == "func":
+    skip = set()
+    for node in ast.walk(tree):
+        if node in skip:
             continue
-        if isinstance(val, ast.Name):
-            symbols.append(val.id)
-            continue
-        if isinstance(val, ast.expr):
-            to_visit += list(val.__dict__.items())
-        if isinstance(val, list):
-            to_visit += [(key, v) for v in val]
+        if isinstance(node, ast.Call):
+            skip.add(node.func)
+        if isinstance(node, ast.Name):
+            symbols.append(node.id)
     return dtypes.deduplicate(symbols)
 
 

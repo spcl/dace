@@ -450,6 +450,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         if validate_name(new_name):
             _replace_dict(self._arrays, name, new_name)
             _replace_dict(self.symbols, name, new_name)
+            _replace_dict(self.constants_prop, name, new_name)
 
         # Replace inside data descriptors
         for array in self.arrays.values():
@@ -1279,7 +1280,8 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
     def _find_new_name(self, name: str):
         """ Tries to find a new name by adding an underscore and a number. """
         index = 0
-        while (name + ('_%d' % index)) in self._arrays:
+        names = (self._arrays.keys() | self.constants_prop.keys())
+        while (name + ('_%d' % index)) in names:
             index += 1
 
         return name + ('_%d' % index)
