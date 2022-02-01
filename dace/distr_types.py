@@ -498,7 +498,7 @@ class RedistrArray(object):
 
                     if (idx{i}_dst < 0 || idx{i}_dst >= kappa[{i}]) continue;
                     int lo{i} = (idx{i}_dst == 0 ? lambda[{i}] : 0);
-                    int uo{i} = (idx{i}_dst == kappa[{i}] ? {sb} + lambda[{i}] - idx{i}_dst * {sa} : {sa});
+                    int uo{i} = (idx{i}_dst == kappa[{i}] - 1 ? {sb} + lambda[{i}] - idx{i}_dst * {sa} : {sa});
                     subsizes[{i}] = uo{i} - lo{i};
                     origin[{i}] = lo{i};
                     //pcoords[{i}] = idx{i};
@@ -562,7 +562,7 @@ class RedistrArray(object):
                 MPI_Type_create_subarray({len(array_a.shape)},  sizes, subsizes, origin, MPI_ORDER_C, {utils.MPI_DDT(array_a.dtype.base_type)}, &__state->{self.name}_send_types[__state->{self.name}_sends]);
                 MPI_Type_commit(&__state->{self.name}_send_types[__state->{self.name}_sends]);
                 __state->{self.name}_dst_ranks[__state->{self.name}_sends] = ranks2[0];
-                printf("({self.array_a} -> {self.array_b}) I am rank %d and I send to %d%d (%d - %d) size (%d, %d) from (%d, %d)\\n", myrank, pcoords[0], pcoords[1], cart_rank, __state->{self.name}_dst_ranks[__state->{self.name}_sends], origin[0], origin[1], subsizes[0], subsizes[1]);
+                printf("({self.array_a} -> {self.array_b}) I am rank %d and I send to %d%d (%d - %d) from (%d, %d) size (%d, %d)\\n", myrank, pcoords[0], pcoords[1], cart_rank, __state->{self.name}_dst_ranks[__state->{self.name}_sends], origin[0], origin[1], subsizes[0], subsizes[1]);
                 __state->{self.name}_sends++;
             }}
             MPI_Group_free(&world_group);
