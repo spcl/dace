@@ -3,10 +3,10 @@ import ast
 import copy
 from dataclasses import dataclass
 import inspect
+import numbers
 import numpy
 import re
 import sympy
-import sys
 import warnings
 
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
@@ -475,10 +475,17 @@ class LoopUnroller(ast.NodeTransformer):
         new_body = []
         for elem in generator:
             # Paste loop body with replaced elements
-            try:
-                iter(elem)
-            except (TypeError, ValueError):
+            if not isinstance(elem, (list, tuple, set)):
                 elem = [elem]
+
+            # If an unknown/mutable object, add to closure
+            for i, e in enumerate(elem):
+                if not isinstance(e, (numbers.Number, str)):
+                    raise NotImplementedError('Closure augmentation needed')
+                else:
+                    # Compatibility check since Python changed their AST nodes
+                    newnode = astutils.create_constant(e)
+                    elem[i] = newnode
 
             elembody = [astutils.copy_tree(stmt) for stmt in node.body]
             replace = astutils.ASTFindReplace({k: v for k, v in zip(to_replace, elem)})
@@ -653,16 +660,7 @@ class GlobalResolver(ast.NodeTransformer, astutils.ASTHelperMixin):
                 self.closure.closure_constants[qualname] = value
 
             # Compatibility check since Python changed their AST nodes
-            if sys.version_info >= (3, 8):
-                newnode = ast.Constant(value=value, kind='')
-            else:
-                if value is None:
-                    newnode = ast.NameConstant(value=None)
-                elif isinstance(value, str):
-                    newnode = ast.Str(s=value)
-                else:
-                    newnode = ast.Num(n=value)
-
+            newnode = astutils.create_constant(value)
             newnode.qualname = qualname
 
         elif detect_callables and hasattr(value, '__call__') and hasattr(value.__call__, '__sdfg__'):

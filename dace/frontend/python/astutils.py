@@ -634,3 +634,26 @@ class ASTHelperMixin:
             else:
                 setattr(node, field, new_node)
         return node
+
+
+def create_constant(value: Any, node: Optional[ast.AST] = None) -> ast.AST:
+    """
+    Cross-Python-AST-version helper function that creates an AST constant node from a given value.
+    :param value: The value to create a constant from.
+    :param node: An optional node to copy the source location information from.
+    :return: An AST node (``ast.Constant`` after Python 3.8) that represents this value.
+    """
+    if sys.version_info >= (3, 8):
+        newnode = ast.Constant(value=value, kind='')
+    else:
+        if value is None:
+            newnode = ast.NameConstant(value=None)
+        elif isinstance(value, str):
+            newnode = ast.Str(s=value)
+        else:
+            newnode = ast.Num(n=value)
+
+    if node is not None:
+        newnode = ast.copy_location(newnode, node)
+
+    return newnode

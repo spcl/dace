@@ -243,6 +243,33 @@ def test_deepcopy():
     assert np.allclose(b, expected)
 
 
+def test_arrays_keys():
+    class Wrapper:
+        def __init__(self) -> None:
+            self._an_array = np.ones((12), np.float64)
+
+        def __str__(self) -> str:
+            return f"I am an array {self._an_array}"
+
+        def __repr__(self) -> str:
+            return self.__str__()
+
+        @property
+        def arr(self):
+            return self._an_array
+    d = {'0a0': Wrapper(), '1b1': Wrapper()}
+    expected = {'0a0': d['0a0'].arr + 1, '1b1': d['1b1'].arr + 1}
+
+    @dace.program
+    def prog():
+        for arr in d.keys():
+            d[arr].arr += 1
+
+    prog()
+    assert np.allclose(d['0a0'].arr, expected['0a0'])
+    assert np.allclose(d['1b1'].arr, expected['1b1'])
+
+
 if __name__ == '__main__':
     test_native_unroll()
     test_dace_unroll()
@@ -259,3 +286,4 @@ if __name__ == '__main__':
     test_unroll_threshold(0)
     test_unroll_threshold(5)
     test_deepcopy()
+    test_arrays_keys()
