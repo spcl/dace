@@ -543,7 +543,7 @@ model->s_axis_{name}_tdata = {name}[0];'''
                     },
                     "unroll": self.n_unrolled,
                     "ip_cores": tasklet.ip_cores if isinstance(tasklet, nodes.RTLTasklet) else {},
-                    "clocks": 2 # TODO make this "trickle" down to here. Maybe add speeds as well?
+                    "clocks": 2
                 }
 
                 self.code_objects.append(
@@ -768,12 +768,12 @@ model = NULL;
     RTL_HEADER = """\
 module {name}
 {parameters}
-( input  ap_aclk   // convention: ap_aclk clocks the design
-, input  ap_areset // convention: ap_areset resets the design
-, input  ap_aclk_2
-, input  ap_areset_2
-, input  ap_start  // convention: ap_start indicates a start from host
-, output ap_done   // convention: ap_done tells the host that the kernel has finished
+( input  ap_aclk     // convention: ap_aclk clocks the design, specifically the external ports
+, input  ap_areset   // convention: ap_areset resets the design
+, input  ap_aclk_2   // convention: ap_aclk_2 is the secondary clock, which can be used inside
+, input  ap_areset_2 // convention: ap_areset_2 resets the components clocked by ap_aclk_2
+, input  ap_start    // convention: ap_start indicates a start from host
+, output ap_done     // convention: ap_done tells the host that the kernel has finished
 
 {inputs}
 

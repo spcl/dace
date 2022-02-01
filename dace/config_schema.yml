@@ -461,7 +461,9 @@ required:
                         title: Target frequency for Xilinx kernels
                         description: >
                             Target frequency when compiling kernels for Xilinx.
-                            Will not necessarily be achieved in practice.
+                            Will not necessarily be achieved in practice. To 
+                            enable multiple clocks, enter values seperated by 
+                            an escaped bar enclosed in quotes, E.g. "250\|500".
 
                     enable_debugging:
                         type: bool
