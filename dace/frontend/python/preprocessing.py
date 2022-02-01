@@ -224,10 +224,11 @@ class ContextManagerInliner(ast.NodeTransformer, astutils.ASTHelperMixin):
     in the right places, i.e., at the end of the body or when the context is left due to
     a return statement, or top-level break/continue statements.
     """
-    def __init__(self) -> None:
+    def __init__(self, globals: Dict[str, Any]) -> None:
         super().__init__()
         self.with_statements: List[ast.With] = []
         self.context_manager_names: Dict[ast.With, List[str]] = {}
+        self.globals: Dict[str, Any] = globals
 
     def _visit_node_with_body(self, node):
         node = self.generic_visit_filtered(node, {'body'})
@@ -274,6 +275,14 @@ class ContextManagerInliner(ast.NodeTransformer, astutils.ASTHelperMixin):
         return result
 
     def visit_With(self, node: ast.With):
+        # Avoid parsing "with dace.tasklet"
+        try:
+            evald = astutils.evalnode(node.items[0].context_expr, self.globals)
+            if evald is dace.tasklet or isinstance(evald, dace.tasklet):
+                return self.generic_visit(node)
+        except SyntaxError:
+            pass
+
         # Beginning and end of body adds __enter__, __exit__ calls for each item
         self.with_statements.append(node)
 
@@ -1079,7 +1088,7 @@ def preprocess_dace_program(f: Callable[..., Any],
         try:
             src_ast = closure_resolver.visit(src_ast)
             src_ast = LoopUnroller(resolved, src_file).visit(src_ast)
-            src_ast = ContextManagerInliner().visit(src_ast)
+            src_ast = ContextManagerInliner(resolved).visit(src_ast)
             src_ast = ConditionalCodeResolver(resolved).visit(src_ast)
             src_ast = DeadCodeEliminator().visit(src_ast)
         except Exception:
