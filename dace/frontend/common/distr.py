@@ -917,7 +917,12 @@ def _redistribute(pv: 'ProgramVisitor',
             f'int* {rdistrarray_name}_dst_ranks;',
             f'int {rdistrarray_name}_recvs;',
             f'MPI_Datatype* {rdistrarray_name}_recv_types;',
-            f'int* {rdistrarray_name}_src_ranks;'
+            f'int* {rdistrarray_name}_src_ranks;',
+            f'int {rdistrarray_name}_self_copies;',
+            f'int* {rdistrarray_name}_self_src;',
+            f'int* {rdistrarray_name}_self_dst;',
+            f'int* {rdistrarray_name}_self_size;'
+
         ]
     )
     state.add_node(tasklet)
