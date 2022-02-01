@@ -570,7 +570,7 @@ class RedistrArray(object):
         for i in range(len(array_b.shape)):
             tmp += f"}}"
         tmp += "}"
-        tmp += "fflush(stdout);"
+        # tmp += "fflush(stdout);"
         tmp += "}"
         return tmp
     
