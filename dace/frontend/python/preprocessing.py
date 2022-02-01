@@ -477,6 +477,8 @@ class LoopUnroller(ast.NodeTransformer):
             # Paste loop body with replaced elements
             if not isinstance(elem, (list, tuple, set)):
                 elem = [elem]
+            else:
+                elem = list(elem)
 
             # If an unknown/mutable object, add to closure
             for i, e in enumerate(elem):
