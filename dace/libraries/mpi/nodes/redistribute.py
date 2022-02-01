@@ -53,6 +53,7 @@ class ExpandRedistribute(ExpandTransformation):
                 delete[] status;
             }}
             printf("I am rank %d and I finished the redistribution {redistr.array_a} -> {redistr.array_b}\\n", myrank);
+            fflush(stdout);
             
         """
 
