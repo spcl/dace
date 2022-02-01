@@ -2,6 +2,7 @@
 import numpy as np
 import dace
 from common import compare_numpy_output
+import math
 from numpy import exp, sin, cos, sqrt, log, conj, real, imag
 import pytest
 
@@ -77,7 +78,7 @@ def test_exponent_t():
 
 
 class TestMathFuncs:
-    @pytest.mark.parametrize("mathfunc", [abs, np.abs, np.sqrt])
+    @pytest.mark.parametrize("mathfunc", [abs, np.abs, np.sqrt, math.floor, math.ceil])
     @pytest.mark.parametrize("arg", [0.7, np.random.randn(5, 5)])
     def test_func(self, mathfunc, arg):
         @dace.program
@@ -121,3 +122,5 @@ if __name__ == '__main__':
     test_exponent_t()
     TestMathFuncs().test_func(np.abs, 0.7)
     TestMathFuncs().test_func(abs, 0.7)
+    TestMathFuncs().test_func(math.floor, 0.7)
+    TestMathFuncs().test_func(math.ceil, 0.7)

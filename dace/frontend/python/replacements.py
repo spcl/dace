@@ -595,6 +595,13 @@ def _sqrt(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, input: str):
 def _log(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, input: str):
     return _simple_call(sdfg, state, input, 'log')
 
+@oprepo.replaces('math.floor')
+def _floor(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, input: str):
+    return _simple_call(sdfg, state, input, 'floor')
+
+@oprepo.replaces('math.ceil')
+def _ceil(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, input: str):
+    return _simple_call(sdfg, state, input, 'ceil')
 
 @oprepo.replaces('conj')
 @oprepo.replaces('dace.conj')
