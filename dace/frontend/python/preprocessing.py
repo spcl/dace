@@ -748,7 +748,17 @@ class GlobalResolver(ast.NodeTransformer, astutils.ASTHelperMixin):
 
         for arg in ast.walk(node.args):
             if isinstance(arg, ast.arg):
-                self.current_scope.add(arg.arg)
+                # Skip ``dace.constant``-annotated arguments
+                is_constant = False
+                if arg.annotation is not None:
+                    try:
+                        ann = astutils.evalnode(arg.annotation, self.globals)
+                        if ann is dace.constant:
+                            is_constant = True
+                    except SyntaxError:
+                        pass
+                if not is_constant:
+                    self.current_scope.add(arg.arg)
         return self.generic_visit(node)
 
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> Any:
