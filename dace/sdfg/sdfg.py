@@ -1,6 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
-import astunparse
 import collections
 import copy
 import errno
@@ -336,6 +335,9 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         if hash:
             tmp['attributes']['hash'] = self.hash_sdfg(tmp)
 
+        if int(self.sdfg_id) == 0:
+            tmp['dace_version'] = dace.__version__
+
         return tmp
 
     @classmethod
@@ -448,6 +450,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         if validate_name(new_name):
             _replace_dict(self._arrays, name, new_name)
             _replace_dict(self.symbols, name, new_name)
+            _replace_dict(self.constants_prop, name, new_name)
 
         # Replace inside data descriptors
         for array in self.arrays.values():
@@ -1230,13 +1233,9 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                                    state.
             :return: A new SDFGState object.
         """
-        if label is None:
-            label = f'state_{self.number_of_nodes()}'
-        else:
-            existing_labels = set(s.label for s in self.nodes())
-            if label in existing_labels:
-                base = "state" if label is None else label
-                label = dt.find_new_name(base, existing_labels)
+        label = label or 'state'
+        existing_labels = set(s.label for s in self.nodes())
+        label = dt.find_new_name(label, existing_labels)
         state = SDFGState(label, self)
 
         self.add_node(state, is_start_state=is_start_state)
@@ -1281,7 +1280,8 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
     def _find_new_name(self, name: str):
         """ Tries to find a new name by adding an underscore and a number. """
         index = 0
-        while (name + ('_%d' % index)) in self._arrays:
+        names = (self._arrays.keys() | self.constants_prop.keys())
+        while (name + ('_%d' % index)) in names:
             index += 1
 
         return name + ('_%d' % index)

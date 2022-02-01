@@ -23,7 +23,7 @@ class RTLCodeGen(target.TargetCodeGenerator):
     title = 'RTL'
     target_name = 'rtl'
     languages = [dtypes.Language.SystemVerilog]
-    n_unrolled = 1
+    n_unrolled: Dict[str, int] = {}
 
     def __init__(self, frame_codegen: framecode.DaCeCodeGenerator, sdfg: sdfg.SDFG):
         # store reference to sdfg
@@ -105,8 +105,8 @@ class RTLCodeGen(target.TargetCodeGenerator):
                     line: str = "{} {} = {};".format(dst_node.in_connectors[edge.dst_conn].ctype, edge.dst_conn,
                                                      edge.src.data)
         elif isinstance(edge.src, nodes.MapEntry) and isinstance(edge.dst, nodes.Tasklet):
-            # TODO works for one kernel, but might break with several. Also only handles if the scope and tasklet are directly connected.
-            self.n_unrolled = symbolic.evaluate(edge.src.map.range[0][1] + 1, sdfg.constants)
+            rtl_name = self.unique_name(edge.dst, sdfg.nodes()[state_id], sdfg)
+            self.n_unrolled[rtl_name] = symbolic.evaluate(edge.src.map.range[0][1] + 1, sdfg.constants)
             line: str = f'{dst_node.in_connectors[edge.dst_conn]} {edge.dst_conn} = &{edge.data.data}[{edge.src.map.params[0]}*{edge.data.volume}];'
         else:
             raise RuntimeError("Not handling copy_memory case of type {} -> {}.".format(type(edge.src), type(edge.dst)))
@@ -339,17 +339,19 @@ model->s_axis_{name}_tdata = {name}[0];'''
             for name, (arr, is_output, bytes, veclen, volume) in buses.items()
         ]
 
-    def generate_cpp_internal_state(self, tasklet):
-        internal_state_str = " ".join(
-            ["{}=0x%x".format(var_name) for var_name in {
-                **tasklet.in_connectors,
-                **tasklet.out_connectors
-            }])
-        internal_state_var = ", ".join(  # TODO fix
-            ["model->{}".format(var_name) for var_name in {
-                **tasklet.in_connectors,
-                **tasklet.out_connectors
-            }])
+    def generate_cpp_internal_state(self, buses):
+        internal_state_strs = []
+        internal_state_vars = []
+        for name, (_, is_output, _, veclen, _) in buses.items():
+            prefix = 'm' if is_output else 's'
+            data_format = '0x%x' if veclen == 1 else f'[{" ".join(["0x%x"]*veclen)}]'
+            internal_state_strs.append(f'{name}={data_format} ready=%u valid=%u')
+            data_vars = f'model->{prefix}_axis_{name}_tdata' if veclen == 1 else ', '.join(
+                [f'model->{prefix}_axis_{name}_tdata[{i}]' for i in range(veclen)])
+            internal_state_vars.append(
+                f'{data_vars}, model->{prefix}_axis_{name}_tvalid, model->{prefix}_axis_{name}_tready')
+        internal_state_str = " | ".join(internal_state_strs)
+        internal_state_var = ", ".join(internal_state_vars)
         return internal_state_str, internal_state_var
 
     def generate_input_hs(self, buses):
@@ -450,6 +452,9 @@ model->s_axis_{name}_tdata = {name}[0];'''
         evals = ' && '.join([f'out_ptr_{name} < num_elements_{name}' for name in tasklet.out_connectors])
         return evals
 
+    def unique_name(self, node: nodes.RTLTasklet, state, sdfg):
+        return "{}_{}_{}_{}".format(node.name, sdfg.sdfg_id, sdfg.node_id(state), state.node_id(node))
+
     def unparse_tasklet(self, sdfg: sdfg.SDFG, dfg: state.StateSubgraphView, state_id: int, node: nodes.Node,
                         function_stream: prettycode.CodeIOStream, callsite_stream: prettycode.CodeIOStream):
 
@@ -458,7 +463,7 @@ model->s_axis_{name}_tdata = {name}[0];'''
         tasklet = node
 
         # construct variables paths
-        unique_name: str = "{}_{}_{}_{}".format(tasklet.name, sdfg.sdfg_id, sdfg.node_id(state), state.node_id(tasklet))
+        unique_name: str = self.unique_name(tasklet, state, sdfg)
 
         # Collect all of the input and output connectors into buses and scalars
         buses = {}  # {tasklet_name: (array_name, output_from_rtl, bytes, veclen)}
@@ -483,7 +488,7 @@ model->s_axis_{name}_tdata = {name}[0];'''
             elif isinstance(arr, data.Stream):
                 buses[edge.dst_conn] = (edge.data.data, False, total_size, vec_len, edge.data.volume)
             elif isinstance(arr, data.Scalar):
-                scalars[edge.dst_conn] = (False, total_size)  #(edge.data.data, False, total_size, 1, edge.data.volume)
+                scalars[edge.dst_conn] = (False, total_size)
 
         for edge in state.out_edges(tasklet):
             arr = sdfg.arrays[edge.data.data]
@@ -541,7 +546,7 @@ model->s_axis_{name}_tdata = {name}[0];'''
                         },
                         "memory": {}
                     },
-                    "unroll": self.n_unrolled,
+                    "unroll": self.n_unrolled[unique_name] if unique_name in self.n_unrolled else 1,
                     "ip_cores": tasklet.ip_cores if isinstance(tasklet, nodes.RTLTasklet) else {},
                     "clocks": 2
                 }
@@ -593,12 +598,11 @@ model->s_axis_{name}_tdata = {name}[0];'''
                 raise NotImplementedError('Only RTL codegen for Xilinx is implemented')
         else:  # not hardware_target
             # generate verilator simulation cpp code components
-            inputs, outputs = self.generate_cpp_inputs_outputs(
-                tasklet, buses)  # TODO i don't know if i want to do it differently.
+            inputs, outputs = self.generate_cpp_inputs_outputs(tasklet, buses)
             valid_zeros, ready_zeros, scalar_zeros = self.generate_cpp_zero_inits(buses, scalars)
             vector_init = self.generate_cpp_vector_init(tasklet)
             num_elements = self.generate_cpp_num_elements(buses)
-            internal_state_str, internal_state_var = self.generate_cpp_internal_state(tasklet)
+            internal_state_str, internal_state_var = self.generate_cpp_internal_state(buses)
             read_input_hs = self.generate_input_hs(buses)
             feed_elements = self.generate_feeding(tasklet, inputs)
             in_ptrs, out_ptrs = self.generate_ptrs(tasklet)
@@ -640,17 +644,13 @@ model->s_axis_{name}_tdata = {name}[0];'''
                 internal_state_var=internal_state_var,
                 debug_sim_start="std::cout << \"SIM {name} START\" << std::endl;" if self.verilator_debug else "",
                 debug_internal_state=f'''
-
-for (int i = 0; i < {self.n_unrolled}; i++) {{
-    // report internal state
-    //VL_PRINTF("%d, [t=%lu] ap_aclk=%u ap_areset=%u valid_i=%u ready_i=%u valid_o=%u ready_o=%u \\n",
-    //    i, main_time, models[i]->ap_aclk, models[i]->ap_areset,
-    //    models[i]->valid_i, models[i]->ready_i, models[i]->valid_o, models[i]->ready_o);
-    VL_PRINTF("{internal_state_str}\\n", {internal_state_var});
-    std::cout << std::flush;
-}}''' if self.verilator_debug else '',
+// report internal state
+VL_PRINTF("[t=%lu] ap_aclk=%u ap_areset=%u\\n", main_time, model->ap_aclk, model->ap_areset);
+VL_PRINTF("{internal_state_str}\\n", {internal_state_var});
+std::cout << std::flush;
+''' if self.verilator_debug else '',
                 debug_sim_end="\nstd::cout << \"SIM {name} END\" << std::endl;" if self.verilator_debug else "",
-                unroll=self.n_unrolled),
+            ),
                                   sdfg=sdfg,
                                   state_id=state_id,
                                   node_id=node)

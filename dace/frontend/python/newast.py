@@ -188,52 +188,55 @@ def parse_dace_program(name: str,
                              closure=closure,
                              simplify=simplify)
 
-    sdfg, _, _, _ = visitor.parse_program(preprocessed_ast.preprocessed_ast.body[0])
-    sdfg.set_sourcecode(preprocessed_ast.src, 'python')
+    try:
+        sdfg, _, _, _ = visitor.parse_program(preprocessed_ast.preprocessed_ast.body[0])
+        sdfg.set_sourcecode(preprocessed_ast.src, 'python')
 
-    # Combine nested closures with the current one
-    nested_closure_replacements: Dict[str, str] = {}
-    for name, (arr, _) in visitor.nested_closure_arrays.items():
-        # Check if the same array is already passed as part of a nested closure
-        if id(arr) in closure.array_mapping:
-            existing_name = closure.array_mapping[id(arr)]
-            if name != existing_name:
-                nested_closure_replacements[name] = existing_name
+        # Combine nested closures with the current one
+        nested_closure_replacements: Dict[str, str] = {}
+        for name, (arr, _) in visitor.nested_closure_arrays.items():
+            # Check if the same array is already passed as part of a nested closure
+            if id(arr) in closure.array_mapping:
+                existing_name = closure.array_mapping[id(arr)]
+                if name != existing_name:
+                    if existing_name not in closure.callbacks:
+                        nested_closure_replacements[name] = existing_name
+                    else:  # Callbacks should be replicated
+                        closure.callbacks[name] = closure.callbacks[existing_name]
 
-    # Make safe replacements
-    def repl_callback(repldict):
-        for state in sdfg.nodes():
+        # Make safe replacements
+        def repl_callback(repldict):
+            for state in sdfg.nodes():
+                for name, new_name in repldict.items():
+                    state.replace(name, new_name)
             for name, new_name in repldict.items():
-                state.replace(name, new_name)
-        for name, new_name in repldict.items():
-            sdfg.arrays[new_name] = sdfg.arrays[name]
-            del sdfg.arrays[name]
+                sdfg.arrays[new_name] = sdfg.arrays[name]
+                del sdfg.arrays[name]
+                if name in sdfg.constants_prop:
+                    sdfg.constants_prop[new_name] = sdfg.constants_prop[name]
+                    del sdfg.constants_prop[name]
 
-    symbolic.safe_replace(nested_closure_replacements, repl_callback, value_as_string=True)
+        symbolic.safe_replace(nested_closure_replacements, repl_callback, value_as_string=True)
 
-    sdfg.debuginfo = dtypes.DebugInfo(
-        visitor.src_line + 1,
-        end_line=visitor.src_line + len(preprocessed_ast.src.split("\n")) - 1,
-        filename=path.abspath(preprocessed_ast.filename),
-    )
+        sdfg.debuginfo = dtypes.DebugInfo(
+            visitor.src_line + 1,
+            end_line=visitor.src_line + len(preprocessed_ast.src.split("\n")) - 1,
+            filename=path.abspath(preprocessed_ast.filename),
+        )
 
-    # Progress bar handling (post-parse)
-    if (progress is None and isinstance(ProgramVisitor.progress_bar, tuple)
-            and (time.time() - ProgramVisitor.start_time) >= 5):
-        initial, total = ProgramVisitor.progress_bar
-        ProgramVisitor.progress_bar = tqdm(total=total, initial=initial, desc='Parsing Python program')
-    if ProgramVisitor.progress_bar is not None:
-        if isinstance(ProgramVisitor.progress_bar, tuple):
-            i, t = ProgramVisitor.progress_bar
-            ProgramVisitor.progress_bar = (i + 1, t)
-        else:
-            ProgramVisitor.progress_bar.update(1)
-    if teardown_progress:
-        if not isinstance(ProgramVisitor.progress_bar, tuple):
-            ProgramVisitor.progress_bar.close()
-            print('Parsing complete.')
-        ProgramVisitor.progress_bar = None
-        ProgramVisitor.start_time = 0
+        # Progress bar handling (post-parse)
+        if (progress is None and isinstance(ProgramVisitor.progress_bar, tuple)
+                and (time.time() - ProgramVisitor.start_time) >= 5):
+            initial, total = ProgramVisitor.progress_bar
+            ProgramVisitor.progress_bar = tqdm(total=total, initial=initial, desc='Parsing Python program')
+        ProgramVisitor.increment_progress()
+    finally:
+        if teardown_progress:
+            if not isinstance(ProgramVisitor.progress_bar, tuple):
+                ProgramVisitor.progress_bar.close()
+                print('Parsing complete.')
+            ProgramVisitor.progress_bar = None
+            ProgramVisitor.start_time = 0
 
     return sdfg
 
@@ -1098,6 +1101,26 @@ class ProgramVisitor(ExtNodeVisitor):
 
         # Indirections
         self.indirections = dict()
+
+    @classmethod
+    def progress_count(cls) -> int:
+        """ Returns the number of parsed SDFGs so far within this run. """
+        if cls.progress_bar is None:
+            return 0
+        if isinstance(cls.progress_bar, tuple):
+            return cls.progress_bar[0]
+        else:
+            return cls.progress_bar.n
+
+    @classmethod
+    def increment_progress(cls, number=1):
+        """ Adds a number of parsed SDFGs to the progress bar (whether visible or not). """
+        if cls.progress_bar is not None:
+            if isinstance(cls.progress_bar, tuple):
+                i, t = cls.progress_bar
+                cls.progress_bar = (i + number, t)
+            else:
+                cls.progress_bar.update(number)
 
     def visit(self, node: ast.AST):
         """Visit a node."""
@@ -2004,6 +2027,9 @@ class ProgramVisitor(ExtNodeVisitor):
             raise DaceSyntaxError(self, node, "Number of indices and ranges of for-loop do not match")
 
         if iterator == 'dace.map':
+            if node.orelse:
+                raise DaceSyntaxError(self, node, '"else" clause not supported on DaCe maps')
+
             state = self._add_state('MapState')
             params = [(k, ':'.join([str(t) for t in v])) for k, v in zip(indices, ranges)]
             params, map_inputs = self._parse_map_inputs('map_%d' % node.lineno, params, node)
@@ -2098,11 +2124,21 @@ class ProgramVisitor(ExtNodeVisitor):
 
             # Add loop to SDFG
             loop_cond = '>' if ((pystr_to_symbolic(ranges[0][2]) < 0) == True) else '<'
+            incr = {indices[0]: '%s + %s' % (indices[0], astutils.unparse(ast_ranges[0][2]))}
             _, loop_guard, loop_end = self.sdfg.add_loop(
                 laststate, first_loop_state, end_loop_state, indices[0], astutils.unparse(ast_ranges[0][0]),
-                '%s %s %s' % (indices[0], loop_cond, astutils.unparse(ast_ranges[0][1])),
-                '%s + %s' % (indices[0], astutils.unparse(ast_ranges[0][2])), last_loop_state)
-            incr = {indices[0]: '%s + %s' % (indices[0], ranges[0][2])}
+                '%s %s %s' % (indices[0], loop_cond, astutils.unparse(ast_ranges[0][1])), incr[indices[0]],
+                last_loop_state)
+
+            # Handle else clause
+            if node.orelse:
+                # Continue visiting body
+                for stmt in node.orelse:
+                    self.visit(stmt)
+
+                # The state that all "break" edges go to
+                loop_end = self._add_state(f'postloop_{node.lineno}')
+
             continue_states = self.continue_states.pop()
             while continue_states:
                 next_state = continue_states.pop()
@@ -2202,6 +2238,15 @@ class ProgramVisitor(ExtNodeVisitor):
             self.sdfg.add_edge(end_guard, e.dst, e.data)
             self.sdfg.remove_edge(e)
         self.sdfg.remove_node(loop_guard)
+
+        # Handle else clause
+        if node.orelse:
+            # Continue visiting body
+            for stmt in node.orelse:
+                self.visit(stmt)
+
+            # The state that all "break" edges go to
+            loop_end = self._add_state(f'postwhile_{node.lineno}')
 
         continue_states = self.continue_states.pop()
         while continue_states:
@@ -2959,7 +3004,7 @@ class ProgramVisitor(ExtNodeVisitor):
                         self.variables[name] = true_name
                         defined_vars[name] = true_name
                         continue
-                    elif not result_data.transient:
+                    elif not result_data.transient or result in self.sdfg.constants_prop:
                         true_name, new_data = _add_transient_data(self.sdfg, result_data, dtype)
                         self.variables[name] = true_name
                         defined_vars[name] = true_name
@@ -2982,8 +3027,8 @@ class ProgramVisitor(ExtNodeVisitor):
 
                     # Visit slice contents
                     nslice = self._parse_subscript_slice(true_target.slice)
-                    defined_arrays = {**self.sdfg.arrays, **self.scope_arrays, **self.defined}
 
+                defined_arrays = {**self.sdfg.arrays, **self.scope_arrays, **self.defined}
                 expr: MemletExpr = ParseMemlet(self, defined_arrays, true_target, nslice)
                 rng = expr.subset
                 if isinstance(rng, subsets.Indices):
@@ -3279,6 +3324,7 @@ class ProgramVisitor(ExtNodeVisitor):
             args = posargs + kwargs
             required_args = [a for a in sdfg.arglist().keys() if a not in sdfg.symbols and not a.startswith('__return')]
             all_args = required_args
+            self.increment_progress()
         elif isinstance(func, SDFGConvertible) or self._has_sdfg(func):
             argnames, constant_args = func.__sdfg_signature__()
             posargs = [(aname, self._parse_function_arg(arg)) for aname, arg in zip(argnames, node.args)]
@@ -3291,6 +3337,7 @@ class ProgramVisitor(ExtNodeVisitor):
             if hasattr(fcopy, 'global_vars'):
                 fcopy.global_vars = {**self.globals, **func.global_vars}
 
+            cnt = self.progress_count()
             try:
                 fargs = tuple(self._eval_arg(arg) for _, arg in posargs)
                 fkwargs = {k: self._eval_arg(arg) for k, arg in kwargs}
@@ -3305,6 +3352,10 @@ class ProgramVisitor(ExtNodeVisitor):
                     posargs = [(k, v) for k, v in posargs if k in required_args]
                     kwargs = [(k, v) for k, v in kwargs if k in required_args]
                     args = posargs + kwargs
+
+                # Handle parsing progress bar for non-dace-program SDFG convertibles
+                if cnt == self.progress_count():
+                    self.increment_progress()
 
             except Exception as ex:  # Parsing failure
                 # If error should propagate outwards, do not try to parse as callback
@@ -3809,8 +3860,16 @@ class ProgramVisitor(ExtNodeVisitor):
             return_type = None
         callback_type = dace.callback(return_type, *argtypes)
 
-        funcname = self.sdfg.find_new_symbol(funcname)
-        self.sdfg.add_symbol(funcname, callback_type)
+        if funcname not in self.sdfg.symbols:
+            self.sdfg.add_symbol(funcname, callback_type)
+        else:
+            # If callback signature mismatches
+            symtype = self.sdfg.symbols[funcname]
+            if symtype != callback_type:
+                new_funcname = self.sdfg.find_new_symbol(funcname)
+                self.closure.callbacks[new_funcname] = self.closure.callbacks[funcname]
+                self.sdfg.add_symbol(new_funcname, callback_type)
+                funcname = new_funcname
 
         # Create the graph that calls the callback
         if not create_graph:

@@ -221,7 +221,7 @@ class GPUPersistentKernel(SubgraphTransformation):
         kernel_args_write = set()
         for data in kernel_args:
             data_accesses_read_only = [
-                node.access == dtypes.AccessType.ReadOnly for state in kernel_sdfg for node in state
+                state.in_degree(node) == 0 for state in kernel_sdfg for node in state
                 if isinstance(node, nodes.AccessNode) and node.data == data
             ]
             if all(data_accesses_read_only):

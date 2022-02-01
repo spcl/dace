@@ -6,7 +6,6 @@
 from dace.frontend.python.wrappers import stream
 import dace
 import ast
-import astunparse
 from dace.codegen import cppunparse
 from dace.sdfg import nodes, SDFG, SDFGState, ScopeSubgraphView, graph as gr
 from typing import IO, Tuple, Union
@@ -122,7 +121,7 @@ class SVEUnparser(cppunparse.CPPUnparser):
 
         # Sanity check
         if not inf:
-            raise util.NotSupportedError(f'Could not infer the expression type of `{astunparse.unparse(tree)}`')
+            raise util.NotSupportedError(f'Could not infer the expression type of `{astutils.unparse(tree)}`')
 
         if isinstance(inf, dtypes.vector):
             # Unparsing a vector
@@ -207,7 +206,7 @@ class SVEUnparser(cppunparse.CPPUnparser):
         # It is very important to remember that elif's rely on the previous elif's (they are sequential)
         # i.e. the first subcase that hits wins and all following ones lose
 
-        self.fill('// Case ' + astunparse.unparse(t.test))
+        self.fill('// Case ' + astutils.unparse(t.test))
         self.enter()
 
         # Generate the case body, which will use the test predicate in the ops
@@ -383,7 +382,7 @@ class SVEUnparser(cppunparse.CPPUnparser):
         lhs_type, rhs_type = self.infer(target, t.value)
 
         if rhs_type is None:
-            raise NotImplementedError(f'Can not infer RHS of assignment ({astunparse.unparse(t.value)})')
+            raise NotImplementedError(f'Can not infer RHS of assignment ({astutils.unparse(t.value)})')
 
         is_new_variable = False
 

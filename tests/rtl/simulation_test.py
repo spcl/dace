@@ -681,10 +681,10 @@ end''',
 
 
 if __name__ == '__main__':
-    #test_multi_tasklet()
-    #test_tasklet_array()
-    #test_tasklet_map()
-    #test_tasklet_parameter()
-    #test_tasklet_scalar()
+    test_multi_tasklet()
+    test_tasklet_array()
+    test_tasklet_map()
+    test_tasklet_parameter()
+    test_tasklet_scalar()
     test_tasklet_vector_add()
-    #test_tasklet_vector_conversion()
+    test_tasklet_vector_conversion()
