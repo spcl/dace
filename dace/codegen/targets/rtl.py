@@ -49,6 +49,7 @@ class RTLCodeGen(target.TargetCodeGenerator):
         self.cpp_general_header_added: bool = False
         self.vendor: str = config.Config.get("compiler", "fpga", "vendor")
         self.hardware_target: bool = config.Config.get("compiler", "xilinx", "mode").startswith("hardware")
+        self.frequencies: str = config.Config.get("compiler", "xilinx", "frequency")
 
     def generate_node(self, sdfg: sdfg.SDFG, dfg: state.StateSubgraphView, state_id: int, node: nodes.Node,
                       function_stream: prettycode.CodeIOStream, callsite_stream: prettycode.CodeIOStream):
@@ -234,6 +235,22 @@ class RTLCodeGen(target.TargetCodeGenerator):
                 outputs += self.generate_padded_axis(False, bus, total_size, vec_len)
 
         return inputs, outputs
+
+    def generate_clk_from_cfg(self):
+        """
+        Generate the clock handling initialization expressions.
+        """
+        # Default case: no frequency specified
+        if self.frequencies == '':
+            return '1', '{ 300 }', '{ &(model->ap_aclk) }'
+
+        freqs = self.frequencies.strip('"').split('\\|')
+        nclks = len(freqs)
+        clks = ['&(model->ap_aclk)'] + [f'&(model->ap_aclk_{i+2})' for i in range(nclks-1)]
+        freqs = f'{{ {", ".join(freqs)} }}'
+        nclks = str(nclks)
+        clks = f'{{ {", ".join(clks)} }}'
+        return nclks, freqs, clks
 
     def generate_cpp_zero_inits(self, buses, scalars):
         """
@@ -612,6 +629,7 @@ model->s_axis_{name}_tdata = {name}[0];'''
             input_hs_toggle = self.generate_input_hs_toggle(buses)
             output_hs_toggle = self.generate_output_hs_toggle(buses)
             running_condition = self.generate_running_condition(tasklet)
+            nclks, freqs, clks = self.generate_clk_from_cfg()
 
             # add header code to stream
             if not self.cpp_general_header_added:
@@ -639,6 +657,9 @@ model->s_axis_{name}_tdata = {name}[0];'''
                 hs_flags=str.join('\n', hs_flags),
                 input_hs_toggle=str.join('\n', input_hs_toggle),
                 output_hs_toggle=str.join('\n', output_hs_toggle),
+                nclks=nclks,
+                freqs=freqs,
+                clks=clks,
                 running_condition=running_condition,
                 internal_state_str=internal_state_str,
                 internal_state_var=internal_state_var,
@@ -674,9 +695,47 @@ vluint64_t main_time = 0;
 // instantiate model(s)
 V{name}* model = new V{name};
 
+// instantiate clock handling
+int nclks = {nclks};
+int freqs[nclks] = {freqs};
+CData* clks[nclks] = {clks};
+double periods[nclks];
+for (int i = 0; i < nclks; i++) {{
+    periods[i] = (1000.0 / freqs[i]);
+}}
+double ttf[nclks]; // time to flip
+auto tick = [&]() {{
+    // Lambda function for driving all of the clock signals of the model, until the first clock signal have had a full in-between-rising-edge cycle
+    bool first_rised = *(clks[0]);
+    while (true) {{
+        int next = 0;
+        for (int i = 1; i < nclks; i++) {{
+            if (ttf[i] < ttf[next]) {{
+                next = i;
+            }}
+        }}
+        double time = ttf[next];
+        for (int i = 0; i < nclks; i++) {{
+            if (i == next) {{
+                ttf[i] = periods[i] / 2;
+                *(clks[i]) = !*(clks[i]);
+            }} else {{
+                ttf[i] -= time;
+            }}
+        }}
+        main_time += time;
+        model->eval();
+        if (next == 0 && *(clks[0]) == 1) {{
+            if (first_rised)
+                break;
+            else
+                first_rised = true;
+        }}
+    }}
+}};
+
 // apply initial input values
 model->ap_areset = 0;  // no reset
-model->ap_aclk = 0; // neg clock
 {valid_zeros}
 {ready_zeros}
 {scalar_zeros}
@@ -688,27 +747,9 @@ model->eval();
 
 // reset design
 model->ap_areset = 1;
-model->ap_aclk = 1; // rising
-model->ap_aclk_2 = 1;
-model->eval();
-model->ap_aclk_2 = 0;
-model->eval();
-model->ap_aclk = 0; // falling
-model->ap_aclk_2 = 1;
-model->eval();
-model->ap_aclk_2 = 0;
-model->eval();
+tick();
 model->ap_areset = 0;
-model->ap_aclk = 1; // rising
-model->ap_aclk_2 = 1;
-model->eval();
-model->ap_aclk_2 = 0;
-model->eval();
-model->ap_aclk = 0; // falling
-model->ap_aclk_2 = 1;
-model->eval();
-model->ap_aclk_2 = 0;
-model->eval();
+tick();
 
 // simulate until in_handshakes = out_handshakes = num_elements
 {hs_flags}
@@ -730,31 +771,13 @@ while ({running_condition}) {{
     // check if valid and ready have been asserted at the rising clock edge -> output write handshake
 {write_output_hs}
 
-    // positive clock edge
-    model->ap_aclk = !(model->ap_aclk);
-
-    // Run the double clock
-    model->ap_aclk_2 = !(model->ap_aclk_2);
-    model->eval();
-    model->ap_aclk_2 = !(model->ap_aclk_2);
-
-    model->eval(); {debug_internal_state}
+    tick(); {debug_internal_state}
 
     // check if valid and ready has been asserted for each input at the rising clock edge
 {input_hs_toggle}
 
     // check if valid and ready haæ been asserted for each output at the rising clock edge
 {output_hs_toggle}
-
-    // negative clock edge
-    model->ap_aclk = !(model->ap_aclk);
-
-    // Run the double clock
-    model->ap_aclk_2 = !(model->ap_aclk_2);
-    model->eval();
-    model->ap_aclk_2 = !(model->ap_aclk_2);
-
-    model->eval();
 }} {debug_internal_state}
 
 // final model cleanup
