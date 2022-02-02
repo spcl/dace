@@ -376,7 +376,7 @@ class RedistrArray(object):
                                              array_b.correspondence)):
             pcoord = f"__state->{array_b.pgrid}_coords[{cb}]"
             tmp += f"""
-                xi[{i}] = std::floor({pcoord} * {sb} / (double){sa});
+                xi[{i}] = ({pcoord} * {sb}) / {sa};
                 lambda[{i}] = {pcoord} * {sb} % {sa};
                 kappa[{i}] = std::ceil(({sb} + lambda[{i}]) / (double){sa});
             """
@@ -432,12 +432,12 @@ class RedistrArray(object):
             """
         tmp += f"""
                 __state->{self.name}_self_copies++;
-                printf("({self.array_a} -> {self.array_b}) I am rank %d and I self-copy {{I receive from %d%d (%d - %d) in (%d, %d) size (%d, %d)}} \\n", myrank, pcoords[0], pcoords[1], cart_rank, ranks2[0], origin[0], origin[1], subsizes[0], subsizes[1]);
+                //printf("({self.array_a} -> {self.array_b}) I am rank %d and I self-copy {{I receive from %d%d (%d - %d) in (%d, %d) size (%d, %d)}} \\n", myrank, pcoords[0], pcoords[1], cart_rank, ranks2[0], origin[0], origin[1], subsizes[0], subsizes[1]);
             }} else {{
                 MPI_Type_create_subarray({len(array_b.shape)},  sizes, subsizes, origin, MPI_ORDER_C, {utils.MPI_DDT(array_b.dtype.base_type)}, &__state->{self.name}_recv_types[__state->{self.name}_recvs]);
                 MPI_Type_commit(&__state->{self.name}_recv_types[__state->{self.name}_recvs]);
                 __state->{self.name}_src_ranks[__state->{self.name}_recvs] = ranks2[0];
-                printf("({self.array_a} -> {self.array_b}) I am rank %d and I receive from %d%d (%d - %d) in (%d, %d) size (%d, %d) \\n", myrank, pcoords[0], pcoords[1], cart_rank, __state->{self.name}_src_ranks[__state->{self.name}_recvs], origin[0], origin[1], subsizes[0], subsizes[1]);
+                //printf("({self.array_a} -> {self.array_b}) I am rank %d and I receive from %d%d (%d - %d) in (%d, %d) size (%d, %d) \\n", myrank, pcoords[0], pcoords[1], cart_rank, __state->{self.name}_src_ranks[__state->{self.name}_recvs], origin[0], origin[1], subsizes[0], subsizes[1]);
                 __state->{self.name}_recvs++;
             }}
             MPI_Group_free(&world_group);
@@ -468,11 +468,11 @@ class RedistrArray(object):
             tmp += f"""
                 int lp{i} = std::max(0, (int)std::ceil(({pcoord} * {sa} - {sb} + 1) / (double){sb}));
                 int up{i} = std::min(__state->{array_b.pgrid}_dims[{array_b.correspondence[i]}], (int)std::ceil(({pcoord} + 1) * {sa} / (double){sb}));
-                //printf("I am rank %d and I have {i}-th bounds [%d, %d)\\n", myrank, lp{i}, up{i});
+                ////printf("I am rank %d and I have {i}-th bounds [%d, %d)\\n", myrank, lp{i}, up{i});
                 for (auto idx{i} = lp{i}; idx{i} < up{i}; ++idx{i}) {{
                     int actual_idx{i} = {array_b.correspondence[i]};
 
-                    xi[{i}] = std::floor(idx{i} * {sb} / (double){sa});
+                    xi[{i}] = (idx{i} * {sb}) / {sa};
                     lambda[{i}] = idx{i} * {sb} % {sa};
                     kappa[{i}] = std::ceil(({sb} + lambda[{i}]) / (double){sa});
                     int idx{i}_dst = {pcoord} - xi[{i}];
@@ -521,7 +521,7 @@ class RedistrArray(object):
                 MPI_Type_create_subarray({len(array_a.shape)},  sizes, subsizes, origin, MPI_ORDER_C, {utils.MPI_DDT(array_a.dtype.base_type)}, &__state->{self.name}_send_types[__state->{self.name}_sends]);
                 MPI_Type_commit(&__state->{self.name}_send_types[__state->{self.name}_sends]);
                 __state->{self.name}_dst_ranks[__state->{self.name}_sends] = ranks2[0];
-                printf("({self.array_a} -> {self.array_b}) I am rank %d and I send to %d%d (%d - %d) from (%d, %d) size (%d, %d)\\n", myrank, pcoords[0], pcoords[1], cart_rank, __state->{self.name}_dst_ranks[__state->{self.name}_sends], origin[0], origin[1], subsizes[0], subsizes[1]);
+                //printf("({self.array_a} -> {self.array_b}) I am rank %d and I send to %d%d (%d - %d) from (%d, %d) size (%d, %d)\\n", myrank, pcoords[0], pcoords[1], cart_rank, __state->{self.name}_dst_ranks[__state->{self.name}_sends], origin[0], origin[1], subsizes[0], subsizes[1]);
                 __state->{self.name}_sends++;
             }}
             MPI_Group_free(&world_group);
