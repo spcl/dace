@@ -1,69 +1,7 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 #
-# This sample shows the AXPY BLAS routine. It is implemented through Xilinx
-# IPs in order to utilize double pumping, which doubles the performance per
-# consumed FPGA resource. The block diagram of the design (with reset
-# synchronization omitted) is:
-#
-#          ap_aclk          s_axis_y_in        s_axis_x_in     a
-#             │                  │                  │          │
-#             │                  │                  │          │
-#             │                  │                  │          │
-#     ┌───────┼─────────┬────────┼─────────┐        │          │
-#     │       │         │        │         │        │          │
-#     │       │         │        ▼         │        ▼          │
-#     │       │         │  ┌────────────┐  │  ┌────────────┐   │
-#     │       │         └─►│            │  └─►│            │   │
-#     │       │            │ Clock sync │     │ Clock sync │   │
-#     │       │         ┌─►│            │  ┌─►│            │   │
-#     │       ▼ 300 MHz │  └─────┬──────┘  │  └─────┬──────┘   │
-#     │ ┌────────────┐  │        │         │        │          │
-#     │ │ Clock      │  │        │         │        │          │
-#     │ │            │  ├────────┼─────────┤        │          │
-#     │ │ Multiplier │  │        │         │        │          │
-#     │ └─────┬──────┘  │        ▼ 64 bit  │        ▼ 64 bit   │
-#     │       │ 600 MHz │  ┌────────────┐  │  ┌────────────┐   │
-#     │       │         │  │            │  │  │            │   │
-#     │       └─────────┼─►│ Data issue │  └─►│ Data issue │   │
-#     │                 │  │            │     │            │   │
-#     │                 │  └─────┬──────┘     └─────┬──────┘   │
-#     │                 │        │ 32 bit           │ 32 bit   │
-#     │                 │        │                  │          │
-#     │                 │        │                  │          │
-#     │                 │        │                  ▼          ▼
-#     │                 │        │                 ┌────────────┐
-#     │                 │        │                 │            │
-#     │                 ├────────┼────────────────►│ Multiplier │
-#     │                 │        │                 │            │
-#     │                 │        │                 └─────┬──────┘
-#     │                 │        │                       │
-#     │                 │        │        ┌──────────────┘
-#     │                 │        │        │
-#     │                 │        ▼        ▼
-#     │                 │      ┌────────────┐
-#     │                 │      │            │
-#     │                 ├─────►│    Adder   │
-#     │                 │      │            │
-#     │                 │      └─────┬──────┘
-#     │                 │            │
-#     │                 │            ▼ 32 bit
-#     │                 │      ┌─────────────┐
-#     │                 │      │             │
-#     │                 ├─────►│ Data packer │
-#     │                 │      │             │
-#     │                 │      └─────┬───────┘
-#     │                 │            │ 64 bit
-#     │                 │            ▼
-#     │                 │      ┌────────────┐
-#     │                 └─────►│            │
-#     │                        │ Clock sync │
-#     └───────────────────────►│            │
-#                              └─────┬──────┘
-#                                    │
-#                                    ▼
-#                            m_axis_result_out
-#
-# It is intended for running hardware_emulation or hardware xilinx targets.
+# This sample shows the AXPY BLAS routine. It is implemented through Xilinx IPs in order to utilize floating point
+# operations. It is intended for running hardware_emulation or hardware xilinx targets.
 
 import dace
 import numpy as np
@@ -85,15 +23,9 @@ sdfg.add_constant('WORD_WIDTH', 32)
 
 # add arrays
 sdfg.add_scalar('a', dtype=dace.float32, storage=dace.StorageType.FPGA_Global)
-sdfg.add_array('x', [N // veclen],
-               dtype=dace.vector(dace.float32, veclen),
-               storage=dace.StorageType.CPU_Heap)
-sdfg.add_array('y', [N // veclen],
-               dtype=dace.vector(dace.float32, veclen),
-               storage=dace.StorageType.CPU_Heap)
-sdfg.add_array('result', [N // veclen],
-               dtype=dace.vector(dace.float32, veclen),
-               storage=dace.StorageType.CPU_Heap)
+sdfg.add_array('x', [N // veclen], dtype=dace.vector(dace.float32, veclen), storage=dace.StorageType.CPU_Heap)
+sdfg.add_array('y', [N // veclen], dtype=dace.vector(dace.float32, veclen), storage=dace.StorageType.CPU_Heap)
+sdfg.add_array('result', [N // veclen], dtype=dace.vector(dace.float32, veclen), storage=dace.StorageType.CPU_Heap)
 sdfg.add_array('fpga_x', [N // veclen],
                dtype=dace.vector(dace.float32, veclen),
                transient=True,
@@ -209,12 +141,11 @@ rtl_tasklet.add_ip_core(
         "CONFIG.C_Rate": "1"
     })
 
-rtl_tasklet.add_ip_core(
-    'floating_point_add', 'floating_point', 'xilinx.com', '7.1', {
-        "CONFIG.Add_Sub_Value": "Add",
-        "CONFIG.Axi_Optimize_Goal": "Performance",
-        "CONFIG.C_Latency": "14"
-    })
+rtl_tasklet.add_ip_core('floating_point_add', 'floating_point', 'xilinx.com', '7.1', {
+    "CONFIG.Add_Sub_Value": "Add",
+    "CONFIG.Axi_Optimize_Goal": "Performance",
+    "CONFIG.C_Latency": "14"
+})
 
 # add read and write tasklets
 read_x = state.add_tasklet('read_x', {'inp'}, {'out'}, 'out = inp')
@@ -222,63 +153,32 @@ read_y = state.add_tasklet('read_y', {'inp'}, {'out'}, 'out = inp')
 write_result = state.add_tasklet('write_result', {'inp'}, {'out'}, 'out = inp')
 
 # add read and write maps
-read_x_entry, read_x_exit = state.add_map(
-    'read_x_map', dict(i='0:N//VECLEN'), schedule=dace.ScheduleType.FPGA_Device)
-read_y_entry, read_y_exit = state.add_map(
-    'read_y_map', dict(i='0:N//VECLEN'), schedule=dace.ScheduleType.FPGA_Device)
-write_result_entry, write_result_exit = state.add_map(
-    'write_result_map',
-    dict(i='0:N//VECLEN'),
-    schedule=dace.ScheduleType.FPGA_Device)
+read_x_entry, read_x_exit = state.add_map('read_x_map', dict(i='0:N//VECLEN'), schedule=dace.ScheduleType.FPGA_Device)
+read_y_entry, read_y_exit = state.add_map('read_y_map', dict(i='0:N//VECLEN'), schedule=dace.ScheduleType.FPGA_Device)
+write_result_entry, write_result_exit = state.add_map('write_result_map',
+                                                      dict(i='0:N//VECLEN'),
+                                                      schedule=dace.ScheduleType.FPGA_Device)
 
 # add read_a memlets and access nodes
 read_x_inp = state.add_read('fpga_x')
 read_x_out = state.add_write('x_stream')
-state.add_memlet_path(read_x_inp,
-                      read_x_entry,
-                      read_x,
-                      dst_conn='inp',
-                      memlet=dace.Memlet('fpga_x[i]'))
-state.add_memlet_path(read_x,
-                      read_x_exit,
-                      read_x_out,
-                      src_conn='out',
-                      memlet=dace.Memlet('x_stream[0]'))
+state.add_memlet_path(read_x_inp, read_x_entry, read_x, dst_conn='inp', memlet=dace.Memlet('fpga_x[i]'))
+state.add_memlet_path(read_x, read_x_exit, read_x_out, src_conn='out', memlet=dace.Memlet('x_stream[0]'))
 
 read_y_inp = state.add_read('fpga_y')
 read_y_out = state.add_write('y_stream')
-state.add_memlet_path(read_y_inp,
-                      read_y_entry,
-                      read_y,
-                      dst_conn='inp',
-                      memlet=dace.Memlet('fpga_y[i]'))
-state.add_memlet_path(read_y,
-                      read_y_exit,
-                      read_y_out,
-                      src_conn='out',
-                      memlet=dace.Memlet('y_stream[0]'))
+state.add_memlet_path(read_y_inp, read_y_entry, read_y, dst_conn='inp', memlet=dace.Memlet('fpga_y[i]'))
+state.add_memlet_path(read_y, read_y_exit, read_y_out, src_conn='out', memlet=dace.Memlet('y_stream[0]'))
 
 # add tasklet memlets
 a = state.add_read('a')
 x = state.add_read('x_stream')
 y = state.add_read('y_stream')
 result = state.add_write('result_stream')
-state.add_memlet_path(a,
-                      rtl_tasklet,
-                      dst_conn='a_in',
-                      memlet=dace.Memlet('a[0]'))
-state.add_memlet_path(x,
-                      rtl_tasklet,
-                      dst_conn='x_in',
-                      memlet=dace.Memlet('x_stream[0]'))
-state.add_memlet_path(y,
-                      rtl_tasklet,
-                      dst_conn='y_in',
-                      memlet=dace.Memlet('y_stream[0]'))
-state.add_memlet_path(rtl_tasklet,
-                      result,
-                      src_conn='result_out',
-                      memlet=dace.Memlet('result_stream[0]'))
+state.add_memlet_path(a, rtl_tasklet, dst_conn='a_in', memlet=dace.Memlet('a[0]'))
+state.add_memlet_path(x, rtl_tasklet, dst_conn='x_in', memlet=dace.Memlet('x_stream[0]'))
+state.add_memlet_path(y, rtl_tasklet, dst_conn='y_in', memlet=dace.Memlet('y_stream[0]'))
+state.add_memlet_path(rtl_tasklet, result, src_conn='result_out', memlet=dace.Memlet('result_stream[0]'))
 
 # add write_c memlets and access nodes
 write_result_inp = state.add_read('result_stream')
@@ -300,21 +200,15 @@ cpu_x = copy_to_device.add_read('x')
 cpu_y = copy_to_device.add_read('y')
 dev_x = copy_to_device.add_write('fpga_x')
 dev_y = copy_to_device.add_write('fpga_y')
-copy_to_device.add_memlet_path(cpu_x,
-                               dev_x,
-                               memlet=dace.Memlet('x[0:N//VECLEN]'))
-copy_to_device.add_memlet_path(cpu_y,
-                               dev_y,
-                               memlet=dace.Memlet('y[0:N//VECLEN]'))
+copy_to_device.add_memlet_path(cpu_x, dev_x, memlet=dace.Memlet('x[0:N//VECLEN]'))
+copy_to_device.add_memlet_path(cpu_y, dev_y, memlet=dace.Memlet('y[0:N//VECLEN]'))
 sdfg.add_edge(copy_to_device, state, dace.InterstateEdge())
 
 # add copy to host state
 copy_to_host = sdfg.add_state('copy_to_host')
 dev_result = copy_to_host.add_read('fpga_result')
 cpu_result = copy_to_host.add_write('result')
-copy_to_host.add_memlet_path(dev_result,
-                             cpu_result,
-                             memlet=dace.Memlet('result[0:N//VECLEN]'))
+copy_to_host.add_memlet_path(dev_result, cpu_result, memlet=dace.Memlet('result[0:N//VECLEN]'))
 sdfg.add_edge(state, copy_to_host, dace.InterstateEdge())
 
 # validate sdfg
@@ -326,7 +220,7 @@ if __name__ == '__main__':
 
     # init data structures
     N.set(4096)
-    a = np.float32(0) #np.random.rand(1)[0].astype(np.float32)
+    a = np.float32(0)  #np.random.rand(1)[0].astype(np.float32)
     x = np.random.rand(N.get()).astype(np.float32)
     y = np.random.rand(N.get()).astype(np.float32)
     result = np.zeros((N.get(), )).astype(np.float32)

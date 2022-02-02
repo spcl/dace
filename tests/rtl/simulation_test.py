@@ -70,6 +70,7 @@ def test_tasklet_array():
     # check result
     assert (b == a + 42).all()
 
+
 @pytest.mark.verilator
 def test_tasklet_double_clk_counters():
     """
@@ -151,14 +152,15 @@ def test_tasklet_double_clk_counters():
     sdfg.validate()
 
     a = np.random.randint(0, 100, 1).astype(np.int32)
-    b = np.zeros((1,)).astype(np.int32)
+    b = np.zeros((1, )).astype(np.int32)
 
     sdfg(A=a, B=b)
 
     dace.config.Config.set('compiler', 'xilinx', 'frequency', value=old_freq)
 
     assert b[0] & 0xFFFF == a[0]
-    assert (b[0] >> 16) & 0xFFFF == a[0]*2
+    assert (b[0] >> 16) & 0xFFFF == a[0] * 2
+
 
 @pytest.mark.verilator
 def test_tasklet_scalar():

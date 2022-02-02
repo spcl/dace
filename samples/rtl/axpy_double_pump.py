@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 #
 # This sample shows the AXPY BLAS routine. It is implemented through Xilinx
 # IPs in order to utilize double pumping, which doubles the performance per
@@ -295,11 +295,10 @@ rtl_tasklet = state.add_tasklet(name='rtl_tasklet',
     ''',
                                 language=dace.Language.SystemVerilog)
 
-rtl_tasklet.add_ip_core('slow_to_fast_clk', 'axis_clock_converter',
-                        'xilinx.com', '1.1', {
-                            "CONFIG.TDATA_NUM_BYTES": "8",
-                            "CONFIG.SYNCHRONIZATION_STAGES": "8"
-                        })
+rtl_tasklet.add_ip_core('slow_to_fast_clk', 'axis_clock_converter', 'xilinx.com', '1.1', {
+    "CONFIG.TDATA_NUM_BYTES": "8",
+    "CONFIG.SYNCHRONIZATION_STAGES": "8"
+})
 
 rtl_tasklet.add_ip_core('slow_to_fast_data', 'axis_dwidth_converter', 'xilinx.com', '1.1', {
     "CONFIG.S_TDATA_NUM_BYTES": "8",
@@ -410,7 +409,7 @@ if __name__ == '__main__':
 
     # init data structures
     N.set(4096)
-    a = np.float32(0) #np.random.rand(1)[0].astype(np.float32)
+    a = np.float32(0)  #np.random.rand(1)[0].astype(np.float32)
     x = np.random.rand(N.get()).astype(np.float32)
     y = np.random.rand(N.get()).astype(np.float32)
     result = np.zeros((N.get(), )).astype(np.float32)
