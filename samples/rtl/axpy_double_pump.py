@@ -68,6 +68,9 @@
 import dace
 import numpy as np
 
+# Configuration has to use multiple clocks in this sample.
+dace.config.Config.set('compiler', 'xilinx', 'frequency', value='"300\\|600"')
+
 # add symbol
 N = dace.symbol('N')
 

@@ -550,6 +550,7 @@ model->s_axis_{name}_tdata = {name}[0];'''
 
         if self.hardware_target:
             if self.vendor == 'xilinx':
+                nclks, _, _ = self.generate_clk_from_cfg()
                 rtllib_config = {
                     "name": unique_name,
                     "buses": {
@@ -565,7 +566,7 @@ model->s_axis_{name}_tdata = {name}[0];'''
                     },
                     "unroll": self.n_unrolled[unique_name] if unique_name in self.n_unrolled else 1,
                     "ip_cores": tasklet.ip_cores if isinstance(tasklet, nodes.RTLTasklet) else {},
-                    "clocks": 2
+                    "clocks": int(nclks)
                 }
 
                 self.code_objects.append(
