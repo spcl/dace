@@ -78,7 +78,7 @@ def test_exponent_t():
 
 
 class TestMathFuncs:
-    @pytest.mark.parametrize("mathfunc", [abs, np.abs, np.sqrt, math.floor, math.ceil])
+    @pytest.mark.parametrize("mathfunc", [abs, np.abs, np.sqrt])
     @pytest.mark.parametrize("arg", [0.7, np.random.randn(5, 5)])
     def test_func(self, mathfunc, arg):
         @dace.program
@@ -87,6 +87,10 @@ class TestMathFuncs:
 
         res = func(arg)
         assert np.allclose(mathfunc(arg), res, equal_nan=True)
+
+    @pytest.mark.parametrize("mathfunc", [math.floor, math.ceil])
+    def test_func_scalar(self, mathfunc):
+        self.test_func(mathfunc, 0.7)
 
     @pytest.mark.parametrize("mathfunc", [min, max])
     def test_func2_scalar(self, mathfunc):
@@ -162,8 +166,8 @@ if __name__ == '__main__':
     test_exponent_t()
     TestMathFuncs().test_func(np.abs, 0.7)
     TestMathFuncs().test_func(abs, 0.7)
-    TestMathFuncs().test_func(math.floor, 0.7)
-    TestMathFuncs().test_func(math.ceil, 0.7)
+    TestMathFuncs().test_func_scalar(math.floor, 0.7)
+    TestMathFuncs().test_func_scalar(math.ceil, 0.7)
     test_scalarret_cond_1()
     test_scalarret_cond_2()
     test_scalarret_cond_3()
