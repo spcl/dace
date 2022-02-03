@@ -1537,14 +1537,21 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                               total_size=total_size,
                               may_alias=may_alias)
 
-    def add_temp_transient_like(self, desc: dt.Array, dtype=None, debuginfo=None):
+    def add_temp_transient_like(self, desc: Union[dt.Array, dt.Scalar], dtype=None, debuginfo=None):
         """ Convenience function to add a transient array with a temporary name to the data
             descriptor store. """
         debuginfo = debuginfo or desc.debuginfo
         dtype = dtype or desc.dtype
+        if isinstance(desc, dt.Scalar):
+            return self.add_scalar(self.temp_data_name(),
+                                   dtype,
+                                   desc.storage,
+                                   transient=True,
+                                   lifetime=desc.lifetime,
+                                   debuginfo=debuginfo)
         return self.add_array(self.temp_data_name(),
                               desc.shape,
-                              desc.dtype,
+                              dtype,
                               storage=desc.storage,
                               location=desc.location,
                               transient=True,

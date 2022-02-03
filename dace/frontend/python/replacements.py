@@ -126,11 +126,10 @@ def _define_literal_ex(pv: 'ProgramVisitor',
     if dtype is not None and not isinstance(dtype, dtypes.typeclass):
         dtype = dtypes.typeclass(dtype)
 
-
     # From existing data descriptor
     if isinstance(obj, str):
         desc = dcpy(sdfg.arrays[obj])
-        if dtype is not None: 
+        if dtype is not None:
             desc.dtype = dtype
     else:  # From literal / constant
         if dtype is None:
@@ -523,11 +522,21 @@ def _simple_call(sdfg: SDFG, state: SDFGState, inpname: str, func: str, restype:
     """ Implements a simple call of the form `out = func(inp)`. """
     if isinstance(inpname, (list, tuple)):  # TODO investigate this
         inpname = inpname[0]
-    inparr = sdfg.arrays[inpname]
+    if not isinstance(inpname, str):
+        # Constant parameter
+        cst = inpname
+        inparr = data.create_datadescriptor(cst)
+        inpname = sdfg.temp_data_name()
+        inparr.transient = True
+        sdfg.add_constant(inpname, cst, inparr)
+        sdfg.add_datadesc(inpname, inparr)
+    else:
+        inparr = sdfg.arrays[inpname]
+
     if restype is None:
-        restype = sdfg.arrays[inpname].dtype
-    outname, outarr = sdfg.add_temp_transient(inparr.shape, restype, inparr.storage)
-    num_elements = reduce(lambda x, y: x * y, inparr.shape)
+        restype = inparr.dtype
+    outname, outarr = sdfg.add_temp_transient_like(inparr)
+    num_elements = data._prod(inparr.shape)
     if num_elements == 1:
         inp = state.add_read(inpname)
         out = state.add_write(outname)
@@ -595,13 +604,16 @@ def _sqrt(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, input: str):
 def _log(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, input: str):
     return _simple_call(sdfg, state, input, 'log')
 
+
 @oprepo.replaces('math.floor')
 def _floor(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, input: str):
     return _simple_call(sdfg, state, input, 'floor')
 
+
 @oprepo.replaces('math.ceil')
 def _ceil(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, input: str):
     return _simple_call(sdfg, state, input, 'ceil')
+
 
 @oprepo.replaces('conj')
 @oprepo.replaces('dace.conj')
