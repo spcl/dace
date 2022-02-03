@@ -416,13 +416,13 @@ class RedistrArray(object):
         tmp += f"""
                 __state->{self.name}_self_copies++;
                 ////printf("({self.array_a} -> {self.array_b}) I am rank %d and I self-copy {{I receive from %d%d (%d - %d) in (%d, %d) size (%d, %d)}} \\n", myrank, pcoords[0], pcoords[1], cart_rank, ranks2[0], origin[0], origin[1], subsizes[0], subsizes[1]);
-                //printf("({self.array_a} -> {self.array_b}) I am rank %d and I self-copy {{I receive from %d%d (%d - %d) in (%d, %d) size (%d, %d)}} \\n", myrank, pcoords[0], pcoords[1], cart_rank, cart_rank, origin[0], origin[1], subsizes[0], subsizes[1]);
+                printf("({self.array_a} -> {self.array_b}) I am rank %d and I self-copy {{I receive from %d%d (%d - %d) in (%d, %d) size (%d, %d)}} \\n", myrank, pcoords[0], pcoords[1], cart_rank, cart_rank, origin[0], origin[1], subsizes[0], subsizes[1]);
             }} else {{
                 MPI_Type_create_subarray({len(array_b.shape)},  sizes, subsizes, origin, MPI_ORDER_C, {utils.MPI_DDT(array_b.dtype.base_type)}, &__state->{self.name}_recv_types[__state->{self.name}_recvs]);
                 MPI_Type_commit(&__state->{self.name}_recv_types[__state->{self.name}_recvs]);
                 //__state->{self.name}_src_ranks[__state->{self.name}_recvs] = ranks2[0];
                 __state->{self.name}_src_ranks[__state->{self.name}_recvs] = cart_rank;
-                //printf("({self.array_a} -> {self.array_b}) I am rank %d and I receive from %d%d (%d - %d) in (%d, %d) size (%d, %d) \\n", myrank, pcoords[0], pcoords[1], cart_rank, __state->{self.name}_src_ranks[__state->{self.name}_recvs], origin[0], origin[1], subsizes[0], subsizes[1]);
+                printf("({self.array_a} -> {self.array_b}) I am rank %d and I receive from %d%d (%d - %d) in (%d, %d) size (%d, %d) \\n", myrank, pcoords[0], pcoords[1], cart_rank, __state->{self.name}_src_ranks[__state->{self.name}_recvs], origin[0], origin[1], subsizes[0], subsizes[1]);
                 __state->{self.name}_recvs++;
             }}
             //MPI_Group_free(&world_group);
@@ -488,7 +488,7 @@ class RedistrArray(object):
                 MPI_Type_create_subarray({len(array_a.shape)},  sizes, subsizes, origin, MPI_ORDER_C, {utils.MPI_DDT(array_a.dtype.base_type)}, &__state->{self.name}_send_types[__state->{self.name}_sends]);
                 MPI_Type_commit(&__state->{self.name}_send_types[__state->{self.name}_sends]);
                 __state->{self.name}_dst_ranks[__state->{self.name}_sends] = cart_rank;
-                //printf("({self.array_a} -> {self.array_b}) I am rank %d and I send to %d%d (%d - %d) from (%d, %d) size (%d, %d)\\n", myrank, pcoords[0], pcoords[1], cart_rank, __state->{self.name}_dst_ranks[__state->{self.name}_sends], origin[0], origin[1], subsizes[0], subsizes[1]);
+                printf("({self.array_a} -> {self.array_b}) I am rank %d and I send to %d%d (%d - %d) from (%d, %d) size (%d, %d)\\n", myrank, pcoords[0], pcoords[1], cart_rank, __state->{self.name}_dst_ranks[__state->{self.name}_sends], origin[0], origin[1], subsizes[0], subsizes[1]);
                 __state->{self.name}_sends++;
             }}
         """
