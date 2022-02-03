@@ -461,9 +461,10 @@ required:
                         title: Target frequency for Xilinx kernels
                         description: >
                             Target frequency when compiling kernels for Xilinx.
-                            Will not necessarily be achieved in practice. To 
-                            enable multiple clocks, enter values seperated by 
-                            an escaped bar enclosed in quotes, E.g. "250\|500".
+                            Will not necessarily be achieved in practice. To
+                            enable multiple clocks, enter values in the format
+                            "clock_id:frequency" seperated by an escaped bar,
+                            all enclosed in quotes. E.g. "0:250\|1:500".
 
                     enable_debugging:
                         type: bool
@@ -760,12 +761,12 @@ required:
             print_fpga_runtime:
                 type: bool
                 default: false
-                title: Print FPGA runtime 
-                description: Prints the runtime of instrumented FPGA kernel states to standard output. 
+                title: Print FPGA runtime
+                description: Prints the runtime of instrumented FPGA kernel states to standard output.
 
     #############################################
     # Python frontend settings
-    
+
     frontend:
         type: dict
         title: Frontend
@@ -776,7 +777,7 @@ required:
                 title: Program cache size
                 default: 32
                 description: >
-                    The number of compiled programs to cache (based on argument 
+                    The number of compiled programs to cache (based on argument
                     types, closure constants, and closure array types) to avoid
                     reparsing/compiling when calling a @dace.program or method.
 
@@ -828,7 +829,7 @@ required:
                 description: >
                     Threshold for automatic loop unrolling of any generator (e.g., including ``range``) with a
                     compile-time size. A value of -1 (default) means not to unroll any loop automatically, a value of
-                    0 means unrolling every loop, and a value above zero sets a size threshold beyond which a 
+                    0 means unrolling every loop, and a value above zero sets a size threshold beyond which a
                     constant-sized loop will not be automatically unrolled.
 
 
@@ -843,16 +844,16 @@ required:
         description: Enable verbose printouts.
 
     cache:
-        type: str 
-        default: name 
-        title: Naming of cache entry 
+        type: str
+        default: name
+        title: Naming of cache entry
         description: >
             Determine the name of the generated dacecache folder.
             "name" uses the name of the SDFG directly, causing it to be
             overridden by other programs using the same SDFG name.
             "hash" uses a mangled name based on the hash of the SDFG, such that
             any change to the SDFG will generate a different cache folder.
-            "unique" uses a name based on the currently running Python process 
+            "unique" uses a name based on the currently running Python process
             at code generation time, such that no caching or clashes can happen
             between different processes or subsequent invocations of Python.
             "single" uses a single cache folder for all SDFGs, saving space and
