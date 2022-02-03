@@ -364,7 +364,6 @@ class RedistrArray(object):
             pgrid_a = sdfg.process_grids[grid_a.parent_grid]
             tmp += f"""
                 int pgrid_exact_coords[{len(pgrid_a.shape)}];
-                //MPI_Cart_coords(__state->{pgrid_a.name}_comm, {grid_a.exact_grid}, {len(pgrid_a.shape)}, pgrid_exact_coords);
                 dace::comm::cart_coords({grid_a.exact_grid}, {len(pgrid_a.shape)}, __state->{pgrid_a.name}_dims, pgrid_exact_coords);
                 int pgrid_coords[{len(pgrid_a.shape)}];
             """
@@ -387,7 +386,6 @@ class RedistrArray(object):
                 int rem{i} = {array_b.subshape[i]};
                 for (auto idx{i} = 0; idx{i} < kappa[{i}]; ++idx{i}) {{
                     int actual_idx{i} = {array_a.correspondence[i]};
-                    //pcoords[{i}] = xi[{i}] + idx{i};
                     pcoords[actual_idx{i}] = xi[{i}] + idx{i};
                     int lo{i} = (idx{i} == 0 ? lambda[{i}] : 0);
                     int uo{i} = std::min({array_a.subshape[i]}, lo{i} + rem{i});
@@ -415,17 +413,14 @@ class RedistrArray(object):
             """
         tmp += f"""
                 __state->{self.name}_self_copies++;
-                ////printf("({self.array_a} -> {self.array_b}) I am rank %d and I self-copy {{I receive from %d%d (%d - %d) in (%d, %d) size (%d, %d)}} \\n", myrank, pcoords[0], pcoords[1], cart_rank, ranks2[0], origin[0], origin[1], subsizes[0], subsizes[1]);
-                printf("({self.array_a} -> {self.array_b}) I am rank %d and I self-copy {{I receive from %d%d (%d - %d) in (%d, %d) size (%d, %d)}} \\n", myrank, pcoords[0], pcoords[1], cart_rank, cart_rank, origin[0], origin[1], subsizes[0], subsizes[1]);
+                // printf("({self.array_a} -> {self.array_b}) I am rank %d and I self-copy {{I receive from %d%d (%d - %d) in (%d, %d) size (%d, %d)}} \\n", myrank, pcoords[0], pcoords[1], cart_rank, cart_rank, origin[0], origin[1], subsizes[0], subsizes[1]);
             }} else {{
                 MPI_Type_create_subarray({len(array_b.shape)},  sizes, subsizes, origin, MPI_ORDER_C, {utils.MPI_DDT(array_b.dtype.base_type)}, &__state->{self.name}_recv_types[__state->{self.name}_recvs]);
                 MPI_Type_commit(&__state->{self.name}_recv_types[__state->{self.name}_recvs]);
-                //__state->{self.name}_src_ranks[__state->{self.name}_recvs] = ranks2[0];
                 __state->{self.name}_src_ranks[__state->{self.name}_recvs] = cart_rank;
-                printf("({self.array_a} -> {self.array_b}) I am rank %d and I receive from %d%d (%d - %d) in (%d, %d) size (%d, %d) \\n", myrank, pcoords[0], pcoords[1], cart_rank, __state->{self.name}_src_ranks[__state->{self.name}_recvs], origin[0], origin[1], subsizes[0], subsizes[1]);
+                // printf("({self.array_a} -> {self.array_b}) I am rank %d and I receive from %d%d (%d - %d) in (%d, %d) size (%d, %d) \\n", myrank, pcoords[0], pcoords[1], cart_rank, __state->{self.name}_src_ranks[__state->{self.name}_recvs], origin[0], origin[1], subsizes[0], subsizes[1]);
                 __state->{self.name}_recvs++;
             }}
-            //MPI_Group_free(&world_group);
         """
         for i in range(len(array_b.shape)):
             tmp += f"}}"
@@ -438,7 +433,6 @@ class RedistrArray(object):
             pgrid_b = sdfg.process_grids[grid_b.parent_grid]
             tmp += f"""
                 int pgrid_exact_coords[{len(pgrid_b.shape)}];
-                //MPI_Cart_coords(__state->{pgrid_b.name}_comm, {grid_b.exact_grid}, {len(pgrid_b.shape)}, pgrid_exact_coords);
                 dace::comm::cart_coords({grid_b.exact_grid}, {len(pgrid_b.shape)}, __state->{pgrid_b.name}_dims, pgrid_exact_coords);
                 int pgrid_coords[{len(pgrid_b.shape)}];
             """
@@ -452,10 +446,11 @@ class RedistrArray(object):
             sa = array_a.subshape[i]
             sb = array_b.subshape[i]
             tmp += f"""
-                //int lp{i} = std::max(0, (int)std::ceil(({pcoord} * {sa} - {sb} + 1) / (double){sb}));
+                // int_ceil(x, y) := (x + y - 1) / y
+                // int_ceil(pcoord * sa - sb + 1, sb) = (pcoord * sa) / sb
                 int lp{i} = std::max(0, ({pcoord} * {sa}) / {sb}); // int_ceil(x, y) := (x + y - 1) / y
                 int up{i} = std::min(__state->{array_b.pgrid}_dims[{array_b.correspondence[i]}], int_ceil(({pcoord} + 1) * {sa}, {sb}));
-                ////printf("I am rank %d and I have {i}-th bounds [%d, %d)\\n", myrank, lp{i}, up{i});
+                // printf("I am rank %d and I have {i}-th bounds [%d, %d)\\n", myrank, lp{i}, up{i});
                 for (auto idx{i} = lp{i}; idx{i} < up{i}; ++idx{i}) {{
                     int actual_idx{i} = {array_b.correspondence[i]};
 
@@ -469,7 +464,6 @@ class RedistrArray(object):
                     int uo{i} = (idx{i}_dst == kappa[{i}] - 1 ? {sb} + lambda[{i}] - idx{i}_dst * {sa} : {sa});
                     subsizes[{i}] = uo{i} - lo{i};
                     origin[{i}] = lo{i};
-                    //pcoords[{i}] = idx{i};
                     pcoords[actual_idx{i}] = idx{i};
 
             """
@@ -489,14 +483,13 @@ class RedistrArray(object):
                 MPI_Type_create_subarray({len(array_a.shape)},  sizes, subsizes, origin, MPI_ORDER_C, {utils.MPI_DDT(array_a.dtype.base_type)}, &__state->{self.name}_send_types[__state->{self.name}_sends]);
                 MPI_Type_commit(&__state->{self.name}_send_types[__state->{self.name}_sends]);
                 __state->{self.name}_dst_ranks[__state->{self.name}_sends] = cart_rank;
-                printf("({self.array_a} -> {self.array_b}) I am rank %d and I send to %d%d (%d - %d) from (%d, %d) size (%d, %d)\\n", myrank, pcoords[0], pcoords[1], cart_rank, __state->{self.name}_dst_ranks[__state->{self.name}_sends], origin[0], origin[1], subsizes[0], subsizes[1]);
+                // printf("({self.array_a} -> {self.array_b}) I am rank %d and I send to %d%d (%d - %d) from (%d, %d) size (%d, %d)\\n", myrank, pcoords[0], pcoords[1], cart_rank, __state->{self.name}_dst_ranks[__state->{self.name}_sends], origin[0], origin[1], subsizes[0], subsizes[1]);
                 __state->{self.name}_sends++;
             }}
         """
         for i in range(len(array_b.shape)):
             tmp += f"}}"
         tmp += "}"
-        # tmp += "fflush(stdout);"
         tmp += "}"
         return tmp
     
