@@ -363,7 +363,8 @@ class RedistrArray(object):
             pgrid_a = sdfg.process_grids[grid_a.parent_grid]
             tmp += f"""
                 int pgrid_exact_coords[{len(pgrid_a.shape)}];
-                MPI_Cart_coords(__state->{pgrid_a.name}_comm, {grid_a.exact_grid}, {len(pgrid_a.shape)}, pgrid_exact_coords);
+                //MPI_Cart_coords(__state->{pgrid_a.name}_comm, {grid_a.exact_grid}, {len(pgrid_a.shape)}, pgrid_exact_coords);
+                dace::comm::cart_coords({grid_a.exact_grid}, {len(pgrid_a.shape)}, __state->{pgrid_a.name}_dims, pgrid_exact_coords);
                 int pgrid_coords[{len(pgrid_a.shape)}];
             """
         tmp += f"""
@@ -393,37 +394,50 @@ class RedistrArray(object):
                     origin[{i}] = {array_b.subshape[i]} - rem{i};
                     rem{i} -= uo{i} - lo{i};
             """
-        tmp += f"""
-            int cart_rank;
-            MPI_Cart_rank(__state->{array_a.pgrid}_comm, pcoords, &cart_rank);
-        """
+        # tmp += f"""
+        #     //int cart_rank;
+        #     //MPI_Cart_rank(__state->{array_a.pgrid}_comm, pcoords, &cart_rank);
+        #     int cart_rank = dace::comm::cart_rank({len(grid_a.shape)}, __state->{grid_a.name}_dims, pcoords);
+        # """
+        # if grid_a.is_subgrid:
+        #     tmp += f"""
+        #         int ranks1[1] = {{cart_rank}};
+        #         int ranks2[1];
+        #         MPI_Group_translate_ranks(__state->{array_a.pgrid}_group, 1, ranks1, __state->{pgrid_a.name}_group, ranks2);
+        #         MPI_Cart_coords(__state->{pgrid_a.name}_comm, ranks2[0], {len(pgrid_a.shape)}, pgrid_coords);
+        #     """
+        #     for i, c in enumerate(grid_a.color):
+        #         tmp += f"""
+        #             pgrid_coords[{i}] = {f"pgrid_coords[{i}]" if c else f"pgrid_exact_coords[{i}]"};                
+        #         """
+        #     tmp += f"""
+        #         MPI_Cart_rank(__state->{pgrid_a.name}_comm, pgrid_coords, &cart_rank);
+        #         MPI_Group world_group;
+        #         MPI_Comm_group(MPI_COMM_WORLD, &world_group);
+        #         ranks1[0] = {{cart_rank}};
+        #         MPI_Group_translate_ranks(__state->{pgrid_a.name}_group, 1, ranks1, world_group, ranks2);
+        #     """
+        # else:
+        #     tmp += f"""
+        #         MPI_Group world_group;
+        #         MPI_Comm_group(MPI_COMM_WORLD, &world_group);
+        #         int ranks1[1] = {{cart_rank}};
+        #         int ranks2[1];
+        #         MPI_Group_translate_ranks(__state->{array_a.pgrid}_group, 1, ranks1, world_group, ranks2);
+        #     """
         if grid_a.is_subgrid:
-            tmp += f"""
-                int ranks1[1] = {{cart_rank}};
-                int ranks2[1];
-                MPI_Group_translate_ranks(__state->{array_a.pgrid}_group, 1, ranks1, __state->{pgrid_a.name}_group, ranks2);
-                MPI_Cart_coords(__state->{pgrid_a.name}_comm, ranks2[0], {len(pgrid_a.shape)}, pgrid_coords);
-            """
+            j = 0
             for i, c in enumerate(grid_a.color):
-                tmp += f"""
-                    pgrid_coords[{i}] = {f"pgrid_coords[{i}]" if c else f"pgrid_exact_coords[{i}]"};                
-                """
-            tmp += f"""
-                MPI_Cart_rank(__state->{pgrid_a.name}_comm, pgrid_coords, &cart_rank);
-                MPI_Group world_group;
-                MPI_Comm_group(MPI_COMM_WORLD, &world_group);
-                ranks1[0] = {{cart_rank}};
-                MPI_Group_translate_ranks(__state->{pgrid_a.name}_group, 1, ranks1, world_group, ranks2);
-            """
+                if c:
+                    tmp += f"pgrid_coords[{i}] = pcoords[{j}];\n"
+                    j += 1
+                else:
+                    tmp += f"pgrid_coords[{i}] = pgrid_exact_coords[{i}];\n"
+            tmp += f"int cart_rank = dace::comm::cart_rank({len(pgrid_a.shape)}, __state->{pgrid_a.name}_dims, pgrid_coords);\n"
         else:
-            tmp += f"""
-                MPI_Group world_group;
-                MPI_Comm_group(MPI_COMM_WORLD, &world_group);
-                int ranks1[1] = {{cart_rank}};
-                int ranks2[1];
-                MPI_Group_translate_ranks(__state->{array_a.pgrid}_group, 1, ranks1, world_group, ranks2);
-            """
-        tmp += f"if (myrank == ranks2[0]) {{ // self-copy"
+            tmp += f"int cart_rank = dace::comm::cart_rank({len(grid_a.shape)}, __state->{grid_a.name}_dims, pcoords);\n"
+        # tmp += f"if (myrank == ranks2[0]) {{ // self-copy"
+        tmp += f"if (myrank == cart_rank) {{ // self-copy"
         for i in range(len(array_b.shape)):
             tmp += f"""
                 __state->{self.name}_self_src[__state->{self.name}_self_copies * {len(array_a.shape)} + {i}] = lo{i};
@@ -433,14 +447,16 @@ class RedistrArray(object):
         tmp += f"""
                 __state->{self.name}_self_copies++;
                 //printf("({self.array_a} -> {self.array_b}) I am rank %d and I self-copy {{I receive from %d%d (%d - %d) in (%d, %d) size (%d, %d)}} \\n", myrank, pcoords[0], pcoords[1], cart_rank, ranks2[0], origin[0], origin[1], subsizes[0], subsizes[1]);
+                printf("({self.array_a} -> {self.array_b}) I am rank %d and I self-copy {{I receive from %d%d (%d - %d) in (%d, %d) size (%d, %d)}} \\n", myrank, pcoords[0], pcoords[1], cart_rank, cart_rank, origin[0], origin[1], subsizes[0], subsizes[1]);
             }} else {{
                 MPI_Type_create_subarray({len(array_b.shape)},  sizes, subsizes, origin, MPI_ORDER_C, {utils.MPI_DDT(array_b.dtype.base_type)}, &__state->{self.name}_recv_types[__state->{self.name}_recvs]);
                 MPI_Type_commit(&__state->{self.name}_recv_types[__state->{self.name}_recvs]);
-                __state->{self.name}_src_ranks[__state->{self.name}_recvs] = ranks2[0];
+                //__state->{self.name}_src_ranks[__state->{self.name}_recvs] = ranks2[0];
+                __state->{self.name}_src_ranks[__state->{self.name}_recvs] = cart_rank;
                 //printf("({self.array_a} -> {self.array_b}) I am rank %d and I receive from %d%d (%d - %d) in (%d, %d) size (%d, %d) \\n", myrank, pcoords[0], pcoords[1], cart_rank, __state->{self.name}_src_ranks[__state->{self.name}_recvs], origin[0], origin[1], subsizes[0], subsizes[1]);
                 __state->{self.name}_recvs++;
             }}
-            MPI_Group_free(&world_group);
+            //MPI_Group_free(&world_group);
         """
         for i in range(len(array_b.shape)):
             tmp += f"}}"
