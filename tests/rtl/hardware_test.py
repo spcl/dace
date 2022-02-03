@@ -2,7 +2,8 @@
 import dace
 from dace.fpga_testing import xilinx_test
 import numpy as np
-
+import importlib.util
+from pathlib import Path
 
 def make_vadd_sdfg(N, veclen=8):
     # add sdfg
@@ -340,6 +341,44 @@ def test_hardware_add42_single():
 
     return sdfg
 
+@xilinx_test()
+def test_hardware_axpy_double_pump():
+    # Grab the double pumped AXPY implementation the samples directory
+    spec = importlib.util.spec_from_file_location(
+        "axpy",
+        Path(__file__).parent.parent.parent / "samples" / "rtl" / "axpy_double_pump.py")
+    axpy = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(axpy)
+
+    # Configuration has to use multiple clocks in this sample.
+    old_freq = dace.config.Config.get('compiler', 'xilinx', 'frequency')
+    dace.config.Config.set('compiler', 'xilinx', 'frequency', value='"0:300\\|1:600"')
+
+    # init data structures
+    N = dace.symbol('N')
+    N.set(16)
+    a = np.float32(0)  #np.random.rand(1)[0].astype(np.float32)
+    x = np.random.rand(N.get()).astype(np.float32)
+    y = np.random.rand(N.get()).astype(np.float32)
+    result = np.zeros((N.get(), )).astype(np.float32)
+
+    # Build the SDFG
+    sdfg = axpy.make_sdfg()
+
+    # call program
+    sdfg(a=a, x=x, y=y, result=result, N=N)
+
+    # check result
+    expected = a * x + y
+    diff = np.linalg.norm(expected - result) / N.get()
+
+    # Set the old frequency back
+    dace.config.Config.set('compiler', 'xilinx', 'frequency', value=old_freq)
+
+    assert diff <= 1e-5
+
+    return sdfg
+
 
 # TODO disabled due to problem with array of streams in Vitis 2021.1
 #@xilinx_test()
@@ -366,7 +405,15 @@ def test_hardware_add42_single():
 
 
 if __name__ == '__main__':
+    # These tests should only be run in hardware* mode
+    old_mode = dace.config.Config.get('compiler', 'xilinx', 'mode')
+    dace.config.Config.set('compiler', 'xilinx', 'mode', value='hardware_emulation')
+
     test_hardware_vadd(None)
     test_hardware_add42_single(None)
     # TODO disabled due to problem with array of streams in Vitis 2021.1
     #test_hardware_add42_multi(None)
+    test_hardware_axpy_double_pump(None)
+
+    # Restore the previous config mode
+    dace.config.Config.set('compiler', 'xilinx', 'mode', value=old_mode)

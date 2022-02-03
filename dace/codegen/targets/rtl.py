@@ -247,7 +247,7 @@ class RTLCodeGen(target.TargetCodeGenerator):
         freqs = self.frequencies.strip('"').split('\\|')
         nclks = len(freqs)
         clks = ['&(model->ap_aclk)'] + [f'&(model->ap_aclk_{i+2})' for i in range(nclks - 1)]
-        freqs = f'{{ {", ".join(freqs)} }}'
+        freqs = f'{{ {", ".join([freq.split(":")[1] for freq in freqs])} }}'
         nclks = str(nclks)
         clks = f'{{ {", ".join(clks)} }}'
         return nclks, freqs, clks

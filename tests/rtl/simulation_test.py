@@ -79,7 +79,7 @@ def test_tasklet_double_clk_counters():
         The last 16 bits of the result should contain the count from the "fast" clock, i.e. slow count * 2
     """
     old_freq = dace.config.Config.get('compiler', 'xilinx', 'frequency')
-    dace.config.Config.set('compiler', 'xilinx', 'frequency', value='"300\\|600"')
+    dace.config.Config.set('compiler', 'xilinx', 'frequency', value='"0:300\\|1:600"')
     sdfg = dace.SDFG('rtl_tasklet_double_clk_counters')
     state = sdfg.add_state()
     sdfg.add_array('A', [1], dtype=dace.int32)
@@ -687,6 +687,10 @@ end''',
 
 
 if __name__ == '__main__':
+    # These tests should only be run in simulation mode
+    old_mode = dace.config.Config.get('compiler', 'xilinx', 'mode')
+    dace.config.Config.set('compiler', 'xilinx', 'mode', value='simulation')
+
     test_multi_tasklet()
     test_tasklet_array()
     test_tasklet_double_clk_counters()
@@ -695,3 +699,6 @@ if __name__ == '__main__':
     test_tasklet_scalar()
     test_tasklet_vector_add()
     test_tasklet_vector_conversion()
+
+    # Restore the previous config mode
+    dace.config.Config.set('compiler', 'xilinx', 'mode', value=old_mode)
