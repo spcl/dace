@@ -482,12 +482,15 @@ class LoopUnroller(ast.NodeTransformer):
 
             # If an unknown/mutable object, add to closure
             for i, e in enumerate(elem):
-                if not isinstance(e, (numbers.Number, str)):
-                    raise NotImplementedError('Closure augmentation needed')
-                else:
+                # Already AST
+                if isinstance(e, ast.AST):
+                    continue
+                if isinstance(e, (numbers.Number, str)):
                     # Compatibility check since Python changed their AST nodes
                     newnode = astutils.create_constant(e)
                     elem[i] = newnode
+                else:
+                    raise NotImplementedError('Closure augmentation needed')
 
             elembody = [astutils.copy_tree(stmt) for stmt in node.body]
             replace = astutils.ASTFindReplace({k: v for k, v in zip(to_replace, elem)})
