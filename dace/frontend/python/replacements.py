@@ -3550,6 +3550,13 @@ def implement_ufunc_reduce(visitor: 'ProgramVisitor', ast_node: ast.Call, sdfg: 
             else:
                 initial = intermediate_name
 
+    # Special case for infinity
+    if np.isinf(initial):
+        if np.sign(initial) < 0:
+            initial = dtypes.min_value(result_type)
+        else:
+            initial = dtypes.max_value(result_type)
+
     # Create subgraph
     if isinstance(inputs[0], str) and inputs[0] in sdfg.arrays.keys():
         _reduce(visitor, sdfg, state, ufunc_impl['reduce'], inputs[0], intermediate_name, axis=axis, identity=initial)
