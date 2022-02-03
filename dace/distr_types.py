@@ -438,7 +438,8 @@ class RedistrArray(object):
             pgrid_b = sdfg.process_grids[grid_b.parent_grid]
             tmp += f"""
                 int pgrid_exact_coords[{len(pgrid_b.shape)}];
-                MPI_Cart_coords(__state->{pgrid_b.name}_comm, {grid_b.exact_grid}, {len(pgrid_b.shape)}, pgrid_exact_coords);
+                //MPI_Cart_coords(__state->{pgrid_b.name}_comm, {grid_b.exact_grid}, {len(pgrid_b.shape)}, pgrid_exact_coords);
+                dace::comm::cart_coords({grid_b.exact_grid}, {len(pgrid_b.shape)}, __state->{pgrid_b.name}_dims, pgrid_exact_coords);
                 int pgrid_coords[{len(pgrid_b.shape)}];
             """
         tmp += f"""
