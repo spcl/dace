@@ -196,7 +196,11 @@ def _reduce(pv: 'ProgramVisitor',
             output_subset = copy.deepcopy(input_subset)
             output_subset.pop(axis)
             output_shape = output_subset.size()
-        outarr, arr = sdfg.add_temp_transient(output_shape, sdfg.arrays[inarr].dtype, sdfg.arrays[inarr].storage)
+        if (len(output_shape) == 1 and output_shape[0] == 1):
+            outarr = sdfg.temp_data_name()
+            outarr, arr = sdfg.add_scalar(outarr, sdfg.arrays[inarr].dtype, sdfg.arrays[inarr].storage, transient=True)
+        else:
+            outarr, arr = sdfg.add_temp_transient(output_shape, sdfg.arrays[inarr].dtype, sdfg.arrays[inarr].storage)
         output_memlet = Memlet.from_array(outarr, arr)
     else:
         inarr = in_array
@@ -3549,6 +3553,13 @@ def implement_ufunc_reduce(visitor: 'ProgramVisitor', ast_node: ast.Call, sdfg: 
                 state = visitor._add_state(state.label + 'b')
             else:
                 initial = intermediate_name
+
+    # Special case for infinity
+    if np.isinf(initial):
+        if np.sign(initial) < 0:
+            initial = dtypes.min_value(result_type)
+        else:
+            initial = dtypes.max_value(result_type)
 
     # Create subgraph
     if isinstance(inputs[0], str) and inputs[0] in sdfg.arrays.keys():
