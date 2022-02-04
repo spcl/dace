@@ -15,7 +15,7 @@ sdfg = dace.SDFG('axpy')
 # add state
 state = sdfg.add_state('device_state')
 
-# add parametr
+# add parameter
 veclen = 1
 sdfg.add_constant('VECLEN', veclen)
 sdfg.add_constant('DATA_WIDTH', 64)

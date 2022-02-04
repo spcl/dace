@@ -78,7 +78,7 @@ def make_sdfg():
     # add state
     state = sdfg.add_state('device_state')
 
-    # add parametr
+    # add parameter
     veclen = 2
     sdfg.add_constant('VECLEN', veclen)
     sdfg.add_constant('DATA_WIDTH', 64)
