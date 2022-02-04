@@ -71,7 +71,7 @@ import numpy as np
 # add symbol
 N = dace.symbol('N')
 
-def make_sdfg():
+def make_sdfg(veclen=2):
     # add sdfg
     sdfg = dace.SDFG('axpy_double_pump')
 
@@ -79,11 +79,7 @@ def make_sdfg():
     state = sdfg.add_state('device_state')
 
     # add parameter
-    veclen = 2
     sdfg.add_constant('VECLEN', veclen)
-    sdfg.add_constant('DATA_WIDTH', 64)
-    sdfg.add_constant('WORD_WIDTH', 32)
-    sdfg.add_constant('RATIO', 2)
 
     # add arrays
     sdfg.add_scalar('a', dtype=dace.float32, storage=dace.StorageType.FPGA_Global)
