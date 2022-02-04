@@ -460,10 +460,11 @@ required:
                         default: ''
                         title: Target frequency for Xilinx kernels
                         description: >
-                            Target frequency when compiling kernels for Xilinx.
-                            Will not necessarily be achieved in practice. To
-                            enable multiple clocks, enter values in the format
-                            "clock_id:frequency" separated by an escaped bar,
+                            Target frequency, in MHz, when compiling kernels
+                            for Xilinx. Will not necessarily be achieved in
+                            practice. To enable multiple clocks, enter values
+                            in the format "clock_id:frequency", with frequency
+                            being specified in MHz separated by an escaped bar,
                             all enclosed in quotes. E.g. "0:250\|1:500".
 
                     enable_debugging:
