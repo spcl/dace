@@ -341,8 +341,7 @@ def test_hardware_add42_single():
 
     return sdfg
 
-@xilinx_test()
-def test_hardware_axpy_double_pump():
+def test_hardware_axpy_double_pump(veclen=2):
     # Grab the double pumped AXPY implementation the samples directory
     spec = importlib.util.spec_from_file_location(
         "axpy",
@@ -365,7 +364,7 @@ def test_hardware_axpy_double_pump():
     result = np.zeros((N.get(), )).astype(np.float32)
 
     # Build the SDFG
-    sdfg = axpy.make_sdfg()
+    sdfg = axpy.make_sdfg(veclen)
 
     # call program
     sdfg(a=a, x=x, y=y, result=result, N=N)
@@ -381,6 +380,13 @@ def test_hardware_axpy_double_pump():
 
     return sdfg
 
+@xilinx_test()
+def test_hardware_axpy_double_pump_vec2():
+    return test_hardware_axpy_double_pump(veclen=2)
+
+@xilinx_test()
+def test_hardware_axpy_double_pump_vec4():
+    return test_hardware_axpy_double_pump(veclen=4)
 
 # TODO disabled due to problem with array of streams in Vitis 2021.1
 #@xilinx_test()
@@ -411,11 +417,12 @@ if __name__ == '__main__':
     old_mode = dace.config.Config.get('compiler', 'xilinx', 'mode')
     dace.config.Config.set('compiler', 'xilinx', 'mode', value='hardware_emulation')
 
-    #test_hardware_vadd(None)
-    #test_hardware_add42_single(None)
+    test_hardware_vadd(None)
+    test_hardware_add42_single(None)
     # TODO disabled due to problem with array of streams in Vitis 2021.1
     #test_hardware_add42_multi(None)
-    test_hardware_axpy_double_pump(None)
+    test_hardware_axpy_double_pump_vec2(None)
+    test_hardware_axpy_double_pump_vec4(None)
 
     # Restore the previous config mode
     dace.config.Config.set('compiler', 'xilinx', 'mode', value=old_mode)

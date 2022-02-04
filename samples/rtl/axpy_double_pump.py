@@ -2,8 +2,12 @@
 #
 # This sample shows the AXPY BLAS routine. It is implemented through Xilinx
 # IPs in order to utilize double pumping, which doubles the performance per
-# consumed FPGA resource. The block diagram of the design (with reset
-# synchronization omitted) is:
+# consumed FPGA resource. The double pumping operation is "inwards", which
+# means that the internal vectorization width of the core computation is half
+# that of the external vectorization width. This translates into utilizing half
+# the amount of internal computing resources, compared to a regular vectorized
+# implementetation. The block diagram of the design for a 32-bit floating-point
+# implementation using vectorization width 2 is:
 #
 #          ap_aclk          s_axis_y_in        s_axis_x_in     a
 #             │                  │                  │          │
@@ -72,8 +76,11 @@ import numpy as np
 N = dace.symbol('N')
 
 def make_sdfg(veclen=2):
+    # Double check that the provided veclen is divisible by 2
+    assert veclen >= 2 and veclen % 2 == 0
+
     # add sdfg
-    sdfg = dace.SDFG('axpy_double_pump')
+    sdfg = dace.SDFG(f'axpy_double_pump_v{veclen}')
 
     # add state
     state = sdfg.add_state('device_state')
@@ -146,9 +153,9 @@ def make_sdfg(veclen=2):
         wire ap_areset_n = ~ap_areset;
         wire ap_areset_n_2 = ~ap_areset_2;
 
-        wire        axis_x_clk_data_tvalid;
-        wire [63:0] axis_x_clk_data_tdata;
-        wire        axis_x_clk_data_tready;
+        wire                    axis_x_clk_data_tvalid;
+        wire [VECLEN-1:0][31:0] axis_x_clk_data_tdata;
+        wire                    axis_x_clk_data_tready;
 
         slow_to_fast_clk clock_sync_x (
             .s_axis_aclk(ap_aclk),
@@ -165,9 +172,9 @@ def make_sdfg(veclen=2):
             .m_axis_tready(axis_x_clk_data_tready)
         );
 
-        wire        axis_y_clk_data_tvalid;
-        wire [63:0] axis_y_clk_data_tdata;
-        wire        axis_y_clk_data_tready;
+        wire                    axis_y_clk_data_tvalid;
+        wire [VECLEN-1:0][31:0] axis_y_clk_data_tdata;
+        wire                    axis_y_clk_data_tready;
 
         slow_to_fast_clk clock_sync_y (
             .s_axis_aclk(ap_aclk),
@@ -184,9 +191,9 @@ def make_sdfg(veclen=2):
             .m_axis_tready(axis_y_clk_data_tready)
         );
 
-        wire        axis_x_data_fl_tvalid;
-        wire [31:0] axis_x_data_fl_tdata;
-        wire        axis_x_data_fl_tready;
+        wire                        axis_x_data_fl_tvalid;
+        wire [(VECLEN/2)-1:0][31:0] axis_x_data_fl_tdata;
+        wire [(VECLEN/2)-1:0]       axis_x_data_fl_tready;
 
         slow_to_fast_data data_issue_x (
             .aclk(ap_aclk_2),
@@ -198,12 +205,12 @@ def make_sdfg(veclen=2):
 
             .m_axis_tvalid(axis_x_data_fl_tvalid),
             .m_axis_tdata( axis_x_data_fl_tdata),
-            .m_axis_tready(axis_x_data_fl_tready)
+            .m_axis_tready(&axis_x_data_fl_tready)
         );
 
-        wire        axis_y_data_fl_tvalid;
-        wire [31:0] axis_y_data_fl_tdata;
-        wire        axis_y_data_fl_tready;
+        wire                        axis_y_data_fl_tvalid;
+        wire [(VECLEN/2)-1:0][31:0] axis_y_data_fl_tdata;
+        wire [(VECLEN/2)-1:0]       axis_y_data_fl_tready;
 
         slow_to_fast_data data_issue_y (
             .aclk(ap_aclk_2),
@@ -215,58 +222,66 @@ def make_sdfg(veclen=2):
 
             .m_axis_tvalid(axis_y_data_fl_tvalid),
             .m_axis_tdata( axis_y_data_fl_tdata),
-            .m_axis_tready(axis_y_data_fl_tready)
+            .m_axis_tready(&axis_y_data_fl_tready)
         );
 
-        wire        axis_ax_tvalid;
-        wire [31:0] axis_ax_tdata;
-        wire        axis_ax_tready;
+        wire [(VECLEN/2)-1:0]       axis_ax_tvalid;
+        wire [(VECLEN/2)-1:0][31:0] axis_ax_tdata;
+        wire [(VECLEN/2)-1:0]       axis_ax_tready;
 
-        floating_point_mult multiplier (
-            .aclk(ap_aclk_2),
+        generate
+            for (genvar i = 0; i < (VECLEN/2); i++) begin
+                floating_point_mult multiplier (
+                    .aclk(ap_aclk_2),
 
-            .s_axis_a_tvalid(1),
-            .s_axis_a_tdata(a_in),
-            //.s_axis_a_tready(),
+                    .s_axis_a_tvalid(1),
+                    .s_axis_a_tdata(a_in),
+                    //.s_axis_a_tready(),
 
-            .s_axis_b_tvalid(axis_x_data_fl_tvalid),
-            .s_axis_b_tdata( axis_x_data_fl_tdata),
-            .s_axis_b_tready(axis_x_data_fl_tready),
+                    .s_axis_b_tvalid(axis_x_data_fl_tvalid),
+                    .s_axis_b_tdata( axis_x_data_fl_tdata[i]),
+                    .s_axis_b_tready(axis_x_data_fl_tready[i]),
 
-            .m_axis_result_tvalid(axis_ax_tvalid),
-            .m_axis_result_tdata( axis_ax_tdata),
-            .m_axis_result_tready(axis_ax_tready)
-        );
+                    .m_axis_result_tvalid(axis_ax_tvalid[i]),
+                    .m_axis_result_tdata( axis_ax_tdata[i]),
+                    .m_axis_result_tready(axis_ax_tready[i])
+                );
+            end
+        endgenerate
 
-        wire        axis_result_tvalid;
-        wire [31:0] axis_result_tdata;
-        wire        axis_result_tready;
+        wire [(VECLEN/2)-1:0]       axis_result_tvalid;
+        wire [(VECLEN/2)-1:0][31:0] axis_result_tdata;
+        wire                        axis_result_tready;
 
-        floating_point_add adder (
-            .aclk(ap_aclk_2),
+        generate
+            for (genvar i = 0; i < (VECLEN/2); i++) begin
+                floating_point_add adder (
+                    .aclk(ap_aclk_2),
 
-            .s_axis_a_tvalid(axis_ax_tvalid),
-            .s_axis_a_tdata( axis_ax_tdata),
-            .s_axis_a_tready(axis_ax_tready),
+                    .s_axis_a_tvalid(axis_ax_tvalid[i]),
+                    .s_axis_a_tdata( axis_ax_tdata[i]),
+                    .s_axis_a_tready(axis_ax_tready[i]),
 
-            .s_axis_b_tvalid(axis_y_data_fl_tvalid),
-            .s_axis_b_tdata( axis_y_data_fl_tdata),
-            .s_axis_b_tready(axis_y_data_fl_tready),
+                    .s_axis_b_tvalid(axis_y_data_fl_tvalid),
+                    .s_axis_b_tdata( axis_y_data_fl_tdata[i]),
+                    .s_axis_b_tready(axis_y_data_fl_tready[i]),
 
-            .m_axis_result_tvalid(axis_result_tvalid),
-            .m_axis_result_tdata( axis_result_tdata),
-            .m_axis_result_tready(axis_result_tready)
-        );
+                    .m_axis_result_tvalid(axis_result_tvalid[i]),
+                    .m_axis_result_tdata( axis_result_tdata[i]),
+                    .m_axis_result_tready(axis_result_tready)
+                );
+            end
+        endgenerate
 
-        wire        axis_result_data_clk_tvalid;
-        wire [63:0] axis_result_data_clk_tdata;
-        wire        axis_result_data_clk_tready;
+        wire                    axis_result_data_clk_tvalid;
+        wire [VECLEN-1:0][31:0] axis_result_data_clk_tdata;
+        wire                    axis_result_data_clk_tready;
 
         fast_to_slow_data data_packer (
             .aclk(ap_aclk_2),
             .aresetn(ap_areset_n_2),
 
-            .s_axis_tvalid(axis_result_tvalid),
+            .s_axis_tvalid(&axis_result_tvalid),
             .s_axis_tdata( axis_result_tdata),
             .s_axis_tready(axis_result_tready),
 
@@ -293,13 +308,13 @@ def make_sdfg(veclen=2):
                                     language=dace.Language.SystemVerilog)
 
     rtl_tasklet.add_ip_core('slow_to_fast_clk', 'axis_clock_converter', 'xilinx.com', '1.1', {
-        "CONFIG.TDATA_NUM_BYTES": "8",
+        "CONFIG.TDATA_NUM_BYTES": f'{4*veclen}',
         "CONFIG.SYNCHRONIZATION_STAGES": "8"
     })
 
     rtl_tasklet.add_ip_core('slow_to_fast_data', 'axis_dwidth_converter', 'xilinx.com', '1.1', {
-        "CONFIG.S_TDATA_NUM_BYTES": "8",
-        "CONFIG.M_TDATA_NUM_BYTES": "4"
+        "CONFIG.S_TDATA_NUM_BYTES": f'{4*veclen}',
+        "CONFIG.M_TDATA_NUM_BYTES": f'{4*(veclen//2)}'
     })
 
     rtl_tasklet.add_ip_core(
@@ -324,12 +339,12 @@ def make_sdfg(veclen=2):
     })
 
     rtl_tasklet.add_ip_core('fast_to_slow_data', 'axis_dwidth_converter', 'xilinx.com', '1.1', {
-        "CONFIG.S_TDATA_NUM_BYTES": "4",
-        "CONFIG.M_TDATA_NUM_BYTES": "8"
+        "CONFIG.S_TDATA_NUM_BYTES": f'{4*(veclen//2)}',
+        "CONFIG.M_TDATA_NUM_BYTES": f'{4*veclen}'
     })
 
     rtl_tasklet.add_ip_core('fast_to_slow_clk', 'axis_clock_converter', 'xilinx.com', '1.1', {
-        "CONFIG.TDATA_NUM_BYTES": "8",
+        "CONFIG.TDATA_NUM_BYTES": f'{4*veclen}',
         "CONFIG.SYNCHRONIZATION_STAGES": "8"
     })
 
