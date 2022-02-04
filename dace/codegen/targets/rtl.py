@@ -240,17 +240,28 @@ class RTLCodeGen(target.TargetCodeGenerator):
         """
         Generate the clock handling initialization expressions.
         """
-        # Default case: no frequency specified
-        if self.frequencies == '':
-            return '1', '{ 300 }', '{ &(model->ap_aclk) }'
+        if self.frequencies == '': # Default case: no frequency specified, set to 300.
+            freqs = ['0:300']
+        elif ':' not in self.frequencies: # Case of a single number without id.
+            freqs = [f'0:{self.frequencies}']
+        else: # Multiple clocks specified in the format "0:freq_0\|1:freq_1"
+            freqs = self.frequencies.strip('"').split('\\|')
 
-        freqs = self.frequencies.strip('"').split('\\|')
+        prm_clk_format = \
+            '''input  ap_aclk     // convention: ap_aclk clocks the design, specifically the external ports
+, input  ap_areset   // convention: ap_areset resets the design'''
+        scd_clk_format = \
+            ''', input  ap_aclk_{id}   // convention: ap_aclk_{id} is a secondary clock, which can be used inside
+, input  ap_areset_{id} // convention: ap_areset_{id} resets the components clocked by ap_aclk_{id}'''
+
         nclks = len(freqs)
+        ports = [prm_clk_format] + [scd_clk_format.format(id=i+2) for i in range(nclks-1)]
         clks = ['&(model->ap_aclk)'] + [f'&(model->ap_aclk_{i+2})' for i in range(nclks - 1)]
         freqs = f'{{ {", ".join([freq.split(":")[1] for freq in freqs])} }}'
         nclks = str(nclks)
         clks = f'{{ {", ".join(clks)} }}'
-        return nclks, freqs, clks
+        ports = '\n'.join(ports)
+        return nclks, freqs, clks, ports
 
     def generate_cpp_zero_inits(self, buses, scalars):
         """
@@ -532,13 +543,14 @@ model->s_axis_{name}_tdata = {name}[0];'''
         # generate system verilog module components
         parameter_string: str = self.generate_rtl_parameters(sdfg.constants)
         inputs, outputs = self.generate_rtl_inputs_outputs(buses, scalars)
+        nclks, freqs, clks, ports = self.generate_clk_from_cfg()
 
         # create rtl code object (that is later written to file)
         self.code_objects.append(
             codeobject.CodeObject(
                 name="{}".format(unique_name),
                 code=RTLCodeGen.RTL_HEADER.format(
-                    name=unique_name, parameters=parameter_string, inputs="\n".join(inputs), outputs="\n".join(outputs))
+                    name=unique_name, parameters=parameter_string, inputs="\n".join(inputs), outputs="\n".join(outputs), clk_rst_ports=ports)
                 + tasklet.code.code + RTLCodeGen.RTL_FOOTER,
                 language="sv",
                 target=RTLCodeGen,
@@ -550,7 +562,6 @@ model->s_axis_{name}_tdata = {name}[0];'''
 
         if self.hardware_target:
             if self.vendor == 'xilinx':
-                nclks, _, _ = self.generate_clk_from_cfg()
                 rtllib_config = {
                     "name": unique_name,
                     "buses": {
@@ -630,7 +641,6 @@ model->s_axis_{name}_tdata = {name}[0];'''
             input_hs_toggle = self.generate_input_hs_toggle(buses)
             output_hs_toggle = self.generate_output_hs_toggle(buses)
             running_condition = self.generate_running_condition(tasklet)
-            nclks, freqs, clks = self.generate_clk_from_cfg()
 
             # add header code to stream
             if not self.cpp_general_header_added:
@@ -792,10 +802,7 @@ model = NULL;
     RTL_HEADER = """\
 module {name}
 {parameters}
-( input  ap_aclk     // convention: ap_aclk clocks the design, specifically the external ports
-, input  ap_areset   // convention: ap_areset resets the design
-, input  ap_aclk_2   // convention: ap_aclk_2 is the secondary clock, which can be used inside
-, input  ap_areset_2 // convention: ap_areset_2 resets the components clocked by ap_aclk_2
+( {clk_rst_ports}
 , input  ap_start    // convention: ap_start indicates a start from host
 , output ap_done     // convention: ap_done tells the host that the kernel has finished
 
