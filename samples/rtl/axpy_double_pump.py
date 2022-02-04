@@ -421,6 +421,8 @@ def make_sdfg(veclen=2):
 
 if __name__ == '__main__':
     # Configuration has to use multiple clocks in this sample, and target hardware.
+    old_freq = dace.config.Config.get('compiler', 'xilinx', 'frequency')
+    old_mode = dace.config.Config.get('compiler', 'xilinx', 'mode')
     dace.config.Config.set('compiler', 'xilinx', 'frequency', value='"0:300\\|1:600"')
     dace.config.Config.set('compiler', 'xilinx', 'mode', value='hardware_emulation')
 
@@ -447,4 +449,8 @@ if __name__ == '__main__':
     expected = a * x + y
     diff = np.linalg.norm(expected - result) / N.get()
     print("Difference:", diff)
+
+    dace.config.Config.set('xilinx', 'compiler', 'frequency', value=old_freq)
+    dace.config.Config.set('xilinx', 'compiter', 'mode', value=old_mode)
+
     exit(0 if diff <= 1e-5 else 1)
