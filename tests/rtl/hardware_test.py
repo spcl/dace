@@ -6,6 +6,7 @@ import importlib.util
 from pathlib import Path
 import pytest
 
+
 def make_vadd_sdfg(N, veclen=8):
     # add sdfg
     sdfg = dace.SDFG('floating_point_vector_plus_scalar')
@@ -342,6 +343,7 @@ def test_hardware_add42_single():
 
     return sdfg
 
+
 @pytest.mark.skip(reason="This test is covered by the Xilinx tests.")
 def test_hardware_axpy_double_pump(veclen=2):
     # Grab the double pumped AXPY implementation the samples directory
@@ -382,13 +384,16 @@ def test_hardware_axpy_double_pump(veclen=2):
 
     return sdfg
 
+
 @xilinx_test()
 def test_hardware_axpy_double_pump_vec2():
     return test_hardware_axpy_double_pump(veclen=2)
 
+
 @xilinx_test()
 def test_hardware_axpy_double_pump_vec4():
     return test_hardware_axpy_double_pump(veclen=4)
+
 
 # TODO disabled due to problem with array of streams in Vitis 2021.1
 #@xilinx_test()
@@ -412,7 +417,6 @@ def test_hardware_axpy_double_pump_vec4():
 #        assert b[i] == a[i] + 42
 #
 #    return sdfg
-
 
 if __name__ == '__main__':
     # These tests should only be run in hardware* mode

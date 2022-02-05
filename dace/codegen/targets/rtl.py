@@ -240,11 +240,11 @@ class RTLCodeGen(target.TargetCodeGenerator):
         """
         Generate the clock handling initialization expressions.
         """
-        if self.frequencies == '': # Default case: no frequency specified, set to 300.
+        if self.frequencies == '':  # Default case: no frequency specified, set to 300.
             freqs = ['0:300']
-        elif ':' not in self.frequencies: # Case of a single number without id.
+        elif ':' not in self.frequencies:  # Case of a single number without id.
             freqs = [f'0:{self.frequencies}']
-        else: # Multiple clocks specified in the format "0:freq_0\|1:freq_1"
+        else:  # Multiple clocks specified in the format "0:freq_0\|1:freq_1"
             freqs = self.frequencies.strip('"').split('\\|')
 
         prm_clk_format = \
@@ -255,7 +255,7 @@ class RTLCodeGen(target.TargetCodeGenerator):
 , input  ap_areset_{id} // convention: ap_areset_{id} resets the components clocked by ap_aclk_{id}'''
 
         nclks = len(freqs)
-        ports = [prm_clk_format] + [scd_clk_format.format(id=i+2) for i in range(nclks-1)]
+        ports = [prm_clk_format] + [scd_clk_format.format(id=i + 2) for i in range(nclks - 1)]
         clks = ['&(model->ap_aclk)'] + [f'&(model->ap_aclk_{i+2})' for i in range(nclks - 1)]
         freqs = f'{{ {", ".join([freq.split(":")[1] for freq in freqs])} }}'
         nclks = str(nclks)
@@ -547,18 +547,20 @@ model->s_axis_{name}_tdata = {name}[0];'''
 
         # create rtl code object (that is later written to file)
         self.code_objects.append(
-            codeobject.CodeObject(
-                name="{}".format(unique_name),
-                code=RTLCodeGen.RTL_HEADER.format(
-                    name=unique_name, parameters=parameter_string, inputs="\n".join(inputs), outputs="\n".join(outputs), clk_rst_ports=ports)
-                + tasklet.code.code + RTLCodeGen.RTL_FOOTER,
-                language="sv",
-                target=RTLCodeGen,
-                title="rtl",
-                target_type="{}".format(unique_name),
-                additional_compiler_kwargs="",
-                linkable=True,
-                environments=None))
+            codeobject.CodeObject(name="{}".format(unique_name),
+                                  code=RTLCodeGen.RTL_HEADER.format(name=unique_name,
+                                                                    parameters=parameter_string,
+                                                                    inputs="\n".join(inputs),
+                                                                    outputs="\n".join(outputs),
+                                                                    clk_rst_ports=ports) + tasklet.code.code +
+                                  RTLCodeGen.RTL_FOOTER,
+                                  language="sv",
+                                  target=RTLCodeGen,
+                                  title="rtl",
+                                  target_type="{}".format(unique_name),
+                                  additional_compiler_kwargs="",
+                                  linkable=True,
+                                  environments=None))
 
         if self.hardware_target:
             if self.vendor == 'xilinx':

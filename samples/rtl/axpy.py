@@ -9,6 +9,7 @@ import numpy as np
 # add symbol
 N = dace.symbol('N')
 
+
 def make_sdfg(veclen=2):
     # add sdfg
     sdfg = dace.SDFG('axpy')
@@ -25,17 +26,17 @@ def make_sdfg(veclen=2):
     sdfg.add_array('y', [N // veclen], dtype=dace.vector(dace.float32, veclen), storage=dace.StorageType.CPU_Heap)
     sdfg.add_array('result', [N // veclen], dtype=dace.vector(dace.float32, veclen), storage=dace.StorageType.CPU_Heap)
     sdfg.add_array('fpga_x', [N // veclen],
-                dtype=dace.vector(dace.float32, veclen),
-                transient=True,
-                storage=dace.StorageType.FPGA_Global)
+                   dtype=dace.vector(dace.float32, veclen),
+                   transient=True,
+                   storage=dace.StorageType.FPGA_Global)
     sdfg.add_array('fpga_y', [N // veclen],
-                dtype=dace.vector(dace.float32, veclen),
-                transient=True,
-                storage=dace.StorageType.FPGA_Global)
+                   dtype=dace.vector(dace.float32, veclen),
+                   transient=True,
+                   storage=dace.StorageType.FPGA_Global)
     sdfg.add_array('fpga_result', [N // veclen],
-                dtype=dace.vector(dace.float32, veclen),
-                transient=True,
-                storage=dace.StorageType.FPGA_Global)
+                   dtype=dace.vector(dace.float32, veclen),
+                   transient=True,
+                   storage=dace.StorageType.FPGA_Global)
 
     # add streams
     sdfg.add_stream('x_stream',
@@ -151,11 +152,15 @@ def make_sdfg(veclen=2):
     write_result = state.add_tasklet('write_result', {'inp'}, {'out'}, 'out = inp')
 
     # add read and write maps
-    read_x_entry, read_x_exit = state.add_map('read_x_map', dict(i='0:N//VECLEN'), schedule=dace.ScheduleType.FPGA_Device)
-    read_y_entry, read_y_exit = state.add_map('read_y_map', dict(i='0:N//VECLEN'), schedule=dace.ScheduleType.FPGA_Device)
+    read_x_entry, read_x_exit = state.add_map('read_x_map',
+                                              dict(i='0:N//VECLEN'),
+                                              schedule=dace.ScheduleType.FPGA_Device)
+    read_y_entry, read_y_exit = state.add_map('read_y_map',
+                                              dict(i='0:N//VECLEN'),
+                                              schedule=dace.ScheduleType.FPGA_Device)
     write_result_entry, write_result_exit = state.add_map('write_result_map',
-                                                        dict(i='0:N//VECLEN'),
-                                                        schedule=dace.ScheduleType.FPGA_Device)
+                                                          dict(i='0:N//VECLEN'),
+                                                          schedule=dace.ScheduleType.FPGA_Device)
 
     # add read_a memlets and access nodes
     read_x_inp = state.add_read('fpga_x')
@@ -182,15 +187,15 @@ def make_sdfg(veclen=2):
     write_result_inp = state.add_read('result_stream')
     write_result_out = state.add_write('fpga_result')
     state.add_memlet_path(write_result_inp,
-                        write_result_entry,
-                        write_result,
-                        dst_conn='inp',
-                        memlet=dace.Memlet('result_stream[0]'))
+                          write_result_entry,
+                          write_result,
+                          dst_conn='inp',
+                          memlet=dace.Memlet('result_stream[0]'))
     state.add_memlet_path(write_result,
-                        write_result_exit,
-                        write_result_out,
-                        src_conn='out',
-                        memlet=dace.Memlet('fpga_result[i]'))
+                          write_result_exit,
+                          write_result_out,
+                          src_conn='out',
+                          memlet=dace.Memlet('fpga_result[i]'))
 
     # add copy to device state
     copy_to_device = sdfg.add_state('copy_to_device')
@@ -213,6 +218,7 @@ def make_sdfg(veclen=2):
     sdfg.validate()
 
     return sdfg
+
 
 ######################################################################
 
