@@ -4,6 +4,7 @@ from dace.fpga_testing import xilinx_test
 import numpy as np
 import importlib.util
 from pathlib import Path
+import pytest
 
 def make_vadd_sdfg(N, veclen=8):
     # add sdfg
@@ -341,6 +342,7 @@ def test_hardware_add42_single():
 
     return sdfg
 
+@pytest.mark.skip(reason="This test is covered by the Xilinx tests.")
 def test_hardware_axpy_double_pump(veclen=2):
     # Grab the double pumped AXPY implementation the samples directory
     spec = importlib.util.spec_from_file_location(
@@ -355,7 +357,7 @@ def test_hardware_axpy_double_pump(veclen=2):
 
     # init data structures
     N = dace.symbol('N')
-    N.set(16)
+    N.set(128)
     # TODO a is set to zero due to the problem of the host overwriting the arguments with 0's after launching
     # the kernel, when running in hardware simulation.
     a = np.float32(0)  #np.random.rand(1)[0].astype(np.float32)
