@@ -323,6 +323,11 @@ def test_constant_argument_default():
     const_prog(A, cst=4)
     assert np.allclose(A, 4)
 
+    # Test program
+    A = np.random.rand(20)
+    const_prog(A, cst=5)
+    assert np.allclose(A, 5)
+
     # Test code for folding
     code = const_prog.to_sdfg().generate_code()[0].clean_code
     assert 'cst' not in code

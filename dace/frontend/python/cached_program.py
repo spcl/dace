@@ -11,6 +11,7 @@ from typing import Any, Callable, Dict, Optional, Set, Tuple
 ArgTypes = Dict[str, dt.Data]
 ConstantTypes = Dict[str, Any]
 EvalCallback = Callable[[str], Any]
+SpecifiedArgs = Set[str]
 
 
 # Adapted from https://stackoverflow.com/a/2437645/6489142
@@ -44,16 +45,20 @@ class ProgramCacheKey:
     arg_types: ArgTypes
     closure_types: ArgTypes
     closure_constants: ConstantTypes
+    specified_args: SpecifiedArgs
 
-    def __init__(self, arg_types: ArgTypes, closure_types: ArgTypes, closure_constants: ConstantTypes) -> None:
+    def __init__(self, arg_types: ArgTypes, closure_types: ArgTypes, closure_constants: ConstantTypes,
+                 specified_args: SpecifiedArgs) -> None:
         self.arg_types = arg_types
         self.closure_types = closure_types
         self.closure_constants = closure_constants
+        self.specified_args = specified_args
         # Freeze entry
         self._tuple = (
             tuple((k, str(v.to_json())) for k, v in sorted(arg_types.items())),
             tuple((k, str(v.to_json())) for k, v in sorted(closure_types.items())),
             tuple((k, _make_hashable(v)) for k, v in sorted(closure_constants.items())),
+            tuple(sorted(specified_args)),
         )
 
     def __hash__(self) -> int:
@@ -108,7 +113,7 @@ class DaceProgramCache:
         cvals = self._evaluate_constants(closure_constants, extra_constants)
         # Filter out default arguments that were unspecified (for unique cache keys)
         argtypes = {k: v for k, v in argtypes.items() if k in specified_args}
-        key = ProgramCacheKey(argtypes, adescs, cvals)
+        key = ProgramCacheKey(argtypes, adescs, cvals, specified_args)
         return key
 
     def add(self, key: ProgramCacheKey, sdfg: SDFG, compiled_sdfg: 'dace.codegen.compiled_sdfg.CompiledSDFG') -> None:
