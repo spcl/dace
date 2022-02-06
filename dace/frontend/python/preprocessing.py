@@ -589,12 +589,14 @@ def has_replacement(callobj: Callable, parent_object: Optional[Any] = None, node
 class GlobalResolver(ast.NodeTransformer, astutils.ASTHelperMixin):
     """ Resolves global constants and lambda expressions if not
         already defined in the given scope. """
-    def __init__(self, globals: Dict[str, Any], resolve_functions: bool = False):
+    def __init__(self, globals: Dict[str, Any], resolve_functions: bool = False, default_args: Set[str] = None):
         self._globals = globals
         self.resolve_functions = resolve_functions
+        self.default_args = default_args or set()
         self.current_scope = set()
         self.toplevel_function = True
         self.do_not_detect_callables = False
+        self.ignore_node_ctx = False
 
         self.closure = SDFGClosure()
 
@@ -753,6 +755,10 @@ class GlobalResolver(ast.NodeTransformer, astutils.ASTHelperMixin):
 
         for arg in ast.walk(node.args):
             if isinstance(arg, ast.arg):
+                # Skip unspecified default arguments
+                if arg.arg in self.default_args:
+                    continue
+
                 # Skip ``dace.constant``-annotated arguments
                 is_constant = False
                 if arg.annotation is not None:
@@ -769,8 +775,18 @@ class GlobalResolver(ast.NodeTransformer, astutils.ASTHelperMixin):
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> Any:
         return self.visit_FunctionDef(node)
 
+    def visit_AugAssign(self, node: ast.AugAssign):
+        # Node target in augassign is ast.Store, even though it is updating an existing value
+        oldvalue = self.ignore_node_ctx
+        self.ignore_node_ctx = True
+        node.target = self.visit(node.target)
+        self.ignore_node_ctx = oldvalue
+
+        # Parse the rest of the fields
+        return self.generic_visit_filtered(node, {'target'})
+        
     def visit_Name(self, node: ast.Name):
-        if isinstance(node.ctx, (ast.Store, ast.AugStore)):
+        if not self.ignore_node_ctx and isinstance(node.ctx, ast.Store):
             self.current_scope.add(node.id)
         else:
             if node.id in self.current_scope:
@@ -951,6 +967,47 @@ class CallTreeResolver(ast.NodeVisitor):
 
         return res
 
+    def _get_given_args(self, node: ast.Call, function: 'DaceProgram') -> Set[str]:
+        """ Returns a set of names of the given arguments from the positional and keyword arguments """
+        posargs = node.args
+        kwargs = [kwarg.arg for kwarg in node.keywords]
+        result = set()
+
+        nargs = len(posargs)
+        arg_ind = 0
+        # Track both positional arguments and function signature together
+        for i, (aname, sig_arg) in enumerate(function.signature.parameters.items()):
+            if function.objname is not None and aname == function.objname:
+                # Skip "self" argument
+                continue
+
+            # Variable-length arguments: obtain from the remainder of given_*
+            if sig_arg.kind is sig_arg.VAR_POSITIONAL:
+                vargs = posargs[arg_ind:]
+                result.update({f'__arg{j}' for j, _ in enumerate(vargs)})
+                # Shift arg_ind to the end
+                arg_ind = len(posargs)
+            elif sig_arg.kind is sig_arg.VAR_KEYWORD:
+                vargs = {k for k in kwargs.keys() if k not in result}
+                result.update({f'__kwarg_{k}' for k in vargs.keys()})
+            # END OF VARIABLE-LENGTH ARGUMENTS
+            elif sig_arg.kind is sig_arg.POSITIONAL_ONLY:
+                if arg_ind < nargs:
+                    result.add(aname)
+                    arg_ind += 1
+            elif sig_arg.kind is sig_arg.POSITIONAL_OR_KEYWORD:
+                if arg_ind >= nargs:
+                    if aname in kwargs:
+                        result.add(aname)
+                else:
+                    result.add(aname)
+                    arg_ind += 1
+            elif sig_arg.kind is sig_arg.KEYWORD_ONLY:
+                if aname in kwargs:
+                    result.add(aname)
+
+        return result
+
     def visit_Call(self, node: ast.Call):
         # Only parse calls to parsed SDFGConvertibles
         if not isinstance(node.func, (ast.Num, ast.Constant)):
@@ -980,7 +1037,11 @@ class CallTreeResolver(ast.NodeVisitor):
                 qualname = node.func.qualname
             self.seen_calls.add(qualname)
             if hasattr(value, 'closure_resolver'):
-                self.closure.nested_closures.append((qualname, value.closure_resolver(constant_args, self.closure)))
+                # Get given arguments from signature and args/kwargs
+                given_args = self._get_given_args(node, value)
+
+                self.closure.nested_closures.append(
+                    (qualname, value.closure_resolver(constant_args, given_args, self.closure)))
             else:
                 self.closure.nested_closures.append((qualname, SDFGClosure()))
         except DaceRecursionError:  # Parsing failed in a nested context, raise
@@ -1027,7 +1088,8 @@ def preprocess_dace_program(f: Callable[..., Any],
                             global_vars: Dict[str, Any],
                             modules: Dict[str, Any],
                             resolve_functions: bool = False,
-                            parent_closure: Optional[SDFGClosure] = None) -> Tuple[PreprocessedAST, SDFGClosure]:
+                            parent_closure: Optional[SDFGClosure] = None,
+                            default_args: Optional[Set[str]] = None) -> Tuple[PreprocessedAST, SDFGClosure]:
     """
     Preprocesses a ``@dace.program`` and all its nested functions, returning
     a preprocessed AST object and the closure of the resulting SDFG.
@@ -1045,6 +1107,7 @@ def preprocess_dace_program(f: Callable[..., Any],
                                 values.
     :param parent_closure: If not None, represents the closure of the parent of
                            the currently processed function.
+    :param default_args: If not None, defines a list of unspecified default arguments.
     :return: A 2-tuple of the AST and its reduced (used) closure.
     """
     src_ast, src_file, src_line, src = astutils.function_to_ast(f)
@@ -1063,8 +1126,8 @@ def preprocess_dace_program(f: Callable[..., Any],
 
     # Resolve constants to their values (if they are not already defined in this scope)
     # and symbols to their names
-    resolved = {k: v for k, v in global_vars.items() if k not in argtypes and k != '_'}
-    closure_resolver = GlobalResolver(resolved, resolve_functions)
+    resolved = {k: v for k, v in global_vars.items() if k not in (argtypes.keys() - default_args) and k != '_'}
+    closure_resolver = GlobalResolver(resolved, resolve_functions, default_args=default_args)
 
     # Append element to call stack and handle max recursion depth
     if parent_closure is not None:

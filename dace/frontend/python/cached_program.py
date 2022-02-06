@@ -99,12 +99,15 @@ class DaceProgramCache:
 
     def make_key(self,
                  argtypes: ArgTypes,
+                 specified_args: Set[str],
                  closure_types: Set[str],
                  closure_constants: Set[str],
                  extra_constants: Dict[str, Any] = None) -> ProgramCacheKey:
         """ Creates a program cache key from the given arguments. """
         adescs = self._evaluate_descriptors(closure_types, extra_constants)
         cvals = self._evaluate_constants(closure_constants, extra_constants)
+        # Filter out default arguments that were unspecified (for unique cache keys)
+        argtypes = {k: v for k, v in argtypes.items() if k in specified_args}
         key = ProgramCacheKey(argtypes, adescs, cvals)
         return key
 
