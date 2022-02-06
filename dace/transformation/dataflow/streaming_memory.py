@@ -108,10 +108,7 @@ class StreamingMemory(xf.SingleStateTransformation):
             sdutil.node_path_graph(cls.exit, cls.access),
         ]
 
-    def can_be_applied(self, graph: SDFGState,
-                       expr_index: int,
-                       sdfg: SDFG,
-                       permissive: bool = False) -> bool:
+    def can_be_applied(self, graph: SDFGState, expr_index: int, sdfg: SDFG, permissive: bool = False) -> bool:
         access = self.access
         # Make sure the access node is only accessed once (read or write),
         # and not at the same time
@@ -334,14 +331,9 @@ class StreamingComposition(xf.SingleStateTransformation):
 
     @classmethod
     def expressions(cls) -> List[gr.SubgraphView]:
-        return [
-            sdutil.node_path_graph(cls.first, cls.access, cls.second)
-        ]
+        return [sdutil.node_path_graph(cls.first, cls.access, cls.second)]
 
-    def can_be_applied(self, graph: SDFGState,
-                       expr_index: int,
-                       sdfg: SDFG,
-                       permissive: bool = False) -> bool:
+    def can_be_applied(self, graph: SDFGState, expr_index: int, sdfg: SDFG, permissive: bool = False) -> bool:
         access = self.access
         # Make sure the access node is only accessed once (read or write),
         # and not at the same time
@@ -352,8 +344,10 @@ class StreamingComposition(xf.SingleStateTransformation):
         desc = sdfg.arrays[access.data]
         if isinstance(desc, data.Stream):
             return False
-        if not permissive and desc.transient:
-            return False
+
+        # If this check is in the code, almost all applications of StreamingComposition must be permissive
+        # if not permissive and desc.transient:
+        #     return False
 
         # Only free nodes are allowed (search up the SDFG tree)
         curstate = graph
