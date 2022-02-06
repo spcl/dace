@@ -280,6 +280,11 @@ def emit_memlet_reference(dispatcher,
             if is_write is False:
                 typedef = f'const {typedef}'
             ref = '&'
+        else:
+            # constexpr arrays
+            if memlet.data in dispatcher.frame.symbols_and_constants(sdfg):
+                typedef = f'const {typedef}'
+                ref = '*'
     elif defined_type == DefinedType.ArrayInterface:
         base_ctype = conntype.base_type.ctype
         typedef = f"{base_ctype}*" if is_write else f"const {base_ctype}*"

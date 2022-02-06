@@ -1094,8 +1094,12 @@ class CPUCodeGen(TargetCodeGenerator):
                         # We can pre-read the value
                         result += "{} {} = {};".format(memlet_type, local_name, expr)
                     else:
-                        # Pointer reference
-                        result += "{} {} = {};".format(ctypedef, local_name, expr)
+                        # constexpr arrays
+                        if memlet.data in self._frame.symbols_and_constants(sdfg):
+                            result += "const {} {} = {};".format(memlet_type, local_name, expr)
+                        else:
+                            # Pointer reference
+                            result += "{} {} = {};".format(ctypedef, local_name, expr)
                 else:
                     # Variable number of reads: get a const reference that can
                     # be read if necessary
