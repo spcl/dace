@@ -313,17 +313,6 @@ def validate_state(state: 'dace.sdfg.SDFGState',
             dups = node.in_connectors.keys() & node.out_connectors.keys()
             raise InvalidSDFGNodeError("Duplicate connectors: " + str(dups), sdfg, state_id, nid)
 
-        # Check for connectors that are also array/symbol names
-        if isinstance(node, nd.Tasklet):
-            for conn in node.in_connectors.keys():
-                if conn in sdfg.arrays or conn in symbols:
-                    raise InvalidSDFGNodeError(f"Input connector {conn} already "
-                                               "defined as array or symbol", sdfg, state_id, nid)
-            for conn in node.out_connectors.keys():
-                if conn in sdfg.arrays or conn in symbols:
-                    raise InvalidSDFGNodeError(f"Output connector {conn} already "
-                                               "defined as array or symbol", sdfg, state_id, nid)
-
         # Check for dangling connectors (incoming)
         for conn in node.in_connectors:
             incoming_edges = 0

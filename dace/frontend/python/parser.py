@@ -703,17 +703,14 @@ class DaceProgram(pycommon.SDFGConvertible):
             if v.dtype.type is None:
                 global_vars[k] = None
                 removed_args.add(k)
-        argtypes = {k: v for k, v in argtypes.items() if v.dtype.type is not None}
-
+        
         # Set module aliases to point to their actual names
         modules = {k: v.__name__ for k, v in global_vars.items() if dtypes.ismodule(v)}
         modules['builtins'] = ''
 
         # Add symbols as globals with their actual names (sym_0 etc.)
         global_vars.update({v.name: v for _, v in global_vars.items() if isinstance(v, symbolic.symbol)})
-        for argtype in argtypes.values():
-            global_vars.update({v.name: v for v in argtype.free_symbols})
-
+        
         # Add default arguments to global vars
         unspecified_default_args = {k: v for k, v in self.default_args.items() if k not in specified}
         removed_args.update(unspecified_default_args)
@@ -721,6 +718,11 @@ class DaceProgram(pycommon.SDFGConvertible):
 
         # Add constant arguments to global_vars
         global_vars.update(gvars)
+
+        argtypes = {k: v for k, v in argtypes.items() if k not in removed_args}
+        for argtype in argtypes.values():
+            global_vars.update({v.name: v for v in argtype.free_symbols})
+
 
         # Parse AST to create the SDFG
         parsed_ast, closure = preprocessing.preprocess_dace_program(dace_func,
