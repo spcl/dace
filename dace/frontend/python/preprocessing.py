@@ -969,40 +969,51 @@ class CallTreeResolver(ast.NodeVisitor):
 
     def _get_given_args(self, node: ast.Call, function: 'DaceProgram') -> Set[str]:
         """ Returns a set of names of the given arguments from the positional and keyword arguments """
+        from dace.frontend.python.parser import DaceProgram  # Avoid import loop
+
         posargs = node.args
         kwargs = [kwarg.arg for kwarg in node.keywords]
         result = set()
 
+        if not isinstance(function, DaceProgram):
+            # Make set of parameters from __sdfg_signature__
+            parameters = [(name, inspect.Parameter.POSITIONAL_OR_KEYWORD) for name in function.__sdfg_signature__()[0]]
+        else:
+            parameters = [(aname, arg.kind) for aname, arg in function.signature.parameters.items()]
+
+        # Handle "self" argument
+        objname = getattr(function, 'objname', False)
+
         nargs = len(posargs)
         arg_ind = 0
         # Track both positional arguments and function signature together
-        for i, (aname, sig_arg) in enumerate(function.signature.parameters.items()):
-            if function.objname is not None and aname == function.objname:
+        for aname, sig_kind in parameters:
+            if aname == objname:
                 # Skip "self" argument
                 continue
 
             # Variable-length arguments: obtain from the remainder of given_*
-            if sig_arg.kind is sig_arg.VAR_POSITIONAL:
+            if sig_kind is inspect.Parameter.VAR_POSITIONAL:
                 vargs = posargs[arg_ind:]
                 result.update({f'__arg{j}' for j, _ in enumerate(vargs)})
                 # Shift arg_ind to the end
                 arg_ind = len(posargs)
-            elif sig_arg.kind is sig_arg.VAR_KEYWORD:
+            elif sig_kind is inspect.Parameter.VAR_KEYWORD:
                 vargs = {k for k in kwargs.keys() if k not in result}
                 result.update({f'__kwarg_{k}' for k in vargs.keys()})
             # END OF VARIABLE-LENGTH ARGUMENTS
-            elif sig_arg.kind is sig_arg.POSITIONAL_ONLY:
+            elif sig_kind is inspect.Parameter.POSITIONAL_ONLY:
                 if arg_ind < nargs:
                     result.add(aname)
                     arg_ind += 1
-            elif sig_arg.kind is sig_arg.POSITIONAL_OR_KEYWORD:
+            elif sig_kind is inspect.Parameter.POSITIONAL_OR_KEYWORD:
                 if arg_ind >= nargs:
                     if aname in kwargs:
                         result.add(aname)
                 else:
                     result.add(aname)
                     arg_ind += 1
-            elif sig_arg.kind is sig_arg.KEYWORD_ONLY:
+            elif sig_kind is inspect.Parameter.KEYWORD_ONLY:
                 if aname in kwargs:
                     result.add(aname)
 
