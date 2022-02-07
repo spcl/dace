@@ -25,7 +25,7 @@ def test_dace_unroll():
             A[0] += i * i
 
     src_ast, fname, _, _ = astutils.function_to_ast(tounroll.f)
-    lu = LoopUnroller(tounroll.global_vars, fname)
+    lu = LoopUnroller(tounroll.global_vars, fname, None)
     unrolled = lu.visit(src_ast)
     assert len(unrolled.body[0].body) == 3
 
@@ -44,7 +44,7 @@ def test_dace_unroll_multistatement():
                 A[0] += 2
 
     src_ast, fname, _, _ = astutils.function_to_ast(tounroll.f)
-    lu = LoopUnroller(tounroll.global_vars, fname)
+    lu = LoopUnroller(tounroll.global_vars, fname, None)
     unrolled = lu.visit(src_ast)
     assert len(unrolled.body[0].body) == 6
 
@@ -63,7 +63,7 @@ def test_dace_unroll_break():
                 break
 
     src_ast, fname, _, _ = astutils.function_to_ast(tounroll.f)
-    lu = LoopUnroller(tounroll.global_vars, fname)
+    lu = LoopUnroller(tounroll.global_vars, fname, None)
     with pytest.raises(DaceSyntaxError):
         unrolled = lu.visit(src_ast)
 
@@ -286,6 +286,36 @@ def test_arrays_keys_daceconstant():
     assert np.allclose(dd['1b1'].arr, expected['1b1'])
 
 
+def test_arrays_values():
+    d = {0: np.random.rand(10), 1: np.random.rand(20)}
+    expected = {0: d[0] + 1, 1: d[1] + 1}
+
+    @dace.program
+    def prog():
+        for arr in d.values():
+            arr += 1
+
+    prog()
+    assert np.allclose(d[0], expected[0])
+    assert np.allclose(d[1], expected[1])
+
+
+def test_objects():
+    @dace.program
+    def nested(arr, scal):
+        arr[:] = arr[:] * scal
+
+    @dace.program
+    def program(wrapped_arr: dace.constant, scal):
+        for warr in wrapped_arr.values():
+            nested(warr.arr, scal)
+
+    wrapped_arrays = {"0": Wrapper(), "1": Wrapper()}
+    scal = 2
+
+    program(wrapped_arrays, scal)
+
+
 if __name__ == '__main__':
     test_native_unroll()
     test_dace_unroll()
@@ -304,3 +334,5 @@ if __name__ == '__main__':
     test_deepcopy()
     test_arrays_keys_closure()
     test_arrays_keys_daceconstant()
+    test_arrays_values()
+    test_objects()

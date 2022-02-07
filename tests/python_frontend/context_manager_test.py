@@ -2,11 +2,7 @@
 import contextlib
 import dace
 import numpy as np
-import pytest
 
-
-def dace_inhibitor(f):
-    return f
 
 
 # Reason: Context manager object is not yet parsed successfully by dace (object requires type hints)
@@ -23,12 +19,10 @@ def test_context_manager_decorator():
             yield
             self.stop()
 
-        @dace_inhibitor
         def start(self, name: str):
             if name == 'pass':
                 self.did_start = True
 
-        @dace_inhibitor
         def stop(self):
             if self.did_start:
                 self.should_pass = True
