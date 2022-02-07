@@ -5,6 +5,7 @@ from dace.transformation.dataflow import StripMining
 
 N = dace.symbol('N')
 
+
 @dace.program(dace.float64, dace.float64[N], dace.float64[N])
 def axpy(A, X, Y):
     @dace.map(_[0:N])
@@ -26,14 +27,10 @@ def test_tiling_number_of_tiles():
     Y = np.random.rand(size)
     Z = np.copy(Y)
     sdfg = axpy.to_sdfg()
-    sdfg.apply_strict_transformations()
-    sdfg.apply_transformations(StripMining,
-                               options=[{
-                                   'tile_size': '16',
-                                   'tiling_type': dace.TilingType.NumberOfTiles
-                               }])
+    sdfg.simplify()
+    sdfg.apply_transformations(StripMining, options=[{'tile_size': '16', 'tiling_type': dace.TilingType.NumberOfTiles}])
     sdfg(A=A, X=X, Y=Y, N=size)
-    assert np.allclose(Y, A*X+Z)
+    assert np.allclose(Y, A * X + Z)
     print('PASS')
 
 

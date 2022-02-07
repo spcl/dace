@@ -3,14 +3,16 @@ import dace
 import numpy as np
 import unittest
 
+
 @dace.program
 def Copy(output: dace.int32[5], input: dace.int32[5]):
     @dace.map
     def mytasklet(i: _[0:5]):
         inp << input[i]
         out >> output[i]
-        
+
         out = inp
+
 
 class UnrollerTest(unittest.TestCase):
     def test_unroller(self):

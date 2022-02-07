@@ -3,7 +3,7 @@
     and its dependencies to a given device. """
 
 from copy import deepcopy as dcpy
-from dace import data, properties, symbolic, dtypes, registry
+from dace import data, properties, symbolic, dtypes
 from dace.sdfg import graph, nodes
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation
@@ -18,9 +18,8 @@ def change_storage(sdfg, storage):
                 change_storage(node.sdfg, storage)
 
 
-@registry.autoregister_params(singlestate=True)
 @properties.make_properties
-class CopyToDevice(transformation.Transformation):
+class CopyToDevice(transformation.SingleStateTransformation):
     """ Implements the copy-to-device transformation, which copies a nested
         SDFG and its dependencies to a given device.
 
@@ -29,7 +28,7 @@ class CopyToDevice(transformation.Transformation):
         the nested SDFG to that storage.
     """
 
-    _nested_sdfg = nodes.NestedSDFG("", graph.OrderedDiGraph(), {}, {})
+    nested_sdfg = transformation.PatternNode(nodes.NestedSDFG)
 
     storage = properties.EnumProperty(dtype=dtypes.StorageType,
                                       desc="Nested SDFG storage",
@@ -39,37 +38,28 @@ class CopyToDevice(transformation.Transformation):
     def annotates_memlets():
         return True
 
-    @staticmethod
-    def expressions():
-        return [sdutil.node_path_graph(CopyToDevice._nested_sdfg)]
+    @classmethod
+    def expressions(cls):
+        return [sdutil.node_path_graph(cls.nested_sdfg)]
 
-    @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
-        nested_sdfg = graph.nodes()[candidate[CopyToDevice._nested_sdfg]]
+    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
+        nested_sdfg = self.nested_sdfg
 
         for edge in graph.all_edges(nested_sdfg):
             # Stream inputs/outputs not allowed
             path = graph.memlet_path(edge)
-            if ((isinstance(path[0].src, nodes.AccessNode)
-                 and isinstance(sdfg.arrays[path[0].src.data], data.Stream)) or
-                (isinstance(path[-1].dst, nodes.AccessNode)
-                 and isinstance(sdfg.arrays[path[-1].dst.data], data.Stream))):
+            if ((isinstance(path[0].src, nodes.AccessNode) and isinstance(sdfg.arrays[path[0].src.data], data.Stream))
+                    or (isinstance(path[-1].dst, nodes.AccessNode)
+                        and isinstance(sdfg.arrays[path[-1].dst.data], data.Stream))):
                 return False
             # WCR outputs with arrays are not allowed
-            if (edge.data.wcr is not None
-                    and edge.data.subset.num_elements() != 1):
+            if (edge.data.wcr is not None and edge.data.subset.num_elements() != 1):
                 return False
 
         return True
 
-    @staticmethod
-    def match_to_str(graph, candidate):
-        nested_sdfg = graph.nodes()[candidate[CopyToDevice._nested_sdfg]]
-        return nested_sdfg.label
-
-    def apply(self, sdfg):
-        state = sdfg.nodes()[self.state_id]
-        nested_sdfg = state.nodes()[self.subgraph[CopyToDevice._nested_sdfg]]
+    def apply(self, state, sdfg):
+        nested_sdfg = self.nested_sdfg
         storage = self.storage
         created_arrays = set()
 
@@ -84,16 +74,12 @@ class CopyToDevice(transformation.Transformation):
             name = 'device_' + dataname + '_in'
             if name not in created_arrays:
                 if isinstance(memdata, data.Array):
-                    name, _ = sdfg.add_array(
-                        'device_' + dataname + '_in',
-                        shape=[
-                            symbolic.overapproximate(r)
-                            for r in memlet.bounding_box_size()
-                        ],
-                        dtype=memdata.dtype,
-                        transient=True,
-                        storage=storage,
-                        find_new_name=True)
+                    name, _ = sdfg.add_array('device_' + dataname + '_in',
+                                             shape=[symbolic.overapproximate(r) for r in memlet.bounding_box_size()],
+                                             dtype=memdata.dtype,
+                                             transient=True,
+                                             storage=storage,
+                                             find_new_name=True)
                 elif isinstance(memdata, data.Scalar):
                     name, _ = sdfg.add_scalar('device_' + dataname + '_in',
                                               dtype=memdata.dtype,
@@ -135,21 +121,14 @@ class CopyToDevice(transformation.Transformation):
             name = 'device_' + dataname + '_out'
             if name not in created_arrays:
                 if isinstance(memdata, data.Array):
-                    name, _ = sdfg.add_array(
-                        name,
-                        shape=[
-                            symbolic.overapproximate(r)
-                            for r in memlet.bounding_box_size()
-                        ],
-                        dtype=memdata.dtype,
-                        transient=True,
-                        storage=storage,
-                        find_new_name=True)
+                    name, _ = sdfg.add_array(name,
+                                             shape=[symbolic.overapproximate(r) for r in memlet.bounding_box_size()],
+                                             dtype=memdata.dtype,
+                                             transient=True,
+                                             storage=storage,
+                                             find_new_name=True)
                 elif isinstance(memdata, data.Scalar):
-                    name, _ = sdfg.add_scalar(name,
-                                              dtype=memdata.dtype,
-                                              transient=True,
-                                              storage=storage)
+                    name, _ = sdfg.add_scalar(name, dtype=memdata.dtype, transient=True, storage=storage)
                 else:
                     raise NotImplementedError
                 created_arrays.add(name)

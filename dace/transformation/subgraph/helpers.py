@@ -43,9 +43,7 @@ def common_map_base_ranges(ranges: List[subsets.Range]) -> List[subsets.Range]:
     return range_base
 
 
-def find_reassignment(maps: List[nodes.Map],
-                      common_ranges,
-                      offset=False) -> Dict[nodes.Map, List]:
+def find_reassignment(maps: List[nodes.Map], common_ranges, offset=False) -> Dict[nodes.Map, List]:
     """ Provided a list of maps and their common base ranges
         (found via common_map_base_ranges()),
         for each map greedily assign each loop to an index so that
@@ -174,14 +172,12 @@ def get_outermost_scope_maps(sdfg, graph, subgraph=None, scope_dict=None):
     # first, get the toplevel scope of the underlying subgraph
     # if not found, return empty list (ambiguous)
     try:
-        outermost_scope = outermost_scope_from_subgraph(graph, subgraph,
-                                                        scope_dict)
+        outermost_scope = outermost_scope_from_subgraph(graph, subgraph, scope_dict)
     except TypeError:
         return []
 
     maps = [
-        node for node in subgraph.nodes() if isinstance(node, nodes.MapEntry)
-        and scope_dict[node] == outermost_scope
+        node for node in subgraph.nodes() if isinstance(node, nodes.MapEntry) and scope_dict[node] == outermost_scope
     ]
 
     return maps
@@ -199,11 +195,9 @@ def subgraph_from_maps(sdfg, graph, map_entries, scope_children=None):
     node_set = set()
     for map_entry in map_entries:
         node_set |= set(scope_children[map_entry])
-        node_set |= set(e.dst
-                        for e in graph.out_edges(graph.exit_node(map_entry))
+        node_set |= set(e.dst for e in graph.out_edges(graph.exit_node(map_entry))
                         if isinstance(e.dst, nodes.AccessNode))
-        node_set |= set(e.src for e in graph.in_edges(map_entry)
-                        if isinstance(e.src, nodes.AccessNode))
+        node_set |= set(e.src for e in graph.in_edges(map_entry) if isinstance(e.src, nodes.AccessNode))
 
         node_set.add(map_entry)
 

@@ -14,9 +14,7 @@ stream_out = state.add_stream('S', dp.int32, transient=True)
 output = state.add_array('res', [1], dp.float32)
 
 # Consume and tasklet
-consume_entry, consume_exit = state.add_consume('cons', ('p', str(nprocs)),
-                                                'res[0] >= 44',
-                                                chunksize=2)
+consume_entry, consume_exit = state.add_consume('cons', ('p', str(nprocs)), 'res[0] >= 44', chunksize=2)
 tasklet = state.add_tasklet(
     'fibonacci', {'s'}, {'sout', 'val'}, """
 for i in range(__dace_cons_numelems):
@@ -28,10 +26,8 @@ for i in range(__dace_cons_numelems):
 """)
 
 # Edges
-state.add_nedge(initial_value, stream_init,
-                dp.Memlet.from_array(stream_init.data, stream_init.desc(sdfg)))
-e = state.add_edge(stream, None, consume_entry, 'IN_stream',
-                   dp.Memlet.from_array(stream.data, stream.desc(sdfg)))
+state.add_nedge(initial_value, stream_init, dp.Memlet.from_array(stream_init.data, stream_init.desc(sdfg)))
+e = state.add_edge(stream, None, consume_entry, 'IN_stream', dp.Memlet.from_array(stream.data, stream.desc(sdfg)))
 
 # FIXME: Due to how memlets and propagation work, force access to stream to
 # use an array instead of a scalar.
@@ -40,16 +36,12 @@ memlet = dp.Memlet.simple(stream, '0:2')
 memlet.allow_oob = True
 
 state.add_edge(consume_entry, 'OUT_stream', tasklet, 's', memlet)
-state.add_edge(tasklet, 'sout', consume_exit, 'IN_S',
-               dp.Memlet.simple(stream_out, '0', num_accesses=-1))
-state.add_edge(consume_exit, 'OUT_S', stream_out, None,
-               dp.Memlet.simple(stream_out, '0', num_accesses=-1))
-state.add_edge(
-    tasklet, 'val', consume_exit, 'IN_V',
-    dp.Memlet.simple(output, '0', wcr_str='lambda a,b: a+b', num_accesses=-1))
-state.add_edge(
-    consume_exit, 'OUT_V', output, None,
-    dp.Memlet.simple(output, '0', wcr_str='lambda a,b: a+b', num_accesses=-1))
+state.add_edge(tasklet, 'sout', consume_exit, 'IN_S', dp.Memlet.simple(stream_out, '0', num_accesses=-1))
+state.add_edge(consume_exit, 'OUT_S', stream_out, None, dp.Memlet.simple(stream_out, '0', num_accesses=-1))
+state.add_edge(tasklet, 'val', consume_exit, 'IN_V',
+               dp.Memlet.simple(output, '0', wcr_str='lambda a,b: a+b', num_accesses=-1))
+state.add_edge(consume_exit, 'OUT_V', output, None,
+               dp.Memlet.simple(output, '0', wcr_str='lambda a,b: a+b', num_accesses=-1))
 
 consume_exit.add_in_connector('IN_S')
 consume_exit.add_in_connector('IN_V')

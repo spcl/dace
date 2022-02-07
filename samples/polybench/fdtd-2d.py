@@ -94,5 +94,4 @@ def fdtd2d(ex, ey, hz, _fict_):  #, NX, NY, TMAX):
 
 
 if __name__ == '__main__':
-    polybench.main(sizes, args, [(0, 'ex'), (1, 'ey'), (2, 'hz')], init_array,
-                   fdtd2d)
+    polybench.main(sizes, args, [(0, 'ex'), (1, 'ey'), (2, 'hz')], init_array, fdtd2d)

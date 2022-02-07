@@ -1,27 +1,13 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Tests class fields and external arrays. """
 import dace
+from dace.data import Array
 from dace.frontend.python.common import DaceSyntaxError
 import numpy as np
 from dataclasses import dataclass
 import pytest
 import time
-
-
-def test_bad_closure():
-    """ 
-    Testing functions that should not be in the closure (must be implemented as
-    callbacks).
-    """
-    with pytest.raises(DaceSyntaxError):
-
-        @dace.program
-        def badprog(A: dace.float64[20]):
-            # Library function that does not return the same value every time
-            A[:] = time.time()
-
-        A = np.random.rand(20)
-        badprog(A)
+from types import SimpleNamespace
 
 
 def test_dynamic_closure():
@@ -543,8 +529,165 @@ def test_array_closure_cache_nested():
     assert np.allclose(obj(A), expected)
 
 
+def test_allconstants():
+    some_namespace = SimpleNamespace(A=1.0)
+    A = np.zeros((10, ))
+
+    @dace.program
+    def func(ns: dace.constant):
+        A[...] = ns.A
+
+    func(some_namespace)
+    assert np.allclose(1.0, A)
+
+
+def test_method_allconstants():
+    A = np.ones((10, ))
+    ns = SimpleNamespace(A=A)
+
+    @dace.program
+    def inner(A: dace.float64[10]):
+        A[...] = 7.0
+
+    class Example:
+        @dace.method
+        def __call__(self, ns: dace.constant):
+            inner(ns.A)
+
+    obj = Example()
+    obj(ns)
+    assert np.allclose(7.0, ns.A)
+
+
+def test_same_global_array():
+    A = {'a': np.random.rand(20), 'b': np.zeros([20]), 'c': np.zeros([20])}
+
+    @dace.program
+    def proga():
+        A['b'] += A['a'] + 1
+
+    @dace.program
+    def progb():
+        A['c'][:] = A['b'] + 1
+
+    @dace.program
+    def caller():
+        proga()
+        progb()
+
+    # Check result
+    caller()
+    assert np.allclose(A['b'], A['a'] + 1)
+    assert np.allclose(A['c'], A['a'] + 2)
+
+    # Check validity of closure
+    assert len(caller.resolver.closure_arrays) == 3
+
+    # Ensure only three globals are created
+    sdfg = caller.to_sdfg()
+    assert len([k for k in sdfg.arrays if '__g' in k]) == 3
+
+
+def test_two_inner_methods():
+    class Inner:
+        def __init__(self, scalar):
+            self._tmp = np.full(fill_value=7.0, shape=(10, 10, 10))
+            self.scalar = scalar
+
+        @dace.method
+        def __call__(self, A):
+            A[...] = self._tmp + self.scalar
+
+    class Outer:
+        def __init__(self):
+            self.inner1 = Inner(3.0)
+            self.inner2 = Inner(4.0)
+
+        @dace.method
+        def __call__(self, A, B):
+            self.inner1(A)
+            self.inner1(B)
+            self.inner2(A)
+
+    A = np.ones((10, 10, 10))
+    B = np.ones((10, 10, 10))
+
+    outer = Outer()
+    outer(A, B)
+
+    assert np.allclose(11.0, A)
+    assert np.allclose(10.0, B)
+
+
+class TransientField(np.ndarray):
+    def __descriptor__(self) -> Array:
+        dtype = dace.typeclass(self.dtype.type)
+        # Adapted from dace.data.create_datadescriptor
+        return Array(
+            dtype=dtype,
+            strides=tuple(s // self.itemsize for s in self.strides),
+            shape=self.shape,
+            transient=True,  # <----- Different part
+        )
+
+
+def test_transient_field():
+    class Something:
+        def __init__(self):
+            self._nonglobal = TransientField(shape=[10, 11], dtype=np.float64)
+
+        @dace.method
+        def __call__(self, A):
+            self._nonglobal[...] = A
+            return self._nonglobal + 1
+
+    A = np.ones((10, 11))
+
+    outer = Something()
+
+    # Ensure no other global arrays were created apart from A and __return
+    sdfg = outer.__call__.to_sdfg(A)
+    assert len([k for k, v in sdfg.arrays.items() if not v.transient]) == 2
+
+    # Run code
+    outer(A)
+
+    assert np.allclose(1.0, A)
+
+
+def test_nested_transient_field():
+    class Something:
+        def __init__(self):
+            self._nonglobal = TransientField(shape=[10, 11], dtype=np.float64)
+
+        @dace.method
+        def __call__(self, A):
+            self._nonglobal[...] = A
+            return self._nonglobal + 1
+
+    class MainSomething:
+        def __init__(self) -> None:
+            self.something_else = Something()
+
+        @dace.method
+        def __call__(self, A):
+            return self.something_else(A)
+
+    A = np.ones((10, 11))
+
+    outer = MainSomething()
+
+    # Ensure no other global arrays were created apart from A and __return
+    sdfg = outer.__call__.to_sdfg(A)
+    assert len([k for k, v in sdfg.arrays.items() if not v.transient]) == 2
+
+    # Run code
+    outer(A)
+
+    assert np.allclose(1.0, A)
+
+
 if __name__ == '__main__':
-    test_bad_closure()
     test_dynamic_closure()
     test_external_ndarray_readonly()
     test_external_ndarray_modify()
@@ -569,3 +712,9 @@ if __name__ == '__main__':
     test_constant_closure_cache_nested()
     test_array_closure_cache()
     test_array_closure_cache_nested()
+    test_allconstants()
+    test_method_allconstants()
+    test_same_global_array()
+    test_two_inner_methods()
+    test_transient_field()
+    test_nested_transient_field()

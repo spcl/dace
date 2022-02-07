@@ -16,17 +16,9 @@ def mystate(state, src, dst):
     tasklet = state.add_tasklet('aaa2', {'a'}, {'b'}, 'b = a')
 
     # input path (src->me->tasklet[a])
-    state.add_memlet_path(src_node,
-                          me,
-                          tasklet,
-                          dst_conn='a',
-                          memlet=dace.Memlet.simple(src, 'i'))
+    state.add_memlet_path(src_node, me, tasklet, dst_conn='a', memlet=dace.Memlet.simple(src, 'i'))
     # output path (tasklet[b]->mx->dst)
-    state.add_memlet_path(tasklet,
-                          mx,
-                          dst_node,
-                          src_conn='b',
-                          memlet=dace.Memlet.simple(dst, 'i'))
+    state.add_memlet_path(tasklet, mx, dst_node, src_conn='b', memlet=dace.Memlet.simple(dst, 'i'))
 
 
 state = sdfg.add_state('s0')
@@ -50,7 +42,7 @@ for i in range(len(nodes) - 1):
 sdfg.validate()
 
 # Fuses redundant states and removes unnecessary transient arrays
-sdfg.apply_strict_transformations()
+sdfg.simplify()
 
 ######################################
 if __name__ == '__main__':

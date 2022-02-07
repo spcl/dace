@@ -46,17 +46,9 @@ def test_reshape_dst_explicit():
 
     me, mx = state.add_map('compute', dict(i='0:2', j='0:3', k='0:4'))
     t = state.add_tasklet('add', {'a'}, {'b'}, 'b = a + 1')
-    state.add_memlet_path(state.add_read('A'),
-                          me,
-                          t,
-                          dst_conn='a',
-                          memlet=dace.Memlet('A[i,j,k]'))
+    state.add_memlet_path(state.add_read('A'), me, t, dst_conn='a', memlet=dace.Memlet('A[i,j,k]'))
     v = state.add_access('Bv')
-    state.add_memlet_path(t,
-                          mx,
-                          v,
-                          src_conn='b',
-                          memlet=dace.Memlet('Bv[i,j,k]'))
+    state.add_memlet_path(t, mx, v, src_conn='b', memlet=dace.Memlet('Bv[i,j,k]'))
     state.add_nedge(v, state.add_write('B'), dace.Memlet('B'))
     sdfg.validate()
 
@@ -103,8 +95,7 @@ def test_reshape_copy_scoped():
     v = state.add_access('Av')
     t = state.add_access('tmp')
     w = state.add_write('B')
-    state.add_edge_pair(me, v, r, dace.Memlet('A[0:2, 0:3]'),
-                        dace.Memlet('A[0:2, 0:3]'))
+    state.add_edge_pair(me, v, r, dace.Memlet('A[0:2, 0:3]'), dace.Memlet('A[0:2, 0:3]'))
     state.add_nedge(v, t, dace.Memlet('Av[i]'))
     state.add_memlet_path(t, mx, w, memlet=dace.Memlet('B[6 - i - 1]'))
     sdfg.validate()
@@ -140,8 +131,7 @@ def test_reshape_subset_explicit():
 
     state.add_mapped_tasklet('compute',
                              dict(i='0:12'),
-                             dict(a=dace.Memlet('Av[i]'),
-                                  b=dace.Memlet('B[i]')),
+                             dict(a=dace.Memlet('Av[i]'), b=dace.Memlet('B[i]')),
                              'out = a + b',
                              dict(out=dace.Memlet('B[i]')),
                              external_edges=True)

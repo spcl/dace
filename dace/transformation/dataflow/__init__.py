@@ -29,11 +29,9 @@ from .streaming_memory import StreamingMemory, StreamingComposition
 
 # Complexity reduction
 from .dedup_access import DeduplicateAccess
-from .redundant_array import (RedundantArray, RedundantSecondArray,
-                              SqueezeViewRemove, UnsqueezeViewRemove)
-from .redundant_array_copying import (RedundantArrayCopyingIn,
-                                      RedundantArrayCopying,
-                                      RedundantArrayCopying2,
+from .redundant_array import (RedundantArray, RedundantSecondArray, SqueezeViewRemove, UnsqueezeViewRemove,
+                              RedundantReadSlice, RedundantWriteSlice)
+from .redundant_array_copying import (RedundantArrayCopyingIn, RedundantArrayCopying, RedundantArrayCopying2,
                                       RedundantArrayCopying3)
 from .merge_arrays import InMergeArrays, OutMergeArrays, MergeSourceSinkArrays
 from .prune_connectors import PruneConnectors, PruneSymbols
@@ -47,10 +45,10 @@ from .gpu_transform import GPUTransformMap
 from .gpu_transform_local_storage import GPUTransformLocalStorage
 from .mpi import MPITransformMap
 from .warp_tiling import WarpTiling
+from .bank_split import BankSplit
 
 # Algorithmic
 from .matrix_product_transpose import MatrixProductTranspose
 
 # Distributions
-from .map_distribution import (ElementWiseArrayOperation,
-                               ElementWiseArrayOperation2D, RedundantComm2D)
+from .map_distribution import (ElementWiseArrayOperation, ElementWiseArrayOperation2D, RedundantComm2D)

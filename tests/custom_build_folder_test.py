@@ -18,8 +18,7 @@ def test_custom_build_folder():
             csdfg = sdfg.compile()
 
             # Ensure files were generated in the right folder
-            assert os.path.isfile(
-                os.path.join(sdfg.build_folder, 'program.sdfg'))
+            assert os.path.isfile(os.path.join(sdfg.build_folder, 'program.sdfg'))
 
             # Ensure file is closed so it can be deleted
             del csdfg

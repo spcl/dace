@@ -42,34 +42,19 @@ def pure_graph(implementation, dtype, veclen):
     ger_node.implementation = implementation
 
     state.add_memlet_path(x, ger_node, dst_conn="_x", memlet=Memlet("x[0:m]"))
-    state.add_memlet_path(y,
-                          ger_node,
-                          dst_conn="_y",
-                          memlet=Memlet(f"y[0:n/{veclen}]"))
-    state.add_memlet_path(A,
-                          ger_node,
-                          dst_conn="_A",
-                          memlet=Memlet(f"A[0:m, 0:n/{veclen}]"))
-    state.add_memlet_path(ger_node,
-                          res,
-                          src_conn="_res",
-                          memlet=Memlet(f"res[0:m, 0:n/{veclen}]"))
+    state.add_memlet_path(y, ger_node, dst_conn="_y", memlet=Memlet(f"y[0:n/{veclen}]"))
+    state.add_memlet_path(A, ger_node, dst_conn="_A", memlet=Memlet(f"A[0:m, 0:n/{veclen}]"))
+    state.add_memlet_path(ger_node, res, src_conn="_res", memlet=Memlet(f"res[0:m, 0:n/{veclen}]"))
 
     return ger_node, state, sdfg
 
 
 def fpga_graph(dtype, veclen, tile_size_x, tile_size_y):
     ger_node, state, sdfg = pure_graph("FPGA", dtype, veclen)
-    ger_node.expand(sdfg,
-                    state,
-                    tile_size_x=tile_size_x,
-                    tile_size_y=tile_size_y)
+    ger_node.expand(sdfg, state, tile_size_x=tile_size_x, tile_size_y=tile_size_y)
     sdfg.apply_transformations_repeated([FPGATransformSDFG, InlineSDFG])
     sdfg.expand_library_nodes()
-    sdfg.apply_transformations_repeated(
-        [InlineSDFG, StreamingMemory], [{}, {
-            "storage": dace.StorageType.FPGA_Local
-        }])
+    sdfg.apply_transformations_repeated([InlineSDFG, StreamingMemory], [{}, {"storage": dace.StorageType.FPGA_Local}])
     return sdfg
 
 
@@ -91,9 +76,8 @@ def run_test(ger, target):
 
     diff = np.linalg.norm(np.subtract(res, ref))
     if diff >= args.eps * n * m:
-        raise RuntimeError(
-            "Unexpected result returned from ger rank 1 operation: "
-            "got:\n{}\nexpected:\n{} on {}".format(A, ref, target))
+        raise RuntimeError("Unexpected result returned from ger rank 1 operation: "
+                           "got:\n{}\nexpected:\n{} on {}".format(A, ref, target))
     else:
         print("Ok")
 
@@ -116,29 +100,16 @@ def run_ger(target: str,
     else:
         raise ValueError("Unsupported target")
 
-    x = aligned_ndarray(np.random.rand(m).astype(np.float32),
-                        alignment=4 * veclen)
-    y = aligned_ndarray(np.random.rand(n).astype(np.float32),
-                        alignment=4 * veclen)
-    A = aligned_ndarray(np.random.rand(m, n).astype(np.float32),
-                        alignment=4 * veclen)
-    res = aligned_ndarray(np.empty(A.shape, dtype=A.dtype),
-                          alignment=4 * veclen)
-    ref = aligned_ndarray(np.empty(A.shape, dtype=A.dtype),
-                          alignment=4 * veclen)
+    x = aligned_ndarray(np.random.rand(m).astype(np.float32), alignment=4 * veclen)
+    y = aligned_ndarray(np.random.rand(n).astype(np.float32), alignment=4 * veclen)
+    A = aligned_ndarray(np.random.rand(m, n).astype(np.float32), alignment=4 * veclen)
+    res = aligned_ndarray(np.empty(A.shape, dtype=A.dtype), alignment=4 * veclen)
+    ref = aligned_ndarray(np.empty(A.shape, dtype=A.dtype), alignment=4 * veclen)
     res[:] = A[:]
     ref[:] = A[:]
 
-    with dace.config.set_temporary('compiler',
-                                   'allow_view_arguments',
-                                   value=True):
-        sdfg(x=x,
-             y=y,
-             A=A,
-             res=res,
-             m=dace.int32(m),
-             n=dace.int32(n),
-             alpha=alpha)
+    with dace.config.set_temporary('compiler', 'allow_view_arguments', value=True):
+        sdfg(x=x, y=y, A=A, res=res, m=dace.int32(m), n=dace.int32(n), alpha=alpha)
 
     ref = scipy.linalg.blas.sger(alpha=alpha, x=x, y=y, a=ref)
 
@@ -173,5 +144,4 @@ if __name__ == "__main__":
     parser.add_argument("--eps", type=float, default=1e-6)
     args = parser.parse_args()
 
-    run_ger(args.target, args.N, args.M, args.tile_size_x, args.tile_size_y,
-            args.alpha, args.veclen, args.eps)
+    run_ger(args.target, args.N, args.M, args.tile_size_x, args.tile_size_y, args.alpha, args.veclen, args.eps)

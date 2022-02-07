@@ -11,10 +11,8 @@ class PropertyTests(unittest.TestCase):
     """Implements unit tests for dace.sdfg.properties.Property class."""
     def test_indirect_properties(self):
 
-        m = dace.sdfg.nodes.Map(
-            "test_map", ['i', 'j', 'k'],
-            dace.subsets.Range([(0, 10, 1), (0, sp.Symbol("N"), 4),
-                                (0, sp.Symbol("M"), None)]))
+        m = dace.sdfg.nodes.Map("test_map", ['i', 'j', 'k'],
+                                dace.subsets.Range([(0, 10, 1), (0, sp.Symbol("N"), 4), (0, sp.Symbol("M"), None)]))
 
         entry = dace.sdfg.nodes.MapEntry(m)
 
@@ -32,11 +30,8 @@ class PropertyTests(unittest.TestCase):
     def test_range_property(self):
 
         m = dace.sdfg.nodes.Map(
-            "test_map",
-            [sp.Symbol("i"), sp.Symbol("j"),
-             sp.Symbol("k")],
-            dace.subsets.Range([(0, 9, 1), (0, sp.Symbol("N") - 1, 4),
-                                (1, sp.Symbol("M") - 1, None)]))
+            "test_map", [sp.Symbol("i"), sp.Symbol("j"), sp.Symbol("k")],
+            dace.subsets.Range([(0, 9, 1), (0, sp.Symbol("N") - 1, 4), (1, sp.Symbol("M") - 1, None)]))
 
         to_string = dace.sdfg.nodes.Map.__properties__["range"].to_string
         from_string = dace.sdfg.nodes.Map.__properties__["range"].from_string

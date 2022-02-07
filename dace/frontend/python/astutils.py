@@ -4,9 +4,12 @@ import ast
 import astunparse
 import copy
 from collections import OrderedDict
+from io import StringIO
 import inspect
 import numbers
+import numpy
 import sympy
+import sys
 from typing import Any, Dict, List, Set, Tuple
 
 from dace import dtypes, symbolic
@@ -42,12 +45,11 @@ def function_to_ast(f):
             src_file = '<interpreter>'
             src_line = 0
         except (ImportError, ModuleNotFoundError, TypeError, OSError):
-            raise TypeError(
-                'Cannot obtain source code for dace program. This may '
-                'happen if you are using the "python" default '
-                'interpreter. Please either use the "ipython" '
-                'interpreter, a Jupyter or Colab notebook, or place '
-                'the source code in a file and import it.')
+            raise TypeError('Cannot obtain source code for dace program. This may '
+                            'happen if you are using the "python" default '
+                            'interpreter. Please either use the "ipython" '
+                            'interpreter, a Jupyter or Colab notebook, or place '
+                            'the source code in a file and import it.')
 
     src_ast = ast.parse(_remove_outer_indentation(src))
     ast.increment_lineno(src_ast, src_line)
@@ -65,13 +67,26 @@ def evalnode(node: ast.AST, gvars: Dict[str, Any]) -> Any:
     """
     if not isinstance(node, ast.AST):
         return node
+    if isinstance(node, ast.Index):  # For compatibility
+        node = node.value
+    if isinstance(node, ast.Num):  # For compatibility
+        return node.n
+    if sys.version_info >= (3, 8):
+        if isinstance(node, ast.Constant):
+            return node.value
+
+    # Replace internal constants with their values
+    node = copy.deepcopy(node)
+    cext = ConstantExtractor(gvars)
+    cext.visit(node)
+    gvars = copy.copy(gvars)
+    gvars.update(cext.gvars)
+
     try:
         # Ensure context is load so eval works (e.g., when using value as lhs)
         if not isinstance(getattr(node, 'ctx', False), ast.Load):
-            node = copy.deepcopy(node)
             node.ctx = ast.Load()
-        return eval(compile(ast.Expression(node), '<string>', mode='eval'),
-                    gvars)
+        return eval(compile(ast.Expression(node), '<string>', mode='eval'), gvars)
     except:  # Anything can happen here
         raise SyntaxError
 
@@ -94,7 +109,8 @@ def rname(node):
     if isinstance(node, ast.Call):  # form @dace.attr(...)
         if isinstance(node.func, ast.Name):
             return node.func.id
-        # Assuming isinstance(node.func, ast.Attribute) == True
+        if not isinstance(node.func, ast.Attribute):
+            raise TypeError(f'Unexpected call expression type {type(node.func).__name__}: {unparse(node.func)}')
         name = node.func.attr
         # Handle calls with submodules and methods, e.g. numpy.add.reduce
         value = node.func.value
@@ -105,8 +121,7 @@ def rname(node):
             name = value.id + '.' + name
         else:
             raise NotImplementedError("Unsupported AST {n} node nested inside "
-                                      "AST call node: {s}".format(
-                                          n=type(value), s=unparse(value)))
+                                      "AST call node: {s}".format(n=type(value), s=unparse(value)))
         return name
     if isinstance(node, ast.FunctionDef):  # form def func(...)
         return node.name
@@ -188,6 +203,26 @@ def subscript_to_ast_slice_recursive(node):
     return result
 
 
+class ExtUnparser(astunparse.Unparser):
+    def _Subscript(self, t):
+        self.dispatch(t.value)
+        self.write('[')
+        # Compatibility
+        if isinstance(t.slice, ast.Index):
+            slc = t.slice.value
+        else:
+            slc = t.slice
+        # Get rid of the tuple parentheses in expressions like "A[(i, j)]""
+        if isinstance(slc, ast.Tuple):
+            for elt in slc.elts[:-1]:
+                self.dispatch(elt)
+                self.write(', ')
+            self.dispatch(slc.elts[-1])
+        else:
+            self.dispatch(slc)
+        self.write(']')
+
+
 def unparse(node):
     """ Unparses an AST node to a Python string, chomping trailing newline. """
     if node is None:
@@ -196,12 +231,15 @@ def unparse(node):
     if isinstance(node, sympy.Basic):
         return sympy.printing.pycode(node)
     # Support for numerical constants
-    if isinstance(node, numbers.Number):
+    if isinstance(node, (numbers.Number, numpy.bool, numpy.bool_)):
         return str(node)
     # Suport for string
     if isinstance(node, str):
         return node
-    return astunparse.unparse(node).strip()
+
+    v = StringIO()
+    ExtUnparser(node, file=v)
+    return v.getvalue().strip()
 
 
 # Helper function to convert an ND subscript AST node to a list of 3-tuple
@@ -242,17 +280,12 @@ def astrange_to_symrange(astrange, arrays, arrname=None):
         # If range is the entire array, use the array descriptor to obtain the
         # entire range
         if astrange is None:
-            return [
-                (symbolic.pystr_to_symbolic(0),
-                 symbolic.pystr_to_symbolic(symbolic.symbol_name_or_value(s)) -
-                 1, symbolic.pystr_to_symbolic(1)) for s in arrdesc.shape
-            ]
+            return [(symbolic.pystr_to_symbolic(0), symbolic.pystr_to_symbolic(symbolic.symbol_name_or_value(s)) - 1,
+                     symbolic.pystr_to_symbolic(1)) for s in arrdesc.shape]
 
         missing_slices = len(arrdesc.shape) - len(astrange)
         if missing_slices < 0:
-            raise ValueError(
-                'Mismatching shape {} - range {} dimensions'.format(
-                    arrdesc.shape, astrange))
+            raise ValueError('Mismatching shape {} - range {} dimensions'.format(arrdesc.shape, astrange))
         for i in range(missing_slices):
             astrange.append((None, None, None))
 
@@ -274,8 +307,7 @@ def astrange_to_symrange(astrange, arrays, arrname=None):
                 if (end < 0) == True:
                     end += arrdesc.shape[i]
             else:
-                end = symbolic.pystr_to_symbolic(
-                    symbolic.symbol_name_or_value(arrdesc.shape[i])) - 1
+                end = symbolic.pystr_to_symbolic(symbolic.symbol_name_or_value(arrdesc.shape[i])) - 1
             if skip is None:
                 skip = symbolic.pystr_to_symbolic(1)
             else:
@@ -301,7 +333,7 @@ def negate_expr(node):
     if isinstance(node, sympy.Basic):
         return sympy.Not(node)
     # Support for numerical constants
-    if isinstance(node, numbers.Number):
+    if isinstance(node, (numbers.Number, numpy.bool, numpy.bool_)):
         return str(not node)
     # Negation support for strings (most likely dace.Data.Scalar names)
     if isinstance(node, str):
@@ -312,8 +344,7 @@ def negate_expr(node):
         node = node.code
     if hasattr(node, "__len__"):
         if len(node) > 1:
-            raise ValueError("negate_expr only expects "
-                             "single expressions, got: {}".format(node))
+            raise ValueError("negate_expr only expects " "single expressions, got: {}".format(node))
         expr = node[0]
     else:
         expr = node
@@ -344,14 +375,8 @@ class ExtNodeTransformer(ast.NodeTransformer):
                 new_values = []
                 for value in old_value:
                     if isinstance(value, ast.AST):
-                        if (field == 'body' or field
-                                == 'orelse') and isinstance(value, ast.Expr):
-                            clsname = type(value).__name__
-                            if getattr(self, "visit_TopLevel" + clsname, False):
-                                value = getattr(self, "visit_TopLevel" +
-                                                clsname)(value)
-                            else:
-                                value = self.visit(value)
+                        if (field == 'body' or field == 'orelse') and isinstance(value, ast.Expr):
+                            value = self.visit_TopLevel(value)
                         else:
                             value = self.visit(value)
                         if value is None:
@@ -403,18 +428,26 @@ class ExtNodeVisitor(ast.NodeVisitor):
 class ASTFindReplace(ast.NodeTransformer):
     def __init__(self, repldict: Dict[str, str]):
         self.repldict = repldict
+        # If ast.Names were given, use them as keys as well
+        self.repldict.update({k.id: v for k, v in self.repldict.items() if isinstance(k, ast.Name)})
 
     def visit_Name(self, node: ast.Name):
         if node.id in self.repldict:
-            new_node = ast.copy_location(
-                ast.parse(str(self.repldict[node.id])).body[0].value, node)
+            val = self.repldict[node.id]
+            if isinstance(val, ast.AST):
+                new_node = ast.copy_location(val, node)
+            else:
+                new_node = ast.copy_location(ast.parse(str(self.repldict[node.id])).body[0].value, node)
             return new_node
 
         return self.generic_visit(node)
 
     def visit_keyword(self, node: ast.keyword):
         if node.arg in self.repldict:
-            node.arg = self.repldict[node.arg]
+            val = self.repldict[node.arg]
+            if isinstance(val, ast.AST):
+                val = unparse(val)
+            node.arg = val
         return self.generic_visit(node)
 
 
@@ -455,9 +488,37 @@ class TaskletFreeSymbolVisitor(ast.NodeVisitor):
             self.visit(node.value)
 
     def visit_Name(self, node):
-        if (isinstance(node.ctx, ast.Load) and node.id not in self.defined
-                and isinstance(node.id, str) and node.id not in ('inf', 'nan')):
+        if (isinstance(node.ctx, ast.Load) and node.id not in self.defined and isinstance(node.id, str)
+                and node.id not in ('inf', 'nan')):
             self.free_symbols.add(node.id)
         else:
             self.defined.add(node.id)
         self.generic_visit(node)
+
+
+class AnnotateTopLevel(ExtNodeTransformer):
+    def visit_TopLevel(self, node):
+        node.toplevel = True
+        return super().visit_TopLevel(node)
+
+
+class ConstantExtractor(ast.NodeTransformer):
+    def __init__(self, globals: Dict[str, Any]):
+        super().__init__()
+        self.id = 0
+        self.globals = globals
+        self.gvars: Dict[str, Any] = {}
+
+    def visit_Name(self, node: ast.Name):
+        if isinstance(node.ctx, ast.Load) and node.id in self.globals and self.globals[node.id] is SyntaxError:
+            raise SyntaxError
+        return self.generic_visit(node)
+
+    def visit_Constant(self, node):
+        return self.visit_Num(node)
+
+    def visit_Num(self, node: ast.Num):
+        newname = f'__uu{self.id}'
+        self.gvars[newname] = node.n
+        self.id += 1
+        return ast.copy_location(ast.Name(id=newname, ctx=ast.Load()), node)

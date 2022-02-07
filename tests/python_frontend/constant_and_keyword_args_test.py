@@ -4,6 +4,8 @@ import dace
 import numpy as np
 import pytest
 
+from dace.frontend.python.common import SDFGConvertible
+
 
 def test_kwargs():
     @dace.program
@@ -66,14 +68,11 @@ def test_var_args_aot():
 
 
 def test_var_args_empty():
-    # This test is supposed to be unsupported
-    with pytest.raises(SyntaxError):
+    @dace.program
+    def arg_aot(*args):
+        return np.zeros([20])
 
-        @dace.program
-        def arg_aot(*args):
-            return np.zeros([20])
-
-        arg_aot.compile()
+    arg_aot.compile()
 
 
 def test_var_kwargs_jit():
@@ -117,6 +116,100 @@ def test_none_arrays():
     assert np.allclose(myprog(A, B), B)
     assert np.allclose(myprog(A, None), A)
     assert np.allclose(myprog(None, None), 1)
+
+
+def test_none_callables():
+    myfunc = None
+
+    @dace.program
+    def myprog(A: dace.float64[20]):
+        if myfunc:
+            return myfunc(A)
+        return A
+
+    # Tests
+    A = np.random.rand(20)
+    assert np.allclose(myprog(A), A)
+
+    def modifier(a):
+        return a + 1
+
+    myfunc = modifier
+    assert np.allclose(myprog(A), A + 1)
+
+
+def test_none_callables_2():
+    myfunc = None
+
+    @dace.program
+    def myprog(A: dace.float64[20]):
+        if myfunc is not None:
+            return myfunc(A)
+        return A
+
+    # Tests
+    A = np.random.rand(20)
+    assert np.allclose(myprog(A), A)
+
+    def modifier(a):
+        return a + 1
+
+    myfunc = modifier
+    assert np.allclose(myprog(A), A + 1)
+
+
+def test_none_convertibles():
+    myfunc = None
+
+    @dace.program
+    def myprog(A: dace.float64[20]):
+        if myfunc is not None:
+            return myfunc(A)
+        return A
+
+    # Tests
+    A = np.random.rand(20)
+    assert np.allclose(myprog(A), A)
+
+    @dace.program
+    def modifier(a):
+        return a + 1
+
+    myfunc = modifier
+    assert np.allclose(myprog(A), A + 1)
+
+
+def test_none_convertibles_2():
+    myfunc = None
+
+    class AConvertible(SDFGConvertible):
+        def __sdfg__(self):
+            @dace.program
+            def func():
+                arr = np.empty([20], np.float64)
+                arr[:] = 7.0
+                return arr
+
+            return func.to_sdfg()
+
+        def __sdfg_signature__(self):
+            return ([], [])
+
+        def __sdfg_closure__(self, reevaluate=None):
+            return {}
+
+    @dace.program
+    def myprog(A: dace.float64[20]):
+        if myfunc is not None:
+            return myfunc()
+        return A
+
+    # Tests
+    A = np.random.rand(20)
+    assert np.allclose(myprog(A), A)
+
+    myfunc = AConvertible()
+    assert np.allclose(myprog(A), 7)
 
 
 def test_none_arrays_jit():
@@ -180,9 +273,7 @@ def test_optional_argument_jit_kwarg():
 
 def test_optional_argument():
     @dace.program
-    def linear(x: dace.float64[13, 14],
-               w: dace.float64[10, 14],
-               bias: dace.float64[10] = None):
+    def linear(x: dace.float64[13, 14], w: dace.float64[10, 14], bias: dace.float64[10] = None):
         """ Linear layer with weights w applied to x, and optional bias. """
         if bias is not None:
             return np.dot(x, w.T) + bias
@@ -254,8 +345,7 @@ def test_constant_argument_object():
         return A[cfg.p]
 
     @dace.program
-    def constant_parameter(cfg: dace.constant, cfg2: dace.constant,
-                           A: dace.float64[20]):
+    def constant_parameter(cfg: dace.constant, cfg2: dace.constant, A: dace.float64[20]):
         A[cfg.q] = nested_func(cfg, A)
         A[cfg.get_random_number] = nested_func(cfg2, A)
 
@@ -279,8 +369,7 @@ def test_none_field():
         def method(self, A):
             if (self.field_or_none is None) and (self.field_or_none is None):
                 A[...] = 7.0
-            if (self.field_or_none is not None) and (self.field_or_none
-                                                     is not None):
+            if (self.field_or_none is not None) and (self.field_or_none is not None):
                 A[...] += self.field_or_none
 
     A = np.ones((10, ))
@@ -355,6 +444,99 @@ def test_intglobal():
     func(np.empty((10, )))
 
 
+def test_numpynumber_condition():
+    @dace.program
+    def conditional_val(A: dace.float64[20], val: dace.constant):
+        if (val % 4) == 0:
+            A[:] = 0
+        else:
+            A[:] = 1
+
+    # Ensure condition was folded
+    sdfg = conditional_val.to_sdfg(val=np.int64(3), simplify=True)
+    assert sdfg.number_of_nodes() == 1
+
+    a = np.random.rand(20)
+    conditional_val(a, np.int64(3))
+    assert np.allclose(a, 1)
+    conditional_val(a, np.int64(4))
+    assert np.allclose(a, 0)
+
+
+def test_constant_list_number():
+    something = [1, 2, 3]
+    n = len(something)
+
+    @dace.program
+    def sometest(A):
+        for i in dace.unroll(range(n)):
+            A += something[i]
+
+    A = np.random.rand(20)
+    sometest.to_sdfg(A)
+
+
+def test_constant_list_function():
+    def a(A):
+        A += 1
+
+    def b(A):
+        A += 2
+
+    def c(A):
+        A += 3
+
+    something = [a, b, c]
+    n = len(something)
+
+    @dace.program
+    def sometest(A):
+        for i in dace.unroll(range(n)):
+            something[i](A)
+
+    A = np.random.rand(20)
+    sometest.to_sdfg(A)
+
+
+def test_constant_propagation():
+    @dace.program
+    def conditional_val(A: dace.float64[20], val: dace.constant):
+        cval = val % 4
+        if cval == 0:
+            A[:] = 0
+        else:
+            A[:] = 1
+
+    # Ensure condition was folded
+    sdfg = conditional_val.to_sdfg(val=3, simplify=True)
+    from dace.transformation.interstate.state_elimination import DeadStateElimination, ConstantPropagation
+    sdfg.apply_transformations_repeated([ConstantPropagation, DeadStateElimination])
+    sdfg.simplify()
+    assert sdfg.number_of_nodes() == 1
+
+    a = np.random.rand(20)
+    conditional_val(a, 3)
+    assert np.allclose(a, 1)
+    conditional_val(a, 4)
+    assert np.allclose(a, 0)
+
+
+def test_constant_propagation_2():
+    @dace.program
+    def conditional_val(A: dace.float64[20], val: dace.int64):
+        if val:
+            A[:] = 0
+        else:
+            A[:] = 1
+
+    # Ensure condition was folded
+    a = np.random.rand(20)
+    conditional_val(a, 1)
+    assert np.allclose(a, 0)
+    conditional_val(a, 0)
+    assert np.allclose(a, 1)
+
+
 if __name__ == '__main__':
     test_kwargs()
     test_kwargs_jit()
@@ -366,6 +548,10 @@ if __name__ == '__main__':
     test_var_kwargs_aot()
     test_none_arrays()
     test_none_arrays_jit()
+    test_none_callables()
+    test_none_callables_2()
+    test_none_convertibles()
+    test_none_convertibles_2()
     test_optional_argument_jit()
     test_optional_argument_jit_kwarg()
     test_optional_argument()
@@ -377,3 +563,8 @@ if __name__ == '__main__':
     test_constant_folding()
     test_boolglobal()
     test_intglobal()
+    test_numpynumber_condition()
+    test_constant_list_number()
+    test_constant_list_function()
+    test_constant_propagation()
+    test_constant_propagation_2()

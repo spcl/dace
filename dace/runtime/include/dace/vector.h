@@ -2,7 +2,7 @@
 #ifndef __DACE_VECTOR_H
 #define __DACE_VECTOR_H
 
-#ifdef DACE_XILINX_DEVICE_CODE
+#ifdef DACE_XILINX
 #include "xilinx/vec.h"
 #else // Don't include this file if building for Xilinx
 

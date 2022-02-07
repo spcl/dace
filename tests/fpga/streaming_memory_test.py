@@ -14,14 +14,12 @@ M, N, K = 64, 64, 64
 
 
 @dace.program
-def matadd_streaming(A: dace.float32[M, N], B: dace.float32[M, N],
-                     C: dace.float32[M, N]):
+def matadd_streaming(A: dace.float32[M, N], B: dace.float32[M, N], C: dace.float32[M, N]):
     C[:] = A + B
 
 
 @dace.program
-def matadd_multistream(A: dace.float32[M, N], B: dace.float32[M, N],
-                       C: dace.float32[M, N], D: dace.float32[M, N]):
+def matadd_multistream(A: dace.float32[M, N], B: dace.float32[M, N], C: dace.float32[M, N], D: dace.float32[M, N]):
     C[:] = A + B
     D[:] = A - B
 
@@ -62,8 +60,7 @@ def test_streaming_mem():
     sdfg: dace.SDFG = matadd_streaming.to_sdfg()
     # Transform
     sdfg.apply_transformations([FPGATransformSDFG, InlineSDFG])
-    assert sdfg.apply_transformations_repeated(
-        sm.StreamingMemory, dict(storage=dace.StorageType.FPGA_Local)) == 3
+    assert sdfg.apply_transformations_repeated(sm.StreamingMemory, dict(storage=dace.StorageType.FPGA_Local)) == 3
 
     # Run verification
     A = np.random.rand(M, N).astype(np.float32)
@@ -84,8 +81,7 @@ def test_multistream():
     sdfg: dace.SDFG = matadd_multistream.to_sdfg()
     # Transform
     sdfg.apply_transformations([FPGATransformSDFG, InlineSDFG])
-    assert sdfg.apply_transformations_repeated(
-        sm.StreamingMemory, dict(storage=dace.StorageType.FPGA_Local)) == 4
+    assert sdfg.apply_transformations_repeated(sm.StreamingMemory, dict(storage=dace.StorageType.FPGA_Local)) == 4
 
     # Ensure only 4 connected components exist
     mainstate = next(s for s in sdfg.nodes() if 'copy' not in s.label)
@@ -112,8 +108,7 @@ def test_multistream_with_deps():
     sdfg: dace.SDFG = streamingcomp.to_sdfg()
     # Transform
     sdfg.apply_transformations([FPGATransformSDFG, InlineSDFG])
-    assert sdfg.apply_transformations_repeated(
-        sm.StreamingMemory, dict(storage=dace.StorageType.FPGA_Local)) == 3
+    assert sdfg.apply_transformations_repeated(sm.StreamingMemory, dict(storage=dace.StorageType.FPGA_Local)) == 3
 
     # Ensure only 4 connected components exist
     mainstate = next(s for s in sdfg.nodes() if 'copy' not in s.label)
@@ -137,8 +132,7 @@ def test_streaming_mem_mapnests():
     sdfg: dace.SDFG = matadd_streaming.to_sdfg()
     # Transform
     sdfg.apply_transformations([FPGATransformSDFG, InlineSDFG, MapExpansion])
-    assert sdfg.apply_transformations_repeated(
-        sm.StreamingMemory, dict(storage=dace.StorageType.FPGA_Local)) == 3
+    assert sdfg.apply_transformations_repeated(sm.StreamingMemory, dict(storage=dace.StorageType.FPGA_Local)) == 3
 
     # Run verification
     A = np.random.rand(M, N).astype(np.float32)
@@ -166,8 +160,7 @@ def test_streaming_composition():
     sdfg: dace.SDFG = streamingcomp.to_sdfg()
     # Transform
     sdfg.apply_transformations([FPGATransformSDFG, InlineSDFG])
-    assert sdfg.apply_transformations_repeated(
-        sm.StreamingComposition, dict(storage=dace.StorageType.FPGA_Local)) == 1
+    assert sdfg.apply_transformations_repeated(sm.StreamingComposition, dict(storage=dace.StorageType.FPGA_Local)) == 1
 
     # Run verification
     A = np.random.rand(M, N).astype(np.float32)
@@ -191,13 +184,11 @@ def test_streaming_composition_mapnests():
     # Test 1 - both maps expanded
     test1 = copy.deepcopy(sdfg)
     assert test1.apply_transformations_repeated(MapExpansion) == 2
-    assert test1.apply_transformations_repeated(
-        sm.StreamingComposition, dict(storage=dace.StorageType.FPGA_Local)) == 1
+    assert test1.apply_transformations_repeated(sm.StreamingComposition, dict(storage=dace.StorageType.FPGA_Local)) == 1
 
     # Test 2 - one only one map expanded
     sdfg.apply_transformations(MapExpansion)
-    assert sdfg.apply_transformations_repeated(
-        sm.StreamingComposition, dict(storage=dace.StorageType.FPGA_Local)) == 1
+    assert sdfg.apply_transformations_repeated(sm.StreamingComposition, dict(storage=dace.StorageType.FPGA_Local)) == 1
 
     # Run verification
     A = np.random.rand(M, N).astype(np.float32)
@@ -219,10 +210,8 @@ def test_streaming_and_composition():
     # Transform
     sdfg.apply_transformations([FPGATransformSDFG, InlineSDFG])
 
-    assert sdfg.apply_transformations_repeated(
-        sm.StreamingMemory, dict(storage=dace.StorageType.FPGA_Local)) == 3
-    assert sdfg.apply_transformations_repeated(
-        sm.StreamingComposition, dict(storage=dace.StorageType.FPGA_Local)) == 1
+    assert sdfg.apply_transformations_repeated(sm.StreamingMemory, dict(storage=dace.StorageType.FPGA_Local)) == 3
+    assert sdfg.apply_transformations_repeated(sm.StreamingComposition, dict(storage=dace.StorageType.FPGA_Local)) == 1
 
     # Run verification
     A = np.random.rand(M, N).astype(np.float32)

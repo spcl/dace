@@ -30,8 +30,7 @@ def test():
     TW.set(16)
     TH.set(16)
 
-    print('Transpose (Tiled) %dx%d (tile size: %dx%d)' %
-          (W.get(), H.get(), TW.get(), TH.get()))
+    print('Transpose (Tiled) %dx%d (tile size: %dx%d)' % (W.get(), H.get(), TW.get(), TH.get()))
 
     A = dace.ndarray([H, W], dtype=dace.float32)
     B = dace.ndarray([H, W], dtype=dace.float32)

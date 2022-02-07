@@ -5,12 +5,7 @@ from typing import Any, Dict, Optional
 import warnings
 
 
-def _get_matmul_operands(node,
-                         state,
-                         sdfg,
-                         name_lhs="_a",
-                         name_rhs="_b",
-                         name_out="_c"):
+def _get_matmul_operands(node, state, sdfg, name_lhs="_a", name_rhs="_b", name_out="_c"):
     """Returns the matrix multiplication input edges, arrays, and shape."""
     res_lhs = None
     res_rhs = None
@@ -19,11 +14,8 @@ def _get_matmul_operands(node,
             subset = dc(edge.data.subset)
             squeezed = subset.squeeze()
             size = subset.size()
-            outer_array = sdfg.data(
-                dace.sdfg.find_input_arraynode(state, edge).data)
-            strides = [
-                s for i, s in enumerate(outer_array.strides) if i in squeezed
-            ]
+            outer_array = sdfg.data(dace.sdfg.find_input_arraynode(state, edge).data)
+            strides = [s for i, s in enumerate(outer_array.strides) if i in squeezed]
             res = edge, outer_array, size, strides
             if edge.dst_conn == name_lhs:
                 res_lhs = res
@@ -33,22 +25,16 @@ def _get_matmul_operands(node,
             subset = dc(edge.data.subset)
             squeezed = subset.squeeze()
             size = subset.size()
-            outer_array = sdfg.data(
-                dace.sdfg.find_output_arraynode(state, edge).data)
-            strides = [
-                s for i, s in enumerate(outer_array.strides) if i in squeezed
-            ]
+            outer_array = sdfg.data(dace.sdfg.find_output_arraynode(state, edge).data)
+            strides = [s for i, s in enumerate(outer_array.strides) if i in squeezed]
             res_out = edge, outer_array, size, strides
-    for res, name in ((res_lhs, name_lhs), (res_rhs, name_rhs), (res_out,
-                                                                 name_out)):
+    for res, name in ((res_lhs, name_lhs), (res_rhs, name_rhs), (res_out, name_out)):
         if res is None:
-            raise ValueError("Matrix multiplication connector "
-                             "\"{}\" not found.".format(name))
+            raise ValueError("Matrix multiplication connector " "\"{}\" not found.".format(name))
     return res_lhs, res_rhs, res_out
 
 
-def _get_batchmm_opts(a_shape, a_strides, b_shape, b_strides, c_shape,
-                      c_strides) -> Dict[str, Any]:
+def _get_batchmm_opts(a_shape, a_strides, b_shape, b_strides, c_shape, c_strides) -> Dict[str, Any]:
     """
     Detects whether a matrix multiplication is a batched matrix multiplication
     and returns its parameters (strides, batch size), or an empty dictionary if
@@ -60,8 +46,7 @@ def _get_batchmm_opts(a_shape, a_strides, b_shape, b_strides, c_shape,
              and c); and b (batch size).
     """
     if len(a_shape) > 3 or len(b_shape) > 3 or (c_shape and len(c_shape) > 3):
-        raise ValueError('Tensor dimensions too large for (batched) matrix '
-                         'multiplication')
+        raise ValueError('Tensor dimensions too large for (batched) matrix ' 'multiplication')
     if len(a_shape) <= 2 and len(b_shape) <= 2:
         return {}
 
@@ -87,15 +72,13 @@ def _get_batchmm_opts(a_shape, a_strides, b_shape, b_strides, c_shape,
     return {'sa': stride_a, 'sb': stride_b, 'sc': stride_c, 'b': batch}
 
 
-def _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, alpha, beta,
-                           cdtype, func) -> Dict[str, Any]:
+def _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, alpha, beta, cdtype, func) -> Dict[str, Any]:
     """ Get option map for GEMM code generation (with column-major order). """
     # Avoid import loops
     from dace.codegen.targets.common import sym2cpp
     from dace.libraries.blas.blas_helpers import get_gemm_opts
 
-    (_, _, ashape, astride), (_, _, bshape, bstride), (
-        _, _, cshape, cstride) = _get_matmul_operands(node, state, sdfg)
+    (_, _, ashape, astride), (_, _, bshape, bstride), (_, _, cshape, cstride) = _get_matmul_operands(node, state, sdfg)
 
     if getattr(node, 'transA', False):
         ashape = list(reversed(ashape))
@@ -109,6 +92,9 @@ def _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, alpha, beta,
 
     opt['x'] = '_a'
     opt['y'] = '_b'
+    opt['xdtype'] = adesc.dtype
+    opt['ydtype'] = bdesc.dtype
+    opt['cdtype'] = cdesc.dtype
     opt['M'] = sym2cpp(ashape[-2])
     opt['N'] = sym2cpp(bshape[-1])
     opt['K'] = sym2cpp(ashape[-1])
@@ -121,6 +107,7 @@ def _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, alpha, beta,
             bopt['sa'], bopt['sb'] = bopt['sb'], bopt['sa']
         opt['lda'], opt['ldb'] = opt['ldb'], opt['lda']
         opt['x'], opt['y'] = opt['y'], opt['x']
+        opt['xdtype'], opt['ydtype'] = opt['ydtype'], opt['xdtype']
         opt['ta'], opt['tb'] = opt['tb'], opt['ta']
         opt['M'], opt['N'] = opt['N'], opt['M']
 
@@ -161,19 +148,13 @@ class SpecializeMatMul(dace.transformation.transformation.ExpandTransformation):
                     beta = 1.0
                     cin = False
                 else:
-                    warnings.warn("Unsupported WCR in output of MatMul "
-                                  "library node: {}".format(c[0].data.wcr))
-            gemm = Gemm(node.name + 'gemm',
-                        location=node.location,
-                        alpha=1.0,
-                        beta=beta,
-                        cin=cin)
+                    warnings.warn("Unsupported WCR in output of MatMul " "library node: {}".format(c[0].data.wcr))
+            gemm = Gemm(node.name + 'gemm', location=node.location, alpha=1.0, beta=beta, cin=cin)
             return gemm
         elif len(size_b) == 3 and (len(size_a) in [2, 3]):
             # Batched matrix and matrix -> batched matrix multiplication
             from dace.libraries.blas.nodes.batched_matmul import BatchedMatMul
-            batched = BatchedMatMul(node.name + 'bmm',
-                                    location=node.location)
+            batched = BatchedMatMul(node.name + 'bmm', location=node.location)
             return batched
         elif len(size_a) == 2 and len(size_b) == 1:
             # Matrix and vector -> GEMV
@@ -191,9 +172,7 @@ class SpecializeMatMul(dace.transformation.transformation.ExpandTransformation):
             a[0].dst_conn = "_x"
             b[0].dst_conn = "_A"
             c[0].src_conn = "_y"
-            gemv = Gemv(node.name + 'gemvt',
-                        location=node.location,
-                        transA=True)
+            gemv = Gemv(node.name + 'gemvt', location=node.location, transA=True)
             return gemv
         elif len(size_a) == 1 and len(size_b) == 1:
             # Vector and vector -> dot product
@@ -206,8 +185,7 @@ class SpecializeMatMul(dace.transformation.transformation.ExpandTransformation):
             return dot
         else:
             raise NotImplementedError("Matrix multiplication not implemented "
-                                      "for shapes: {} and {}".format(
-                                          size_a, size_b))
+                                      "for shapes: {} and {}".format(size_a, size_b))
 
 
 @dace.library.node
@@ -224,7 +202,4 @@ class MatMul(dace.sdfg.nodes.LibraryNode):
     default_implementation = "specialize"
 
     def __init__(self, name, location=None):
-        super().__init__(name,
-                         location=location,
-                         inputs={"_a", "_b"},
-                         outputs={"_c"})
+        super().__init__(name, location=location, inputs={"_a", "_b"}, outputs={"_c"})

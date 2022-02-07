@@ -54,10 +54,7 @@ def test_scalar_output():
 def test_scalar_output_ptr_access():
     sdfg = dace.SDFG("scalptrtest")
     state = sdfg.add_state()
-    sdfg.add_scalar("scal",
-                    dace.float64,
-                    transient=True,
-                    storage=dace.dtypes.StorageType.GPU_Global)
+    sdfg.add_scalar("scal", dace.float64, transient=True, storage=dace.dtypes.StorageType.GPU_Global)
     sdfg.add_array("__return", [1], dace.float64)
 
     tasklet = state.add_tasklet(
@@ -74,10 +71,8 @@ def test_scalar_output_ptr_access():
     access_scal = state.add_access("scal")
 
     write_unsqueezed = state.add_write("__return")
-    state.add_edge(tasklet, "outp", access_scal, None,
-                   sdfg.make_array_memlet("scal"))
-    state.add_edge(access_scal, None, write_unsqueezed, None,
-                   sdfg.make_array_memlet("scal"))
+    state.add_edge(tasklet, "outp", access_scal, None, sdfg.make_array_memlet("scal"))
+    state.add_edge(access_scal, None, write_unsqueezed, None, sdfg.make_array_memlet("scal"))
 
     ret = sdfg()
     assert np.allclose(ret, 5)

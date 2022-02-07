@@ -36,11 +36,9 @@ z_out = vecAdd_state.add_write('_res')
 # ---------- ----------
 # COMPUTE
 # ---------- ----------
-vecMap_entry, vecMap_exit = vecAdd_state.add_map(
-    'vecAdd_map', dict(i='0:n/{}'.format(vec_width)))
+vecMap_entry, vecMap_exit = vecAdd_state.add_map('vecAdd_map', dict(i='0:n/{}'.format(vec_width)))
 
-vecAdd_tasklet = vecAdd_state.add_tasklet('vecAdd_task', {'x_con', 'y_con'},
-                                          {'z_con'}, 'z_con = x_con + y_con')
+vecAdd_tasklet = vecAdd_state.add_tasklet('vecAdd_task', {'x_con', 'y_con'}, {'z_con'}, 'z_con = x_con + y_con')
 
 vecAdd_state.add_memlet_path(x_in,
                              vecMap_entry,
@@ -75,22 +73,12 @@ x_in1 = state.add_read('x1')
 y_in1 = state.add_read('y1')
 z_out1 = state.add_write('z1')
 
-nested_sdfg = state.add_nested_sdfg(vecAdd_sdfg, sdfg, {"_x", "_y"},
-                                         {"_res"})
+nested_sdfg = state.add_nested_sdfg(vecAdd_sdfg, sdfg, {"_x", "_y"}, {"_res"})
 
-state.add_memlet_path(x_in1,
-                           nested_sdfg,
-                           dst_conn='_x',
-                           memlet=Memlet.simple(x_in1, "0:n"))
-state.add_memlet_path(y_in1,
-                           nested_sdfg,
-                           dst_conn='_y',
-                           memlet=Memlet.simple(y_in1, "0:n"))
+state.add_memlet_path(x_in1, nested_sdfg, dst_conn='_x', memlet=Memlet.simple(x_in1, "0:n"))
+state.add_memlet_path(y_in1, nested_sdfg, dst_conn='_y', memlet=Memlet.simple(y_in1, "0:n"))
 
-state.add_memlet_path(nested_sdfg,
-                           z_out1,
-                           src_conn='_res',
-                           memlet=Memlet.simple(z_out1, "0:n"))
+state.add_memlet_path(nested_sdfg, z_out1, src_conn='_res', memlet=Memlet.simple(z_out1, "0:n"))
 
 
 def test_nested_vectorization():

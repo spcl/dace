@@ -4,15 +4,14 @@
 from dace.sdfg.utils import consolidate_edges
 from typing import Dict, List
 import dace
-from dace import dtypes, registry, subsets, symbolic
+from dace import dtypes, subsets, symbolic
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import OrderedMultiDiConnectorGraph
 from dace.transformation import transformation as pm
 
 
-@registry.autoregister_params(singlestate=True)
-class MapExpansion(pm.Transformation):
+class MapExpansion(pm.SingleStateTransformation):
     """ Implements the map-expansion pattern.
 
         Map-expansion takes an N-dimensional map and expands it to N 
@@ -26,31 +25,21 @@ class MapExpansion(pm.Transformation):
 
     map_entry = pm.PatternNode(nodes.MapEntry)
 
-    @staticmethod
-    def expressions():
-        return [sdutil.node_path_graph(MapExpansion.map_entry)]
+    @classmethod
+    def expressions(cls):
+        return [sdutil.node_path_graph(cls.map_entry)]
 
-    @staticmethod
-    def can_be_applied(graph: dace.SDFGState,
-                       candidate: Dict[pm.PatternNode, int],
+    def can_be_applied(self, graph: dace.SDFGState,
                        expr_index: int,
                        sdfg: dace.SDFG,
-                       strict: bool = False):
+                       permissive: bool = False):
         # A candidate subgraph matches the map-expansion pattern when it
         # includes an N-dimensional map, with N greater than one.
-        map_entry = graph.node(candidate[MapExpansion.map_entry])
-        return map_entry.map.get_param_num() > 1
+        return self.map_entry.map.get_param_num() > 1
 
-    @staticmethod
-    def match_to_str(graph: dace.SDFGState, candidate: Dict[pm.PatternNode,
-                                                            int]) -> str:
-        map_entry = graph.node(candidate[MapExpansion.map_entry])
-        return map_entry.map.label + ': ' + str(map_entry.map.params)
-
-    def apply(self, sdfg: dace.SDFG):
+    def apply(self, graph: dace.SDFGState, sdfg: dace.SDFG):
         # Extract the map and its entry and exit nodes.
-        graph = sdfg.node(self.state_id)
-        map_entry = self.map_entry(sdfg)
+        map_entry = self.map_entry
         map_exit = graph.exit_node(map_entry)
         current_map = map_entry.map
 
@@ -58,8 +47,8 @@ class MapExpansion(pm.Transformation):
         new_maps = [
             nodes.Map(current_map.label + '_' + str(param), [param],
                       subsets.Range([param_range]),
-                      schedule=dtypes.ScheduleType.Sequential) for param,
-            param_range in zip(current_map.params[1:], current_map.range[1:])
+                      schedule=dtypes.ScheduleType.Sequential)
+            for param, param_range in zip(current_map.params[1:], current_map.range[1:])
         ]
         current_map.params = [current_map.params[0]]
         current_map.range = subsets.Range([current_map.range[0]])
@@ -92,8 +81,7 @@ class MapExpansion(pm.Transformation):
             path = []
             for mapnode in [map_entry] + entries:
                 path.append(mapnode)
-                if any(edge.dst_conn in map(str, symbolic.symlist(r))
-                       for r in mapnode.map.range):
+                if any(edge.dst_conn in map(str, symbolic.symlist(r)) for r in mapnode.map.range):
                     graph.add_memlet_path(edge.src,
                                           *path,
                                           memlet=edge.data,

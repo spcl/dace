@@ -6,6 +6,7 @@ import dace as dp
 from dace.sdfg import SDFG
 from dace.memlet import Memlet
 
+
 def test():
     print('Dynamic SDFG test with vectorization and min')
     # Externals (parameters, symbols)
@@ -27,10 +28,9 @@ def test():
     B = state.add_access('B')
     C = state.add_access('C')
 
-    tasklet, map_entry, map_exit = state.add_mapped_tasklet(
-        'mytasklet', dict(i='0:N:2'),
-        dict(a=Memlet.simple(A, 'i'), b=Memlet.simple(B, 'i')), 'c = min(a, b)',
-        dict(c=Memlet.simple(C, 'i')))
+    tasklet, map_entry, map_exit = state.add_mapped_tasklet('mytasklet', dict(i='0:N:2'),
+                                                            dict(a=Memlet.simple(A, 'i'), b=Memlet.simple(B, 'i')),
+                                                            'c = min(a, b)', dict(c=Memlet.simple(C, 'i')))
 
     # Manually vectorize tasklet
     tasklet.in_connectors['a'] = dp.vector(dp.float32, 2)
@@ -48,6 +48,7 @@ def test():
     print("Difference:", diff)
     print("==== Program end ====")
     assert diff <= 1e-5
+
 
 if __name__ == "__main__":
     test()

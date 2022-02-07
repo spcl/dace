@@ -25,14 +25,8 @@ def copy_with_strides(src_numeric, dst_numeric, copy_numeric=True):
         symvals.update({'C1': 2, 'C2': 3, 'C3': 4, 'C4': 5})
 
     sdfg = dace.SDFG('cws' + str(src_numeric)[0] + str(dst_numeric)[0] + str(copy_numeric)[0])
-    sdfg.add_array('A',
-                   shape=[C1, C2, C3, C4],
-                   dtype=dace.float64,
-                   strides=[E, F, G, H])
-    sdfg.add_array('B',
-                   shape=[C1, C2, C3, C4],
-                   dtype=dace.float64,
-                   strides=[X, Y, Z, W])
+    sdfg.add_array('A', shape=[C1, C2, C3, C4], dtype=dace.float64, strides=[E, F, G, H])
+    sdfg.add_array('B', shape=[C1, C2, C3, C4], dtype=dace.float64, strides=[X, Y, Z, W])
     state = sdfg.add_state()
 
     r = state.add_read('A')

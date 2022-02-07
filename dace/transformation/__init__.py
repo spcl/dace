@@ -1,1 +1,2 @@
-from .transformation import strict_transformations, Transformation, ExpandTransformation
+from .transformation import (simplification_transformations, SingleStateTransformation, MultiStateTransformation,
+                             SubgraphTransformation, ExpandTransformation)

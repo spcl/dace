@@ -4,10 +4,9 @@ import copy
 from dace.sdfg.sdfg import SDFG
 import itertools
 import os
-import pdb
 import re
 import numpy as np
-
+import ast
 import dace
 from dace import data as dt, registry, dtypes, subsets
 from dace.config import Config
@@ -45,7 +44,7 @@ class XilinxCodeGen(fpga.FPGACodeGen):
     language = 'hls'
 
     def __init__(self, *args, **kwargs):
-        fpga_vendor = Config.get("compiler", "fpga_vendor")
+        fpga_vendor = Config.get("compiler", "fpga", "vendor")
         if fpga_vendor.lower() != "xilinx":
             # Don't register this code generator
             return
@@ -54,6 +53,11 @@ class XilinxCodeGen(fpga.FPGACodeGen):
         # where they are written to file
         self._bank_assignments = {}
 
+        # Keep track of external streams: original_name -> mangled_name
+        self._external_streams = dict()
+        self._defined_external_streams = set()
+        self._execution_mode = Config.get("compiler", "xilinx", "mode")
+
     @staticmethod
     def cmake_options():
         host_flags = Config.get("compiler", "xilinx", "host_flags")
@@ -61,20 +65,16 @@ class XilinxCodeGen(fpga.FPGACodeGen):
         build_flags = Config.get("compiler", "xilinx", "build_flags")
         mode = Config.get("compiler", "xilinx", "mode")
         target_platform = Config.get("compiler", "xilinx", "platform")
-        enable_debugging = ("ON" if Config.get_bool(
-            "compiler", "xilinx", "enable_debugging") else "OFF")
-        autobuild = ("ON" if Config.get_bool("compiler", "autobuild_bitstreams")
-                     else "OFF")
-        frequency = Config.get("compiler", "xilinx", "frequency").strip()
+        enable_debugging = ("ON" if Config.get_bool("compiler", "xilinx", "enable_debugging") else "OFF")
+        autobuild = ("ON" if Config.get_bool("compiler", "fpga", "autobuild_bitstreams") else "OFF")
+        frequency = Config.get("compiler", "xilinx", "frequency").strip().strip('"').split(":")[0]
         options = [
             "-DDACE_XILINX_HOST_FLAGS=\"{}\"".format(host_flags),
             "-DDACE_XILINX_SYNTHESIS_FLAGS=\"{}\"".format(synthesis_flags),
-            "-DDACE_XILINX_BUILD_FLAGS=\"{}\"".format(build_flags),
-            "-DDACE_XILINX_MODE={}".format(mode),
+            "-DDACE_XILINX_BUILD_FLAGS=\"{}\"".format(build_flags), "-DDACE_XILINX_MODE={}".format(mode),
             "-DDACE_XILINX_TARGET_PLATFORM=\"{}\"".format(target_platform),
             "-DDACE_XILINX_ENABLE_DEBUGGING={}".format(enable_debugging),
-            "-DDACE_FPGA_AUTOBUILD_BITSTREAM={}".format(autobuild),
-            f"-DDACE_XILINX_TARGET_CLOCK={frequency}"
+            "-DDACE_FPGA_AUTOBUILD_BITSTREAM={}".format(autobuild), f"-DDACE_XILINX_TARGET_CLOCK={frequency}"
         ]
         # Override Vitis/SDx/SDAccel installation directory
         if Config.get("compiler", "xilinx", "path"):
@@ -100,27 +100,24 @@ class XilinxCodeGen(fpga.FPGACodeGen):
             xcl_emulation_mode = None
             xilinx_sdx = None
         else:
-            raise cgx.CodegenError(
-                "Unknown Xilinx execution mode: {}".format(execution_mode))
+            raise cgx.CodegenError("Unknown Xilinx execution mode: {}".format(execution_mode))
 
         set_env_vars = ""
         set_str = "dace::set_environment_variable(\"{}\", {});\n"
         unset_str = "dace::unset_environment_variable(\"{}\");\n"
-        set_env_vars += (set_str.format("XCL_EMULATION_MODE",
-                                        xcl_emulation_mode)
-                         if xcl_emulation_mode is not None else
-                         unset_str.format("XCL_EMULATION_MODE"))
-        set_env_vars += (set_str.format("XILINX_SDX", xilinx_sdx) if xilinx_sdx
-                         is not None else unset_str.format("XILINX_SDX"))
+        set_env_vars += (set_str.format("XCL_EMULATION_MODE", xcl_emulation_mode)
+                         if xcl_emulation_mode is not None else unset_str.format("XCL_EMULATION_MODE"))
+        set_env_vars += (set_str.format("XILINX_SDX", xilinx_sdx)
+                         if xilinx_sdx is not None else unset_str.format("XILINX_SDX"))
         set_env_vars += set_str.format(
-            "EMCONFIG_PATH", "DACE_BINARY_DIR"
-        ) if execution_mode == 'hardware_emulation' else unset_str.format(
-            "EMCONFIG_PATH")
+            "EMCONFIG_PATH",
+            "DACE_BINARY_DIR") if execution_mode == 'hardware_emulation' else unset_str.format("EMCONFIG_PATH")
 
         host_code = CodeIOStream()
         host_code.write("""\
 #include "dace/xilinx/host.h"
 #include "dace/dace.h"
+#include "dace/xilinx/stream.h"
 """)
         if len(self._dispatcher.instrumentation) > 1:
             host_code.write("""\
@@ -132,10 +129,9 @@ class XilinxCodeGen(fpga.FPGACodeGen):
 """)
         host_code.write("\n\n")
 
-        self._frame.generate_fileheader(self._global_sdfg, host_code,
-                                        'xilinx_host')
+        self._frame.generate_fileheader(self._global_sdfg, host_code, 'xilinx_host')
 
-        params_comma = self._global_sdfg.signature(with_arrays=False)
+        params_comma = self._global_sdfg.signature(with_arrays=False, arglist=self._frame.arglist_scalars_only)
         if params_comma:
             params_comma = ', ' + params_comma
 
@@ -143,7 +139,7 @@ class XilinxCodeGen(fpga.FPGACodeGen):
 DACE_EXPORTED int __dace_init_xilinx({sdfg.name}_t *__state{signature}) {{
     {environment_variables}
 
-    __state->fpga_context = new dace::fpga::Context();
+    __state->fpga_context = new dace_fpga_context();
     __state->fpga_context->Get().MakeProgram({kernel_file_name});
     return 0;
 }}
@@ -158,10 +154,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                       kernel_file_name=kernel_file_name,
                       host_code="".join([
                           "{separator}\n// Kernel: {kernel_name}"
-                          "\n{separator}\n\n{code}\n\n".format(separator="/" *
-                                                               79,
-                                                               kernel_name=name,
-                                                               code=code)
+                          "\n{separator}\n\n{code}\n\n".format(separator="/" * 79, kernel_name=name, code=code)
                           for (name, code) in self._host_codes
                       ])))
 
@@ -178,12 +171,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         ]
 
         kernel_code_objs = [
-            CodeObject(kernel_name,
-                       code,
-                       "cpp",
-                       XilinxCodeGen,
-                       "Xilinx",
-                       target_type="device")
+            CodeObject(kernel_name, code, "cpp", XilinxCodeGen, "Xilinx", target_type="device")
             for (kernel_name, code) in self._kernel_codes
         ]
 
@@ -195,14 +183,10 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         if any(are_assigned):
             if not all(are_assigned):
                 raise RuntimeError("Some, but not all global memory arrays "
-                                   "were assigned to memory banks: {}".format(
-                                       self._bank_assignments))
+                                   "were assigned to memory banks: {}".format(self._bank_assignments))
             # Emit mapping from kernel memory interfaces to DRAM banks
-            for (kernel_name, interface_name), (
-                    memory_type, memory_bank) in self._bank_assignments.items():
-                link_cfg.write(
-                    f"sp={kernel_name}_1.m_axi_{interface_name}:{memory_type}[{memory_bank}]"
-                )
+            for (kernel_name, interface_name), (memory_type, memory_bank) in self._bank_assignments.items():
+                link_cfg.write(f"sp={kernel_name}_1.m_axi_{interface_name}:{memory_type}[{memory_bank}]")
         # Emit mapping between inter-kernel streaming interfaces
         for stream_name, (src, dst) in self._stream_connections.items():
             if src is None or dst is None:
@@ -220,55 +204,76 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         for name, code in self._other_codes.items():
             name = name.split(".")
             other_objs.append(
-                CodeObject(name[0],
-                           code.getvalue(),
-                           ".".join(name[1:]),
-                           XilinxCodeGen,
-                           "Xilinx",
-                           target_type="device"))
+                CodeObject(name[0], code.getvalue(), ".".join(name[1:]), XilinxCodeGen, "Xilinx", target_type="device"))
 
         return [host_code_obj] + ip_objs + kernel_code_objs + other_objs
 
-    @staticmethod
-    def define_stream(dtype, buffer_size, var_name, array_size, function_stream,
-                      kernel_stream):
+    def _internal_preprocess(self, sdfg: dace.SDFG):
+        '''
+        Vendor-specific SDFG Preprocessing
+        '''
+
+        # Preprocess inter state edge assignments:
+        # - look at every interstate edge
+        # - if any of them accesses an ArrayInterface (Global FPGA memory), qualify its name and replace it
+        #       in the assignment string
+
+        for graph in sdfg.all_sdfgs_recursive():
+            for state in graph.states():
+                out_edges = graph.out_edges(state)
+                for e in out_edges:
+                    if len(e.data.assignments) > 0:
+                        replace_dict = dict()
+
+                        for variable, value in e.data.assignments.items():
+                            expr = ast.parse(value)
+                            # walk in the expression, get all array names and check whether we need to qualify them
+                            for node in ast.walk(expr):
+                                if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name):
+                                    arr_name = node.value.id
+
+                                    if arr_name not in replace_dict and arr_name in graph.arrays and graph.arrays[
+                                        arr_name].storage == dace.dtypes.StorageType.FPGA_Global:
+                                        repl = fpga.fpga_ptr(arr_name, graph.arrays[node.value.id], sdfg, None, False,
+                                                             None, None, True)
+                                        replace_dict[arr_name] = repl
+
+                        # Perform replacement
+                        for k, v in replace_dict.items():
+                            e.data.replace(k, v)
+
+
+    def define_stream(self, dtype, buffer_size, var_name, array_size, function_stream, kernel_stream, sdfg):
         """
            Defines a stream
            :return: a tuple containing the type of the created variable, and boolean indicating
                whether this is a global variable or not
            """
-        ctype = "dace::FIFO<{}, {}, {}>".format(dtype.base_type.ctype,
-                                                dtype.veclen, buffer_size)
-        if cpp.sym2cpp(array_size) == "1":
-            kernel_stream.write("{} {}(\"{}\");".format(ctype, var_name,
-                                                        var_name))
+
+        ctype = "dace::FIFO<{}, {}, {}>".format(dtype.base_type.ctype, cpp.sym2cpp(dtype.veclen),
+                                                cpp.sym2cpp(buffer_size))
+
+        array_size_cpp = cpp.sym2cpp(array_size)
+        if array_size_cpp == "1":
+            kernel_stream.write("{} {}(\"{}\");".format(ctype, var_name, var_name))
         else:
-            kernel_stream.write("{} {}[{}];\n".format(ctype, var_name,
-                                                      cpp.sym2cpp(array_size)))
-            kernel_stream.write("dace::SetNames({}, \"{}\", {});".format(
-                var_name, var_name, cpp.sym2cpp(array_size)))
+            kernel_stream.write("{} {}[{}];\n".format(ctype, var_name, cpp.sym2cpp(array_size)))
+            kernel_stream.write("dace::SetNames({}, \"{}\", {});".format(var_name, var_name, cpp.sym2cpp(array_size)))
         # In Xilinx, streams are defined as local variables
         # Return value is used for adding to defined_vars in fpga.py
         return ctype, False
 
-    def define_local_array(self, var_name, desc, array_size, function_stream,
-                           kernel_stream, sdfg, state_id, node):
+    def define_local_array(self, var_name, desc, array_size, function_stream, kernel_stream, sdfg, state_id, node):
         dtype = desc.dtype
-        kernel_stream.write("{} {}[{}];\n".format(dtype.ctype, var_name,
-                                                  cpp.sym2cpp(array_size)))
+        kernel_stream.write("{} {}[{}];\n".format(dtype.ctype, var_name, cpp.sym2cpp(array_size)))
         if desc.storage == dace.dtypes.StorageType.FPGA_Registers:
             kernel_stream.write("#pragma HLS ARRAY_PARTITION variable={} "
                                 "complete\n".format(var_name))
         elif desc.storage == dace.dtypes.StorageType.FPGA_Local:
-            if len(desc.shape) > 1:
-                kernel_stream.write("#pragma HLS ARRAY_PARTITION variable={} "
-                                    "block factor={}\n".format(
-                                        var_name, desc.shape[-2]))
+            pass
         else:
-            raise ValueError("Unsupported storage type: {}".format(
-                desc.storage.name))
-        self._dispatcher.defined_vars.add(var_name, DefinedType.Pointer,
-                                          '%s *' % dtype.ctype)
+            raise ValueError("Unsupported storage type: {}".format(desc.storage.name))
+        self._dispatcher.defined_vars.add(var_name, DefinedType.Pointer, '%s *' % dtype.ctype)
 
     def define_shift_register(*args, **kwargs):
         raise NotImplementedError("Xilinx shift registers NYI")
@@ -286,17 +291,15 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                              with_vectorization: bool,
                              interface_id: Union[int, List[int]] = None):
         if isinstance(data, dt.Array):
-            var_name = fpga.fpga_ptr(var_name, data, sdfg, subset_info,
-                                     is_output, None, None, True, interface_id)
+            var_name = fpga.fpga_ptr(var_name, data, sdfg, subset_info, is_output, None, None, True, interface_id)
             if with_vectorization:
                 dtype = data.dtype
             else:
                 dtype = data.dtype.base_type
             return "{} *{}".format(dtype.ctype, var_name)
         if isinstance(data, dt.Stream):
-            ctype = "dace::FIFO<{}, {}, {}>".format(data.dtype.base_type.ctype,
-                                                    data.dtype.veclen,
-                                                    data.buffer_size)
+            ctype = "dace::FIFO<{}, {}, {}>".format(data.dtype.base_type.ctype, cpp.sym2cpp(data.dtype.veclen),
+                                                    cpp.sym2cpp(data.buffer_size))
             if data.shape[0] == 1:
                 return "{} &{}".format(ctype, var_name)
             else:
@@ -304,8 +307,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         else:
             return data.as_arg(with_types=True, name=var_name)
 
-    def generate_unroll_loop_pre(self, kernel_stream, factor, sdfg, state_id,
-                                 node):
+    def generate_unroll_loop_pre(self, kernel_stream, factor, sdfg, state_id, node):
         pass
 
     @staticmethod
@@ -313,8 +315,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         if factor is None:
             kernel_stream.write("#pragma HLS UNROLL", sdfg, state_id, node)
         else:
-            kernel_stream.write("#pragma HLS UNROLL factor={}".format(factor),
-                                sdfg, state_id, node)
+            kernel_stream.write("#pragma HLS UNROLL factor={}".format(factor), sdfg, state_id, node)
 
     @staticmethod
     def generate_pipeline_loop_pre(kernel_stream, sdfg, state_id, node):
@@ -332,42 +333,26 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
     def generate_flatten_loop_post(kernel_stream, sdfg, state_id, node):
         kernel_stream.write("#pragma HLS LOOP_FLATTEN")
 
-    def generate_nsdfg_header(self, sdfg, state, state_id, node,
-                              memlet_references, sdfg_label):
+    def generate_nsdfg_header(self, sdfg, state, state_id, node, memlet_references, sdfg_label):
         # TODO: Use a single method for GPU kernels, FPGA modules, and NSDFGs
-        arguments = [
-            f'{atype} {aname}' for atype, aname, _ in memlet_references
-        ]
+        arguments = [f'{atype} {aname}' for atype, aname, _ in memlet_references]
         arguments += [
-            f'{node.sdfg.symbols[aname].as_arg(aname)}'
-            for aname in sorted(node.symbol_mapping.keys())
+            f'{node.sdfg.symbols[aname].as_arg(aname)}' for aname in sorted(node.symbol_mapping.keys())
             if aname not in sdfg.constants
         ]
         arguments = ', '.join(arguments)
         return f'void {sdfg_label}({arguments}) {{\n#pragma HLS INLINE'
 
-    def write_and_resolve_expr(self,
-                               sdfg,
-                               memlet,
-                               nc,
-                               outname,
-                               inname,
-                               indices=None,
-                               dtype=None):
+    def write_and_resolve_expr(self, sdfg, memlet, nc, outname, inname, indices=None, dtype=None):
         """
         Emits a conflict resolution call from a memlet.
         """
         redtype = operations.detect_reduction_type(memlet.wcr, openmp=True)
         defined_type, _ = self._dispatcher.defined_vars.get(memlet.data)
         if isinstance(indices, str):
-            ptr = '%s + %s' % (cpp.cpp_ptr_expr(
-                sdfg, memlet, defined_type, is_write=True), indices)
+            ptr = '%s + %s' % (cpp.cpp_ptr_expr(sdfg, memlet, defined_type, is_write=True), indices)
         else:
-            ptr = cpp.cpp_ptr_expr(sdfg,
-                                   memlet,
-                                   defined_type,
-                                   indices=indices,
-                                   is_write=True)
+            ptr = cpp.cpp_ptr_expr(sdfg, memlet, defined_type, indices=indices, is_write=True)
 
         if isinstance(dtype, dtypes.pointer):
             dtype = dtype.base_type
@@ -379,23 +364,20 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                 credtype = "dace::ReductionType::Sum"
                 is_sub = True
             else:
-                credtype = "dace::ReductionType::" + str(
-                    redtype)[str(redtype).find(".") + 1:]
+                credtype = "dace::ReductionType::" + str(redtype)[str(redtype).find(".") + 1:]
                 is_sub = False
             if isinstance(dtype, dtypes.vector):
                 return (f'dace::xilinx_wcr_fixed_vec<{credtype}, '
                         f'{dtype.vtype.ctype}, {dtype.veclen}>::reduce('
                         f'{ptr}, {"-" if is_sub else ""}{inname})')
-            return (
-                f'dace::xilinx_wcr_fixed<{credtype}, {dtype.ctype}>::reduce('
-                f'{ptr}, {"-" if is_sub else ""}{inname})')
+            return (f'dace::xilinx_wcr_fixed<{credtype}, {dtype.ctype}>::reduce('
+                    f'{ptr}, {"-" if is_sub else ""}{inname})')
 
         # General reduction
         raise NotImplementedError('General reductions not yet implemented')
 
     @staticmethod
-    def make_read(defined_type, dtype, var_name, expr, index, is_pack,
-                  packing_factor):
+    def make_read(defined_type, dtype, var_name, expr, index, is_pack, packing_factor):
         if defined_type in [DefinedType.Stream, DefinedType.StreamArray]:
             if " " in expr:
                 expr = "(" + expr + ")"
@@ -408,26 +390,20 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
             else:
                 read_expr = expr
         if is_pack:
-            return "dace::Pack<{}, {}>({})".format(dtype.base_type.ctype,
-                                                   packing_factor, read_expr)
+            return "dace::Pack<{}, {}>({})".format(dtype.base_type.ctype, packing_factor, read_expr)
         else:
-            return "dace::Read<{}, {}>({})".format(dtype.base_type.ctype,
-                                                   dtype.veclen, read_expr)
+            return "dace::Read<{}, {}>({})".format(dtype.base_type.ctype, dtype.veclen, read_expr)
 
     def generate_converter(*args, **kwargs):
         pass  # Handled in C++
 
     @staticmethod
-    def make_write(defined_type, dtype, var_name, write_expr, index, read_expr,
-                   wcr, is_unpack, packing_factor):
+    def make_write(defined_type, dtype, var_name, write_expr, index, read_expr, wcr, is_unpack, packing_factor):
         if defined_type in [DefinedType.Stream, DefinedType.StreamArray]:
             if defined_type == DefinedType.StreamArray:
-                write_expr = "{}[{}]".format(write_expr,
-                                             "0" if not index else index)
+                write_expr = "{}[{}]".format(write_expr, "0" if not index else index)
             if is_unpack:
-                return "\n".join(
-                    "{}.push({}[{}]);".format(write_expr, read_expr, i)
-                    for i in range(packing_factor))
+                return "\n".join("{}.push({}[{}]);".format(write_expr, read_expr, i) for i in range(packing_factor))
             else:
                 return "{}.push({});".format(write_expr, read_expr)
         else:
@@ -436,37 +412,29 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
             elif index and index != "0":
                 write_expr = "{} + {}".format(write_expr, index)
             if is_unpack:
-                return "dace::Unpack<{}, {}>({}, {});".format(
-                    dtype.base_type.ctype, packing_factor, read_expr,
-                    write_expr)
+                return "dace::Unpack<{}, {}>({}, {});".format(dtype.base_type.ctype, packing_factor, read_expr,
+                                                              write_expr)
             else:
                 # TODO: Temporary hack because we don't have the output
                 #       vector length.
                 veclen = max(dtype.veclen, packing_factor)
-                return "dace::Write<{}, {}>({}, {});".format(
-                    dtype.base_type.ctype, veclen, write_expr, read_expr)
+                return "dace::Write<{}, {}>({}, {});".format(dtype.base_type.ctype, veclen, write_expr, read_expr)
 
-    def make_shift_register_write(self, defined_type, dtype, var_name,
-                                  write_expr, index, read_expr, wcr, is_unpack,
+    def make_shift_register_write(self, defined_type, dtype, var_name, write_expr, index, read_expr, wcr, is_unpack,
                                   packing_factor, sdfg):
         raise NotImplementedError("Xilinx shift registers NYI")
 
     @staticmethod
-    def generate_no_dependence_pre(kernel_stream,
-                                   sdfg,
-                                   state_id,
-                                   node,
-                                   var_name=None):
+    def generate_no_dependence_pre(kernel_stream, sdfg, state_id, node, var_name=None):
         pass
 
-    def generate_no_dependence_post(
-            self,
-            kernel_stream,
-            sdfg: SDFG,
-            state_id: int,
-            node: nodes.Node,
-            var_name: str,
-            accessed_subset: Union[int, subsets.Subset] = None):
+    def generate_no_dependence_post(self,
+                                    kernel_stream,
+                                    sdfg: SDFG,
+                                    state_id: int,
+                                    node: nodes.Node,
+                                    var_name: str,
+                                    accessed_subset: Union[int, subsets.Subset] = None):
         '''
         Adds post loop pragma for ignoring loop carried dependencies on a given variable
         '''
@@ -477,26 +445,20 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         else:
             array = None
 
-        var_name = fpga.fpga_ptr(
-            var_name,
-            array,
-            sdfg,
-            accessed_subset,
-            True,
-            self._dispatcher,
-            is_array_interface=(defined_type == DefinedType.ArrayInterface))
-        kernel_stream.write(
-            "#pragma HLS DEPENDENCE variable={} false".format(var_name), sdfg,
-            state_id, node)
+        var_name = fpga.fpga_ptr(var_name,
+                                 array,
+                                 sdfg,
+                                 accessed_subset,
+                                 True,
+                                 self._dispatcher,
+                                 is_array_interface=(defined_type == DefinedType.ArrayInterface))
+        kernel_stream.write("#pragma HLS DEPENDENCE variable={} false".format(var_name), sdfg, state_id, node)
 
-    def generate_kernel_boilerplate_pre(self, sdfg, state_id, kernel_name,
-                                        parameters, bank_assignments,
-                                        module_stream, kernel_stream,
-                                        external_streams):
+    def generate_kernel_boilerplate_pre(self, sdfg, state_id, kernel_name, parameters, bank_assignments, module_stream,
+                                        kernel_stream, external_streams):
 
         # Write header
-        module_stream.write(
-            """#include <dace/xilinx/device.h>
+        module_stream.write("""#include <dace/fpga_device.h>
 #include <dace/math.h>
 #include <dace/complex.h>""", sdfg)
         self._frame.generate_fileheader(sdfg, module_stream, 'xilinx_device')
@@ -507,29 +469,19 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         kernel_args = []
         array_args = []
         for is_output, data_name, data, interface in parameters:
-            is_assigned = data_name in bank_assignments and bank_assignments[
-                data_name] is not None
+            is_assigned = data_name in bank_assignments and bank_assignments[data_name] is not None
             if is_assigned and isinstance(data, dt.Array):
                 memory_bank = bank_assignments[data_name]
-                if memory_bank[0] == "HBM":
-                    lowest_bank_index, _ = fpga.get_multibank_ranges_from_subset(
-                        memory_bank[1], sdfg)
-                else:
-                    lowest_bank_index = int(memory_bank[1])
-                for bank, interface_id in fpga.iterate_hbm_interface_ids(
-                        data, interface):
-                    kernel_arg = self.make_kernel_argument(
-                        data, data_name, bank, sdfg, is_output, True,
-                        interface_id)
+                lowest_bank_index, _ = fpga.get_multibank_ranges_from_subset(memory_bank[1], sdfg)
+
+                for bank, interface_id in fpga.iterate_multibank_interface_ids(data, interface):
+                    kernel_arg = self.make_kernel_argument(data, data_name, bank, sdfg, is_output, True, interface_id)
                     if kernel_arg:
                         kernel_args.append(kernel_arg)
                         array_args.append((kernel_arg, data_name))
-                        argname_to_bank_assignment[kernel_arg] = (
-                            memory_bank[0], lowest_bank_index + bank)
+                        argname_to_bank_assignment[kernel_arg] = (memory_bank[0], lowest_bank_index + bank)
             else:
-                kernel_arg = self.make_kernel_argument(data, data_name, None,
-                                                       None, is_output, True,
-                                                       interface)
+                kernel_arg = self.make_kernel_argument(data, data_name, None, None, is_output, True, interface)
                 if kernel_arg:
                     kernel_args.append(kernel_arg)
                     if isinstance(data, dt.Array):
@@ -538,8 +490,8 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
 
         stream_args = []
         for is_output, data_name, data, interface in external_streams:
-            kernel_arg = self.make_kernel_argument(data, data_name, None, None,
-                                                   is_output, True, interface)
+            kernel_arg = self.make_kernel_argument(data, data_name, None, None, is_output, True, interface)
+
             if kernel_arg:
                 if kernel_arg in stream_args: # TODO sometimes streams are added as an argument twice. In this case it is used by 2 RTL kernels, which means the host shouldn't have them, as there can only be two accessing a stream at one point in time.
                     stream_args.remove(kernel_arg)
@@ -547,10 +499,8 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                     stream_args.append(kernel_arg)
 
         # Write kernel signature
-        kernel_stream.write(
-            "DACE_EXPORTED void {}({}) {{\n".format(
-                kernel_name, ', '.join(kernel_args + stream_args)), sdfg,
-            state_id)
+        kernel_stream.write("DACE_EXPORTED void {}({}) {{\n".format(kernel_name, ', '.join(kernel_args + stream_args)),
+                            sdfg, state_id)
 
         # Insert interface pragmas
         num_mapped_args = 0
@@ -560,20 +510,16 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                 interface_name = "gmem{}".format(num_mapped_args)
                 kernel_stream.write(
                     "#pragma HLS INTERFACE m_axi port={} "
-                    "offset=slave bundle={}".format(var_name, interface_name),
-                    sdfg, state_id)
+                    "offset=slave bundle={}".format(var_name, interface_name), sdfg, state_id)
                 # Map this interface to the corresponding location
                 # specification to be passed to the Xilinx compiler
                 memory_bank = argname_to_bank_assignment[arg]
-                self._bank_assignments[(kernel_name,
-                                        interface_name)] = memory_bank
+                self._bank_assignments[(kernel_name, interface_name)] = memory_bank
                 num_mapped_args += 1
 
         for arg in kernel_args + ["return"]:
             var_name = re.findall(r"\w+", arg)[-1]
-            kernel_stream.write(
-                "#pragma HLS INTERFACE s_axilite port={} bundle=control".format(
-                    var_name))
+            kernel_stream.write("#pragma HLS INTERFACE s_axilite port={} bundle=control".format(var_name))
 
         # TODO same comment as with the stream_args above; they are added double, when they shouldn't be.
         axis_pragmas = []
@@ -593,7 +539,6 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         for axis_pragma in axis_pragmas:
             kernel_stream.write(axis_pragma)
 
-
         # TODO: add special case if there's only one module for niceness
         kernel_stream.write("\n#pragma HLS DATAFLOW")
         kernel_stream.write("\nHLSLIB_DATAFLOW_INIT();")
@@ -602,11 +547,8 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
     def generate_kernel_boilerplate_post(kernel_stream, sdfg, state_id):
         kernel_stream.write("HLSLIB_DATAFLOW_FINALIZE();\n}\n", sdfg, state_id)
 
-    def generate_host_function_body(self, sdfg: dace.SDFG,
-                                    state: dace.SDFGState, kernel_name: str,
-                                    predecessors: list, parameters: list,
-                                    rtl_tasklet_names: list,
-                                    kernel_stream: CodeIOStream,
+    def generate_host_function_body(self, sdfg: dace.SDFG, state: dace.SDFGState, kernel_name: str, predecessors: list,
+                                    parameters: list, rtl_tasklet_names: list, kernel_stream: CodeIOStream,
                                     instrumentation_stream: CodeIOStream):
         '''
         Generate the host-specific code for spawning and synchronizing the given kernel.
@@ -622,10 +564,13 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         kernel_args = []
         for _, name, p, interface_ids in parameters:
             if isinstance(p, dt.Array):
-                for bank, _ in fpga.iterate_hbm_interface_ids(p, interface_ids):
-                    kernel_args.append(
-                        p.as_arg(False, name=fpga.fpga_ptr(name, p, sdfg,
-                                                           bank)))
+                for bank, _ in fpga.iterate_multibank_interface_ids(p, interface_ids):
+                    kernel_args.append(p.as_arg(False, name=fpga.fpga_ptr(name, p, sdfg, bank)))
+            elif isinstance(p, dt.Stream) and name in self._defined_external_streams:
+                if p.is_stream_array():
+                    kernel_args.append(f" hlslib::ocl::SimulationOnly(&{p.as_arg(False, name=name)}[0])")
+                else:
+                    kernel_args.append(f" hlslib::ocl::SimulationOnly({p.as_arg(False, name=name)})")
             else:
                 kernel_args.append(p.as_arg(False, name=name))
 
@@ -638,26 +583,26 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         if needs_synch:
             # Build a vector containing all the events associated with the kernels from which this one depends
             kernel_deps_name = f"deps_{kernel_name}"
-            kernel_stream.write(f"std::vector<cl::Event> {kernel_deps_name};")
+            kernel_stream.write(f"std::vector<hlslib::ocl::Event> {kernel_deps_name};")
             for pred in predecessors:
                 # concatenate events from predecessor kernel
-                kernel_stream.write(
-                    f"{kernel_deps_name}.push_back({pred}_event);")
+                kernel_stream.write(f"{kernel_deps_name}.push_back({pred}_event);")
 
         # Launch HLS kernel, passing synchronization events (if any)
         kernel_stream.write(
+            f"""auto {kernel_name}_kernel = program.MakeKernel({kernel_function_name}, "{kernel_function_name}", {", ".join(kernel_args)});"""
+        )
+
+        kernel_stream.write(
             f"""\
-  auto {kernel_name}_kernel = program.MakeKernel({kernel_function_name}, "{kernel_function_name}", {", ".join(kernel_args)});
-  cl::Event {kernel_name}_event = {kernel_name}_kernel.ExecuteTaskFork({f'{kernel_deps_name}.begin(), {kernel_deps_name}.end()' if needs_synch else ''});
+  hlslib::ocl::Event {kernel_name}_event = {kernel_name}_kernel.ExecuteTaskAsync({f'{kernel_deps_name}.begin(), {kernel_deps_name}.end()' if needs_synch else ''});
   all_events.push_back({kernel_name}_event);""", sdfg, sdfg.node_id(state))
         if state.instrument == dtypes.InstrumentationType.FPGA:
-            self.instrument_opencl_kernel(kernel_name, sdfg.node_id(state),
-                                          sdfg.sdfg_id, instrumentation_stream)
+            self.instrument_opencl_kernel(kernel_name, sdfg.node_id(state), sdfg.sdfg_id, instrumentation_stream)
 
         # Join RTL tasklets
         for name in rtl_tasklet_names:
-            kernel_stream.write(f"kernel_{name}.wait();\n", sdfg,
-                                sdfg.node_id(state))
+            kernel_stream.write(f"kernel_{name}.wait();\n", sdfg, sdfg.node_id(state))
 
     def is_double_pumped(self, subgraph):
         for n in subgraph.nodes():
@@ -670,9 +615,8 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                         return nested_double
         return None
 
-    def generate_module(self, sdfg, state, kernel_name, name, subgraph,
-                        parameters, module_stream, entry_stream, host_stream,
-                        instrumentation_stream):
+    def generate_module(self, sdfg, state, kernel_name, name, subgraph, parameters, module_stream, entry_stream,
+                        host_stream, instrumentation_stream):
         """Generates a module that will run as a dataflow function in the FPGA
            kernel."""
 
@@ -684,14 +628,8 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
 
         for is_output, pname, p, interface_ids in parameters:
             if isinstance(p, dt.Array):
-                for bank, interface_id in fpga.iterate_hbm_interface_ids(
-                        p, interface_ids):
-                    arr_name = fpga.fpga_ptr(pname,
-                                             p,
-                                             sdfg,
-                                             bank,
-                                             is_output,
-                                             is_array_interface=True)
+                for bank, interface_id in fpga.iterate_multibank_interface_ids(p, interface_ids):
+                    arr_name = fpga.fpga_ptr(pname, p, sdfg, bank, is_output, is_array_interface=True)
                     # Add interface ID to called module, but not to the module
                     # arguments
                     argname = fpga.fpga_ptr(pname,
@@ -704,28 +642,23 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
 
                     kernel_args_call.append(argname)
                     dtype = p.dtype
-                    kernel_args_module.append("{} {}*{}".format(
-                        dtype.ctype, "const " if not is_output else "",
-                        arr_name))
+                    kernel_args_module.append("{} {}*{}".format(dtype.ctype, "const " if not is_output else "",
+                                                                arr_name))
             else:
                 if isinstance(p, dt.Stream):
-                    kernel_args_call.append(
-                        p.as_arg(with_types=False, name=pname))
+                    # if this is an external stream, its name may have been mangled in the kernel
+                    call_name = self._external_streams[pname] if pname in self._external_streams else pname
+                    kernel_args_call.append(p.as_arg(with_types=False, name=call_name))
                     if p.is_stream_array():
-                        kernel_args_module.append(
-                            "dace::FIFO<{}, {}, {}> {}[{}]".format(
-                                p.dtype.base_type.ctype, p.veclen,
-                                p.buffer_size, pname, p.size_string()))
+                        kernel_args_module.append("dace::FIFO<{}, {}, {}> {}[{}]".format(
+                            p.dtype.base_type.ctype, cpp.sym2cpp(p.veclen), cpp.sym2cpp(p.buffer_size), pname,
+                            p.size_string()))
                     else:
-                        kernel_args_module.append(
-                            "dace::FIFO<{}, {}, {}> &{}".format(
-                                p.dtype.base_type.ctype, p.veclen,
-                                p.buffer_size, pname))
+                        kernel_args_module.append("dace::FIFO<{}, {}, {}> &{}".format(
+                            p.dtype.base_type.ctype, cpp.sym2cpp(p.veclen), cpp.sym2cpp(p.buffer_size), pname))
                 else:
-                    kernel_args_call.append(
-                        p.as_arg(with_types=False, name=pname))
-                    kernel_args_module.append(
-                        p.as_arg(with_types=True, name=pname))
+                    kernel_args_call.append(p.as_arg(with_types=False, name=pname))
+                    kernel_args_module.append(p.as_arg(with_types=True, name=pname))
 
         # Check if we are generating an RTL module, in which case only the
         # accesses to the streams should be handled
@@ -733,8 +666,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         double_pumped = self.is_double_pumped(subgraph)
         inward = double_pumped == dace.ScheduleType.FPGA_Double
         for n in subgraph.nodes():
-            if (isinstance(n, dace.nodes.Tasklet)
-                    and n.language == dace.dtypes.Language.SystemVerilog):
+            if (isinstance(n, dace.nodes.Tasklet) and n.language == dace.dtypes.Language.SystemVerilog):
                 rtl_tasklet = n
                 break
 
@@ -769,15 +701,11 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                     # TODO multiple readers accessing a single stream should fail
                     dst = subgraph.out_edges(node)[0].dst
                     if isinstance(dst, dace.nodes.MapEntry) and dst.map.unroll:
-                        unrolled_map_range = dace.symbolic.evaluate(
-                            dst.map.range[0][1] + 1, sdfg.constants)
+                        unrolled_map_range = dace.symbolic.evaluate(dst.map.range[0][1] + 1, sdfg.constants)
                     else:
                         unrolled_map_range = 1
                     if unrolled_map_range > 1:
-                        elements_to_add = [
-                            f'{node.data}_{i}'
-                            for i in range(unrolled_map_range)
-                        ]
+                        elements_to_add = [f'{node.data}_{i}' for i in range(unrolled_map_range)]
                     else:
                         elements_to_add = [node.data]
                     for i in range(unrolled_map_range):
@@ -787,8 +715,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                             self._stream_connections[elem] = [None, None]
                         for edge in subgraph.out_edges(node):
                             rtl_dst = state.memlet_path(edge)[-1].dst_conn if rtl_tasklet else node.data
-                            val = '{}_top_1.s_axis_{}{}'.format(
-                                rtl_name, rtl_dst, postfix)
+                            val = '{}_top_1.s_axis_{}{}'.format(rtl_name, rtl_dst, postfix)
                             self._stream_connections[elem][1] = val
                             direction_workaround[rtl_dst] = False
 
@@ -804,15 +731,11 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                     # TODO multiple writers accessing a single stream should fail
                     src = subgraph.in_edges(node)[0].src
                     if (isinstance(src, dace.nodes.MapExit) and src.map.unroll):
-                        unrolled_map_range = dace.symbolic.evaluate(
-                            src.map.range[0][1] + 1, sdfg.constants)
+                        unrolled_map_range = dace.symbolic.evaluate(src.map.range[0][1] + 1, sdfg.constants)
                     else:
                         unrolled_map_range = 1
                     if unrolled_map_range > 1:
-                        elements_to_add = [
-                            f'{node.data}_{i}'
-                            for i in range(unrolled_map_range)
-                        ]
+                        elements_to_add = [f'{node.data}_{i}' for i in range(unrolled_map_range)]
                     else:
                         elements_to_add = [node.data]
                     for i in range(unrolled_map_range):
@@ -1040,12 +963,14 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         if rtl_tasklet or not (double_pumped is None):
             # TODO only if there are any scalar arguments. Otherwise, it shouldn't be needed.
             # Launch the kernel from the host code
+            rtl_name = self.rtl_tasklet_name(rtl_tasklet, state, sdfg)
+
+            # kernel arguments
             host_stream.write(
                 f"all_events.push_back(program.MakeKernel(\"{rtl_name}_top\"{', '.join([''] + [name for _, name, p, _ in parameters if not isinstance(p, dt.Stream)])}).ExecuteTaskFork());",
                 sdfg, state_id, rtl_tasklet)
             if state.instrument == dtypes.InstrumentationType.FPGA:
-                self.instrument_opencl_kernel(rtl_name, state_id, sdfg.sdfg_id,
-                                              instrumentation_stream)
+                self.instrument_opencl_kernel(rtl_name, state_id, sdfg.sdfg_id, instrumentation_stream)
 
         if rtl_tasklet or not (double_pumped is None):
             return
@@ -1056,10 +981,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         # Unrolling processing elements: if there first scope of the subgraph
         # is an unrolled map, generate a processing element for each iteration
         scope_children = subgraph.scope_children()
-        top_scopes = [
-            n for n in scope_children[None]
-            if isinstance(n, dace.sdfg.nodes.EntryNode)
-        ]
+        top_scopes = [n for n in scope_children[None] if isinstance(n, dace.sdfg.nodes.EntryNode)]
         unrolled_loops = 0
         if len(top_scopes) == 1:
             scope = top_scopes[0]
@@ -1070,16 +992,16 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                 for p, r in zip(scope.map.params, scope.map.range):
                     if len(r) > 3:
                         raise cgx.CodegenError("Strided unroll not supported")
-                    entry_stream.write(
-                        "for (size_t {param} = {begin}; {param} < {end}; "
-                        "{param} += {increment}) {{\n#pragma HLS UNROLL".format(
-                            param=p, begin=r[0], end=r[1] + 1, increment=r[2]))
+                    entry_stream.write("for (size_t {param} = {begin}; {param} < {end}; "
+                                       "{param} += {increment}) {{\n#pragma HLS UNROLL".format(param=p,
+                                                                                               begin=r[0],
+                                                                                               end=r[1] + 1,
+                                                                                               increment=r[2]))
                     unrolled_loops += 1
 
         # Generate caller code in top-level function
         entry_stream.write(
-            "HLSLIB_DATAFLOW_FUNCTION({}, {});".format(
-                module_function_name, ", ".join(kernel_args_call)), sdfg,
+            "HLSLIB_DATAFLOW_FUNCTION({}, {});".format(module_function_name, ", ".join(kernel_args_call)), sdfg,
             state_id)
 
         for _ in range(unrolled_loops):
@@ -1093,43 +1015,37 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
 
         module_body_stream = CodeIOStream()
 
-        module_body_stream.write(
-            "void {}({}) {{".format(module_function_name,
-                                    ", ".join(kernel_args_module)), sdfg,
-            state_id)
+        module_body_stream.write("void {}({}) {{".format(module_function_name, ", ".join(kernel_args_module)), sdfg,
+                                 state_id)
 
         # Register the array interface as a naked pointer for use inside the
         # FPGA kernel
         interfaces_added = set()
+
         for is_output, argname, arg, interface_id in parameters:
-            for bank, _ in fpga.iterate_hbm_interface_ids(arg, interface_id):
-                if (not (isinstance(arg, dt.Array) and arg.storage
-                         == dace.dtypes.StorageType.FPGA_Global)):
+            for bank, _ in fpga.iterate_multibank_interface_ids(arg, interface_id):
+                if isinstance(arg, dt.Stream) and argname in self._external_streams:
+                    # This is an external stream being passed to the module
+                    # Add this to defined vars
+                    if not self._dispatcher.defined_vars.has(argname):
+                        self._dispatcher.defined_vars.add(argname, DefinedType.Stream, arg.ctype)
+                    continue
+
+                if (not (isinstance(arg, dt.Array) and arg.storage == dace.dtypes.StorageType.FPGA_Global)):
                     continue
                 ctype = dtypes.pointer(arg.dtype).ctype
-                ptr_name = fpga.fpga_ptr(argname,
-                                         arg,
-                                         sdfg,
-                                         bank,
-                                         is_output,
-                                         None,
-                                         is_array_interface=True)
+                ptr_name = fpga.fpga_ptr(argname, arg, sdfg, bank, is_output, None, is_array_interface=True)
                 if not is_output:
                     ctype = f"const {ctype}"
-                self._dispatcher.defined_vars.add(ptr_name, DefinedType.Pointer,
-                                                  ctype)
+                self._dispatcher.defined_vars.add(ptr_name, DefinedType.Pointer, ctype)
                 if argname in interfaces_added:
                     continue
                 interfaces_added.add(argname)
-                self._dispatcher.defined_vars.add(argname,
-                                                  DefinedType.ArrayInterface,
-                                                  ctype,
-                                                  allow_shadowing=True)
+                self._dispatcher.defined_vars.add(argname, DefinedType.ArrayInterface, ctype, allow_shadowing=True)
         module_body_stream.write("\n")
 
         # Allocate local transients
-        data_to_allocate = (set(subgraph.top_level_transients()) -
-                            set(sdfg.shared_transients()) -
+        data_to_allocate = (set(subgraph.top_level_transients()) - set(sdfg.shared_transients()) -
                             set([p[1] for p in parameters]))
 
         allocated = set()
@@ -1139,8 +1055,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
             if node.data not in data_to_allocate or node.data in allocated:
                 continue
             allocated.add(node.data)
-            self._dispatcher.dispatch_allocate(sdfg, state, state_id, node,
-                                               node.desc(sdfg), module_stream,
+            self._dispatcher.dispatch_allocate(sdfg, state, state_id, node, node.desc(sdfg), module_stream,
                                                module_body_stream)
 
         self._dispatcher.dispatch_subgraph(sdfg,
@@ -1159,16 +1074,12 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         return "dp_kernel_{}_{}_{}".format(sdfg.sdfg_id, sdfg.node_id(state), state.node_id(node))
 
     def rtl_tasklet_name(self, node: nodes.RTLTasklet, state, sdfg):
-        return "{}_{}_{}_{}".format(node.name, sdfg.sdfg_id,
-                                    sdfg.node_id(state), state.node_id(node))
+        return "{}_{}_{}_{}".format(node.name, sdfg.sdfg_id, sdfg.node_id(state), state.node_id(node))
 
-    def generate_kernel_internal(
-            self, sdfg: dace.SDFG, state: dace.SDFGState, kernel_name: str,
-            predecessors: list, subgraphs: list, kernel_stream: CodeIOStream,
-            state_host_header_stream: CodeIOStream,
-            state_host_body_stream: CodeIOStream,
-            instrumentation_stream: CodeIOStream, function_stream: CodeIOStream,
-            callsite_stream: CodeIOStream, state_parameters: list):
+    def generate_kernel_internal(self, sdfg: dace.SDFG, state: dace.SDFGState, kernel_name: str, predecessors: list,
+                                 subgraphs: list, kernel_stream: CodeIOStream, state_host_header_stream: CodeIOStream,
+                                 state_host_body_stream: CodeIOStream, instrumentation_stream: CodeIOStream,
+                                 function_stream: CodeIOStream, callsite_stream: CodeIOStream, state_parameters: list):
         '''
         Generates Kernel code, both device and host side.
         :param sdfg:
@@ -1187,24 +1098,50 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         :param state_parameters: list of state parameters. The kernel-specific parameters will be appended to it.
         '''
 
-        (global_data_parameters, top_level_local_data, subgraph_parameters,
-         nested_global_transients, bank_assignments,
+        (global_data_parameters, top_level_local_data, subgraph_parameters, nested_global_transients, bank_assignments,
          external_streams) = self.make_parameters(sdfg, state, subgraphs)
 
         state_parameters.extend(global_data_parameters)
 
+        # We need to pass external streams as parameters to module
+        # (unless they are already there. This could be case of inter-PE intra-kernel streams)
+        # TODO It doesn't break RTL, but the streams are passed to sub kernels that don't need the streams, in turn relying on Vitis to optimize them away again.
+        for k, v in subgraph_parameters.items():
+            for stream_is_out, stream_name, stream_desc, stream_iid in external_streams:
+                for is_output, data_name, desc, interface_id in v:
+                    if data_name == stream_name and stream_desc == desc:
+                        break
+                else:
+                    v.append((stream_is_out, stream_name, stream_desc, stream_iid))
+
+        # Xilinx does not like external streams name with leading underscores to be used as port names
+        # We remove them, and we check that they are not defined anywhere else
+        for es in external_streams:
+
+            new_name = es[1].strip("_")
+            self._external_streams[es[1]] = new_name
+
+            if new_name != es[1]:
+                clashes = [param for param in global_data_parameters if param[1] == new_name]
+                clashes.extend([param for param in top_level_local_data if param[1] == new_name])
+                clashes.extend([param for param in subgraph_parameters.values() if param[1] == new_name])
+                clashes.extend([param for param in nested_global_transients if param[1] == new_name])
+                if len(clashes) > 0:
+                    raise cgx.CodegenError(
+                        f"External stream sanitized name {new_name} clashes with other paramters: {clashes}")
+                else:
+                    external_streams.remove(es)
+                    external_streams.append((es[0], new_name, es[2], es[3]))
+
         # Detect RTL tasklets, which will be launched as individual kernels
         rtl_tasklet_names = [
-            self.rtl_tasklet_name(nd, state, sdfg) for nd in state.nodes()
-            if isinstance(nd, nodes.RTLTasklet)
+            self.rtl_tasklet_name(nd, state, sdfg) for nd in state.nodes() if isinstance(nd, nodes.RTLTasklet)
         ]
 
         # Generate host code
-        self.generate_host_header(sdfg, kernel_name, global_data_parameters,
+        self.generate_host_header(sdfg, kernel_name, global_data_parameters + external_streams,
                                   state_host_header_stream)
-        self.generate_host_function_boilerplate(sdfg, state,
-                                                nested_global_transients,
-                                                state_host_body_stream)
+        self.generate_host_function_boilerplate(sdfg, state, nested_global_transients, state_host_body_stream)
 
         # Now we write the device code
         module_stream = CodeIOStream()
@@ -1212,15 +1149,12 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
 
         state_id = sdfg.node_id(state)
 
-        self.generate_kernel_boilerplate_pre(sdfg, state_id, kernel_name,
-                                             global_data_parameters,
-                                             bank_assignments, module_stream,
-                                             entry_stream, external_streams)
+        self.generate_kernel_boilerplate_pre(sdfg, state_id, kernel_name, global_data_parameters, bank_assignments,
+                                             module_stream, entry_stream, external_streams)
 
         # Emit allocations
         for node in top_level_local_data:
-            self._dispatcher.dispatch_allocate(sdfg, state, state_id, node,
-                                               node.desc(sdfg), module_stream,
+            self._dispatcher.dispatch_allocate(sdfg, state, state_id, node, node.desc(sdfg), module_stream,
                                                entry_stream)
 
         # double_pumped = None
@@ -1235,37 +1169,37 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         for is_output, name, node, _ in external_streams:
 
             # TODO: deal with veclen if this goes into a double pumped version
-            buffer_size = dace.symbolic.evaluate(node.buffer_size,
-                                                     sdfg.constants)
-            ctype = "dace::FIFO<{}, {}, {}>".format(node.dtype.base_type.ctype,
-                                                node.dtype.veclen, buffer_size)
+            buffer_size = dace.symbolic.evaluate(node.buffer_size, sdfg.constants)
+            ctype = "dace::FIFO<{}, {}, {}>".format(node.dtype.base_type.ctype, node.dtype.veclen, buffer_size)
 
+            self._dispatcher.defined_vars.add_global(name, DefinedType.Stream, ctype)
+            num_streams = dace.symbolic.evaluate(node.shape[0], sdfg.constants)
+            self._dispatcher.defined_vars.add_global(name, DefinedType.Stream, node.ctype)
+            key = 0 if is_output else 1
 
-            self._dispatcher.defined_vars.add_global(name, DefinedType.Stream,
-                                                     ctype)
-            # TODO find better way to extract num kernels, rather than the shape of the streams
-            num_kernels = dace.symbolic.evaluate(node.shape[0], sdfg.constants)
-            key = 1 if is_output else 0
-            if num_kernels > 1:
-                streams = [f'{name}_{i}' for i in range(num_kernels)]
+            # Define here external streams
+            if name not in self._defined_external_streams:
+                self.define_stream(node.dtype, node.buffer_size, name, node.total_size, None, state_host_body_stream,
+                                   sdfg)
+                self._defined_external_streams.add(name)
+
+            if num_streams > 1:
+                streams = [f'{name}_{i}' for i in range(num_streams)]
             else:  # _num should not be appended, when there is only one kernel
                 streams = [name]
+
             for stream in streams:
                 if stream not in self._stream_connections:
                     self._stream_connections[stream] = [None, None]
                 val = '{}_1.{}'.format(kernel_name, stream)
                 self._stream_connections[stream][key] = val
 
-
-        self.generate_modules(sdfg, state, kernel_name, subgraphs,
-                              subgraph_parameters, module_stream, entry_stream,
+        self.generate_modules(sdfg, state, kernel_name, subgraphs, subgraph_parameters, module_stream, entry_stream,
                               state_host_body_stream, instrumentation_stream)
 
         self.generate_host_function_body(sdfg, state, kernel_name, predecessors,
-                                         global_data_parameters,
-                                         rtl_tasklet_names,
-                                         state_host_body_stream,
-                                         instrumentation_stream)
+                                         global_data_parameters + external_streams, rtl_tasklet_names,
+                                         state_host_body_stream, instrumentation_stream)
 
         # Store code to be passed to compilation phase
         # self._host_codes.append((kernel_name, host_code_stream.getvalue()))
@@ -1274,44 +1208,45 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
 
         self.generate_kernel_boilerplate_post(kernel_stream, sdfg, state_id)
 
-    def generate_host_header(self, sdfg, kernel_function_name, parameters,
-                             host_code_stream):
+    def generate_host_header(self, sdfg, kernel_function_name, parameters, host_code_stream):
 
         kernel_args = []
         for is_output, name, arg, interface_ids in parameters:
-            if isinstance(arg, dt.Array):
-                for bank, interface_id in fpga.iterate_hbm_interface_ids(
-                        arg, interface_ids):
-                    argname = fpga.fpga_ptr(name, arg, sdfg, bank, is_output,
-                                            None, None, True, interface_id)
-                    kernel_args.append(arg.as_arg(with_types=True,
-                                                  name=argname))
+            if isinstance(arg, dt.Stream):
+
+                if arg.is_stream_array():
+                    kernel_args.append("dace::FIFO<{}, {}, {}> {}[{}]".format(arg.dtype.base_type.ctype,
+                                                                              cpp.sym2cpp(arg.veclen),
+                                                                              cpp.sym2cpp(arg.buffer_size), name,
+                                                                              arg.size_string()))
+                else:
+                    kernel_args.append("dace::FIFO<{}, {}, {}> &{}".format(arg.dtype.base_type.ctype,
+                                                                           cpp.sym2cpp(arg.veclen),
+                                                                           cpp.sym2cpp(arg.buffer_size), name))
+            elif isinstance(arg, dt.Array):
+                for bank, interface_id in fpga.iterate_multibank_interface_ids(arg, interface_ids):
+                    argname = fpga.fpga_ptr(name, arg, sdfg, bank, is_output, None, None, True, interface_id)
+                    kernel_args.append(arg.as_arg(with_types=True, name=argname))
             else:
                 kernel_args.append(arg.as_arg(with_types=True, name=name))
+
         host_code_stream.write(
             """\
 // Signature of kernel function (with raw pointers) for argument matching
-DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(
-                kernel_function_name=kernel_function_name,
-                kernel_args=", ".join(kernel_args)), sdfg)
+DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(kernel_function_name=kernel_function_name,
+                                                                        kernel_args=", ".join(kernel_args)), sdfg)
 
-    def generate_memlet_definition(self, sdfg, dfg, state_id, src_node,
-                                   dst_node, edge, callsite_stream):
+    def generate_memlet_definition(self, sdfg, dfg, state_id, src_node, dst_node, edge, callsite_stream):
         memlet = edge.data
-        if (self._dispatcher.defined_vars.get(
-                memlet.data)[0] == DefinedType.FPGA_ShiftRegister):
+
+        if (self._dispatcher.defined_vars.get(memlet.data)[0] == DefinedType.FPGA_ShiftRegister):
             raise NotImplementedError("Shift register for Xilinx NYI")
         else:
-            self._cpu_codegen.copy_memory(sdfg, dfg, state_id, src_node,
-                                          dst_node, edge, None, callsite_stream)
+            self._cpu_codegen.copy_memory(sdfg, dfg, state_id, src_node, dst_node, edge, None, callsite_stream)
 
-    def allocate_view(self, sdfg: dace.SDFG, dfg: dace.SDFGState, state_id: int,
-                      node: dace.nodes.AccessNode, global_stream: CodeIOStream,
-                      declaration_stream: CodeIOStream,
-                      allocation_stream: CodeIOStream):
-        return self._cpu_codegen.allocate_view(sdfg, dfg, state_id, node,
-                                               global_stream,
-                                               declaration_stream,
+    def allocate_view(self, sdfg: dace.SDFG, dfg: dace.SDFGState, state_id: int, node: dace.nodes.AccessNode,
+                      global_stream: CodeIOStream, declaration_stream: CodeIOStream, allocation_stream: CodeIOStream):
+        return self._cpu_codegen.allocate_view(sdfg, dfg, state_id, node, global_stream, declaration_stream,
                                                allocation_stream)
 
     def generate_nsdfg_arguments(self, sdfg, dfg, state, node):
@@ -1321,15 +1256,13 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(
         inout = set(node.in_connectors.keys() & node.out_connectors.keys())
 
         memlet_references = []
-        for _, _, _, vconn, in_memlet in sorted(state.in_edges(node),
-                                                key=lambda e: e.dst_conn or ""):
+        for _, _, _, vconn, in_memlet in sorted(state.in_edges(node), key=lambda e: e.dst_conn or ""):
             if in_memlet.data is None:
                 continue
-            is_memory_interface = (self._dispatcher.defined_vars.get(
-                in_memlet.data, 1)[0] == DefinedType.ArrayInterface)
+            is_memory_interface = (self._dispatcher.defined_vars.get(in_memlet.data,
+                                                                     1)[0] == DefinedType.ArrayInterface)
             if is_memory_interface:
-                for bank in fpga.iterate_distributed_subset(
-                        sdfg.arrays[in_memlet.data], in_memlet, False, sdfg):
+                for bank in fpga.iterate_distributed_subset(sdfg.arrays[in_memlet.data], in_memlet, False, sdfg):
                     interface_name = fpga.fpga_ptr(vconn,
                                                    sdfg.arrays[in_memlet.data],
                                                    sdfg,
@@ -1337,23 +1270,20 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(
                                                    False,
                                                    is_array_interface=True)
                     passed_memlet = copy.deepcopy(in_memlet)
-                    passed_memlet.subset = fpga.modify_distributed_subset(
-                        passed_memlet.subset, bank)
-                    interface_ref = cpp.emit_memlet_reference(
-                        self._dispatcher,
-                        sdfg,
-                        passed_memlet,
-                        interface_name,
-                        conntype=node.in_connectors[vconn],
-                        is_write=False)
+                    passed_memlet.subset = fpga.modify_distributed_subset(passed_memlet.subset, bank)
+                    interface_ref = cpp.emit_memlet_reference(self._dispatcher,
+                                                              sdfg,
+                                                              passed_memlet,
+                                                              interface_name,
+                                                              conntype=node.in_connectors[vconn],
+                                                              is_write=False)
                     memlet_references.append(interface_ref)
             if vconn in inout:
                 continue
-            if fpga.is_hbm_array_with_distributed_index(
-                    sdfg.arrays[in_memlet.data]):
+            if fpga.is_multibank_array_with_distributed_index(sdfg.arrays[in_memlet.data]):
                 passed_memlet = copy.deepcopy(in_memlet)
-                passed_memlet.subset = fpga.modify_distributed_subset(
-                    passed_memlet.subset, 0)  # dummy so it works for HBM
+                passed_memlet.subset = fpga.modify_distributed_subset(passed_memlet.subset,
+                                                                      0)  # dummy so it works for HBM
             else:
                 passed_memlet = in_memlet
             ref = cpp.emit_memlet_reference(self._dispatcher,
@@ -1365,15 +1295,13 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(
             if not is_memory_interface:
                 memlet_references.append(ref)
 
-        for _, uconn, _, _, out_memlet in sorted(
-                state.out_edges(node), key=lambda e: e.src_conn or ""):
+        for _, uconn, _, _, out_memlet in sorted(state.out_edges(node), key=lambda e: e.src_conn or ""):
             if out_memlet.data is None:
                 continue
-            if fpga.is_hbm_array_with_distributed_index(
-                    sdfg.arrays[out_memlet.data]):
+            if fpga.is_multibank_array_with_distributed_index(sdfg.arrays[out_memlet.data]):
                 passed_memlet = copy.deepcopy(out_memlet)
-                passed_memlet.subset = fpga.modify_distributed_subset(
-                    passed_memlet.subset, 0)  # dummy so it works for HBM
+                passed_memlet.subset = fpga.modify_distributed_subset(passed_memlet.subset,
+                                                                      0)  # dummy so it works for HBM
             else:
                 passed_memlet = out_memlet
             ref = cpp.emit_memlet_reference(self._dispatcher,
@@ -1382,11 +1310,10 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(
                                             uconn,
                                             conntype=node.out_connectors[uconn],
                                             is_write=True)
-            is_memory_interface = (self._dispatcher.defined_vars.get(
-                out_memlet.data, 1)[0] == DefinedType.ArrayInterface)
+            is_memory_interface = (self._dispatcher.defined_vars.get(out_memlet.data,
+                                                                     1)[0] == DefinedType.ArrayInterface)
             if is_memory_interface:
-                for bank in fpga.iterate_distributed_subset(
-                        sdfg.arrays[out_memlet.data], out_memlet, True, sdfg):
+                for bank in fpga.iterate_distributed_subset(sdfg.arrays[out_memlet.data], out_memlet, True, sdfg):
                     interface_name = fpga.fpga_ptr(uconn,
                                                    sdfg.arrays[out_memlet.data],
                                                    sdfg,
@@ -1394,16 +1321,14 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(
                                                    True,
                                                    is_array_interface=True)
                     passed_memlet = copy.deepcopy(out_memlet)
-                    passed_memlet.subset = fpga.modify_distributed_subset(
-                        passed_memlet.subset, bank)
+                    passed_memlet.subset = fpga.modify_distributed_subset(passed_memlet.subset, bank)
                     memlet_references.append(
-                        cpp.emit_memlet_reference(
-                            self._dispatcher,
-                            sdfg,
-                            passed_memlet,
-                            interface_name,
-                            conntype=node.out_connectors[uconn],
-                            is_write=True))
+                        cpp.emit_memlet_reference(self._dispatcher,
+                                                  sdfg,
+                                                  passed_memlet,
+                                                  interface_name,
+                                                  conntype=node.out_connectors[uconn],
+                                                  is_write=True))
             else:
                 memlet_references.append(ref)
 
@@ -1419,7 +1344,5 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(
         destination is a pointer.
         :return: String of C++ performing the write.
         """
-        return self.make_write(DefinedType.Pointer, dst_dtype, None,
-                               "&" + dst_expr, None, src_expr, None,
-                               dst_dtype.veclen < src_dtype.veclen,
-                               src_dtype.veclen)
+        return self.make_write(DefinedType.Pointer, dst_dtype, None, "&" + dst_expr, None, src_expr, None,
+                               dst_dtype.veclen < src_dtype.veclen, src_dtype.veclen)

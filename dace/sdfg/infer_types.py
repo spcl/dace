@@ -25,22 +25,18 @@ def infer_connector_types(sdfg: SDFG):
                     continue
                 scalar = (e.data.subset and e.data.subset.num_elements() == 1)
                 if e.data.data is not None:
-                    allocated_as_scalar = (sdfg.arrays[e.data.data].storage is
-                                           not dtypes.StorageType.GPU_Global)
+                    allocated_as_scalar = (sdfg.arrays[e.data.data].storage is not dtypes.StorageType.GPU_Global)
                 else:
                     allocated_as_scalar = True
 
                 if node.in_connectors[cname].type is None:
                     # If nested SDFG, try to use internal array type
                     if isinstance(node, nodes.NestedSDFG):
-                        scalar = (isinstance(node.sdfg.arrays[cname],
-                                             data.Scalar)
-                                  and allocated_as_scalar)
+                        scalar = (isinstance(node.sdfg.arrays[cname], data.Scalar) and allocated_as_scalar)
                         dtype = node.sdfg.arrays[cname].dtype
                         ctype = (dtype if scalar else dtypes.pointer(dtype))
                     elif e.data.data is not None:  # Obtain type from memlet
-                        scalar |= isinstance(sdfg.arrays[e.data.data],
-                                             data.Scalar)
+                        scalar |= isinstance(sdfg.arrays[e.data.data], data.Scalar)
                         if isinstance(node, nodes.LibraryNode):
                             scalar &= allocated_as_scalar
                         dtype = sdfg.arrays[e.data.data].dtype
@@ -50,8 +46,7 @@ def infer_connector_types(sdfg: SDFG):
                         sconn = src_edge.src.out_connectors[src_edge.src_conn]
                         if sconn.type is None:
                             raise TypeError('Ambiguous or uninferable type in'
-                                            ' connector "%s" of node "%s"' %
-                                            (sconn, src_edge.src))
+                                            ' connector "%s" of node "%s"' % (sconn, src_edge.src))
                         ctype = sconn
                     node.in_connectors[cname] = ctype
 
@@ -61,25 +56,20 @@ def infer_connector_types(sdfg: SDFG):
                 if cname is None:
                     continue
                 scalar = (e.data.subset and e.data.subset.num_elements() == 1
-                          and (not e.data.dynamic or
-                               (e.data.dynamic and e.data.wcr is not None)))
+                          and (not e.data.dynamic or (e.data.dynamic and e.data.wcr is not None)))
                 if e.data.data is not None:
-                    allocated_as_scalar = (sdfg.arrays[e.data.data].storage is
-                                           not dtypes.StorageType.GPU_Global)
+                    allocated_as_scalar = (sdfg.arrays[e.data.data].storage is not dtypes.StorageType.GPU_Global)
                 else:
                     allocated_as_scalar = True
-                    
+
                 if node.out_connectors[cname].type is None:
                     # If nested SDFG, try to use internal array type
                     if isinstance(node, nodes.NestedSDFG):
-                        scalar = (isinstance(node.sdfg.arrays[cname],
-                                             data.Scalar)
-                                  and allocated_as_scalar)
+                        scalar = (isinstance(node.sdfg.arrays[cname], data.Scalar) and allocated_as_scalar)
                         dtype = node.sdfg.arrays[cname].dtype
                         ctype = (dtype if scalar else dtypes.pointer(dtype))
                     elif e.data.data is not None:  # Obtain type from memlet
-                        scalar |= isinstance(sdfg.arrays[e.data.data],
-                                             data.Scalar)
+                        scalar |= isinstance(sdfg.arrays[e.data.data], data.Scalar)
                         if isinstance(node, nodes.LibraryNode):
                             scalar &= allocated_as_scalar
                         dtype = sdfg.arrays[e.data.data].dtype
@@ -94,18 +84,15 @@ def infer_connector_types(sdfg: SDFG):
             # If there are any remaining uninferable connectors, fail
             for e in state.out_edges(node):
                 cname = e.src_conn
-                if cname and node.out_connectors[cname].type is None:
-                    raise TypeError('Ambiguous or uninferable type in'
-                                    ' connector "%s" of node "%s"' %
-                                    (cname, node))
+                if cname and node.out_connectors[cname] is None:
+                    raise TypeError('Ambiguous or uninferable type in' ' connector "%s" of node "%s"' % (cname, node))
 
 
 #############################################################################
 # Default schedule and storage type inference
 
 
-def set_default_schedule_and_storage_types(
-    sdfg: SDFG, toplevel_schedule: dtypes.ScheduleType):
+def set_default_schedule_and_storage_types(sdfg: SDFG, toplevel_schedule: dtypes.ScheduleType):
     """ 
     Sets default storage and schedule types throughout SDFG in-place.
     Replaces `ScheduleType.Default` and `StorageType.Default`
@@ -134,16 +121,15 @@ def _scopes_with_tbmaps(state: SDFGState, scopes: List[nodes.EntryNode]):
         has_tb_map = False
         # Append thread-block maps from subgraph and nested SDFGs
         for node in subgraph.nodes():
-            if isinstance(node, nodes.EntryNode) and node.schedule in (
-                    dtypes.ScheduleType.GPU_ThreadBlock,
-                    dtypes.ScheduleType.GPU_ThreadBlock_Dynamic):
+            if isinstance(node, nodes.EntryNode) and node.schedule in (dtypes.ScheduleType.GPU_ThreadBlock,
+                                                                       dtypes.ScheduleType.GPU_ThreadBlock_Dynamic):
                 has_tb_map = True
                 break
             elif isinstance(node, nodes.NestedSDFG):
                 for n in node.sdfg.all_nodes_recursive():
-                    if isinstance(node, nodes.EntryNode) and node.schedule in (
-                            dtypes.ScheduleType.GPU_ThreadBlock,
-                            dtypes.ScheduleType.GPU_ThreadBlock_Dynamic):
+                    if isinstance(node,
+                                  nodes.EntryNode) and node.schedule in (dtypes.ScheduleType.GPU_ThreadBlock,
+                                                                         dtypes.ScheduleType.GPU_ThreadBlock_Dynamic):
                         has_tb_map = True
                         break
                 if has_tb_map:
@@ -155,14 +141,12 @@ def _scopes_with_tbmaps(state: SDFGState, scopes: List[nodes.EntryNode]):
 
 def _set_default_schedule_in_scope(parent_node: nodes.Node,
                                    parent_schedule: dtypes.ScheduleType,
-                                   reverse_scope_dict: Dict[nodes.Node,
-                                                            List[nodes.Node]],
+                                   reverse_scope_dict: Dict[nodes.Node, List[nodes.Node]],
                                    use_parent_schedule: bool = False):
     for node in reverse_scope_dict[parent_node]:
         if use_parent_schedule:
             child_schedule = parent_schedule
-            if parent_schedule in (dtypes.ScheduleType.Default,
-                                   dtypes.ScheduleType.GPU_Default):
+            if parent_schedule in (dtypes.ScheduleType.Default, dtypes.ScheduleType.GPU_Default):
                 child_schedule = dtypes.SCOPEDEFAULT_SCHEDULE[parent_schedule]
         else:
             child_schedule = dtypes.SCOPEDEFAULT_SCHEDULE[parent_schedule]
@@ -171,15 +155,13 @@ def _set_default_schedule_in_scope(parent_node: nodes.Node,
             if node.map.schedule is dtypes.ScheduleType.Default:
                 node.map.schedule = child_schedule
             # Also traverse children (recursively)
-            _set_default_schedule_in_scope(node, node.map.schedule,
-                                           reverse_scope_dict)
+            _set_default_schedule_in_scope(node, node.map.schedule, reverse_scope_dict)
         elif isinstance(node, nodes.ConsumeEntry):
             if node.consume.schedule is dtypes.ScheduleType.Default:
                 node.consume.schedule = child_schedule
 
             # Also traverse children (recursively)
-            _set_default_schedule_in_scope(node, node.consume.schedule,
-                                           reverse_scope_dict)
+            _set_default_schedule_in_scope(node, node.consume.schedule, reverse_scope_dict)
         elif isinstance(node, nodes.NestedSDFG):
             # Nested SDFGs retain same schedule as their parent scope
             if node.schedule is dtypes.ScheduleType.Default:
@@ -187,29 +169,24 @@ def _set_default_schedule_in_scope(parent_node: nodes.Node,
             _set_default_schedule_types(node.sdfg, node.schedule)
         elif getattr(node, 'schedule', False):
             if node.schedule is dtypes.ScheduleType.Default:
-                node.schedule = (
-                    child_schedule if isinstance(node, nodes.EntryNode)
-                    or parent_schedule is None else parent_schedule)
+                node.schedule = (child_schedule
+                                 if isinstance(node, nodes.EntryNode) or parent_schedule is None else parent_schedule)
 
 
-def _set_default_schedule_types(sdfg: SDFG,
-                                toplevel_schedule: dtypes.ScheduleType,
-                                use_parent_schedule: bool = False):
+def _set_default_schedule_types(sdfg: SDFG, toplevel_schedule: dtypes.ScheduleType, use_parent_schedule: bool = False):
     for state in sdfg.nodes():
         reverse_scope_dict = state.scope_children()
 
         # Start with top-level nodes and call recursively
-        _set_default_schedule_in_scope(None, toplevel_schedule,
-                                       reverse_scope_dict, use_parent_schedule)
+        _set_default_schedule_in_scope(None, toplevel_schedule, reverse_scope_dict, use_parent_schedule)
 
 
-def _set_default_storage_types(sdfg: SDFG,
-                               toplevel_schedule: dtypes.ScheduleType):
+def _set_default_storage_types(sdfg: SDFG, toplevel_schedule: dtypes.ScheduleType):
     for state in sdfg.nodes():
         scope_dict = state.scope_dict()
         scopes_with_tbmaps = _scopes_with_tbmaps(state, [
-            n for n in state.nodes() if isinstance(n, nodes.MapEntry)
-            and n.schedule in [dtypes.ScheduleType.GPU_Device]
+            n
+            for n in state.nodes() if isinstance(n, nodes.MapEntry) and n.schedule in [dtypes.ScheduleType.GPU_Device]
         ])
 
         for node in state.nodes():
@@ -217,8 +194,7 @@ def _set_default_storage_types(sdfg: SDFG,
                 continue
             desc = node.desc(sdfg)
             # Only set transients if nested
-            if ((desc.transient or sdfg.parent_sdfg is None)
-                    and desc.storage is dtypes.StorageType.Default):
+            if ((desc.transient or sdfg.parent_sdfg is None) and desc.storage is dtypes.StorageType.Default):
                 # Special cases
                 parent_node = scope_dict[node]
                 if parent_node is None:
@@ -244,7 +220,7 @@ def _set_default_storage_types(sdfg: SDFG,
 
     # Take care of remaining arrays/scalars, e.g., code->code edges
     for desc in sdfg.arrays.values():
-        if desc.storage is dtypes.StorageType.Default:
+        if ((desc.transient or sdfg.parent_sdfg is None) and desc.storage is dtypes.StorageType.Default):
             desc.storage = dtypes.StorageType.Register
 
     for state in sdfg.nodes():
@@ -254,8 +230,7 @@ def _set_default_storage_types(sdfg: SDFG,
             if not isinstance(node, nodes.NestedSDFG):
                 continue
             for name, desc in node.sdfg.arrays.items():
-                if (not desc.transient
-                        and desc.storage is dtypes.StorageType.Default):
+                if (not desc.transient and desc.storage is dtypes.StorageType.Default):
                     # Find connector and ensure storage types match
                     for e in state.in_edges(node):
                         if e.dst_conn == name:

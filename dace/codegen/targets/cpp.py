@@ -16,8 +16,7 @@ from typing import IO, List, Optional, Tuple, Union
 import dace
 from dace import data, subsets, symbolic, dtypes, memlet as mmlt, nodes
 from dace.codegen import cppunparse
-from dace.codegen.targets.common import (sym2cpp, find_incoming_edges,
-                                         codeblock_to_cpp)
+from dace.codegen.targets.common import (sym2cpp, find_incoming_edges, codeblock_to_cpp)
 from dace.codegen.dispatcher import DefinedType
 from dace.config import Config
 from dace.frontend import operations
@@ -56,21 +55,20 @@ def copy_expr(
         offset_cppstr = "0"
     dt = ""
 
-    is_global = data_desc.lifetime in (dtypes.AllocationLifetime.Global,
-                                       dtypes.AllocationLifetime.Persistent)
+    is_global = data_desc.lifetime in (dtypes.AllocationLifetime.Global, dtypes.AllocationLifetime.Persistent)
     defined_types = None
+    # Non-free symbol dependent Arrays due to their shape
+    dependent_shape = (isinstance(data_desc, data.Array) and not isinstance(data_desc, data.View) and any(
+        str(s) not in dispatcher.frame.symbols_and_constants(sdfg) for s in dispatcher.frame.free_symbols(data_desc)))
     try:
-        if (isinstance(data_desc, data.Array)
-                and not isinstance(data_desc, data.View) and any(
-                    str(s) not in sdfg.free_symbols.union(sdfg.constants.keys())
-                    for s in data_desc.free_symbols)):
-            defined_types = dispatcher.declared_arrays.get(data_name,
-                                                           is_global=is_global)
+        # NOTE: It is hard to get access to the view-edge here, so always check
+        # the declared-arrays dictionary for Views.
+        if dependent_shape or isinstance(data_desc, data.View):
+            defined_types = dispatcher.declared_arrays.get(data_name, is_global=is_global)
     except KeyError:
         pass
     if not defined_types:
-        defined_types = dispatcher.defined_vars.get(data_name,
-                                                    is_global=is_global)
+        defined_types = dispatcher.defined_vars.get(data_name, is_global=is_global)
     def_type, _ = defined_types
     if fpga.is_fpga_array(data_desc):
         expr = fpga.fpga_ptr(
@@ -90,8 +88,7 @@ def copy_expr(
     add_offset = offset_cppstr != "0"
 
     if def_type in [DefinedType.Pointer, DefinedType.ArrayInterface]:
-        return "{}{}{}".format(
-            dt, expr, " + {}".format(offset_cppstr) if add_offset else "")
+        return "{}{}{}".format(dt, expr, " + {}".format(offset_cppstr) if add_offset else "")
 
     elif def_type == DefinedType.StreamArray:
         return "{}[{}]".format(expr, offset_cppstr)
@@ -102,24 +99,17 @@ def copy_expr(
     elif def_type in [DefinedType.Scalar, DefinedType.Stream]:
 
         if add_offset:
-            raise TypeError("Tried to offset address of scalar {}: {}".format(
-                data_name, offset_cppstr))
+            raise TypeError("Tried to offset address of scalar {}: {}".format(data_name, offset_cppstr))
 
         if def_type == DefinedType.Scalar:
             return "{}&{}".format(dt, expr)
         else:
             return data_name
     else:
-        raise NotImplementedError("copy_expr not implemented "
-                                  "for connector type: {}".format(def_type))
+        raise NotImplementedError("copy_expr not implemented " "for connector type: {}".format(def_type))
 
 
-def memlet_copy_to_absolute_strides(dispatcher,
-                                    sdfg,
-                                    memlet,
-                                    src_node,
-                                    dst_node,
-                                    packed_types=False):
+def memlet_copy_to_absolute_strides(dispatcher, sdfg, memlet, src_node, dst_node, packed_types=False):
     # TODO: Take both source and destination subset into account for computing
     # copy shape.
     copy_shape = memlet.subset.size_exact()
@@ -127,12 +117,7 @@ def memlet_copy_to_absolute_strides(dispatcher,
     dst_nodedesc = dst_node.desc(sdfg)
 
     if memlet.data == src_node.data:
-        src_expr = copy_expr(dispatcher,
-                             sdfg,
-                             src_node.data,
-                             memlet,
-                             is_write=False,
-                             packed_types=packed_types)
+        src_expr = copy_expr(dispatcher, sdfg, src_node.data, memlet, is_write=False, packed_types=packed_types)
         if memlet.other_subset is not None:
             dst_expr = copy_expr(dispatcher,
                                  sdfg,
@@ -156,12 +141,7 @@ def memlet_copy_to_absolute_strides(dispatcher,
         src_subset = memlet.subset
 
     else:
-        dst_expr = copy_expr(dispatcher,
-                             sdfg,
-                             dst_node.data,
-                             memlet,
-                             is_write=True,
-                             packed_types=packed_types)
+        dst_expr = copy_expr(dispatcher, sdfg, dst_node.data, memlet, is_write=True, packed_types=packed_types)
         if memlet.other_subset is not None:
             src_expr = copy_expr(dispatcher,
                                  sdfg,
@@ -204,16 +184,14 @@ def memlet_copy_to_absolute_strides(dispatcher,
         # If other_subset is defined, reduce its dimensionality by
         # removing the "empty" dimensions (size = 1) and filter the
         # corresponding strides out
-        src_strides = ([
-            stride
-            for stride, s in zip(src_strides, src_subset.size()) if s != 1
-        ] + src_strides[len(src_subset):])  # Include tiles
+        src_strides = ([stride
+                        for stride, s in zip(src_strides, src_subset.size()) if s != 1] + src_strides[len(src_subset):]
+                       )  # Include tiles
         if not src_strides:
             src_strides = [1]
-        dst_strides = ([
-            stride
-            for stride, s in zip(dst_strides, dst_subset.size()) if s != 1
-        ] + dst_strides[len(dst_subset):])  # Include tiles
+        dst_strides = ([stride
+                        for stride, s in zip(dst_strides, dst_subset.size()) if s != 1] + dst_strides[len(dst_subset):]
+                       )  # Include tiles
         if not dst_strides:
             dst_strides = [1]
         copy_shape = [s for s in copy_shape if s != 1]
@@ -222,14 +200,11 @@ def memlet_copy_to_absolute_strides(dispatcher,
 
     # Extend copy shape to the largest among the data dimensions,
     # and extend other array with the appropriate strides
-    if len(dst_strides) != len(copy_shape) or len(src_strides) != len(
-            copy_shape):
+    if len(dst_strides) != len(copy_shape) or len(src_strides) != len(copy_shape):
         if memlet.data == src_node.data:
-            copy_shape, dst_strides = reshape_strides(src_subset, src_strides,
-                                                      dst_strides, copy_shape)
+            copy_shape, dst_strides = reshape_strides(src_subset, src_strides, dst_strides, copy_shape)
         elif memlet.data == dst_node.data:
-            copy_shape, src_strides = reshape_strides(dst_subset, dst_strides,
-                                                      src_strides, copy_shape)
+            copy_shape, src_strides = reshape_strides(dst_subset, dst_strides, src_strides, copy_shape)
 
     return copy_shape, src_strides, dst_strides, src_expr, dst_expr
 
@@ -279,12 +254,10 @@ def emit_memlet_reference(dispatcher,
     # accordingly.
     defined_types = None
     try:
-        if (isinstance(desc, data.Array) and not isinstance(desc, data.View)
-                and any(
-                    str(s) not in sdfg.free_symbols.union(sdfg.constants.keys())
-                    for s in desc.free_symbols)):
-            defined_types = dispatcher.declared_arrays.get(
-                memlet.data, ancestor)
+        if (isinstance(desc, data.Array) and not isinstance(desc, data.View) and any(
+                str(s) not in dispatcher.frame.symbols_and_constants(sdfg)
+                for s in dispatcher.frame.free_symbols(desc))):
+            defined_types = dispatcher.declared_arrays.get(memlet.data, ancestor)
     except KeyError:
         pass
     if not defined_types:
@@ -292,21 +265,26 @@ def emit_memlet_reference(dispatcher,
     defined_type, defined_ctype = defined_types
 
     if fpga.is_fpga_array(desc):
-        datadef = fpga.fpga_ptr(memlet.data, desc, sdfg, memlet.subset,
-                                 is_write, dispatcher, ancestor,
-                                 defined_type == DefinedType.ArrayInterface)
+        datadef = fpga.fpga_ptr(memlet.data, desc, sdfg, memlet.subset, is_write, dispatcher, ancestor,
+                                defined_type == DefinedType.ArrayInterface)
     else:
         datadef = ptr(memlet.data, desc, sdfg)
 
     if (defined_type == DefinedType.Pointer
-            or (defined_type == DefinedType.ArrayInterface
-                and isinstance(desc, data.View))):
+            or (defined_type == DefinedType.ArrayInterface and isinstance(desc, data.View))):
         if not is_scalar and desc.dtype == conntype.base_type:
             # Cast potential consts
             typedef = defined_ctype
         if is_scalar:
             defined_type = DefinedType.Scalar
+            if is_write is False:
+                typedef = f'const {typedef}'
             ref = '&'
+        else:
+            # constexpr arrays
+            if memlet.data in dispatcher.frame.symbols_and_constants(sdfg):
+                typedef = f'const {typedef}'
+                ref = '*'
     elif defined_type == DefinedType.ArrayInterface:
         base_ctype = conntype.base_type.ctype
         typedef = f"{base_ctype}*" if is_write else f"const {base_ctype}*"
@@ -346,24 +324,18 @@ def emit_memlet_reference(dispatcher,
             and desc.storage == dace.StorageType.FPGA_Global):
         # This is a device buffer accessed on the host.
         # Can not be accessed with offset different than zero. Check this if we can:
-        if (isinstance(offset, int) and int(offset) != 0) or (isinstance(
-                offset, str) and offset.isnumeric() and int(offset) != 0):
-            raise TypeError(
-                "Can not offset device buffers from host code ({}, offset {})".
-                format(datadef, offset))
+        if (isinstance(offset, int) and int(offset) != 0) or (isinstance(offset, str) and offset.isnumeric()
+                                                              and int(offset) != 0):
+            raise TypeError("Can not offset device buffers from host code ({}, offset {})".format(datadef, offset))
         # Device buffers are passed by reference
         expr = datadef
         ref = '&'
     else:
         # Cast as necessary
-        expr = make_ptr_vector_cast(datadef + offset_expr, desc.dtype, conntype,
-                                    is_scalar, defined_type)
+        expr = make_ptr_vector_cast(datadef + offset_expr, desc.dtype, conntype, is_scalar, defined_type)
 
     # Register defined variable
-    dispatcher.defined_vars.add(pointer_name,
-                                defined_type,
-                                typedef,
-                                allow_shadowing=True)
+    dispatcher.defined_vars.add(pointer_name, defined_type, typedef, allow_shadowing=True)
 
     return (typedef + ref, pointer_name, expr)
 
@@ -375,14 +347,10 @@ def reshape_strides(subset, strides, original_strides, copy_shape):
     original_copy_shape = subset.size()
     dims = len(copy_shape)
 
-    reduced_tile_sizes = [
-        ts for ts, s in zip(subset.tile_sizes, original_copy_shape) if s != 1
-    ]
+    reduced_tile_sizes = [ts for ts, s in zip(subset.tile_sizes, original_copy_shape) if s != 1]
 
     reshaped_copy = copy_shape + [ts for ts in subset.tile_sizes if ts != 1]
-    reshaped_copy[:len(copy_shape)] = [
-        s / ts for s, ts in zip(copy_shape, reduced_tile_sizes)
-    ]
+    reshaped_copy[:len(copy_shape)] = [s / ts for s, ts in zip(copy_shape, reduced_tile_sizes)]
 
     new_strides = [0] * len(reshaped_copy)
     elements_remaining = functools.reduce(sp.Mul, copy_shape, 1)
@@ -391,8 +359,7 @@ def reshape_strides(subset, strides, original_strides, copy_shape):
         new_strides[i] = elements_remaining / reshaped_copy[i]
         elements_remaining = new_strides[i]
         if reduced_tile_sizes[i] != 1:
-            new_strides[dims + tiledim] = (elements_remaining /
-                                           reshaped_copy[dims + tiledim])
+            new_strides[dims + tiledim] = (elements_remaining / reshaped_copy[dims + tiledim])
             elements_remaining = new_strides[dims + tiledim]
             tiledim += 1
 
@@ -400,12 +367,11 @@ def reshape_strides(subset, strides, original_strides, copy_shape):
 
 
 def _is_c_contiguous(shape, strides):
-    """ 
-    Returns True if the strides represent a non-padded, C-contiguous (last 
+    """
+    Returns True if the strides represent a non-padded, C-contiguous (last
     dimension contiguous) array.
     """
-    computed_strides = tuple(
-        data._prod(shape[i + 1:]) for i in range(len(shape)))
+    computed_strides = tuple(data._prod(shape[i + 1:]) for i in range(len(shape)))
     return tuple(strides) == computed_strides
 
 
@@ -434,10 +400,8 @@ def ndcopy_to_strided_copy(
     # pointers should be the shape of the copy
     first_src_index = src_subset.at([0] * src_subset.dims(), src_strides)
     first_dst_index = dst_subset.at([0] * dst_subset.dims(), dst_strides)
-    last_src_index = src_subset.at([d - 1 for d in src_subset.size()],
-                                   src_strides)
-    last_dst_index = dst_subset.at([d - 1 for d in dst_subset.size()],
-                                   dst_strides)
+    last_src_index = src_subset.at([d - 1 for d in src_subset.size()], src_strides)
+    last_dst_index = dst_subset.at([d - 1 for d in dst_subset.size()], dst_strides)
     copy_length = functools.reduce(lambda x, y: x * y, copy_shape)
     src_copylen = last_src_index - first_src_index + 1
     dst_copylen = last_dst_index - first_dst_index + 1
@@ -454,23 +418,19 @@ def ndcopy_to_strided_copy(
     # arrays.
     if (tuple(src_strides) == tuple(dst_strides)
             and ((src_copylen == copy_length and dst_copylen == copy_length) or
-                 (tuple(src_shape) == tuple(copy_shape)
-                  and tuple(dst_shape) == tuple(copy_shape)))):
+                 (tuple(src_shape) == tuple(copy_shape) and tuple(dst_shape) == tuple(copy_shape)))):
         # Emit 1D copy of the whole array
         copy_shape = [functools.reduce(lambda x, y: x * y, copy_shape)]
         return copy_shape, [1], [1]
     # Another case of non-strided 1D copy: all indices match and copy length
     # matches pointer difference, as well as match in contiguity and padding
-    elif (first_src_index == first_dst_index
-          and last_src_index == last_dst_index and copy_length == src_copylen
-          and _is_c_contiguous(src_shape, src_strides)
-          and _is_c_contiguous(dst_shape, dst_strides)):
+    elif (first_src_index == first_dst_index and last_src_index == last_dst_index and copy_length == src_copylen
+          and _is_c_contiguous(src_shape, src_strides) and _is_c_contiguous(dst_shape, dst_strides)):
         # Emit 1D copy of the whole array
         copy_shape = [functools.reduce(lambda x, y: x * y, copy_shape)]
         return copy_shape, [1], [1]
     # 1D strided copy
-    elif (sum([0 if c == 1 else 1 for c in copy_shape]) == 1
-          and len(src_subset) == len(dst_subset)):
+    elif (sum([0 if c == 1 else 1 for c in copy_shape]) == 1 and len(src_subset) == len(dst_subset)):
         # Find the copied dimension:
         # In copy shape
         copydim = next(i for i, c in enumerate(copy_shape) if c != 1)
@@ -506,17 +466,12 @@ def ndcopy_to_strided_copy(
                     dstdim = next(i for i, c in enumerate(dst_shape) if c != 1)
 
         # Return new copy
-        return [copy_shape[copydim]], [src_strides[srcdim]
-                                       ], [dst_strides[dstdim]]
+        return [copy_shape[copydim]], [src_strides[srcdim]], [dst_strides[dstdim]]
     else:
         return None
 
 
-def cpp_offset_expr(d: data.Data,
-                    subset_in: subsets.Subset,
-                    offset=None,
-                    packed_veclen=1,
-                    indices=None):
+def cpp_offset_expr(d: data.Data, subset_in: subsets.Subset, offset=None, packed_veclen=1, indices=None):
     """ Creates a C++ expression that can be added to a pointer in order
         to offset it to the beginning of the given subset and offset.
         :param d: The data structure to use for sizes/strides.
@@ -528,7 +483,7 @@ def cpp_offset_expr(d: data.Data,
         :param indices: A tuple of indices to use for expression.
         :return: A string in C++ syntax with the correct offset
     """
-    if fpga.is_hbm_array_with_distributed_index(d):
+    if fpga.is_multibank_array_with_distributed_index(d):
         subset_in = fpga.modify_distributed_subset(subset_in, 0)
 
     # Offset according to parameters, then offset according to array
@@ -561,8 +516,7 @@ def cpp_array_expr(sdfg,
     subset = memlet.subset if not use_other_subset else memlet.other_subset
     s = subset if relative_offset else subsets.Indices(offset)
     o = offset if relative_offset else None
-    desc = (sdfg.arrays[memlet.data]
-            if referenced_array is None else referenced_array)
+    desc = (sdfg.arrays[memlet.data] if referenced_array is None else referenced_array)
     offset_cppstr = cpp_offset_expr(desc, s, o, packed_veclen, indices=indices)
 
     if with_brackets:
@@ -575,8 +529,7 @@ def cpp_array_expr(sdfg,
         return offset_cppstr
 
 
-def make_ptr_vector_cast(dst_expr, dst_dtype, src_dtype, is_scalar,
-                         defined_type):
+def make_ptr_vector_cast(dst_expr, dst_dtype, src_dtype, is_scalar, defined_type):
     """
     If there is a type mismatch, cast pointer type. Used mostly in vector types.
     """
@@ -611,7 +564,7 @@ def cpp_ptr_expr(sdfg,
         offset_cppstr = cpp_offset_expr(desc, s, o, indices=indices)
     if fpga.is_fpga_array(desc):
         dname = fpga.fpga_ptr(memlet.data, desc, sdfg, s, is_write, None, None,
-                               defined_type == DefinedType.ArrayInterface)
+                              defined_type == DefinedType.ArrayInterface)
     else:
         dname = ptr(memlet.data, desc, sdfg)
 
@@ -683,14 +636,10 @@ def is_write_conflicted(dfg, edge, datanode=None, sdfg_schedule=None):
     Detects whether a write-conflict-resolving edge can be emitted without
     using atomics or critical sections.
     """
-    return (is_write_conflicted_with_reason(dfg, edge, datanode, sdfg_schedule)
-            is not None)
+    return (is_write_conflicted_with_reason(dfg, edge, datanode, sdfg_schedule) is not None)
 
 
-def is_write_conflicted_with_reason(dfg,
-                                    edge,
-                                    datanode=None,
-                                    sdfg_schedule=None):
+def is_write_conflicted_with_reason(dfg, edge, datanode=None, sdfg_schedule=None):
     """
     Detects whether a write-conflict-resolving edge can be emitted without
     using atomics or critical sections, returning the node or SDFG that caused
@@ -709,8 +658,8 @@ def is_write_conflicted_with_reason(dfg,
         in_edges = find_incoming_edges(datanode, dfg)
         if len(in_edges) != 1:
             return dfg
-        if (isinstance(in_edges[0].src, nodes.ExitNode) and
-                in_edges[0].src.map.schedule == dtypes.ScheduleType.Sequential):
+        if (isinstance(in_edges[0].src, nodes.ExitNode)
+                and in_edges[0].src.map.schedule == dtypes.ScheduleType.Sequential):
             return None
         return dfg
     elif isinstance(dfg, gr.SubgraphView):
@@ -722,8 +671,7 @@ def is_write_conflicted_with_reason(dfg,
     while edge is not None:
         path = dfg.memlet_path(edge)
         for e in path:
-            if (isinstance(e.dst, nodes.ExitNode)
-                    and e.dst.map.schedule != dtypes.ScheduleType.Sequential):
+            if (isinstance(e.dst, nodes.ExitNode) and e.dst.map.schedule != dtypes.ScheduleType.Sequential):
                 if _check_map_conflicts(e.dst.map, e):
                     # This map is parallel w.r.t. WCR
                     # print('PAR: Continuing from map')
@@ -731,10 +679,8 @@ def is_write_conflicted_with_reason(dfg,
                 # print('SEQ: Map is conflicted')
                 return dfg.entry_node(e.dst)
             # Should never happen (no such thing as write-conflicting reads)
-            if (isinstance(e.src, nodes.EntryNode)
-                    and e.src.map.schedule != dtypes.ScheduleType.Sequential):
-                warnings.warn(
-                    'Unexpected WCR path to have write-conflicting reads')
+            if (isinstance(e.src, nodes.EntryNode) and e.src.map.schedule != dtypes.ScheduleType.Sequential):
+                warnings.warn('Unexpected WCR path to have write-conflicting reads')
                 return e.src
 
         sdfg = dfg.parent
@@ -770,10 +716,7 @@ def is_write_conflicted_with_reason(dfg,
 class LambdaToFunction(ast.NodeTransformer):
     def visit_Lambda(self, node: ast.Lambda):
         newbody = [ast.Return(value=node.body)]
-        newnode = ast.FunctionDef(name="_anonymous",
-                                  args=node.args,
-                                  body=newbody,
-                                  decorator_list=[])
+        newnode = ast.FunctionDef(name="_anonymous", args=node.args, body=newbody, decorator_list=[])
         newnode = ast.copy_location(newnode, node)
         return ast.fix_missing_locations(newnode)
 
@@ -798,8 +741,7 @@ def unparse_cr_split(sdfg, wcr_ast):
     elif isinstance(wcr_ast, str):
         return unparse_cr_split(sdfg, LambdaProperty.from_string(wcr_ast))
     else:
-        raise NotImplementedError("INVALID TYPE OF WCR: " +
-                                  type(wcr_ast).__name__)
+        raise NotImplementedError("INVALID TYPE OF WCR: " + type(wcr_ast).__name__)
 
 
 def unparse_cr(sdfg, wcr_ast, dtype):
@@ -809,21 +751,20 @@ def unparse_cr(sdfg, wcr_ast, dtype):
     ctype = 'auto' if dtype is None else dtype.ctype
 
     # Construct a C++ lambda function out of a function
-    return '[] (%s) { %s }' % (', '.join('const %s& %s' % (ctype, a)
-                                         for a in args), body_cpp)
+    return '[] (%s) { %s }' % (', '.join('const %s& %s' % (ctype, a) for a in args), body_cpp)
 
 
 def connected_to_gpu_memory(node: nodes.Node, state: SDFGState, sdfg: SDFG):
     for e in state.all_edges(node):
         path = state.memlet_path(e)
-        if ((isinstance(path[0].src, nodes.AccessNode) and
-             path[0].src.desc(sdfg).storage is dtypes.StorageType.GPU_Global)):
+        if ((isinstance(path[0].src, nodes.AccessNode)
+             and path[0].src.desc(sdfg).storage is dtypes.StorageType.GPU_Global)):
             return True
     return False
 
 
-def unparse_tasklet(sdfg, state_id, dfg, node, function_stream, callsite_stream,
-                    locals, ldepth, toplevel_schedule, codegen):
+def unparse_tasklet(sdfg, state_id, dfg, node, function_stream, callsite_stream, locals, ldepth, toplevel_schedule,
+                    codegen):
 
     if node.label is None or node.label == "":
         return ""
@@ -851,54 +792,44 @@ def unparse_tasklet(sdfg, state_id, dfg, node, function_stream, callsite_stream,
     if node.language != dtypes.Language.Python:
         # If this code runs on the host and is associated with a GPU stream,
         # set the stream to a local variable.
-        max_streams = int(
-            Config.get("compiler", "cuda", "max_concurrent_streams"))
-        if not is_devicelevel_gpu(sdfg, state_dfg, node) and (
-                hasattr(node, "_cuda_stream")
-                or connected_to_gpu_memory(node, state_dfg, sdfg)):
+        max_streams = int(Config.get("compiler", "cuda", "max_concurrent_streams"))
+        if not is_devicelevel_gpu(sdfg, state_dfg, node) and (hasattr(node, "_cuda_stream")
+                                                              or connected_to_gpu_memory(node, state_dfg, sdfg)):
             if max_streams >= 0:
                 callsite_stream.write(
                     'int __dace_current_stream_id = %d;\n%sStream_t __dace_current_stream = __state->gpu_context->streams[__dace_current_stream_id];'
-                    % (node._cuda_stream,
-                       Config.get('compiler', 'cuda', 'backend')),
+                    % (node._cuda_stream, Config.get('compiler', 'cuda', 'backend')),
                     sdfg,
                     state_id,
                     node,
                 )
             else:
                 callsite_stream.write(
-                    '%sStream_t __dace_current_stream = nullptr;' %
-                    Config.get('compiler', 'cuda', 'backend'),
+                    '%sStream_t __dace_current_stream = nullptr;' % Config.get('compiler', 'cuda', 'backend'),
                     sdfg,
                     state_id,
                     node,
                 )
 
         if node.language != dtypes.Language.CPP and node.language != dtypes.Language.MLIR:
-            raise ValueError(
-                "Only Python, C++ or MLIR code supported in CPU codegen, got: {}"
-                .format(node.language))
+            raise ValueError("Only Python, C++ or MLIR code supported in CPU codegen, got: {}".format(node.language))
 
         if node.language == dtypes.Language.MLIR:
             # Inline import because mlir.utils depends on pyMLIR which may not be installed
             # Doesn't cause crashes due to missing pyMLIR if a MLIR tasklet is not present
             from dace.codegen.targets.mlir import utils
 
-            mlir_func_uid = "_" + str(
-                sdfg.sdfg_id) + "_" + str(state_id) + "_" + str(
-                    dfg.node_id(node))
+            mlir_func_uid = "_" + str(sdfg.sdfg_id) + "_" + str(state_id) + "_" + str(dfg.node_id(node))
 
             mlir_ast = utils.get_ast(node.code.code)
             mlir_is_generic = utils.is_generic(mlir_ast)
-            mlir_entry_func = utils.get_entry_func(mlir_ast, mlir_is_generic,
-                                                   mlir_func_uid)
+            mlir_entry_func = utils.get_entry_func(mlir_ast, mlir_is_generic, mlir_func_uid)
 
             # Arguments of the MLIR must match the input connector names of the tasklet (the "%" excluded)
             mlir_in_typed = ""
             mlir_in_untyped = ""
 
-            for mlir_arg in utils.get_entry_args(mlir_entry_func,
-                                                 mlir_is_generic):
+            for mlir_arg in utils.get_entry_args(mlir_entry_func, mlir_is_generic):
                 mlir_arg_name = mlir_arg[0]
                 mlir_arg_type = node.in_connectors[mlir_arg_name].ctype
                 mlir_in_typed = mlir_in_typed + mlir_arg_type + " " + mlir_arg_name + ", "
@@ -912,21 +843,15 @@ def unparse_tasklet(sdfg, state_id, dfg, node, function_stream, callsite_stream,
             mlir_out_name = mlir_out[0]
 
             # MLIR tools such as mlir-opt and mlir-translate as well as the LLVM compiler "lc" will be required to compile the MLIR tasklet
-            function_stream.write('extern "C" ' + mlir_out_type +
-                                  ' mlir_entry' + mlir_func_uid + '(' +
-                                  mlir_in_typed + ');\n\n')
-            callsite_stream.write(mlir_out_name + " = mlir_entry" +
-                                  mlir_func_uid + "(" + mlir_in_untyped + ");")
+            function_stream.write('extern "C" ' + mlir_out_type + ' mlir_entry' + mlir_func_uid + '(' + mlir_in_typed +
+                                  ');\n\n')
+            callsite_stream.write(mlir_out_name + " = mlir_entry" + mlir_func_uid + "(" + mlir_in_untyped + ");")
 
         if node.language == dtypes.Language.CPP:
-            callsite_stream.write(
-                type(node).__properties__["code"].to_string(node.code), sdfg,
-                state_id, node)
+            callsite_stream.write(type(node).__properties__["code"].to_string(node.code), sdfg, state_id, node)
 
-        if hasattr(node, "_cuda_stream") and not is_devicelevel_gpu(
-                sdfg, state_dfg, node):
-            synchronize_streams(sdfg, state_dfg, state_id, node, node,
-                                callsite_stream)
+        if hasattr(node, "_cuda_stream") and not is_devicelevel_gpu(sdfg, state_dfg, node):
+            synchronize_streams(sdfg, state_dfg, state_id, node, node, callsite_stream)
         return
 
     body = node.code.code
@@ -936,8 +861,7 @@ def unparse_tasklet(sdfg, state_id, dfg, node, function_stream, callsite_stream,
     for edge in state_dfg.all_edges(node):
         u, uconn, v, vconn, memlet = edge
         if u == node:
-            memlet_nc = not is_write_conflicted(
-                dfg, edge, sdfg_schedule=toplevel_schedule)
+            memlet_nc = not is_write_conflicted(dfg, edge, sdfg_schedule=toplevel_schedule)
             memlet_wcr = memlet.wcr
             if uconn in u.out_connectors:
                 conntype = u.out_connectors[uconn]
@@ -956,35 +880,27 @@ def unparse_tasklet(sdfg, state_id, dfg, node, function_stream, callsite_stream,
     # To prevent variables-redefinition, build dictionary with all the previously defined symbols
     defined_symbols = state_dfg.symbols_defined_at(node)
 
-    defined_symbols.update({
-        k: v.dtype if hasattr(v, 'dtype') else dtypes.typeclass(type(v))
-        for k, v in sdfg.constants.items()
-    })
+    defined_symbols.update(
+        {k: v.dtype if hasattr(v, 'dtype') else dtypes.typeclass(type(v))
+         for k, v in sdfg.constants.items()})
 
     for connector, (memlet, _, _, conntype) in memlets.items():
         if connector is not None:
             defined_symbols.update({connector: conntype})
 
-    callsite_stream.write("// Tasklet code (%s)\n" % node.label, sdfg, state_id,
-                          node)
+    callsite_stream.write("// Tasklet code (%s)\n" % node.label, sdfg, state_id, node)
     for stmt in body:
         stmt = copy.deepcopy(stmt)
         rk = StructInitializer(sdfg).visit(stmt)
         if isinstance(stmt, ast.Expr):
-            rk = DaCeKeywordRemover(sdfg, memlets, sdfg.constants,
-                                    codegen).visit_TopLevelExpr(stmt)
+            rk = DaCeKeywordRemover(sdfg, memlets, sdfg.constants, codegen).visit_TopLevelExpr(stmt)
         else:
-            rk = DaCeKeywordRemover(sdfg, memlets, sdfg.constants,
-                                    codegen).visit(stmt)
+            rk = DaCeKeywordRemover(sdfg, memlets, sdfg.constants, codegen).visit(stmt)
 
         if rk is not None:
             # Unparse to C++ and add 'auto' declarations if locals not declared
             result = StringIO()
-            cppunparse.CPPUnparser(rk,
-                                   ldepth + 1,
-                                   locals,
-                                   result,
-                                   defined_symbols=defined_symbols)
+            cppunparse.CPPUnparser(rk, ldepth + 1, locals, result, defined_symbols=defined_symbols)
             callsite_stream.write(result.getvalue(), sdfg, state_id, node)
 
 
@@ -1004,18 +920,18 @@ class InterstateEdgeUnparser(cppunparse.CPPUnparser):
     multidimensional array expressions from an existing SDFGs. Used in
     inter-state edge code generation.
     """
-    def __init__(self,
-                 sdfg: SDFG,
-                 tree: ast.AST,
-                 file: IO[str],
-                 defined_symbols=None):
+    def __init__(self, sdfg: SDFG, tree: ast.AST, file: IO[str], defined_symbols=None):
         self.sdfg = sdfg
-        super().__init__(tree,
-                         0,
-                         cppunparse.CPPLocals(),
-                         file,
-                         expr_semicolon=False,
-                         defined_symbols=defined_symbols)
+        super().__init__(tree, 0, cppunparse.CPPLocals(), file, expr_semicolon=False, defined_symbols=defined_symbols)
+
+    def _Name(self, t: ast.Name):
+        if t.id not in self.sdfg.arrays:
+            return super()._Name(t)
+
+        # Replace values with their code-generated names (for example,
+        # persistent arrays)
+        desc = self.sdfg.arrays[t.id]
+        self.write(ptr(t.id, desc, self.sdfg))
 
     def _Subscript(self, t: ast.Subscript):
         from dace.frontend.python.astutils import subscript_to_slice
@@ -1025,12 +941,17 @@ class InterstateEdgeUnparser(cppunparse.CPPUnparser):
             raise SyntaxError('Range subscripts disallowed in interstate edges')
 
         memlet = mmlt.Memlet(data=target, subset=rng)
-        self.write(cpp_array_expr(self.sdfg, memlet))
+
+        if target not in self.sdfg.arrays:
+            # This could be an FPGA array whose name has been mangled
+            unqualified = fpga.unqualify_fpga_array_name(self.sdfg, target)
+            desc = self.sdfg.arrays[unqualified]
+            self.write(cpp_array_expr(self.sdfg, memlet, referenced_array=desc))
+        else:
+            self.write(cpp_array_expr(self.sdfg, memlet))
 
 
-def unparse_interstate_edge(code_ast: Union[ast.AST, str],
-                            sdfg: SDFG,
-                            symbols=None) -> str:
+def unparse_interstate_edge(code_ast: Union[ast.AST, str], sdfg: SDFG, symbols=None) -> str:
     # Convert from code to AST as necessary
     if isinstance(code_ast, str):
         code_ast = ast.parse(code_ast).body[0]
@@ -1047,7 +968,7 @@ class DaCeKeywordRemover(ExtNodeTransformer):
         Used for unparsing Python tasklets into C++ that uses the DaCe
         runtime.
 
-        @note: Assumes that the DaCe syntax is correct (as verified by the
+        :note: Assumes that the DaCe syntax is correct (as verified by the
                Python frontend).
     """
     def __init__(self, sdfg, memlets, constants, codegen):
@@ -1055,12 +976,12 @@ class DaCeKeywordRemover(ExtNodeTransformer):
         self.memlets = memlets
         self.constants = constants
         self.codegen = codegen
+        self.allow_casts = True
 
     def visit_TopLevelExpr(self, node):
         # This is a DaCe shift, omit it
         if isinstance(node.value, ast.BinOp):
-            if isinstance(node.value.op, ast.LShift) or isinstance(
-                    node.value.op, ast.RShift):
+            if isinstance(node.value.op, ast.LShift) or isinstance(node.value.op, ast.RShift):
                 return None
         return self.generic_visit(node)
 
@@ -1072,20 +993,16 @@ class DaCeKeywordRemover(ExtNodeTransformer):
         if target not in self.memlets:
             return self.generic_visit(node)
 
-        raise SyntaxError("Augmented assignments (e.g. +=) not allowed on " +
-                          "array memlets")
+        raise SyntaxError("Augmented assignments (e.g. +=) not allowed on " + "array memlets")
 
-    def _replace_assignment(self, newnode: ast.AST,
-                            node: ast.Assign) -> ast.AST:
+    def _replace_assignment(self, newnode: ast.AST, node: ast.Assign) -> ast.AST:
         locfix = ast.copy_location(newnode, node.value)
         if len(node.targets) == 1:
             return locfix
         # More than one target, i.e., x = y = z
-        return ast.copy_location(
-            ast.Assign(targets=node.targets[:-1], value=locfix), node)
+        return ast.copy_location(ast.Assign(targets=node.targets[:-1], value=locfix), node)
 
-    def _subscript_expr(self, slicenode: ast.AST,
-                        target: str) -> symbolic.SymbolicType:
+    def _subscript_expr(self, slicenode: ast.AST, target: str) -> symbolic.SymbolicType:
         visited_slice = self.visit(slicenode)
 
         if isinstance(visited_slice, ast.Index):
@@ -1105,26 +1022,28 @@ class DaCeKeywordRemover(ExtNodeTransformer):
             dimlen = dtype.veclen if isinstance(dtype, dtypes.vector) else 1
             subset_size = memlet.subset.size()
             indexdims = [i for i, s in enumerate(subset_size) if s == 1]
-            strides = [
-                s for i, s in enumerate(strides) if i not in indexdims
-                and not (s == 1 and subset_size[i] == dimlen)
-            ]
+            # Pointer to a single element can use all strides
+            is_scalar = not isinstance(dtype, dtypes.pointer)
+            if is_scalar or data._prod(subset_size) != 1:
+                strides = [
+                    s for i, s in enumerate(strides) if i not in indexdims and not (s == 1 and subset_size[i] == dimlen)
+                ]
 
         if isinstance(visited_slice, ast.Tuple):
             if len(strides) != len(visited_slice.elts):
-                raise SyntaxError(
-                    'Invalid number of dimensions in expression (expected %d, '
-                    'got %d)' % (len(strides), len(visited_slice.elts)))
+                raise SyntaxError('Invalid number of dimensions in expression (expected %d, '
+                                  'got %d)' % (len(strides), len(visited_slice.elts)))
 
-            return sum(
-                symbolic.pystr_to_symbolic(unparse(elt)) * s
-                for elt, s in zip(visited_slice.elts, strides))
+            return sum(symbolic.pystr_to_symbolic(unparse(elt)) * s for elt, s in zip(visited_slice.elts, strides))
 
         if len(strides) != 1:
-            raise SyntaxError('Missing dimensions in expression (expected %d, '
-                              'got one)' % len(strides))
+            raise SyntaxError('Missing dimensions in expression (expected %d, ' 'got one)' % len(strides))
 
-        return symbolic.pystr_to_symbolic(unparse(visited_slice)) * strides[0]
+        try:
+            return symbolic.pystr_to_symbolic(unparse(visited_slice)) * strides[0]
+        except (TypeError, sp.SympifyError):
+            # Fallback in case of .pop() or other C++ mannerisms
+            return f'({unparse(visited_slice)}) * {strides[0]}'
 
     def visit_Assign(self, node):
         target = rname(node.targets[-1])
@@ -1137,20 +1056,16 @@ class DaCeKeywordRemover(ExtNodeTransformer):
         if not isinstance(node.targets[-1], ast.Subscript):
             # Dynamic accesses or streams -> every access counts
             try:
-                desc = (self.sdfg.arrays[memlet.data]
-                        if memlet and memlet.data else None)
-                if memlet and memlet.data and (memlet.dynamic or isinstance(
-                        desc, data.Stream)):
+                desc = (self.sdfg.arrays[memlet.data] if memlet and memlet.data else None)
+                if memlet and memlet.data and (memlet.dynamic or isinstance(desc, data.Stream)):
                     if wcr is not None:
                         newnode = ast.Name(
-                            id=self.codegen.write_and_resolve_expr(
-                                self.sdfg,
-                                memlet,
-                                nc,
-                                target,
-                                cppunparse.cppunparse(value,
-                                                      expr_semicolon=False),
-                                dtype=dtype))
+                            id=self.codegen.write_and_resolve_expr(self.sdfg,
+                                                                   memlet,
+                                                                   nc,
+                                                                   target,
+                                                                   cppunparse.cppunparse(value, expr_semicolon=False),
+                                                                   dtype=dtype))
                         node.value = ast.copy_location(newnode, node.value)
                         return node
                     elif isinstance(desc, data.Stream):
@@ -1164,20 +1079,16 @@ class DaCeKeywordRemover(ExtNodeTransformer):
                             cppunparse.cppunparse(value, expr_semicolon=False),
                         ))
                     else:
-                        var_type, ctypedef = self.codegen._dispatcher.defined_vars.get(
-                            memlet.data)
+                        var_type, ctypedef = self.codegen._dispatcher.defined_vars.get(memlet.data)
                         if var_type == DefinedType.Scalar:
                             newnode = ast.Name(id="%s = %s;" % (
                                 memlet.data,
-                                cppunparse.cppunparse(value,
-                                                      expr_semicolon=False),
+                                cppunparse.cppunparse(value, expr_semicolon=False),
                             ))
-                        elif (var_type != DefinedType.ArrayInterface
-                              or isinstance(desc, data.View)):
+                        elif (var_type != DefinedType.ArrayInterface or isinstance(desc, data.View)):
                             newnode = ast.Name(id="%s = %s;" % (
                                 cpp_array_expr(self.sdfg, memlet),
-                                cppunparse.cppunparse(value,
-                                                      expr_semicolon=False),
+                                cppunparse.cppunparse(value, expr_semicolon=False),
                             ))
                         else:
                             array_interface_name = fpga.fpga_ptr(
@@ -1190,11 +1101,9 @@ class DaCeKeywordRemover(ExtNodeTransformer):
                                 None,
                                 True,
                             )
-                            newnode = ast.Name(
-                                id=f"{array_interface_name}"
-                                f"[{cpp_array_expr(self.sdfg, memlet, with_brackets=False)}]"
-                                f" = {cppunparse.cppunparse(value, expr_semicolon=False)};"
-                            )
+                            newnode = ast.Name(id=f"{array_interface_name}"
+                                               f"[{cpp_array_expr(self.sdfg, memlet, with_brackets=False)}]"
+                                               f" = {cppunparse.cppunparse(value, expr_semicolon=False)};")
 
                     return self._replace_assignment(newnode, node)
             except TypeError:  # cannot determine truth value of Relational
@@ -1205,19 +1114,17 @@ class DaCeKeywordRemover(ExtNodeTransformer):
         subscript = self._subscript_expr(node.targets[-1].slice, target)
 
         if wcr is not None:
-            newnode = ast.Name(id=self.codegen.write_and_resolve_expr(
-                self.sdfg,
-                memlet,
-                nc,
-                target,
-                cppunparse.cppunparse(value, expr_semicolon=False),
-                indices=sym2cpp(subscript),
-                dtype=dtype) + ';')
-        else:
             newnode = ast.Name(
-                id="%s[%s] = %s;" %
-                (target, sym2cpp(subscript),
-                 cppunparse.cppunparse(value, expr_semicolon=False)))
+                id=self.codegen.write_and_resolve_expr(self.sdfg,
+                                                       memlet,
+                                                       nc,
+                                                       target,
+                                                       cppunparse.cppunparse(value, expr_semicolon=False),
+                                                       indices=sym2cpp(subscript),
+                                                       dtype=dtype) + ';')
+        else:
+            newnode = ast.Name(id="%s[%s] = %s;" %
+                               (target, sym2cpp(subscript), cppunparse.cppunparse(value, expr_semicolon=False)))
 
         return self._replace_assignment(newnode, node)
 
@@ -1236,14 +1143,31 @@ class DaCeKeywordRemover(ExtNodeTransformer):
 
         return ast.copy_location(newnode, node)
 
+    def visit_Call(self, node: ast.Call):
+        funcname = rname(node.func)
+        if (funcname in self.sdfg.symbols and isinstance(self.sdfg.symbols[funcname], dtypes.callback)):
+            # Visit arguments without changing their types
+            self.allow_casts = False
+            result = self.generic_visit(node)
+            self.allow_casts = True
+            return result
+        else:
+            return self.generic_visit(node)
+
     def visit_Name(self, node: ast.Name):
         name = rname(node)
         if name not in self.memlets:
             return self.generic_visit(node)
         memlet, nc, wcr, dtype = self.memlets[name]
-        if (isinstance(dtype, dtypes.pointer)
-                and memlet.subset.num_elements() == 1):
-            return ast.Name(id="(*{})".format(name), ctx=node.ctx)
+        try:
+            defined_type, _ = self.codegen._dispatcher.defined_vars.get(node.id)
+        except KeyError:
+            defined_type = None
+        if (self.allow_casts and isinstance(dtype, dtypes.pointer) and memlet.subset.num_elements() == 1):
+            return ast.Name(id="{}[0]".format(name), ctx=node.ctx)
+        elif (self.allow_casts and (defined_type == DefinedType.Stream or defined_type == DefinedType.StreamArray)
+              and memlet.dynamic):
+            return ast.Name(id=f"{name}.pop()", ctx=node.ctx)
         else:
             return self.generic_visit(node)
 
@@ -1271,8 +1195,7 @@ class DaCeKeywordRemover(ExtNodeTransformer):
         if isinstance(node.op, ast.Pow):
             try:
                 unparsed = symbolic.pystr_to_symbolic(unparse(node.right))
-                evaluated = symbolic.symstr(
-                    symbolic.evaluate(unparsed, self.constants))
+                evaluated = symbolic.symstr(symbolic.evaluate(unparsed, self.constants))
                 node.right = ast.parse(evaluated).body[0].value
             except (TypeError, AttributeError, NameError, KeyError, ValueError):
                 return self.generic_visit(node)
@@ -1286,8 +1209,7 @@ class DaCeKeywordRemover(ExtNodeTransformer):
         func_name = attrname[attrname.rfind(".") + 1:]
         if module_name in dtypes._ALLOWED_MODULES:
             cppmodname = dtypes._ALLOWED_MODULES[module_name]
-            return ast.copy_location(
-                ast.Name(id=(cppmodname + func_name), ctx=ast.Load), node)
+            return ast.copy_location(ast.Name(id=(cppmodname + func_name), ctx=ast.Load), node)
         return self.generic_visit(node)
 
 
@@ -1307,9 +1229,8 @@ class StructInitializer(ExtNodeTransformer):
                 self._structs[array.dtype.name] = array.dtype
 
     def visit_Call(self, node):
-        if isinstance(node.func,
-                      ast.Name) and (node.func.id.startswith('__DACESTRUCT_')
-                                     or node.func.id in self._structs):
+        if isinstance(node.func, ast.Name) and (node.func.id.startswith('__DACESTRUCT_')
+                                                or node.func.id in self._structs):
             fields = ', '.join([
                 '.%s = %s' % (rname(arg.arg), cppunparse.pyexpr2cpp(arg.value))
                 for arg in sorted(node.keywords, key=lambda x: x.arg)
@@ -1319,8 +1240,7 @@ class StructInitializer(ExtNodeTransformer):
             if node.func.id.startswith('__DACESTRUCT_'):
                 tname = node.func.id[len('__DACESTRUCT_'):]
 
-            return ast.copy_location(
-                ast.Name(id="%s { %s }" % (tname, fields), ctx=ast.Load), node)
+            return ast.copy_location(ast.Name(id="%s { %s }" % (tname, fields), ctx=ast.Load), node)
 
         return self.generic_visit(node)
 
@@ -1328,8 +1248,7 @@ class StructInitializer(ExtNodeTransformer):
 # TODO: This should be in the CUDA code generator. Add appropriate conditions to node dispatch predicate
 def presynchronize_streams(sdfg, dfg, state_id, node, callsite_stream):
     state_dfg = sdfg.nodes()[state_id]
-    if hasattr(node, "_cuda_stream") or is_devicelevel_gpu(
-            sdfg, state_dfg, node):
+    if hasattr(node, "_cuda_stream") or is_devicelevel_gpu(sdfg, state_dfg, node):
         return
     backend = Config.get('compiler', 'cuda', 'backend')
     for e in state_dfg.in_edges(node):
@@ -1353,14 +1272,11 @@ def synchronize_streams(sdfg, dfg, state_id, node, scope_exit, callsite_stream):
         for edge in dfg.out_edges(scope_exit):
             # Synchronize end of kernel with output data (multiple kernels
             # lead to same data node)
-            if (isinstance(edge.dst, nodes.AccessNode)
-                    and edge.dst._cuda_stream != node._cuda_stream):
+            if (isinstance(edge.dst, nodes.AccessNode) and edge.dst._cuda_stream != node._cuda_stream):
                 callsite_stream.write(
                     """{backend}EventRecord(__state->gpu_context->events[{ev}], {src_stream});
-{backend}StreamWaitEvent(__state->gpu_context->streams[{dst_stream}], __state->gpu_context->events[{ev}], 0);"""
-                    .format(
-                        ev=edge._cuda_event
-                        if hasattr(edge, "_cuda_event") else 0,
+{backend}StreamWaitEvent(__state->gpu_context->streams[{dst_stream}], __state->gpu_context->events[{ev}], 0);""".format(
+                        ev=edge._cuda_event if hasattr(edge, "_cuda_event") else 0,
                         src_stream=cudastream,
                         dst_stream=edge.dst._cuda_stream,
                         backend=backend,
@@ -1390,10 +1306,9 @@ def synchronize_streams(sdfg, dfg, state_id, node, scope_exit, callsite_stream):
                 elif e.dst._cuda_stream != node._cuda_stream:
                     callsite_stream.write(
                         """{backend}EventRecord(__state->gpu_context->events[{ev}], {src_stream});
-    {backend}StreamWaitEvent(__state->gpu_context->streams[{dst_stream}], __state->gpu_context->events[{ev}], 0);"""
-                        .format(
-                            ev=e._cuda_event
-                            if hasattr(e, "_cuda_event") else 0,
+    {backend}StreamWaitEvent(__state->gpu_context->streams[{dst_stream}], __state->gpu_context->events[{ev}], 0);""".
+                        format(
+                            ev=e._cuda_event if hasattr(e, "_cuda_event") else 0,
                             src_stream=cudastream,
                             dst_stream=e.dst._cuda_stream,
                             backend=backend,
