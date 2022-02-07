@@ -12,21 +12,27 @@ def test_mttkrp_io():
     """
     # get MTTKRP sdfg with auto-generated default tensor sizes  
     # einsum_str = 'ijk,jl,kl->il' 
-    einsum_str = 'ik,kj,jl->il'
+    # einsum_str = 'ik,kj,jl->il'
+    # i0-4 = abcde
+    # j0-4 = fghij
+    einsum_str = 'af,bg,ch,di,ej,bcgh,fghij->abcde'
     # decomp_params=[("p", 17), ("Ss", 1024), ("S0", 256), ("S1", 256), ("S2", 256), ("S3", 256)]
     # decomp_params=[("p", 64), ("Ss", 1024), ("S0", 6400 * 4), ("S1", 4400 * 4), ("S2", 7200 * 4), ("S3", 256)]
-    p = 128
-    NI = 6400
-    NJ = 7200
-    NK = 4400
-    NL = 4800
-    def scale(N: int):
-        return int(np.ceil(int(N * np.cbrt(p)) / 2) * 2)
-    S0 = scale(NI)
-    S1 = scale(NK)
-    S2 = scale(NJ)
-    S3 = scale(NL)
-    decomp_params=[("p", p), ("Ss", 1024), ("S0", S0), ("S1", S1), ("S2", S2), ("S3", S3)]
+    decomp_params = [("p", 64), ("Ss", 1024)]
+    for i in range(10):
+        decomp_params.append((f"S{i}", 2))
+    # p = 128
+    # NI = 6400
+    # NJ = 7200
+    # NK = 4400
+    # NL = 4800
+    # def scale(N: int):
+    #     return int(np.ceil(int(N * np.cbrt(p)) / 2) * 2)
+    # S0 = scale(NI)
+    # S1 = scale(NK)
+    # S2 = scale(NJ)
+    # S3 = scale(NL)
+    # decomp_params=[("p", p), ("Ss", 1024), ("S0", S0), ("S1", S1), ("S2", S2), ("S3", S3)]
     soap_result = perform_soap_analysis_einsum(einsum_str, decomp_params, generate_schedule=True)
     for i, sgraph in enumerate(soap_result.subgraphs):
         print(f"Subgraph {i}==================================================")
