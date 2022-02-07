@@ -7,7 +7,7 @@ import networkx as nx
 import warnings
 
 from dace.transformation import transformation as xf
-from dace import (data, dtypes, nodes, properties, registry, memlet as mm, subsets, symbolic)
+from dace import (data, dtypes, nodes, properties, registry, memlet as mm, subsets, symbolic, ScheduleType)
 from dace.sdfg import SDFG, SDFGState, utils as sdutil, graph as gr
 
 
