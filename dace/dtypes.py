@@ -918,6 +918,10 @@ class callback(typeclass):
                 inp_arraypos.append(index)
                 inp_types_and_sizes.append((ctypes.c_char_p, []))
                 inp_converters.append(lambda a, *args: ctypes.cast(a, ctypes.c_char_p).value.decode('utf-8'))
+            elif isinstance(arg, data.Scalar) and isinstance(arg.dtype, pointer):
+                inp_arraypos.append(index)
+                inp_types_and_sizes.append((ctypes.c_void_p, []))
+                inp_converters.append(lambda a, *args: ctypes.cast(a, ctypes.c_void_p).value)
             else:
                 inp_converters.append(lambda a: a)
         offset = len(self.input_types)
@@ -933,6 +937,10 @@ class callback(typeclass):
                 ret_arraypos.append(index + offset)
                 ret_types_and_sizes.append((ctypes.c_char_p, []))
                 ret_converters.append(lambda a, *args: ctypes.cast(a, ctypes.c_char_p).value.decode('utf-8'))
+            elif isinstance(arg, data.Scalar) and isinstance(arg.dtype, pointer):
+                ret_arraypos.append(index)
+                ret_types_and_sizes.append((ctypes.c_void_p, []))
+                ret_converters.append(lambda a, *args: ctypes.cast(a, ctypes.c_void_p).value)
             else:
                 ret_converters.append(lambda a, *args: a)
         if len(inp_arraypos) == 0 and len(ret_arraypos) == 0:
