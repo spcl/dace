@@ -67,14 +67,16 @@ class XilinxCodeGen(fpga.FPGACodeGen):
         target_platform = Config.get("compiler", "xilinx", "platform")
         enable_debugging = ("ON" if Config.get_bool("compiler", "xilinx", "enable_debugging") else "OFF")
         autobuild = ("ON" if Config.get_bool("compiler", "fpga", "autobuild_bitstreams") else "OFF")
-        frequency = Config.get("compiler", "xilinx", "frequency").strip().strip('"').split(":")[0]
+        frequency = Config.get("compiler", "xilinx", "frequency").strip()
         options = [
             "-DDACE_XILINX_HOST_FLAGS=\"{}\"".format(host_flags),
             "-DDACE_XILINX_SYNTHESIS_FLAGS=\"{}\"".format(synthesis_flags),
-            "-DDACE_XILINX_BUILD_FLAGS=\"{}\"".format(build_flags), "-DDACE_XILINX_MODE={}".format(mode),
+            "-DDACE_XILINX_BUILD_FLAGS=\"{}\"".format(build_flags),
+            "-DDACE_XILINX_MODE={}".format(mode),
             "-DDACE_XILINX_TARGET_PLATFORM=\"{}\"".format(target_platform),
             "-DDACE_XILINX_ENABLE_DEBUGGING={}".format(enable_debugging),
-            "-DDACE_FPGA_AUTOBUILD_BITSTREAM={}".format(autobuild), f"-DDACE_XILINX_TARGET_CLOCK={frequency}"
+            "-DDACE_FPGA_AUTOBUILD_BITSTREAM={}".format(autobuild),
+            "-DDACE_XILINX_TARGET_CLOCK={}".format(frequency)
         ]
         # Override Vitis/SDx/SDAccel installation directory
         if Config.get("compiler", "xilinx", "path"):

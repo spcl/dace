@@ -3,7 +3,7 @@ set_top ${DACE_KERNEL_NAME}
 add_files -cflags "${DACE_XILINX_SYNTHESIS_FLAGS} -I${DACE_RUNTIME_DIR}/include -I${DACE_HLSLIB_DIR}/include -I${CMAKE_BINARY_DIR}" "${DACE_IP}"
 open_solution "${DACE_KERNEL_NAME}" -flow_target vivado
 set_part ${DACE_XILINX_PART_NAME}
-create_clock -period 1.667 -name default
+create_clock -period ${DACE_XILINX_INTERNAL_TARGET_CLOCK}MHz -name default
 csynth_design
 export_design -format ip_catalog
 quit
