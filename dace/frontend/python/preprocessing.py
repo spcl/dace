@@ -217,292 +217,6 @@ class _FindBreakContinueStmts(ast.NodeVisitor):
         return self.generic_visit(node)
 
 
-class ContextManagerInliner(ast.NodeTransformer, astutils.ASTHelperMixin):
-    """
-    Since exceptions are disabled in dace programs, AST with ``with`` statements
-    can be replaced with appropriate calls to the ``__enter__``/``__exit__`` calls
-    in the right places, i.e., at the end of the body or when the context is left due to
-    a return statement, or top-level break/continue statements.
-    """
-    def __init__(self, globals: Dict[str, Any]) -> None:
-        super().__init__()
-        self.with_statements: List[ast.With] = []
-        self.context_manager_names: Dict[ast.With, List[str]] = {}
-        self.globals: Dict[str, Any] = globals
-
-    def _visit_node_with_body(self, node):
-        node = self.generic_visit_filtered(node, {'body'})
-        self.with_statements.append(node)
-        node = self.generic_visit_field(node, 'body')
-        self.with_statements.pop()
-        return node
-
-    def _add_exits(self, until_loop_end: bool, only_one: bool = False) -> List[ast.AST]:
-        result = []
-        if len(self.with_statements) == 0:
-            return result
-        for stmt in reversed(self.with_statements):
-            if until_loop_end and not isinstance(stmt, (ast.With, ast.AsyncWith)):
-                break
-            for mgr in reversed(self.context_manager_names[stmt]):
-                # Call __exit__ (without exception management all three arguments are set to None)
-                exit_call = ast.copy_location(ast.parse(f'{mgr}.__exit__(None, None, None)').body[0], stmt)
-                result.append(exit_call)
-            if only_one:
-                break
-
-        return result
-
-    def _add_entries(self, node: ast.With) -> List[ast.AST]:
-        result = []
-        ctx_mgr_names = []
-        for i, item in enumerate(node.items):
-            # Create manager
-            mgr = ast.copy_location(ast.Name(id=f'__with_{node.lineno}_{i}', ctx=ast.Store()), node)
-            create_mgr = ast.copy_location(ast.Assign(targets=[mgr], value=item.context_expr, type_comment=None), node)
-            result.append(create_mgr)
-            ctx_mgr_names.append(mgr.id)
-
-            # Call __enter__
-            enter_call = ast.copy_location(ast.parse(f'{mgr.id}.__enter__()').body[0], node)
-            if item.optional_vars is not None:
-                enter_call = ast.copy_location(
-                    ast.Assign(targets=[item.optional_vars], value=enter_call.value, type_comment=None), node)
-            result.append(enter_call)
-
-        self.context_manager_names[node] = ctx_mgr_names
-
-        return result
-
-    def visit_With(self, node: ast.With):
-        # Avoid parsing "with dace.tasklet"
-        try:
-            evald = astutils.evalnode(node.items[0].context_expr, self.globals)
-            if evald is dace.tasklet or isinstance(evald, dace.tasklet):
-                return self.generic_visit(node)
-        except SyntaxError:
-            pass
-
-        # Beginning and end of body adds __enter__, __exit__ calls for each item
-        self.with_statements.append(node)
-
-        # Make empty block
-        ifnode: ast.If = ast.parse('if True: pass').body[0]
-        ifnode = ast.copy_location(ifnode, node)
-
-        # Make enter calls
-        entries = self._add_entries(node)
-        ifnode.body = entries
-
-        # Visit body
-        node = self.generic_visit_field(node, 'body')
-        ifnode.body += node.body
-
-        # Make exit calls
-        ifnode.body += self._add_exits(True, True)
-
-        # Pop context manager information
-        self.with_statements.pop()
-        del self.context_manager_names[node]
-        return ifnode
-
-    def visit_AsyncWith(self, node):
-        return self.visit_With(node)
-
-    def visit_For(self, node):
-        return self._visit_node_with_body(node)
-
-    def visit_AsyncFor(self, node):
-        return self._visit_node_with_body(node)
-
-    def visit_While(self, node):
-        return self._visit_node_with_body(node)
-
-    def visit_Break(self, node):
-        node = self.generic_visit(node)
-        return self._add_exits(True) + [node]
-
-    def visit_Continue(self, node):
-        node = self.generic_visit(node)
-        return self._add_exits(True) + [node]
-
-    def visit_Return(self, node):
-        node = self.generic_visit(node)
-        return self._add_exits(False) + [node]
-
-
-class LoopUnroller(ast.NodeTransformer):
-    """ 
-    Replaces loops by their unrolled bodies if generator can be evaluated at
-    compile time and one of the following conditions apply:
-        1. `dace.unroll` was explicitly called
-        2. looping over compile-time constant tuples/lists/dictionaries
-        3. generator is one of the predetermined "stateless generators"
-        4. any generator with compile-time size that is lower than the "unroll_threshold" configuration
-    """
-    STATELESS_GENERATORS = [
-        enumerate,
-        zip,
-        reversed,
-        dict.values,
-        dict.keys,
-        dict.items,
-    ]
-
-    THRESHOLD_GENERATORS = [
-        range,
-    ]
-
-    def __init__(self, globals: Dict[str, Any], filename: str):
-        super().__init__()
-        self.globals = globals
-        self.filename = filename
-        self.threshold = int(Config.get('frontend', 'unroll_threshold'))
-
-    def visit_For(self, node: ast.For) -> Any:
-        # Avoid import loops
-        EXPLICIT_GENERATORS = [
-            range,  # Handled in ProgramVisitor
-            dace.map,
-            dace.consume,
-        ]
-
-        node = self.generic_visit(node)
-
-        # First, skip loops that contain break/continue that is part of this
-        # for loop (rather than nested ones)
-        cannot_unroll = False
-        cflow_finder = _FindBreakContinueStmts()
-        for stmt in node.body:
-            cflow_finder.visit(stmt)
-        if cflow_finder.has_cflow or node.orelse:
-            cannot_unroll = True
-
-        niter = node.iter
-
-        # Find out if loop was explicitly requested to be unrolled with unroll,
-        # and whether it should be done implicitly
-        explicitly_requested = False
-        if isinstance(niter, ast.Call):
-            # Avoid import loop
-            from dace.frontend.python.interface import unroll
-
-            try:
-                genfunc = astutils.evalnode(niter.func, self.globals)
-            except SyntaxError:
-                genfunc = None
-
-            if genfunc is unroll:
-                explicitly_requested = True
-                niter = niter.args[0]
-
-        if explicitly_requested and cannot_unroll:
-            raise DaceSyntaxError(None, node, 'Cannot unroll loop due to ' '"break", "continue", or "else" statements.')
-
-        # Find out if unrolling should be done implicitly
-        implicit = True
-        # Anything not a call is implicitly allowed
-        if isinstance(niter, (ast.Call, ast.Subscript)):
-            if isinstance(niter, ast.Subscript):
-                nfunc = niter.value
-            else:
-                nfunc = niter.func
-
-            implicit = False
-            # Try to see if it's one of the allowed stateless generators
-            try:
-                genfunc = astutils.evalnode(nfunc, self.globals)
-
-                # If genfunc is a bound method, try to extract function from type
-                if hasattr(genfunc, '__self__'):
-                    genfunc = getattr(type(genfunc.__self__), genfunc.__name__, False)
-
-                if (self.threshold >= 0
-                        and (genfunc not in EXPLICIT_GENERATORS or genfunc in LoopUnroller.THRESHOLD_GENERATORS)):
-                    implicit = True
-                elif genfunc in LoopUnroller.STATELESS_GENERATORS:
-                    implicit = True
-                elif genfunc in EXPLICIT_GENERATORS:
-                    implicit = False
-
-            except SyntaxError:
-                pass
-
-        # Loop will not be unrolled
-        if not implicit and not explicitly_requested:
-            return node
-
-        # Check if loop target is supported
-        if isinstance(node.target, ast.Tuple):
-            to_replace = node.target.elts
-        elif isinstance(node.target, ast.Name):
-            to_replace = [node.target]
-        else:
-            # Unsupported loop target
-            return node
-
-        if isinstance(niter, (ast.Tuple, ast.List, ast.Set)):
-            # Check if a literal tuple/list/set
-            generator = niter.elts
-        elif isinstance(niter, ast.Dict):
-            # If dict, take keys (Python compatible)
-            generator = niter.keys
-        # elif isinstance(iter, (ast.ListComp, ast.DictComp, ast.SetComp, ast.GeneratorExp)):
-        #     # Check if a comprehension or generator expression
-        #     pass
-        else:
-            # Check if the generator is compile-time constant
-            try:
-                generator = astutils.evalnode(niter, self.globals)
-            except SyntaxError:
-                # Cannot evaluate generator at compile time
-                return node
-
-        if self.threshold == 0:  # Unroll any loop
-            explicitly_requested = True
-        elif self.threshold > 0:
-            generator = list(generator)
-            if len(generator) > self.threshold:
-                return node
-            explicitly_requested = True
-
-        # Too verbose?
-        if implicit and not explicitly_requested:
-            warnings.warn(f'Loop at {self.filename}:{node.lineno} will be ' 'implicitly unrolled.')
-
-        ##########################################
-        # Unroll loop
-        new_body = []
-        for elem in generator:
-            # Paste loop body with replaced elements
-            if not isinstance(elem, (list, tuple, set)):
-                elem = [elem]
-            else:
-                elem = list(elem)
-
-            # If an unknown/mutable object, add to closure
-            for i, e in enumerate(elem):
-                # Already AST
-                if isinstance(e, ast.AST):
-                    continue
-                if isinstance(e, (numbers.Number, str)):
-                    # Compatibility check since Python changed their AST nodes
-                    newnode = astutils.create_constant(e)
-                    elem[i] = newnode
-                else:
-                    raise NotImplementedError('Closure augmentation needed')
-
-            elembody = [astutils.copy_tree(stmt) for stmt in node.body]
-            replace = astutils.ASTFindReplace({k: v for k, v in zip(to_replace, elem)})
-            for stmt in elembody:
-                new_body.append(replace.visit(stmt))
-
-        return new_body
-
-    def visit_AsyncFor(self, node) -> Any:
-        return self.visit_For(node)
-
-
 class DeadCodeEliminator(ast.NodeTransformer):
     """ Removes any code within scope after return/break/continue/raise. """
     def generic_visit(self, node: ast.AST):
@@ -624,7 +338,13 @@ class GlobalResolver(ast.NodeTransformer, astutils.ASTHelperMixin):
                             'properly during parsing. Please report this issue.')
         return f"{prefix}{sanitized}"
 
-    def global_value_to_node(self, value, parent_node, qualname, recurse=False, detect_callables=False):
+    def global_value_to_node(self,
+                             value,
+                             parent_node,
+                             qualname,
+                             recurse=False,
+                             detect_callables=False,
+                             keep_object=False):
         # if recurse is false, we don't allow recursion into lists
         # this should not happen anyway; the globals dict should only contain
         # single "level" lists
@@ -679,7 +399,10 @@ class GlobalResolver(ast.NodeTransformer, astutils.ASTHelperMixin):
             else:
                 arrname = self._qualname_to_array_name(qualname)
                 desc = data.create_datadescriptor(value)
-                self.closure.closure_arrays[arrname] = (qualname, desc, lambda: eval(qualname, self.globals), False)
+                if keep_object:
+                    self.closure.closure_arrays[arrname] = (qualname, desc, lambda: value, False)
+                else:
+                    self.closure.closure_arrays[arrname] = (qualname, desc, lambda: eval(qualname, self.globals), False)
                 self.closure.array_mapping[id(value)] = arrname
 
             newnode = ast.Name(id=arrname, ctx=ast.Load())
@@ -721,6 +444,8 @@ class GlobalResolver(ast.NodeTransformer, astutils.ASTHelperMixin):
                 sast, _, _, _ = astutils.function_to_ast(value)
                 if len(sast.body[0].decorator_list) > 0:
                     return newnode
+                if find_disallowed_statements(sast):
+                    return newnode
 
                 parsed = parser.DaceProgram(value, [], {}, False, dtypes.DeviceType.CPU)
                 # If method, add the first argument (which disappears due to
@@ -731,13 +456,20 @@ class GlobalResolver(ast.NodeTransformer, astutils.ASTHelperMixin):
 
                 res = self.global_value_to_node(parsed, parent_node, qualname, recurse, detect_callables)
 
-                res.oldnode = copy.deepcopy(parent_node)
+                res.oldnode = astutils.copy_tree(parent_node)
+                res.cbname = cbname
 
                 # Keep callback in callbacks in case of parsing failure
                 # del self.closure.callbacks[cbname]
                 return res
             except Exception:  # Parsing failed (almost any exception can occur)
                 return newnode
+        elif keep_object:
+            # General object, keep in globals and give a unique name
+            objname = self._qualname_to_array_name(qualname, prefix='')
+            objname = data.find_new_name(objname, self._globals.keys())
+            self._globals[objname] = value
+            newnode = ast.Name(id=objname, ctx=ast.Load())
         else:
             return None
 
@@ -784,7 +516,7 @@ class GlobalResolver(ast.NodeTransformer, astutils.ASTHelperMixin):
 
         # Parse the rest of the fields
         return self.generic_visit_filtered(node, {'target'})
-        
+
     def visit_Name(self, node: ast.Name):
         if not self.ignore_node_ctx and isinstance(node.ctx, ast.Store):
             self.current_scope.add(node.id)
@@ -938,6 +670,332 @@ class GlobalResolver(ast.NodeTransformer, astutils.ASTHelperMixin):
                 node)
 
 
+class ContextManagerInliner(ast.NodeTransformer, astutils.ASTHelperMixin):
+    """
+    Since exceptions are disabled in dace programs, AST with ``with`` statements
+    can be replaced with appropriate calls to the ``__enter__``/``__exit__`` calls
+    in the right places, i.e., at the end of the body or when the context is left due to
+    a return statement, or top-level break/continue statements.
+    """
+    def __init__(self, globals: Dict[str, Any], filename: str, closure_resolver: GlobalResolver) -> None:
+        super().__init__()
+        self.with_statements: List[ast.With] = []
+        self.context_managers: Dict[ast.With, List[Tuple[str, Any]]] = {}
+        self.globals: Dict[str, Any] = globals
+        self.filename = filename
+        self.resolver = closure_resolver
+
+    def _visit_node_with_body(self, node):
+        node = self.generic_visit_filtered(node, {'body'})
+        self.with_statements.append(node)
+        node = self.generic_visit_field(node, 'body')
+        self.with_statements.pop()
+        return node
+
+    def _register_callback(self, node: ast.AST, callable: Callable[..., Any]):
+        # Store the handle to the original callable, in case parsing fails
+        if isinstance(node, ast.Call):
+            cbqualname = astutils.unparse(node.func)
+        else:
+            cbqualname = astutils.rname(node)
+        newnode = self.resolver.global_value_to_node(callable, node, cbqualname, detect_callables=True)
+        if isinstance(node, ast.Call):
+            node.func = newnode
+            return node
+        return newnode
+
+    def _add_exits(self, until_loop_end: bool, only_one: bool = False) -> List[ast.AST]:
+        result = []
+        if len(self.with_statements) == 0:
+            return result
+        for stmt in reversed(self.with_statements):
+            if until_loop_end and not isinstance(stmt, (ast.With, ast.AsyncWith)):
+                break
+            for mgrname, mgr in reversed(self.context_managers[stmt]):
+                # Call __exit__ (without exception management all three arguments are set to None)
+                exit_call = ast.copy_location(ast.parse(f'{mgrname}.__exit__(None, None, None)').body[0], stmt)
+                exit_call.value = self._register_callback(exit_call.value, mgr.__exit__)
+                result.append(exit_call)
+            if only_one:
+                break
+
+        return result
+
+    def _add_entries(self, node: ast.With) -> List[ast.AST]:
+        result = []
+        ctx_mgr_names = []
+        for i, item in enumerate(node.items):
+            # Check if manager is parse-time evaluatable
+            try:
+                if isinstance(item.context_expr, ast.Call) and isinstance(item.context_expr.func, ast.Name):
+                    fname = item.context_expr.func.id
+                    if fname in self.resolver.closure.callbacks:
+                        newglobals = copy.copy(self.globals)
+                        newglobals[fname] = self.resolver.closure.callbacks[fname][1]
+                        ctxmgr = astutils.evalnode(item.context_expr, newglobals)
+                    else:
+                        ctxmgr = astutils.evalnode(item.context_expr, self.globals)
+                else:
+                    ctxmgr = astutils.evalnode(item.context_expr, self.globals)
+            except SyntaxError:
+                raise ValueError(f'Cannot create context manager at {self.filename}:{node.lineno} - only compile-time '
+                                 'evaluatable context managers are supported.')
+
+            # Create manager as part of closure
+            mgr_name = f'__with_{node.lineno}_{i}' if len(node.items) > 1 else f'__with_{node.lineno}'
+            mgr = self.resolver.global_value_to_node(ctxmgr, node, mgr_name, keep_object=True)
+            ctx_mgr_names.append((mgr.id, ctxmgr))
+
+            # Call __enter__
+            enter_call = ast.copy_location(ast.parse(f'{mgr.id}.__enter__()').body[0], node)
+            enter_call.value = self._register_callback(enter_call.value, ctxmgr.__enter__)
+            if item.optional_vars is not None:
+                enter_call = ast.copy_location(
+                    ast.Assign(targets=[item.optional_vars], value=enter_call.value, type_comment=None), node)
+            result.append(enter_call)
+
+        self.context_managers[node] = ctx_mgr_names
+
+        return result
+
+    def visit_With(self, node: ast.With):
+        # Avoid parsing "with dace.tasklet"
+        try:
+            evald = astutils.evalnode(node.items[0].context_expr, self.globals)
+            if evald is dace.tasklet or isinstance(evald, dace.tasklet):
+                return self.generic_visit(node)
+        except SyntaxError:
+            pass
+
+        # Beginning and end of body adds __enter__, __exit__ calls for each item
+        self.with_statements.append(node)
+
+        # Make empty block
+        ifnode: ast.If = ast.parse('if True: pass').body[0]
+        ifnode = ast.copy_location(ifnode, node)
+
+        # Make enter calls
+        entries = self._add_entries(node)
+        ifnode.body = entries
+
+        # Visit body
+        node = self.generic_visit_field(node, 'body')
+        ifnode.body += node.body
+
+        # Make exit calls
+        ifnode.body += self._add_exits(True, True)
+
+        # Pop context manager information
+        self.with_statements.pop()
+        del self.context_managers[node]
+        return ifnode
+
+    def visit_AsyncWith(self, node):
+        return self.visit_With(node)
+
+    def visit_For(self, node):
+        return self._visit_node_with_body(node)
+
+    def visit_AsyncFor(self, node):
+        return self._visit_node_with_body(node)
+
+    def visit_While(self, node):
+        return self._visit_node_with_body(node)
+
+    def visit_Break(self, node):
+        node = self.generic_visit(node)
+        return self._add_exits(True) + [node]
+
+    def visit_Continue(self, node):
+        node = self.generic_visit(node)
+        return self._add_exits(True) + [node]
+
+    def visit_Return(self, node):
+        node = self.generic_visit(node)
+        return self._add_exits(False) + [node]
+
+
+class LoopUnroller(ast.NodeTransformer):
+    """ 
+    Replaces loops by their unrolled bodies if generator can be evaluated at
+    compile time and one of the following conditions apply:
+        1. `dace.unroll` was explicitly called
+        2. looping over compile-time constant tuples/lists/dictionaries
+        3. generator is one of the predetermined "stateless generators"
+        4. any generator with compile-time size that is lower than the "unroll_threshold" configuration
+    """
+    STATELESS_GENERATORS = [
+        enumerate,
+        zip,
+        reversed,
+        dict.values,
+        dict.keys,
+        dict.items,
+    ]
+
+    THRESHOLD_GENERATORS = [
+        range,
+    ]
+
+    def __init__(self, globals: Dict[str, Any], filename: str, closure_resolver: GlobalResolver):
+        super().__init__()
+        self.globals = globals
+        self.filename = filename
+        self.threshold = int(Config.get('frontend', 'unroll_threshold'))
+        self.resolver = closure_resolver
+
+    def visit_For(self, node: ast.For) -> Any:
+        # Avoid import loops
+        EXPLICIT_GENERATORS = [
+            range,  # Handled in ProgramVisitor
+            dace.map,
+            dace.consume,
+        ]
+
+        node = self.generic_visit(node)
+
+        # First, skip loops that contain break/continue that is part of this
+        # for loop (rather than nested ones)
+        cannot_unroll = False
+        cflow_finder = _FindBreakContinueStmts()
+        for stmt in node.body:
+            cflow_finder.visit(stmt)
+        if cflow_finder.has_cflow or node.orelse:
+            cannot_unroll = True
+
+        niter = node.iter
+
+        # Find out if loop was explicitly requested to be unrolled with unroll,
+        # and whether it should be done implicitly
+        explicitly_requested = False
+        if isinstance(niter, ast.Call):
+            # Avoid import loop
+            from dace.frontend.python.interface import unroll
+
+            try:
+                genfunc = astutils.evalnode(niter.func, self.globals)
+            except SyntaxError:
+                genfunc = None
+
+            if genfunc is unroll:
+                explicitly_requested = True
+                niter = niter.args[0]
+
+        if explicitly_requested and cannot_unroll:
+            raise DaceSyntaxError(None, node, 'Cannot unroll loop due to "break", "continue", or "else" statements.')
+
+        # Find out if unrolling should be done implicitly
+        implicit = True
+        # Anything not a call is implicitly allowed
+        if isinstance(niter, (ast.Call, ast.Subscript)):
+            if isinstance(niter, ast.Subscript):
+                nfunc = niter.value
+            else:
+                nfunc = niter.func
+
+            implicit = False
+            # Try to see if it's one of the allowed stateless generators
+            try:
+                genfunc = astutils.evalnode(nfunc, self.globals)
+
+                # If genfunc is a bound method, try to extract function from type
+                if hasattr(genfunc, '__self__'):
+                    genfunc = getattr(type(genfunc.__self__), genfunc.__name__, False)
+
+                if (self.threshold >= 0
+                        and (genfunc not in EXPLICIT_GENERATORS or genfunc in LoopUnroller.THRESHOLD_GENERATORS)):
+                    implicit = True
+                elif genfunc in LoopUnroller.STATELESS_GENERATORS:
+                    implicit = True
+                elif genfunc in EXPLICIT_GENERATORS:
+                    implicit = False
+
+            except SyntaxError:
+                pass
+
+        # Loop will not be unrolled
+        if not implicit and not explicitly_requested:
+            return node
+
+        # Check if loop target is supported
+        if isinstance(node.target, ast.Tuple):
+            to_replace = node.target.elts
+        elif isinstance(node.target, ast.Name):
+            to_replace = [node.target]
+        else:
+            # Unsupported loop target
+            return node
+
+        if isinstance(niter, (ast.Tuple, ast.List, ast.Set)):
+            # Check if a literal tuple/list/set
+            generator = niter.elts
+        elif isinstance(niter, ast.Dict):
+            # If dict, take keys (Python compatible)
+            generator = niter.keys
+        # elif isinstance(iter, (ast.ListComp, ast.DictComp, ast.SetComp, ast.GeneratorExp)):
+        #     # Check if a comprehension or generator expression
+        #     pass
+        else:
+            # Check if the generator is compile-time constant
+            try:
+                generator = astutils.evalnode(niter, self.globals)
+            except SyntaxError:
+                # Cannot evaluate generator at compile time
+                return node
+
+        if self.threshold == 0:  # Unroll any loop
+            explicitly_requested = True
+        elif self.threshold > 0:
+            generator = list(generator)
+            if len(generator) > self.threshold:
+                return node
+            explicitly_requested = True
+
+        # Too verbose?
+        if implicit and not explicitly_requested:
+            warnings.warn(f'Loop at {self.filename}:{node.lineno} will be implicitly unrolled.')
+
+        ##########################################
+        # Unroll loop
+        new_body = []
+        for eid, elem in enumerate(generator):
+            # Paste loop body with replaced elements
+            if not isinstance(elem, (list, tuple, set)):
+                elem = [elem]
+            else:
+                elem = list(elem)
+
+            # If an unknown/mutable object, add to closure
+            for i, e in enumerate(elem):
+                # Already AST
+                if isinstance(e, ast.AST):
+                    continue
+                if isinstance(e, (numbers.Number, str)):
+                    # Compatibility check since Python changed their AST nodes
+                    newnode = astutils.create_constant(e)
+                    elem[i] = newnode
+                else:
+                    # Augment closure with new value
+                    eid_str = f'{eid}'
+                    if len(elem) > 1:
+                        eid_str = f'{eid}_{i}'
+                    elem[i] = self.resolver.global_value_to_node(e,
+                                                                 node,
+                                                                 f'gen{node.lineno}_{eid_str}',
+                                                                 True,
+                                                                 keep_object=True)
+
+            elembody = [astutils.copy_tree(stmt) for stmt in node.body]
+            replace = astutils.ASTFindReplace({k: v for k, v in zip(to_replace, elem)})
+            for stmt in elembody:
+                new_body.append(replace.visit(stmt))
+
+        return new_body
+
+    def visit_AsyncFor(self, node) -> Any:
+        return self.visit_For(node)
+
+
 class CallTreeResolver(ast.NodeVisitor):
     def __init__(self, closure: SDFGClosure, globals: Dict[str, Any]) -> None:
         self.closure = closure
@@ -1021,6 +1079,8 @@ class CallTreeResolver(ast.NodeVisitor):
 
     def visit_Call(self, node: ast.Call):
         # Only parse calls to parsed SDFGConvertibles
+        if hasattr(node.func, 'cbname'):
+            self.seen_calls.add(node.func.cbname)
         if not isinstance(node.func, (ast.Num, ast.Constant)):
             self.seen_calls.add(astutils.unparse(node.func))
             return self.generic_visit(node)
@@ -1070,7 +1130,15 @@ class CallTreeResolver(ast.NodeVisitor):
             # Return old call AST instead
             if not hasattr(node.func, 'oldnode'):
                 raise
-            node.func = node.func.oldnode.func
+
+            # If callback exists, use callback name
+            if hasattr(node.func, 'cbname'):
+                newnode = ast.Name(id=node.func.cbname, ctx=ast.Load())
+                newnode.oldnode = node.func.oldnode
+                node.func = ast.copy_location(newnode, node.func)
+            else:
+                # Revert to old call AST
+                node.func = node.func.oldnode.func
 
             return self.generic_visit(node)
 
@@ -1092,6 +1160,15 @@ class AugAssignExpander(ast.NodeTransformer):
         value = self.generic_visit(node.value)
         newvalue = ast.copy_location(ast.BinOp(left=copy.deepcopy(target), op=node.op, right=value), value)
         return ast.copy_location(ast.Assign(targets=[target], value=newvalue), node)
+
+
+def find_disallowed_statements(node: ast.AST):
+    from dace.frontend.python.newast import DISALLOWED_STMTS  # Avoid import loop
+    for subnode in ast.walk(node):
+        # Found disallowed statement
+        if type(subnode).__name__ in DISALLOWED_STMTS:
+            return type(subnode).__name__
+    return None
 
 
 def preprocess_dace_program(f: Callable[..., Any],
@@ -1153,6 +1230,12 @@ def preprocess_dace_program(f: Callable[..., Any],
 
         closure_resolver.closure.callstack = parent_closure.callstack + [fid]
 
+    # Find disallowed AST nodes
+    disallowed = find_disallowed_statements(src_ast)
+    if disallowed:
+        raise TypeError(f'Converting function "{f.__name__}" ({src_file}:{src_line}) to callback due to disallowed '
+                        f'keyword: {disallowed}')
+
     passes = int(Config.get('frontend', 'preprocessing_passes'))
     if passes >= 0:
         gen = range(passes)
@@ -1174,8 +1257,8 @@ def preprocess_dace_program(f: Callable[..., Any],
     for pass_num in gen:
         try:
             src_ast = closure_resolver.visit(src_ast)
-            src_ast = LoopUnroller(resolved, src_file).visit(src_ast)
-            src_ast = ContextManagerInliner(resolved).visit(src_ast)
+            src_ast = LoopUnroller(resolved, src_file, closure_resolver).visit(src_ast)
+            src_ast = ContextManagerInliner(resolved, src_file, closure_resolver).visit(src_ast)
             src_ast = ConditionalCodeResolver(resolved).visit(src_ast)
             src_ast = DeadCodeEliminator().visit(src_ast)
         except Exception:

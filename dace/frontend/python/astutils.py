@@ -81,6 +81,7 @@ def evalnode(node: ast.AST, gvars: Dict[str, Any]) -> Any:
     cext.visit(node)
     gvars = copy.copy(gvars)
     gvars.update(cext.gvars)
+    node = ast.fix_missing_locations(node)
 
     try:
         # Ensure context is load so eval works (e.g., when using value as lhs)

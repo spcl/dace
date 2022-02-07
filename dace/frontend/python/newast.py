@@ -242,10 +242,14 @@ def parse_dace_program(name: str,
 
 
 # AST node types that are disallowed in DaCe programs
-_DISALLOWED_STMTS = [
-    'Global', 'Delete', 'Import', 'ImportFrom', 'Assert', 'Exec', 'Print', 'Nonlocal', 'Yield', 'YieldFrom', 'Raise',
-    'Try', 'TryExcept', 'TryFinally', 'ExceptHandler', 'Starred', 'ClassDef', 'AsyncFor', 'Await', 'Bytes', 'Set',
-    'Dict', 'ListComp', 'GeneratorExp', 'SetComp', 'DictComp', 'comprehension'
+DISALLOWED_STMTS = [
+    'Delete', 'Import', 'ImportFrom', 'Exec', 'Yield', 'YieldFrom', 'ClassDef', 'Await', 'Try', 'TryExcept',
+    'TryFinally', 'ExceptHandler'
+]
+# Extra AST node types that are disallowed after preprocessing
+_DISALLOWED_STMTS = DISALLOWED_STMTS + [
+    'Global', 'Assert', 'Print', 'Nonlocal', 'Raise', 'Starred', 'AsyncFor', 'Bytes', 'Set', 'Dict', 'ListComp',
+    'GeneratorExp', 'SetComp', 'DictComp', 'comprehension'
 ]
 
 TaskletType = Union[ast.FunctionDef, ast.With, ast.For]
