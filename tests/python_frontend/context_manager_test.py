@@ -4,9 +4,6 @@ import dace
 import numpy as np
 
 
-
-# Reason: Context manager object is not yet parsed successfully by dace (object requires type hints)
-@pytest.mark.skip
 def test_context_manager_decorator():
     class Ctx:
         def __init__(self) -> None:
