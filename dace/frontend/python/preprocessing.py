@@ -1254,6 +1254,7 @@ def preprocess_dace_program(f: Callable[..., Any],
 
     for pass_num in gen:
         try:
+            closure_resolver.toplevel_function = True
             src_ast = closure_resolver.visit(src_ast)
             src_ast = LoopUnroller(resolved, src_file, closure_resolver).visit(src_ast)
             src_ast = ContextManagerInliner(resolved, src_file, closure_resolver).visit(src_ast)
