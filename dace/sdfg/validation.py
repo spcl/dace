@@ -266,11 +266,18 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                 if arr.transient and state.in_degree(node) > 0:
                     initialized_transients.add(node.data)
 
-            # Find writes to input-only arrays
-            only_empty_inputs = all(e.data.is_empty() for e in state.in_edges(node))
-            if (not arr.transient) and (not only_empty_inputs):
-                nsdfg_node = sdfg.parent_nsdfg_node
-                if nsdfg_node is not None:
+            nsdfg_node = sdfg.parent_nsdfg_node
+            if nsdfg_node is not None:
+                # Find unassociated non-transients access nodes
+                if (not arr.transient and node.data not in nsdfg_node.in_connectors
+                        and node.data not in nsdfg_node.out_connectors):
+                    raise InvalidSDFGNodeError(
+                        f'Data descriptor "{node.data}" is not transient and used in a nested SDFG, '
+                        'but does not have a matching connector on the outer SDFG node.', sdfg, state_id, nid)
+
+                # Find writes to input-only arrays
+                only_empty_inputs = all(e.data.is_empty() for e in state.in_edges(node))
+                if (not arr.transient) and (not only_empty_inputs):
                     if node.data not in nsdfg_node.out_connectors:
                         raise InvalidSDFGNodeError(
                             'Data descriptor %s is '
@@ -305,17 +312,6 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                 and not isinstance(node, (nd.NestedSDFG, nd.LibraryNode))):
             dups = node.in_connectors.keys() & node.out_connectors.keys()
             raise InvalidSDFGNodeError("Duplicate connectors: " + str(dups), sdfg, state_id, nid)
-
-        # Check for connectors that are also array/symbol names
-        if isinstance(node, nd.Tasklet):
-            for conn in node.in_connectors.keys():
-                if conn in sdfg.arrays or conn in symbols:
-                    raise InvalidSDFGNodeError(f"Input connector {conn} already "
-                                               "defined as array or symbol", sdfg, state_id, nid)
-            for conn in node.out_connectors.keys():
-                if conn in sdfg.arrays or conn in symbols:
-                    raise InvalidSDFGNodeError(f"Output connector {conn} already "
-                                               "defined as array or symbol", sdfg, state_id, nid)
 
         # Check for dangling connectors (incoming)
         for conn in node.in_connectors:

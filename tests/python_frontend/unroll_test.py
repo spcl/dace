@@ -2,6 +2,7 @@
 """ Tests loop unrolling functionality. """
 import dace
 from dace.frontend.python import astutils
+from dace.frontend.python.common import SDFGConvertible
 from dace.frontend.python.preprocessing import LoopUnroller, DaceSyntaxError
 import numpy as np
 import pytest
@@ -24,7 +25,7 @@ def test_dace_unroll():
             A[0] += i * i
 
     src_ast, fname, _, _ = astutils.function_to_ast(tounroll.f)
-    lu = LoopUnroller(tounroll.global_vars, fname)
+    lu = LoopUnroller(tounroll.global_vars, fname, None)
     unrolled = lu.visit(src_ast)
     assert len(unrolled.body[0].body) == 3
 
@@ -43,7 +44,7 @@ def test_dace_unroll_multistatement():
                 A[0] += 2
 
     src_ast, fname, _, _ = astutils.function_to_ast(tounroll.f)
-    lu = LoopUnroller(tounroll.global_vars, fname)
+    lu = LoopUnroller(tounroll.global_vars, fname, None)
     unrolled = lu.visit(src_ast)
     assert len(unrolled.body[0].body) == 6
 
@@ -62,7 +63,7 @@ def test_dace_unroll_break():
                 break
 
     src_ast, fname, _, _ = astutils.function_to_ast(tounroll.f)
-    lu = LoopUnroller(tounroll.global_vars, fname)
+    lu = LoopUnroller(tounroll.global_vars, fname, None)
     with pytest.raises(DaceSyntaxError):
         unrolled = lu.visit(src_ast)
 
@@ -210,6 +211,111 @@ def test_unroll_threshold(thres):
 
         assert np.allclose(A, ref)
 
+
+def test_deepcopy():
+    class Nocopy(SDFGConvertible):
+        def __sdfg__(self, *args, **kwargs):
+            @dace
+            def bla(a: dace.float64[20]):
+                return a
+
+            return bla.to_sdfg()
+
+        def __sdfg_closure__(self, reevaluate=None):
+            return {}
+
+        def __sdfg_signature__(self):
+            return [['a'], []]
+
+        def __deepcopy__(self, memo):
+            raise ValueError('DO NOT COPY ME PLEASE')
+
+    nocopy = Nocopy()
+
+    @dace.program
+    def someprogram(a):
+        for i in dace.unroll(range(3)):
+            a += i * nocopy(a)
+
+    b = np.random.rand(20)
+    expected = 6 * b
+    someprogram(b)
+    assert np.allclose(b, expected)
+
+
+class Wrapper:
+    def __init__(self) -> None:
+        self._an_array = np.ones((12), np.float64)
+
+    def __str__(self) -> str:
+        return f"I am an array {self._an_array}"
+
+    def __repr__(self) -> str:
+        return self.__str__()
+
+    @property
+    def arr(self):
+        return self._an_array
+
+
+def test_arrays_keys_closure():
+    d = {'0a0': Wrapper(), '1b1': Wrapper()}
+    expected = {'0a0': d['0a0'].arr + 1, '1b1': d['1b1'].arr + 1}
+
+    @dace.program
+    def prog():
+        for arr in d.keys():
+            d[arr].arr += 1
+
+    prog()
+    assert np.allclose(d['0a0'].arr, expected['0a0'])
+    assert np.allclose(d['1b1'].arr, expected['1b1'])
+
+
+def test_arrays_keys_daceconstant():
+    @dace.program
+    def prog(d: dace.constant):
+        for arr in d.keys():
+            d[arr].arr += 1
+
+    dd = {'0a0': Wrapper(), '1b1': Wrapper()}
+    expected = {'0a0': dd['0a0'].arr + 1, '1b1': dd['1b1'].arr + 1}
+
+    prog(dd)
+    assert np.allclose(dd['0a0'].arr, expected['0a0'])
+    assert np.allclose(dd['1b1'].arr, expected['1b1'])
+
+
+def test_arrays_values():
+    d = {0: np.random.rand(10), 1: np.random.rand(20)}
+    expected = {0: d[0] + 1, 1: d[1] + 1}
+
+    @dace.program
+    def prog():
+        for arr in d.values():
+            arr += 1
+
+    prog()
+    assert np.allclose(d[0], expected[0])
+    assert np.allclose(d[1], expected[1])
+
+
+def test_objects():
+    @dace.program
+    def nested(arr, scal):
+        arr[:] = arr[:] * scal
+
+    @dace.program
+    def program(wrapped_arr: dace.constant, scal):
+        for warr in wrapped_arr.values():
+            nested(warr.arr, scal)
+
+    wrapped_arrays = {"0": Wrapper(), "1": Wrapper()}
+    scal = 2
+
+    program(wrapped_arrays, scal)
+
+
 if __name__ == '__main__':
     test_native_unroll()
     test_dace_unroll()
@@ -225,3 +331,8 @@ if __name__ == '__main__':
     test_unroll_threshold(-1)
     test_unroll_threshold(0)
     test_unroll_threshold(5)
+    test_deepcopy()
+    test_arrays_keys_closure()
+    test_arrays_keys_daceconstant()
+    test_arrays_values()
+    test_objects()

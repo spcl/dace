@@ -82,6 +82,9 @@ def create_datadescriptor(obj):
         return Scalar(dtypes.typeclass(obj))
     elif isinstance(obj, (Number, numpy.number, numpy.bool, numpy.bool_)):
         return Scalar(dtypes.typeclass(type(obj)))
+    elif obj is type(None):
+        # NoneType is void *
+        return Scalar(dtypes.pointer(dtypes.typeclass(None)))
     elif callable(obj):
         # Cannot determine return value/argument types from function object
         return Scalar(dtypes.callback(None))
