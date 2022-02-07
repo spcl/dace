@@ -540,6 +540,7 @@ def _simple_call(sdfg: SDFG, state: SDFGState, inpname: str, func: str, restype:
     if restype is None:
         restype = inparr.dtype
     outname, outarr = sdfg.add_temp_transient_like(inparr)
+    outarr.dtype = restype
     num_elements = data._prod(inparr.shape)
     if num_elements == 1:
         inp = state.add_read(inpname)
@@ -611,12 +612,12 @@ def _log(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, input: str):
 
 @oprepo.replaces('math.floor')
 def _floor(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, input: str):
-    return _simple_call(sdfg, state, input, 'floor')
+    return _simple_call(sdfg, state, input, 'floor', restype=dtypes.typeclass(int))
 
 
 @oprepo.replaces('math.ceil')
 def _ceil(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, input: str):
-    return _simple_call(sdfg, state, input, 'ceil')
+    return _simple_call(sdfg, state, input, 'ceil', restype=dtypes.typeclass(int))
 
 
 @oprepo.replaces('conj')
