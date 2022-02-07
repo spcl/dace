@@ -421,7 +421,11 @@ def _Call(t, symbols, inferred_symbols):
 
     # In case of a typeless math function, determine the return type based on the arguments
     name = dace.frontend.python.astutils.rname(t)
-    module = name[:name.rfind('.')]
+    idx = name.rfind('.')
+    if idx > -1:
+        module = name[:name.rfind('.')]
+    else:
+        module = ''
     if module == 'math':
         return dtypes.result_type_of(arg_types[0], *arg_types)
 
@@ -431,6 +435,8 @@ def _Call(t, symbols, inferred_symbols):
 
     if name in ('abs', 'log'):
         return arg_types[0]
+    if name in ('min', 'max'): # binary math operations that do not exist in the math module
+        return dtypes.result_type_of(arg_types[0], *arg_types)     
 
     # dtypes (dace.int32, np.float64) can be used as functions
     inf_type = _infer_dtype(t)
