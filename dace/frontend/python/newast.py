@@ -3738,7 +3738,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 else:
                     allargs.append(parsed_arg)
             else:
-                if isinstance(parsed_arg, (Number, numpy.number)):
+                if isinstance(parsed_arg, (Number, numpy.number, type(None))):
                     atype = data.create_datadescriptor(type(parsed_arg))
                 else:
                     atype = data.create_datadescriptor(parsed_arg)
