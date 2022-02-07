@@ -76,10 +76,11 @@ def run_floyd_warshall(device_type: dace.dtypes.DeviceType):
                                                          [{}, {
                                                              'storage': dace.StorageType.FPGA_Local
                                                          }],
-                                                         print_report=True)
+                                                         print_report=True,
+                                                         permissive=True)
         assert sc_applied == 1
 
-        # Prune connectors after Streaming Comp
+        # Prune connectors after Streaming Composition
         pruned_conns = sdfg.apply_transformations_repeated(PruneConnectors,
                                                            options=[{
                                                                'remove_unused_containers': True
