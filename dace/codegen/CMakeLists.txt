@@ -448,34 +448,34 @@ if(DACE_ENABLE_XILINX)
 
   # If the project uses generated IP cores (E.g. through double pumping)
   if(DACE_XILINX_IP_FILES)
-    set(VITIS_BUILD_FLAGS ${VITIS_BUILD_FLAGS} --user_ip_repo_paths ip_cores)
+    set(DACE_XILINX_BUILD_FLAGS ${DACE_XILINX_BUILD_FLAGS} --user_ip_repo_paths ip_cores)
   endif()
 
   unset(DACE_KERNEL_TARGETS)
 
   foreach(DACE_IP ${DACE_XILINX_IP_FILES})
-      get_filename_component(DACE_KERNEL_NAME ${DACE_IP} NAME_WE)
-      get_filename_component(DACE_KERNEL_SRC ${DACE_IP} DIRECTORY)
+    get_filename_component(DACE_KERNEL_NAME ${DACE_IP} NAME_WE)
+    get_filename_component(DACE_KERNEL_SRC ${DACE_IP} DIRECTORY)
 
-      configure_file(${CMAKE_SOURCE_DIR}/Xilinx_IP.tcl.in Package_${DACE_KERNEL_NAME}.tcl)
-      add_custom_command(
-        OUTPUT ip_cores/${DACE_KERNEL_NAME}/impl/export.zip
-        COMMAND XILINX_PATH=${CMAKE_BINARY_DIR} ${Vitis_HLS}
-        -f Package_${DACE_KERNEL_NAME}.tcl
-        DEPENDS ${DACE_IP}
-      )
+    configure_file(${CMAKE_SOURCE_DIR}/Xilinx_IP.tcl.in Package_${DACE_KERNEL_NAME}.tcl)
+    add_custom_command(
+      OUTPUT ip_cores/${DACE_KERNEL_NAME}/impl/export.zip
+      COMMAND XILINX_PATH=${CMAKE_BINARY_DIR} ${Vitis_HLS}
+      -f Package_${DACE_KERNEL_NAME}.tcl
+      DEPENDS ${DACE_IP}
+    )
 
-      execute_process(COMMAND ${Vitis_PLATFORMINFO} -p ${DACE_XILINX_TARGET_PLATFORM} -jhardwarePlatform.board.part
-      OUTPUT_VARIABLE RTL_PART
-      RESULT_VARIABLE _platforminfo_res
-      OUTPUT_STRIP_TRAILING_WHITESPACE)
+    execute_process(COMMAND ${Vitis_PLATFORMINFO} -p ${DACE_XILINX_TARGET_PLATFORM} -jhardwarePlatform.board.part
+    OUTPUT_VARIABLE RTL_PART
+    RESULT_VARIABLE _platforminfo_res
+    OUTPUT_STRIP_TRAILING_WHITESPACE)
 
-      set (RTL_XO "${DACE_KERNEL_NAME}.xo")
-      rtllib_rtl_target(${DACE_KERNEL_NAME} ${DACE_KERNEL_SRC} ${DACE_KERNEL_SRC} ${DACE_KERNEL_SRC} log tmp ${DACE_KERNEL_SRC} ${RTL_XO} ${RTL_PART} ip_cores/${DACE_KERNEL_NAME}/impl/export.zip ip_cores)
-      add_custom_target(${RTL_KERNEL} DEPENDS ${RTL_XO})
-      set(DACE_RTL_KERNELS ${DACE_RTL_KERNELS} ${RTL_XO})
-      set(DACE_RTL_DEPENDS ${DACE_RTL_DEPENDS} ${RTL_KERNEL})
-    endforeach()
+    set (RTL_XO "${DACE_KERNEL_NAME}.xo")
+    rtllib_rtl_target(${DACE_KERNEL_NAME} ${DACE_KERNEL_SRC} ${DACE_KERNEL_SRC} ${DACE_KERNEL_SRC} log tmp ${DACE_KERNEL_SRC} ${RTL_XO} ${RTL_PART} ip_cores/${DACE_KERNEL_NAME}/impl/export.zip ip_cores)
+    add_custom_target(${DACE_KERNEL_NAME} DEPENDS ${RTL_XO})
+    set(DACE_RTL_KERNELS ${DACE_RTL_KERNELS} ${RTL_XO})
+    set(DACE_RTL_DEPENDS ${DACE_RTL_DEPENDS} ${DACE_KERNEL_NAME})
+  endforeach()
 
   foreach(DACE_KERNEL_FILE ${DACE_XILINX_KERNEL_FILES})
     # Extract kernel name

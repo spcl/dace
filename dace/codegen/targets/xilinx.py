@@ -775,7 +775,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                     node.bytes = int(dace.symbolic.evaluate(node.bytes, sdfg.constants)) >> 1
                     node.veclen = int(dace.symbolic.evaluate(node.veclen, sdfg.constants)) >> 1
 
-                double_kernel_module.write('''#include <dace/xilinx/device.h>
+                double_kernel_module.write('''#include <dace/fpga_device.h>
 #include <dace/math.h>
 #include <dace/complex.h>''')
 
@@ -965,11 +965,11 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         if rtl_tasklet or not (double_pumped is None):
             # TODO only if there are any scalar arguments. Otherwise, it shouldn't be needed.
             # Launch the kernel from the host code
-            rtl_name = self.rtl_tasklet_name(rtl_tasklet, state, sdfg)
+            #rtl_name = self.rtl_tasklet_name(rtl_tasklet, state, sdfg)
 
             # kernel arguments
             host_stream.write(
-                f"all_events.push_back(program.MakeKernel(\"{rtl_name}_top\"{', '.join([''] + [name for _, name, p, _ in parameters if not isinstance(p, dt.Stream)])}).ExecuteTaskFork());",
+                f"all_events.push_back(program.MakeKernel(\"{rtl_name}_top\"{', '.join([''] + [name for _, name, p, _ in parameters if not isinstance(p, dt.Stream)])}).ExecuteTaskAsync());",
                 sdfg, state_id, rtl_tasklet)
             if state.instrument == dtypes.InstrumentationType.FPGA:
                 self.instrument_opencl_kernel(rtl_name, state_id, sdfg.sdfg_id, instrumentation_stream)
