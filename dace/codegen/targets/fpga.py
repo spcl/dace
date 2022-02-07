@@ -909,6 +909,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                     # Add the data as a parameter to this PE
                     subgraph_parameters[subgraph].add((is_output, data_name, desc, interface_id))
                     # Global data is passed from outside the kernel
+                    global_data_parameters.add((is_output, data_name, desc, interface_id))
                 # TODO fix hardcoding:
                 elif data_name in shared_data or str(desc.shape[0]) == 'P + 1':
                     # Add the data as a parameter to this PE
