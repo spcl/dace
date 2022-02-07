@@ -1079,8 +1079,6 @@ class CallTreeResolver(ast.NodeVisitor):
 
     def visit_Call(self, node: ast.Call):
         # Only parse calls to parsed SDFGConvertibles
-        if hasattr(node.func, 'cbname'):
-            self.seen_calls.add(node.func.cbname)
         if not isinstance(node.func, (ast.Num, ast.Constant)):
             self.seen_calls.add(astutils.unparse(node.func))
             return self.generic_visit(node)
