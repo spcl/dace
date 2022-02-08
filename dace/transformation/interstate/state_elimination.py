@@ -204,15 +204,14 @@ class StateAssignElimination(transformation.MultiStateTransformation, transforma
                 if varname in sdfg.symbols:
                     sdfg.remove_symbol(varname)
                 # if assignments_to_consider[varname] in sdfg.symbols:
-                if varname in sdfg.free_symbols:
-                    repl_dict[varname] = assignments_to_consider[varname]
+                repl_dict[varname] = assignments_to_consider[varname]
 
         def _str_repl(s, d):
             for k, v in d.items():
                 s.replace(str(k), str(v))
 
         if repl_dict:
-            symbolic.safe_replace(repl_dict, lambda m: _str_repl(sdfg, m))
+            symbolic.safe_replace(repl_dict, lambda m: _str_repl(state, repl_dict))
 
 
 class ConstantPropagation(transformation.MultiStateTransformation):

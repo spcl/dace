@@ -11,6 +11,7 @@ from dace.sdfg import graph as gr
 from dace.frontend.python import astutils
 from dace.sdfg import utils as sdutils
 from dace.transformation import helpers as xfh
+import copy
 import re
 from typing import Any, DefaultDict, Dict, List, Optional, Set, Tuple, Union
 
@@ -192,10 +193,13 @@ def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integer
     interstate_symbols = set()
     for edge in sdfg.edges():
         interstate_symbols |= edge.data.free_symbols
-    for candidate in (candidates - interstate_symbols):
+    candidates_to_remove=set()
+    for candidate in candidates:
+    #for candidate in (candidates - interstate_symbols):    
         if integers_only and sdfg.arrays[candidate].dtype not in dtypes.INTEGER_TYPES:
-            candidates.remove(candidate)
-
+            candidates_to_remove.add(candidate)
+            #candidates.remove(candidate)
+    candidates -= candidates_to_remove
     # Only keep candidates that were found in SDFG
     candidates &= (candidates_seen | interstate_symbols)
 
