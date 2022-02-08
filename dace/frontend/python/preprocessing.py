@@ -300,7 +300,7 @@ def has_replacement(callobj: Callable, parent_object: Optional[Any] = None, node
     return oprepo.Replacements.get(astutils.rname(node)) is not None
 
 
-class GlobalResolver(ast.NodeTransformer, astutils.ASTHelperMixin):
+class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
     """ Resolves global constants and lambda expressions if not
         already defined in the given scope. """
     def __init__(self, globals: Dict[str, Any], resolve_functions: bool = False, default_args: Set[str] = None):
@@ -624,6 +624,15 @@ class GlobalResolver(ast.NodeTransformer, astutils.ASTHelperMixin):
         self.generic_visit_field(node, 'body')
         self.generic_visit_field(node, 'orelse')
         return node
+
+    def visit_TopLevelExpr(self, node: ast.Expr):
+        # Ignore memlet targets in tasklets
+        if isinstance(node.value, ast.BinOp):
+            if isinstance(node.value.op, (ast.LShift, ast.RShift)):
+                # Do not visit node.value.left
+                node.value.right = self.visit(node.value.right)
+                return node
+        return self.generic_visit(node)
 
     def visit_Assert(self, node: ast.Assert) -> Any:
         # Try to evaluate assertion statically
