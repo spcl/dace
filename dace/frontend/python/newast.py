@@ -1807,7 +1807,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 else:
                     arr = self.scope_arrays[memlet.data]
                 for s, r in symbols.items():
-                    memlet = propagate_subset([memlet], arr, [s], r, use_dst=False)
+                    memlet = propagate_subset([memlet], arr, [s], r, use_dst=False, defined_variables=set())
                 if _subset_has_indirection(memlet.subset, self):
                     read_node = entry_node
                     if entry_node is None:
@@ -1896,7 +1896,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 else:
                     arr = self.scope_arrays[memlet.data]
                 for s, r in symbols.items():
-                    memlet = propagate_subset([memlet], arr, [s], r, use_dst=True)
+                    memlet = propagate_subset([memlet], arr, [s], r, use_dst=True, defined_variables=set())
                 if _subset_has_indirection(memlet.subset, self):
                     write_node = exit_node
                     if exit_node is None:
