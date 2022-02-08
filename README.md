@@ -11,19 +11,27 @@
 
 _Decoupling domain science from performance optimization._
 
-DaCe is a parallel programming framework that takes code in Python/NumPy and other programming languages, and maps it to high-performance **CPU, GPU, and FPGA** programs, which can be optimized to achieve state-of-the-art. Internally, DaCe uses the Stateful DataFlow multiGraph (SDFG) *data-centric intermediate representation*: A transformable, interactive representation of code based on data movement.
-Since the input code and the SDFG are separate, it is posible to optimize a program without
-changing its source, so that it stays readable. On the other hand, transformations are customizable and user-extensible, so they can be written once and reused in many applications.
-With data-centric parallel programming, we enable **direct knowledge transfer** of performance optimization, regardless of the application or the target processor.
+DaCe is a parallel programming framework that takes code in Python/NumPy and 
+other programming languages, and maps it to high-performance **CPU, GPU, and FPGA** 
+programs, which can be optimized to achieve state-of-the-art. Internally, DaCe 
+uses the Stateful DataFlow multiGraph (SDFG) *data-centric intermediate 
+representation*: A transformable, interactive representation of code based on 
+data movement.
+Since the input code and the SDFG are separate, it is posible to optimize a 
+program without changing its source, so that it stays readable. On the other 
+hand, transformations are customizable and user-extensible, so they can be written 
+once and reused in many applications.
+With data-centric parallel programming, we enable **direct knowledge transfer** 
+of performance optimization, regardless of the application or the target processor.
 
 DaCe generates high-performance programs for:
- * Multi-core CPUs (tested on Intel and IBM POWER9)
- * NVIDIA GPUs
- * AMD GPUs (with HIP)
- * Xilinx FPGAs
- * Intel FPGAs
+ * Multi-core CPUs (tested on Intel, IBM POWER9, and ARM with SVE)
+ * NVIDIA GPUs and AMD GPUs (with HIP)
+ * Xilinx and Intel FPGAs
 
-DaCe can be written inline in Python and transformed in the command-line/Jupyter Notebooks, or SDFGs can be interactively modified using the Data-centric Interactive Optimization Development Environment (DIODE, currently experimental).
+DaCe can be written inline in Python and transformed in the command-line/Jupyter 
+Notebooks, or SDFGs can be interactively modified using the Data-centric 
+Interactive Optimization Development Environment (DIODE, currently experimental).
 
 For more information, see our [paper](http://www.arxiv.org/abs/1902.10345).
 
@@ -42,11 +50,16 @@ import numpy as np
 @dace
 def myprogram(a):
     for i in range(a.shape[0]):
-	    a[i] += i
+        a[i] += i
     return np.sum(a)
 ```
 
-Calling `myprogram` with any NumPy array or `__{cuda_}array_interface__`-supporting tensor (e.g., PyTorch, Numba) will generate data-centric code, compile, and run it. From here on out, you can _optimize_ (interactively or automatically), _instrument_, and _distribute_ your code. The code creates a shared library (DLL/SO file) that can readily be used in any C ABI compatible language (C/C++, FORTRAN, etc.).
+Calling `myprogram` with any NumPy array or 
+`__{cuda_}array_interface__`-supporting tensor (e.g., PyTorch, Numba) will 
+generate data-centric code, compile, and run it. From here on out, you can 
+_optimize_ (interactively or automatically), _instrument_, and _distribute_ 
+your code. The code creates a shared library (DLL/SO file) that can readily 
+be used in any C ABI compatible language (C/C++, FORTRAN, etc.).
 
 For more information on how to use DaCe, see the [samples](samples) or tutorials below:
 
