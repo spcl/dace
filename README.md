@@ -29,24 +29,41 @@ For more information, see our [paper](http://www.arxiv.org/abs/1902.10345).
 
 See an example SDFG [in the standalone viewer (SDFV)](https://spcl.github.io/dace/sdfv.html?url=https://spcl.github.io/dace/examples/gemm.sdfg).
 
-Tutorials
----------
+Quick Start
+-----------
+
+Install DaCe with pip: `pip install dace`
+
+Using DaCe in Python is as simple as adding a `@dace` decorator:
+```python
+import dace
+import numpy as np
+
+@dace
+def myprogram(a):
+    for i in range(a.shape[0]):
+	    a[i] += i
+    return np.sum(a)
+```
+
+Calling `myprogram` with any NumPy array or `__{cuda_}array_interface__`-supporting tensor (e.g., PyTorch, Numba) will generate data-centric code, compile, and run it. From here on out, you can _optimize_ (interactively or automatically), _instrument_, and _distribute_ your code. The code creates a shared library (DLL/SO file) that can readily be used in any C ABI compatible language (C/C++, FORTRAN, etc.).
+
+For more information on how to use DaCe, see the [samples](samples) or tutorials below:
 
 * [Getting Started](https://nbviewer.jupyter.org/github/spcl/dace/blob/master/tutorials/getting_started.ipynb)
+* [Benchmarks, Instrumentation, and Performance Comparison with Other Python Compilers](https://nbviewer.jupyter.org/github/spcl/dace/blob/master/tutorials/benchmarking.ipynb)
 * [Explicit Dataflow in Python](https://nbviewer.jupyter.org/github/spcl/dace/blob/master/tutorials/explicit.ipynb)
 * [NumPy API Reference](https://nbviewer.jupyter.org/github/spcl/dace/blob/master/tutorials/numpy_frontend.ipynb)
 * [SDFG API](https://nbviewer.jupyter.org/github/spcl/dace/blob/master/tutorials/sdfg_api.ipynb)
 * [Using and Creating Transformations](https://nbviewer.jupyter.org/github/spcl/dace/blob/master/tutorials/transformations.ipynb)
 * [Extending the Code Generator](https://nbviewer.jupyter.org/github/spcl/dace/blob/master/tutorials/codegen.ipynb)
 
-Installation and Dependencies
------------------------------
-
-To install: `pip install dace`
+Dependencies
+------------
 
 Runtime dependencies:
  * A C++14-capable compiler (e.g., gcc 5.3+)
- * Python 3.6 or newer
+ * Python 3.7 or newer (Python 3.6 is supported but not actively tested)
  * CMake 3.15 or newer
 
 Running
