@@ -192,7 +192,7 @@ struct {sdfg.name}_t {{
         params = sdfg.signature(arglist=self.arglist)
         paramnames = sdfg.signature(False, for_call=True, arglist=self.arglist)
         initparams = sdfg.init_signature()
-        initparamnames = sdfg.signature(for_call=True)
+        initparamnames = sdfg.init_signature(for_call=True)
 
         # Invoke all instrumentation providers
         for instr in self._dispatcher.instrumentation.values():
