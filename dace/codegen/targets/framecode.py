@@ -50,7 +50,6 @@ class DaCeCodeGenerator(object):
         self._symbols_and_constants: Dict[int, Set[str]] = {}
         fsyms = self.free_symbols(sdfg)
         self.arglist = sdfg.arglist(scalars_only=False, free_symbols=fsyms)
-        self.arglist_scalars_only = sdfg.arglist(scalars_only=True, free_symbols=fsyms)
 
     # Cached fields
     def symbols_and_constants(self, sdfg: SDFG):
@@ -191,8 +190,8 @@ struct {sdfg.name}_t {{
         fname = sdfg.name
         params = sdfg.signature(arglist=self.arglist)
         paramnames = sdfg.signature(False, for_call=True, arglist=self.arglist)
-        initparams = sdfg.init_signature()
-        initparamnames = sdfg.init_signature(for_call=True)
+        initparams = sdfg.init_signature(free_symbols=self.free_symbols(sdfg))
+        initparamnames = sdfg.init_signature(for_call=True, free_symbols=self.free_symbols(sdfg))
 
         # Invoke all instrumentation providers
         for instr in self._dispatcher.instrumentation.values():

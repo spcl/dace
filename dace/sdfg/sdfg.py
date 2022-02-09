@@ -1043,17 +1043,18 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
         return result
 
-    def init_signature(self, for_call=False) -> str:
+    def init_signature(self, for_call=False, free_symbols=None) -> str:
         """ Returns a C/C++ signature of this SDFG, used when generating the initalization code.
             It only contains symbols.
 
             :param for_call: If True, returns arguments that can be used when calling the SDFG.
         """
         # Get global free symbols scalar arguments
+        free_symbols = free_symbols or self.free_symbols
         return ", ".join(
             dt.Scalar(self.symbols[k]).as_arg(
                 name=k, with_types=not for_call, for_call=for_call)
-            for k in sorted(self.free_symbols) if not k.startswith('__dace'))
+            for k in sorted(free_symbols) if not k.startswith('__dace'))
 
     def signature_arglist(self, with_types=True, for_call=False, with_arrays=True, arglist=None) -> List[str]:
         """ Returns a list of arguments necessary to call this SDFG,
