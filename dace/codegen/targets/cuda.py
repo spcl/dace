@@ -186,7 +186,7 @@ class CUDACodeGen(TargetCodeGenerator):
         else:
             raise NameError('GPU backend "%s" not recognized' % self.backend)
 
-        params_comma = self._global_sdfg.signature(with_arrays=False)
+        params_comma = self._global_sdfg.init_signature()
         if params_comma:
             params_comma = ', ' + params_comma
 

@@ -177,8 +177,8 @@ struct {sdfg.name}_t {{
         fname = sdfg.name
         params = sdfg.signature()
         paramnames = sdfg.signature(False, for_call=True)
-        initparams = sdfg.signature(with_arrays=False)
-        initparamnames = sdfg.signature(False, for_call=True, with_arrays=False)
+        initparams = sdfg.init_signature()
+        initparamnames = sdfg.init_signature(for_call=True)
 
         # Invoke all instrumentation providers
         for instr in self._dispatcher.instrumentation.values():
@@ -244,7 +244,8 @@ DACE_EXPORTED {sdfg.name}_t *__dace_init_{sdfg.name}({initparams})
             if None in sd.init_code:
                 callsite_stream.write(codeblock_to_cpp(sd.init_code[None]), sd)
             if 'frame' in sd.init_code:
-                callsite_stream.write(codeblock_to_cpp(sd.init_code['frame']), sd)
+                callsite_stream.write(codeblock_to_cpp(sd.init_code['frame']),
+                                      sd)
 
         callsite_stream.write(self._initcode.getvalue(), sdfg)
 
@@ -275,7 +276,8 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
             if None in sd.exit_code:
                 callsite_stream.write(codeblock_to_cpp(sd.exit_code[None]), sd)
             if 'frame' in sd.exit_code:
-                callsite_stream.write(codeblock_to_cpp(sd.exit_code['frame']), sd)
+                callsite_stream.write(codeblock_to_cpp(sd.exit_code['frame']),
+                                      sd)
 
         for target in self._dispatcher.used_targets:
             if target.has_finalizer:

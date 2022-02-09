@@ -34,10 +34,10 @@ from dace.sdfg.graph import OrderedDiGraph, Edge, SubgraphView
 from dace.sdfg.state import SDFGState
 from dace.sdfg.propagation import propagate_memlets_sdfg
 from dace.dtypes import validate_name
-from dace.properties import (DebugInfoProperty, EnumProperty, ListProperty, make_properties,
-                             Property, CodeProperty, TransformationHistProperty,
-                             SDFGReferenceProperty, DictProperty,
-                             OrderedDictProperty, CodeBlock)
+from dace.properties import (DebugInfoProperty, EnumProperty, ListProperty,
+                             make_properties, Property, CodeProperty,
+                             TransformationHistProperty, SDFGReferenceProperty,
+                             DictProperty, OrderedDictProperty, CodeBlock)
 
 
 def _arrays_to_json(arrays):
@@ -1074,6 +1074,18 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             result[k] = v
 
         return result
+
+    def init_signature(self, for_call=False) -> str:
+        """ Returns a C/C++ signature of this SDFG, used when generating the initalization code.
+            It only contains symbols.
+
+            :param for_call: If True, returns arguments that can be used when calling the SDFG.
+        """
+        # Get global free symbols scalar arguments
+        return ", ".join(
+            dt.Scalar(self.symbols[k]).as_arg(
+                name=k, with_types=not for_call, for_call=for_call)
+            for k in sorted(self.free_symbols) if not k.startswith('__dace'))
 
     def signature_arglist(self,
                           with_types=True,
@@ -2115,18 +2127,18 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
         return sum(applied_transformations.values())
 
-    def apply_transformations_repeated(
-            self,
-            xforms: Union[Type, List[Type]],
-            options: Optional[Union[Dict[str, Any], List[Dict[str,
-                                                              Any]]]] = None,
-            validate: bool = True,
-            validate_all: bool = False,
-            strict: bool = False,
-            states: Optional[List[Any]] = None,
-            print_report: Optional[bool] = None,
-            order_by_transformation: bool = True,
-            progress: Optional[bool] = None) -> int:
+    def apply_transformations_repeated(self,
+                                       xforms: Union[Type, List[Type]],
+                                       options: Optional[Union[Dict[
+                                           str, Any], List[Dict[str,
+                                                                Any]]]] = None,
+                                       validate: bool = True,
+                                       validate_all: bool = False,
+                                       strict: bool = False,
+                                       states: Optional[List[Any]] = None,
+                                       print_report: Optional[bool] = None,
+                                       order_by_transformation: bool = True,
+                                       progress: Optional[bool] = None) -> int:
         """ This function repeatedly applies a transformation or a set of
             (unique) transformations until none can be found. Operates in-place.
             :param xforms: A Transformation class or a set thereof.
@@ -2156,7 +2168,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         # Avoiding import loops
         from dace.transformation import optimizer
         from dace.transformation.transformation import Transformation
-            
+
         start = time.time()
 
         applied_transformations = collections.defaultdict(int)
@@ -2188,8 +2200,10 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             applied_transformations[type(match).__name__] += 1
             if progress or (progress is None and (time.time() - start) > 5):
                 print('Applied {}.\r'.format(', '.join([
-                     '%d %s' % (v, k) for k, v in applied_transformations.items()
-                ])), end='')
+                    '%d %s' % (v, k)
+                    for k, v in applied_transformations.items()
+                ])),
+                      end='')
             if validate_all:
                 try:
                     self.validate()
@@ -2246,8 +2260,11 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
         if (len(applied_transformations) > 0
                 and (progress or print_report or
-                     ((progress is None or print_report is None) and Config.get_bool('debugprint')))):
-            print('Applied {}.'.format(', '.join(['%d %s' % (v, k) for k, v in applied_transformations.items()])))
+                     ((progress is None or print_report is None)
+                      and Config.get_bool('debugprint')))):
+            print('Applied {}.'.format(', '.join([
+                '%d %s' % (v, k) for k, v in applied_transformations.items()
+            ])))
 
         return sum(applied_transformations.values())
 

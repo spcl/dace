@@ -22,10 +22,7 @@ def generate_headers(sdfg: SDFG) -> str:
     """ Generate a header file for the SDFG """
     proto = ""
     proto += "#include <dace/dace.h>\n"
-    init_params = (sdfg.name, sdfg.name,
-                   sdfg.signature(with_types=True,
-                                  for_call=False,
-                                  with_arrays=False))
+    init_params = (sdfg.name, sdfg.name, sdfg.init_signature(for_call=False))
     call_params = sdfg.signature(with_types=True, for_call=False)
     if len(call_params) > 0:
         call_params = ', ' + call_params
@@ -44,9 +41,7 @@ def generate_dummy(sdfg: SDFG) -> str:
         the right types and and guess values for scalars.
     """
     al = sdfg.arglist()
-    init_params = sdfg.signature(with_types=False,
-                                 for_call=True,
-                                 with_arrays=False)
+    init_params = sdfg.init_signature(for_call=True)
     params = sdfg.signature(with_types=False, for_call=True)
     if len(params) > 0:
         params = ', ' + params
