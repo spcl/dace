@@ -126,7 +126,7 @@ class XilinxCodeGen(fpga.FPGACodeGen):
 
         self._frame.generate_fileheader(self._global_sdfg, host_code, 'xilinx_host')
 
-        params_comma = self._global_sdfg.signature(with_arrays=False, arglist=self._frame.arglist_scalars_only)
+        params_comma = self._global_sdfg.init_signature()
         if params_comma:
             params_comma = ', ' + params_comma
 
