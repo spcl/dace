@@ -30,7 +30,7 @@ class MPICodeGen(TargetCodeGenerator):
         sdfg = self._global_sdfg
         self._frame.generate_fileheader(sdfg, fileheader, 'mpi')
 
-        params_comma = self._global_sdfg.init_signature(self._frame.free_symbols(self._global_sdfg))
+        params_comma = self._global_sdfg.init_signature(free_symbols=self._frame.free_symbols(self._global_sdfg))
         if params_comma:
             params_comma = ', ' + params_comma
 
