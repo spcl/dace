@@ -1192,7 +1192,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                 json_output = self.to_json(hash=hash)
                 if exception:
                     json_output['error'] = exception.to_json()
-                fp.write(dace.serialize.dumps(json_output))
+                dace.serialize.dump(json_output, fp)
             if hash and 'hash' in json_output['attributes']:
                 return json_output['attributes']['hash']
 

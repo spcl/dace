@@ -151,6 +151,14 @@ def dumps(*args, **kwargs):
     return json.dumps(*args, default=to_json, indent=2, **kwargs)
 
 
+def load(*args, context=None, **kwargs):
+    loaded = json.load(*args, **kwargs)
+    return from_json(loaded, context)
+
+
+def dump(*args, **kwargs):
+    return json.dump(*args, default=to_json, indent=2, **kwargs)
+
 def all_properties_to_json(object_with_properties):
     retdict = {}
     for x, v in object_with_properties.properties():

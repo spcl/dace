@@ -14,7 +14,7 @@ from dace.properties import (EnumProperty, Property, DictProperty, SubsetPropert
                              make_properties)
 from inspect import getframeinfo, stack
 import itertools
-from typing import (Any, AnyStr, Dict, Iterable, List, Optional, Set, Tuple, Union)
+from typing import (Any, AnyStr, Dict, Iterable, Iterator, List, Optional, Set, Tuple, Union, overload)
 import warnings
 
 
@@ -55,6 +55,17 @@ class StateGraphView(object):
     """
     def __init__(self, *args, **kwargs):
         self._clear_scopedict_cache()
+
+    ###################################################################
+    # Typing overrides
+    
+    @overload
+    def nodes(self) -> List[nd.Node]:
+        ...
+
+    @overload
+    def edges(self) -> List[MultiConnectorEdge[mm.Memlet]]:
+        ...
 
     ###################################################################
     # Traversal methods
