@@ -303,7 +303,7 @@ def make_vadd_multi_sdfg(N, M):
 def test_hardware_vadd():
     # add symbol
     N = dace.symbol('N')
-    N.set(256)
+    N.set(128)
     veclen = 16
     sdfg = make_vadd_sdfg(N, veclen)
     a = np.random.randint(0, 100, N.get()).astype(np.float32)
@@ -326,8 +326,8 @@ def test_hardware_add42_single():
     M = dace.symbol('M')
 
     # init data structures
-    N.set(256)  # elements
-    M.set(256)  # elements per kernel
+    N.set(128)  # elements
+    M.set(128)  # elements per kernel
     a = np.random.randint(0, 100, N.get()).astype(np.int32)
     b = np.zeros((N.get(), )).astype(np.int32)
     sdfg = make_vadd_multi_sdfg(N, M)
@@ -358,7 +358,7 @@ def test_hardware_axpy_double_pump(veclen=2):
 
     # init data structures
     N = dace.symbol('N')
-    N.set(4096)
+    N.set(128)
     a = np.random.rand(1)[0].astype(np.float32)
     x = np.random.rand(N.get()).astype(np.float32)
     y = np.random.rand(N.get()).astype(np.float32)
@@ -420,12 +420,12 @@ if __name__ == '__main__':
     old_mode = dace.config.Config.get('compiler', 'xilinx', 'mode')
     dace.config.Config.set('compiler', 'xilinx', 'mode', value='hardware_emulation')
 
-    test_hardware_vadd(None)
-    test_hardware_add42_single(None)
+    #test_hardware_vadd(None)
+    #test_hardware_add42_single(None)
     # TODO disabled due to problem with array of streams in Vitis 2021.1
     #test_hardware_add42_multi(None)
     test_hardware_axpy_double_pump_vec2(None)
-    test_hardware_axpy_double_pump_vec4(None)
+    #test_hardware_axpy_double_pump_vec4(None)
 
     # Restore the previous config mode
     dace.config.Config.set('compiler', 'xilinx', 'mode', value=old_mode)
