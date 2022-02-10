@@ -1542,27 +1542,11 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             descriptor store. """
         debuginfo = debuginfo or desc.debuginfo
         dtype = dtype or desc.dtype
-        if isinstance(desc, dt.Scalar):
-            return self.add_scalar(self.temp_data_name(),
-                                   dtype,
-                                   desc.storage,
-                                   transient=True,
-                                   lifetime=desc.lifetime,
-                                   debuginfo=debuginfo)
-        return self.add_array(self.temp_data_name(),
-                              desc.shape,
-                              dtype,
-                              storage=desc.storage,
-                              location=desc.location,
-                              transient=True,
-                              strides=desc.strides,
-                              offset=desc.offset,
-                              lifetime=desc.lifetime,
-                              alignment=desc.alignment,
-                              debuginfo=debuginfo,
-                              allow_conflicts=desc.allow_conflicts,
-                              total_size=desc.total_size,
-                              may_alias=desc.may_alias)
+        newdesc = desc.clone()
+        newdesc.dtype = dtype
+        newdesc.transient = True
+        newdesc.debuginfo = debuginfo
+        return self.add_datadesc(self.temp_data_name(), newdesc), newdesc
 
     def add_datadesc(self, name: str, datadesc: dt.Data, find_new_name=False) -> str:
         """ Adds an existing data descriptor to the SDFG array store.
