@@ -87,41 +87,53 @@ def make_sdfg(veclen=2):
         wire [31:0] axis_ax_tdata;
         wire        axis_ax_tready;
 
-        floating_point_mult multiplier (
-            .aclk(ap_aclk),
+        reg [VECLEN-1:0] s_axis_x_in_tready_tmp;
+        reg [VECLEN-1:0] s_axis_y_in_tready_tmp;
+        reg [VECLEN-1:0] m_axis_result_out_tvalid_tmp;
 
-            .s_axis_a_tvalid(1),
-            .s_axis_a_tdata(a_in),
-            //.s_axis_a_tready(),
+        generate for (genvar i = 0; i < VECLEN; i++) begin
 
-            .s_axis_b_tvalid(s_axis_x_in_tvalid),
-            .s_axis_b_tdata( s_axis_x_in_tdata),
-            .s_axis_b_tready(s_axis_x_in_tready),
+            wire        axis_ax_tvalid;
+            wire [31:0] axis_ax_tdata;
+            wire        axis_ax_tready;
 
-            .m_axis_result_tvalid(axis_ax_tvalid),
-            .m_axis_result_tdata( axis_ax_tdata),
-            .m_axis_result_tready(axis_ax_tready)
-        );
+            floating_point_mult multiplier (
+                .aclk(ap_aclk),
 
-        wire        axis_result_tvalid;
-        wire [31:0] axis_result_tdata;
-        wire        axis_result_tready;
+                .s_axis_a_tvalid(scalars_valid),
+                .s_axis_a_tdata(a_in),
+                //.s_axis_a_tready(),
 
-        floating_point_add adder (
-            .aclk(ap_aclk),
+                .s_axis_b_tvalid(s_axis_x_in_tvalid),
+                .s_axis_b_tdata( s_axis_x_in_tdata[i]),
+                .s_axis_b_tready(s_axis_x_in_tready_tmp[i]),
 
-            .s_axis_a_tvalid(axis_ax_tvalid),
-            .s_axis_a_tdata( axis_ax_tdata),
-            .s_axis_a_tready(axis_ax_tready),
+                .m_axis_result_tvalid(axis_ax_tvalid),
+                .m_axis_result_tdata( axis_ax_tdata),
+                .m_axis_result_tready(axis_ax_tready)
+            );
 
-            .s_axis_b_tvalid(s_axis_y_in_tvalid),
-            .s_axis_b_tdata( s_axis_y_in_tdata),
-            .s_axis_b_tready(s_axis_y_in_tready),
+            floating_point_add adder (
+                .aclk(ap_aclk),
 
-            .m_axis_result_tvalid(m_axis_result_out_tvalid),
-            .m_axis_result_tdata( m_axis_result_out_tdata),
-            .m_axis_result_tready(m_axis_result_out_tready)
-        );
+                .s_axis_a_tvalid(axis_ax_tvalid),
+                .s_axis_a_tdata( axis_ax_tdata),
+                .s_axis_a_tready(axis_ax_tready),
+
+                .s_axis_b_tvalid(s_axis_y_in_tvalid),
+                .s_axis_b_tdata( s_axis_y_in_tdata[i]),
+                .s_axis_b_tready(s_axis_y_in_tready_tmp[i]),
+
+                .m_axis_result_tvalid(m_axis_result_out_tvalid_tmp[i]),
+                .m_axis_result_tdata( m_axis_result_out_tdata[i]),
+                .m_axis_result_tready(m_axis_result_out_tready)
+            );
+
+        end endgenerate
+
+        assign s_axis_x_in_tready = &s_axis_x_in_tready_tmp;
+        assign s_axis_y_in_tready = &s_axis_y_in_tready_tmp;
+        assign m_axis_result_out_tvalid = &m_axis_result_out_tvalid_tmp;
         ''',
                                     language=dace.Language.SystemVerilog)
 
@@ -226,7 +238,7 @@ if __name__ == '__main__':
 
     # init data structures
     N.set(4096)
-    a = np.float32(0)  #np.random.rand(1)[0].astype(np.float32)
+    a = np.random.rand(1)[0].astype(np.float32)
     x = np.random.rand(N.get()).astype(np.float32)
     y = np.random.rand(N.get()).astype(np.float32)
     result = np.zeros((N.get(), )).astype(np.float32)

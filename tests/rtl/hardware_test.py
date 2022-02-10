@@ -82,7 +82,7 @@ def make_vadd_sdfg(N, veclen=8):
                     .s_axis_a_tdata  (a_tdata[i]),
                     .s_axis_a_tready (a_tready[i]),
 
-                    .s_axis_b_tvalid (1),
+                    .s_axis_b_tvalid (scalars_valid),
                     .s_axis_b_tdata  (b),
 
                     .m_axis_result_tvalid (c_tvalid[i]),
@@ -307,8 +307,7 @@ def test_hardware_vadd():
     veclen = 16
     sdfg = make_vadd_sdfg(N, veclen)
     a = np.random.randint(0, 100, N.get()).astype(np.float32)
-    # TODO set to 0 due to the scalar argument problem
-    b = np.float32(0)  #np.random.randint(1, 100, 1)[0].astype(np.float32)
+    b = np.random.randint(1, 100, 1)[0].astype(np.float32)
     c = np.zeros((N.get(), )).astype(np.float32)
 
     # call program
@@ -359,10 +358,8 @@ def test_hardware_axpy_double_pump(veclen=2):
 
     # init data structures
     N = dace.symbol('N')
-    N.set(128)
-    # TODO a is set to zero due to the problem of the host overwriting the arguments with 0's after launching
-    # the kernel, when running in hardware simulation.
-    a = np.float32(0)  #np.random.rand(1)[0].astype(np.float32)
+    N.set(4096)
+    a = np.random.rand(1)[0].astype(np.float32)
     x = np.random.rand(N.get()).astype(np.float32)
     y = np.random.rand(N.get()).astype(np.float32)
     result = np.zeros((N.get(), )).astype(np.float32)

@@ -235,7 +235,7 @@ def make_sdfg(veclen=2):
                 floating_point_mult multiplier (
                     .aclk(ap_aclk_2),
 
-                    .s_axis_a_tvalid(1),
+                    .s_axis_a_tvalid(scalars_valid),
                     .s_axis_a_tdata(a_in),
                     //.s_axis_a_tready(),
 
@@ -434,7 +434,7 @@ if __name__ == '__main__':
 
     # init data structures
     N.set(4096)
-    a = np.float32(0)  #np.random.rand(1)[0].astype(np.float32)
+    a = np.random.rand(1)[0].astype(np.float32)
     x = np.random.rand(N.get()).astype(np.float32)
     y = np.random.rand(N.get()).astype(np.float32)
     result = np.zeros((N.get(), )).astype(np.float32)
@@ -456,7 +456,7 @@ if __name__ == '__main__':
     diff = np.linalg.norm(expected - result) / N.get()
     print("Difference:", diff)
 
-    dace.config.Config.set('xilinx', 'compiler', 'frequency', value=old_freq)
-    dace.config.Config.set('xilinx', 'compiter', 'mode', value=old_mode)
+    dace.config.Config.set('compiler', 'xilinx', 'frequency', value=old_freq)
+    dace.config.Config.set('compiler', 'xilinx', 'mode', value=old_mode)
 
     exit(0 if diff <= 1e-5 else 1)
