@@ -285,6 +285,8 @@ def _subset_has_indirection(subset, pvisitor: 'ProgramVisitor' = None):
 
 
 def _subset_is_local_symbol_dependent(subset: subsets.Subset, pvisitor: 'ProgramVisitor') -> bool:
+    if any(str(s) in subset.free_symbols for s in pvisitor.symbols.keys()):
+        return True
     if any(s not in pvisitor.map_symbols and s not in pvisitor.globals for s in subset.free_symbols):
         return True
     return False
@@ -1346,7 +1348,11 @@ class ProgramVisitor(ExtNodeVisitor):
         # Add map inputs first
         dyn_inputs = {}
         for name, val in memlet_inputs.items():
-            dyn_inputs[name] = symbolic.symbol(name, self.scope_arrays[val.data].dtype)
+            if val.data in self.sdfg.arrays:
+                datatype = self.sdfg.arrays[val.data].dtype
+            else:
+                datatype = self.scope_arrays[val.data].dtype
+            dyn_inputs[name] = symbolic.symbol(name, datatype)
         result.update(dyn_inputs)
 
         for name, val in params:
@@ -1675,7 +1681,11 @@ class ProgramVisitor(ExtNodeVisitor):
                             raise DaceSyntaxError(self, node, 'Undefined variable "%s"' % atom)
                         # Add to global SDFG symbols
                         # TODO: If scalar, should add dynamic map connector?
-                        if str(atom) not in self.sdfg.symbols:
+                        if str(atom) in self.sdfg.arrays and isinstance(self.sdfg.arrays[str(atom)], data.Scalar):
+                            newvar = '__%s_%s%d' % (name, vid, ctr)
+                            repldict[str(atom)] = newvar
+                            map_inputs[newvar] = Memlet.from_array(str(atom), self.sdfg.arrays[str(atom)])
+                        elif str(atom) not in self.sdfg.symbols:
                             self.sdfg.add_symbol(str(atom), self.defined[str(atom)].dtype)
 
                 for expr in symbolic.swalk(symval):
@@ -1698,7 +1708,7 @@ class ProgramVisitor(ExtNodeVisitor):
                         ctr += 1
                 # Replace functions with new variables
                 for find, replace in repldict.items():
-                    val = re.sub(r"%s\(.*?\)" % find, replace, val)
+                    val = re.sub(r"%s\(.*?\)" % find, val, replace)
                 vsp[i] = val
 
             new_params.append((k, ':'.join(vsp)))
@@ -2122,7 +2132,8 @@ class ProgramVisitor(ExtNodeVisitor):
             self.break_states.append([])
             laststate, first_loop_state, last_loop_state = self._recursive_visit(node.body,
                                                                                  'for',
-                                                                                 node.lineno)
+                                                                                 node.lineno,
+                                                                                 extra_symbols=extra_syms)
             end_loop_state = self.last_state
 
             # Add loop to SDFG
