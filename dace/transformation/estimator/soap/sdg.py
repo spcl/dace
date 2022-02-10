@@ -1147,6 +1147,10 @@ class SDG:
     def recursive_SDG_subgraphing(self, node : str, nodes_so_far : Set[str], checked_subgraphs : set) -> List[SoapStatement]:
         if "all_subgraphs" in self.graph.nodes[node].keys():
             return self.graph.nodes[node]["all_subgraphs"]
+
+        # if len(nodes_so_far) > X: return
+        # count the number of unique modes in the subgraph
+        # and quit based on this
         base_st = self.graph.nodes[node]['st']
         S = copy.deepcopy(base_st)
         S.name = node
@@ -1185,14 +1189,18 @@ class SDG:
                                 S = copy.deepcopy(cur_stat)
                                 status = S.concatenate_sdg_statements(None, s_st)
                                 if status == 0:                                
-                                    cur_stat.concatenate_sdg_statements(None, s_st)                            
+                                    cur_stat.concatenate_sdg_statements(None, s_st) 
+                                     
+
                         else:
                             sibling_statements = copy.deepcopy(sdg_statements)
                             for sib_stat in sibling_statements:                                 
                                 S = copy.deepcopy(sib_stat)
                                 status = S.concatenate_sdg_statements(None, s_st)
                                 if status == 0 and S.subgraph not in checked_subgraphs.union(set([frozenset(sg.subgraph) for sg in sdg_statements])):
-                                    sdg_statements.append(S)    
+                                    cur_stat.calculate_dominator_size() 
+                                    if len(cur_stat.Dom_size.free_symbols) <= 6:
+                                        sdg_statements.append(S)    
 
             pred_arr_name = strip(pred)
             # the first condition catches the case where the scope dimension changed, and the array is no longer transient
