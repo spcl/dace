@@ -2122,8 +2122,7 @@ class ProgramVisitor(ExtNodeVisitor):
             self.break_states.append([])
             laststate, first_loop_state, last_loop_state = self._recursive_visit(node.body,
                                                                                  'for',
-                                                                                 node.lineno,
-                                                                                 extra_symbols=extra_syms)
+                                                                                 node.lineno)
             end_loop_state = self.last_state
 
             # Add loop to SDFG
@@ -4262,6 +4261,11 @@ class ProgramVisitor(ExtNodeVisitor):
             if (isinstance(result, symbolic.symbol) and name not in self.sdfg.symbols.keys()):
                 self.sdfg.add_symbol(result.name, result.dtype)
             return result
+
+        # Local PVisitor symbols
+        for s in self.symbols:
+            if name == str(s):
+                return s
 
         if name in self.sdfg.arrays:
             return name
