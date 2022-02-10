@@ -33,6 +33,9 @@ def test_mttkrp_io():
     # S2 = scale(NJ)
     # S3 = scale(NL)
     # decomp_params=[("p", p), ("Ss", 1024), ("S0", S0), ("S1", S1), ("S2", S2), ("S3", S3)]
+    einsum_str = 'ijk,jl,kl->il'
+    # einsum_str = 'ik,kj,jl->il'  # ik,kj -> ij.....    ij, jl -> il
+    decomp_params=[("p", 17), ("Ss", 1024), ("S0", 256), ("S1", 256), ("S2", 256), ("S3", 25600)]
     soap_result = perform_soap_analysis_einsum(einsum_str, decomp_params, generate_schedule=True)
     for i, sgraph in enumerate(soap_result.subgraphs):
         print(f"Subgraph {i}==================================================")

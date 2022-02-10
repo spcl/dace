@@ -12,75 +12,70 @@ import pytest
 
 os.environ['SYMPY_USE_CACHE'] = 'no'
 
-all_tests = [(suite_name, kernel_name) for suite_name in ["npbench"] #["manual_polybench", "npbench"] 
+all_tests = [(suite_name, kernel_name) for suite_name in ["manual_polybench", "npbench"]  
     for kernel_name in ["2mm", "3mm", "atax", "bicg", "cholesky", "correlation", "covariance", "deriche", "doitgen", 
 "durbin", "fdtd2d", "floyd-warshall", "gemm", "gemver", "gesummv", "gramschmidt", "heat3d", 
-"jacobi1d", "jacobi2d", "lu", "ludcmp", "mvt", "nussinov", "seidel2d", "symm", "syr2k", "syrk", "trmm", "trisolv"]]
+"jacobi1d", "jacobi2d", "lu", "ludcmp", "mvt", "nussinov", "seidel2d", "symm", "trmm", "trisolv"]]
 
-all_tests = [(suite_name, kernel_name) for suite_name in ["npbench"] 
-    for kernel_name in ["gemver"]]
+# all_tests = [(suite_name, kernel_name) for suite_name in ["npbench"] 
+#     for kernel_name in ["gramschmidt"]]
 
 
 @pytest.mark.parametrize("suite_name, kernel_name", all_tests)
-def test_polybench_kernels(suite_name : str = "manual_polybench", kernel_name : str = "heat3d"):
-#def test_polybench_kernels(suite_name : str, kernel_name : str):
+def test_polybench_kernels(suite_name : str, kernel_name : str):
+    sdfg_path = Config.get("soap", "tests", suite_name + "_path")
+    kernels = get_kernels(suite_name, kernel_name, sdfg_path)
+    final_analysisSym = polybenchRes
+    preprocessed = False
 
-    for suite_name, kernel_name in all_tests:
-        # suite_name = "manual_polybench"
-        # kernel_name = "heat3d"
-        sdfg_path = Config.get("soap", "tests", suite_name + "_path")
-        kernels = get_kernels(suite_name, kernel_name, sdfg_path)
-        final_analysisSym = polybenchRes
-        preprocessed = False
-
-        for [sdfg, exp] in kernels:
-            
-            exp = exp.split('_')[0]
-            sdfg_to_evaluate = ""
-            for node, state in sdfg.all_nodes_recursive():
-                if isinstance(node, dace.nodes.NestedSDFG) and 'kernel_' in node.label:
-                    sdfg_to_evaluate = node.sdfg
-                    break
-            if not sdfg_to_evaluate:
-                warnings.warn('NESTED SDFG NOT FOUND')
-                sdfg_to_evaluate = sdfg
-            sdfg=sdfg_to_evaluate
-
-            
-            print("Evaluating ", exp, ":\n")
-            if not preprocessed:
-                # Parallelize as many loops as possible
-                from dace.transformation.interstate import LoopToMap, RefineNestedAccess
-                sdfg.apply_transformations_repeated([LoopToMap, RefineNestedAccess])
-            
-                dace.propagate_memlets_sdfg(sdfg)
-                sdfg.save("tmp.sdfg", hash=False)        
-
-            else:
-                sdfg = dace.SDFG.from_file("tmp.sdfg")
-
-            if kernel_name in ["deriche", "symm"]:
-                solver_timeout = 100
-            else:
-                solver_timeout = 10
-            soap_result = perform_soap_analysis(sdfg, solver_timeout= solver_timeout)
-            Q = soap_result.Q
+    for [sdfg, exp] in kernels:
         
-            if len(Q.free_symbols) > 0:
-                Q = get_lead_term(Q)
-            strQ = (str(sp.simplify(Q))).replace('Ss', 'S').replace("**", "^").\
-                    replace('TMAX', 'T').replace('tsteps','T').replace('dace_','').\
-                    replace('_0', '').replace('m', 'M').replace('n', 'N').replace('k', 'K').\
-                    replace('i', 'I').replace('j', 'J').replace('l', 'L')
+        exp = exp.split('_')[0]
+        sdfg_to_evaluate = ""
+        for node, state in sdfg.all_nodes_recursive():
+            if isinstance(node, dace.nodes.NestedSDFG) and 'kernel_' in node.label:
+                sdfg_to_evaluate = node.sdfg
+                break
+        if not sdfg_to_evaluate:
+            warnings.warn('NESTED SDFG NOT FOUND')
+            sdfg_to_evaluate = sdfg
+        sdfg=sdfg_to_evaluate
+
+        
+        print("Evaluating ", exp, ":\n")
+        if not preprocessed:
+            # Parallelize as many loops as possible
+            from dace.transformation.interstate import LoopToMap, RefineNestedAccess
+            sdfg.apply_transformations_repeated([LoopToMap, RefineNestedAccess])
+        
+            dace.propagate_memlets_sdfg(sdfg)
+            sdfg.save("tmp.sdfg", hash=False)        
+
+        else:
+            sdfg = dace.SDFG.from_file("tmp.sdfg")
+
+        if kernel_name in ["deriche", "symm", "ludcmp", "gramschmidt"]:
+            solver_timeout = 100
+        else:
+            solver_timeout = 10
+        soap_result = perform_soap_analysis(sdfg, solver_timeout= solver_timeout)
+        Q = soap_result.Q
+    
+        if len(Q.free_symbols) > 0:
+            Q = get_lead_term(Q)
+        strQ = (str(sp.simplify(Q))).replace('Ss', 'S').replace("**", "^").\
+                replace('TMAX', 'T').replace('tsteps','T').replace('dace_','').\
+                replace('_0', '').replace('m', 'M').replace('n', 'N').replace('k', 'K').\
+                replace('i', 'I').replace('j', 'J').replace('l', 'L')
 
 
-            if exp in final_analysisSym.keys():
-                assert strQ in final_analysisSym[exp], 'Test failed! For exp ' + exp + ', old bound: ' + str(final_analysisSym[exp]) + ", new bound: " + strQ
-            elif any(exp in k for k in final_analysisSym.keys()):
-                exp = [k for k in final_analysisSym.keys() if exp in k][0]
-                assert final_analysisSym[exp] == strQ, 'Test failed! For exp ' + exp + ', old bound: ' + str(final_analysisSym[exp]) + ", new bound: " + strQ
-            else:
-                final_analysisSym[exp] = Q
+        if exp in final_analysisSym.keys():
+            assert strQ in final_analysisSym[exp], 'Test failed! For exp ' + exp + ', old bound: ' + str(final_analysisSym[exp]) + ", new bound: " + strQ
+        elif any(exp in k for k in final_analysisSym.keys()):
+            exp = [k for k in final_analysisSym.keys() if exp in k][0]
+            assert final_analysisSym[exp] == strQ, 'Test failed! For exp ' + exp + ', old bound: ' + str(final_analysisSym[exp]) + ", new bound: " + strQ
+        else:
+            final_analysisSym[exp] = Q
 
 
 

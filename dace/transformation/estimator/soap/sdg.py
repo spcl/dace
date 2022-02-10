@@ -1184,7 +1184,7 @@ class SDG:
                             a = 1
                         
                         # if the brother has no other parents than our shared parent, always add - do not branch
-                        if len(list(self.graph.predecessors(sibling))) == 1:
+                        if len(list(self.graph.predecessors(sibling))) == 1 and len(self.in_edges(sibling)) == 1:
                             for cur_stat in sdg_statements:  
                                 S = copy.deepcopy(cur_stat)
                                 status = S.concatenate_sdg_statements(None, s_st)
