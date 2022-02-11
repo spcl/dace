@@ -2758,7 +2758,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     if s in symbolic.symlist(r).values():
                         ignore_indices.append(i)
                         if any(t in self.sdfg.arrays for t in sr.free_symbols):
-                            sym_rng.append(subsets.Range([(0, parent_array.shape[i], 1)]))
+                            sym_rng.append(subsets.Range([(0, parent_array.shape[i] - 1, 1)]))
                         else:
                             sym_rng.append(sr)
                             # NOTE: Assume that the i-th index of the range is
