@@ -3,17 +3,19 @@ import dace
 
 import ast
 import copy
+from copy import deepcopy as dcpy
 import itertools
 import warnings
 from functools import reduce
 from numbers import Number, Integral
-from typing import Any, Callable, Dict, List, Sequence, Set, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple, Union
 
 import dace
 from dace.codegen.tools import type_inference
 from dace.config import Config
 from dace import data, dtypes, subsets, symbolic, sdfg as sd
 from dace.frontend.common import op_repository as oprepo
+from dace.frontend.python.common import DaceSyntaxError
 import dace.frontend.python.memlet_parser as mem_parser
 from dace.frontend.python import astutils
 from dace.frontend.python.nested_call import NestedCall
@@ -102,6 +104,63 @@ def _define_streamarray(pv: 'ProgramVisitor',
     return name
 
 
+@oprepo.replaces('numpy.array')
+@oprepo.replaces('dace.array')
+def _define_literal_ex(pv: 'ProgramVisitor',
+                       sdfg: SDFG,
+                       state: SDFGState,
+                       obj: Any,
+                       dtype: dace.typeclass = None,
+                       copy: bool = True,
+                       order: str = 'K',
+                       subok: bool = False,
+                       ndmin: int = 0,
+                       like: Any = None,
+                       storage: Optional[dtypes.StorageType] = None,
+                       lifetime: Optional[dtypes.AllocationLifetime] = None):
+    """ Defines a literal array in a DaCe program. """
+    if like is not None:
+        raise NotImplementedError('"like" argument unsupported for numpy.array')
+
+    name = sdfg.temp_data_name()
+    if dtype is not None and not isinstance(dtype, dtypes.typeclass):
+        dtype = dtypes.typeclass(dtype)
+
+    # From existing data descriptor
+    if isinstance(obj, str):
+        desc = dcpy(sdfg.arrays[obj])
+        if dtype is not None:
+            desc.dtype = dtype
+    else:  # From literal / constant
+        if dtype is None:
+            arr = np.array(obj, copy=copy, order=order, subok=subok, ndmin=ndmin)
+        else:
+            npdtype = dtype.as_numpy_dtype()
+            arr = np.array(obj, npdtype, copy=copy, order=order, subok=subok, ndmin=ndmin)
+        desc = data.create_datadescriptor(arr)
+
+    # Set extra properties
+    desc.transient = True
+    if storage is not None:
+        desc.storage = storage
+    if lifetime is not None:
+        desc.lifetime = lifetime
+
+    sdfg.add_datadesc(name, desc)
+
+    # If using existing array, make copy. Otherwise, make constant
+    if isinstance(obj, str):
+        # Make copy
+        rnode = state.add_read(obj)
+        wnode = state.add_write(name)
+        state.add_nedge(rnode, wnode, dace.Memlet.from_array(name, desc))
+    else:
+        # Make constant
+        sdfg.add_constant(name, arr, desc)
+
+    return name
+
+
 @oprepo.replaces('dace.reduce')
 def _reduce(pv: 'ProgramVisitor',
             sdfg: SDFG,
@@ -136,7 +195,11 @@ def _reduce(pv: 'ProgramVisitor',
             output_subset = copy.deepcopy(input_subset)
             output_subset.pop(axis)
             output_shape = output_subset.size()
-        outarr, arr = sdfg.add_temp_transient(output_shape, sdfg.arrays[inarr].dtype, sdfg.arrays[inarr].storage)
+        if (len(output_shape) == 1 and output_shape[0] == 1):
+            outarr = sdfg.temp_data_name()
+            outarr, arr = sdfg.add_scalar(outarr, sdfg.arrays[inarr].dtype, sdfg.arrays[inarr].storage, transient=True)
+        else:
+            outarr, arr = sdfg.add_temp_transient(output_shape, sdfg.arrays[inarr].dtype, sdfg.arrays[inarr].storage)
         output_memlet = Memlet.from_array(outarr, arr)
     else:
         inarr = in_array
@@ -463,11 +526,22 @@ def _simple_call(sdfg: SDFG, state: SDFGState, inpname: str, func: str, restype:
     """ Implements a simple call of the form `out = func(inp)`. """
     if isinstance(inpname, (list, tuple)):  # TODO investigate this
         inpname = inpname[0]
-    inparr = sdfg.arrays[inpname]
+    if not isinstance(inpname, str):
+        # Constant parameter
+        cst = inpname
+        inparr = data.create_datadescriptor(cst)
+        inpname = sdfg.temp_data_name()
+        inparr.transient = True
+        sdfg.add_constant(inpname, cst, inparr)
+        sdfg.add_datadesc(inpname, inparr)
+    else:
+        inparr = sdfg.arrays[inpname]
+
     if restype is None:
-        restype = sdfg.arrays[inpname].dtype
-    outname, outarr = sdfg.add_temp_transient(inparr.shape, restype, inparr.storage)
-    num_elements = reduce(lambda x, y: x * y, inparr.shape)
+        restype = inparr.dtype
+    outname, outarr = sdfg.add_temp_transient_like(inparr)
+    outarr.dtype = restype
+    num_elements = data._prod(inparr.shape)
     if num_elements == 1:
         inp = state.add_read(inpname)
         out = state.add_write(outname)
@@ -534,6 +608,16 @@ def _sqrt(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, input: str):
 @oprepo.replaces('math.log')
 def _log(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, input: str):
     return _simple_call(sdfg, state, input, 'log')
+
+
+@oprepo.replaces('math.floor')
+def _floor(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, input: str):
+    return _simple_call(sdfg, state, input, 'floor', restype=dtypes.typeclass(int))
+
+
+@oprepo.replaces('math.ceil')
+def _ceil(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, input: str):
+    return _simple_call(sdfg, state, input, 'ceil', restype=dtypes.typeclass(int))
 
 
 @oprepo.replaces('conj')
@@ -1588,17 +1672,13 @@ def _scalar_const_binop(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
 
     if left_operand in sdfg.arrays:
         left_scal = sdfg.arrays[left_operand]
-        left_type = left_scal.dtype
         storage = left_scal.storage
         right_scal = None
-        right_type = dtypes.DTYPE_TO_TYPECLASS[type(right_operand)]
         arguments = [left_scal, right_operand]
         tasklet_args = ['__in1', f'({str(right_operand)})']
     else:
         left_scal = None
-        left_type = dtypes.DTYPE_TO_TYPECLASS[type(left_operand)]
         right_scal = sdfg.arrays[right_operand]
-        right_type = right_scal.dtype
         storage = right_scal.storage
         arguments = [left_operand, right_scal]
         tasklet_args = [f'({str(left_operand)})', '__in2']
@@ -3489,6 +3569,13 @@ def implement_ufunc_reduce(visitor: 'ProgramVisitor', ast_node: ast.Call, sdfg: 
                 state = visitor._add_state(state.label + 'b')
             else:
                 initial = intermediate_name
+
+    # Special case for infinity
+    if np.isinf(initial):
+        if np.sign(initial) < 0:
+            initial = dtypes.min_value(result_type)
+        else:
+            initial = dtypes.max_value(result_type)
 
     # Create subgraph
     if isinstance(inputs[0], str) and inputs[0] in sdfg.arrays.keys():

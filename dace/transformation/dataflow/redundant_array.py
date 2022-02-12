@@ -184,6 +184,10 @@ class RedundantArray(pm.SingleStateTransformation, pm.SimplifyPass):
         if graph.out_degree(in_array) != 1:
             return False
 
+        # Ensure it is not an isolated copy
+        if graph.in_degree(in_array) == 0:
+            return False
+
         # Make sure that the candidate is a transient variable
         if not in_desc.transient:
             return False

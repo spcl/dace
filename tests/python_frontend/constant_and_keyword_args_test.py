@@ -1,10 +1,11 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Tests constants, optional, and keyword arguments. """
+from types import SimpleNamespace
 import dace
 import numpy as np
 import pytest
 
-from dace.frontend.python.common import SDFGConvertible
+from dace.frontend.python.common import DaceSyntaxError, SDFGConvertible
 
 
 def test_kwargs():
@@ -322,6 +323,11 @@ def test_constant_argument_default():
     const_prog(A, cst=4)
     assert np.allclose(A, 4)
 
+    # Test program
+    A = np.random.rand(20)
+    const_prog(A, cst=5)
+    assert np.allclose(A, 5)
+
     # Test code for folding
     code = const_prog.to_sdfg().generate_code()[0].clean_code
     assert 'cst' not in code
@@ -537,6 +543,79 @@ def test_constant_propagation_2():
     assert np.allclose(a, 1)
 
 
+def test_constant_proper_use():
+    @dace.program
+    def good_function(scal: dace.constant, scal2: dace.constant, arr):
+        a_bool = scal == 1
+        if a_bool:
+            arr[:] = arr[:] + scal2
+
+    @dace.program
+    def program(arr, scal: dace.constant):
+        arr[:] = arr[:] * scal
+        good_function(scal, 3.0, arr)
+
+    arr = np.ones((12), np.float64)
+    scal = 2
+
+    program(arr, scal)
+    assert np.allclose(arr, 2)
+
+
+def test_constant_proper_use_2():
+    """ Stress test constants with strings. """
+    @dace.program
+    def good_function(cfg: dace.constant, cfg2: dace.constant, arr):
+        print(cfg)
+        print(cfg2)
+
+    @dace.program
+    def program(arr, cfg: dace.constant):
+        arr[:] = arr[:] * scal
+        good_function(cfg, 'cfg2', arr)
+
+    arr = np.ones((12), np.float64)
+    scal = 2
+
+    program(arr, 'cfg')
+    assert np.allclose(arr, 2)
+
+
+def test_constant_misuse():
+    @dace.program
+    def bad_function(scal: dace.constant, arr):
+        a_bool = scal == 1
+        if a_bool:
+            arr[:] = arr[:] + 1
+
+    @dace.program
+    def program(arr, scal):
+        arr[:] = arr[:] * scal
+        bad_function(scal, arr)
+
+    arr = np.ones((12), np.float64)
+    scal = 2
+
+    with pytest.raises(DaceSyntaxError):
+        program(arr, scal)
+
+
+def test_constant_field():
+    def function(ctx: dace.constant, arr, somebool):
+        a_bool = ctx.scal == 1
+        if a_bool and somebool:
+            arr[:] = arr[:] + 1
+
+    @dace.program
+    def program(arr, ctx: dace.constant):
+        function(ctx, arr, ctx.scal == 1)
+
+    ns = SimpleNamespace(scal=2)
+    arr = np.ones((12), np.float64)
+
+    program(arr, ns)
+
+
 if __name__ == '__main__':
     test_kwargs()
     test_kwargs_jit()
@@ -568,3 +647,7 @@ if __name__ == '__main__':
     test_constant_list_function()
     test_constant_propagation()
     test_constant_propagation_2()
+    test_constant_proper_use()
+    test_constant_proper_use_2()
+    test_constant_misuse()
+    test_constant_field()

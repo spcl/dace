@@ -258,6 +258,7 @@ def fpga_ptr(name: str,
 
             subset_info = low  #used for arrayinterface name where it must be int
     if is_array_interface:
+        # qualify the name
         if is_write is None:
             raise ValueError("is_write must be set for ArrayInterface.")
         ptr_in = f"__{name}_in"
@@ -282,6 +283,21 @@ def fpga_ptr(name: str,
         if interface_id is not None:
             name = f"{name}_{interface_id}"
     return name
+
+
+def unqualify_fpga_array_name(sdfg: dace.SDFG, arr_name: str):
+    '''
+    Returns the unqualified array name if it refers to an array interface.
+    Otherwise return it as it is.
+    :param name: array name to unqualify
+    '''
+
+    if arr_name not in sdfg.arrays and (arr_name.endswith('_in') or arr_name.endswith('out')) and arr_name.startswith('__'):
+        unqualified = re.sub('_in$|_out$', '', arr_name)
+        unqualified = re.sub('^__', '', unqualified)
+        return unqualified
+    else:
+        return arr_name
 
 
 class FPGACodeGen(TargetCodeGenerator):
@@ -376,6 +392,9 @@ class FPGACodeGen(TargetCodeGenerator):
     def preprocess(self, sdfg: SDFG) -> None:
         # Right before finalizing code, write FPGA context to state structure
         self._frame.statestruct.append('dace_fpga_context *fpga_context;')
+
+        # Call vendor-specific preprocessing
+        self._internal_preprocess(sdfg)
 
     def _kernels_subgraphs(self, graph: Union[dace.sdfg.SDFGState, ScopeSubgraphView], dependencies: dict):
         '''
@@ -716,6 +735,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
             data_to_node.update(
                 {node.data: node
                  for node in subgraph.nodes() if isinstance(node, dace.sdfg.nodes.AccessNode)})
+            is_rtl_subgraph = any([isinstance(node, nodes.RTLTasklet) for node in subgraph.nodes()])
             subsdfg = subgraph.parent
             candidates = []  # type: List[Tuple[bool,str,Data]]
             # [(is an output, dataname string, data object)]
@@ -724,19 +744,14 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
             for n in subgraph.source_nodes():
                 # Check if the node is connected to an RTL tasklet, in which
                 # case it should be an external stream
-                dsts = [e.dst for e in state.out_edges(n)]
-                srcs = [e.src for e in state.in_edges(n)]
-                tasks = [t for t in dsts + srcs if isinstance(t, dace.nodes.Tasklet)]
-                external = any([t.language == dtypes.Language.SystemVerilog for t in tasks])
+                is_external = is_rtl_subgraph
                 is_output = True
-
-                if not external and self._num_kernels > 1:
-                    # Check if this is an external stream
+                if not is_external and self._num_kernels > 1:
                     if is_external_stream(n, subgraph):
-                        external = True
+                        is_external = True
                         is_output = False
 
-                if external:
+                if is_external:
                     external_streams |= {(is_output, e.data.data, subsdfg.arrays[e.data.data], None)
                                          for e in state.out_edges(n)
                                          if isinstance(subsdfg.arrays[e.data.data], dt.Stream)}
@@ -745,20 +760,14 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
             for n in subgraph.sink_nodes():
                 # Check if the node is connected to an RTL tasklet, in which
                 # case it should be an external stream
-                dsts = [e.dst for e in state.out_edges(n)]
-                srcs = [e.src for e in state.in_edges(n)]
-                tasks = [t for t in dsts + srcs if isinstance(t, dace.nodes.Tasklet)]
-
-                external = any([t.language == dtypes.Language.SystemVerilog for t in tasks])
+                is_external = is_rtl_subgraph
                 is_output = False
-
-                if not external and self._num_kernels > 1:
-                    # Check if this is an external stream
+                if not is_external and self._num_kernels > 1:
                     if is_external_stream(n, subgraph):
-                        external = True
+                        is_external = True
                         is_output = True
 
-                if external:
+                if is_external:
                     external_streams |= {(is_output, e.data.data, subsdfg.arrays[e.data.data], None)
                                          for e in state.in_edges(n)
                                          if isinstance(subsdfg.arrays[e.data.data], dt.Stream)}
@@ -869,7 +878,8 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                             trace_type, trace_bank = parse_location_bank(trace_desc)
                             if (bank is not None and bank_type is not None
                                     and (bank != trace_bank or bank_type != trace_type)):
-                                raise cgx.CodegenError("Found inconsistent memory bank " f"specifier for {trace_name}.")
+                                raise cgx.CodegenError("Found inconsistent memory bank "
+                                                       f"specifier for {trace_name}.")
                             bank = trace_bank
                             bank_type = trace_type
 
@@ -1396,7 +1406,8 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
 
             if (not sum(copy_shape) == 1 and
                 (not isinstance(memlet.subset, subsets.Range) or any([step != 1 for _, _, step in memlet.subset]))):
-                raise NotImplementedError("Only contiguous copies currently " "supported for FPGA codegen.")
+                raise NotImplementedError("Only contiguous copies currently "
+                                          "supported for FPGA codegen.")
 
             if host_to_device or device_to_device:
                 host_dtype = sdfg.data(src_node.data).dtype
@@ -1616,7 +1627,8 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
     @staticmethod
     def make_opencl_parameter(name, desc):
         if isinstance(desc, dt.Array):
-            return (f"hlslib::ocl::Buffer<{desc.dtype.ctype}, " f"hlslib::ocl::Access::readWrite> &{name}")
+            return (f"hlslib::ocl::Buffer<{desc.dtype.ctype}, "
+                    f"hlslib::ocl::Access::readWrite> &{name}")
         else:
             return (desc.as_arg(with_types=True, name=name))
 
@@ -1876,7 +1888,8 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                                 elif np.issubdtype(np.dtype(end_type.dtype.type), np.unsignedinteger):
                                     loop_var_type = "size_t"
                     except (UnboundLocalError):
-                        raise UnboundLocalError('Pipeline scopes require ' 'specialized bound values')
+                        raise UnboundLocalError('Pipeline scopes require '
+                                                'specialized bound values')
                     except (TypeError):
                         # Raised when the evaluation of begin or skip fails.
                         # This could occur, for example, if they are defined in terms of other symbols, which

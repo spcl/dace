@@ -23,11 +23,7 @@ def generate_headers(sdfg: SDFG, frame: framecode.DaCeCodeGenerator) -> str:
     """ Generate a header file for the SDFG """
     proto = ""
     proto += "#include <dace/dace.h>\n"
-    init_params = (sdfg.name, sdfg.name,
-                   sdfg.signature(with_types=True,
-                                  for_call=False,
-                                  with_arrays=False,
-                                  arglist=frame.arglist_scalars_only))
+    init_params = (sdfg.name, sdfg.name, sdfg.init_signature(free_symbols=frame.free_symbols(sdfg)))
     call_params = sdfg.signature(with_types=True, for_call=False, arglist=frame.arglist)
     if len(call_params) > 0:
         call_params = ', ' + call_params
@@ -46,7 +42,7 @@ def generate_dummy(sdfg: SDFG, frame: framecode.DaCeCodeGenerator) -> str:
         the right types and and guess values for scalars.
     """
     al = frame.arglist
-    init_params = sdfg.signature(with_types=False, for_call=True, with_arrays=False, arglist=frame.arglist_scalars_only)
+    init_params = sdfg.init_signature(for_call=True, free_symbols=frame.free_symbols(sdfg))
     params = sdfg.signature(with_types=False, for_call=True, arglist=frame.arglist)
     if len(params) > 0:
         params = ', ' + params

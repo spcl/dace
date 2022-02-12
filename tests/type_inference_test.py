@@ -93,6 +93,11 @@ class TestTypeInference(unittest.TestCase):
         code_str = "a = 5 + 3.5"
         self.assertRaises(TypeError, lambda: type_inference.infer_expr_type(code_str))
 
+        prev_symbols = {"ul": dtypes.typeclass(float)}
+        code_str = "min(ul, 0)"
+        inf_type = type_inference.infer_expr_type(code_str, prev_symbols)
+        self.assertEqual(inf_type, dtypes.typeclass(float))
+
     def testExpressionAssignment(self):
 
         code_str = "res = 5 + 3.1"
@@ -114,6 +119,11 @@ class TestTypeInference(unittest.TestCase):
 
     def testArrayAccess(self):
         code_str = "tmp = array[i]"
+        symbols = type_inference.infer_types(code_str, {"array": dtypes.typeclass(float)})
+        self.assertEqual(symbols["tmp"], dtypes.typeclass(float))
+
+    def testMultidimArrayAccess(self):
+        code_str = "tmp = 1.0 - array[i, j]"
         symbols = type_inference.infer_types(code_str, {"array": dtypes.typeclass(float)})
         self.assertEqual(symbols["tmp"], dtypes.typeclass(float))
 
@@ -214,7 +224,7 @@ for i in range(5):
 
     def testVarious(self):
         # code snippets that contains constructs not directly involved in type inference
-        # (borrowed by astunparse tests)
+        # (borrowed from astunparse tests)
 
         while_code = """def g():
     while True:

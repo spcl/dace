@@ -791,7 +791,7 @@ class constant:
     """
     @staticmethod
     def __descriptor__():
-        raise ValueError('All constant arguments must be provided in order ' 'to compile the SDFG ahead-of-time.')
+        raise ValueError('All constant arguments must be provided in order to compile the SDFG ahead-of-time.')
 
 
 ####### Utility function ##############
@@ -807,17 +807,9 @@ def ptrtocupy(ptr, inner_ctype, shape):
     return cp.ndarray(shape=shape, dtype=inner_ctype, memptr=cp.cuda.MemoryPointer(umem, 0))
 
 
-def _atomic_counter_generator():
-    ctr = 0
-    while True:
-        ctr += 1
-        yield ctr
-
-
 class callback(typeclass):
     """ Looks like dace.callback([None, <some_native_type>], *types)"""
     def __init__(self, return_types, *variadic_args):
-        self.uid = next(_atomic_counter_generator())
         from dace import data
         if return_types is None:
             return_types = []
@@ -929,6 +921,10 @@ class callback(typeclass):
                 inp_arraypos.append(index)
                 inp_types_and_sizes.append((ctypes.c_char_p, []))
                 inp_converters.append(lambda a, *args: ctypes.cast(a, ctypes.c_char_p).value.decode('utf-8'))
+            elif isinstance(arg, data.Scalar) and isinstance(arg.dtype, pointer):
+                inp_arraypos.append(index)
+                inp_types_and_sizes.append((ctypes.c_void_p, []))
+                inp_converters.append(lambda a, *args: ctypes.cast(a, ctypes.c_void_p).value)
             else:
                 inp_converters.append(lambda a: a)
         offset = len(self.input_types)
@@ -944,6 +940,10 @@ class callback(typeclass):
                 ret_arraypos.append(index + offset)
                 ret_types_and_sizes.append((ctypes.c_char_p, []))
                 ret_converters.append(lambda a, *args: ctypes.cast(a, ctypes.c_char_p).value.decode('utf-8'))
+            elif isinstance(arg, data.Scalar) and isinstance(arg.dtype, pointer):
+                ret_arraypos.append(index)
+                ret_types_and_sizes.append((ctypes.c_void_p, []))
+                ret_converters.append(lambda a, *args: ctypes.cast(a, ctypes.c_void_p).value)
             else:
                 ret_converters.append(lambda a, *args: a)
         if len(inp_arraypos) == 0 and len(ret_arraypos) == 0:
@@ -989,7 +989,7 @@ class callback(typeclass):
         return partial(trampoline, pyfunc, inp_arraypos, inp_types_and_sizes, ret_arraypos, ret_types_and_sizes)
 
     def __hash__(self):
-        return hash((self.uid, *self.return_types, *self.input_types))
+        return hash((*self.return_types, *self.input_types))
 
     def to_json(self):
         if self.return_types:
@@ -1021,7 +1021,7 @@ class callback(typeclass):
     def __eq__(self, other):
         if not isinstance(other, callback):
             return False
-        return self.uid == other.uid
+        return self.input_types == other.input_types and self.return_types == other.return_types
 
     def __ne__(self, other):
         return not self.__eq__(other)

@@ -97,6 +97,24 @@ def test_identity():
     return np.identity(M)
 
 
+@compare_numpy_output()
+def test_array(A: dace.float64[N, M]):
+    return np.array(A)
+
+
+cst = np.random.rand(10, 10).astype(np.float32)
+
+
+@compare_numpy_output()
+def test_array_constant():
+    return np.array(cst, dtype=np.float32)
+
+
+@compare_numpy_output()
+def test_array_literal():
+    return np.array([[1, 2], [3, 4]], dtype=np.float32)
+
+
 if __name__ == "__main__":
     test_empty()
     test_empty_like1()
@@ -110,3 +128,6 @@ if __name__ == "__main__":
     test_full_like()
     test_copy()
     test_identity()
+    test_array()
+    test_array_constant()
+    test_array_literal()

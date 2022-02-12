@@ -1094,8 +1094,12 @@ class CPUCodeGen(TargetCodeGenerator):
                         # We can pre-read the value
                         result += "{} {} = {};".format(memlet_type, local_name, expr)
                     else:
-                        # Pointer reference
-                        result += "{} {} = {};".format(ctypedef, local_name, expr)
+                        # constexpr arrays
+                        if memlet.data in self._frame.symbols_and_constants(sdfg):
+                            result += "const {} {} = {};".format(memlet_type, local_name, expr)
+                        else:
+                            # Pointer reference
+                            result += "{} {} = {};".format(ctypedef, local_name, expr)
                 else:
                     # Variable number of reads: get a const reference that can
                     # be read if necessary
@@ -1109,6 +1113,9 @@ class CPUCodeGen(TargetCodeGenerator):
         elif var_type in [DefinedType.Stream, DefinedType.StreamArray]:
             if not memlet.dynamic and memlet.num_accesses == 1:
                 if not output:
+                    if isinstance(desc, data.Stream) and desc.is_stream_array():
+                        index = cpp.cpp_offset_expr(desc, memlet.subset)
+                        expr = f"{memlet.data}[{index}]"
                     result += f'{memlet_type} {local_name} = ({expr}).pop();'
                     defined = DefinedType.Scalar
             else:
