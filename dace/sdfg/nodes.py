@@ -556,13 +556,18 @@ class NestedSDFG(CodeNode):
             if not dtypes.validate_name(out_conn):
                 raise NameError('Invalid output connector "%s"' % out_conn)
         connectors = self.in_connectors.keys() | self.out_connectors.keys()
+        for conn in connectors:
+            if conn not in self.sdfg.arrays:
+                raise NameError(
+                    f'Connector "{conn}" was given but is not a registered data descriptor in the nested SDFG. '
+                    'Example: parameter passed to a function without a matching array within it.')
         for dname, desc in self.sdfg.arrays.items():
             # TODO(later): Disallow scalars without access nodes (so that this
             #              check passes for them too).
             if isinstance(desc, data.Scalar):
                 continue
             if not desc.transient and dname not in connectors:
-                raise NameError('Data descriptor "%s" not found in nested ' 'SDFG connectors' % dname)
+                raise NameError('Data descriptor "%s" not found in nested SDFG connectors' % dname)
             if dname in connectors and desc.transient:
                 raise NameError('"%s" is a connector but its corresponding array is transient' % dname)
 
