@@ -93,6 +93,11 @@ class TestTypeInference(unittest.TestCase):
         code_str = "a = 5 + 3.5"
         self.assertRaises(TypeError, lambda: type_inference.infer_expr_type(code_str))
 
+        prev_symbols = {"ul": dtypes.typeclass(float)}
+        code_str = "min(ul, 0)"
+        inf_type = type_inference.infer_expr_type(code_str, prev_symbols)
+        self.assertEqual(inf_type, dtypes.typeclass(float))
+
     def testExpressionAssignment(self):
 
         code_str = "res = 5 + 3.1"

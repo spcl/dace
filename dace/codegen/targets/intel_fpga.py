@@ -134,7 +134,7 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
 
         self._frame.generate_fileheader(self._global_sdfg, host_code, 'intelfpga_host')
 
-        params_comma = self._global_sdfg.signature(with_arrays=False, arglist=self._frame.arglist_scalars_only)
+        params_comma = self._global_sdfg.init_signature(free_symbols=self._frame.free_symbols(self._global_sdfg))
         if params_comma:
             params_comma = ', ' + params_comma
 

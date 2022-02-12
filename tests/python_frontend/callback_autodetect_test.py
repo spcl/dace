@@ -497,6 +497,23 @@ def test_two_callbacks_different_type():
     assert called_cnt == 2
 
 
+def test_disallowed_keyword():
+    class Obj:
+        def hello(a):
+            try:
+                return a + 1
+            except:
+                return a + 2
+
+    @dace
+    def prog(a: dace.float64[10]):
+        b: dace.float64[10] = Obj.hello(a)
+        return b
+
+    a = np.random.rand(10)
+    assert np.allclose(prog(a), a + 1)
+
+
 if __name__ == '__main__':
     test_automatic_callback()
     test_automatic_callback_2()
@@ -519,3 +536,4 @@ if __name__ == '__main__':
     test_two_callbacks()
     test_two_callbacks_different_sig()
     test_two_callbacks_different_type()
+    test_disallowed_keyword()

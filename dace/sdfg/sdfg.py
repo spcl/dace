@@ -1043,6 +1043,19 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
         return result
 
+    def init_signature(self, for_call=False, free_symbols=None) -> str:
+        """ Returns a C/C++ signature of this SDFG, used when generating the initalization code.
+            It only contains symbols.
+
+            :param for_call: If True, returns arguments that can be used when calling the SDFG.
+        """
+        # Get global free symbols scalar arguments
+        free_symbols = free_symbols or self.free_symbols
+        return ", ".join(
+            dt.Scalar(self.symbols[k]).as_arg(
+                name=k, with_types=not for_call, for_call=for_call)
+            for k in sorted(free_symbols) if not k.startswith('__dace'))
+
     def signature_arglist(self, with_types=True, for_call=False, with_arrays=True, arglist=None) -> List[str]:
         """ Returns a list of arguments necessary to call this SDFG,
             formatted as a list of C definitions.
@@ -1537,14 +1550,21 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                               total_size=total_size,
                               may_alias=may_alias)
 
-    def add_temp_transient_like(self, desc: dt.Array, dtype=None, debuginfo=None):
+    def add_temp_transient_like(self, desc: Union[dt.Array, dt.Scalar], dtype=None, debuginfo=None):
         """ Convenience function to add a transient array with a temporary name to the data
             descriptor store. """
         debuginfo = debuginfo or desc.debuginfo
         dtype = dtype or desc.dtype
+        if isinstance(desc, dt.Scalar):
+            return self.add_scalar(self.temp_data_name(),
+                                   dtype,
+                                   desc.storage,
+                                   transient=True,
+                                   lifetime=desc.lifetime,
+                                   debuginfo=debuginfo)
         return self.add_array(self.temp_data_name(),
                               desc.shape,
-                              desc.dtype,
+                              dtype,
                               storage=desc.storage,
                               location=desc.location,
                               transient=True,
