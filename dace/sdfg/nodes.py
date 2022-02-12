@@ -591,7 +591,6 @@ class NestedSDFG(CodeNode):
         self.sdfg.validate()
 
 
-
 # ------------------------------------------------------------------------------
 
 
@@ -665,8 +664,6 @@ class MapEntry(EntryNode):
 
     def __str__(self):
         return str(self.map)
-
- 
 
     @property
     def free_symbols(self) -> Set[str]:
@@ -747,8 +744,6 @@ class MapExit(ExitNode):
         return str(self.map)
 
 
-
-
 @make_properties
 class Map(object):
     """ A Map is a two-node representation of parametric graphs, containing
@@ -803,9 +798,6 @@ class Map(object):
     def validate(self, sdfg, state, node):
         if not dtypes.validate_name(self.label):
             raise NameError('Invalid map name "%s"' % self.label)
-
- 
-
 
     def get_param_num(self):
         """ Returns the number of map dimension parameters/symbols. """
@@ -863,8 +855,6 @@ class ConsumeEntry(EntryNode):
     @property
     def consume(self):
         return self._consume
-
-
 
     @consume.setter
     def consume(self, val):
@@ -925,8 +915,6 @@ class ConsumeExit(ExitNode):
     @property
     def map(self):
         return self._consume.as_map()
-
-  
 
     @property
     def consume(self):
@@ -1002,8 +990,6 @@ class Consume(object):
         if not dtypes.validate_name(self.label):
             raise NameError('Invalid consume name "%s"' % self.label)
 
-
-
     def get_param_num(self):
         """ Returns the number of consume dimension parameters/symbols. """
         return 1
@@ -1047,8 +1033,6 @@ class PipelineEntry(MapEntry):
         return result
 
 
-
-
 @dace.serialize.serializable
 class PipelineExit(MapExit):
     @staticmethod
@@ -1062,8 +1046,6 @@ class PipelineExit(MapExit):
     @pipeline.setter
     def pipeline(self, val):
         self._map = val
-
-
 
 
 @make_properties
