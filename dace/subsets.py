@@ -147,17 +147,17 @@ class Range(Subset):
         """
         Simplifies all expressions in the Range.
         """
-        # for i in range(len(self.ranges)):
+        for i in range(len(self.ranges)):
 
-        #     ranges_list = list(self.ranges[i])
+            ranges_list = list(self.ranges[i])
 
-        #     for j in range(len(ranges_list)):
-        #         ranges_list[j] = symbolic.simplify(ranges_list[j])
+            for j in range(len(ranges_list)):
+                ranges_list[j] = symbolic.simplify(ranges_list[j])
 
-        #     self.ranges[i] = tuple(ranges_list)
+            self.ranges[i] = tuple(ranges_list)
 
-        # for i in range(len(self.tile_sizes)):
-        #     self.tile_sizes[i] = symbolic.simplify(self.tile_sizes[i])
+        for i in range(len(self.tile_sizes)):
+            self.tile_sizes[i] = symbolic.simplify(self.tile_sizes[i])
 
     def to_json(self):
         ret = []
@@ -747,8 +747,8 @@ class Indices(Subset):
         Simplifies all expressions in the Indices.
         """
 
-        # for i in range(len(self.indices)):
-        #     self.indices[i] = symbolic.simplify(self.indices[i])
+        for i in range(len(self.indices)):
+            self.indices[i] = symbolic.simplify(self.indices[i])
 
     def to_json(self):
         def a2s(obj):
