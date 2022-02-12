@@ -699,11 +699,6 @@ def test_vec_bicg():
     # specialize the SDFG (needed by the GEMV expansion)
     sdfg.specialize(dict(M=SIZE, N=SIZE))
 
-    # sdfg.instrument = dace.InstrumentationType.FPGA
-
-    # for s in sdfg.states():
-    #     s.instrument = dace.InstrumentationType.FPGA
-
     res0, res1 = sdfg(A=A, p=p, r=r)
 
     # Compute ground truth and Validate result
