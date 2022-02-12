@@ -19,7 +19,7 @@ def make_vadd_sdfg(N, veclen=8):
 
     # add arrays
     sdfg.add_array('A', [N // veclen], dtype=dace.vector(dace.float32, veclen), storage=dace.StorageType.CPU_Heap)
-    sdfg.add_scalar('B', dace.float32, storage=dace.StorageType.FPGA_Registers)
+    sdfg.add_scalar('B', dace.float32, storage=dace.StorageType.FPGA_Global)
     sdfg.add_array('C', [N // veclen], dtype=dace.vector(dace.float32, veclen), storage=dace.StorageType.CPU_Heap)
     sdfg.add_array('fpga_A', [N // veclen],
                    dtype=dace.vector(dace.float32, veclen),
@@ -71,9 +71,8 @@ def make_vadd_sdfg(N, veclen=8):
             .m_axis_tready (a_tready)
         );
 
-        genvar i;
         generate
-            for (i = 0; i < VECLEN; i = i + 1) begin
+            for (genvar i = 0; i < VECLEN; i = i + 1) begin
                 floating_point_add add(
                     .aclk    (ap_aclk),
                     .aresetn (ap_aresetn),
@@ -117,14 +116,14 @@ def make_vadd_sdfg(N, veclen=8):
     rtl_tasklet.add_ip_core(
         'axis_broadcaster_0', 'axis_broadcaster', 'xilinx.com', '1.1',
         dict({
-            'CONFIG.NUM_MI': '16',
+            'CONFIG.NUM_MI': f'{veclen}',
             'CONFIG.M_TDATA_NUM_BYTES': '4',
-            'CONFIG.S_TDATA_NUM_BYTES': '64'
+            'CONFIG.S_TDATA_NUM_BYTES': f'{veclen*4}'
         }, **{f'CONFIG.M{i:02}_TDATA_REMAP': f'tdata[{((i+1)*32)-1}:{i*32}]'
               for i in range(veclen)}))
     rtl_tasklet.add_ip_core('axis_combiner_0', 'axis_combiner', 'xilinx.com', '1.1', {
         'CONFIG.TDATA_NUM_BYTES': '4',
-        'CONFIG.NUM_SI': '16'
+        'CONFIG.NUM_SI': f'{veclen}'
     })
 
     # add read and write tasklets
@@ -303,8 +302,8 @@ def make_vadd_multi_sdfg(N, M):
 def test_hardware_vadd():
     # add symbol
     N = dace.symbol('N')
-    N.set(128)
-    veclen = 16
+    N.set(4096)
+    veclen = 8
     sdfg = make_vadd_sdfg(N, veclen)
     a = np.random.randint(0, 100, N.get()).astype(np.float32)
     b = np.random.randint(1, 100, 1)[0].astype(np.float32)
@@ -326,8 +325,8 @@ def test_hardware_add42_single():
     M = dace.symbol('M')
 
     # init data structures
-    N.set(128)  # elements
-    M.set(128)  # elements per kernel
+    N.set(1024)  # elements
+    M.set(1024)  # elements per kernel
     a = np.random.randint(0, 100, N.get()).astype(np.int32)
     b = np.zeros((N.get(), )).astype(np.int32)
     sdfg = make_vadd_multi_sdfg(N, M)
@@ -358,7 +357,7 @@ def test_hardware_axpy_double_pump(veclen=2):
 
     # init data structures
     N = dace.symbol('N')
-    N.set(128)
+    N.set(1024)
     a = np.random.rand(1)[0].astype(np.float32)
     x = np.random.rand(N.get()).astype(np.float32)
     y = np.random.rand(N.get()).astype(np.float32)
@@ -420,12 +419,12 @@ if __name__ == '__main__':
     old_mode = dace.config.Config.get('compiler', 'xilinx', 'mode')
     dace.config.Config.set('compiler', 'xilinx', 'mode', value='hardware_emulation')
 
-    #test_hardware_vadd(None)
-    #test_hardware_add42_single(None)
+    test_hardware_vadd()
+    test_hardware_add42_single(None)
     # TODO disabled due to problem with array of streams in Vitis 2021.1
     #test_hardware_add42_multi(None)
     test_hardware_axpy_double_pump_vec2(None)
-    #test_hardware_axpy_double_pump_vec4(None)
+    test_hardware_axpy_double_pump_vec4(None)
 
     # Restore the previous config mode
     dace.config.Config.set('compiler', 'xilinx', 'mode', value=old_mode)
