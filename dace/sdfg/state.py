@@ -804,7 +804,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
         Simplifies all expressions in the state.
         """
 
-        serialize.all_properties_simplify(self)
+        serialize.simplify_all_properties(self)
 
         for e in self.edges():
             e.simplify_expr()

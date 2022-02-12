@@ -59,7 +59,7 @@ class Node(object):
         """
         Simplifies all expressions in the state.
         """
-        dace.serialize.all_properties_simplify(self)
+        dace.serialize.simplify_all_properties(self)
 
     def to_json(self, parent):
         labelstr = str(self)

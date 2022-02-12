@@ -183,7 +183,7 @@ class Graph(Generic[NodeT, EdgeT]):
         return NotImplementedError("Not implemented for " + str(type(self)))
 
     def simplify_expr(self):
-        dace.serialize.all_properties_simplify(self)
+        dace.serialize.simplify_all_properties(self)
 
         for n in self.nodes():
             n.simplify_expr()

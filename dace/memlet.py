@@ -139,7 +139,7 @@ class Memlet(object):
         """
         Simplifies all expressions in this memlet.
         """
-        dace.serialize.all_properties_simplify(self)
+        dace.serialize.simplify_all_properties(self)
 
         if self.src_subset is not None:
             self.src_subset.simplify_expr()

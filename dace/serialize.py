@@ -159,7 +159,7 @@ def all_properties_to_json(object_with_properties):
     return retdict
 
 
-def all_properties_simplify(object_with_properties):
+def simplify_all_properties(object_with_properties):
     for x, v in object_with_properties.properties():
         x.simplify_expr(x, v)
 

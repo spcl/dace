@@ -184,7 +184,7 @@ class Data(object):
         Simplifies all expressions in the node.
         """
 
-        serialize.all_properties_simplify(self)
+        serialize.simplify_all_properties(self)
 
     def to_json(self):
         attrs = serialize.all_properties_to_json(self)

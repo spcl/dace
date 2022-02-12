@@ -187,7 +187,7 @@ class InterstateEdge(object):
         return {k: infer_expr_type(v, alltypes) for k, v in self.assignments.items()}
 
     def simplify_expr(self):
-        dace.serialize.all_properties_simplify(self)
+        dace.serialize.simplify_all_properties(self)
 
     def to_json(self, parent=None):
         return {
