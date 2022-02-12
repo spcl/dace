@@ -302,7 +302,7 @@ def make_vadd_multi_sdfg(N, M):
 def test_hardware_vadd():
     # add symbol
     N = dace.symbol('N')
-    N.set(4096)
+    N.set(1024)
     veclen = 8
     sdfg = make_vadd_sdfg(N, veclen)
     a = np.random.randint(0, 100, N.get()).astype(np.float32)
