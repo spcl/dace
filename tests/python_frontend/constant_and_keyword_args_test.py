@@ -4,6 +4,8 @@ import dace
 import numpy as np
 import pytest
 
+from dace.frontend.python.common import SDFGConvertible
+
 
 def test_kwargs():
     @dace.program
@@ -114,6 +116,100 @@ def test_none_arrays():
     assert np.allclose(myprog(A, B), B)
     assert np.allclose(myprog(A, None), A)
     assert np.allclose(myprog(None, None), 1)
+
+
+def test_none_callables():
+    myfunc = None
+
+    @dace.program
+    def myprog(A: dace.float64[20]):
+        if myfunc:
+            return myfunc(A)
+        return A
+
+    # Tests
+    A = np.random.rand(20)
+    assert np.allclose(myprog(A), A)
+
+    def modifier(a):
+        return a + 1
+
+    myfunc = modifier
+    assert np.allclose(myprog(A), A + 1)
+
+
+def test_none_callables_2():
+    myfunc = None
+
+    @dace.program
+    def myprog(A: dace.float64[20]):
+        if myfunc is not None:
+            return myfunc(A)
+        return A
+
+    # Tests
+    A = np.random.rand(20)
+    assert np.allclose(myprog(A), A)
+
+    def modifier(a):
+        return a + 1
+
+    myfunc = modifier
+    assert np.allclose(myprog(A), A + 1)
+
+
+def test_none_convertibles():
+    myfunc = None
+
+    @dace.program
+    def myprog(A: dace.float64[20]):
+        if myfunc is not None:
+            return myfunc(A)
+        return A
+
+    # Tests
+    A = np.random.rand(20)
+    assert np.allclose(myprog(A), A)
+
+    @dace.program
+    def modifier(a):
+        return a + 1
+
+    myfunc = modifier
+    assert np.allclose(myprog(A), A + 1)
+
+
+def test_none_convertibles_2():
+    myfunc = None
+
+    class AConvertible(SDFGConvertible):
+        def __sdfg__(self):
+            @dace.program
+            def func():
+                arr = np.empty([20], np.float64)
+                arr[:] = 7.0
+                return arr
+
+            return func.to_sdfg()
+
+        def __sdfg_signature__(self):
+            return ([], [])
+
+        def __sdfg_closure__(self, reevaluate=None):
+            return {}
+
+    @dace.program
+    def myprog(A: dace.float64[20]):
+        if myfunc is not None:
+            return myfunc()
+        return A
+
+    # Tests
+    A = np.random.rand(20)
+    assert np.allclose(myprog(A), A)
+
+    myfunc = AConvertible()
+    assert np.allclose(myprog(A), 7)
 
 
 def test_none_arrays_jit():
@@ -425,6 +521,22 @@ def test_constant_propagation():
     assert np.allclose(a, 0)
 
 
+def test_constant_propagation_2():
+    @dace.program
+    def conditional_val(A: dace.float64[20], val: dace.int64):
+        if val:
+            A[:] = 0
+        else:
+            A[:] = 1
+
+    # Ensure condition was folded
+    a = np.random.rand(20)
+    conditional_val(a, 1)
+    assert np.allclose(a, 0)
+    conditional_val(a, 0)
+    assert np.allclose(a, 1)
+
+
 if __name__ == '__main__':
     test_kwargs()
     test_kwargs_jit()
@@ -436,6 +548,10 @@ if __name__ == '__main__':
     test_var_kwargs_aot()
     test_none_arrays()
     test_none_arrays_jit()
+    test_none_callables()
+    test_none_callables_2()
+    test_none_convertibles()
+    test_none_convertibles_2()
     test_optional_argument_jit()
     test_optional_argument_jit_kwarg()
     test_optional_argument()
@@ -451,3 +567,4 @@ if __name__ == '__main__':
     test_constant_list_number()
     test_constant_list_function()
     test_constant_propagation()
+    test_constant_propagation_2()

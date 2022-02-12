@@ -219,19 +219,15 @@ class Node(object):
 class AccessNode(Node):
     """ A node that accesses data in the SDFG. Denoted by a circular shape. """
 
-    access = EnumProperty(dtype=dtypes.AccessType,
-                          desc="Type of access to this array",
-                          default=dtypes.AccessType.ReadWrite)
     setzero = Property(dtype=bool, desc="Initialize to zero", default=False)
     debuginfo = DebugInfoProperty()
     data = DataProperty(desc="Data (array, stream, scalar) to access")
 
-    def __init__(self, data, access=dtypes.AccessType.ReadWrite, debuginfo=None):
+    def __init__(self, data, debuginfo=None):
         super(AccessNode, self).__init__()
 
         # Properties
         self.debuginfo = debuginfo
-        self.access = access
         if not isinstance(data, str):
             raise TypeError('Data for AccessNode must be a string')
         self.data = data
@@ -244,7 +240,6 @@ class AccessNode(Node):
 
     def __deepcopy__(self, memo):
         node = object.__new__(AccessNode)
-        node._access = self._access
         node._data = self._data
         node._setzero = self._setzero
         node._in_connectors = dcpy(self._in_connectors, memo=memo)
