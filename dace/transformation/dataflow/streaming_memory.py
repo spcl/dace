@@ -611,8 +611,13 @@ class StreamingComposition(xf.SingleStateTransformation):
             return False
 
         # If already a stream, skip
-        if isinstance(sdfg.arrays[access.data], data.Stream):
+        desc = sdfg.arrays[access.data]
+        if isinstance(desc, data.Stream):
             return False
+
+        # If this check is in the code, almost all applications of StreamingComposition must be permissive
+        # if not permissive and desc.transient:
+        #     return False
 
         # Only free nodes are allowed (search up the SDFG tree)
         curstate = graph
@@ -701,7 +706,8 @@ class StreamingComposition(xf.SingleStateTransformation):
             if any(n.data == access.data for n in ostate.data_nodes()):
                 break
         else:
-            del sdfg.arrays[access.data]
+            if desc.transient:
+                del sdfg.arrays[access.data]
 
         # Replace memlets in path with stream access
         for e in first_mpath:

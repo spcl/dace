@@ -1094,8 +1094,12 @@ class CPUCodeGen(TargetCodeGenerator):
                         # We can pre-read the value
                         result += "{} {} = {};".format(memlet_type, local_name, expr)
                     else:
-                        # Pointer reference
-                        result += "{} {} = {};".format(ctypedef, local_name, expr)
+                        # constexpr arrays
+                        if memlet.data in self._frame.symbols_and_constants(sdfg):
+                            result += "const {} {} = {};".format(memlet_type, local_name, expr)
+                        else:
+                            # Pointer reference
+                            result += "{} {} = {};".format(ctypedef, local_name, expr)
                 else:
                     # Variable number of reads: get a const reference that can
                     # be read if necessary
@@ -1109,6 +1113,9 @@ class CPUCodeGen(TargetCodeGenerator):
         elif var_type in [DefinedType.Stream, DefinedType.StreamArray]:
             if not memlet.dynamic and memlet.num_accesses == 1:
                 if not output:
+                    if isinstance(desc, data.Stream) and desc.is_stream_array():
+                        index = cpp.cpp_offset_expr(desc, memlet.subset)
+                        expr = f"{memlet.data}[{index}]"
                     result += f'{memlet_type} {local_name} = ({expr}).pop();'
                     defined = DefinedType.Scalar
             else:
@@ -1747,21 +1754,21 @@ class CPUCodeGen(TargetCodeGenerator):
 
         # Since consume is an alias node, we create an actual array for the
         # consumed element and modify the outgoing memlet path ("OUT_stream")
-        # TODO: do this before getting to the codegen
+        # TODO: do this before getting to the codegen (preprocess)
         if node.consume.chunksize == 1:
             newname, _ = sdfg.add_scalar("__dace_" + node.consume.label + "_element",
                                          input_streamdesc.dtype,
                                          transient=True,
                                          storage=dtypes.StorageType.Register,
                                          find_new_name=True)
-            ce_node = nodes.AccessNode(newname, dtypes.AccessType.ReadOnly)
+            ce_node = nodes.AccessNode(newname)
         else:
             newname, _ = sdfg.add_array("__dace_" + node.consume.label + '_elements', [node.consume.chunksize],
                                         input_streamdesc.dtype,
                                         transient=True,
                                         storage=dtypes.StorageType.Register,
                                         find_new_name=True)
-            ce_node = nodes.AccessNode(newname, dtypes.AccessType.ReadOnly)
+            ce_node = nodes.AccessNode(newname)
         state_dfg.add_node(ce_node)
         out_memlet_path = state_dfg.memlet_path(output_sedge)
         state_dfg.remove_edge(out_memlet_path[0])

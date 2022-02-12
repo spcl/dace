@@ -426,6 +426,94 @@ def test_inhibit_state_fusion():
         assert sdfg.number_of_nodes() == 1
 
 
+def test_two_callbacks():
+    called_cnt = 0
+
+    @dace_inhibitor
+    def call(arr):
+        nonlocal called_cnt
+        called_cnt += 1
+
+    @dace.program
+    def call_twice(arr, scal):
+        call(arr)
+        arr[:] = arr[:] * scal
+        call(arr)
+
+    arr = np.ones((12, ), np.float64)
+    scal = 2
+
+    call_twice(arr, scal)
+    assert called_cnt == 2
+
+
+def test_two_callbacks_different_sig():
+    called_cnt = 0
+
+    @dace_inhibitor
+    def call(*args):
+        nonlocal called_cnt
+        called_cnt += 1
+
+    @dace.program
+    def call_twice(arr, scal):
+        call()
+        arr[:] = arr[:] * scal
+        call(arr)
+
+    @dace.program
+    def call_twice_2(arr, scal):
+        call_twice(arr, scal)
+
+    arr = np.ones((12, ), np.float64)
+    scal = 2
+
+    call_twice_2(arr, scal)
+    assert called_cnt == 2
+
+
+def test_two_callbacks_different_type():
+    called_cnt = 0
+
+    @dace_inhibitor
+    def call(array):
+        nonlocal called_cnt
+        called_cnt += 1
+
+    @dace.program
+    def call_twice(arr: dace.float64[20], arr2: dace.int32[20, 20]):
+        call(arr)
+        arr *= arr2[1]
+        call(arr2)
+
+    @dace.program
+    def call_twice_3(arr: dace.float64[20], arr2: dace.int32[20, 20]):
+        call_twice(arr, arr2)
+
+    arr = np.ones((20, ), np.float64)
+    arr2 = np.full((20, 20), 2, np.int32)
+
+    call_twice_3(arr, arr2)
+    assert called_cnt == 2
+
+
+def test_disallowed_keyword():
+    class Obj:
+        def hello(a):
+            try:
+                return a + 1
+            except:
+                return a + 2
+
+    @dace
+    def prog(a: dace.float64[10]):
+        b: dace.float64[10] = Obj.hello(a)
+        return b
+
+    a = np.random.rand(10)
+    assert np.allclose(prog(a), a + 1)
+
+
 if __name__ == '__main__':
     test_automatic_callback()
     test_automatic_callback_2()
@@ -445,3 +533,7 @@ if __name__ == '__main__':
     test_two_parameters_same_name()
     test_inout_same_name()
     test_inhibit_state_fusion()
+    test_two_callbacks()
+    test_two_callbacks_different_sig()
+    test_two_callbacks_different_type()
+    test_disallowed_keyword()

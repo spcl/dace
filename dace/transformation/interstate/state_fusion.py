@@ -505,7 +505,6 @@ class StateFusion(transformation.MultiStateTransformation, transformation.Simpli
 
                 sdutil.change_edge_src(first_state, node, n)
                 first_state.remove_node(node)
-                n.access = dtypes.AccessType.ReadWrite
 
         # Redirect edges and remove second state
         sdutil.change_edge_src(sdfg, second_state, first_state)

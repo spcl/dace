@@ -416,21 +416,17 @@ def resolve_symbol_to_constant(symb, start_sdfg):
         return None
 
 
-def symbols_in_ast(tree):
+def symbols_in_ast(tree: ast.AST):
     """ Walks an AST and finds all names, excluding function names. """
-    to_visit = list(tree.__dict__.items())
     symbols = []
-    while len(to_visit) > 0:
-        (key, val) = to_visit.pop()
-        if key == "func":
+    skip = set()
+    for node in ast.walk(tree):
+        if node in skip:
             continue
-        if isinstance(val, ast.Name):
-            symbols.append(val.id)
-            continue
-        if isinstance(val, ast.expr):
-            to_visit += list(val.__dict__.items())
-        if isinstance(val, list):
-            to_visit += [(key, v) for v in val]
+        if isinstance(node, ast.Call):
+            skip.add(node.func)
+        if isinstance(node, ast.Name):
+            symbols.append(node.id)
     return dtypes.deduplicate(symbols)
 
 
@@ -547,6 +543,26 @@ def sympy_numeric_fix(expr):
                 else:
                     return -sympy.oo
     return expr
+
+
+class int_floor(sympy.Function):
+    @classmethod
+    def eval(cls, x, y):
+        if x.is_Number and y.is_Number:
+            return x // y
+
+    def _eval_is_integer(self):
+        return True
+
+
+class int_ceil(sympy.Function):
+    @classmethod
+    def eval(cls, x, y):
+        if x.is_Number and y.is_Number:
+            return sympy.ceiling(x / y)
+
+    def _eval_is_integer(self):
+        return True
 
 
 def sympy_intdiv_fix(expr):
@@ -757,11 +773,14 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None):
         'GtE': sympy.Ge,
         'LtE': sympy.Le,
         'NotEq': sympy.Ne,
+        'floor': sympy.floor,
+        'ceil': sympy.ceiling,
         # Convert and/or to special sympy functions to avoid boolean evaluation
         'And': sympy.Function('AND'),
         'Or': sympy.Function('OR'),
         'var': sympy.Symbol('var'),
         'root': sympy.Symbol('root'),
+        'arg': sympy.Symbol('arg'),
     }
     # _clash1 enables all one-letter variables like N as symbols
     # _clash also allows pi, beta, zeta and other common greek letters
@@ -842,6 +861,7 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
             return res
         except ValueError:
             return "dace::math::pow({f}, {s})".format(f=self._print(expr.args[0]), s=self._print(expr.args[1]))
+
 
 @lru_cache(maxsize=16384)
 def symstr(sym, arrayexprs: Optional[Set[str]] = None) -> str:

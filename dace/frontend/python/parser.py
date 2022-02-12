@@ -6,7 +6,7 @@ import itertools
 import copy
 import os
 import sympy
-from typing import Any, Callable, Dict, List, Optional, Set, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Optional, Set, Sequence, Tuple, Union
 import warnings
 
 from dace import symbolic, dtypes
@@ -14,6 +14,11 @@ from dace.config import Config
 from dace.frontend.python import (newast, common as pycommon, cached_program, preprocessing)
 from dace.sdfg import SDFG
 from dace.data import create_datadescriptor, Data
+
+try:
+    from typing import get_origin
+except ImportError:
+    from typing_compat import get_origin
 
 ArgTypes = Dict[str, Data]
 
@@ -206,13 +211,13 @@ class DaceProgram(pycommon.SDFGConvertible):
             if self.methodobj is not None:
                 self.global_vars[self.objname] = self.methodobj
 
-            argtypes, arg_mapping, constant_args = self._get_type_annotations(args, kwargs)
+            argtypes, arg_mapping, constant_args, specified = self._get_type_annotations(args, kwargs)
 
             # Add constant arguments to globals for caching
             self.global_vars.update(constant_args)
 
             # Check cache for already-parsed SDFG
-            cachekey = self._cache.make_key(argtypes, self.closure_array_keys, self.closure_constant_keys,
+            cachekey = self._cache.make_key(argtypes, specified, self.closure_array_keys, self.closure_constant_keys,
                                             constant_args)
 
             if self._cache.has(cachekey):
@@ -284,7 +289,7 @@ class DaceProgram(pycommon.SDFGConvertible):
         else:
             return {k: eval(v, self.global_vars) if isinstance(v, str) else v for k, v in reevaluate.items()}
 
-    def closure_resolver(self, constant_args, parent_closure=None):
+    def closure_resolver(self, constant_args, given_args, parent_closure=None):
         # Parse allowed global variables
         # (for inferring types and values in the DaCe program)
         global_vars = copy.copy(self.global_vars)
@@ -307,6 +312,11 @@ class DaceProgram(pycommon.SDFGConvertible):
         # Add symbols as globals with their actual names (sym_0 etc.)
         global_vars.update({v.name: v for _, v in global_vars.items() if isinstance(v, symbolic.symbol)})
 
+        # Add default arguments that were not given as parameters
+        given_args = given_args or set()
+        given_default_args = {k: v for k, v in self.default_args.items() if k not in given_args}
+        gvars.update(given_default_args)
+
         # Add constant arguments to global_vars
         global_vars.update(gvars)
 
@@ -315,7 +325,8 @@ class DaceProgram(pycommon.SDFGConvertible):
                                                            global_vars,
                                                            modules,
                                                            resolve_functions=self.resolve_functions,
-                                                           parent_closure=parent_closure)
+                                                           parent_closure=parent_closure,
+                                                           default_args=given_default_args.keys())
         return closure
 
     def _eval_closure(self, arg: str, extra_constants: Optional[Dict[str, Any]] = None) -> Any:
@@ -351,13 +362,14 @@ class DaceProgram(pycommon.SDFGConvertible):
         if self.methodobj is not None:
             self.global_vars[self.objname] = self.methodobj
 
-        argtypes, arg_mapping, constant_args = self._get_type_annotations(args, kwargs)
+        argtypes, arg_mapping, constant_args, specified = self._get_type_annotations(args, kwargs)
 
         # Add constant arguments to globals for caching
         self.global_vars.update(constant_args)
 
         # Cache key
-        cachekey = self._cache.make_key(argtypes, self.closure_array_keys, self.closure_constant_keys, constant_args)
+        cachekey = self._cache.make_key(argtypes, specified, self.closure_array_keys, self.closure_constant_keys,
+                                        constant_args)
 
         if self._cache.has(cachekey):
             entry = self._cache.get(cachekey)
@@ -390,7 +402,8 @@ class DaceProgram(pycommon.SDFGConvertible):
         binaryobj = sdfg.compile(validate=self.validate)
 
         # Recreate key and add to cache
-        cachekey = self._cache.make_key(argtypes, self.closure_array_keys, self.closure_constant_keys, constant_args)
+        cachekey = self._cache.make_key(argtypes, specified, self.closure_array_keys, self.closure_constant_keys,
+                                        constant_args)
         self._cache.add(cachekey, sdfg, binaryobj)
 
         # Call SDFG
@@ -446,21 +459,25 @@ class DaceProgram(pycommon.SDFGConvertible):
 
         return sdfg
 
-    def _get_type_annotations(self, given_args: Tuple[Any],
-                              given_kwargs: Dict[str, Any]) -> Tuple[ArgTypes, Dict[str, Any], Dict[str, Any]]:
+    def _get_type_annotations(
+            self, given_args: Tuple[Any],
+            given_kwargs: Dict[str, Any]) -> Tuple[ArgTypes, Dict[str, Any], Dict[str, Any], Set[str]]:
         """ 
         Obtains types from decorator and/or from type annotations in a function.
         :param given_args: The call-site arguments to the dace.program.
         :param given_kwargs: The call-site keyword arguments to the program.
-        :return: A 3-tuple containing (argument type mapping, extra argument 
-                 mapping, extra global variable mapping)
+        :return: A 4-tuple containing (argument type mapping, extra argument 
+                 mapping, extra global variable mapping, all given argument names)
         """
         types: ArgTypes = {}
         arg_mapping: Dict[str, Any] = {}
         gvar_mapping: Dict[str, Any] = {}
+        specified_args: Set[str] = set()
 
         # Filter symbols out of given keyword arguments
         given_kwargs = {k: v for k, v in given_kwargs.items() if k not in self.symbols}
+
+        specified_args |= given_kwargs.keys()
 
         # Make argument mapping to either type annotation, given argument,
         # default argument, or ignore (symbols and constants).
@@ -488,6 +505,7 @@ class DaceProgram(pycommon.SDFGConvertible):
                 types.update({f'__arg{j}': create_datadescriptor(varg) for j, varg in enumerate(vargs)})
                 arg_mapping.update({f'__arg{j}': varg for j, varg in enumerate(vargs)})
                 gvar_mapping[aname] = tuple(f'__arg{j}' for j in range(len(vargs)))
+                specified_args.update(set(gvar_mapping[aname]))
                 # Shift arg_ind to the end
                 arg_ind = len(given_args)
             elif sig_arg.kind is sig_arg.VAR_KEYWORD:
@@ -502,6 +520,7 @@ class DaceProgram(pycommon.SDFGConvertible):
                 types.update({f'__kwarg_{k}': v for k, v in vargs.items()})
                 arg_mapping.update({f'__kwarg_{k}': given_kwargs[k] for k in vargs.keys()})
                 gvar_mapping[aname] = {k: f'__kwarg_{k}' for k in vargs.keys()}
+                specified_args.update({f'__kwarg_{k}' for k in vargs.keys()})
             # END OF VARIABLE-LENGTH ARGUMENTS
             else:
                 # Regular arguments (annotations take precedence)
@@ -515,6 +534,14 @@ class DaceProgram(pycommon.SDFGConvertible):
                     else:
                         curarg = ann
 
+                    # If annotation specifies to skip its data descriptor and favor JIT types
+                    try:
+                        if get_origin(ann) is Union or create_datadescriptor(ann) is None:
+                            curarg = None
+                    except (TypeError, ValueError):
+                        # Skip for now
+                        pass
+
                 # If no annotation is provided, use given arguments
                 if sig_arg.kind is sig_arg.POSITIONAL_ONLY:
                     if arg_ind >= nargs:
@@ -527,6 +554,7 @@ class DaceProgram(pycommon.SDFGConvertible):
                         if curarg is None:
                             curarg = given_args[arg_ind]
                         arg_ind += 1
+                        specified_args.add(aname)
                 elif sig_arg.kind is sig_arg.POSITIONAL_OR_KEYWORD:
                     if arg_ind >= nargs:
                         if aname not in given_kwargs:
@@ -541,6 +569,7 @@ class DaceProgram(pycommon.SDFGConvertible):
                         if curarg is None:
                             curarg = given_args[arg_ind]
                         arg_ind += 1
+                        specified_args.add(aname)
                 elif sig_arg.kind is sig_arg.KEYWORD_ONLY:
                     if aname not in given_kwargs:
                         if curarg is None and not _is_empty(sig_arg.default):
@@ -567,7 +596,7 @@ class DaceProgram(pycommon.SDFGConvertible):
             else:
                 types['__return'] = create_datadescriptor(rettype)
 
-        return types, arg_mapping, gvar_mapping
+        return types, arg_mapping, gvar_mapping, specified_args
 
     def _load_sdfg(self, path: str, *args, **kwargs):
         """
@@ -585,7 +614,7 @@ class DaceProgram(pycommon.SDFGConvertible):
             sdfg = None
 
         # Perform preprocessing to obtain closure
-        argtypes, _, constant_args = self._get_type_annotations(args, kwargs)
+        argtypes, _, constant_args, given_args = self._get_type_annotations(args, kwargs)
 
         # Remove None arguments and make into globals that can be folded
         removed_args = set()
@@ -594,7 +623,10 @@ class DaceProgram(pycommon.SDFGConvertible):
                 removed_args.add(k)
         argtypes = {k: v for k, v in argtypes.items() if v.dtype.type is not None}
 
-        closure = self.closure_resolver(constant_args)
+        closure = self.closure_resolver(constant_args, given_args)
+
+        unspecified_default_args = {k for k in self.default_args if k not in given_args}
+        removed_args.update(unspecified_default_args)
 
         # Create new argument mapping from closure arrays
         arg_mapping = {k: v for k, (_, _, v, _) in closure.closure_arrays.items()}
@@ -603,7 +635,8 @@ class DaceProgram(pycommon.SDFGConvertible):
         self.closure_constant_keys = set(closure.closure_constants.keys()) - removed_args
         self.resolver = closure
 
-        return sdfg, self._cache.make_key(argtypes, self.closure_array_keys, self.closure_constant_keys, constant_args)
+        return sdfg, self._cache.make_key(argtypes, given_args, self.closure_array_keys, self.closure_constant_keys,
+                                          constant_args)
 
     def load_sdfg(self, path: str, *args, **kwargs) -> None:
         """
@@ -646,7 +679,7 @@ class DaceProgram(pycommon.SDFGConvertible):
         dace_func = self.f
 
         # If exist, obtain type annotations (for compilation)
-        argtypes, _, gvars = self._get_type_annotations(args, kwargs)
+        argtypes, _, gvars, specified = self._get_type_annotations(args, kwargs)
 
         # Move "self" from an argument into the closure
         if self.methodobj is not None:
@@ -670,26 +703,34 @@ class DaceProgram(pycommon.SDFGConvertible):
             if v.dtype.type is None:
                 global_vars[k] = None
                 removed_args.add(k)
-        argtypes = {k: v for k, v in argtypes.items() if v.dtype.type is not None}
-
+        
         # Set module aliases to point to their actual names
         modules = {k: v.__name__ for k, v in global_vars.items() if dtypes.ismodule(v)}
         modules['builtins'] = ''
 
         # Add symbols as globals with their actual names (sym_0 etc.)
         global_vars.update({v.name: v for _, v in global_vars.items() if isinstance(v, symbolic.symbol)})
-        for argtype in argtypes.values():
-            global_vars.update({v.name: v for v in argtype.free_symbols})
+        
+        # Add default arguments to global vars
+        unspecified_default_args = {k: v for k, v in self.default_args.items() if k not in specified}
+        removed_args.update(unspecified_default_args)
+        gvars.update(unspecified_default_args)
 
         # Add constant arguments to global_vars
         global_vars.update(gvars)
+
+        argtypes = {k: v for k, v in argtypes.items() if k not in removed_args}
+        for argtype in argtypes.values():
+            global_vars.update({v.name: v for v in argtype.free_symbols})
+
 
         # Parse AST to create the SDFG
         parsed_ast, closure = preprocessing.preprocess_dace_program(dace_func,
                                                                     argtypes,
                                                                     global_vars,
                                                                     modules,
-                                                                    resolve_functions=self.resolve_functions)
+                                                                    resolve_functions=self.resolve_functions,
+                                                                    default_args=unspecified_default_args.keys())
 
         # Create new argument mapping from closure arrays
         arg_mapping = {k: v for k, (_, _, v, _) in closure.closure_arrays.items()}
@@ -699,7 +740,7 @@ class DaceProgram(pycommon.SDFGConvertible):
         self.resolver = closure
 
         # If parsed SDFG is already cached, use it
-        cachekey = self._cache.make_key(argtypes, self.closure_array_keys, self.closure_constant_keys, gvars)
+        cachekey = self._cache.make_key(argtypes, specified, self.closure_array_keys, self.closure_constant_keys, gvars)
         if self._cache.has(cachekey):
             sdfg = self._cache.get(cachekey).sdfg
             cached = True
