@@ -676,6 +676,13 @@ class string(pointer):
     def __init__(self):
         super().__init__(int8)
 
+    def to_json(self):
+        return {'type': 'string'}
+
+    @staticmethod
+    def from_json(json_obj, context=None):
+        return string()
+
 
 class struct(typeclass):
     """ A data type for a struct of existing typeclasses.
