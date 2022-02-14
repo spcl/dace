@@ -345,6 +345,9 @@ class DaceProgram(pycommon.SDFGConvertible):
         # Add closure arguments to the call
         result.update(self.__sdfg_closure__())
 
+        # Update closure with respect to callback mapping
+        result.update({k: result[v] for k, v in sdfg.callback_mapping.items()})
+
         # Update arguments with symbols in data shapes
         result.update(
             infer_symbols_from_datadescriptor(

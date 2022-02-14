@@ -201,8 +201,8 @@ def parse_dace_program(name: str,
                 if name != existing_name:
                     if existing_name not in closure.callbacks:
                         nested_closure_replacements[name] = existing_name
-                    else:  # Callbacks should be replicated
-                        closure.callbacks[name] = closure.callbacks[existing_name]
+                    else:  # Callbacks should be mapped
+                        sdfg.callback_mapping[name] = existing_name
 
         # Make safe replacements
         def repl_callback(repldict):
@@ -3421,6 +3421,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
             # Handle nested closure
             closure_arrays = getattr(fcopy, '__sdfg_closure__', lambda *args: {})()
+            closure_arrays.update({k: closure_arrays[v] for k, v in sdfg.callback_mapping.items()})
             for aname, arr in closure_arrays.items():
                 if aname in sdfg.symbols:
                     outer_name = self.sdfg.find_new_symbol(aname)
@@ -3474,14 +3475,15 @@ class ProgramVisitor(ExtNodeVisitor):
                 raise DaceSyntaxError(self, node, 'Invalid keyword argument "%s" in call to '
                                       '"%s"' % (aname, funcname))
         if len(args) != len(required_args):
+            gargs = set(a[0] for a in args)
             if len(args) > len(required_args):
-                extra = set(args) - set(required_args)
+                extra = set(gargs) - set(required_args)
                 raise DaceSyntaxError(
                     self, node, 'Argument number mismatch in'
                     ' call to "%s" (expected %d,'
                     ' got %d). Extra arguments provided: %s' % (funcname, len(required_args), len(args), extra))
             else:
-                missing = set(required_args) - set(args)
+                missing = set(required_args) - set(gargs)
                 raise DaceSyntaxError(
                     self, node, 'Argument number mismatch in'
                     ' call to "%s" (expected %d,'
@@ -3905,8 +3907,8 @@ class ProgramVisitor(ExtNodeVisitor):
             symtype = self.sdfg.symbols[funcname]
             if symtype != callback_type:
                 new_funcname = self.sdfg.find_new_symbol(funcname)
-                self.closure.callbacks[new_funcname] = self.closure.callbacks[funcname]
                 self.sdfg.add_symbol(new_funcname, callback_type)
+                self.sdfg.callback_mapping[new_funcname] = funcname
                 funcname = new_funcname
 
         # Create the graph that calls the callback

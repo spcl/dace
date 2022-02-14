@@ -55,6 +55,10 @@ def _replace_dict(d, old, new):
         d[new] = d[old]
         del d[old]
 
+def _replace_dict_values(d, old, new):
+    for k, v in d.items():
+        if v == old:
+            d[k] = new
 
 def _assignments_from_string(astr):
     """ Returns a dictionary of assignments from a semicolon-delimited
@@ -261,6 +265,11 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
     debuginfo = DebugInfoProperty(allow_none=True)
 
+    callback_mapping = DictProperty(str,
+                                    str,
+                                    desc='Mapping between callback name and its original callback '
+                                    '(for when the same callback is used with a different signature)')
+
     def __init__(self,
                  name: str,
                  constants: Dict[str, Tuple[dt.Data, Any]] = None,
@@ -300,6 +309,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         self.exit_code = {'frame': CodeBlock("", dtypes.Language.CPP)}
         self.orig_sdfg = None
         self.transformation_hist = []
+        self.callback_mapping = {}
         # Counter to make it easy to create temp transients
         self._temp_transients = 0
 
@@ -451,6 +461,8 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             _replace_dict(self._arrays, name, new_name)
             _replace_dict(self.symbols, name, new_name)
             _replace_dict(self.constants_prop, name, new_name)
+            _replace_dict(self.callback_mapping, name, new_name)
+            _replace_dict_values(self.callback_mapping, name, new_name)
 
         # Replace inside data descriptors
         for array in self.arrays.values():
