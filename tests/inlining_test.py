@@ -186,6 +186,53 @@ def test_inline_symexpr():
     assert not np.allclose(a[10:], 2.0)
 
 
+def test_inline_unsqueeze():
+
+    @dace.program
+    def nested_squeezed(c: dace.int32[5], d: dace.int32[5]):
+        d[:] = c
+    
+    @dace.program
+    def inline_unsqueeze(A: dace.int32[2, 5], B: dace.int32[5, 3]):
+        nested_squeezed(A[1, :], B[:, 1])
+    
+    sdfg = inline_unsqueeze.to_sdfg()
+    sdfg.apply_transformations(InlineSDFG)
+
+    A = np.arange(10, dtype=np.int32).reshape(2, 5).copy()
+    B = np.zeros((5, 3), np.int32)
+    sdfg(A, B)
+    for i in range(3):
+        if i == 1:
+            assert(np.array_equal(B[:, i], A[1, :]))
+        else:
+            assert(np.array_equal(B[:, i], np.zeros((5,), np.int32)))
+
+
+def test_inline_unsqueeze2():
+
+    @dace.program
+    def nested_squeezed(c, d):
+        d[:] = c
+    
+    @dace.program
+    def inline_unsqueeze(A: dace.int32[2, 5], B: dace.int32[5, 3]):
+        for i in range(2):
+            nested_squeezed(A[i, :], B[:, 1-i])
+    
+    sdfg = inline_unsqueeze.to_sdfg()
+    sdfg.apply_transformations(InlineSDFG)
+
+    A = np.arange(10, dtype=np.int32).reshape(2, 5).copy()
+    B = np.zeros((5, 3), np.int32)
+    sdfg(A, B)
+    for i in range(3):
+        if i < 2:
+            assert(np.array_equal(B[:, 1-i], A[i, :]))
+        else:
+            assert(np.array_equal(B[:, i], np.zeros((5,), np.int32)))
+
+
 if __name__ == "__main__":
     test()
     # Skipped to to bug that cannot be reproduced
@@ -194,3 +241,5 @@ if __name__ == "__main__":
     test_multistate_inline()
     test_multistate_inline_samename()
     test_inline_symexpr()
+    test_inline_unsqueeze()
+    test_inline_unsqueeze2()
