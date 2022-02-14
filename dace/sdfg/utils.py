@@ -708,6 +708,30 @@ def get_view_edge(state: SDFGState, view: nd.AccessNode) -> gr.MultiConnectorEdg
     if in_edge.data.data == view.data and out_edge.data.data == view.data:
         return None
 
+    # Both memlets' data point to their respective access nodes.
+    # In such a case, check the strides.
+    sdfg = state.parent
+    v_data = sdfg.arrays[view.data]
+
+    def _get_matching_strides(memlet, data):
+        if memlet.other_subset:
+            strides = []
+            i = 0
+            for sz, st in zip(memlet.subset, data.strides):
+                if sz == memlet.other_subset[i]:
+                    strides.append(st)
+                    i += 1
+                    if i >= len(memlet.other_subset):
+                        break
+        else:
+            strides = data.strides
+        return tuple(strides)
+
+    if _get_matching_strides(in_edge.data, sdfg.arrays[in_edge.data.data]) == v_data.strides:
+        return in_edge
+    if _get_matching_strides(out_edge.data, sdfg.arrays[out_edge.data.data]) == v_data.strides:
+        return out_edge
+
     # If both memlets' data are the respective access nodes, the access
     # node at the highest scope is the one that is viewed.
     if isinstance(in_edge.src, nd.EntryNode):
