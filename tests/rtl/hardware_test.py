@@ -416,15 +416,10 @@ def test_hardware_axpy_double_pump_vec4():
 
 if __name__ == '__main__':
     # These tests should only be run in hardware* mode
-    old_mode = dace.config.Config.get('compiler', 'xilinx', 'mode')
-    dace.config.Config.set('compiler', 'xilinx', 'mode', value='hardware_emulation')
-
-    test_hardware_vadd()
-    test_hardware_add42_single(None)
-    # TODO disabled due to problem with array of streams in Vitis 2021.1
-    #test_hardware_add42_multi(None)
-    test_hardware_axpy_double_pump_vec2(None)
-    test_hardware_axpy_double_pump_vec4(None)
-
-    # Restore the previous config mode
-    dace.config.Config.set('compiler', 'xilinx', 'mode', value=old_mode)
+    with dace.config.set_temporary('compiler', 'xilinx', 'mode', value='hardware_emulation'):
+        test_hardware_vadd(None)
+        test_hardware_add42_single(None)
+        # TODO disabled due to problem with array of streams in Vitis 2021.1
+        #test_hardware_add42_multi(None)
+        test_hardware_axpy_double_pump_vec2(None)
+        test_hardware_axpy_double_pump_vec4(None)

@@ -426,37 +426,30 @@ def make_sdfg(veclen=2):
 ######################################################################
 
 if __name__ == '__main__':
-    # Configuration has to use multiple clocks in this sample, and target hardware.
-    old_freq = dace.config.Config.get('compiler', 'xilinx', 'frequency')
-    old_mode = dace.config.Config.get('compiler', 'xilinx', 'mode')
-    dace.config.Config.set('compiler', 'xilinx', 'frequency', value='"0:300\\|1:600"')
-    dace.config.Config.set('compiler', 'xilinx', 'mode', value='hardware_emulation')
+    with dace.config.set_temporary('compiler', 'xilinx', 'frequency', value='"0:300\\|1:600"'):
+        with dace.config.set_temporary('compiler', 'xilinx', 'mode', value='hardware_emulation'):
+            # init data structures
+            N.set(4096)
+            a = np.random.rand(1)[0].astype(np.float32)
+            x = np.random.rand(N.get()).astype(np.float32)
+            y = np.random.rand(N.get()).astype(np.float32)
+            result = np.zeros((N.get(), )).astype(np.float32)
 
-    # init data structures
-    N.set(4096)
-    a = np.random.rand(1)[0].astype(np.float32)
-    x = np.random.rand(N.get()).astype(np.float32)
-    y = np.random.rand(N.get()).astype(np.float32)
-    result = np.zeros((N.get(), )).astype(np.float32)
+            # show initial values
+            print("a={}, x={}, y={}".format(a, x, y))
 
-    # show initial values
-    print("a={}, x={}, y={}".format(a, x, y))
+            # Build the SDFG
+            sdfg = make_sdfg()
 
-    # Build the SDFG
-    sdfg = make_sdfg()
+            # call program
+            sdfg(a=a, x=x, y=y, result=result, N=N)
 
-    # call program
-    sdfg(a=a, x=x, y=y, result=result, N=N)
+            # show result
+            print("result={}".format(result))
 
-    # show result
-    print("result={}".format(result))
-
-    # check result
-    expected = a * x + y
-    diff = np.linalg.norm(expected - result) / N.get()
-    print("Difference:", diff)
-
-    dace.config.Config.set('compiler', 'xilinx', 'frequency', value=old_freq)
-    dace.config.Config.set('compiler', 'xilinx', 'mode', value=old_mode)
+            # check result
+            expected = a * x + y
+            diff = np.linalg.norm(expected - result) / N.get()
+            print("Difference:", diff)
 
     exit(0 if diff <= 1e-5 else 1)

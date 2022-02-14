@@ -235,28 +235,28 @@ def make_sdfg(veclen=2):
 ######################################################################
 
 if __name__ == '__main__':
+    with dace.config.set_temporary('compiler', 'xilinx', 'mode', value='hardware_emulation'):
+        # init data structures
+        N.set(4096)
+        a = np.random.rand(1)[0].astype(np.float32)
+        x = np.random.rand(N.get()).astype(np.float32)
+        y = np.random.rand(N.get()).astype(np.float32)
+        result = np.zeros((N.get(), )).astype(np.float32)
 
-    # init data structures
-    N.set(4096)
-    a = np.random.rand(1)[0].astype(np.float32)
-    x = np.random.rand(N.get()).astype(np.float32)
-    y = np.random.rand(N.get()).astype(np.float32)
-    result = np.zeros((N.get(), )).astype(np.float32)
+        # show initial values
+        print("a={}, x={}, y={}".format(a, x, y))
 
-    # show initial values
-    print("a={}, x={}, y={}".format(a, x, y))
+        # Build the SDFG
+        sdfg = make_sdfg()
 
-    # Build the SDFG
-    sdfg = make_sdfg()
+        # call program
+        sdfg(a=a, x=x, y=y, result=result, N=N)
 
-    # call program
-    sdfg(a=a, x=x, y=y, result=result, N=N)
+        # show result
+        print("result={}".format(result))
 
-    # show result
-    print("result={}".format(result))
-
-    # check result
-    expected = a * x + y
-    diff = np.linalg.norm(expected - result) / N.get()
-    print("Difference:", diff)
+        # check result
+        expected = a * x + y
+        diff = np.linalg.norm(expected - result) / N.get()
+        print("Difference:", diff)
     exit(0 if diff <= 1e-5 else 1)
