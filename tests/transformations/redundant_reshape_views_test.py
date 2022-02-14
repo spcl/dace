@@ -109,3 +109,4 @@ def test_views_between_maps_work():
 if __name__ == "__main__":
     test_inline_reshape_views_work()
     test_views_between_maps_work()
+    test_inline_flipped_reshape_works()
