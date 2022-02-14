@@ -419,7 +419,7 @@ def unsqueeze_memlet(internal_memlet: Memlet,
 
     # Actual result preserves 'other subset' and placement of subsets in memlet
     actual_result = Memlet.from_memlet(internal_memlet)
-    if actual_result.subset != internal_subset:
+    if actual_result.subset != internal_subset and actual_result.other_subset:
         actual_result.other_subset = result.subset
         actual_result._is_data_src = not internal_memlet._is_data_src
     else:
