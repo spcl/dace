@@ -1198,8 +1198,8 @@ class SDG:
                                 S = copy.deepcopy(sib_stat)
                                 status = S.concatenate_sdg_statements(None, s_st)
                                 if status == 0 and S.subgraph not in checked_subgraphs.union(set([frozenset(sg.subgraph) for sg in sdg_statements])):
-                                    cur_stat.calculate_dominator_size() 
-                                    if len(cur_stat.Dom_size.free_symbols) <= 6:
+                                    sib_stat.calculate_dominator_size() 
+                                    if len(sib_stat.Dom_size.free_symbols) <= 6:
                                         sdg_statements.append(S)    
 
             pred_arr_name = strip(pred)
@@ -1237,7 +1237,9 @@ class SDG:
                                 S = copy.deepcopy(sib_stat)
                                 status = S.concatenate_sdg_statements(pred, pred_stat)
                                 if status == 0 and S.subgraph not in checked_subgraphs.union(set([frozenset(sg.subgraph) for sg in sdg_statements])):
-                                    sdg_statements.append(S)    
+                                    sib_stat.calculate_dominator_size() 
+                                    if len(sib_stat.Dom_size.free_symbols) <= 6:
+                                        sdg_statements.append(S)    
   
 
         self.graph.nodes[node]["all_subgraphs"] = sdg_statements
