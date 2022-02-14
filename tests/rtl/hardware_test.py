@@ -344,37 +344,31 @@ def test_hardware_add42_single():
 
 @pytest.mark.skip(reason="This test is covered by the Xilinx tests.")
 def test_hardware_axpy_double_pump(veclen=2):
-    # Grab the double pumped AXPY implementation the samples directory
-    spec = importlib.util.spec_from_file_location(
-        "axpy",
-        Path(__file__).parent.parent.parent / "samples" / "rtl" / "axpy_double_pump.py")
-    axpy = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(axpy)
+    with dace.config.set_temporary('compiler', 'xilinx', 'frequency', value='"0:300\\|1:600"'):
+        # Grab the double pumped AXPY implementation the samples directory
+        spec = importlib.util.spec_from_file_location(
+            "axpy",
+            Path(__file__).parent.parent.parent / "samples" / "rtl" / "axpy_double_pump.py")
+        axpy = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(axpy)
 
-    # Configuration has to use multiple clocks in this sample.
-    old_freq = dace.config.Config.get('compiler', 'xilinx', 'frequency')
-    dace.config.Config.set('compiler', 'xilinx', 'frequency', value='"0:300\\|1:600"')
+        # init data structures
+        N = dace.symbol('N')
+        N.set(1024)
+        a = np.random.rand(1)[0].astype(np.float32)
+        x = np.random.rand(N.get()).astype(np.float32)
+        y = np.random.rand(N.get()).astype(np.float32)
+        result = np.zeros((N.get(), )).astype(np.float32)
 
-    # init data structures
-    N = dace.symbol('N')
-    N.set(1024)
-    a = np.random.rand(1)[0].astype(np.float32)
-    x = np.random.rand(N.get()).astype(np.float32)
-    y = np.random.rand(N.get()).astype(np.float32)
-    result = np.zeros((N.get(), )).astype(np.float32)
+        # Build the SDFG
+        sdfg = axpy.make_sdfg(veclen)
 
-    # Build the SDFG
-    sdfg = axpy.make_sdfg(veclen)
+        # call program
+        sdfg(a=a, x=x, y=y, result=result, N=N)
 
-    # call program
-    sdfg(a=a, x=x, y=y, result=result, N=N)
-
-    # check result
-    expected = a * x + y
-    diff = np.linalg.norm(expected - result) / N.get()
-
-    # Set the old frequency back
-    dace.config.Config.set('compiler', 'xilinx', 'frequency', value=old_freq)
+        # check result
+        expected = a * x + y
+        diff = np.linalg.norm(expected - result) / N.get()
 
     assert diff <= 1e-5
 
