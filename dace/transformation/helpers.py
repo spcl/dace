@@ -377,10 +377,8 @@ def unsqueeze_memlet(internal_memlet: Memlet,
     """
     internal_subset = _get_internal_subset(internal_memlet, external_memlet, use_src_subset, use_dst_subset)
     result = Memlet.from_memlet(internal_memlet)
-    result.data = external_memlet.data
     result.subset = internal_subset
-    result._is_data_src = internal_memlet._is_data_src
-    
+
     shape = external_memlet.subset.size()
     if len(internal_subset) < len(external_memlet.subset):
         ones = [i for i, d in enumerate(shape) if d == 1]
@@ -419,7 +417,17 @@ def unsqueeze_memlet(internal_memlet: Memlet,
     if external_memlet.other_subset is not None:
         raise NotImplementedError
 
-    return result
+    # Actual result preserves 'other subset' and placement of subsets in memlet
+    actual_result = Memlet.from_memlet(internal_memlet)
+    if actual_result.subset != internal_subset:
+        actual_result.other_subset = result.subset
+        actual_result._is_data_src = not internal_memlet._is_data_src
+    else:
+        actual_result.data = external_memlet.data
+        actual_result.subset = result.subset
+        actual_result._is_data_src = internal_memlet._is_data_src
+
+    return actual_result
 
 
 def replicate_scope(sdfg: SDFG, state: SDFGState, scope: ScopeSubgraphView) -> ScopeSubgraphView:
