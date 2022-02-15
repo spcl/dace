@@ -708,38 +708,38 @@ def get_view_edge(state: SDFGState, view: nd.AccessNode) -> gr.MultiConnectorEdg
     if in_edge.data.data == view.data and out_edge.data.data == view.data:
         return None
 
-    # Both memlets' data point to their respective access nodes.
-    # In such a case, check the strides.
-    sdfg = state.parent
-    v_data = sdfg.arrays[view.data]
+    # # Both memlets' data point to their respective access nodes.
+    # # In such a case, check the strides.
+    # sdfg = state.parent
+    # v_data = sdfg.arrays[view.data]
 
-    def _get_matching_strides(memlet, data):
-        if memlet.other_subset:
-            strides = []
-            i = 0
-            sbs_sz = memlet.subset.size()
-            osbs_sz = memlet.other_subset.size()
-            for sz, st in zip(sbs_sz, data.strides):
-                if sz == osbs_sz[i]:
-                    strides.append(st)
-                    i += 1
-                    if i >= len(osbs_sz):
-                        break
-        else:
-            strides = data.strides
-        if not strides:
-            strides = (1,)
-        return tuple(strides)
+    # def _get_matching_strides(memlet, data):
+    #     if memlet.other_subset:
+    #         strides = []
+    #         i = 0
+    #         sbs_sz = memlet.subset.size()
+    #         osbs_sz = memlet.other_subset.size()
+    #         for sz, st in zip(sbs_sz, data.strides):
+    #             if sz == osbs_sz[i]:
+    #                 strides.append(st)
+    #                 i += 1
+    #                 if i >= len(osbs_sz):
+    #                     break
+    #     else:
+    #         strides = data.strides
+    #     if not strides:
+    #         strides = (1,)
+    #     return tuple(strides)
     
-    in_strides = _get_matching_strides(in_edge.data, sdfg.arrays[in_edge.data.data])
-    out_strides = _get_matching_strides(out_edge.data, sdfg.arrays[out_edge.data.data])
+    # in_strides = _get_matching_strides(in_edge.data, sdfg.arrays[in_edge.data.data])
+    # out_strides = _get_matching_strides(out_edge.data, sdfg.arrays[out_edge.data.data])
 
-    # NOTE: Give higher priority to the case where the last input and view
-    # strides match. This is the case where some data is reshaped.
-    if in_strides[-1] == v_data.strides[-1]:
-        return in_edge
-    if out_strides == v_data.strides:
-        return out_edge
+    # # NOTE: Give higher priority to the case where the last input and view
+    # # strides match. This is the case where some data is reshaped.
+    # if in_strides[-1] == v_data.strides[-1]:
+    #     return in_edge
+    # if out_strides == v_data.strides:
+    #     return out_edge
 
     # If both memlets' data are the respective access nodes, the access
     # node at the highest scope is the one that is viewed.
@@ -749,7 +749,8 @@ def get_view_edge(state: SDFGState, view: nd.AccessNode) -> gr.MultiConnectorEdg
         return out_edge
 
     # If both access nodes reside in the same scope, the input data is viewed.
-    return in_edge
+    # return in_edge
+    raise ValueError(f"Ambiguous view: in_edge {in_edge} -> view {view.data} -> out_edge {out_edge}")
 
 
 def dynamic_map_inputs(state: SDFGState, map_entry: nd.MapEntry) -> List[gr.MultiConnectorEdge]:
