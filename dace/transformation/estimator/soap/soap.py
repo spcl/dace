@@ -274,7 +274,7 @@ class SoapStatement:
     def init_decomposition(self, subs_list):
         dimensions = {str(d[0]) : d[2] - d[1] + 1 for d in list(self.ranges.values())[0]}
         self.dimensions_ordered = [sp.sympify(str(dimensions[str(i)])).subs(subs_list) for i in self.variables]
-        stream_dim_number = self.variables.index(self.stream_dim)
+        stream_dim_number = self.variables.index(self.stream_dim) if hasattr(self, 'stream_dim') else -1
         self.param_vals = [(sp.symbols(p), val) for (p, val) in subs_list]            
         Ss = sp.symbols('Ss')
         X = sp.symbols('X')
@@ -323,7 +323,7 @@ class SoapStatement:
         strategy = "increaseX"
         strategy = "narrowest_dim_first"
         if (sp.prod(self.p_grid) > comm_world):
-            if Config.get("soap", "decomposition", "chosen_par_setup") == "memory_dependent":
+            if Config.get("soap", "decomposition", "chosen_par_setup") == "memory_dependent" and stream_dim_number >= 0:
                 if self.p_grid[stream_dim_number] == 1:
                     print("\n\nERROR!!!\nMemory-dependent bound. For S={}, the minimum number of ranks is p_min={}. \
                         \nHowever, only {} ranks are given\n\n".format(S_val, sp.prod(self.p_grid), comm_world))
