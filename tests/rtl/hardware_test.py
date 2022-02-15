@@ -302,8 +302,8 @@ def make_vadd_multi_sdfg(N, M):
 def test_hardware_vadd():
     # add symbol
     N = dace.symbol('N')
-    N.set(1024)
-    veclen = 8
+    N.set(32)
+    veclen = 4
     sdfg = make_vadd_sdfg(N, veclen)
     a = np.random.randint(0, 100, N.get()).astype(np.float32)
     b = np.random.randint(1, 100, 1)[0].astype(np.float32)
@@ -325,8 +325,8 @@ def test_hardware_add42_single():
     M = dace.symbol('M')
 
     # init data structures
-    N.set(1024)  # elements
-    M.set(1024)  # elements per kernel
+    N.set(32)  # elements
+    M.set(32)  # elements per kernel
     a = np.random.randint(0, 100, N.get()).astype(np.int32)
     b = np.zeros((N.get(), )).astype(np.int32)
     sdfg = make_vadd_multi_sdfg(N, M)
@@ -354,7 +354,7 @@ def test_hardware_axpy_double_pump(veclen=2):
 
         # init data structures
         N = dace.symbol('N')
-        N.set(1024)
+        N.set(32)
         a = np.random.rand(1)[0].astype(np.float32)
         x = np.random.rand(N.get()).astype(np.float32)
         y = np.random.rand(N.get()).astype(np.float32)
@@ -392,8 +392,8 @@ def test_hardware_axpy_double_pump_vec4():
 #    M = dace.symbol('M')
 #
 #    # init data structures
-#    N.set(256)  # elements
-#    M.set(32)  # elements per kernel
+#    N.set(32)  # elements
+#    M.set(8)  # elements per kernel
 #    a = np.random.randint(0, 100, N.get()).astype(np.int32)
 #    b = np.zeros((N.get(), )).astype(np.int32)
 #    sdfg = make_vadd_multi_sdfg(N, M)

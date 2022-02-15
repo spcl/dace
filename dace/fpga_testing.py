@@ -13,7 +13,7 @@ from typing import Callable, Iterable, Optional, Tuple, Union
 from dace import SDFG
 from dace.config import Config, temporary_config
 
-TEST_TIMEOUT = 900  # Timeout tests after 10 minutes
+TEST_TIMEOUT = 900  # Timeout tests after 15 minutes
 
 
 class Colors:
