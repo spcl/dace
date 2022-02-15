@@ -717,19 +717,28 @@ def get_view_edge(state: SDFGState, view: nd.AccessNode) -> gr.MultiConnectorEdg
         if memlet.other_subset:
             strides = []
             i = 0
-            for sz, st in zip(memlet.subset, data.strides):
-                if sz == memlet.other_subset[i]:
+            sbs_sz = memlet.subset.size()
+            osbs_sz = memlet.other_subset.size()
+            for sz, st in zip(sbs_sz, data.strides):
+                if sz == osbs_sz[i]:
                     strides.append(st)
                     i += 1
-                    if i >= len(memlet.other_subset):
+                    if i >= len(osbs_sz):
                         break
         else:
             strides = data.strides
+        if not strides:
+            strides = (1,)
         return tuple(strides)
+    
+    in_strides = _get_matching_strides(in_edge.data, sdfg.arrays[in_edge.data.data])
+    out_strides = _get_matching_strides(out_edge.data, sdfg.arrays[out_edge.data.data])
 
-    if _get_matching_strides(in_edge.data, sdfg.arrays[in_edge.data.data]) == v_data.strides:
+    # NOTE: Give higher priority to the case where the last input and view
+    # strides match. This is the case where some data is reshaped.
+    if in_strides[-1] == v_data.strides[-1]:
         return in_edge
-    if _get_matching_strides(out_edge.data, sdfg.arrays[out_edge.data.data]) == v_data.strides:
+    if out_strides == v_data.strides:
         return out_edge
 
     # If both memlets' data are the respective access nodes, the access
