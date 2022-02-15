@@ -42,6 +42,8 @@ Quick Start
 
 Install DaCe with pip: `pip install dace`
 
+Having issues? See [Troubleshooting](#Troubleshooting)
+
 Using DaCe in Python is as simple as adding a `@dace` decorator:
 ```python
 import dace
@@ -116,6 +118,17 @@ If you use DaCe, cite us:
 }
 ```
 
+Troubleshooting
+---------------
+
+* If you are running on Mac OS and getting compilation errors when calling DaCe programs, make sure you have OpenMP installed and configured with Apple Clang. Otherwise, you can use GCC to compile the code by following these steps:
+    * Run `brew install gcc`
+	* Set your `~/.dace.conf` compiler configuration to use the installed GCC. For example, if you installed version 9 (`brew install gcc@9`), run `which g++-9` and set the config entry called `compiler.cpu.executable` (empty string by default) to the resulting path
+	* Remove any `.dacecache` folders to clear the cache
+
+Other issues? Look for similar issues or start a discussion on our [GitHub Discussions](https://github.com/spcl/dace/discussions)!
+
+
 Configuration
 -------------
 
@@ -123,7 +136,7 @@ DaCe creates a file called `.dace.conf` in the user's home directory. It provide
 
 Useful environment variable configurations include:
 
-* `DACE_CONFIG` (default: `~/.dace.conf`): Override DaCe configuration file choice.
+ * `DACE_CONFIG` (default: `~/.dace.conf`): Override DaCe configuration file choice.
 
 General configuration:
  * `DACE_debugprint` (default: False): Print debugging information.
