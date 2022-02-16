@@ -72,7 +72,7 @@ def test_reshape_copy(memlet_dst):
     r = state.add_read('A')
     v = state.add_access('Av')
     w = state.add_write('B')
-    state.add_nedge(r, v, dace.Memlet(data='A'))
+    state.add_edge(r, None, v, 'views', dace.Memlet(data='A'))
     state.add_nedge(v, w, dace.Memlet(data='B' if memlet_dst else 'Av'))
     sdfg.validate()
 
@@ -176,10 +176,10 @@ def test_reinterpret_invalid():
 
 
 if __name__ == "__main__":
-    test_reshape()
-    test_reshape_dst()
-    test_reshape_dst_explicit()
-    test_reshape_copy(False)
+    # test_reshape()
+    # test_reshape_dst()
+    # test_reshape_dst_explicit()
+    # test_reshape_copy(False)
     test_reshape_copy(True)
     test_reshape_copy_scoped()
     test_reshape_subset()
