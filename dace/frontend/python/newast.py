@@ -3685,7 +3685,7 @@ class ProgramVisitor(ExtNodeVisitor):
             # NOTE: This is more complicated than it should because we allow passing
             # arguments to a nested SDFG with incompatible shapes. For an example,
             # see 'tests/tranformations/redundant_reshape_views_test::test_inline_reshape_views_work'
-            if not isinstance(m, nodes.AccessNode):
+            if not isinstance(m, Memlet):
                 continue
             outer_data = self.sdfg.arrays[m.data]
             if outer_data.shape == (1,):
