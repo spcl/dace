@@ -1210,13 +1210,13 @@ class ProgramVisitor(ExtNodeVisitor):
                         aname, m = self.views[vnode.data]
                         arr = self.sdfg.arrays[aname]
                         r = state.add_read(aname)
-                        state.add_nedge(r, vnode, copy.deepcopy(m))
+                        state.add_edge(r, None, vnode, 'views', copy.deepcopy(m))
                         new_nodes.append(r)
                     elif state.out_degree(vnode) == 0:
                         aname, m = self.views[vnode.data]
                         arr = self.sdfg.arrays[aname]
                         w = state.add_write(aname)
-                        state.add_nedge(vnode, w, copy.deepcopy(m))
+                        state.add_edge(vnode, 'views', w, None, copy.deepcopy(m))
                         new_nodes.append(w)
                     else:
                         raise ValueError(f'View "{vnode.data}" already has' 'both incoming and outgoing edges')
