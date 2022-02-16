@@ -25,7 +25,7 @@ from dace.sdfg.scope import ScopeTree
 from dace.sdfg.replace import replace, replace_properties
 from dace.sdfg.validation import (InvalidSDFGError, validate_sdfg)
 from dace.config import Config
-from dace.frontend.python import wrappers
+from dace.frontend.python import astutils, wrappers
 from dace.sdfg import nodes as nd
 from dace.sdfg.graph import OrderedDiGraph, Edge, SubgraphView
 from dace.sdfg.state import SDFGState
@@ -155,9 +155,6 @@ class InterstateEdge(object):
         :param new_name: The replacement name.
         :param replace_keys: If False, skips replacing assignment keys.
         """
-        # Avoid import loops
-        from dace.frontend.python import astutils
-
         if replace_keys:
             _replace_dict(self.assignments, name, new_name)
 
@@ -167,11 +164,15 @@ class InterstateEdge(object):
             newv = astutils.unparse(vast)
             if newv != v:
                 self.assignments[k] = newv
-        condition = ast.parse(self.condition.as_string)
-        condition = astutils.ASTFindReplace({name: new_name}).visit(condition)
-        newc = astutils.unparse(condition)
-        if newc != condition:
-            self.condition.as_string = newc
+
+        replacer = astutils.ASTFindReplace({name: new_name})
+        if isinstance(self.condition.code, list):
+            for stmt in self.condition.code:
+                replacer.visit(stmt)
+        else:
+            replacer.visit(self.condition.code)
+        
+        if replacer.replace_count > 0:
             self._uncond = None
             self._cond_sympy = None
 
