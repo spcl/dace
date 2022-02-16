@@ -3681,9 +3681,18 @@ class ProgramVisitor(ExtNodeVisitor):
 
         # Update strides
         for a, m in {**inputs, **outputs}.items():
+            # NOTE: This is more complicated than it should because we allow passing
+            # arguments to a nested SDFG with incompatible shapes. For an example,
+            # see 'tests/tranformations/redundant_reshape_views_test::test_inline_reshape_views_work'
             outer_data = self.sdfg.arrays[m.data]
+            if outer_data.shape == (1,):
+                continue
             strides = tuple(outer_data.strides[i] for i, sz in enumerate(m.subset.size()) if sz != 1)
-            sdfg.arrays[a]._strides = strides
+            if len(strides) == len(sdfg.arrays[a].shape):
+                sdfg.arrays[a]._strides = strides
+            else:
+                if strides and (strides[-1] != 1 or sdfg.arrays[a].strides[-1] != 1):
+                    warnings.warn(f'Incompatible strides: inner {sdfg.arrays[a].strides} - outer {strides}')
 
         nsdfg = state.add_nested_sdfg(sdfg,
                                       self.sdfg,
