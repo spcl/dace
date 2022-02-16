@@ -1110,46 +1110,44 @@ def inline_sdfgs(sdfg: SDFG, permissive: bool = False, progress: bool = None, mu
             tqdm = None
 
     counter = 0
-    sdfgs = list(sdfg.all_sdfgs_recursive())
+    nsdfgs = [(n, p) for n, p in sdfg.all_nodes_recursive() if isinstance(n, NestedSDFG)]
     if progress is True:
-        pbar = tqdm(total=len(sdfgs), desc='Inlining SDFGs')
+        pbar = tqdm(total=len(nsdfgs), desc='Inlining SDFGs')
 
     start = time.time()
 
-    for sd in reversed(sdfgs):
-        id = sd.sdfg_id
-        for state in sd.nodes():
-            for node in state.nodes():
-                if (progress is None and tqdm is not None and (time.time() - start) > 5):
-                    progress = True
-                    pbar = tqdm(total=len(sdfgs), desc='Inlining SDFG', initial=counter)
+    for ctr, (node, state) in enumerate(reversed(nsdfgs)):
+        id = node.sdfg.sdfg_id
+        sd = state.parent
+        if (progress is None and tqdm is not None and (time.time() - start) > 5):
+            progress = True
+            pbar = tqdm(total=len(nsdfgs), desc='Inlining SDFG', initial=ctr)
 
-                if not isinstance(node, NestedSDFG):
-                    continue
-                # We have to reevaluate every time due to changing IDs
-                node_id = state.node_id(node)
-                state_id = sd.node_id(state)
-                if multistate:
-                    candidate = {
-                        InlineMultistateSDFG.nested_sdfg: node_id,
-                    }
-                    inliner = InlineMultistateSDFG(sd, id, state_id, candidate, 0, override=True)
-                    if inliner.can_be_applied(state, 0, sd, permissive=permissive):
-                        inliner.apply(state, sd)
-                        counter += 1
-                        if progress:
-                            pbar.update(1)
-                        continue
+        # We have to reevaluate every time due to changing IDs
+        node_id = state.node_id(node)
+        state_id = sd.node_id(state)
+        if multistate:
+            candidate = {
+                InlineMultistateSDFG.nested_sdfg: node_id,
+            }
+            inliner = InlineMultistateSDFG(sd, id, state_id, candidate, 0, override=True)
+            if inliner.can_be_applied(state, 0, sd, permissive=permissive):
+                inliner.apply(state, sd)
+                counter += 1
+                if progress:
+                    pbar.update(1)
+                continue
 
-                candidate = {
-                    InlineSDFG.nested_sdfg: node_id,
-                }
-                inliner = InlineSDFG(sd, id, state_id, candidate, 0, override=True)
-                if inliner.can_be_applied(state, 0, sd, permissive=permissive):
-                    inliner.apply(state, sd)
-                    counter += 1
-                    if progress:
-                        pbar.update(1)
+        candidate = {
+            InlineSDFG.nested_sdfg: node_id,
+        }
+        inliner = InlineSDFG(sd, id, state_id, candidate, 0, override=True)
+        if inliner.can_be_applied(state, 0, sd, permissive=permissive):
+            inliner.apply(state, sd)
+            counter += 1
+        if progress:
+            pbar.update(1)
+
     if progress:
         pbar.close()
     if config.Config.get_bool('debugprint') and counter > 0:
