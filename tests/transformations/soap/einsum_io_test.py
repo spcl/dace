@@ -16,8 +16,9 @@ def test_mttkrp_io():
     # i0-4 = abcde
     # j0-4 = fghij
     # einsum_str = 'af,bg,ch,di,ej,bcgh,fghij->abcde'
-    einsum_str = 'ab,ab->ab'
-    # einsum_str = 'abc,jb,kc->ajk'
+    # einsum_str = 'ab,ab->ab'
+    einsum_str = 'abc,jb,kc->ajk'
+    # einsum_str = 'ijk,lj,mk->ilm'
     # decomp_params=[("p", 17), ("Ss", 1024), ("S0", 256), ("S1", 256), ("S2", 256), ("S3", 256)]
     # decomp_params=[("p", 64), ("Ss", 1024), ("S0", 6400 * 4), ("S1", 4400 * 4), ("S2", 7200 * 4), ("S3", 256)]
     decomp_params = [("p", 64), ("Ss", 1024), ("S0", 1000), ("S1", 1000), ("S2", 1000), ("S3", 1000), ("S4", 1000)]
