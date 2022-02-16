@@ -143,7 +143,7 @@ def perform_soap_analysis_einsum(einsum_string : str, decomp_params: List = [],
                     variables = subgr.variables, inner_tile = subgr.inner_tile, 
                     outer_tile = subgr.outer_tile, input_arrays = subgr.phis,
                     tasklets = subgr.tasklet)                    
-        if generate_schedule:
+        if generate_schedule and hasattr(subgr, 'varsOpt'):
             if decomp_params == []:
                 decomp_list = Config.get("soap", "decomposition", "decomposition_params")
                 decomp_params = list(zip(decomp_list[::2],decomp_list[1::2]))

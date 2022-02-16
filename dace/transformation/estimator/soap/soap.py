@@ -31,6 +31,7 @@ import networkx as nx
 from ordered_set import OrderedSet
 from dace.transformation.estimator.soap.utils import *
 from warnings import warn
+from numbers import Number
 
 
 """
@@ -291,20 +292,24 @@ class SoapStatement:
         while(not loc_domain_found):
             loc_domain_found = True
             loc_domain_dims = [sp.floor(dim) for dim in xpart_opt_dims]
-            if Config.get("soap", "decomposition", "chosen_par_setup") == "memory_dependent":
-                loc_domain_vol = sp.prod(self.variables).subs(self.stream_dim, X)
-                loc_domain_vol = loc_domain_vol.subs(zip(self.variables, loc_domain_dims))
-                X_size = solve(self.V - (p * loc_domain_vol), X)[0]            
-                loc_domain_dims[self.variables.index(self.stream_dim)] = X_size
-            else:
-                loc_domain_vol = sp.prod(loc_domain_dims).subs(Ss, X)
-                try:
-                    X_size = solve(self.V - (p * loc_domain_vol), X)[0]
-                except:
-                    loc_domain_dims = [dim for dim in xpart_opt_dims]
+
+            if any(not isinstance(n, Number) for n in loc_domain_dims):
+                if Config.get("soap", "decomposition", "chosen_par_setup") == "memory_dependent":
+                    loc_domain_vol = sp.prod(self.variables).subs(self.stream_dim, X)
+                    loc_domain_vol = loc_domain_vol.subs(zip(self.variables, loc_domain_dims))
+                    X_size = solve(self.V - (p * loc_domain_vol), X)[0]            
+                    loc_domain_dims[self.variables.index(self.stream_dim)] = X_size
+                else:
                     loc_domain_vol = sp.prod(loc_domain_dims).subs(Ss, X)
-                    X_size = solve(self.V - (p * loc_domain_vol), X)[0]
-                loc_domain_dims = [dim.subs(Ss, X_size) for dim in loc_domain_dims]
+                    try:
+                        X_size = solve(self.V - (p * loc_domain_vol), X)[0]
+                    except:
+                        loc_domain_dims = [dim for dim in xpart_opt_dims]
+                        loc_domain_vol = sp.prod(loc_domain_dims).subs(Ss, X)
+                        print(loc_domain_dims)
+                        print(self.V - (p * loc_domain_vol))
+                        X_size = solve(self.V - (p * loc_domain_vol), X)[0]
+                    loc_domain_dims = [dim.subs(Ss, X_size) for dim in loc_domain_dims]
                 
             self.loc_domain_dims = [sp.ceiling(dim.subs(self.param_vals)) for dim in loc_domain_dims]        
             for dim_num, (loc_dim, glob_dim) in enumerate(zip(self.loc_domain_dims, self.dimensions_ordered)):
