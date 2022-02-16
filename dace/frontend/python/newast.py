@@ -3683,7 +3683,7 @@ class ProgramVisitor(ExtNodeVisitor):
         for a, m in {**inputs, **outputs}.items():
             outer_data = self.sdfg.arrays[m.data]
             strides = tuple(outer_data.strides[i] for i, sz in enumerate(m.subset.size()) if sz != 1)
-            sdfg.arrays[a].strides = strides
+            sdfg.arrays[a]._strides = strides
 
         nsdfg = state.add_nested_sdfg(sdfg,
                                       self.sdfg,
