@@ -3680,7 +3680,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 rets.append(new_arrname)
 
         # Update strides
-        inv_mapping = {v: k for k, v in mapping.items()}
+        inv_mapping = {v: k for k, v in mapping.items() if symbolic.issymbolic(v) or isinstance(v, str)}
         for a, m in {**inputs, **outputs}.items():
             # NOTE: This is more complicated than it should because we allow passing
             # arguments to a nested SDFG with incompatible shapes. For an example,
