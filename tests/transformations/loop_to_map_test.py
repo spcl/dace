@@ -197,6 +197,44 @@ def test_output_accumulate():
     assert np.allclose(A, regression)
 
 
+def test_specialize():
+    # Test inspired by issue #909
+
+    size = dace.symbol("size")
+
+    @dace.program
+    def is_greater(in_data: dace.float64[size], out_data: dace.bool[size]):
+        tmp = np.empty(size, dtype=dace.bool)
+
+        @dace.map
+        def detect_greater(i: _[0:size]):
+            inp << in_data[i]
+            is_greater >> tmp[i]
+
+            if (inp > 0.5):
+                is_greater = True
+            else:
+                is_greater = False
+
+        # Write to memory
+        for nb in range(size):
+            out_data[nb] = tmp[nb]
+
+    x = np.random.rand(8)
+    y = np.empty(8, dtype=bool)
+    regression = np.empty(8, dtype=bool)
+    for i in range(8):
+        regression[i] = x[i] > 0.5
+
+    sdfg = is_greater.to_sdfg()
+    sdfg.specialize(dict(size=8))
+    assert sdfg.apply_transformations_repeated(LoopToMap) == 1
+
+    sdfg(x, y)
+
+    assert np.allclose(y, regression)
+
+
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
