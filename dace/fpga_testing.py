@@ -13,7 +13,8 @@ from typing import Callable, Iterable, Optional, Tuple, Union
 from dace import SDFG
 from dace.config import Config, temporary_config
 
-TEST_TIMEOUT = 900  # Timeout tests after 10 minutes
+TEST_TIMEOUT_SW = 600  # Timeout software simulation tests after 10 minutes
+TEST_TIMEOUT_HW = 900  # Timeout hardware emulation tests after 15 minutes
 
 
 class Colors:
@@ -88,7 +89,7 @@ def raise_error(message):
     raise TestFailed(message)
 
 
-def _run_fpga_test(vendor: str, test_function: Callable, run_synthesis: bool = True, assert_ii_1: bool = True):
+def _run_fpga_test(vendor: str, test_function: Callable, test_timeout: int, run_synthesis: bool = True, assert_ii_1: bool = True):
     path = Path(inspect.getfile(test_function))
     base_name = f"{path.stem}::{Colors.UNDERLINE}{test_function.__name__}{Colors.END}"
     with temporary_config():
@@ -137,12 +138,12 @@ def _run_fpga_test(vendor: str, test_function: Callable, run_synthesis: bool = T
                                         stdout=sp.PIPE,
                                         stderr=sp.PIPE,
                                         encoding="utf=8")
-                        syn_out, syn_err = proc.communicate(timeout=TEST_TIMEOUT)
+                        syn_out, syn_err = proc.communicate(timeout=test_timeout)
                     except sp.TimeoutExpired:
                         dump_logs(proc)
                         raise_error(f"{base_name} [Xilinx]: High-level "
                                     f"synthesis timed out after "
-                                    f"{TEST_TIMEOUT} seconds.")
+                                    f"{test_timeout} seconds.")
                     if proc.returncode != 0:
                         dump_logs(proc)
                         raise_error(f"{base_name} [Xilinx]: High-level " f"synthesis failed.")
@@ -184,7 +185,7 @@ def _run_fpga_test(vendor: str, test_function: Callable, run_synthesis: bool = T
             raise ValueError(f"Unrecognized vendor {vendor}.")
 
 
-def fpga_test(run_synthesis: bool = True, assert_ii_1: bool = True, xilinx: bool = True, intel: bool = True):
+def fpga_test(run_synthesis: bool = True, assert_ii_1: bool = True, xilinx: bool = True, intel: bool = True, rtl: bool = False):
     """
     Decorator to run an FPGA test with pytest, setting the appropriate
     variables and performing additional checks, such as running HLS and
@@ -195,6 +196,7 @@ def fpga_test(run_synthesis: bool = True, assert_ii_1: bool = True, xilinx: bool
     :param assert_ii_1: Assert that all loops have been fully pipelined (currently only implemented for Xilinx).
     :param xilinx: Run as a Xilinx test.
     :param intel: Run as an Intel test.
+    :param rtl: Run as an RTL Xilinx test.
     """
 
     # Check arguments
@@ -205,21 +207,30 @@ def fpga_test(run_synthesis: bool = True, assert_ii_1: bool = True, xilinx: bool
         pytest_params.append("xilinx")
     if intel:
         pytest_params.append("intel_fpga")
+    test_timeout = TEST_TIMEOUT_HW if rtl else TEST_TIMEOUT_SW
 
     def decorator(test_function: Callable):
-        @pytest.mark.fpga
-        @pytest.mark.parametrize("vendor", pytest_params)
-        def wrapper(vendor: Optional[str]):
+        def internal(vendor: Optional[str]):
             if vendor == None:
                 vendor = Config.get("compiler", "fpga", "vendor")
-            p = FPGATestProcess(target=_run_fpga_test, args=(vendor, test_function, run_synthesis, assert_ii_1))
+            p = FPGATestProcess(target=_run_fpga_test, args=(vendor, test_function, test_timeout, run_synthesis, assert_ii_1))
             p.start()
-            p.join(timeout=TEST_TIMEOUT)
+            p.join(timeout=test_timeout)
             if p.is_alive():
                 p.kill()
                 raise_error(f"Test {Colors.UNDERLINE}{test_function.__name__}" f"{Colors.END} timed out.")
             if p.exception:
                 raise p.exception
+        if rtl:
+            @pytest.mark.rtl_hardware
+            @pytest.mark.parametrize("vendor", pytest_params)
+            def wrapper(vendor: Optional[str]):
+                internal(vendor)
+        else:
+            @pytest.mark.fpga
+            @pytest.mark.parametrize("vendor", pytest_params)
+            def wrapper(vendor: Optional[str]):
+                internal(vendor)
 
         return wrapper
 
@@ -232,6 +243,9 @@ def xilinx_test(*args, **kwargs):
 
 def intel_fpga_test(*args, **kwargs):
     return fpga_test(*args, xilinx=False, intel=True, **kwargs)
+
+def rtl_test(*args, **kwargs):
+    return fpga_test(*args, xilinx=True, intel=False, rtl=True, **kwargs)
 
 
 def import_sample(path: Union[Path, str]):
