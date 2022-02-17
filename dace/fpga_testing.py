@@ -13,7 +13,7 @@ from typing import Callable, Iterable, Optional, Tuple, Union
 from dace import SDFG
 from dace.config import Config, temporary_config
 
-TEST_TIMEOUT_SW = 300  # Timeout software simulation tests after 5 minutes
+TEST_TIMEOUT_SW = 600  # Timeout software simulation tests after 10 minutes
 TEST_TIMEOUT_HW = 900  # Timeout hardware emulation tests after 15 minutes
 
 
