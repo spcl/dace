@@ -1,6 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
-from dace.fpga_testing import xilinx_test
+from dace.fpga_testing import rtl_test
 import numpy as np
 import importlib.util
 from pathlib import Path
@@ -298,7 +298,7 @@ def make_vadd_multi_sdfg(N, M):
     return sdfg
 
 
-@xilinx_test()
+@rtl_test()
 def test_hardware_vadd():
     # add symbol
     N = dace.symbol('N')
@@ -319,7 +319,7 @@ def test_hardware_vadd():
     return sdfg
 
 
-@xilinx_test()
+@rtl_test()
 def test_hardware_add42_single():
     N = dace.symbol('N')
     M = dace.symbol('M')
@@ -375,18 +375,18 @@ def test_hardware_axpy_double_pump(veclen=2):
     return sdfg
 
 
-@xilinx_test()
+@rtl_test()
 def test_hardware_axpy_double_pump_vec2():
     return test_hardware_axpy_double_pump(veclen=2)
 
 
-@xilinx_test()
+@rtl_test()
 def test_hardware_axpy_double_pump_vec4():
     return test_hardware_axpy_double_pump(veclen=4)
 
 
 # TODO disabled due to problem with array of streams in Vitis 2021.1
-#@xilinx_test()
+#rtl_test()
 #def test_hardware_add42_multi():
 #    N = dace.symbol('N')
 #    M = dace.symbol('M')
