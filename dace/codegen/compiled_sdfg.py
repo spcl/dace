@@ -181,6 +181,7 @@ class CompiledSDFG(object):
         # Cache SDFG argument properties
         self._typedict = self._sdfg.arglist()
         self._sig = self._sdfg.signature_arglist(with_types=False, arglist=self._typedict)
+        self._free_symbols = self._sdfg.free_symbols
         self.argnames = argnames
 
     def get_state_struct(self) -> ctypes.Structure:
@@ -382,25 +383,27 @@ class CompiledSDFG(object):
         constants = sdfg.constants
 
         # Remove symbolic constants from arguments
-        callparams = tuple((arg, actype, atype) for arg, actype, atype in zip(arglist, arg_ctypes, argtypes)
+        callparams = tuple((arg, actype, atype, aname) for arg, actype, atype, aname in zip(arglist, arg_ctypes, argtypes, argnames)
                            if not symbolic.issymbolic(arg) or (hasattr(arg, 'name') and arg.name not in constants))
 
         # Replace symbols with their values
         callparams = tuple(
-            (actype(arg.get()), actype, atype) if isinstance(arg, symbolic.symbol) else (arg, actype, atype)
-            for arg, actype, atype in callparams)
+            (actype(arg.get()) if isinstance(arg, symbolic.symbol) else arg, actype, atype, aname)
+            for arg, actype, atype, aname in callparams)
+
+        # Construct init args, which only consist of the symbols
+        symbols = self._free_symbols
+        initargs = tuple(
+            actype(arg) if (not isinstance(arg, ctypes._SimpleCData)) else arg
+            for arg, actype, atype, aname in callparams if aname in symbols)
 
         # Replace arrays with their base host/device pointers
         newargs = tuple((ctypes.c_void_p(_array_interface_ptr(arg, atype)), actype,
-                         atype) if dtypes.is_array(arg) else (arg, actype, atype) for arg, actype, atype in callparams)
+                         atype) if dtypes.is_array(arg) else (arg, actype, atype) for arg, actype, atype, _ in callparams)
 
-        initargs = tuple(atup for atup in callparams if not dtypes.is_array(atup[0]))
 
         newargs = tuple(
             actype(arg) if (not isinstance(arg, ctypes._SimpleCData)) else arg for arg, actype, atype in newargs)
-
-        initargs = tuple(
-            actype(arg) if (not isinstance(arg, ctypes._SimpleCData)) else arg for arg, actype, atype in initargs)
 
         self._lastargs = newargs, initargs
         return self._lastargs

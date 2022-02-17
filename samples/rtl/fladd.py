@@ -169,25 +169,25 @@ sdfg.validate()
 ######################################################################
 
 if __name__ == '__main__':
+    with dace.config.set_temporary('compiler', 'xilinx', 'mode', value='hardware_emulation'):
+        # init data structures
+        N.set(8192)
+        a = np.random.randint(0, 100, N.get()).astype(np.float32)
+        b = np.random.randint(0, 100, N.get()).astype(np.float32)
+        c = np.zeros((N.get() // veclen, )).astype(np.float32)
+        print(a.shape, b.shape, c.shape)
 
-    # init data structures
-    N.set(8192)
-    a = np.random.randint(0, 100, N.get()).astype(np.float32)
-    b = np.random.randint(0, 100, N.get()).astype(np.float32)
-    c = np.zeros((N.get() // veclen, )).astype(np.float32)
-    print(a.shape, b.shape, c.shape)
+        # show initial values
+        print("a={}, b={}".format(a, b))
 
-    # show initial values
-    print("a={}, b={}".format(a, b))
+        # call program
+        sdfg(A=a, B=b, C=c, N=N)
 
-    # call program
-    sdfg(A=a, B=b, C=c, N=N)
+        # show result
+        print("a={}, b={}, c={}".format(a, b, c))
 
-    # show result
-    print("a={}, b={}, c={}".format(a, b, c))
-
-    # check result
-    expected = a + b
-    diff = np.linalg.norm(expected - result) / N.get()
-    print("Difference:", diff)
+        # check result
+        expected = a + b
+        diff = np.linalg.norm(expected - c) / N.get()
+        print("Difference:", diff)
     exit(0 if diff <= 1e-5 else 1)
