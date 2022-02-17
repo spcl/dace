@@ -176,10 +176,10 @@ def test_reinterpret_invalid():
 
 
 if __name__ == "__main__":
-    # test_reshape()
-    # test_reshape_dst()
-    # test_reshape_dst_explicit()
-    # test_reshape_copy(False)
+    test_reshape()
+    test_reshape_dst()
+    test_reshape_dst_explicit()
+    test_reshape_copy(False)
     test_reshape_copy(True)
     test_reshape_copy_scoped()
     test_reshape_subset()
