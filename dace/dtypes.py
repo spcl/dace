@@ -551,14 +551,19 @@ class opaque(typeclass):
         self.dtype = self
 
     def to_json(self):
-        return {'type': 'opaque', 'name': self.ctype}
+        return {'type': 'opaque', 'ctype': self.ctype}
 
     @staticmethod
     def from_json(json_obj, context=None):
         if json_obj['type'] != 'opaque':
             raise TypeError("Invalid type for opaque object")
 
-        return opaque(json_to_typeclass(json_obj['ctype'], context))
+        try:
+            typeclass = json_to_typeclass(json_obj['ctype'], context)
+        except KeyError:
+            typeclass = json_obj['ctype']
+
+        return opaque(typeclass)
 
     def as_ctypes(self):
         """ Returns the ctypes version of the typeclass. """
