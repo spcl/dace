@@ -1789,9 +1789,11 @@ class ProgramVisitor(ExtNodeVisitor):
         # Parse internal node inputs and indirect memory accesses
         if inputs:
             for conn, v in inputs.items():
-                if v is None:  # Input already handled outside
+                inner_state, memlet, inner_indices = v
+                if memlet is None:  # Input already handled outside
                     continue
-                if isinstance(v, nodes.Tasklet):
+
+                if isinstance(memlet, nodes.Tasklet):
                     # Create a code->code node
                     new_scalar = self.sdfg.temp_data_name()
                     if isinstance(internal_node, nodes.NestedSDFG):
@@ -1800,13 +1802,12 @@ class ProgramVisitor(ExtNodeVisitor):
                         raise SyntaxError('Cannot determine connector type for ' 'tasklet input dependency')
                     self.sdfg.add_scalar(new_scalar, dtype, transient=True)
                     accessnode = state.add_access(new_scalar)
-                    state.add_edge(v, conn, accessnode, None, dace.Memlet.simple(new_scalar, '0'))
+                    state.add_edge(memlet, conn, accessnode, None, dace.Memlet.simple(new_scalar, '0'))
                     state.add_edge(accessnode, None, internal_node, conn, dace.Memlet.simple(new_scalar, '0'))
                     if entry_node is not None:
-                        state.add_edge(entry_node, None, v, None, dace.Memlet())
+                        state.add_edge(entry_node, None, memlet, None, dace.Memlet())
                     continue
 
-                inner_state, memlet, inner_indices = v
                 if memlet.data in self.sdfg.arrays:
                     arr = self.sdfg.arrays[memlet.data]
                 else:
@@ -1889,9 +1890,9 @@ class ProgramVisitor(ExtNodeVisitor):
         # Parse internal node outputs
         if outputs:
             for conn, v in outputs.items():
-                if v is None:  # Output already handled outside
-                    continue
                 inner_state, memlet, inner_indices = v
+                if memlet is None:  # Output already handled outside
+                    continue
                 if memlet.data in self.sdfg.arrays:
                     arr = self.sdfg.arrays[memlet.data]
                 else:
