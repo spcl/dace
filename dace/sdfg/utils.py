@@ -4,6 +4,7 @@
 import collections
 import copy
 import os
+import warnings
 import networkx as nx
 import time
 
@@ -722,8 +723,8 @@ def get_view_edge(state: SDFGState, view: nd.AccessNode) -> gr.MultiConnectorEdg
         return out_edge
 
     # If both access nodes reside in the same scope, the input data is viewed.
-    # return in_edge
-    raise ValueError(f"Ambiguous view: in_edge {in_edge} -> view {view.data} -> out_edge {out_edge}")
+    warnings.warn(f"Ambiguous view: in_edge {in_edge} -> view {view.data} -> out_edge {out_edge}")
+    return in_edge
 
 
 def dynamic_map_inputs(state: SDFGState, map_entry: nd.MapEntry) -> List[gr.MultiConnectorEdge]:

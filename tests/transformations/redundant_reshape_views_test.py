@@ -76,8 +76,7 @@ def _dml_disambiguate_direction_dependent_views(sdfg: dace.SDFG):
 
 
 def test_inline_flipped_reshape_works():
-    # related to autodiff in daceml: to disambiguate views, daceml will
-    # flip the memlet on reshape nodes
+    # related to autodiff: to disambiguate views, flip the memlet on reshape nodes
 
     reshape_sdfg = reshape_node_both_args.to_sdfg()
     _dml_disambiguate_direction_dependent_views(reshape_sdfg)

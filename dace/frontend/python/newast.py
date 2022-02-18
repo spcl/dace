@@ -3681,7 +3681,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
         # Update strides
         inv_mapping = {v: k for k, v in mapping.items() if symbolic.issymbolic(v) or isinstance(v, str)}
-        for a, m in {**inputs, **outputs}.items():
+        for a, m in itertools.chain(inputs.items(), outputs.items()):
             # NOTE: This is more complicated than it should because we allow passing
             # arguments to a nested SDFG with incompatible shapes. For an example,
             # see 'tests/tranformations/redundant_reshape_views_test::test_inline_reshape_views_work'
