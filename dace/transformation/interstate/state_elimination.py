@@ -211,7 +211,7 @@ class StateAssignElimination(transformation.MultiStateTransformation, transforma
                 s.replace(str(k), str(v))
 
         if repl_dict:
-            symbolic.safe_replace(repl_dict, lambda m: _str_repl(state, repl_dict))
+            symbolic.safe_replace(repl_dict, lambda m: _str_repl(state, m))
 
 
 class ConstantPropagation(transformation.MultiStateTransformation):
