@@ -25,7 +25,7 @@ from dace.frontend.python import nested_call, replacements, preprocessing
 from dace.frontend.python.memlet_parser import (DaceSyntaxError, parse_memlet, pyexpr_to_symbolic, ParseMemlet,
                                                 inner_eval_ast, MemletExpr)
 from dace.sdfg import nodes
-from dace.sdfg.propagation import propagate_memlet, propagate_subset
+from dace.sdfg.propagation import propagate_memlet, propagate_subset, propagate_states
 from dace.memlet import Memlet
 from dace.properties import LambdaProperty, CodeBlock
 from dace.sdfg import SDFG, SDFGState
@@ -597,8 +597,8 @@ class TaskletTransformer(ExtNodeTransformer):
         self.filename = filename
 
         # Connectors generated from memlets
-        self.inputs = {}  # type: Dict[str, Memlet]
-        self.outputs = {}  # type: Dict[str, Memlet]
+        self.inputs: Dict[str, Memlet] = {}
+        self.outputs: Dict[str, Memlet] = {}
 
         self.extcode = None
         self.lang = lang
@@ -613,8 +613,8 @@ class TaskletTransformer(ExtNodeTransformer):
         self.variables = variables
         self.accesses = accesses
 
-        self.sdfg_inputs = {}
-        self.sdfg_outputs = {}
+        self.sdfg_inputs: Dict[str, Tuple[Memlet, Set[int]]] = {}
+        self.sdfg_outputs: Dict[str, Tuple[Memlet, Set[int]]] = {}
 
         # Tmp fix for missing state symbol propatation
         self.symbols = symbols
@@ -1077,8 +1077,8 @@ class ProgramVisitor(ExtNodeVisitor):
                         self.sdfg.add_symbol(sym.name, sym.dtype)
         self.sdfg._temp_transients = tmp_idx
         self.last_state = self.sdfg.add_state('init', is_start_state=True)
-        self.inputs = {}
-        self.outputs = {}
+        self.inputs: Dict[str, Tuple[SDFGState, Memlet, Tuple[int]]] = {}
+        self.outputs: Dict[str, Tuple[SDFGState, Memlet, Tuple[int]]] = {}
         self.current_lineinfo = dtypes.DebugInfo(line_offset, col_offset, line_offset, col_offset, filename)
 
         self.modules = {k: v.__name__ for k, v in self.globals.items() if dtypes.ismodule(v)}
@@ -1199,7 +1199,7 @@ class ProgramVisitor(ExtNodeVisitor):
         for arrname, arr in self.sdfg.arrays.items():
             if arrname.startswith('__return'):
                 arr.transient = False
-                self.outputs[arrname] = Memlet.from_array(arrname, arr)
+                self.outputs[arrname] = (None, Memlet.from_array(arrname, arr), [])
         ####
 
         def _views_to_data(state: SDFGState, nodes: List[dace.nodes.AccessNode]) -> List[dace.nodes.AccessNode]:
@@ -1235,6 +1235,11 @@ class ProgramVisitor(ExtNodeVisitor):
                 if self.sdfg.arrays[arrname].transient:
                     if (pyname and dtypes.validate_name(pyname) and pyname not in self.sdfg.arrays):
                         self.sdfg.replace(arrname, pyname)
+
+        propagate_states(self.sdfg)
+        for state, memlet, inner_indices in itertools.chain(self.inputs.values(), self.outputs.values()):
+            if state is not None and state.dynamic_executions:
+                memlet.dynamic = True
 
         return self.sdfg, self.inputs, self.outputs, self.symbols
 
@@ -1400,8 +1405,8 @@ class ProgramVisitor(ExtNodeVisitor):
 
             # Add memlets
             self._add_dependencies(state, internal_node, None, None, inputs, outputs)
-            self.inputs.update(sdfg_inp)
-            self.outputs.update(sdfg_out)
+            self.inputs.update({k: (state, *v) for k, v in sdfg_inp.items()})
+            self.outputs.update({k: (state, *v) for k, v in sdfg_out.items()})
 
         elif dec.startswith('dace.map') or dec.startswith('dace.consume'):  # Scope or scope+tasklet
             if 'map' in dec:
@@ -1798,10 +1803,7 @@ class ProgramVisitor(ExtNodeVisitor):
                         state.add_edge(entry_node, None, v, None, dace.Memlet())
                     continue
 
-                if isinstance(v, tuple):
-                    memlet, inner_indices = v
-                else:
-                    memlet, inner_indices = v, set()
+                inner_state, memlet, inner_indices = v
                 if memlet.data in self.sdfg.arrays:
                     arr = self.sdfg.arrays[memlet.data]
                 else:
@@ -1860,8 +1862,7 @@ class ProgramVisitor(ExtNodeVisitor):
                             self.sdfg.add_stream(vname, dtype)
                         else:
                             self.sdfg.add_array(vname, shape, dtype, strides=strides)
-                        self.inputs[vname] = (scope_memlet, inner_indices)
-                        # self.inputs[vname] = (memlet.data, scope_memlet.subset, inner_indices)
+                        self.inputs[vname] = (state, scope_memlet, inner_indices)
                         memlet.data = vname
                         # memlet.subset.offset(memlet.subset, True, outer_indices)
                 else:
@@ -1887,10 +1888,7 @@ class ProgramVisitor(ExtNodeVisitor):
             for conn, v in outputs.items():
                 if v is None:  # Output already handled outside
                     continue
-                if isinstance(v, tuple):
-                    memlet, inner_indices = v
-                else:
-                    memlet, inner_indices = v, set()
+                inner_state, memlet, inner_indices = v
                 if memlet.data in self.sdfg.arrays:
                     arr = self.sdfg.arrays[memlet.data]
                 else:
@@ -1950,8 +1948,7 @@ class ProgramVisitor(ExtNodeVisitor):
                             self.sdfg.add_stream(vname, dtype)
                         else:
                             self.sdfg.add_array(vname, shape, dtype, strides=strides)
-                        self.outputs[vname] = (scope_memlet, inner_indices)
-                        # self.outputs[vname] = (memlet.data, scope_memlet.subset, inner_indices)
+                        self.outputs[vname] = (state, scope_memlet, inner_indices)
                         inner_memlet.data = vname
                         # memlet.subset.offset(memlet.subset, True, outer_indices)
                 else:
@@ -2821,16 +2818,18 @@ class ProgramVisitor(ExtNodeVisitor):
 
         inner_indices = set(non_squeezed)
 
+        state = self.last_state
+
         if access_type == 'r':
             if has_indirection:
-                self.inputs[var_name] = (dace.Memlet.from_array(parent_name, parent_array), inner_indices)
+                self.inputs[var_name] = (state, dace.Memlet.from_array(parent_name, parent_array), inner_indices)
             else:
-                self.inputs[var_name] = (dace.Memlet.simple(parent_name, rng), inner_indices)
+                self.inputs[var_name] = (state, dace.Memlet.simple(parent_name, rng), inner_indices)
         else:
             if has_indirection:
-                self.outputs[var_name] = (dace.Memlet.from_array(parent_name, parent_array), inner_indices)
+                self.outputs[var_name] = (state, dace.Memlet.from_array(parent_name, parent_array), inner_indices)
             else:
-                self.outputs[var_name] = (dace.Memlet.simple(parent_name, rng), inner_indices)
+                self.outputs[var_name] = (state, dace.Memlet.simple(parent_name, rng), inner_indices)
 
         self.variables[var_name] = var_name
         return (var_name, squeezed_rng)
@@ -3635,7 +3634,7 @@ class ProgramVisitor(ExtNodeVisitor):
                             break
                     if not conn_used:
                         del self.sdfg.arrays[aname]
-            if not isinput and aname in self.inputs.keys():
+            if not isinput and aname in self.inputs:
                 # Delete input
                 del self.inputs[aname]
             # Delete potential input slicing
@@ -3686,6 +3685,8 @@ class ProgramVisitor(ExtNodeVisitor):
                                       mapping,
                                       debuginfo=self.current_lineinfo)
         self._add_nested_symbols(nsdfg)
+        inputs = {k: (state, v, set()) for k, v in inputs.items()}
+        outputs = {k: (state, v, set()) for k, v in outputs.items()}
         self._add_dependencies(state, nsdfg, None, None, inputs, outputs)
 
         # If __pystate is detected within nested SDFG, map to local Python state
@@ -4231,8 +4232,8 @@ class ProgramVisitor(ExtNodeVisitor):
 
                 # Add memlets
                 self._add_dependencies(state, tasklet, None, None, inputs, outputs)
-                self.inputs.update(sdfg_inp)
-                self.outputs.update(sdfg_out)
+                self.inputs.update({k: (state, *v) for k, v in sdfg_inp.items()})
+                self.outputs.update({k: (state, *v) for k, v in sdfg_out.items()})
                 return
 
         raise DaceSyntaxError(self, node, 'General "with" statements disallowed in DaCe programs')
