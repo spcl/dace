@@ -4,6 +4,7 @@
 import collections
 import copy
 import os
+import warnings
 import networkx as nx
 import time
 
@@ -707,6 +708,12 @@ def get_view_edge(state: SDFGState, view: nd.AccessNode) -> gr.MultiConnectorEdg
         return in_edge
     if in_edge.data.data == view.data and out_edge.data.data == view.data:
         return None
+    
+    # Check if there is a 'views' connector
+    if in_edge.dst_conn and in_edge.dst_conn == 'views':
+        return in_edge
+    if out_edge.src_conn and out_edge.src_conn == 'views':
+        return out_edge
 
     # If both memlets' data are the respective access nodes, the access
     # node at the highest scope is the one that is viewed.
@@ -716,6 +723,7 @@ def get_view_edge(state: SDFGState, view: nd.AccessNode) -> gr.MultiConnectorEdg
         return out_edge
 
     # If both access nodes reside in the same scope, the input data is viewed.
+    warnings.warn(f"Ambiguous view: in_edge {in_edge} -> view {view.data} -> out_edge {out_edge}")
     return in_edge
 
 

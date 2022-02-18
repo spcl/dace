@@ -1210,13 +1210,13 @@ class ProgramVisitor(ExtNodeVisitor):
                         aname, m = self.views[vnode.data]
                         arr = self.sdfg.arrays[aname]
                         r = state.add_read(aname)
-                        state.add_nedge(r, vnode, copy.deepcopy(m))
+                        state.add_edge(r, None, vnode, 'views', copy.deepcopy(m))
                         new_nodes.append(r)
                     elif state.out_degree(vnode) == 0:
                         aname, m = self.views[vnode.data]
                         arr = self.sdfg.arrays[aname]
                         w = state.add_write(aname)
-                        state.add_nedge(vnode, w, copy.deepcopy(m))
+                        state.add_edge(vnode, 'views', w, None, copy.deepcopy(m))
                         new_nodes.append(w)
                     else:
                         raise ValueError(f'View "{vnode.data}" already has' 'both incoming and outgoing edges')
@@ -3680,6 +3680,26 @@ class ProgramVisitor(ExtNodeVisitor):
                 # Create an output entry for the connectors
                 outputs[arrname] = dace.Memlet.from_array(new_arrname, newarr)
                 rets.append(new_arrname)
+
+        # Update strides
+        inv_mapping = {v: k for k, v in mapping.items() if symbolic.issymbolic(v) or isinstance(v, str)}
+        for a, m in itertools.chain(inputs.items(), outputs.items()):
+            # NOTE: This is more complicated than it should because we allow passing
+            # arguments to a nested SDFG with incompatible shapes. For an example,
+            # see 'tests/tranformations/redundant_reshape_views_test::test_inline_reshape_views_work'
+            if not isinstance(m, Memlet):
+                continue
+            outer_data = self.sdfg.arrays[m.data]
+            if outer_data.shape == (1,):
+                continue
+            strides = tuple(outer_data.strides[i] for i, sz in enumerate(m.subset.size()) if sz != 1)
+            if len(strides) == len(sdfg.arrays[a].shape):
+                sdfg.arrays[a]._strides = strides
+                if inv_mapping:
+                    symbolic.safe_replace(inv_mapping, lambda m: sd.replace_properties_dict(sdfg.arrays[a], m))
+            else:
+                if strides and (strides[-1] != 1 or sdfg.arrays[a].strides[-1] != 1):
+                    warnings.warn(f'Incompatible strides: inner {sdfg.arrays[a].strides} - outer {strides}')
 
         nsdfg = state.add_nested_sdfg(sdfg,
                                       self.sdfg,
