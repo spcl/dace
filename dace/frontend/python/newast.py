@@ -1404,6 +1404,9 @@ class ProgramVisitor(ExtNodeVisitor):
             internal_node, inputs, outputs, sdfg_inp, sdfg_out = self._parse_tasklet(state, node)
 
             # Add memlets
+            inputs = {k: (state, v, set()) for k, v in inputs.items()}
+            outputs = {k: (state, v, set()) for k, v in outputs.items()}
+
             self._add_dependencies(state, internal_node, None, None, inputs, outputs)
             self.inputs.update({k: (state, *v) for k, v in sdfg_inp.items()})
             self.outputs.update({k: (state, *v) for k, v in sdfg_out.items()})
