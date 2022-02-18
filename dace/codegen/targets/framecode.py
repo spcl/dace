@@ -50,7 +50,6 @@ class DaCeCodeGenerator(object):
         self._symbols_and_constants: Dict[int, Set[str]] = {}
         fsyms = self.free_symbols(sdfg)
         self.arglist = sdfg.arglist(scalars_only=False, free_symbols=fsyms)
-        self.arglist_scalars_only = sdfg.arglist(scalars_only=True, free_symbols=fsyms)
 
     # Cached fields
     def symbols_and_constants(self, sdfg: SDFG):
@@ -191,8 +190,8 @@ struct {sdfg.name}_t {{
         fname = sdfg.name
         params = sdfg.signature(arglist=self.arglist)
         paramnames = sdfg.signature(False, for_call=True, arglist=self.arglist)
-        initparams = sdfg.signature(with_arrays=False, arglist=self.arglist_scalars_only)
-        initparamnames = sdfg.signature(False, for_call=True, with_arrays=False, arglist=self.arglist_scalars_only)
+        initparams = sdfg.init_signature(free_symbols=self.free_symbols(sdfg))
+        initparamnames = sdfg.init_signature(for_call=True, free_symbols=self.free_symbols(sdfg))
 
         # Invoke all instrumentation providers
         for instr in self._dispatcher.instrumentation.values():
@@ -255,7 +254,8 @@ DACE_EXPORTED {sdfg.name}_t *__dace_init_{sdfg.name}({initparams})
             if None in sd.init_code:
                 callsite_stream.write(codeblock_to_cpp(sd.init_code[None]), sd)
             if 'frame' in sd.init_code:
-                callsite_stream.write(codeblock_to_cpp(sd.init_code['frame']), sd)
+                callsite_stream.write(codeblock_to_cpp(sd.init_code['frame']),
+                                      sd)
 
         callsite_stream.write(self._initcode.getvalue(), sdfg)
 
@@ -284,7 +284,8 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
             if None in sd.exit_code:
                 callsite_stream.write(codeblock_to_cpp(sd.exit_code[None]), sd)
             if 'frame' in sd.exit_code:
-                callsite_stream.write(codeblock_to_cpp(sd.exit_code['frame']), sd)
+                callsite_stream.write(codeblock_to_cpp(sd.exit_code['frame']),
+                                      sd)
 
         for target in self._dispatcher.used_targets:
             if target.has_finalizer:
