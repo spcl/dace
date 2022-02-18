@@ -97,8 +97,8 @@ def jacobi_2d_dist(TSTEPS: dc.int64, A: dc.float64[Nx, Ny], B: dc.float64[Nx, Ny
     tAB[:] = lB[1:-1, 1:-1]
     dc.comm.Gather(tAB, B2)
 
-    A[:] = np.transpose(A2, (0, 2, 1, 3))
-    B[:] = np.transpose(B2, (0, 2, 1, 3))
+    A[:] = np.reshape(np.transpose(A2, (0, 2, 1, 3)), (Nx, Ny))
+    B[:] = np.reshape(np.transpose(B2, (0, 2, 1, 3)), (Nx, Ny))
 
 
 def init_data(N, datatype):
@@ -118,6 +118,8 @@ grid = {1: (1, 1), 2: (2, 1), 4: (2, 2), 8: (4, 2), 16: (4, 4)}
 if __name__ == "__main__":
 
     TSTEPS, N = 100, 280
+
+    from mpi4py import MPI
 
     comm = MPI.COMM_WORLD
     rank = comm.Get_rank()

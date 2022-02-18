@@ -782,6 +782,11 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
         if not isinstance(memlet, mm.Memlet):
             raise TypeError("Memlet is not of type Memlet (type: %s)" % str(type(memlet)))
 
+        if u_connector and isinstance(u, nd.AccessNode):
+            u.add_out_connector(u_connector, force=True)
+        if v_connector and isinstance(v, nd.AccessNode):
+            v.add_in_connector(v_connector, force=True)
+
         self._clear_scopedict_cache()
         result = super(SDFGState, self).add_edge(u, u_connector, v, v_connector, memlet)
         memlet.try_initialize(self.parent, self, result)
