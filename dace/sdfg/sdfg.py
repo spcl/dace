@@ -80,18 +80,28 @@ class LogicalGroup(object):
     """ Logical element groupings on a per-SDFG level.
     """
 
-    nodes = ListProperty(element_type=Tuple[int, int],
+    nodes = ListProperty(element_type=tuple,
                          desc='Nodes in this group given by [State, Node] id tuples')
     states = ListProperty(element_type=int,
                           desc='States in this group given by their ids')
-    name = Property(dtype=str)
-    color = Property(dtype=str)
+    name = Property(dtype=str, desc='Logical group name')
+    color = Property(dtype=str,
+                     desc='Color for the group, given as a hexadecimal string')
 
     def __init__(self, name, color, nodes=[], states=[]):
         self.nodes = nodes
         self.states = states
         self.color = color
         self.name = name
+
+    def to_json(self):
+        return dace.serialize.all_properties_to_json(self)
+
+    @staticmethod
+    def from_json(json_obj, context=None):
+        ret = LogicalGroup('', '')
+        dace.serialize.set_properties_from_json(ret, json_obj, context=context)
+        return ret
 
 
 @make_properties
