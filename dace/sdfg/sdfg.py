@@ -75,30 +75,23 @@ def _assignments_to_string(assdict):
     return '; '.join(['%s=%s' % (k, v) for k, v in assdict.items()])
 
 
-class LogicalGroup:
+@make_properties
+class LogicalGroup(object):
     """ Logical element groupings on a per-SDFG level.
     """
 
-    def __init__(self, name, nodes=[], edges=[], states=[], attributes={}):
+    nodes = ListProperty(element_type=Tuple[int, int],
+                         desc='Nodes in this group given by [State, Node] id tuples')
+    states = ListProperty(element_type=int,
+                          desc='States in this group given by their ids')
+    name = Property(dtype=str)
+    color = Property(dtype=str)
+
+    def __init__(self, name, color, nodes=[], states=[]):
         self.nodes = nodes
-        self.edges = edges
         self.states = states
-        self.attributes = attributes
+        self.color = color
         self.name = name
-
-    def to_json(self):
-        return dict(type='LogicalGroup',
-                    nodes=self.nodes,
-                    edges=self.edges,
-                    states=self.states,
-                    attributes=self.attributes,
-                    name=self.name)
-
-    @staticmethod
-    def from_json(json_obj, context=None):
-        return LogicalGroup(json_obj['name'], json_obj['nodes'],
-                            json_obj['edges'], json_obj['states'],
-                            json_obj['attributes'])
 
 
 @make_properties
