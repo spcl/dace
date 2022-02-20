@@ -95,12 +95,15 @@ class LogicalGroup(object):
         self.name = name
 
     def to_json(self):
-        return dace.serialize.all_properties_to_json(self)
+        retdict = dace.serialize.all_properties_to_json(self)
+        retdict['type'] = type(self).__name__
+        return retdict
 
     @staticmethod
     def from_json(json_obj, context=None):
         ret = LogicalGroup('', '')
-        dace.serialize.set_properties_from_json(ret, json_obj, context=context)
+        dace.serialize.set_properties_from_json(ret, json_obj, context=context,
+                                                ignore_properties={'type'})
         return ret
 
 
