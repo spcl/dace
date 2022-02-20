@@ -75,6 +75,32 @@ def _assignments_to_string(assdict):
     return '; '.join(['%s=%s' % (k, v) for k, v in assdict.items()])
 
 
+class LogicalGroup:
+    """ Logical element groupings on a per-SDFG level.
+    """
+
+    def __init__(self, name, nodes=[], edges=[], states=[], attributes={}):
+        self.nodes = nodes
+        self.edges = edges
+        self.states = states
+        self.attributes = attributes
+        self.name = name
+
+    def to_json(self):
+        return dict(type='LogicalGroup',
+                    nodes=self.nodes,
+                    edges=self.edges,
+                    states=self.states,
+                    attributes=self.attributes,
+                    name=self.name)
+
+    @staticmethod
+    def from_json(json_obj, context=None):
+        return LogicalGroup(json_obj['name'], json_obj['nodes'],
+                            json_obj['edges'], json_obj['states'],
+                            json_obj['attributes'])
+
+
 @make_properties
 class InterstateEdge(object):
     """ An SDFG state machine edge. These edges can contain a condition
@@ -254,6 +280,9 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
     orig_sdfg = SDFGReferenceProperty(allow_none=True)
     transformation_hist = TransformationHistProperty()
+
+    logical_groups = ListProperty(element_type=LogicalGroup,
+                                  desc='Logical groupings of nodes and edges')
 
     openmp_sections = Property(dtype=bool,
                                default=Config.get_bool('compiler', 'cpu', 'openmp_sections'),
