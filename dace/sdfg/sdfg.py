@@ -76,6 +76,38 @@ def _assignments_to_string(assdict):
 
 
 @make_properties
+class LogicalGroup(object):
+    """ Logical element groupings on a per-SDFG level.
+    """
+
+    nodes = ListProperty(element_type=tuple,
+                         desc='Nodes in this group given by [State, Node] id tuples')
+    states = ListProperty(element_type=int,
+                          desc='States in this group given by their ids')
+    name = Property(dtype=str, desc='Logical group name')
+    color = Property(dtype=str,
+                     desc='Color for the group, given as a hexadecimal string')
+
+    def __init__(self, name, color, nodes=[], states=[]):
+        self.nodes = nodes
+        self.states = states
+        self.color = color
+        self.name = name
+
+    def to_json(self):
+        retdict = dace.serialize.all_properties_to_json(self)
+        retdict['type'] = type(self).__name__
+        return retdict
+
+    @staticmethod
+    def from_json(json_obj, context=None):
+        ret = LogicalGroup('', '')
+        dace.serialize.set_properties_from_json(ret, json_obj, context=context,
+                                                ignore_properties={'type'})
+        return ret
+
+
+@make_properties
 class InterstateEdge(object):
     """ An SDFG state machine edge. These edges can contain a condition
         (which may include data accesses for data-dependent decisions) and
@@ -254,6 +286,9 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
     orig_sdfg = SDFGReferenceProperty(allow_none=True)
     transformation_hist = TransformationHistProperty()
+
+    logical_groups = ListProperty(element_type=LogicalGroup,
+                                  desc='Logical groupings of nodes and edges')
 
     openmp_sections = Property(dtype=bool,
                                default=Config.get_bool('compiler', 'cpu', 'openmp_sections'),
