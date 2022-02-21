@@ -1505,7 +1505,7 @@ class ProgramVisitor(ExtNodeVisitor):
                             internal_connector=ntrans)
 
         # Mark as input so that no extra edges are added
-        inputs[ntrans] = None
+        inputs[ntrans] = (state, None, set())
 
     def _parse_for_indices(self, node: ast.Expr):
         """Parses the indices of a for-loop statement
