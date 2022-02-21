@@ -76,6 +76,38 @@ def _assignments_to_string(assdict):
 
 
 @make_properties
+class LogicalGroup(object):
+    """ Logical element groupings on a per-SDFG level.
+    """
+
+    nodes = ListProperty(element_type=tuple,
+                         desc='Nodes in this group given by [State, Node] id tuples')
+    states = ListProperty(element_type=int,
+                          desc='States in this group given by their ids')
+    name = Property(dtype=str, desc='Logical group name')
+    color = Property(dtype=str,
+                     desc='Color for the group, given as a hexadecimal string')
+
+    def __init__(self, name, color, nodes=[], states=[]):
+        self.nodes = nodes
+        self.states = states
+        self.color = color
+        self.name = name
+
+    def to_json(self):
+        retdict = dace.serialize.all_properties_to_json(self)
+        retdict['type'] = type(self).__name__
+        return retdict
+
+    @staticmethod
+    def from_json(json_obj, context=None):
+        ret = LogicalGroup('', '')
+        dace.serialize.set_properties_from_json(ret, json_obj, context=context,
+                                                ignore_properties={'type'})
+        return ret
+
+
+@make_properties
 class InterstateEdge(object):
     """ An SDFG state machine edge. These edges can contain a condition
         (which may include data accesses for data-dependent decisions) and
@@ -254,6 +286,9 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
     orig_sdfg = SDFGReferenceProperty(allow_none=True)
     transformation_hist = TransformationHistProperty()
+
+    logical_groups = ListProperty(element_type=LogicalGroup,
+                                  desc='Logical groupings of nodes and edges')
 
     openmp_sections = Property(dtype=bool,
                                default=Config.get_bool('compiler', 'cpu', 'openmp_sections'),
@@ -1043,6 +1078,19 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
         return result
 
+    def init_signature(self, for_call=False, free_symbols=None) -> str:
+        """ Returns a C/C++ signature of this SDFG, used when generating the initalization code.
+            It only contains symbols.
+
+            :param for_call: If True, returns arguments that can be used when calling the SDFG.
+        """
+        # Get global free symbols scalar arguments
+        free_symbols = free_symbols or self.free_symbols
+        return ", ".join(
+            dt.Scalar(self.symbols[k]).as_arg(
+                name=k, with_types=not for_call, for_call=for_call)
+            for k in sorted(free_symbols) if not k.startswith('__dace'))
+
     def signature_arglist(self, with_types=True, for_call=False, with_arrays=True, arglist=None) -> List[str]:
         """ Returns a list of arguments necessary to call this SDFG,
             formatted as a list of C definitions.
@@ -1537,14 +1585,21 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                               total_size=total_size,
                               may_alias=may_alias)
 
-    def add_temp_transient_like(self, desc: dt.Array, dtype=None, debuginfo=None):
+    def add_temp_transient_like(self, desc: Union[dt.Array, dt.Scalar], dtype=None, debuginfo=None):
         """ Convenience function to add a transient array with a temporary name to the data
             descriptor store. """
         debuginfo = debuginfo or desc.debuginfo
         dtype = dtype or desc.dtype
+        if isinstance(desc, dt.Scalar):
+            return self.add_scalar(self.temp_data_name(),
+                                   dtype,
+                                   desc.storage,
+                                   transient=True,
+                                   lifetime=desc.lifetime,
+                                   debuginfo=debuginfo)
         return self.add_array(self.temp_data_name(),
                               desc.shape,
-                              desc.dtype,
+                              dtype,
                               storage=desc.storage,
                               location=desc.location,
                               transient=True,

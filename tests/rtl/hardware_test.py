@@ -1,6 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
-from dace.fpga_testing import xilinx_test
+from dace.fpga_testing import rtl_test
 import numpy as np
 import importlib.util
 from pathlib import Path
@@ -19,7 +19,7 @@ def make_vadd_sdfg(N, veclen=8):
 
     # add arrays
     sdfg.add_array('A', [N // veclen], dtype=dace.vector(dace.float32, veclen), storage=dace.StorageType.CPU_Heap)
-    sdfg.add_scalar('B', dace.float32, storage=dace.StorageType.FPGA_Registers)
+    sdfg.add_scalar('B', dace.float32, storage=dace.StorageType.FPGA_Global)
     sdfg.add_array('C', [N // veclen], dtype=dace.vector(dace.float32, veclen), storage=dace.StorageType.CPU_Heap)
     sdfg.add_array('fpga_A', [N // veclen],
                    dtype=dace.vector(dace.float32, veclen),
@@ -71,9 +71,8 @@ def make_vadd_sdfg(N, veclen=8):
             .m_axis_tready (a_tready)
         );
 
-        genvar i;
         generate
-            for (i = 0; i < VECLEN; i = i + 1) begin
+            for (genvar i = 0; i < VECLEN; i = i + 1) begin
                 floating_point_add add(
                     .aclk    (ap_aclk),
                     .aresetn (ap_aresetn),
@@ -82,7 +81,7 @@ def make_vadd_sdfg(N, veclen=8):
                     .s_axis_a_tdata  (a_tdata[i]),
                     .s_axis_a_tready (a_tready[i]),
 
-                    .s_axis_b_tvalid (1),
+                    .s_axis_b_tvalid (scalars_valid),
                     .s_axis_b_tdata  (b),
 
                     .m_axis_result_tvalid (c_tvalid[i]),
@@ -117,14 +116,14 @@ def make_vadd_sdfg(N, veclen=8):
     rtl_tasklet.add_ip_core(
         'axis_broadcaster_0', 'axis_broadcaster', 'xilinx.com', '1.1',
         dict({
-            'CONFIG.NUM_MI': '16',
+            'CONFIG.NUM_MI': f'{veclen}',
             'CONFIG.M_TDATA_NUM_BYTES': '4',
-            'CONFIG.S_TDATA_NUM_BYTES': '64'
+            'CONFIG.S_TDATA_NUM_BYTES': f'{veclen*4}'
         }, **{f'CONFIG.M{i:02}_TDATA_REMAP': f'tdata[{((i+1)*32)-1}:{i*32}]'
               for i in range(veclen)}))
     rtl_tasklet.add_ip_core('axis_combiner_0', 'axis_combiner', 'xilinx.com', '1.1', {
         'CONFIG.TDATA_NUM_BYTES': '4',
-        'CONFIG.NUM_SI': '16'
+        'CONFIG.NUM_SI': f'{veclen}'
     })
 
     # add read and write tasklets
@@ -299,16 +298,15 @@ def make_vadd_multi_sdfg(N, M):
     return sdfg
 
 
-@xilinx_test()
+@rtl_test()
 def test_hardware_vadd():
     # add symbol
     N = dace.symbol('N')
-    N.set(256)
-    veclen = 16
+    N.set(32)
+    veclen = 4
     sdfg = make_vadd_sdfg(N, veclen)
     a = np.random.randint(0, 100, N.get()).astype(np.float32)
-    # TODO set to 0 due to the scalar argument problem
-    b = np.float32(0)  #np.random.randint(1, 100, 1)[0].astype(np.float32)
+    b = np.random.randint(1, 100, 1)[0].astype(np.float32)
     c = np.zeros((N.get(), )).astype(np.float32)
 
     # call program
@@ -321,14 +319,14 @@ def test_hardware_vadd():
     return sdfg
 
 
-@xilinx_test()
+@rtl_test()
 def test_hardware_add42_single():
     N = dace.symbol('N')
     M = dace.symbol('M')
 
     # init data structures
-    N.set(256)  # elements
-    M.set(256)  # elements per kernel
+    N.set(32)  # elements
+    M.set(32)  # elements per kernel
     a = np.random.randint(0, 100, N.get()).astype(np.int32)
     b = np.zeros((N.get(), )).astype(np.int32)
     sdfg = make_vadd_multi_sdfg(N, M)
@@ -346,64 +344,56 @@ def test_hardware_add42_single():
 
 @pytest.mark.skip(reason="This test is covered by the Xilinx tests.")
 def test_hardware_axpy_double_pump(veclen=2):
-    # Grab the double pumped AXPY implementation the samples directory
-    spec = importlib.util.spec_from_file_location(
-        "axpy",
-        Path(__file__).parent.parent.parent / "samples" / "rtl" / "axpy_double_pump.py")
-    axpy = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(axpy)
+    with dace.config.set_temporary('compiler', 'xilinx', 'frequency', value='"0:300\\|1:600"'):
+        # Grab the double pumped AXPY implementation the samples directory
+        spec = importlib.util.spec_from_file_location(
+            "axpy",
+            Path(__file__).parent.parent.parent / "samples" / "rtl" / "axpy_double_pump.py")
+        axpy = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(axpy)
 
-    # Configuration has to use multiple clocks in this sample.
-    old_freq = dace.config.Config.get('compiler', 'xilinx', 'frequency')
-    dace.config.Config.set('compiler', 'xilinx', 'frequency', value='"0:300\\|1:600"')
+        # init data structures
+        N = dace.symbol('N')
+        N.set(32)
+        a = np.random.rand(1)[0].astype(np.float32)
+        x = np.random.rand(N.get()).astype(np.float32)
+        y = np.random.rand(N.get()).astype(np.float32)
+        result = np.zeros((N.get(), )).astype(np.float32)
 
-    # init data structures
-    N = dace.symbol('N')
-    N.set(128)
-    # TODO a is set to zero due to the problem of the host overwriting the arguments with 0's after launching
-    # the kernel, when running in hardware simulation.
-    a = np.float32(0)  #np.random.rand(1)[0].astype(np.float32)
-    x = np.random.rand(N.get()).astype(np.float32)
-    y = np.random.rand(N.get()).astype(np.float32)
-    result = np.zeros((N.get(), )).astype(np.float32)
+        # Build the SDFG
+        sdfg = axpy.make_sdfg(veclen)
 
-    # Build the SDFG
-    sdfg = axpy.make_sdfg(veclen)
+        # call program
+        sdfg(a=a, x=x, y=y, result=result, N=N)
 
-    # call program
-    sdfg(a=a, x=x, y=y, result=result, N=N)
-
-    # check result
-    expected = a * x + y
-    diff = np.linalg.norm(expected - result) / N.get()
-
-    # Set the old frequency back
-    dace.config.Config.set('compiler', 'xilinx', 'frequency', value=old_freq)
+        # check result
+        expected = a * x + y
+        diff = np.linalg.norm(expected - result) / N.get()
 
     assert diff <= 1e-5
 
     return sdfg
 
 
-@xilinx_test()
+@rtl_test()
 def test_hardware_axpy_double_pump_vec2():
     return test_hardware_axpy_double_pump(veclen=2)
 
 
-@xilinx_test()
+@rtl_test()
 def test_hardware_axpy_double_pump_vec4():
     return test_hardware_axpy_double_pump(veclen=4)
 
 
 # TODO disabled due to problem with array of streams in Vitis 2021.1
-#@xilinx_test()
+#rtl_test()
 #def test_hardware_add42_multi():
 #    N = dace.symbol('N')
 #    M = dace.symbol('M')
 #
 #    # init data structures
-#    N.set(256)  # elements
-#    M.set(32)  # elements per kernel
+#    N.set(32)  # elements
+#    M.set(8)  # elements per kernel
 #    a = np.random.randint(0, 100, N.get()).astype(np.int32)
 #    b = np.zeros((N.get(), )).astype(np.int32)
 #    sdfg = make_vadd_multi_sdfg(N, M)
@@ -420,15 +410,10 @@ def test_hardware_axpy_double_pump_vec4():
 
 if __name__ == '__main__':
     # These tests should only be run in hardware* mode
-    old_mode = dace.config.Config.get('compiler', 'xilinx', 'mode')
-    dace.config.Config.set('compiler', 'xilinx', 'mode', value='hardware_emulation')
-
-    test_hardware_vadd(None)
-    test_hardware_add42_single(None)
-    # TODO disabled due to problem with array of streams in Vitis 2021.1
-    #test_hardware_add42_multi(None)
-    test_hardware_axpy_double_pump_vec2(None)
-    test_hardware_axpy_double_pump_vec4(None)
-
-    # Restore the previous config mode
-    dace.config.Config.set('compiler', 'xilinx', 'mode', value=old_mode)
+    with dace.config.set_temporary('compiler', 'xilinx', 'mode', value='hardware_emulation'):
+        test_hardware_vadd(None)
+        test_hardware_add42_single(None)
+        # TODO disabled due to problem with array of streams in Vitis 2021.1
+        #test_hardware_add42_multi(None)
+        test_hardware_axpy_double_pump_vec2(None)
+        test_hardware_axpy_double_pump_vec4(None)

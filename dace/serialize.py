@@ -48,6 +48,7 @@ class NumpySerializer:
 
 _DACE_SERIALIZE_TYPES = {
     # Define these manually, so dtypes can stay independent
+    "opaque": dace.dtypes.opaque,
     "pointer": dace.dtypes.pointer,
     "vector": dace.dtypes.vector,
     "callback": dace.dtypes.callback,
