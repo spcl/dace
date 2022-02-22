@@ -709,9 +709,9 @@ class InlineSDFG(transformation.SingleStateTransformation, transformation.Simpli
                 continue
             edge = new_edges[reshp[node.data]]
             if inputs:
-                state.add_edge(edge.src, edge.src_conn, node, None, edge.data)
+                state.add_edge(edge.src, edge.src_conn, node, 'views', edge.data)
             else:
-                state.add_edge(node, None, edge.dst, edge.dst_conn, edge.data)
+                state.add_edge(node, 'views', edge.dst, edge.dst_conn, edge.data)
 
 
 @make_properties

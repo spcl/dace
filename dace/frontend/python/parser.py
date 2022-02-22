@@ -9,7 +9,7 @@ import sympy
 from typing import Any, Callable, Dict, List, Optional, Set, Sequence, Tuple, Union
 import warnings
 
-from dace import symbolic, dtypes
+from dace import symbolic, data, dtypes
 from dace.config import Config
 from dace.frontend.python import (newast, common as pycommon, cached_program, preprocessing)
 from dace.sdfg import SDFG
@@ -689,7 +689,10 @@ class DaceProgram(pycommon.SDFGConvertible):
             self.global_vars[self.objname] = self.methodobj
 
         for k, v in argtypes.items():
-            if v.transient:  # Arguments to (nested) SDFGs cannot be transient
+            if isinstance(v, data.View):  # Arguments to (nested) SDFG cannot be Views
+                argtypes[k] = v.as_array()
+                argtypes[k].transient = False
+            elif v.transient:  # Arguments to (nested) SDFGs cannot be transient
                 v_cpy = copy.deepcopy(v)
                 v_cpy.transient = False
                 argtypes[k] = v_cpy

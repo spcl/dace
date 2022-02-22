@@ -62,7 +62,7 @@ def test_view_fpga_sdfg():
     r = fpga_state.add_read('device_A')
     v = fpga_state.add_access('Av')
     w = fpga_state.add_write('device_B')
-    fpga_state.add_nedge(r, v, dace.Memlet(data='device_A'))
+    fpga_state.add_edge(r, None, v, 'views', dace.Memlet(data='device_A'))
     fpga_state.add_nedge(v, w, dace.Memlet(data='device_B'))
 
     ######################################
