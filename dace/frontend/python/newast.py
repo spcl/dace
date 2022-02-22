@@ -44,7 +44,7 @@ Size = Union[int, dace.symbolic.symbol]
 ShapeTuple = Tuple[Size]
 ShapeList = List[Size]
 Shape = Union[ShapeTuple, ShapeList]
-
+DependencyType = Dict[str, Tuple[SDFGState, Union[Memlet, nodes.Tasklet], Tuple[int]]]
 
 class SkipCall(Exception):
     """ Exception used to skip calls to functions that cannot be parsed. """
@@ -1077,8 +1077,9 @@ class ProgramVisitor(ExtNodeVisitor):
                         self.sdfg.add_symbol(sym.name, sym.dtype)
         self.sdfg._temp_transients = tmp_idx
         self.last_state = self.sdfg.add_state('init', is_start_state=True)
-        self.inputs: Dict[str, Tuple[SDFGState, Memlet, Tuple[int]]] = {}
-        self.outputs: Dict[str, Tuple[SDFGState, Memlet, Tuple[int]]] = {}
+        
+        self.inputs: DependencyType = {}
+        self.outputs: DependencyType = {}
         self.current_lineinfo = dtypes.DebugInfo(line_offset, col_offset, line_offset, col_offset, filename)
 
         self.modules = {k: v.__name__ for k, v in self.globals.items() if dtypes.ismodule(v)}
@@ -1767,8 +1768,8 @@ class ProgramVisitor(ExtNodeVisitor):
                           internal_node: nodes.CodeNode,
                           entry_node: nodes.EntryNode,
                           exit_node: nodes.ExitNode,
-                          inputs: Dict[str, Memlet],
-                          outputs: Dict[str, Memlet],
+                          inputs: DependencyType,
+                          outputs: DependencyType,
                           map_inputs: Dict[str, Memlet] = None,
                           symbols: Dict[str, 'dace.symbol'] = dict()):
 
@@ -1789,11 +1790,12 @@ class ProgramVisitor(ExtNodeVisitor):
         # Parse internal node inputs and indirect memory accesses
         if inputs:
             for conn, v in inputs.items():
-                inner_state, memlet, inner_indices = v
-                if memlet is None:  # Input already handled outside
+                inner_state, memlet_or_node, inner_indices = v
+                if memlet_or_node is None:  # Input already handled outside
                     continue
 
-                if isinstance(memlet, nodes.Tasklet):
+                if isinstance(memlet_or_node, nodes.Tasklet):
+                    tasklet: nodes.Tasklet = memlet_or_node
                     # Create a code->code node
                     new_scalar = self.sdfg.temp_data_name()
                     if isinstance(internal_node, nodes.NestedSDFG):
@@ -1802,11 +1804,13 @@ class ProgramVisitor(ExtNodeVisitor):
                         raise SyntaxError('Cannot determine connector type for ' 'tasklet input dependency')
                     self.sdfg.add_scalar(new_scalar, dtype, transient=True)
                     accessnode = state.add_access(new_scalar)
-                    state.add_edge(memlet, conn, accessnode, None, dace.Memlet.simple(new_scalar, '0'))
+                    state.add_edge(tasklet, conn, accessnode, None, dace.Memlet.simple(new_scalar, '0'))
                     state.add_edge(accessnode, None, internal_node, conn, dace.Memlet.simple(new_scalar, '0'))
                     if entry_node is not None:
-                        state.add_edge(entry_node, None, memlet, None, dace.Memlet())
+                        state.add_edge(entry_node, None, tasklet, None, dace.Memlet())
                     continue
+
+                memlet: Memlet = memlet_or_node
 
                 if memlet.data in self.sdfg.arrays:
                     arr = self.sdfg.arrays[memlet.data]
