@@ -1,6 +1,5 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
-from pandas import cut
 import dace
 from dace.sdfg.analysis import cutout
 import pytest
