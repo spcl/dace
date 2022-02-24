@@ -34,11 +34,12 @@ class InstrumentationProvider(object):
                 result += '_' + str(state.node_id(node))
         return result
 
-    def on_sdfg_begin(self, sdfg, local_stream, global_stream):
+    def on_sdfg_begin(self, sdfg, local_stream, global_stream, codegen):
         """ Event called at the beginning of SDFG code generation.
             :param sdfg: The generated SDFG object.
             :param local_stream: Code generator for the in-function code.
             :param global_stream: Code generator for global (external) code.
+            :param codegen: An instance of the code generator.
         """
         pass
 

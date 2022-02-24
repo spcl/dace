@@ -707,7 +707,7 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
         # Invoke all instrumentation providers
         for instr in self._dispatcher.instrumentation.values():
             if instr is not None:
-                instr.on_sdfg_begin(sdfg, callsite_stream, global_stream)
+                instr.on_sdfg_begin(sdfg, callsite_stream, global_stream, self)
 
         # Allocate outer-level transients
         self.allocate_arrays_in_scope(sdfg, sdfg, global_stream, callsite_stream)
