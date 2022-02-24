@@ -396,7 +396,8 @@ class StateGraphView(object):
         :note: Assumes that the graph is valid (i.e., without undefined or
                overlapping symbols).
         """
-        sdfg = self.parent
+        state = self.graph if isinstance(self, SubgraphView) else self
+        sdfg = state.parent
         new_symbols = set()
         freesyms = set()
 
@@ -430,7 +431,7 @@ class StateGraphView(object):
         state or subgraph to their types.
         """
         state = self.graph if isinstance(self, SubgraphView) else self
-        sdfg = self.parent
+        sdfg = state.parent
 
         # Start with SDFG global symbols
         defined_syms = {k: v for k, v in sdfg.symbols.items()}
