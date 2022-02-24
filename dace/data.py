@@ -367,7 +367,55 @@ class Scalar(Data):
 
 @make_properties
 class Array(Data):
-    """ Array/constant descriptor (dimensions, type and other properties). """
+    """
+    Array data descriptor. This object represents a multi-dimensional data container in SDFGs that can be accessed and
+    modified. The definition does not contain the actual array, but rather a description of how to construct it and
+    how it should behave.
+
+    The array definition is flexible in terms of data allocation, it allows arbitrary multidimensional, potentially
+    symbolic shapes (e.g., an array with size ``N+1 x M`` will have ``shape=(N+1, M)``), of arbitrary data 
+    typeclasses (``dtype``). The physical data layout of the array is controlled by several properties:
+       * The ``strides`` property determines the ordering and layout of the dimensions --- it specifies how many
+         elements in memory are skipped whenever one element in that dimension is advanced. For example, the contiguous
+         dimension always has a stride of ``1``; a C-style MxN array will have strides ``(N, 1)``, whereas a 
+         FORTRAN-style array of the same size will have ``(1, M)``. Strides can be larger than the shape, which allows
+         post-padding of the contents of each dimension.
+       * The ``start_offset`` property is a number of elements to pad the beginning of the memory buffer with. This is
+         used to ensure that a specific index is aligned as a form of pre-padding (that element may not necessarily be
+         the first element, e.g., in the case of halo or "ghost cells" in stencils).
+       * The ``total_size`` property determines how large the total allocation size is. Normally, it is the product of
+         the ``shape`` elements, but if pre- or post-padding is involved it may be larger.
+       * ``alignment`` provides alignment guarantees (in bytes) of the first element in the allocated array. This is
+         used by allocators in the code generator to ensure certain addresses are expected to be aligned, e.g., for
+         vectorization.
+       * Lastly, a property called ``offset`` controls the logical access of the array, i.e., what would be the first
+         element's index after padding and alignment. This mimics a language feature prominent in scientific languages
+         such as FORTRAN, where one could set an array to begin with 1, or any arbitrary index. By default this is set
+         to zero.
+
+    To summarize with an example, a two-dimensional array with pre- and post-padding looks as follows:
+    ```
+    [xxx][          |xx]
+         [          |xx]
+         [          |xx]
+         [          |xx]
+         ---------------
+         [xxxxxxxxxxxxx]
+
+    shape = (4, 10)
+    strides = (12, 1)
+    start_offset = 3
+    total_size = 63   (= 3 + 12 * 5)
+    offset = (0, 0, 0)
+    ```
+    Notice that the last padded row does not appear in strides, but is a consequence of ``total_size`` being larger.
+    
+
+    Apart from memory layout, other properties of ``Array`` help the data-centric transformation infrastructure make
+    decisions about the array. ``allow_conflicts`` states that warnings should not be printed if potential conflicted
+    acceses (e.g., data races) occur. ``may_alias`` inhibits transformations that may assume that this array does not
+    overlap with other arrays in the same context (e.g., function).
+    """
 
     # Properties
     allow_conflicts = Property(dtype=bool,
@@ -382,16 +430,15 @@ class Array(Data):
         'skip in order to obtain the next element in '
         'that dimension.')
 
-    total_size = SymbolicProperty(default=0, desc='The total allocated size of the array. Can be used for' ' padding.')
+    total_size = SymbolicProperty(default=0, desc='The total allocated size of the array. Can be used for padding.')
 
     offset = ShapeProperty(desc='Initial offset to translate all indices by.')
 
     may_alias = Property(dtype=bool,
                          default=False,
-                         desc='This pointer may alias with other pointers in '
-                         'the same function')
+                         desc='This pointer may alias with other pointers in the same function')
 
-    alignment = Property(dtype=int, default=0, desc='Allocation alignment in bytes (0 uses ' 'compiler-default)')
+    alignment = Property(dtype=int, default=0, desc='Allocation alignment in bytes (0 uses compiler-default)')
 
     def __init__(self,
                  dtype,
