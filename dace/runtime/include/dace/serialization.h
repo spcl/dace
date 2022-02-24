@@ -32,7 +32,7 @@ static bool create_directory(const char *dirpath) {
 #else
     // The second argument emulates chmod 0755
     int res = ::mkdir(dirpath, S_IRWXU | S_IRGRP | S_IXGRP | S_IROTH | S_IXOTH);
-    if (!res || res == EEXIST)
+    if (!res || errno == EEXIST)
         return true;
     return false;
 #endif
