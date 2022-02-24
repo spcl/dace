@@ -2,7 +2,7 @@
 import ast
 import collections
 import copy
-import errno
+import ctypes
 import itertools
 import os
 import pickle, json
@@ -773,6 +773,35 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         path = os.path.join(self.build_folder, 'data')
         for report in reports:
             shutil.rmtree(os.path.join(path, report))
+
+    def call_with_instrumented_data(self,
+                                    dreport: 'dace.codegen.instrumentation.data.data_report.InstrumentedDataReport',
+                                    *args, **kwargs):
+        """
+        Invokes an SDFG with an instrumented data report, generating and compiling code if necessary. 
+        Arguments given as ``args`` and ``kwargs`` will be overriden by the data containers defined in the report.
+        :param dreport: The instrumented data report to use upon calling.
+        :param args: Arguments to call SDFG with.
+        :param kwargs: Keyword arguments to call SDFG with.
+        :return: The return value(s) of this SDFG.
+        """
+        from dace.codegen.compiled_sdfg import CompiledSDFG  # Avoid import loop
+
+        binaryobj: CompiledSDFG = self.compile()
+        set_report = binaryobj.get_exported_function('__dace_set_instrumented_data_report')
+        if set_report is None:
+            raise ValueError(
+                'Data instrumentation report function not found. This is likely because the SDFG is not instrumented '
+                'with `dace.DataInstrumentationType.Restore`')
+
+        # Initialize the compiled SDFG to get the handle, then set the report folder
+        handle = binaryobj.initialize(*args, **kwargs)
+        set_report(handle, ctypes.c_char_p(os.path.abspath(dreport.folder).encode('utf-8')))
+
+        # Verify passed arguments (unless disabled by the user)
+        if dace.config.Config.get_bool("execution", "general", "check_args"):
+            self.argument_typecheck(args, kwargs)
+        return binaryobj(*args, **kwargs)
 
     ##########################################
 

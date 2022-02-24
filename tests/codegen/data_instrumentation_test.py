@@ -2,6 +2,7 @@
 import dace
 from dace import nodes
 import numpy as np
+import pytest
 
 from dace.codegen.instrumentation.data.data_report import InstrumentedDataReport
 
@@ -59,6 +60,62 @@ def test_dump_gpu():
     assert np.allclose(dreport['__return'], A + 6)
 
 
+def test_restore():
+    @dace.program
+    def tester(A: dace.float64[20, 20]):
+        return A + 5
+
+    sdfg = tester.to_sdfg(simplify=True)
+    _instrument(sdfg, dace.DataInstrumentationType.Save)
+
+    A = np.random.rand(20, 20)
+    acopy = np.copy(A)
+    result = sdfg(A)
+    assert np.allclose(result, A + 5)
+
+    # Verify instrumented data
+    dreport = sdfg.get_instrumented_data()
+    _instrument(sdfg, dace.DataInstrumentationType.Restore)
+
+    A[:] = 5
+    result = sdfg.call_with_instrumented_data(dreport, A)
+
+    assert np.allclose(result, acopy + 5)
+
+
+@pytest.mark.gpu
+def test_restore_gpu():
+    @dace.program
+    def tester(A: dace.float64[20, 20]):
+        return A + 5
+
+    sdfg = tester.to_sdfg(simplify=True)
+    sdfg.apply_gpu_transformations()
+
+    # Instrument everything but the return value
+    _instrument(sdfg, dace.DataInstrumentationType.Save)
+    for node, _ in sdfg.all_nodes_recursive():
+        if isinstance(node, nodes.AccessNode) and 'return' in node.data:
+            node.instrument = dace.DataInstrumentationType.No_Instrumentation
+
+    A = np.random.rand(20, 20)
+    acopy = np.copy(A)
+    result = sdfg(A)
+    assert np.allclose(result, A + 5)
+
+    # Verify instrumented data
+    dreport = sdfg.get_instrumented_data()
+    _instrument(sdfg, dace.DataInstrumentationType.Restore)
+    for node, _ in sdfg.all_nodes_recursive():
+        if isinstance(node, nodes.AccessNode) and 'return' in node.data:
+            node.instrument = dace.DataInstrumentationType.No_Instrumentation
+
+    A[:] = 5
+    result = sdfg.call_with_instrumented_data(dreport, A)
+
+    assert np.allclose(result, acopy + 5)
+
+
 def test_dinstr_versioning():
     @dace.program
     def dinstr(A: dace.float64[20], B: dace.float64[20]):
@@ -108,5 +165,7 @@ def test_dinstr_in_loop():
 if __name__ == '__main__':
     test_dump()
     test_dump_gpu()
+    test_restore()
+    test_restore_gpu()
     test_dinstr_versioning()
     test_dinstr_in_loop()
