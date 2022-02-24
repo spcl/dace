@@ -55,10 +55,12 @@ def _replace_dict(d, old, new):
         d[new] = d[old]
         del d[old]
 
+
 def _replace_dict_values(d, old, new):
     for k, v in d.items():
         if v == old:
             d[k] = new
+
 
 def _assignments_from_string(astr):
     """ Returns a dictionary of assignments from a semicolon-delimited
@@ -84,13 +86,10 @@ class LogicalGroup(object):
     """ Logical element groupings on a per-SDFG level.
     """
 
-    nodes = ListProperty(element_type=tuple,
-                         desc='Nodes in this group given by [State, Node] id tuples')
-    states = ListProperty(element_type=int,
-                          desc='States in this group given by their ids')
+    nodes = ListProperty(element_type=tuple, desc='Nodes in this group given by [State, Node] id tuples')
+    states = ListProperty(element_type=int, desc='States in this group given by their ids')
     name = Property(dtype=str, desc='Logical group name')
-    color = Property(dtype=str,
-                     desc='Color for the group, given as a hexadecimal string')
+    color = Property(dtype=str, desc='Color for the group, given as a hexadecimal string')
 
     def __init__(self, name, color, nodes=[], states=[]):
         self.nodes = nodes
@@ -106,8 +105,7 @@ class LogicalGroup(object):
     @staticmethod
     def from_json(json_obj, context=None):
         ret = LogicalGroup('', '')
-        dace.serialize.set_properties_from_json(ret, json_obj, context=context,
-                                                ignore_properties={'type'})
+        dace.serialize.set_properties_from_json(ret, json_obj, context=context, ignore_properties={'type'})
         return ret
 
 
@@ -203,7 +201,7 @@ class InterstateEdge(object):
                 replacer.visit(stmt)
         else:
             replacer.visit(self.condition.code)
-        
+
         if replacer.replace_count > 0:
             self._uncond = None
             self._cond_sympy = None
@@ -292,8 +290,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
     orig_sdfg = SDFGReferenceProperty(allow_none=True)
     transformation_hist = TransformationHistProperty()
 
-    logical_groups = ListProperty(element_type=LogicalGroup,
-                                  desc='Logical groupings of nodes and edges')
+    logical_groups = ListProperty(element_type=LogicalGroup, desc='Logical groupings of nodes and edges')
 
     openmp_sections = Property(dtype=bool,
                                default=Config.get_bool('compiler', 'cpu', 'openmp_sections'),
@@ -721,8 +718,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                 continue
             os.unlink(os.path.join(path, fname))
 
-    def get_latest_report(self) -> \
-            Optional['dace.codegen.instrumentation.InstrumentationReport']:
+    def get_latest_report(self) -> Optional['dace.codegen.instrumentation.InstrumentationReport']:
         """
         Returns an instrumentation report from the latest run of this SDFG, or
         None if the file does not exist.
@@ -738,6 +734,45 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         from dace.codegen.instrumentation import InstrumentationReport
 
         return InstrumentationReport(os.path.join(path, sorted(files, reverse=True)[0]))
+
+    def get_instrumented_data(
+        self,
+        timestamp: Optional[int] = None
+    ) -> Optional['dace.codegen.instrumentation.data.data_report.InstrumentedDataReport']:
+        """
+        Returns an instrumented data report from the latest run of this SDFG, with a given timestamp, or
+        None if no reports exist.
+        :param timestamp: An optional timestamp to use for the report.
+        :return: An InstrumentedDataReport object, or None if one does not exist.
+        """
+        # Avoid import loops
+        from dace.codegen.instrumentation.data.data_report import InstrumentedDataReport
+
+        if timestamp is None:
+            timestamp = sorted(self.available_data_reports())[-1]
+
+        folder = os.path.join(self.build_folder, 'data', str(timestamp))
+
+        return InstrumentedDataReport(self, folder)
+
+    def available_data_reports(self) -> List[str]:
+        """
+        Returns a list of available instrumented data reports for this SDFG.
+        """
+        path = os.path.join(self.build_folder, 'data')
+        if os.path.exists(path):
+            return os.listdir(path)
+        else:
+            return []
+
+    def clear_data_reports(self):
+        """
+        Clears the instrumented data report folders of this SDFG.
+        """
+        reports = self.available_data_reports()
+        path = os.path.join(self.build_folder, 'data')
+        for report in reports:
+            shutil.rmtree(os.path.join(path, report))
 
     ##########################################
 
@@ -1100,8 +1135,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         # Get global free symbols scalar arguments
         free_symbols = free_symbols or self.free_symbols
         return ", ".join(
-            dt.Scalar(self.symbols[k]).as_arg(
-                name=k, with_types=not for_call, for_call=for_call)
+            dt.Scalar(self.symbols[k]).as_arg(name=k, with_types=not for_call, for_call=for_call)
             for k in sorted(free_symbols) if not k.startswith('__dace'))
 
     def signature_arglist(self, with_types=True, for_call=False, with_arrays=True, arglist=None) -> List[str]:
