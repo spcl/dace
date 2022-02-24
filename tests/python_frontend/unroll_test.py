@@ -316,6 +316,30 @@ def test_objects():
     program(wrapped_arrays, scal)
 
 
+def test_nounroll():
+    # Try to always unroll loops
+    with dace.config.set_temporary('frontend', 'unroll_threshold', value=0):
+
+        @dace.program
+        def tounroll(A: dace.float64[10]):
+            for i in dace.nounroll(range(6, 10)):
+                A[i] = i
+            for j in range(6):
+                A[j] = j + 1
+
+        sdfg = tounroll.to_sdfg()
+        assert 'i' in sdfg.symbols and 'j' not in sdfg.symbols
+
+        A = np.random.rand(10)
+        ref = np.copy(A)
+        ref[0:6] = np.arange(1, 7)
+        ref[6:10] = np.arange(6, 10)
+
+        sdfg(A)
+
+        assert np.allclose(A, ref)
+
+
 if __name__ == '__main__':
     test_native_unroll()
     test_dace_unroll()
@@ -336,3 +360,4 @@ if __name__ == '__main__':
     test_arrays_keys_daceconstant()
     test_arrays_values()
     test_objects()
+    test_nounroll()

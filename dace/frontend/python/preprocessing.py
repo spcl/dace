@@ -854,6 +854,10 @@ class LoopUnroller(ast.NodeTransformer):
 
         node = self.generic_visit(node)
 
+        # If this node was already designated as a no-unroll node, continue
+        if getattr(node, 'nounroll', False):
+            return node
+
         # First, skip loops that contain break/continue that is part of this
         # for loop (rather than nested ones)
         cannot_unroll = False
@@ -870,7 +874,7 @@ class LoopUnroller(ast.NodeTransformer):
         explicitly_requested = False
         if isinstance(niter, ast.Call):
             # Avoid import loop
-            from dace.frontend.python.interface import unroll
+            from dace.frontend.python.interface import nounroll, unroll
 
             try:
                 genfunc = astutils.evalnode(niter.func, self.globals)
@@ -880,6 +884,11 @@ class LoopUnroller(ast.NodeTransformer):
             if genfunc is unroll:
                 explicitly_requested = True
                 niter = niter.args[0]
+            elif genfunc is nounroll:
+                # Return the contents of the nounroll call
+                node.nounroll = True
+                node.iter = niter.args[0]
+                return node
 
         if explicitly_requested and cannot_unroll:
             raise DaceSyntaxError(None, node, 'Cannot unroll loop due to "break", "continue", or "else" statements.')
@@ -1254,6 +1263,7 @@ def preprocess_dace_program(f: Callable[..., Any],
 
     for pass_num in gen:
         try:
+            closure_resolver.toplevel_function = True
             src_ast = closure_resolver.visit(src_ast)
             src_ast = LoopUnroller(resolved, src_file, closure_resolver).visit(src_ast)
             src_ast = ContextManagerInliner(resolved, src_file, closure_resolver).visit(src_ast)

@@ -14,7 +14,7 @@ from dace.properties import (EnumProperty, Property, DictProperty, SubsetPropert
                              make_properties)
 from inspect import getframeinfo, stack
 import itertools
-from typing import (Any, AnyStr, Dict, Iterable, List, Optional, Set, Tuple, Union)
+from typing import (Any, AnyStr, Dict, Iterable, Iterator, List, Optional, Set, Tuple, Union, overload)
 import warnings
 
 
@@ -57,6 +57,17 @@ class StateGraphView(object):
         self._clear_scopedict_cache()
 
     ###################################################################
+    # Typing overrides
+    
+    @overload
+    def nodes(self) -> List[nd.Node]:
+        ...
+
+    @overload
+    def edges(self) -> List[MultiConnectorEdge[mm.Memlet]]:
+        ...
+
+    ###################################################################
     # Traversal methods
 
     def all_nodes_recursive(self):
@@ -90,7 +101,7 @@ class StateGraphView(object):
     ###################################################################
     # Memlet-tracking methods
 
-    def memlet_path(self, edge: MultiConnectorEdge) -> List[MultiConnectorEdge]:
+    def memlet_path(self, edge: MultiConnectorEdge[mm.Memlet]) -> List[MultiConnectorEdge[mm.Memlet]]:
         """ Given one edge, returns a list of edges representing a path
             between its source and sink nodes. Used for memlet tracking.
 
