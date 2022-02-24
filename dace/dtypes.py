@@ -136,15 +136,23 @@ class Language(aenum.AutoNumberEnum):
 @undefined_safe_enum
 @extensible_enum
 class InstrumentationType(aenum.AutoNumberEnum):
-    """ Types of instrumentation providers.
-        :note: Might be determined automatically in future versions.
-    """
+    """ Types of instrumentation providers. """
 
     No_Instrumentation = ()
     Timer = ()
     PAPI_Counters = ()
     GPU_Events = ()
     FPGA = ()
+
+
+@undefined_safe_enum
+@extensible_enum
+class DataInstrumentationType(aenum.AutoNumberEnum):
+    """ Types of data container instrumentation providers. """
+
+    No_Instrumentation = ()
+    Save = ()
+    Restore = ()
 
 
 @undefined_safe_enum

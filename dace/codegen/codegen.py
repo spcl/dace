@@ -90,6 +90,7 @@ def _get_codegen_targets(sdfg: SDFG, frame: framecode.DaCeCodeGenerator):
     disp = frame._dispatcher
     provider_mapping = InstrumentationProvider.get_provider_mapping()
     disp.instrumentation[dtypes.InstrumentationType.No_Instrumentation] = None
+    disp.instrumentation[dtypes.DataInstrumentationType.No_Instrumentation] = None
     for node, parent in sdfg.all_nodes_recursive():
         # Query nodes and scopes
         if isinstance(node, SDFGState):
