@@ -1,5 +1,5 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
-from dace import config, dtypes, registry, SDFG
+from dace import config, data as dt, dtypes, registry, SDFG
 from dace.sdfg import nodes, is_devicelevel_gpu
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.instrumentation.provider import InstrumentationProvider
@@ -7,6 +7,7 @@ from dace.sdfg.scope import is_devicelevel_fpga
 from dace.sdfg.state import SDFGState
 from dace.codegen.targets import cpp
 import os
+from typing import Tuple
 
 
 class DataInstrumentationProviderMixin:
@@ -26,6 +27,26 @@ class DataInstrumentationProviderMixin:
 
         # For other file headers
         sdfg.append_global_code('\n#include <%s>' % header_name, None)
+
+    def _generate_copy_to_host(self, node: nodes.AccessNode, desc: dt.Array, ptr: str) -> Tuple[str, str, str]:
+        """ Copies to host and returns (preamble, postamble, name of new host pointer). """
+        new_ptr = f'__dinstr_{node.data}'
+        new_desc = dt.Array(desc.dtype, [desc.total_size - desc.start_offset])
+        csize = cpp.sym2cpp(desc.total_size - desc.start_offset)
+
+        # Emit synchronous memcpy
+        preamble = f'''
+        {{
+        {new_desc.as_arg(name=new_ptr)} = new {desc.dtype.ctype}[{csize}];
+        {self.backend}Memcpy({new_ptr}, {ptr}, sizeof({desc.dtype.ctype}) * ({csize}), {self.backend}MemcpyDeviceToHost);
+        '''
+
+        postamble = f'''
+        delete[] {new_ptr};
+        }}
+        '''
+
+        return preamble, postamble, new_ptr
 
 
 @registry.autoregister_params(type=dtypes.DataInstrumentationType.Save)
@@ -59,18 +80,7 @@ class SaveProvider(InstrumentationProvider, DataInstrumentationProviderMixin):
             # Only run on host code
             return
 
-        preamble, postamble = '', ''
         desc = node.desc(sdfg)
-        if desc.storage == dtypes.StorageType.GPU_Global:
-            self._setup_gpu_runtime(sdfg, global_stream)
-            raise NotImplementedError
-            # TODO
-            # preamble, postamble = self._generate_copy_to_host()
-
-        # Create UUID
-        state_id = sdfg.node_id(state)
-        node_id = state.node_id(node)
-        uuid = f'{sdfg.sdfg_id}_{state_id}_{node_id}'
 
         # Obtain a pointer for arrays and scalars
         ptrname = cpp.ptr(node.data, desc, sdfg)
@@ -78,10 +88,21 @@ class SaveProvider(InstrumentationProvider, DataInstrumentationProviderMixin):
         if defined_type == DefinedType.Scalar:
             ptrname = '&' + ptrname
 
+        # Create UUID
+        state_id = sdfg.node_id(state)
+        node_id = state.node_id(node)
+        uuid = f'{sdfg.sdfg_id}_{state_id}_{node_id}'
+
+        # Get optional pre/postamble for instrumenting device data
+        preamble, postamble = '', ''
+        if desc.storage == dtypes.StorageType.GPU_Global:
+            self._setup_gpu_runtime(sdfg, global_stream)
+            preamble, postamble, ptrname = self._generate_copy_to_host(node, desc, ptrname)
+
         # Write code
         inner_stream.write(preamble, sdfg, state_id, node_id)
         inner_stream.write(
-            f'__state->serializer->save({ptrname}, {desc.total_size - desc.start_offset}, '
+            f'__state->serializer->save({ptrname}, {cpp.sym2cpp(desc.total_size - desc.start_offset)}, '
             f'"{node.data}", "{uuid}");\n', sdfg, state_id, node_id)
         inner_stream.write(postamble, sdfg, state_id, node_id)
 

@@ -34,6 +34,31 @@ def test_dump():
     assert np.allclose(dreport['__return'], A + 6)
 
 
+@pytest.mark.gpu
+def test_dump_gpu():
+    @dace.program
+    def tester(A: dace.float64[20, 20]):
+        tmp = A + 1
+        return tmp + 5
+
+    sdfg = tester.to_sdfg(simplify=True)
+    sdfg.apply_gpu_transformations()
+    _instrument(sdfg, dace.DataInstrumentationType.Save)
+
+    A = np.random.rand(20, 20)
+    result = sdfg(A)
+    assert np.allclose(result, A + 6)
+
+    # Verify instrumented data
+    dreport = sdfg.get_instrumented_data()
+    assert dreport.keys() == {'A', 'gpu_A', 'tmp', 'gpu___return', '__return'}
+    assert np.allclose(dreport['A'], A)
+    assert np.allclose(dreport['gpu_A'], A)
+    assert np.allclose(dreport['tmp'], A + 1)
+    assert np.allclose(dreport['gpu___return'], A + 6)
+    assert np.allclose(dreport['__return'], A + 6)
+
+
 def test_dinstr_versioning():
     @dace.program
     def dinstr(A: dace.float64[20], B: dace.float64[20]):
@@ -47,7 +72,6 @@ def test_dinstr_versioning():
     A = np.random.rand(20)
     B = np.random.rand(20)
     oa = np.copy(A)
-    ob = np.copy(B)
     sdfg(A, B)
 
     dreport = sdfg.get_instrumented_data()
@@ -83,5 +107,6 @@ def test_dinstr_in_loop():
 
 if __name__ == '__main__':
     test_dump()
+    test_dump_gpu()
     test_dinstr_versioning()
     test_dinstr_in_loop()
