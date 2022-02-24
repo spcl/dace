@@ -86,14 +86,14 @@ class InstrumentedDataReport:
         filenames = self.files[item]
         desc = self.sdfg.arrays[item]
         dtype: dtypes.typeclass = desc.dtype
+        npdtype = dtype.as_numpy_dtype()
 
         results = []
         for i, file in enumerate(filenames):
             # Make numpy array from data descriptor
-            nparr = np.fromfile(file, dtype=dtype.as_numpy_dtype())
+            nparr = np.fromfile(file, dtype=npdtype)
             # No need to use ``start_offset`` because the unaligned version is saved
-            view = np.reshape(nparr, desc.shape)
-            view.strides = tuple(s * dtype.bytes for s in desc.strides)
+            view = np.ndarray(desc.shape, npdtype, buffer=nparr, strides=tuple(s * dtype.bytes for s in desc.strides))
             self.loaded_arrays[item, i] = nparr
             results.append(view)
 

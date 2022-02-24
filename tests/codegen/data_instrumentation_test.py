@@ -1,4 +1,5 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
+from typing import Optional
 import dace
 from dace import nodes
 import numpy as np
@@ -7,11 +8,14 @@ import pytest
 from dace.codegen.instrumentation.data.data_report import InstrumentedDataReport
 
 
-def _instrument(sdfg: dace.SDFG, instr: dace.DataInstrumentationType):
+def _instrument(sdfg: dace.SDFG, instr: dace.DataInstrumentationType, ignore: Optional[str] = None):
     # Set instrumentation on all access nodes
     for node, _ in sdfg.all_nodes_recursive():
         if isinstance(node, nodes.AccessNode):
-            node.instrument = instr
+            if ignore and ignore in node.data:
+                node.instrument = dace.DataInstrumentationType.No_Instrumentation
+            else:
+                node.instrument = instr
 
 
 def test_dump():
@@ -93,10 +97,7 @@ def test_restore_gpu():
     sdfg.apply_gpu_transformations()
 
     # Instrument everything but the return value
-    _instrument(sdfg, dace.DataInstrumentationType.Save)
-    for node, _ in sdfg.all_nodes_recursive():
-        if isinstance(node, nodes.AccessNode) and 'return' in node.data:
-            node.instrument = dace.DataInstrumentationType.No_Instrumentation
+    _instrument(sdfg, dace.DataInstrumentationType.Save, ignore='return')
 
     A = np.random.rand(20, 20)
     acopy = np.copy(A)
@@ -105,10 +106,7 @@ def test_restore_gpu():
 
     # Verify instrumented data
     dreport = sdfg.get_instrumented_data()
-    _instrument(sdfg, dace.DataInstrumentationType.Restore)
-    for node, _ in sdfg.all_nodes_recursive():
-        if isinstance(node, nodes.AccessNode) and 'return' in node.data:
-            node.instrument = dace.DataInstrumentationType.No_Instrumentation
+    _instrument(sdfg, dace.DataInstrumentationType.Restore, ignore='return')
 
     A[:] = 5
     result = sdfg.call_with_instrumented_data(dreport, A)
@@ -162,6 +160,37 @@ def test_dinstr_in_loop():
     assert np.allclose(dreport['__return'][-1], result)
 
 
+def test_dinstr_strided():
+    @dace.program
+    def dinstr(A: dace.float64[20, 20]):
+        tmp = A + 1
+        return tmp + 5
+
+    sdfg = dinstr.to_sdfg(simplify=True)
+    sdfg.arrays['tmp'].total_size = 32 * 32
+    sdfg.arrays['tmp'].strides = (32, 1)
+
+    _instrument(sdfg, dace.DataInstrumentationType.Save, ignore='return')
+
+    A = np.random.rand(20, 20)
+    result = sdfg(A)
+    assert np.allclose(result, A + 6)
+
+    # Verify instrumented data
+    dreport: InstrumentedDataReport = sdfg.get_instrumented_data()
+    assert np.allclose(dreport['A'], A)
+    assert np.allclose(dreport['tmp'], A + 1)
+
+    # Modify instrumented data and restore
+    tmp = dreport['tmp']
+    tmp *= 2
+    dreport.update_report()
+
+    _instrument(sdfg, dace.DataInstrumentationType.Restore, ignore='return')
+    result = sdfg.call_with_instrumented_data(dreport, A=A)
+    assert np.allclose(result, 2 * A + 7)
+
+
 if __name__ == '__main__':
     test_dump()
     test_dump_gpu()
@@ -169,3 +198,4 @@ if __name__ == '__main__':
     test_restore_gpu()
     test_dinstr_versioning()
     test_dinstr_in_loop()
+    test_dinstr_strided()
