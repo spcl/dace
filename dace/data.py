@@ -331,6 +331,10 @@ class Scalar(Data):
     def offset(self):
         return [0]
 
+    @property
+    def start_offset(self):
+        return 0
+
     def is_equivalent(self, other):
         if not isinstance(other, Scalar):
             return False
@@ -673,6 +677,10 @@ class Stream(Data):
     @property
     def strides(self):
         return [_prod(self.shape[i + 1:]) for i in range(len(self.shape))]
+
+    @property
+    def start_offset(self):
+        return 0
 
     def clone(self):
         return type(self)(self.dtype, self.buffer_size, self.shape, self.transient, self.storage, self.location,
