@@ -1,6 +1,5 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 from dace import config, dtypes, registry, SDFG
-from dace.codegen.dispatcher import DefinedType
 from dace.sdfg import nodes, is_devicelevel_gpu
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.instrumentation.provider import InstrumentationProvider
@@ -54,6 +53,8 @@ class SaveProvider(InstrumentationProvider, DataInstrumentationProviderMixin):
 
     def on_node_end(self, sdfg: SDFG, state: SDFGState, node: nodes.AccessNode, outer_stream: CodeIOStream,
                     inner_stream: CodeIOStream, global_stream: CodeIOStream):
+        from dace.codegen.dispatcher import DefinedType  # Avoid import loop
+
         if is_devicelevel_gpu(sdfg, state, node) or is_devicelevel_fpga(sdfg, state, node):
             # Only run on host code
             return
