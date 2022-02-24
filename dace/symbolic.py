@@ -753,7 +753,6 @@ class SympyBooleanConverter(ast.NodeTransformer):
         return self.visit_Constant(node)
 
 
-@lru_cache(16384)
 def pystr_to_symbolic(expr, symbol_map=None, simplify=None):
     """ Takes a Python string and converts it into a symbolic expression. """
     from dace.frontend.python.astutils import unparse  # Avoid import loops

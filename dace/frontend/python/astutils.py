@@ -228,6 +228,10 @@ def unparse(node):
     """ Unparses an AST node to a Python string, chomping trailing newline. """
     if node is None:
         return None
+    if isinstance(node, (ast.AST, list)):
+        v = StringIO()
+        ExtUnparser(node, file=v)
+        return v.getvalue().strip()
     # Support for SymPy expressions
     if isinstance(node, sympy.Basic):
         return sympy.printing.pycode(node)
@@ -238,9 +242,7 @@ def unparse(node):
     if isinstance(node, str):
         return node
 
-    v = StringIO()
-    ExtUnparser(node, file=v)
-    return v.getvalue().strip()
+    raise TypeError(f'Unsupported type "{type(node).__name__}" for unparse')
 
 
 # Helper function to convert an ND subscript AST node to a list of 3-tuple
@@ -352,7 +354,7 @@ def negate_expr(node):
     if isinstance(expr, ast.Expr):
         expr = expr.value
 
-    newexpr = ast.Expr(value=ast.UnaryOp(op=ast.Not(), operand=expr))
+    newexpr = ast.Expr(value=ast.UnaryOp(op=ast.Not(), operand=copy_tree(expr)))
     newexpr = ast.copy_location(newexpr, expr)
     return ast.fix_missing_locations(newexpr)
 
@@ -478,6 +480,7 @@ class ExtNodeVisitor(ast.NodeVisitor):
 
 class ASTFindReplace(ast.NodeTransformer):
     def __init__(self, repldict: Dict[str, str]):
+        self.replace_count = 0
         self.repldict = repldict
         # If ast.Names were given, use them as keys as well
         self.repldict.update({k.id: v for k, v in self.repldict.items() if isinstance(k, ast.Name)})
@@ -489,6 +492,7 @@ class ASTFindReplace(ast.NodeTransformer):
                 new_node = ast.copy_location(val, node)
             else:
                 new_node = ast.copy_location(ast.parse(str(self.repldict[node.id])).body[0].value, node)
+            self.replace_count += 1
             return new_node
 
         return self.generic_visit(node)
@@ -499,6 +503,7 @@ class ASTFindReplace(ast.NodeTransformer):
             if isinstance(val, ast.AST):
                 val = unparse(val)
             node.arg = val
+            self.replace_count += 1
         return self.generic_visit(node)
 
 
