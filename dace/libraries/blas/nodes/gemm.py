@@ -429,7 +429,7 @@ class ExpandGemmPBLAS(ExpandTransformation):
             lB = np.empty((K // Px, N // Py), dtype=_b.dtype)
             dace.comm.BCScatter(_a, lA, (M // Px, K // Py))
             dace.comm.BCScatter(_b, lB, (K // Px, N // Py))
-            lC = distr.MatMult(_a, _b, lA, lB, (M // Px, K // Py), (K // Px, N // Py))
+            lC = distr.MatMult(lA, lB, (M, N, K))
             dace.comm.BCGather(lC, _c, (M // Px, N // Py))
 
         return _gemm_pblas.to_sdfg()
