@@ -38,6 +38,16 @@ static bool create_directory(const char *dirpath) {
 #endif
 }
 
+static inline void write_parameter_pack(std::ofstream &ofs) {
+}
+
+template <typename T, typename... Args>
+static inline void write_parameter_pack(std::ofstream& ofs, T value, Args... values) {
+    uint32_t cast = uint32_t(value);
+    ofs.write((const char *)&cast, sizeof(uint32_t));
+    write_parameter_pack(ofs, values...);
+}
+
 class DataSerializer {
 protected:
     std::mutex _mutex;
@@ -76,8 +86,9 @@ public:
         this->folder = folder;
     }
 
-    template <typename T>
-    void save(const T *buffer, size_t size, const std::string &arrayname, const std::string &filename) {
+    template <typename T, typename... Args>
+    void save(const T *buffer, size_t size, const std::string &arrayname, const std::string &filename, Args... shape_stride) {
+        // NOTE: The "shape_stride" parameter is two concatenated tuples of shape, strides
         if (!this->enable) return;
         std::lock_guard<std::mutex> guard(this->_mutex);
 
@@ -102,6 +113,9 @@ public:
         // Write contents to file
         ss << "/" << filename << "_" << version << ".bin";
         std::ofstream ofs(ss.str(), std::ios::binary);
+        uint32_t ndims = sizeof...(shape_stride) / 2;
+        ofs.write((const char *)&ndims, sizeof(uint32_t));
+        write_parameter_pack(ofs, shape_stride...);
         ofs.write((const char *)buffer, sizeof(T) * size);
     }
 
@@ -121,6 +135,13 @@ public:
         std::stringstream ss;
         ss << this->folder << "/" << arrayname << "/" << filename << "_" << version << ".bin";
         std::ifstream ifs(ss.str(), std::ios::binary);
+        
+        // Ignore header (dimensions, shape, and strides)
+        uint32_t ndims;
+        ifs.read((char *)&ndims, sizeof(uint32_t));
+        ifs.ignore(ndims * 2 * sizeof(uint32_t));
+
+        // Read contents
         ifs.read((char *)buffer, sizeof(T) * size);
     }
 };

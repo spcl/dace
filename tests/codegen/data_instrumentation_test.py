@@ -191,6 +191,27 @@ def test_dinstr_strided():
     assert np.allclose(result, 2 * A + 7)
 
 
+def test_dinstr_symbolic():
+    N = dace.symbol('N')
+
+    @dace.program
+    def dinstr(A: dace.float64[2 * N, 20]):
+        tmp = A + 1
+        return tmp + 5
+
+    sdfg = dinstr.to_sdfg(simplify=True)
+    _instrument(sdfg, dace.DataInstrumentationType.Save)
+
+    A = np.random.rand(20, 20)
+    result = sdfg(A, N=10)
+    assert np.allclose(result, A + 6)
+
+    # Verify instrumented data
+    dreport: InstrumentedDataReport = sdfg.get_instrumented_data()
+    assert np.allclose(dreport['A'], A)
+    assert np.allclose(dreport['tmp'], A + 1)
+
+
 if __name__ == '__main__':
     test_dump()
     test_dump_gpu()
@@ -199,3 +220,4 @@ if __name__ == '__main__':
     test_dinstr_versioning()
     test_dinstr_in_loop()
     test_dinstr_strided()
+    test_dinstr_symbolic()

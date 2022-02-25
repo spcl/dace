@@ -119,11 +119,15 @@ class SaveProvider(InstrumentationProvider, DataInstrumentationProviderMixin):
             self._setup_gpu_runtime(sdfg, global_stream)
             preamble, postamble, ptrname = self._generate_copy_to_host(node, desc, ptrname)
 
+        # Encode runtime shape and strides
+        shape = ', '.join(cpp.sym2cpp(s) for s in desc.shape)
+        strides = ', '.join(cpp.sym2cpp(s) for s in desc.strides)
+
         # Write code
         inner_stream.write(preamble, sdfg, state_id, node_id)
         inner_stream.write(
             f'__state->serializer->save({ptrname}, {cpp.sym2cpp(desc.total_size - desc.start_offset)}, '
-            f'"{node.data}", "{uuid}");\n', sdfg, state_id, node_id)
+            f'"{node.data}", "{uuid}", {shape}, {strides});\n', sdfg, state_id, node_id)
         inner_stream.write(postamble, sdfg, state_id, node_id)
 
 

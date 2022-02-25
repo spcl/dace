@@ -1,7 +1,9 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 from dataclasses import dataclass
+import struct
 from typing import Any, Dict, List, Set, Tuple, Union
 import os
+
 from dace import dtypes, SDFG
 
 import numpy as np
@@ -90,12 +92,19 @@ class InstrumentedDataReport:
 
         results = []
         for i, file in enumerate(filenames):
-            # Make numpy array from data descriptor
-            nparr = np.fromfile(file, dtype=npdtype)
-            # No need to use ``start_offset`` because the unaligned version is saved
-            view = np.ndarray(desc.shape, npdtype, buffer=nparr, strides=tuple(s * dtype.bytes for s in desc.strides))
-            self.loaded_arrays[item, i] = nparr
-            results.append(view)
+            with open(file, 'rb') as fp:
+                # Recreate runtime shape and strides from buffer
+                ndims, = struct.unpack('i', fp.read(4))
+                shape = struct.unpack('i' * ndims, fp.read(4 * ndims))
+                strides = struct.unpack('i' * ndims, fp.read(4 * ndims))
+                strides = tuple(s * dtype.bytes for s in strides)
+
+                # Make numpy array from data descriptor
+                nparr = np.fromfile(fp, dtype=npdtype)
+                # No need to use ``start_offset`` because the unaligned version is saved
+                view = np.ndarray(shape, npdtype, buffer=nparr, strides=strides)
+                self.loaded_arrays[item, i] = nparr
+                results.append(view)
 
         if len(results) == 1:
             return results[0]
@@ -108,4 +117,9 @@ class InstrumentedDataReport:
         :see: dace.dtypes.DataInstrumentationType.Restore
         """
         for (k, i), loaded in self.loaded_arrays.items():
-            loaded.tofile(self.files[k][i])
+            dtype_bytes = loaded.dtype.itemsize
+            with open(self.files[k][i], 'wb') as fp:
+                fp.write(struct.pack('i', loaded.ndim))
+                fp.write(struct.pack('i' * loaded.ndim, *loaded.shape))
+                fp.write(struct.pack('i' * loaded.ndim, *(s // dtype_bytes for s in loaded.strides)))
+                loaded.tofile(fp)
