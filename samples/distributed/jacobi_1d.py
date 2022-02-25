@@ -3,6 +3,7 @@
 import dace as dc
 import numpy as np
 import os
+import sys
 from dace.sdfg.utils import load_precompiled_sdfg
 
 from mpi4py import MPI
@@ -86,7 +87,14 @@ if __name__ == "__main__":
     comm = MPI.COMM_WORLD
     rank = comm.Get_rank()
     size = comm.Get_size()
+
     lN = N // size
+
+    if size < 2 or lN * size != 1000:
+        if rank == 0:
+            print("Please run this sample with at least 2 MPI ranks. Furthermore, "
+                  "the number of MPI ranks must divide evenly N (by default 1000).")
+        sys.exit(0)
 
     mpi_sdfg = jacobi_1d_dist.to_sdfg()
     if rank == 0:
