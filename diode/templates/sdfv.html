@@ -1,52 +1,66 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
-    <title>SDFG Viewer</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>SDFV: SDFG Viewer</title>
     <link rel="stylesheet" type="text/css" href="{{dir|safe}}./webclient/external_lib/material/material-icons.css">
     <link rel="stylesheet" type="text/css" href="{{dir|safe}}./webclient/sdfv.css">
-    <script src="{{dir|safe}}./webclient/renderer_dir/dagre.js"></script>
-    <script src="{{dir|safe}}./webclient/external_lib/jquery.min.js"></script>
+
     <script src="{{dir|safe}}./webclient/external_lib/pdfkit.standalone.js"></script>
     <script src="{{dir|safe}}./webclient/external_lib/blob-stream.js"></script>
     <script src="{{dir|safe}}./webclient/external_lib/canvas2pdf.js"></script>
-    <script src="{{dir|safe}}./webclient/external_lib/math.min.js"></script>
 
-    <script src="{{dir|safe}}./webclient/renderer_dir/global_vars.js"></script>
-    <script src="{{dir|safe}}./webclient/renderer_elements.js"></script>
-    <script src="{{dir|safe}}./webclient/context_menu.js"></script>
-	<script src="{{dir|safe}}./webclient/overlay_manager.js"></script>
-    <script src="{{dir|safe}}./webclient/sdfg_utils.js"></script>
-    <script src="{{dir|safe}}./webclient/renderer.js"></script>
+    <script defer src="{{dir|safe}}./webclient/dist/sdfv.js"></script>
+
 </head>
+
 <body>
-<div class="w3-sidebar w3-bar-block w3-card w3-animate-right" style="display:none;right:0;" id="sidebar">
-    <div class="dragbar" id="dragbar"></div>
-    <div class="sidebar-inner">
-        <button onclick="close_menu()" class="w3-bar-item w3-button w3-large">Close &times;</button>
-        <h3 id="sidebar-header">Nothing selected</h3>
-        <div id="sidebar-contents"></div>
+    <div class="w3-sidebar w3-bar-block w3-card w3-animate-right" style="display:none;right:0;" id="sidebar">
+        <div class="dragbar" id="dragbar"></div>
+        <div class="sidebar-inner">
+            <button id="menuclose" class="w3-bar-item w3-button w3-large">Close &times;</button>
+            <h3 id="sidebar-header">Nothing selected</h3>
+            <div id="sidebar-contents"></div>
+        </div>
     </div>
-</div>
-<div id="filepicker"><form>
-    <input type="file" id="sdfg-file-input" accept=".sdfg,.json"> <input type="button" id="reload" value="Refresh">
-    <input type="button" id="outline" value="SDFG Outline">
-</form></div>
-<input type="file" accept=".json" id="instrumentation-report-file-input" style="display: none;">
-<input type="button" value="Load Instrumentation Report" id="load-instrumentation-report-btn" onclick="$('#instrumentation-report-file-input').click();">
-<div><form>
-    <input id="search" type="text" placeholder="Search in graph elements">
-    <input type="button" id="search-btn" value="Search">
-    <input type="checkbox" id="search-case"> Case Sensitive
-</form></div>
-<div id="contents"></div>
-<script src="{{dir|safe}}./webclient/sdfv.js"></script>
-<script>
-$(document).ready(function(){
-    var sdfg_json = {{sdfg|safe}};
-    var sdfg = parse_sdfg(sdfg_json);
-    init_sdfv(sdfg);
-});
-</script>
+    <div id="filepicker">
+        <form>
+            <input type="file" id="sdfg-file-input" accept=".sdfg,.json"> <input type="button" id="reload"
+                value="Refresh">
+            <input type="button" id="outline" value="SDFG Outline">
+        </form>
+    </div>
+    <input type="file" accept=".json" id="instrumentation-report-file-input" style="display: none;">
+    <input type="button" value="Load Instrumentation Report" id="load-instrumentation-report-btn"
+        onclick="document.getElementById('instrumentation-report-file-input').click();">
+    <div>
+        <form>
+            <input id="search" type="text" placeholder="Search in graph elements">
+            <input type="button" id="search-btn" value="Search">
+            <input type="checkbox" id="search-case"> Case Sensitive
+        </form>
+        <form>
+            <textarea id="advsearch" style="font-family: monospace">
+(graph, element) => {
+  // Create a predicate that returns true for a match
+  // For example, finding transient arrays below  
+  if (element && element.data.node) {
+    let arrname = element.data.node.attributes.data;
+    if (arrname) {
+      let arr = element.sdfg.attributes._arrays[arrname];
+      if (arr && arr.attributes.transient)
+        return true;
+    }
+  }
+  return false;
+};
+            </textarea>
+            <input type="button" id="advsearch-btn" value="Advanced Search">
+        </form>
+    </div>
+    <div id="contents"></div>
 </body>
+
 </html>
