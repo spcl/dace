@@ -51,15 +51,16 @@ if __name__ == "__main__":
     size = comm.Get_size()
 
     if rank == 0:
-        mpi_sdfg = gesummv.to_sdfg(simplify=False)
-        mpi_sdfg.simplify()
-        mpi_sdfg.apply_transformations_repeated(ElementWiseArrayOperation2D)
-        mpi_sdfg.apply_transformations_repeated(ElementWiseArrayOperation)
-        mpi_sdfg.expand_library_nodes()
-        mpi_sdfg.simplify()
-        mpi_sdfg.apply_transformations_repeated(RedundantComm2D)
-        mpi_sdfg.simplify()
-        mpi_func = mpi_sdfg.compile()
+        with dc.config.set_temporary('library', 'blas', 'default_implementation', value='PBLAS'):
+            mpi_sdfg = gesummv.to_sdfg(simplify=False)
+            mpi_sdfg.simplify()
+            mpi_sdfg.apply_transformations_repeated(ElementWiseArrayOperation2D)
+            mpi_sdfg.apply_transformations_repeated(ElementWiseArrayOperation)
+            mpi_sdfg.expand_library_nodes()
+            mpi_sdfg.simplify()
+            mpi_sdfg.apply_transformations_repeated(RedundantComm2D)
+            mpi_sdfg.simplify()
+            mpi_func = mpi_sdfg.compile()
     comm.Barrier()
     if rank > 0:
         build_folder = dc.Config.get('default_build_folder')

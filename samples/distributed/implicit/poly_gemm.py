@@ -3,6 +3,7 @@
 import dace as dc
 import numpy as np
 import os
+import sys
 from dace.sdfg.utils import load_precompiled_sdfg
 from mpi4py import MPI
 
@@ -26,9 +27,12 @@ def init_data(NI, NJ, NK, datatype):
 
     alpha = datatype(1.5)
     beta = datatype(1.2)
-    C = np.fromfunction(lambda i, j: ((i * j + 1) % NI) / NI, shape=(NI, NJ), dtype=datatype)
-    A = np.fromfunction(lambda i, k: (i * (k + 1) % NK) / NK, shape=(NI, NK), dtype=datatype)
-    B = np.fromfunction(lambda k, j: (k * (j + 2) % NJ) / NJ, shape=(NK, NJ), dtype=datatype)
+    # C = np.fromfunction(lambda i, j: ((i * j + 1) % NI) / NI, shape=(NI, NJ), dtype=datatype)
+    # A = np.fromfunction(lambda i, k: (i * (k + 1) % NK) / NK, shape=(NI, NK), dtype=datatype)
+    # B = np.fromfunction(lambda k, j: (k * (j + 2) % NJ) / NJ, shape=(NK, NJ), dtype=datatype)
+    C = np.zeros((NI, NJ), dtype=datatype)
+    A = np.arange(NI * NK, dtype=datatype).reshape(NI, NK).copy()
+    B = np.ones((NK, NJ), dtype=datatype)
 
     return alpha, beta, C, A, B
 
@@ -36,22 +40,30 @@ def init_data(NI, NJ, NK, datatype):
 if __name__ == "__main__":
 
     # Initialization
-    NI, NJ, NK = 2000, 2300, 2600
+    # NI, NJ, NK = 2000, 2300, 2600
+    NI, NJ, NK = 4, 4, 4
     alpha, beta, C, A, B = init_data(NI, NJ, NK, np.float64)
 
     comm = MPI.COMM_WORLD
     rank = comm.Get_rank()
     size = comm.Get_size()
 
+    Px = Py = int(np.sqrt(size))
+    if Px * Py != size:
+        if rank == 0:
+            print("This sample is designed to run with a number of MPI ranks that is a perfect square.")
+        sys.exit(0)
+
     if rank == 0:
-        mpi_sdfg = gemm.to_sdfg(simplify=False)
-        mpi_sdfg.simplify()
-        mpi_sdfg.apply_transformations_repeated(ElementWiseArrayOperation2D)
-        mpi_sdfg.expand_library_nodes()
-        mpi_sdfg.simplify()
-        mpi_sdfg.apply_transformations_repeated(RedundantComm2D)
-        mpi_sdfg.simplify()
-        mpi_func = mpi_sdfg.compile()
+        with dc.config.set_temporary('library', 'blas', 'default_implementation', value='PBLAS'):
+            mpi_sdfg = gemm.to_sdfg(simplify=False)
+            mpi_sdfg.simplify()
+            mpi_sdfg.apply_transformations_repeated(ElementWiseArrayOperation2D)
+            mpi_sdfg.expand_library_nodes()
+            mpi_sdfg.simplify()
+            mpi_sdfg.apply_transformations_repeated(RedundantComm2D)
+            mpi_sdfg.simplify()
+            mpi_func = mpi_sdfg.compile()
 
     comm.Barrier()
     if rank > 0:
@@ -59,7 +71,6 @@ if __name__ == "__main__":
         mpi_func = load_precompiled_sdfg(os.path.join(build_folder, gemm.name))
     comm.Barrier()
 
-    Px = Py = int(np.sqrt(size))
     mpi_func(A=A, B=B, C=C, alpha=alpha, beta=beta, NI=NI, NJ=NJ, NK=NK, commsize=size, Px=Px, Py=Py)
 
     comm.Barrier()
@@ -67,4 +78,9 @@ if __name__ == "__main__":
     if rank == 0:
         alpha, beta, refC, refA, refB = init_data(NI, NJ, NK, np.float64)
         refC[:] = alpha * refA @ refB + beta * refC
+
+        print(A)
+        print(B)
+        print(C)
+        print(refC)
         assert (np.allclose(refC, C))
