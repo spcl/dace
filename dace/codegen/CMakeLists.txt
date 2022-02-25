@@ -145,7 +145,7 @@ endif()
 
 # Function for performing deferred variable expansion
 function(expand_deferred_variables VAR_NAME)
-  string(REGEX MATCHALL "_DACE_CMAKE_EXPAND{([^}]+)}" EXPAND_VARS 
+  string(REGEX MATCHALL "_DACE_CMAKE_EXPAND{([^}]+)}" EXPAND_VARS
          "${${VAR_NAME}}")
   string(REPLACE " " ";" EXPAND_VARS "${EXPAND_VARS}")
   foreach(EXPAND_VAR ${EXPAND_VARS})
@@ -346,7 +346,7 @@ if(DACE_ENABLE_RTL)
         get_filename_component(RTL_KERNEL ${RTL_SRC_DIR} NAME)
         get_filename_component(RTL_SCRIPTS "${RTL_SRC_DIR}/../scripts" ABSOLUTE)
         set(RTL_XO "${RTL_KERNEL}.xo")
-        rtllib_rtl_target(${RTL_KERNEL} ${RTL_SRC_DIR} ${RTL_SCRIPTS} ${RTL_GENERATED_DIR} ${RTL_LOG_DIR} ${RTL_TEMP_DIR} "${RTLLIB_DIR}/rtl" ${RTL_XO} ${RTL_PART})
+        rtllib_rtl_target(${RTL_KERNEL} ${RTL_SRC_DIR} ${RTL_SCRIPTS} ${RTL_GENERATED_DIR} ${RTL_LOG_DIR} ${RTL_TEMP_DIR} "${RTLLIB_DIR}/rtl" ${RTL_XO} ${RTL_PART} "" "\"\"")
         add_custom_target(${RTL_KERNEL} DEPENDS ${RTL_XO})
         set(DACE_RTL_KERNELS ${DACE_RTL_KERNELS} ${RTL_XO})
         set(DACE_RTL_DEPENDS ${DACE_RTL_DEPENDS} ${RTL_KERNEL})

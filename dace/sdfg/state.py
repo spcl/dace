@@ -14,7 +14,7 @@ from dace.properties import (EnumProperty, Property, DictProperty, SubsetPropert
                              make_properties)
 from inspect import getframeinfo, stack
 import itertools
-from typing import (Any, AnyStr, Dict, Iterable, List, Optional, Set, Tuple, Union)
+from typing import (Any, AnyStr, Dict, Iterable, Iterator, List, Optional, Set, Tuple, Union, overload)
 import warnings
 
 
@@ -57,6 +57,17 @@ class StateGraphView(object):
         self._clear_scopedict_cache()
 
     ###################################################################
+    # Typing overrides
+    
+    @overload
+    def nodes(self) -> List[nd.Node]:
+        ...
+
+    @overload
+    def edges(self) -> List[MultiConnectorEdge[mm.Memlet]]:
+        ...
+
+    ###################################################################
     # Traversal methods
 
     def all_nodes_recursive(self):
@@ -90,7 +101,7 @@ class StateGraphView(object):
     ###################################################################
     # Memlet-tracking methods
 
-    def memlet_path(self, edge: MultiConnectorEdge) -> List[MultiConnectorEdge]:
+    def memlet_path(self, edge: MultiConnectorEdge[mm.Memlet]) -> List[MultiConnectorEdge[mm.Memlet]]:
         """ Given one edge, returns a list of edges representing a path
             between its source and sink nodes. Used for memlet tracking.
 
@@ -385,7 +396,8 @@ class StateGraphView(object):
         :note: Assumes that the graph is valid (i.e., without undefined or
                overlapping symbols).
         """
-        sdfg = self.parent
+        state = self.graph if isinstance(self, SubgraphView) else self
+        sdfg = state.parent
         new_symbols = set()
         freesyms = set()
 
@@ -419,7 +431,7 @@ class StateGraphView(object):
         state or subgraph to their types.
         """
         state = self.graph if isinstance(self, SubgraphView) else self
-        sdfg = self.parent
+        sdfg = state.parent
 
         # Start with SDFG global symbols
         defined_syms = {k: v for k, v in sdfg.symbols.items()}
@@ -781,6 +793,11 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
             raise TypeError("Destination connector is not string (type: %s)" % str(type(v_connector)))
         if not isinstance(memlet, mm.Memlet):
             raise TypeError("Memlet is not of type Memlet (type: %s)" % str(type(memlet)))
+
+        if u_connector and isinstance(u, nd.AccessNode):
+            u.add_out_connector(u_connector, force=True)
+        if v_connector and isinstance(v, nd.AccessNode):
+            v.add_in_connector(v_connector, force=True)
 
         self._clear_scopedict_cache()
         result = super(SDFGState, self).add_edge(u, u_connector, v, v_connector, memlet)

@@ -3,7 +3,7 @@ from os import stat
 from typing import Any, AnyStr, Dict, Optional, Set, Tuple, Union
 import re
 
-from dace import dtypes, registry, SDFG, SDFGState, symbolic, properties
+from dace import dtypes, registry, SDFG, SDFGState, symbolic, properties, data as dt
 from dace.transformation import transformation as pm, helpers
 from dace.sdfg import nodes, utils
 from dace.sdfg.analysis import cfg
@@ -191,3 +191,99 @@ class PruneSymbols(pm.SingleStateTransformation, pm.SimplifyPass):
             # If not used in SDFG, remove from symbols as well
             if helpers.is_symbol_unused(nsdfg.sdfg, candidate):
                 nsdfg.sdfg.remove_symbol(candidate)
+
+
+class PruneUnusedOutputs(pm.SingleStateTransformation, pm.SimplifyPass):
+    """ 
+    Removes unused symbol mappings from nested SDFGs, as well as internal
+    symbols if necessary.
+    """
+
+    nsdfg = pm.PatternNode(nodes.NestedSDFG)
+
+    @classmethod
+    def expressions(cls):
+        return [utils.node_path_graph(cls.nsdfg)]
+
+    @classmethod
+    def _candidates(cls, nsdfg: nodes.NestedSDFG) -> Tuple[Set[str], Set[Tuple[SDFGState, nodes.AccessNode]]]:
+        # Start with all non-transient arrays
+        candidates = set(conn for conn in nsdfg.out_connectors.keys())
+        candidate_nodes: Set[Tuple[SDFGState, nodes.AccessNode]] = set()
+
+        # Remove candidates that are used more than once in the outer SDFG
+        state = nsdfg.sdfg.parent
+        sdfg = nsdfg.sdfg.parent_sdfg
+        for e in state.out_edges(nsdfg):
+            if e.data.is_empty():
+                continue
+            outer_desc = sdfg.arrays[e.data.data]
+            if isinstance(outer_desc, dt.View):
+                candidates.remove(e.src_conn)
+                continue
+            if not outer_desc.transient:
+                candidates.remove(e.src_conn)
+                continue
+            if not isinstance(state.memlet_path(e)[-1].dst, nodes.AccessNode):
+                candidates.remove(e.src_conn)
+                continue
+
+            all_access_nodes = [(s, n) for s in sdfg.nodes() for n in s.data_nodes() if n.data == e.data.data]
+            if len(all_access_nodes) > 1:
+                candidates.remove(e.src_conn)
+                continue
+            if all_access_nodes[0][0].out_degree(all_access_nodes[0][1]) > 0:
+                candidates.remove(e.src_conn)
+                continue
+
+        if not candidates:
+            return set(), set()
+
+        # Remove candidates that are used in the nested SDFG
+        for nstate in nsdfg.sdfg.nodes():
+            for node in nstate.data_nodes():
+                if node.data in candidates:
+                    # If used in nested SDFG
+                    if nstate.out_degree(node) > 0:
+                        candidates.remove(node.data)
+                        continue
+                    # If a result of a code node
+                    if any(not isinstance(nstate.memlet_path(e)[0].src, nodes.AccessNode)
+                           for e in nstate.in_edges(node)):
+                        candidates.remove(node.data)
+                        continue
+
+                    # Add node for later use
+                    candidate_nodes.add((nstate, node))
+
+        # Any array that is used in interstate edges is removed
+        for e in nsdfg.sdfg.edges():
+            candidates -= (set(map(str, symbolic.symbols_in_ast(e.data.condition.code[0]))))
+            for assign in e.data.assignments.values():
+                candidates -= (symbolic.free_symbols_and_functions(assign))
+
+        candidate_nodes = {n for n in candidate_nodes if n[1].data in candidates}
+
+        return candidates, candidate_nodes
+
+    def can_be_applied(self, graph: SDFGState, expr_index: int, sdfg: SDFG, permissive: bool = False) -> bool:
+        nsdfg: nodes.NestedSDFG = self.nsdfg
+        candidates, _ = self._candidates(nsdfg)
+        if len(candidates) > 0:
+            return True
+
+        return False
+
+    def apply(self, state: SDFGState, sdfg: SDFG):
+        nsdfg = self.nsdfg
+
+        candidates, candidate_nodes = self._candidates(nsdfg)
+        for outer_edge in state.out_edges(nsdfg):
+            if outer_edge.src_conn in candidates:
+                state.remove_memlet_path(outer_edge)
+                sdfg.remove_data(outer_edge.data.data, validate=False)
+        for nstate, node in candidate_nodes:
+            for ie in nstate.in_edges(node):
+                nstate.remove_memlet_path(ie)
+        for cand in candidates:
+            nsdfg.sdfg.remove_data(cand, validate=False)

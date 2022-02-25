@@ -11,7 +11,7 @@ from dace import data, dtypes, registry, memlet as mmlt, subsets, symbolic, Conf
 from dace.codegen import cppunparse, exceptions as cgx
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets import cpp
-from dace.codegen.targets.common import codeblock_to_cpp
+from dace.codegen.targets.common import codeblock_to_cpp, sym2cpp
 from dace.codegen.targets.target import TargetCodeGenerator, make_absolute
 from dace.codegen.dispatcher import DefinedType, TargetDispatcher
 from dace.frontend import operations
@@ -350,9 +350,15 @@ class CPUCodeGen(TargetCodeGenerator):
             if node.setzero:
                 allocation_stream.write("memset(%s, 0, sizeof(%s)*%s);" %
                                         (alloc_name, nodedesc.dtype.ctype, cpp.sym2cpp(arrsize)))
+            if nodedesc.start_offset != 0:
+                allocation_stream.write(f'{alloc_name} += {cpp.sym2cpp(nodedesc.start_offset)};\n', sdfg, state_id, 
+                    node)
+
             return
         elif (nodedesc.storage == dtypes.StorageType.Register):
             ctypedef = dtypes.pointer(nodedesc.dtype).ctype
+            if nodedesc.start_offset != 0:
+                raise NotImplementedError('Start offset unsupported for registers')
             if node.setzero:
                 declaration_stream.write(
                     "%s %s[%s]  DACE_ALIGN(64) = {0};\n" % (nodedesc.dtype.ctype, name, cpp.sym2cpp(arrsize)),
@@ -397,6 +403,10 @@ class CPUCodeGen(TargetCodeGenerator):
             if node.setzero:
                 allocation_stream.write("memset(%s, 0, sizeof(%s)*%s);" %
                                         (alloc_name, nodedesc.dtype.ctype, cpp.sym2cpp(arrsize)))
+            if nodedesc.start_offset != 0:
+                allocation_stream.write(f'{alloc_name} += {cpp.sym2cpp(nodedesc.start_offset)};\n', sdfg, state_id, 
+                    node)
+
             # Close OpenMP parallel section
             allocation_stream.write('}')
             self._dispatcher.defined_vars.add_global(name, DefinedType.Pointer, '%s *' % nodedesc.dtype.ctype)
@@ -406,6 +416,8 @@ class CPUCodeGen(TargetCodeGenerator):
     def deallocate_array(self, sdfg, dfg, state_id, node, nodedesc, function_stream, callsite_stream):
         arrsize = nodedesc.total_size
         alloc_name = cpp.ptr(node.data, nodedesc, sdfg)
+        if isinstance(nodedesc, data.Array) and nodedesc.start_offset != 0:
+            alloc_name = f'({alloc_name} - {cpp.sym2cpp(nodedesc.start_offset)})'
 
         if self._dispatcher.declared_arrays.has(node.data):
             is_global = nodedesc.lifetime in (dtypes.AllocationLifetime.Global, dtypes.AllocationLifetime.Persistent)
@@ -1853,6 +1865,11 @@ class CPUCodeGen(TargetCodeGenerator):
             # NOTE: sink nodes are synchronized at the end of a state
             cpp.presynchronize_streams(sdfg, state_dfg, state_id, node, callsite_stream)
 
+        # Instrumentation: Pre-node
+        instr = self._dispatcher.instrumentation[node.instrument]
+        if instr is not None:
+            instr.on_node_begin(sdfg, state_dfg, node, callsite_stream, callsite_stream, function_stream)
+
         sdict = state_dfg.scope_dict()
         for edge in state_dfg.in_edges(node):
             predecessor, _, _, _, memlet = edge
@@ -1889,6 +1906,10 @@ class CPUCodeGen(TargetCodeGenerator):
             False,
             function_stream,
         )
+
+        # Instrumentation: Post-node
+        if instr is not None:
+            instr.on_node_end(sdfg, state_dfg, node, callsite_stream, callsite_stream, function_stream)
 
     # Methods for subclasses to override
 

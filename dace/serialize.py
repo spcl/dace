@@ -48,12 +48,14 @@ class NumpySerializer:
 
 _DACE_SERIALIZE_TYPES = {
     # Define these manually, so dtypes can stay independent
+    "opaque": dace.dtypes.opaque,
     "pointer": dace.dtypes.pointer,
     "vector": dace.dtypes.vector,
     "callback": dace.dtypes.callback,
     "struct": dace.dtypes.struct,
     "ndarray": NumpySerializer,
-    "DebugInfo": dace.dtypes.DebugInfo
+    "DebugInfo": dace.dtypes.DebugInfo,
+    "string": dace.dtypes.string,
     # All classes annotated with the make_properties decorator will register
     # themselves here.
 }
@@ -149,6 +151,15 @@ def loads(*args, context=None, **kwargs):
 
 def dumps(*args, **kwargs):
     return json.dumps(*args, default=to_json, indent=2, **kwargs)
+
+
+def load(*args, context=None, **kwargs):
+    loaded = json.load(*args, **kwargs)
+    return from_json(loaded, context)
+
+
+def dump(*args, **kwargs):
+    return json.dump(*args, default=to_json, indent=2, **kwargs)
 
 
 def all_properties_to_json(object_with_properties):

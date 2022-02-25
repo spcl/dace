@@ -383,7 +383,8 @@ void __dace_exit_cuda({sdfg.name}_t *__state) {{
             result_alloc.write('%sMalloc((void**)&%s, %s);\n' % (self.backend, allocname, arrsize_malloc))
             if node.setzero:
                 result_alloc.write('%sMemset(%s, 0, %s);\n' % (self.backend, allocname, arrsize_malloc))
-
+            if isinstance(nodedesc, dt.Array) and nodedesc.start_offset != 0:
+                result_alloc.write(f'{allocname} += {cpp.sym2cpp(nodedesc.start_offset)};\n')
         elif nodedesc.storage == dtypes.StorageType.CPU_Pinned:
             if not declared:
                 result_decl.write('%s %s;\n' % (ctypedef, dataname))
@@ -393,9 +394,13 @@ void __dace_exit_cuda({sdfg.name}_t *__state) {{
             result_alloc.write('%sMallocHost(&%s, %s);\n' % (self.backend, allocname, arrsize_malloc))
             if node.setzero:
                 result_alloc.write('memset(%s, 0, %s);\n' % (allocname, arrsize_malloc))
+            if nodedesc.start_offset != 0:
+                result_alloc.write(f'{allocname} += {cpp.sym2cpp(nodedesc.start_offset)};\n')
         elif nodedesc.storage == dtypes.StorageType.GPU_Shared:
             if is_dynamically_sized:
                 raise NotImplementedError('Dynamic shared memory unsupported')
+            if nodedesc.start_offset != 0:
+                raise NotImplementedError('Start offset unsupported for shared memory')
             result_decl.write("__shared__ %s %s[%s];\n" % (nodedesc.dtype.ctype, dataname, sym2cpp(arrsize)))
             self._dispatcher.defined_vars.add(dataname, DefinedType.Pointer, ctypedef)
             if node.setzero:
@@ -407,6 +412,8 @@ void __dace_exit_cuda({sdfg.name}_t *__state) {{
         elif nodedesc.storage == dtypes.StorageType.Register:
             if is_dynamically_sized:
                 raise ValueError('Dynamic allocation of registers not allowed')
+            if nodedesc.start_offset != 0:
+                raise NotImplementedError('Start offset unsupported for registers')
             szstr = ' = {0}' if node.setzero else ''
             result_decl.write("%s %s[%s]%s;\n" % (nodedesc.dtype.ctype, dataname, sym2cpp(arrsize), szstr))
             self._dispatcher.defined_vars.add(dataname, DefinedType.Pointer, ctypedef)
@@ -489,6 +496,8 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
     def deallocate_array(self, sdfg, dfg, state_id, node, nodedesc, function_stream, callsite_stream):
         dataname = cpp.ptr(node.data, nodedesc, sdfg)
+        if isinstance(nodedesc, dt.Array) and nodedesc.start_offset != 0:
+            dataname = f'({dataname} - {cpp.sym2cpp(nodedesc.start_offset)})'
 
         if self._dispatcher.declared_arrays.has(node.data):
             is_global = nodedesc.lifetime in (dtypes.AllocationLifetime.Global, dtypes.AllocationLifetime.Persistent)

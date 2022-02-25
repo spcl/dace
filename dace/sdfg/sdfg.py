@@ -2,7 +2,7 @@
 import ast
 import collections
 import copy
-import errno
+import ctypes
 import itertools
 import os
 import pickle, json
@@ -25,7 +25,7 @@ from dace.sdfg.scope import ScopeTree
 from dace.sdfg.replace import replace, replace_properties
 from dace.sdfg.validation import (InvalidSDFGError, validate_sdfg)
 from dace.config import Config
-from dace.frontend.python import wrappers
+from dace.frontend.python import astutils, wrappers
 from dace.sdfg import nodes as nd
 from dace.sdfg.graph import OrderedDiGraph, Edge, SubgraphView
 from dace.sdfg.state import SDFGState
@@ -56,6 +56,12 @@ def _replace_dict(d, old, new):
         del d[old]
 
 
+def _replace_dict_values(d, old, new):
+    for k, v in d.items():
+        if v == old:
+            d[k] = new
+
+
 def _assignments_from_string(astr):
     """ Returns a dictionary of assignments from a semicolon-delimited
         string of expressions. """
@@ -73,6 +79,34 @@ def _assignments_to_string(assdict):
     """ Returns a semicolon-delimited string from a dictionary of assignment
         expressions. """
     return '; '.join(['%s=%s' % (k, v) for k, v in assdict.items()])
+
+
+@make_properties
+class LogicalGroup(object):
+    """ Logical element groupings on a per-SDFG level.
+    """
+
+    nodes = ListProperty(element_type=tuple, desc='Nodes in this group given by [State, Node] id tuples')
+    states = ListProperty(element_type=int, desc='States in this group given by their ids')
+    name = Property(dtype=str, desc='Logical group name')
+    color = Property(dtype=str, desc='Color for the group, given as a hexadecimal string')
+
+    def __init__(self, name, color, nodes=[], states=[]):
+        self.nodes = nodes
+        self.states = states
+        self.color = color
+        self.name = name
+
+    def to_json(self):
+        retdict = dace.serialize.all_properties_to_json(self)
+        retdict['type'] = type(self).__name__
+        return retdict
+
+    @staticmethod
+    def from_json(json_obj, context=None):
+        ret = LogicalGroup('', '')
+        dace.serialize.set_properties_from_json(ret, json_obj, context=context, ignore_properties={'type'})
+        return ret
 
 
 @make_properties
@@ -151,9 +185,6 @@ class InterstateEdge(object):
         :param new_name: The replacement name.
         :param replace_keys: If False, skips replacing assignment keys.
         """
-        # Avoid import loops
-        from dace.frontend.python import astutils
-
         if replace_keys:
             _replace_dict(self.assignments, name, new_name)
 
@@ -163,11 +194,15 @@ class InterstateEdge(object):
             newv = astutils.unparse(vast)
             if newv != v:
                 self.assignments[k] = newv
-        condition = ast.parse(self.condition.as_string)
-        condition = astutils.ASTFindReplace({name: new_name}).visit(condition)
-        newc = astutils.unparse(condition)
-        if newc != condition:
-            self.condition.as_string = newc
+
+        replacer = astutils.ASTFindReplace({name: new_name})
+        if isinstance(self.condition.code, list):
+            for stmt in self.condition.code:
+                replacer.visit(stmt)
+        else:
+            replacer.visit(self.condition.code)
+
+        if replacer.replace_count > 0:
             self._uncond = None
             self._cond_sympy = None
 
@@ -255,11 +290,18 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
     orig_sdfg = SDFGReferenceProperty(allow_none=True)
     transformation_hist = TransformationHistProperty()
 
+    logical_groups = ListProperty(element_type=LogicalGroup, desc='Logical groupings of nodes and edges')
+
     openmp_sections = Property(dtype=bool,
                                default=Config.get_bool('compiler', 'cpu', 'openmp_sections'),
                                desc='Whether to generate OpenMP sections in code')
 
     debuginfo = DebugInfoProperty(allow_none=True)
+
+    callback_mapping = DictProperty(str,
+                                    str,
+                                    desc='Mapping between callback name and its original callback '
+                                    '(for when the same callback is used with a different signature)')
 
     def __init__(self,
                  name: str,
@@ -300,6 +342,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         self.exit_code = {'frame': CodeBlock("", dtypes.Language.CPP)}
         self.orig_sdfg = None
         self.transformation_hist = []
+        self.callback_mapping = {}
         # Counter to make it easy to create temp transients
         self._temp_transients = 0
 
@@ -451,6 +494,8 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             _replace_dict(self._arrays, name, new_name)
             _replace_dict(self.symbols, name, new_name)
             _replace_dict(self.constants_prop, name, new_name)
+            _replace_dict(self.callback_mapping, name, new_name)
+            _replace_dict_values(self.callback_mapping, name, new_name)
 
         # Replace inside data descriptors
         for array in self.arrays.values():
@@ -673,8 +718,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                 continue
             os.unlink(os.path.join(path, fname))
 
-    def get_latest_report(self) -> \
-            Optional['dace.codegen.instrumentation.InstrumentationReport']:
+    def get_latest_report(self) -> Optional['dace.codegen.instrumentation.InstrumentationReport']:
         """
         Returns an instrumentation report from the latest run of this SDFG, or
         None if the file does not exist.
@@ -690,6 +734,74 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         from dace.codegen.instrumentation import InstrumentationReport
 
         return InstrumentationReport(os.path.join(path, sorted(files, reverse=True)[0]))
+
+    def get_instrumented_data(
+        self,
+        timestamp: Optional[int] = None
+    ) -> Optional['dace.codegen.instrumentation.data.data_report.InstrumentedDataReport']:
+        """
+        Returns an instrumented data report from the latest run of this SDFG, with a given timestamp, or
+        None if no reports exist.
+        :param timestamp: An optional timestamp to use for the report.
+        :return: An InstrumentedDataReport object, or None if one does not exist.
+        """
+        # Avoid import loops
+        from dace.codegen.instrumentation.data.data_report import InstrumentedDataReport
+
+        if timestamp is None:
+            timestamp = sorted(self.available_data_reports())[-1]
+
+        folder = os.path.join(self.build_folder, 'data', str(timestamp))
+
+        return InstrumentedDataReport(self, folder)
+
+    def available_data_reports(self) -> List[str]:
+        """
+        Returns a list of available instrumented data reports for this SDFG.
+        """
+        path = os.path.join(self.build_folder, 'data')
+        if os.path.exists(path):
+            return os.listdir(path)
+        else:
+            return []
+
+    def clear_data_reports(self):
+        """
+        Clears the instrumented data report folders of this SDFG.
+        """
+        reports = self.available_data_reports()
+        path = os.path.join(self.build_folder, 'data')
+        for report in reports:
+            shutil.rmtree(os.path.join(path, report))
+
+    def call_with_instrumented_data(self,
+                                    dreport: 'dace.codegen.instrumentation.data.data_report.InstrumentedDataReport',
+                                    *args, **kwargs):
+        """
+        Invokes an SDFG with an instrumented data report, generating and compiling code if necessary. 
+        Arguments given as ``args`` and ``kwargs`` will be overriden by the data containers defined in the report.
+        :param dreport: The instrumented data report to use upon calling.
+        :param args: Arguments to call SDFG with.
+        :param kwargs: Keyword arguments to call SDFG with.
+        :return: The return value(s) of this SDFG.
+        """
+        from dace.codegen.compiled_sdfg import CompiledSDFG  # Avoid import loop
+
+        binaryobj: CompiledSDFG = self.compile()
+        set_report = binaryobj.get_exported_function('__dace_set_instrumented_data_report')
+        if set_report is None:
+            raise ValueError(
+                'Data instrumentation report function not found. This is likely because the SDFG is not instrumented '
+                'with `dace.DataInstrumentationType.Restore`')
+
+        # Initialize the compiled SDFG to get the handle, then set the report folder
+        handle = binaryobj.initialize(*args, **kwargs)
+        set_report(handle, ctypes.c_char_p(os.path.abspath(dreport.folder).encode('utf-8')))
+
+        # Verify passed arguments (unless disabled by the user)
+        if dace.config.Config.get_bool("execution", "general", "check_args"):
+            self.argument_typecheck(args, kwargs)
+        return binaryobj(*args, **kwargs)
 
     ##########################################
 
@@ -1052,8 +1164,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         # Get global free symbols scalar arguments
         free_symbols = free_symbols or self.free_symbols
         return ", ".join(
-            dt.Scalar(self.symbols[k]).as_arg(
-                name=k, with_types=not for_call, for_call=for_call)
+            dt.Scalar(self.symbols[k]).as_arg(name=k, with_types=not for_call, for_call=for_call)
             for k in sorted(free_symbols) if not k.startswith('__dace'))
 
     def signature_arglist(self, with_types=True, for_call=False, with_arrays=True, arglist=None) -> List[str]:
@@ -1205,7 +1316,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                 json_output = self.to_json(hash=hash)
                 if exception:
                     json_output['error'] = exception.to_json()
-                fp.write(dace.serialize.dumps(json_output))
+                dace.serialize.dump(json_output, fp)
             if hash and 'hash' in json_output['attributes']:
                 return json_output['attributes']['hash']
 
@@ -1555,27 +1666,11 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             descriptor store. """
         debuginfo = debuginfo or desc.debuginfo
         dtype = dtype or desc.dtype
-        if isinstance(desc, dt.Scalar):
-            return self.add_scalar(self.temp_data_name(),
-                                   dtype,
-                                   desc.storage,
-                                   transient=True,
-                                   lifetime=desc.lifetime,
-                                   debuginfo=debuginfo)
-        return self.add_array(self.temp_data_name(),
-                              desc.shape,
-                              dtype,
-                              storage=desc.storage,
-                              location=desc.location,
-                              transient=True,
-                              strides=desc.strides,
-                              offset=desc.offset,
-                              lifetime=desc.lifetime,
-                              alignment=desc.alignment,
-                              debuginfo=debuginfo,
-                              allow_conflicts=desc.allow_conflicts,
-                              total_size=desc.total_size,
-                              may_alias=desc.may_alias)
+        newdesc = desc.clone()
+        newdesc.dtype = dtype
+        newdesc.transient = True
+        newdesc.debuginfo = debuginfo
+        return self.add_datadesc(self.temp_data_name(), newdesc), newdesc
 
     def add_datadesc(self, name: str, datadesc: dt.Data, find_new_name=False) -> str:
         """ Adds an existing data descriptor to the SDFG array store.

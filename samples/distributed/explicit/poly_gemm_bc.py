@@ -3,6 +3,7 @@
 import dace as dc
 import numpy as np
 import os
+import sys
 import timeit
 from dace.sdfg.utils import load_precompiled_sdfg
 from mpi4py import MPI
@@ -25,7 +26,7 @@ def relerr(ref, val):
     return np.linalg.norm(ref - val) / np.linalg.norm(ref)
 
 
-@dc.program
+@dc.program(auto_optimize=True)
 def gemm_shared(alpha: dc.float64, beta: dc.float64, C: dc.float64[NI, NJ], A: dc.float64[NI, NK], B: dc.float64[NK,
                                                                                                                  NJ]):
 
@@ -100,6 +101,17 @@ if __name__ == "__main__":
     comm = MPI.COMM_WORLD
     rank = comm.Get_rank()
     size = comm.Get_size()
+
+    if size not in grid:
+        if rank == 0:
+            print("This sample is designed to run with 1, 2, 4, 8, or 16 MPI ranks. "
+                  "If you would like to run with a different number of ranks, "
+                  "please edit this file and insert the rows and columns of the "
+                  "desired grid in the 'grid' dictionary. Please note that, if the "
+                  "grid sizes do not divide evenly the matrix sizes, the sample may "
+                  "not work properly.")
+        sys.exit(0)
+
     Px, Py = grid[size]
     Bx, By = 128, 128
     lNI = NI // Px
@@ -220,20 +232,21 @@ if __name__ == "__main__":
 
         alpha, beta, refC, refA, refB = init_data(NI, NJ, NK, np.float64)
         shared_sdfg = gemm_shared.compile()
-        shared_sdfg(A=refA,
-                    B=refB,
-                    C=refC,
-                    alpha=alpha,
-                    beta=beta,
-                    NI=NI,
-                    NJ=NJ,
-                    NK=NK,
-                    lNI=lNI,
-                    lNJ=lNJ,
-                    lNKa=lNKa,
-                    lNKb=lNKb,
-                    Px=Px,
-                    Py=Py)
+        with dc.config.set_temporary('compiler', 'allow_view_arguments', value=True):
+            shared_sdfg(A=refA,
+                        B=refB,
+                        C=refC,
+                        alpha=alpha,
+                        beta=beta,
+                        NI=NI,
+                        NJ=NJ,
+                        NK=NK,
+                        lNI=lNI,
+                        lNJ=lNJ,
+                        lNKa=lNKa,
+                        lNKb=lNKb,
+                        Px=Px,
+                        Py=Py)
 
         print("=======Validation=======")
         assert (np.allclose(C, refC))
