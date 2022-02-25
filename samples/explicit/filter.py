@@ -1,5 +1,5 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-
+# Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
+""" Predicate-based filtering with dynamic, explicit memlets in DaCe. """
 import argparse
 import dace
 import numpy as np
@@ -7,24 +7,36 @@ import numpy as np
 N = dace.symbol('N', positive=True)
 
 
-@dace.program(dace.float32[N], dace.float32[N], dace.uint32[1], dace.float32)
-def pbf(A, out, outsz, ratio):
+@dace.program
+def pbf(A: dace.float32[N], out: dace.float32[N], outsz: dace.uint32[1], ratio: dace.float32):
+    # We define a stream (an object that behaves like a queue) so that we can dynamically
+    # push values to `out`
     ostream = dace.define_stream(dace.float32, N)
 
-    @dace.map(_[0:N])
-    def filter(i):
-        a << A[i]
-        r << ratio
-        b >> ostream(-1)
-        osz >> outsz(-1, lambda x, y: x + y, 0)
+    # The map evaluates a single element from `A` at a time
+    for i in dace.map[0:N]:
+        with dace.tasklet:
+            a << A[i]
+            r << ratio
 
-        filter = (a > r)
+            # The filter predicate is based on the ratio
+            filter = (a > r)
 
-        if filter:
-            b = a
+            # If we should filter, writing `b = a` pushes `a` onto the stream
+            if filter:
+                b = a
 
-        osz = filter
+            # With write-conflict resolution, storing the filter predicate would add it to `outsz`
+            osz = filter
 
+            # Writing to the output stream uses a dynamic output memlet, annotated with -1
+            b >> ostream(-1)
+            
+            # Writing to the output size is also dynamic, and uses the sum write-conflict resolution
+            osz >> outsz(-1, lambda x, y: x + y, 0)
+
+    # Lastly, we connect ostream to the output array. DaCe detects this pattern and emits
+    # fast code that pushes results to `out` directly
     ostream >> out
 
 
@@ -33,34 +45,28 @@ def regression(A, ratio):
 
 
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser()
     parser.add_argument("N", type=int, nargs="?", default=64)
     parser.add_argument("ratio", type=float, nargs="?", default=0.5)
-    args = vars(parser.parse_args())
+    args = parser.parse_args()
 
-    N.set(args["N"])
-    ratio = np.float32(args["ratio"])
-
-    print('Predicate-Based Filter. size=%d, ratio=%f' % (N.get(), ratio))
-
-    A = np.random.rand(N.get()).astype(np.float32)
+    # Initialize arrays
+    ratio = np.float32(args.ratio)
+    A = np.random.rand(args.N).astype(np.float32)
     B = np.zeros_like(A)
     outsize = dace.scalar(dace.uint32)
     outsize[0] = 0
 
+    # Call filter
     pbf(A, B, outsize, ratio)
-
-    if dace.Config.get_bool('profiling'):
-        dace.timethis('filter', 'numpy', 0, regression, A, ratio)
 
     filtered = regression(A, ratio)
 
     if len(filtered) != outsize[0]:
-        print("Difference in number of filtered items: %d (DaCe) vs. %d (numpy)" % (outsize[0], len(filtered)))
-        totalitems = min(outsize[0], N.get())
-        print('DaCe:', B[:totalitems].view(type=np.ndarray))
-        print('Regression:', filtered.view(type=np.ndarray))
+        print(f'Difference in number of filtered items: {outsize[0]} (DaCe) vs. {len(filtered)} (numpy)')
+        totalitems = min(outsize[0], args.N)
+        print('DaCe:', B[:totalitems])
+        print('numpy:', filtered)
         exit(1)
 
     # Sort the outputs
@@ -68,15 +74,15 @@ if __name__ == "__main__":
     B[:outsize[0]] = np.sort(B[:outsize[0]])
 
     if len(filtered) == 0:
-        print("==== Program end ====")
+        print('Success, nothing left in array')
         exit(0)
 
     diff = np.linalg.norm(filtered - B[:outsize[0]]) / float(outsize[0])
-    print("Difference:", diff)
+    print('Difference:', diff)
     if diff > 1e-5:
-        totalitems = min(outsize[0], N.get())
-        print('DaCe:', B[:totalitems].view(type=np.ndarray))
-        print('Regression:', filtered.view(type=np.ndarray))
+        totalitems = min(outsize[0], args.N)
+        print('DaCe:', B[:totalitems])
+        print('numpy:', filtered)
 
     print("==== Program end ====")
     exit(0 if diff <= 1e-5 else 1)

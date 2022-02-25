@@ -1,6 +1,8 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-from __future__ import print_function
-
+# Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
+"""
+Sample showing the Shiloach-Viskin pointer-chasing connected components algorithm in the
+explicit DaCe syntax.
+"""
 import argparse
 import dace
 import numpy as np
@@ -8,7 +10,6 @@ import networkx as nx
 
 E = dace.symbol('E')
 V = dace.symbol('V')
-
 
 @dace.program
 def shiloach_vishkin(EL, comp):
@@ -24,7 +25,6 @@ def shiloach_vishkin(EL, comp):
             out = v
 
     while flag_hook:
-
         with dace.tasklet:
             out >> flag_hook
             out = 0
@@ -60,29 +60,31 @@ def shiloach_vishkin(EL, comp):
 
 
 if __name__ == "__main__":
-
     parser = argparse.ArgumentParser()
     parser.add_argument("edges", type=int, nargs="?", default=17)
     parser.add_argument("vertices", type=int, nargs="?", default=16)
     parser.add_argument("-seed", type=int, nargs="?", default=None)
-    args = vars(parser.parse_args())
+    args = parser.parse_args()
 
-    E.set(args['edges'])
-    V.set(args['vertices'])
+    E = args.edges
+    V = args.vertices
 
-    print('Connected Components (Shiloach-Vishkin) E=%d, V=%d' % (E.get(), V.get()))
+    print(f'Connected Components (Shiloach-Vishkin) E={E}, V={V}')
 
-    graph = nx.gnm_random_graph(V.get(), E.get(), seed=args['seed'])
+    # Create a random graph and use it to create an edge list (EL)
+    graph = nx.gnm_random_graph(V, E, seed=args.seed)
+    EL = np.ndarray([2 * E, 2], np.uint64)
+    EL[:E] = np.array([[u, v] for u, v, d in nx.to_edgelist(graph)], dtype=np.uint64)
+    EL[E:] = np.array([[v, u] for u, v, d in nx.to_edgelist(graph)], dtype=np.uint64)
 
-    comp = np.arange(0, V.get(), dtype=np.uint64)
-    EL = dace.ndarray([2 * E, 2], dace.uint64)
-    EL[:E.get()] = np.array([[u, v] for u, v, d in nx.to_edgelist(graph)], dtype=np.uint64)
-    EL[E.get():] = np.array([[v, u] for u, v, d in nx.to_edgelist(graph)], dtype=np.uint64)
+    # Initialize list of components with every node having its own component
+    comp = np.arange(0, V, dtype=np.uint64)
 
+    # Call program
     shiloach_vishkin(EL, comp, E=E, V=V)
 
+    # Verify correctness
     cc = nx.number_connected_components(graph)
     diff = abs(cc - len(np.unique(comp)))
-    print("Difference:", diff, '(SV:', len(np.unique(comp)), ', NX:', cc, ')')
-    print("==== Program end ====")
+    print("Difference:", diff, '(dace-sv:', len(np.unique(comp)), ', networkx:', cc, ')')
     exit(0 if diff == 0 else 1)
