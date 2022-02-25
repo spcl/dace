@@ -25,7 +25,7 @@ from dace.sdfg.scope import ScopeTree
 from dace.sdfg.replace import replace, replace_properties
 from dace.sdfg.validation import (InvalidSDFGError, validate_sdfg)
 from dace.config import Config
-from dace.frontend.python import wrappers
+from dace.frontend.python import astutils, wrappers
 from dace.sdfg import nodes as nd
 from dace.sdfg.graph import OrderedDiGraph, Edge, SubgraphView
 from dace.sdfg.state import SDFGState
@@ -55,6 +55,10 @@ def _replace_dict(d, old, new):
         d[new] = d[old]
         del d[old]
 
+def _replace_dict_values(d, old, new):
+    for k, v in d.items():
+        if v == old:
+            d[k] = new
 
 def _assignments_from_string(astr):
     """ Returns a dictionary of assignments from a semicolon-delimited
@@ -73,6 +77,38 @@ def _assignments_to_string(assdict):
     """ Returns a semicolon-delimited string from a dictionary of assignment
         expressions. """
     return '; '.join(['%s=%s' % (k, v) for k, v in assdict.items()])
+
+
+@make_properties
+class LogicalGroup(object):
+    """ Logical element groupings on a per-SDFG level.
+    """
+
+    nodes = ListProperty(element_type=tuple,
+                         desc='Nodes in this group given by [State, Node] id tuples')
+    states = ListProperty(element_type=int,
+                          desc='States in this group given by their ids')
+    name = Property(dtype=str, desc='Logical group name')
+    color = Property(dtype=str,
+                     desc='Color for the group, given as a hexadecimal string')
+
+    def __init__(self, name, color, nodes=[], states=[]):
+        self.nodes = nodes
+        self.states = states
+        self.color = color
+        self.name = name
+
+    def to_json(self):
+        retdict = dace.serialize.all_properties_to_json(self)
+        retdict['type'] = type(self).__name__
+        return retdict
+
+    @staticmethod
+    def from_json(json_obj, context=None):
+        ret = LogicalGroup('', '')
+        dace.serialize.set_properties_from_json(ret, json_obj, context=context,
+                                                ignore_properties={'type'})
+        return ret
 
 
 @make_properties
@@ -151,9 +187,6 @@ class InterstateEdge(object):
         :param new_name: The replacement name.
         :param replace_keys: If False, skips replacing assignment keys.
         """
-        # Avoid import loops
-        from dace.frontend.python import astutils
-
         if replace_keys:
             _replace_dict(self.assignments, name, new_name)
 
@@ -163,11 +196,15 @@ class InterstateEdge(object):
             newv = astutils.unparse(vast)
             if newv != v:
                 self.assignments[k] = newv
-        condition = ast.parse(self.condition.as_string)
-        condition = astutils.ASTFindReplace({name: new_name}).visit(condition)
-        newc = astutils.unparse(condition)
-        if newc != condition:
-            self.condition.as_string = newc
+
+        replacer = astutils.ASTFindReplace({name: new_name})
+        if isinstance(self.condition.code, list):
+            for stmt in self.condition.code:
+                replacer.visit(stmt)
+        else:
+            replacer.visit(self.condition.code)
+        
+        if replacer.replace_count > 0:
             self._uncond = None
             self._cond_sympy = None
 
@@ -255,11 +292,19 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
     orig_sdfg = SDFGReferenceProperty(allow_none=True)
     transformation_hist = TransformationHistProperty()
 
+    logical_groups = ListProperty(element_type=LogicalGroup,
+                                  desc='Logical groupings of nodes and edges')
+
     openmp_sections = Property(dtype=bool,
                                default=Config.get_bool('compiler', 'cpu', 'openmp_sections'),
                                desc='Whether to generate OpenMP sections in code')
 
     debuginfo = DebugInfoProperty(allow_none=True)
+
+    callback_mapping = DictProperty(str,
+                                    str,
+                                    desc='Mapping between callback name and its original callback '
+                                    '(for when the same callback is used with a different signature)')
 
     def __init__(self,
                  name: str,
@@ -300,6 +345,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         self.exit_code = {'frame': CodeBlock("", dtypes.Language.CPP)}
         self.orig_sdfg = None
         self.transformation_hist = []
+        self.callback_mapping = {}
         # Counter to make it easy to create temp transients
         self._temp_transients = 0
 
@@ -451,6 +497,8 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             _replace_dict(self._arrays, name, new_name)
             _replace_dict(self.symbols, name, new_name)
             _replace_dict(self.constants_prop, name, new_name)
+            _replace_dict(self.callback_mapping, name, new_name)
+            _replace_dict_values(self.callback_mapping, name, new_name)
 
         # Replace inside data descriptors
         for array in self.arrays.values():
@@ -1205,7 +1253,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                 json_output = self.to_json(hash=hash)
                 if exception:
                     json_output['error'] = exception.to_json()
-                fp.write(dace.serialize.dumps(json_output))
+                dace.serialize.dump(json_output, fp)
             if hash and 'hash' in json_output['attributes']:
                 return json_output['attributes']['hash']
 
@@ -1555,27 +1603,11 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             descriptor store. """
         debuginfo = debuginfo or desc.debuginfo
         dtype = dtype or desc.dtype
-        if isinstance(desc, dt.Scalar):
-            return self.add_scalar(self.temp_data_name(),
-                                   dtype,
-                                   desc.storage,
-                                   transient=True,
-                                   lifetime=desc.lifetime,
-                                   debuginfo=debuginfo)
-        return self.add_array(self.temp_data_name(),
-                              desc.shape,
-                              dtype,
-                              storage=desc.storage,
-                              location=desc.location,
-                              transient=True,
-                              strides=desc.strides,
-                              offset=desc.offset,
-                              lifetime=desc.lifetime,
-                              alignment=desc.alignment,
-                              debuginfo=debuginfo,
-                              allow_conflicts=desc.allow_conflicts,
-                              total_size=desc.total_size,
-                              may_alias=desc.may_alias)
+        newdesc = desc.clone()
+        newdesc.dtype = dtype
+        newdesc.transient = True
+        newdesc.debuginfo = debuginfo
+        return self.add_datadesc(self.temp_data_name(), newdesc), newdesc
 
     def add_datadesc(self, name: str, datadesc: dt.Data, find_new_name=False) -> str:
         """ Adds an existing data descriptor to the SDFG array store.

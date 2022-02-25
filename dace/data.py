@@ -382,7 +382,7 @@ class Array(Data):
         'skip in order to obtain the next element in '
         'that dimension.')
 
-    total_size = SymbolicProperty(default=0, desc='The total allocated size of the array. Can be used for' ' padding.')
+    total_size = SymbolicProperty(default=0, desc='The total allocated size of the array. Can be used for padding.')
 
     offset = ShapeProperty(desc='Initial offset to translate all indices by.')
 
@@ -391,7 +391,9 @@ class Array(Data):
                          desc='This pointer may alias with other pointers in '
                          'the same function')
 
-    alignment = Property(dtype=int, default=0, desc='Allocation alignment in bytes (0 uses ' 'compiler-default)')
+    alignment = Property(dtype=int, default=0, desc='Allocation alignment in bytes (0 uses compiler-default)')
+
+    start_offset = Property(dtype=int, default=0, desc='Allocation offset elements for manual alignment (pre-padding)')
 
     def __init__(self,
                  dtype,
@@ -406,7 +408,8 @@ class Array(Data):
                  lifetime=dtypes.AllocationLifetime.Scope,
                  alignment=0,
                  debuginfo=None,
-                 total_size=None):
+                 total_size=None,
+                 start_offset=None):
 
         super(Array, self).__init__(dtype, shape, transient, storage, location, lifetime, debuginfo)
 
@@ -416,6 +419,8 @@ class Array(Data):
         self.allow_conflicts = allow_conflicts
         self.may_alias = may_alias
         self.alignment = alignment
+        if start_offset is not None:
+            self.start_offset = start_offset
 
         if strides is not None:
             self.strides = cp.copy(strides)
@@ -441,7 +446,7 @@ class Array(Data):
     def clone(self):
         return type(self)(self.dtype, self.shape, self.transient, self.allow_conflicts, self.storage, self.location,
                           self.strides, self.offset, self.may_alias, self.lifetime, self.alignment, self.debuginfo,
-                          self.total_size)
+                          self.total_size, self.start_offset)
 
     def to_json(self):
         attrs = serialize.all_properties_to_json(self)

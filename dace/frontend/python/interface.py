@@ -225,3 +225,10 @@ def unroll(generator):
     :note: Only use with stateless and compile-time evaluateable loops!
     """
     yield from generator
+
+def nounroll(generator):
+    """
+    Explicitly annotates that a loop should not be unrolled during parsing.
+    :param generator: The original generator to loop over.
+    """
+    yield from generator
