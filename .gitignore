@@ -169,8 +169,6 @@ _dacegraphs/
 
 /dace/codegen/cmake-build-debug/
 
-/tests/diode/*.py.*
-
 client_configs/
 
 perfdata-dir/
