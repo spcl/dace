@@ -72,7 +72,7 @@ class TransformationTester(Optimizer):
                 match._sdfg = tsdfg
                 match.apply(tgraph, tsdfg)
 
-                sdfg.save(os.path.join('_dacegraphs', 'program.sdfg'))
+                new_sdfg.save(os.path.join('_dacegraphs', 'program.sdfg'))
 
                 # Validate
                 if self.validate:
@@ -93,7 +93,7 @@ class TransformationTester(Optimizer):
                 self.passed_tests += 1
 
                 # Recursively optimize as necessary
-                self._optimize_recursive(sdfg, depth + 1)
+                self._optimize_recursive(new_sdfg, depth + 1)
 
             except:  # Literally anything can happen here
                 print('FAIL', file=self.stdout)
