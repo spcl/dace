@@ -1,6 +1,8 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-from __future__ import print_function
-
+# Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
+"""
+Sample showcasing transformations applied on a naive matrix multiplication program, yielding performance that competes
+with Intel MKL and NVIDIA CUBLAS.
+"""
 import click
 import dace
 import numpy as np
