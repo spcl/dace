@@ -83,7 +83,7 @@ class SaveProvider(InstrumentationProvider, DataInstrumentationProviderMixin):
         # Initialize serializer versioning object
         if sdfg.parent is None:
             self.codegen = codegen
-            path = os.path.abspath(os.path.join(sdfg.build_folder, 'data'))
+            path = os.path.abspath(os.path.join(sdfg.build_folder, 'data')).replace('\\', '/')
             codegen.statestruct.append('dace::DataSerializer *serializer;')
             sdfg.append_init_code(f'__state->serializer = new dace::DataSerializer("{path}");\n')
 
