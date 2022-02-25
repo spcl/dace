@@ -40,6 +40,11 @@ def preamble():
 
     # Try to load dependencies from online sources
     if _connected():
+        sdfv_js_deps = [
+            'renderer_dir/dagre.js', 'renderer_dir/global_vars.js', 'context_menu.js', 'renderer_elements.js',
+            'sdfg_utils.js', 'overlay_manager.js', 'renderer.js'
+        ]
+
         # external_js_deps = [
         #     'external_lib/pdfkit.standalone.js',
         #     'external_lib/blob-stream.js',
