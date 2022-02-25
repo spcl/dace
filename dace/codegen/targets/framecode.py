@@ -171,7 +171,7 @@ struct {sdfg.name}_t {{
             self.statestruct.extend(env.state_fields)
 
         # Instrumentation preamble
-        if len(self._dispatcher.instrumentation) > 1:
+        if len(self._dispatcher.instrumentation) > 2:
             self.statestruct.append('dace::perf::Report report;')
             # Reset report if written every invocation
             if config.Config.get_bool('instrumentation', 'report_each_invocation'):
@@ -200,7 +200,7 @@ struct {sdfg.name}_t {{
 
         # Instrumentation saving
         if (config.Config.get_bool('instrumentation', 'report_each_invocation')
-                and len(self._dispatcher.instrumentation) > 1):
+                and len(self._dispatcher.instrumentation) > 2):
             callsite_stream.write(
                 '''__state->report.save("{path}/perf", __HASH_{name});'''.format(path=sdfg.build_folder.replace(
                     '\\', '/'),
@@ -274,7 +274,7 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
 
         # Instrumentation saving
         if (not config.Config.get_bool('instrumentation', 'report_each_invocation')
-                and len(self._dispatcher.instrumentation) > 1):
+                and len(self._dispatcher.instrumentation) > 2):
             callsite_stream.write(
                 '__state->report.save("%s/perf", __HASH_%s);' % (sdfg.build_folder.replace('\\', '/'), sdfg.name), sdfg)
 

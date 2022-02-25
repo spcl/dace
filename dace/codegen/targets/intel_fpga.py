@@ -122,7 +122,7 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
 
         host_code = CodeIOStream()
         host_code.write('#include "dace/intel_fpga/host.h"')
-        if len(self._dispatcher.instrumentation) > 1:
+        if len(self._dispatcher.instrumentation) > 2:
             host_code.write("""\
 #include "dace/perf/reporting.h"
 #include <chrono>
