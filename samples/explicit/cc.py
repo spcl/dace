@@ -1,7 +1,7 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 """
-Sample showing the Shiloach-Viskin pointer-chasing connected components algorithm in the
-explicit DaCe syntax.
+Sample showing the Shiloach-Viskin pointer-chasing connected components graph algorithm in the explicit DaCe syntax.
+It showcases write-conflicting accesses, location constraints, and explicit data movement volume.
 """
 import argparse
 import dace
@@ -11,29 +11,39 @@ import networkx as nx
 E = dace.symbol('E')
 V = dace.symbol('V')
 
-@dace.program
-def shiloach_vishkin(EL, comp):
-    flag_hook = dace.define_local_scalar(dace.int32)
 
-    with dace.tasklet:
-        out >> flag_hook
-        out = 1
+@dace.program
+def shiloach_vishkin(EL: dace.uint64[2 * E, 2], comp: dace.uint64[V]):
+    """
+    The Shiloach-Vishkin algorithm [1] has two steps that run consecutively: Hook and Compress.
+    Hook connects two components together, whereas Compress condenses ``comp`` to become a tree of depth-1 ("star").
+    The process runs until there are no more components to connect, and ends with ``comp`` pointing each vertex to
+    its component ID, designated by the smallest vertex index contained within it.
+
+    [1] Y. Shiloach and U. Vishkin. An O(log N) parallel connectivity algorithm. Journal of Algorithms, 3:57-67, 1982.
+
+    :param EL: The graph represented as an edge list.
+    :param comp: The component parent-pointing tree.
+    """
+    flag_hook = np.ones([1], np.int32)
 
     for v in dace.map[0:V]:
         with dace.tasklet:
             out >> comp[v]
             out = v
 
-    while flag_hook:
+    while flag_hook[0]:
         with dace.tasklet:
             out >> flag_hook
             out = 0
 
+        # Hook in parallel. Notice that writing to `comp` may have conflicts, but the last access will "win" and set
+        # the flag.
         for e in dace.map[0:2 * E]:
             with dace.tasklet:
                 u << EL[e, 0]
                 v << EL[e, 1]
-                parents << comp(3)[:]
+                parents << comp(3)[:]  # The data movement volume is known (3), but not the location
                 out >> comp(1)[:]
                 f >> flag_hook(-1)
 
@@ -45,10 +55,12 @@ def shiloach_vishkin(EL, comp):
                     out[ppv] = pu
                     f = 1
 
-        # Multi-jump version
+        # Compress uses the "multi-jump" version, where the tasklet keeps accessing `comp` in a loop
+        # until reaching the top of the parent-pointing auxiliary data structure. This will always point
+        # backwards, so we introduce this as a location constraint "hint" in the memlet.
         for v in dace.map[0:V]:
             with dace.tasklet:
-                inp << comp(-1)[0:v + 1]
+                inp << comp(-1)[0:v + 1]  # The volume is unknown, but the location constraints are known
                 out >> comp(-1)[v]
 
                 p = inp[v]
