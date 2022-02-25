@@ -3,8 +3,8 @@ include dace/*.yml dace/codegen/CMakeLists.txt dace/codegen/tools/*.cpp dace/ext
 recursive-include dace/codegen *.cmake
 graft dace/runtime/include
 graft dace/libraries
-graft diode/webclient
-graft diode/templates
+graft dace/viewer/webclient
+graft dace/viewer/templates
 graft dace/external/cub/cub
 graft dace/external/hlslib/cmake
 graft dace/external/hlslib/include

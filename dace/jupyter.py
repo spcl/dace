@@ -30,10 +30,7 @@ def isnotebook():
 
 def preamble():
     # Emit javascript headers for SDFG renderer
-    sdfv_js_deps = [
-        'renderer_dir/dagre.js', 'renderer_dir/global_vars.js', 'context_menu.js', 'renderer_elements.js',
-        'sdfg_utils.js', 'overlay_manager.js', 'renderer.js'
-    ]
+    sdfv_js_deps = ['sdfv.js']
     sdfv_css_deps = ['sdfv.css']
 
     result = ''
@@ -65,7 +62,7 @@ def preamble():
         return result
 
     # Load local dependencies
-    root_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'diode', 'webclient')
+    root_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'dace', 'viewer', 'webclient', 'dist')
     for dep in sdfv_js_deps:
         file = os.path.join(root_path, dep)
         with open(file, 'r') as fp:

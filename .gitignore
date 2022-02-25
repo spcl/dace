@@ -177,7 +177,7 @@ rgf_dense_saved.sdfg
 
 .ycm_extra_conf.py
 
-/diode/sdfv_tmp*.html
+/dace/viewer/sdfv_tmp*.html
 
 _build/
 
