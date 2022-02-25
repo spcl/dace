@@ -67,9 +67,9 @@ def preamble():
         return result
 
     # Load local dependencies
-    root_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'dace', 'viewer', 'webclient', 'dist')
+    root_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'dace', 'viewer', 'webclient')
     for dep in sdfv_js_deps:
-        file = os.path.join(root_path, dep)
+        file = os.path.join(root_path, 'dist', dep)
         with open(file, 'r') as fp:
             result += '<script>%s</script>\n' % fp.read()
     for dep in sdfv_css_deps:
