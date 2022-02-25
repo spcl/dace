@@ -11,7 +11,6 @@ from dace.transformation import transformation as xf
 from dace import (data, dtypes, nodes, properties, registry, memlet as mm, subsets, symbolic, symbol, Memlet)
 from dace.sdfg import SDFG, SDFGState, utils as sdutil, graph as gr
 from dace.libraries.standard import Gearbox
-from tests.fpga.streaming_memory_test import N
 
 
 def get_post_state(sdfg: SDFG, state: SDFGState):

@@ -114,7 +114,7 @@ def create_gemm_sdfg(sdfg_name,
 
 @fpga_test(assert_ii_1=False)
 def test_naive_matmul_fpga():
-    matmul = import_sample(Path("simple") / "matmul.py")
+    matmul = import_sample(Path("optimization") / "matmul.py")
     sdfg = matmul.matmul.to_sdfg()
     sdfg.apply_transformations(FPGATransformSDFG)
 

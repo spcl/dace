@@ -8,7 +8,7 @@ import urllib.error
 
 def _connected():
     try:
-        urllib.request.urlopen('https://spcl.github.io/dace/webclient/sdfv.css', timeout=1)
+        urllib.request.urlopen('https://spcl.github.io/dace/webclient/renderer.js', timeout=1)
         return True
     except urllib.error.URLError:
         return False
@@ -30,10 +30,7 @@ def isnotebook():
 
 def preamble():
     # Emit javascript headers for SDFG renderer
-    sdfv_js_deps = [
-        'renderer_dir/dagre.js', 'renderer_dir/global_vars.js', 'context_menu.js', 'renderer_elements.js',
-        'sdfg_utils.js', 'overlay_manager.js', 'renderer.js'
-    ]
+    sdfv_js_deps = ['sdfv.js']
     sdfv_css_deps = ['sdfv.css']
 
     result = ''
@@ -43,6 +40,11 @@ def preamble():
 
     # Try to load dependencies from online sources
     if _connected():
+        sdfv_js_deps = [
+            'renderer_dir/dagre.js', 'renderer_dir/global_vars.js', 'context_menu.js', 'renderer_elements.js',
+            'sdfg_utils.js', 'overlay_manager.js', 'renderer.js'
+        ]
+
         # external_js_deps = [
         #     'external_lib/pdfkit.standalone.js',
         #     'external_lib/blob-stream.js',
@@ -65,9 +67,9 @@ def preamble():
         return result
 
     # Load local dependencies
-    root_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'diode', 'webclient')
+    root_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'dace', 'viewer', 'webclient')
     for dep in sdfv_js_deps:
-        file = os.path.join(root_path, dep)
+        file = os.path.join(root_path, 'dist', dep)
         with open(file, 'r') as fp:
             result += '<script>%s</script>\n' % fp.read()
     for dep in sdfv_css_deps:

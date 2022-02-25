@@ -31,7 +31,7 @@ DaCe generates high-performance programs for:
 
 DaCe can be written inline in Python and transformed in the command-line/Jupyter 
 Notebooks, or SDFGs can be interactively modified using the Data-centric 
-Interactive Optimization Development Environment (DIODE, currently experimental).
+Interactive Optimization Development Environment [Visual Studio Code extension](https://marketplace.visualstudio.com/items?itemName=phschaad.sdfv).
 
 For more information, see our [paper](http://www.arxiv.org/abs/1902.10345).
 
@@ -41,6 +41,8 @@ Quick Start
 -----------
 
 Install DaCe with pip: `pip install dace`
+
+Having issues? See [Troubleshooting](#Troubleshooting)
 
 Using DaCe in Python is as simple as adding a `@dace` decorator:
 ```python
@@ -84,11 +86,9 @@ Running
 
 **Python scripts:** Run DaCe programs (in implicit or explicit syntax) using Python directly.
 
-**[SDFV (standalone SDFG viewer)](https://spcl.github.io/dace/sdfv.html):** To view SDFGs separately, run the `sdfv` installed script with the `.sdfg` file as an argument. Alternatively, you can use the link or open `diode/sdfv.html` directly and choose a file in the browser.
+**[SDFV (standalone SDFG viewer)](https://spcl.github.io/dace/sdfv.html):** To view SDFGs separately, run the `sdfv` installed script with the `.sdfg` file as an argument. Alternatively, you can use the link or open `dace/viewer/webclient/sdfv.html` directly and choose a file in the browser.
 
-**Visual Studio Code plugin**: Install from the [VSCode marketplace](https://marketplace.visualstudio.com/items?itemName=phschaad.sdfv) or open an `.sdfg` file for interactive SDFG viewing and transformation.
-
-**DIODE interactive development (experimental):**: Either run the installed script `diode`, or call `python3 -m diode` from the shell. Then, follow the printed instructions to enter the web interface.
+**Visual Studio Code extension**: Install from the [VSCode marketplace](https://marketplace.visualstudio.com/items?itemName=phschaad.sdfv) or open an `.sdfg` file for interactive SDFG viewing and transformation.
 
 **The sdfgcc tool:** Compile `.sdfg` files with `sdfgcc program.sdfg`. Interactive command-line optimization is possible with the `--optimize` flag.
 
@@ -116,19 +116,41 @@ If you use DaCe, cite us:
 }
 ```
 
+Troubleshooting
+---------------
+
+* If you are using DaCe from the git repository and getting missing dependencies or missing include files, make sure you cloned the repository recursively (with `git clone --recursive`) and that the submodules are up to date.
+* If you are running on Mac OS and getting compilation errors when calling DaCe programs, make sure you have OpenMP installed and configured with Apple Clang. Otherwise, you can use GCC to compile the code by following these steps:
+    * Run `brew install gcc`
+	* Set your `~/.dace.conf` compiler configuration to use the installed GCC. For example, if you installed version 9 (`brew install gcc@9`), run `which g++-9` and set the config entry called `compiler.cpu.executable` (empty string by default) to the resulting path
+	* Remove any `.dacecache` folders to clear the cache
+
+Other issues? Look for similar issues or start a discussion on our [GitHub Discussions](https://github.com/spcl/dace/discussions)!
+
+
 Configuration
 -------------
 
-DaCe creates a file called `.dace.conf` in the user's home directory. It provides useful settings that can be modified either directly in the file (YAML), within DIODE, or overriden on a case-by-case basis using environment variables that begin with `DACE_` and specify the setting (where categories are separated by underscores). The full configuration schema is located [here](dace/config_schema.yml).
+DaCe creates a file called `.dace.conf` in the user's home directory. It provides useful settings that can be modified either directly in the file (YAML), or overriden on a case-by-case basis using environment variables that begin with `DACE_` and specify the setting (where categories are separated by underscores). The full configuration schema is located [here](dace/config_schema.yml).
+
+The priority order for configuration files is as follows:
+ 1. If a `DACE_*` environment variable is found, its value will always be used
+ 2. If `with dace.config.set_temporary(...)` is used ([see example here](samples/simple/laplace.py#L43))
+ 3. A `.dace.conf` located in the current working directory
+ 4. The `.dace.conf` located in the user's home directory or the path pointed to by the `DACE_CONFIG` environment variable
 
 Useful environment variable configurations include:
 
-* `DACE_CONFIG` (default: `~/.dace.conf`): Override DaCe configuration file choice.
+ * `DACE_CONFIG` (default: `~/.dace.conf`): Override DaCe configuration file choice.
 
 General configuration:
  * `DACE_debugprint` (default: False): Print debugging information.
  * `DACE_compiler_use_cache` (default: False): Uses DaCe program cache instead of re-optimizing and compiling programs.
  * `DACE_compiler_default_data_types` (default: `Python`): Chooses default types for integer and floating-point values. If `Python` is chosen, `int` and `float` are both 64-bit wide. If `C` is chosen, `int` and `float` are 32-bit wide.
+ 
+Profiling:
+ * `DACE_profiling` (default: False): Enables profiling measurement of the DaCe program runtime in milliseconds. Produces a log file and prints out median runtime.
+ * `DACE_treps` (default: 100): Number of repetitions to run a DaCe program when profiling is enabled.
  
 GPU programming and debugging:
  * `DACE_compiler_cuda_backend` (default: `cuda`): Chooses the GPU backend to use (can be `cuda` for NVIDIA GPUs or `hip` for AMD GPUs).
@@ -141,10 +163,6 @@ SDFG interactive transformation:
  * `DACE_optimizer_transform_on_call` (default: False): Uses the transformation command line interface every time a `@dace` function is called.
  * `DACE_optimizer_interface` (default: `dace.transformation.optimizer.SDFGOptimizer`): Controls the SDFG optimization process if `transform_on_call` is enabled. By default, uses the transformation command line interface.
  * `DACE_optimizer_automatic_simplification` (default: True): If False, skips automatic simplification in the Python frontend (see transformations tutorial for more information).
- 
-Profiling:
- * `DACE_profiling` (default: False): Enables profiling measurement of the DaCe program runtime in milliseconds. Produces a log file and prints out median runtime.
- * `DACE_treps` (default: 100): Number of repetitions to run a DaCe program when profiling is enabled.
  
 
 Contributing
