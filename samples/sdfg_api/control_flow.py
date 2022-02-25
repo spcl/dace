@@ -1,11 +1,15 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
+""" SDFG API sample that showcases state machine creation and the `simplify` call, which will fuse them. """
 import dace
 import numpy as np
 
+# Define a symbol to be used in the SDFG
 T = dace.symbol('T')
 
+# Create an empty SDFG
 sdfg = dace.SDFG('cflow')
 
+# Add global arrays and the symbol from above to the SDFG
 sdfg.add_array('A', [2], dace.float32)
 sdfg.add_array('B', [2], dace.float32)
 sdfg.add_symbol('T', T.dtype)
@@ -13,22 +17,26 @@ sdfg.add_symbol('T', T.dtype)
 
 # Sample state contents
 def mystate(state, src, dst):
+    # Create access nodes for reading and writing
     src_node = state.add_read(src)
     dst_node = state.add_write(dst)
+    # Create a map in which a tasklet will reside
     me, mx = state.add_map('aaa', dict(i='0:2'))
+    # Create the tasklet
     tasklet = state.add_tasklet('aaa2', {'a'}, {'b'}, 'b = a')
 
     # input path (src->me->tasklet[a])
-    state.add_memlet_path(src_node, me, tasklet, dst_conn='a', memlet=dace.Memlet.simple(src, 'i'))
+    state.add_memlet_path(src_node, me, tasklet, dst_conn='a', memlet=dace.Memlet(data=src, subset='i'))
     # output path (tasklet[b]->mx->dst)
-    state.add_memlet_path(tasklet, mx, dst_node, src_conn='b', memlet=dace.Memlet.simple(dst, 'i'))
+    state.add_memlet_path(tasklet, mx, dst_node, src_conn='b', memlet=dace.Memlet(data=dst, subset='i'))
 
 
 # End state contents
 def endstate(state):
+    # Only reading A into the tasklet
     A = state.add_read('A')
     t = state.add_tasklet('endtask', {'a'}, {}, 'printf("done %f\\n", a)')
-    state.add_edge(A, None, t, 'a', dace.Memlet.simple('A', '0'))
+    state.add_edge(A, None, t, 'a', dace.Memlet(data='A', subset='0'))
 
 
 # State construction
@@ -75,8 +83,6 @@ sdfg.simplify()
 
 ######################################
 if __name__ == '__main__':
-    print('Program start')
-
     a = np.random.rand(2).astype(np.float32)
     b = np.random.rand(2).astype(np.float32)
 
