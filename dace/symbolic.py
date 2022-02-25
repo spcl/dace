@@ -323,10 +323,14 @@ def evaluate(expr: Union[sympy.Basic, int, float],
     :param symbols: A mapping of symbols to their values.
     :return: A constant value based on ``expr`` and ``symbols``.
     """
+    if isinstance(expr, list):
+        return [evaluate(e, symbols) for e in expr]
+    if isinstance(expr, tuple):
+        return tuple(evaluate(e, symbols) for e in expr)
     if isinstance(expr, SymExpr):
         return evaluate(expr.expr, symbols)
     if issymbolic(expr, set(map(str, symbols.keys()))):
-        raise TypeError('Expression cannot be evaluated to a constant')
+        raise TypeError(f'Symbolic expression "{expr}" cannot be evaluated to a constant')
     if isinstance(expr, (int, float, numpy.number)):
         return expr
 

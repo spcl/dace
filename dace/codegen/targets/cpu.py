@@ -1865,6 +1865,11 @@ class CPUCodeGen(TargetCodeGenerator):
             # NOTE: sink nodes are synchronized at the end of a state
             cpp.presynchronize_streams(sdfg, state_dfg, state_id, node, callsite_stream)
 
+        # Instrumentation: Pre-node
+        instr = self._dispatcher.instrumentation[node.instrument]
+        if instr is not None:
+            instr.on_node_begin(sdfg, state_dfg, node, callsite_stream, callsite_stream, function_stream)
+
         sdict = state_dfg.scope_dict()
         for edge in state_dfg.in_edges(node):
             predecessor, _, _, _, memlet = edge
@@ -1901,6 +1906,10 @@ class CPUCodeGen(TargetCodeGenerator):
             False,
             function_stream,
         )
+
+        # Instrumentation: Post-node
+        if instr is not None:
+            instr.on_node_end(sdfg, state_dfg, node, callsite_stream, callsite_stream, function_stream)
 
     # Methods for subclasses to override
 

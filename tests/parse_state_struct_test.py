@@ -78,7 +78,7 @@ def test_preallocate_transients_in_state_struct(cuda_helper):
     A = np.random.randn(3, 3).astype(np.float32)
     B = np.random.randn(3, 5).astype(np.float32)
     compiledsdfg = sdfg.compile()
-    compiledsdfg.initialize()
+    compiledsdfg._initialize(tuple())
 
     state_struct = compiledsdfg.get_state_struct()
 
