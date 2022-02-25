@@ -8,7 +8,7 @@ import urllib.error
 
 def _connected():
     try:
-        urllib.request.urlopen('https://spcl.github.io/dace/webclient/sdfv.css', timeout=1)
+        urllib.request.urlopen('https://spcl.github.io/dace/webclient/renderer.js', timeout=1)
         return True
     except urllib.error.URLError:
         return False
