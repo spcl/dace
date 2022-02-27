@@ -72,8 +72,6 @@ class TransformationTester(Optimizer):
                 match._sdfg = tsdfg
                 match.apply(tgraph, tsdfg)
 
-                new_sdfg.save(os.path.join('_dacegraphs', 'program.sdfg'))
-
                 # Validate
                 if self.validate:
                     new_sdfg.validate()
