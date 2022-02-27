@@ -25,6 +25,7 @@ from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets.target import (TargetCodeGenerator, IllegalCopy, make_absolute)
 from dace.codegen import cppunparse
 from dace.properties import Property, make_properties, indirect_properties
+from dace.sdfg.state import SDFGState
 from dace.symbolic import evaluate
 from dace.transformation.dataflow import MapUnroll
 from collections import defaultdict
@@ -292,7 +293,8 @@ def unqualify_fpga_array_name(sdfg: dace.SDFG, arr_name: str):
     :param name: array name to unqualify
     '''
 
-    if arr_name not in sdfg.arrays and (arr_name.endswith('_in') or arr_name.endswith('out')) and arr_name.startswith('__'):
+    if arr_name not in sdfg.arrays and (arr_name.endswith('_in')
+                                        or arr_name.endswith('out')) and arr_name.startswith('__'):
         unqualified = re.sub('_in$|_out$', '', arr_name)
         unqualified = re.sub('^__', '', unqualified)
         return unqualified
@@ -679,7 +681,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                             seen[node.data] = sg
         return shared
 
-    def make_parameters(self, sdfg, state, subgraphs):
+    def make_parameters(self, sdfg: SDFG, state: SDFGState, subgraphs):
         """
         Determines the parameters that must be passed to the passed list of
         subgraphs, as well as to the global kernel.
@@ -718,13 +720,31 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
         subgraph_parameters = collections.OrderedDict()  # {subgraph: [params]}
         nested_global_transients = set()
         # [(Is an output, dataname string, data object, interface)]
-        external_streams: Set[tuple[bool, str, dt, dict[str, int]]] = set()
+        external_streams: Set[tuple[bool, str, dt.Data, dict[str, int]]] = set()
 
         # Mapping from global arrays to memory interfaces
         bank_assignments: Dict[str, Tuple[str, Union[int, subsets.Range]]] = {}
 
         # Mapping from symbol to a unique parameter tuple
         all_symbols = {k: (False, k, dt.Scalar(v), None) for k, v in sdfg.symbols.items() if k not in sdfg.constants}
+
+        # Add symbols from inter-state edges
+        global_symbols = copy.deepcopy(sdfg.symbols)
+        interstate_symbols = {}
+        for e in sdfg.dfs_edges(sdfg.start_state):
+            symbols = e.data.new_symbols(sdfg, global_symbols)
+            # Inferred symbols only take precedence if global symbol not defined or None
+            symbols = {
+                k: v if (k not in global_symbols or global_symbols[k] is None) else global_symbols[k]
+                for k, v in symbols.items()
+            }
+            interstate_symbols.update(symbols)
+            global_symbols.update(symbols)
+        all_symbols.update({
+            k: (False, k, dt.Scalar(v), None)
+            for k, v in interstate_symbols.items() if k not in all_symbols and k not in sdfg.constants
+        })
+
         # Symbols that will be passed as parameters to the top-level kernel
         global_symbols = set()
 
@@ -878,8 +898,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                             trace_type, trace_bank = parse_location_bank(trace_desc)
                             if (bank is not None and bank_type is not None
                                     and (bank != trace_bank or bank_type != trace_type)):
-                                raise cgx.CodegenError("Found inconsistent memory bank "
-                                                       f"specifier for {trace_name}.")
+                                raise cgx.CodegenError("Found inconsistent memory bank " f"specifier for {trace_name}.")
                             bank = trace_bank
                             bank_type = trace_type
 
@@ -1406,8 +1425,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
 
             if (not sum(copy_shape) == 1 and
                 (not isinstance(memlet.subset, subsets.Range) or any([step != 1 for _, _, step in memlet.subset]))):
-                raise NotImplementedError("Only contiguous copies currently "
-                                          "supported for FPGA codegen.")
+                raise NotImplementedError("Only contiguous copies currently " "supported for FPGA codegen.")
 
             if host_to_device or device_to_device:
                 host_dtype = sdfg.data(src_node.data).dtype
@@ -1627,8 +1645,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
     @staticmethod
     def make_opencl_parameter(name, desc):
         if isinstance(desc, dt.Array):
-            return (f"hlslib::ocl::Buffer<{desc.dtype.ctype}, "
-                    f"hlslib::ocl::Access::readWrite> &{name}")
+            return (f"hlslib::ocl::Buffer<{desc.dtype.ctype}, " f"hlslib::ocl::Access::readWrite> &{name}")
         else:
             return (desc.as_arg(with_types=True, name=name))
 
@@ -1888,8 +1905,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                                 elif np.issubdtype(np.dtype(end_type.dtype.type), np.unsignedinteger):
                                     loop_var_type = "size_t"
                     except (UnboundLocalError):
-                        raise UnboundLocalError('Pipeline scopes require '
-                                                'specialized bound values')
+                        raise UnboundLocalError('Pipeline scopes require ' 'specialized bound values')
                     except (TypeError):
                         # Raised when the evaluation of begin or skip fails.
                         # This could occur, for example, if they are defined in terms of other symbols, which
