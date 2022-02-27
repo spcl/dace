@@ -2,3 +2,7 @@
 	path = webclient
 	url = https://github.com/spcl/dace-webclient
 	branch = master
+[submodule "webclient2"]
+	path = webclient2
+	url = https://github.com/spcl/dace-webclient.git
+	branch = exports
