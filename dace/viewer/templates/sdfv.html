@@ -11,9 +11,6 @@
     <script src="{{dir|safe}}./webclient/external_lib/pdfkit.standalone.js"></script>
     <script src="{{dir|safe}}./webclient/external_lib/blob-stream.js"></script>
     <script src="{{dir|safe}}./webclient/external_lib/canvas2pdf.js"></script>
-
-    <script defer src="{{dir|safe}}./webclient/dist/sdfv.js"></script>
-
 </head>
 
 <body>
@@ -60,7 +57,16 @@
             <input type="button" id="advsearch-btn" value="Advanced Search">
         </form>
     </div>
-    <div id="contents"></div>
+    <div id="contents">
+    <script src="{{dir|safe}}./webclient/dist/sdfv.js"></script>
+    <script>
+    document.addEventListener("DOMContentLoaded", function (event) {
+        var sdfg_json = {{sdfg|safe}};
+        var sdfg = parse_sdfg(sdfg_json);
+        init_sdfv(sdfg);
+    });
+    </script>        
+    </div>
 </body>
 
 </html>
