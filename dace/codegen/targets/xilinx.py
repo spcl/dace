@@ -114,7 +114,7 @@ class XilinxCodeGen(fpga.FPGACodeGen):
 #include "dace/dace.h"
 #include "dace/xilinx/stream.h"
 """)
-        if len(self._dispatcher.instrumentation) > 1:
+        if len(self._dispatcher.instrumentation) > 2:
             host_code.write("""\
 #include "dace/perf/reporting.h"
 #include <chrono>

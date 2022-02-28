@@ -5,10 +5,29 @@ import copy
 from typing import Dict, List, Tuple
 import networkx as nx
 import warnings
+import sympy
 
 from dace.transformation import transformation as xf
-from dace import (data, dtypes, nodes, properties, registry, memlet as mm, subsets, symbolic)
+from dace import (data, dtypes, nodes, properties, registry, memlet as mm, subsets, symbolic, symbol, Memlet)
 from dace.sdfg import SDFG, SDFGState, utils as sdutil, graph as gr
+from dace.libraries.standard import Gearbox
+
+
+def get_post_state(sdfg: SDFG, state: SDFGState):
+    """ 
+    Returns the post state (the state that copies the data a back from the FGPA device) if there is one.
+    """
+    for s in sdfg.all_sdfgs_recursive():
+        for post_state in s.states():
+
+            if 'post_' + str(state) == str(post_state):
+                return post_state
+
+    return None
+
+
+def is_int(i):
+    return isinstance(i, int) or isinstance(i, sympy.core.numbers.Integer)
 
 
 def _collect_map_ranges(state: SDFGState,
@@ -90,6 +109,9 @@ class StreamingMemory(xf.SingleStateTransformation):
     Converts a read or a write to streaming memory access, where data is
     read/written to/from a stream in a separate connected component than the
     computation.
+    If 'use_memory_buffering' is True, the transformation reads/writes data from memory
+    using a wider data format (e.g. 512 bits), and then convert it
+    on the fly to the right data type used by the computation: 
     """
     access = xf.PatternNode(nodes.AccessNode)
     entry = xf.PatternNode(nodes.EntryNode)
@@ -100,6 +122,13 @@ class StreamingMemory(xf.SingleStateTransformation):
     storage = properties.EnumProperty(dtype=dtypes.StorageType,
                                       desc='Set storage type for the newly-created stream',
                                       default=dtypes.StorageType.Default)
+
+    use_memory_buffering = properties.Property(dtype=bool,
+                                               default=False,
+                                               desc='Set if memory buffering should be used.')
+
+    memory_buffering_target_bytes = properties.Property(
+        dtype=int, default=64, desc='Set bytes read/written from memory if memory buffering is enabled.')
 
     @classmethod
     def expressions(cls) -> List[gr.SubgraphView]:
@@ -167,6 +196,97 @@ class StreamingMemory(xf.SingleStateTransformation):
         if other_node.label.startswith('__s'):
             return False
 
+        ## Check Memory Buffering Properties
+        if self.use_memory_buffering:
+
+            access = self.access
+            desc = sdfg.arrays[access.data]
+
+            # Array has to be global array
+            if desc.storage != dtypes.StorageType.FPGA_Global:
+                return False
+
+            # Type has to divide target bytes
+            if self.memory_buffering_target_bytes % desc.dtype.bytes != 0:
+                return False
+
+            # Target bytes has to be >= size of data type
+            if self.memory_buffering_target_bytes < desc.dtype.bytes:
+                return False
+
+            strides = list(desc.strides)
+
+            # Last stride has to be one
+            if strides[-1] != 1:
+                return False
+
+            vector_size = int(self.memory_buffering_target_bytes / desc.dtype.bytes)
+            strides.pop()  # Remove last element since we already checked it
+
+            # Other strides have to be divisible by vector size
+            for stride in strides:
+
+                if is_int(stride) and stride % vector_size != 0:
+                    return False
+
+            # Check if map has the right access pattern
+            # Stride 1 access by innermost loop, innermost loop counter has to be divisible by vector size
+            # Same code as in apply
+            state = sdfg.node(self.state_id)
+            dnode: nodes.AccessNode = self.access
+            if self.expr_index == 0:
+                edges = state.out_edges(dnode)
+            else:
+                edges = state.in_edges(dnode)
+
+            mapping: Dict[Tuple[subsets.Range], List[gr.MultiConnectorEdge[mm.Memlet]]] = defaultdict(list)
+            ranges = {}
+            for edge in edges:
+                mpath = state.memlet_path(edge)
+                ranges[edge] = _collect_map_ranges(state, mpath)
+                mapping[tuple(r[1] for r in ranges[edge])].append(edge)
+
+            for edges_with_same_range in mapping.values():
+                for edge in edges_with_same_range:
+                    # Get memlet path and innermost edge
+                    mpath = state.memlet_path(edge)
+                    innermost_edge = copy.deepcopy(mpath[-1] if self.expr_index == 0 else mpath[0])
+
+                    edge_subset = [a_tuple[0] for a_tuple in list(innermost_edge.data.subset)]
+
+                    if self.expr_index == 0:
+                        map_subset = innermost_edge.src.map.params.copy()
+                        ranges = list(innermost_edge.src.map.range)
+                    else:
+                        map_subset = innermost_edge.dst.map.params.copy()
+                        ranges = list(innermost_edge.dst.map.range)
+
+                    # Check is correct access pattern
+                    # Correct ranges in map
+                    if is_int(ranges[-1][1]) and (ranges[-1][1] + 1) % vector_size != 0:
+                        return False
+
+                    if ranges[-1][2] != 1:
+                        return False
+
+                    # Correct access in array
+                    if isinstance(edge_subset[-1], symbol) and str(edge_subset[-1]) == map_subset[-1]:
+                        pass
+
+                    elif isinstance(edge_subset[-1], sympy.core.add.Add):
+
+                        counter: int = 0
+
+                        for arg in edge_subset[-1].args:
+                            if isinstance(arg, symbol) and str(arg) == map_subset[-1]:
+                                counter += 1
+
+                        if counter != 1:
+                            return False
+
+                    else:
+                        return False
+
         return True
 
     def apply(self, state: SDFGState, sdfg: SDFG) -> nodes.AccessNode:
@@ -221,13 +341,92 @@ class StreamingMemory(xf.SingleStateTransformation):
         streams = {}
         mpaths = {}
         for edge in edges:
-            name, newdesc = sdfg.add_stream(dnode.data,
-                                            desc.dtype,
-                                            buffer_size=self.buffer_size,
-                                            storage=self.storage,
-                                            transient=True,
-                                            find_new_name=True)
-            streams[edge] = name
+
+            if self.use_memory_buffering:
+
+                arrname = str(self.access)
+
+                # Add gearbox
+                total_size = edge.data.volume
+                vector_size = int(self.memory_buffering_target_bytes / desc.dtype.bytes)
+
+                if not is_int(sdfg.arrays[dnode.data].shape[-1]):
+                    warnings.warn(
+                        "Using the MemoryBuffering transformation is potential unsafe since {sym} is not an integer. There should be no issue if {sym} % {vec} == 0"
+                        .format(sym=sdfg.arrays[dnode.data].shape[-1], vec=vector_size))
+
+                for i in sdfg.arrays[dnode.data].strides:
+                    if not is_int(i):
+                        warnings.warn(
+                            "Using the MemoryBuffering transformation is potential unsafe since {sym} is not an integer. There should be no issue if {sym} % {vec} == 0"
+                            .format(sym=i, vec=vector_size))
+
+                if self.expr_index == 0:  # Read
+                    edges = state.out_edges(dnode)
+                    gearbox_input_type = dtypes.vector(desc.dtype, vector_size)
+                    gearbox_output_type = desc.dtype
+                    gearbox_read_volume = total_size / vector_size
+                    gearbox_write_volume = total_size
+                else:  # Write
+                    edges = state.in_edges(dnode)
+                    gearbox_input_type = desc.dtype
+                    gearbox_output_type = dtypes.vector(desc.dtype, vector_size)
+                    gearbox_read_volume = total_size
+                    gearbox_write_volume = total_size / vector_size
+
+                input_gearbox_name, input_gearbox_newdesc = sdfg.add_stream("gearbox_input",
+                                                                            gearbox_input_type,
+                                                                            buffer_size=self.buffer_size,
+                                                                            storage=self.storage,
+                                                                            transient=True,
+                                                                            find_new_name=True)
+
+                output_gearbox_name, output_gearbox_newdesc = sdfg.add_stream("gearbox_output",
+                                                                              gearbox_output_type,
+                                                                              buffer_size=self.buffer_size,
+                                                                              storage=self.storage,
+                                                                              transient=True,
+                                                                              find_new_name=True)
+
+                read_to_gearbox = state.add_read(input_gearbox_name)
+                write_from_gearbox = state.add_write(output_gearbox_name)
+
+                gearbox = Gearbox(total_size / vector_size)
+
+                state.add_node(gearbox)
+
+                state.add_memlet_path(read_to_gearbox,
+                                      gearbox,
+                                      dst_conn="from_memory",
+                                      memlet=Memlet(input_gearbox_name + "[0]", volume=gearbox_read_volume))
+                state.add_memlet_path(gearbox,
+                                      write_from_gearbox,
+                                      src_conn="to_kernel",
+                                      memlet=Memlet(output_gearbox_name + "[0]", volume=gearbox_write_volume))
+
+                if self.expr_index == 0:
+                    streams[edge] = input_gearbox_name
+                    name = output_gearbox_name
+                    newdesc = output_gearbox_newdesc
+                else:
+                    streams[edge] = output_gearbox_name
+                    name = input_gearbox_name
+                    newdesc = input_gearbox_newdesc
+
+            else:
+
+                name, newdesc = sdfg.add_stream(dnode.data,
+                                                desc.dtype,
+                                                buffer_size=self.buffer_size,
+                                                storage=self.storage,
+                                                transient=True,
+                                                find_new_name=True)
+                streams[edge] = name
+
+                # Add these such that we can easily use output_gearbox_name and input_gearbox_name without using if statements
+                output_gearbox_name = name
+                input_gearbox_name = name
+
             mpath = state.memlet_path(edge)
             mpaths[edge] = mpath
 
@@ -243,13 +442,50 @@ class StreamingMemory(xf.SingleStateTransformation):
 
             # Replace access node and memlet tree with one access
             if self.expr_index == 0:
-                replacement = state.add_read(name)
+                replacement = state.add_read(output_gearbox_name)
                 state.remove_edge(edge)
                 state.add_edge(replacement, edge.src_conn, edge.dst, edge.dst_conn, edge.data)
             else:
-                replacement = state.add_write(name)
+                replacement = state.add_write(input_gearbox_name)
                 state.remove_edge(edge)
                 state.add_edge(edge.src, edge.src_conn, replacement, edge.dst_conn, edge.data)
+
+        if self.use_memory_buffering:
+
+            arrname = str(self.access)
+            vector_size = int(self.memory_buffering_target_bytes / desc.dtype.bytes)
+
+            # Vectorize access to global array.
+            dtype = sdfg.arrays[arrname].dtype
+            sdfg.arrays[arrname].dtype = dtypes.vector(dtype, vector_size)
+            new_shape = list(sdfg.arrays[arrname].shape)
+            contigidx = sdfg.arrays[arrname].strides.index(1)
+            new_shape[contigidx] /= vector_size
+            try:
+                new_shape[contigidx] = int(new_shape[contigidx])
+            except TypeError:
+                pass
+            sdfg.arrays[arrname].shape = new_shape
+
+            # Change strides
+            new_strides: List = list(sdfg.arrays[arrname].strides)
+
+            for i in range(len(new_strides)):
+                if i == len(new_strides) - 1:  # Skip last dimension since it is always 1
+                    continue
+                new_strides[i] = new_strides[i] / vector_size
+            sdfg.arrays[arrname].strides = new_strides
+
+            post_state = get_post_state(sdfg, state)
+
+            if post_state != None:
+                # Change subset in the post state such that the correct amount of memory is copied back from the device
+                for e in post_state.edges():
+                    if e.data.data == self.access.data:
+                        new_subset = list(e.data.subset)
+                        i, j, k = new_subset[-1]
+                        new_subset[-1] = (i, (j + 1) / vector_size - 1, k)
+                        e.data = mm.Memlet(data=str(e.src), subset=subsets.Range(new_subset))
 
         # Make read/write components
         ionodes = []
@@ -293,9 +529,42 @@ class StreamingMemory(xf.SingleStateTransformation):
             maps = []
             for entry in path:
                 map: nodes.Map = entry.map
-                maps.append(
-                    state.add_map(f'__s{opname}_{mapname}', [(p, r) for p, r in zip(map.params, map.range)],
-                                  map.schedule))
+
+                ranges = [(p, (r[0], r[1], r[2])) for p, r in zip(map.params, map.range)]
+
+                # Change ranges of map
+                if self.use_memory_buffering:
+                    # Find edges from/to map
+
+                    edge_subset = [a_tuple[0] for a_tuple in list(innermost_edge.data.subset)]
+
+                    # Change range of map
+                    if isinstance(edge_subset[-1], symbol) and str(edge_subset[-1]) == map.params[-1]:
+
+                        if not is_int(ranges[-1][1][1]):
+
+                            warnings.warn(
+                                "Using the MemoryBuffering transformation is potential unsafe since {sym} is not an integer. There should be no issue if {sym} % {vec} == 0"
+                                .format(sym=ranges[-1][1][1].args[1], vec=vector_size))
+
+                        ranges[-1] = (ranges[-1][0], (ranges[-1][1][0], (ranges[-1][1][1] + 1) / vector_size - 1,
+                                                      ranges[-1][1][2]))
+
+                    elif isinstance(edge_subset[-1], sympy.core.add.Add):
+
+                        for arg in edge_subset[-1].args:
+                            if isinstance(arg, symbol) and str(arg) == map.params[-1]:
+
+                                if not is_int(ranges[-1][1][1]):
+                                    warnings.warn(
+                                        "Using the MemoryBuffering transformation is potential unsafe since {sym} is not an integer. There should be no issue if {sym} % {vec} == 0"
+                                        .format(sym=ranges[-1][1][1].args[1], vec=vector_size))
+
+                                ranges[-1] = (ranges[-1][0],
+                                              (ranges[-1][1][0], (ranges[-1][1][1] + 1) / vector_size - 1,
+                                               ranges[-1][1][2]))
+
+                maps.append(state.add_map(f'__s{opname}_{mapname}', ranges, map.schedule))
             tasklet = state.add_tasklet(
                 f'{opname}_{mapname}',
                 {m[1]

@@ -702,23 +702,6 @@ required:
                         default: 4
                         title: Number of processes
                         description: Number of MPI processes to use
-    diode:
-        type: dict
-        title: DIODE
-        description: DIODE GUI preferences
-        required:
-            general:
-                type: dict
-                title: General
-                description: General DIODE Preferences
-                required:
-                    library_autoexpand:
-                        type: bool
-                        default: True
-                        title: Auto-Expand Library Nodes
-                        description: >
-                            Automatically expand library nodes upon compilation, rather than
-                            expecting the nodes be expanded manually to the chosen implementation.
 
     instrumentation:
         type: dict

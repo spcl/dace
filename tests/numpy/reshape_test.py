@@ -72,7 +72,7 @@ def test_reshape_copy(memlet_dst):
     r = state.add_read('A')
     v = state.add_access('Av')
     w = state.add_write('B')
-    state.add_nedge(r, v, dace.Memlet(data='A'))
+    state.add_edge(r, None, v, 'views', dace.Memlet(data='A'))
     state.add_nedge(v, w, dace.Memlet(data='B' if memlet_dst else 'Av'))
     sdfg.validate()
 

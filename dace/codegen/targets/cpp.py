@@ -420,15 +420,13 @@ def ndcopy_to_strided_copy(
             and ((src_copylen == copy_length and dst_copylen == copy_length) or
                  (tuple(src_shape) == tuple(copy_shape) and tuple(dst_shape) == tuple(copy_shape)))):
         # Emit 1D copy of the whole array
-        copy_shape = [functools.reduce(lambda x, y: x * y, copy_shape)]
-        return copy_shape, [1], [1]
+        return [src_copylen], [1], [1]
     # Another case of non-strided 1D copy: all indices match and copy length
     # matches pointer difference, as well as match in contiguity and padding
     elif (first_src_index == first_dst_index and last_src_index == last_dst_index and copy_length == src_copylen
           and _is_c_contiguous(src_shape, src_strides) and _is_c_contiguous(dst_shape, dst_strides)):
         # Emit 1D copy of the whole array
-        copy_shape = [functools.reduce(lambda x, y: x * y, copy_shape)]
-        return copy_shape, [1], [1]
+        return [src_copylen], [1], [1]
     # 1D strided copy
     elif (sum([0 if c == 1 else 1 for c in copy_shape]) == 1 and len(src_subset) == len(dst_subset)):
         # Find the copied dimension:
@@ -1037,7 +1035,7 @@ class DaCeKeywordRemover(ExtNodeTransformer):
             return sum(symbolic.pystr_to_symbolic(unparse(elt)) * s for elt, s in zip(visited_slice.elts, strides))
 
         if len(strides) != 1:
-            raise SyntaxError('Missing dimensions in expression (expected %d, ' 'got one)' % len(strides))
+            raise SyntaxError('Missing dimensions in expression (expected %d, got one)' % len(strides))
 
         try:
             return symbolic.pystr_to_symbolic(unparse(visited_slice)) * strides[0]

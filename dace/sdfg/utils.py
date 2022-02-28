@@ -4,6 +4,7 @@
 import collections
 import copy
 import os
+import warnings
 import networkx as nx
 import time
 
@@ -707,6 +708,12 @@ def get_view_edge(state: SDFGState, view: nd.AccessNode) -> gr.MultiConnectorEdg
         return in_edge
     if in_edge.data.data == view.data and out_edge.data.data == view.data:
         return None
+    
+    # Check if there is a 'views' connector
+    if in_edge.dst_conn and in_edge.dst_conn == 'views':
+        return in_edge
+    if out_edge.src_conn and out_edge.src_conn == 'views':
+        return out_edge
 
     # If both memlets' data are the respective access nodes, the access
     # node at the highest scope is the one that is viewed.
@@ -716,6 +723,7 @@ def get_view_edge(state: SDFGState, view: nd.AccessNode) -> gr.MultiConnectorEdg
         return out_edge
 
     # If both access nodes reside in the same scope, the input data is viewed.
+    warnings.warn(f"Ambiguous view: in_edge {in_edge} -> view {view.data} -> out_edge {out_edge}")
     return in_edge
 
 
@@ -1110,46 +1118,44 @@ def inline_sdfgs(sdfg: SDFG, permissive: bool = False, progress: bool = None, mu
             tqdm = None
 
     counter = 0
-    sdfgs = list(sdfg.all_sdfgs_recursive())
+    nsdfgs = [(n, p) for n, p in sdfg.all_nodes_recursive() if isinstance(n, NestedSDFG)]
     if progress is True:
-        pbar = tqdm(total=len(sdfgs), desc='Inlining SDFGs')
+        pbar = tqdm(total=len(nsdfgs), desc='Inlining SDFGs')
 
     start = time.time()
 
-    for sd in reversed(sdfgs):
-        id = sd.sdfg_id
-        for state in sd.nodes():
-            for node in state.nodes():
-                if (progress is None and tqdm is not None and (time.time() - start) > 5):
-                    progress = True
-                    pbar = tqdm(total=len(sdfgs), desc='Inlining SDFG', initial=counter)
+    for ctr, (node, state) in enumerate(reversed(nsdfgs)):
+        id = node.sdfg.sdfg_id
+        sd = state.parent
+        if (progress is None and tqdm is not None and (time.time() - start) > 5):
+            progress = True
+            pbar = tqdm(total=len(nsdfgs), desc='Inlining SDFG', initial=ctr)
 
-                if not isinstance(node, NestedSDFG):
-                    continue
-                # We have to reevaluate every time due to changing IDs
-                node_id = state.node_id(node)
-                state_id = sd.node_id(state)
-                if multistate:
-                    candidate = {
-                        InlineMultistateSDFG.nested_sdfg: node_id,
-                    }
-                    inliner = InlineMultistateSDFG(sd, id, state_id, candidate, 0, override=True)
-                    if inliner.can_be_applied(state, 0, sd, permissive=permissive):
-                        inliner.apply(state, sd)
-                        counter += 1
-                        if progress:
-                            pbar.update(1)
-                        continue
+        # We have to reevaluate every time due to changing IDs
+        node_id = state.node_id(node)
+        state_id = sd.node_id(state)
+        if multistate:
+            candidate = {
+                InlineMultistateSDFG.nested_sdfg: node_id,
+            }
+            inliner = InlineMultistateSDFG(sd, id, state_id, candidate, 0, override=True)
+            if inliner.can_be_applied(state, 0, sd, permissive=permissive):
+                inliner.apply(state, sd)
+                counter += 1
+                if progress:
+                    pbar.update(1)
+                continue
 
-                candidate = {
-                    InlineSDFG.nested_sdfg: node_id,
-                }
-                inliner = InlineSDFG(sd, id, state_id, candidate, 0, override=True)
-                if inliner.can_be_applied(state, 0, sd, permissive=permissive):
-                    inliner.apply(state, sd)
-                    counter += 1
-                    if progress:
-                        pbar.update(1)
+        candidate = {
+            InlineSDFG.nested_sdfg: node_id,
+        }
+        inliner = InlineSDFG(sd, id, state_id, candidate, 0, override=True)
+        if inliner.can_be_applied(state, 0, sd, permissive=permissive):
+            inliner.apply(state, sd)
+            counter += 1
+        if progress:
+            pbar.update(1)
+
     if progress:
         pbar.close()
     if config.Config.get_bool('debugprint') and counter > 0:
