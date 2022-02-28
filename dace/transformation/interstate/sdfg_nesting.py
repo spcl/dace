@@ -1065,7 +1065,7 @@ class NestSDFG(transformation.MultiStateTransformation):
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
         return True
 
-    def apply(self, _, sdfg: SDFG):
+    def apply(self, _, sdfg: SDFG) -> nodes.NestedSDFG:
         outer_sdfg = sdfg
         nested_sdfg = dc(sdfg)
 
@@ -1249,3 +1249,5 @@ class NestSDFG(transformation.MultiStateTransformation):
             arrnode = outer_state.add_write(key)
             outer_state.add_edge(nested_node, val, arrnode, None,
                                  memlet.Memlet.from_array(key, arrnode.desc(outer_sdfg)))
+
+        return nested_node

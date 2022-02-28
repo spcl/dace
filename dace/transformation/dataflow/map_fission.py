@@ -353,6 +353,11 @@ class MapFission(transformation.SingleStateTransformation):
                 if array in modified_arrays:
                     continue
                 desc = parent.arrays[array]
+                if isinstance(desc, dt.Scalar):  # Scalar needs to be augmented to an array
+                    desc = dt.Array(desc.dtype, desc.shape, desc.transient, desc.allow_conflicts, desc.storage,
+                                    desc.location, desc.strides, desc.offset, False, desc.lifetime,
+                                    0, desc.debuginfo, desc.total_size, desc.start_offset)
+                    parent.arrays[array] = desc
                 for sz in reversed(mapsize):
                     desc.strides = [desc.total_size] + list(desc.strides)
                     desc.total_size = desc.total_size * sz

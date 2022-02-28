@@ -5,4 +5,3 @@ dace
    :maxdepth: 4
 
    dace
-   diode

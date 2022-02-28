@@ -1352,7 +1352,11 @@ class ProgramVisitor(ExtNodeVisitor):
         # Add map inputs first
         dyn_inputs = {}
         for name, val in memlet_inputs.items():
-            dyn_inputs[name] = symbolic.symbol(name, self.scope_arrays[val.data].dtype)
+            if val.data in self.sdfg.arrays:
+                datatype = self.sdfg.arrays[val.data].dtype
+            else:
+                datatype = self.scope_arrays[val.data].dtype
+            dyn_inputs[name] = symbolic.symbol(name, datatype)
         result.update(dyn_inputs)
 
         for name, val in params:
@@ -1684,7 +1688,11 @@ class ProgramVisitor(ExtNodeVisitor):
                             raise DaceSyntaxError(self, node, 'Undefined variable "%s"' % atom)
                         # Add to global SDFG symbols
                         # TODO: If scalar, should add dynamic map connector?
-                        if str(atom) not in self.sdfg.symbols:
+                        if str(atom) in self.sdfg.arrays and isinstance(self.sdfg.arrays[str(atom)], data.Scalar):
+                            newvar = '__%s_%s%d' % (name, vid, ctr)
+                            repldict[str(atom)] = newvar
+                            map_inputs[newvar] = Memlet.from_array(str(atom), self.sdfg.arrays[str(atom)])
+                        elif str(atom) not in self.sdfg.symbols:
                             self.sdfg.add_symbol(str(atom), self.defined[str(atom)].dtype)
 
                 for expr in symbolic.swalk(symval):
@@ -1707,7 +1715,7 @@ class ProgramVisitor(ExtNodeVisitor):
                         ctr += 1
                 # Replace functions with new variables
                 for find, replace in repldict.items():
-                    val = re.sub(r"%s\(.*?\)" % find, replace, val)
+                    val = re.sub(r"%s\(.*?\)" % find, val, replace)
                 vsp[i] = val
 
             new_params.append((k, ':'.join(vsp)))
@@ -1817,7 +1825,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 else:
                     arr = self.scope_arrays[memlet.data]
                 for s, r in symbols.items():
-                    memlet = propagate_subset([memlet], arr, [s], r, use_dst=False)
+                    memlet = propagate_subset([memlet], arr, [s], r, use_dst=False, defined_variables=set())
                 if _subset_has_indirection(memlet.subset, self):
                     read_node = entry_node
                     if entry_node is None:
@@ -1902,7 +1910,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 else:
                     arr = self.scope_arrays[memlet.data]
                 for s, r in symbols.items():
-                    memlet = propagate_subset([memlet], arr, [s], r, use_dst=True)
+                    memlet = propagate_subset([memlet], arr, [s], r, use_dst=True, defined_variables=set())
                 if _subset_has_indirection(memlet.subset, self):
                     write_node = exit_node
                     if exit_node is None:
@@ -2754,28 +2762,31 @@ class ProgramVisitor(ExtNodeVisitor):
                 for s, sr in self.symbols.items():
                     if s in symbolic.symlist(r).values():
                         ignore_indices.append(i)
-                        sym_rng.append(sr)
-                        # NOTE: Assume that the i-th index of the range is
-                        # dependent on a local symbol s, i.e, rng[i] = f(s).
-                        # Therefore, the i-th index will not be squeezed
-                        # even if it has length equal to 1. However, it must
-                        # still be offsetted by f(min(sr)), so that the indices
-                        # for the squeezed connector start from 0.
-                        # Example:
-                        # Memlet range: [i+1, j, k+1]
-                        # k: local symbol with range(1, 4)
-                        # i,j: global symbols
-                        # Squeezed range: [f(k)] = [k+1]
-                        # Offset squeezed range: [f(k)-f(min(range(1, 4)))] =
-                        #                        [f(k)-f(1)] = [k-1]
-                        # NOTE: The code takes into account the case where an
-                        # index is dependent on multiple symbols. See also
-                        # tests/python_frontend/nested_name_accesses_test.py.
-                        step = sr[0][2]
-                        if (step < 0) == True:
-                            repl_dict[s] = sr[0][1]
+                        if any(t in self.sdfg.arrays for t in sr.free_symbols):
+                            sym_rng.append(subsets.Range([(0, parent_array.shape[i] - 1, 1)]))
                         else:
-                            repl_dict[s] = sr[0][0]
+                            sym_rng.append(sr)
+                            # NOTE: Assume that the i-th index of the range is
+                            # dependent on a local symbol s, i.e, rng[i] = f(s).
+                            # Therefore, the i-th index will not be squeezed
+                            # even if it has length equal to 1. However, it must
+                            # still be offsetted by f(min(sr)), so that the indices
+                            # for the squeezed connector start from 0.
+                            # Example:
+                            # Memlet range: [i+1, j, k+1]
+                            # k: local symbol with range(1, 4)
+                            # i,j: global symbols
+                            # Squeezed range: [f(k)] = [k+1]
+                            # Offset squeezed range: [f(k)-f(min(range(1, 4)))] =
+                            #                        [f(k)-f(1)] = [k-1]
+                            # NOTE: The code takes into account the case where an
+                            # index is dependent on multiple symbols. See also
+                            # tests/python_frontend/nested_name_accesses_test.py.
+                            step = sr[0][2]
+                            if (step < 0) == True:
+                                repl_dict[s] = sr[0][1]
+                            else:
+                                repl_dict[s] = sr[0][0]
                 if repl_dict:
                     offset.append(r[0].subs(repl_dict))
                 else:
@@ -3080,6 +3091,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
             if self.nested and not new_data:
                 new_name, new_rng = self._add_write_access(name, rng, target)
+                # Local symbol or local data dependent
                 if _subset_is_local_symbol_dependent(rng, self):
                     new_rng = rng
             else:

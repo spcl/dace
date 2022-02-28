@@ -3,6 +3,7 @@ import dace.library
 import dace.sdfg.nodes
 from dace.transformation.transformation import ExpandTransformation
 from .. import environments
+from dace.libraries.blas import blas_helpers
 
 
 @dace.library.expansion
@@ -12,8 +13,8 @@ class ExpandPgemvMKL(ExpandTransformation):
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, **kwargs):
         a, b, c, desca, descb, gdescc, ldesc = node.validate(parent_sdfg, parent_state)
-        from dace.libraries.lapack import utils
-        lapack_dtype_str = utils.LAPACK_DTYPE_CHR(a.dtype.base_type)
+        dtype = a.dtype.base_type
+        lapack_dtype_str = blas_helpers.to_blastype(dtype.type).lower()
 
         transa = 'N' if node._transa == 'T' else 'T'
         code = f"""
@@ -47,7 +48,7 @@ class ExpandPgemvMKL(ExpandTransformation):
             p{lapack_dtype_str}gemv(
                 &trans, &_m, &_n, &one, _a, &__state->__mkl_int_one, &__state->__mkl_int_one, _a_ldesc,
                 _b, &__state->__mkl_int_one, &__state->__mkl_int_one, _b_ldesc, &__state->__mkl_int_one,
-                &zero, _c, &__state->__mkl_int_one, &__state->__mkl_int_one, _c_ldesc, &__state->__mkl_int_one);"
+                &zero, _c, &__state->__mkl_int_one, &__state->__mkl_int_one, _c_ldesc, &__state->__mkl_int_one);
         """
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,

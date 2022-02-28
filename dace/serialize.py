@@ -218,7 +218,7 @@ def set_properties_from_json(object_with_properties, json_obj, context=None, ign
         setattr(object_with_properties, prop_name, val)
 
     remaining_properties = source_properties - ignore_properties
-    # Ignore all metadata "properties" saved for DIODE
+    # Ignore all metadata "properties" saved for editing
     remaining_properties = set(prop for prop in remaining_properties if not prop.startswith('_meta'))
     if len(remaining_properties) > 0:
         # TODO: elevate to error once #28 is fixed.

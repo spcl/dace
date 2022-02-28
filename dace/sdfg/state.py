@@ -1186,7 +1186,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
             :param location:   Execution location indicator.
             :param language:   Programming language in which the code is
                                written
-            :param debuginfo:  Debugging information (mostly for DIODE)
+            :param debuginfo:  Source line information
             :param external_edges: Create external access nodes and connect
                                    them with memlets automatically
             :param input_nodes: Mapping between data names and corresponding

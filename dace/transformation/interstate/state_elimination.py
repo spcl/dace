@@ -78,6 +78,10 @@ class StartStateElimination(transformation.MultiStateTransformation):
         if not graph.parent:
             return False
 
+        # Only empty states can be eliminated
+        if state.number_of_nodes() > 0:
+            return False
+
         out_edges = graph.out_edges(state)
         in_edges = graph.in_edges(state)
 
@@ -91,11 +95,11 @@ class StartStateElimination(transformation.MultiStateTransformation):
         edge = out_edges[0]
         if not edge.data.is_unconditional():
             return False
-
-        # Only empty states can be eliminated
-        if state.number_of_nodes() > 0:
-            return False
-
+        # Assignments that make descriptors into symbols cannot be eliminated
+        for assign in edge.data.assignments.values():
+            if graph.arrays.keys() & symbolic.free_symbols_and_functions(assign):
+                return False
+        
         return True
 
     def apply(self, _, sdfg):

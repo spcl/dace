@@ -104,7 +104,7 @@ def configure_and_compile(program_folder, program_name=None, output_stream=None)
                                equivalent to what was passed to
                                `generate_program_folder`.
         :param output_stream: Additional output stream to write to (used for
-                              DIODE client).
+                              other clients such as the vscode extension).
         :return: Path to the compiled shared library file.
     """
 

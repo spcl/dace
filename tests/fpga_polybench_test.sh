@@ -172,7 +172,7 @@ if [ "$1" == "intel_fpga" ]; then
   export DACE_compiler_intel_fpga_mode="emulator"
 
   TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null && pwd)"
-  cd $TEST_DIR/../samples/polybench
+  cd $TEST_DIR/polybench
 
   run_all run_sample_intel
 
@@ -196,7 +196,7 @@ else
   rm -fr .dacecache/
 
   TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null && pwd)"
-  cd $TEST_DIR/../samples/polybench
+  cd $TEST_DIR/polybench
   run_all run_sample_xilinx
 fi
 

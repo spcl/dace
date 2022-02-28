@@ -40,7 +40,7 @@ class PruneConnectors(pm.SingleStateTransformation, pm.SimplifyPass):
         syms = tuple(symbolic.pystr_to_symbolic(s) for s in strs)
         symnames = tuple(s.name if hasattr(s, 'name') else '' for s in syms)
         for conn in list(prune_in):
-            if conn in syms or conn in symnames:
+            if conn in syms or conn in symnames or conn in nsdfg.sdfg.symbols:
                 prune_in.remove(conn)
 
         # Add WCR outputs to "do not prune" input list

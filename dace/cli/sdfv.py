@@ -8,7 +8,6 @@ import os
 import platform
 
 import dace
-import diode
 import tempfile
 import jinja2
 
@@ -21,7 +20,7 @@ def view(sdfg, filename=None):
     if type(sdfg) is dace.SDFG:
         sdfg = dace.serialize.dumps(sdfg.to_json())
 
-    basepath = os.path.dirname(os.path.realpath(diode.__file__))
+    basepath = os.path.join(os.path.dirname(os.path.realpath(dace.__file__)), 'viewer')
     template_loader = jinja2.FileSystemLoader(searchpath=os.path.join(basepath, 'templates'))
     template_env = jinja2.Environment(loader=template_loader)
     template = template_env.get_template('sdfv.html')

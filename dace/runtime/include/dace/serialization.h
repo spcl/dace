@@ -11,6 +11,9 @@
 
 #if defined(_WIN32) || defined(_WIN64)
 #include <windows.h>
+#undef __in
+#undef __inout
+#undef __out
 #else
 #include <sys/stat.h>
 #endif
