@@ -1699,6 +1699,7 @@ class ProgramVisitor(ExtNodeVisitor):
                             newvar = '__%s_%s%d' % (name, vid, ctr)
                             repldict[atomstr] = newvar
                             map_inputs[newvar] = Memlet.from_array(candidate, self.sdfg.arrays[candidate])
+                            ctr += 1
                         elif candidate not in self.sdfg.symbols:
                             self.sdfg.add_symbol(atomstr, self.defined[candidate].dtype)
 
