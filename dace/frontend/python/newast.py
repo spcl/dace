@@ -1673,12 +1673,12 @@ class ProgramVisitor(ExtNodeVisitor):
         """
         new_params = []
         map_inputs = {}
+        ctr = 0
         for k, v in params:
             vsp = list(v.split(':'))
             for i, (val, vid) in enumerate(zip(vsp, 'best')):
                 # Walk through expression, find functions and replace with
                 # variables
-                ctr = 0
                 repldict = {}
                 symval = pystr_to_symbolic(val)
 
