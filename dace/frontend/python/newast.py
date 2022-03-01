@@ -46,6 +46,7 @@ ShapeList = List[Size]
 Shape = Union[ShapeTuple, ShapeList]
 DependencyType = Dict[str, Tuple[SDFGState, Union[Memlet, nodes.Tasklet], Tuple[int]]]
 
+
 class SkipCall(Exception):
     """ Exception used to skip calls to functions that cannot be parsed. """
     pass
@@ -1077,7 +1078,7 @@ class ProgramVisitor(ExtNodeVisitor):
                         self.sdfg.add_symbol(sym.name, sym.dtype)
         self.sdfg._temp_transients = tmp_idx
         self.last_state = self.sdfg.add_state('init', is_start_state=True)
-        
+
         self.inputs: DependencyType = {}
         self.outputs: DependencyType = {}
         self.current_lineinfo = dtypes.DebugInfo(line_offset, col_offset, line_offset, col_offset, filename)
@@ -1684,16 +1685,22 @@ class ProgramVisitor(ExtNodeVisitor):
                 for atom in symval.free_symbols:
                     if symbolic.issymbolic(atom, self.sdfg.constants):
                         # Check for undefined variables
-                        if str(atom) not in self.defined:
+                        atomstr = str(atom)
+                        if atomstr not in self.defined:
                             raise DaceSyntaxError(self, node, 'Undefined variable "%s"' % atom)
                         # Add to global SDFG symbols
-                        # TODO: If scalar, should add dynamic map connector?
-                        if str(atom) in self.sdfg.arrays and isinstance(self.sdfg.arrays[str(atom)], data.Scalar):
+
+                        # If scalar, should add dynamic map connector
+                        candidate = atomstr
+                        if candidate in self.variables and self.variables[candidate] in self.sdfg.arrays:
+                            candidate = self.variables[candidate]
+
+                        if candidate in self.sdfg.arrays and isinstance(self.sdfg.arrays[candidate], data.Scalar):
                             newvar = '__%s_%s%d' % (name, vid, ctr)
-                            repldict[str(atom)] = newvar
-                            map_inputs[newvar] = Memlet.from_array(str(atom), self.sdfg.arrays[str(atom)])
-                        elif str(atom) not in self.sdfg.symbols:
-                            self.sdfg.add_symbol(str(atom), self.defined[str(atom)].dtype)
+                            repldict[atomstr] = newvar
+                            map_inputs[newvar] = Memlet.from_array(candidate, self.sdfg.arrays[candidate])
+                        elif candidate not in self.sdfg.symbols:
+                            self.sdfg.add_symbol(atomstr, self.defined[candidate].dtype)
 
                 for expr in symbolic.swalk(symval):
                     if symbolic.is_sympy_userfunction(expr):
@@ -3709,7 +3716,7 @@ class ProgramVisitor(ExtNodeVisitor):
             if not isinstance(m, Memlet):
                 continue
             outer_data = self.sdfg.arrays[m.data]
-            if outer_data.shape == (1,):
+            if outer_data.shape == (1, ):
                 continue
             strides = tuple(outer_data.strides[i] for i, sz in enumerate(m.subset.size()) if sz != 1)
             if len(strides) == len(sdfg.arrays[a].shape):
