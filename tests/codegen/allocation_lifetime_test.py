@@ -336,18 +336,36 @@ def test_persistent_scalar_in_map():
     assert np.allclose(a[1, 2], 5)
 
 
+def test_persistent_array_access():
+    @dace.program
+    def perscal(a: dace.float64[20]):
+        tmp = dace.define_local_scalar(dace.int32, lifetime=dace.AllocationLifetime.Persistent)
+        tmp2 = dace.define_local_scalar(dace.int32, lifetime=dace.AllocationLifetime.Persistent)
+        tmp[:] = 1
+        tmp2[:] = 2
+
+        with dace.tasklet:
+            aa >> a[tmp + tmp2]
+            aa = 5
+
+    a = np.random.rand(20)
+    perscal(a)
+    assert np.allclose(a[3], 5)
+
+
 if __name__ == '__main__':
-    # test_determine_alloc_scope()
-    # test_determine_alloc_state()
-    # test_determine_alloc_sdfg()
-    # test_determine_alloc_global()
-    # test_persistent_gpu_copy_regression()
-    # test_persistent_gpu_transpose_regression()
-    # test_alloc_persistent_register()
-    # test_alloc_persistent()
-    # test_alloc_persistent_threadlocal()
-    # test_alloc_multistate()
-    # test_nested_view_samename()
-    # test_nested_persistent()
-    # test_persistent_scalar()
+    test_determine_alloc_scope()
+    test_determine_alloc_state()
+    test_determine_alloc_sdfg()
+    test_determine_alloc_global()
+    test_persistent_gpu_copy_regression()
+    test_persistent_gpu_transpose_regression()
+    test_alloc_persistent_register()
+    test_alloc_persistent()
+    test_alloc_persistent_threadlocal()
+    test_alloc_multistate()
+    test_nested_view_samename()
+    test_nested_persistent()
+    test_persistent_scalar()
     test_persistent_scalar_in_map()
+    test_persistent_array_access()

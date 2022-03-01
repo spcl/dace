@@ -358,6 +358,7 @@ def add_indirection_subgraph(sdfg: SDFG,
                     if direct_assignment:
                         # newsubset[dimidx] = newsubset[dimidx].subs(expr, toreplace)
                         newsubset[dimidx] = r.subs(expr, toreplace)
+                        r = newsubset[dimidx]
                     else:
                         rng = list(newsubset[dimidx])
                         rng[i] = rng[i].subs(expr, toreplace)
