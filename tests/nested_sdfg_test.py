@@ -31,20 +31,11 @@ A = state.add_array('A', [N, N], dp.float32)
 B = state.add_array('B', [N, N], dp.float32)
 
 map_entry, map_exit = state.add_map('elements', [('i', '0:N'), ('j', '0:N')])
-nsdfg = state.add_nested_sdfg(sdfg_internal.to_sdfg(), mysdfg, {'input'},
-                              {'output'})
+nsdfg = state.add_nested_sdfg(sdfg_internal.to_sdfg(), mysdfg, {'input'}, {'output'})
 
 # Add edges
-state.add_memlet_path(A,
-                      map_entry,
-                      nsdfg,
-                      dst_conn='input',
-                      memlet=Memlet.simple(A, 'i,j'))
-state.add_memlet_path(nsdfg,
-                      map_exit,
-                      B,
-                      src_conn='output',
-                      memlet=Memlet.simple(B, 'i,j'))
+state.add_memlet_path(A, map_entry, nsdfg, dst_conn='input', memlet=Memlet.simple(A, 'i,j'))
+state.add_memlet_path(nsdfg, map_exit, B, src_conn='output', memlet=Memlet.simple(B, 'i,j'))
 
 
 def test():

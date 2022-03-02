@@ -70,7 +70,7 @@ def run_lu(device_type: dace.dtypes.DeviceType):
 
     elif device_type == dace.dtypes.DeviceType.FPGA:
         # Parse SDFG and apply FPGA friendly optimization
-        sdfg = lu_kernel.to_sdfg(strict=True)
+        sdfg = lu_kernel.to_sdfg(simplify=True)
 
         applied = sdfg.apply_transformations([FPGATransformSDFG])
         assert applied == 1
@@ -116,11 +116,7 @@ def test_fpga():
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("-t",
-                        "--target",
-                        default='cpu',
-                        choices=['cpu', 'gpu', 'fpga'],
-                        help='Target platform')
+    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu', 'fpga'], help='Target platform')
 
     args = vars(parser.parse_args())
     target = args["target"]

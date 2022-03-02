@@ -4,17 +4,15 @@
 import sympy as sp
 from typing import Optional
 
-from dace import registry, sdfg as sd, symbolic
+from dace import sdfg as sd
 from dace.properties import Property, make_properties, CodeBlock
 from dace.sdfg import graph as gr
 from dace.sdfg import utils as sdutil
 from dace.symbolic import pystr_to_symbolic
-from dace.transformation.interstate.loop_detection import (DetectLoop,
-                                                           find_for_loop)
+from dace.transformation.interstate.loop_detection import (DetectLoop, find_for_loop)
 from dace.transformation.interstate.loop_unroll import LoopUnroll
 
 
-@registry.autoregister
 @make_properties
 class LoopPeeling(LoopUnroll):
     """
@@ -29,14 +27,12 @@ class LoopPeeling(LoopUnroll):
         'iterations), otherwise peels last `count` iterations.',
     )
 
-    @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
-        if not DetectLoop.can_be_applied(graph, candidate, expr_index, sdfg,
-                                         strict):
+    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
+        if not super().can_be_applied(graph, expr_index, sdfg, permissive):
             return False
 
-        guard = graph.node(candidate[DetectLoop._loop_guard])
-        begin = graph.node(candidate[DetectLoop._loop_begin])
+        guard = self.loop_guard
+        begin = self.loop_begin
 
         # If loop cannot be detected, fail
         found = find_for_loop(sdfg, guard, begin)
@@ -77,13 +73,12 @@ class LoopPeeling(LoopUnroll):
         res = str(itersym) + op + str(end)
         return res
 
-    def apply(self, sdfg: sd.SDFG):
+    def apply(self, _, sdfg: sd.SDFG):
         ####################################################################
         # Obtain loop information
-        guard: sd.SDFGState = sdfg.node(self.subgraph[DetectLoop._loop_guard])
-        begin: sd.SDFGState = sdfg.node(self.subgraph[DetectLoop._loop_begin])
-        after_state: sd.SDFGState = sdfg.node(
-            self.subgraph[DetectLoop._exit_state])
+        guard: sd.SDFGState = self.loop_guard
+        begin: sd.SDFGState = self.loop_begin
+        after_state: sd.SDFGState = self.exit_state
 
         # Obtain iteration variable, range, and stride
         condition_edge = sdfg.edges_between(guard, begin)[0]
@@ -91,10 +86,7 @@ class LoopPeeling(LoopUnroll):
         itervar, rng, loop_struct = find_for_loop(sdfg, guard, begin)
 
         # Get loop states
-        loop_states = list(
-            sdutil.dfs_conditional(sdfg,
-                                   sources=[begin],
-                                   condition=lambda _, child: child != guard))
+        loop_states = list(sdutil.dfs_conditional(sdfg, sources=[begin], condition=lambda _, child: child != guard))
         first_id = loop_states.index(begin)
         last_state = loop_struct[1]
         last_id = loop_states.index(last_state)
@@ -110,8 +102,7 @@ class LoopPeeling(LoopUnroll):
             before_states = loop_struct[0]
             for before_state in before_states:
                 init_edge = sdfg.edges_between(before_state, guard)[0]
-                init_edge.data.assignments[itervar] = str(rng[0] +
-                                                          self.count * rng[2])
+                init_edge.data.assignments[itervar] = str(rng[0] + self.count * rng[2])
                 init_edges.append(init_edge)
             append_states = before_states
 
@@ -119,9 +110,7 @@ class LoopPeeling(LoopUnroll):
             for i in range(self.count):
                 # Instantiate loop states with iterate value
                 state_name: str = 'start_' + itervar + str(i * rng[2])
-                state_name = state_name.replace('-',
-                                                'm').replace('+', 'p').replace(
-                                                    '*', 'M').replace('/', 'D')
+                state_name = state_name.replace('-', 'm').replace('+', 'p').replace('*', 'M').replace('/', 'D')
                 new_states = self.instantiate_loop(
                     sdfg,
                     loop_states,
@@ -133,8 +122,7 @@ class LoopPeeling(LoopUnroll):
 
                 # Connect states to before the loop with unconditional edges
                 for append_state in append_states:
-                    sdfg.add_edge(append_state, new_states[first_id],
-                                  sd.InterstateEdge())
+                    sdfg.add_edge(append_state, new_states[first_id], sd.InterstateEdge())
                 append_states = [new_states[last_id]]
 
             # Reconnect edge to guard state from last peeled iteration
@@ -147,21 +135,16 @@ class LoopPeeling(LoopUnroll):
             # If begin, change initialization assignment and prepend states before
             # guard
             itervar_sym = pystr_to_symbolic(itervar)
-            condition_edge.data.condition = CodeBlock(
-                self._modify_cond(condition_edge.data.condition, itervar,
-                                  rng[2]))
+            condition_edge.data.condition = CodeBlock(self._modify_cond(condition_edge.data.condition, itervar, rng[2]))
             not_condition_edge.data.condition = CodeBlock(
-                self._modify_cond(not_condition_edge.data.condition, itervar,
-                                  rng[2]))
+                self._modify_cond(not_condition_edge.data.condition, itervar, rng[2]))
             prepend_state = after_state
 
             # Add `count` states, each with instantiated iteration variable
             for i in reversed(range(self.count)):
                 # Instantiate loop states with iterate value
                 state_name: str = 'end_' + itervar + str(-i * rng[2])
-                state_name = state_name.replace('-',
-                                                'm').replace('+', 'p').replace(
-                                                    '*', 'M').replace('/', 'D')
+                state_name = state_name.replace('-', 'm').replace('+', 'p').replace('*', 'M').replace('/', 'D')
                 new_states = self.instantiate_loop(
                     sdfg,
                     loop_states,
@@ -172,8 +155,7 @@ class LoopPeeling(LoopUnroll):
                 )
 
                 # Connect states to before the loop with unconditional edges
-                sdfg.add_edge(new_states[last_id], prepend_state,
-                              sd.InterstateEdge())
+                sdfg.add_edge(new_states[last_id], prepend_state, sd.InterstateEdge())
                 prepend_state = new_states[first_id]
 
             # Reconnect edge to guard state from last peeled iteration

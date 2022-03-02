@@ -50,4 +50,3 @@ def test_wcr_max():
 
     assert 'ReductionType::Max' in code
     assert 'svmaxv' in code
-

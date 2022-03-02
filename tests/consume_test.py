@@ -24,22 +24,15 @@ elif s > 1:
 """)
 
 # Edges
-state.add_nedge(initial_value, stream_init,
-                dp.Memlet.from_array(stream_init.data, stream_init.desc(sdfg)))
-state.add_edge(stream, None, consume_entry, 'IN_stream',
-               dp.Memlet.from_array(stream.data, stream.desc(sdfg)))
-state.add_edge(consume_entry, 'OUT_stream', tasklet, 's',
-               dp.Memlet.from_array(stream.data, stream.desc(sdfg)))
-state.add_edge(tasklet, 'sout', consume_exit, 'IN_S',
-               dp.Memlet.simple(stream_out, '0', num_accesses=-1))
-state.add_edge(consume_exit, 'OUT_S', stream_out, None,
-               dp.Memlet.simple(stream_out, '0', num_accesses=-1))
-state.add_edge(
-    tasklet, 'val', consume_exit, 'IN_V',
-    dp.Memlet.simple(output, '0', wcr_str='lambda a,b: a+b', num_accesses=-1))
-state.add_edge(
-    consume_exit, 'OUT_V', output, None,
-    dp.Memlet.simple(output, '0', wcr_str='lambda a,b: a+b', num_accesses=-1))
+state.add_nedge(initial_value, stream_init, dp.Memlet.from_array(stream_init.data, stream_init.desc(sdfg)))
+state.add_edge(stream, None, consume_entry, 'IN_stream', dp.Memlet.from_array(stream.data, stream.desc(sdfg)))
+state.add_edge(consume_entry, 'OUT_stream', tasklet, 's', dp.Memlet.from_array(stream.data, stream.desc(sdfg)))
+state.add_edge(tasklet, 'sout', consume_exit, 'IN_S', dp.Memlet.simple(stream_out, '0', num_accesses=-1))
+state.add_edge(consume_exit, 'OUT_S', stream_out, None, dp.Memlet.simple(stream_out, '0', num_accesses=-1))
+state.add_edge(tasklet, 'val', consume_exit, 'IN_V',
+               dp.Memlet.simple(output, '0', wcr_str='lambda a,b: a+b', num_accesses=-1))
+state.add_edge(consume_exit, 'OUT_V', output, None,
+               dp.Memlet.simple(output, '0', wcr_str='lambda a,b: a+b', num_accesses=-1))
 
 consume_exit.add_in_connector('IN_S')
 consume_exit.add_in_connector('IN_V')
@@ -69,6 +62,7 @@ def test():
     diff = (regression - output[0])**2
     print('Difference:', diff)
     assert diff <= 1e-5
+
 
 if __name__ == '__main__':
     test()

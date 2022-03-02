@@ -10,8 +10,7 @@ import numpy as np
 N = dace.symbol('N')
 
 
-def _test_determine_alloc(lifetime: dace.AllocationLifetime,
-                          unused: bool = False) -> dace.SDFG:
+def _test_determine_alloc(lifetime: dace.AllocationLifetime, unused: bool = False) -> dace.SDFG:
     """ Creates an SDFG playground for determining allocation. """
     sdfg = dace.SDFG('lifetimetest')
     sdfg.add_array('A', [N], dace.float64)
@@ -24,41 +23,19 @@ def _test_determine_alloc(lifetime: dace.AllocationLifetime,
     nsdfg = dace.SDFG('nested')
     nsdfg.add_array('A', [N], dace.float64)
     nsdfg.add_array('B', [N], dace.float64)
-    nsdfg.add_transient('tmp', [N],
-                        dace.float64,
-                        dace.StorageType.GPU_Global,
-                        lifetime=lifetime)
-    nsdfg.add_transient('tmp2', [1],
-                        dace.float64,
-                        dace.StorageType.Register,
-                        lifetime=lifetime)
+    nsdfg.add_transient('tmp', [N], dace.float64, dace.StorageType.GPU_Global, lifetime=lifetime)
+    nsdfg.add_transient('tmp2', [1], dace.float64, dace.StorageType.Register, lifetime=lifetime)
     nstate = nsdfg.add_state()
-    ime, imx = nstate.add_map('m2',
-                              dict(i='0:20'),
-                              schedule=dace.ScheduleType.GPU_Device)
+    ime, imx = nstate.add_map('m2', dict(i='0:20'), schedule=dace.ScheduleType.GPU_Device)
     t1 = nstate.add_access('tmp')
     t2 = nstate.add_access('tmp2')
     nstate.add_nedge(t1, t2, dace.Memlet('tmp[0]'))
-    nstate.add_memlet_path(nstate.add_read('A'),
-                           ime,
-                           t1,
-                           memlet=dace.Memlet('A[i]'))
-    nstate.add_memlet_path(t2,
-                           imx,
-                           nstate.add_write('B'),
-                           memlet=dace.Memlet('B[0]', wcr='lambda a,b: a+b'))
+    nstate.add_memlet_path(nstate.add_read('A'), ime, t1, memlet=dace.Memlet('A[i]'))
+    nstate.add_memlet_path(t2, imx, nstate.add_write('B'), memlet=dace.Memlet('B[0]', wcr='lambda a,b: a+b'))
     #########################################################################
     nsdfg_node = state.add_nested_sdfg(nsdfg, None, {'A'}, {'B'})
-    state.add_memlet_path(state.add_read('A'),
-                          me,
-                          nsdfg_node,
-                          dst_conn='A',
-                          memlet=dace.Memlet('A[0:N]'))
-    state.add_memlet_path(nsdfg_node,
-                          mx,
-                          state.add_write('B'),
-                          src_conn='B',
-                          memlet=dace.Memlet('B[0:N]'))
+    state.add_memlet_path(state.add_read('A'), me, nsdfg_node, dst_conn='A', memlet=dace.Memlet('A[0:N]'))
+    state.add_memlet_path(nsdfg_node, mx, state.add_write('B'), src_conn='B', memlet=dace.Memlet('B[0:N]'))
 
     # Set default storage/schedule types in SDFG
     infer_types.set_default_schedule_and_storage_types(sdfg, None)
@@ -78,7 +55,7 @@ def _check_alloc(id, name, codegen, scope):
 
 def test_determine_alloc_scope():
     sdfg, scopes = _test_determine_alloc(dace.AllocationLifetime.Scope)
-    codegen = framecode.DaCeCodeGenerator()
+    codegen = framecode.DaCeCodeGenerator(sdfg)
     codegen.determine_allocation_lifetime(sdfg)
 
     # tmp cannot be allocated within the inner scope because it is GPU_Global
@@ -87,9 +64,8 @@ def test_determine_alloc_scope():
 
 
 def test_determine_alloc_state():
-    sdfg, scopes = _test_determine_alloc(dace.AllocationLifetime.State,
-                                         unused=True)
-    codegen = framecode.DaCeCodeGenerator()
+    sdfg, scopes = _test_determine_alloc(dace.AllocationLifetime.State, unused=True)
+    codegen = framecode.DaCeCodeGenerator(sdfg)
     codegen.determine_allocation_lifetime(sdfg)
 
     # Ensure that unused transients are not allocated
@@ -101,7 +77,7 @@ def test_determine_alloc_state():
 
 def test_determine_alloc_sdfg():
     sdfg, scopes = _test_determine_alloc(dace.AllocationLifetime.SDFG)
-    codegen = framecode.DaCeCodeGenerator()
+    codegen = framecode.DaCeCodeGenerator(sdfg)
     codegen.determine_allocation_lifetime(sdfg)
 
     assert _check_alloc(1, 'tmp', codegen, scopes[-3])
@@ -110,7 +86,7 @@ def test_determine_alloc_sdfg():
 
 def test_determine_alloc_global():
     sdfg, scopes = _test_determine_alloc(dace.AllocationLifetime.Global)
-    codegen = framecode.DaCeCodeGenerator()
+    codegen = framecode.DaCeCodeGenerator(sdfg)
     codegen.determine_allocation_lifetime(sdfg)
     assert any('__1_tmp' in field for field in codegen.statestruct)
     assert any('__1_tmp2' in field for field in codegen.statestruct)
@@ -150,21 +126,16 @@ def test_persistent_gpu_copy_regression():
                     lifetime=dace.AllocationLifetime.Persistent)
 
     a_trans = nstate.add_access("transient_heap")
-    nstate.add_edge(nstate.add_read("ninput"), None, a_trans, None,
-                    nsdfg.make_array_memlet("transient_heap"))
-    nstate.add_edge(a_trans, None, nstate.add_write("noutput"), None,
-                    nsdfg.make_array_memlet("transient_heap"))
+    nstate.add_edge(nstate.add_read("ninput"), None, a_trans, None, nsdfg.make_array_memlet("transient_heap"))
+    nstate.add_edge(a_trans, None, nstate.add_write("noutput"), None, nsdfg.make_array_memlet("transient_heap"))
 
     a_gpu = state.add_read("input_gpu")
     nsdfg_node = state.add_nested_sdfg(nsdfg, None, {"ninput"}, {"noutput"})
     wR = state.add_write("__return")
 
-    state.add_edge(state.add_read("input"), None, a_gpu, None,
-                   sdfg.make_array_memlet("input"))
-    state.add_edge(a_gpu, None, nsdfg_node, "ninput",
-                   sdfg.make_array_memlet("input_gpu"))
-    state.add_edge(nsdfg_node, "noutput", wR, None,
-                   sdfg.make_array_memlet("__return"))
+    state.add_edge(state.add_read("input"), None, a_gpu, None, sdfg.make_array_memlet("input"))
+    state.add_edge(a_gpu, None, nsdfg_node, "ninput", sdfg.make_array_memlet("input_gpu"))
+    state.add_edge(nsdfg_node, "noutput", wR, None, sdfg.make_array_memlet("__return"))
     result = sdfg(input=np.ones((2, 2), dtype=np.float64))
     assert np.all(result == np.ones((2, 2)))
 
@@ -178,7 +149,7 @@ def test_persistent_gpu_transpose_regression():
     sdfg = test_persistent_transpose.to_sdfg()
 
     sdfg.expand_library_nodes()
-    sdfg.apply_strict_transformations()
+    sdfg.simplify()
     sdfg.apply_gpu_transformations()
 
     for _, _, arr in sdfg.arrays_recursive():
@@ -210,9 +181,7 @@ def test_alloc_persistent_register():
 def test_alloc_persistent():
     @dace.program
     def persistentmem(output: dace.int32[1]):
-        tmp = dace.ndarray([1],
-                           output.dtype,
-                           lifetime=dace.AllocationLifetime.Persistent)
+        tmp = dace.ndarray([1], output.dtype, lifetime=dace.AllocationLifetime.Persistent)
         if output[0] == 1.0:
             tmp[0] = 0
         else:
@@ -305,12 +274,10 @@ def test_nested_view_samename():
 
     @dace.program
     def top(a: dace.float64[20]):
-        tmp = dace.ndarray([20],
-                           dace.float64,
-                           lifetime=dace.AllocationLifetime.Persistent)
+        tmp = dace.ndarray([20], dace.float64, lifetime=dace.AllocationLifetime.Persistent)
         return incall(a, tmp)
 
-    sdfg = top.to_sdfg(strict=False)
+    sdfg = top.to_sdfg(simplify=False)
 
     a = np.random.rand(20)
     ref = a.copy()
@@ -329,7 +296,7 @@ def test_nested_persistent():
     def toppers(a: dace.float64[20]):
         return nestpers(a)
 
-    sdfg = toppers.to_sdfg(strict=False)
+    sdfg = toppers.to_sdfg(simplify=False)
     for _, _, arr in sdfg.arrays_recursive():
         if arr.transient:
             arr.lifetime = dace.AllocationLifetime.Persistent
@@ -342,8 +309,7 @@ def test_nested_persistent():
 def test_persistent_scalar():
     @dace.program
     def perscal(a: dace.float64[20]):
-        tmp = dace.define_local_scalar(
-            dace.float64, lifetime=dace.AllocationLifetime.Persistent)
+        tmp = dace.define_local_scalar(dace.float64, lifetime=dace.AllocationLifetime.Persistent)
         tmp[:] = a[1] + 1
         return tmp
 

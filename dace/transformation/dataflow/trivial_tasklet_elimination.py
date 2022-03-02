@@ -8,9 +8,8 @@ from dace.transformation import transformation
 from dace.properties import make_properties
 
 
-@registry.autoregister_params(singlestate=True)
 @make_properties
-class TrivialTaskletElimination(transformation.Transformation):
+class TrivialTaskletElimination(transformation.SingleStateTransformation):
     """ Implements the Trivial-Tasklet Elimination pattern.
 
         Trivial-Tasklet Elimination removes tasklets that just copy the input
@@ -21,17 +20,14 @@ class TrivialTaskletElimination(transformation.Transformation):
     tasklet = transformation.PatternNode(nodes.Tasklet)
     write = transformation.PatternNode(nodes.AccessNode)
 
-    @staticmethod
-    def expressions():
-        return [sdutil.node_path_graph(TrivialTaskletElimination.read,
-                                       TrivialTaskletElimination.tasklet,
-                                       TrivialTaskletElimination.write)]
+    @classmethod
+    def expressions(cls):
+        return [sdutil.node_path_graph(cls.read, cls.tasklet, cls.write)]
 
-    @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
-        read = graph.nodes()[candidate[TrivialTaskletElimination.read]]
-        tasklet = graph.nodes()[candidate[TrivialTaskletElimination.tasklet]]
-        write = graph.nodes()[candidate[TrivialTaskletElimination.write]]
+    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
+        read = self.read
+        tasklet = self.tasklet
+        write = self.write
         # Do not apply on Streams
         if isinstance(sdfg.arrays[read.data], data.Stream):
             return False
@@ -46,24 +42,18 @@ class TrivialTaskletElimination(transformation.Transformation):
         if len(tasklet.in_connectors) != 1:
             return False
         if len(tasklet.out_connectors) != 1:
-            return False   
+            return False
         in_conn = list(tasklet.in_connectors.keys())[0]
         out_conn = list(tasklet.out_connectors.keys())[0]
         if tasklet.code.as_string != f'{out_conn} = {in_conn}':
             return False
-        
+
         return True
 
-    @staticmethod
-    def match_to_str(graph, candidate):
-        tasklet = graph.nodes()[candidate[TrivialTaskletElimination.tasklet]]
-        return tasklet.label
-
-    def apply(self, sdfg):
-        graph = sdfg.nodes()[self.state_id]
-        read = graph.nodes()[self.subgraph[TrivialTaskletElimination.read]]
-        tasklet = graph.nodes()[self.subgraph[TrivialTaskletElimination.tasklet]]
-        write = graph.nodes()[self.subgraph[TrivialTaskletElimination.write]]
+    def apply(self, graph, sdfg):
+        read = self.read
+        tasklet = self.tasklet
+        write = self.write
 
         in_edge = graph.edges_between(read, tasklet)[0]
         out_edge = graph.edges_between(tasklet, write)[0]

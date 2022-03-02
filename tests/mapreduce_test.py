@@ -1,8 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
-from dace.transformation.dataflow import (MapReduceFusion, MapFusion,
-                                          MapWCRFusion)
+from dace.transformation.dataflow import (MapReduceFusion, MapFusion, MapWCRFusion)
 
 W = dace.symbol('W')
 H = dace.symbol('H')
@@ -80,8 +79,7 @@ def mapreduce_test_3(A, B, sum):
     dace.reduce(lambda a, b: a + b, tmp, sum)
 
 
-@dace.program(dace.float64[M, N], dace.float64[N, K], dace.float64[M, K],
-              dace.float64[M, K, N])
+@dace.program(dace.float64[M, N], dace.float64[N, K], dace.float64[M, K], dace.float64[M, K, N])
 def mapreduce_test_4(A, B, C, D):
     # Transient variable
     tmp = dace.define_local([M, K, N], dtype=A.dtype)
@@ -154,7 +152,7 @@ def onetest(program):
     C_regression = A @ B
 
     sdfg = program.to_sdfg()
-    sdfg.apply_strict_transformations()
+    sdfg.simplify()
     sdfg.apply_transformations([MapFusion, MapWCRFusion])
     sdfg(A=A, B=B, C=C, M=M, N=N, K=K)
 
@@ -233,8 +231,7 @@ def test_extradims():
 
     mapreduce_test_3(A, B, res)
 
-    diff = np.linalg.norm(5 * A.reshape((H.get(), W.get())) - B) / (H.get() *
-                                                                    W.get())
+    diff = np.linalg.norm(5 * A.reshape((H.get(), W.get())) - B) / (H.get() * W.get())
     diff_res = abs((np.sum(B) - res[0])).view(type=np.ndarray)
     print("Difference:", diff, diff_res)
     print("==== Program end ====")
@@ -283,7 +280,7 @@ def test_histogram():
     hist = np.zeros([BINS], dtype=np.uint32)
 
     sdfg = histogram.to_sdfg()
-    sdfg.apply_strict_transformations()
+    sdfg.simplify()
     sdfg.apply_transformations(MapReduceFusion)
     sdfg(A=A, hist=hist, H=H, W=W)
 

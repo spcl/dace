@@ -10,10 +10,7 @@ from dace.memlet import Memlet
 from dace.transformation import helpers
 
 
-def make_vecAdd_sdfg(symbol_name: str,
-                     sdfg_name: str,
-                     access_nodes_dict: dict,
-                     dtype=dace.float32):
+def make_vecAdd_sdfg(symbol_name: str, sdfg_name: str, access_nodes_dict: dict, dtype=dace.float32):
     n = dace.symbol(symbol_name)
     vecAdd_sdfg = dace.SDFG(sdfg_name)
     vecAdd_state = vecAdd_sdfg.add_state()
@@ -37,12 +34,9 @@ def make_vecAdd_sdfg(symbol_name: str,
     # ---------- ----------
     # COMPUTE
     # ---------- ----------
-    vecMap_entry, vecMap_exit = vecAdd_state.add_map('vecAdd_map',
-                                                     dict(i='0:{}'.format(n)))
+    vecMap_entry, vecMap_exit = vecAdd_state.add_map('vecAdd_map', dict(i='0:{}'.format(n)))
 
-    vecAdd_tasklet = vecAdd_state.add_tasklet('vecAdd_task', ['x_con', 'y_con'],
-                                              ['z_con'],
-                                              'z_con = x_con + y_con')
+    vecAdd_tasklet = vecAdd_state.add_tasklet('vecAdd_task', ['x_con', 'y_con'], ['z_con'], 'z_con = x_con + y_con')
 
     vecAdd_state.add_memlet_path(x_in,
                                  vecMap_entry,
@@ -91,18 +85,9 @@ def make_nested_sdfg_cpu():
 
     nested_sdfg = state.add_nested_sdfg(to_nest, sdfg, {"x", "y"}, {"z"})
 
-    state.add_memlet_path(x,
-                          nested_sdfg,
-                          dst_conn="x",
-                          memlet=Memlet.simple(x, "0:n", num_accesses=n))
-    state.add_memlet_path(y,
-                          nested_sdfg,
-                          dst_conn="y",
-                          memlet=Memlet.simple(y, "0:n", num_accesses=n))
-    state.add_memlet_path(nested_sdfg,
-                          z,
-                          src_conn="z",
-                          memlet=Memlet.simple(z, "0:n", num_accesses=n))
+    state.add_memlet_path(x, nested_sdfg, dst_conn="x", memlet=Memlet.simple(x, "0:n", num_accesses=n))
+    state.add_memlet_path(y, nested_sdfg, dst_conn="y", memlet=Memlet.simple(y, "0:n", num_accesses=n))
+    state.add_memlet_path(nested_sdfg, z, src_conn="z", memlet=Memlet.simple(z, "0:n", num_accesses=n))
 
     # Build the second axpy: works with v,w and u of m elements
     access_nodes_dict = {"x": "v", "y": "w", "z": "u"}
@@ -117,18 +102,9 @@ def make_nested_sdfg_cpu():
 
     nested_sdfg = state.add_nested_sdfg(to_nest, sdfg, {"v", "w"}, {"u"})
 
-    state.add_memlet_path(v,
-                          nested_sdfg,
-                          dst_conn="v",
-                          memlet=Memlet.simple(v, "0:m", num_accesses=m))
-    state.add_memlet_path(w,
-                          nested_sdfg,
-                          dst_conn="w",
-                          memlet=Memlet.simple(w, "0:m", num_accesses=m))
-    state.add_memlet_path(nested_sdfg,
-                          u,
-                          src_conn="u",
-                          memlet=Memlet.simple(u, "0:m", num_accesses=m))
+    state.add_memlet_path(v, nested_sdfg, dst_conn="v", memlet=Memlet.simple(v, "0:m", num_accesses=m))
+    state.add_memlet_path(w, nested_sdfg, dst_conn="w", memlet=Memlet.simple(w, "0:m", num_accesses=m))
+    state.add_memlet_path(nested_sdfg, u, src_conn="u", memlet=Memlet.simple(u, "0:m", num_accesses=m))
 
     return sdfg
 
@@ -151,8 +127,7 @@ def test_state_fission():
     node_z = state.nodes()[2]
     vec_add1 = state.nodes()[3]
 
-    subg = dace.sdfg.graph.SubgraphView(state,
-                                        [node_x, node_y, vec_add1, node_z])
+    subg = dace.sdfg.graph.SubgraphView(state, [node_x, node_y, vec_add1, node_z])
     helpers.state_fission(sdfg, subg)
     sdfg.validate()
 

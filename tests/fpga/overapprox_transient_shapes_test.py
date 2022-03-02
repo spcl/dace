@@ -14,8 +14,7 @@ M, N = (dace.symbol(s, dtype=dace.int32) for s in ('M', 'N'))
 
 
 @dace.program
-def overapprox(alpha: dace.float32, C: dace.float32[N, N], A: dace.float32[N,
-                                                                           M]):
+def overapprox(alpha: dace.float32, C: dace.float32[N, N], A: dace.float32[N, M]):
 
     for i in range(N):
         tmp = np.zeros((N, ), dtype=np.float32)

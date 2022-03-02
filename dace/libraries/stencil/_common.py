@@ -1,6 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
-import astunparse
 import collections
 import copy
 import functools
@@ -9,6 +8,7 @@ import operator
 from typing import Dict, List, Tuple
 
 import dace
+from dace.frontend.python import astutils
 from dace.codegen.targets.cpp import sym2cpp
 from .subscript_converter import SubscriptConverter
 
@@ -16,24 +16,15 @@ from .subscript_converter import SubscriptConverter
 def dim_to_abs_val(input, _dimensions, sdfg):
     """Compute scalar number from independent dimension unit."""
     input = [dace.symbolic.resolve_symbol_to_constant(x, sdfg) for x in input]
-    dimensions = [
-        dace.symbolic.resolve_symbol_to_constant(x, sdfg) for x in _dimensions
-    ]
+    dimensions = [dace.symbolic.resolve_symbol_to_constant(x, sdfg) for x in _dimensions]
     for i, dim in enumerate(dimensions[1:]):
         if dim is None:
-            raise ValueError(f"Shape size \"{_dimensions[i + 1]}\" must "
-                             f"evaluate to a constant.")
-    vec = [
-        functools.reduce(operator.mul, dimensions[i + 1:], 1)
-        for i in range(len(dimensions))
-    ]
+            raise ValueError(f"Shape size \"{_dimensions[i + 1]}\" must " f"evaluate to a constant.")
+    vec = [functools.reduce(operator.mul, dimensions[i + 1:], 1) for i in range(len(dimensions))]
     return functools.reduce(operator.add, map(operator.mul, input, vec), 0)
 
 
-def make_iterators(dimensions,
-                   halo_sizes=None,
-                   parameters=None,
-                   vector_length=1):
+def make_iterators(dimensions, halo_sizes=None, parameters=None, vector_length=1):
     def add_halo(i):
         if i == len(dimensions) - 1 and halo_sizes is not None:
             return " + " + str(-halo_sizes[0] + halo_sizes[1])
@@ -41,12 +32,10 @@ def make_iterators(dimensions,
             return ""
 
     if parameters is None:
-        iterators = collections.OrderedDict([("i" + str(i),
-                                              "0:" + str(d) + add_halo(i))
+        iterators = collections.OrderedDict([("i" + str(i), "0:" + str(d) + add_halo(i))
                                              for i, d in enumerate(dimensions)])
     else:
-        iterators = collections.OrderedDict([(parameters[i],
-                                              "0:" + str(d) + add_halo(i))
+        iterators = collections.OrderedDict([(parameters[i], "0:" + str(d) + add_halo(i))
                                              for i, d in enumerate(dimensions)])
     if vector_length > 1:
         iterators[parameters[-1]] += "/{}".format(vector_length)
@@ -63,8 +52,7 @@ def check_stencil_shape(shape: Tuple, other: Tuple):
         shape = copy.copy(other)
     elif len(other) == len(shape):
         if shape != other:
-            raise ValueError(f"Inconsistent input sizes: {shape} "
-                             f"vs. {other}")
+            raise ValueError(f"Inconsistent input sizes: {shape} " f"vs. {other}")
     else:
         # Allow lower-dimensional accesses
         pass
@@ -108,10 +96,8 @@ def parse_connectors(node, state, sdfg):
         shape = check_stencil_shape(shape, desc.shape)
     # Adjust shape for vector length
     vector_length = max(vector_lengths.values())
-    shape = tuple(s * vector_length if i == len(shape) - 1 else s
-                  for i, s in enumerate(shape))
-    return (inputs, outputs, shape, field_to_data, field_to_desc, field_to_edge,
-            vector_lengths)
+    shape = tuple(s * vector_length if i == len(shape) - 1 else s for i, s in enumerate(shape))
+    return (inputs, outputs, shape, field_to_data, field_to_desc, field_to_edge, vector_lengths)
 
 
 def parse_accesses(code, outputs: List[str]):
@@ -131,22 +117,20 @@ def parse_accesses(code, outputs: List[str]):
     offset = None
     for output in outputs:
         if len(field_accesses[output]) > 1:
-            raise ValueError(
-                f"Stencil {node.label} can only write {output} once.")
+            raise ValueError(f"Stencil {node.label} can only write {output} once.")
         _offset = next(iter(field_accesses[output].keys()))
         if offset is None:
             offset = _offset
         else:
             if _offset != offset:
-                raise ValueError(f"Inconsistent output offset for "
-                                 f"{node.label}: {offset} and {_offset}")
+                raise ValueError(f"Inconsistent output offset for " f"{node.label}: {offset} and {_offset}")
 
     # If the offset is non-zero, rerun the converter to adjust
     if offset is not None and any(o != 0 for o in offset):
         converter = SubscriptConverter(offset=tuple(-o for o in offset))
         new_ast = converter.visit(ast.parse(code))
         field_accesses = converter.mapping
-    new_code = astunparse.unparse(new_ast)
+    new_code = astutils.unparse(new_ast)
 
     return new_code, field_accesses
 
@@ -168,13 +152,11 @@ def make_iterator_mapping(node, field_accesses, shape) -> Dict[str, Tuple[int]]:
         if num_dims == 0:
             continue  # Scalar input
         if len(iterators) != len(shape):
-            raise ValueError(
-                f"Invalid iterator mapping for {field_name}: {iterators}")
+            raise ValueError(f"Invalid iterator mapping for {field_name}: {iterators}")
     return iterator_mapping
 
 
-def generate_boundary_conditions(node, shape, field_accesses, field_to_desc,
-                                 iterator_mapping):
+def generate_boundary_conditions(node, shape, field_accesses, field_to_desc, iterator_mapping):
     boundary_code = ""
     # Conditions where the output should not be written
     oob_cond = set()
@@ -188,8 +170,7 @@ def generate_boundary_conditions(node, shape, field_accesses, field_to_desc,
         # Loop over each access to this data
         for indices, memlet_name in accesses.items():
             if len(indices) != num_dims:
-                raise ValueError(f"Access {field_name}[{indices}] inconsistent "
-                                 f"with iterator mapping {iterators}.")
+                raise ValueError(f"Access {field_name}[{indices}] inconsistent " f"with iterator mapping {iterators}.")
             cond = set()
             cond_global = set()
             # Loop over each index of this access
@@ -244,11 +225,9 @@ def generate_boundary_conditions(node, shape, field_accesses, field_to_desc,
                     # Add this to the output condition
                     oob_cond |= cond_global
                 else:
-                    raise ValueError(
-                        f"Unsupported boundary condition type: {btype}")
-                boundary_code += ("{} = {} if {} else _{}\n".format(
-                    memlet_name, boundary_val, " or ".join(sorted(cond)),
-                    memlet_name))
+                    raise ValueError(f"Unsupported boundary condition type: {btype}")
+                boundary_code += ("{} = {} if {} else _{}\n".format(memlet_name, boundary_val,
+                                                                    " or ".join(sorted(cond)), memlet_name))
     return boundary_code, oob_cond
 
 
@@ -267,7 +246,6 @@ def validate_vector_lengths(vector_lengths, iterator_mapping):
                                  f"{vector_length}, expected {expected}.")
         else:
             if vector_length != 1:
-                raise ValueError(
-                    f"Field {field_name} cannot be vectorized, "
-                    "because it doesn't read the innermost dimension.")
+                raise ValueError(f"Field {field_name} cannot be vectorized, "
+                                 "because it doesn't read the innermost dimension.")
     return expected

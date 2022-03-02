@@ -61,31 +61,30 @@ def run_floyd_warshall(device_type: dace.dtypes.DeviceType):
 
     elif device_type == dace.dtypes.DeviceType.FPGA:
         # Parse SDFG and apply FPGA friendly optimization
-        sdfg = kernel.to_sdfg(strict=True)
+        sdfg = kernel.to_sdfg(simplify=True)
         # sdfg.apply_transformations_repeated([MapFusion])
         applied = sdfg.apply_transformations([FPGATransformSDFG])
         assert applied == 1
 
-        sm_applied = sdfg.apply_transformations_repeated(
-            [InlineSDFG, StreamingMemory],
-            [{}, {
-                'storage': dace.StorageType.FPGA_Local
-            }],
-            print_report=True)
+        sm_applied = sdfg.apply_transformations_repeated([InlineSDFG, StreamingMemory],
+                                                         [{}, {
+                                                             'storage': dace.StorageType.FPGA_Local
+                                                         }],
+                                                         print_report=True)
         assert sm_applied == 1
-        sc_applied = sdfg.apply_transformations_repeated(
-            [InlineSDFG, StreamingComposition],
-            [{}, {
-                'storage': dace.StorageType.FPGA_Local
-            }],
-            print_report=True)
+        sc_applied = sdfg.apply_transformations_repeated([InlineSDFG, StreamingComposition],
+                                                         [{}, {
+                                                             'storage': dace.StorageType.FPGA_Local
+                                                         }],
+                                                         print_report=True,
+                                                         permissive=True)
         assert sc_applied == 1
 
-        # Prune connectors after Streaming Comp
-        pruned_conns = sdfg.apply_transformations_repeated(
-            PruneConnectors, options=[{
-                'remove_unused_containers': True
-            }])
+        # Prune connectors after Streaming Composition
+        pruned_conns = sdfg.apply_transformations_repeated(PruneConnectors,
+                                                           options=[{
+                                                               'remove_unused_containers': True
+                                                           }])
 
         assert pruned_conns == 1
 
@@ -123,11 +122,7 @@ def test_fpga():
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("-t",
-                        "--target",
-                        default='cpu',
-                        choices=['cpu', 'gpu', 'fpga'],
-                        help='Target platform')
+    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu', 'fpga'], help='Target platform')
 
     args = vars(parser.parse_args())
     target = args["target"]

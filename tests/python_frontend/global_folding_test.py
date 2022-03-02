@@ -4,9 +4,7 @@ import dace
 import numpy as np
 
 from dace.frontend.python import astutils
-from dace.frontend.python.preprocessing import (GlobalResolver,
-                                                ConditionalCodeResolver,
-                                                DeadCodeEliminator)
+from dace.frontend.python.preprocessing import (GlobalResolver, ConditionalCodeResolver, DeadCodeEliminator)
 from dace.frontend.python.parser import DaceProgram
 
 
@@ -58,8 +56,7 @@ def test_instantiated_global():
 
 @dace.program(constant_functions=True)
 def instantiated_global_with_funcs(A):
-    A[cfg.q] = (A[cfg.get_parameter()] * MyConfiguration.get_random_number() +
-                cfg.p) + val
+    A[cfg.q] = (A[cfg.get_parameter()] * MyConfiguration.get_random_number() + cfg.p) + val
 
 
 def test_instantiated_global_resolve_functions():
@@ -94,10 +91,7 @@ def test_nested_globals():
 
 def _analyze_and_unparse_code(func: DaceProgram) -> str:
     src_ast, _, _, _ = astutils.function_to_ast(func.f)
-    resolved = {
-        k: v
-        for k, v in func.global_vars.items() if k not in func.argnames
-    }
+    resolved = {k: v for k, v in func.global_vars.items() if k not in func.argnames}
     src_ast = GlobalResolver(resolved).visit(src_ast)
     src_ast = ConditionalCodeResolver(resolved).visit(src_ast)
     src_ast = DeadCodeEliminator().visit(src_ast)

@@ -45,8 +45,7 @@ def test_global_to_local():
     # Check that all access nodes that refer to this container have also been updated
     for node, graph in sdfg.all_nodes_recursive():
         if isinstance(node, dace.sdfg.nodes.AccessNode):
-            trace = dace.sdfg.utils.trace_nested_access(node, graph,
-                                                        graph.parent)
+            trace = dace.sdfg.utils.trace_nested_access(node, graph, graph.parent)
 
             for (_, acc_node), memlet_trace, state_trace, sdfg_trace in trace:
                 if acc_node is not None and acc_node.data == candidate:
@@ -66,8 +65,7 @@ def test_rr_interleave():
         Tests RR interleaving of containers to memory banks
     '''
     @dace.program
-    def rr_interleave(A: dace.float32[8], B: dace.float32[8],
-                      C: dace.float32[8]):
+    def rr_interleave(A: dace.float32[8], B: dace.float32[8], C: dace.float32[8]):
         return A + B + C
 
     A = np.random.rand(8).astype(np.float32)

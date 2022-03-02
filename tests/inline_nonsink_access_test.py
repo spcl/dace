@@ -32,10 +32,8 @@ def make_sdfg(outer_shape, inner_shape, outer_index, inner_index):
     D = nstate.add_write('D')
 
     nstate.add_edge(t_init, 'o', C, None, dace.Memlet.simple('C', inner_index))
-    nstate.add_edge(C, None, t_square, 'i',
-                    dace.Memlet.simple('C', inner_index))
-    nstate.add_edge(t_square, 'o', C2, None,
-                    dace.Memlet.simple('C', inner_index))
+    nstate.add_edge(C, None, t_square, 'i', dace.Memlet.simple('C', inner_index))
+    nstate.add_edge(t_square, 'o', C2, None, dace.Memlet.simple('C', inner_index))
     nstate.add_edge(C2, None, t_cube, 'i', dace.Memlet.simple('C', inner_index))
     nstate.add_edge(t_cube, 'o', D, None, dace.Memlet.simple('D', inner_index))
 
@@ -53,7 +51,7 @@ def test_same_shape():
     B = np.random.rand(1).astype(np.float32)
 
     sdfg = make_sdfg([1], [1], '0', '0')
-    sdfg.apply_strict_transformations()
+    sdfg.simplify()
 
     sdfg.save('_dacegraphs/program.sdfg')
     sdfg(A=A, B=B)
@@ -72,12 +70,11 @@ def test_different_shape():
     B = np.random.rand(20, 3).astype(np.float32)
 
     sdfg = make_sdfg([20, 3], [60], '1, 0', '3')
-    sdfg.apply_strict_transformations()
+    sdfg.simplify()
 
     sdfg(A=A, B=B)
 
-    assert all(not isinstance(node, dace.nodes.NestedSDFG)
-               for node in sdfg.node(0).nodes())
+    assert all(not isinstance(node, dace.nodes.NestedSDFG) for node in sdfg.node(0).nodes())
 
     expected = np.array([2**2, (2**2) + (2**6)], dtype=np.float32)
     result = np.array([A[1, 0], B[1, 0]], dtype=np.float32)

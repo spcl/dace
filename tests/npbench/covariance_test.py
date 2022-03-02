@@ -31,9 +31,10 @@ def covariance_kernel(float_n: dc.float32, data: dc.float32[N, M]):
 
     return cov
 
+
 def ground_truth(M, N, float_n, data):
 
-    mean = np.empty((M,), dtype=data.dtype)
+    mean = np.empty((M, ), dtype=data.dtype)
     for j in range(M):
         mean[j] = 0.0
         for i in range(N):
@@ -56,7 +57,6 @@ def ground_truth(M, N, float_n, data):
     return cov
 
 
-
 def init_data(M, N):
 
     float_n = np.float32(N)
@@ -68,7 +68,6 @@ def init_data(M, N):
     return float_n, data
 
 
-
 def run_covariance(device_type: dace.dtypes.DeviceType):
     '''
     Runs Covariance for the given device
@@ -77,7 +76,7 @@ def run_covariance(device_type: dace.dtypes.DeviceType):
 
     # Initialize data (polybench small size)
     M, N = (80, 100)
-    float_n, data  = init_data(M, N)
+    float_n, data = init_data(M, N)
 
     gt_data = np.copy(data)
 
@@ -89,8 +88,8 @@ def run_covariance(device_type: dace.dtypes.DeviceType):
 
     elif device_type == dace.dtypes.DeviceType.FPGA:
         # Parse SDFG and apply FPGA friendly optimization
-        sdfg = covariance_kernel.to_sdfg(strict=False)
-        sdfg.apply_strict_transformations()
+        sdfg = covariance_kernel.to_sdfg(simplify=False)
+        sdfg.simplify()
         applied = sdfg.apply_transformations([FPGATransformSDFG])
         assert applied == 1
 
@@ -136,11 +135,7 @@ def test_fpga():
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("-t",
-                        "--target",
-                        default='cpu',
-                        choices=['cpu', 'gpu', 'fpga'],
-                        help='Target platform')
+    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu', 'fpga'], help='Target platform')
 
     args = vars(parser.parse_args())
     target = args["target"]

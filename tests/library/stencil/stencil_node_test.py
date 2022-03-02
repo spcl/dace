@@ -13,8 +13,7 @@ DTYPE = np.float32
 
 def make_sdfg_1d(implementation: str, vector_length: int):
 
-    vtype = dace.vector(dace.typeclass(DTYPE),
-                        vector_length) if vector_length > 1 else DTYPE
+    vtype = dace.vector(dace.typeclass(DTYPE), vector_length) if vector_length > 1 else DTYPE
 
     sdfg = dace.SDFG(f"stencil_node_test_1d_w{vector_length}")
     _, a_desc = sdfg.add_array("a", (SIZE / vector_length, ), dtype=vtype)
@@ -34,26 +33,22 @@ res[1] = (dace.float32(0.3333) * tmp1)""",
     stencil_node.implementation = implementation
     state.add_node(stencil_node)
 
-    state.add_edge(a, None, stencil_node, "a",
-                   dace.Memlet.from_array("a", a_desc))
-    state.add_edge(stencil_node, "res", res, None,
-                   dace.Memlet.from_array("res", res_desc))
+    state.add_edge(a, None, stencil_node, "a", dace.Memlet.from_array("a", a_desc))
+    state.add_edge(stencil_node, "res", res, None, dace.Memlet.from_array("res", res_desc))
 
     return sdfg
 
 
 def make_sdfg_2d(implementation: str, vector_length: int):
 
-    vtype = dace.vector(dace.typeclass(DTYPE),
-                        vector_length) if vector_length > 1 else DTYPE
+    vtype = dace.vector(dace.typeclass(DTYPE), vector_length) if vector_length > 1 else DTYPE
 
     sdfg = dace.SDFG(f"stencil_node_test_2d_w{vector_length}")
     _, a_desc = sdfg.add_array("a", (ROWS, COLS / vector_length), dtype=vtype)
     _, b_desc = sdfg.add_array("b", (ROWS, ), dtype=DTYPE)
     sdfg.add_symbol("c", DTYPE)
     _, d_desc = sdfg.add_array("d", (ROWS, COLS / vector_length), dtype=vtype)
-    _, res_desc = sdfg.add_array("res", (ROWS, COLS / vector_length),
-                                 dtype=vtype)
+    _, res_desc = sdfg.add_array("res", (ROWS, COLS / vector_length), dtype=vtype)
 
     state = sdfg.add_state("stencil_node_test_2d")
     a = state.add_read("a")
@@ -61,29 +56,16 @@ def make_sdfg_2d(implementation: str, vector_length: int):
     d = state.add_read("d")
     res = state.add_write("res")
 
-    stencil_node = Stencil(
-        "stencil_test",
-        "res[0, 0] = c * b[0] * (a[-1, 0] + a[1, 0] + a[0, -1] + a[0, 1]) + d[0, -1] + d[0, 1]",
-        iterator_mapping={"b": (True, False)})
+    stencil_node = Stencil("stencil_test",
+                           "res[0, 0] = c * b[0] * (a[-1, 0] + a[1, 0] + a[0, -1] + a[0, 1]) + d[0, -1] + d[0, 1]",
+                           iterator_mapping={"b": (True, False)})
     stencil_node.implementation = implementation
     state.add_node(stencil_node)
 
-    state.add_memlet_path(a,
-                          stencil_node,
-                          dst_conn="a",
-                          memlet=dace.Memlet.from_array("a", a_desc))
-    state.add_memlet_path(b,
-                          stencil_node,
-                          dst_conn="b",
-                          memlet=dace.Memlet.from_array("b", b_desc))
-    state.add_memlet_path(d,
-                          stencil_node,
-                          dst_conn="d",
-                          memlet=dace.Memlet.from_array("d", d_desc))
-    state.add_memlet_path(stencil_node,
-                          res,
-                          src_conn="res",
-                          memlet=dace.Memlet.from_array("res", res_desc))
+    state.add_memlet_path(a, stencil_node, dst_conn="a", memlet=dace.Memlet.from_array("a", a_desc))
+    state.add_memlet_path(b, stencil_node, dst_conn="b", memlet=dace.Memlet.from_array("b", b_desc))
+    state.add_memlet_path(d, stencil_node, dst_conn="d", memlet=dace.Memlet.from_array("d", d_desc))
+    state.add_memlet_path(stencil_node, res, src_conn="res", memlet=dace.Memlet.from_array("res", res_desc))
 
     return sdfg
 
@@ -103,8 +85,7 @@ def test_stencil_node_1d():
 
 
 def stencil_node_1d_fpga_array(vector_length: int):
-    sdfg = make_sdfg_1d(dace.Config.get("compiler", "fpga", "vendor"),
-                        vector_length)
+    sdfg = make_sdfg_1d(dace.Config.get("compiler", "fpga", "vendor"), vector_length)
     assert sdfg.apply_transformations(FPGATransformSDFG) == 1
     assert sdfg.apply_transformations(InlineSDFG) == 1
     run_stencil_1d(sdfg, 32)
@@ -118,8 +99,7 @@ def test_stencil_node_1d_fpga_array():
 
 def run_stencil_2d(sdfg, rows, cols, specialize: bool):
     a = np.zeros((rows, cols), dtype=DTYPE)
-    a[1:-1, 1:-1] = np.arange(1, (rows - 2) * (cols - 2) + 1,
-                              dtype=DTYPE).reshape((rows - 2, cols - 2))
+    a[1:-1, 1:-1] = np.arange(1, (rows - 2) * (cols - 2) + 1, dtype=DTYPE).reshape((rows - 2, cols - 2))
     b = np.empty((rows, ), dtype=DTYPE)
     b[:] = 1
     c = DTYPE(0.25)
@@ -129,8 +109,7 @@ def run_stencil_2d(sdfg, rows, cols, specialize: bool):
         sdfg(a=a, b=b, c=c, d=d, res=res, rows=rows)
     else:
         sdfg(a=a, b=b, c=c, d=d, res=res, rows=rows, cols=cols)
-    expected = (0.25 *
-                (a[2:, 1:-1] + a[:-2, 1:-1] + a[1:-1, 2:] + a[1:-1, :-2]) + 1)
+    expected = (0.25 * (a[2:, 1:-1] + a[:-2, 1:-1] + a[1:-1, 2:] + a[1:-1, :-2]) + 1)
     assert np.allclose(expected, res[1:-1, 1:-1])
 
 
@@ -139,8 +118,7 @@ def test_stencil_node_2d():
 
 
 def stencil_node_2d_fpga_array(vector_length: int):
-    sdfg = make_sdfg_2d(dace.Config.get("compiler", "fpga", "vendor"),
-                        vector_length)
+    sdfg = make_sdfg_2d(dace.Config.get("compiler", "fpga", "vendor"), vector_length)
     sdfg.specialize({"cols": 8})
     assert sdfg.apply_transformations(FPGATransformSDFG) == 1
     assert sdfg.apply_transformations(InlineSDFG) == 1

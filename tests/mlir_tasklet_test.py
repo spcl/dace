@@ -132,20 +132,17 @@ def test_mlir_tasklet_inference():
     tasklet.infer_connector_types(sdfg, state)
     assert isinstance(tasklet.in_connectors['a'], dace.dtypes.vector)
     assert tasklet.in_connectors['a'].veclen == 4
-    assert isinstance(tasklet.in_connectors['a'].base_type,
-                      dace.dtypes.typeclass)
+    assert isinstance(tasklet.in_connectors['a'].base_type, dace.dtypes.typeclass)
     assert tasklet.in_connectors['a'].base_type.ctype == "int"
 
     assert isinstance(tasklet.in_connectors['b'], dace.dtypes.vector)
     assert tasklet.in_connectors['b'].veclen == 4
-    assert isinstance(tasklet.in_connectors['b'].base_type,
-                      dace.dtypes.typeclass)
+    assert isinstance(tasklet.in_connectors['b'].base_type, dace.dtypes.typeclass)
     assert tasklet.in_connectors['b'].base_type.ctype == "int"
 
     assert isinstance(tasklet.out_connectors['c'], dace.dtypes.vector)
     assert tasklet.out_connectors['c'].veclen == 4
-    assert isinstance(tasklet.out_connectors['c'].base_type,
-                      dace.dtypes.typeclass)
+    assert isinstance(tasklet.out_connectors['c'].base_type, dace.dtypes.typeclass)
     assert tasklet.out_connectors['c'].base_type.ctype == "int"
 
     # Test ints
@@ -307,8 +304,7 @@ def mlir_tasklet_no_entry(A: dace.int32[3], B: dace.int32[2], C: dace.int32[1]):
 
 
 @dace.program
-def mlir_tasklet_no_entry_generic(A: dace.int32[3], B: dace.int32[2],
-                                  C: dace.int32[1]):
+def mlir_tasklet_no_entry_generic(A: dace.int32[3], B: dace.int32[2], C: dace.int32[1]):
     @dace.tasklet('MLIR')
     def add():
         a << A[0]
@@ -338,8 +334,7 @@ def test_mlir_tasklet_no_entry():
 
 
 @dace.program
-def mlir_tasklet_double_entry(A: dace.int32[3], B: dace.int32[2],
-                              C: dace.int32[1]):
+def mlir_tasklet_double_entry(A: dace.int32[3], B: dace.int32[2], C: dace.int32[1]):
     @dace.tasklet('MLIR')
     def add():
         a << A[0]
@@ -375,8 +370,7 @@ def test_mlir_tasklet_double_entry():
 
 
 @dace.program
-def mlir_tasklet_double_return(A: dace.int32[3], B: dace.int32[2],
-                               C: dace.int32[1]):
+def mlir_tasklet_double_return(A: dace.int32[3], B: dace.int32[2], C: dace.int32[1]):
     @dace.tasklet('MLIR')
     def add():
         a << A[0]
@@ -393,8 +387,7 @@ def mlir_tasklet_double_return(A: dace.int32[3], B: dace.int32[2],
 
 
 @dace.program
-def mlir_tasklet_double_return_generic(A: dace.int32[3], B: dace.int32[2],
-                                       C: dace.int32[1]):
+def mlir_tasklet_double_return_generic(A: dace.int32[3], B: dace.int32[2], C: dace.int32[1]):
     @dace.tasklet('MLIR')
     def add():
         a << A[0]
@@ -429,8 +422,7 @@ def test_mlir_tasklet_double_return():
 
 
 @dace.program
-def mlir_tasklet_llvm_dialect_opt(A: dace.int32[3], B: dace.int32[2],
-                                  C: dace.int32[1]):
+def mlir_tasklet_llvm_dialect_opt(A: dace.int32[3], B: dace.int32[2], C: dace.int32[1]):
     @dace.tasklet('MLIR')
     def add():
         a << A[0]
@@ -462,8 +454,7 @@ def test_mlir_tasklet_llvm_dialect():
 
 
 @dace.program
-def mlir_tasklet_float(A: dace.float32[3], B: dace.float32[2],
-                       C: dace.float32[1]):
+def mlir_tasklet_float(A: dace.float32[3], B: dace.float32[2], C: dace.float32[1]):
     @dace.tasklet('MLIR')
     def add():
         a << A[0]
@@ -537,6 +528,7 @@ def test_mlir_tasklet_recursion():
     mlir_tasklet_recursion(A, B)
     assert B[0] == 55
 
+
 @dace.program
 def mlir_tasklet_long_name(A: dace.int32[2], B: dace.int32[1]):
     @dace.tasklet('MLIR')
@@ -551,6 +543,7 @@ def mlir_tasklet_long_name(A: dace.int32[2], B: dace.int32[1]):
         }
         """
 
+
 @pytest.mark.mlir
 def test_mlir_tasklet_long_name():
     A = dace.ndarray((1, ), dace.int32)
@@ -561,6 +554,7 @@ def test_mlir_tasklet_long_name():
 
     mlir_tasklet_long_name(A, B)
     assert B[0] == 10
+
 
 @dace.program
 def mlir_tasklet_no_input(A: dace.int32[1]):
@@ -576,6 +570,7 @@ def mlir_tasklet_no_input(A: dace.int32[1]):
         }
         """
 
+
 @pytest.mark.mlir
 def test_mlir_tasklet_no_input():
     A = dace.ndarray((1, ), dace.int32)
@@ -584,6 +579,7 @@ def test_mlir_tasklet_no_input():
 
     mlir_tasklet_no_input(A)
     assert A[0] == 5
+
 
 if __name__ == "__main__":
     test_mlir_tasklet_explicit()

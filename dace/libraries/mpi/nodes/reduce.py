@@ -13,10 +13,8 @@ class ExpandReduceMPI(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
-        (inbuffer,
-         count_str), outbuffer, root, in_place = node.validate(parent_sdfg, parent_state)
-        mpi_dtype_str = dace.libraries.mpi.utils.MPI_DDT(
-            inbuffer.dtype.base_type)
+        (inbuffer, count_str), outbuffer, root, in_place = node.validate(parent_sdfg, parent_state)
+        mpi_dtype_str = dace.libraries.mpi.utils.MPI_DDT(inbuffer.dtype.base_type)
         if inbuffer.dtype.veclen > 1:
             raise (NotImplementedError)
         if root.dtype.base_type != dace.dtypes.int32:
@@ -66,11 +64,7 @@ class Reduce(dace.sdfg.nodes.LibraryNode):
     grid = dace.properties.Property(dtype=str, allow_none=True, default=None)
 
     def __init__(self, name, op='MPI_SUM', grid=None, *args, **kwargs):
-        super().__init__(name,
-                         *args,
-                         inputs={"_inbuffer", "_root"},
-                         outputs={"_outbuffer"},
-                         **kwargs)
+        super().__init__(name, *args, inputs={"_inbuffer", "_root"}, outputs={"_outbuffer"}, **kwargs)
         self.op = op
         self.grid = grid
 

@@ -4,6 +4,7 @@ import dace
 import numpy as np
 import pytest
 import time
+from dace import config
 
 N = dace.symbol('N')
 
@@ -29,8 +30,7 @@ def scale(C, beta):
 
 def test_automatic_callback():
     @dace.program
-    def autocallback(A: dace.float64[N, N], B: dace.float64[N, N],
-                     C: dace.float64[N, N], beta: dace.float64):
+    def autocallback(A: dace.float64[N, N], B: dace.float64[N, N], C: dace.float64[N, N], beta: dace.float64):
         tmp: dace.float64[N, N] = almost_gemm(A, 0.5, B)
         scale(C, beta)
         C += tmp
@@ -48,8 +48,7 @@ def test_automatic_callback():
 
 def test_automatic_callback_2():
     @dace.program
-    def autocallback(A: dace.float64[N, N], B: dace.float64[N, N],
-                     C: dace.float64[N, N], beta: dace.float64):
+    def autocallback(A: dace.float64[N, N], B: dace.float64[N, N], C: dace.float64[N, N], beta: dace.float64):
         tmp: dace.float64[N, N]
         tmp2: dace.float64
         tmp, tmp2 = almost_gemm_2(A, 0.5, B)
@@ -69,8 +68,7 @@ def test_automatic_callback_2():
 
 def test_automatic_callback_inference():
     @dace.program
-    def autocallback_ret(A: dace.float64[N, N], B: dace.float64[N, N],
-                         C: dace.float64[N, N], beta: dace.float64):
+    def autocallback_ret(A: dace.float64[N, N], B: dace.float64[N, N], C: dace.float64[N, N], beta: dace.float64):
         tmp = np.ndarray([N, N], dace.float64)
         tmp[:] = almost_gemm(A, 0.5, B)
         scale(C, beta)
@@ -89,8 +87,7 @@ def test_automatic_callback_inference():
 
 def test_automatic_callback_inference_2():
     @dace.program
-    def autocallback_ret(A: dace.float64[N, N], B: dace.float64[N, N],
-                         C: dace.float64[N, N], beta: dace.float64):
+    def autocallback_ret(A: dace.float64[N, N], B: dace.float64[N, N], C: dace.float64[N, N], beta: dace.float64):
         tmp = np.ndarray([N, N], dace.float64)
         tmp2 = np.float64(0.0)
         tmp[:], tmp2 = almost_gemm_2(A, 0.5, B)
@@ -170,8 +167,7 @@ def test_callback_tasklet():
 
 def test_view_callback():
     @dace.program
-    def autocallback(A: dace.float64[2 * N, N], B: dace.float64[N, N],
-                     C: dace.float64[N, N], beta: dace.float64):
+    def autocallback(A: dace.float64[2 * N, N], B: dace.float64[N, N], C: dace.float64[N, N], beta: dace.float64):
         A[N:, :] = almost_gemm(A[:N, :], 0.5, B)
         scale(C, beta)
         C += A[N:, :]
@@ -304,7 +300,7 @@ def test_callback_samename():
         call_b()
         call_a()
 
-    sdfg = same_name_nested.to_sdfg(strict=False)
+    sdfg = same_name_nested.to_sdfg(simplify=False)
     assert list(sdfg.arrays.keys()) == ['__pystate']
 
     same_name_nested()
@@ -324,9 +320,7 @@ def test_gpu_callback():
 
     @dace.program
     def gpucallback(A):
-        tmp = dace.ndarray([20],
-                           dace.float64,
-                           storage=dace.StorageType.GPU_Global)
+        tmp = dace.ndarray([20], dace.float64, storage=dace.StorageType.GPU_Global)
         tmp[:] = A
         cb_with_gpu(tmp)
         A[:] = tmp
@@ -412,6 +406,149 @@ def test_inout_same_name():
     assert np.allclose(expected, a)
 
 
+def test_inhibit_state_fusion():
+    """ Tests that state fusion is inhibited around callbacks if configured as such. """
+    @dace_inhibitor
+    def add(a, b):
+        return a + b
+
+    @dace.program
+    def calladd(A: dace.float64[20], B: dace.float64[20], C: dace.float64[20], D: dace.float64[20]):
+        A[:] = add(B, C)
+        D[:] = add(A, C)
+
+    with config.set_temporary('frontend', 'dont_fuse_callbacks', value=True):
+        sdfg = calladd.to_sdfg(simplify=True)
+        assert sdfg.number_of_nodes() == 5
+
+    with config.set_temporary('frontend', 'dont_fuse_callbacks', value=False):
+        sdfg = calladd.to_sdfg(simplify=True)
+        assert sdfg.number_of_nodes() == 1
+
+
+def test_two_callbacks():
+    called_cnt = 0
+
+    @dace_inhibitor
+    def call(arr):
+        nonlocal called_cnt
+        called_cnt += 1
+
+    @dace.program
+    def call_twice(arr, scal):
+        call(arr)
+        arr[:] = arr[:] * scal
+        call(arr)
+
+    arr = np.ones((12, ), np.float64)
+    scal = 2
+
+    call_twice(arr, scal)
+    assert called_cnt == 2
+
+
+def test_two_callbacks_different_sig():
+    called_cnt = 0
+
+    @dace_inhibitor
+    def call(*args):
+        nonlocal called_cnt
+        called_cnt += 1
+
+    @dace.program
+    def call_twice(arr, scal):
+        call()
+        arr[:] = arr[:] * scal
+        call(arr)
+
+    @dace.program
+    def call_twice_2(arr, scal):
+        call_twice(arr, scal)
+
+    arr = np.ones((12, ), np.float64)
+    scal = 2
+
+    call_twice_2(arr, scal)
+    assert called_cnt == 2
+
+
+def test_two_callbacks_different_type():
+    called_cnt = 0
+
+    @dace_inhibitor
+    def call(array):
+        nonlocal called_cnt
+        called_cnt += 1
+
+    @dace.program
+    def call_twice(arr: dace.float64[20], arr2: dace.int32[20, 20]):
+        call(arr)
+        arr *= arr2[1]
+        call(arr2)
+
+    @dace.program
+    def call_twice_3(arr: dace.float64[20], arr2: dace.int32[20, 20]):
+        call_twice(arr, arr2)
+
+    arr = np.ones((20, ), np.float64)
+    arr2 = np.full((20, 20), 2, np.int32)
+
+    call_twice_3(arr, arr2)
+    assert called_cnt == 2
+
+
+def test_disallowed_keyword():
+    class Obj:
+        def hello(a):
+            try:
+                return a + 1
+            except:
+                return a + 2
+
+    @dace
+    def prog(a: dace.float64[10]):
+        b: dace.float64[10] = Obj.hello(a)
+        return b
+
+    a = np.random.rand(10)
+    assert np.allclose(prog(a), a + 1)
+
+
+def test_nested_duplicate_callbacks():
+    called = 0
+
+    @dace_inhibitor
+    def callback(*args):
+        nonlocal called
+        called += len(args)
+
+    @dace.program
+    def myprogram_1(a):
+        callback(a[0])
+        for i in range(a.shape[0]):
+            a[i] += i
+        callback(a[0], a[1])
+        return np.sum(a)
+
+    @dace.program
+    def myprogram(a):
+        myprogram_1(a)
+
+    a = np.random.rand(20, 1)
+    sdfg = myprogram.to_sdfg(a)
+    build_folder = sdfg.build_folder
+
+    myprogram(a)
+    # Ensure the cache is clear
+    myprogram._cache.clear()
+
+    myprogram.load_precompiled_sdfg(build_folder, a)
+    assert len(myprogram._cache.cache) == 1
+
+    myprogram(a)
+    assert called == 6
+
+
 if __name__ == '__main__':
     test_automatic_callback()
     test_automatic_callback_2()
@@ -430,3 +567,9 @@ if __name__ == '__main__':
     test_object_with_nested_callback()
     test_two_parameters_same_name()
     test_inout_same_name()
+    test_inhibit_state_fusion()
+    test_two_callbacks()
+    test_two_callbacks_different_sig()
+    test_two_callbacks_different_type()
+    test_disallowed_keyword()
+    test_nested_duplicate_callbacks()

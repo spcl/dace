@@ -19,22 +19,18 @@ from collections import defaultdict
 from dace.sdfg.utils import dfs_topological_sort
 
 
-class TypeInferenceDict(DefaultDict[Tuple[Tasklet, str, bool],
-                                    dtypes.typeclass]):
+class TypeInferenceDict(DefaultDict[Tuple[Tasklet, str, bool], dtypes.typeclass]):
     def __init__(self):
         super().__init__(lambda: dtypes.typeclass(None))
 
 
-def infer_tasklet_connectors(sdfg: SDFG, state: SDFGState, node: Tasklet,
-                             inferred: TypeInferenceDict):
+def infer_tasklet_connectors(sdfg: SDFG, state: SDFGState, node: Tasklet, inferred: TypeInferenceDict):
     """ Infers the connectors in a Tasklet using its code and type inference. """
 
     if node.code.language != dtypes.Language.Python:
-        raise NotImplementedError(
-            'Tasklet inference for other languages than Python not supported')
+        raise NotImplementedError('Tasklet inference for other languages than Python not supported')
 
-    if any(inferred[(node, conn, True)].type is None
-           for conn in node.in_connectors):
+    if any(inferred[(node, conn, True)].type is None for conn in node.in_connectors):
         raise TypeError('Cannot infer output connectors of tasklet "%s", '
                         'not all input connectors have types' % str(node))
 
@@ -61,13 +57,11 @@ def infer_tasklet_connectors(sdfg: SDFG, state: SDFGState, node: Tasklet,
         if inferred[(node, cname, False)].type is None:
             if cname not in new_syms:
                 raise TypeError('Cannot infer type of tasklet %s output '
-                                '"%s", please specify manually.' %
-                                (node.label, cname))
+                                '"%s", please specify manually.' % (node.label, cname))
             inferred[(node, cname, False)] = new_syms[cname]
 
 
-def infer_node_connectors(sdfg: SDFG, state: SDFGState, node: nodes.Node,
-                          inferred: TypeInferenceDict):
+def infer_node_connectors(sdfg: SDFG, state: SDFGState, node: nodes.Node, inferred: TypeInferenceDict):
     """ Infers the connectors of a node and updates `inferred` accordingly. """
 
     # Try to infer input connector type from node type or previous edges
@@ -78,16 +72,14 @@ def infer_node_connectors(sdfg: SDFG, state: SDFGState, node: nodes.Node,
 
         scalar = (e.data.subset and e.data.subset.num_elements() == 1)
         if e.data.data is not None:
-            allocated_as_scalar = (sdfg.arrays[e.data.data].storage
-                                   is not dtypes.StorageType.GPU_Global)
+            allocated_as_scalar = (sdfg.arrays[e.data.data].storage is not dtypes.StorageType.GPU_Global)
         else:
             allocated_as_scalar = True
 
         if inferred[(node, cname, True)].type is None:
             # If nested SDFG, try to use internal array type
             if isinstance(node, nodes.NestedSDFG):
-                scalar = (isinstance(node.sdfg.arrays[cname], data.Scalar)
-                          and allocated_as_scalar)
+                scalar = (isinstance(node.sdfg.arrays[cname], data.Scalar) and allocated_as_scalar)
                 dtype = node.sdfg.arrays[cname].dtype
                 ctype = (dtype if scalar else dtypes.pointer(dtype))
             elif e.data.data is not None:  # Obtain type from memlet
@@ -101,8 +93,7 @@ def infer_node_connectors(sdfg: SDFG, state: SDFGState, node: nodes.Node,
                 sconn = src_edge.src.out_connectors[src_edge.src_conn]
                 if sconn.type is None:
                     raise TypeError('Ambiguous or uninferable type in'
-                                    ' connector "%s" of node "%s"' %
-                                    (sconn, src_edge.src))
+                                    ' connector "%s" of node "%s"' % (sconn, src_edge.src))
                 ctype = sconn
             inferred[(node, cname, True)] = ctype
 
@@ -113,19 +104,16 @@ def infer_node_connectors(sdfg: SDFG, state: SDFGState, node: nodes.Node,
             continue
 
         scalar = (e.data.subset and e.data.subset.num_elements() == 1
-                  and (not e.data.dynamic or
-                       (e.data.dynamic and e.data.wcr is not None)))
+                  and (not e.data.dynamic or (e.data.dynamic and e.data.wcr is not None)))
         if e.data.data is not None:
-            allocated_as_scalar = (sdfg.arrays[e.data.data].storage
-                                   is not dtypes.StorageType.GPU_Global)
+            allocated_as_scalar = (sdfg.arrays[e.data.data].storage is not dtypes.StorageType.GPU_Global)
         else:
             allocated_as_scalar = True
 
         if inferred[(node, cname, False)].type is None:
             # If nested SDFG, try to use internal array type
             if isinstance(node, nodes.NestedSDFG):
-                scalar = (isinstance(node.sdfg.arrays[cname], data.Scalar)
-                          and allocated_as_scalar)
+                scalar = (isinstance(node.sdfg.arrays[cname], data.Scalar) and allocated_as_scalar)
                 dtype = node.sdfg.arrays[cname].dtype
                 ctype = (dtype if scalar else dtypes.pointer(dtype))
             elif e.data.data is not None:  # Obtain type from memlet
@@ -148,8 +136,7 @@ def infer_node_connectors(sdfg: SDFG, state: SDFGState, node: nodes.Node,
     for e in state.out_edges(node):
         cname = e.src_conn
         if cname and inferred[(node, cname, False)].type is None:
-            raise TypeError('Ambiguous or uninferable type in'
-                            ' connector "%s" of node "%s"' % (cname, node))
+            raise TypeError('Ambiguous or uninferable type in' ' connector "%s" of node "%s"' % (cname, node))
 
 
 def infer_connector_types(sdfg: SDFG,

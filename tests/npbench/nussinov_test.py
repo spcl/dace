@@ -35,14 +35,11 @@ def kernel(seq: dc.int32[N]):
                 table[i, j] = np.maximum(table[i, j], table[i + 1, j])
             if j - 1 >= 0 and i + 1 < N:
                 if i < j - 1:
-                    table[i, j] = np.maximum(
-                        table[i, j],
-                        table[i + 1, j - 1] + match(seq[i], seq[j]))
+                    table[i, j] = np.maximum(table[i, j], table[i + 1, j - 1] + match(seq[i], seq[j]))
                 else:
                     table[i, j] = np.maximum(table[i, j], table[i + 1, j - 1])
             for k in range(i + 1, j):
-                table[i, j] = np.maximum(table[i, j],
-                                         table[i, k] + table[k + 1, j])
+                table[i, j] = np.maximum(table[i, j], table[i, k] + table[k + 1, j])
 
     return table
 
@@ -64,9 +61,7 @@ def ground_truth(N, seq):
                 table[i, j] = max(table[i, j], table[i + 1, j])
             if j - 1 >= 0 and i + 1 < N:
                 if i < j - 1:
-                    table[i, j] = max(
-                        table[i, j],
-                        table[i + 1, j - 1] + match_gt(seq[i], seq[j]))
+                    table[i, j] = max(table[i, j], table[i + 1, j - 1] + match_gt(seq[i], seq[j]))
                 else:
                     table[i, j] = max(table[i, j], table[i + 1, j - 1])
             for k in range(i + 1, j):
@@ -100,12 +95,12 @@ def run_nussinov(device_type: dace.dtypes.DeviceType):
     if device_type in {dace.dtypes.DeviceType.CPU, dace.dtypes.DeviceType.GPU}:
         # Parse the SDFG and apply autopot
         sdfg = kernel.to_sdfg()
-        sdfg.apply_strict_transformations()
+        sdfg.simplify()
         dace_res = sdfg(seq=seq, N=N)
 
     elif device_type == dace.dtypes.DeviceType.FPGA:
         # Parse SDFG and apply FPGA friendly optimization
-        sdfg = kernel.to_sdfg(strict=True)
+        sdfg = kernel.to_sdfg(simplify=True)
         applied = sdfg.apply_transformations([FPGATransformSDFG])
         assert applied == 1
 
@@ -131,7 +126,7 @@ def test_gpu():
     run_nussinov(dace.dtypes.DeviceType.GPU)
 
 
-@fpga_test(assert_ii_1=False, xilinx=False)
+@fpga_test(assert_ii_1=False)
 def test_fpga():
     return run_nussinov(dace.dtypes.DeviceType.FPGA)
 
@@ -139,11 +134,7 @@ def test_fpga():
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("-t",
-                        "--target",
-                        default='cpu',
-                        choices=['cpu', 'gpu', 'fpga'],
-                        help='Target platform')
+    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu', 'fpga'], help='Target platform')
 
     args = vars(parser.parse_args())
     target = args["target"]

@@ -37,44 +37,19 @@ def memory_buffering(vec_width, use_library_node, elementwise):
     sdfg = dace.SDFG("memory_buffering_library_node")
     state = sdfg.add_state("memory_buffering_library_node")
 
-    sdfg.add_array("input_array", (n / mem_width, ),
-                   memory_type,
-                   transient=True,
-                   storage=dace.StorageType.FPGA_Global)
-    sdfg.add_array("output_array", (n / mem_width, ),
-                   memory_type,
-                   transient=True,
-                   storage=dace.StorageType.FPGA_Global)
-    sdfg.add_stream("read_to_gearbox",
-                    memory_type,
-                    transient=True,
-                    storage=dace.StorageType.FPGA_Local)
-    sdfg.add_stream("gearbox_to_kernel",
-                    kernel_type,
-                    transient=True,
-                    storage=dace.StorageType.FPGA_Local)
-    sdfg.add_stream("kernel_to_gearbox",
-                    kernel_type,
-                    transient=True,
-                    storage=dace.StorageType.FPGA_Local)
-    sdfg.add_stream("gearbox_to_write",
-                    memory_type,
-                    transient=True,
-                    storage=dace.StorageType.FPGA_Local)
+    sdfg.add_array("input_array", (n / mem_width, ), memory_type, transient=True, storage=dace.StorageType.FPGA_Global)
+    sdfg.add_array("output_array", (n / mem_width, ), memory_type, transient=True, storage=dace.StorageType.FPGA_Global)
+    sdfg.add_stream("read_to_gearbox", memory_type, transient=True, storage=dace.StorageType.FPGA_Local)
+    sdfg.add_stream("gearbox_to_kernel", kernel_type, transient=True, storage=dace.StorageType.FPGA_Local)
+    sdfg.add_stream("kernel_to_gearbox", kernel_type, transient=True, storage=dace.StorageType.FPGA_Local)
+    sdfg.add_stream("gearbox_to_write", memory_type, transient=True, storage=dace.StorageType.FPGA_Local)
 
     # Read from memory
     memory_read = state.add_read("input_array")
     read_to_gearbox_write = state.add_write("read_to_gearbox")
-    read_entry, read_exit = state.add_map(
-        "read", {"i": f"0:n/{mem_width}"},
-        schedule=dace.ScheduleType.FPGA_Device)
-    read_tasklet = state.add_tasklet("read", {"mem"}, {"to_gearbox"},
-                                     "to_gearbox = mem")
-    state.add_memlet_path(memory_read,
-                          read_entry,
-                          read_tasklet,
-                          dst_conn="mem",
-                          memlet=dace.Memlet(f"input_array[i]"))
+    read_entry, read_exit = state.add_map("read", {"i": f"0:n/{mem_width}"}, schedule=dace.ScheduleType.FPGA_Device)
+    read_tasklet = state.add_tasklet("read", {"mem"}, {"to_gearbox"}, "to_gearbox = mem")
+    state.add_memlet_path(memory_read, read_entry, read_tasklet, dst_conn="mem", memlet=dace.Memlet(f"input_array[i]"))
     state.add_memlet_path(read_tasklet,
                           read_exit,
                           read_to_gearbox_write,
@@ -90,26 +65,20 @@ def memory_buffering(vec_width, use_library_node, elementwise):
         state.add_memlet_path(read_to_gearbox_read,
                               read_gearbox,
                               dst_conn="from_memory",
-                              memlet=dace.Memlet("read_to_gearbox[0]",
-                                                 volume=n / mem_width))
+                              memlet=dace.Memlet("read_to_gearbox[0]", volume=n / mem_width))
         state.add_memlet_path(read_gearbox,
                               gearbox_to_kernel_write,
                               src_conn="to_kernel",
-                              memlet=dace.Memlet("gearbox_to_kernel[0]",
-                                                 volume=n / vec_width))
+                              memlet=dace.Memlet("gearbox_to_kernel[0]", volume=n / vec_width))
     else:
-        sdfg.add_array("read_buffer", (1, ),
-                       memory_type,
-                       storage=dace.StorageType.FPGA_Local,
-                       transient=True)
+        sdfg.add_array("read_buffer", (1, ), memory_type, storage=dace.StorageType.FPGA_Local, transient=True)
         read_buffer_read = state.add_read("read_buffer")
         read_buffer_write = state.add_write("read_buffer")
-        read_gearbox_entry, read_gearbox_exit = state.add_map(
-            "gearbox_read", {
-                "i": f"0:n/{mem_width}",
-                "j": f"0:{gear_factor}"
-            },
-            schedule=dace.ScheduleType.FPGA_Device)
+        read_gearbox_entry, read_gearbox_exit = state.add_map("gearbox_read", {
+            "i": f"0:n/{mem_width}",
+            "j": f"0:{gear_factor}"
+        },
+                                                              schedule=dace.ScheduleType.FPGA_Device)
         read_gearbox_tasklet = state.add_tasklet(
             "gearbox_read", {
                 "from_memory": memory_type,
@@ -122,8 +91,7 @@ buffer_out = wide""")
                               read_gearbox_entry,
                               read_gearbox_tasklet,
                               dst_conn="from_memory",
-                              memlet=dace.Memlet("read_to_gearbox[0]",
-                                                 dynamic=True))
+                              memlet=dace.Memlet("read_to_gearbox[0]", dynamic=True))
         state.add_memlet_path(read_buffer_read,
                               read_gearbox_entry,
                               read_gearbox_tasklet,
@@ -143,11 +111,9 @@ buffer_out = wide""")
     # Some fictional compute
     gearbox_to_kernel_read = state.add_read("gearbox_to_kernel")
     kernel_to_gearbox_write = state.add_write("kernel_to_gearbox")
-    compute_entry, compute_exit = state.add_map(
-        "compute", {"i": f"0:n/{vec_width}"},
-        schedule=dace.ScheduleType.FPGA_Device)
-    compute_tasklet = state.add_tasklet("compute", {"val_in"}, {"val_out"},
-                                        "val_out = val_in + 1")
+    compute_entry, compute_exit = state.add_map("compute", {"i": f"0:n/{vec_width}"},
+                                                schedule=dace.ScheduleType.FPGA_Device)
+    compute_tasklet = state.add_tasklet("compute", {"val_in"}, {"val_out"}, "val_out = val_in + 1")
     state.add_memlet_path(gearbox_to_kernel_read,
                           compute_entry,
                           compute_tasklet,
@@ -168,29 +134,22 @@ buffer_out = wide""")
         state.add_memlet_path(kernel_to_gearbox_read,
                               write_gearbox,
                               dst_conn="from_kernel",
-                              memlet=dace.Memlet("kernel_to_gearbox[0]",
-                                                 volume=n / vec_width))
+                              memlet=dace.Memlet("kernel_to_gearbox[0]", volume=n / vec_width))
         state.add_memlet_path(write_gearbox,
                               gearbox_to_write_write,
                               src_conn="to_memory",
-                              memlet=dace.Memlet("gearbox_to_write[0]",
-                                                 volume=n / mem_width))
+                              memlet=dace.Memlet("gearbox_to_write[0]", volume=n / mem_width))
     else:
-        sdfg.add_array("write_buffer", (1, ),
-                       memory_type,
-                       storage=dace.StorageType.FPGA_Local,
-                       transient=True)
+        sdfg.add_array("write_buffer", (1, ), memory_type, storage=dace.StorageType.FPGA_Local, transient=True)
         write_buffer_read = state.add_read("write_buffer")
         write_buffer_write = state.add_write("write_buffer")
-        write_gearbox_entry, write_gearbox_exit = state.add_map(
-            "gearbox_write", {
-                "i": f"0:n/{mem_width}",
-                "j": f"0:{gear_factor}"
-            },
-            schedule=dace.ScheduleType.FPGA_Device)
+        write_gearbox_entry, write_gearbox_exit = state.add_map("gearbox_write", {
+            "i": f"0:n/{mem_width}",
+            "j": f"0:{gear_factor}"
+        },
+                                                                schedule=dace.ScheduleType.FPGA_Device)
         write_gearbox_tasklet = state.add_tasklet(
-            "gearbox_write", {"from_kernel", "buffer_in"},
-            {"to_memory", "buffer_out"}, f"""\
+            "gearbox_write", {"from_kernel", "buffer_in"}, {"to_memory", "buffer_out"}, f"""\
 wide = buffer_in
 wide[j] = from_kernel
 if j == {gear_factor} - 1:
@@ -210,8 +169,7 @@ buffer_out = wide""")
                               write_gearbox_exit,
                               gearbox_to_write_write,
                               src_conn="to_memory",
-                              memlet=dace.Memlet("gearbox_to_write[0]",
-                                                 dynamic=True))
+                              memlet=dace.Memlet("gearbox_to_write[0]", dynamic=True))
         state.add_memlet_path(write_gearbox_tasklet,
                               write_gearbox_exit,
                               write_buffer_write,
@@ -221,11 +179,8 @@ buffer_out = wide""")
     # Write memory
     gearbox_to_write_read = state.add_read("gearbox_to_write")
     memory_write = state.add_write("output_array")
-    write_entry, write_exit = state.add_map(
-        "write", {"i": f"0:n/{mem_width}"},
-        schedule=dace.ScheduleType.FPGA_Device)
-    write_tasklet = state.add_tasklet("write", {"from_gearbox"}, {"mem"},
-                                      "mem = from_gearbox")
+    write_entry, write_exit = state.add_map("write", {"i": f"0:n/{mem_width}"}, schedule=dace.ScheduleType.FPGA_Device)
+    write_tasklet = state.add_tasklet("write", {"from_gearbox"}, {"mem"}, "mem = from_gearbox")
     state.add_memlet_path(gearbox_to_write_read,
                           write_entry,
                           write_tasklet,
@@ -242,20 +197,18 @@ buffer_out = wide""")
     pre_state = sdfg.add_state("host_to_device")
     host_to_device_read = pre_state.add_read("input_array_host")
     host_to_device_write = pre_state.add_write("input_array")
-    pre_state.add_memlet_path(
-        host_to_device_read,
-        host_to_device_write,
-        memlet=dace.Memlet(f"input_array[0:n/{mem_width}]"))
+    pre_state.add_memlet_path(host_to_device_read,
+                              host_to_device_write,
+                              memlet=dace.Memlet(f"input_array[0:n/{mem_width}]"))
 
     # Copy data back to the host
     sdfg.add_array("output_array_host", (n, ), dtype)
     post_state = sdfg.add_state("device_to_host")
     device_to_host_read = post_state.add_read("output_array")
     device_to_host_write = post_state.add_write("output_array_host")
-    post_state.add_memlet_path(
-        device_to_host_read,
-        device_to_host_write,
-        memlet=dace.Memlet(f"output_array[0:n/{mem_width}]"))
+    post_state.add_memlet_path(device_to_host_read,
+                               device_to_host_write,
+                               memlet=dace.Memlet(f"output_array[0:n/{mem_width}]"))
 
     # Link states
     sdfg.add_edge(pre_state, state, dace.InterstateEdge())

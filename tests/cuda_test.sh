@@ -1,5 +1,5 @@
 #!/bin/bash
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 
 set -a
 
@@ -9,7 +9,7 @@ PYTHON_BINARY="${PYTHON_BINARY:-python3}"
 
 DACE_debugprint="${DACE_debugprint:-0}"
 DACE_optimizer_transform_on_call=${DACE_optimizer_transform_on_call:-1}
-DACE_optimizer_automatic_strict_transformations=${DACE_optimizer_automatic_strict_transformations:-1}
+DACE_optimizer_automatic_simplification=${DACE_optimizer_automatic_simplification:-1}
 ERRORS=0
 FAILED_TESTS=""
 TESTS=0
@@ -157,11 +157,10 @@ runoptargs() {
 
 runall() {
     echo "Running $PYTHON_BINARY"
-    runopt samples/simple/sum.py $1 'GPUTransformMap$0'
     runopt samples/simple/axpy.py $1 'GPUTransformSDFG$0'
-    runopt samples/simple/filter.py $1 'GPUTransformSDFG$0'
-    runopt samples/customization/tensor_cores.py $1
-    runoptargs samples/simple/matmul.py --version optimize_gpu
+    runopt samples/explicit/filter.py $1 'GPUTransformSDFG$0'
+    runopt samples/codegen/tensor_cores.py $1
+    runoptargs samples/optimization/matmul.py --version optimize_gpu
 }
 
 
