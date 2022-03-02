@@ -280,6 +280,7 @@ class CompiledSDFG(object):
     def finalize(self):
         if self._exit is not None:
             self._exit(self._libhandle)
+            self._initialized = False
 
     def __call__(self, *args, **kwargs):
         # Update arguments from ordered list
