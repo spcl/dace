@@ -300,17 +300,18 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
     debuginfo = DebugInfoProperty(allow_none=True)
 
     _pgrids = Property(dtype=dict,
-                       desc="Process grids for this SDFG",
+                       desc="Process-grid descriptors for this SDFG",
                        to_json=_arrays_to_json,
                        from_json=_arrays_from_json)
     _subarrays = Property(dtype=dict,
-                          desc="MPI sub-arrays for this SDFG",
+                          desc="Sub-array descriptors for this SDFG",
                           to_json=_arrays_to_json,
                           from_json=_arrays_from_json)
     _rdistrarrays = Property(dtype=dict,
-                             desc="Redistribution of MPI sub-arrays for this SDFG",
+                             desc="Sub-array redistribution descriptors for this SDFG",
                              to_json=_arrays_to_json,
                              from_json=_arrays_from_json)
+    
     callback_mapping = DictProperty(str,
                                     str,
                                     desc='Mapping between callback name and its original callback '
@@ -359,7 +360,8 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         self.callback_mapping = {}
         # Counter to make it easy to create temp transients
         self._temp_transients = 0
-        # Process grid-related fields
+
+        # Grid-distribution-related fields
         self._pgrids = {}
         self._pgrids_count = 0
         self._subarrays = {}
@@ -491,20 +493,17 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
     
     @property
     def process_grids(self):
-        """ Returns a dictionary of process grids used in this SDFG.
-        """
+        """ Returns a dictionary of process-grid descriptors (`ProcessGrid` objects) used in this SDFG. """
         return self._pgrids
     
     @property
     def subarrays(self):
-        """ Returns a dictionary of sub-arrays used in this SDFG.
-        """
+        """ Returns a dictionary of sub-array descriptors (`SubArray` objects) used in this SDFG. """
         return self._subarrays
     
     @property
     def rdistrarrays(self):
-        """ Returns a dictionary of array redistributions used in this SDFG.
-        """
+        """ Returns a dictionary of sub-array redistribution descriptors (`RedistrArray` objects) used in this SDFG. """
         return self._rdistrarrays
 
     def data(self, dataname: str):
@@ -1741,7 +1740,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         return name
     
     def temp_pgrid_name(self):
-        """ Returns a temporary process grid name that can be used in this SDFG. """
+        """ Returns a temporary process-grid name that can be used in this SDFG. """
 
         name = '__pgrid%d' % self._pgrids_count
         while name in self._pgrids:
@@ -1751,19 +1750,17 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
         return name
     
-    def add_pgrid(self, shape=None, parent_grid=None, color=None,
-                  exact_grid=None, root=0):
+    def add_pgrid(self, shape=None, parent_grid=None, color=None, exact_grid=None, root=0):
+        """ Adds a process-grid to the process-grid descriptor store. """
+
         if not (shape or parent_grid):
-            raise ValueError("Process grid must either have its shape defined"
-                             " or be linked to a parent-grid.")
+            raise ValueError("Process-grid must either have its shape defined or be linked to a parent-grid.")
         grid_name = self.temp_pgrid_name()
         is_subgrid = (parent_grid is not None)
         shape = shape or []
         if parent_grid and isinstance(parent_grid, str):
             parent_grid = self._pgrids[parent_grid]
-        self._pgrids[grid_name] = ProcessGrid(
-            grid_name, is_subgrid, shape, parent_grid,
-            color, exact_grid, root)
+        self._pgrids[grid_name] = ProcessGrid(grid_name, is_subgrid, shape, parent_grid, color, exact_grid, root)
         self.append_init_code(self._pgrids[grid_name].init_code())
         self.append_exit_code(self._pgrids[grid_name].exit_code())
         return grid_name
@@ -1780,15 +1777,16 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         return name
 
     def add_subarray(self, dtype, shape, subshape, pgrid, correspondence):
+        """ Adds a sub-array to the sub-array descriptor store. """
+
         subarray_name = self.temp_subarray_name()
-        self._subarrays[subarray_name] = SubArray(
-            subarray_name, dtype, shape, subshape, pgrid, correspondence)
+        self._subarrays[subarray_name] = SubArray(subarray_name, dtype, shape, subshape, pgrid, correspondence)
         self.append_init_code(self._subarrays[subarray_name].init_code())
         self.append_exit_code(self._subarrays[subarray_name].exit_code())
         return subarray_name
     
     def temp_rdistrarray_name(self):
-        """ Returns a temporary redistribution name that can be used in this SDFG. """
+        """ Returns a temporary sub-array redistribution name that can be used in this SDFG. """
 
         name = '__rdistrarray%d' % self._rdistrarrays_count
         while name in self._rdistrarrays:
@@ -1799,13 +1797,13 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         return name
     
     def add_rdistrarray(self, array_a, array_b):
+        """ Adds a sub-array redistribution to the sub-array redistribtuion descriptor store. """
+
         rdistrarray_name = self.temp_rdistrarray_name()
-        self._rdistrarrays[rdistrarray_name] = RedistrArray(
-            rdistrarray_name, array_a, array_b)
+        self._rdistrarrays[rdistrarray_name] = RedistrArray(rdistrarray_name, array_a, array_b)
         self.append_init_code(self._rdistrarrays[rdistrarray_name].init_code(self))
         self.append_exit_code(self._rdistrarrays[rdistrarray_name].exit_code(self))
         return rdistrarray_name
-
 
     def add_loop(
         self,
