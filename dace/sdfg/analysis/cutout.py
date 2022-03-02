@@ -6,7 +6,8 @@ testing or optimization.
 from collections import deque
 import copy
 from typing import Deque, Dict, List, Set
-from dace.sdfg import nodes as nd, SDFG, SDFGState
+from dace import data
+from dace.sdfg import nodes as nd, SDFG, SDFGState, utils as sdutil
 from dace.sdfg.state import StateSubgraphView
 
 
@@ -60,6 +61,7 @@ def cutout_state(state: SDFGState, *nodes: nd.Node) -> SDFG:
 
 def _extend_subgraph_with_access_nodes(state: SDFGState, subgraph: StateSubgraphView) -> StateSubgraphView:
     """ Expands a subgraph view to include necessary input/output access nodes, using memlet paths. """
+    sdfg = state.parent
     result: List[nd.Node] = copy.copy(subgraph.nodes())
     queue: Deque[nd.Node] = deque(subgraph.nodes())
 
@@ -67,6 +69,10 @@ def _extend_subgraph_with_access_nodes(state: SDFGState, subgraph: StateSubgraph
     while len(queue) > 0:
         node = queue.pop()
         if isinstance(node, nd.AccessNode):
+            if isinstance(node.desc(sdfg), data.View):
+                vnode = sdutil.get_view_node(state, node)
+                result.append(vnode)
+                queue.append(vnode)
             continue
         for e in state.in_edges(node):
             # Special case: IN_* connectors are not traversed further
