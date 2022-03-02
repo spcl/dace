@@ -749,9 +749,14 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         from dace.codegen.instrumentation.data.data_report import InstrumentedDataReport
 
         if timestamp is None:
-            timestamp = sorted(self.available_data_reports())[-1]
+            reports = self.available_data_reports()
+            if not reports:
+                return None
+            timestamp = sorted(reports)[-1]
 
         folder = os.path.join(self.build_folder, 'data', str(timestamp))
+        if not os.path.exists(folder):
+            return None
 
         return InstrumentedDataReport(self, folder)
 
