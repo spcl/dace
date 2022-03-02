@@ -337,6 +337,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         self._sdfg_list = [self]
         self._start_state: Optional[int] = None
         self._arrays = {}  # type: Dict[str, dt.Array]
+        self._labels: Set[str] = set()
         self.global_code = {'frame': CodeBlock("", dtypes.Language.CPP)}
         self.init_code = {'frame': CodeBlock("", dtypes.Language.CPP)}
         self.exit_code = {'frame': CodeBlock("", dtypes.Language.CPP)}
@@ -1363,10 +1364,13 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                                    state.
             :return: A new SDFGState object.
         """
+        if self._labels is None or len(self._labels) != self.number_of_nodes():
+            self._labels = set(s.label for s in self.nodes())
         label = label or 'state'
-        existing_labels = set(s.label for s in self.nodes())
+        existing_labels = self._labels
         label = dt.find_new_name(label, existing_labels)
         state = SDFGState(label, self)
+        self._labels.add(label)
 
         self.add_node(state, is_start_state=is_start_state)
         return state

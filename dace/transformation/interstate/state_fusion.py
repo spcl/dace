@@ -1,7 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ State fusion transformation """
 
-from typing import List, Set
+from typing import Dict, List, Set
 import networkx as nx
 
 from dace import dtypes, registry, sdfg, subsets
@@ -116,6 +116,53 @@ class StateFusion(transformation.MultiStateTransformation, transformation.Simpli
                 if result is True or result is None:
                     return True
         return False
+
+    def has_path(self, first_state: SDFGState, second_state: SDFGState,
+                 match_nodes: Dict[nodes.AccessNode, nodes.AccessNode], node_a: nodes.Node, node_b: nodes.Node) -> bool:
+        """ Check for paths between the two states if they are fused. """
+        for match_a, match_b in match_nodes.items():
+            if nx.has_path(first_state._nx, node_a, match_a) and nx.has_path(second_state._nx, match_b, node_b):
+                return True
+        return False
+
+    def _check_all_paths(self, first_state: SDFGState, second_state: SDFGState,
+                         match_nodes: Dict[nodes.AccessNode, nodes.AccessNode], nodes_first: List[nodes.AccessNode],
+                         nodes_second: List[nodes.AccessNode], first_read: bool, second_read: bool) -> bool:
+        for node_a in nodes_first:
+            succ_a = first_state.successors(node_a)
+            for node_b in nodes_second:
+                if all(self.has_path(first_state, second_state, match_nodes, sa, node_b) for sa in succ_a):
+                    return True
+        # Path not found, check memlets
+        if StateFusion.memlets_intersect(first_state, nodes_first, first_read, second_state, nodes_second, second_read):
+            return False
+        return True
+
+    def _check_paths(self, first_state: SDFGState, second_state: SDFGState, match_nodes: Dict[nodes.AccessNode,
+                                                                                              nodes.AccessNode],
+                     nodes_first: List[nodes.AccessNode], nodes_second: List[nodes.AccessNode],
+                     second_input: Set[nodes.AccessNode], first_read: bool, second_read: bool) -> bool:
+        fail = False
+        path_found = False
+        for match in match_nodes:
+            for node in nodes_first:
+                path_to = nx.has_path(first_state._nx, node, match)
+                if not path_to:
+                    continue
+                path_found = True
+                node2 = next(n for n in second_input if n.data == match.data)
+                if not all(nx.has_path(second_state._nx, node2, n) for n in nodes_second):
+                    fail = True
+                    break
+            if fail or path_found:
+                break
+
+        # Check for intersection (if None, fusion is ok)
+        if fail or not path_found:
+            if StateFusion.memlets_intersect(first_state, nodes_first, first_read, second_state, nodes_second,
+                                             second_read):
+                return False
+        return True
 
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
         first_state: SDFGState = self.first_state
@@ -265,8 +312,9 @@ class StateFusion(transformation.MultiStateTransformation, transformation.Simpli
                     if isinstance(x, nodes.AccessNode) and x.data in fused_cc.first_outputs
                 ]
                 # Those nodes will be the connection points upon fusion
-                match_nodes = {
-                    next(n for n in order if n.data == match)
+                match_nodes: Dict[nodes.AccessNode, nodes.AccessNode] = {
+                    next(n for n in order
+                         if n.data == match): next(n for n in fused_cc.second_input_nodes if n.data == match)
                     for match in (fused_cc.first_outputs
                                   & fused_cc.second_inputs)
                 }
@@ -280,26 +328,9 @@ class StateFusion(transformation.MultiStateTransformation, transformation.Simpli
 
                     # If there is a path for the candidate that goes through
                     # the match nodes in both states, there is no conflict
-                    fail = False
-                    path_found = False
-                    for match in match_nodes:
-                        for node in nodes_first:
-                            path_to = nx.has_path(first_state._nx, node, match)
-                            if not path_to:
-                                continue
-                            path_found = True
-                            node2 = next(n for n in second_input if n.data == match.data)
-                            if not all(nx.has_path(second_state._nx, node2, n) for n in nodes_second):
-                                fail = True
-                                break
-                        if fail or path_found:
-                            break
-
-                    # Check for intersection (if None, fusion is ok)
-                    if fail or not path_found:
-                        if StateFusion.memlets_intersect(first_state, nodes_first, False, second_state, nodes_second,
-                                                         False):
-                            return False
+                    if not self._check_paths(first_state, second_state, match_nodes, nodes_first, nodes_second,
+                                             second_input, False, False):
+                        return False
                 # End of write-write hazard check
 
                 first_inout = fused_cc.first_inputs | fused_cc.first_outputs
@@ -325,6 +356,15 @@ class StateFusion(transformation.MultiStateTransformation, transformation.Simpli
                                                     for n0 in nodes_first:
                                                         if not nx.has_path(first_state._nx, n0, n1):
                                                             return False
+                                # Read-write hazard where an access node is connected
+                                # to more than one output at once: (a) -> (b)  |  (d) -> [code] -> (d)
+                                #                                     \-> (c)  |
+                                # in the first state, and the same memory is inout in the second state
+                                # All paths need to lead to `src`
+                                if not self._check_all_paths(first_state, second_state, match_nodes, nodes_first,
+                                                             nodes_second, True, False):
+                                    return False
+
                         continue
                     # If an input/output of a connected component in the first
                     # state is an output of another connected component in the
@@ -371,26 +411,10 @@ class StateFusion(transformation.MultiStateTransformation, transformation.Simpli
 
                     # If there is a path for the candidate that goes through
                     # the match nodes in both states, there is no conflict
-                    fail = False
-                    path_found = False
-                    for match in match_nodes:
-                        for node in nodes_first:
-                            path_to = nx.has_path(first_state._nx, node, match)
-                            if not path_to:
-                                continue
-                            path_found = True
-                            node2 = next(n for n in second_input if n.data == match.data)
-                            if not all(nx.has_path(second_state._nx, node2, n) for n in nodes_second):
-                                fail = True
-                                break
-                        if fail or path_found:
-                            break
+                    if not self._check_paths(first_state, second_state, match_nodes, nodes_first, nodes_second,
+                                             second_input, True, False):
+                        return False
 
-                    # Check for intersection (if None, fusion is ok)
-                    if fail or not path_found:
-                        if StateFusion.memlets_intersect(first_state, nodes_first, True, second_state, nodes_second,
-                                                         False):
-                            return False
                 # End of read-write hazard check
 
                 # Read-after-write dependencies: if there is more than one first
