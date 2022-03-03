@@ -4,6 +4,7 @@ import numpy as np
 
 from typing import Generator, Tuple, Dict, List
 
+from dace import SDFG, dtypes
 from dace.optimization import cutout_tuner
 from dace.transformation import dataflow as df
 from dace.transformation import helpers as xfh
@@ -11,9 +12,9 @@ from dace.sdfg.analysis import cutout as cutter
 
 
 class MapTilingTuner(cutout_tuner.CutoutTuner):
-
-    def __init__(self, sdfg: dace.SDFG) -> None:
+    def __init__(self, sdfg: SDFG, measurement: dtypes.InstrumentationType = dtypes.InstrumentationType.Timer) -> None:
         super().__init__(sdfg=sdfg)
+        self.instrument = measurement
 
     def cutouts(self) -> Generator[Tuple[dace.SDFGState, dace.nodes.Node], None, None]:
         for node, state in self._sdfg.all_nodes_recursive():
@@ -42,7 +43,7 @@ class MapTilingTuner(cutout_tuner.CutoutTuner):
         for state, parent_map in self.cutouts():
             subgraph_nodes = state.scope_subgraph(parent_map).nodes()
             cutout = cutter.cutout_state(state, *subgraph_nodes)
-            cutout.instrument = dace.InstrumentationType.Timer
+            cutout.instrument = self.instrument
 
             arguments = {}
             for cstate in cutout.nodes():

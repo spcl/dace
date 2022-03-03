@@ -7,7 +7,7 @@ import itertools
 
 from typing import Generator, Tuple, Dict, List, Sequence, Set
 
-from dace import data as dt
+from dace import data as dt, SDFG, dtypes
 from dace.optimization import cutout_tuner
 from dace.transformation import helpers as xfh
 from dace.sdfg.analysis import cutout as cutter
@@ -19,8 +19,9 @@ except (ImportError, ModuleNotFoundError):
 
 
 class DataLayoutTuner(cutout_tuner.CutoutTuner):
-    def __init__(self, sdfg: dace.SDFG) -> None:
+    def __init__(self, sdfg: SDFG, measurement: dtypes.InstrumentationType = dtypes.InstrumentationType.Timer) -> None:
         super().__init__(sdfg=sdfg)
+        self.instrument = measurement
 
     def cutouts(self) -> Generator[Tuple[dace.SDFGState, dace.nodes.Node], None, None]:
         for node, state in self._sdfg.all_nodes_recursive():
@@ -82,7 +83,7 @@ class DataLayoutTuner(cutout_tuner.CutoutTuner):
         for state, node in self.cutouts():
             subgraph_nodes = state.scope_subgraph(node).nodes() if isinstance(node, dace.nodes.MapEntry) else [node]
             cutout = cutter.cutout_state(state, *subgraph_nodes)
-            cutout.instrument = dace.InstrumentationType.Timer
+            cutout.instrument = self.instrument
 
             # Prepare original arguments to sub-SDFG from instrumented data report
             arguments: Dict[str, dt.ArrayLike] = {}
