@@ -5,7 +5,7 @@ import numpy as np
 
 from typing import Dict, Generator, Any, Tuple, List
 
-from dace.optim import auto_tuner
+from dace.optimization import auto_tuner
 from dace.codegen.instrumentation.data import data_report
 
 

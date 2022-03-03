@@ -4,15 +4,13 @@ import copy
 import math
 
 import itertools
-import numpy as np
 
 from typing import Generator, Tuple, Dict, List, Sequence, Set
 
 from dace import data as dt
-from dace.optim import cutout_tuner
+from dace.optimization import cutout_tuner
 from dace.transformation import helpers as xfh
 from dace.sdfg.analysis import cutout as cutter
-from dace.codegen.instrumentation.data import data_report
 
 try:
     from tqdm import tqdm

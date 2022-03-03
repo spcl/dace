@@ -1,7 +1,7 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 import math
 import dace
-import dace.optim as optim
+import dace.optimization as optim
 import numpy as np
 
 from dace.transformation.auto.auto_optimize import auto_optimize
