@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 """ A module that contains type definitions for distributed SDFGs. """
 import functools
 import re
@@ -10,10 +10,8 @@ from typing import Set, Sequence, Tuple
 
 import dace.dtypes as dtypes
 from dace import symbolic, serialize
-from dace.properties import (EnumProperty, Property, make_properties,
-                             DictProperty, SubArrayProperty, ShapeProperty,
-                             SubsetProperty, SymbolicProperty,
-                             TypeClassProperty, DebugInfoProperty, CodeProperty,
+from dace.properties import (EnumProperty, Property, make_properties, DictProperty, SubArrayProperty, ShapeProperty,
+                             SubsetProperty, SymbolicProperty, TypeClassProperty, DebugInfoProperty, CodeProperty,
                              ListProperty)
 
 
@@ -23,35 +21,46 @@ def _prod(sequence):
 
 @make_properties
 class ProcessGrid(object):
-    """ Process grids are used to create cartesian communicators.
+    """
+    Process-grids implement cartesian topologies similarly to cartesian communicators created with [MPI_Cart_create](https://www.mpich.org/static/docs/latest/www3/MPI_Cart_create.html)
+    and [MPI_Cart_sub](https://www.mpich.org/static/docs/v3.2/www3/MPI_Cart_sub.html).
+
+    The boolean parameter `is_subgrid` provides a switch between "parent" process-grids (equivalent to communicators
+    create with `MPI_Cart_create`) and sub-grids (equivalent to communicators created with `MPI_Cart_sub`).
+    
+    If `is_subgrid` is False, a "parent" process-grid is created. The `shape` parameter is equivalent to the `ndims`
+    parameter of `MPI_Cart_create`. The other parameters (except `root`) are ignored. All "parent" process-grids spawn
+    out of `MPI_COMM_WORLD`, while their `periods` and `reorder` parameters are set to False.
+
+    If `is_subgrid` is True, then the `parent_grid` is partitioned to lower-dimensional cartesian sub-grids (for more
+    details, see the documentation of `MPI_Cart_sub`). The `parent_grid` parameter is equivalent to the `comm` parameter
+    of `MPI_Cart_sub`. The `color parameter corresponds to the `remain_dims` parameters of `MPI_Cart_sub`, i.e., the i-th
+    entry specifies whether the i-th dimension is kep in the sub-grid or is dropped. The `exact_grid` parameter is either
+    None or the rank of an MPI process in the `parent_grid`. If set then, out of all the sub-grids created, only the one
+    that contains this rank is used for collective communication.
+
+    The `root` parameter is used to select the root rank for purposed of collective communication (by default 0).
     """
 
     name = Property(dtype=str, desc="The grid's name.")
-    is_subgrid = Property(
-        dtype=bool,
-        default=False,
-        desc="True if the grid is a subset of another grid.")
+    is_subgrid = Property(dtype=bool, default=False, desc="True if the grid is a subset of another grid.")
     shape = ShapeProperty(default=[], desc="The grid's shape.")
-    parent_grid = Property(
-        dtype=str,
-        allow_none=True,
-        default=None,
-        desc="Name of the parent grid (mandatory only if is_subgrid == True).")
-    color = ListProperty(
-        int,
-        allow_none=True,
-        default=None,
-        desc="The color that can be used to split the parent-grid.")
-    exact_grid = SymbolicProperty(
-        allow_none=True,
-        default=None,
-        desc="An MPI process's rank in the parent grid. Defines the exact "
-             "sub-grid that includes this rank "
-             "(optional only if is_subgrid == True).")
+    parent_grid = Property(dtype=str,
+                           allow_none=True,
+                           default=None,
+                           desc="Name of the parent grid (mandatory only if is_subgrid == True).")
+    color = ListProperty(int,
+                         allow_none=True,
+                         default=None,
+                         desc="The color that can be used to split the parent-grid.")
+    exact_grid = SymbolicProperty(allow_none=True,
+                                  default=None,
+                                  desc="An MPI process's rank in the parent grid. Defines the exact "
+                                  "sub-grid that includes this rank "
+                                  "(optional only if is_subgrid == True).")
     root = SymbolicProperty(default=0, desc="The root rank for collectives.")
 
-    def __init__(self, name, is_subgrid, shape, parent_grid=None, color=None, exact_grid=None,
-                 root=0):
+    def __init__(self, name, is_subgrid, shape, parent_grid=None, color=None, exact_grid=None, root=0):
         self.name = name
         self.is_subgrid = is_subgrid
         if is_subgrid:
@@ -60,8 +69,7 @@ class ProcessGrid(object):
             self.color = color
             self.exact_grid = exact_grid
 
-            self.shape = [parent_grid.shape[i]
-                          for i, remain in enumerate(color) if remain]
+            self.shape = [parent_grid.shape[i] for i, remain in enumerate(color) if remain]
             # self.color = [1 if i in correspondence else 0
             #               for i in range(len(parent_grid.shape))]
         else:
@@ -81,13 +89,11 @@ class ProcessGrid(object):
         if self.is_subgrid:
             if not self.parent_grid or len(self.parent_grid) == 0:
                 raise ValueError('Sub-grid misses its corresponding main-grid')
-        if any(not isinstance(
-                s, (Integral, symbolic.SymExpr, symbolic.symbol,
-                    symbolic.sympy.Basic)) for s in self.shape):
-                raise TypeError('Shape must be a list or tuple of integer '
-                                'values or symbols')
+        if any(not isinstance(s, (Integral, symbolic.SymExpr, symbolic.symbol, symbolic.sympy.Basic))
+               for s in self.shape):
+            raise TypeError('Shape must be a list or tuple of integer ' 'values or symbols')
         return True
-    
+
     def to_json(self):
         attrs = serialize.all_properties_to_json(self)
         retdict = {"type": type(self).__name__, "attributes": attrs}
@@ -101,7 +107,7 @@ class ProcessGrid(object):
         # Check validity now
         ret.validate()
         return ret
-    
+
     def init_code(self):
         if self.is_subgrid:
             tmp = ""
@@ -153,7 +159,7 @@ class ProcessGrid(object):
                 }}
             """
             return tmp
-    
+
     def exit_code(self):
         return f"""
             if (__state->{self.name}_valid) {{
@@ -172,18 +178,16 @@ class SubArray(object):
     dtype = TypeClassProperty(default=dtypes.int32, choices=dtypes.Typeclasses)
     shape = ShapeProperty(default=[], desc="The array's shape.")
     subshape = ShapeProperty(default=[], desc="The sub-array's shape.")
-    pgrid = Property(
-        dtype=str,
-        allow_none=True,
-        default=None,
-        desc="Name of the process grid where the data are distributed.")
-    correspondence = ListProperty(
-        int,
-        allow_none=True,
-        default=None,
-        desc="Correspondence of the array's indices to the process grid's "
-             "indices.")
-    
+    pgrid = Property(dtype=str,
+                     allow_none=True,
+                     default=None,
+                     desc="Name of the process grid where the data are distributed.")
+    correspondence = ListProperty(int,
+                                  allow_none=True,
+                                  default=None,
+                                  desc="Correspondence of the array's indices to the process grid's "
+                                  "indices.")
+
     def __init__(self, name, dtype, shape, subshape, pgrid, correspondence):
         self.name = name
         self.dtype = dtype
@@ -203,7 +207,7 @@ class SubArray(object):
     # `validate` function.
     def _validate(self):
         return True
-    
+
     def to_json(self):
         attrs = serialize.all_properties_to_json(self)
         retdict = {"type": type(self).__name__, "attributes": attrs}
@@ -217,7 +221,7 @@ class SubArray(object):
         # Check validity now
         ret.validate()
         return ret
-    
+
     def init_code(self):
         from dace.libraries.mpi import utils
         return f"""
@@ -270,7 +274,7 @@ class SubArray(object):
                 }}
             }}
         """
-    
+
     def exit_code(self):
         return f"""
             if (__state->{self.pgrid}_valid) {{
@@ -287,15 +291,9 @@ class RedistrArray(object):
     """
 
     name = Property(dtype=str, desc="The redistribution's name.")
-    array_a = Property(
-        dtype=str,
-        allow_none=True,
-        default=None,desc="Sub-array that will be redistributed.")
-    array_b = Property(
-        dtype=str,
-        allow_none=True,
-        default=None,desc="Output sub-array.")
-    
+    array_a = Property(dtype=str, allow_none=True, default=None, desc="Sub-array that will be redistributed.")
+    array_b = Property(dtype=str, allow_none=True, default=None, desc="Output sub-array.")
+
     def __init__(self, name, array_a, array_b):
         self.name = name
         self.array_a = array_a
@@ -312,7 +310,7 @@ class RedistrArray(object):
     # `validate` function.
     def _validate(self):
         return True
-    
+
     def to_json(self):
         attrs = serialize.all_properties_to_json(self)
         retdict = {"type": type(self).__name__, "attributes": attrs}
@@ -326,7 +324,7 @@ class RedistrArray(object):
         # Check validity now
         ret.validate()
         return ret
-    
+
     def init_code(self, sdfg):
         array_a = sdfg.subarrays[self.array_a]
         array_b = sdfg.subarrays[self.array_b]
@@ -376,9 +374,7 @@ class RedistrArray(object):
             int subsizes[{len(array_b.subshape)}];
             int origin[{len(array_b.subshape)}];
         """
-        for i, (sa, sb, cb) in enumerate(zip(array_a.subshape,
-                                             array_b.subshape,
-                                             array_b.correspondence)):
+        for i, (sa, sb, cb) in enumerate(zip(array_a.subshape, array_b.subshape, array_b.correspondence)):
             pcoord = f"__state->{array_b.pgrid}_coords[{cb}]"
             tmp += f"""
                 xi[{i}] = ({pcoord} * {sb}) / {sa};
@@ -496,7 +492,7 @@ class RedistrArray(object):
         tmp += "}"
         tmp += "}"
         return tmp
-    
+
     def exit_code(self, sdfg):
         array_a = sdfg.subarrays[self.array_a]
         return f"""
