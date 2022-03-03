@@ -78,23 +78,21 @@ def _extend_subgraph_with_access_nodes(state: SDFGState, subgraph: StateSubgraph
             # Special case: IN_* connectors are not traversed further
             if e.dst_conn.startswith('IN_'):
                 continue
-            if e.src not in result:
-                mpath = state.memlet_path(e)
-                new_nodes = [mpe.src for mpe in mpath if mpe.src not in result]
-                result.extend(new_nodes)
-                # Memlet path may end in a code node, continue traversing and expanding graph
-                queue.extend(new_nodes)
+            mpath = state.memlet_path(e)
+            new_nodes = [mpe.src for mpe in mpath if mpe.src not in result]
+            result.extend(new_nodes)
+            # Memlet path may end in a code node, continue traversing and expanding graph
+            queue.extend(new_nodes)
 
         for e in state.out_edges(node):
             # Special case: OUT_* connectors are not traversed further
             if e.src_conn.startswith('OUT_'):
                 continue
-            if e.dst not in result:
-                mpath = state.memlet_path(e)
-                new_nodes = [mpe.dst for mpe in mpath if mpe.dst not in result]
-                result.extend(new_nodes)
-                # Memlet path may end in a code node, continue traversing and expanding graph
-                queue.extend(new_nodes)
+            mpath = state.memlet_path(e)
+            new_nodes = [mpe.dst for mpe in mpath if mpe.dst not in result]
+            result.extend(new_nodes)
+            # Memlet path may end in a code node, continue traversing and expanding graph
+            queue.extend(new_nodes)
 
     # Check for mismatch in scopes
     for node in result:
