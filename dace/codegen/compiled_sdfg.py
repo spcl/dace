@@ -460,7 +460,7 @@ class CompiledSDFG(object):
 
                 zeros = cupy.empty
             except (ImportError, ModuleNotFoundError):
-                raise NotImplementedError('GPU return values are ' 'unsupported if cupy is not ' 'installed')
+                raise NotImplementedError('GPU return values are unsupported if cupy is not installed')
         if storage is dtypes.StorageType.FPGA_Global:
             raise NotImplementedError('FPGA return values are unsupported')
 

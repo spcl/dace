@@ -8,6 +8,7 @@ import numpy as np
 
 from typing import Generator, Tuple, Dict, List, Sequence, Set
 
+from dace import data as dt
 from dace.optim import cutout_tuner
 from dace.transformation import helpers as xfh
 from dace.sdfg.analysis import cutout as cutter
@@ -20,7 +21,6 @@ except (ImportError, ModuleNotFoundError):
 
 
 class DataLayoutTuner(cutout_tuner.CutoutTuner):
-
     def __init__(self, sdfg: dace.SDFG) -> None:
         super().__init__(sdfg=sdfg)
 
@@ -87,7 +87,7 @@ class DataLayoutTuner(cutout_tuner.CutoutTuner):
             cutout.instrument = dace.InstrumentationType.Timer
 
             # Prepare original arguments to sub-SDFG from instrumented data report
-            arguments: Dict[str, data_report.ArrayLike] = {}
+            arguments: Dict[str, dt.ArrayLike] = {}
             groups = [set(), set()] if group_inputs else None
             for cstate in cutout.nodes():
                 for dnode in cstate.data_nodes():
@@ -108,8 +108,7 @@ class DataLayoutTuner(cutout_tuner.CutoutTuner):
             for modified_arrays in self.space(cutout_sdfg=cutout, groups=groups):
                 # Modify data layout prior to calling
                 for marray in modified_arrays:
-                    arguments[marray] = DataLayoutTuner.make_array_from_descriptor(arguments[marray],
-                                                                                   cutout.arrays[marray])
+                    arguments[marray] = dt.make_array_from_descriptor(cutout.arrays[marray], arguments[marray])
 
                 layout = '\n'.join([f'  {k}: {v.strides}' for k, v in cutout.arrays.items() if not v.transient])
 
@@ -127,14 +126,3 @@ class DataLayoutTuner(cutout_tuner.CutoutTuner):
             tuning_report[node.label] = results
 
         return tuning_report
-
-    @staticmethod
-    def make_array_from_descriptor(original_array: data_report.ArrayLike,
-                                   descriptor: dace.data.Array) -> data_report.ArrayLike:
-        """ Creates an array that matches the given data descriptor, and copies the original array to it. """
-        # Make numpy array from data descriptor
-        npdtype = descriptor.dtype.as_numpy_dtype()
-        buffer = np.ndarray([descriptor.total_size], dtype=npdtype)
-        view = np.ndarray(descriptor.shape, npdtype, buffer=buffer, strides=descriptor.strides)
-        view[:] = original_array
-        return np.copy(view)

@@ -52,14 +52,15 @@ class CutoutTuner(auto_tuner.AutoTuner, abc.ABC):
                 if isinstance(node, dace.nodes.AccessNode):
                     node.instrument = dace.DataInstrumentationType.No_Instrumentation
 
-    def measure(self, sdfg: dace.sdfg, arguments: Dict[str, data_report.ArrayLike], repetitions: int = 30) -> np.float:
+    def measure(self, sdfg: dace.sdfg, arguments: Dict[str, dace.data.ArrayLike], repetitions: int = 30) -> np.float:
         with dace.config.set_temporary('debugprint', value=False):
             with dace.config.set_temporary('instrumentation', 'report_each_invocation', value=False):
-                csdfg = sdfg.compile()
-                for _ in range(repetitions):
-                    csdfg(**arguments)
+                with dace.config.set_temporary('compiler', 'allow_view_arguments', value=True):
+                    csdfg = sdfg.compile()
+                    for _ in range(repetitions):
+                        csdfg(**arguments)
 
-                csdfg.finalize()
+                    csdfg.finalize()
 
         report = sdfg.get_latest_report()
         durations = next(iter(next(iter(report.durations.values())).values()))

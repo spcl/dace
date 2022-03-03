@@ -5,12 +5,9 @@ from typing import Any, Dict, List, Set, Tuple, Union
 import os
 
 from dace import dtypes, SDFG
+from dace.data import ArrayLike  # Type hint
 
 import numpy as np
-try:
-    from numpy.typing import ArrayLike
-except (ModuleNotFoundError, ImportError):
-    ArrayLike = Any
 
 
 @dataclass
