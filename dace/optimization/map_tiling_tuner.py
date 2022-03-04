@@ -26,7 +26,10 @@ class MapTilingTuner(cutout_tuner.CutoutTuner):
             if isinstance(node, dace.nodes.MapEntry):
                 if xfh.get_parent_map(state, node) is not None:
                     continue
-                yield state, node
+                
+                node_id = state.node_id(node)
+                state_id = self._sdfg.node_id(state)
+                yield (state_id, node_id), (state, node)
 
     def space(self, parent_map: dace.nodes.MapEntry) -> Generator[Tuple[int], None, None]:
         # TODO: choices
@@ -41,7 +44,7 @@ class MapTilingTuner(cutout_tuner.CutoutTuner):
 
         return choices
 
-    def evaluate(self, state: dace.SDFGState, parent_map: dace.nodes.MapEntry, measurements: int, dreport: data_report.InstrumentedDataReport) -> Dict:
+    def evaluate(self, state: dace.SDFGState, parent_map: dace.nodes.MapEntry, dreport: data_report.InstrumentedDataReport, measurements: int) -> Dict:
         subgraph_nodes = state.scope_subgraph(parent_map).nodes()
         cutout = cutter.cutout_state(state, *subgraph_nodes)
         cutout.instrument = self.instrument
@@ -71,6 +74,8 @@ class MapTilingTuner(cutout_tuner.CutoutTuner):
             df.MapTiling.apply_to(tiled_sdfg, map_entry=tiled_map, options={"tile_sizes": point})
 
             runtime = self.measure(tiled_sdfg, arguments, measurements)
-            results[point] = runtime
+            
+            key = ".".join(map(lambda p: str(p), point))
+            results[key] = runtime
 
         return results

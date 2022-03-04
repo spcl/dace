@@ -10,6 +10,7 @@ from dace import SDFG, dtypes
 from dace.optimization import cutout_tuner
 from dace.transformation import helpers as xfh
 from dace.sdfg.analysis import cutout as cutter
+from dace.codegen.instrumentation.data import data_report
 
 try:
     from tqdm import tqdm
@@ -27,12 +28,16 @@ class MapPermutationTuner(cutout_tuner.CutoutTuner):
             if isinstance(node, dace.nodes.MapEntry):
                 if xfh.get_parent_map(state, node) is not None:
                     continue
-                yield state, node
+
+                node_id = state.node_id(node)
+                state_id = self._sdfg.node_id(state)
+                yield (state_id, node_id), (state, node)
+
 
     def space(self, parent_map: dace.nodes.MapEntry) -> Generator[Tuple[str], None, None]:
         return itertools.permutations(parent_map.map.params)
 
-    def evaluate(self, state: dace.SDFGState, parent_map: dace.nodes.Node, measurements: int, dreport, **kwargs) -> Dict:
+    def evaluate(self, state: dace.SDFGState, parent_map: dace.nodes.Node,  dreport: data_report.InstrumentedDataReport, measurements: int) -> Dict:
         subgraph_nodes = state.scope_subgraph(parent_map).nodes()
         cutout = cutter.cutout_state(state, *subgraph_nodes)
         cutout.instrument = self.instrument
@@ -54,6 +59,8 @@ class MapPermutationTuner(cutout_tuner.CutoutTuner):
             parent_map.map.params = point
 
             runtime = self.measure(cutout, arguments, measurements)
-            results[point] = runtime
+            
+            key = ".".join(point)
+            results[key] = runtime
 
         return results

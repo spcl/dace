@@ -99,7 +99,8 @@ class CutoutTuner(auto_tuner.AutoTuner):
         dreport: data_report.InstrumentedDataReport = self._sdfg.get_instrumented_data()
 
         tuning_report = {}
-        for (state_id, node_id), (state, node) in tqdm(list(self.cutouts())):
+        for cutout in tqdm(list(self.cutouts())):
+            (state_id, node_id), (state, node) = cutout
             fn = self.file_name(state_id, node_id, node.label)
             results = self.try_load(fn)
             
@@ -109,6 +110,7 @@ class CutoutTuner(auto_tuner.AutoTuner):
                 with open(fn, 'w') as fp:
                     json.dump(results, fp)
             
-            tuning_report[(state_id, node_id)] = results     
+            key = ".".join((str(state_id), str(node_id)))
+            tuning_report[key] = results     
 
         return tuning_report

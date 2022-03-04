@@ -39,10 +39,12 @@ class DataLayoutTuner(cutout_tuner.CutoutTuner):
             if xfh.get_parent_map(state, node) is not None:
                 continue
 
+            node_id = state.node_id(node)
+            state_id = self._sdfg.node_id(state)
             if isinstance(node, dace.nodes.MapEntry):
-                yield state, node
+                yield (state_id, node_id), (state, node)
             elif isinstance(node, (dace.nodes.LibraryNode, dace.nodes.Tasklet)):
-                yield state, node
+                yield (state_id, node_id), (state, node)
 
     def space(self, cutout_sdfg: dace.SDFG, groups: List[Set[str]] = None) -> Generator[Set[str], None, None]:
         # Make a copy of the original arrays
@@ -89,7 +91,7 @@ class DataLayoutTuner(cutout_tuner.CutoutTuner):
             # Yield configuration
             yield modified_arrays, new_arrays
 
-    def evaluate(self, state: dace.SDFGState, node: dace.nodes.Node, measurements: int, dreport: data_report.InstrumentedDataReport, group_by: bool) -> Dict:
+    def evaluate(self, state: dace.SDFGState, node: dace.nodes.Node, dreport: data_report.InstrumentedDataReport, measurements: int, group_by: TuningGroups) -> Dict:
         # No modification to original SDFG, best configuration needs to be determined globally
         subgraph_nodes = state.scope_subgraph(node).nodes() if isinstance(node, dace.nodes.MapEntry) else [node]
         cutout = cutter.cutout_state(state, *subgraph_nodes)

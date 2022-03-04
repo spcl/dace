@@ -5,6 +5,8 @@ import numpy as np
 
 from dace.transformation.auto.auto_optimize import auto_optimize
 
+from dace.optimization import data_layout_tuner
+
 N = 200
 
 
@@ -22,6 +24,6 @@ if __name__ == '__main__':
 
     tuner = optim.DataLayoutTuner(sdfg)
     tuner.dry_run(A, B)
-    report = tuner.optimize()
+    report = tuner.optimize(group_by=data_layout_tuner.TuningGroups.Inputs_Outputs)
 
     print(report)
