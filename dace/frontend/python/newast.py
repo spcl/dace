@@ -1846,7 +1846,7 @@ class ProgramVisitor(ExtNodeVisitor):
                             inner_indices.add(n)
                     # Avoid the case where all indices are outer,
                     # i.e., the whole array is carried through the nested SDFG levels.
-                    if len(outer_indices) < len(irng):
+                    if len(outer_indices) < len(irng) or irng.num_elements() == 1:
                         irng.pop(outer_indices)
                         orng.pop(outer_indices)
                         irng.offset(orng, True)
@@ -1935,7 +1935,7 @@ class ProgramVisitor(ExtNodeVisitor):
                             inner_indices.add(n)
                     # Avoid the case where all indices are outer,
                     # i.e., the whole array is carried through the nested SDFG levels.
-                    if len(outer_indices) < len(irng):
+                    if len(outer_indices) < len(irng) or irng.num_elements() == 1:
                         irng.pop(outer_indices)
                         orng.pop(outer_indices)
                         irng.offset(orng, True)
