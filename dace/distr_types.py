@@ -6,13 +6,16 @@ import copy as cp
 import sympy as sp
 import numpy
 from numbers import Number, Integral
-from typing import Set, Sequence, Tuple
+from typing import Set, Sequence, Tuple, Union
 
 import dace.dtypes as dtypes
 from dace import symbolic, serialize
 from dace.properties import (EnumProperty, Property, make_properties, DictProperty, SubArrayProperty, ShapeProperty,
                              SubsetProperty, SymbolicProperty, TypeClassProperty, DebugInfoProperty, CodeProperty,
                              ListProperty)
+
+ShapeType = Sequence[Union[Integral, str, symbolic.symbol, symbolic.SymExpr, symbolic.sympy.Basic]]
+RankType = Union[Integral, str, symbolic.symbol, symbolic.SymExpr, symbolic.sympy.Basic]
 
 
 def _prod(sequence):
@@ -28,11 +31,11 @@ class ProcessGrid(object):
     The boolean parameter `is_subgrid` provides a switch between "parent" process-grids (equivalent to communicators
     create with `MPI_Cart_create`) and sub-grids (equivalent to communicators created with `MPI_Cart_sub`).
     
-    If `is_subgrid` is False, a "parent" process-grid is created. The `shape` parameter is equivalent to the `ndims`
+    If `is_subgrid` is false, a "parent" process-grid is created. The `shape` parameter is equivalent to the `dims`
     parameter of `MPI_Cart_create`. The other parameters (except `root`) are ignored. All "parent" process-grids spawn
     out of `MPI_COMM_WORLD`, while their `periods` and `reorder` parameters are set to False.
 
-    If `is_subgrid` is True, then the `parent_grid` is partitioned to lower-dimensional cartesian sub-grids (for more
+    If `is_subgrid` is true, then the `parent_grid` is partitioned to lower-dimensional cartesian sub-grids (for more
     details, see the documentation of `MPI_Cart_sub`). The `parent_grid` parameter is equivalent to the `comm` parameter
     of `MPI_Cart_sub`. The `color parameter corresponds to the `remain_dims` parameters of `MPI_Cart_sub`, i.e., the i-th
     entry specifies whether the i-th dimension is kep in the sub-grid or is dropped. The `exact_grid` parameter is either
@@ -42,36 +45,41 @@ class ProcessGrid(object):
     The `root` parameter is used to select the root rank for purposed of collective communication (by default 0).
     """
 
-    name = Property(dtype=str, desc="The grid's name.")
-    is_subgrid = Property(dtype=bool, default=False, desc="True if the grid is a subset of another grid.")
-    shape = ShapeProperty(default=[], desc="The grid's shape.")
+    name = Property(dtype=str, desc="The process-grid's name.")
+    is_subgrid = Property(dtype=bool, default=False, desc="If true, spanws sub-grids out of the parent process-grid.")
+    shape = ShapeProperty(default=[], desc="The process-grid's shape.")
     parent_grid = Property(dtype=str,
                            allow_none=True,
                            default=None,
-                           desc="Name of the parent grid (mandatory only if is_subgrid == True).")
+                           desc="Name of the parent process-grid "
+                           "(mandatory if `is_subgrid` is true, otherwise ignored).")
     color = ListProperty(int,
                          allow_none=True,
                          default=None,
-                         desc="The color that can be used to split the parent-grid.")
+                         desc="The i-th entry specifies whether the i-th dimension is kept in the sub-grid or is "
+                         "dropped (mandatory if `is_subgrid` is true, otherwise ignored).")
     exact_grid = SymbolicProperty(allow_none=True,
                                   default=None,
-                                  desc="An MPI process's rank in the parent grid. Defines the exact "
-                                  "sub-grid that includes this rank "
-                                  "(optional only if is_subgrid == True).")
-    root = SymbolicProperty(default=0, desc="The root rank for collectives.")
+                                  desc="If set then, out of all the sub-grids created, only the one that contains the "
+                                  "rank with id `exact_grid` will be utilized for collective communication "
+                                  "(optional if `is_subgrid` is true, otherwise ignored).")
+    root = SymbolicProperty(default=0, desc="The root rank for collective communication.")
 
-    def __init__(self, name, is_subgrid, shape, parent_grid=None, color=None, exact_grid=None, root=0):
+    def __init__(self,
+                 name: str,
+                 is_subgrid: bool,
+                 shape: ShapeType = None,
+                 parent_grid: str = None,
+                 color: Sequence[Union[Integral, bool]] = None,
+                 exact_grid: RankType = None,
+                 root: RankType = 0):
         self.name = name
         self.is_subgrid = is_subgrid
         if is_subgrid:
             self.parent_grid = parent_grid.name
-            # self.correspondence = correspondence
             self.color = color
             self.exact_grid = exact_grid
-
             self.shape = [parent_grid.shape[i] for i, remain in enumerate(color) if remain]
-            # self.color = [1 if i in correspondence else 0
-            #               for i in range(len(parent_grid.shape))]
         else:
             self.shape = shape
         self.root = root
@@ -88,10 +96,12 @@ class ProcessGrid(object):
     def _validate(self):
         if self.is_subgrid:
             if not self.parent_grid or len(self.parent_grid) == 0:
-                raise ValueError('Sub-grid misses its corresponding main-grid')
+                raise ValueError('Sub-grid misses its corresponding parent process-grid')
         if any(not isinstance(s, (Integral, symbolic.SymExpr, symbolic.symbol, symbolic.sympy.Basic))
                for s in self.shape):
-            raise TypeError('Shape must be a list or tuple of integer ' 'values or symbols')
+            raise TypeError('Shape must be a list or tuple of integer values or symbols')
+        if self.color and any(c < 0 or c > 1 for c in self.color):
+            raise ValueError('Color must have only logical true (1) or false (0) values.')
         return True
 
     def to_json(self):
@@ -109,6 +119,21 @@ class ProcessGrid(object):
         return ret
 
     def init_code(self):
+        """ Outputs MPI allocation/initialization code for the process-grid.
+            It is assumed that the following variables exist in the SDFG program's state:
+            - MPI_Comm {self.name}_comm
+            - MPI_Group {self.name}_group
+            - int {self.name}_rank
+            - int {self.name}_size
+            - int* {self.name}_dims
+            - int* {self.name}_remain
+            - int* {self.name}_coords
+            - bool {self.name})_valid
+
+            These variables are typically added to the program's state through a Tasklet, e.g., the Dummy MPI node (for
+            more details, check the DaCe MPI library in `dace/libraries/mpi`).
+
+        """
         if self.is_subgrid:
             tmp = ""
             for i, s in enumerate(self.shape):
@@ -144,7 +169,6 @@ class ProcessGrid(object):
             tmp += f"""
                 int {self.name}_periods[{len(self.shape)}] = {{0}};
                 MPI_Cart_create(MPI_COMM_WORLD, {len(self.shape)}, __state->{self.name}_dims, {self.name}_periods, 0, &__state->{self.name}_comm);
-                // TODO: Do we need this check?
                 if (__state->{self.name}_comm != MPI_COMM_NULL) {{
                     MPI_Comm_group(__state->{self.name}_comm, &__state->{self.name}_group);
                     MPI_Comm_rank(__state->{self.name}_comm, &__state->{self.name}_rank);
@@ -161,6 +185,7 @@ class ProcessGrid(object):
             return tmp
 
     def exit_code(self):
+        """ Outputs MPI deallocation code for the process-grid. """
         return f"""
             if (__state->{self.name}_valid) {{
                 MPI_Group_free(&__state->{self.name}_group);

@@ -1758,12 +1758,12 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
     def add_pgrid(self,
                   shape: ShapeType = None,
                   parent_grid: str = None,
-                  color: Sequence[bool] = None,
+                  color: Sequence[Union[Integral, bool]] = None,
                   exact_grid: RankType = None,
                   root: RankType = 0):
         """ Adds a process-grid to the process-grid descriptor store.
             For more details on process-grids, please read the documentation of the ProcessGrid class.
-            :param shape: Shape of the process-grid (see `ndims` parameter of [MPI_Cart_create](https://www.mpich.org/static/docs/latest/www3/MPI_Cart_create.html)), e.g., [2, 3, 3].
+            :param shape: Shape of the process-grid (see `dims` parameter of [MPI_Cart_create](https://www.mpich.org/static/docs/latest/www3/MPI_Cart_create.html)), e.g., [2, 3, 3].
             :param parent_grid: Parent process-grid (similar to the `comm` parameter of [MPI_Cart_sub](https://www.mpich.org/static/docs/v3.2/www3/MPI_Cart_sub.html)).
             :param color: The i-th entry specifies whether the i-th dimension is kept in the sub-grid or is dropped (see `remain_dims` input of [MPI_Cart_sub](https://www.mpich.org/static/docs/v3.2/www3/MPI_Cart_sub.html)).
             :param exact_grid: If set then, out of all the sub-grids created, only the one that contains the rank with id `exact_grid` will be utilized for collective communication.
