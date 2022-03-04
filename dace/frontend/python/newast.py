@@ -1844,9 +1844,12 @@ class ProgramVisitor(ExtNodeVisitor):
                             outer_indices.append(n)
                         elif n not in inner_indices:
                             inner_indices.add(n)
-                    irng.pop(outer_indices)
-                    orng.pop(outer_indices)
-                    irng.offset(orng, True)
+                    # Avoid the case where all indices are outer,
+                    # i.e., the whole array is carried through the nested SDFG levels.
+                    if len(outer_indices) < len(irng):
+                        irng.pop(outer_indices)
+                        orng.pop(outer_indices)
+                        irng.offset(orng, True)
                     if (memlet.data, scope_memlet.subset, 'w') in self.accesses:
                         vname = self.accesses[(memlet.data, scope_memlet.subset, 'w')][0]
                         memlet = Memlet.simple(vname, str(irng))
@@ -1930,9 +1933,12 @@ class ProgramVisitor(ExtNodeVisitor):
                             outer_indices.append(n)
                         elif n not in inner_indices:
                             inner_indices.add(n)
-                    irng.pop(outer_indices)
-                    orng.pop(outer_indices)
-                    irng.offset(orng, True)
+                    # Avoid the case where all indices are outer,
+                    # i.e., the whole array is carried through the nested SDFG levels.
+                    if len(outer_indices) < len(irng):
+                        irng.pop(outer_indices)
+                        orng.pop(outer_indices)
+                        irng.offset(orng, True)
                     if self._find_access(memlet.data, scope_memlet.subset, 'w'):
                         vname = self.accesses[(memlet.data, scope_memlet.subset, 'w')][0]
                         inner_memlet = Memlet.simple(vname, str(irng))
