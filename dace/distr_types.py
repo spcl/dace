@@ -24,21 +24,23 @@ class ProcessGrid(object):
     Process-grids implement cartesian topologies similarly to cartesian communicators created with [MPI_Cart_create](https://www.mpich.org/static/docs/latest/www3/MPI_Cart_create.html)
     and [MPI_Cart_sub](https://www.mpich.org/static/docs/v3.2/www3/MPI_Cart_sub.html).
 
-    The boolean parameter `is_subgrid` provides a switch between "parent" process-grids (equivalent to communicators
+    The boolean property`is_subgrid` provides a switch between "parent" process-grids (equivalent to communicators
     create with `MPI_Cart_create`) and sub-grids (equivalent to communicators created with `MPI_Cart_sub`).
     
-    If `is_subgrid` is false, a "parent" process-grid is created. The `shape` parameter is equivalent to the `dims`
-    parameter of `MPI_Cart_create`. The other parameters (except `root`) are ignored. All "parent" process-grids spawn
-    out of `MPI_COMM_WORLD`, while their `periods` and `reorder` parameters are set to False.
+    If `is_subgrid` is false, a "parent" process-grid is created. The `shape` property is equivalent to the `dims`
+    parameter of `MPI_Cart_create`. The other properties are ignored. All "parent" process-grids spawn out of
+    `MPI_COMM_WORLD`, while their `periods` and `reorder` parameters are set to False.
 
     If `is_subgrid` is true, then the `parent_grid` is partitioned to lower-dimensional cartesian sub-grids (for more
-    details, see the documentation of `MPI_Cart_sub`). The `parent_grid` parameter is equivalent to the `comm` parameter
-    of `MPI_Cart_sub`. The `color parameter corresponds to the `remain_dims` parameters of `MPI_Cart_sub`, i.e., the i-th
-    entry specifies whether the i-th dimension is kep in the sub-grid or is dropped. The `exact_grid` parameter is either
-    None or the rank of an MPI process in the `parent_grid`. If set then, out of all the sub-grids created, only the one
-    that contains this rank is used for collective communication.
+    details, see the documentation of `MPI_Cart_sub`). The `parent_grid` property is equivalent to the `comm` parameter
+    of `MPI_Cart_sub`. The `color` property corresponds to the `remain_dims` parameter of `MPI_Cart_sub`, i.e., the i-th
+    entry specifies whether the i-th dimension is kep in the sub-grid or is dropped.
+    
+    The following properties store information used in the redistribution of data:
 
-    The `root` parameter is used to select the root rank for purposed of collective communication (by default 0).
+    The `exact_grid` property is either None or the rank of an MPI process in the `parent_grid`. If set then, out of all
+    the sub-grids created, only the one that contains this rank is used for collective communication. The `root`
+    property is used to select the root rank for purposed of collective communication (by default 0).
     """
 
     name = Property(dtype=str, desc="The process-grid's name.")
@@ -192,7 +194,19 @@ class ProcessGrid(object):
 
 @make_properties
 class SubArray(object):
-    """ MPI sub-array data type.
+    """
+    Sub-arrays describe subsets of Arrays (see `dace::data::Array`) for purposes of distributed communication. They are
+    implemented with [MPI_Type_create_subarray](https://www.mpich.org/static/docs/v3.2/www3/MPI_Type_create_subarray.html).
+    Sub-arrays can be also used for collective scatter/gather communication in a process-grid.
+
+    The `shape`, `subshape`, and `dtype` properties correspond to the `array_of_sizes`, `array_of_subsizes`, and
+    `oldtype` parameters of `MPI_Type_create_subarray`.
+
+    The following properties are used for collective scatter/gather communication in a process-grid:
+
+    The `pgrid` property is the name of the process-grid where the data will be distributed. The `correspondence`
+    property matches the arrays dimensions to the process-grid's dimensions. For example, if one wants to distribute
+    a matrix to a 2D process-grid, but tile the matrix rows over the grid's columns, then `correspondence = [1, 0]`.
     """
 
     name = Property(dtype=str, desc="The type's name.")
@@ -202,20 +216,20 @@ class SubArray(object):
     pgrid = Property(dtype=str,
                      allow_none=True,
                      default=None,
-                     desc="Name of the process grid where the data are distributed.")
+                     desc="Name of the process-grid where the data are distributed.")
     correspondence = ListProperty(int,
                                   allow_none=True,
                                   default=None,
                                   desc="Correspondence of the array's indices to the process grid's "
                                   "indices.")
 
-    def __init__(self, name, dtype, shape, subshape, pgrid, correspondence):
+    def __init__(self, name: str, dtype: dtypes.typeclass, shape: ShapeType, subshape: ShapeType, pgrid: str = None, correspondence: Sequence[Integral] = None):
         self.name = name
         self.dtype = dtype
         self.shape = shape
         self.subshape = subshape
         self.pgrid = pgrid
-        self.correspondence = correspondence
+        self.correspondence = correspondence or list(range(len(shape)))
         self._validate()
 
     def validate(self):
@@ -227,6 +241,18 @@ class SubArray(object):
     # class can call `_validate()` without calling the subclasses'
     # `validate` function.
     def _validate(self):
+        if any(not isinstance(s, (Integral, symbolic.SymExpr, symbolic.symbol, symbolic.sympy.Basic))
+               for s in self.shape):
+            raise TypeError('Shape must be a list or tuple of integer values or symbols')
+        if any(not isinstance(s, (Integral, symbolic.SymExpr, symbolic.symbol, symbolic.sympy.Basic))
+               for s in self.subshape):
+            raise TypeError('Sub-shape must be a list or tuple of integer values or symbols')
+        if any(not isinstance(i, Integral) for i in self.correspondence):
+            raise TypeError('Correspondence must be a list or tuple of integer values')
+        if len(self.shape) != len(self.subshape):
+            raise ValueError('The dimensionality of the shape and sub-shape must match')
+        if len(self.correspondence) != len(self.shape):
+            raise ValueError('The dimensionality of the shape and correspondence list must match')
         return True
 
     def to_json(self):
@@ -244,66 +270,82 @@ class SubArray(object):
         return ret
 
     def init_code(self):
-        from dace.libraries.mpi import utils
-        return f"""
-            if (__state->{self.pgrid}_valid) {{
-                int sizes[{len(self.shape)}] = {{{', '.join([str(s) for s in self.shape])}}};
-                int subsizes[{len(self.shape)}] = {{{', '.join([str(s) for s in self.subshape])}}};
-                int corr[{len(self.shape)}] = {{{', '.join([str(i) for i in self.correspondence])}}};
+        """ Outputs MPI allocation/initialization code for the sub-array MPI datatype ONLY if the process-grid is set.
+            It is assumed that the following variables exist in the SDFG program's state:
+            - MPI_Datatype {self.name}
+            - int* {self.name}_counts
+            - int* {self.name}_displs
 
-                int basic_stride = subsizes[{len(self.shape)} - 1];
-
-                int process_strides[{len(self.shape)}];
-                int block_strides[{len(self.shape)}];
-                int data_strides[{len(self.shape)}];
-
-                process_strides[{len(self.shape)} - 1] = 1;
-                block_strides[{len(self.shape)} - 1] = subsizes[{len(self.shape)} - 1];
-                data_strides[{len(self.shape)} - 1] = 1;
-
-                for (auto i = {len(self.shape)} - 2; i >= 0; --i) {{
-                    block_strides[i] = block_strides[i+1] * subsizes[i];
-                    process_strides[i] = process_strides[i+1] * __state->{self.pgrid}_dims[corr[i+1]];
-                    data_strides[i] = block_strides[i] * process_strides[i] / basic_stride;
-                }}
-
-                MPI_Datatype type;
-                int origin[{len(self.shape)}] = {{{','.join(['0'] * len(self.shape))}}};
-                MPI_Type_create_subarray({len(self.shape)}, sizes, subsizes, origin, MPI_ORDER_C, {utils.MPI_DDT(self.dtype.base_type)}, &type);
-                MPI_Type_create_resized(type, 0, basic_stride*sizeof({self.dtype.ctype}), &__state->{self.name});
-                MPI_Type_commit(&__state->{self.name});
-
-                __state->{self.name}_counts = new int[__state->{self.pgrid}_size];
-                __state->{self.name}_displs = new int[__state->{self.pgrid}_size];
-                int block_id[{len(self.shape)}] = {{0}};
-                int displ = 0;
-                for (auto i = 0; i < __state->{self.pgrid}_size; ++i) {{
-                    __state->{self.name}_counts[i] = 1;
-                    __state->{self.name}_displs[i] = displ;
-                    int idx = {len(self.shape)} - 1;
-                    while (idx >= 0 && block_id[idx] + 1 >= __state->{self.pgrid}_dims[corr[idx]]) {{
-                        block_id[idx] = 0;
-                        displ -= data_strides[idx] * (__state->{self.pgrid}_dims[corr[idx]] - 1);
-                        idx--;
-                    }}
-                    if (idx >= 0) {{ 
-                        block_id[idx] += 1;
-                        displ += data_strides[idx];
-                    }} else {{
-                        assert(i == __state->{self.pgrid}_size - 1);
-                    }}
-                }}
-            }}
+            These variables are typically added to the program's state through a Tasklet, e.g., the Dummy MPI node (for
+            more details, check the DaCe MPI library in `dace/libraries/mpi`).
         """
+        from dace.libraries.mpi import utils
+        if self.pgrid:
+            return f"""
+                if (__state->{self.pgrid}_valid) {{
+                    int sizes[{len(self.shape)}] = {{{', '.join([str(s) for s in self.shape])}}};
+                    int subsizes[{len(self.shape)}] = {{{', '.join([str(s) for s in self.subshape])}}};
+                    int corr[{len(self.shape)}] = {{{', '.join([str(i) for i in self.correspondence])}}};
+
+                    int basic_stride = subsizes[{len(self.shape)} - 1];
+
+                    int process_strides[{len(self.shape)}];
+                    int block_strides[{len(self.shape)}];
+                    int data_strides[{len(self.shape)}];
+
+                    process_strides[{len(self.shape)} - 1] = 1;
+                    block_strides[{len(self.shape)} - 1] = subsizes[{len(self.shape)} - 1];
+                    data_strides[{len(self.shape)} - 1] = 1;
+
+                    for (auto i = {len(self.shape)} - 2; i >= 0; --i) {{
+                        block_strides[i] = block_strides[i+1] * subsizes[i];
+                        process_strides[i] = process_strides[i+1] * __state->{self.pgrid}_dims[corr[i+1]];
+                        data_strides[i] = block_strides[i] * process_strides[i] / basic_stride;
+                    }}
+
+                    MPI_Datatype type;
+                    int origin[{len(self.shape)}] = {{{','.join(['0'] * len(self.shape))}}};
+                    MPI_Type_create_subarray({len(self.shape)}, sizes, subsizes, origin, MPI_ORDER_C, {utils.MPI_DDT(self.dtype.base_type)}, &type);
+                    MPI_Type_create_resized(type, 0, basic_stride*sizeof({self.dtype.ctype}), &__state->{self.name});
+                    MPI_Type_commit(&__state->{self.name});
+
+                    __state->{self.name}_counts = new int[__state->{self.pgrid}_size];
+                    __state->{self.name}_displs = new int[__state->{self.pgrid}_size];
+                    int block_id[{len(self.shape)}] = {{0}};
+                    int displ = 0;
+                    for (auto i = 0; i < __state->{self.pgrid}_size; ++i) {{
+                        __state->{self.name}_counts[i] = 1;
+                        __state->{self.name}_displs[i] = displ;
+                        int idx = {len(self.shape)} - 1;
+                        while (idx >= 0 && block_id[idx] + 1 >= __state->{self.pgrid}_dims[corr[idx]]) {{
+                            block_id[idx] = 0;
+                            displ -= data_strides[idx] * (__state->{self.pgrid}_dims[corr[idx]] - 1);
+                            idx--;
+                        }}
+                        if (idx >= 0) {{ 
+                            block_id[idx] += 1;
+                            displ += data_strides[idx];
+                        }} else {{
+                            assert(i == __state->{self.pgrid}_size - 1);
+                        }}
+                    }}
+                }}
+            """
+        else:
+            return ""
 
     def exit_code(self):
-        return f"""
-            if (__state->{self.pgrid}_valid) {{
-                delete[] __state->{self.name}_counts;
-                delete[] __state->{self.name}_displs;
-                MPI_Type_free(&__state->{self.name});
-            }}
-        """
+        """ Outputs MPI deallocation code for the sub-array MPI datatype ONLY if the process-grid is set. """
+        if self.pgrid:
+            return f"""
+                if (__state->{self.pgrid}_valid) {{
+                    delete[] __state->{self.name}_counts;
+                    delete[] __state->{self.name}_displs;
+                    MPI_Type_free(&__state->{self.name});
+                }}
+            """
+        else:
+            return ""
 
 
 @make_properties
