@@ -82,7 +82,8 @@ def test_sub_grid():
     sdfg.add_edge(state, state2, dace.InterstateEdge())
     tasklet = state2.add_tasklet(
         "MPI_Cart_get", {}, {'d', 'p', 'c', 'v'},
-        f"MPI_Cart_get(__state->{pgrid_name}_comm, P, &d, &p, &c);\nv = __state->{pgrid_name}_valid;", dtypes.Language.CPP)
+        f"MPI_Cart_get(__state->{pgrid_name}_comm, P, &d, &p, &c);\nv = __state->{pgrid_name}_valid;",
+        dtypes.Language.CPP)
     dims = state2.add_write("dims")
     periods = state2.add_write("periods")
     coords = state2.add_write("coords")
@@ -127,7 +128,7 @@ def test_process_grid_bcast():
     def pgrid_bcast(A: dace.int32[10]):
         pgrid = dace.comm.Cart_create([1, P])
         dace.comm.Bcast(A, grid=pgrid)
-    
+
     from mpi4py import MPI
     commworld = MPI.COMM_WORLD
     rank = commworld.Get_rank()
@@ -148,7 +149,7 @@ def test_process_grid_bcast():
     if rank == 0:
         A = np.arange(10, dtype=np.int32)
     else:
-        A = np.zeros((10,), dtype=np.int32)
+        A = np.zeros((10, ), dtype=np.int32)
     func(A=A, P=size)
 
     assert (np.array_equal(A, np.arange(10, dtype=np.int32)))
@@ -160,14 +161,14 @@ def test_sub_grid_bcast():
 
     @dace.program
     def pgrid_bcast(A: dace.int32[10], rank: dace.int32):
-        pgrid = dace.comm.Cart_create([2, P//2])
+        pgrid = dace.comm.Cart_create([2, P // 2])
         sgrid = dace.comm.Cart_sub(pgrid, [False, True])
         dace.comm.Bcast(A, grid=pgrid)
         B = np.empty_like(A)
-        B[:] = rank % 10 
+        B[:] = rank % 10
         dace.comm.Bcast(B, grid=sgrid)
         A[:] = B
-    
+
     from mpi4py import MPI
     commworld = MPI.COMM_WORLD
     rank = commworld.Get_rank()
@@ -189,13 +190,13 @@ def test_sub_grid_bcast():
     if rank == 0:
         A = np.arange(10, dtype=np.int32)
     else:
-        A = np.ones((10,), dtype=np.int32)
+        A = np.ones((10, ), dtype=np.int32)
     func(A=A, rank=rank, P=size)
 
     if rank < size // 2:
-        assert (np.array_equal(A, np.zeros((10,), dtype=np.int32)))
+        assert (np.array_equal(A, np.zeros((10, ), dtype=np.int32)))
     elif rank < last_rank:
-        assert (np.array_equal(A, np.full_like(A, fill_value=size//2)))
+        assert (np.array_equal(A, np.full_like(A, fill_value=size // 2)))
     else:
         assert (np.array_equal(A, np.full_like(A, fill_value=rank)))
 
