@@ -1807,13 +1807,46 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
         return name
 
-    def add_subarray(self, dtype, shape, subshape, pgrid, correspondence):
-        """ Adds a sub-array to the sub-array descriptor store. """
+    def add_subarray(self,
+                     dtype: dtypes.typeclass,
+                     shape: ShapeType,
+                     subshape: ShapeType,
+                     pgrid: str = None,
+                     correspondence: Sequence[Integral] = None):
+        """ Adds a sub-array to the sub-array descriptor store.
+            For more details on sub-arrays, please read the documentation of the SubArray class.
+            :param dtype: Datatype of the array (see `oldtype` parameter of [MPI_Type_create_subarray](https://www.mpich.org/static/docs/v3.2/www3/MPI_Type_create_subarray.html)).
+            :param shape: Shape of the sub-array (see `array_of_sizes` parameter of [MPI_Type_create_subarray](https://www.mpich.org/static/docs/v3.2/www3/MPI_Type_create_subarray.html)).
+            :param subshape: Sub-shape of the sub-array (see `array_of_subsizes` parameter of [MPI_Type_create_subarray](https://www.mpich.org/static/docs/v3.2/www3/MPI_Type_create_subarray.html)).
+            :param pgrid: Process-grid used to collective scatter/gather operations.
+            :param correspondence: Matching among array dimensions and process-grid dimensions.
+            :return: Name of the new sub-array descriptor.
+        """
+
+        # convert strings to int if possible
+        shape = shape or []
+        newshape = []
+        for s in shape:
+            try:
+                newshape.append(int(s))
+            except:
+                newshape.append(dace.symbolic.pystr_to_symbolic(s))
+        shape = newshape
+        subshape = subshape or []
+        newshape = []
+        for s in subshape:
+            try:
+                newshape.append(int(s))
+            except:
+                newshape.append(dace.symbolic.pystr_to_symbolic(s))
+        subshape = newshape
 
         subarray_name = self.temp_subarray_name()
         self._subarrays[subarray_name] = SubArray(subarray_name, dtype, shape, subshape, pgrid, correspondence)
+
         self.append_init_code(self._subarrays[subarray_name].init_code())
         self.append_exit_code(self._subarrays[subarray_name].exit_code())
+
         return subarray_name
 
     def temp_rdistrarray_name(self):

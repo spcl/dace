@@ -223,7 +223,13 @@ class SubArray(object):
                                   desc="Correspondence of the array's indices to the process grid's "
                                   "indices.")
 
-    def __init__(self, name: str, dtype: dtypes.typeclass, shape: ShapeType, subshape: ShapeType, pgrid: str = None, correspondence: Sequence[Integral] = None):
+    def __init__(self,
+                 name: str,
+                 dtype: dtypes.typeclass,
+                 shape: ShapeType,
+                 subshape: ShapeType,
+                 pgrid: str = None,
+                 correspondence: Sequence[Integral] = None):
         self.name = name
         self.dtype = dtype
         self.shape = shape
