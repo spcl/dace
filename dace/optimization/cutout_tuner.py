@@ -1,6 +1,7 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
-import abc
+import os
 import dace
+import json
 import numpy as np
 
 from typing import Dict, Generator, Any, Tuple, List
@@ -8,17 +9,43 @@ from typing import Dict, Generator, Any, Tuple, List
 from dace.optimization import auto_tuner
 from dace.codegen.instrumentation.data import data_report
 
+try:
+    from tqdm import tqdm
+except (ImportError, ModuleNotFoundError):
+    tqdm = lambda x, **kwargs: x
+
 
 class CutoutTuner(auto_tuner.AutoTuner):
 
-    def __init__(self, sdfg: dace.SDFG) -> None:
+    def __init__(self, task: str, sdfg: dace.SDFG) -> None:
         super().__init__(sdfg=sdfg)
+        self._task = task
+
+    @property
+    def task(self) -> str:
+        return self._task
+
+    def file_name(self, state_id, node_id, node_label):
+        return f"{self._task}.{state_id}.{node_id}.{node_label}.tuning"
+
+    def try_load(self, file_name) -> Dict:
+        results = None
+        if os.path.exists(file_name):
+            print(f'Using cached {file_name}')
+            
+            with open(file_name, 'r') as fp:
+                results = json.load(fp)
+
+        return results
 
     def cutouts(self) -> Generator[Tuple[dace.SDFGState, List[dace.nodes.Node]], None, None]:
-        pass
+        raise NotImplementedError
 
     def space(self, cutout: dace.SDFG) -> Generator[Any, None, None]:
-        pass
+        raise NotImplementedError
+
+    def evaluate(self, state: dace.SDFGState, node: dace.nodes.Node, dreport: data_report.InstrumentedDataReport, measurements: int, **kwargs) -> Dict:
+        raise NotImplementedError
 
     def dry_run(self, *args, **kwargs) -> Any:
         # Check existing instrumented data for shape mismatch
@@ -67,3 +94,21 @@ class CutoutTuner(auto_tuner.AutoTuner):
         report = sdfg.get_latest_report()
         durations = next(iter(next(iter(report.durations.values())).values()))
         return np.median(np.array(durations))
+
+    def optimize(self, measurements: int = 30, **kwargs) -> Dict:
+        dreport: data_report.InstrumentedDataReport = self._sdfg.get_instrumented_data()
+
+        tuning_report = {}
+        for (state_id, node_id), (state, node) in tqdm(list(self.cutouts())):
+            fn = self.file_name(state_id, node_id, node.label)
+            results = self.try_load(fn)
+            
+            if results is None:
+                results = self.evaluate(state, node, dreport, measurements, **kwargs)
+                
+                with open(fn, 'w') as fp:
+                    json.dump(results, fp)
+            
+            tuning_report[(state_id, node_id)] = results     
+
+        return tuning_report

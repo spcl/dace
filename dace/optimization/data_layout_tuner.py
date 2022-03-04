@@ -3,10 +3,6 @@ from collections import defaultdict
 import dace
 import enum
 import copy
-import math
-import json
-import os
-
 import itertools
 
 from typing import Generator, Optional, Tuple, Dict, List, Sequence, Set
@@ -23,7 +19,6 @@ try:
 except (ImportError, ModuleNotFoundError):
     tqdm = lambda x, **kwargs: x
 
-
 class TuningGroups(enum.Enum):
     Separate = enum.auto()
     Inputs_Outputs = enum.auto()
@@ -33,7 +28,7 @@ class TuningGroups(enum.Enum):
 
 class DataLayoutTuner(cutout_tuner.CutoutTuner):
     def __init__(self, sdfg: SDFG, measurement: dtypes.InstrumentationType = dtypes.InstrumentationType.Timer) -> None:
-        super().__init__(sdfg=sdfg)
+        super().__init__(task="DataLayout", sdfg=sdfg)
         self.instrument = measurement
 
     def cutouts(self) -> Generator[Tuple[dace.SDFGState, dace.nodes.Node], None, None]:
@@ -94,6 +89,38 @@ class DataLayoutTuner(cutout_tuner.CutoutTuner):
             # Yield configuration
             yield modified_arrays, new_arrays
 
+    def evaluate(self, state: dace.SDFGState, node: dace.nodes.Node, measurements: int, dreport: data_report.InstrumentedDataReport, group_by: bool) -> Dict:
+        # No modification to original SDFG, best configuration needs to be determined globally
+        subgraph_nodes = state.scope_subgraph(node).nodes() if isinstance(node, dace.nodes.MapEntry) else [node]
+        cutout = cutter.cutout_state(state, *subgraph_nodes)
+        cutout.instrument = self.instrument
+
+        # Prepare original arguments to sub-SDFG from instrumented data report
+        arguments: Dict[str, dt.ArrayLike] = {}
+        for cstate in cutout.nodes():
+            for dnode in cstate.data_nodes():
+                if cutout.arrays[dnode.data].transient:
+                    continue
+                arguments[dnode.data] = dreport.get_first_version(dnode.data)
+
+        # Setup tuning groups
+        groups = self.setup_tuning_groups(cutout, group_by)
+
+        # Iterate over configurations
+        results = {}
+        for modified_arrays, new_arrays in tqdm(list(self.space(cutout_sdfg=cutout, groups=groups)), desc=node.label):
+            # Modify data layout prior to calling
+            cutout._arrays = new_arrays
+            for marray in modified_arrays:
+                arguments[marray] = dt.make_array_from_descriptor(cutout.arrays[marray], arguments[marray])
+
+            layout = '\n'.join([f'  {k}: {v.strides}' for k, v in cutout.arrays.items() if not v.transient])
+
+            runtime = self.measure(cutout, arguments, repetitions=measurements)
+            results[layout] = runtime
+
+        return results
+
     def setup_tuning_groups(self, cutout: SDFG, group_by: TuningGroups) -> Optional[List[Set[str]]]:
         if group_by == TuningGroups.Separate:
             return None
@@ -127,52 +154,3 @@ class DataLayoutTuner(cutout_tuner.CutoutTuner):
             groups.append(set(group))
 
         return groups
-
-    def optimize(self,
-                 apply: bool = True,
-                 group_by: TuningGroups = TuningGroups.Inputs_Outputs,
-                 measurements: int = 30) -> Dict[str, List[float]]:
-        dreport: data_report.InstrumentedDataReport = self._sdfg.get_instrumented_data()
-
-        tuning_report = {}
-        for state, node in tqdm(list(self.cutouts())):
-            if os.path.exists(f'{node.label}.tuning'):
-                print(f'Using cached {node.label}')
-                with open(f'{node.label}.tuning', 'r') as fp:
-                    tuning_report[node.label] = json.load(fp)
-                continue
-            subgraph_nodes = state.scope_subgraph(node).nodes() if isinstance(node, dace.nodes.MapEntry) else [node]
-            cutout = cutter.cutout_state(state, *subgraph_nodes)
-            cutout.instrument = self.instrument
-
-            # Prepare original arguments to sub-SDFG from instrumented data report
-            arguments: Dict[str, dt.ArrayLike] = {}
-            for cstate in cutout.nodes():
-                for dnode in cstate.data_nodes():
-                    if cutout.arrays[dnode.data].transient:
-                        continue
-                    arguments[dnode.data] = dreport.get_first_version(dnode.data)
-
-            # Setup tuning groups
-            groups = self.setup_tuning_groups(cutout, group_by)
-
-            # Iterate over configurations
-            results = {}
-            for modified_arrays, new_arrays in tqdm(list(self.space(cutout_sdfg=cutout, groups=groups)), desc=node.label):
-                # Modify data layout prior to calling
-                cutout._arrays = new_arrays
-                for marray in modified_arrays:
-                    arguments[marray] = dt.make_array_from_descriptor(cutout.arrays[marray], arguments[marray])
-
-                layout = '\n'.join([f'  {k}: {v.strides}' for k, v in cutout.arrays.items() if not v.transient])
-
-                runtime = self.measure(cutout, arguments, repetitions=measurements)
-                results[layout] = runtime
-
-            # No modification to original SDFG, best configuration needs to be determined globally
-
-            tuning_report[node.label] = results
-            with open(f'{node.label}.tuning', 'w') as fp:
-                json.dump(results, fp)
-
-        return tuning_report
