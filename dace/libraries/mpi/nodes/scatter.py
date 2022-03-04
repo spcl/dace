@@ -96,7 +96,7 @@ class ExpandBlockScatterMPI(ExpandTransformation):
 
         code = f"""
             if (__state->{node.scatter_grid}_valid) {{
-                MPI_Scatterv(_inp_buffer, __state->{node.subarray}_counts, __state->{node.subarray}_displs, __state->{node.subarray}, _out_buffer, {symstr(_prod(out_buffer.shape))}, {mpi_dtype_str}, 0, __state->{node.scatter_grid}_comm);
+                MPI_Scatterv(_inp_buffer, __state->{node.subarray_type}_counts, __state->{node.subarray_type}_displs, __state->{node.subarray_type}, _out_buffer, {symstr(_prod(out_buffer.shape))}, {mpi_dtype_str}, 0, __state->{node.scatter_grid}_comm);
             }}
         """
         if node.bcast_grid:
@@ -115,15 +115,15 @@ class BlockScatter(nodes.LibraryNode):
     }
     default_implementation = "MPI"
 
-    subarray_type = properties.Property(dtype=str, allow_none=False)
-    scatter_grid = properties.Property(dtype=str, allow_none=False)
+    subarray_type = properties.Property(dtype=str, default='tmp')
+    scatter_grid = properties.Property(dtype=str, default='tmp')
     bcast_grid = properties.Property(dtype=str, allow_none=True, default=None)
 
-    def __init__(self, name, subarray, scatter, bcast, *args, **kwargs):
+    def __init__(self, name, subarray_type='tmp', scatter_grid='tmp', bcast_grid=None, *args, **kwargs):
         super().__init__(name, *args, inputs={"_inp_buffer"}, outputs={"_out_buffer"}, **kwargs)
-        self.subarray = subarray
-        self.scatter_grid = scatter
-        self.bcast_grid = bcast
+        self.subarray_type = subarray_type
+        self.scatter_grid = scatter_grid
+        self.bcast_grid = bcast_grid
 
     def validate(self, sdfg, state):
         """

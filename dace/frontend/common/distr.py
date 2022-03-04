@@ -681,7 +681,7 @@ def _subarray(pv: 'ProgramVisitor',
               state: SDFGState,
               array: Union[str, ShapeType],
               subarray: Union[str, ShapeType],
-              dtype: dtypes.Typeclass = None,
+              dtype: dtypes.typeclass = None,
               process_grid: str = None,
               correspondence: Sequence[Integral] = None):
     """ Adds a sub-array descriptor to the DaCe Program.
@@ -729,47 +729,52 @@ def _subarray(pv: 'ProgramVisitor',
 
 
 @oprepo.replaces('dace.comm.BlockScatter')
-def _block_scatter(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, in_buffer: str, out_buffer: str,
-                   scatter_grid: str, bcast_grid: str, correspondence: Sequence[Integral]):
+def _block_scatter(pv: 'ProgramVisitor',
+                   sdfg: SDFG,
+                   state: SDFGState,
+                   in_buffer: str,
+                   out_buffer: str,
+                   scatter_grid: str,
+                   bcast_grid: str = None,
+                   correspondence: Sequence[Integral] = None):
+    """ Block-scatters an Array using process-grids, sub-arrays, and the BlockScatter library node.
+        This method currently does not support Array slices and imperfect tiling.
+        :param in_buffer: Name of the (global) Array descriptor.
+        :param out_buffer: Name of the (local) Array descriptor.
+        :param scatter_grid: Name of the sub-grid used for scattering the Array (replication group leaders).
+        :param bcast_grid: Name of the sub-grid used for broadcasting the Array (replication groups). 
+        :param correspondence: Matching of the array/sub-array's dimensions to the process-grid's dimensions.
+        :return: Name of the new sub-array descriptor.
+    """
     in_desc = sdfg.arrays[in_buffer]
     out_desc = sdfg.arrays[out_buffer]
-    subarray_name = sdfg.add_subarray(in_desc.dtype, in_desc.shape, out_desc.shape, scatter_grid, correspondence)
 
-    from dace.libraries.mpi import Dummy, BlockScatter
-    tasklet = Dummy(
-        subarray_name,
-        [f'MPI_Datatype {subarray_name};', f'int* {subarray_name}_counts;', f'int* {subarray_name}_displs;'])
-    state.add_node(tasklet)
-    _, scal = sdfg.add_scalar(subarray_name, dace.int32, transient=True)
-    wnode = state.add_write(subarray_name)
-    state.add_edge(tasklet, '__out', wnode, None, Memlet.from_array(subarray_name, scal))
+    if in_desc.dtype != out_desc.dtype:
+        raise ValueError("Input/output buffer datatypes must match!")
 
+    subarray_name = _subarray(pv, sdfg, state, in_buffer, out_buffer, process_grid=scatter_grid, correspondence=correspondence)
+
+    # from dace.libraries.mpi import Dummy, BlockScatter
+    # tasklet = Dummy(
+    #     subarray_name,
+    #     [f'MPI_Datatype {subarray_name};', f'int* {subarray_name}_counts;', f'int* {subarray_name}_displs;'])
+    # state.add_node(tasklet)
+    # _, scal = sdfg.add_scalar(subarray_name, dace.int32, transient=True)
+    # wnode = state.add_write(subarray_name)
+    # state.add_edge(tasklet, '__out', wnode, None, Memlet.from_array(subarray_name, scal))
+
+    from dace.libraries.mpi import BlockScatter
     libnode = BlockScatter('_BlockScatter_', subarray_name, scatter_grid, bcast_grid)
 
-    inbuf_range = None
-    if isinstance(in_buffer, tuple):
-        inbuf_name, inbuf_range = in_buffer
-    else:
-        inbuf_name = in_buffer
+    inbuf_name = in_buffer
     in_desc = sdfg.arrays[inbuf_name]
     inbuf_node = state.add_read(inbuf_name)
+    inbuf_mem = Memlet.from_array(inbuf_name, in_desc)
 
-    outbuf_range = None
-    if isinstance(out_buffer, tuple):
-        outbuf_name, outbuf_range = out_buffer
-    else:
-        outbuf_name = out_buffer
+    outbuf_name = out_buffer
     out_desc = sdfg.arrays[outbuf_name]
     outbuf_node = state.add_write(outbuf_name)
-
-    if inbuf_range:
-        inbuf_mem = Memlet.simple(inbuf_name, inbuf_range)
-    else:
-        inbuf_mem = Memlet.from_array(inbuf_name, in_desc)
-    if outbuf_range:
-        outbuf_mem = Memlet.simple(outbuf_name, outbuf_range)
-    else:
-        outbuf_mem = Memlet.from_array(outbuf_name, out_desc)
+    outbuf_mem = Memlet.from_array(outbuf_name, out_desc)
 
     state.add_edge(inbuf_node, None, libnode, '_inp_buffer', inbuf_mem)
     state.add_edge(libnode, '_out_buffer', outbuf_node, None, outbuf_mem)
