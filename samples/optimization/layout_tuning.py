@@ -5,7 +5,8 @@ import numpy as np
 
 from dace.transformation.auto.auto_optimize import auto_optimize
 
-from dace.optimization import data_layout_tuner
+from dace.optimization import data_layout_tuner as dt
+from dace.optimization import cutout_tuner as ct
 
 N = 200
 
@@ -22,8 +23,9 @@ if __name__ == '__main__':
     sdfg = layout_sample.to_sdfg(A, B)
     auto_optimize(sdfg, dace.DeviceType.CPU)
 
+    ct.CutoutTuner.dry_run(sdfg, A, B)
+    
     tuner = optim.DataLayoutTuner(sdfg)
-    tuner.dry_run(A, B)
-    report = tuner.optimize(group_by=data_layout_tuner.TuningGroups.Inputs_Outputs)
+    report = tuner.optimize(group_by=dt.TuningGroups.Inputs_Outputs)
 
     print(report)

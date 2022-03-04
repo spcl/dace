@@ -5,6 +5,7 @@ from dace import optimization as optim
 import numpy as np
 
 from dace.transformation.auto.auto_optimize import auto_optimize
+from dace.optimization import cutout_tuner as ct
 
 N = 256
 
@@ -34,14 +35,14 @@ if __name__ == '__main__':
     sdfg = sample.to_sdfg(A, B, C)
     auto_optimize(sdfg, dace.DeviceType.CPU)
 
+    ct.CutoutTuner.dry_run(sdfg, A, B, C)
+
     tuner = optim.MapPermutationTuner(sdfg)
-    tuner.dry_run(A, B, C)
     report = tuner.optimize()
 
     print(report)
 
     tuner_tiles = optim.MapTilingTuner(sdfg)
-    tuner_tiles.dry_run(A, B, C)
     report = tuner_tiles.optimize()
 
     print(report)
