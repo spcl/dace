@@ -44,8 +44,8 @@ class MapTilingTuner(cutout_tuner.CutoutTuner):
 
         return choices
 
-    def evaluate(self, state: dace.SDFGState, parent_map: dace.nodes.MapEntry, dreport: data_report.InstrumentedDataReport, measurements: int) -> Dict:
-        subgraph_nodes = state.scope_subgraph(parent_map).nodes()
+    def evaluate(self, state: dace.SDFGState, node: dace.nodes.MapEntry, dreport: data_report.InstrumentedDataReport, measurements: int) -> Dict:
+        subgraph_nodes = state.scope_subgraph(node).nodes()
         cutout = cutter.cutout_state(state, *subgraph_nodes)
         cutout.instrument = self.instrument
 
@@ -63,12 +63,13 @@ class MapTilingTuner(cutout_tuner.CutoutTuner):
 
         cutout_json = cutout.to_json()
         cutout_map_id = None
+        # TODO: No copy for cutout will fix
         for node in cutout.start_state.nodes():
             if isinstance(node, dace.nodes.MapEntry) and xfh.get_parent_map(cutout.start_state, node) is None:
                 cutout_map_id = cutout.start_state.node_id(node)
                 break
 
-        for point in tqdm(list(self.space(parent_map))):
+        for point in tqdm(list(self.space(node))):
             tiled_sdfg = dace.SDFG.from_json(cutout_json)
             tiled_map = tiled_sdfg.start_state.node(cutout_map_id)
             df.MapTiling.apply_to(tiled_sdfg, map_entry=tiled_map, options={"tile_sizes": point})

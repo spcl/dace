@@ -37,8 +37,8 @@ class MapPermutationTuner(cutout_tuner.CutoutTuner):
     def space(self, parent_map: dace.nodes.MapEntry) -> Generator[Tuple[str], None, None]:
         return itertools.permutations(parent_map.map.params)
 
-    def evaluate(self, state: dace.SDFGState, parent_map: dace.nodes.Node,  dreport: data_report.InstrumentedDataReport, measurements: int) -> Dict:
-        subgraph_nodes = state.scope_subgraph(parent_map).nodes()
+    def evaluate(self, state: dace.SDFGState, node: dace.nodes.Node,  dreport: data_report.InstrumentedDataReport, measurements: int) -> Dict:
+        subgraph_nodes = state.scope_subgraph(node).nodes()
         cutout = cutter.cutout_state(state, *subgraph_nodes)
         cutout.instrument = self.instrument
 
@@ -51,12 +51,12 @@ class MapPermutationTuner(cutout_tuner.CutoutTuner):
                 arguments[dnode.data] = np.copy(dreport.get_first_version(dnode.data))
 
         results = {}
-        for point in tqdm(list(self.space(parent_map))):
-            parent_map.range.ranges = [
-                r for list_param in point for map_param, r in zip(parent_map.map.params, parent_map.range.ranges)
+        for point in tqdm(list(self.space(node))):
+            node.range.ranges = [
+                r for list_param in point for map_param, r in zip(node.map.params, node.range.ranges)
                 if list_param == map_param
             ]
-            parent_map.map.params = point
+            node.map.params = point
 
             runtime = self.measure(cutout, arguments, measurements)
             

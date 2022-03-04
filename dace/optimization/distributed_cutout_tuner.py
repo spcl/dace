@@ -1,7 +1,7 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 import os
 
-from simplejson import OrderedDict
+from collections import OrderedDict
 import dace
 import json
 import itertools
@@ -9,6 +9,7 @@ import itertools
 from typing import Dict
 
 from dace.optimization import cutout_tuner as ct
+from dace.codegen.instrumentation.data import data_report
 
 class DistributedCutoutTuner():
     """Distrubuted wrapper for cutout tuning."""
@@ -16,13 +17,10 @@ class DistributedCutoutTuner():
     def __init__(self, tuner: ct.CutoutTuner) -> None:
         self._tuner = tuner
 
-    def optimize(self, **kwargs) -> Dict:
-        cutouts = []
+    def optimize(self, measurements: int = 30, **kwargs) -> Dict:
         hash_groups = OrderedDict()
         existing_files = {}
-        for state, node in self._tuner.cutouts():
-            state_id = self._tuner._sdfg.node_id(state)
-            node_id = state.node_id(node)
+        for (state_id, node_id), (state, node) in self._tuner.cutouts():
             label = node.label
             if isinstance(node, (dace.nodes.LibraryNode, dace.nodes.Tasklet)):
                 node_hash = label.split("_")[-1]
@@ -37,13 +35,12 @@ class DistributedCutoutTuner():
 
             # Keep track of existing files
             file_name = self._tuner.file_name(state_id, node_id, node.label)
-            if file_name is not None:
+            result = self._tuner.try_load(file_name)
+            if result is not None:
                 if node_hash not in existing_files:
                     existing_files[node_hash] = set()
                 
                 existing_files[node_hash].add(file_name)
-
-            cutouts.append((node_hash, (state, node)))
 
         # Filter cutouts
         new_cutouts = []
@@ -52,23 +49,27 @@ class DistributedCutoutTuner():
             if node_hash not in existing_files:
                 new_cutouts.append(node_hash)
             elif len(hash_groups[node_hash]) < len(existing_files[node_hash]):
-                copy_cutouts.append(copy_cutouts)
+                copy_cutouts.append(node_hash)
 
 
         # Split work
         rank = get_local_rank()
         num_ranks = get_world_size()
-        chunk_size = len(new_cutouts) // (num_ranks - 1)
-        chunks = list(chunk(new_cutouts, chunk_size))
-        
+        chunk_size = max(1, len(new_cutouts) // max(num_ranks - 1, 1))
+        chunks = list(partition(new_cutouts, chunk_size))
+
+        if rank >= len(chunks):
+            return
+
+        dreport: data_report.InstrumentedDataReport = self._tuner._sdfg.get_instrumented_data()
         # Tune new cutouts
-        chunk = chunks[get_local_rank()]
+        chunk = chunks[rank]
         for node_hash in chunk:
             state_id, node_id, label = hash_groups[node_hash][0]
             state = self._tuner._sdfg.node(state_id)
             node = state.node(node_id)
 
-            results = self._tuner.evaluate(state=state, node=node, **kwargs)
+            results = self._tuner.evaluate(state=state, node=node, dreport=dreport, measurements=measurements, **kwargs)
 
             # Write out for all identical cutouts
             for (state_id, node_id, label) in hash_groups[node_hash]:
@@ -85,7 +86,7 @@ class DistributedCutoutTuner():
                         with open(file_name, 'w') as fp:
                             json.dump(results, fp)
 
-def chunk(it, size):
+def partition(it, size):
     it = iter(it)
     return iter(lambda: tuple(itertools.islice(it, size)), ())
 

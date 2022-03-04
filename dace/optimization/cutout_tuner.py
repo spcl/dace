@@ -47,33 +47,34 @@ class CutoutTuner(auto_tuner.AutoTuner):
     def evaluate(self, state: dace.SDFGState, node: dace.nodes.Node, dreport: data_report.InstrumentedDataReport, measurements: int, **kwargs) -> Dict:
         raise NotImplementedError
 
-    def dry_run(self, *args, **kwargs) -> Any:
+    @staticmethod
+    def dry_run(sdfg, *args, **kwargs) -> Any:
         # Check existing instrumented data for shape mismatch
-        kwargs.update({aname: a for aname, a in zip(self._sdfg.arg_names, args)})
+        kwargs.update({aname: a for aname, a in zip(sdfg.arg_names, args)})
 
-        dreport = self._sdfg.get_instrumented_data()
+        dreport = sdfg.get_instrumented_data()
         if dreport is not None:
             for data in dreport.keys():
                 rep_arr = dreport.get_first_version(data)
-                sdfg_arr = self._sdfg.arrays[data]
+                sdfg_arr = sdfg.arrays[data]
                 # Potential shape mismatch
                 if rep_arr.shape != sdfg_arr.shape:
                     # Check given data first
                     if hasattr(kwargs[data], 'shape') and rep_arr.shape != kwargs[data].shape:
-                        self._sdfg.clear_data_reports()
+                        sdfg.clear_data_reports()
                         dreport = None
                         break
 
         # If there is no valid instrumented data available yet, run in data instrumentation mode
         if dreport is None:
-            for node, _ in self._sdfg.all_nodes_recursive():
-                if isinstance(node, dace.nodes.AccessNode) and not node.desc(self._sdfg).transient:
+            for node, _ in sdfg.all_nodes_recursive():
+                if isinstance(node, dace.nodes.AccessNode) and not node.desc(sdfg).transient:
                     node.instrument = dace.DataInstrumentationType.Save
 
-            result = self._sdfg(**kwargs)
+            result = sdfg(**kwargs)
 
             # Disable data instrumentation from now on
-            for node, _ in self._sdfg.all_nodes_recursive():
+            for node, _ in sdfg.all_nodes_recursive():
                 if isinstance(node, dace.nodes.AccessNode):
                     node.instrument = dace.DataInstrumentationType.No_Instrumentation
         else:
