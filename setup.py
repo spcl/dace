@@ -59,7 +59,7 @@ setup(name='dace',
           'scikit-build', 'cmake', 'aenum', 'dataclasses; python_version < "3.7"', 'dill',
           'pyreadline;platform_system=="Windows"', 'typing-compat; python_version < "3.8"'
       ],
-      extras_require={'testing': ['coverage', 'pytest-cov', 'scipy', 'absl-py', 'opt_einsum', 'pymlir', 'click']},
+      extras_require={'testing': ['coverage', 'pytest-cov', 'scipy', 'absl-py', 'opt_einsum', 'pymlir', 'click'], 'performance': ['kerncraft']},
       entry_points={
           'console_scripts': [
               'dacelab = dace.cli.dacelab:main',
