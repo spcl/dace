@@ -44,7 +44,8 @@ class KerncraftWrapper():
         report = model.results
         report["FLOP"] = kernel_desc._flops
 
-        flops_per_cycle = self._machine_model._data["FLOPs per cycle"]["SP"]["total"]
+        precision = "SP" if kernel_desc.datatype[0] == "float" else "DP"
+        flops_per_cycle = self._machine_model._data["FLOPs per cycle"][precision]["total"]
         cores_per_socket = self._machine_model._data["cores per socket"]
         clock = self._machine_model._data["clock"].with_prefix("G").value
         peak_flops = flops_per_cycle * cores_per_socket * clock
@@ -146,7 +147,7 @@ class KerncraftWrapper():
             name = memlet.data
             array = kernel.arrays[name]
             
-            dtype = str(array.dtype)
+            dtype = array.dtype.ctype
             supported_dtype = ["float", "double"]
             if dtype not in supported_dtype:
                 dtype = "float"
