@@ -42,7 +42,9 @@ class KerncraftWrapper():
 
         # TODO: Parse kerncraft report into common format for different backends
         report = model.results
-        report["FLOP"] = kernel_desc._flops
+        flop = sum(kernel_desc._flops.values())
+        report["FLOP per iteration"] = flop
+        report["Total FLOP"] = flop * kernel_desc.iteration_length()
 
         precision = "SP" if kernel_desc.datatype[0] == "float" else "DP"
         flops_per_cycle = self._machine_model._data["FLOPs per cycle"][precision]["total"]
