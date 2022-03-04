@@ -18,10 +18,6 @@ ShapeType = Sequence[Union[Integral, str, symbolic.symbol, symbolic.SymExpr, sym
 RankType = Union[Integral, str, symbolic.symbol, symbolic.SymExpr, symbolic.sympy.Basic]
 
 
-def _prod(sequence):
-    return functools.reduce(lambda a, b: a * b, sequence, 1)
-
-
 @make_properties
 class ProcessGrid(object):
     """
