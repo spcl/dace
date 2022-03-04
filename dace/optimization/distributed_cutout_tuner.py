@@ -1,7 +1,7 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
-import json
 import os
-import os.path
+import dace
+import json
 import itertools
 
 from typing import Dict
@@ -23,8 +23,10 @@ class DistributedCutoutTuner():
             node_id = state.node_id(node)
             label = node.label
 
-            # TODO: How to get the hash?
-            node_hash = hash(node)
+            if isinstance(node, (dace.nodes.LibraryNode, dace.nodes.Tasklet)):
+                node_hash = label.split("_")[-1]
+            else:
+                node_hash = (state_id, node_id)
 
             if node_hash not in hash_groups:
                 hash_groups[node_hash] = []
