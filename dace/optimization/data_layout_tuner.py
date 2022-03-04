@@ -40,7 +40,7 @@ class DataLayoutTuner(cutout_tuner.CutoutTuner):
         for node, state in self._sdfg.all_nodes_recursive():
             if not isinstance(state, SDFGState):
                 continue
-            
+
             if xfh.get_parent_map(state, node) is not None:
                 continue
 
@@ -49,7 +49,7 @@ class DataLayoutTuner(cutout_tuner.CutoutTuner):
             elif isinstance(node, (dace.nodes.LibraryNode, dace.nodes.Tasklet)):
                 yield state, node
 
-    def space(self, cutout_sdfg: dace.SDFG, name: str, groups: List[Set[str]] = None) -> Generator[Set[str], None, None]:
+    def space(self, cutout_sdfg: dace.SDFG, groups: List[Set[str]] = None) -> Generator[Set[str], None, None]:
         # Make a copy of the original arrays
         arrays = copy.deepcopy(cutout_sdfg.arrays)
 
@@ -75,24 +75,24 @@ class DataLayoutTuner(cutout_tuner.CutoutTuner):
         group_layouts = [itertools.permutations(list(range(dims))) for dims in group_dims]
         configurations = itertools.product(*group_layouts)
 
-        for config in tqdm(list(configurations), desc=name):
+        for config in configurations:
             config: Sequence[Sequence[int]]
 
             # Reset arrays
-            cutout_sdfg._arrays = copy.deepcopy(arrays)
+            new_arrays = copy.deepcopy(arrays)
 
             # Set array strides
             modified_arrays = set()
             for group, group_config in zip(groups, config):
                 for member in group:
-                    desc = cutout_sdfg.arrays[member]
+                    desc = new_arrays[member]
                     strides, total_size = desc.strides_from_layout(*group_config)
-                    cutout_sdfg.arrays[member].strides = strides
-                    cutout_sdfg.arrays[member].total_size = total_size
+                    new_arrays[member].strides = strides
+                    new_arrays[member].total_size = total_size
                     modified_arrays.add(member)
 
             # Yield configuration
-            yield modified_arrays
+            yield modified_arrays, new_arrays
 
     def setup_tuning_groups(self, cutout: SDFG, group_by: TuningGroups) -> Optional[List[Set[str]]]:
         if group_by == TuningGroups.Separate:
@@ -156,11 +156,11 @@ class DataLayoutTuner(cutout_tuner.CutoutTuner):
             # Setup tuning groups
             groups = self.setup_tuning_groups(cutout, group_by)
 
+            # Iterate over configurations
             results = {}
-            best_choice = None
-            best_runtime = math.inf
-            for modified_arrays in self.space(cutout_sdfg=cutout, name=node.label, groups=groups):
+            for modified_arrays, new_arrays in tqdm(list(self.space(cutout_sdfg=cutout, groups=groups)), desc=node.label):
                 # Modify data layout prior to calling
+                cutout._arrays = new_arrays
                 for marray in modified_arrays:
                     arguments[marray] = dt.make_array_from_descriptor(cutout.arrays[marray], arguments[marray])
 
@@ -169,13 +169,7 @@ class DataLayoutTuner(cutout_tuner.CutoutTuner):
                 runtime = self.measure(cutout, arguments, repetitions=measurements)
                 results[layout] = runtime
 
-                if runtime < best_runtime:
-                    best_choice = modified_arrays
-                    best_runtime = runtime
-
-            if apply and best_choice is not None:
-                # TODO:
-                pass
+            # No modification to original SDFG, best configuration needs to be determined globally
 
             tuning_report[node.label] = results
             with open(f'{node.label}.tuning', 'w') as fp:
