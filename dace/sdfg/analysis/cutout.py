@@ -31,6 +31,8 @@ def cutout_state(state: SDFGState, *nodes: nd.Node) -> SDFG:
         new_sdfg.add_symbol(sym, defined_syms[sym])
 
     for dnode in subgraph.data_nodes():
+        if dnode.data in new_sdfg.arrays:
+            continue
         new_desc = sdfg.arrays[dnode.data].clone()
         # If transient is defined outside, it becomes a global
         if dnode.data in other_arrays:
@@ -46,6 +48,12 @@ def cutout_state(state: SDFGState, *nodes: nd.Node) -> SDFG:
         if e.dst not in inserted_nodes:
             inserted_nodes[e.dst] = copy.deepcopy(e.dst)
         new_state.add_edge(inserted_nodes[e.src], e.src_conn, inserted_nodes[e.dst], e.dst_conn, copy.deepcopy(e.data))
+
+    # Insert remaining isolated nodes
+    for n in subgraph.nodes():
+        if n not in inserted_nodes:
+            inserted_nodes[n] = copy.deepcopy(n)
+            new_state.add_node(inserted_nodes[n])
 
     # Remove remaining dangling connectors from scope nodes
     for node in inserted_nodes.values():
@@ -76,7 +84,7 @@ def _extend_subgraph_with_access_nodes(state: SDFGState, subgraph: StateSubgraph
             continue
         for e in state.in_edges(node):
             # Special case: IN_* connectors are not traversed further
-            if e.dst_conn.startswith('IN_'):
+            if isinstance(e.dst, (nd.EntryNode, nd.ExitNode)) and e.dst_conn.startswith('IN_'):
                 continue
             mpath = state.memlet_path(e)
             new_nodes = [mpe.src for mpe in mpath if mpe.src not in result]
@@ -86,7 +94,7 @@ def _extend_subgraph_with_access_nodes(state: SDFGState, subgraph: StateSubgraph
 
         for e in state.out_edges(node):
             # Special case: OUT_* connectors are not traversed further
-            if e.src_conn.startswith('OUT_'):
+            if isinstance(e.src, (nd.EntryNode, nd.ExitNode)) and e.src_conn.startswith('OUT_'):
                 continue
             mpath = state.memlet_path(e)
             new_nodes = [mpe.dst for mpe in mpath if mpe.dst not in result]

@@ -9,20 +9,18 @@ from dace.optimization import auto_tuner
 from dace.codegen.instrumentation.data import data_report
 
 
-class CutoutTuner(auto_tuner.AutoTuner, abc.ABC):
+class CutoutTuner(auto_tuner.AutoTuner):
 
     def __init__(self, sdfg: dace.SDFG) -> None:
         super().__init__(sdfg=sdfg)
 
-    @abc.abstractmethod
     def cutouts(self) -> Generator[Tuple[dace.SDFGState, List[dace.nodes.Node]], None, None]:
         pass
 
-    @abc.abstractmethod
     def space(self, cutout: dace.SDFG) -> Generator[Any, None, None]:
         pass
 
-    def dry_run(self, *args, **kwargs) -> None:
+    def dry_run(self, *args, **kwargs) -> Any:
         # Check existing instrumented data for shape mismatch
         kwargs.update({aname: a for aname, a in zip(self._sdfg.arg_names, args)})
 
@@ -45,14 +43,18 @@ class CutoutTuner(auto_tuner.AutoTuner, abc.ABC):
                 if isinstance(node, dace.nodes.AccessNode) and not node.desc(self._sdfg).transient:
                     node.instrument = dace.DataInstrumentationType.Save
 
-            self._sdfg(**kwargs)
+            result = self._sdfg(**kwargs)
 
             # Disable data instrumentation from now on
             for node, _ in self._sdfg.all_nodes_recursive():
                 if isinstance(node, dace.nodes.AccessNode):
                     node.instrument = dace.DataInstrumentationType.No_Instrumentation
+        else:
+            return None
 
-    def measure(self, sdfg: dace.sdfg, arguments: Dict[str, dace.data.ArrayLike], repetitions: int = 30) -> np.float:
+        return result
+
+    def measure(self, sdfg: dace.SDFG, arguments: Dict[str, dace.data.ArrayLike], repetitions: int = 30) -> float:
         with dace.config.set_temporary('debugprint', value=False):
             with dace.config.set_temporary('instrumentation', 'report_each_invocation', value=False):
                 with dace.config.set_temporary('compiler', 'allow_view_arguments', value=True):
