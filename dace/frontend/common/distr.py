@@ -645,7 +645,7 @@ def _cart_sub(pv: 'ProgramVisitor',
         The sub-grids are implemented with [MPI_Cart_sub](https://www.mpich.org/static/docs/latest/www3/MPI_Cart_sub.html).
         :param parent_grid: Parent process-grid (similar to the `comm` parameter of `MPI_Cart_sub`).
         :param color: The i-th entry specifies whether the i-th dimension is kept in the sub-grid or is dropped (see `remain_dims` input of `MPI_Cart_sub`).
-        :param exact_grid: If set then, out of all the sub-grids created, only the one that contains the rank with id `exact_grid` will be utilized for collective communication.
+        :param exact_grid: [DEVELOPER] If set then, out of all the sub-grids created, only the one that contains the rank with id `exact_grid` will be utilized for collective communication.
         :return: Name of the new sub-grid descriptor.
     """
     pgrid_name = sdfg.add_pgrid(parent_grid=parent_grid, color=color, exact_grid=exact_grid)
@@ -679,22 +679,51 @@ def _cart_sub(pv: 'ProgramVisitor',
 def _subarray(pv: 'ProgramVisitor',
               sdfg: SDFG,
               state: SDFGState,
-              out_buffer: str,
-              process_grid: str,
-              correspondence: Sequence[Integral],
-              shape: Sequence[Union[sp.Expr, Integral]] = None):
-    out_desc = sdfg.arrays[out_buffer]
-    subarray_name = sdfg.add_subarray(out_desc.dtype, shape if shape else out_desc.shape, out_desc.shape, process_grid,
-                                      correspondence)
+              array: Union[str, ShapeType],
+              subarray: Union[str, ShapeType],
+              dtype: dtypes.Typeclass = None,
+              process_grid: str = None,
+              correspondence: Sequence[Integral] = None):
+    """ Adds a sub-array descriptor to the DaCe Program.
+        Sub-arrays are implemented (when `process_grid` is set) with [MPI_Type_create_subarray](https://www.mpich.org/static/docs/v3.2/www3/MPI_Type_create_subarray.html).
+        :param array: Either the name of an Array descriptor or the shape of the array (similar to the `array_of_sizes` parameter of `MPI_Type_create_subarray`).
+        :param subarray: Either the name of an Array descriptor or the sub-shape of the (sub-)array (similar to the `array_of_subsizes` parameter of `MPI_Type_create_subarray`).
+        :param dtype: Datatype of the array/sub-array (similar to the `oldtype` parameter of `MPI_Type_create_subarray`).
+        :process_grid: Name of the process-grid for collective scatter/gather operations.
+        :param correspondence: Matching of the array/sub-array's dimensions to the process-grid's dimensions.
+        :return: Name of the new sub-array descriptor.
+    """
+    # Get dtype, shape, and subshape
+    if isinstance(array, str):
+        shape = sdfg.arrays[array].shape
+        arr_dtype = sdfg.arrays[array].dtype
+    else:
+        shape = array
+        arr_dtype = None
+    if isinstance(subarray, str):
+        subshape = sdfg.arrays[subarray].shape
+        sub_dtype = sdfg.arrays[subarray].dtype
+    else:
+        subshape = subarray
+        sub_dtype = None
+    dtype = dtype or arr_dtype or sub_dtype
 
-    from dace.libraries.mpi import Dummy
-    tasklet = Dummy(
-        subarray_name,
-        [f'MPI_Datatype {subarray_name};', f'int* {subarray_name}_counts;', f'int* {subarray_name}_displs;'])
-    state.add_node(tasklet)
-    _, scal = sdfg.add_scalar(subarray_name, dace.int32, transient=True)
-    wnode = state.add_write(subarray_name)
-    state.add_edge(tasklet, '__out', wnode, None, Memlet.from_array(subarray_name, scal))
+    subarray_name = sdfg.add_subarray(dtype, shape, subshape, process_grid, correspondence)
+
+    # Generate subgraph only if process-grid is set, i.e., the sub-array will be used for collective scatter/gather ops.
+    if process_grid:
+        # Dummy tasklet adds MPI variables to the program's state.
+        from dace.libraries.mpi import Dummy
+        tasklet = Dummy(
+            subarray_name,
+            [f'MPI_Datatype {subarray_name};', f'int* {subarray_name}_counts;', f'int* {subarray_name}_displs;'])
+
+        state.add_node(tasklet)
+
+        # Pseudo-writing to a dummy variable to avoid removal of Dummy node by transformations.
+        _, scal = sdfg.add_scalar(subarray_name, dace.int32, transient=True)
+        wnode = state.add_write(subarray_name)
+        state.add_edge(tasklet, '__out', wnode, None, Memlet.from_array(subarray_name, scal))
 
     return subarray_name
 

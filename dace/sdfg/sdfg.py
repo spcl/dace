@@ -1818,7 +1818,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             :param dtype: Datatype of the array (see `oldtype` parameter of [MPI_Type_create_subarray](https://www.mpich.org/static/docs/v3.2/www3/MPI_Type_create_subarray.html)).
             :param shape: Shape of the sub-array (see `array_of_sizes` parameter of [MPI_Type_create_subarray](https://www.mpich.org/static/docs/v3.2/www3/MPI_Type_create_subarray.html)).
             :param subshape: Sub-shape of the sub-array (see `array_of_subsizes` parameter of [MPI_Type_create_subarray](https://www.mpich.org/static/docs/v3.2/www3/MPI_Type_create_subarray.html)).
-            :param pgrid: Process-grid used to collective scatter/gather operations.
+            :param pgrid: Process-grid used for collective scatter/gather operations.
             :param correspondence: Matching among array dimensions and process-grid dimensions.
             :return: Name of the new sub-array descriptor.
         """
