@@ -400,8 +400,6 @@ def add_indirection_subgraph(sdfg: SDFG,
     for arrname, arr_accesses in accesses.items():
         arr_name = arrname
         for i, access in enumerate(arr_accesses):
-            if isinstance(access, (list, tuple)):
-                access = access[0]
             if isinstance(access, sympy.Tuple):
                 access = list(access)
             if not isinstance(access, (list, tuple)):
