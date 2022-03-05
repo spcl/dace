@@ -1270,7 +1270,7 @@ def synchronize_streams(sdfg, dfg, state_id, node, scope_exit, callsite_stream):
         for edge in dfg.out_edges(scope_exit):
             # Synchronize end of kernel with output data (multiple kernels
             # lead to same data node)
-            if (isinstance(edge.dst, nodes.AccessNode) and edge.dst._cuda_stream != node._cuda_stream):
+            if (isinstance(edge.dst, nodes.AccessNode) and hasattr(edge.dst, '_cuda_stream') and edge.dst._cuda_stream != node._cuda_stream):
                 callsite_stream.write(
                     """{backend}EventRecord(__state->gpu_context->events[{ev}], {src_stream});
 {backend}StreamWaitEvent(__state->gpu_context->streams[{dst_stream}], __state->gpu_context->events[{ev}], 0);""".format(
