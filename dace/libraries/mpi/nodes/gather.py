@@ -1,17 +1,14 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace.library
-import dace.properties
-import dace.sdfg.nodes
+# Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
+from dace import dtypes, library, properties
+from dace.data import _prod
+from dace.libraries.mpi import utils
+from dace.sdfg import nodes
 from dace.symbolic import symstr
 from dace.transformation.transformation import ExpandTransformation
-import functools
 from .. import environments
 
 
-def _prod(sequence):
-    return functools.reduce(lambda a, b: a * b, sequence, 1)
-
-@dace.library.expansion
+@library.expansion
 class ExpandGatherMPI(ExpandTransformation):
 
     environments = [environments.mpi.MPI]
@@ -19,12 +16,12 @@ class ExpandGatherMPI(ExpandTransformation):
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
         (inbuffer, in_count_str), (outbuffer, out_count_str), root = node.validate(parent_sdfg, parent_state)
-        in_mpi_dtype_str = dace.libraries.mpi.utils.MPI_DDT(inbuffer.dtype.base_type)
-        out_mpi_dtype_str = dace.libraries.mpi.utils.MPI_DDT(outbuffer.dtype.base_type)
+        in_mpi_dtype_str = utils.MPI_DDT(inbuffer.dtype.base_type)
+        out_mpi_dtype_str = utils.MPI_DDT(outbuffer.dtype.base_type)
 
         if inbuffer.dtype.veclen > 1:
             raise (NotImplementedError)
-        if root.dtype.base_type != dace.dtypes.int32:
+        if root.dtype.base_type != dtypes.int32:
             raise ValueError("Gather root must be an integer!")
 
         code = f"""
@@ -34,162 +31,12 @@ class ExpandGatherMPI(ExpandTransformation):
                        _outbuffer, ({out_count_str})/_commsize, {out_mpi_dtype_str},
                        _root, MPI_COMM_WORLD);
             """
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          node.in_connectors,
-                                          node.out_connectors,
-                                          code,
-                                          language=dace.dtypes.Language.CPP)
+        tasklet = nodes.Tasklet(node.name, node.in_connectors, node.out_connectors, code, language=dtypes.Language.CPP)
         return tasklet
 
 
-@dace.library.expansion
-class ExpandBlockGatherMPI(ExpandTransformation):
-
-    environments = [environments.mpi.MPI]
-
-    @staticmethod
-    def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
-        (inp_buffer, block_sizes, process_grid, color_dims,
-         out_buffer) = node.validate(parent_sdfg, parent_state)
-        in_mpi_dtype_str = dace.libraries.mpi.utils.MPI_DDT(
-            inp_buffer.dtype.base_type)
-        out_mpi_dtype_str = dace.libraries.mpi.utils.MPI_DDT(
-            out_buffer.dtype.base_type)
-
-        if inp_buffer.dtype.veclen > 1:
-            raise NotImplementedError
-        # if root.dtype.base_type != dace.dtypes.int32:
-        #     raise ValueError("Scatter root must be an integer!")
-
-        num_comp_dims = process_grid.shape[0]
-        num_data_dims = block_sizes.shape[0]
-        num_color_dims = color_dims.shape[0]
-
-        code = f"""
-            MPI_Comm __cart_comm;
-            int periods[{num_comp_dims}] = {{0}};
-            MPI_Cart_create(MPI_COMM_WORLD, {num_comp_dims}, _process_grid, periods, 0, &__cart_comm);
-
-            if (__cart_comm != MPI_COMM_NULL) {{
-                int __cart_rank, __cart_size;
-                MPI_Comm_rank(__cart_comm, &__cart_rank);
-                MPI_Comm_size(__cart_comm, &__cart_size);
-
-                int process_id[{num_comp_dims}];
-                MPI_Cart_coords(__cart_comm, __cart_rank, {num_comp_dims}, process_id);
-
-                MPI_Comm __scatter_comm, __bcast_comm;
-                int remain[{num_comp_dims}];
-                for (auto i = 0; i < {num_color_dims}; ++i) {{
-                    remain[i] = (_color_dims[i] + 1) % 2;
-                }}
-                MPI_Cart_sub(__cart_comm, _color_dims, &__scatter_comm);
-                MPI_Cart_sub(__cart_comm, remain, &__bcast_comm);
-
-                int __scatter_rank, num_blocks;
-                MPI_Comm_rank(__scatter_comm, &__scatter_rank);
-                MPI_Comm_size(__scatter_comm, &num_blocks);
-
-                int __bcast_rank;
-                MPI_Comm_rank(__bcast_comm, &__bcast_rank);
-
-                MPI_Group __cart_group, __scatter_group;
-                MPI_Comm_group(__cart_comm, &__cart_group);
-                MPI_Comm_group(__scatter_comm, &__scatter_group);
-                int ranks1[1] = {{0}};
-                int ranks2[1];
-                MPI_Group_translate_ranks(__cart_group, 1, ranks1, __scatter_group, ranks2);
-
-                if (ranks2[0] != MPI_PROC_NULL && ranks2[0] != MPI_UNDEFINED) {{
-
-                    assert(__bcast_rank == 0);
-
-                    MPI_Reduce(MPI_IN_PLACE, _inp_buffer, {symstr(_prod(inp_buffer.shape))}, {in_mpi_dtype_str}, MPI_SUM, __bcast_rank, __bcast_comm);
-
-                    int basic_stride = _block_sizes[{num_data_dims} - 1];
-                    int process_strides[{num_data_dims}];
-                    int block_strides[{num_data_dims}];
-                    int data_strides[{num_data_dims}];
-                    process_strides[{num_data_dims} - 1] = 1;
-                    block_strides[{num_data_dims} - 1] = _block_sizes[{num_data_dims} - 1];
-                    data_strides[{num_data_dims} - 1] = 1;
-                    for (auto i = {num_data_dims} - 2; i >= 0; --i) {{
-                        block_strides[i] = block_strides[i+1] * _block_sizes[i];
-                        process_strides[i] = process_strides[i+1] * _process_grid[_cd_equiv[i+1]];
-                        data_strides[i] = block_strides[i] * process_strides[i] / basic_stride;
-                    }}
-
-                    MPI_Datatype type, rsized_type;
-                    int sizes[{num_data_dims}] = {{{','.join(symstr(s) for s in out_buffer.shape)}}};
-                    int origin[{num_data_dims}] = {{{','.join(['0'] * num_data_dims)}}};
-                    MPI_Type_create_subarray({num_data_dims}, sizes, _block_sizes, origin, MPI_ORDER_C, {out_mpi_dtype_str}, &type);
-                    MPI_Type_create_resized(type, 0, basic_stride*sizeof({out_buffer.dtype.ctype}), &rsized_type);
-                    MPI_Type_commit(&rsized_type);
-
-                    int* counts = new int[num_blocks];
-                    int* displs = new int[num_blocks];
-                    int block_id[{num_data_dims}] = {{0}};
-                    int displ = 0;
-                    for (auto i = 0; i < num_blocks; ++i) {{
-                        counts[i] = 1;
-                        displs[i] = displ;
-                        int idx = {num_data_dims} - 1;
-                        while (block_id[idx] + 1 >= _process_grid[_cd_equiv[idx]]) {{
-                            block_id[idx] = 0;
-                            displ -= data_strides[idx] * (_process_grid[_cd_equiv[idx]] - 1);
-                            idx--;
-                        }}
-                        block_id[idx] += 1;
-                        displ += data_strides[idx];
-                    }}
-
-                    if (__scatter_rank == 0) {{
-                        printf("Number of blocks is %d\\n", num_blocks);
-                        printf("Process grid");
-                        for (auto i = 0; i < {num_data_dims}; ++i) printf(" %d", _process_grid[_cd_equiv[i]]);
-                        printf("\\n");
-                        printf("Block strides");
-                        for (auto i = 0; i < {num_data_dims}; ++i) printf(" %d", block_strides[i]);
-                        printf("\\n");
-                        printf("Process strides");
-                        for (auto i = 0; i < {num_data_dims}; ++i) printf(" %d", process_strides[i]);
-                        printf("\\n");
-                        printf("Data strides");
-                        for (auto i = 0; i < {num_data_dims}; ++i) printf(" %d", data_strides[i]);
-                        printf("\\n");
-                        printf("Counts are");
-                        for (auto i = 0; i < num_blocks; ++i) printf(" %d", counts[i]);
-                        printf("\\n");
-                        printf("Displacements are");
-                        for (auto i = 0; i < num_blocks; ++i) printf(" %d", displs[i]);
-                        printf("\\n");
-                    }}
-                    MPI_Gatherv(_inp_buffer, {symstr(_prod(inp_buffer.shape))}, {in_mpi_dtype_str}, _out_buffer, counts, displs, rsized_type, 0, __scatter_comm);
-                    
-                    delete[] counts;
-                    delete[] displs;
-                    MPI_Type_free(&rsized_type);
-                }} else {{
-                    MPI_Reduce(_inp_buffer, _inp_buffer, {symstr(_prod(inp_buffer.shape))}, {in_mpi_dtype_str}, MPI_SUM, 0, __bcast_comm);
-                }}
-
-                MPI_Comm_free(&__scatter_comm);
-                MPI_Comm_free(&__bcast_comm);
-            }}
-
-            MPI_Comm_free(&__cart_comm);
-        """
-
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          node.in_connectors,
-                                          node.out_connectors,
-                                          code,
-                                          language=dace.dtypes.Language.CPP)
-        return tasklet
-
-
-@dace.library.node
-class Gather(dace.sdfg.nodes.LibraryNode):
+@library.node
+class Gather(nodes.LibraryNode):
 
     # Global properties
     implementations = {
@@ -216,7 +63,7 @@ class Gather(dace.sdfg.nodes.LibraryNode):
             if e.dst_conn == "_root":
                 root = sdfg.arrays[e.data.data]
 
-        if root.dtype.base_type != dace.dtypes.int32:
+        if root.dtype.base_type != dtypes.int32:
             raise (ValueError("Gather root must be an integer!"))
 
         in_count_str = "XXX"
@@ -233,62 +80,57 @@ class Gather(dace.sdfg.nodes.LibraryNode):
         return (inbuffer, in_count_str), (outbuffer, out_count_str), root
 
 
-@dace.library.expansion
-class ExpandBlockGatherMPI2(ExpandTransformation):
+@library.expansion
+class ExpandBlockGatherMPI(ExpandTransformation):
 
     environments = [environments.mpi.MPI]
 
     @staticmethod
-    def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
+    def expansion(node, parent_state, parent_sdfg):
         inp_buffer, out_buffer = node.validate(parent_sdfg, parent_state)
-        in_mpi_dtype_str = dace.libraries.mpi.utils.MPI_DDT(
-            inp_buffer.dtype.base_type)
-        out_mpi_dtype_str = dace.libraries.mpi.utils.MPI_DDT(
-            out_buffer.dtype.base_type)
+        mpi_dtype_str = utils.MPI_DDT(inp_buffer.dtype.base_type)
 
-        if inp_buffer.dtype.veclen > 1:
+        if out_buffer.dtype.veclen > 1:
             raise NotImplementedError
-        # if root.dtype.base_type != dace.dtypes.int32:
-        #     raise ValueError("Scatter root must be an integer!")
 
-        code = f"""
-            if (__state->{node._gather_grid}_valid) {{
-                assert(__state->{node._reduce_grid}_rank == 0);
-                MPI_Reduce(MPI_IN_PLACE, _inp_buffer, {symstr(_prod(inp_buffer.shape))}, {in_mpi_dtype_str}, MPI_SUM, __state->{node._reduce_grid}_rank, __state->{node._reduce_grid}_comm);
-                MPI_Gatherv(_inp_buffer, {symstr(_prod(inp_buffer.shape))}, {in_mpi_dtype_str}, _out_buffer, __state->{node._dtype}_counts, __state->{node._dtype}_displs, __state->{node._dtype}, 0, __state->{node._gather_grid}_comm);
-            }} else {{
-                MPI_Reduce(_inp_buffer, _inp_buffer, {symstr(_prod(inp_buffer.shape))}, {in_mpi_dtype_str}, MPI_SUM, 0, __state->{node._reduce_grid}_comm);
-            }}
-        """
+        if node.reduce_grid:
+            code = f"""
+                if (__state->{node.gather_grid}_valid) {{
+                    MPI_Reduce(MPI_IN_PLACE, _inp_buffer, {symstr(_prod(inp_buffer.shape))}, {mpi_dtype_str}, MPI_SUM, __state->{node.reduce_grid}_rank, __state->{node.reduce_grid}_comm);
+                    MPI_Gatherv(_inp_buffer, {symstr(_prod(inp_buffer.shape))}, {mpi_dtype_str}, _out_buffer, __state->{node.subarray_type}_counts, __state->{node.subarray_type}_displs, __state->{node.subarray_type}, 0, __state->{node.gather_grid}_comm);
+                }} else if (__state->{node.reduce_grid}_valid) {{
+                    MPI_Reduce(_inp_buffer, _inp_buffer, {symstr(_prod(inp_buffer.shape))}, {mpi_dtype_str}, MPI_SUM, 0, __state->{node.reduce_grid}_comm);
+                }}
+            """
+        else:
+            code = f"""
+                if (__state->{node.gather_grid}_valid) {{
+                    MPI_Gatherv(_inp_buffer, {symstr(_prod(inp_buffer.shape))}, {mpi_dtype_str}, _out_buffer, __state->{node.subarray_type}_counts, __state->{node.subarray_type}_displs, __state->{node.subarray_type}, 0, __state->{node.gather_grid}_comm);
+                }}
+            """
 
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          node.in_connectors,
-                                          node.out_connectors,
-                                          code,
-                                          language=dace.dtypes.Language.CPP)
+        tasklet = nodes.Tasklet(node.name, node.in_connectors, node.out_connectors, code, language=dtypes.Language.CPP)
         return tasklet
 
 
-@dace.library.node
-class BlockGather(dace.sdfg.nodes.LibraryNode):
+@library.node
+class BlockGather(nodes.LibraryNode):
 
     # Global properties
     implementations = {
-        "MPI": ExpandBlockGatherMPI2,
+        "MPI": ExpandBlockGatherMPI,
     }
     default_implementation = "MPI"
 
-    def __init__(self, name, dtype, gather_grid, reduce_grid, *args, **kwargs):
-        super().__init__(name,
-                         *args,
-                        #  inputs={"_inp_buffer", "_block_sizes", "_cd_equiv",
-                        #          "_process_grid", "_color_dims"},
-                        inputs={"_inp_buffer"},
-                         outputs={"_out_buffer"},
-                         **kwargs)
-        self._dtype = dtype
-        self._gather_grid = gather_grid
-        self._reduce_grid = reduce_grid
+    subarray_type = properties.Property(dtype=str, default='tmp')
+    gather_grid = properties.Property(dtype=str, default='tmp')
+    reduce_grid = properties.Property(dtype=str, allow_none=True, default=None)
+
+    def __init__(self, name, subarray_type='tmp', gather_grid='tmp', reduce_grid=None, *args, **kwargs):
+        super().__init__(name, *args, inputs={"_inp_buffer"}, outputs={"_out_buffer"}, **kwargs)
+        self.subarray_type = subarray_type
+        self.gather_grid = gather_grid
+        self.reduce_grid = reduce_grid
 
     def validate(self, sdfg, state):
         """
@@ -303,40 +145,5 @@ class BlockGather(dace.sdfg.nodes.LibraryNode):
         for e in state.in_edges(self):
             if e.dst_conn == "_inp_buffer":
                 inp_buffer = sdfg.arrays[e.data.data]
-        
+
         return inp_buffer, out_buffer
-
-        # inp_buffer, block_sizes, process_grid, color_dims, out_buffer = (
-        #     None, None, None, None, None)
-        # for e in state.out_edges(self):
-        #     if e.src_conn == "_out_buffer":
-        #         out_buffer = sdfg.arrays[e.data.data]
-        #         # out_size = e.data.subset.size_exact()
-        # for e in state.in_edges(self):
-        #     if e.dst_conn == "_inp_buffer":
-        #         inp_buffer = sdfg.arrays[e.data.data]
-        #         # inp_size = e.data.subset.size_exact()
-        #     if e.dst_conn == "_block_sizes":
-        #         block_sizes = sdfg.arrays[e.data.data]
-        #     if e.dst_conn == "_process_grid":
-        #         process_grid = sdfg.arrays[e.data.data]
-        #     if e.dst_conn == "_color_dims":
-        #         color_dims = sdfg.arrays[e.data.data]
-        #     # if e.dst_conn == "_root":
-        #     #     root = sdfg.arrays[e.data.data]
-
-        # # if root.dtype.base_type != dace.dtypes.int32:
-        # #     raise (ValueError("Scatter root must be an integer!"))
-
-        # # in_count_str = "XXX"
-        # # out_count_str = "XXX"
-        # # for _, src_conn, _, _, data in state.out_edges(self):
-        # #     if src_conn == '_outbuffer':
-        # #         dims = [symstr(e) for e in data.subset.size_exact()]
-        # #         out_count_str = "*".join(dims)
-        # # for _, _, _, dst_conn, data in state.in_edges(self):
-        # #     if dst_conn == '_inbuffer':
-        # #         dims = [symstr(e) for e in data.subset.size_exact()]
-        # #         in_count_str = "*".join(dims)
-
-        # return inp_buffer, block_sizes, process_grid, color_dims, out_buffer
