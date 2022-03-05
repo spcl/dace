@@ -356,7 +356,11 @@ class SubArray(object):
 
 @make_properties
 class RedistrArray(object):
-    """ Array redistribution.
+    """
+    Describes the redistribution of an Array from one process-grid and sub-array descriptor (`array_a`) to another
+    (`array_b`). The redistribution is implemented with MPI datatypes (see [MPI_Type_create_subarray](https://www.mpich.org/static/docs/v3.2/www3/MPI_Type_create_subarray.html)
+    and point-to-point communication through the `MPI_COMM_WORLD` communicator.
+    TODO: Add reference to publication describing the redistribution scheme.
     """
 
     name = Property(dtype=str, desc="The redistribution's name.")
@@ -395,6 +399,23 @@ class RedistrArray(object):
         return ret
 
     def init_code(self, sdfg):
+        """ Outputs MPI allocation/initialization code for the redistribution.
+            It is assumed that the following variables exist in the SDFG program's state:
+            - MPI_Datatype {self.name}
+            - int {self.name}_sends
+            - MPI_Datatype* {self.name}_send_types
+            - int* {self.name}_dst_ranks
+            - int {self.name}_recvs
+            - MPI_Datatype* {self.name}_recv_types
+            - int* {self.name}_src_ranks
+            - int {self.name}_self_copies
+            - int* {self.name}_self_src
+            - int* {self.name}_self_dst
+            - int* {self.name}_self_size
+
+            These variables are typically added to the program's state through a Tasklet, e.g., the Dummy MPI node (for
+            more details, check the DaCe MPI library in `dace/libraries/mpi`).
+        """
         array_a = sdfg.subarrays[self.array_a]
         array_b = sdfg.subarrays[self.array_b]
         from dace.libraries.mpi import utils
@@ -563,6 +584,7 @@ class RedistrArray(object):
         return tmp
 
     def exit_code(self, sdfg):
+        """ Outputs MPI deallocation code for the redistribution. """
         array_a = sdfg.subarrays[self.array_a]
         return f"""
             if (__state->{array_a.pgrid}_valid) {{
