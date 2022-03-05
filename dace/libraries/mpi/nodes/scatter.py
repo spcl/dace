@@ -5,7 +5,6 @@ from dace.libraries.mpi import utils
 from dace.sdfg import nodes
 from dace.symbolic import symstr
 from dace.transformation.transformation import ExpandTransformation
-import functools
 from .. import environments
 
 
@@ -100,7 +99,11 @@ class ExpandBlockScatterMPI(ExpandTransformation):
             }}
         """
         if node.bcast_grid:
-            code += f"MPI_Bcast(_out_buffer, {symstr(_prod(out_buffer.shape))}, {mpi_dtype_str}, 0, __state->{node._bcast_grid}_comm);"
+            code += f"""
+                if (__state->{node.bcast_grid}_valid) {{
+                    MPI_Bcast(_out_buffer, {symstr(_prod(out_buffer.shape))}, {mpi_dtype_str}, 0, __state->{node._bcast_grid}_comm);
+                }}
+            """
 
         tasklet = nodes.Tasklet(node.name, node.in_connectors, node.out_connectors, code, language=dtypes.Language.CPP)
         return tasklet
