@@ -19,6 +19,7 @@ try:
 except (ImportError, ModuleNotFoundError):
     tqdm = lambda x, **kwargs: x
 
+
 class TuningGroups(enum.Enum):
     Separate = enum.auto()
     Inputs_Outputs = enum.auto()
@@ -27,6 +28,7 @@ class TuningGroups(enum.Enum):
 
 
 class DataLayoutTuner(cutout_tuner.CutoutTuner):
+
     def __init__(self, sdfg: SDFG, measurement: dtypes.InstrumentationType = dtypes.InstrumentationType.Timer) -> None:
         super().__init__(task="DataLayout", sdfg=sdfg)
         self.instrument = measurement
@@ -91,7 +93,8 @@ class DataLayoutTuner(cutout_tuner.CutoutTuner):
             # Yield configuration
             yield modified_arrays, new_arrays
 
-    def evaluate(self, state: dace.SDFGState, node: dace.nodes.Node, dreport: data_report.InstrumentedDataReport, measurements: int, group_by: TuningGroups) -> Dict:
+    def evaluate(self, state: dace.SDFGState, node: dace.nodes.Node, dreport: data_report.InstrumentedDataReport,
+                 measurements: int, group_by: TuningGroups) -> Dict:
         # No modification to original SDFG, best configuration needs to be determined globally
         subgraph_nodes = state.scope_subgraph(node).nodes() if isinstance(node, dace.nodes.MapEntry) else [node]
         cutout = cutter.cutout_state(state, *subgraph_nodes)

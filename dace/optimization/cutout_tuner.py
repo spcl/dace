@@ -32,7 +32,7 @@ class CutoutTuner(auto_tuner.AutoTuner):
         results = None
         if os.path.exists(file_name):
             print(f'Using cached {file_name}')
-            
+
             with open(file_name, 'r') as fp:
                 results = json.load(fp)
 
@@ -44,7 +44,8 @@ class CutoutTuner(auto_tuner.AutoTuner):
     def space(self, cutout: dace.SDFG) -> Generator[Any, None, None]:
         raise NotImplementedError
 
-    def evaluate(self, state: dace.SDFGState, node: dace.nodes.Node, dreport: data_report.InstrumentedDataReport, measurements: int, **kwargs) -> Dict:
+    def evaluate(self, state: dace.SDFGState, node: dace.nodes.Node, dreport: data_report.InstrumentedDataReport,
+                 measurements: int, **kwargs) -> Dict:
         raise NotImplementedError
 
     @staticmethod
@@ -104,14 +105,14 @@ class CutoutTuner(auto_tuner.AutoTuner):
             (state_id, node_id), (state, node) = cutout
             fn = self.file_name(state_id, node_id, node.label)
             results = self.try_load(fn)
-            
+
             if results is None:
                 results = self.evaluate(state, node, dreport, measurements, **kwargs)
-                
+
                 with open(fn, 'w') as fp:
                     json.dump(results, fp)
-            
+
             key = ".".join((str(state_id), str(node_id)))
-            tuning_report[key] = results     
+            tuning_report[key] = results
 
         return tuning_report

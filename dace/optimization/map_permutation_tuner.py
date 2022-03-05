@@ -17,6 +17,7 @@ try:
 except (ImportError, ModuleNotFoundError):
     tqdm = lambda x, **kwargs: x
 
+
 class MapPermutationTuner(cutout_tuner.CutoutTuner):
 
     def __init__(self, sdfg: SDFG, measurement: dtypes.InstrumentationType = dtypes.InstrumentationType.Timer) -> None:
@@ -33,11 +34,11 @@ class MapPermutationTuner(cutout_tuner.CutoutTuner):
                 state_id = self._sdfg.node_id(state)
                 yield (state_id, node_id), (state, node)
 
-
     def space(self, parent_map: dace.nodes.MapEntry) -> Generator[Tuple[str], None, None]:
         return itertools.permutations(parent_map.map.params)
 
-    def evaluate(self, state: dace.SDFGState, node: dace.nodes.Node,  dreport: data_report.InstrumentedDataReport, measurements: int) -> Dict:
+    def evaluate(self, state: dace.SDFGState, node: dace.nodes.Node, dreport: data_report.InstrumentedDataReport,
+                 measurements: int) -> Dict:
         subgraph_nodes = state.scope_subgraph(node).nodes()
         cutout = cutter.cutout_state(state, *subgraph_nodes)
         cutout.instrument = self.instrument
@@ -59,7 +60,7 @@ class MapPermutationTuner(cutout_tuner.CutoutTuner):
             node.map.params = point
 
             runtime = self.measure(cutout, arguments, measurements)
-            
+
             key = ".".join(point)
             results[key] = runtime
 
