@@ -1,8 +1,9 @@
+from re import sub
 import dace
 import sympy
 import itertools
 
-from typing import Union, Dict
+from typing import Union, Dict, Tuple
 from pathlib import Path
 
 from kerncraft import machinemodel as mm
@@ -25,8 +26,8 @@ class KerncraftWrapper():
         if cores > 0:
             self._cores = min(cores, self._cores)
 
-    def roofline(self, kernel: dace.SDFG, values: Dict[str, int]) -> Dict:
-        kernel_desc = KerncraftWrapper.kerncraftify(kernel, values)
+    def roofline(self, state: dace.SDFGState, subgraph: dace.sdfg.ScopeSubgraphView, values: Dict[str, int]) -> Dict:
+        kernel_desc = KerncraftWrapper.kerncraftify(state, subgraph, values)
         kernel_desc.clear_state()
         for k, v in values.items():
             kernel_desc.set_constant(str(k), v)
@@ -63,7 +64,7 @@ class KerncraftWrapper():
 
         return report
 
-    def ecm(self, kernel: dace.SDFG, values: Dict[str, int]):
+    def ecm(self, state: dace.SDFGState, subgraph: dace.sdfg.ScopeSubgraphView, values: Dict[str, int]):
         raise NotImplementedError()
         
         kernel_desc = Kerncraft.kerncraftify(kernel, values)
@@ -84,10 +85,10 @@ class KerncraftWrapper():
         return model.results
 
     @staticmethod
-    def kerncraftify(kernel: dace.SDFG, values: Dict[str, int]):
+    def kerncraftify(state: dace.SDFGState, subgraph: dace.sdfg.ScopeSubgraphView, values: Dict[str, int]):
         tasklet = None
         maps = []
-        for node in kernel.start_state.nodes():
+        for node in subgraph.nodes():
             if isinstance(node, dace.nodes.MapEntry):
                 maps.append(node.map)
             elif isinstance(node, dace.nodes.Tasklet):
@@ -111,7 +112,7 @@ class KerncraftWrapper():
                     for expr in map.range.ranges[i]
                 ]
 
-                if len(step.free_symbols.intersection(kernel.free_symbols)) > 0:
+                if len(step.free_symbols.intersection(subgraph.free_symbols)) > 0:
                     raise ValueError("Wrong loop format")
 
                 offset = start
@@ -119,8 +120,8 @@ class KerncraftWrapper():
                 start = sympy.simplify(start - offset)
                 offsets.append((index, offset))
                 if (
-                    len(start.free_symbols.intersection(kernel.free_symbols)) > 0
-                    or len(stop.free_symbols.intersection(kernel.free_symbols)) > 0
+                    len(start.free_symbols.intersection(subgraph.free_symbols)) > 0
+                    or len(stop.free_symbols.intersection(subgraph.free_symbols)) > 0
                 ):
                     raise ValueError("Wrong loop format")
 
@@ -136,7 +137,7 @@ class KerncraftWrapper():
         desc["data sources"] = {}
         desc["data destinations"] = {}
         all_dtype = "float"
-        for edge in kernel.start_state.edges():
+        for edge in subgraph.edges():
             if not (
                 isinstance(edge.src, dace.nodes.Tasklet)
                 or isinstance(edge.dst, dace.nodes.Tasklet)
@@ -145,7 +146,7 @@ class KerncraftWrapper():
 
             memlet = edge.data
             name = memlet.data
-            array = kernel.arrays[name]
+            array = state.parent.arrays[name]
             
             dtype = array.dtype.ctype
             supported_dtype = ["float", "double"]
