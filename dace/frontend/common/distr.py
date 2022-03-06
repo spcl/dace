@@ -831,19 +831,22 @@ def _block_gather(pv: 'ProgramVisitor',
 
 
 @oprepo.replaces('dace.comm.Redistribute')
-def _redistribute(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, in_buffer: str, out_buffer: str, in_subarray: str,
-                  out_process_grid: str, out_correspondence: Sequence[Integral]):
+def _redistribute(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, in_buffer: str, in_subarray: str, out_buffer: str,
+                  out_subarray: str):
+    """ Redistributes an Array using process-grids, sub-arrays, and the Redistribute library node.
+        :param in_buffer: Name of the (local) input Array descriptor.
+        :param in_subarray: Input sub-array descriptor.
+        :param out_buffer: Name of the (local) output Array descriptor.
+        :param out_subarray: Output sub-array descriptor.
+        :return: Name of the new redistribution descriptor.
+    """
     in_desc = sdfg.arrays[in_buffer]
     out_desc = sdfg.arrays[out_buffer]
-    in_sarray = sdfg.subarrays[in_subarray]
-    out_subarray_name = sdfg.add_subarray(in_sarray.dtype, in_sarray.shape, out_desc.shape, out_process_grid,
-                                          out_correspondence)
 
-    rdistrarray_name = sdfg.add_rdistrarray(in_subarray, out_subarray_name)
+    rdistrarray_name = sdfg.add_rdistrarray(in_subarray, out_subarray)
 
     from dace.libraries.mpi import Dummy, Redistribute
-    tasklet = Dummy(out_subarray_name, [
-        f'MPI_Datatype {out_subarray_name};', f'int* {out_subarray_name}_counts;', f'int* {out_subarray_name}_displs;',
+    tasklet = Dummy(rdistrarray_name, [
         f'MPI_Datatype {rdistrarray_name};', f'int {rdistrarray_name}_sends;',
         f'MPI_Datatype* {rdistrarray_name}_send_types;', f'int* {rdistrarray_name}_dst_ranks;',
         f'int {rdistrarray_name}_recvs;', f'MPI_Datatype* {rdistrarray_name}_recv_types;',
@@ -852,9 +855,9 @@ def _redistribute(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, in_buffer:
         f'int* {rdistrarray_name}_self_size;'
     ])
     state.add_node(tasklet)
-    _, scal = sdfg.add_scalar(out_subarray_name, dace.int32, transient=True)
-    wnode = state.add_write(out_subarray_name)
-    state.add_edge(tasklet, '__out', wnode, None, Memlet.from_array(out_subarray_name, scal))
+    _, scal = sdfg.add_scalar(rdistrarray_name, dace.int32, transient=True)
+    wnode = state.add_write(rdistrarray_name)
+    state.add_edge(tasklet, '__out', wnode, None, Memlet.from_array(rdistrarray_name, scal))
 
     libnode = Redistribute('_Redistribute_', rdistrarray_name)
 
@@ -886,7 +889,7 @@ def _redistribute(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, in_buffer:
     state.add_edge(inbuf_node, None, libnode, '_inp_buffer', inbuf_mem)
     state.add_edge(libnode, '_out_buffer', outbuf_node, None, outbuf_mem)
 
-    return out_subarray_name
+    return rdistrarray_name
 
 
 # @oprepo.replaces('dace.comm.BlockGather')
