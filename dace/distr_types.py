@@ -367,7 +367,7 @@ class RedistrArray(object):
     array_a = Property(dtype=str, allow_none=True, default=None, desc="Sub-array that will be redistributed.")
     array_b = Property(dtype=str, allow_none=True, default=None, desc="Output sub-array.")
 
-    def __init__(self, name, array_a, array_b):
+    def __init__(self, name: str, array_a: str, array_b: str):
         self.name = name
         self.array_a = array_a
         self.array_b = array_b
@@ -435,6 +435,8 @@ class RedistrArray(object):
             MPI_Comm_rank(MPI_COMM_WORLD, &myrank);
         """
         for i, (sa, sb) in enumerate(zip(array_a.subshape, array_b.subshape)):
+            sa = f"int({sa})"
+            sb = f"int({sb})"
             tmp += f"""
                 max_sends *= int_ceil({sa} + {sb} - 1, {sb});
                 max_recvs *= int_ceil({sb} - 1, {sa}) + 1;
@@ -465,6 +467,8 @@ class RedistrArray(object):
             int origin[{len(array_b.subshape)}];
         """
         for i, (sa, sb, cb) in enumerate(zip(array_a.subshape, array_b.subshape, array_b.correspondence)):
+            sa = f"int({sa})"
+            sb = f"int({sb})"
             pcoord = f"__state->{array_b.pgrid}_coords[{cb}]"
             tmp += f"""
                 xi[{i}] = ({pcoord} * {sb}) / {sa};
@@ -478,7 +482,7 @@ class RedistrArray(object):
                     int actual_idx{i} = {array_a.correspondence[i]};
                     pcoords[actual_idx{i}] = xi[{i}] + idx{i};
                     int lo{i} = (idx{i} == 0 ? lambda[{i}] : 0);
-                    int uo{i} = std::min({array_a.subshape[i]}, lo{i} + rem{i});
+                    int uo{i} = std::min(int({array_a.subshape[i]}), lo{i} + rem{i});
                     subsizes[{i}] = uo{i} - lo{i};
                     origin[{i}] = {array_b.subshape[i]} - rem{i};
                     rem{i} -= uo{i} - lo{i};
@@ -533,8 +537,8 @@ class RedistrArray(object):
         """
         for i in range(len(array_b.shape)):
             pcoord = f"__state->{array_a.pgrid}_coords[{array_a.correspondence[i]}]"
-            sa = array_a.subshape[i]
-            sb = array_b.subshape[i]
+            sa = f"int({array_a.subshape[i]})"
+            sb = f"int({array_b.subshape[i]})"
             tmp += f"""
                 // int_ceil(x, y) := (x + y - 1) / y
                 // int_ceil(pcoord * sa - sb + 1, sb) = (pcoord * sa) / sb
