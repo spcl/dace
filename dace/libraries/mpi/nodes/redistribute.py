@@ -1,37 +1,28 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace.library
-import dace.properties
-import dace.sdfg.nodes
-from dace.symbolic import symbol, symstr
+# Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
+from dace import dtypes, library, properties, subsets, symbolic
+from dace.data import _prod
+from dace.libraries.mpi import utils
+from dace.sdfg import nodes
 from dace.transformation.transformation import ExpandTransformation
-import functools
 from .. import environments
 from dace.codegen.targets import cpp
 from dace import subsets
 
 
-def _prod(sequence):
-    return functools.reduce(lambda a, b: a * b, sequence, 1)
-
-
-@dace.library.expansion
+@library.expansion
 class ExpandRedistribute(ExpandTransformation):
 
     environments = [environments.mpi.MPI]
 
     @staticmethod
-    def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
+    def expansion(node, parent_state, parent_sdfg):
         inp_buffer, out_buffer = node.validate(parent_sdfg, parent_state)
-        in_mpi_dtype_str = dace.libraries.mpi.utils.MPI_DDT(
-            inp_buffer.dtype.base_type)
-        out_mpi_dtype_str = dace.libraries.mpi.utils.MPI_DDT(
-            out_buffer.dtype.base_type)
-        redistr = parent_sdfg.rdistrarrays[node._redistr]
+        redistr = parent_sdfg.rdistrarrays[node.redistr]
         array_a = parent_sdfg.subarrays[redistr.array_a]
         array_b = parent_sdfg.subarrays[redistr.array_b]
 
-        inp_symbols = [symbol(f"__inp_s{i}") for i in range(len(inp_buffer.shape))]
-        out_symbols = [symbol(f"__out_s{i}") for i in range(len(out_buffer.shape))]
+        inp_symbols = [symbolic.symbol(f"__inp_s{i}") for i in range(len(inp_buffer.shape))]
+        out_symbols = [symbolic.symbol(f"__out_s{i}") for i in range(len(out_buffer.shape))]
         inp_subset = subsets.Indices(inp_symbols)
         out_subset = subsets.Indices(out_symbols)
         inp_offset = cpp.cpp_offset_expr(inp_buffer, inp_subset)
@@ -40,12 +31,14 @@ class ExpandRedistribute(ExpandTransformation):
         print(out_offset)
         inp_repl = ""
         for i, s in enumerate(inp_symbols):
-            inp_repl += f"int {s} = __state->{node._redistr}_self_src[__idx * {len(inp_buffer.shape)} + {i}];\n"
+            inp_repl += f"int {s} = __state->{node.redistr}_self_src[__idx * {len(inp_buffer.shape)} + {i}];\n"
         out_repl = ""
         for i, s in enumerate(out_symbols):
-            out_repl += f"int {s} = __state->{node._redistr}_self_dst[__idx * {len(out_buffer.shape)} + {i}];\n"
-        copy_args = ", ".join([f"__state->{node._redistr}_self_size[__idx * {len(inp_buffer.shape)} + {i}], {istride}, {ostride}"
-                               for i, (istride, ostride) in enumerate(zip(inp_buffer.strides, out_buffer.strides))])
+            out_repl += f"int {s} = __state->{node.redistr}_self_dst[__idx * {len(out_buffer.shape)} + {i}];\n"
+        copy_args = ", ".join([
+            f"__state->{node.redistr}_self_size[__idx * {len(inp_buffer.shape)} + {i}], {istride}, {ostride}"
+            for i, (istride, ostride) in enumerate(zip(inp_buffer.strides, out_buffer.strides))
+        ])
 
         code = f"""
             int myrank;
@@ -86,16 +79,12 @@ class ExpandRedistribute(ExpandTransformation):
             
         """
 
-        tasklet = dace.sdfg.nodes.Tasklet(node.name,
-                                          node.in_connectors,
-                                          node.out_connectors,
-                                          code,
-                                          language=dace.dtypes.Language.CPP)
+        tasklet = nodes.Tasklet(node.name, node.in_connectors, node.out_connectors, code, language=dtypes.Language.CPP)
         return tasklet
 
 
-@dace.library.node
-class Redistribute(dace.sdfg.nodes.LibraryNode):
+@library.node
+class Redistribute(nodes.LibraryNode):
 
     # Global properties
     implementations = {
@@ -103,14 +92,10 @@ class Redistribute(dace.sdfg.nodes.LibraryNode):
     }
     default_implementation = "MPI"
 
-    redistr = dace.properties.Property(dtype=str, allow_none=True, default=None)
+    redistr = properties.Property(dtype=str, default='tmp')
 
-    def __init__(self, name, redistr=None, *args, **kwargs):
-        super().__init__(name,
-                         *args,
-                         inputs={"_inp_buffer"},
-                         outputs={"_out_buffer"},
-                         **kwargs)
+    def __init__(self, name, redistr='tmp', *args, **kwargs):
+        super().__init__(name, *args, inputs={"_inp_buffer"}, outputs={"_out_buffer"}, **kwargs)
         self.redistr = redistr
 
     def validate(self, sdfg, state):
@@ -126,5 +111,5 @@ class Redistribute(dace.sdfg.nodes.LibraryNode):
         for e in state.in_edges(self):
             if e.dst_conn == "_inp_buffer":
                 inp_buffer = sdfg.arrays[e.data.data]
-        
+
         return inp_buffer, out_buffer
