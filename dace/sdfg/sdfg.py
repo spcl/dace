@@ -1860,8 +1860,13 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
         return name
 
-    def add_rdistrarray(self, array_a, array_b):
-        """ Adds a sub-array redistribution to the sub-array redistribtuion descriptor store. """
+    def add_rdistrarray(self, array_a: str, array_b: str):
+        """ Adds a sub-array redistribution to the sub-array redistribution descriptor store.
+            For more details on redistributions, please read the documentation of the RedistrArray class.
+            :param array_a: Input sub-array descriptor.
+            :param array_b: Output sub-array descriptor.
+            :return: Name of the new redistribution descriptor.
+        """
 
         rdistrarray_name = self.temp_rdistrarray_name()
         self._rdistrarrays[rdistrarray_name] = RedistrArray(rdistrarray_name, array_a, array_b)

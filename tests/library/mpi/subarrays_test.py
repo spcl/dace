@@ -1,3 +1,4 @@
+# Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 from dace.codegen.compiled_sdfg import CompiledSDFG, ReloadableDLL
 import numpy as np

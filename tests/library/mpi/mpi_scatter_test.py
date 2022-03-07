@@ -4,6 +4,7 @@ from dace.memlet import Memlet
 import dace.libraries.mpi as mpi
 import numpy as np
 import pytest
+
 ###############################################################################
 
 
@@ -108,6 +109,7 @@ def test_dace_scatter_gather():
         assert (np.allclose(A, np.full([length * commsize], np.pi, dtype=np.float32)))
     else:
         assert (True)
+
 
 ###############################################################################
 
