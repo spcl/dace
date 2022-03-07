@@ -1,17 +1,11 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 """ A module that contains type definitions for distributed SDFGs. """
-import functools
-import re
-import copy as cp
-import sympy as sp
-import numpy
-from numbers import Number, Integral
-from typing import Set, Sequence, Tuple, Union
+from numbers import Integral
+from typing import Sequence, Union
 
 import dace.dtypes as dtypes
 from dace import symbolic, serialize
-from dace.properties import (EnumProperty, Property, make_properties, DictProperty, SubArrayProperty, ShapeProperty,
-                             SubsetProperty, SymbolicProperty, TypeClassProperty, DebugInfoProperty, CodeProperty,
+from dace.properties import (Property, make_properties, ShapeProperty, SymbolicProperty, TypeClassProperty,
                              ListProperty)
 
 ShapeType = Sequence[Union[Integral, str, symbolic.symbol, symbolic.SymExpr, symbolic.sympy.Basic]]
