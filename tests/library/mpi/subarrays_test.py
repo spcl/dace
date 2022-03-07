@@ -10,9 +10,9 @@ def test_subarray_scatter():
     P = dace.symbol('P', dace.int32)
 
     @dace.program
-    def block_scatter(A: dace.int32[100, 100]):
+    def block_scatter(A: dace.int32[8*P, 8*P]):
         scatter_grid = dace.comm.Cart_create([2, P//2])
-        lA = np.empty_like(A, shape=(50, 100 // (P//2)))
+        lA = np.empty_like(A, shape=(4*P, 16))
         subarray = dace.comm.BlockScatter(A, lA, scatter_grid)
         return lA
     
@@ -20,7 +20,7 @@ def test_subarray_scatter():
     commworld = MPI.COMM_WORLD
     rank = commworld.Get_rank()
     size = commworld.Get_size()
-    last_rank = (size // 2) * 2
+    even_size = (size // 2) * 2
 
     if size < 2:
         raise ValueError("Please run this test with at least two processes.")
@@ -34,15 +34,15 @@ def test_subarray_scatter():
         func = CompiledSDFG(sdfg, ReloadableDLL(".dacecache/{n}/build/lib{n}.so".format(n=sdfg.name), sdfg.name))
     commworld.Barrier()
 
-    A = np.arange(10000, dtype=np.int32).reshape(100, 100).copy()
-    lA_ref = A.reshape(2, 50, size//2, 100 // (size//2)).transpose(0, 2, 1, 3)
+    A = np.arange(64*even_size*even_size, dtype=np.int32).reshape(8*even_size, 8*even_size).copy()
+    lA_ref = A.reshape(2, 4*even_size, even_size//2, 16).transpose(0, 2, 1, 3)
     if rank == 0:
-        lA = func(A=A, P=size)
+        lA = func(A=A, P=even_size)
     else:
-        lA = func(A=np.zeros((1, ), dtype=np.int32), P=size)
+        lA = func(A=np.zeros((1, ), dtype=np.int32), P=even_size)
 
-    if rank < last_rank:
-        assert (np.array_equal(lA, lA_ref[rank // 2, rank % 2]))
+    if rank < even_size:
+        assert (np.array_equal(lA, lA_ref[rank // (even_size//2), rank % (even_size//2)]))
 
 
 @pytest.mark.mpi
@@ -51,11 +51,11 @@ def test_subarray_scatter_bcast():
     P = dace.symbol('P', dace.int32)
 
     @dace.program
-    def block_scatter_bcast(A: dace.int32[100]):
+    def block_scatter_bcast(A: dace.int32[8*P]):
         pgrid = dace.comm.Cart_create([2, P//2])
         scatter_grid = dace.comm.Cart_sub(pgrid, [False, True], exact_grid=0)
         bcast_grid = dace.comm.Cart_sub(pgrid, [True, False])
-        lA = np.empty_like(A, shape=(100 // (P//2)))
+        lA = np.empty_like(A, shape=(16,))
         subarray = dace.comm.BlockScatter(A, lA, scatter_grid, bcast_grid)
         return lA
     
@@ -63,7 +63,7 @@ def test_subarray_scatter_bcast():
     commworld = MPI.COMM_WORLD
     rank = commworld.Get_rank()
     size = commworld.Get_size()
-    last_rank = (size // 2) * 2
+    even_size = (size // 2) * 2
 
     if size < 2:
         raise ValueError("Please run this test with at least two processes.")
@@ -77,16 +77,16 @@ def test_subarray_scatter_bcast():
         func = CompiledSDFG(sdfg, ReloadableDLL(".dacecache/{n}/build/lib{n}.so".format(n=sdfg.name), sdfg.name))
     commworld.Barrier()
 
-    A = np.arange(100, dtype=np.int32)
+    A = np.arange(8*even_size, dtype=np.int32)
 
     if rank == 0:
-        lA = func(A=A, P=size)
+        lA = func(A=A, P=even_size)
     else:
-        lA = func(A=np.zeros((1, ), dtype=np.int32), P=size)
+        lA = func(A=np.zeros((1, ), dtype=np.int32), P=even_size)
 
-    if rank < last_rank:
-        lbound = (rank % 2) * (100 // (size//2))
-        ubound = (rank % 2 + 1) * (100 // (size//2))
+    if rank < even_size:
+        lbound = (rank % (even_size//2)) * 16
+        ubound = (rank % (even_size//2) + 1) * 16
         assert (np.array_equal(lA, A[lbound:ubound]))
 
 
@@ -96,9 +96,9 @@ def test_subarray_gather():
     P = dace.symbol('P', dace.int32)
 
     @dace.program
-    def block_gather(lA: dace.int32[50, 100 // (P//2)]):
+    def block_gather(lA: dace.int32[4*P, 16]):
         gather_grid = dace.comm.Cart_create([2, P//2])
-        A = np.empty_like(lA, shape=(100, 100))
+        A = np.empty_like(lA, shape=(8*P, 8*P))
         subarray = dace.comm.BlockGather(lA, A, gather_grid)
         return A
     
@@ -106,7 +106,7 @@ def test_subarray_gather():
     commworld = MPI.COMM_WORLD
     rank = commworld.Get_rank()
     size = commworld.Get_size()
-    last_rank = (size // 2) * 2
+    even_size = (size // 2) * 2
 
     if size < 2:
         raise ValueError("Please run this test with at least two processes.")
@@ -120,12 +120,12 @@ def test_subarray_gather():
         func = CompiledSDFG(sdfg, ReloadableDLL(".dacecache/{n}/build/lib{n}.so".format(n=sdfg.name), sdfg.name))
     commworld.Barrier()
 
-    A_ref = np.arange(10000, dtype=np.int32).reshape(100, 100)
-    lA = A_ref.reshape(2, 50, size//2, 100 // (size//2)).transpose(0, 2, 1, 3)
-    if rank < last_rank:
-        A = func(lA=lA[rank // 2, rank % 2].copy(), P=size)
+    A_ref = np.arange(64*even_size*even_size, dtype=np.int32).reshape(8*even_size, 8*even_size)
+    lA = A_ref.reshape(2, 4*even_size, even_size//2, 16).transpose(0, 2, 1, 3)
+    if rank < even_size:
+        A = func(lA=lA[rank // (even_size//2), rank % (even_size//2)].copy(), P=even_size)
     else:
-        A = func(lA=np.zeros((1, ), dtype=np.int32), P=size)
+        A = func(lA=np.zeros((1, ), dtype=np.int32), P=even_size)
 
     if rank == 0:
         assert (np.array_equal(A, A_ref))
@@ -137,11 +137,11 @@ def test_subarray_gather_reduce():
     P = dace.symbol('P', dace.int32)
 
     @dace.program
-    def block_gather_reduce(lA: dace.int32[100 // (P//2)]):
+    def block_gather_reduce(lA: dace.int32[16]):
         pgrid = dace.comm.Cart_create([2, P//2])
         gather_grid = dace.comm.Cart_sub(pgrid, [False, True], exact_grid=0)
         reduce_grid = dace.comm.Cart_sub(pgrid, [True, False])
-        A = np.empty_like(lA, shape=(100))
+        A = np.empty_like(lA, shape=(8*P))
         subarray = dace.comm.BlockGather(lA, A, gather_grid, reduce_grid)
         return A
     
@@ -149,7 +149,7 @@ def test_subarray_gather_reduce():
     commworld = MPI.COMM_WORLD
     rank = commworld.Get_rank()
     size = commworld.Get_size()
-    last_rank = (size // 2) * 2
+    even_size = (size // 2) * 2
 
     if size < 2:
         raise ValueError("Please run this test with at least two processes.")
@@ -163,13 +163,13 @@ def test_subarray_gather_reduce():
         func = CompiledSDFG(sdfg, ReloadableDLL(".dacecache/{n}/build/lib{n}.so".format(n=sdfg.name), sdfg.name))
     commworld.Barrier()
 
-    A_ref = np.arange(100, dtype=np.int32)
-    if rank < last_rank:
-        lbound = (rank % 2) * (100 // (size//2))
-        ubound = (rank % 2 + 1) * (100 // (size//2))
-        A = func(lA=A_ref[lbound:ubound].copy(), P=size)
+    A_ref = np.arange(8*even_size, dtype=np.int32)
+    if rank < even_size:
+        lbound = (rank % (even_size//2)) * 16
+        ubound = (rank % (even_size//2) + 1) * 16
+        A = func(lA=A_ref[lbound:ubound].copy(), P=even_size)
     else:
-        A = func(lA=np.zeros((1, ), dtype=np.int32), P=size)
+        A = func(lA=np.zeros((1, ), dtype=np.int32), P=even_size)
 
     if rank == 0:
         assert (np.array_equal(A, 2 * A_ref))
