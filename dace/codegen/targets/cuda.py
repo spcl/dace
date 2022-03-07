@@ -755,13 +755,17 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     src_strides = [src_strides[1]]
                     dst_strides = [dst_strides[1]]
                 else:
-                    raise NotImplementedError('2D copy only supported with one ' 'stride')
+                    raise NotImplementedError('2D copy only supported with one stride')
 
             # Currently we only support ND copies when they can be represented
             # as a 1D copy or as a 2D strided copy
             if dims > 2:
                 if src_strides[-1] != 1 or dst_strides[-1] != 1:
-                    raise NotImplementedError('Copies between CPU and GPU are ' 'not supported for N-dimensions')
+                    raise NotImplementedError(
+                        'GPU copies are not supported for N-dimensions if they can\'t be represented by a strided copy\n'
+                        f'  Nodes: src {src_node} ({src_storage}), dst {dst_node}({dst_storage})\n'
+                        f'  Strides: src {src_strides}, dst {dst_strides}'
+                    )
                 else:
                     # Write for-loop headers
                     for d in range(dims - 2):

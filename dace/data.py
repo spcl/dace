@@ -833,6 +833,9 @@ def make_array_from_descriptor(descriptor: Array, original_array: Optional[Array
                               memptr=buffer.data,
                               strides=[s * dtype.itemsize for s in strides])
             return view
+        
+        def copy_array(dst, src):
+            dst[:] = cp.asarray(src)
 
     elif descriptor.storage == dtypes.StorageType.FPGA_Global:
         raise TypeError('Cannot allocate FPGA array in Python')
@@ -842,11 +845,15 @@ def make_array_from_descriptor(descriptor: Array, original_array: Optional[Array
             buffer = np.ndarray([total_size], dtype=dtype)
             view = np.ndarray(shape, dtype, buffer=buffer, strides=[s * dtype.itemsize for s in strides])
             return view
+        
+        def copy_array(dst, src):
+            dst[:] = src
+
 
     # Make numpy array from data descriptor
     npdtype = descriptor.dtype.as_numpy_dtype()
     view = create_array(descriptor.shape, npdtype, descriptor.total_size, descriptor.strides)
     if original_array is not None:
-        view[:] = original_array
+        copy_array(view, original_array)
 
     return view
