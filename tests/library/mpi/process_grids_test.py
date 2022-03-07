@@ -121,6 +121,7 @@ def test_sub_grid():
     assert (valid[0])
 
 
+@pytest.mark.mpi
 def test_process_grid_bcast():
 
     P = dace.symbol('P', dace.int32)
@@ -156,6 +157,7 @@ def test_process_grid_bcast():
     assert (np.array_equal(A, np.arange(10, dtype=np.int32)))
 
 
+@pytest.mark.mpi
 def test_sub_grid_bcast():
 
     P = dace.symbol('P', dace.int32)
