@@ -196,7 +196,7 @@ def test_sub_grid_bcast():
     if rank < size // 2:
         assert (np.array_equal(A, np.zeros((10, ), dtype=np.int32)))
     elif rank < last_rank:
-        assert (np.array_equal(A, np.full_like(A, fill_value=(size//2) % 10)))
+        assert (np.array_equal(A, np.full_like(A, fill_value=(size // 2) % 10)))
     else:
         assert (np.array_equal(A, np.full_like(A, fill_value=rank % 10)))
 

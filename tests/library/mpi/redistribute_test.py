@@ -22,20 +22,20 @@ def test_redistribute_matrix_2d_2d():
     P = dace.symbol('P', dace.int32)
 
     @dace.program
-    def matrix_2d_2d(A: dace.int32[4*P, 16]):
+    def matrix_2d_2d(A: dace.int32[4 * P, 16]):
 
-        a_grid = dace.comm.Cart_create([2, P//2])
-        b_grid = dace.comm.Cart_create([P//2, 2])
+        a_grid = dace.comm.Cart_create([2, P // 2])
+        b_grid = dace.comm.Cart_create([P // 2, 2])
 
-        B = np.empty_like(A, shape=(16, 4*P))
+        B = np.empty_like(A, shape=(16, 4 * P))
 
-        a_arr = dace.comm.Subarray((8*P, 8*P), A, process_grid=a_grid)
-        b_arr = dace.comm.Subarray((8*P, 8*P), B, process_grid=b_grid)
+        a_arr = dace.comm.Subarray((8 * P, 8 * P), A, process_grid=a_grid)
+        b_arr = dace.comm.Subarray((8 * P, 8 * P), B, process_grid=b_grid)
 
         rdistr = dace.comm.Redistribute(A, a_arr, B, b_arr)
 
         return B
-    
+
     from mpi4py import MPI
     commworld = MPI.COMM_WORLD
     rank = commworld.Get_rank()
@@ -54,11 +54,11 @@ def test_redistribute_matrix_2d_2d():
         func = CompiledSDFG(sdfg, ReloadableDLL(".dacecache/{n}/build/lib{n}.so".format(n=sdfg.name), sdfg.name))
     commworld.Barrier()
 
-    A = np.arange(64*even_size*even_size, dtype=np.int32).reshape(8*even_size, 8*even_size)
-    lA = A.reshape(2, 4*even_size, even_size//2, 16).transpose(0, 2, 1, 3)
-    lB = A.reshape(even_size//2, 16, 2, 4*even_size).transpose(0, 2, 1, 3)
+    A = np.arange(64 * even_size * even_size, dtype=np.int32).reshape(8 * even_size, 8 * even_size)
+    lA = A.reshape(2, 4 * even_size, even_size // 2, 16).transpose(0, 2, 1, 3)
+    lB = A.reshape(even_size // 2, 16, 2, 4 * even_size).transpose(0, 2, 1, 3)
     if rank < even_size:
-        B = func(A=lA[rank // (even_size//2), rank % (even_size//2)].copy(), P=even_size)
+        B = func(A=lA[rank // (even_size // 2), rank % (even_size // 2)].copy(), P=even_size)
     else:
         B = func(A=np.zeros((1, ), dtype=np.int32), P=even_size)
 
@@ -83,20 +83,20 @@ def test_redistribute_matrix_2d_2d_2():
     P = dace.symbol('P', dace.int32)
 
     @dace.program
-    def matrix_2d_2d_2(A: dace.int32[4*P, 16]):
+    def matrix_2d_2d_2(A: dace.int32[4 * P, 16]):
 
-        a_grid = dace.comm.Cart_create([2, P//2])
+        a_grid = dace.comm.Cart_create([2, P // 2])
         b_grid = dace.comm.Cart_create([P, 1])
 
-        B = np.empty_like(A, shape=(8, 8*P))
+        B = np.empty_like(A, shape=(8, 8 * P))
 
-        a_arr = dace.comm.Subarray((8*P, 8*P), A, process_grid=a_grid)
-        b_arr = dace.comm.Subarray((8*P, 8*P), B, process_grid=b_grid)
+        a_arr = dace.comm.Subarray((8 * P, 8 * P), A, process_grid=a_grid)
+        b_arr = dace.comm.Subarray((8 * P, 8 * P), B, process_grid=b_grid)
 
         rdistr = dace.comm.Redistribute(A, a_arr, B, b_arr)
 
         return B
-    
+
     from mpi4py import MPI
     commworld = MPI.COMM_WORLD
     rank = commworld.Get_rank()
@@ -115,11 +115,11 @@ def test_redistribute_matrix_2d_2d_2():
         func = CompiledSDFG(sdfg, ReloadableDLL(".dacecache/{n}/build/lib{n}.so".format(n=sdfg.name), sdfg.name))
     commworld.Barrier()
 
-    A = np.arange(64*even_size*even_size, dtype=np.int32).reshape(8*even_size, 8*even_size)
-    lA = A.reshape(2, 4*even_size, even_size//2, 16).transpose(0, 2, 1, 3)
-    lB = A.reshape(even_size, 8, 1, 8*even_size).transpose(0, 2, 1, 3)
+    A = np.arange(64 * even_size * even_size, dtype=np.int32).reshape(8 * even_size, 8 * even_size)
+    lA = A.reshape(2, 4 * even_size, even_size // 2, 16).transpose(0, 2, 1, 3)
+    lB = A.reshape(even_size, 8, 1, 8 * even_size).transpose(0, 2, 1, 3)
     if rank < even_size:
-        B = func(A=lA[rank // (even_size//2), rank % (even_size//2)].copy(), P=even_size)
+        B = func(A=lA[rank // (even_size // 2), rank % (even_size // 2)].copy(), P=even_size)
     else:
         B = func(A=np.zeros((1, ), dtype=np.int32), P=even_size)
 
@@ -153,20 +153,20 @@ def test_redistribute_matrix_2d_2d_3():
     P = dace.symbol('P', dace.int32)
 
     @dace.program
-    def matrix_2d_2d_3(A: dace.int32[4*P, 16]):
+    def matrix_2d_2d_3(A: dace.int32[4 * P, 16]):
 
-        a_grid = dace.comm.Cart_create([2, P//2])
-        b_grid = dace.comm.Cart_create([P//2, 2])
+        a_grid = dace.comm.Cart_create([2, P // 2])
+        b_grid = dace.comm.Cart_create([P // 2, 2])
 
         B = np.empty_like(A)
 
-        a_arr = dace.comm.Subarray((8*P, 8*P), A, process_grid=a_grid)
-        b_arr = dace.comm.Subarray((8*P, 8*P), B, process_grid=b_grid, correspondence=(1, 0))
+        a_arr = dace.comm.Subarray((8 * P, 8 * P), A, process_grid=a_grid)
+        b_arr = dace.comm.Subarray((8 * P, 8 * P), B, process_grid=b_grid, correspondence=(1, 0))
 
         rdistr = dace.comm.Redistribute(A, a_arr, B, b_arr)
 
         return B
-    
+
     from mpi4py import MPI
     commworld = MPI.COMM_WORLD
     rank = commworld.Get_rank()
@@ -185,11 +185,11 @@ def test_redistribute_matrix_2d_2d_3():
         func = CompiledSDFG(sdfg, ReloadableDLL(".dacecache/{n}/build/lib{n}.so".format(n=sdfg.name), sdfg.name))
     commworld.Barrier()
 
-    A = np.arange(64*even_size*even_size, dtype=np.int32).reshape(8*even_size, 8*even_size)
-    lA = A.reshape(2, 4*even_size, even_size//2, 16).transpose(0, 2, 1, 3)
-    lB = A.reshape(2, 4*even_size, even_size//2, 16).transpose(2, 0, 1, 3)
+    A = np.arange(64 * even_size * even_size, dtype=np.int32).reshape(8 * even_size, 8 * even_size)
+    lA = A.reshape(2, 4 * even_size, even_size // 2, 16).transpose(0, 2, 1, 3)
+    lB = A.reshape(2, 4 * even_size, even_size // 2, 16).transpose(2, 0, 1, 3)
     if rank < even_size:
-        B = func(A=lA[rank // (even_size//2), rank % (even_size//2)].copy(), P=even_size)
+        B = func(A=lA[rank // (even_size // 2), rank % (even_size // 2)].copy(), P=even_size)
     else:
         B = func(A=np.zeros((1, ), dtype=np.int32), P=even_size)
 
@@ -211,23 +211,23 @@ def test_redistribute_vector_2d_2d():
     P = dace.symbol('P', dace.int32)
 
     @dace.program
-    def vector_2d_2d(A: dace.int32[8*P]):
+    def vector_2d_2d(A: dace.int32[8 * P]):
 
-        a_grid = dace.comm.Cart_create([2, P//2])
+        a_grid = dace.comm.Cart_create([2, P // 2])
         a_scatter_grid = dace.comm.Cart_sub(a_grid, [False, True], exact_grid=0)
         a_bcast_grid = dace.comm.Cart_sub(a_grid, [True, False])
-        b_grid = dace.comm.Cart_create([P//2, 2])
+        b_grid = dace.comm.Cart_create([P // 2, 2])
         b_scatter_grid = dace.comm.Cart_sub(b_grid, [True, False], exact_grid=0)
         b_bcast_grid = dace.comm.Cart_sub(b_grid, [False, True])
 
-        lA = np.empty_like(A, shape=(16,))
+        lA = np.empty_like(A, shape=(16, ))
         a_subarr = dace.comm.BlockScatter(A, lA, a_scatter_grid, a_bcast_grid)
-        lB = np.zeros_like(A, shape=(16,))
-        b_subarr = dace.comm.Subarray((8*P,), lB, process_grid=b_scatter_grid)
+        lB = np.zeros_like(A, shape=(16, ))
+        b_subarr = dace.comm.Subarray((8 * P, ), lB, process_grid=b_scatter_grid)
         redistr = dace.comm.Redistribute(lA, a_subarr, lB, b_subarr)
 
         return lB
-    
+
     from mpi4py import MPI
     commworld = MPI.COMM_WORLD
     rank = commworld.Get_rank()
@@ -246,8 +246,8 @@ def test_redistribute_vector_2d_2d():
         func = CompiledSDFG(sdfg, ReloadableDLL(".dacecache/{n}/build/lib{n}.so".format(n=sdfg.name), sdfg.name))
     commworld.Barrier()
 
-    A = np.arange(8*even_size, dtype=np.int32)
-    lB_ref = A.reshape(even_size//2, 16)
+    A = np.arange(8 * even_size, dtype=np.int32)
+    lB_ref = A.reshape(even_size // 2, 16)
     if rank < even_size:
         lB = func(A=A, P=even_size)
     else:
