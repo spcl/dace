@@ -764,8 +764,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     raise NotImplementedError(
                         'GPU copies are not supported for N-dimensions if they can\'t be represented by a strided copy\n'
                         f'  Nodes: src {src_node} ({src_storage}), dst {dst_node}({dst_storage})\n'
-                        f'  Strides: src {src_strides}, dst {dst_strides}'
-                    )
+                        f'  Strides: src {src_strides}, dst {dst_strides}')
                 else:
                     # Write for-loop headers
                     for d in range(dims - 2):
@@ -907,16 +906,14 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     accum = '::template Accum%s' % reduction_tmpl
 
                 if any(symbolic.issymbolic(s, sdfg.constants) for s in copy_shape):
-                    callsite_stream.write(
-                        ('    {func}Dynamic<{type}, {bdims}, ' + '{dststrides}, {is_async}>{accum}({args});').format(
-                            func=funcname,
-                            type=dst_node.desc(sdfg).dtype.ctype,
-                            bdims=', '.join(_topy(self._block_dims)),
-                            dststrides=', '.join(_topy(dst_strides)),
-                            is_async='true' if state_dfg.out_degree(dst_node) > 0 else 'true',
-                            accum=accum,
-                            args=', '.join([src_expr] + _topy(src_strides) + [dst_expr] + custom_reduction +
-                                           _topy(copy_shape))), sdfg, state_id, [src_node, dst_node])
+                    callsite_stream.write(('    {func}Dynamic<{type}, {bdims}, {is_async}>{accum}({args});').format(
+                        func=funcname,
+                        type=dst_node.desc(sdfg).dtype.ctype,
+                        bdims=', '.join(_topy(self._block_dims)),
+                        is_async='true' if state_dfg.out_degree(dst_node) > 0 else 'true',
+                        accum=accum,
+                        args=', '.join([src_expr] + _topy(src_strides) + [dst_expr] + custom_reduction +
+                                       _topy(dst_strides) + _topy(copy_shape))), sdfg, state_id, [src_node, dst_node])
                 else:
                     callsite_stream.write(
                         ('    {func}<{type}, {bdims}, {copysize}, ' +
