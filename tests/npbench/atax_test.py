@@ -4,10 +4,11 @@ import dace.dtypes
 import numpy as np
 import dace as dc
 import pytest
+import argparse
 from dace.fpga_testing import fpga_test
 from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
 from dace.transformation.dataflow import StreamingMemory, StreamingComposition
-from dace.transformation.auto.auto_optimize import auto_optimize
+from dace.transformation.auto.auto_optimize import auto_optimize, fpga_auto_opt
 
 M, N = (dc.symbol(s, dtype=dc.int32) for s in ('M', 'N'))
 
@@ -48,7 +49,7 @@ def run_atax(device_type: dace.dtypes.DeviceType):
 
     elif device_type == dace.dtypes.DeviceType.FPGA:
         # Parse SDFG and apply FPGA friendly optimization
-        sdfg = kernel.to_sdfg(strict=True)
+        sdfg = kernel.to_sdfg(simplify=True)
         applied = sdfg.apply_transformations([FPGATransformSDFG])
         assert applied == 1
 
@@ -56,13 +57,18 @@ def run_atax(device_type: dace.dtypes.DeviceType):
         from dace.libraries.blas import Gemv
         Gemv.default_implementation = "FPGA_Accumulate"
         sdfg.expand_library_nodes()
-        sm_applied = sdfg.apply_transformations_repeated(
-            [InlineSDFG, StreamingMemory],
-            [{}, {
-                'storage': dace.StorageType.FPGA_Local
-            }],
-            print_report=True)
+        sm_applied = sdfg.apply_transformations_repeated([InlineSDFG, StreamingMemory],
+                                                         [{}, {
+                                                             'storage': dace.StorageType.FPGA_Local
+                                                         }],
+                                                         print_report=True)
         assert sm_applied == 6  # 3 inlines and 3 Streaming memories
+
+        ###########################
+        # FPGA Auto Opt
+        fpga_auto_opt.fpga_global_to_local(sdfg)
+        fpga_auto_opt.fpga_rr_interleave_containers_to_banks(sdfg)
+
         # specialize the SDFG (needed by the GEMV expansion)
         sdfg.specialize(dict(M=M, N=N))
         y = sdfg(A, x)
@@ -85,3 +91,19 @@ def test_gpu():
 @fpga_test(assert_ii_1=False)
 def test_fpga():
     return run_atax(dace.dtypes.DeviceType.FPGA)
+
+
+if __name__ == "__main__":
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu', 'fpga'], help='Target platform')
+
+    args = vars(parser.parse_args())
+    target = args["target"]
+
+    if target == "cpu":
+        run_atax(dace.dtypes.DeviceType.CPU)
+    elif target == "gpu":
+        run_atax(dace.dtypes.DeviceType.GPU)
+    elif target == "fpga":
+        run_atax(dace.dtypes.DeviceType.FPGA)

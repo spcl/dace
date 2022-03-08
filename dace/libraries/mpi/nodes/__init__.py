@@ -5,8 +5,10 @@ from .recv import Recv
 from .irecv import Irecv
 from .wait import Wait, Waitall
 from .bcast import Bcast
-from .scatter import Scatter
-from .gather import Gather
+from .scatter import Scatter, BlockScatter
+from .gather import Gather, BlockGather
 from .reduce import Reduce
 from .allreduce import Allreduce
 from .allgather import Allgather
+from .dummy import Dummy
+from .redistribute import Redistribute

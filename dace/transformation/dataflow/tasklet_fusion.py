@@ -42,8 +42,7 @@ class PythonLHSExtractor(ast.NodeVisitor):
             self.assignments.add(node.targets[0].id)
 
 
-@registry.autoregister_params(singlestate=True, strict=False)
-class SimpleTaskletFusion(pm.Transformation):
+class SimpleTaskletFusion(pm.SingleStateTransformation):
     """ Fuses two connected Tasklets.
         It is recommended that this transformation is used on Tasklets that
         contain only simple assignments.
@@ -120,22 +119,14 @@ class SimpleTaskletFusion(pm.Transformation):
     t1 = pm.PatternNode(nodes.Tasklet)
     t2 = pm.PatternNode(nodes.Tasklet)
 
-    @staticmethod
-    def expressions():
-        return [
-            sdutil.node_path_graph(SimpleTaskletFusion.t1,
-                                   SimpleTaskletFusion.t2)
-        ]
+    @classmethod
+    def expressions(cls):
+        return [sdutil.node_path_graph(cls.t1, cls.t2)]
 
-    @staticmethod
-    def can_be_applied(graph: dace.SDFGState,
-                       candidate: Dict[pm.PatternNode, int],
-                       expr_index: int,
-                       sdfg: dace.SDFG,
-                       strict: bool = False):
+    def can_be_applied(self, graph: dace.SDFGState, expr_index: int, sdfg: dace.SDFG, permissive: bool = False):
 
-        t1 = graph.node(candidate[SimpleTaskletFusion.t1])
-        t2 = graph.node(candidate[SimpleTaskletFusion.t2])
+        t1 = self.t1
+        t2 = self.t2
 
         # Tasklets must be of the same language
         if t1.language != t2.language:
@@ -153,17 +144,9 @@ class SimpleTaskletFusion(pm.Transformation):
 
         return True
 
-    @staticmethod
-    def match_to_str(graph: dace.SDFGState, candidate: Dict[pm.PatternNode,
-                                                            int]) -> str:
-        t1 = graph.node(candidate[SimpleTaskletFusion.t1])
-        t2 = graph.node(candidate[SimpleTaskletFusion.t2])
-        return f'fuse({t1.label}, {t2.label})'
-
-    def apply(self, sdfg: dace.SDFG):
-        graph = sdfg.nodes()[self.state_id]
-        t1 = graph.nodes()[self.subgraph[self.t1]]
-        t2 = graph.nodes()[self.subgraph[self.t2]]
+    def apply(self, graph: dace.SDFGState, sdfg: dace.SDFG):
+        t1 = self.t1
+        t2 = self.t2
 
         def rename_conn(conn: str, names: Set[str]) -> str:
             """ Renames connector so that it doesn't clash with names.
@@ -187,21 +170,17 @@ class SimpleTaskletFusion(pm.Transformation):
                     repl.visit(stmt)
             elif tasklet.language is dtypes.Language.CPP:
                 for old, new in repl_dict.items():
-                    tasklet.code.code = re.sub(r'\b%s\b' % re.escape(old), new,
-                                               tasklet.code.as_string)
+                    tasklet.code.code = re.sub(r'\b%s\b' % re.escape(old), new, tasklet.code.as_string)
 
         def replace_lhs(tasklet, repl_dict):
             """ Replaces assignments' LHS based on the input replacement
                 dictionary. This is used only on CPP tasklets.
             """
             if tasklet.language is dtypes.Language.Python:
-                raise ValueError(
-                    "This method should only be used with CPP Tasklets")
+                raise ValueError("This method should only be used with CPP Tasklets")
             elif tasklet.language is dtypes.Language.CPP:
                 for old, new in repl_dict.items():
-                    tasklet.code.code = re.sub(
-                        r'(?<!auto\s)%s[\s\t]*=' % re.escape(old), new,
-                        tasklet.code.as_string)
+                    tasklet.code.code = re.sub(r'(?<!auto\s)%s[\s\t]*=' % re.escape(old), new, tasklet.code.as_string)
 
         def extract_lhs(tasklet) -> Set[str]:
             """ Returns the LHS of assignments in Tasklet code.
@@ -213,8 +192,7 @@ class SimpleTaskletFusion(pm.Transformation):
                 return extr.assignments
             elif tasklet.language is dtypes.Language.CPP:
                 rhs = set()
-                for match in re.findall('[\s\t\n\r]*([\w]*)[\s\t]*=',
-                                        tasklet.code.code):
+                for match in re.findall('[\s\t\n\r]*([\w]*)[\s\t]*=', tasklet.code.code):
                     rhs.add(match)
                 return rhs
 

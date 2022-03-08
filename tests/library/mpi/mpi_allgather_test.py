@@ -22,10 +22,7 @@ def make_sdfg(dtype):
     outA = state.add_access("outA")
     allgather_node = mpi.nodes.allgather.Allgather("allgather")
 
-    state.add_memlet_path(inA,
-                          allgather_node,
-                          dst_conn="_inbuffer",
-                          memlet=Memlet.simple(inA, "0:n", num_accesses=n))
+    state.add_memlet_path(inA, allgather_node, dst_conn="_inbuffer", memlet=Memlet.simple(inA, "0:n", num_accesses=n))
     state.add_memlet_path(allgather_node,
                           outA,
                           src_conn="_outbuffer",
@@ -44,8 +41,7 @@ def _test_mpi(info, sdfg, dtype):
     commsize = comm.Get_size()
     mpi_sdfg = None
     if commsize < 2:
-        raise ValueError(
-            "This test is supposed to be run with at least two processes!")
+        raise ValueError("This test is supposed to be run with at least two processes!")
     for r in range(0, commsize):
         if r == rank:
             mpi_sdfg = sdfg.compile()

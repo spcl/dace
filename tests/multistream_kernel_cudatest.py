@@ -9,21 +9,11 @@ sdfg.add_array('A', [2], dace.float32, storage=dace.StorageType.CPU_Pinned)
 sdfg.add_array('B', [2], dace.float32, storage=dace.StorageType.CPU_Pinned)
 sdfg.add_array('C', [2], dace.float32, storage=dace.StorageType.CPU_Pinned)
 
-sdfg.add_transient('gA1', [2],
-                   dace.float32,
-                   storage=dace.StorageType.GPU_Global)
-sdfg.add_transient('gA2', [2],
-                   dace.float32,
-                   storage=dace.StorageType.GPU_Global)
-sdfg.add_transient('gB1', [2],
-                   dace.float32,
-                   storage=dace.StorageType.GPU_Global)
-sdfg.add_transient('gB2', [2],
-                   dace.float32,
-                   storage=dace.StorageType.GPU_Global)
-sdfg.add_transient('gC', [2],
-                   dace.float32,
-                   storage=dace.StorageType.GPU_Global)
+sdfg.add_transient('gA1', [2], dace.float32, storage=dace.StorageType.GPU_Global)
+sdfg.add_transient('gA2', [2], dace.float32, storage=dace.StorageType.GPU_Global)
+sdfg.add_transient('gB1', [2], dace.float32, storage=dace.StorageType.GPU_Global)
+sdfg.add_transient('gB2', [2], dace.float32, storage=dace.StorageType.GPU_Global)
+sdfg.add_transient('gC', [2], dace.float32, storage=dace.StorageType.GPU_Global)
 
 state = sdfg.add_state('s0')
 
@@ -41,20 +31,17 @@ gc = state.add_access('gC')
 c = state.add_write('C')
 state.add_nedge(gc, c, dace.Memlet.simple('gC', '0:2'))
 
-t1, me1, mx1 = state.add_mapped_tasklet(
-    'addone', dict(i='0:2'),
-    dict(inp=dace.Memlet.simple('gA1', 'i')), 'out = inp + 1',
-    dict(out=dace.Memlet.simple('gA2', 'i')), dace.ScheduleType.GPU_Device)
-t2, me2, mx2 = state.add_mapped_tasklet(
-    'addtwo', dict(i='0:2'),
-    dict(inp=dace.Memlet.simple('gB1', 'i')), 'out = inp + 2',
-    dict(out=dace.Memlet.simple('gB2', 'i')), dace.ScheduleType.GPU_Device)
+t1, me1, mx1 = state.add_mapped_tasklet('addone', dict(i='0:2'),
+                                        dict(inp=dace.Memlet.simple('gA1', 'i')), 'out = inp + 1',
+                                        dict(out=dace.Memlet.simple('gA2', 'i')), dace.ScheduleType.GPU_Device)
+t2, me2, mx2 = state.add_mapped_tasklet('addtwo', dict(i='0:2'),
+                                        dict(inp=dace.Memlet.simple('gB1', 'i')), 'out = inp + 2',
+                                        dict(out=dace.Memlet.simple('gB2', 'i')), dace.ScheduleType.GPU_Device)
 
-t2, me3, mx3 = state.add_mapped_tasklet(
-    'twoarrays', dict(i='0:2'),
-    dict(inp1=dace.Memlet.simple('gA2', 'i'),
-         inp2=dace.Memlet.simple('gB2', 'i')), 'out = inp1 * inp2',
-    dict(out=dace.Memlet.simple('gC', 'i')), dace.ScheduleType.GPU_Device)
+t2, me3, mx3 = state.add_mapped_tasklet('twoarrays', dict(i='0:2'),
+                                        dict(inp1=dace.Memlet.simple('gA2', 'i'),
+                                             inp2=dace.Memlet.simple('gB2', 'i')), 'out = inp1 * inp2',
+                                        dict(out=dace.Memlet.simple('gC', 'i')), dace.ScheduleType.GPU_Device)
 
 state.add_nedge(ga1, me1, dace.Memlet.simple('gA1', '0:2'))
 state.add_nedge(gb1, me2, dace.Memlet.simple('gB1', '0:2'))
@@ -69,6 +56,7 @@ sdfg.fill_scope_connectors()
 
 # Validate correctness of initial SDFG
 sdfg.validate()
+
 
 ######################################
 @pytest.mark.gpu
@@ -85,6 +73,7 @@ def test_multistream_kernel():
     diff = np.linalg.norm(c - refC)
     print('Difference:', diff)
     assert diff <= 1e-5
+
 
 if __name__ == "__main__":
     test_multistream_kernel()

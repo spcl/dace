@@ -9,7 +9,7 @@ import argparse
 from dace.fpga_testing import fpga_test
 from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
 from dace.transformation.dataflow import StreamingMemory, MapFusion, StreamingComposition, PruneConnectors
-from dace.transformation.auto.auto_optimize import auto_optimize, fpga_aopt
+from dace.transformation.auto.auto_optimize import auto_optimize, fpga_auto_opt
 
 N = dc.symbol('N', dtype=dc.int32)
 
@@ -61,35 +61,34 @@ def run_floyd_warshall(device_type: dace.dtypes.DeviceType):
 
     elif device_type == dace.dtypes.DeviceType.FPGA:
         # Parse SDFG and apply FPGA friendly optimization
-        sdfg = kernel.to_sdfg(strict=True)
+        sdfg = kernel.to_sdfg(simplify=True)
         # sdfg.apply_transformations_repeated([MapFusion])
         applied = sdfg.apply_transformations([FPGATransformSDFG])
         assert applied == 1
 
-        sm_applied = sdfg.apply_transformations_repeated(
-            [InlineSDFG, StreamingMemory],
-            [{}, {
-                'storage': dace.StorageType.FPGA_Local
-            }],
-            print_report=True)
+        sm_applied = sdfg.apply_transformations_repeated([InlineSDFG, StreamingMemory],
+                                                         [{}, {
+                                                             'storage': dace.StorageType.FPGA_Local
+                                                         }],
+                                                         print_report=True)
         assert sm_applied == 1
-        sc_applied = sdfg.apply_transformations_repeated(
-            [InlineSDFG, StreamingComposition],
-            [{}, {
-                'storage': dace.StorageType.FPGA_Local
-            }],
-            print_report=True)
+        sc_applied = sdfg.apply_transformations_repeated([InlineSDFG, StreamingComposition],
+                                                         [{}, {
+                                                             'storage': dace.StorageType.FPGA_Local
+                                                         }],
+                                                         print_report=True,
+                                                         permissive=True)
         assert sc_applied == 1
 
-        # Prune connectors after Streaming Comp
-        pruned_conns = sdfg.apply_transformations_repeated(
-            PruneConnectors, options=[{
-                'remove_unused_containers': True
-            }])
+        # Prune connectors after Streaming Composition
+        pruned_conns = sdfg.apply_transformations_repeated(PruneConnectors,
+                                                           options=[{
+                                                               'remove_unused_containers': True
+                                                           }])
 
         assert pruned_conns == 1
 
-        fpga_aopt.fpga_rr_interleave_containers_to_banks(sdfg)
+        fpga_auto_opt.fpga_rr_interleave_containers_to_banks(sdfg)
 
         # In this case, we want to generate the top-level state as an host-based state,
         # not an FPGA kernel. We need to explicitly indicate that
@@ -123,11 +122,7 @@ def test_fpga():
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("-t",
-                        "--target",
-                        default='cpu',
-                        choices=['cpu', 'gpu', 'fpga'],
-                        help='Target platform')
+    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu', 'fpga'], help='Target platform')
 
     args = vars(parser.parse_args())
     target = args["target"]

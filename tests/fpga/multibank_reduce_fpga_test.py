@@ -36,32 +36,14 @@ def create_multibank_reduce_sdfg(
     tmp_in2_memlet = dace.Memlet(f"in2[k, i, j]")
     tmp_out_memlet = dace.Memlet(f"out[k, i]", wcr="lambda x,y: x+y")
 
-    outer_entry, outer_exit = state.add_map("vadd_outer_map",
-                                            dict(k=f'0:{banks}'))
-    map_entry, map_exit = state.add_map("vadd_inner_map", dict(i="0:N",
-                                                               j="0:M"))
-    tasklet = state.add_tasklet("mul", dict(__in1=None, __in2=None),
-                                dict(__out=None), '__out = __in1 * __in2')
+    outer_entry, outer_exit = state.add_map("vadd_outer_map", dict(k=f'0:{banks}'))
+    map_entry, map_exit = state.add_map("vadd_inner_map", dict(i="0:N", j="0:M"))
+    tasklet = state.add_tasklet("mul", dict(__in1=None, __in2=None), dict(__out=None), '__out = __in1 * __in2')
     outer_entry.map.schedule = dace.ScheduleType.Unrolled
 
-    state.add_memlet_path(read_in1,
-                          outer_entry,
-                          map_entry,
-                          tasklet,
-                          memlet=tmp_in1_memlet,
-                          dst_conn="__in1")
-    state.add_memlet_path(read_in2,
-                          outer_entry,
-                          map_entry,
-                          tasklet,
-                          memlet=tmp_in2_memlet,
-                          dst_conn="__in2")
-    state.add_memlet_path(tasklet,
-                          map_exit,
-                          outer_exit,
-                          out_write,
-                          memlet=tmp_out_memlet,
-                          src_conn="__out")
+    state.add_memlet_path(read_in1, outer_entry, map_entry, tasklet, memlet=tmp_in1_memlet, dst_conn="__in1")
+    state.add_memlet_path(read_in2, outer_entry, map_entry, tasklet, memlet=tmp_in2_memlet, dst_conn="__in2")
+    state.add_memlet_path(tasklet, map_exit, outer_exit, out_write, memlet=tmp_out_memlet, src_conn="__out")
 
     sdfg.apply_fpga_transformations()
     return sdfg

@@ -41,10 +41,10 @@ def timethis(sdfg, title, flop_count, f, *args, **kwargs):
             iterator = tqdm(iterator, desc="Profiling", file=sys.stdout)
         except ImportError:
             print('WARNING: Cannot show profiling progress, missing optional '
-                'dependency tqdm...\n\tTo see a live progress bar please install '
-                'tqdm (`pip install tqdm`)\n\tTo disable this feature (and '
-                'this warning) set `profiling_status` to false in the dace '
-                'config (~/.dace.conf).')
+                  'dependency tqdm...\n\tTo see a live progress bar please install '
+                  'tqdm (`pip install tqdm`)\n\tTo disable this feature (and '
+                  'this warning) set `profiling_status` to false in the dace '
+                  'config (~/.dace.conf).')
     for i in iterator:
         # Call function
         ret = f(*args, **kwargs)
@@ -57,10 +57,7 @@ def timethis(sdfg, title, flop_count, f, *args, **kwargs):
     profiling_dir = os.path.join(sdfg.build_folder, 'profiling')
     os.makedirs(profiling_dir, exist_ok=True)
     timestamp_string = str(int(time.time() * 1000))
-    outfile_path = os.path.join(
-        profiling_dir,
-        'results-' + timestamp_string + '.csv'
-    )
+    outfile_path = os.path.join(profiling_dir, 'results-' + timestamp_string + '.csv')
 
     with open(outfile_path, 'w') as f:
         f.write('Program,Optimization,Problem_Size,Runtime_sec\n')
@@ -100,17 +97,14 @@ def detect_reduction_type(wcr_str, openmp=False):
     b = sympy.Symbol('b')
     try:
         result = wcr(a, b)
-    except (TypeError, AttributeError,
-            NameError):  # e.g., "Cannot determine truth value of relational"
+    except (TypeError, AttributeError, NameError):  # e.g., "Cannot determine truth value of relational"
         result = None
 
     # Check resulting value
-    if result == sympy.Max(a, b) or (isinstance(wcr_ast, ast.Call)
-                                     and isinstance(wcr_ast.func, ast.Name)
+    if result == sympy.Max(a, b) or (isinstance(wcr_ast, ast.Call) and isinstance(wcr_ast.func, ast.Name)
                                      and wcr_ast.func.id == 'max'):
         return dtypes.ReductionType.Max
-    elif result == sympy.Min(a, b) or (isinstance(wcr_ast, ast.Call)
-                                       and isinstance(wcr_ast.func, ast.Name)
+    elif result == sympy.Min(a, b) or (isinstance(wcr_ast, ast.Call) and isinstance(wcr_ast.func, ast.Name)
                                        and wcr_ast.func.id == 'min'):
         return dtypes.ReductionType.Min
     elif result == a + b:
@@ -127,8 +121,7 @@ def detect_reduction_type(wcr_str, openmp=False):
         return dtypes.ReductionType.Logical_And
     elif isinstance(wcr_ast, ast.BoolOp) and isinstance(wcr_ast.op, ast.Or):
         return dtypes.ReductionType.Logical_Or
-    elif (isinstance(wcr_ast, ast.Compare)
-          and isinstance(wcr_ast.ops[0], ast.NotEq)):
+    elif (isinstance(wcr_ast, ast.Compare) and isinstance(wcr_ast.ops[0], ast.NotEq)):
         return dtypes.ReductionType.Logical_Xor
     elif result == b:
         return dtypes.ReductionType.Exchange
@@ -160,8 +153,7 @@ def is_op_commutative(wcr_str):
     try:
         aRb = wcr(a, b)
         bRa = wcr(b, a)
-    except (TypeError, AttributeError
-            ):  # e.g., "Cannot determine truth value of relational"
+    except (TypeError, AttributeError):  # e.g., "Cannot determine truth value of relational"
         return None
 
     return aRb == bRa
@@ -187,8 +179,7 @@ def is_op_associative(wcr_str):
     try:
         aRbc = wcr(a, wcr(b, c))
         abRc = wcr(wcr(a, b), c)
-    except (TypeError, AttributeError
-            ):  # e.g., "Cannot determine truth value of relational"
+    except (TypeError, AttributeError):  # e.g., "Cannot determine truth value of relational"
         return None
 
     return aRbc == abRc

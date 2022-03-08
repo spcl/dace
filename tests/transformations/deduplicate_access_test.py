@@ -72,7 +72,7 @@ def test_dedup_access_simple():
                 out >> B[i, j]
                 B[i, j] = inp1 + inp2
 
-    sdfg: dace.SDFG = datest.to_sdfg(strict=True)
+    sdfg: dace.SDFG = datest.to_sdfg(simplify=True)
     nodes_before = sdfg.node(0).number_of_nodes()
     assert sdfg.apply_transformations(DeduplicateAccess) == 1
     nodes_after = sdfg.node(0).number_of_nodes()
@@ -114,8 +114,8 @@ def test_dedup_access_plus():
                 out >> B[i, j]
                 B[i, j] = inp[0] + inp[1] + inp[2] + inp[3] + inp[4]
 
-    sdfg: dace.SDFG = datest.to_sdfg(strict=True)
-    assert sdfg.apply_transformations(DeduplicateAccess) == 0
+    sdfg: dace.SDFG = datest.to_sdfg(simplify=True)
+    assert sdfg.apply_transformations(DeduplicateAccess) == 1
 
 
 def test_dedup_access_square():
@@ -129,24 +129,21 @@ def test_dedup_access_square():
             with dace.tasklet:
                 a << A[i - 1:i + 2, j - 1:j + 2]
                 b >> tmp[0]
-                b = (a[0, 0] + a[0, 1] + a[0, 2] + a[1, 0] + a[1, 1] + a[1, 2] +
-                     a[2, 0] + a[2, 1] + a[2, 2]) / 9.0
+                b = (a[0, 0] + a[0, 1] + a[0, 2] + a[1, 0] + a[1, 1] + a[1, 2] + a[2, 0] + a[2, 1] + a[2, 2]) / 9.0
             with dace.tasklet:
                 a << A[i - 1:i + 2, j:j + 3]
                 b >> tmp[1]
-                b = (a[0, 0] + a[0, 1] + a[0, 2] + a[1, 0] + a[1, 1] + a[1, 2] +
-                     a[2, 0] + a[2, 1] + a[2, 2]) / 9.0
+                b = (a[0, 0] + a[0, 1] + a[0, 2] + a[1, 0] + a[1, 1] + a[1, 2] + a[2, 0] + a[2, 1] + a[2, 2]) / 9.0
             with dace.tasklet:
                 a << A[i - 1:i + 2, j + 1:j + 4]
                 b >> tmp[2]
-                b = (a[0, 0] + a[0, 1] + a[0, 2] + a[1, 0] + a[1, 1] + a[1, 2] +
-                     a[2, 0] + a[2, 1] + a[2, 2]) / 9.0
+                b = (a[0, 0] + a[0, 1] + a[0, 2] + a[1, 0] + a[1, 1] + a[1, 2] + a[2, 0] + a[2, 1] + a[2, 2]) / 9.0
             with dace.tasklet:
                 inp << tmp
                 out >> B[i, j]
                 B[i, j] = (inp[0] + inp[1] + inp[2]) / 12.0
 
-    sdfg: dace.SDFG = datest.to_sdfg(strict=True)
+    sdfg: dace.SDFG = datest.to_sdfg(simplify=True)
     nodes_before = sdfg.node(0).number_of_nodes()
     assert sdfg.apply_transformations(DeduplicateAccess) == 1
     # Check that the subset is contiguous by checking how many nodes are added
@@ -191,14 +188,14 @@ def test_dedup_access_contiguous():
                 B[i, j] = (inp[0] + inp[1] + inp[2]) / 3.0
 
     # j contiguous dimension
-    sdfg: dace.SDFG = datest.to_sdfg(strict=True)
+    sdfg: dace.SDFG = datest.to_sdfg(simplify=True)
     nodes_before = sdfg.node(0).number_of_nodes()
     assert sdfg.apply_transformations(DeduplicateAccess) == 1
     nodes_after = sdfg.node(0).number_of_nodes()
     assert nodes_after == nodes_before + 2
 
     # i contiguous dimension
-    sdfg: dace.SDFG = datest.to_sdfg(strict=True)
+    sdfg: dace.SDFG = datest.to_sdfg(simplify=True)
     sdfg.arrays['A'].strides = [1, N]
     nodes_before = sdfg.node(0).number_of_nodes()
     assert sdfg.apply_transformations(DeduplicateAccess) == 1

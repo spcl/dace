@@ -20,8 +20,7 @@ def to_blastype(dtype):
     elif dtype == np.complex128:
         return 'Z'
     else:
-        raise TypeError('Type %s not supported in BLAS operations' %
-                        dtype.__name__)
+        raise TypeError('Type %s not supported in BLAS operations' % dtype.__name__)
 
 
 def cublas_type_metadata(dtype: dtypes.typeclass) -> Tuple[str, str, str]:
@@ -212,5 +211,4 @@ def check_access(schedule: dtypes.ScheduleType, *descs: data.Data):
     """
     for desc in descs:
         if not dtypes.can_access(schedule, desc.storage):
-            raise ValueError(
-                f"Schedule mismatch: {schedule} cannot access {desc.storage}")
+            raise ValueError(f"Schedule mismatch: {schedule} cannot access {desc.storage}")

@@ -18,14 +18,12 @@ def create_dynamic_memlet_sdfg(mem_type):
     sdfg.arrays["y"].location["memorytype"] = mem_type
     sdfg.arrays["y"].location["bank"] = "4:8"
 
-    map_enter, map_exit = state.add_map(mem_type + "map", dict(k="0:4"),
-                                        dtypes.ScheduleType.Unrolled)
+    map_enter, map_exit = state.add_map(mem_type + "map", dict(k="0:4"), dtypes.ScheduleType.Unrolled)
     arr_map_enter, arr_map_exit = state.add_map("map", dict(i="0:_dynbound"))
-    tasklet = state.add_tasklet("dyn", set(["_in"]), set(["_out"]),
-                                ("if(i == 2):\n"
-                                 "   _out = 2\n"
-                                 "elif (_in != 2):\n"
-                                 "   _out = _in\n"))
+    tasklet = state.add_tasklet("dyn", set(["_in"]), set(["_out"]), ("if(i == 2):\n"
+                                                                     "   _out = 2\n"
+                                                                     "elif (_in != 2):\n"
+                                                                     "   _out = _in\n"))
 
     state.add_memlet_path(xarr,
                           map_enter,
@@ -39,11 +37,7 @@ def create_dynamic_memlet_sdfg(mem_type):
                           yarr,
                           memlet=mem.Memlet("y[k, i]", dynamic=True),
                           src_conn="_out")
-    state.add_memlet_path(xarr,
-                          map_enter,
-                          arr_map_enter,
-                          memlet=mem.Memlet("x[1, 0]"),
-                          dst_conn="_dynbound")
+    state.add_memlet_path(xarr, map_enter, arr_map_enter, memlet=mem.Memlet("x[1, 0]"), dst_conn="_dynbound")
     sdfg.apply_fpga_transformations()
     return sdfg
 

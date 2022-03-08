@@ -1,9 +1,9 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
-from copy import deepcopy as dcpy
+from copy import deepcopy as dcpy, copy
 from functools import reduce
 import operator
-from typing import List, Set, Union
+from typing import List, Optional, Set, Union
 import warnings
 
 import dace
@@ -11,8 +11,7 @@ import dace.serialize
 from dace import subsets, dtypes, symbolic
 from dace.frontend.operations import detect_reduction_type
 from dace.frontend.python.astutils import unparse
-from dace.properties import (Property, make_properties, DataProperty,
-                             SubsetProperty, SymbolicProperty,
+from dace.properties import (Property, make_properties, DataProperty, SubsetProperty, SymbolicProperty,
                              DebugInfoProperty, LambdaProperty)
 
 
@@ -33,13 +32,10 @@ class Memlet(object):
                        dtype=bool,
                        desc='Is the number of elements moved determined at '
                        'runtime (e.g., data dependent)')
-    subset = SubsetProperty(allow_none=True,
-                            desc='Subset of elements to move from the data '
-                            'attached to this edge.')
-    other_subset = SubsetProperty(
-        allow_none=True,
-        desc='Subset of elements after reindexing to the data not attached '
-        'to this edge (e.g., for offsets and reshaping).')
+    subset = SubsetProperty(allow_none=True, desc='Subset of elements to move from the data attached to this edge.')
+    other_subset = SubsetProperty(allow_none=True,
+                                  desc='Subset of elements after reindexing to the data not attached '
+                                  'to this edge (e.g., for offsets and reshaping).')
     data = DataProperty(desc='Data descriptor attached to this memlet')
     wcr = LambdaProperty(allow_none=True,
                          desc='If set, defines a write-conflict resolution '
@@ -48,15 +44,12 @@ class Memlet(object):
                          'value, and returns the value after resolution')
 
     # Code generation and validation hints
-    debuginfo = DebugInfoProperty(desc='Line information to track source and '
-                                  'generated code')
+    debuginfo = DebugInfoProperty(desc='Line information to track source and generated code')
     wcr_nonatomic = Property(dtype=bool,
                              default=False,
                              desc='If True, always generates non-conflicting '
                              '(non-atomic) writes in resulting code')
-    allow_oob = Property(dtype=bool,
-                         default=False,
-                         desc='Bypass out-of-bounds validation')
+    allow_oob = Property(dtype=bool, default=False, desc='Bypass out-of-bounds validation')
 
     def __init__(self,
                  expr: str = None,
@@ -140,6 +133,22 @@ class Memlet(object):
         self.debuginfo = debuginfo
         self.allow_oob = allow_oob
 
+    @staticmethod
+    def from_memlet(memlet: 'Memlet') -> 'Memlet':
+        sbs = subsets.Range(memlet.subset.ndrange()) if memlet.subset is not None else None
+        osbs = subsets.Range(memlet.other_subset.ndrange()) if memlet.other_subset is not None else None
+        result = Memlet(data=memlet.data,
+                        subset=sbs,
+                        other_subset=osbs,
+                        volume=memlet.volume,
+                        dynamic=memlet.dynamic,
+                        wcr=memlet.wcr,
+                        debuginfo=copy(memlet.debuginfo),
+                        wcr_nonatomic=memlet.wcr_nonatomic,
+                        allow_oob=memlet.allow_oob)
+        result._is_data_src = memlet._is_data_src
+        return result
+
     def to_json(self):
         attrs = dace.serialize.all_properties_to_json(self)
 
@@ -162,11 +171,10 @@ class Memlet(object):
     @staticmethod
     def from_json(json_obj, context=None):
         ret = Memlet()
-        dace.serialize.set_properties_from_json(
-            ret,
-            json_obj,
-            context=context,
-            ignore_properties={'src_subset', 'dst_subset', 'num_accesses'})
+        dace.serialize.set_properties_from_json(ret,
+                                                json_obj,
+                                                context=context,
+                                                ignore_properties={'src_subset', 'dst_subset', 'num_accesses'})
         if context:
             ret._sdfg = context['sdfg']
             ret._state = context['sdfg_state']
@@ -201,8 +209,7 @@ class Memlet(object):
         primarily used for connecting nodes to scopes without transferring 
         data to them. 
         """
-        return (self.data is None and self.src_subset is None
-                and self.dst_subset is None)
+        return (self.data is None and self.src_subset is None and self.dst_subset is None)
 
     @property
     def num_accesses(self):
@@ -284,8 +291,7 @@ class Memlet(object):
             if isinstance(other_subset_str, subsets.Subset):
                 result.other_subset = other_subset_str
             else:
-                result.other_subset = SubsetProperty.from_string(
-                    other_subset_str)
+                result.other_subset = SubsetProperty.from_string(other_subset_str)
         else:
             result.other_subset = None
 
@@ -338,8 +344,7 @@ class Memlet(object):
         self.data, self.subset = self._parse_from_subexpr(src_expr)
         self.other_subset = SubsetProperty.from_string(dst_expr)
 
-    def try_initialize(self, sdfg: 'dace.sdfg.SDFG',
-                       state: 'dace.sdfg.SDFGState',
+    def try_initialize(self, sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState',
                        edge: 'dace.sdfg.graph.MultiConnectorEdge'):
         """ 
         Tries to initialize the internal fields of the memlet (e.g., src/dst 
@@ -351,14 +356,13 @@ class Memlet(object):
         self._edge = edge
 
         # If memlet is code->code, ensure volume=1
-        if (isinstance(edge.src, CodeNode) and isinstance(edge.dst, CodeNode)
-                and self.volume == 0):
+        if (isinstance(edge.src, CodeNode) and isinstance(edge.dst, CodeNode) and self.volume == 0):
             self.volume = 1
 
         # Find source/destination of memlet
         try:
             path = state.memlet_path(edge)
-        except (ValueError, AssertionError, StopIteration):
+        except (ValueError, StopIteration):
             # Cannot initialize yet
             return
 
@@ -381,17 +385,14 @@ class Memlet(object):
         # If subset is None, fill in with entire array
         if (self.data is not None and self.subset is None):
             self.subset = subsets.Range.from_array(sdfg.arrays[self.data])
-    
-    def get_src_subset(self, edge: 'dace.sdfg.graph.MultiConnectorEdge',
-                       state: 'dace.sdfg.SDFGState'):
+
+    def get_src_subset(self, edge: 'dace.sdfg.graph.MultiConnectorEdge', state: 'dace.sdfg.SDFGState'):
         self.try_initialize(state.parent, state, edge)
         return self.src_subset
 
-    def get_dst_subset(self, edge: 'dace.sdfg.graph.MultiConnectorEdge',
-                       state: 'dace.sdfg.SDFGState'):
+    def get_dst_subset(self, edge: 'dace.sdfg.graph.MultiConnectorEdge', state: 'dace.sdfg.SDFGState'):
         self.try_initialize(state.parent, state, edge)
         return self.dst_subset
-
 
     @staticmethod
     def from_array(dataname, datadesc, wcr=None):
@@ -405,13 +406,12 @@ class Memlet(object):
         return Memlet.simple(dataname, rng, wcr_str=wcr)
 
     def __hash__(self):
-        return hash(
-            (self.volume, self.src_subset, self.dst_subset, str(self.wcr)))
+        return hash((self.volume, self.src_subset, self.dst_subset, str(self.wcr)))
 
     def __eq__(self, other):
         return all([
-            self.volume == other.volume, self.src_subset == other.src_subset,
-            self.dst_subset == other.dst_subset, self.wcr == other.wcr
+            self.volume == other.volume, self.src_subset == other.src_subset, self.dst_subset == other.dst_subset,
+            self.wcr == other.wcr
         ])
 
     def replace(self, repl_dict):
@@ -507,6 +507,28 @@ class Memlet(object):
             result |= self.dst_subset.free_symbols
         return result
 
+    def get_stride(self, sdfg: 'dace.sdfg.SDFG', map: 'dace.sdfg.nodes.Map', dim: int = -1) -> 'dace.symbolic.SymExpr':
+        """ Returns the stride of the underlying memory when traversing a Map.
+            
+            :param sdfg: The SDFG in which the memlet resides.
+            :param map: The map in which the memlet resides.
+            :param dim: The dimension that is incremented. By default it is the innermost.
+        """
+        if self.data is None:
+            return symbolic.pystr_to_symbolic('0')
+
+        param = symbolic.symbol(map.params[dim])
+        array = sdfg.arrays[self.data]
+
+        # Flatten the subset to a 1D-offset (using the array strides) at some iteration
+        curr = self.subset.at([0] * len(array.strides), array.strides)
+
+        # Substitute the param with the next (possibly strided) value
+        next = curr.subs(param, param + map.range[dim][2])
+
+        # The stride is the difference between both
+        return (next - curr).simplify()
+
     def __label__(self, sdfg, state):
         """ Returns a string representation of the memlet for display in a
             graph.
@@ -582,15 +604,20 @@ class MemletTree(object):
         all siblings of the same edge and their children, for instance if
         multiple inputs from the same access node are used.
     """
-    def __init__(
-        self,
-        edge,
-        parent=None,
-        children=None
-    ):  # type: (dace.sdfg.graph.MultiConnectorEdge, MemletTree, List[MemletTree]) -> None
+    def __init__(self,
+                 edge: 'dace.sdfg.graph.MultiConnectorEdge[Memlet]',
+                 downwards: bool = True,
+                 parent: 'MemletTree' = None,
+                 children: Optional[List['MemletTree']] = None) -> None:
         self.edge = edge
         self.parent = parent
         self.children = children or []
+        self._downwards = downwards
+
+    @property
+    def downwards(self):
+        """ If True, this memlet tree points downwards (rooted at the source node). """
+        return self._downwards
 
     def __iter__(self):
         if self.parent is not None:
@@ -609,6 +636,16 @@ class MemletTree(object):
         while node.parent is not None:
             node = node.parent
         return node
+
+    def leaves(self) -> 'List[dace.sdfg.graph.MultiConnectorEdge[Memlet]]':
+        """ Returns a list of all the leaves of this MemletTree, i.e., the innermost edges. """
+        if not self.children:
+            return [self.edge]
+
+        result = []
+        for child in self.children:
+            result.extend(child.leaves())
+        return result
 
     def traverse_children(self, include_self=False):
         if include_self:

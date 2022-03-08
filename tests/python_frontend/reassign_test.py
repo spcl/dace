@@ -8,8 +8,7 @@ from dace.frontend.python.common import DaceSyntaxError
 
 def test_reassign():
     @dace.program
-    def shouldfail(A: dace.float64[20], B: dace.float64[30],
-                   selector: dace.int32):
+    def shouldfail(A: dace.float64[20], B: dace.float64[30], selector: dace.int32):
         if selector == 0:
             tmp = np.empty_like(A)
             tmp[:] = A
@@ -25,8 +24,7 @@ def test_reassign():
 
 def test_reassign_samesize():
     @dace.program
-    def samesize(A: dace.float64[20], B: dace.float64[30],
-                 selector: dace.int32):
+    def samesize(A: dace.float64[20], B: dace.float64[30], selector: dace.int32):
         if selector == 0:
             tmp = np.empty_like(A)
             tmp[:] = A
@@ -41,8 +39,7 @@ def test_reassign_samesize():
 
 def test_reassign_retval():
     @dace.program
-    def shouldfail_retval(A: dace.float64[20], B: dace.float64[30],
-                          selector: dace.int32):
+    def shouldfail_retval(A: dace.float64[20], B: dace.float64[30], selector: dace.int32):
         if selector == 0:
             tmp = np.empty_like(A)
             tmp[:] = A

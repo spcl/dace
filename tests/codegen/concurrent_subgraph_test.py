@@ -12,18 +12,9 @@ def test_duplicate_codegen():
     sdfg = dace.SDFG("dup")
     state = sdfg.add_state()
 
-    c_task = state.add_tasklet("c_task",
-                               inputs={"c"},
-                               outputs={"d"},
-                               code='d = c')
-    e_task = state.add_tasklet("e_task",
-                               inputs={"a", "d"},
-                               outputs={"e"},
-                               code="e = a + d")
-    f_task = state.add_tasklet("f_task",
-                               inputs={"b", "d"},
-                               outputs={"f"},
-                               code="f = b + d")
+    c_task = state.add_tasklet("c_task", inputs={"c"}, outputs={"d"}, code='d = c')
+    e_task = state.add_tasklet("e_task", inputs={"a", "d"}, outputs={"e"}, code="e = a + d")
+    f_task = state.add_tasklet("f_task", inputs={"b", "d"}, outputs={"f"}, code="f = b + d")
 
     _, A_arr = sdfg.add_array("A", [
         1,
@@ -58,10 +49,8 @@ def test_duplicate_codegen():
     state.add_edge(D, None, f_task, "d", Memlet.from_array("D", D_arr))
     state.add_edge(D, None, e_task, "d", Memlet.from_array("D", D_arr))
 
-    state.add_edge(e_task, "e", E, None,
-                   Memlet.from_array("E", E_arr, wcr="lambda x, y: x + y"))
-    state.add_edge(f_task, "f", F, None,
-                   Memlet.from_array("F", F_arr, wcr="lambda x, y: x + y"))
+    state.add_edge(e_task, "e", E, None, Memlet.from_array("E", E_arr, wcr="lambda x, y: x + y"))
+    state.add_edge(f_task, "f", F, None, Memlet.from_array("F", F_arr, wcr="lambda x, y: x + y"))
 
     A = np.array([1], dtype=np.float32)
     B = np.array([1], dtype=np.float32)

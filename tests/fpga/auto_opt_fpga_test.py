@@ -6,7 +6,7 @@ import numpy as np
 from dace.fpga_testing import fpga_test
 from dace.transformation.interstate import FPGATransformSDFG
 from dace.transformation.auto import auto_optimize as aopt
-from dace.transformation.auto import fpga as fpga_aopt
+from dace.transformation.auto import fpga as fpga_auto_opt
 
 N = dace.symbol('N')
 
@@ -45,8 +45,7 @@ def test_global_to_local():
     # Check that all access nodes that refer to this container have also been updated
     for node, graph in sdfg.all_nodes_recursive():
         if isinstance(node, dace.sdfg.nodes.AccessNode):
-            trace = dace.sdfg.utils.trace_nested_access(node, graph,
-                                                        graph.parent)
+            trace = dace.sdfg.utils.trace_nested_access(node, graph, graph.parent)
 
             for (_, acc_node), memlet_trace, state_trace, sdfg_trace in trace:
                 if acc_node is not None and acc_node.data == candidate:
@@ -66,8 +65,7 @@ def test_rr_interleave():
         Tests RR interleaving of containers to memory banks
     '''
     @dace.program
-    def rr_interleave(A: dace.float32[8], B: dace.float32[8],
-                      C: dace.float32[8]):
+    def rr_interleave(A: dace.float32[8], B: dace.float32[8], C: dace.float32[8]):
         return A + B + C
 
     A = np.random.rand(8).astype(np.float32)
@@ -78,7 +76,7 @@ def test_rr_interleave():
     sdfg.apply_transformations([FPGATransformSDFG])
 
     #specifically run the the interleave transformation
-    allocated = fpga_aopt.fpga_rr_interleave_containers_to_banks(sdfg)
+    allocated = fpga_auto_opt.fpga_rr_interleave_containers_to_banks(sdfg)
 
     # There will be 5 arrays (one is a temporary containing A + B)
     assert allocated == [2, 1, 1, 1]

@@ -34,8 +34,7 @@ def subrange_of_subrange(A: dace.float32[2, 3, 4, 5], B: dace.float32[4]):
 
 
 @dace.program
-def subrange_of_subrange_nested(A: dace.float32[2, 3, 4, 5],
-                                B: dace.float32[4]):
+def subrange_of_subrange_nested(A: dace.float32[2, 3, 4, 5], B: dace.float32[4]):
     for i, j, k in dace.map[0:3, 0:5, 0:2]:
         B[:] = A[:, i, :, j][k, :]
 

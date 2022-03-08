@@ -86,13 +86,12 @@ required:
                 title: Save intermediate SDFGs
                 description: Save SDFG files after every transformation.
 
-            automatic_strict_transformations:
+            automatic_simplification:
                 type: bool
                 default: true
-                title: Automatic strict transformations
+                title: Automatic SDFG simplification
                 description: >
-                    Automatically performs strict transformations
-                    that are considered to be safe.
+                    Automatically performs SDFG simplification on programs.
 
             detect_control_flow:
                 type: bool
@@ -461,8 +460,12 @@ required:
                         default: ''
                         title: Target frequency for Xilinx kernels
                         description: >
-                            Target frequency when compiling kernels for Xilinx.
-                            Will not necessarily be achieved in practice.
+                            Target frequency, in MHz, when compiling kernels
+                            for Xilinx. Will not necessarily be achieved in
+                            practice. To enable multiple clocks, enter values
+                            in the format "clock_id:frequency", with frequency
+                            being specified in MHz separated by an escaped bar,
+                            all enclosed in quotes. E.g. "0:250\|1:500".
 
                     enable_debugging:
                         type: bool
@@ -539,14 +542,6 @@ required:
                         title: Kernel flags
                         description: High-level synthesis C++ flags
                         default: "-fp-relaxed -cl-no-signed-zeros -cl-fast-relaxed-math -cl-single-precision-constant -no-interleaving=default"
-
-                    launch_async:
-                        type: bool
-                        default: false
-                        title: Launch kernels asynchronously
-                        description: >
-                            Instead of launching kernels one-by-one, spawn a separate C++ thread using std::async and
-                            std::future. This also allows each kernel to measure its own runtime from the host code.
 
             #############################################
             # RTL (SystemVerilog) compiler
@@ -707,23 +702,6 @@ required:
                         default: 4
                         title: Number of processes
                         description: Number of MPI processes to use
-    diode:
-        type: dict
-        title: DIODE
-        description: DIODE GUI preferences
-        required:
-            general:
-                type: dict
-                title: General
-                description: General DIODE Preferences
-                required:
-                    library_autoexpand:
-                        type: bool
-                        default: True
-                        title: Auto-Expand Library Nodes
-                        description: >
-                            Automatically expand library nodes upon compilation, rather than
-                            expecting the nodes be expanded manually to the chosen implementation.
 
     instrumentation:
         type: dict
@@ -767,8 +745,8 @@ required:
             print_fpga_runtime:
                 type: bool
                 default: false
-                title: Print FPGA runtime 
-                description: Prints the runtime of instrumented FPGA kernel states to standard output. 
+                title: Print FPGA runtime
+                description: Prints the runtime of instrumented FPGA kernel states to standard output.
 
     #############################################
     # SOAP I/O analysis settings
@@ -950,7 +928,7 @@ required:
 
     #############################################
     # Python frontend settings
-    
+
     frontend:
         type: dict
         title: Frontend
@@ -961,7 +939,7 @@ required:
                 title: Program cache size
                 default: 32
                 description: >
-                    The number of compiled programs to cache (based on argument 
+                    The number of compiled programs to cache (based on argument
                     types, closure constants, and closure array types) to avoid
                     reparsing/compiling when calling a @dace.program or method.
 
@@ -972,6 +950,50 @@ required:
                 description: >
                     The maximum call-stack depth allowed when automatically
                     parsing called dace functions or methods.
+
+            raise_nested_parsing_errors:
+                type: bool
+                title: Raise nested parsing errors
+                default: false
+                description: >
+                    Raise all errors out of nested function parsing contexts
+                    instead of trying to create a callback implicitly.
+
+            verbose_errors:
+                type: bool
+                title: Show preprocessed AST on parsing errors
+                default: false
+                description: >
+                    Prints out the preprocessed unparsed AST in case of a parsing
+                    error.
+
+            preprocessing_passes:
+                type: int
+                title: Number of preprocessing passes on Python code
+                default: 5
+                description: >
+                    Number of times to run the Python preprocessing passes (e.g., constant
+                    folding) on the input code. Set to zero to disable preprocessing
+                    optimizations, set to -1 to run until the code has not changed.
+
+            dont_fuse_callbacks:
+                type: bool
+                title: Do not fuse callbacks
+                default: false
+                description: >
+                    Stricter mode of operation where callbacks into Python don't participate
+                    in state fusion transformations.
+
+            unroll_threshold:
+                type: int
+                title: Automatic unroll loop size threshold
+                default: -1
+                description: >
+                    Threshold for automatic loop unrolling of any generator (e.g., including ``range``) with a
+                    compile-time size. A value of -1 (default) means not to unroll any loop automatically, a value of
+                    0 means unrolling every loop, and a value above zero sets a size threshold beyond which a
+                    constant-sized loop will not be automatically unrolled.
+
 
 
     #############################################
@@ -984,16 +1006,16 @@ required:
         description: Enable verbose printouts.
 
     cache:
-        type: str 
-        default: name 
-        title: Naming of cache entry 
+        type: str
+        default: name
+        title: Naming of cache entry
         description: >
             Determine the name of the generated dacecache folder.
             "name" uses the name of the SDFG directly, causing it to be
             overridden by other programs using the same SDFG name.
             "hash" uses a mangled name based on the hash of the SDFG, such that
             any change to the SDFG will generate a different cache folder.
-            "unique" uses a name based on the currently running Python process 
+            "unique" uses a name based on the currently running Python process
             at code generation time, such that no caching or clashes can happen
             between different processes or subsequent invocations of Python.
             "single" uses a single cache folder for all SDFGs, saving space and

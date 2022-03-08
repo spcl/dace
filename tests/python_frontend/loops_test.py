@@ -404,6 +404,59 @@ def test_nested_map_with_symbol():
     assert (np.array_equal(val, ref))
 
 
+def test_for_else():
+    @dace.program
+    def for_else(A: dace.float64[20]):
+        for i in range(1, 20):
+            if A[i] >= 10:
+                A[0] = i
+                break
+            if i % 2 == 1:
+                continue
+            A[i] = i
+        else:
+            A[0] = -1.0
+
+    A = np.random.rand(20)
+    A_2 = np.copy(A)
+    expected_1 = np.copy(A)
+    expected_2 = np.copy(A)
+
+    expected_2[6] = 20.0
+    for_else.f(expected_1)
+    for_else.f(expected_2)
+
+    for_else(A)
+    assert np.allclose(A, expected_1)
+
+    A_2[6] = 20.0
+    for_else(A_2)
+    assert np.allclose(A_2, expected_2)
+
+
+def test_while_else():
+    @dace.program
+    def while_else(A: dace.float64[2]):
+        while A[0] < 5.0:
+            if A[1] < 0.0:
+                A[0] = -1.0
+                break
+            A[0] += 1.0
+        else:
+            A[1] = 1.0
+            A[1] = 1.0
+
+    A = np.array([0.0, 0.0])
+    expected = np.array([5.0, 1.0])
+    while_else(A)
+    assert np.allclose(A, expected)
+
+    A = np.array([0.0, -1.0])
+    expected = np.array([-1.0, -1.0])
+    while_else(A)
+    assert np.allclose(A, expected)
+
+
 if __name__ == "__main__":
     test_for_loop()
     test_for_loop_with_break_continue()
@@ -423,3 +476,5 @@ if __name__ == "__main__":
     test_nested_map_for_loop_2()
     test_nested_map_for_loop_with_tasklet_2()
     test_nested_map_with_symbol()
+    test_for_else()
+    test_while_else()

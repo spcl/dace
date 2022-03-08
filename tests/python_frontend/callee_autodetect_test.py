@@ -133,7 +133,7 @@ def test_nested_recursion2_fail():
         return nested_a(a)
 
     A = np.random.rand(20)
-    with pytest.raises(DaceSyntaxError, match='nested_b'):
+    with pytest.raises(DaceSyntaxError, match='nested_'):
         recursive_autoparse(A)
 
 
@@ -226,6 +226,24 @@ def test_nested_class_error_handling():
         testprogram(A, MaybeConvertible())
 
 
+def test_loop_unrolling():
+    @dace.program
+    def called(A):
+        A += 1
+
+    n = 5
+
+    @dace.program
+    def program(A):
+        for i in dace.unroll(range(n)):
+            called(A)
+
+    A = np.random.rand(20)
+    expected = A + n
+    program(A)
+    assert np.allclose(A, expected)
+
+
 if __name__ == '__main__':
     test_autodetect_function()
     test_autodetect_method()
@@ -239,3 +257,4 @@ if __name__ == '__main__':
     test_autodetect_function_in_for()
     test_error_handling()
     test_nested_class_error_handling()
+    test_loop_unrolling()

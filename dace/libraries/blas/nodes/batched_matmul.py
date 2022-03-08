@@ -8,13 +8,9 @@ import dace.properties
 from dace.frontend.common import op_repository as oprepo
 import dace.sdfg.nodes
 from dace.transformation.transformation import ExpandTransformation
-from dace.libraries.blas.blas_helpers import (to_blastype, get_gemm_opts,
-                                              check_access,
-                                              dtype_to_cudadatatype,
+from dace.libraries.blas.blas_helpers import (to_blastype, get_gemm_opts, check_access, dtype_to_cudadatatype,
                                               to_cublas_computetype)
-from dace.libraries.blas.nodes.matmul import (_get_matmul_operands,
-                                              _get_batchmm_opts,
-                                              _get_codegen_gemm_opts)
+from dace.libraries.blas.nodes.matmul import (_get_matmul_operands, _get_batchmm_opts, _get_codegen_gemm_opts)
 from .. import environments
 
 
@@ -26,13 +22,11 @@ class ExpandBatchedMatMulPure(ExpandTransformation):
     @staticmethod
     def make_sdfg(node, parent_state, parent_sdfg):
         # Get metadata from parent SDFG
-        ((edge_a, outer_array_a, shape_a, strides_a), (edge_b, outer_array_b,
-                                                       shape_b, strides_b),
+        ((edge_a, outer_array_a, shape_a, strides_a), (edge_b, outer_array_b, shape_b, strides_b),
          cdata) = _get_matmul_operands(node, parent_state, parent_sdfg)
         outedge = parent_state.out_edges(node)[0]
         cdesc = parent_sdfg.arrays[outedge.data.data]
-        bopt = _get_batchmm_opts(shape_a, strides_a, shape_b, strides_b,
-                                 cdesc.shape, cdesc.strides)
+        bopt = _get_batchmm_opts(shape_a, strides_a, shape_b, strides_b, cdesc.shape, cdesc.strides)
 
         if shape_a[-1] != shape_b[-2]:
             raise SyntaxError('Matrix sizes must match')
@@ -52,33 +46,16 @@ class ExpandBatchedMatMulPure(ExpandTransformation):
         # Create replacement SDFG
         sdfg = dace.SDFG(node.label + "_sdfg")
 
-        _, array_a = sdfg.add_array("_a",
-                                    shape_a,
-                                    dtype_a,
-                                    strides=strides_a,
-                                    storage=storage)
-        _, array_b = sdfg.add_array("_b",
-                                    shape_b,
-                                    dtype_b,
-                                    strides=strides_b,
-                                    storage=storage)
-        _, array_c = sdfg.add_array("_c",
-                                    shape_c,
-                                    dtype_c,
-                                    strides=cdata[-1],
-                                    storage=storage)
+        _, array_a = sdfg.add_array("_a", shape_a, dtype_a, strides=strides_a, storage=storage)
+        _, array_b = sdfg.add_array("_b", shape_b, dtype_b, strides=strides_b, storage=storage)
+        _, array_c = sdfg.add_array("_c", shape_c, dtype_c, strides=cdata[-1], storage=storage)
 
         # Add an initialization state
         init_state = sdfg.add_state()
         init_state.add_mapped_tasklet(
-            'batched_matmul_init',
-            {'_o%d' % i: '0:%s' % symstr(d)
-             for i, d in enumerate(shape_c)}, {},
-            'out = 0', {
-                'out':
-                dace.Memlet.simple(
-                    '_c', ','.join(['_o%d' % i for i in range(len(shape_c))]))
-            },
+            'batched_matmul_init', {'_o%d' % i: '0:%s' % symstr(d)
+                                    for i, d in enumerate(shape_c)}, {},
+            'out = 0', {'out': dace.Memlet.simple('_c', ','.join(['_o%d' % i for i in range(len(shape_c))]))},
             external_edges=True)
 
         state = sdfg.add_state_after(init_state, node.label + "_state")
@@ -86,23 +63,12 @@ class ExpandBatchedMatMulPure(ExpandTransformation):
         state.add_mapped_tasklet(
             '_BatchedBatchedMatMult_', {
                 '__i%d' % i: '0:%s' % s
-                for i, s in enumerate([
-                    bopt['b'], array_a.shape[-2], array_b.shape[-1],
-                    array_a.shape[-1]
-                ])
+                for i, s in enumerate([bopt['b'], array_a.shape[-2], array_b.shape[-1], array_a.shape[-1]])
             }, {
-                '__a':
-                dace.Memlet.simple("_a", ('__i1, __i3' if len(array_a.shape)
-                                          == 2 else '__i0, __i1, __i3')),
-                '__b':
-                dace.Memlet.simple("_b", ('__i3, __i2' if len(array_b.shape)
-                                          == 2 else '__i0, __i3, __i2'))
+                '__a': dace.Memlet.simple("_a", ('__i1, __i3' if len(array_a.shape) == 2 else '__i0, __i1, __i3')),
+                '__b': dace.Memlet.simple("_b", ('__i3, __i2' if len(array_b.shape) == 2 else '__i0, __i3, __i2'))
             },
-            '__c = __a * __b', {
-                '__c':
-                dace.Memlet.simple(
-                    "_c", '__i0, __i1, __i2', wcr_str='lambda x, y: x + y')
-            },
+            '__c = __a * __b', {'__c': dace.Memlet.simple("_c", '__i0, __i1, __i2', wcr_str='lambda x, y: x + y')},
             external_edges=True)
 
         return sdfg
@@ -121,9 +87,7 @@ class ExpandBatchedMatMulMKL(ExpandTransformation):
     @staticmethod
     def expansion(node, state, sdfg):
         node.validate(sdfg, state)
-        (_, adesc, ashape,
-         astrides), (_, bdesc, bshape,
-                     bstrides), _ = _get_matmul_operands(node, state, sdfg)
+        (_, adesc, ashape, astrides), (_, bdesc, bshape, bstrides), _ = _get_matmul_operands(node, state, sdfg)
         cdesc = sdfg.arrays[state.out_edges(node)[0].data.data]
         check_access(dtypes.ScheduleType.CPU_Multicore, adesc, bdesc, cdesc)
         dtype = cdesc.dtype.base_type
@@ -141,10 +105,8 @@ class ExpandBatchedMatMulMKL(ExpandTransformation):
             alpha = "dace::blas::BlasConstants::Get().Complex128Pone()"
             beta = "dace::blas::BlasConstants::Get().Complex128Zero()"
         else:
-            raise ValueError("Unsupported type for BLAS dot product: " +
-                             str(dtype))
-        opt = _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc,
-                                     alpha, beta, cdesc.dtype.ctype, func)
+            raise ValueError("Unsupported type for BLAS dot product: " + str(dtype))
+        opt = _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, alpha, beta, cdesc.dtype.ctype, func)
 
         # Adaptations for MKL/BLAS API
         opt['ta'] = 'CblasNoTrans' if opt['ta'] == 'N' else 'CblasTrans'
@@ -204,8 +166,7 @@ class ExpandBatchedMatMulCuBLAS(ExpandTransformation):
         if not adesc or not bdesc or not cdesc:
             raise ValueError('Unsupported input/output arrays')
 
-        needs_copy = any(desc.storage not in (dace.StorageType.GPU_Global,
-                                              dace.StorageType.CPU_Pinned)
+        needs_copy = any(desc.storage not in (dace.StorageType.GPU_Global, dace.StorageType.CPU_Pinned)
                          for desc in (adesc, bdesc, cdesc))
 
         dtype = cdesc.dtype.base_type
@@ -232,10 +193,8 @@ class ExpandBatchedMatMulCuBLAS(ExpandTransformation):
         call_suffix = ''
         # Handle alpha / beta
         constants = {
-            1.0:
-            f"__state->cublas_handle.Constants(__dace_cuda_device).{factort}Pone()",
-            0.0:
-            f"__state->cublas_handle.Constants(__dace_cuda_device).{factort}Zero()",
+            1.0: f"__state->cublas_handle.Constants(__dace_cuda_device).{factort}Pone()",
+            0.0: f"__state->cublas_handle.Constants(__dace_cuda_device).{factort}Zero()",
         }
         if node.alpha not in constants:
             # Deal with complex input constants
@@ -259,13 +218,11 @@ class ExpandBatchedMatMulCuBLAS(ExpandTransformation):
             beta = "__state->cublas_handle.Constants(__dace_cuda_device).%sZero()" % factort
 
         # Set up options for code formatting
-        opt = _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc,
-                                     alpha, beta, cdtype, func)
+        opt = _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, alpha, beta, cdtype, func)
         opt['array_prefix'] = '_' if needs_copy else ''
 
         # Matrix multiplication
-        if (node.compute_type is None and node.accumulator_type is None
-                and node.algorithm is None):
+        if (node.compute_type is None and node.accumulator_type is None and node.algorithm is None):
             call = '''cublas{func}StridedBatched(__dace_cublas_handle,
                 CUBLAS_OP_{ta}, CUBLAS_OP_{tb},
                 {M}, {N}, {K},
@@ -346,12 +303,9 @@ class ExpandBatchedMatMulCuBLAS(ExpandTransformation):
             nstate.add_node(tasklet)
             nstate.add_nedge(a, ga, dace.Memlet.from_array('_a', adesc))
             nstate.add_nedge(b, gb, dace.Memlet.from_array('_b', bdesc))
-            nstate.add_edge(ga, None, tasklet, '__a',
-                            dace.Memlet.from_array('_a_gpu', adesc))
-            nstate.add_edge(gb, None, tasklet, '__b',
-                            dace.Memlet.from_array('_b_gpu', bdesc))
-            nstate.add_edge(tasklet, '__c', gc, None,
-                            dace.Memlet.from_array('_c_gpu', cdesc))
+            nstate.add_edge(ga, None, tasklet, '__a', dace.Memlet.from_array('_a_gpu', adesc))
+            nstate.add_edge(gb, None, tasklet, '__b', dace.Memlet.from_array('_b_gpu', bdesc))
+            nstate.add_edge(tasklet, '__c', gc, None, dace.Memlet.from_array('_c_gpu', cdesc))
             nstate.add_nedge(gc, c, dace.Memlet.from_array('_c', cdesc))
 
             return nsdfg
@@ -370,49 +324,39 @@ class BatchedMatMul(dace.sdfg.nodes.LibraryNode):
         "OpenBLAS": ExpandBatchedMatMulOpenBLAS,
         "cuBLAS": ExpandBatchedMatMulCuBLAS
     }
-    transA = properties.Property(
-        dtype=bool, desc="Whether to transpose A before multiplying")
-    transB = properties.Property(
-        dtype=bool, desc="Whether to transpose B before multiplying")
-    alpha = properties.Property(
-        allow_none=False,
-        default=1,
-        desc="A scalar which will be multiplied with A @ B before adding C")
-    beta = properties.Property(
-        allow_none=False,
-        default=0,
-        desc="A scalar which will be multiplied with C before adding C")
-    algorithm = properties.Property(
-        dtype=str,
-        allow_none=True,
-        default=None,
-        desc="If applicable, chooses the vendor-provided implementation "
-        "(algorithm) for the multiplication")
+    transA = properties.Property(dtype=bool, desc="Whether to transpose A before multiplying")
+    transB = properties.Property(dtype=bool, desc="Whether to transpose B before multiplying")
+    alpha = properties.Property(allow_none=False,
+                                default=1,
+                                desc="A scalar which will be multiplied with A @ B before adding C")
+    beta = properties.Property(allow_none=False,
+                               default=0,
+                               desc="A scalar which will be multiplied with C before adding C")
+    algorithm = properties.Property(dtype=str,
+                                    allow_none=True,
+                                    default=None,
+                                    desc="If applicable, chooses the vendor-provided implementation "
+                                    "(algorithm) for the multiplication")
     accumulator_type = properties.TypeClassProperty(
         default=None,
         choices=dtypes.Typeclasses,
         allow_none=True,
         desc="Accumulator or intermediate storage type used in multiplication")
-    compute_type = properties.Property(
-        default=None,
-        dtype=str,
-        allow_none=True,
-        desc="If applicable, overrides computation type (CUBLAS-specific, see "
-        "``cublasComputeType_t``)")
+    compute_type = properties.Property(default=None,
+                                       dtype=str,
+                                       allow_none=True,
+                                       desc="If applicable, overrides computation type (CUBLAS-specific, see "
+                                       "``cublasComputeType_t``)")
 
     default_implementation = None
 
     def __init__(self, name, location=None):
-        super().__init__(name,
-                         location=location,
-                         inputs={'_a', '_b'},
-                         outputs={'_c'})
+        super().__init__(name, location=location, inputs={'_a', '_b'}, outputs={'_c'})
 
     def validate(self, sdfg, state):
         in_edges = state.in_edges(self)
         if len(in_edges) != 2:
-            raise ValueError(
-                "Expected exactly two inputs to batched matrix-matrix product")
+            raise ValueError("Expected exactly two inputs to batched matrix-matrix product")
         for _, _, _, dst_conn, memlet in state.in_edges(self):
             if dst_conn == '_a':
                 subset = dc(memlet.subset)
@@ -424,39 +368,25 @@ class BatchedMatMul(dace.sdfg.nodes.LibraryNode):
                 size1 = subset.size()
         out_edges = state.out_edges(self)
         if len(out_edges) != 1:
-            raise ValueError("Expected exactly one output from "
-                             "batched matrix-matrix product")
+            raise ValueError("Expected exactly one output from " "batched matrix-matrix product")
         out_memlet = out_edges[0].data
         # Function is symmetric, edge order does not matter
         if len(size0) not in [2, 3]:
-            raise ValueError(
-                "Batched matrix-matrix product only supported on matrices")
+            raise ValueError("Batched matrix-matrix product only supported on matrices")
         if len(size1) != 3:
-            raise ValueError(
-                "Batched matrix-matrix product only supported on matrices")
+            raise ValueError("Batched matrix-matrix product only supported on matrices")
         if size0[-1] != size1[-2]:
-            raise ValueError("Inputs to matrix-matrix product "
-                             "must agree in the k-dimension")
+            raise ValueError("Inputs to matrix-matrix product " "must agree in the k-dimension")
         out_subset = dc(out_memlet.subset)
         out_subset.squeeze()
         size2 = out_subset.size()
         if len(size2) != 3:
-            raise ValueError(
-                "batched matrix-matrix product only supported on matrices")
+            raise ValueError("batched matrix-matrix product only supported on matrices")
 
 
 # Numpy replacement
 @oprepo.replaces('dace.libraries.blas.bmm')
-def bmmnode(pv,
-            sdfg: dace.SDFG,
-            state: dace.SDFGState,
-            A,
-            B,
-            C,
-            alpha=1,
-            beta=0,
-            trans_a=False,
-            trans_b=False):
+def bmmnode(pv, sdfg: dace.SDFG, state: dace.SDFGState, A, B, C, alpha=1, beta=0, trans_a=False, trans_b=False):
     # Add nodes
     A_in, B_in = (state.add_read(name) for name in (A, B))
     C_out = state.add_write(C)

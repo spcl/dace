@@ -16,8 +16,6 @@ TESTPREFIX=""
 TOTAL_TESTS=0
 PYTHON_BINARY="${PYTHON_BINARY:-python3}"
 
-DACE_optimizer_detect_control_flow=${DACE_automatic_strict_transformations}
-
 TIMEOUTCMD="timeout -s9 30"
 
 RED='\033[0;31m'
@@ -87,7 +85,7 @@ endreport() {
 
 echo "====== Polybench Test Runner ======"
 
-cd $SCRIPTPATH/../samples/polybench
+cd $SCRIPTPATH/polybench
 
 # Specific test(s)
 if [ $# -ne 0 ]; then
@@ -110,7 +108,7 @@ counttests() {
 }
 
 # Count tests in top-level folder
-cd $SCRIPTPATH/../samples/polybench
+cd $SCRIPTPATH/polybench
 counttests
 
 
@@ -123,7 +121,7 @@ runtests() {
     done
 }
 
-cd $SCRIPTPATH/../samples/polybench
+cd $SCRIPTPATH/polybench
 TESTPREFIX=""
 runtests
 

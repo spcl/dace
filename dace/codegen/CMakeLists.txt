@@ -145,7 +145,7 @@ endif()
 
 # Function for performing deferred variable expansion
 function(expand_deferred_variables VAR_NAME)
-  string(REGEX MATCHALL "_DACE_CMAKE_EXPAND{([^}]+)}" EXPAND_VARS 
+  string(REGEX MATCHALL "_DACE_CMAKE_EXPAND{([^}]+)}" EXPAND_VARS
          "${${VAR_NAME}}")
   string(REPLACE " " ";" EXPAND_VARS "${EXPAND_VARS}")
   foreach(EXPAND_VAR ${EXPAND_VARS})
@@ -181,6 +181,7 @@ if(${NUM_ENV_VARS} GREATER 0)
     set(${KEY} ${VAL})
   endforeach()
 endif()
+string(REPLACE "_DACE_CMAKE_EXPAND" "$" DACE_ENV_PACKAGES "${DACE_ENV_PACKAGES}")
 string(REPLACE " " ";" DACE_ENV_PACKAGES "${DACE_ENV_PACKAGES}")
 foreach(PACKAGE_NAME ${DACE_ENV_PACKAGES})
   find_package(${PACKAGE_NAME} REQUIRED)
@@ -200,10 +201,14 @@ if(${NUM_ENV_VARS} GREATER 0)
   endforeach()
 endif()
 # Configure specified include directories, libraries, and flags
+string(REPLACE "_DACE_CMAKE_EXPAND" "$" DACE_ENV_INCLUDES "${DACE_ENV_INCLUDES}")
+string(REPLACE "_DACE_CMAKE_EXPAND" "$" DACE_ENV_LIBRARIES "${DACE_ENV_LIBRARIES}")
 string(REPLACE " " ";" DACE_ENV_INCLUDES "${DACE_ENV_INCLUDES}")
 string(REPLACE " " ";" DACE_ENV_LIBRARIES "${DACE_ENV_LIBRARIES}")
 include_directories(${DACE_ENV_INCLUDES})
 set(DACE_LIBS ${DACE_LIBS} ${DACE_ENV_LIBRARIES})
+string(REPLACE "_DACE_CMAKE_EXPAND" "$" DACE_ENV_LINK_FLAGS "${DACE_ENV_LINK_FLAGS}")
+string(REPLACE "_DACE_CMAKE_EXPAND" "$" DACE_ENV_COMPILE_FLAGS "${DACE_ENV_COMPILE_FLAGS}")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${DACE_ENV_COMPILE_FLAGS}")
 set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} ${DACE_ENV_LINK_FLAGS}")
 set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${DACE_ENV_LINK_FLAGS}")
@@ -341,7 +346,7 @@ if(DACE_ENABLE_RTL)
         get_filename_component(RTL_KERNEL ${RTL_SRC_DIR} NAME)
         get_filename_component(RTL_SCRIPTS "${RTL_SRC_DIR}/../scripts" ABSOLUTE)
         set(RTL_XO "${RTL_KERNEL}.xo")
-        rtllib_rtl_target(${RTL_KERNEL} ${RTL_SRC_DIR} ${RTL_SCRIPTS} ${RTL_GENERATED_DIR} ${RTL_LOG_DIR} ${RTL_TEMP_DIR} "${RTLLIB_DIR}/rtl" ${RTL_XO} ${RTL_PART})
+        rtllib_rtl_target(${RTL_KERNEL} ${RTL_SRC_DIR} ${RTL_SCRIPTS} ${RTL_GENERATED_DIR} ${RTL_LOG_DIR} ${RTL_TEMP_DIR} "${RTLLIB_DIR}/rtl" ${RTL_XO} ${RTL_PART} "" "\"\"")
         add_custom_target(${RTL_KERNEL} DEPENDS ${RTL_XO})
         set(DACE_RTL_KERNELS ${DACE_RTL_KERNELS} ${RTL_XO})
         set(DACE_RTL_DEPENDS ${DACE_RTL_DEPENDS} ${RTL_KERNEL})
@@ -468,6 +473,7 @@ if(DACE_ENABLE_INTELFPGA)
 
   # Add synthesis and build commands
   set(DACE_AOC_KERNEL_FILES)
+  set(DACE_AOC_DEFINITIONS "-DDACE_INTELFPGA")
   foreach(DACE_KERNEL_FILE ${DACE_INTELFPGA_KERNEL_FILES})
 
     get_filename_component(DACE_KERNEL_NAME ${DACE_KERNEL_FILE} NAME)
@@ -489,7 +495,8 @@ if(DACE_ENABLE_INTELFPGA)
     -I${CMAKE_SOURCE_DIR}/../runtime/include
     -I${CMAKE_BINARY_DIR}
     -board=${DACE_INTELFPGA_TARGET_BOARD}
-    ${DACE_INTELFPGA_KERNEL_FLAGS_INTERNAL})
+    ${DACE_INTELFPGA_KERNEL_FLAGS_INTERNAL}
+    ${DACE_AOC_DEFINITIONS})
 
   add_custom_target(
     intelfpga_report_${DACE_PROGRAM_NAME}
