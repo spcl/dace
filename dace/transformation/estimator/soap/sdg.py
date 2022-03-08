@@ -9,7 +9,6 @@ from dace.transformation.estimator.soap.soap import AccessParams, SoapStatement
 from dace.transformation.estimator.soap.utils import *
 import dace
 from dace.sdfg.graph import MultiConnectorEdge
-# from soap.SOAP import *
 from dace.codegen import control_flow
 from dace.sdfg.nodes import *
 from dace.subsets import Range
@@ -1160,8 +1159,6 @@ class SDG:
         inner_nodes = copy.deepcopy(nodes_so_far)
         inner_nodes.add(node)
 
-        if node == "__tmp6_1":
-            a = 1
 
         for pred in self.graph.predecessors(node): 
             # merging horizontally - input reuse
@@ -1180,8 +1177,6 @@ class SDG:
 
                         # if self.graph.nodes[sibling]['transient'] == True: 
                         #     continue
-                        if sibling == "__tmp4_1": # '__tmp9_1;__tmp7_1;__tmp5_1;__tmp4_1'
-                            a = 1
                         
                         # if the brother has no other parents than our shared parent, always add - do not branch
                         if len(list(self.graph.predecessors(sibling))) == 1 and len(self.in_edges(sibling)) == 1:
