@@ -955,16 +955,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             :param dtype: Optional data type of the symbol, or None to deduce
                           automatically.
         """
-        def get_type(obj):
-            if isinstance(obj, np.ndarray):
-                return dt.Array(dtypes.DTYPE_TO_TYPECLASS[obj.dtype.type], shape=obj.shape)
-            elif isinstance(obj, dtypes.typeclass):
-                return dt.Scalar(type(obj))
-            elif type(obj) in dtypes.DTYPE_TO_TYPECLASS:
-                return dt.Scalar(dtypes.DTYPE_TO_TYPECLASS[type(obj)])
-            raise TypeError('Unrecognized constant type: %s' % type(obj))
-
-        self.constants_prop[name] = (dtype or get_type(value), value)
+        self.constants_prop[name] = (dtype or dt.create_datadescriptor(value), value)
 
     @property
     def propagate(self):
