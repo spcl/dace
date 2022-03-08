@@ -9,6 +9,7 @@ import networkx as nx
 import time
 
 import dace.sdfg.nodes
+from dace.codegen import compiled_sdfg as csdfg
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.sdfg import SDFG
 from dace.sdfg.nodes import Node, NestedSDFG
@@ -708,7 +709,7 @@ def get_view_edge(state: SDFGState, view: nd.AccessNode) -> gr.MultiConnectorEdg
         return in_edge
     if in_edge.data.data == view.data and out_edge.data.data == view.data:
         return None
-    
+
     # Check if there is a 'views' connector
     if in_edge.dst_conn and in_edge.dst_conn == 'views':
         return in_edge
@@ -1172,11 +1173,40 @@ def load_precompiled_sdfg(folder: str):
     :param folder: Path to SDFG output folder.
     :return: A callable CompiledSDFG object.
     """
-    from dace.codegen import compiled_sdfg as csdfg
     sdfg = SDFG.from_file(os.path.join(folder, 'program.sdfg'))
     suffix = config.Config.get('compiler', 'library_extension')
     return csdfg.CompiledSDFG(sdfg,
                               csdfg.ReloadableDLL(os.path.join(folder, 'build', f'lib{sdfg.name}.{suffix}'), sdfg.name))
+
+
+def distributed_compile(sdfg: SDFG, comm: "Intracomm") -> csdfg.CompiledSDFG:
+    """
+    Compiles an SDFG in rank 0 of MPI communicator `comm`. Then, the compiled SDFG is loaded in all other ranks.
+    NOTE: This method can be used only if the module mpi4py is installed.
+    :param sdfg: SDFG to be compiled.
+    :param comm: MPI communicator. "Intracomm" is the base mpi4py communicator class.
+    :return: Compiled SDFG.
+    """
+
+    rank = comm.Get_rank()
+    func = None
+    folder = None
+
+    # Rank 0 compiles SDFG.
+    if rank == 0:
+        func = sdfg.compile()
+        folder = sdfg.build_folder
+
+    # Broadcasts build folder.
+    folder = comm.bcast(folder, root=0)
+
+    # Loads compiled SDFG.
+    if rank > 0:
+        func = load_precompiled_sdfg(folder)
+
+    comm.Barrier()
+
+    return func
 
 
 def get_next_nonempty_states(sdfg: SDFG, state: SDFGState) -> Set[SDFGState]:

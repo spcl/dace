@@ -1,6 +1,6 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
-from dace.codegen.compiled_sdfg import CompiledSDFG, ReloadableDLL
+from dace.sdfg import utils
 import dace.dtypes as dtypes
 import dace.frontend.common.distr as comm
 import numpy as np
@@ -44,12 +44,7 @@ def test_process_grid():
     if size < 2:
         raise ValueError("Please run this test with at least two processes.")
 
-    if rank == 0:
-        func = sdfg.compile()
-    commworld.Barrier()
-    if rank > 0:
-        func = CompiledSDFG(sdfg, ReloadableDLL(".dacecache/{n}/build/lib{n}.so".format(n=sdfg.name), sdfg.name))
-    commworld.Barrier()
+    func = utils.distributed_compile(sdfg, commworld)
 
     dims = np.zeros((2, ), dtype=np.int32)
     periods = np.zeros((2, ), dtype=np.int32)
@@ -102,12 +97,7 @@ def test_sub_grid():
     if size < 2:
         raise ValueError("Please run this test with at least two processes.")
 
-    if rank == 0:
-        func = sdfg.compile()
-    commworld.Barrier()
-    if rank > 0:
-        func = CompiledSDFG(sdfg, ReloadableDLL(".dacecache/{n}/build/lib{n}.so".format(n=sdfg.name), sdfg.name))
-    commworld.Barrier()
+    func = utils.distributed_compile(sdfg, commworld)
 
     dims = np.zeros((1, ), dtype=np.int32)
     periods = np.zeros((1, ), dtype=np.int32)
@@ -139,14 +129,10 @@ def test_process_grid_bcast():
     if size < 2:
         raise ValueError("Please run this test with at least two processes.")
 
+    sdfg = None
     if rank == 0:
         sdfg = pgrid_bcast.to_sdfg()
-        func = sdfg.compile()
-    commworld.Barrier()
-    if rank > 0:
-        sdfg = dace.SDFG.from_file(".dacecache/{n}/program.sdfg".format(n=pgrid_bcast.name))
-        func = CompiledSDFG(sdfg, ReloadableDLL(".dacecache/{n}/build/lib{n}.so".format(n=sdfg.name), sdfg.name))
-    commworld.Barrier()
+    func = utils.distributed_compile(sdfg, commworld)
 
     if rank == 0:
         A = np.arange(10, dtype=np.int32)
@@ -163,7 +149,7 @@ def test_sub_grid_bcast():
     P = dace.symbol('P', dace.int32)
 
     @dace.program
-    def pgrid_bcast(A: dace.int32[10], rank: dace.int32):
+    def subgrid_bcast(A: dace.int32[10], rank: dace.int32):
         pgrid = dace.comm.Cart_create([2, P // 2])
         sgrid = dace.comm.Cart_sub(pgrid, [False, True])
         dace.comm.Bcast(A, grid=pgrid)
@@ -181,14 +167,10 @@ def test_sub_grid_bcast():
     if size < 2:
         raise ValueError("Please run this test with at least two processes.")
 
+    sdfg = None
     if rank == 0:
-        sdfg = pgrid_bcast.to_sdfg()
-        func = sdfg.compile()
-    commworld.Barrier()
-    if rank > 0:
-        sdfg = dace.SDFG.from_file(".dacecache/{n}/program.sdfg".format(n=pgrid_bcast.name))
-        func = CompiledSDFG(sdfg, ReloadableDLL(".dacecache/{n}/build/lib{n}.so".format(n=sdfg.name), sdfg.name))
-    commworld.Barrier()
+        sdfg = subgrid_bcast.to_sdfg()
+    func = utils.distributed_compile(sdfg, commworld)
 
     if rank == 0:
         A = np.arange(10, dtype=np.int32)

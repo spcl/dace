@@ -1,6 +1,6 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
-from dace.codegen.compiled_sdfg import CompiledSDFG, ReloadableDLL
+from dace.sdfg import utils
 import numpy as np
 import pytest
 
@@ -26,14 +26,10 @@ def test_subarray_scatter():
     if size < 2:
         raise ValueError("Please run this test with at least two processes.")
 
+    sdfg = None
     if rank == 0:
         sdfg = block_scatter.to_sdfg()
-        func = sdfg.compile()
-    commworld.Barrier()
-    if rank > 0:
-        sdfg = dace.SDFG.from_file(".dacecache/{n}/program.sdfg".format(n=block_scatter.name))
-        func = CompiledSDFG(sdfg, ReloadableDLL(".dacecache/{n}/build/lib{n}.so".format(n=sdfg.name), sdfg.name))
-    commworld.Barrier()
+    func = utils.distributed_compile(sdfg, commworld)
 
     A = np.arange(64 * even_size * even_size, dtype=np.int32).reshape(8 * even_size, 8 * even_size).copy()
     lA_ref = A.reshape(2, 4 * even_size, even_size // 2, 16).transpose(0, 2, 1, 3)
@@ -69,14 +65,10 @@ def test_subarray_scatter_bcast():
     if size < 2:
         raise ValueError("Please run this test with at least two processes.")
 
+    sdfg = None
     if rank == 0:
         sdfg = block_scatter_bcast.to_sdfg()
-        func = sdfg.compile()
-    commworld.Barrier()
-    if rank > 0:
-        sdfg = dace.SDFG.from_file(".dacecache/{n}/program.sdfg".format(n=block_scatter_bcast.name))
-        func = CompiledSDFG(sdfg, ReloadableDLL(".dacecache/{n}/build/lib{n}.so".format(n=sdfg.name), sdfg.name))
-    commworld.Barrier()
+    func = utils.distributed_compile(sdfg, commworld)
 
     A = np.arange(8 * even_size, dtype=np.int32)
 
@@ -112,14 +104,10 @@ def test_subarray_gather():
     if size < 2:
         raise ValueError("Please run this test with at least two processes.")
 
+    sdfg = None
     if rank == 0:
         sdfg = block_gather.to_sdfg()
-        func = sdfg.compile()
-    commworld.Barrier()
-    if rank > 0:
-        sdfg = dace.SDFG.from_file(".dacecache/{n}/program.sdfg".format(n=block_gather.name))
-        func = CompiledSDFG(sdfg, ReloadableDLL(".dacecache/{n}/build/lib{n}.so".format(n=sdfg.name), sdfg.name))
-    commworld.Barrier()
+    func = utils.distributed_compile(sdfg, commworld)
 
     A_ref = np.arange(64 * even_size * even_size, dtype=np.int32).reshape(8 * even_size, 8 * even_size)
     lA = A_ref.reshape(2, 4 * even_size, even_size // 2, 16).transpose(0, 2, 1, 3)
@@ -155,14 +143,10 @@ def test_subarray_gather_reduce():
     if size < 2:
         raise ValueError("Please run this test with at least two processes.")
 
+    sdfg = None
     if rank == 0:
         sdfg = block_gather_reduce.to_sdfg()
-        func = sdfg.compile()
-    commworld.Barrier()
-    if rank > 0:
-        sdfg = dace.SDFG.from_file(".dacecache/{n}/program.sdfg".format(n=block_gather_reduce.name))
-        func = CompiledSDFG(sdfg, ReloadableDLL(".dacecache/{n}/build/lib{n}.so".format(n=sdfg.name), sdfg.name))
-    commworld.Barrier()
+    func = utils.distributed_compile(sdfg, commworld)
 
     A_ref = np.arange(8 * even_size, dtype=np.int32)
     if rank < even_size:
