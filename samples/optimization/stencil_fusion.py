@@ -35,14 +35,12 @@ if __name__ == '__main__':
 
         dtype = sdfg.arrays[array].dtype
         shape = sdfg.arrays[array].shape
-    
+
         data = np.random.rand(*shape)
         arguments[array] = data
 
     result = ct.CutoutTuner.dry_run(sdfg, **arguments)
 
-
-    print("Tuning")
     tuner = optim.StencilFusionTuner(sdfg)
-    report = tuner.optimize()
-    print(report)
+    dist = optim.DistributedCutoutTuner(tuner=tuner)
+    dist.optimize()
