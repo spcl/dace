@@ -7,7 +7,6 @@ from dace.sdfg.graph import MultiConnectorEdge
 import dace
 from dace.sdfg.nodes import *
 from dace.subsets import Range
-# from dace.sdfg import Scope
 
 from dace.symbolic import pystr_to_symbolic
 from dace import subsets, Config

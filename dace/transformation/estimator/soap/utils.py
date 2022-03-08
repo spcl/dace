@@ -1,4 +1,3 @@
-# import matplotlib.pyplot as plt
 from collections import defaultdict
 from dataclasses import dataclass
 import numpy as np
@@ -135,69 +134,6 @@ def get_kernels(suite_name : str, kernel_name : str = "", sdfg_path : str = ""):
     return kernels
 
 
-# def parse_params():
-#     params = SOAPParameters()
-#     parser = argparse.ArgumentParser()
-#     parser.add_argument("-m", "--matlab", help="Use remote Matlab server",
-#         action="store_true")
-#     parser.add_argument("-w", "--workDepth", help="Perform work depth analysis",
-#         action="store_true")
-#     parser.add_argument("-q", "--IO", help="Perform I/O analysis",
-#         action="store_false")
-#     parser.add_argument("-i", "--injective", help="Assume that ALL accesses do not overlap",
-#         action="store_false")
-#     # just specify the path and recursively traverse the given dir
-#     parser.add_argument("-t", "--test", help="Test the solver",
-#         action="store_true")
-#     parser.add_argument("-l", "--latex", help="Output as a Latex table",
-#         action="store_true")
-#     parser.add_argument("-n", "--npbench", help="Get kernels from npbench",
-#         action="store_true")
-#     parser.add_argument("-p", "--path", help="Name of the sdfg file (single experiment) or of the folder containing sdfgs",
-#         default = "sources/test.sdfg")#"polybench")
-#      #   default = "polybench")#"polybench")
-#         # default = "polybench/correlation/correlation_dace.py")
-#     #"polybench_optimized")#"nn")#"sample-sdfgs/sources/conv-param.sdfg")
-
-
-#     # command line arguments
-#     args = parser.parse_args()
-#     params.remoteMatlab = args.matlab
-#     params.WDanalysis = args.workDepth
-#     params.IOanalysis = args.IO
-#     params.latex = args.latex
-#     params.suiteName = args.path
-#     params.allInjective = args.injective
-#     params.npbench = args.npbench
-    
-#     # screw it, we overwrite it using the parameters specified on top of utils.py
-#     params.remoteMatlab = use_remote_matlab_server
-#     params.npbench = (chosen_setup == "npbench")
-#     if chosen_setup == "old_tals_sdfgs":        
-#         params.suiteName = "polybench"
-#     if chosen_setup == "c2dace":        
-#         params.suiteName = "polybench_optimized" 
-#     if chosen_setup == "npbench":        
-#         params.suiteName = "polybench" 
-#     if chosen_setup == "other":        
-#         params.suiteName = sdfg_path
-#     if chosen_setup == "einsum_string":        
-#         params.suiteName = "einsum"
-#         params.einsum_strings = [einsum_string]
-#     if chosen_setup == "einsum_strings_from_file":        
-#         params.suiteName = "einsum"
-#         with open("sample-sdfgs/tensors/sample_einsums.txt") as file:
-#             params.einsum_strings = ["".join(line.split()) for line in file.readlines()]
-    
-
-#     if args.test:
-#         solver = Solver()
-#         [fromSolver, toSolver] = solver.start_solver(params.remoteMatlab)
-#         TestSolver(solver)
-#         solver.EndSolver()
-#         sys.exit()
-    
-#     return params
 
 
 import dace.frontend.python.parser
