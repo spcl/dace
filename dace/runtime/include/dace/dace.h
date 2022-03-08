@@ -22,6 +22,7 @@
 #include "stream.h"
 #include "os.h"
 #include "perf/reporting.h"
+#include "comm.h"
 #include "serialization.h"
 
 #if defined(__CUDACC__) || defined(__HIPCC__)
