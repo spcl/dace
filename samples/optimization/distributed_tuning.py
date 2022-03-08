@@ -1,4 +1,6 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
+import os
+import shutil
 import math
 import dace
 from dace import optimization as optim
@@ -7,6 +9,8 @@ import numpy as np
 
 from dace.transformation.auto.auto_optimize import auto_optimize
 from dace.optimization import data_layout_tuner
+
+from pathlib import Path
 
 N = 256
 
@@ -34,9 +38,16 @@ if __name__ == '__main__':
     C = np.random.rand(N, N)
 
     sdfg = sample.to_sdfg(A, B, C)
-    auto_optimize(sdfg, dace.DeviceType.CPU)
+    #auto_optimize(sdfg, dace.DeviceType.CPU)
+
+    cache_path = Path(__file__).parent / ".dacecache"
+    shutil.rmtree(cache_path, ignore_errors=True)
 
     CutoutTuner.dry_run(sdfg, A, B, C)
+
+    tuner = optim.StencilFusionTuner(sdfg)
+    dist = optim.DistributedCutoutTuner(tuner=tuner)
+    dist.optimize()
 
     tuner = optim.MapPermutationTuner(sdfg)
     dist = optim.DistributedCutoutTuner(tuner=tuner)
