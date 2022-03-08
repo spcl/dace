@@ -304,18 +304,21 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
     debuginfo = DebugInfoProperty(allow_none=True)
 
-    _pgrids = Property(dtype=dict,
-                       desc="Process-grid descriptors for this SDFG",
-                       to_json=_arrays_to_json,
-                       from_json=_arrays_from_json)
-    _subarrays = Property(dtype=dict,
-                          desc="Sub-array descriptors for this SDFG",
-                          to_json=_arrays_to_json,
-                          from_json=_arrays_from_json)
-    _rdistrarrays = Property(dtype=dict,
-                             desc="Sub-array redistribution descriptors for this SDFG",
-                             to_json=_arrays_to_json,
-                             from_json=_arrays_from_json)
+    _pgrids = DictProperty(str,
+                           ProcessGrid,
+                           desc="Process-grid descriptors for this SDFG",
+                           to_json=_arrays_to_json,
+                           from_json=_arrays_from_json)
+    _subarrays = DictProperty(str,
+                              SubArray,
+                              desc="Sub-array descriptors for this SDFG",
+                              to_json=_arrays_to_json,
+                              from_json=_arrays_from_json)
+    _rdistrarrays = DictProperty(str,
+                                 RedistrArray,
+                                 desc="Sub-array redistribution descriptors for this SDFG",
+                                 to_json=_arrays_to_json,
+                                 from_json=_arrays_from_json)
 
     callback_mapping = DictProperty(str,
                                     str,
@@ -368,11 +371,8 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
         # Grid-distribution-related fields
         self._pgrids = {}
-        self._pgrids_count = 0
         self._subarrays = {}
-        self._subarrays_count = 0
         self._rdistrarrays = {}
-        self._rdistrarrays_count = 0
 
         # Counter to resolve name conflicts
         self._orig_name = name
@@ -1451,7 +1451,8 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
     def _find_new_name(self, name: str):
         """ Tries to find a new name by adding an underscore and a number. """
         index = 0
-        names = (self._arrays.keys() | self.constants_prop.keys())
+        names = (self._arrays.keys() | self.constants_prop.keys() | self._pgrids.keys() | self._subarrays.keys()
+                 | self._rdistrarrays.keys())
         while (name + ('_%d' % index)) in names:
             index += 1
 
@@ -1744,17 +1745,6 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
         return name
 
-    def temp_pgrid_name(self):
-        """ Returns a temporary process-grid name that can be used in this SDFG. """
-
-        name = '__pgrid%d' % self._pgrids_count
-        while name in self._pgrids:
-            self._pgrids_count += 1
-            name = '__pgrid%d' % self._pgrids_count
-        self._pgrids_count += 1
-
-        return name
-
     def add_pgrid(self,
                   shape: ShapeType = None,
                   parent_grid: str = None,
@@ -1784,7 +1774,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                 newshape.append(dace.symbolic.pystr_to_symbolic(s))
         shape = newshape
 
-        grid_name = self.temp_pgrid_name()
+        grid_name = self._find_new_name('__pgrid')
         is_subgrid = (parent_grid is not None)
         if parent_grid and isinstance(parent_grid, str):
             parent_grid = self._pgrids[parent_grid]
@@ -1795,17 +1785,6 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         self.append_exit_code(self._pgrids[grid_name].exit_code())
 
         return grid_name
-
-    def temp_subarray_name(self):
-        """ Returns a temporary sub-array name that can be used in this SDFG. """
-
-        name = '__subarray%d' % self._subarrays_count
-        while name in self._subarrays:
-            self._subarrays_count += 1
-            name = '__subarray%d' % self._subarrays_count
-        self._subarrays_count += 1
-
-        return name
 
     def add_subarray(self,
                      dtype: dtypes.typeclass,
@@ -1841,24 +1820,13 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                 newshape.append(dace.symbolic.pystr_to_symbolic(s))
         subshape = newshape
 
-        subarray_name = self.temp_subarray_name()
+        subarray_name = self._find_new_name('__subarray')
         self._subarrays[subarray_name] = SubArray(subarray_name, dtype, shape, subshape, pgrid, correspondence)
 
         self.append_init_code(self._subarrays[subarray_name].init_code())
         self.append_exit_code(self._subarrays[subarray_name].exit_code())
 
         return subarray_name
-
-    def temp_rdistrarray_name(self):
-        """ Returns a temporary sub-array redistribution name that can be used in this SDFG. """
-
-        name = '__rdistrarray%d' % self._rdistrarrays_count
-        while name in self._rdistrarrays:
-            self._rdistrarrays_count += 1
-            name = '__rdistrarray%d' % self._rdistrarrays_count
-        self._rdistrarrays_count += 1
-
-        return name
 
     def add_rdistrarray(self, array_a: str, array_b: str):
         """ Adds a sub-array redistribution to the sub-array redistribution descriptor store.
@@ -1868,7 +1836,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             :return: Name of the new redistribution descriptor.
         """
 
-        rdistrarray_name = self.temp_rdistrarray_name()
+        rdistrarray_name = self._find_new_name('__rdistrarray')
         self._rdistrarrays[rdistrarray_name] = RedistrArray(rdistrarray_name, array_a, array_b)
         self.append_init_code(self._rdistrarrays[rdistrarray_name].init_code(self))
         self.append_exit_code(self._rdistrarrays[rdistrarray_name].exit_code(self))
