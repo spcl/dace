@@ -68,16 +68,18 @@ class CutoutTuner(auto_tuner.AutoTuner):
 
         # If there is no valid instrumented data available yet, run in data instrumentation mode
         if dreport is None:
-            for node, _ in sdfg.all_nodes_recursive():
-                if isinstance(node, dace.nodes.AccessNode) and not node.desc(sdfg).transient:
-                    node.instrument = dace.DataInstrumentationType.Save
+            for state in sdfg.nodes():
+                for node in state.nodes():
+                    if isinstance(node, dace.nodes.AccessNode) and not node.desc(sdfg).transient:
+                        node.instrument = dace.DataInstrumentationType.Save
 
             result = sdfg(**kwargs)
 
             # Disable data instrumentation from now on
-            for node, _ in sdfg.all_nodes_recursive():
-                if isinstance(node, dace.nodes.AccessNode):
-                    node.instrument = dace.DataInstrumentationType.No_Instrumentation
+            for state in sdfg.nodes():
+                for node in state.nodes():
+                    if isinstance(node, dace.nodes.AccessNode):
+                        node.instrument = dace.DataInstrumentationType.No_Instrumentation
         else:
             return None
 
