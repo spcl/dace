@@ -25,8 +25,8 @@ class CutoutTuner(auto_tuner.AutoTuner):
     def task(self) -> str:
         return self._task
 
-    def file_name(self, state_id, node_id, node_label):
-        return f"{self._task}.{state_id}.{node_id}.{node_label}.tuning"
+    def file_name(self, label: str) -> str:
+        return f"{self._task}.{label}.tuning"
 
     def try_load(self, file_name) -> Dict:
         results = None
@@ -38,14 +38,18 @@ class CutoutTuner(auto_tuner.AutoTuner):
 
         return results
 
-    def cutouts(self) -> Generator[Tuple[dace.SDFGState, List[dace.nodes.Node]], None, None]:
+    def cutouts(self) -> Generator[Tuple[dace.SDFGState, str], None, None]:
         raise NotImplementedError
 
     def space(self, cutout: dace.SDFG) -> Generator[Any, None, None]:
         raise NotImplementedError
 
-    def evaluate(self, state: dace.SDFGState, node: dace.nodes.Node, dreport: data_report.InstrumentedDataReport,
-                 measurements: int, **kwargs) -> Dict:
+    def evaluate(self, cutout: dace.SDFG, dreport: data_report.InstrumentedDataReport, measurements: int,
+                 **kwargs) -> Dict:
+        raise NotImplementedError
+
+    def evaluate_single(self, config: Any, cutout: dace.SDFG, dreport: data_report.InstrumentedDataReport,
+                        measurements: int, **kwargs) -> Dict:
         raise NotImplementedError
 
     @staticmethod
@@ -103,18 +107,16 @@ class CutoutTuner(auto_tuner.AutoTuner):
         dreport: data_report.InstrumentedDataReport = self._sdfg.get_instrumented_data()
 
         tuning_report = {}
-        for cutout in tqdm(list(self.cutouts())):
-            (state_id, node_id), (state, node) = cutout
-            fn = self.file_name(state_id, node_id, node.label)
+        for cutout, label in tqdm(list(self.cutouts())):
+            fn = self.file_name(label)
             results = self.try_load(fn)
 
             if results is None:
-                results = self.evaluate(state, node, dreport, measurements, **kwargs)
+                results = self.evaluate(cutout, dreport, measurements, **kwargs)
 
                 with open(fn, 'w') as fp:
                     json.dump(results, fp)
 
-            key = ".".join((str(state_id), str(node_id)))
-            tuning_report[key] = results
+            tuning_report[label] = results
 
         return tuning_report

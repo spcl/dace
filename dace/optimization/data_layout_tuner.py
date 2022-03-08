@@ -33,24 +33,28 @@ class DataLayoutTuner(cutout_tuner.CutoutTuner):
         super().__init__(task="DataLayout", sdfg=sdfg)
         self.instrument = measurement
 
-    def cutouts(self) -> Generator[Tuple[dace.SDFGState, dace.nodes.Node], None, None]:
-        for node, state in self._sdfg.all_nodes_recursive():
-            if not isinstance(state, SDFGState):
-                continue
+    def cutouts(self) -> Generator[Tuple[dace.SDFG, str], None, None]:
+        for state in self._sdfg.nodes():
+            for node in state.nodes():
+                if xfh.get_parent_map(state, node) is not None:
+                    continue
 
-            if xfh.get_parent_map(state, node) is not None:
-                continue
+                if isinstance(node, dace.nodes.MapEntry):
+                    node_id = state.node_id(node)
+                    state_id = self._sdfg.node_id(state)
+                    cutout_hash = f"{state_id}.{node_id}.{node.label}"
+                    subgraph_nodes = state.scope_subgraph(node).nodes()
+                    cutout = cutter.cutout_state(state, *subgraph_nodes)
+                    yield cutout, cutout_hash
+                elif isinstance(node, (dace.nodes.LibraryNode, dace.nodes.Tasklet)):
+                    cutout_hash = node.label.split("_")[-1]
+                    subgraph_nodes = [node]
+                    cutout = cutter.cutout_state(state, *subgraph_nodes)
+                    yield cutout, cutout_hash
 
-            node_id = state.node_id(node)
-            state_id = self._sdfg.node_id(state)
-            if isinstance(node, dace.nodes.MapEntry):
-                yield (state_id, node_id), (state, node)
-            elif isinstance(node, (dace.nodes.LibraryNode, dace.nodes.Tasklet)):
-                yield (state_id, node_id), (state, node)
-
-    def space(self, cutout_sdfg: dace.SDFG, groups: List[Set[str]] = None) -> Generator[Set[str], None, None]:
+    def space(self, cutout: dace.SDFG, groups: List[Set[str]] = None) -> Generator[Set[str], None, None]:
         # Make a copy of the original arrays
-        arrays = copy.deepcopy(cutout_sdfg.arrays)
+        arrays = copy.deepcopy(cutout.arrays)
 
         # Tuning groups - if None, each array is in its own group
         group_dims: List[int] = []
@@ -93,11 +97,9 @@ class DataLayoutTuner(cutout_tuner.CutoutTuner):
             # Yield configuration
             yield modified_arrays, new_arrays
 
-    def evaluate(self, state: dace.SDFGState, node: dace.nodes.Node, dreport: data_report.InstrumentedDataReport,
-                 measurements: int, group_by: TuningGroups) -> Dict:
+    def evaluate(self, cutout: dace.SDFG, dreport: data_report.InstrumentedDataReport, measurements: int,
+                 group_by: TuningGroups) -> Dict:
         # No modification to original SDFG, best configuration needs to be determined globally
-        subgraph_nodes = state.scope_subgraph(node).nodes() if isinstance(node, dace.nodes.MapEntry) else [node]
-        cutout = cutter.cutout_state(state, *subgraph_nodes)
         cutout.instrument = self.instrument
 
         # Prepare original arguments to sub-SDFG from instrumented data report
@@ -113,7 +115,7 @@ class DataLayoutTuner(cutout_tuner.CutoutTuner):
 
         # Iterate over configurations
         results = {}
-        for modified_arrays, new_arrays in tqdm(list(self.space(cutout_sdfg=cutout, groups=groups)), desc=node.label):
+        for modified_arrays, new_arrays in tqdm(list(self.space(cutout=cutout, groups=groups))):
             # Modify data layout prior to calling
             cutout._arrays = new_arrays
             for marray in modified_arrays:
