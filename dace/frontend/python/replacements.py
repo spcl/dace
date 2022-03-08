@@ -456,41 +456,50 @@ def _numpy_rot90(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str, k
 
     k %= 4
 
-    if k == 0:
-        return arr
-    if k == 2:
-        res = _numpy_flip(pv, sdfg, state, arr, axes[0])
-        state = pv._add_state(state.label + '_b')
-        return _numpy_flip(pv, sdfg, state, res, axes[1])
+    to_flip = []
+    transpose = False
 
     axes_list = list(range(ndim))
     (axes_list[axes[0]], axes_list[axes[1]]) = (axes_list[axes[1]], axes_list[axes[0]])
+    inpidx = ','.join([f'__i{i}' for i in range(ndim)])
 
-    if k == 1:
-        arr_copy, narr = sdfg.add_temp_transient_like(desc)
-        shape_list = list(narr.shape)
+    if k == 0:
+        return arr
+    if k == 2:
+        to_flip = [axes[0], axes[1]]
+    elif k == 1:
+        to_flip = [axes[1]]
+        transpose = True
+    else:  # k == 3
+        to_flip = [axes[0]]
+        transpose = True
+
+    arr_copy, narr = sdfg.add_temp_transient_like(desc)
+
+    shape_list = list(narr.shape)
+    if transpose:
         shape_list[axes[0]], shape_list[axes[1]] = shape_list[axes[1]], shape_list[axes[0]]
+
+        # Make C-contiguous array shape
         narr.shape = shape_list
         narr.strides = [data._prod(shape_list[i + 1:]) for i in range(len(shape_list))]
         narr.total_size = sum(((shp - 1) * s for shp, s in zip(narr.shape, narr.strides))) + 1
+        narr.alignment_offset = 0
 
-        inpidx = ','.join([f'__i{i}' for i in range(ndim)])
-        out_indices = [f'{s} - __i{i} - 1' if i == axes[1] else f'__i{i}' for i, s in enumerate(desc.shape)]
+    out_indices = [f'{s} - __i{i} - 1' if i in to_flip else f'__i{i}' for i, s in enumerate(desc.shape)]
+    if transpose:
         out_indices[axes[0]], out_indices[axes[1]] = out_indices[axes[1]], out_indices[axes[0]]
-        outidx = ','.join(out_indices)
-        state.add_mapped_tasklet(name="_rot90_",
-                                 map_ranges={f'__i{i}': f'0:{s}:1'
-                                             for i, s in enumerate(desc.shape)},
-                                 inputs={'__inp': Memlet(f'{arr}[{inpidx}]')},
-                                 code='__out = __inp',
-                                 outputs={'__out': Memlet(f'{arr_copy}[{outidx}]')},
-                                 external_edges=True)
 
-        return arr_copy
-    else:  # k == 3
-        res = _transpose(pv, sdfg, state, arr, axes_list)
-        state = pv._add_state(state.label + '_b')
-        return _numpy_flip(pv, sdfg, state, res, axes[1])
+    outidx = ','.join(out_indices)
+    state.add_mapped_tasklet(name="_rot90_",
+                             map_ranges={f'__i{i}': f'0:{s}:1'
+                                         for i, s in enumerate(desc.shape)},
+                             inputs={'__inp': Memlet(f'{arr}[{inpidx}]')},
+                             code='__out = __inp',
+                             outputs={'__out': Memlet(f'{arr_copy}[{outidx}]')},
+                             external_edges=True)
+
+    return arr_copy
 
 
 @oprepo.replaces('elementwise')
