@@ -18,7 +18,7 @@ class ProcessGrid(object):
     Process-grids implement cartesian topologies similarly to cartesian communicators created with [MPI_Cart_create](https://www.mpich.org/static/docs/latest/www3/MPI_Cart_create.html)
     and [MPI_Cart_sub](https://www.mpich.org/static/docs/v3.2/www3/MPI_Cart_sub.html).
 
-    The boolean property`is_subgrid` provides a switch between "parent" process-grids (equivalent to communicators
+    The boolean property `is_subgrid` provides a switch between "parent" process-grids (equivalent to communicators
     create with `MPI_Cart_create`) and sub-grids (equivalent to communicators created with `MPI_Cart_sub`).
     
     If `is_subgrid` is false, a "parent" process-grid is created. The `shape` property is equivalent to the `dims`
