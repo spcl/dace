@@ -115,52 +115,59 @@ def memlet_copy_to_absolute_strides(dispatcher, sdfg, memlet, src_node, dst_node
     copy_shape = memlet.subset.size_exact()
     src_nodedesc = src_node.desc(sdfg)
     dst_nodedesc = dst_node.desc(sdfg)
+    src_expr, dst_expr = None, None
 
     if memlet.data == src_node.data:
-        src_expr = copy_expr(dispatcher, sdfg, src_node.data, memlet, is_write=False, packed_types=packed_types)
+        if dispatcher is not None:
+            src_expr = copy_expr(dispatcher, sdfg, src_node.data, memlet, is_write=False, packed_types=packed_types)
         if memlet.other_subset is not None:
-            dst_expr = copy_expr(dispatcher,
-                                 sdfg,
-                                 dst_node.data,
-                                 memlet,
-                                 is_write=True,
-                                 offset=memlet.other_subset,
-                                 relative_offset=False,
-                                 packed_types=packed_types)
+            if dispatcher is not None:
+                dst_expr = copy_expr(dispatcher,
+                                    sdfg,
+                                    dst_node.data,
+                                    memlet,
+                                    is_write=True,
+                                    offset=memlet.other_subset,
+                                    relative_offset=False,
+                                    packed_types=packed_types)
             dst_subset = memlet.other_subset
         else:
-            dst_expr = copy_expr(dispatcher,
-                                 sdfg,
-                                 dst_node.data,
-                                 memlet,
-                                 is_write=True,
-                                 offset=None,
-                                 relative_offset=False,
-                                 packed_types=packed_types)
+            if dispatcher is not None:
+                dst_expr = copy_expr(dispatcher,
+                                    sdfg,
+                                    dst_node.data,
+                                    memlet,
+                                    is_write=True,
+                                    offset=None,
+                                    relative_offset=False,
+                                    packed_types=packed_types)
             dst_subset = subsets.Range.from_array(dst_nodedesc)
         src_subset = memlet.subset
 
     else:
-        dst_expr = copy_expr(dispatcher, sdfg, dst_node.data, memlet, is_write=True, packed_types=packed_types)
+        if dispatcher is not None:
+            dst_expr = copy_expr(dispatcher, sdfg, dst_node.data, memlet, is_write=True, packed_types=packed_types)
         if memlet.other_subset is not None:
-            src_expr = copy_expr(dispatcher,
-                                 sdfg,
-                                 src_node.data,
-                                 memlet,
-                                 is_write=False,
-                                 offset=memlet.other_subset,
-                                 relative_offset=False,
-                                 packed_types=packed_types)
+            if dispatcher is not None:
+                src_expr = copy_expr(dispatcher,
+                                    sdfg,
+                                    src_node.data,
+                                    memlet,
+                                    is_write=False,
+                                    offset=memlet.other_subset,
+                                    relative_offset=False,
+                                    packed_types=packed_types)
             src_subset = memlet.other_subset
         else:
-            src_expr = copy_expr(dispatcher,
-                                 sdfg,
-                                 src_node.data,
-                                 memlet,
-                                 is_write=False,
-                                 offset=None,
-                                 relative_offset=False,
-                                 packed_types=packed_types)
+            if dispatcher is not None:
+                src_expr = copy_expr(dispatcher,
+                                    sdfg,
+                                    src_node.data,
+                                    memlet,
+                                    is_write=False,
+                                    offset=None,
+                                    relative_offset=False,
+                                    packed_types=packed_types)
             src_subset = subsets.Range.from_array(src_nodedesc)
         dst_subset = memlet.subset
 

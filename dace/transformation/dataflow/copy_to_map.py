@@ -91,15 +91,20 @@ class CopyToMap(xf.SingleStateTransformation):
             schedule = dtypes.ScheduleType.GPU_Device
 
         # Add copy map
-        state.add_mapped_tasklet('copy',
-                                 maprange,
-                                 dict(__inp=Memlet(data=av, subset=a_subset)),
-                                 '__out = __inp',
-                                 dict(__out=Memlet(data=bv, subset=b_subset)),
-                                 schedule,
-                                 external_edges=True,
-                                 input_nodes={av: avnode},
-                                 output_nodes={bv: bvnode})
+        t, _, _ = state.add_mapped_tasklet('copy',
+                                           maprange,
+                                           dict(__inp=Memlet(data=av, subset=a_subset)),
+                                           '__out = __inp',
+                                           dict(__out=Memlet(data=bv, subset=b_subset)),
+                                           schedule,
+                                           external_edges=True,
+                                           input_nodes={av: avnode},
+                                           output_nodes={bv: bvnode})
+
+        # Set connector types (due to this transformation appearing in codegen, after connector
+        # types have been resolved)
+        t.in_connectors['__inp'] = adesc.dtype
+        t.out_connectors['__out'] = bdesc.dtype
 
         # Remove old edge
         state.remove_edge(edge)
