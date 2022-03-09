@@ -10,7 +10,6 @@ from functools import reduce
 from numbers import Number, Integral
 from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple, Union
 
-import dace
 from dace.codegen.tools import type_inference
 from dace.config import Config
 from dace import data, dtypes, subsets, symbolic, sdfg as sd
@@ -653,33 +652,41 @@ def _abs(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, input: Union[str, N
 @oprepo.replaces('numpy.transpose')
 def _transpose(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, inpname: str, axes=None):
 
-    if axes is None:
-        arr1 = sdfg.arrays[inpname]
+    arr1 = sdfg.arrays[inpname]
+
+    if axes is None and len(arr1.shape) == 2:  # matrix transposition
         restype = arr1.dtype
         outname, arr2 = sdfg.add_temp_transient((arr1.shape[1], arr1.shape[0]), restype, arr1.storage)
 
         acc1 = state.add_read(inpname)
         acc2 = state.add_write(outname)
         import dace.libraries.blas  # Avoid import loop
-        tasklet = dace.libraries.blas.Transpose('_Transpose_', restype)
+        tasklet = dace.libraries.blas.Transpose('_MatrixTranspose_', restype)
         state.add_node(tasklet)
-        state.add_edge(acc1, None, tasklet, '_inp', dace.Memlet.from_array(inpname, arr1))
-        state.add_edge(tasklet, '_out', acc2, None, dace.Memlet.from_array(outname, arr2))
+        state.add_edge(acc1, None, tasklet, '_inp', Memlet.from_array(inpname, arr1))
+        state.add_edge(tasklet, '_out', acc2, None, Memlet.from_array(outname, arr2))
     else:
-        arr1 = sdfg.arrays[inpname]
         if len(axes) != len(arr1.shape) or sorted(axes) != list(range(len(arr1.shape))):
             raise ValueError("axes don't match array")
 
         new_shape = [arr1.shape[i] for i in axes]
         outname, arr2 = sdfg.add_temp_transient(new_shape, arr1.dtype, arr1.storage)
 
-        state.add_mapped_tasklet(
-            "_transpose_", {"_i{}".format(i): "0:{}".format(s)
-                            for i, s in enumerate(arr1.shape)},
-            dict(_in=Memlet.simple(inpname, ", ".join("_i{}".format(i) for i, _ in enumerate(arr1.shape)))),
-            "_out = _in",
-            dict(_out=Memlet.simple(outname, ", ".join("_i{}".format(axes[i]) for i, _ in enumerate(arr1.shape)))),
-            external_edges=True)
+        read = state.add_read(inpname)
+        write = state.add_write(outname)
+        from dace.libraries.ttranspose import TensorTranspose
+        tasklet = TensorTranspose('_TensorTranspose', axes or list(range(len(arr1.shape))))
+        state.add_node(tasklet)
+        state.add_edge(read, None, tasklet, '_inp_tensor', Memlet.from_array(inpname, arr1))
+        state.add_edge(tasklet, '_out_tensor', write, None, Memlet.from_array(outname, arr2))
+
+        # state.add_mapped_tasklet(
+        #     "_transpose_", {"_i{}".format(i): "0:{}".format(s)
+        #                     for i, s in enumerate(arr1.shape)},
+        #     dict(_in=Memlet.simple(inpname, ", ".join("_i{}".format(i) for i, _ in enumerate(arr1.shape)))),
+        #     "_out = _in",
+        #     dict(_out=Memlet.simple(outname, ", ".join("_i{}".format(axes[i]) for i, _ in enumerate(arr1.shape)))),
+        #     external_edges=True)
 
     return outname
 
