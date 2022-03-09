@@ -37,7 +37,7 @@ class ExpandPotrfOpenBLAS(ExpandTransformation):
             raise (NotImplementedError)
 
         n = n or node.n
-        uplo = "'L'" if node._lower else "'U'"
+        uplo = "'L'" if node.lower else "'U'"
         code = f"_res = LAPACKE_{lapack_dtype}potrf(LAPACK_ROW_MAJOR, {uplo}, {rows_x}, _xin, {stride_x});"
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,
@@ -74,7 +74,7 @@ class ExpandPotrfCuSolverDn(ExpandTransformation):
         n = n or node.n
         if veclen != 1:
             n /= veclen
-        uplo = "CUBLAS_FILL_MODE_LOWER" if node._lower else "CUBLAS_FILL_MODE_UPPER"
+        uplo = "CUBLAS_FILL_MODE_LOWER" if node.lower else "CUBLAS_FILL_MODE_UPPER"
 
         code = (environments.cusolverdn.cuSolverDn.handle_setup_code(node) + f"""
                 int __dace_workspace_size = 0;
@@ -112,10 +112,11 @@ class Potrf(dace.sdfg.nodes.LibraryNode):
 
     # Object fields
     n = dace.properties.SymbolicProperty(allow_none=True, default=None)
+    lower = dace.properties.Property(dtype=bool, default=True)
 
     def __init__(self, name, lower=True, n=None, *args, **kwargs):
         super().__init__(name, *args, inputs={"_xin"}, outputs={"_xout", "_res"}, **kwargs)
-        self._lower = lower
+        self.lower = lower
 
     def validate(self, sdfg, state):
         """
