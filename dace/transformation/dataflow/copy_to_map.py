@@ -19,13 +19,20 @@ class CopyToMap(xf.SingleStateTransformation):
         return [sdutil.node_path_graph(cls.a, cls.b)]
 
     def can_be_applied(self, graph: SDFGState, expr_index: int, sdfg: SDFG, permissive: bool = False) -> bool:
-        # Only array->array copies are supported
-        if type(self.a.desc(sdfg)) != data.Array:
+        # Only array->array or view<->array copies are supported
+        if not isinstance(self.a.desc(sdfg), data.Array):
             return False
-        if type(self.b.desc(sdfg)) != data.Array:
+        if not isinstance(self.b.desc(sdfg), data.Array):
             return False
+        if isinstance(self.a.desc(sdfg), data.View):
+            if sdutil.get_view_node(graph, self.a) == self.b:
+                return False
+        if isinstance(self.b.desc(sdfg), data.View):
+            if sdutil.get_view_node(graph, self.b) == self.a:
+                return False
         if self.a.desc(sdfg).strides == self.b.desc(sdfg).strides:
             return False
+
         return True
 
     def delinearize_linearize(self, desc: data.Array, copy_shape: Tuple[symbolic.SymbolicType],
