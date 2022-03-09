@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
 import dace
+import pytest
 from common import compare_numpy_output
 
 M, N = 24, 24
@@ -45,6 +46,15 @@ def test_transpose():
     assert rel_error <= 1e-5
 
 
+@pytest.mark.hptt
+def test_hptt():
+    with dace.config.set_temporary('library', 'ttranspose', 'default_implementation', value='HPTT'):
+        test_transpose_axes0()
+        test_transpose_axes1()
+        test_transpose_axes2()
+        test_transpose_none()
+
+
 if __name__ == '__main__':
     test_transpose_axes0()
     test_transpose_axes1()
@@ -52,3 +62,4 @@ if __name__ == '__main__':
     test_transpose()
     test_transpose_none()
     test_transpose_no()
+    test_hptt()
