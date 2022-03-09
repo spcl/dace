@@ -54,6 +54,8 @@ class ExpandHPTT(ExpandTransformation):
         axes = ','.join([symstr(a) for a in node.axes])
         shape = ','.join([symstr(s) for s in inp_tensor.shape])
         dchar = blas_helpers.to_blastype(inp_tensor.dtype.type).lower()
+        if dchar not in ('s', 'd', 'c', 'z'):
+            raise TypeError("HPTT supports only single and double (and corresponding complex) FP datatypes")
         alpha = symstr(node.alpha)
         beta = symstr(node.beta)
         code = f"""
