@@ -28,7 +28,7 @@ def _make_sdfg(node, parent_state, parent_sdfg, implementation):
 
     state = sdfg.add_state("{l}_state".format(l=node.label))
 
-    potrf_node = Potrf('potrf', lower=node._lower)
+    potrf_node = Potrf('potrf', lower=node.lower)
     potrf_node.implementation = implementation
 
     _, me, mx = state.add_mapped_tasklet('_uzero_',
