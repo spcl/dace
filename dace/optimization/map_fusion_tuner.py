@@ -30,12 +30,16 @@ class MapFusionTuner(cutout_tuner.CutoutTuner):
     def cutouts(self):
         for state in self._sdfg.nodes():
             state_id = self._sdfg.node_id(state)
-            cutout = cutter.cutout_state(state, *(state.nodes()), make_copy=False)
+            nodes = state.nodes()
+            cutout = cutter.cutout_state(state, *(nodes))
             yield cutout, f"{state_id}.{state.label}"
 
     def space(self, cutout: dace.SDFG) -> Generator[List[bool], None, None]:
-        subgraphs = list(en.ConnectedEnumerator(cutout, cutout.start_state))
-        return enumerate(subgraphs)
+        subgraphs = en.ConnectedEnumerator(cutout, cutout.start_state)
+        yield 0, []
+        
+        for i, (subgraph, score) in enumerate(subgraphs):
+            yield i + 1, list(map(lambda m: cutout.start_state.node_id(m), subgraph))
 
     def pre_evaluate(self, cutout: dace.SDFG, dreport: data_report.InstrumentedDataReport, measurements: int, **kwargs) -> Dict:
         cutout.instrument = self.instrument
@@ -45,31 +49,38 @@ class MapFusionTuner(cutout_tuner.CutoutTuner):
                 if cutout.arrays[dnode.data].transient:
                     continue
 
-                arguments[dnode.data] = np.copy(dreport.get_first_version(dnode.data))
+                arguments[dnode.data] = dreport.get_first_version(dnode.data)
 
         new_kwargs = {"space_kwargs": {"cutout": cutout}, "cutout": cutout.to_json(), "arguments": arguments, "measurements": measurements, "key": lambda point: str(point[0])}
         return new_kwargs
 
     def evaluate(self, config, cutout, arguments: Dict, measurements: int, **kwargs) -> float:
         cutout_ = dace.SDFG.from_json(cutout)
-        maps = config[1]
-        if len(maps) < 2:
+        map_ids = config[1]
+        if config[0] == 0 and len(map_ids) == 0:
+            # Baseline
+            return self.measure(cutout_, arguments, measurements)
+
+        if len(map_ids) < 2:
             return math.inf
 
         # Check
-        subgraph = helpers.subgraph_from_maps(sdfg=cutout_, graph=cutout_.start_state, map_entries=maps)
+        maps_ = list(map(lambda m: cutout_.start_state.node(m), map_ids))
+        subgraph = helpers.subgraph_from_maps(sdfg=cutout_, graph=cutout_.start_state, map_entries=maps_)
         fusion = comp.CompositeFusion(subgraph, cutout_.sdfg_id, cutout_.node_id(cutout_.start_state))
         fusion.allow_tiling = True
         if not fusion.can_be_applied(cutout_, subgraph):
             return math.inf
 
+        print("WUHU", config[0])
+        
         # Apply on copy
         candidate = SDFG.from_json(cutout)
-        maps_ = list(map(lambda m: candidate.start_state.node(cutout_.start_state.node_id(m)), maps))
+        maps_ = list(map(lambda m: candidate.start_state.node(m), map_ids))
         subgraph = helpers.subgraph_from_maps(sdfg=candidate, graph=candidate.start_state, map_entries=maps_)
 
         fusion = comp.CompositeFusion(subgraph, candidate.sdfg_id, candidate.node_id(candidate.start_state))
         fusion.allow_tiling = True
         fusion.apply(candidate)
 
-        return self.measure(cutout_, arguments, measurements)
+        return self.measure(candidate, arguments, measurements)
