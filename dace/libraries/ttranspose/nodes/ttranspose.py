@@ -3,6 +3,7 @@ import dace
 from dace import library, nodes, properties, subsets
 from dace.transformation.transformation import ExpandTransformation
 from numbers import Number
+from .. import environments
 
 
 @library.expansion
@@ -16,20 +17,19 @@ class ExpandPure(ExpandTransformation):
         inp_tensor, out_tensor = node.validate(parent_sdfg, parent_state)
 
         sdfg = dace.SDFG(f"{node.label}_sdfg")
-        _, inp_arr = sdfg.add_array("_inp", inp_tensor.shape, inp_tensor.dtype, inp_tensor.storage, strides=inp_tensor.storage)
-        _, out_arr = sdfg.add_array("_out", out_tensor.shape, out_tensor.dtype, out_tensor.storage, strides=out_tensor.storage)
+        _, inp_arr = sdfg.add_array("_inp_tensor", inp_tensor.shape, inp_tensor.dtype, inp_tensor.storage, strides=inp_tensor.strides)
+        _, out_arr = sdfg.add_array("_out_tensor", out_tensor.shape, out_tensor.dtype, out_tensor.storage, strides=out_tensor.strides)
         
         state = sdfg.add_state(f"{node.label}_state")   
-        inp_rng = subsets.Range.from_array(inp_arr)
-        map_params = [f"__i{i}" for i in range(inp_arr.shape)]
-        map_rng = {i: subsets.Range([r])for i, r in zip(map_params, inp_rng)}
-        inp_mem = dace.Memlet(expr=f"_inp[{','.join([map_params])}]")
-        out_mem = dace.Memlet(expr=f"_out[{','.join(map_params[node.axes])}]")
+        map_params = [f"__i{i}" for i in range(len(inp_arr.shape))]
+        map_rng = {i: f"0:{s}"for i, s in zip(map_params, inp_arr.shape)}
+        inp_mem = dace.Memlet(expr=f"_inp_tensor[{','.join(map_params)}]")
+        out_mem = dace.Memlet(expr=f"_out_tensor[{','.join([map_params[i] for i in node.axes])}]")
         inputs = {"_inp": inp_mem}
         outputs = {"_out": out_mem}
         code = f"_out = {node.alpha} * _inp"
         if node.beta != 0:
-            inputs["_inout": out_mem]
+            inputs["_inout"] = out_mem
             code = f"_out = {node.alpha} * _inp + {node.beta} * _inout"
         state.add_mapped_tasklet(f"{node.label}_tasklet", map_rng, inputs, code, outputs, external_edges=True)
 
@@ -37,12 +37,13 @@ class ExpandPure(ExpandTransformation):
 
 
 @library.expansion
-class ExpantHPTT(ExpandTransformation):
+class ExpandHPTT(ExpandTransformation):
     """
     Implements the TensorTranspose library node using the High-Performance Tensor Transpose Library (HPTT).
     For more information, see https://github.com/springer13/hptt.
     """
-    pass
+    
+    environments = [environments.HPTT]
 
 
 
@@ -54,11 +55,11 @@ class TensorTranspose(nodes.LibraryNode):
         "pure": ExpandPure,
         "HPTT": ExpandHPTT
     }
-    default_implementation = "HPTT"
+    default_implementation = "pure"
 
-    axes = properties.ListProperty(element_type=int, default=[], description="Permutation of input tensor's modes")
-    alpha = properties.Property(dtype=Number, default=1, description="Input tensor scaling factor")
-    beta = properties.Property(dtype=Number, default=0, description="Output tensor scaling factor")
+    axes = properties.ListProperty(element_type=int, default=[], desc="Permutation of input tensor's modes")
+    alpha = properties.Property(dtype=Number, default=1, desc="Input tensor scaling factor")
+    beta = properties.Property(dtype=Number, default=0, desc="Output tensor scaling factor")
 
     def __init__(self, name, axes=[], alpha=1, beta=0, *args, **kwargs):
         super().__init__(name, *args, inputs={"_inp_tensor"}, outputs={"_out_tensor"}, **kwargs)
