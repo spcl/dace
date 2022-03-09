@@ -6,7 +6,7 @@ import pytest
 import numpy as np
 
 
-def _copy_to_map(storage):
+def _copy_to_map(storage: dace.StorageType):
     @dace
     def somecopy(a, b):
         b[:] = a
@@ -16,14 +16,14 @@ def _copy_to_map(storage):
     A = dace.data.make_array_from_descriptor(desc_a, np.random.rand(3, 2))
     B = dace.data.make_array_from_descriptor(desc_b, np.random.rand(3, 2))
     sdfg = somecopy.to_sdfg(A, B)
-    sdfg.apply_transformations(CopyToMap)
+    assert sdfg.apply_transformations(CopyToMap) == 1
     with dace.config.set_temporary('compiler', 'allow_view_arguments', value=True):
         sdfg(A, B)
 
     assert np.allclose(B, A)
 
 
-def _flatten_to_map(storage):
+def _flatten_to_map(storage: dace.StorageType):
     @dace
     def somecopy(a, b):
         b[:] = a.flatten()
@@ -33,7 +33,11 @@ def _flatten_to_map(storage):
     A = dace.data.make_array_from_descriptor(desc_a, np.random.rand(3, 2))
     B = dace.data.make_array_from_descriptor(desc_b, np.random.rand(6))
     sdfg = somecopy.to_sdfg(A, B)
+
     sdfg.apply_transformations(CopyToMap)
+    if storage == dace.StorageType.GPU_Global:
+        sdfg.apply_gpu_transformations()
+
     with dace.config.set_temporary('compiler', 'allow_view_arguments', value=True):
         sdfg(A, B)
 
