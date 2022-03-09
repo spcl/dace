@@ -21,10 +21,10 @@ except (ImportError, ModuleNotFoundError):
     tqdm = lambda x, **kwargs: x
 
 
-class StencilFusionTuner(cutout_tuner.CutoutTuner):
+class MapFusionTuner(cutout_tuner.CutoutTuner):
 
     def __init__(self, sdfg: SDFG, measurement: dtypes.InstrumentationType = dtypes.InstrumentationType.Timer) -> None:
-        super().__init__(task="StencilFusion", sdfg=sdfg)
+        super().__init__(task="MapFusion", sdfg=sdfg)
         self.instrument = measurement
 
     def cutouts(self):

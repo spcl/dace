@@ -2,4 +2,5 @@ from dace.optimization.map_permutation_tuner import MapPermutationTuner
 from dace.optimization.map_tiling_tuner import MapTilingTuner
 from dace.optimization.data_layout_tuner import DataLayoutTuner
 from dace.optimization.distributed_cutout_tuner import DistributedCutoutTuner, DistributedSpaceTuner
-from dace.optimization.stencil_fusion_tuner import StencilFusionTuner
+from dace.optimization.map_fusion_tuner import MapFusionTuner
+from dace.optimization.cutout_tuner import CutoutTuner

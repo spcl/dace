@@ -14,7 +14,6 @@ from dace import optimization as optim
 if __name__ == '__main__':
 
     sdfg = dace.SDFG.from_file(Path(__file__).parent / "program.sdfg")
-    #sdfg = randsdfg("stencil", max_stages=16, testing=True)
     auto_optimize(sdfg, DeviceType.CPU)
 
     cache_path = Path(__file__).parent / ".dacecache"
@@ -41,6 +40,6 @@ if __name__ == '__main__':
 
     result = ct.CutoutTuner.dry_run(sdfg, **arguments)
 
-    tuner = optim.StencilFusionTuner(sdfg)
+    tuner = optim.MapFusionTuner(sdfg)
     dist = optim.DistributedCutoutTuner(tuner=tuner)
     dist.optimize()
