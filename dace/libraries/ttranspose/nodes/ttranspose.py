@@ -1,6 +1,9 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
-from dace import library, nodes, properties, subsets
+import multiprocessing
+from dace import library, nodes, properties
+from dace.libraries.blas import blas_helpers
+from dace.symbolic import symstr
 from dace.transformation.transformation import ExpandTransformation
 from numbers import Number
 from .. import environments
@@ -45,6 +48,27 @@ class ExpandHPTT(ExpandTransformation):
     
     environments = [environments.HPTT]
 
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg):
+        inp_tensor, out_tensor = node.validate(parent_sdfg, parent_state)
+        axes = ','.join([symstr(a) for a in node.axes])
+        shape = ','.join([symstr(s) for s in inp_tensor.shape])
+        dchar = blas_helpers.to_blastype(inp_tensor.dtype.type).lower()
+        alpha = symstr(node.alpha)
+        beta = symstr(node.beta)
+        code = f"""
+            int perm[{len(inp_tensor.shape)}] = {{{axes}}};
+            int size[{len(inp_tensor.shape)}] = {{{shape}}};
+            {dchar}TensorTranspose(perm, {len(inp_tensor.shape)}, {alpha}, _inp_tensor, size, NULL, {beta}, _out_tensor, NULL, {multiprocessing.cpu_count()}, 1);
+        """
+
+        tasklet = nodes.Tasklet(node.name,
+                                          node.in_connectors,
+                                          node.out_connectors,
+                                          code,
+                                          language=dace.dtypes.Language.CPP)
+
+        return tasklet
 
 
 @library.node
@@ -55,7 +79,7 @@ class TensorTranspose(nodes.LibraryNode):
         "pure": ExpandPure,
         "HPTT": ExpandHPTT
     }
-    default_implementation = "pure"
+    default_implementation = None
 
     axes = properties.ListProperty(element_type=int, default=[], desc="Permutation of input tensor's modes")
     alpha = properties.Property(dtype=Number, default=1, desc="Input tensor scaling factor")
