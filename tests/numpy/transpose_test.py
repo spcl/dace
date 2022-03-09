@@ -25,6 +25,14 @@ def test_transpose_axes1(A: dace.float32[10, 5, 3, 2]):
 def test_transpose_axes2(A: dace.float32[10, 5, 3, 2]):
     return np.transpose(A, axes=[3, 0, 2])
 
+@compare_numpy_output()
+def test_transpose_none(A: dace.float32[10, 5, 3, 2]):
+    return np.transpose(A)
+
+@compare_numpy_output()
+def test_transpose_no(A: dace.float32[10, 5, 3, 2]):
+    return np.transpose(A, axes=[0, 1, 2, 3])
+
 
 def test_transpose():
     A = np.random.rand(M, N).astype(np.float32)
@@ -42,3 +50,5 @@ if __name__ == '__main__':
     test_transpose_axes1()
     test_transpose_axes2()
     test_transpose()
+    test_transpose_none()
+    test_transpose_no()

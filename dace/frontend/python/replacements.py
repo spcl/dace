@@ -654,7 +654,13 @@ def _transpose(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, inpname: str,
 
     arr1 = sdfg.arrays[inpname]
 
-    if axes is None and len(arr1.shape) == 2:  # matrix transposition
+    if axes is None:
+        axes = list(range(len(arr1.shape))[::-1])
+    
+    if axes == list(range(len(arr1.shape))):
+        return inpname
+
+    if len(arr1.shape) == 2:  # matrix transposition
         restype = arr1.dtype
         outname, arr2 = sdfg.add_temp_transient((arr1.shape[1], arr1.shape[0]), restype, arr1.storage)
 
@@ -665,7 +671,7 @@ def _transpose(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, inpname: str,
         state.add_node(tasklet)
         state.add_edge(acc1, None, tasklet, '_inp', Memlet.from_array(inpname, arr1))
         state.add_edge(tasklet, '_out', acc2, None, Memlet.from_array(outname, arr2))
-    else:
+    else:  # tensor transpose
         if len(axes) != len(arr1.shape) or sorted(axes) != list(range(len(arr1.shape))):
             raise ValueError("axes don't match array")
 
@@ -679,14 +685,6 @@ def _transpose(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, inpname: str,
         state.add_node(tasklet)
         state.add_edge(read, None, tasklet, '_inp_tensor', Memlet.from_array(inpname, arr1))
         state.add_edge(tasklet, '_out_tensor', write, None, Memlet.from_array(outname, arr2))
-
-        # state.add_mapped_tasklet(
-        #     "_transpose_", {"_i{}".format(i): "0:{}".format(s)
-        #                     for i, s in enumerate(arr1.shape)},
-        #     dict(_in=Memlet.simple(inpname, ", ".join("_i{}".format(i) for i, _ in enumerate(arr1.shape)))),
-        #     "_out = _in",
-        #     dict(_out=Memlet.simple(outname, ", ".join("_i{}".format(axes[i]) for i, _ in enumerate(arr1.shape)))),
-        #     external_edges=True)
 
     return outname
 
