@@ -1426,7 +1426,7 @@ void  *{kname}_args[] = {{ {kargs} }};
                     block_size = [int(b) for b in Config.get('compiler', 'cuda', 'default_block_size').split(',')]
             assert (len(block_size) >= 1 and len(block_size) <= 3)
 
-            int_ceil = sympy.Function('int_ceil')
+            int_ceil = symbolic.int_ceil
 
             # Grid size = ceil(|S|/32) for first dimension, rest = |S|
             grid_size = [int_ceil(gs, bs)

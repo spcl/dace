@@ -242,6 +242,7 @@ class DaceProgram(pycommon.SDFGConvertible):
         # Invoke auto-optimization as necessary
         if Config.get_bool('optimizer', 'autooptimize') or self.auto_optimize:
             sdfg = self._auto_optimize(sdfg)
+            sdfg.simplify()
 
         return sdfg.compile(validate=self.validate)
 
@@ -399,6 +400,8 @@ class DaceProgram(pycommon.SDFGConvertible):
         # Invoke auto-optimization as necessary
         if Config.get_bool('optimizer', 'autooptimize') or self.auto_optimize:
             sdfg = self._auto_optimize(sdfg, symbols=sdfg_args)
+            sdfg.simplify()
+
 
         # Compile SDFG (note: this is done after symbol inference due to shape
         # altering transformations such as Vectorization)
