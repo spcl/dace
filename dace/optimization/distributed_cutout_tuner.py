@@ -95,12 +95,6 @@ class DistributedSpaceTuner:
         self._tuner.rank = rank
         self._tuner.num_ranks = num_ranks
 
-        results = self._tuner.evaluate(cutout=cutout, dreport=dreport, measurements=measurements, **kwargs)
-
-        file_name = self._tuner.file_name(hash)
-        with open(file_name, 'w') as fp:
-            json.dump(results, fp)
-
         for hash in new_cutouts:
             cutout = cutouts[hash]
             cutout.instrument = self._tuner.instrument
