@@ -44,11 +44,11 @@ class CutoutTuner(auto_tuner.AutoTuner):
     def space(self, cutout: dace.SDFG) -> Generator[Any, None, None]:
         raise NotImplementedError
 
-    def evaluate(self, cutout: dace.SDFG, dreport: data_report.InstrumentedDataReport, measurements: int,
+    def search(self, cutout: dace.SDFG, dreport: data_report.InstrumentedDataReport, measurements: int,
                  **kwargs) -> Dict:
         raise NotImplementedError
 
-    def evaluate_single(self, config: Any, cutout: dace.SDFG, dreport: data_report.InstrumentedDataReport,
+    def evaluate(self, config: Any, cutout: dace.SDFG, dreport: data_report.InstrumentedDataReport,
                         measurements: int, **kwargs) -> Dict:
         raise NotImplementedError
 
@@ -112,7 +112,7 @@ class CutoutTuner(auto_tuner.AutoTuner):
             results = self.try_load(fn)
 
             if results is None:
-                results = self.evaluate(cutout, dreport, measurements, **kwargs)
+                results = self.search(cutout, dreport, measurements, **kwargs)
 
                 with open(fn, 'w') as fp:
                     json.dump(results, fp)

@@ -57,7 +57,7 @@ class DistributedCutoutTuner:
         chunk = chunks[rank]
         for hash in chunk:
             cutout = cutouts[hash]
-            results = self._tuner.evaluate(cutout=cutout, dreport=dreport, measurements=measurements, **kwargs)
+            results = self._tuner.search(cutout=cutout, dreport=dreport, measurements=measurements, **kwargs)
 
             file_name = self._tuner.file_name(hash)
             with open(file_name, 'w') as fp:

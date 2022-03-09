@@ -48,7 +48,7 @@ class MapTilingTuner(cutout_tuner.CutoutTuner):
 
         return choices
 
-    def evaluate(self, cutout: dace.SDFG, dreport: data_report.InstrumentedDataReport, measurements: int,
+    def search(self, cutout: dace.SDFG, dreport: data_report.InstrumentedDataReport, measurements: int,
                  **kwargs) -> Dict[str, float]:
         cutout.instrument = self.instrument
         arguments = {}

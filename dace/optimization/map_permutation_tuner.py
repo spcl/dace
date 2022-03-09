@@ -39,7 +39,7 @@ class MapPermutationTuner(cutout_tuner.CutoutTuner):
     def space(self, map_entry: dace.nodes.MapEntry) -> Generator[Tuple[str], None, None]:
         return itertools.permutations(map_entry.map.params)
 
-    def evaluate(self, cutout: dace.SDFG, dreport: data_report.InstrumentedDataReport, measurements: int,
+    def search(self, cutout: dace.SDFG, dreport: data_report.InstrumentedDataReport, measurements: int,
                  **kwargs) -> Dict[str, float]:
         cutout.instrument = self.instrument
         arguments = {}

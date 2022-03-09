@@ -40,6 +40,8 @@ if __name__ == '__main__':
     tuner = optim.DataLayoutTuner(sdfg)
     report = tuner.optimize(group_by=dt.TuningGroups.Inputs_Outputs)
 
+    print(report)
+
     tuner = optim.MapPermutationTuner(sdfg)
     report = tuner.optimize()
 

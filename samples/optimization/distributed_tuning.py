@@ -45,10 +45,6 @@ if __name__ == '__main__':
 
     CutoutTuner.dry_run(sdfg, A, B, C)
 
-    tuner = optim.StencilFusionTuner(sdfg)
-    dist = optim.DistributedCutoutTuner(tuner=tuner)
-    dist.optimize()
-
     tuner = optim.MapPermutationTuner(sdfg)
     dist = optim.DistributedCutoutTuner(tuner=tuner)
     dist.optimize()

@@ -97,7 +97,7 @@ class DataLayoutTuner(cutout_tuner.CutoutTuner):
             # Yield configuration
             yield modified_arrays, new_arrays
 
-    def evaluate(self, cutout: dace.SDFG, dreport: data_report.InstrumentedDataReport, measurements: int,
+    def search(self, cutout: dace.SDFG, dreport: data_report.InstrumentedDataReport, measurements: int,
                  group_by: TuningGroups) -> Dict:
         # No modification to original SDFG, best configuration needs to be determined globally
         cutout.instrument = self.instrument
