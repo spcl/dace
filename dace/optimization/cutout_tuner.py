@@ -41,15 +41,17 @@ class CutoutTuner(auto_tuner.AutoTuner):
     def cutouts(self) -> Generator[Tuple[dace.SDFGState, str], None, None]:
         raise NotImplementedError
 
-    def space(self, cutout: dace.SDFG) -> Generator[Any, None, None]:
+    def space(self, **kwargs) -> Generator[Any, None, None]:
         raise NotImplementedError
 
     def search(self, cutout: dace.SDFG, dreport: data_report.InstrumentedDataReport, measurements: int,
                  **kwargs) -> Dict:
         raise NotImplementedError
 
-    def evaluate(self, config: Any, cutout: dace.SDFG, dreport: data_report.InstrumentedDataReport,
-                        measurements: int, **kwargs) -> Dict:
+    def pre_evaluate(self, **kwargs) -> Dict:
+        raise NotImplementedError
+
+    def evaluate(self, **kwargs) -> float:
         raise NotImplementedError
 
     @staticmethod
@@ -120,3 +122,16 @@ class CutoutTuner(auto_tuner.AutoTuner):
             tuning_report[label] = results
 
         return tuning_report
+
+
+    def search(self, cutout: dace.SDFG, dreport: data_report.InstrumentedDataReport, measurements: int, **kwargs) -> Dict[str, float]:
+        kwargs = self.pre_evaluate(cutout=cutout, dreport=dreport, measurements=measurements, **kwargs)
+
+        results = {}
+        key = kwargs["key"]
+        for config in tqdm(list(self.space(**(kwargs["space_kwargs"])))):
+            kwargs["config"] = config
+            runtime = self.evaluate(**kwargs)
+            results[key(config)] = runtime
+
+        return results

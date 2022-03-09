@@ -36,11 +36,10 @@ class MapPermutationTuner(cutout_tuner.CutoutTuner):
                 cutout = cutter.cutout_state(state, *subgraph_nodes)
                 yield cutout, f"{state_id}.{node_id}.{node.label}"
 
-    def space(self, map_entry: dace.nodes.MapEntry) -> Generator[Tuple[str], None, None]:
+    def space(self, map_entry: dace.nodes.MapEntry, **kwargs) -> Generator[Tuple[str], None, None]:
         return itertools.permutations(map_entry.map.params)
 
-    def search(self, cutout: dace.SDFG, dreport: data_report.InstrumentedDataReport, measurements: int,
-                 **kwargs) -> Dict[str, float]:
+    def pre_evaluate(self, cutout: dace.SDFG, dreport: data_report.InstrumentedDataReport, measurements: int, **kwargs) -> Dict:
         cutout.instrument = self.instrument
         arguments = {}
         for cstate in cutout.nodes():
@@ -56,18 +55,18 @@ class MapPermutationTuner(cutout_tuner.CutoutTuner):
                 map_entry = node
                 break
         assert map_entry is not None
+                
+        new_kwargs = {"space_kwargs": {"map_entry": map_entry}, "cutout": cutout.to_json(), "map_entry_id": cutout.start_state.node_id(map_entry), "arguments": arguments, "measurements": measurements, "key": lambda point: ".".join(point)}
+        return new_kwargs
 
-        results = {}
-        for point in tqdm(list(self.space(map_entry))):
-            node.range.ranges = [
-                r for list_param in point for map_param, r in zip(node.map.params, node.range.ranges)
-                if list_param == map_param
-            ]
-            node.map.params = point
+    def evaluate(self, config, cutout, map_entry_id: int, arguments: Dict, measurements: int, **kwargs) -> float:
+        cutout_ = dace.SDFG.from_json(cutout)
+        map_ = cutout_.start_state.node(map_entry_id)
 
-            runtime = self.measure(cutout, arguments, measurements)
+        map_.range.ranges = [
+            r for list_param in config for map_param, r in zip(map_.map.params, map_.range.ranges)
+            if list_param == map_param
+        ]
+        map_.map.params = config
 
-            key = ".".join(point)
-            results[key] = runtime
-
-        return results
+        return self.measure(cutout_, arguments, measurements)

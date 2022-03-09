@@ -35,9 +35,10 @@ class MapTilingTuner(cutout_tuner.CutoutTuner):
                 cutout = cutter.cutout_state(state, *subgraph_nodes)
                 yield cutout, f"{state_id}.{node_id}.{node.label}"
 
-    def space(self, parent_map: dace.nodes.MapEntry) -> Generator[Tuple[int], None, None]:
+    def space(self, map_entry: dace.nodes.MapEntry) -> Generator[Tuple[int], None, None]:
         # TODO: choices
         choices = [
+            None,
             (8, 8, 8),
             (16, 16, 16),
             (32, 32, 32),
@@ -48,8 +49,7 @@ class MapTilingTuner(cutout_tuner.CutoutTuner):
 
         return choices
 
-    def search(self, cutout: dace.SDFG, dreport: data_report.InstrumentedDataReport, measurements: int,
-                 **kwargs) -> Dict[str, float]:
+    def pre_evaluate(self, cutout: dace.SDFG, dreport: data_report.InstrumentedDataReport, measurements: int, **kwargs) -> Dict:
         cutout.instrument = self.instrument
         arguments = {}
         for cstate in cutout.nodes():
@@ -65,21 +65,14 @@ class MapTilingTuner(cutout_tuner.CutoutTuner):
                 map_entry = node
                 break
         assert map_entry is not None
-        map_entry_id = cutout.start_state.node_id(map_entry)
+        
+        new_kwargs = {"space_kwargs": {"map_entry": map_entry}, "cutout": cutout.to_json(), "map_entry_id": cutout.start_state.node_id(map_entry), "arguments": arguments, "measurements": measurements, "key": lambda point: "None" if point is None else ".".join(map(lambda p: str(p), point))}
+        return new_kwargs
 
-        results = {}
-        baseline = self.measure(cutout, arguments, measurements)
-        results[None] = baseline
+    def evaluate(self, config, cutout, map_entry_id: int, arguments: Dict, measurements: int, **kwargs) -> float:
+        cutout_ = dace.SDFG.from_json(cutout)
+        map_ = cutout_.start_state.node(map_entry_id)
+        if config is not None:
+            df.MapTiling.apply_to(cutout_, map_entry=map_, options={"tile_sizes": config})
 
-        cutout_json = cutout.to_json()
-        for point in tqdm(list(self.space(node))):
-            tiled_sdfg = dace.SDFG.from_json(cutout_json)
-            tiled_map = tiled_sdfg.start_state.node(map_entry_id)
-            df.MapTiling.apply_to(tiled_sdfg, map_entry=tiled_map, options={"tile_sizes": point})
-
-            runtime = self.measure(tiled_sdfg, arguments, measurements)
-
-            key = ".".join(map(lambda p: str(p), point))
-            results[key] = runtime
-
-        return results
+        return self.measure(cutout_, arguments, measurements)

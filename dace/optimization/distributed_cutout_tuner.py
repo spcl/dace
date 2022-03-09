@@ -95,33 +95,26 @@ class DistributedSpaceTuner:
         self._tuner.rank = rank
         self._tuner.num_ranks = num_ranks
 
-        for hash in new_cutouts:
-            cutout = cutouts[hash]
-            cutout.instrument = self._tuner.instrument
+        for cutout_hash in new_cutouts:
+            cutout = cutouts[cutout_hash]
+            evaluate_kwargs = self._tuner.pre_evaluate(cutout=cutout, dreport=dreport, measurements=measurements, **kwargs)
 
-            # Setup arguments once
-            arguments = {}
-            for cstate in cutout.nodes():
-                for dnode in cstate.data_nodes():
-                    if cutout.arrays[dnode.data].transient:
-                        continue
-
-                    arguments[dnode.data] = dreport.get_first_version(dnode.data)
-
-            configs = list(self._tuner.space(cutout))
+            configs = list(self._tuner.space(**(evaluate_kwargs["space_kwargs"])))
 
             # Split work
             chunk_size = len(configs) // max(num_ranks, 1)
             chunk_start = rank * chunk_size
             chunk_end = None if rank == (num_ranks - 1) else ((rank + 1) * chunk_size)
 
-            label = f'{rank + 1}/{num_ranks}: {hash}'
+            label = f'{rank + 1}/{num_ranks}: {cutout_hash}'
             results = {}
+            key = evaluate_kwargs["key"]
             for config in tqdm(list(itertools.islice(configs, chunk_start, chunk_end)), desc=label):
-                key, value = self._tuner.evaluate_single(config, cutout, arguments, dreport, measurements, **kwargs)
-                results[key] = value
+                evaluate_kwargs["config"] = config
+                runtime = self._tuner.evaluate(**evaluate_kwargs)
+                results[key(config)] = runtime
 
-                file_name = self._tuner.file_name(hash)
+                file_name = self._tuner.file_name(cutout_hash)
                 with open(file_name, 'w') as fp:
                     json.dump(results, fp)
 

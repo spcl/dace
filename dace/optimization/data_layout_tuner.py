@@ -97,8 +97,7 @@ class DataLayoutTuner(cutout_tuner.CutoutTuner):
             # Yield configuration
             yield modified_arrays, new_arrays
 
-    def search(self, cutout: dace.SDFG, dreport: data_report.InstrumentedDataReport, measurements: int,
-                 group_by: TuningGroups) -> Dict:
+    def pre_evaluate(self, cutout: dace.SDFG, dreport: data_report.InstrumentedDataReport, measurements: int, group_by: TuningGroups, **kwargs) -> Dict:
         # No modification to original SDFG, best configuration needs to be determined globally
         cutout.instrument = self.instrument
 
@@ -113,20 +112,19 @@ class DataLayoutTuner(cutout_tuner.CutoutTuner):
         # Setup tuning groups
         groups = self.setup_tuning_groups(cutout, group_by)
 
-        # Iterate over configurations
-        results = {}
-        for modified_arrays, new_arrays in tqdm(list(self.space(cutout=cutout, groups=groups))):
-            # Modify data layout prior to calling
-            cutout._arrays = new_arrays
-            for marray in modified_arrays:
-                arguments[marray] = dt.make_array_from_descriptor(cutout.arrays[marray], arguments[marray])
+        new_kwargs = {"space_kwargs": {"cutout": cutout, "groups": groups}, "cutout": cutout, "arguments": arguments, "measurements": measurements, "key": lambda point: '\n'.join([f'  {k}: {v.strides}' for k, v in point[1].items() if not v.transient])}
+        new_kwargs["group_by"] = group_by
+        return new_kwargs
 
-            layout = '\n'.join([f'  {k}: {v.strides}' for k, v in cutout.arrays.items() if not v.transient])
+    def evaluate(self, config, cutout,  arguments: Dict, measurements: int, **kwargs) -> float:
+        modified_arrays, new_arrays = config
+        
+        # Modify data layout prior to calling
+        cutout._arrays = new_arrays
+        for marray in modified_arrays:
+            arguments[marray] = dt.make_array_from_descriptor(cutout.arrays[marray], arguments[marray])
 
-            runtime = self.measure(cutout, arguments, repetitions=measurements)
-            results[layout] = runtime
-
-        return results
+        return self.measure(cutout, arguments, measurements)
 
     def setup_tuning_groups(self, cutout: SDFG, group_by: TuningGroups) -> Optional[List[Set[str]]]:
         if group_by == TuningGroups.Separate:

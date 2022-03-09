@@ -46,13 +46,13 @@ if __name__ == '__main__':
     CutoutTuner.dry_run(sdfg, A, B, C)
 
     tuner = optim.MapPermutationTuner(sdfg)
-    dist = optim.DistributedCutoutTuner(tuner=tuner)
+    dist = optim.DistributedSpaceTuner(tuner=tuner)
     dist.optimize()
 
     tuner = optim.MapTilingTuner(sdfg)
-    dist = optim.DistributedCutoutTuner(tuner)
+    dist = optim.DistributedSpaceTuner(tuner)
     dist.optimize()
 
     tuner = optim.DataLayoutTuner(sdfg)
-    dist = optim.DistributedCutoutTuner(tuner)
+    dist = optim.DistributedSpaceTuner(tuner)
     dist.optimize(group_by=data_layout_tuner.TuningGroups.Inputs_Outputs)
