@@ -25,8 +25,8 @@ class ExpandPure(ExpandTransformation):
         _, right_arr = sdfg.add_array("_right_tensor", right_tensor.shape, right_tensor.dtype, right_tensor.storage, strides=right_tensor.strides)
         _, out_arr = sdfg.add_array("_out_tensor", out_tensor.shape, out_tensor.dtype, out_tensor.storage, strides=out_tensor.strides)
         
-        state = sdfg.add_state(f"{node.label}_init")
-        state.add_mapped_tasklet(f"{node.label}_init_tasklet", 
+        init_state = sdfg.add_state(f"{node.label}_init", is_start_state=True)
+        init_state.add_mapped_tasklet(f"{node.label}_init_tasklet", 
                                  {f"__i{i}": f"0:{symstr(s)}" for i, s in enumerate(out_tensor.shape)},
                                  {},
                                  '__out = 0',
@@ -34,6 +34,7 @@ class ExpandPure(ExpandTransformation):
                                  external_edges=True)
 
         state = sdfg.add_state(f"{node.label}_state")
+        sdfg.add_edge(init_state, state, dace.InterstateEdge())
 
         outer_map_shape = list([s for i, s in enumerate(left_tensor.shape) if i not in node.left_axes])
         outer_map_shape.extend([s for i, s in enumerate(right_tensor.shape) if i not in node.right_axes])
@@ -85,6 +86,8 @@ class ExpandCuTensor(ExpandTransformation):
     For more information, see https://developer.nvidia.com/cutensor.
     """
 
+    environments = []
+
 
 @library.node
 class TensorDot(nodes.LibraryNode):
@@ -101,7 +104,7 @@ class TensorDot(nodes.LibraryNode):
     right_axes = properties.ListProperty(element_type=int, default=[], desc="Right tensor's contracting modes")
     permutation = properties.ListProperty(element_type=int, allow_none=True, default=None, desc="Permutation of the output tensor")
 
-    def __init__(self, name, left_axes=[], right_axes=[], permutation=NOne, *args, **kwargs):
+    def __init__(self, name, left_axes=[], right_axes=[], permutation=None, *args, **kwargs):
         super().__init__(name, *args, inputs={"_left_tensor", "_right_tensor"}, outputs={"_out_tensor"}, **kwargs)
         self.left_axes = left_axes
         self.right_axes = right_axes
@@ -113,7 +116,7 @@ class TensorDot(nodes.LibraryNode):
         :return: A triple (left_tensor, right_tensor, out_tensor) for the data descriptors in the parent SDFG.
         """
 
-        left_tensor, right_tensor, out_tensor = None, None
+        left_tensor, right_tensor, out_tensor = None, None, None
         for e in state.out_edges(self):
             if e.src_conn == "_out_tensor":
                 out_tensor = sdfg.arrays[e.data.data]

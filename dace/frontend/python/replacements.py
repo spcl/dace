@@ -4542,7 +4542,7 @@ def _inv(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, inp_op: str):
 
 @oprepo.replaces('dace.tensordot')
 @oprepo.replaces('numpy.tensordot')
-def _tensordot(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op_a: str, op_b: str, axes: Union[int, Sequence[int]] = 2]):
+def _tensordot(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op_a: str, op_b: str, axes: Union[int, Sequence[int]] = 2):
 
     for op in (op_a, op_b):
         if not isinstance(op, str) or not op in sdfg.arrays.keys():
@@ -4570,7 +4570,7 @@ def _tensordot(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op_a: str, op
     
     dot_shape = [s for i, s in enumerate(arr_a.shape) if i not in left_axes]
     dot_shape.extend([s for i, s in enumerate(arr_b.shape) if i not in right_axes])
-    op_c, arr_c = sdfg.add_temp_transient(arr_a.shape, arr_a.dtype, storage=arr_a.storage)
+    op_c, arr_c = sdfg.add_temp_transient(dot_shape, arr_a.dtype, storage=arr_a.storage)
 
     from dace.libraries.linalg import TensorDot
     a = state.add_read(op_a)
