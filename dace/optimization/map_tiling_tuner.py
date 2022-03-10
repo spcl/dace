@@ -57,7 +57,7 @@ class MapTilingTuner(cutout_tuner.CutoutTuner):
                 if cutout.arrays[dnode.data].transient:
                     continue
 
-                arguments[dnode.data] = np.copy(dreport.get_first_version(dnode.data))
+                arguments[dnode.data] = dreport.get_first_version(dnode.data)
 
         map_entry = None
         for node in cutout.start_state.nodes():

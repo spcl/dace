@@ -42,12 +42,11 @@ class MapPermutationTuner(cutout_tuner.CutoutTuner):
     def pre_evaluate(self, cutout: dace.SDFG, dreport: data_report.InstrumentedDataReport, measurements: int, **kwargs) -> Dict:
         cutout.instrument = self.instrument
         arguments = {}
-        for cstate in cutout.nodes():
-            for dnode in cstate.data_nodes():
-                if cutout.arrays[dnode.data].transient:
-                    continue
+        for dnode in cutout.start_state.data_nodes():
+            if cutout.arrays[dnode.data].transient:
+                continue
 
-                arguments[dnode.data] = np.copy(dreport.get_first_version(dnode.data))
+            arguments[dnode.data] = dreport.get_first_version(dnode.data)
 
         map_entry = None
         for node in cutout.start_state.nodes():
