@@ -3,6 +3,7 @@ import collections
 import dace
 import multiprocessing
 from dace import library, nodes, properties
+from dace.data import _prod
 from dace.libraries.blas import blas_helpers
 from dace.symbolic import symstr
 from dace.transformation.transformation import ExpandTransformation
@@ -77,6 +78,76 @@ class ExpandTTGT(ExpandTransformation):
     """
     
     environments = []
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg):
+        left_tensor, right_tensor, out_tensor = node.validate(parent_sdfg, parent_state)
+
+        sdfg = dace.SDFG(f"{node.label}_sdfg")
+        _, left_arr = sdfg.add_array("_left_tensor", left_tensor.shape, left_tensor.dtype, left_tensor.storage, strides=left_tensor.strides)
+        _, right_arr = sdfg.add_array("_right_tensor", right_tensor.shape, right_tensor.dtype, right_tensor.storage, strides=right_tensor.strides)
+        _, out_arr = sdfg.add_array("_out_tensor", out_tensor.shape, out_tensor.dtype, out_tensor.storage, strides=out_tensor.strides)
+
+        from dace.frontend.python.replacements import _transpose
+        # NOTE: We use the numpy.transpose replacement because:
+        # (1) It will return the tensor itself if transposition is uncessary.
+        # (2) It will use matrix transpose operation for 2-mode tensors.
+        state = sdfg.add_state(f"{node.label}_inp_transpose_state", is_start_state=True)
+        left_axes = [i for i in range(left_arr.shape) if i not in node.left_axes]
+        left_axes.extend(node.left_axes)
+        left_tt = _transpose(None, sdfg, state, "_left_tensor", left_axes)
+        left_tt_arr = sdfg.arrays[left_tt]
+        right_axes = node.right_axes
+        right_axes.extend([i for i in range(right_arr.shape) if i not in node.right_axes])
+        right_tt = _transpose(None, sdfg, state, "_right_tensor", right_axes)
+        right_tt_arr = sdfg.arrays[right_tt]
+
+        from dace.libraries.blas import Gemm
+        prv_state = state
+        state = sdfg.add_state(f"{node.label}_gemm_state")
+        sdfg.add_edge(prv_state, state, dace.InterstateEdge())
+        left_shape = [_prod(left_tt_arr.shape[:-len(node.left_axes)]), _prod(left_tt_arr.shape[len(left_tt_arr.shape)-len(node.left_axes):])]
+        left_strides = [left_tt_arr.strides[-len(node.left_axes)-1], left_tt_arr.strides[-1]]
+        left_vname, left_view = sdfg.add_view(left_tt, left_shape, left_tt_arr.dtype, left_tt_arr.storage, strides=left_strides, find_new_name=True)
+        left_anode = state.add_read(left_tt)
+        left_vnode = state.add_access(left_vname)
+        state.add_edge(left_anode, None, left_vnode, 'views', dace.Memlet.from_array(left_tt, left_tt_arr))
+        right_shape = [_prod(right_tt_arr.shape[0:len(node.left_axes)]), _prod(right_tt_arr.shape[len(node.left_axes):]), ]
+        right_strides = [right_tt_arr.strides[len(node.right_axes)-1], right_tt_arr.strides[-1]]
+        right_vname, right_view = sdfg.add_view(right_tt, right_shape, right_tt_arr.dtype, right_tt_arr.storage, strides=right_strides, find_new_name=True)
+        right_anode = state.add_read(right_tt)
+        right_vnode = state.add_access(right_vname)
+        state.add_edge(right_anode, None, right_vnode, 'views', dace.Memlet.from_array(right_tt, right_tt_arr))
+        tasklet = Gemm(cin=False)
+        state.add_edge(left_vnode, None, tasklet, '_a', dace.Memlet.from_array(left_vname, left_view))
+        state.add_edge(right_vnode, None, tasklet, '_b', dace.Memlet.from_array(right_vname, right_view))
+
+        # Output handling
+        out_shape = [left_shape[0], right_shape[1]]
+        if node.permutation and node.permutation != list(range(len(node.permutation))):
+            dot_shape = [s for i, s in enumerate(left_tensor.shape) if i not in node.left_axes]
+            dot_shape.extend([s for i, s in enumerate(right_tensor.shape) if i not in node.right_axes])
+            dot_name, dot_arr = sdfg.add_temp_transient(dot_shape, out_arr.dtype, out_arr.storage)
+            out_strides = [dot_arr.strides[len(left_tt_arr.shape)-len(node.left_axes)-1], dot_arr.strides[-1]]
+            dot_vname, dot_view = sdfg.add_view('__gemm_out', out_shape, dot_arr.dtype, dot_arr.storage, strides=out_strides, find_new_name=True)
+            dot_anode = state.add_access(dot_name)
+            dot_vnode = state.add_access(dot_vname)
+            state.add_edge(tasklet, '_c', dot_vnode, None, dace.Memlet.from_array(dot_vname, dot_view))
+            state.add_edge(dot_vnode, 'views', dot_anode, None, dace.Memlet.from_array(dot_name, dot_arr))
+            out_node = state.add_write('_out_tensor')
+            from dace.libraries.ttranspose import TensorTranspose
+            tasklet = TensorTranspose('_TensorTranspose', node.permutation)
+            state.add_edge(dot_anode, None, tasklet, '_inp_tensor', dace.Memlet.from_array(dot_name, dot_arr))
+            state.add_edge(tasklet, '_out_tensor', out_node, None, dace.Memlet.from_array('_out_tensor', out_arr))
+        else:
+            out_strides = [out_arr.strides[len(left_tt_arr.shape)-len(node.left_axes)-1], out_arr.strides[-1]]
+            out_vname, out_view = sdfg.add_view('__gemm_out', out_shape, out_arr.dtype, out_arr.storage, strides=out_strides, find_new_name=True)
+            out_anode = state.add_access(out_name)
+            out_vnode = state.add_access(out_vname)
+            state.add_edge(tasklet, '_c', out_vnode, None, dace.Memlet.from_array(out_vname, out_view))
+            state.add_edge(out_vnode, 'views', out_anode, None, dace.Memlet.from_array('_out_tensor', out_arr))
+
+        return sdfg
 
 
 @library.expansion
