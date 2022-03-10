@@ -54,6 +54,8 @@ class ExpandPure(ExpandTransformation):
         for k, v in right_sorted_dict.items():
             right_idx.insert(k, v)
         out_idx = outer_map_params
+        if node.permutation:
+            out_idx = [outer_map_params[i] for i in node.permutation]
 
         left_mem = dace.Memlet(expr=f"_left_tensor[{','.join(left_idx)}]")
         right_mem = dace.Memlet(expr=f"_right_tensor[{','.join(right_idx)}]")
@@ -99,10 +101,11 @@ class TensorDot(nodes.LibraryNode):
     right_axes = properties.ListProperty(element_type=int, default=[], desc="Right tensor's contracting modes")
     permutation = properties.ListProperty(element_type=int, allow_none=True, default=None, desc="Permutation of the output tensor")
 
-    def __init__(self, name, left_axes=[], right_axes=[], *args, **kwargs):
+    def __init__(self, name, left_axes=[], right_axes=[], permutation=NOne, *args, **kwargs):
         super().__init__(name, *args, inputs={"_left_tensor", "_right_tensor"}, outputs={"_out_tensor"}, **kwargs)
         self.left_axes = left_axes
         self.right_axes = right_axes
+        self.permutation = permutation
     
     def validate(self, sdfg, state):
         """
@@ -136,7 +139,7 @@ class TensorDot(nodes.LibraryNode):
             raise ValueError("Axes for right tensor are out-of-bounds.")
         if len(self.left_axes) != len(self.right_axes):
             raise ValueError("The input tensors must have the same number of contracting modes.")
-        if any(left_tensor.shape[l] != left_tensor.shape[r] for l, r in zip(self.left_axes, self.right_axes)):
+        if any(left_tensor.shape[l] != right_tensor.shape[r] for l, r in zip(self.left_axes, self.right_axes)):
             raise ValueError("The input tensors' contracting modes must have the same length.")
         
         dot_shape = [s for i, s in enumerate(left_tensor.shape) if i not in self.left_axes]

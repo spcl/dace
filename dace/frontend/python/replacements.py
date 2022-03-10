@@ -4540,6 +4540,50 @@ def _inv(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, inp_op: str):
     return out_arr[0]
 
 
+@oprepo.replaces('dace.tensordot')
+@oprepo.replaces('numpy.tensordot')
+def _tensordot(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op_a: str, op_b: str, axes: Union[int, Sequence[int]] = 2]):
+
+    for op in (op_a, op_b):
+        if not isinstance(op, str) or not op in sdfg.arrays.keys():
+            raise SyntaxError()
+
+    arr_a = sdfg.arrays[op_a]
+    arr_b = sdfg.arrays[op_b]
+
+    if isinstance(axes, Integral):
+        left_axes = list(range(len(arr_a.shape) - axes, len(arr_a.shape)))
+        right_axes = list(range(0, axes))
+    else:
+        left_axes = axes[0]
+        right_axes = axes[1]
+
+    # Some validation (more detailed validation is done inside the TensorDot library node)
+    if any(a >= len(arr_a.shape) or a < 0 for a in left_axes):
+        raise ValueError("Axes for left tensor are out-of-bounds.")
+    if any(a >= len(arr_b.shape) or a < 0 for a in right_axes):
+        raise ValueError("Axes for right tensor are out-of-bounds.")
+    if len(left_axes) != len(right_axes):
+        raise ValueError("The input tensors must have the same number of contracting modes.")
+    if any(arr_a.shape[l] != arr_b.shape[r] for l, r in zip(left_axes, right_axes)):
+        raise ValueError("The input tensors' contracting modes must have the same length.")
+    
+    dot_shape = [s for i, s in enumerate(arr_a.shape) if i not in left_axes]
+    dot_shape.extend([s for i, s in enumerate(arr_b.shape) if i not in right_axes])
+    op_c, arr_c = sdfg.add_temp_transient(arr_a.shape, arr_a.dtype, storage=arr_a.storage)
+
+    from dace.libraries.linalg import TensorDot
+    a = state.add_read(op_a)
+    b = state.add_read(op_b)
+    c = state.add_write(op_c)
+    tasklet = TensorDot("_TensorDot_", left_axes, right_axes)
+    state.add_edge(a, None, tasklet, '_left_tensor', Memlet.from_array(op_a, arr_a))
+    state.add_edge(b, None, tasklet, '_right_tensor', Memlet.from_array(op_b, arr_b))
+    state.add_edge(tasklet, '_out_tensor', c, None, Memlet.from_array(op_c, arr_c))
+
+    return op_c
+
+
 # CuPy replacements
 
 
