@@ -93,12 +93,12 @@ class ExpandTTGT(ExpandTransformation):
         # (1) It will return the tensor itself if transposition is uncessary.
         # (2) It will use matrix transpose operation for 2-mode tensors.
         state = sdfg.add_state(f"{node.label}_inp_transpose_state", is_start_state=True)
-        left_axes = [i for i in range(left_arr.shape) if i not in node.left_axes]
+        left_axes = [i for i in range(len(left_arr.shape)) if i not in node.left_axes]
         left_axes.extend(node.left_axes)
         left_tt = _transpose(None, sdfg, state, "_left_tensor", left_axes)
         left_tt_arr = sdfg.arrays[left_tt]
-        right_axes = node.right_axes
-        right_axes.extend([i for i in range(right_arr.shape) if i not in node.right_axes])
+        right_axes = list(node.right_axes)
+        right_axes.extend([i for i in range(len(right_arr.shape)) if i not in node.right_axes])
         right_tt = _transpose(None, sdfg, state, "_right_tensor", right_axes)
         right_tt_arr = sdfg.arrays[right_tt]
 
@@ -112,13 +112,13 @@ class ExpandTTGT(ExpandTransformation):
         left_anode = state.add_read(left_tt)
         left_vnode = state.add_access(left_vname)
         state.add_edge(left_anode, None, left_vnode, 'views', dace.Memlet.from_array(left_tt, left_tt_arr))
-        right_shape = [_prod(right_tt_arr.shape[0:len(node.left_axes)]), _prod(right_tt_arr.shape[len(node.left_axes):]), ]
+        right_shape = [_prod(right_tt_arr.shape[0:len(node.right_axes)]), _prod(right_tt_arr.shape[len(node.right_axes):]), ]
         right_strides = [right_tt_arr.strides[len(node.right_axes)-1], right_tt_arr.strides[-1]]
         right_vname, right_view = sdfg.add_view(right_tt, right_shape, right_tt_arr.dtype, right_tt_arr.storage, strides=right_strides, find_new_name=True)
         right_anode = state.add_read(right_tt)
         right_vnode = state.add_access(right_vname)
         state.add_edge(right_anode, None, right_vnode, 'views', dace.Memlet.from_array(right_tt, right_tt_arr))
-        tasklet = Gemm(cin=False)
+        tasklet = Gemm('_GEMM_', cin=False)
         state.add_edge(left_vnode, None, tasklet, '_a', dace.Memlet.from_array(left_vname, left_view))
         state.add_edge(right_vnode, None, tasklet, '_b', dace.Memlet.from_array(right_vname, right_view))
 
@@ -142,7 +142,7 @@ class ExpandTTGT(ExpandTransformation):
         else:
             out_strides = [out_arr.strides[len(left_tt_arr.shape)-len(node.left_axes)-1], out_arr.strides[-1]]
             out_vname, out_view = sdfg.add_view('__gemm_out', out_shape, out_arr.dtype, out_arr.storage, strides=out_strides, find_new_name=True)
-            out_anode = state.add_access(out_name)
+            out_anode = state.add_access('_out_tensor')
             out_vnode = state.add_access(out_vname)
             state.add_edge(tasklet, '_c', out_vnode, None, dace.Memlet.from_array(out_vname, out_view))
             state.add_edge(out_vnode, 'views', out_anode, None, dace.Memlet.from_array('_out_tensor', out_arr))
