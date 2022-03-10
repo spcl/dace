@@ -1,11 +1,13 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 import os
+import math
 import dace
 import json
 import numpy as np
 
 from typing import Dict, Generator, Any, Tuple, List
 
+from dace.codegen import exceptions as cgx
 from dace.optimization import auto_tuner
 from dace.codegen.instrumentation.data import data_report
 
@@ -101,7 +103,12 @@ class CutoutTuner(auto_tuner.AutoTuner):
         with dace.config.set_temporary('debugprint', value=False):
             with dace.config.set_temporary('instrumentation', 'report_each_invocation', value=False):
                 with dace.config.set_temporary('compiler', 'allow_view_arguments', value=True):
-                    csdfg = sdfg.compile()
+                    try:
+                        csdfg = sdfg.compile()
+                    except cgx.CompilationError:
+                        print("WARNING: Compile failure")
+                        return math.inf
+                    
                     for _ in range(repetitions):
                         csdfg(**arguments)
 
@@ -130,10 +137,8 @@ class CutoutTuner(auto_tuner.AutoTuner):
 
             best_config = min(results, key=results.get)
             if apply:
-                print(label)
-                print(results, best_config)
                 config = self.config_from_key(best_config, cutout=cutout)
-                self.apply(config, cutout=cutout, label=label)
+                self.apply(config, label=label)
 
             tuning_report[label] = results
 

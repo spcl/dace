@@ -40,7 +40,7 @@ class MapTilingTuner(cutout_tuner.CutoutTuner):
             None,
             (8, 8, 8),
             (16, 16, 16),
-            (32, 8, 8),
+            (32, 32, 32),
             (64, 8, 8),
         ]
 

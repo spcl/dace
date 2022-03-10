@@ -36,6 +36,9 @@ class MapPermutationTuner(cutout_tuner.CutoutTuner):
                 cutout = cutter.cutout_state(state, *subgraph_nodes, make_copy=False)
                 yield cutout, f"{state_id}.{node_id}.{node.label}"
 
+    def space(self, map_entry: dace.nodes.MapEntry, **kwargs) -> Generator[Tuple[str], None, None]:
+        return itertools.permutations(map_entry.map.params)
+
     def config_from_key(self, key: str, **kwargs) -> List[str]:
         return key.split(".")
 
@@ -48,9 +51,6 @@ class MapPermutationTuner(cutout_tuner.CutoutTuner):
             if list_param == map_param
         ]
         map_entry.map.params = config
-
-    def space(self, map_entry: dace.nodes.MapEntry, **kwargs) -> Generator[Tuple[str], None, None]:
-        return itertools.permutations(map_entry.map.params)
 
     def pre_evaluate(self, cutout: dace.SDFG, dreport: data_report.InstrumentedDataReport, measurements: int, **kwargs) -> Dict:
         cutout.instrument = self.instrument

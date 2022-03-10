@@ -42,22 +42,26 @@ class MapFusionTuner(cutout_tuner.CutoutTuner):
         sp = list(self.space(cutout=cutout))
         return sp[fusion_id]
 
-    def apply(self, config, cutout, label, **kwargs) -> None:
+    def apply(self, config: Tuple[int, List[int]], label: str, **kwargs) -> None:
         if config[0] == 0:
             return
-        
+
+        state_id = label.split(".")[0]
+        state_id = int(state_id)
+        state = self._sdfg.node(state_id)
+        nodes = state.nodes()
+        cutout = cutter.cutout_state(state, *(nodes), make_copy=False)
+
         map_ids = config[1]
-        sdfg_state_id = int(label.split(".")[0])
-        sdfg_state = self._sdfg.node(sdfg_state_id)
         maps_ = map(lambda m: cutout.start_state.node(m), map_ids)
-        subgraph = helpers.subgraph_from_maps(sdfg=self._sdfg, graph=sdfg_state, map_entries=maps_)
-        fusion = comp.CompositeFusion(subgraph, self._sdfg.sdfg_id, sdfg_state_id)
+        subgraph = helpers.subgraph_from_maps(sdfg=self._sdfg, graph=state, map_entries=maps_)
+        fusion = comp.CompositeFusion(subgraph, self._sdfg.sdfg_id, state_id)
         fusion.allow_tiling = True
 
         if not fusion.can_be_applied(self._sdfg, subgraph):
             raise ValueError("Invalid config")
 
-        print(f"Fusing {len(map_ids)} maps in state {sdfg_state.label}")
+        print(f"Fusing {len(map_ids)} maps in state {state.label}")
         fusion.apply(self._sdfg)
 
     def space(self, cutout: dace.SDFG) -> Generator[List[bool], None, None]:

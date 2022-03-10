@@ -1,24 +1,33 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
-from math import prod
 import shutil
 import os
 import dace
-import json
 import numpy as np
 
 from pathlib import Path
 
-from dace.transformation.auto.auto_optimize import auto_optimize
 from dace.optimization import cutout_tuner as ct
 from dace import optimization as optim
-from dace.transformation.subgraph import helpers
-from dace.transformation.subgraph import composite as comp
-from dace.sdfg.analysis import cutout as cutter
+
+def measure(sdfg, arguments):
+    with dace.config.set_temporary('debugprint', value=False):
+        with dace.config.set_temporary('instrumentation', 'report_each_invocation', value=False):
+            with dace.config.set_temporary('compiler', 'allow_view_arguments', value=True):
+                csdfg = sdfg.compile()
+
+                for _ in range(30):
+                    csdfg(**arguments)
+
+                csdfg.finalize()
+
+    report = sdfg.get_latest_report()
+    print(report)
 
 if __name__ == '__main__':
 
-    sdfg_path = Path("/home/lukas/projects/tuning-dace/") / "aha-expanded.sdfg"
+    sdfg_path = Path(os.environ["HOME"]) / "projects/tuning-dace/aha-expanded.sdfg"
     sdfg = dace.SDFG.from_file(sdfg_path)
+    sdfg.instrument = dace.InstrumentationType.Timer
     # sdfg = dace.SDFG.from_file(Path("/home/lukas/projects/autodace/") / "test_stencil.sdfg")
 
     cache_path = Path(__file__).parent / ".dacecache"
@@ -42,7 +51,7 @@ if __name__ == '__main__':
     for name, array in sdfg.arrays.items():
         # dtype = array.dtype
         # shape_ = tuple(map(lambda dim: dace.symbolic.evaluate(dim, values), array.shape))
-        array.storage = dace.StorageType.CPU_Heap
+        array.storage = dace.StorageType.GPU_Shared
 
         # array.shape = shape_
         # array.total_size = dace.symbolic.evaluate(array.total_size, values)
@@ -52,22 +61,30 @@ if __name__ == '__main__':
             data = dace.data.make_array_from_descriptor(array, np.random.rand(*array.shape))
             arguments[name] = data
 
-
     for state in sdfg.nodes():
         for node in state.nodes():
             if isinstance(node, dace.nodes.MapEntry):
-                node.schedule = dace.ScheduleType.CPU_Multicore
+                node.schedule = dace.ScheduleType.GPU_Device
 
     result = ct.CutoutTuner.dry_run(sdfg, **arguments)
 
+    print("Initial version")
+    measure(sdfg, arguments)
+
+    print("Fusing")
     tuner = optim.MapFusionTuner(sdfg)
     tuner.optimize(apply=True)
+    measure(sdfg, arguments)
 
+    print("Permutation")
     tuner = optim.MapPermutationTuner(sdfg)
     tuner.optimize(apply=True)
+    measure(sdfg, arguments)
 
+    print("Tiling")
     tuner = optim.MapTilingTuner(sdfg)
     tuner.optimize(apply=True)
+    measure(sdfg, arguments)
 
-    sdfg_path = Path("/home/lukas/projects/tuning-dace/") / "aha-expanded_fused_permuted_tiled.sdfg"
+    sdfg_path = Path(os.environ["HOME"]) / "projects/tuning-dace/aha-expanded_fused_permuted_tiled_cpu.sdfg"
     sdfg.save(sdfg_path)
