@@ -142,7 +142,7 @@ class CUDACodeGen(TargetCodeGenerator):
                 if (e.src.desc(nsdfg).storage == dtypes.StorageType.GPU_Global
                         and e.dst.desc(nsdfg).storage == dtypes.StorageType.GPU_Global):
                     copy_shape, src_strides, dst_strides, _, _ = memlet_copy_to_absolute_strides(
-                        None, sdfg, e.data, e.src, e.dst)
+                        None, nsdfg, e.data, e.src, e.dst)
                     dims = len(copy_shape)
 
                     # Skip supported copy types

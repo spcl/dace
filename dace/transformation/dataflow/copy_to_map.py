@@ -1,6 +1,7 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 
 from dace import dtypes, symbolic, data, subsets, Memlet
+from dace.sdfg.scope import is_devicelevel_gpu
 from dace.transformation import transformation as xf
 from dace.sdfg import SDFGState, SDFG, nodes, utils as sdutil
 from typing import Tuple
@@ -47,12 +48,10 @@ class CopyToMap(xf.SingleStateTransformation):
         if tuple(desc.shape) == tuple(copy_shape):
             return subsets.Range([(ind, ind, 1) for ind in indices])
 
-        linear_index = sum(indices[i] * data._prod(copy_shape[i + 1:]) for i in range(len(indices)))
+        if rng is not None:  # Deal with offsets and strides in range
+            indices = rng.coord_at(indices)
 
-        if rng is not None and any(mn != 0 for mn in rng.min_element()):
-            raise NotImplementedError('Offsets not yet implemented')
-        if rng is not None and any(rs != 1 for _, _, rs in rng):
-            raise NotImplementedError('Strides not yet implemented')
+        linear_index = sum(indices[i] * data._prod(copy_shape[i + 1:]) for i in range(len(indices)))
 
         cur_index = [0] * len(desc.shape)
         divide_by = 1
@@ -95,7 +94,11 @@ class CopyToMap(xf.SingleStateTransformation):
         # Set schedule based on GPU arrays
         schedule = dtypes.ScheduleType.Default
         if adesc.storage == dtypes.StorageType.GPU_Global or bdesc.storage == dtypes.StorageType.GPU_Global:
-            schedule = dtypes.ScheduleType.GPU_Device
+            # If already inside GPU kernel
+            if is_devicelevel_gpu(sdfg, state, self.a):
+                schedule = dtypes.ScheduleType.Sequential
+            else:
+                schedule = dtypes.ScheduleType.GPU_Device
 
         # Add copy map
         t, _, _ = state.add_mapped_tasklet('copy',
