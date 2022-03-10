@@ -1,4 +1,5 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
+import collections
 import dace
 import multiprocessing
 from dace import library, nodes, properties
@@ -14,6 +15,55 @@ class ExpandPure(ExpandTransformation):
     """ Implements the pure expansion of TensorDot library node. """
     
     environments = []
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg):
+        left_tensor, right_tensor, out_tensor = node.validate(parent_sdfg, parent_state)
+
+        sdfg = dace.SDFG(f"{node.label}_sdfg")
+        _, left_arr = sdfg.add_array("_left_tensor", left_tensor.shape, left_tensor.dtype, left_tensor.storage, strides=left_tensor.strides)
+        _, right_arr = sdfg.add_array("_right_tensor", right_tensor.shape, right_tensor.dtype, right_tensor.storage, strides=right_tensor.strides)
+        _, out_arr = sdfg.add_array("_out_tensor", out_tensor.shape, out_tensor.dtype, out_tensor.storage, strides=out_tensor.strides)
+        
+        state = sdfg.add_state(f"{node.label}_init")
+        state.add_mapped_tasklet(f"{node.label}_init_tasklet", 
+                                 {f"__i{i}": f"0:{symstr(s)}" for i, s in enumerate(out_tensor.shape)},
+                                 {},
+                                 '__out = 0',
+                                 {'__out': dace.Memlet(expr=f"_out_tensor[{','.join(['__i%d' % i for i in range(len(out_tensor.shape))])}]")},
+                                 external_edges=True)
+
+        state = sdfg.add_state(f"{node.label}_state")
+
+        outer_map_shape = list([s for i, s in enumerate(left_tensor.shape) if i not in node.left_axes])
+        outer_map_shape.extend([s for i, s in enumerate(right_tensor.shape) if i not in node.right_axes])
+        outer_map_params = [f"__oi{i}" for i in range(len(outer_map_shape))]
+        outer_map_rng = {i: f"0:{symstr(s)}"for i, s in zip(outer_map_params, outer_map_shape)}
+        inner_map_shape = list([left_tensor.shape[i] for i in node.left_axes])
+        inner_map_params = [f"__ii{i}" for i in range(len(inner_map_shape))]
+        inner_map_rng = {i: f"0:{symstr(s)}"for i, s in zip(inner_map_params, inner_map_shape)}
+
+        left_idx = outer_map_params[:len(left_tensor.shape)-len(node.left_axes)]
+        left_dict = {j: inner_map_params[i] for i, j in enumerate(node.left_axes)}
+        left_sorted_dict = collections.OrderedDict(sorted(left_dict.items()))
+        for k, v in left_sorted_dict.items():
+            left_idx.insert(k, v)
+        right_idx = outer_map_params[len(left_tensor.shape)-len(node.left_axes):]
+        right_dict = {j: inner_map_params[i] for i, j in enumerate(node.right_axes)}
+        right_sorted_dict = collections.OrderedDict(sorted(right_dict.items()))
+        for k, v in right_sorted_dict.items():
+            right_idx.insert(k, v)
+        out_idx = outer_map_params
+
+        left_mem = dace.Memlet(expr=f"_left_tensor[{','.join(left_idx)}]")
+        right_mem = dace.Memlet(expr=f"_right_tensor[{','.join(right_idx)}]")
+        out_mem = dace.Memlet(expr=f"_out_tensor[{','.join(out_idx)}]", wcr="lambda x, y: x + y")
+        inputs = {"_left": left_mem, "_right": right_mem}
+        outputs = {"_out": out_mem}
+        code = f"_out = _left * _right"
+        state.add_mapped_tasklet(f"{node.label}_tasklet", {**outer_map_rng, **inner_map_rng}, inputs, code, outputs, external_edges=True)
+
+        return sdfg
 
 
 @library.expansion
