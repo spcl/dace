@@ -36,10 +36,10 @@ class MapPermutationTuner(cutout_tuner.CutoutTuner):
                 cutout = cutter.cutout_state(state, *subgraph_nodes, make_copy=False)
                 yield cutout, f"{state_id}.{node_id}.{node.label}"
 
-    def config_from_key(self, key: str, cutout: dace.SDFG, **kwargs) -> List[str]:
+    def config_from_key(self, key: str, **kwargs) -> List[str]:
         return key.split(".")
 
-    def apply(self, config, cutout, label: str, **kwargs) -> None:
+    def apply(self, config: List[str], label: str, **kwargs) -> None:
         state_id, node_id, node_label = label.split(".")
         map_entry = self._sdfg.node(int(state_id)).node(int(node_id))
         
