@@ -17,7 +17,7 @@ from dace.sdfg.analysis import cutout as cutter
 
 if __name__ == '__main__':
 
-    sdfg_path = Path("/home/lukas/projects/tuning-dace/") / "aha-expanded copy.sdfg"
+    sdfg_path = Path("/home/lukas/projects/tuning-dace/") / "aha-expanded.sdfg"
     sdfg = dace.SDFG.from_file(sdfg_path)
     # sdfg = dace.SDFG.from_file(Path("/home/lukas/projects/autodace/") / "test_stencil.sdfg")
 
@@ -60,27 +60,14 @@ if __name__ == '__main__':
 
     result = ct.CutoutTuner.dry_run(sdfg, **arguments)
 
-    tuner = optim.MapPermutationTuner(sdfg)
-    tuner.optimize(apply=True)
-    sdfg_path = Path("/home/lukas/projects/tuning-dace/") / "aha-expanded_copy_permuted.sdfg"
-    sdfg.save(sdfg_path)
-
-    tuning_paths = Path(__file__).parent.rglob("*.tuning")
-    for path in tuning_paths:
-        os.remove(path)
-
     tuner = optim.MapFusionTuner(sdfg)
     tuner.optimize(apply=True)
 
-    tuning_paths = Path(__file__).parent.rglob("*.tuning")
-    for path in tuning_paths:
-        os.remove(path)
-
-    sdfg_path = Path("/home/lukas/projects/tuning-dace/") / "aha-expanded_copy_permuted_fused.sdfg"
-    sdfg.save(sdfg_path)
-
     tuner = optim.MapPermutationTuner(sdfg)
     tuner.optimize(apply=True)
-    
-    sdfg_path = Path("/home/lukas/projects/tuning-dace/") / "aha-expanded_copy_permuted_fused_permuted.sdfg"
+
+    tuner = optim.MapTilingTuner(sdfg)
+    tuner.optimize(apply=True)
+
+    sdfg_path = Path("/home/lukas/projects/tuning-dace/") / "aha-expanded_fused_permuted_tiled.sdfg"
     sdfg.save(sdfg_path)
