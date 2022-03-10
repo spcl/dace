@@ -54,6 +54,12 @@ class CutoutTuner(auto_tuner.AutoTuner):
     def evaluate(self, **kwargs) -> float:
         raise NotImplementedError
 
+    def config_from_key(self, key: str, cutout: dace.SDFG, **kwargs) -> Any:
+        raise NotImplementedError
+
+    def apply(self, config, cutout, **kwargs) -> None:
+        raise NotImplementedError
+
     @staticmethod
     def dry_run(sdfg, *args, **kwargs) -> Any:
         # Check existing instrumented data for shape mismatch
@@ -105,7 +111,7 @@ class CutoutTuner(auto_tuner.AutoTuner):
         durations = next(iter(next(iter(report.durations.values())).values()))
         return np.median(np.array(durations))
 
-    def optimize(self, measurements: int = 30, **kwargs) -> Dict:
+    def optimize(self, measurements: int = 30, apply: bool = False, **kwargs) -> Dict:
         dreport: data_report.InstrumentedDataReport = self._sdfg.get_instrumented_data()
 
         tuning_report = {}
@@ -115,9 +121,19 @@ class CutoutTuner(auto_tuner.AutoTuner):
 
             if results is None:
                 results = self.search(cutout, dreport, measurements, **kwargs)
+                if results is None:
+                    tuning_report[label] = None
+                    continue
 
                 with open(fn, 'w') as fp:
                     json.dump(results, fp)
+
+            best_config = min(results, key=results.get)
+            if apply:
+                print(label)
+                print(results, best_config)
+                config = self.config_from_key(best_config, cutout=cutout)
+                self.apply(config, cutout=cutout, label=label)
 
             tuning_report[label] = results
 
@@ -125,7 +141,11 @@ class CutoutTuner(auto_tuner.AutoTuner):
 
 
     def search(self, cutout: dace.SDFG, dreport: data_report.InstrumentedDataReport, measurements: int, **kwargs) -> Dict[str, float]:
-        kwargs = self.pre_evaluate(cutout=cutout, dreport=dreport, measurements=measurements, **kwargs)
+        try:
+            kwargs = self.pre_evaluate(cutout=cutout, dreport=dreport, measurements=measurements, **kwargs)
+        except KeyError:
+            print("Not all arguments available in dreport")
+            return None
 
         results = {}
         key = kwargs["key"]

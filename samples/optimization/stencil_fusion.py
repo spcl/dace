@@ -17,7 +17,8 @@ from dace.sdfg.analysis import cutout as cutter
 
 if __name__ == '__main__':
 
-    sdfg = dace.SDFG.from_file(Path("/home/lukas/projects/tuning-dace/") / "aha-expanded.sdfg")
+    sdfg_path = Path("/home/lukas/projects/tuning-dace/") / "aha-expanded copy.sdfg"
+    sdfg = dace.SDFG.from_file(sdfg_path)
     # sdfg = dace.SDFG.from_file(Path("/home/lukas/projects/autodace/") / "test_stencil.sdfg")
 
     cache_path = Path(__file__).parent / ".dacecache"
@@ -58,18 +59,28 @@ if __name__ == '__main__':
                 node.schedule = dace.ScheduleType.CPU_Multicore
 
     result = ct.CutoutTuner.dry_run(sdfg, **arguments)
-    
+
+    tuner = optim.MapPermutationTuner(sdfg)
+    tuner.optimize(apply=True)
+    sdfg_path = Path("/home/lukas/projects/tuning-dace/") / "aha-expanded_copy_permuted.sdfg"
+    sdfg.save(sdfg_path)
+
+    tuning_paths = Path(__file__).parent.rglob("*.tuning")
+    for path in tuning_paths:
+        os.remove(path)
+
     tuner = optim.MapFusionTuner(sdfg)
-    for i, (cutout, label) in enumerate(tuner.cutouts()):
-        for i, map_ids in tuner.space(cutout):
-            maps_ = list(map(lambda m: cutout.start_state.node(m), map_ids))
-            subgraph = helpers.subgraph_from_maps(sdfg=cutout, graph=cutout.start_state, map_entries=maps_)
+    tuner.optimize(apply=True)
 
-            if len(maps_) < 2:
-                continue
+    tuning_paths = Path(__file__).parent.rglob("*.tuning")
+    for path in tuning_paths:
+        os.remove(path)
 
-            fused_subgraph = cutter.cutout_state(cutout.start_state, *(subgraph.nodes()))
-            with open(cutout_path / f"cutout_{i}.sdfg", "w") as handle:
-                json.dump(fused_subgraph.to_json(), handle)
+    sdfg_path = Path("/home/lukas/projects/tuning-dace/") / "aha-expanded_copy_permuted_fused.sdfg"
+    sdfg.save(sdfg_path)
 
-    tuner.optimize()
+    tuner = optim.MapPermutationTuner(sdfg)
+    tuner.optimize(apply=True)
+    
+    sdfg_path = Path("/home/lukas/projects/tuning-dace/") / "aha-expanded_copy_permuted_fused_permuted.sdfg"
+    sdfg.save(sdfg_path)
