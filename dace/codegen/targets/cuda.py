@@ -134,11 +134,51 @@ class CUDACodeGen(TargetCodeGenerator):
             DACE_CUDA_CHECK({backend}DeviceSynchronize());'''.format(backend=self.backend))
 
     def preprocess(self, sdfg: SDFG) -> None:
+        # Find GPU<->GPU strided copies that cannot be represented by a single copy command
+        from dace.transformation.dataflow import CopyToMap
+        for e, state in list(sdfg.all_edges_recursive()):
+            nsdfg = state.parent
+            if isinstance(e.src, nodes.AccessNode) and isinstance(e.dst, nodes.AccessNode):
+                if (e.src.desc(nsdfg).storage == dtypes.StorageType.GPU_Global
+                        and e.dst.desc(nsdfg).storage == dtypes.StorageType.GPU_Global):
+                    copy_shape, src_strides, dst_strides, _, _ = memlet_copy_to_absolute_strides(
+                        None, nsdfg, e.data, e.src, e.dst)
+                    dims = len(copy_shape)
+
+                    # Skip supported copy types
+                    if dims == 1:
+                        continue
+                    elif dims == 2:
+                        if src_strides[-1] != 1 or dst_strides[-1] != 1:
+                            # NOTE: Special case of continuous copy
+                            # Example: dcol[0:I, 0:J, k] -> datacol[0:I, 0:J]
+                            # with copy shape [I, J] and strides [J*K, K], [J, 1]
+                            try:
+                                is_src_cont = src_strides[0] / src_strides[1] == copy_shape[1]
+                                is_dst_cont = dst_strides[0] / dst_strides[1] == copy_shape[1]
+                            except (TypeError, ValueError):
+                                is_src_cont = False
+                                is_dst_cont = False
+                            if is_src_cont and is_dst_cont:
+                                continue
+                        else:
+                            continue
+                    elif dims > 2:
+                        if not (src_strides[-1] != 1 or dst_strides[-1] != 1):
+                            continue
+
+                    # Turn unsupported copy to a map
+                    try:
+                        CopyToMap.apply_to(nsdfg, save=False, annotate=False, a=e.src, b=e.dst)
+                    except ValueError:  # If transformation doesn't match, continue normally
+                        continue
+
         # Annotate CUDA streams and events
         self._cuda_streams, self._cuda_events = self._compute_cudastreams(sdfg)
 
-        # Right before finalizing code, write GPU context to state structure
+        # Write GPU context to state structure
         self._frame.statestruct.append('dace::cuda::Context *gpu_context;')
+
 
     # Generate final code
     def get_generated_codeobjects(self):
@@ -755,13 +795,16 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     src_strides = [src_strides[1]]
                     dst_strides = [dst_strides[1]]
                 else:
-                    raise NotImplementedError('2D copy only supported with one ' 'stride')
+                    raise NotImplementedError('2D copy only supported with one stride')
 
             # Currently we only support ND copies when they can be represented
             # as a 1D copy or as a 2D strided copy
             if dims > 2:
                 if src_strides[-1] != 1 or dst_strides[-1] != 1:
-                    raise NotImplementedError('Copies between CPU and GPU are ' 'not supported for N-dimensions')
+                    raise NotImplementedError(
+                        'GPU copies are not supported for N-dimensions if they cannot be represented by a strided copy\n'
+                        f'  Nodes: src {src_node} ({src_storage}), dst {dst_node}({dst_storage})\n'
+                        f'  Strides: src {src_strides}, dst {dst_strides}')
                 else:
                     # Write for-loop headers
                     for d in range(dims - 2):
@@ -903,16 +946,14 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     accum = '::template Accum%s' % reduction_tmpl
 
                 if any(symbolic.issymbolic(s, sdfg.constants) for s in copy_shape):
-                    callsite_stream.write(
-                        ('    {func}Dynamic<{type}, {bdims}, ' + '{dststrides}, {is_async}>{accum}({args});').format(
-                            func=funcname,
-                            type=dst_node.desc(sdfg).dtype.ctype,
-                            bdims=', '.join(_topy(self._block_dims)),
-                            dststrides=', '.join(_topy(dst_strides)),
-                            is_async='true' if state_dfg.out_degree(dst_node) > 0 else 'true',
-                            accum=accum,
-                            args=', '.join([src_expr] + _topy(src_strides) + [dst_expr] + custom_reduction +
-                                           _topy(copy_shape))), sdfg, state_id, [src_node, dst_node])
+                    callsite_stream.write(('    {func}Dynamic<{type}, {bdims}, {is_async}>{accum}({args});').format(
+                        func=funcname,
+                        type=dst_node.desc(sdfg).dtype.ctype,
+                        bdims=', '.join(_topy(self._block_dims)),
+                        is_async='true' if state_dfg.out_degree(dst_node) > 0 else 'true',
+                        accum=accum,
+                        args=', '.join([src_expr] + _topy(src_strides) + [dst_expr] + custom_reduction +
+                                       _topy(dst_strides) + _topy(copy_shape))), sdfg, state_id, [src_node, dst_node])
                 else:
                     callsite_stream.write(
                         ('    {func}<{type}, {bdims}, {copysize}, ' +
@@ -1425,7 +1466,7 @@ void  *{kname}_args[] = {{ {kargs} }};
                     block_size = [int(b) for b in Config.get('compiler', 'cuda', 'default_block_size').split(',')]
             assert (len(block_size) >= 1 and len(block_size) <= 3)
 
-            int_ceil = sympy.Function('int_ceil')
+            int_ceil = symbolic.int_ceil
 
             # Grid size = ceil(|S|/32) for first dimension, rest = |S|
             grid_size = [int_ceil(gs, bs)

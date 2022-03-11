@@ -348,11 +348,11 @@ def issymbolic(value, constants=None):
     constants = constants or {}
     if isinstance(value, SymExpr):
         return issymbolic(value.expr)
-    if isinstance(value, symbol) and value.name not in constants:
+    if isinstance(value, (sympy.Symbol, symbol)) and value.name not in constants:
         return True
     if isinstance(value, sympy.Basic):
         for atom in value.atoms():
-            if isinstance(atom, symbol) and atom.name not in constants:
+            if isinstance(atom, (sympy.Symbol, symbol)) and atom.name not in constants:
                 return True
     return False
 

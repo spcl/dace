@@ -5,7 +5,11 @@ import copy as cp
 import sympy as sp
 import numpy
 from numbers import Number
-from typing import Set, Sequence, Tuple
+from typing import Any, Optional, Set, Sequence, Tuple
+try:
+    from numpy.typing import ArrayLike
+except (ModuleNotFoundError, ImportError):
+    ArrayLike = Any
 
 import dace.dtypes as dtypes
 from dace.codegen import cppunparse
@@ -806,3 +810,50 @@ class View(Array):
         copy = cp.deepcopy(self)
         copy.__class__ = Array
         return copy
+
+
+def make_array_from_descriptor(descriptor: Array, original_array: Optional[ArrayLike] = None) -> ArrayLike:
+    """
+    Creates an array that matches the given data descriptor, and optionally copies another array to it.
+    :param descriptor: The data descriptor to create the array from.
+    :param original_array: An optional array to fill the content of the return value with.
+    :return: A NumPy-compatible array (CuPy for GPU storage) with the specified size and strides.
+    """
+    import numpy as np
+    if descriptor.storage == dtypes.StorageType.GPU_Global:
+        try:
+            import cupy as cp
+        except (ImportError, ModuleNotFoundError):
+            raise NotImplementedError('GPU memory can only be allocated in Python if cupy is installed')
+
+        def create_array(shape: Tuple[int], dtype: np.dtype, total_size: int, strides: Tuple[int]) -> ArrayLike:
+            buffer = cp.ndarray(shape=[total_size], dtype=dtype)
+            view = cp.ndarray(shape=shape,
+                              dtype=dtype,
+                              memptr=buffer.data,
+                              strides=[s * dtype.itemsize for s in strides])
+            return view
+        
+        def copy_array(dst, src):
+            dst[:] = cp.asarray(src)
+
+    elif descriptor.storage == dtypes.StorageType.FPGA_Global:
+        raise TypeError('Cannot allocate FPGA array in Python')
+    else:
+
+        def create_array(shape: Tuple[int], dtype: np.dtype, total_size: int, strides: Tuple[int]) -> ArrayLike:
+            buffer = np.ndarray([total_size], dtype=dtype)
+            view = np.ndarray(shape, dtype, buffer=buffer, strides=[s * dtype.itemsize for s in strides])
+            return view
+        
+        def copy_array(dst, src):
+            dst[:] = src
+
+
+    # Make numpy array from data descriptor
+    npdtype = descriptor.dtype.as_numpy_dtype()
+    view = create_array(descriptor.shape, npdtype, descriptor.total_size, descriptor.strides)
+    if original_array is not None:
+        copy_array(view, original_array)
+
+    return view
