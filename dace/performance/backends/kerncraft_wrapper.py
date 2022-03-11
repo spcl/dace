@@ -1,16 +1,15 @@
-from re import sub
 import dace
 import sympy
 import itertools
 
-from typing import Union, Dict, Tuple
+from typing import Union, Dict
 from pathlib import Path
 
 from kerncraft import machinemodel as mm
 from kerncraft import kernel as kk
 from kerncraft.models import roofline, ecm
 
-from dace.performance.analysis.flop_counter import FLOPCounter
+from dace.performance.backends.flop_counter import FLOPCounter
 
 class ArgMock(object):
     pass
@@ -26,10 +25,10 @@ class KerncraftWrapper():
         if cores > 0:
             self._cores = min(cores, self._cores)
 
-    def roofline(self, state: dace.SDFGState, subgraph: dace.sdfg.ScopeSubgraphView, values: Dict[str, int]) -> Dict:
-        kernel_desc = KerncraftWrapper.kerncraftify(state, subgraph, values)
+    def roofline(self, kernel: dace.SDFG, symbols: Dict[str, int]) -> Dict:
+        kernel_desc = KerncraftWrapper.kerncraftify(kernel, symbols)
         kernel_desc.clear_state()
-        for k, v in values.items():
+        for k, v in symbols.items():
             kernel_desc.set_constant(str(k), v)
 
         args = ArgMock()
@@ -41,7 +40,6 @@ class KerncraftWrapper():
         
         model.analyze()
 
-        # TODO: Parse kerncraft report into common format for different backends
         report = model.results
         report["FLOPs"] = kernel_desc._flops
         report["iterations"] = kernel_desc.iteration_length()
@@ -53,18 +51,9 @@ class KerncraftWrapper():
         peak_flops = flops_per_cycle * cores_per_socket * clock
         report["Peak FLOP/s"] = peak_flops
 
-        # TODO: PrefixedUnit
-        flops = report['min performance']['FLOP/s'].with_prefix("G").value
-        # Correct ?
-        flops = self._machine_model._data["sockets"] * flops
-        clock_speed = self._machine_model._data["clock"].with_prefix("G").value
-        report['runtime'] = 0.0
-        if flops > 0.0:
-            report['runtime'] = clock_speed / flops
-
         return report
 
-    def ecm(self, state: dace.SDFGState, subgraph: dace.sdfg.ScopeSubgraphView, values: Dict[str, int]):
+    def ecm(self, kernel: dace.SDFG, symbols: Dict[str, int]):
         raise NotImplementedError()
         
         kernel_desc = Kerncraft.kerncraftify(kernel, values)
@@ -85,10 +74,10 @@ class KerncraftWrapper():
         return model.results
 
     @staticmethod
-    def kerncraftify(state: dace.SDFGState, subgraph: dace.sdfg.ScopeSubgraphView, values: Dict[str, int]):
+    def kerncraftify(kernel: dace.SDFG, symbols: Dict[str, int]):
         tasklet = None
         maps = []
-        for node in subgraph.nodes():
+        for node in kernel.start_state.nodes():
             if isinstance(node, dace.nodes.MapEntry):
                 maps.append(node.map)
             elif isinstance(node, dace.nodes.Tasklet):
@@ -96,10 +85,9 @@ class KerncraftWrapper():
                 # Single tasklet assumption
                 tasklet = node
 
-        # TODO: symbolic flop
-        flop = FLOPCounter.count(tasklet)
         desc = {}
-        desc["flops"] = flop
+        flop = FLOPCounter.count(tasklet)
+        desc["flops"] = dace.symbolic.evaluate(flop, symbols=symbols)
 
         desc["loops"] = []
         offsets = []
@@ -112,7 +100,7 @@ class KerncraftWrapper():
                     for expr in map.range.ranges[i]
                 ]
 
-                if len(step.free_symbols.intersection(subgraph.free_symbols)) > 0:
+                if len(step.free_symbols.intersection(kernel.free_symbols)) > 0:
                     raise ValueError("Wrong loop format")
 
                 offset = start
@@ -120,8 +108,8 @@ class KerncraftWrapper():
                 start = sympy.simplify(start - offset)
                 offsets.append((index, offset))
                 if (
-                    len(start.free_symbols.intersection(subgraph.free_symbols)) > 0
-                    or len(stop.free_symbols.intersection(subgraph.free_symbols)) > 0
+                    len(start.free_symbols.intersection(kernel.free_symbols)) > 0
+                    or len(stop.free_symbols.intersection(kernel.free_symbols)) > 0
                 ):
                     raise ValueError("Wrong loop format")
 
@@ -137,7 +125,7 @@ class KerncraftWrapper():
         desc["data sources"] = {}
         desc["data destinations"] = {}
         all_dtype = "float"
-        for edge in subgraph.edges():
+        for edge in kernel.start_state.edges():
             if not (
                 isinstance(edge.src, dace.nodes.Tasklet)
                 or isinstance(edge.dst, dace.nodes.Tasklet)
@@ -146,7 +134,7 @@ class KerncraftWrapper():
 
             memlet = edge.data
             name = memlet.data
-            array = state.parent.arrays[name]
+            array = kernel.arrays[name]
             
             dtype = array.dtype.ctype
             supported_dtype = ["float", "double"]

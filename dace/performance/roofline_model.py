@@ -1,11 +1,9 @@
 import dace
 
-from typing import Dict, Generator, Tuple
+from typing import Dict
 
-from dace.transformation import helpers as xfh
 from dace.performance import performance_model
-
-from dace.performance.analysis import kerncraft_wrapper
+from dace.performance.backends import kerncraft_wrapper
 
 class RooflineModel(performance_model.PerformanceModel):
     """Wrapper class for roofline analysis provided by backend."""
@@ -15,15 +13,5 @@ class RooflineModel(performance_model.PerformanceModel):
 
         self._backend = kerncraft_wrapper.KerncraftWrapper(self._machine_file_path, cache_predictor="SIM")
 
-    def analyze(self, state: dace.SDFGState, subgraph: dace.sdfg.ScopeSubgraphView, symbol_values: Dict[str, int]) -> Dict:
-        return self._backend.roofline(state, subgraph, symbol_values)
-    
-    @staticmethod
-    def kernels(sdfg: dace.SDFG) -> Generator[Tuple[dace.SDFGState, dace.sdfg.ScopeSubgraphView], None, None]:
-        for state in sdfg.nodes():
-            for node in state.nodes():
-                if isinstance(node, dace.nodes.MapEntry):
-                    if xfh.get_parent_map(state, node) is not None:
-                        continue
-
-                    yield state, state.scope_subgraph(node)
+    def analyze(self, kernel: dace.SDFG, symbols: Dict[str, int]) -> Dict:
+        return self._backend.roofline(kernel, symbols)
