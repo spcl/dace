@@ -97,6 +97,14 @@ class DataLayoutTuner(cutout_tuner.CutoutTuner):
             # Yield configuration
             yield modified_arrays, new_arrays
 
+    def config_from_key(self, key: str, **kwargs) -> List[int]:
+        # TODO
+        raise NotImplementedError
+
+    def apply(self, config: List[int], label: str, **kwargs) -> None:
+        # TODO
+        raise NotImplementedError
+
     def pre_evaluate(self, cutout: dace.SDFG, dreport: data_report.InstrumentedDataReport, measurements: int, group_by: TuningGroups, **kwargs) -> Dict:
         # No modification to original SDFG, best configuration needs to be determined globally
         cutout.instrument = self.instrument
@@ -112,7 +120,7 @@ class DataLayoutTuner(cutout_tuner.CutoutTuner):
         # Setup tuning groups
         groups = self.setup_tuning_groups(cutout, group_by)
 
-        new_kwargs = {"space_kwargs": {"cutout": cutout, "groups": groups}, "cutout": cutout, "arguments": arguments, "measurements": measurements, "key": lambda point: '\n'.join([f'  {k}: {v.strides}' for k, v in point[1].items() if not v.transient])}
+        new_kwargs = {"space_kwargs": {"cutout": cutout, "groups": groups}, "cutout": cutout, "arguments": arguments, "measurements": measurements, "key": lambda config: '\n'.join([f'  {k}: {v.strides}' for k, v in config[1].items() if not v.transient])}
         new_kwargs["group_by"] = group_by
         return new_kwargs
 

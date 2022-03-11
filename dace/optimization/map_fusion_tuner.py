@@ -4,7 +4,7 @@ import math
 import json
 import numpy as np
 
-from typing import Generator, Dict, List
+from typing import Generator, Dict, List, Tuple
 
 from dace import SDFG, dtypes
 from dace.optimization import cutout_tuner
@@ -31,8 +31,38 @@ class MapFusionTuner(cutout_tuner.CutoutTuner):
         for state in self._sdfg.nodes():
             state_id = self._sdfg.node_id(state)
             nodes = state.nodes()
-            cutout = cutter.cutout_state(state, *(nodes))
+            cutout = cutter.cutout_state(state, *(nodes), make_copy=False)
             yield cutout, f"{state_id}.{state.label}"
+
+    def config_from_key(self, key: str, cutout: dace.SDFG, **kwargs) -> Tuple[int, List[int]]:
+        fusion_id = int(key)
+        if fusion_id == 0:
+            return (0, [])
+        
+        sp = list(self.space(cutout=cutout))
+        return sp[fusion_id]
+
+    def apply(self, config: Tuple[int, List[int]], label: str, **kwargs) -> None:
+        if config[0] == 0:
+            return
+
+        state_id = label.split(".")[0]
+        state_id = int(state_id)
+        state = self._sdfg.node(state_id)
+        nodes = state.nodes()
+        cutout = cutter.cutout_state(state, *(nodes), make_copy=False)
+
+        map_ids = config[1]
+        maps_ = map(lambda m: cutout.start_state.node(m), map_ids)
+        subgraph = helpers.subgraph_from_maps(sdfg=self._sdfg, graph=state, map_entries=maps_)
+        fusion = comp.CompositeFusion(subgraph, self._sdfg.sdfg_id, state_id)
+        fusion.allow_tiling = True
+
+        if not fusion.can_be_applied(self._sdfg, subgraph):
+            raise ValueError("Invalid config")
+
+        print(f"Fusing {len(map_ids)} maps in state {state.label}")
+        fusion.apply(self._sdfg)
 
     def space(self, cutout: dace.SDFG) -> Generator[List[bool], None, None]:
         subgraphs = en.ConnectedEnumerator(cutout, cutout.start_state)
@@ -71,8 +101,6 @@ class MapFusionTuner(cutout_tuner.CutoutTuner):
         fusion.allow_tiling = True
         if not fusion.can_be_applied(cutout_, subgraph):
             return math.inf
-
-        print("WUHU", config[0])
         
         # Apply on copy
         candidate = SDFG.from_json(cutout)

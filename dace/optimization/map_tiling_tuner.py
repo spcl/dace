@@ -2,7 +2,7 @@
 import dace
 import numpy as np
 
-from typing import Generator, Tuple, Dict
+from typing import Generator, Tuple, Dict, List
 
 from dace import SDFG, dtypes
 from dace.optimization import cutout_tuner
@@ -36,18 +36,29 @@ class MapTilingTuner(cutout_tuner.CutoutTuner):
                 yield cutout, f"{state_id}.{node_id}.{node.label}"
 
     def space(self, map_entry: dace.nodes.MapEntry) -> Generator[Tuple[int], None, None]:
-        # TODO: choices
         choices = [
             None,
             (8, 8, 8),
             (16, 16, 16),
             (32, 32, 32),
-            (64, 64, 64),
-            (128, 128, 128),
-            (256, 256, 256),
+            (64, 8, 8),
         ]
 
         return choices
+
+    def config_from_key(self, key: str, **kwargs) -> List[int]:
+        if key == "None":
+            return None
+
+        return list(map(lambda k: int(k), key.split(".")))
+
+    def apply(self, config: List[int], label: str, **kwargs) -> None:
+        if config is None:
+            return
+
+        state_id, node_id, _ = label.split(".")
+        map_entry = self._sdfg.node(int(state_id)).node(int(node_id))
+        df.MapTiling.apply_to(self._sdfg, map_entry=map_entry, options={"tile_sizes": config})
 
     def pre_evaluate(self, cutout: dace.SDFG, dreport: data_report.InstrumentedDataReport, measurements: int, **kwargs) -> Dict:
         cutout.instrument = self.instrument

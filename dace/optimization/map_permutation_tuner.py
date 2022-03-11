@@ -4,7 +4,7 @@ import dace
 import itertools
 import numpy as np
 
-from typing import Generator, Tuple, Dict
+from typing import Generator, Tuple, Dict, List
 
 from dace import SDFG, dtypes
 from dace.optimization import cutout_tuner
@@ -33,11 +33,24 @@ class MapPermutationTuner(cutout_tuner.CutoutTuner):
                 node_id = state.node_id(node)
                 state_id = self._sdfg.node_id(state)
                 subgraph_nodes = state.scope_subgraph(node).nodes()
-                cutout = cutter.cutout_state(state, *subgraph_nodes)
+                cutout = cutter.cutout_state(state, *subgraph_nodes, make_copy=False)
                 yield cutout, f"{state_id}.{node_id}.{node.label}"
 
     def space(self, map_entry: dace.nodes.MapEntry, **kwargs) -> Generator[Tuple[str], None, None]:
         return itertools.permutations(map_entry.map.params)
+
+    def config_from_key(self, key: str, **kwargs) -> List[str]:
+        return key.split(".")
+
+    def apply(self, config: List[str], label: str, **kwargs) -> None:
+        state_id, node_id, node_label = label.split(".")
+        map_entry = self._sdfg.node(int(state_id)).node(int(node_id))
+        
+        map_entry.range.ranges = [
+            r for list_param in config for map_param, r in zip(map_entry.map.params, map_entry.range.ranges)
+            if list_param == map_param
+        ]
+        map_entry.map.params = config
 
     def pre_evaluate(self, cutout: dace.SDFG, dreport: data_report.InstrumentedDataReport, measurements: int, **kwargs) -> Dict:
         cutout.instrument = self.instrument
