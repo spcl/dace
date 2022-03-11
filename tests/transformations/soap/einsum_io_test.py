@@ -17,14 +17,16 @@ def test_mttkrp_io():
     # j0-4 = fghij
     # einsum_str = 'af,bg,ch,di,ej,bcgh,fghij->abcde'
     # einsum_str = 'ab,ab->ab'
-    einsum_str = 'abc,jb,kc->ajk'
+    # einsum_str = 'abc,jb,kc->ajk'
+    # einsum_str = 'ijkl,ia,kc,ld->jacd'  # 4-mode TTMc
+    einsum_str = 'ijkl,ia,ja,ka->la'  # 4-mode MTTKRP
     # einsum_str = 'ijk,lj,mk->ilm'
     # decomp_params=[("p", 17), ("Ss", 1024), ("S0", 256), ("S1", 256), ("S2", 256), ("S3", 256)]
     # decomp_params=[("p", 64), ("Ss", 1024), ("S0", 6400 * 4), ("S1", 4400 * 4), ("S2", 7200 * 4), ("S3", 256)]
-    decomp_params = [("p", 64), ("Ss", 1024), ("S0", 1000), ("S1", 1000), ("S2", 1000), ("S3", 1000), ("S4", 1000)]
-    # decomp_params = [("p", 64), ("Ss", 1024)]
-    # for i in range(10):
-    #     decomp_params.append((f"S{i}", 2))
+    decomp_params = [("p", 64), ("Ss", 1024), ("S0", 200), ("S1", 200), ("S2", 200), ("S3", 200), ("S4", 200)]
+    decomp_params = [("p", 64), ("Ss", 1024)]
+    for i in range(10):
+        decomp_params.append((f"S{i}", 460))
     # # p = 128
     # # NI = 6400
     # # NJ = 7200
