@@ -47,7 +47,7 @@ class CutoutTuner(auto_tuner.AutoTuner):
         raise NotImplementedError
 
     def search(self, cutout: dace.SDFG, dreport: data_report.InstrumentedDataReport, measurements: int,
-                 **kwargs) -> Dict:
+               **kwargs) -> Dict:
         raise NotImplementedError
 
     def pre_evaluate(self, **kwargs) -> Dict:
@@ -106,15 +106,16 @@ class CutoutTuner(auto_tuner.AutoTuner):
                     try:
                         csdfg = sdfg.compile()
                     except cgx.CompilationError:
-                        print("WARNING: Compile failure")
+                        print("WARNING: Compilation failed")
                         return math.inf
-                    
+
                     for _ in range(repetitions):
                         csdfg(**arguments)
 
                     csdfg.finalize()
 
         report = sdfg.get_latest_report()
+        print(report)
         durations = next(iter(next(iter(report.durations.values())).values()))
         return np.median(np.array(durations))
 
@@ -144,8 +145,8 @@ class CutoutTuner(auto_tuner.AutoTuner):
 
         return tuning_report
 
-
-    def search(self, cutout: dace.SDFG, dreport: data_report.InstrumentedDataReport, measurements: int, **kwargs) -> Dict[str, float]:
+    def search(self, cutout: dace.SDFG, dreport: data_report.InstrumentedDataReport, measurements: int,
+               **kwargs) -> Dict[str, float]:
         try:
             kwargs = self.pre_evaluate(cutout=cutout, dreport=dreport, measurements=measurements, **kwargs)
         except KeyError:

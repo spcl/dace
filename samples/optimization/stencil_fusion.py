@@ -5,9 +5,12 @@ import dace
 import numpy as np
 
 from pathlib import Path
+from tqdm import tqdm
 
 from dace.optimization import cutout_tuner as ct
 from dace import optimization as optim
+from dace.transformation.subgraph import helpers
+from dace.transformation.subgraph import composite as comp
 
 def measure(sdfg, arguments):
     with dace.config.set_temporary('debugprint', value=False):
@@ -25,66 +28,89 @@ def measure(sdfg, arguments):
 
 if __name__ == '__main__':
 
-    sdfg_path = Path(os.environ["HOME"]) / "projects/tuning-dace/aha-expanded.sdfg"
+    sdfg_path = Path(os.environ["HOME"]) / "projects/tuning-dace/aha-expanded-2.sdfg"
     sdfg = dace.SDFG.from_file(sdfg_path)
     sdfg.instrument = dace.InstrumentationType.Timer
-    # sdfg = dace.SDFG.from_file(Path("/home/lukas/projects/autodace/") / "test_stencil.sdfg")
 
-    cache_path = Path(__file__).parent / ".dacecache"
-    shutil.rmtree(cache_path, ignore_errors=True)
+    sdfg.apply_gpu_transformations()
+    sdfg.simplify()
 
-    tuning_paths = Path(__file__).parent.rglob("*.tuning")
-    for path in tuning_paths:
-        os.remove(path)
+    do_not_transient = set()
+    visited = set()
+    for state in sdfg.nodes():
+        for node in state.data_nodes():
+            in_degree = state.in_degree(node)
+            out_degree = state.out_degree(node)
 
-    cutout_path = Path(__file__).parent / "cutouts"
-    shutil.rmtree(cutout_path, ignore_errors=True)
-    cutout_path.mkdir()
+            if in_degree == 0 or out_degree == 0 or node.data in visited:
+                do_not_transient.add(node.data)
+            visited.add(node.data)
 
-    # values = {}
-    # for v in sdfg.free_symbols:
-    #     values[str(v)] = np.int32(64)
+    
 
-    # sdfg.specialize(values)
+
 
     arguments = {}
     for name, array in sdfg.arrays.items():
-        # dtype = array.dtype
-        # shape_ = tuple(map(lambda dim: dace.symbolic.evaluate(dim, values), array.shape))
-        array.storage = dace.StorageType.GPU_Shared
+        if name not in do_not_transient:
+            array.transient = True
+        if array.transient:
+            continue
 
-        # array.shape = shape_
-        # array.total_size = dace.symbolic.evaluate(array.total_size, values)
-        # array.strides = tuple(map(lambda dim: dace.symbolic.evaluate(dim, values), array.strides))
+
         
-        if not array.transient:
-            data = dace.data.make_array_from_descriptor(array, np.random.rand(*array.shape))
-            arguments[name] = data
-
+        data = dace.data.make_array_from_descriptor(array, np.random.rand(*array.shape))
+        arguments[name] = data
+    
+    
     for state in sdfg.nodes():
-        for node in state.nodes():
-            if isinstance(node, dace.nodes.MapEntry):
-                node.schedule = dace.ScheduleType.GPU_Device
+        state.instrument = dace.InstrumentationType.GPU_Events
+        # for node in state.nodes():
+        #     if isinstance(node, dace.nodes.MapEntry):
+        #         node.map.instrument = dace.InstrumentationType.GPU_Events
 
     result = ct.CutoutTuner.dry_run(sdfg, **arguments)
 
     print("Initial version")
     measure(sdfg, arguments)
 
-    print("Fusing")
-    tuner = optim.MapFusionTuner(sdfg)
-    tuner.optimize(apply=True)
-    measure(sdfg, arguments)
+    tuner = optim.MapFusionTuner(sdfg, measurement=dace.InstrumentationType.GPU_Events)
+    for cutout, label in tqdm(list(tuner.cutouts())):
+        cutout_json = cutout.to_json()
+        for id, map_ids in tqdm(list(tuner.space(cutout))):
+            candidate = dace.SDFG.from_json(cutout_json)
+            maps_ = list(map(lambda m: candidate.start_state.node(m), map_ids))
+            subgraph = helpers.subgraph_from_maps(sdfg=candidate, graph=candidate.start_state, map_entries=maps_)
 
-    print("Permutation")
-    tuner = optim.MapPermutationTuner(sdfg)
-    tuner.optimize(apply=True)
-    measure(sdfg, arguments)
+            fusion = comp.CompositeFusion(subgraph, candidate.sdfg_id, candidate.node_id(candidate.start_state))
+            fusion.allow_tiling = True
+            if fusion.can_be_applied(candidate, subgraph):
+                fusion.apply(candidate)
 
-    print("Tiling")
-    tuner = optim.MapTilingTuner(sdfg)
-    tuner.optimize(apply=True)
-    measure(sdfg, arguments)
+                candidate_path = Path(__file__).parent / "cutouts" / f"{label}_{id}.sdfg"
+                candidate.save(candidate_path)
 
-    sdfg_path = Path(os.environ["HOME"]) / "projects/tuning-dace/aha-expanded_fused_permuted_tiled_cpu.sdfg"
-    sdfg.save(sdfg_path)
+
+    # print("Fusing")
+    # tuner = optim.MapFusionTuner(sdfg, measurement=dace.InstrumentationType.GPU_Events)
+    # tuner.optimize(apply=True)
+    # measure(sdfg, arguments)
+
+    # sdfg_path = Path(os.environ["HOME"]) / "projects/tuning-dace/aha-expanded_fused_gpu.sdfg"
+    # sdfg.save(sdfg_path)
+
+    # print("Tiling")
+    # tuner = optim.MapTilingTuner(sdfg, measurement=dace.InstrumentationType.GPU_Events)
+    # tuner.optimize(apply=True)
+    # measure(sdfg, arguments)
+
+    # sdfg_path = Path(os.environ["HOME"]) / "projects/tuning-dace/aha-expanded_fused_tiled_gpu.sdfg"
+    # sdfg.save(sdfg_path)
+
+    # print("Permutation")
+    # tuner = optim.MapPermutationTuner(sdfg, measurement=dace.InstrumentationType.GPU_Events)
+    # tuner.optimize(apply=True)
+    # measure(sdfg, arguments)
+
+    # sdfg_path = Path(os.environ["HOME"]) / "projects/tuning-dace/aha-expanded_fused_tiled_permuted_gpu.sdfg"
+    # sdfg.save(sdfg_path)

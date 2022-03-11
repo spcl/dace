@@ -1,8 +1,6 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
-
 import itertools
-import numpy as np
 
 from typing import Generator, Tuple, Dict, List
 
@@ -45,21 +43,26 @@ class MapPermutationTuner(cutout_tuner.CutoutTuner):
     def apply(self, config: List[str], label: str, **kwargs) -> None:
         state_id, node_id, node_label = label.split(".")
         map_entry = self._sdfg.node(int(state_id)).node(int(node_id))
-        
+
         map_entry.range.ranges = [
             r for list_param in config for map_param, r in zip(map_entry.map.params, map_entry.range.ranges)
             if list_param == map_param
         ]
         map_entry.map.params = config
 
-    def pre_evaluate(self, cutout: dace.SDFG, dreport: data_report.InstrumentedDataReport, measurements: int, **kwargs) -> Dict:
-        cutout.instrument = self.instrument
-        arguments = {}
-        for dnode in cutout.start_state.data_nodes():
-            if cutout.arrays[dnode.data].transient:
-                continue
+    def pre_evaluate(self, cutout: dace.SDFG, dreport: data_report.InstrumentedDataReport, measurements: int,
+                     **kwargs) -> Dict:
+        cutout.start_state.instrument = self.instrument
 
-            arguments[dnode.data] = dreport.get_first_version(dnode.data)
+        arguments = {}
+        for cstate in cutout.nodes():
+            for dnode in cstate.data_nodes():
+                array = cutout.arrays[dnode.data]
+                if array.transient:
+                    continue
+
+                data = dreport.get_first_version(dnode.data)
+                arguments[dnode.data] = data
 
         map_entry = None
         for node in cutout.start_state.nodes():
@@ -67,8 +70,17 @@ class MapPermutationTuner(cutout_tuner.CutoutTuner):
                 map_entry = node
                 break
         assert map_entry is not None
-                
-        new_kwargs = {"space_kwargs": {"map_entry": map_entry}, "cutout": cutout.to_json(), "map_entry_id": cutout.start_state.node_id(map_entry), "arguments": arguments, "measurements": measurements, "key": lambda point: ".".join(point)}
+
+        new_kwargs = {
+            "space_kwargs": {
+                "map_entry": map_entry
+            },
+            "cutout": cutout.to_json(),
+            "map_entry_id": cutout.start_state.node_id(map_entry),
+            "arguments": arguments,
+            "measurements": measurements,
+            "key": lambda point: ".".join(point)
+        }
         return new_kwargs
 
     def evaluate(self, config, cutout, map_entry_id: int, arguments: Dict, measurements: int, **kwargs) -> float:
