@@ -36,7 +36,7 @@ def sdfg_gen(subscripts: str, arrays: List[np.ndarray] = None, inp_dim: int = 30
             
 
     # Extract symbols
-    path_info = oe.contract_path(subscripts, *arrays)
+    path_info = oe.contract_path(subscripts, *arrays, optimize='optimal')
 
     counter = 0
     array_names = []
