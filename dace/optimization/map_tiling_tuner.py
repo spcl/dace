@@ -1,10 +1,9 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
-import numpy as np
 
 from typing import Generator, Tuple, Dict, List
 
-from dace import SDFG, dtypes
+from dace import dtypes
 from dace.optimization import cutout_tuner
 from dace.transformation import dataflow as df
 from dace.transformation import helpers as xfh
@@ -19,7 +18,9 @@ except (ImportError, ModuleNotFoundError):
 
 class MapTilingTuner(cutout_tuner.CutoutTuner):
 
-    def __init__(self, sdfg: SDFG, measurement: dtypes.InstrumentationType = dtypes.InstrumentationType.Timer) -> None:
+    def __init__(self,
+                 sdfg: dace.SDFG,
+                 measurement: dtypes.InstrumentationType = dtypes.InstrumentationType.Timer) -> None:
         super().__init__(task="MapTiling", sdfg=sdfg)
         self.instrument = measurement
 
@@ -38,10 +39,7 @@ class MapTilingTuner(cutout_tuner.CutoutTuner):
     def space(self, map_entry: dace.nodes.MapEntry) -> Generator[Tuple[int], None, None]:
         choices = [
             None,
-            (8, 8, 8),
-            (16, 16, 16),
-            (32, 32, 32),
-            (64, 8, 8),
+            (64, 8, 1),
         ]
 
         return choices
@@ -60,8 +58,10 @@ class MapTilingTuner(cutout_tuner.CutoutTuner):
         map_entry = self._sdfg.node(int(state_id)).node(int(node_id))
         df.MapTiling.apply_to(self._sdfg, map_entry=map_entry, options={"tile_sizes": config})
 
-    def pre_evaluate(self, cutout: dace.SDFG, dreport: data_report.InstrumentedDataReport, measurements: int, **kwargs) -> Dict:
-        cutout.instrument = self.instrument
+    def pre_evaluate(self, cutout: dace.SDFG, dreport: data_report.InstrumentedDataReport, measurements: int,
+                     **kwargs) -> Dict:
+        cutout.start_state.instrument = self.instrument
+
         arguments = {}
         for cstate in cutout.nodes():
             for dnode in cstate.data_nodes():
@@ -76,8 +76,17 @@ class MapTilingTuner(cutout_tuner.CutoutTuner):
                 map_entry = node
                 break
         assert map_entry is not None
-        
-        new_kwargs = {"space_kwargs": {"map_entry": map_entry}, "cutout": cutout.to_json(), "map_entry_id": cutout.start_state.node_id(map_entry), "arguments": arguments, "measurements": measurements, "key": lambda point: "None" if point is None else ".".join(map(lambda p: str(p), point))}
+
+        new_kwargs = {
+            "space_kwargs": {
+                "map_entry": map_entry
+            },
+            "cutout": cutout.to_json(),
+            "map_entry_id": cutout.start_state.node_id(map_entry),
+            "arguments": arguments,
+            "measurements": measurements,
+            "key": lambda point: "None" if point is None else ".".join(map(lambda p: str(p), point))
+        }
         return new_kwargs
 
     def evaluate(self, config, cutout, map_entry_id: int, arguments: Dict, measurements: int, **kwargs) -> float:
