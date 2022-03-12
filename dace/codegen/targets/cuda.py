@@ -1168,7 +1168,9 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
             if scope_entry == node:
                 continue
             if (isinstance(node, nodes.EntryNode) and node.map.schedule == dtypes.ScheduleType.GPU_Device):
-                create_grid_barrier = True
+                # Create grid barrier only if there is a synchronization requirement on nested GPU_Device maps
+                if any(p is not scope_entry for p in dfg_scope.predecessors(node)):
+                    create_grid_barrier = True
 
         self.create_grid_barrier = create_grid_barrier
         kernel_name = '%s_%d_%d_%d' % (scope_entry.map.label, sdfg.sdfg_id, sdfg.node_id(state),
@@ -1182,7 +1184,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         # Get parameters of subgraph
         kernel_args = dfg_scope.arglist()
 
-        # handle dynamic map inputs
+        # Handle dynamic map inputs
         for e in dace.sdfg.dynamic_map_inputs(state, scope_entry):
             kernel_args[str(e.src)] = e.src.desc(sdfg)
 
