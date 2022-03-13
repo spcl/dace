@@ -203,8 +203,8 @@ class Range(Subset):
         """ Returns the number of elements in each dimension. """
         offset = [-1 if (s < 0) == True else 1 for _, _, s in self.ranges]
 
-        if for_codegen == True:
-            int_ceil = sp.Function('int_ceil')
+        if for_codegen:
+            int_ceil = symbolic.int_ceil
             return [
                 ts * int_ceil(((iMax.approx if isinstance(iMax, symbolic.SymExpr) else iMax) + off -
                                (iMin.approx if isinstance(iMin, symbolic.SymExpr) else iMin)),
