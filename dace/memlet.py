@@ -14,6 +14,8 @@ from dace.frontend.python.astutils import unparse
 from dace.properties import (Property, make_properties, DataProperty, SubsetProperty, SymbolicProperty,
                              DebugInfoProperty, LambdaProperty)
 
+from dace.symbolic import simplify
+
 
 @make_properties
 class Memlet(object):
@@ -133,6 +135,19 @@ class Memlet(object):
         self.debuginfo = debuginfo
         self.allow_oob = allow_oob
 
+    def simplify_expr(self) -> None:
+        """
+        Simplifies all expressions in this memlet.
+        """
+        dace.serialize.simplify_all_properties(self)
+
+        if self.src_subset is not None:
+            self.src_subset.simplify_expr()
+
+        if self.dst_subset is not None:
+            self.dst_subset.simplify_expr()
+
+        self.num_accesses = simplify(self.num_accesses)
     @staticmethod
     def from_memlet(memlet: 'Memlet') -> 'Memlet':
         sbs = subsets.Range(memlet.subset.ndrange()) if memlet.subset is not None else None

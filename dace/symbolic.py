@@ -806,7 +806,12 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None):
 
 @lru_cache(maxsize=2048)
 def simplify(expr: SymbolicType) -> SymbolicType:
-    return sympy.simplify(expr)
+    if isinstance(expr, SymExpr):
+        expr._main_expr = sympy.simplify(expr.expr)
+        expr._approx_expr = sympy.simplify(expr.approx)
+        return expr
+    else:
+        return sympy.simplify(expr)
 
 
 class DaceSympyPrinter(sympy.printing.str.StrPrinter):

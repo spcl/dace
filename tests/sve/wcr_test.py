@@ -1,6 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
-from tests.codegen.sve.common import get_code
+from tests.sve.common import get_code
 import pytest
 from dace.codegen.targets.sve.util import NotSupportedError
 
@@ -50,3 +50,10 @@ def test_wcr_max():
 
     assert 'ReductionType::Max' in code
     assert 'svmaxv' in code
+
+
+
+if __name__ == '__main__':
+    test_wcr_sum()
+    test_wcr_min()
+    test_wcr_max()

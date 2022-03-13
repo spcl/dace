@@ -816,6 +816,19 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
         if edge.dst_conn in edge.dst.in_connectors:
             edge.dst.remove_in_connector(edge.dst_conn)
 
+    def simplify_expr(self) -> None:
+        """
+        Simplifies all expressions in the state.
+        """
+
+        serialize.simplify_all_properties(self)
+
+        for e in self.edges():
+            e.simplify_expr()
+
+        for n in self.nodes():
+            n.simplify_expr()
+
     def to_json(self, parent=None):
         # Create scope dictionary with a failsafe
         try:

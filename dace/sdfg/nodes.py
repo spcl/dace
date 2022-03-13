@@ -17,7 +17,7 @@ from dace.properties import (EnumProperty, Property, CodeProperty, LambdaPropert
                              ListProperty, SDFGReferenceProperty, DictProperty, LibraryImplementationProperty,
                              CodeBlock)
 from dace.frontend.operations import detect_reduction_type
-from dace.symbolic import pystr_to_symbolic
+from dace.symbolic import pystr_to_symbolic, simplify
 from dace import data, subsets as sbs, dtypes
 import pydoc
 import warnings
@@ -54,6 +54,12 @@ class Node(object):
 
     def validate(self, sdfg, state):
         pass
+
+    def simplify_expr(self) -> None:
+        """
+        Simplifies all expressions in the state.
+        """
+        dace.serialize.simplify_all_properties(self)
 
     def to_json(self, parent):
         labelstr = str(self)

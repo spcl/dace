@@ -3,7 +3,7 @@ import dace
 import numpy as np
 import scipy as sp
 
-import tests.codegen.sve.common as common
+import tests.sve.common as common
 import pytest
 
 N = dace.symbol('N')
@@ -55,3 +55,7 @@ def test_axpy():
     print("Difference:", diff)
     print("==== Program end ====")
     assert diff <= 1e-5
+
+
+if __name__ == '__main__':
+    test_axpy()

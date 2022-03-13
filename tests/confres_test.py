@@ -47,7 +47,11 @@ def test():
     red1[:] = dace.float32(0)
     red2[:] = dace.float32(0)
 
-    confres_test.compile(A, B, red1, red2)
+    sdfg = confres_test.to_sdfg(simplify=True)
+    sdfg.simplify()
+    sdfg.validate()
+    sdfg.compile()
+
 
 
 if __name__ == "__main__":

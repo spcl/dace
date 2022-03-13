@@ -380,6 +380,9 @@ class typeclass(object):
             return True
         return False
 
+    def simplify_expr(self):
+        pass
+
     def to_json(self):
         if self.type is None:
             return None

@@ -1,7 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
-import tests.codegen.sve.common as common
+import tests.sve.common as common
 import pytest
 
 N = dace.symbol('N', positive=True)
@@ -74,3 +74,7 @@ def test_filter():
 
     print("==== Program end ====")
     assert diff <= 1e-5
+
+
+if __name__ == '__main__':
+    test_filter()

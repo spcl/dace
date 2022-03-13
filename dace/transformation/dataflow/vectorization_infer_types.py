@@ -1,6 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """
-    SVE Infer Types: This module is responsible for inferring connector types in the SDFG.
+    Infer Types: This module is responsible for inferring connector types in the SDFG.
 """
 from typing import *
 from dace.sdfg.graph import MultiConnectorEdge, Graph, SubgraphView

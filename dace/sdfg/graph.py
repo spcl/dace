@@ -5,6 +5,7 @@ from collections import deque, OrderedDict
 import itertools
 import networkx as nx
 from dace.dtypes import deduplicate
+from dace.memlet import Memlet
 import dace.serialize
 from typing import Any, Callable, Generic, Iterable, List, Sequence, TypeVar, Union
 
@@ -49,6 +50,13 @@ class Edge(Generic[T]):
         yield self._src
         yield self._dst
         yield self._data
+
+    def simplify_expr(self) -> None:
+        """
+        Simplifies all expressions if data is a memlet.
+        """
+        if isinstance(self.data, Memlet):
+            self.data.simplify_expr()
 
     def to_json(self, parent_graph):
         memlet_ret = self.data.to_json()
@@ -173,6 +181,16 @@ class MultiConnectorEdge(MultiEdge, Generic[T]):
 class Graph(Generic[NodeT, EdgeT]):
     def _not_implemented_error(self):
         return NotImplementedError("Not implemented for " + str(type(self)))
+
+    def simplify_expr(self):
+        dace.serialize.simplify_all_properties(self)
+
+        for n in self.nodes():
+            n.simplify_expr()
+
+        for e in self.edges():
+            e.simplify_expr()
+         
 
     def to_json(self):
         ret = {

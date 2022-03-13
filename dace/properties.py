@@ -11,9 +11,10 @@ import numpy as np
 import dace.subsets as sbs
 import dace
 import dace.serialize
-from dace.symbolic import pystr_to_symbolic
+from dace.symbolic import SymExpr, pystr_to_symbolic, simplify
 from dace.dtypes import DebugInfo
 from numbers import Integral, Number
+import sympy
 from typing import List, Set, Type, Union, TypeVar, Generic
 
 T = TypeVar('T')
@@ -287,6 +288,9 @@ class Property(Generic[T]):
     def from_json(self):
         return self._from_json
 
+    def simplify_expr(self, obj, val):
+        pass
+
     @property
     def to_json(self):
         return self._to_json
@@ -457,6 +461,13 @@ def indirect_properties(indirect_class, indirect_function, override=False):
 class OrderedDictProperty(Property):
     """ Property type for ordered dicts
     """
+    def simplify_expr(self, obj, val):
+        if val is None:
+            return
+        for key in val:
+            if isinstance(val[key], (sympy.Basic, SymExpr)):
+                val[key] = simplify(val[key])
+
     def to_json(self, d):
 
         # The ordered dict is more of a list than a dict.
@@ -504,6 +515,14 @@ class ListProperty(Property[List[T]]):
     @staticmethod
     def to_string(l):
         return str(l)
+
+    def simplify_expr(self, obj, val):
+        if val is None:
+            return
+
+        for i in range(len(val)):
+            if isinstance(val[i], (sympy.Basic, SymExpr)):
+                val[i] = simplify(val[i])
 
     def to_json(self, l):
         if l is None:
@@ -612,6 +631,13 @@ class DictProperty(Property):
     def to_string(d):
         return str(d)
 
+    def simplify_expr(self, obj, val):
+        if val is None:
+            return
+        for key in val:
+            if isinstance(val[key], (sympy.Basic, SymExpr)):
+                val[key] = simplify(val[key])
+
     def to_json(self, d):
         if d is None:
             return None
@@ -694,6 +720,10 @@ class EnumProperty(Property):
 
 
 class SDFGReferenceProperty(Property):
+    def simplify_expr(self, obj, val):
+        if val is not None:
+            val.simplify_expr()
+
     def to_json(self, obj):
         if obj is None:
             return None
@@ -721,6 +751,12 @@ class RangeProperty(Property):
     @property
     def dtype(self):
         return sbs.Range
+
+    def simplify_expr(self, obj, val):
+
+        if val is None:
+            return
+        val.simplify_expr()
 
     @staticmethod
     def to_string(obj):
@@ -841,6 +877,19 @@ class SetProperty(Property):
     @staticmethod
     def from_string(s):
         return [eval(i) for i in re.sub(r"[\{\}\(\)\[\]]", "", s).split(",")]
+
+    def simplify_expr(self, obj, val):
+
+        if val is None:
+            return
+
+        set_list = list(val)
+
+        for id in range(len(set_list)):
+            if isinstance(set_list[id], (sympy.Basic, SymExpr)):
+                set_list[id] = simplify(set_list[id])
+
+        self.__set__(obj, set(set_list))
 
     def to_json(self, l):
         return list(sorted(l))
@@ -1109,6 +1158,11 @@ class SubsetProperty(Property):
             return 'None'
         raise TypeError
 
+    def simplify_expr(self, obj, val):
+
+        if val is not None:
+            val.simplify_expr()
+
     def to_json(self, val):
         if val is None:
             return None
@@ -1134,6 +1188,15 @@ class SymbolicProperty(Property):
             val = SymbolicProperty.from_string(str(val))
 
         super(SymbolicProperty, self).__set__(obj, val)
+
+    def simplify_expr(self, obj, val):
+
+        if val is None:
+            return
+
+        new_val = simplify(val)
+        # TODO: fix this
+        # self.__set__(obj, new_val)
 
     @staticmethod
     def from_string(s):
@@ -1231,6 +1294,14 @@ class ShapeProperty(Property):
     @staticmethod
     def to_string(obj):
         return ", ".join(map(str, obj))
+
+    def simplify_expr(self, obj, val):
+        if val is not None:
+            shape_list = list(val)
+            for i in range(len(shape_list)):
+                shape_list[i] = simplify(shape_list[i])
+
+            super(ShapeProperty, self).__set__(obj, tuple(shape_list))
 
     def to_json(self, obj):
         if obj is None:

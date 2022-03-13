@@ -179,6 +179,13 @@ class Data(object):
             raise TypeError('Shape must be a list or tuple of integer values ' 'or symbols')
         return True
 
+    def simplify_expr(self) -> None:
+        """
+        Simplifies all expressions in the node.
+        """
+
+        serialize.simplify_all_properties(self)
+
     def to_json(self):
         attrs = serialize.all_properties_to_json(self)
 

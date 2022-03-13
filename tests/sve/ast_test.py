@@ -2,7 +2,7 @@
 from dace.codegen.targets.sve.util import NotSupportedError
 import dace
 import dace.dtypes
-from tests.codegen.sve.common import get_code
+from tests.sve.common import get_code
 import pytest
 from dace.codegen.targets.sve.type_compatibility import IncompatibleTypeError
 
@@ -138,3 +138,16 @@ def test_fused_operations():
 
     # No fusion if less than 2 vectors
     assert 'svadd' in code
+
+
+
+if __name__ == '__main__':
+    test_assign_scalar()
+    test_assign_pointer()
+    test_compare_scalar_vector()
+    test_if_block()
+    test_assign_new_variable()
+    test_math_functions()
+    test_fused_operations()
+
+

@@ -227,6 +227,9 @@ class InterstateEdge(object):
 
         return {k: infer_expr_type(v, alltypes) for k, v in self.assignments.items()}
 
+    def simplify_expr(self):
+        dace.serialize.simplify_all_properties(self)
+
     def to_json(self, parent=None):
         return {
             'type': type(self).__name__,
@@ -385,6 +388,19 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         tree of SDFGs (top-level SDFG is 0, nested SDFGs are greater).
         """
         return self.sdfg_list.index(self)
+
+    def simplify_expr(self) -> None:
+        """ Simplifies all expression in the SDFG."""
+
+        # # Location in the SDFG list (only for root SDFG)
+        if self.parent_sdfg is None:
+            self.reset_sdfg_list()
+
+        super().simplify_expr()
+
+        for data_str in self._arrays:
+            data = self.data(data_str)
+            data.simplify_expr()
 
     def to_json(self, hash=False):
         """ Serializes this object to JSON format.

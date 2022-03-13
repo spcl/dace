@@ -1,6 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
-from tests.codegen.sve.common import get_code
+from tests.sve.common import get_code
 import pytest
 
 N = dace.symbol('N')
@@ -22,3 +22,7 @@ def test_stream_push():
 
     assert 'stream.push' in code
     assert 'svcompact' in code
+
+
+if __name__ == '__main__':
+    test_stream_push()

@@ -354,6 +354,9 @@ class PatternTransformation(TransformationBase):
         string += self.match_to_str(graph)
         return string
 
+    def simplify_expr(self):
+        serialize.simplify_all_properties(self)
+
     def to_json(self, parent=None) -> Dict[str, Any]:
         props = serialize.all_properties_to_json(self)
         return {'type': 'PatternTransformation', 'transformation': type(self).__name__, **props}
@@ -616,6 +619,10 @@ class ExpandTransformation(PatternTransformation):
         state.remove_node(node)
         type(self).postprocessing(sdfg, state, expansion)
 
+
+    def simplify_expr(self):
+        serialize.simplify_all_properties(self)
+
     def to_json(self, parent=None) -> Dict[str, Any]:
         props = serialize.all_properties_to_json(self)
         return {
@@ -800,6 +807,9 @@ class SubgraphTransformation(TransformationBase):
         # Apply to SDFG
         return instance.apply(sdfg)
 
+    def simplify_expr(self):
+        serialize.simplify_all_properties(self)
+        
     def to_json(self, parent=None):
         props = serialize.all_properties_to_json(self)
         return {'type': 'SubgraphTransformation', 'transformation': type(self).__name__, **props}

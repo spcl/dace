@@ -170,7 +170,15 @@ def all_properties_to_json(object_with_properties):
     return retdict
 
 
-def set_properties_from_json(object_with_properties, json_obj, context=None, ignore_properties=None):
+def simplify_all_properties(object_with_properties):
+    for x, v in object_with_properties.properties():
+        x.simplify_expr(x, v)
+
+
+def set_properties_from_json(object_with_properties,
+                             json_obj,
+                             context=None,
+                             ignore_properties=None):
     ignore_properties = ignore_properties or set()
     try:
         attrs = json_obj['attributes']
@@ -216,6 +224,11 @@ def set_properties_from_json(object_with_properties, json_obj, context=None, ign
                 raise
 
         setattr(object_with_properties, prop_name, val)
+
+        #Simplify volume to pass serialization tests with vectorization transformation
+        if prop_name == 'volume':
+            object_with_properties.volume = \
+                 object_with_properties.volume.simplify()
 
     remaining_properties = source_properties - ignore_properties
     # Ignore all metadata "properties" saved for editing
