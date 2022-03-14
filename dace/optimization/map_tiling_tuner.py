@@ -65,10 +65,12 @@ class MapTilingTuner(cutout_tuner.CutoutTuner):
         arguments = {}
         for cstate in cutout.nodes():
             for dnode in cstate.data_nodes():
-                if cutout.arrays[dnode.data].transient:
+                array = cutout.arrays[dnode.data]
+                if array.transient:
                     continue
 
-                arguments[dnode.data] = dreport.get_first_version(dnode.data)
+                data = dreport.get_first_version(dnode.data)
+                arguments[dnode.data] = dace.data.make_array_from_descriptor(array, data)
 
         map_entry = None
         for node in cutout.start_state.nodes():
@@ -92,7 +94,7 @@ class MapTilingTuner(cutout_tuner.CutoutTuner):
     def evaluate(self, config, cutout, map_entry_id: int, arguments: Dict, measurements: int, **kwargs) -> float:
         cutout_ = dace.SDFG.from_json(cutout)
         map_ = cutout_.start_state.node(map_entry_id)
-        if config is not None:
+        if config == "None":
             df.MapTiling.apply_to(cutout_, map_entry=map_, options={"tile_sizes": config})
 
         return self.measure(cutout_, arguments, measurements)

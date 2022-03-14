@@ -62,7 +62,7 @@ class MapPermutationTuner(cutout_tuner.CutoutTuner):
                     continue
 
                 data = dreport.get_first_version(dnode.data)
-                arguments[dnode.data] = data
+                arguments[dnode.data] = dace.data.make_array_from_descriptor(array, data)
 
         map_entry = None
         for node in cutout.start_state.nodes():

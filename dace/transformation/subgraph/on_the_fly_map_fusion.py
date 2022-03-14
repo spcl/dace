@@ -1,5 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
+import random
+
 import dace
 
 from collections import defaultdict
@@ -11,8 +13,7 @@ from dace.transformation import transformation
 @make_properties
 class OnTheFlyMapFusion(transformation.SubgraphTransformation):
 
-    @staticmethod
-    def can_be_applied(state, parent_map_entry, child_map_entry):
+    def can_be_applied(self, state: dace.SDFGState, sdfg: dace.SDFG, parent_map_entry, child_map_entry):
         parent_map_exit = state.exit_node(parent_map_entry)
         nodes = sdutil.nodes_in_all_simple_paths(state, parent_map_exit, child_map_entry)
         nodes.remove(child_map_entry)
@@ -21,7 +22,49 @@ class OnTheFlyMapFusion(transformation.SubgraphTransformation):
             if not isinstance(node, dace.nodes.AccessNode):
                 return False
 
+            if state.in_degree(node) > 1 or state.out_degree(node) > 1:
+                return False
+
         return True
+
+    def apply(self, state: dace.SDFGState, sdfg: dace.SDFG, parent_map_entry, child_map_entry):
+        parent_map_exit = state.exit_node(parent_map_entry)
+        nodes = sdutil.nodes_in_all_simple_paths(state, parent_map_exit, child_map_entry)
+        array_accesses = []
+        for node in nodes:
+            if not isinstance(node, dace.nodes.AccessNode):
+                continue
+
+            array_accesses.append(node)
+
+        OnTheFlyMapFusion._update_map_connectors(state, parent_map_entry, child_map_entry, array_accesses)
+        self._replicate_first_map(
+            sdfg, parent_map_entry, parent_map_exit, child_map_entry, array_accesses
+        )
+        state.remove_nodes_from(
+            state.all_nodes_between(parent_map_entry, parent_map_exit) | {
+                parent_map_entry, parent_map_exit }
+        )
+
+        for node in state.nodes():
+            if not isinstance(node, dace.nodes.AccessNode):
+                continue
+            
+            if state.in_degree(node) == 0 and state.out_degree(node) == 0:
+                state.remove_node(node)
+
+
+    @staticmethod
+    def _update_map_connectors(state, parent_map_entry, child_map_entry, array_accesses):
+        for array_access in array_accesses:
+            for edge in state.edges_between(array_access, child_map_entry):
+                state.remove_edge_and_connectors(edge)
+
+        for edge in state.in_edges(parent_map_entry):
+            if child_map_entry.add_in_connector(edge.dst_conn):
+                state.add_edge(edge.src, edge.src_conn, child_map_entry, edge.dst_conn, edge.data)
+            else:
+                print("Error")
 
     @staticmethod
     def _memlet_offsets(base_memlet, offset_memlet):
@@ -36,21 +79,6 @@ class OnTheFlyMapFusion(transformation.SubgraphTransformation):
         return tuple(
             offset(b, o) for b, o in zip(base_memlet.subset.ranges, offset_memlet.subset.ranges)
         )
-
-    @staticmethod
-    def _update_map_connectors(state, parent_map_entry, child_map_entry, array_accesses):
-        """Remove unused connector (of the to-be-replaced arrays) from second
-        map entry, add new connectors to second map entry for the inputs
-        used in the first map’s tasklets.
-        """
-        for array_access in array_accesses:
-            for edge in state.edges_between(array_access, child_map_entry):
-                state.remove_edge_and_connectors(edge)
-
-            state.remove_node(array_access)
-
-        for edge in state.in_edges(parent_map_entry):
-            state.add_edge(edge.src, edge.src_conn, child_map_entry, edge.dst_conn, edge.data)
 
     @staticmethod
     def _read_offsets(state, array_name, first_map_exit, second_map_entry):
@@ -139,26 +167,3 @@ class OnTheFlyMapFusion(transformation.SubgraphTransformation):
 
                 for edge in edges:
                     state.add_edge(tmp_access, None, edge.dst, edge.dst_conn, dace.Memlet(tmp_name))
-
-    def apply(self, sdfg: dace.SDFG, parent_map_entry, child_map_entry):
-        state = sdfg.node(self.state_id)
-        parent_map_exit = state.exit_node(parent_map_entry)
-
-        parent_exit = state.exit_node(parent_map_entry)
-        nodes = sdutil.nodes_in_all_simple_paths(state, parent_exit, child_map_entry)
-        array_accesses = []
-        for node in nodes:
-            if not isinstance(node, dace.nodes.AccessNode):
-                continue
-
-            array_accesses.append(node)
-
-
-        OnTheFlyMapFusion._update_map_connectors(state, parent_map_entry, child_map_entry, array_accesses)
-        self._replicate_first_map(
-            sdfg, parent_map_entry, parent_map_exit, child_map_entry, array_accesses
-        )
-        state.remove_nodes_from(
-            state.all_nodes_between(parent_map_entry, parent_map_exit) | {
-                parent_map_entry, parent_map_exit }
-        )

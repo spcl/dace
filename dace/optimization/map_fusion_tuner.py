@@ -51,12 +51,29 @@ class MapFusionTuner(cutout_tuner.CutoutTuner):
         cutout = cutter.cutout_state(state, *(nodes), make_copy=False)
 
         map_ids = config[1]
-        maps_ = list(map(lambda m: cutout.start_state.node(m), map_ids))
-        subgraph = helpers.subgraph_from_maps(sdfg=cutout, graph=cutout.start_state, map_entries=maps_)
-        candidate = cutter.cutoutstate(cutout.start_state, *(subgraph.nodes()), make_copy=False)
-        
-        map_fusion = sg.MapFusion(subgraph, candidate.sdfg_id, candidate.node_id(candidate.start_state))
-        map_fusion.apply(candidate, candidate.start_state)
+        maps_ = list(map(cutout.start_state.node, map_ids))
+        subgraph = helpers.subgraph_from_maps(sdfg=self._sdfg, graph=state, map_entries=maps_)
+
+        map_fusion = sg.MapFusion(subgraph, self._sdfg.sdfg_id, state_id)
+        if map_fusion.can_be_applied(state, self._sdfg):
+            map_fusion.apply(state, self._sdfg)
+
+        # map_ids_ = []
+        # for node_id in map_ids:
+        #     try:
+        #         cutout.start_state.node(node_id)
+        #         map_ids_.append(node_id)
+        #     except:
+        #         pass
+
+        # maps_ = list(map(cutout.start_state.node, map_ids_))
+        # subgraph = helpers.subgraph_from_maps(sdfg=cutout, graph=cutout.start_state, map_entries=maps_)
+        # subgraph_fusion = sg.CompositeFusion(subgraph, cutout.sdfg_id, cutout.node_id(cutout.start_state))
+        # subgraph_fusion.allow_tiling = True
+        # subgraph_fusion.schedule_innermaps = dace.ScheduleType.GPU_Device
+        # if subgraph_fusion.can_be_applied(cutout, subgraph):
+        #     subgraph_fusion.apply(cutout)
+
 
     def space(self, cutout: dace.SDFG) -> Generator[List[bool], None, None]:
         subgraphs = en.ConnectedEnumerator(cutout, cutout.start_state)
@@ -91,8 +108,8 @@ class MapFusionTuner(cutout_tuner.CutoutTuner):
         return new_kwargs
 
     def evaluate(self, config, cutout, arguments: Dict, measurements: int, **kwargs) -> float:
-        cutout_ = dace.SDFG.from_json(cutout)
-        for node in cutout_.start_state:
+        candidate = dace.SDFG.from_json(cutout)
+        for node in candidate.start_state:
             if isinstance(node, dace.nodes.MapEntry):
                 break
         else:
@@ -101,27 +118,39 @@ class MapFusionTuner(cutout_tuner.CutoutTuner):
 
         if config[0] == 0:
             # Baseline
-            return self.measure(cutout_, arguments, measurements)
+            return self.measure(candidate, arguments, measurements)
 
         map_ids = config[1]
         if len(map_ids) < 2:
             return math.inf
 
-        # Check
-        maps_ = list(map(lambda m: cutout_.start_state.node(m), map_ids))
-        subgraph = helpers.subgraph_from_maps(sdfg=cutout_, graph=cutout_.start_state, map_entries=maps_)
-        candidate = cutter.cutout_state(cutout_.start_state, *(subgraph.nodes()), make_copy=False)
-        
+        maps_ = list(map(candidate.start_state.node, map_ids))
+        subgraph = helpers.subgraph_from_maps(sdfg=candidate, graph=candidate.start_state, map_entries=maps_)
+
+        changed = False
         map_fusion = sg.MapFusion(subgraph, candidate.sdfg_id, candidate.node_id(candidate.start_state))
-        map_fusion.apply(candidate, candidate.start_state)
+        if map_fusion.can_be_applied(candidate.start_state, candidate):
+            map_fusion.apply(candidate.start_state, candidate)
+            changed = True
 
-        # expansion = sg.MultiExpansion(subgraph, candidate.sdfg_id, candidate.node_id(candidate.start_state))
-        # if expansion.can_be_applied(candidate, subgraph):
-        #     expansion.apply(candidate)
+        # map_ids_ = []
+        # for node_id in map_ids:
+        #     try:
+        #         candidate.start_state.node(node_id)
+        #         map_ids_.append(node_id)
+        #     except:
+        #         pass
 
-        # subgraph_fusion = sg.SubgraphFusion(subgraph, candidate, candidate.node_id(candidate.start_state))
-        # subgraph_view = SubgraphView(candidate.start_state._graph, subgraph_nodes=candidate.start_state.nodes())
-        # if subgraph_fusion.can_be_applied(candidate, subgraph_view):
+        # maps_ = list(map(candidate.start_state.node, map_ids_))
+        # subgraph = helpers.subgraph_from_maps(sdfg=candidate, graph=candidate.start_state, map_entries=maps_)
+        # subgraph_fusion = sg.CompositeFusion(subgraph, candidate.sdfg_id, candidate.node_id(candidate.start_state))
+        # subgraph_fusion.allow_tiling = True
+        # subgraph_fusion.schedule_innermaps = dace.ScheduleType.GPU_Device
+        # if subgraph_fusion.can_be_applied(candidate, subgraph):
         #     subgraph_fusion.apply(candidate)
+        #     changed = True
+
+        if not changed:
+            return math.inf
 
         return self.measure(candidate, arguments, measurements)

@@ -69,65 +69,25 @@ if __name__ == '__main__':
     print("Initial version")
     measure(sdfg, arguments)
 
-    # tuner = optim.MapFusionTuner(sdfg, measurement=dace.InstrumentationType.GPU_Events)
-    # for cutout, label in tqdm(list(tuner.cutouts())):
-    #     cutout_json = cutout.to_json()
-    #     for id, map_ids in tqdm(list(tuner.space(cutout))):
-    #         candidate = dace.SDFG.from_json(cutout_json)
-    #         maps_ = list(map(lambda m: candidate.start_state.node(m), map_ids))
-    #         subgraph = helpers.subgraph_from_maps(sdfg=candidate, graph=candidate.start_state, map_entries=maps_)
-
-    #         fusion = comp.CompositeFusion(subgraph, candidate.sdfg_id, candidate.node_id(candidate.start_state))
-    #         fusion.allow_tiling = True
-    #         if fusion.can_be_applied(candidate, subgraph):
-    #             fusion.apply(candidate)
-
-    #             candidate_path = Path(__file__).parent / "cutouts" / f"{label}_{id}.sdfg"
-    #             candidate.save(candidate_path)
-
-
     tuner = optim.MapFusionTuner(sdfg, measurement=dace.InstrumentationType.GPU_Events)
-    for cutout, cutout_label in tuner.cutouts():
-        cutout_json = cutout.to_json()
-        for i, map_ids in tuner.space(cutout):
-            if len(map_ids) < 2:
-                continue
+    tuner.optimize(apply=True)
+    measure(sdfg, arguments)
 
-            cutout_ = dace.SDFG.from_json(cutout_json)
-            maps_ = list(map(lambda m: cutout_.start_state.node(m), map_ids))
-            subgraph = helpers.subgraph_from_maps(sdfg=cutout_, graph=cutout_.start_state, map_entries=maps_)
-            candidate = cutter.cutout_state(cutout_.start_state, *(subgraph.nodes()), make_copy=False)
+    sdfg_path = Path(os.environ["HOME"]) / "projects/tuning-dace/aha-expanded_fused.sdfg"
+    sdfg.save(sdfg_path)
 
-            map_fusion = sg.MapFusion(subgraph, candidate.sdfg_id, candidate.node_id(candidate.start_state))
-            if sg.MapFusion.can_be_applied(candidate, candidate.start_state):
-                map_fusion.apply(candidate, candidate.start_state)
+    print("Permutation")
+    tuner = optim.MapPermutationTuner(sdfg, measurement=dace.InstrumentationType.GPU_Events)
+    tuner.optimize(apply=True)
+    measure(sdfg, arguments)
 
-                path = Path(__file__).parent / "cutouts"
-                candidate.save(path / f"{cutout_label}_{i}.sdfg")
-            else:
-                print("No")
+    sdfg_path = Path(os.environ["HOME"]) / "projects/tuning-dace/aha-expanded_fused_permuted.sdfg"
+    sdfg.save(sdfg_path)
 
-    # tuner.optimize(apply=True)
-    # measure(sdfg, arguments)
+    print("Tiling")
+    tuner = optim.MapTilingTuner(sdfg, measurement=dace.InstrumentationType.GPU_Events)
+    tuner.optimize(apply=True)
+    measure(sdfg, arguments)
 
-    # sdfg_path = Path(os.environ["HOME"]) / "projects/tuning-dace/aha-expanded_fused.sdfg"
-    # sdfg.save(sdfg_path)
-
-    # sdfg_path = Path(os.environ["HOME"]) / "projects/tuning-dace/aha-expanded_fused_gpu.sdfg"
-    # sdfg.save(sdfg_path)
-
-    # print("Permutation")
-    # tuner = optim.MapPermutationTuner(sdfg, measurement=dace.InstrumentationType.GPU_Events)
-    # tuner.optimize(apply=True)
-    # measure(sdfg, arguments)
-
-    # sdfg_path = Path(os.environ["HOME"]) / "projects/tuning-dace/aha-expanded_fused_tiled_permuted_gpu.sdfg"
-    # sdfg.save(sdfg_path)
-
-    # print("Tiling")
-    # tuner = optim.MapTilingTuner(sdfg, measurement=dace.InstrumentationType.GPU_Events)
-    # tuner.optimize(apply=True)
-    # measure(sdfg, arguments)
-
-    # sdfg_path = Path(os.environ["HOME"]) / "projects/tuning-dace/aha-expanded_fused_tiled_gpu.sdfg"
-    # sdfg.save(sdfg_path)
+    sdfg_path = Path(os.environ["HOME"]) / "projects/tuning-dace/aha-expanded_fused_permuted_tiled.sdfg"
+    sdfg.save(sdfg_path)
