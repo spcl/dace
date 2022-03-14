@@ -15,6 +15,8 @@ class OnTheFlyMapFusion(transformation.SubgraphTransformation):
     def can_be_applied(state, parent_map_entry, child_map_entry):
         parent_map_exit = state.exit_node(parent_map_entry)
         nodes = sdutil.nodes_in_all_simple_paths(state, parent_map_exit, child_map_entry)
+        nodes.remove(child_map_entry)
+        nodes.remove(parent_map_exit)
         for node in nodes:
             if not isinstance(node, dace.nodes.AccessNode):
                 return False

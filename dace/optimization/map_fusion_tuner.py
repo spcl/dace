@@ -8,7 +8,6 @@ from dace import SDFG, dtypes
 from dace.optimization import cutout_tuner
 from dace.sdfg.analysis import cutout as cutter
 from dace.codegen.instrumentation.data import data_report
-from dace.sdfg.graph import SubgraphView
 
 from dace.transformation import subgraph as sg
 from dace.transformation.estimator import enumeration as en
@@ -52,17 +51,12 @@ class MapFusionTuner(cutout_tuner.CutoutTuner):
         cutout = cutter.cutout_state(state, *(nodes), make_copy=False)
 
         map_ids = config[1]
-        maps_ = map(lambda m: cutout.start_state.node(m), map_ids)
-        subgraph = helpers.subgraph_from_maps(sdfg=self._sdfg, graph=state, map_entries=maps_)
+        maps_ = list(map(lambda m: cutout.start_state.node(m), map_ids))
+        subgraph = helpers.subgraph_from_maps(sdfg=cutout, graph=cutout.start_state, map_entries=maps_)
+        candidate = cutter.cutoutstate(cutout.start_state, *(subgraph.nodes()), make_copy=False)
         
-        
-        fusion = comp.CompositeFusion(subgraph, self._sdfg.sdfg_id, state_id)
-        fusion.allow_tiling = True
-        if not fusion.can_be_applied(self._sdfg, subgraph):
-            raise ValueError("Invalid config")
-
-        print(f"Fusing {len(map_ids)} maps in state {state.label}")
-        fusion.apply(self._sdfg)
+        map_fusion = sg.MapFusion(subgraph, candidate.sdfg_id, candidate.node_id(candidate.start_state))
+        map_fusion.apply(candidate, candidate.start_state)
 
     def space(self, cutout: dace.SDFG) -> Generator[List[bool], None, None]:
         subgraphs = en.ConnectedEnumerator(cutout, cutout.start_state)
@@ -116,20 +110,18 @@ class MapFusionTuner(cutout_tuner.CutoutTuner):
         # Check
         maps_ = list(map(lambda m: cutout_.start_state.node(m), map_ids))
         subgraph = helpers.subgraph_from_maps(sdfg=cutout_, graph=cutout_.start_state, map_entries=maps_)
-
-        # TODO: Different fusions necessary?
-
         candidate = cutter.cutout_state(cutout_.start_state, *(subgraph.nodes()), make_copy=False)
+        
         map_fusion = sg.MapFusion(subgraph, candidate.sdfg_id, candidate.node_id(candidate.start_state))
         map_fusion.apply(candidate, candidate.start_state)
 
-        expansion = sg.MultiExpansion(subgraph, candidate.sdfg_id, candidate.node_id(candidate.start_state))
-        if expansion.can_be_applied(candidate, subgraph):
-            expansion.apply(candidate)
+        # expansion = sg.MultiExpansion(subgraph, candidate.sdfg_id, candidate.node_id(candidate.start_state))
+        # if expansion.can_be_applied(candidate, subgraph):
+        #     expansion.apply(candidate)
 
-        subgraph_fusion = sg.SubgraphFusion(subgraph, candidate, candidate.node_id(candidate.start_state))
-        subgraph_view = SubgraphView(candidate.start_state._graph, subgraph_nodes=candidate.start_state.nodes())
-        if subgraph_fusion.can_be_applied(candidate, subgraph_view):
-            subgraph_fusion.apply(candidate)
+        # subgraph_fusion = sg.SubgraphFusion(subgraph, candidate, candidate.node_id(candidate.start_state))
+        # subgraph_view = SubgraphView(candidate.start_state._graph, subgraph_nodes=candidate.start_state.nodes())
+        # if subgraph_fusion.can_be_applied(candidate, subgraph_view):
+        #     subgraph_fusion.apply(candidate)
 
         return self.measure(candidate, arguments, measurements)

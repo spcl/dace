@@ -58,7 +58,6 @@ class MapFusion(transformation.SubgraphTransformation):
                 parents = parent_dict[child]
                 while len(parents) > 0 and not applied:
                     parent = parents.pop(0)
-                    
                     fusion = OnTheFlyMapFusion(state, sdfg_id=sdfg.sdfg_id, state_id=sdfg.node_id(state))
                     if OnTheFlyMapFusion.can_be_applied(state, parent, child):
                         fusion.apply(sdfg, parent, child)
