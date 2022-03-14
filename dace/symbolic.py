@@ -569,6 +569,26 @@ class int_ceil(sympy.Function):
         return True
 
 
+class OR(sympy.Function):
+    @classmethod
+    def eval(cls, x, y):
+        if x.is_Boolean and y.is_Boolean:
+            return x or y
+
+    def _eval_is_boolean(self):
+        return True
+
+
+class AND(sympy.Function):
+    @classmethod
+    def eval(cls, x, y):
+        if x.is_Boolean and y.is_Boolean:
+            return x and y
+
+    def _eval_is_boolean(self):
+        return True
+
+
 def sympy_intdiv_fix(expr):
     """ Fix for SymPy printing out reciprocal values when they should be
         integral in "ceiling/floor" sympy functions.
@@ -763,8 +783,17 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None):
 
     if isinstance(expr, (SymExpr, sympy.Basic)):
         return expr
-    if isinstance(expr, str) and dtypes.validate_name(expr):
-        return symbol(expr)
+    if isinstance(expr, str):
+        try:
+            return sympy.Integer(int(expr))
+        except ValueError:
+            pass
+        try:
+            return sympy.Float(float(expr))
+        except ValueError:
+            pass
+        if dtypes.validate_name(expr):
+            return symbol(expr)
 
     symbol_map = symbol_map or {}
     locals = {
@@ -779,8 +808,8 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None):
         'floor': sympy.floor,
         'ceil': sympy.ceiling,
         # Convert and/or to special sympy functions to avoid boolean evaluation
-        'And': sympy.Function('AND'),
-        'Or': sympy.Function('OR'),
+        'And': AND,
+        'Or': OR,
         'var': sympy.Symbol('var'),
         'root': sympy.Symbol('root'),
         'arg': sympy.Symbol('arg'),
