@@ -115,7 +115,6 @@ class CutoutTuner(auto_tuner.AutoTuner):
                     csdfg.finalize()
 
         report = sdfg.get_latest_report()
-        print(report)
         durations = next(iter(next(iter(report.durations.values())).values()))
         return np.median(np.array(durations))
 
