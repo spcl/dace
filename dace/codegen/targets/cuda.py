@@ -1350,7 +1350,7 @@ void  *{kname}_args[] = {{ {kargs} }};
                     for map, sym_map in tbmaps:
                         for k in sym_map.values():
                             for kk, vv in node.symbol_mapping.items():
-                                sym_map[k] = sym_map[k].subs(dace.symbol(kk), vv)
+                                sym_map[k] = symbolic.symreplace(sym_map[k], {dace.symbol(kk): vv})
                         res.append((map, sym_map))
             elif isinstance(node, nodes.MapEntry) and node.schedule in (
                     dtypes.ScheduleType.GPU_ThreadBlock,

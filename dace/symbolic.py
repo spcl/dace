@@ -165,7 +165,7 @@ class SymExpr(object):
         return self._approx_expr
 
     def subs(self, repldict):
-        return SymExpr(self._main_expr.subs(repldict), self._approx_expr.subs(repldict))
+        return SymExpr(symreplace(self._main_expr, repldict), symreplace(self._approx_expr, repldict))
 
     def match(self, *args, **kwargs):
         return self._main_expr.match(*args, **kwargs)
@@ -265,6 +265,35 @@ class SymExpr(object):
 
 # Type hint for symbolic expressions
 SymbolicType = Union[sympy.Basic, SymExpr]
+
+
+def symreplace(expr: SymbolicType,
+               repl: Dict[SymbolicType, SymbolicType],
+               new_expr: SymbolicType = None) -> SymbolicType:
+    if new_expr is not None:
+        return symreplace(expr, {repl: new_expr})
+
+    easyrepl = {
+        k: pystr_to_symbolic(v)
+        for k, v in repl.items()
+        if isinstance(k, sympy.Symbol) and isinstance(v, (sympy.Symbol, sympy.Number, int, float))
+    }
+    repl = {k: v for k, v in repl.items() if k not in easyrepl}
+
+    # Easy replacements (atom->atom)
+    for atom, parent, aid in _swalk_with_parent(expr, enter_functions=True):
+        if atom in easyrepl:
+            if parent is None:
+                return easyrepl[atom]
+            else:
+                largs = list(parent.args)
+                largs[aid] = easyrepl[atom]
+                parent._args = tuple(largs)
+
+    if repl:
+        return expr.subs(repl)
+    else:
+        return expr
 
 
 def symvalue(val):
@@ -479,17 +508,26 @@ def is_sympy_userfunction(expr):
         return issubclass(type(type(expr)), sympy.function.UndefinedFunction)
 
 
+def _swalk_with_parent(expr, enter_functions=False, parent=None, parent_id=None):
+    """ Walk over a symbolic expression tree (similar to `ast.walk`).
+        Returns an iterator that yields the values and recurses into functions,
+        if specified.
+    """
+    yield expr, parent, parent_id
+    for i, arg in enumerate(expr.args):
+        if not enter_functions and is_sympy_userfunction(arg):
+            yield arg, expr, i
+            continue
+        yield from _swalk_with_parent(arg, parent=expr, parent_id=i)
+
+
 def swalk(expr, enter_functions=False):
     """ Walk over a symbolic expression tree (similar to `ast.walk`).
         Returns an iterator that yields the values and recurses into functions,
         if specified.
     """
-    yield expr
-    for arg in expr.args:
-        if not enter_functions and is_sympy_userfunction(arg):
-            yield arg
-            continue
-        yield from swalk(arg)
+    for arg, _, _ in _swalk_with_parent(expr, enter_functions=enter_functions):
+        yield arg
 
 
 _builtin_userfunctions = {
@@ -763,8 +801,17 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None):
 
     if isinstance(expr, (SymExpr, sympy.Basic)):
         return expr
-    if isinstance(expr, str) and dtypes.validate_name(expr):
-        return symbol(expr)
+    if isinstance(expr, str):
+        try:
+            return sympy.Integer(int(expr))
+        except ValueError:
+            pass
+        try:
+            return sympy.Float(float(expr))
+        except ValueError:
+            pass
+        if dtypes.validate_name(expr):
+            return symbol(expr)
 
     symbol_map = symbol_map or {}
     locals = {

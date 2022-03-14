@@ -190,7 +190,7 @@ class AffineSMemlet(SeparableMemletPattern):
                     return False  # Step must be independent of parameter
 
             node_rb, node_re, node_rs = node_range[self.paramind]
-            result_begin = subexprs[0].subs(self.param, node_rb).expand()
+            result_begin = symbolic.symreplace(subexprs[0], self.param, node_rb).expand()
             if node_rs != 1:
                 # Special case: i:i+stride for a begin:end:stride range
                 if node_rb == result_begin and bre + 1 == node_rs and step == 1:
@@ -237,8 +237,8 @@ class AffineSMemlet(SeparableMemletPattern):
             rs = 1
             rt = 1
 
-        result_begin = rb.subs(self.param, node_rb).expand()
-        result_end = re.subs(self.param, node_re).expand()
+        result_begin = symbolic.symreplace(rb, self.param, node_rb).expand()
+        result_end = symbolic.symreplace(re, self.param, node_re).expand()
 
         # Special case: multiplier < 0
         if (self.multiplier < 0) == True:
@@ -486,13 +486,13 @@ class GenericSMemlet(SeparableMemletPattern):
                 lastindex = neg_lastindex
 
             if result_begin is None:
-                result_begin = rb.subs(self.params[idx], firstindex)
+                result_begin = symbolic.symreplace(rb, self.params[idx], firstindex)
             else:
-                result_begin = result_begin.subs(self.params[idx], firstindex)
+                result_begin = symbolic.symreplace(result_begin, self.params[idx], firstindex)
             if result_end is None:
-                result_end = re.subs(self.params[idx], lastindex)
+                result_end = symbolic.symreplace(re, self.params[idx], lastindex)
             else:
-                result_end = result_end.subs(self.params[idx], lastindex)
+                result_end = symbolic.symreplace(result_end, self.params[idx], lastindex)
 
         result_skip = 1
         result_tile = 1
@@ -504,9 +504,9 @@ def _subexpr(dexpr, repldict):
     if isinstance(dexpr, tuple):
         return tuple(_subexpr(d, repldict) for d in dexpr)
     elif isinstance(dexpr, symbolic.SymExpr):
-        return dexpr.expr.subs(repldict)
+        return symbolic.symreplace(dexpr.expr, repldict)
     else:
-        return dexpr.subs(repldict)
+        return symbolic.symreplace(dexpr, repldict)
 
 
 @registry.autoregister
@@ -841,7 +841,7 @@ def propagate_states(sdfg) -> None:
                         outer_stop = outer_range[0][1]
                         outer_stride = outer_range[0][2]
                         outer_itvar = symbolic.pystr_to_symbolic(outer_itvar_string)
-                        exec_repl = loop_executions.subs({outer_itvar: (outer_itvar * outer_stride + outer_start)})
+                        exec_repl = symbolic.symreplace(loop_executions, {outer_itvar: (outer_itvar * outer_stride + outer_start)})
                         loop_executions = Sum(exec_repl,
                                               (outer_itvar, 0, ceiling((outer_stop - outer_start) / outer_stride)))
                     loop_executions = loop_executions.doit()

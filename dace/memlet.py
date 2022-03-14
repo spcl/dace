@@ -429,8 +429,8 @@ class Memlet(object):
 
         if len(repl_to_intermediate) > 0:
             if self.volume is not None and symbolic.issymbolic(self.volume):
-                self.volume = self.volume.subs(repl_to_intermediate)
-                self.volume = self.volume.subs(repl_to_final)
+                self.volume = symbolic.symreplace(self.volume, repl_to_intermediate)
+                self.volume = symbolic.symreplace(self.volume, repl_to_final)
             if self.subset is not None:
                 self.subset.replace(repl_to_intermediate)
                 self.subset.replace(repl_to_final)

@@ -14,12 +14,12 @@ def _replsym(symlist, symrepl):
     if symlist is None:
         return None
     if isinstance(symlist, (symbolic.SymExpr, symbolic.symbol, sp.Basic)):
-        return symlist.subs(symrepl)
+        return symbolic.symreplace(symlist, symrepl)
     for i, dim in enumerate(symlist):
         try:
-            symlist[i] = tuple(d.subs(symrepl) if symbolic.issymbolic(d) else d for d in dim)
+            symlist[i] = tuple(symbolic.symreplace(d, symrepl) if symbolic.issymbolic(d) else d for d in dim)
         except TypeError:
-            symlist[i] = (dim.subs(symrepl) if symbolic.issymbolic(dim) else dim)
+            symlist[i] = (symbolic.symreplace(dim, symrepl) if symbolic.issymbolic(dim) else dim)
     return symlist
 
 
@@ -57,7 +57,7 @@ def replace_properties(node: Any, symrepl: Dict[symbolic.symbol, symbolic.Symbol
             continue
         pname = propclass.attr_name
         if isinstance(propclass, properties.SymbolicProperty):
-            setattr(node, pname, propval.subs(symrepl))
+            setattr(node, pname, symbolic.symreplace(propval, symrepl))
         elif isinstance(propclass, properties.DataProperty):
             if propval == name:
                 setattr(node, pname, new_name)
@@ -97,7 +97,7 @@ def replace_properties(node: Any, symrepl: Dict[symbolic.symbol, symbolic.Symbol
             # Symbol mappings for nested SDFGs
             for symname, sym_mapping in propval.items():
                 try:
-                    propval[symname] = symbolic.pystr_to_symbolic(str(sym_mapping)).subs(symrepl)
+                    propval[symname] = symbolic.symreplace(symbolic.pystr_to_symbolic(str(sym_mapping)), symrepl)
                 except AttributeError:  # If the symbolified value has no subs
                     pass
 

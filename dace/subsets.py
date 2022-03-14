@@ -675,10 +675,10 @@ class Range(Subset):
 
     def replace(self, repl_dict):
         for i, ((rb, re, rs), ts) in enumerate(zip(self.ranges, self.tile_sizes)):
-            self.ranges[i] = (rb.subs(repl_dict) if symbolic.issymbolic(rb) else rb,
-                              re.subs(repl_dict) if symbolic.issymbolic(re) else re,
-                              rs.subs(repl_dict) if symbolic.issymbolic(rs) else rs)
-            self.tile_sizes[i] = (ts.subs(repl_dict) if symbolic.issymbolic(ts) else ts)
+            self.ranges[i] = (symbolic.symreplace(rb, repl_dict) if symbolic.issymbolic(rb) else rb,
+                              symbolic.symreplace(re, repl_dict) if symbolic.issymbolic(re) else re,
+                              symbolic.symreplace(rs, repl_dict) if symbolic.issymbolic(rs) else rs)
+            self.tile_sizes[i] = (symbolic.symreplace(ts, repl_dict) if symbolic.issymbolic(ts) else ts)
 
     def intersects(self, other: 'Range'):
         type_error = False
@@ -928,7 +928,7 @@ class Indices(Subset):
 
     def replace(self, repl_dict):
         for i, ind in enumerate(self.indices):
-            self.indices[i] = (ind.subs(repl_dict) if symbolic.issymbolic(ind) else ind)
+            self.indices[i] = (symbolic.symreplace(ind, repl_dict) if symbolic.issymbolic(ind) else ind)
 
     def pop(self, dimensions):
         new_indices = []
