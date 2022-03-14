@@ -60,9 +60,9 @@ if __name__ == '__main__':
     
     for state in sdfg.nodes():
         state.instrument = dace.InstrumentationType.GPU_Events
-        # for node in state.nodes():
-        #     if isinstance(node, dace.nodes.MapEntry):
-        #         node.map.instrument = dace.InstrumentationType.GPU_Events
+        for node in state.nodes():
+            if isinstance(node, dace.nodes.MapEntry):
+                node.schedule = dace.ScheduleType.GPU_Device
 
     result = ct.CutoutTuner.dry_run(sdfg, **arguments)
 

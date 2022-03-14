@@ -61,10 +61,10 @@ class OnTheFlyMapFusion(transformation.SubgraphTransformation):
                 state.remove_edge_and_connectors(edge)
 
         for edge in state.in_edges(parent_map_entry):
-            if child_map_entry.add_in_connector(edge.dst_conn):
-                state.add_edge(edge.src, edge.src_conn, child_map_entry, edge.dst_conn, edge.data)
+            if child_map_entry.add_in_connector(edge.dst_conn + "_"):
+                state.add_edge(edge.src, edge.src_conn, child_map_entry, edge.dst_conn + "_", edge.data)
             else:
-                print("Error")
+                raise ValueError("Failed to connect")
 
     @staticmethod
     def _memlet_offsets(base_memlet, offset_memlet):
@@ -161,8 +161,8 @@ class OnTheFlyMapFusion(transformation.SubgraphTransformation):
                     for edge in state.edges_between(parent_map_entry, node):
                         memlet = copy.deepcopy(edge.data)
                         memlet.subset.offset(list(offset), negative=False)
-                        child_map_entry.add_out_connector(edge.src_conn)
-                        state.add_edge(child_map_entry, edge.src_conn, node, edge.dst_conn, memlet)
+                        child_map_entry.add_out_connector(edge.src_conn + "_")
+                        state.add_edge(child_map_entry, edge.src_conn + "_", node, edge.dst_conn, memlet)
                         state.remove_edge(edge)
 
                 for edge in edges:
