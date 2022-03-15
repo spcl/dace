@@ -907,7 +907,7 @@ class CPUCodeGen(TargetCodeGenerator):
                             array_expr = cpp.cpp_array_expr(sdfg, memlet, with_brackets=False, codegen=self._frame)
                             ptr_str = fpga.fpga_ptr(  # we are on fpga, since this is array interface
                                 memlet.data, desc, sdfg, memlet.subset, True, None, None, True)
-                            write_expr = (f"*({ptr_str} + {array_expr}) " f"= {in_local_name};")
+                            write_expr = f"*({ptr_str} + {array_expr}) = {in_local_name};"
                         else:
                             desc_dtype = desc.dtype
                             expr = cpp.cpp_array_expr(sdfg, memlet, codegen=self._frame)

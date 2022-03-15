@@ -1071,7 +1071,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
                 # Need to skip certain entry nodes to make sure that they are
                 # not processed twice
-                # TODO this in not robust, replace by better solution
+                # TODO this is not robust, replace by better solution
                 #  (or wait for new codegen)
                 entry_nodes = list(v for v in c.nodes() if len(list(c.predecessors(v))) == 0)
                 comp_same_entry = [comp for comp in components if comp != c and entry_nodes[0] in comp.nodes()]
@@ -1148,17 +1148,18 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
         # Add data from nested SDFGs to kernel arguments
         self.extra_nsdfg_args = []
-        if scope_entry.map.schedule == dtypes.ScheduleType.GPU_Persistent:
-            to_allocate = set()
-            for nested_sdfg in [node.sdfg for node in dfg_scope.nodes() if isinstance(node, nodes.NestedSDFG)]:
-                nested_shared_transients = set(nested_sdfg.shared_transients())
-                for nested_state in nested_sdfg:
-                    nested_to_allocate = (set(nested_state.top_level_transients()) - nested_shared_transients)
-                    to_allocate |= set(n for n in nested_state.data_nodes() if n.data in nested_to_allocate)
-            for nested_node in sorted(to_allocate, key=lambda n: n.data):
-                desc = nested_node.desc(nested_sdfg)
-                kernel_args[nested_node.data] = desc
-                self.extra_nsdfg_args.append((desc.as_arg(name=''), nested_node.data, nested_node.data))
+        visited = set()
+        for node, parent in dfg_scope.all_nodes_recursive():
+            if isinstance(node, nodes.AccessNode):
+                nsdfg: SDFG = parent.parent
+                desc = node.desc(nsdfg)
+                if (nsdfg, node.data) in visited:
+                    continue
+                visited.add((nsdfg, node.data))
+                if desc.transient and self._frame.where_allocated[(nsdfg, node.data)] is not nsdfg:
+                    name = cpp.ptr(node.data, desc, nsdfg, self._frame)
+                    kernel_args[name] = desc
+                    self.extra_nsdfg_args.append((desc.as_arg(name=''), node.data, name))
 
         const_params = _get_const_params(dfg_scope)
         # make dynamic map inputs constant

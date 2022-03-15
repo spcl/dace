@@ -479,7 +479,7 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                 definition = desc.as_arg(name=f'__{sdfg.sdfg_id}_{name}') + ';'
                 self.statestruct.append(definition)
 
-                self.to_allocate[sdfg].append((sdfg, first_state_instance, first_node_instance, True, True, True))
+                self.to_allocate[top_sdfg].append((sdfg, first_state_instance, first_node_instance, True, True, True))
                 self.where_allocated[(sdfg, name)] = None
                 continue
             elif desc.lifetime is dtypes.AllocationLifetime.Global:
@@ -609,9 +609,11 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                     if cursdfg.parent_nsdfg_node is None:
                         curscope = None
                         curstate = None
+                        cursdfg = None
                     else:
                         curstate = cursdfg.parent
                         curscope = curstate.entry_node(cursdfg.parent_nsdfg_node)
+                        cursdfg = cursdfg.parent_sdfg
                 else:
                     raise TypeError
 
