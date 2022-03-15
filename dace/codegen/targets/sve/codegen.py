@@ -381,10 +381,11 @@ class SVECodeGen(TargetCodeGenerator):
                 nodedesc.dtype, dtypes.vector):
             # Special allocation if vector Code->Code register in SVE scope
             # We prevent dace::vec<>'s and allocate SVE registers instead
-            if self.dispatcher.defined_vars.has(node.data):
+            ptrname = cpp.ptr(node.data, nodedesc, sdfg, self.frame)
+            if self.dispatcher.defined_vars.has(ptrname):
                 sve_type = util.TYPE_TO_SVE[nodedesc.dtype.vtype]
-                self.dispatcher.defined_vars.add(node.data, DefinedType.Scalar, sve_type)
-                declaration_stream.write(f'{sve_type} {node.data};')
+                self.dispatcher.defined_vars.add(ptrname, DefinedType.Scalar, sve_type)
+                declaration_stream.write(f'{sve_type} {ptrname};')
             return
 
         self.cpu_codegen.allocate_array(sdfg, dfg, state_id, node, nodedesc, global_stream, declaration_stream,

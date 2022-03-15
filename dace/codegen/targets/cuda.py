@@ -319,8 +319,10 @@ void __dace_exit_cuda({sdfg.name}_t *__state) {{
             raise NotImplementedError("The declare_array method should only be used for variables "
                                       "that must have their declaration and allocation separate.")
 
+        ptrname = cpp.ptr(node.data, nodedesc, sdfg, self._frame)
+
         # Check if array is already declared
-        if self._dispatcher.declared_arrays.has(node.data):
+        if self._dispatcher.declared_arrays.has(ptrname):
             return
 
         result_decl = StringIO()
@@ -342,8 +344,10 @@ void __dace_exit_cuda({sdfg.name}_t *__state) {{
 
     def allocate_array(self, sdfg, dfg, state_id, node, nodedesc, function_stream, declaration_stream,
                        allocation_stream):
+        dataname = cpp.ptr(node.data, nodedesc, sdfg, self._frame)
+
         try:
-            self._dispatcher.defined_vars.get(node.data)
+            self._dispatcher.defined_vars.get(dataname)
             return
         except KeyError:
             pass  # The variable was not defined, we can continue
@@ -351,7 +355,7 @@ void __dace_exit_cuda({sdfg.name}_t *__state) {{
         # Check if array is already declared
         declared = False
         try:
-            self._dispatcher.declared_arrays.get(node.data)
+            self._dispatcher.declared_arrays.get(dataname)
             declared = True  # Array was already declared in this or upper scopes
         except KeyError:  # Array not declared yet
             pass
@@ -370,9 +374,6 @@ void __dace_exit_cuda({sdfg.name}_t *__state) {{
         arrsize_malloc = '%s * sizeof(%s)' % (sym2cpp(arrsize), nodedesc.dtype.ctype)
         ctypedef = '%s *' % nodedesc.dtype.ctype
 
-        dataname = node.data
-        allocname = cpp.ptr(dataname, nodedesc, sdfg, self._frame)
-
         # Different types of GPU arrays
         if nodedesc.storage == dtypes.StorageType.GPU_Global:
             if not declared:
@@ -380,22 +381,22 @@ void __dace_exit_cuda({sdfg.name}_t *__state) {{
             self._dispatcher.defined_vars.add(dataname, DefinedType.Pointer, ctypedef)
 
             # Strides are left to the user's discretion
-            result_alloc.write('%sMalloc((void**)&%s, %s);\n' % (self.backend, allocname, arrsize_malloc))
+            result_alloc.write('%sMalloc((void**)&%s, %s);\n' % (self.backend, dataname, arrsize_malloc))
             if node.setzero:
-                result_alloc.write('%sMemset(%s, 0, %s);\n' % (self.backend, allocname, arrsize_malloc))
+                result_alloc.write('%sMemset(%s, 0, %s);\n' % (self.backend, dataname, arrsize_malloc))
             if isinstance(nodedesc, dt.Array) and nodedesc.start_offset != 0:
-                result_alloc.write(f'{allocname} += {cpp.sym2cpp(nodedesc.start_offset)};\n')
+                result_alloc.write(f'{dataname} += {cpp.sym2cpp(nodedesc.start_offset)};\n')
         elif nodedesc.storage == dtypes.StorageType.CPU_Pinned:
             if not declared:
                 result_decl.write('%s %s;\n' % (ctypedef, dataname))
             self._dispatcher.defined_vars.add(dataname, DefinedType.Pointer, ctypedef)
 
             # Strides are left to the user's discretion
-            result_alloc.write('%sMallocHost(&%s, %s);\n' % (self.backend, allocname, arrsize_malloc))
+            result_alloc.write('%sMallocHost(&%s, %s);\n' % (self.backend, dataname, arrsize_malloc))
             if node.setzero:
-                result_alloc.write('memset(%s, 0, %s);\n' % (allocname, arrsize_malloc))
+                result_alloc.write('memset(%s, 0, %s);\n' % (dataname, arrsize_malloc))
             if nodedesc.start_offset != 0:
-                result_alloc.write(f'{allocname} += {cpp.sym2cpp(nodedesc.start_offset)};\n')
+                result_alloc.write(f'{dataname} += {cpp.sym2cpp(nodedesc.start_offset)};\n')
         elif nodedesc.storage == dtypes.StorageType.GPU_Shared:
             if is_dynamically_sized:
                 raise NotImplementedError('Dynamic shared memory unsupported')
@@ -407,7 +408,7 @@ void __dace_exit_cuda({sdfg.name}_t *__state) {{
                 result_alloc.write('dace::ResetShared<{type}, {block_size}, {elements}, '
                                    '1, false>::Reset({ptr});\n'.format(type=nodedesc.dtype.ctype,
                                                                        block_size=', '.join(_topy(self._block_dims)),
-                                                                       ptr=allocname,
+                                                                       ptr=dataname,
                                                                        elements=sym2cpp(arrsize)))
         elif nodedesc.storage == dtypes.StorageType.Register:
             if is_dynamically_sized:
@@ -500,9 +501,9 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         if isinstance(nodedesc, dt.Array) and nodedesc.start_offset != 0:
             dataname = f'({dataname} - {cpp.sym2cpp(nodedesc.start_offset)})'
 
-        if self._dispatcher.declared_arrays.has(node.data):
+        if self._dispatcher.declared_arrays.has(dataname):
             is_global = nodedesc.lifetime in (dtypes.AllocationLifetime.Global, dtypes.AllocationLifetime.Persistent)
-            self._dispatcher.declared_arrays.remove(node.data, is_global=is_global)
+            self._dispatcher.declared_arrays.remove(dataname, is_global=is_global)
 
         if isinstance(nodedesc, dace.data.Stream):
             return self.deallocate_stream(sdfg, dfg, state_id, node, nodedesc, function_stream, callsite_stream)
@@ -1159,7 +1160,8 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                 if desc.transient and self._frame.where_allocated[(nsdfg, node.data)] is not nsdfg:
                     name = cpp.ptr(node.data, desc, nsdfg, self._frame)
                     kernel_args[name] = desc
-                    self.extra_nsdfg_args.append((desc.as_arg(name=''), node.data, name))
+                    self.extra_nsdfg_args.append((desc.as_arg(name=''), name, name))
+                    self._dispatcher.defined_vars.add(name, DefinedType.Pointer, desc.dtype.ctype, allow_shadowing=True)
 
         const_params = _get_const_params(dfg_scope)
         # make dynamic map inputs constant

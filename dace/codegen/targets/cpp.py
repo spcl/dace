@@ -38,6 +38,7 @@ def copy_expr(
     packed_types=False,
 ):
     data_desc = sdfg.arrays[data_name]
+    ptrname = ptr(data_name, data_desc, sdfg, dispatcher.frame)
     if relative_offset:
         s = memlet.subset
         o = offset
@@ -64,11 +65,11 @@ def copy_expr(
         # NOTE: It is hard to get access to the view-edge here, so always check
         # the declared-arrays dictionary for Views.
         if dependent_shape or isinstance(data_desc, data.View):
-            defined_types = dispatcher.declared_arrays.get(data_name, is_global=is_global)
+            defined_types = dispatcher.declared_arrays.get(ptrname, is_global=is_global)
     except KeyError:
         pass
     if not defined_types:
-        defined_types = dispatcher.defined_vars.get(data_name, is_global=is_global)
+        defined_types = dispatcher.defined_vars.get(ptrname, is_global=is_global)
     def_type, _ = defined_types
     if fpga.is_fpga_array(data_desc):
         expr = fpga.fpga_ptr(
@@ -255,6 +256,7 @@ def emit_memlet_reference(dispatcher,
     offset = cpp_offset_expr(desc, memlet.subset)
     offset_expr = '[' + offset + ']'
     is_scalar = not isinstance(conntype, dtypes.pointer)
+    ptrname = ptr(memlet.data, desc, sdfg, dispatcher.frame)
     ref = ''
 
     # Get defined type (pointer, stream etc.) and change the type definition
@@ -264,11 +266,11 @@ def emit_memlet_reference(dispatcher,
         if (isinstance(desc, data.Array) and not isinstance(desc, data.View) and any(
                 str(s) not in dispatcher.frame.symbols_and_constants(sdfg)
                 for s in dispatcher.frame.free_symbols(desc))):
-            defined_types = dispatcher.declared_arrays.get(memlet.data, ancestor)
+            defined_types = dispatcher.declared_arrays.get(ptrname, ancestor)
     except KeyError:
         pass
     if not defined_types:
-        defined_types = dispatcher.defined_vars.get(memlet.data, ancestor)
+        defined_types = dispatcher.defined_vars.get(ptrname, ancestor)
     defined_type, defined_ctype = defined_types
 
     if fpga.is_fpga_array(desc):
@@ -1087,7 +1089,8 @@ class DaCeKeywordRemover(ExtNodeTransformer):
                             cppunparse.cppunparse(value, expr_semicolon=False),
                         ))
                     else:
-                        var_type, ctypedef = self.codegen._dispatcher.defined_vars.get(memlet.data)
+                        ptrname = ptr(memlet.data, desc, self.sdfg, self.codegen._frame)
+                        var_type, ctypedef = self.codegen._dispatcher.defined_vars.get(ptrname)
                         if var_type == DefinedType.Scalar:
                             newnode = ast.Name(id="%s = %s;" % (
                                 memlet.data,
@@ -1168,8 +1171,12 @@ class DaCeKeywordRemover(ExtNodeTransformer):
         if name not in self.memlets:
             return self.generic_visit(node)
         memlet, nc, wcr, dtype = self.memlets[name]
+        if node.id in self.sdfg.arrays:
+            ptrname = ptr(node.id, self.sdfg.arrays[node.id], self.sdfg, self.codegen._frame)
+        else:
+            ptrname = node.id
         try:
-            defined_type, _ = self.codegen._dispatcher.defined_vars.get(node.id)
+            defined_type, _ = self.codegen._dispatcher.defined_vars.get(ptrname)
         except KeyError:
             defined_type = None
         if (self.allow_casts and isinstance(dtype, dtypes.pointer) and memlet.subset.num_elements() == 1):

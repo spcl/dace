@@ -104,7 +104,7 @@ class SaveProvider(InstrumentationProvider, DataInstrumentationProviderMixin):
 
         # Obtain a pointer for arrays and scalars
         ptrname = cpp.ptr(node.data, desc, sdfg, self.codegen)
-        defined_type, _ = self.codegen.dispatcher.defined_vars.get(node.data)
+        defined_type, _ = self.codegen.dispatcher.defined_vars.get(ptrname)
         if defined_type == DefinedType.Scalar:
             ptrname = '&' + ptrname
 
@@ -175,7 +175,7 @@ class RestoreProvider(InstrumentationProvider, DataInstrumentationProviderMixin)
 
         # Obtain a pointer for arrays and scalars
         ptrname = cpp.ptr(node.data, desc, sdfg, self.codegen)
-        defined_type, _ = self.codegen.dispatcher.defined_vars.get(node.data)
+        defined_type, _ = self.codegen.dispatcher.defined_vars.get(ptrname)
         if defined_type == DefinedType.Scalar:
             ptrname = '&' + ptrname
 

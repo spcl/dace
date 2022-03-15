@@ -328,7 +328,8 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         Emits a conflict resolution call from a memlet.
         """
         redtype = operations.detect_reduction_type(memlet.wcr, openmp=True)
-        defined_type, _ = self._dispatcher.defined_vars.get(memlet.data)
+        ptrname = cpp.ptr(memlet.data, sdfg.arrays[memlet.data], sdfg, self._frame)
+        defined_type, _ = self._dispatcher.defined_vars.get(ptrname)
         if isinstance(indices, str):
             ptr = '%s + %s' % (cpp.cpp_ptr_expr(sdfg, memlet, defined_type, is_write=True,
                                                 codegen=self._frame), indices)
@@ -943,8 +944,9 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(kernel_f
 
     def generate_memlet_definition(self, sdfg, dfg, state_id, src_node, dst_node, edge, callsite_stream):
         memlet = edge.data
+        ptrname = cpp.ptr(memlet.data, sdfg.arrays[memlet.data], sdfg, self._frame)
 
-        if (self._dispatcher.defined_vars.get(memlet.data)[0] == DefinedType.FPGA_ShiftRegister):
+        if (self._dispatcher.defined_vars.get(ptrname)[0] == DefinedType.FPGA_ShiftRegister):
             raise NotImplementedError("Shift register for Xilinx NYI")
         else:
             self._cpu_codegen.copy_memory(sdfg, dfg, state_id, src_node, dst_node, edge, None, callsite_stream)
@@ -964,7 +966,8 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(kernel_f
         for _, _, _, vconn, in_memlet in sorted(state.in_edges(node), key=lambda e: e.dst_conn or ""):
             if in_memlet.data is None:
                 continue
-            is_memory_interface = (self._dispatcher.defined_vars.get(in_memlet.data,
+            ptrname = cpp.ptr(in_memlet.data, sdfg.arrays[in_memlet.data], sdfg, self._frame)
+            is_memory_interface = (self._dispatcher.defined_vars.get(ptrname,
                                                                      1)[0] == DefinedType.ArrayInterface)
             if is_memory_interface:
                 for bank in fpga.iterate_distributed_subset(sdfg.arrays[in_memlet.data], in_memlet, False, sdfg):
@@ -1015,8 +1018,8 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(kernel_f
                                             uconn,
                                             conntype=node.out_connectors[uconn],
                                             is_write=True)
-            is_memory_interface = (self._dispatcher.defined_vars.get(out_memlet.data,
-                                                                     1)[0] == DefinedType.ArrayInterface)
+            ptrname = cpp.ptr(out_memlet.data, sdfg.arrays[out_memlet.data], sdfg, self._frame)
+            is_memory_interface = (self._dispatcher.defined_vars.get(ptrname, 1)[0] == DefinedType.ArrayInterface)
             if is_memory_interface:
                 for bank in fpga.iterate_distributed_subset(sdfg.arrays[out_memlet.data], out_memlet, True, sdfg):
                     interface_name = fpga.fpga_ptr(uconn,
