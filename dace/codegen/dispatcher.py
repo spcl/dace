@@ -49,7 +49,7 @@ class DefinedMemlets:
         except KeyError:
             return False
 
-    def get(self, name: str, ancestor: int = 0, is_global: bool = False) -> Tuple[DefinedType, str]:
+    def get(self, name: str, ancestor: int = 0, is_global: bool = True) -> Tuple[DefinedType, str]:
         last_visited_scope = None
         for parent, scope, can_access_parent in reversed(self._scopes):
             last_parent = parent

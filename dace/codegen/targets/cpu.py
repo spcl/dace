@@ -267,12 +267,15 @@ class CPUCodeGen(TargetCodeGenerator):
         if not isinstance(nodedesc.dtype, dtypes.opaque):
             arrsize_bytes = arrsize * nodedesc.dtype.bytes
 
+        define_var = self._dispatcher.defined_vars.add
+        if nodedesc.lifetime == dtypes.AllocationLifetime.Persistent:
+            define_var = self._dispatcher.defined_vars.add_global
 
         if isinstance(nodedesc, data.View):
             return self.allocate_view(sdfg, dfg, state_id, node, function_stream, declaration_stream, allocation_stream)
         if isinstance(nodedesc, data.Scalar):
             declaration_stream.write("%s %s;\n" % (nodedesc.dtype.ctype, name), sdfg, state_id, node)
-            self._dispatcher.defined_vars.add(name, DefinedType.Scalar, nodedesc.dtype.ctype)
+            define_var(name, DefinedType.Scalar, nodedesc.dtype.ctype)
         elif isinstance(nodedesc, data.Stream):
             ###################################################################
             # Stream directly connected to an array
@@ -308,7 +311,7 @@ class CPUCodeGen(TargetCodeGenerator):
                     state_id,
                     node,
                 )
-                self._dispatcher.defined_vars.add(name, DefinedType.Stream, ctype)
+                define_var(name, DefinedType.Stream, ctype)
                 return
 
             ###################################################################
@@ -322,7 +325,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 definition = "{} {};".format(ctypedef, name)
 
             declaration_stream.write(definition, sdfg, state_id, node)
-            self._dispatcher.defined_vars.add(name, DefinedType.Stream, ctypedef)
+            define_var(name, DefinedType.Stream, ctypedef)
 
         elif (nodedesc.storage == dtypes.StorageType.CPU_Heap
               or (nodedesc.storage == dtypes.StorageType.Register and
@@ -348,7 +351,7 @@ class CPUCodeGen(TargetCodeGenerator):
             allocation_stream.write(
                 "%s = new %s DACE_ALIGN(64)[%s];\n" % (alloc_name, nodedesc.dtype.ctype, cpp.sym2cpp(arrsize)), sdfg,
                 state_id, node)
-            self._dispatcher.defined_vars.add(name, DefinedType.Pointer, ctypedef)
+            define_var(name, DefinedType.Pointer, ctypedef)
 
             if node.setzero:
                 allocation_stream.write("memset(%s, 0, sizeof(%s)*%s);" %
@@ -369,7 +372,7 @@ class CPUCodeGen(TargetCodeGenerator):
                     state_id,
                     node,
                 )
-                self._dispatcher.defined_vars.add(name, DefinedType.Pointer, ctypedef)
+                define_var(name, DefinedType.Pointer, ctypedef)
                 return
             declaration_stream.write(
                 "%s %s[%s]  DACE_ALIGN(64);\n" % (nodedesc.dtype.ctype, name, cpp.sym2cpp(arrsize)),
@@ -377,7 +380,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 state_id,
                 node,
             )
-            self._dispatcher.defined_vars.add(name, DefinedType.Pointer, ctypedef)
+            define_var(name, DefinedType.Pointer, ctypedef)
             return
         elif nodedesc.storage is dtypes.StorageType.CPU_ThreadLocal:
             # Define pointer once
