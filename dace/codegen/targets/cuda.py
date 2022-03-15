@@ -1148,6 +1148,10 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
             kernel_args[str(e.src)] = e.src.desc(sdfg)
 
         # Add data from nested SDFGs to kernel arguments
+        extra_call_args = []
+        extra_call_args_typed = []
+        extra_kernel_args = []
+        extra_kernel_args_typed = []
         self.extra_nsdfg_args = []
         visited = set()
         for node, parent in dfg_scope.all_nodes_recursive():
@@ -1158,10 +1162,23 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     continue
                 visited.add((nsdfg, node.data))
                 if desc.transient and self._frame.where_allocated[(nsdfg, node.data)] is not nsdfg:
-                    name = cpp.ptr(node.data, desc, nsdfg, self._frame)
-                    kernel_args[name] = desc
-                    self.extra_nsdfg_args.append((desc.as_arg(name=''), name, name))
-                    self._dispatcher.defined_vars.add(name, DefinedType.Pointer, desc.dtype.ctype, allow_shadowing=True)
+                    outer_name = cpp.ptr(node.data, desc, nsdfg, self._frame)
+
+                    # Create name from within kernel
+                    oldval = CUDACodeGen._in_device_code
+                    CUDACodeGen._in_device_code = True
+                    inner_name = cpp.ptr(node.data, desc, nsdfg, self._frame)
+                    CUDACodeGen._in_device_code = oldval
+
+                    self.extra_nsdfg_args.append((desc.as_arg(name=''), inner_name, outer_name))
+                    self._dispatcher.defined_vars.add(inner_name,
+                                                      DefinedType.Pointer,
+                                                      desc.dtype.ctype,
+                                                      allow_shadowing=True)
+                    extra_call_args.append(outer_name)
+                    extra_call_args_typed.append(desc.as_arg(name=inner_name))
+                    extra_kernel_args.append(f'(void *)&{inner_name}')
+                    extra_kernel_args_typed.append(desc.as_arg(name=inner_name))
 
         const_params = _get_const_params(dfg_scope)
         # make dynamic map inputs constant
@@ -1217,7 +1234,6 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         self._dispatcher.defined_vars.exit_scope(scope_entry)
 
         # Add extra kernel arguments for a grid barrier object
-        extra_kernel_args_typed = []
         if create_grid_barrier:
             extra_kernel_args_typed.append('cub::GridBarrier __gbar')
 
@@ -1250,7 +1266,8 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 DACE_EXPORTED void __dace_runkernel_{fname}({fargs});
 void __dace_runkernel_{fname}({fargs})
 {{
-""".format(fname=kernel_name, fargs=', '.join(state_param + kernel_args_typed)), sdfg, state_id, node)
+""".format(fname=kernel_name, fargs=', '.join(state_param + kernel_args_typed + extra_call_args_typed)), sdfg, state_id,
+            node)
 
         if is_persistent:
             self._localcode.write('''
@@ -1261,7 +1278,6 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
                            occupancy=Config.get('compiler', 'cuda', 'persistent_map_occupancy'),
                            backend=self.backend))
 
-        extra_kernel_args = []
         if create_grid_barrier:
             gbar = '__gbar_' + kernel_name
             self._localcode.write('    cub::GridBarrierLifetime %s;\n' % gbar, sdfg, state_id, node)
@@ -1319,8 +1335,9 @@ void  *{kname}_args[] = {{ {kargs} }};
         #######################
         # Add invocation to calling code (in another file)
         function_stream.write(
-            'DACE_EXPORTED void __dace_runkernel_%s(%s);\n' % (kernel_name, ', '.join(state_param + kernel_args_typed)),
-            sdfg, state_id, scope_entry)
+            'DACE_EXPORTED void __dace_runkernel_%s(%s);\n' %
+            (kernel_name, ', '.join(state_param + kernel_args_typed + extra_call_args_typed)), sdfg, state_id,
+            scope_entry)
 
         # Synchronize all events leading to dynamic map range connectors
         for e in dace.sdfg.dynamic_map_inputs(state, scope_entry):
@@ -1337,8 +1354,9 @@ void  *{kname}_args[] = {{ {kargs} }};
         callsite_stream.write(
             '__dace_runkernel_%s(%s);\n' %
             (kernel_name,
-             ', '.join(['__state'] + [cpp.ptr(aname, arg, sdfg, self._frame) for aname, arg in kernel_args.items()])),
-            sdfg, state_id, scope_entry)
+             ', '.join(['__state'] + [cpp.ptr(aname, arg, sdfg, self._frame)
+                                      for aname, arg in kernel_args.items()] + extra_call_args)), sdfg, state_id,
+            scope_entry)
 
         synchronize_streams(sdfg, state, state_id, scope_entry, scope_exit, callsite_stream)
 
@@ -1987,7 +2005,10 @@ void  *{kname}_args[] = {{ {kargs} }};
             result.append(('cub::GridBarrier&', '__gbar', '__gbar'))
 
         # Add data from nested SDFGs to kernel arguments
-        result.extend(self.extra_nsdfg_args)
+        result.extend([(atype, aname, aname) for atype,aname,_ in self.extra_nsdfg_args])
+        for arg in self.extra_nsdfg_args:
+            defined_type, ctype = self._dispatcher.defined_vars.get(arg[1], 1)
+            self._dispatcher.defined_vars.add(arg[1], defined_type, ctype)
 
         return result
 
