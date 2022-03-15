@@ -214,7 +214,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                                     arr_name = node.value.id
 
                                     if arr_name not in replace_dict and arr_name in graph.arrays and graph.arrays[
-                                        arr_name].storage == dace.dtypes.StorageType.FPGA_Global:
+                                            arr_name].storage == dace.dtypes.StorageType.FPGA_Global:
                                         repl = fpga.fpga_ptr(arr_name, graph.arrays[node.value.id], sdfg, None, False,
                                                              None, None, True)
                                         replace_dict[arr_name] = repl
@@ -222,7 +222,6 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                         # Perform replacement
                         for k, v in replace_dict.items():
                             e.data.replace(k, v)
-
 
     def define_stream(self, dtype, buffer_size, var_name, array_size, function_stream, kernel_stream, sdfg):
         """
@@ -249,8 +248,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         dtype = desc.dtype
         kernel_stream.write("{} {}[{}];\n".format(dtype.ctype, var_name, cpp.sym2cpp(array_size)))
         if desc.storage == dace.dtypes.StorageType.FPGA_Registers:
-            kernel_stream.write("#pragma HLS ARRAY_PARTITION variable={} "
-                                "complete\n".format(var_name))
+            kernel_stream.write("#pragma HLS ARRAY_PARTITION variable={} " "complete\n".format(var_name))
         elif desc.storage == dace.dtypes.StorageType.FPGA_Local:
             pass
         else:
@@ -332,9 +330,10 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         redtype = operations.detect_reduction_type(memlet.wcr, openmp=True)
         defined_type, _ = self._dispatcher.defined_vars.get(memlet.data)
         if isinstance(indices, str):
-            ptr = '%s + %s' % (cpp.cpp_ptr_expr(sdfg, memlet, defined_type, is_write=True), indices)
+            ptr = '%s + %s' % (cpp.cpp_ptr_expr(sdfg, memlet, defined_type, is_write=True,
+                                                codegen=self._frame), indices)
         else:
-            ptr = cpp.cpp_ptr_expr(sdfg, memlet, defined_type, indices=indices, is_write=True)
+            ptr = cpp.cpp_ptr_expr(sdfg, memlet, defined_type, indices=indices, is_write=True, codegen=self._frame)
 
         if isinstance(dtype, dtypes.pointer):
             dtype = dtype.base_type

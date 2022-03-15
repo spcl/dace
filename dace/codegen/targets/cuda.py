@@ -371,7 +371,7 @@ void __dace_exit_cuda({sdfg.name}_t *__state) {{
         ctypedef = '%s *' % nodedesc.dtype.ctype
 
         dataname = node.data
-        allocname = cpp.ptr(dataname, nodedesc, sdfg)
+        allocname = cpp.ptr(dataname, nodedesc, sdfg, self._frame)
 
         # Different types of GPU arrays
         if nodedesc.storage == dtypes.StorageType.GPU_Global:
@@ -426,7 +426,7 @@ void __dace_exit_cuda({sdfg.name}_t *__state) {{
     def allocate_stream(self, sdfg, dfg, state_id, node, nodedesc, function_stream, declaration_stream,
                         allocation_stream):
         dataname = node.data
-        allocname = cpp.ptr(dataname, nodedesc, sdfg)
+        allocname = cpp.ptr(dataname, nodedesc, sdfg, self._frame)
         if nodedesc.storage == dtypes.StorageType.GPU_Global:
             fmtargs = {
                 'name': dataname,
@@ -444,7 +444,8 @@ void __dace_exit_cuda({sdfg.name}_t *__state) {{
                 if len(edges) > 1:
                     raise NotImplementedError("Cannot handle streams writing " "to multiple arrays.")
 
-                fmtargs['ptr'] = nodedesc.sink + ' + ' + cpp_array_expr(sdfg, edges[0].data, with_brackets=False)
+                fmtargs['ptr'] = nodedesc.sink + ' + ' + cpp_array_expr(
+                    sdfg, edges[0].data, with_brackets=False, codegen=self._frame)
 
                 # Assuming 1D subset of sink/src
                 # sym2cpp(edges[0].data.subset[-1])
@@ -487,7 +488,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                                         state_id, node)
 
     def deallocate_stream(self, sdfg, dfg, state_id, node, nodedesc, function_stream, callsite_stream):
-        dataname = cpp.ptr(node.data, nodedesc, sdfg)
+        dataname = cpp.ptr(node.data, nodedesc, sdfg, self._frame)
         if nodedesc.storage == dtypes.StorageType.GPU_Global:
             if is_array_stream_view(sdfg, dfg, node):
                 callsite_stream.write('dace::FreeGPUArrayStreamView(%s);' % dataname, sdfg, state_id, node)
@@ -495,7 +496,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                 callsite_stream.write('dace::FreeGPUStream(%s);' % dataname, sdfg, state_id, node)
 
     def deallocate_array(self, sdfg, dfg, state_id, node, nodedesc, function_stream, callsite_stream):
-        dataname = cpp.ptr(node.data, nodedesc, sdfg)
+        dataname = cpp.ptr(node.data, nodedesc, sdfg, self._frame)
         if isinstance(nodedesc, dt.Array) and nodedesc.start_offset != 0:
             dataname = f'({dataname} - {cpp.sym2cpp(nodedesc.start_offset)})'
 
@@ -1332,7 +1333,8 @@ void  *{kname}_args[] = {{ {kargs} }};
         # Invoke kernel call
         callsite_stream.write(
             '__dace_runkernel_%s(%s);\n' %
-            (kernel_name, ', '.join(['__state'] + [cpp.ptr(aname, arg, sdfg) for aname, arg in kernel_args.items()])),
+            (kernel_name,
+             ', '.join(['__state'] + [cpp.ptr(aname, arg, sdfg, self._frame) for aname, arg in kernel_args.items()])),
             sdfg, state_id, scope_entry)
 
         synchronize_streams(sdfg, state, state_id, scope_entry, scope_exit, callsite_stream)

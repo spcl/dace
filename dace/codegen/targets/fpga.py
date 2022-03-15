@@ -1415,13 +1415,15 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                                                 with_brackets=False,
                                                 referenced_array=src_nodedesc,
                                                 use_other_subset=(not src_is_subset
-                                                                  and memlet.other_subset is not None))
+                                                                  and memlet.other_subset is not None),
+                                                codegen=self._frame)
             if memlet.dst_subset is not None:
                 offset_dst = cpp.cpp_array_expr(sdfg,
                                                 memlet,
                                                 with_brackets=False,
                                                 referenced_array=dst_nodedesc,
-                                                use_other_subset=(src_is_subset and memlet.other_subset is not None))
+                                                use_other_subset=(src_is_subset and memlet.other_subset is not None),
+                                                codegen=self._frame)
 
             if (not sum(copy_shape) == 1 and
                 (not isinstance(memlet.subset, subsets.Range) or any([step != 1 for _, _, step in memlet.subset]))):

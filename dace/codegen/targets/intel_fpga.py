@@ -178,13 +178,11 @@ DACE_EXPORTED void __dace_exit_intel_fpga({sdfg.name}_t *__state) {{
 
         return [host_code_obj] + kernel_code_objs + other_code_objs
 
-
     def _internal_preprocess(self, sdfg: dace.SDFG):
         '''
         Vendor-specific SDFG Preprocessing
         '''
         pass
-
 
     def create_mangled_channel_name(self, var_name, kernel_id, external_stream):
         '''
@@ -781,7 +779,8 @@ __kernel void \\
                 if defined_type is not DefinedType.Pointer:
                     typedef = typedef + "*"
 
-                memlet_references.append((typedef, vconn, cpp.cpp_ptr_expr(sdfg, in_memlet, defined_type)))
+                memlet_references.append(
+                    (typedef, vconn, cpp.cpp_ptr_expr(sdfg, in_memlet, defined_type, codegen=self._frame)))
                 self._dispatcher.defined_vars.add(vconn, DefinedType.Pointer, typedef, allow_shadowing=True)
             else:
                 # all the other cases
@@ -824,7 +823,8 @@ __kernel void \\
                     typedef = defined_ctype
                     if defined_type is not DefinedType.Pointer:
                         typedef = typedef + "*"
-                    memlet_references.append((typedef, uconn, cpp.cpp_ptr_expr(sdfg, out_memlet, defined_type)))
+                    memlet_references.append(
+                        (typedef, uconn, cpp.cpp_ptr_expr(sdfg, out_memlet, defined_type, codegen=self._frame)))
                     self._dispatcher.defined_vars.add(uconn, DefinedType.Pointer, typedef, allow_shadowing=True)
                 else:
                     memlet_references.append(

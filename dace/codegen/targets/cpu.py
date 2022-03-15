@@ -263,7 +263,7 @@ class CPUCodeGen(TargetCodeGenerator):
         if not isinstance(nodedesc.dtype, dtypes.opaque):
             arrsize_bytes = arrsize * nodedesc.dtype.bytes
 
-        alloc_name = cpp.ptr(name, nodedesc, sdfg)
+        alloc_name = cpp.ptr(name, nodedesc, sdfg, self._frame)
 
         if isinstance(nodedesc, data.View):
             return self.allocate_view(sdfg, dfg, state_id, node, function_stream, declaration_stream, allocation_stream)
@@ -351,8 +351,8 @@ class CPUCodeGen(TargetCodeGenerator):
                 allocation_stream.write("memset(%s, 0, sizeof(%s)*%s);" %
                                         (alloc_name, nodedesc.dtype.ctype, cpp.sym2cpp(arrsize)))
             if nodedesc.start_offset != 0:
-                allocation_stream.write(f'{alloc_name} += {cpp.sym2cpp(nodedesc.start_offset)};\n', sdfg, state_id, 
-                    node)
+                allocation_stream.write(f'{alloc_name} += {cpp.sym2cpp(nodedesc.start_offset)};\n', sdfg, state_id,
+                                        node)
 
             return
         elif (nodedesc.storage == dtypes.StorageType.Register):
@@ -404,8 +404,8 @@ class CPUCodeGen(TargetCodeGenerator):
                 allocation_stream.write("memset(%s, 0, sizeof(%s)*%s);" %
                                         (alloc_name, nodedesc.dtype.ctype, cpp.sym2cpp(arrsize)))
             if nodedesc.start_offset != 0:
-                allocation_stream.write(f'{alloc_name} += {cpp.sym2cpp(nodedesc.start_offset)};\n', sdfg, state_id, 
-                    node)
+                allocation_stream.write(f'{alloc_name} += {cpp.sym2cpp(nodedesc.start_offset)};\n', sdfg, state_id,
+                                        node)
 
             # Close OpenMP parallel section
             allocation_stream.write('}')
@@ -415,7 +415,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
     def deallocate_array(self, sdfg, dfg, state_id, node, nodedesc, function_stream, callsite_stream):
         arrsize = nodedesc.total_size
-        alloc_name = cpp.ptr(node.data, nodedesc, sdfg)
+        alloc_name = cpp.ptr(node.data, nodedesc, sdfg, self._frame)
         if isinstance(nodedesc, data.Array) and nodedesc.start_offset != 0:
             alloc_name = f'({alloc_name} - {cpp.sym2cpp(nodedesc.start_offset)})'
 
@@ -583,8 +583,10 @@ class CPUCodeGen(TargetCodeGenerator):
                     array_expr = cpp.cpp_offset_expr(dst_nodedesc, array_subset)
                     assert functools.reduce(lambda a, b: a * b, src_nodedesc.shape, 1) == 1
                     stream.write(
-                        "{s}.pop(&{arr}[{aexpr}], {maxsize});".format(s=cpp.ptr(src_node.data, src_nodedesc, sdfg),
-                                                                      arr=cpp.ptr(dst_node.data, dst_nodedesc, sdfg),
+                        "{s}.pop(&{arr}[{aexpr}], {maxsize});".format(s=cpp.ptr(src_node.data, src_nodedesc, sdfg,
+                                                                                self._frame),
+                                                                      arr=cpp.ptr(dst_node.data, dst_nodedesc, sdfg,
+                                                                                  self._frame),
                                                                       aexpr=array_expr,
                                                                       maxsize=cpp.sym2cpp(array_subset.num_elements())),
                         sdfg,
@@ -596,17 +598,17 @@ class CPUCodeGen(TargetCodeGenerator):
                 if isinstance(src_nodedesc, (data.Scalar, data.Array)) and isinstance(dst_nodedesc, data.Stream):
                     if isinstance(src_nodedesc, data.Scalar):
                         stream.write(
-                            "{s}.push({arr});".format(s=cpp.ptr(dst_node.data, dst_nodedesc, sdfg),
-                                                      arr=cpp.ptr(src_node.data, src_nodedesc, sdfg)),
+                            "{s}.push({arr});".format(s=cpp.ptr(dst_node.data, dst_nodedesc, sdfg, self._frame),
+                                                      arr=cpp.ptr(src_node.data, src_nodedesc, sdfg, self._frame)),
                             sdfg,
                             state_id,
                             [src_node, dst_node],
                         )
                     elif hasattr(src_nodedesc, "src"):  # ArrayStreamView
                         stream.write(
-                            "{s}.push({arr});".format(s=cpp.ptr(dst_node.data, dst_nodedesc, sdfg),
-                                                      arr=cpp.ptr(src_nodedesc.src, sdfg.arrays[src_nodedesc.src],
-                                                                  sdfg)),
+                            "{s}.push({arr});".format(s=cpp.ptr(dst_node.data, dst_nodedesc, sdfg, self._frame),
+                                                      arr=cpp.ptr(src_nodedesc.src, sdfg.arrays[src_nodedesc.src], sdfg,
+                                                                  self._frame)),
                             sdfg,
                             state_id,
                             [src_node, dst_node],
@@ -614,8 +616,9 @@ class CPUCodeGen(TargetCodeGenerator):
                     else:
                         copysize = " * ".join([cpp.sym2cpp(s) for s in memlet.subset.size()])
                         stream.write(
-                            "{s}.push({arr}, {size});".format(s=cpp.ptr(dst_node.data, dst_nodedesc, sdfg),
-                                                              arr=cpp.ptr(src_node.data, src_nodedesc, sdfg),
+                            "{s}.push({arr}, {size});".format(s=cpp.ptr(dst_node.data, dst_nodedesc, sdfg, self._frame),
+                                                              arr=cpp.ptr(src_node.data, src_nodedesc, sdfg,
+                                                                          self._frame),
                                                               size=copysize),
                             sdfg,
                             state_id,
@@ -766,9 +769,9 @@ class CPUCodeGen(TargetCodeGenerator):
         atomic = "_atomic" if not nc else ""
         defined_type, _ = self._dispatcher.defined_vars.get(memlet.data)
         if isinstance(indices, str):
-            ptr = '%s + %s' % (cpp.cpp_ptr_expr(sdfg, memlet, defined_type), indices)
+            ptr = '%s + %s' % (cpp.cpp_ptr_expr(sdfg, memlet, defined_type, codegen=self._frame), indices)
         else:
-            ptr = cpp.cpp_ptr_expr(sdfg, memlet, defined_type, indices=indices)
+            ptr = cpp.cpp_ptr_expr(sdfg, memlet, defined_type, indices=indices, codegen=self._frame)
 
         if isinstance(dtype, dtypes.pointer):
             dtype = dtype.base_type
@@ -890,7 +893,7 @@ class CPUCodeGen(TargetCodeGenerator):
                         desc = sdfg.arrays[memlet.data]
 
                         if defined_type == DefinedType.Scalar:
-                            mname = cpp.ptr(memlet.data, desc, sdfg)
+                            mname = cpp.ptr(memlet.data, desc, sdfg, self._frame)
                             write_expr = f"{mname} = {in_local_name};"
                         elif (defined_type == DefinedType.ArrayInterface and not isinstance(desc, data.View)):
                             # Special case: No need to write anything between
@@ -901,13 +904,13 @@ class CPUCodeGen(TargetCodeGenerator):
                                 deftype = None
                             if deftype == DefinedType.ArrayInterface:
                                 continue
-                            array_expr = cpp.cpp_array_expr(sdfg, memlet, with_brackets=False)
+                            array_expr = cpp.cpp_array_expr(sdfg, memlet, with_brackets=False, codegen=self._frame)
                             ptr_str = fpga.fpga_ptr(  # we are on fpga, since this is array interface
                                 memlet.data, desc, sdfg, memlet.subset, True, None, None, True)
                             write_expr = (f"*({ptr_str} + {array_expr}) " f"= {in_local_name};")
                         else:
                             desc_dtype = desc.dtype
-                            expr = cpp.cpp_array_expr(sdfg, memlet)
+                            expr = cpp.cpp_array_expr(sdfg, memlet, codegen=self._frame)
                             write_expr = codegen.make_ptr_assignment(in_local_name, conntype, expr, desc_dtype)
 
                     # Write out
@@ -958,9 +961,9 @@ class CPUCodeGen(TargetCodeGenerator):
             # FIXME: _packed_types influences how this offset is
             # generated from the FPGA codegen. We should find a nicer solution.
             if self._packed_types is True:
-                offset = cpp.cpp_array_expr(sdfg, memlet, False)
+                offset = cpp.cpp_array_expr(sdfg, memlet, False, codegen=self._frame)
             else:
-                offset = cpp.cpp_array_expr(sdfg, memlet, False)
+                offset = cpp.cpp_array_expr(sdfg, memlet, False, codegen=self._frame)
 
             # Compute address
             memlet_params.append(memlet_expr + " + " + offset)
@@ -1078,10 +1081,10 @@ class CPUCodeGen(TargetCodeGenerator):
             ptr = fpga.fpga_ptr(memlet.data, desc, sdfg, memlet.subset, output, self._dispatcher, 0,
                                 var_type == DefinedType.ArrayInterface and not isinstance(desc, data.View))
         else:
-            ptr = cpp.ptr(memlet.data, desc, sdfg)
+            ptr = cpp.ptr(memlet.data, desc, sdfg, self._frame)
 
         result = ''
-        expr = (cpp.cpp_array_expr(sdfg, memlet, with_brackets=False)
+        expr = (cpp.cpp_array_expr(sdfg, memlet, with_brackets=False, codegen=self._frame)
                 if var_type in [DefinedType.Pointer, DefinedType.StreamArray, DefinedType.ArrayInterface] else ptr)
 
         if expr != ptr:
@@ -1359,7 +1362,7 @@ class CPUCodeGen(TargetCodeGenerator):
         elif isinstance(cdtype, dtypes.pointer):
             # If pointer, also point to output
             defined_type, _ = self._dispatcher.defined_vars.get(edge.data.data)
-            base_ptr = cpp.cpp_ptr_expr(sdfg, edge.data, defined_type)
+            base_ptr = cpp.cpp_ptr_expr(sdfg, edge.data, defined_type, codegen=self._frame)
             callsite_stream.write(f'{cdtype.ctype} {edge.src_conn} = {base_ptr};', sdfg, state_id, src_node)
         else:
             callsite_stream.write(f'{cdtype.ctype} {edge.src_conn};', sdfg, state_id, src_node)
