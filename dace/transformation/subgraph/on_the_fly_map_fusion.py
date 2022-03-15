@@ -22,7 +22,14 @@ class OnTheFlyMapFusion(transformation.SubgraphTransformation):
             if not isinstance(node, dace.nodes.AccessNode):
                 return False
 
-            if state.in_degree(node) > 1 or state.out_degree(node) > 1:
+            srcs = state.in_edges(node)
+            srcs = set(map(lambda edge: edge.src, srcs))
+            if len(srcs) == 0:
+                continue
+
+            dests = state.out_edges(node)
+            dests = set(map(lambda edge: edge.dst, dests))
+            if len(srcs) > 1 or len(dests) > 1:
                 return False
 
         return True
