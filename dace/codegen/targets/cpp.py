@@ -221,17 +221,17 @@ def ptr(name: str, desc: data.Data, sdfg: SDFG = None, framecode=None) -> str:
 
     # Special case: If memory is persistent and defined in this SDFG, add state
     # struct to name
-    if (desc.transient and desc.lifetime is dtypes.AllocationLifetime.Persistent
-            and desc.storage != dtypes.StorageType.CPU_ThreadLocal):
-        from dace.codegen.targets.cuda import CUDACodeGen  # Avoid import loop
-        if not CUDACodeGen._in_device_code:  # GPU kernels cannot access state
-            if not sdfg:
-                raise ValueError("Missing SDFG value")
-            return f'__state->__{sdfg.sdfg_id}_{name}'
-    if (desc.transient and sdfg is not None and framecode is not None and (sdfg, name) in framecode.where_allocated
-            and framecode.where_allocated[(sdfg, name)] is not sdfg):
-        # Array allocated for another SDFG, use unambiguous name
-        return f'__{sdfg.sdfg_id}_{name}'
+    if desc.storage != dtypes.StorageType.CPU_ThreadLocal:
+        if (desc.transient and desc.lifetime is dtypes.AllocationLifetime.Persistent):
+            from dace.codegen.targets.cuda import CUDACodeGen  # Avoid import loop
+            if not CUDACodeGen._in_device_code:  # GPU kernels cannot access state
+                if not sdfg:
+                    raise ValueError("Missing SDFG value")
+                return f'__state->__{sdfg.sdfg_id}_{name}'
+        elif (desc.transient and sdfg is not None and framecode is not None and (sdfg, name) in framecode.where_allocated
+                and framecode.where_allocated[(sdfg, name)] is not sdfg):
+            # Array allocated for another SDFG, use unambiguous name
+            return f'__{sdfg.sdfg_id}_{name}'
 
     return name
 
