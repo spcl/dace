@@ -69,11 +69,18 @@ if __name__ == '__main__':
     print("Initial version")
     measure(sdfg, arguments)
 
-    tuner = optim.MapFusionTuner(sdfg, measurement=dace.InstrumentationType.GPU_Events)
+    tuner = optim.OnTheFlyMapFusionTuner(sdfg, measurement=dace.InstrumentationType.GPU_Events)
     tuner.optimize(apply=True)
     measure(sdfg, arguments)
 
-    sdfg_path = Path(os.environ["HOME"]) / "projects/tuning-dace/aha-expanded_fused.sdfg"
+    sdfg_path = Path(os.environ["HOME"]) / "projects/tuning-dace/aha-expanded_otf_fused.sdfg"
+    sdfg.save(sdfg_path)
+
+    tuner = optim.SubgraphFusionTuner(sdfg, measurement=dace.InstrumentationType.GPU_Events)
+    tuner.optimize(apply=True)
+    measure(sdfg, arguments)
+
+    sdfg_path = Path(os.environ["HOME"]) / "projects/tuning-dace/aha-expanded_sub_fused.sdfg"
     sdfg.save(sdfg_path)
 
     print("Permutation")

@@ -3,9 +3,12 @@ import os
 import math
 import dace
 import json
+import traceback
 import numpy as np
 
 from typing import Dict, Generator, Any, Tuple, List
+import multiprocessing as mp
+# mp.set_start_method("spawn")
 
 from dace.codegen import exceptions as cgx
 from dace.optimization import auto_tuner
@@ -46,8 +49,7 @@ class CutoutTuner(auto_tuner.AutoTuner):
     def space(self, **kwargs) -> Generator[Any, None, None]:
         raise NotImplementedError
 
-    def search(self, cutout: dace.SDFG, dreport: data_report.InstrumentedDataReport, measurements: int,
-               **kwargs) -> Dict:
+    def search(self, cutout: dace.SDFG, measurements: int, **kwargs) -> Dict:
         raise NotImplementedError
 
     def pre_evaluate(self, **kwargs) -> Dict:
@@ -99,35 +101,38 @@ class CutoutTuner(auto_tuner.AutoTuner):
 
         return result
 
-    def measure(self, sdfg: dace.SDFG, arguments: Dict[str, dace.data.ArrayLike], repetitions: int = 30) -> float:
-        with dace.config.set_temporary('debugprint', value=False):
-            with dace.config.set_temporary('instrumentation', 'report_each_invocation', value=False):
-                with dace.config.set_temporary('compiler', 'allow_view_arguments', value=True):
-                    try:
-                        csdfg = sdfg.compile()
-                    except cgx.CompilationError:
-                        print("WARNING: Compilation failed")
-                        return math.inf
+    def measure(self, sdfg: dace.SDFG, repetitions: int = 30, timeout: float = 60.0) -> float:
+        parent_conn, child_conn = mp.Pipe()        
+        proc = MeasureProcess(target=_measure, args=(self._sdfg.to_json(), sdfg.to_json(), repetitions, child_conn))
+        
+        mp.set_start_method('forkserver', force=True)
+        
+        proc.start()
+        
+        if parent_conn.poll(timeout):
+            runtime = parent_conn.recv()
+        else:
+            print("Error occured during measuring: timeout")
+            runtime = math.inf
 
-                    for _ in range(repetitions):
-                        csdfg(**arguments)
+        proc.join()
 
-                    csdfg.finalize()
+        if proc.exception:
+            error, traceback = proc.exception
+            print("Error occured during measuring: ", error)
+            runtime = math.inf
 
-        report = sdfg.get_latest_report()
-        durations = next(iter(next(iter(report.durations.values())).values()))
-        return np.median(np.array(durations))
+        print("\n Runtime: ", runtime)
+        return runtime
 
     def optimize(self, measurements: int = 30, apply: bool = False, **kwargs) -> Dict:
-        dreport: data_report.InstrumentedDataReport = self._sdfg.get_instrumented_data()
-
         tuning_report = {}
         for cutout, label in tqdm(list(self.cutouts())):
             fn = self.file_name(label)
             results = self.try_load(fn)
 
             if results is None:
-                results = self.search(cutout, dreport, measurements, **kwargs)
+                results = self.search(cutout, measurements, **kwargs)
                 if results is None:
                     tuning_report[label] = None
                     continue
@@ -144,13 +149,9 @@ class CutoutTuner(auto_tuner.AutoTuner):
 
         return tuning_report
 
-    def search(self, cutout: dace.SDFG, dreport: data_report.InstrumentedDataReport, measurements: int,
+    def search(self, cutout: dace.SDFG, measurements: int,
                **kwargs) -> Dict[str, float]:
-        try:
-            kwargs = self.pre_evaluate(cutout=cutout, dreport=dreport, measurements=measurements, **kwargs)
-        except KeyError:
-            print("Not all arguments available in dreport")
-            return None
+        kwargs = self.pre_evaluate(cutout=cutout, measurements=measurements, **kwargs)
 
         results = {}
         key = kwargs["key"]
@@ -160,3 +161,55 @@ class CutoutTuner(auto_tuner.AutoTuner):
             results[key(config)] = runtime
 
         return results
+
+def _measure(sdfg_json: Dict, cutout_json: Dict, repetitions: int, pipe: mp.Pipe) -> float:
+    sdfg = dace.SDFG.from_json(sdfg_json)
+    cutout = dace.SDFG.from_json(cutout_json)
+    dreport: data_report.InstrumentedDataReport = sdfg.get_instrumented_data()
+
+    arguments = {}
+    for cstate in cutout.nodes():
+        for dnode in cstate.data_nodes():
+            array = cutout.arrays[dnode.data]
+            if array.transient:
+                continue
+
+            data = dreport.get_first_version(dnode.data)
+            arguments[dnode.data] = dace.data.make_array_from_descriptor(array, data)
+
+    with dace.config.set_temporary('debugprint', value=False):
+        with dace.config.set_temporary('instrumentation', 'report_each_invocation', value=False):
+            with dace.config.set_temporary('compiler', 'allow_view_arguments', value=True):
+                csdfg = cutout.compile()
+
+                for _ in range(repetitions):
+                    csdfg(**arguments)
+
+                csdfg.finalize()
+
+    report = cutout.get_latest_report()
+    durations = next(iter(next(iter(report.durations.values())).values()))
+
+    pipe.send(np.median(np.array(durations)))
+    pipe.close()
+
+class MeasureProcess(mp.Process):
+    def __init__(self, *args, **kwargs):
+        mp.Process.__init__(self, *args, **kwargs)
+        self._pconn, self._cconn = mp.Pipe()
+        self._exception = None
+
+    def run(self):
+        try:
+            mp.Process.run(self)
+            self._cconn.send(None)
+        except Exception as e:
+            tb = traceback.format_exc()
+            self._cconn.send((e, tb))
+            # raise e  # You can still rise this exception if you need to
+
+    @property
+    def exception(self):
+        if self._pconn.poll():
+            self._exception = self._pconn.recv()
+        return self._exception

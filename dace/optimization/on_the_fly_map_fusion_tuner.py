@@ -19,10 +19,10 @@ except (ImportError, ModuleNotFoundError):
     tqdm = lambda x, **kwargs: x
 
 
-class MapFusionTuner(cutout_tuner.CutoutTuner):
+class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
 
     def __init__(self, sdfg: SDFG, measurement: dtypes.InstrumentationType = dtypes.InstrumentationType.Timer) -> None:
-        super().__init__(task="MapFusion", sdfg=sdfg)
+        super().__init__(task="OnTheFlyMapFusion", sdfg=sdfg)
         self.instrument = measurement
 
     def cutouts(self):
@@ -59,14 +59,6 @@ class MapFusionTuner(cutout_tuner.CutoutTuner):
             fuse_counter = map_fusion.apply(state, self._sdfg)
             print(f"Fusing {fuse_counter} maps")
 
-        if fuse_counter == 0:
-            subgraph_fusion = sg.CompositeFusion(subgraph, self._sdfg.sdfg_id, state_id)
-            subgraph_fusion.allow_tiling = True
-            subgraph_fusion.schedule_innermaps = dace.ScheduleType.GPU_Device
-            if subgraph_fusion.can_be_applied(self._sdfg, subgraph):
-                subgraph_fusion.apply(self._sdfg)
-
-
     def space(self, cutout: dace.SDFG) -> Generator[List[bool], None, None]:
         subgraphs = en.ConnectedEnumerator(cutout, cutout.start_state)
         yield 0, []
@@ -74,32 +66,20 @@ class MapFusionTuner(cutout_tuner.CutoutTuner):
         for i, (subgraph, score) in enumerate(subgraphs):
             yield i + 1, list(map(lambda m: cutout.start_state.node_id(m), subgraph))
 
-    def pre_evaluate(self, cutout: dace.SDFG, dreport: data_report.InstrumentedDataReport, measurements: int,
-                     **kwargs) -> Dict:
+    def pre_evaluate(self, cutout: dace.SDFG, measurements: int, **kwargs) -> Dict:
         cutout.start_state.instrument = self.instrument
-
-        arguments = {}
-        for cstate in cutout.nodes():
-            for dnode in cstate.data_nodes():
-                array = cutout.arrays[dnode.data]
-                if array.transient:
-                    continue
-
-                data = dreport.get_first_version(dnode.data)
-                arguments[dnode.data] = dace.data.make_array_from_descriptor(array, data)
 
         new_kwargs = {
             "space_kwargs": {
                 "cutout": cutout
             },
             "cutout": cutout.to_json(),
-            "arguments": arguments,
             "measurements": measurements,
             "key": lambda point: str(point[0])
         }
         return new_kwargs
 
-    def evaluate(self, config, cutout, arguments: Dict, measurements: int, **kwargs) -> float:
+    def evaluate(self, config, cutout, measurements: int, **kwargs) -> float:
         candidate = dace.SDFG.from_json(cutout)
         for node in candidate.start_state:
             if isinstance(node, dace.nodes.MapEntry):
@@ -110,7 +90,7 @@ class MapFusionTuner(cutout_tuner.CutoutTuner):
 
         if config[0] == 0:
             # Baseline
-            return self.measure(candidate, arguments, measurements)
+            return self.measure(candidate, measurements)
 
         map_ids = config[1]
         if len(map_ids) < 2:
@@ -119,23 +99,11 @@ class MapFusionTuner(cutout_tuner.CutoutTuner):
         maps_ = list(map(candidate.start_state.node, map_ids))
         subgraph = helpers.subgraph_from_maps(sdfg=candidate, graph=candidate.start_state, map_entries=maps_)
 
-        changed = False
         map_fusion = sg.MapFusion(subgraph, candidate.sdfg_id, candidate.node_id(candidate.start_state))
         if map_fusion.can_be_applied(candidate.start_state, candidate):
             fuse_counter = map_fusion.apply(candidate.start_state, candidate)
-            changed = fuse_counter > 0
 
+            if fuse_counter == 0:
+                return math.inf
 
-        if not changed:
-            subgraph_fusion = sg.CompositeFusion(subgraph, candidate.sdfg_id, candidate.node_id(candidate.start_state))
-            subgraph_fusion.allow_tiling = True
-            subgraph_fusion.schedule_innermaps = dace.ScheduleType.GPU_Device
-            if subgraph_fusion.can_be_applied(candidate, subgraph):
-                subgraph_fusion.apply(candidate)
-                changed = True
-
-        if not changed:
-            return math.inf
-
-        candidate.save(f"{candidate.start_state.label}_{config[0]}.sdfg")
-        return self.measure(candidate, arguments, measurements)
+        return self.measure(candidate,  measurements)

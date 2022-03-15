@@ -50,19 +50,8 @@ class MapPermutationTuner(cutout_tuner.CutoutTuner):
         ]
         map_entry.map.params = config
 
-    def pre_evaluate(self, cutout: dace.SDFG, dreport: data_report.InstrumentedDataReport, measurements: int,
-                     **kwargs) -> Dict:
+    def pre_evaluate(self, cutout: dace.SDFG, measurements: int, **kwargs) -> Dict:
         cutout.start_state.instrument = self.instrument
-
-        arguments = {}
-        for cstate in cutout.nodes():
-            for dnode in cstate.data_nodes():
-                array = cutout.arrays[dnode.data]
-                if array.transient:
-                    continue
-
-                data = dreport.get_first_version(dnode.data)
-                arguments[dnode.data] = dace.data.make_array_from_descriptor(array, data)
 
         map_entry = None
         for node in cutout.start_state.nodes():
@@ -77,13 +66,12 @@ class MapPermutationTuner(cutout_tuner.CutoutTuner):
             },
             "cutout": cutout.to_json(),
             "map_entry_id": cutout.start_state.node_id(map_entry),
-            "arguments": arguments,
             "measurements": measurements,
             "key": lambda point: ".".join(point)
         }
         return new_kwargs
 
-    def evaluate(self, config, cutout, map_entry_id: int, arguments: Dict, measurements: int, **kwargs) -> float:
+    def evaluate(self, config, cutout, map_entry_id: int, measurements: int, **kwargs) -> float:
         cutout_ = dace.SDFG.from_json(cutout)
         map_ = cutout_.start_state.node(map_entry_id)
 
@@ -93,4 +81,4 @@ class MapPermutationTuner(cutout_tuner.CutoutTuner):
         ]
         map_.map.params = config
 
-        return self.measure(cutout_, arguments, measurements)
+        return self.measure(cutout_, measurements)

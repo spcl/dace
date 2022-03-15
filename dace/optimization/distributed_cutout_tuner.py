@@ -50,14 +50,13 @@ class DistributedCutoutTuner:
         if rank >= len(chunks):
             return
 
-        dreport: data_report.InstrumentedDataReport = self._tuner._sdfg.get_instrumented_data()
         self._tuner.rank = rank
         self._tuner.num_ranks = num_ranks
         # Tune new cutouts
         chunk = chunks[rank]
         for hash in chunk:
             cutout = cutouts[hash]
-            results = self._tuner.search(cutout=cutout, dreport=dreport, measurements=measurements, **kwargs)
+            results = self._tuner.search(cutout=cutout, measurements=measurements, **kwargs)
 
             file_name = self._tuner.file_name(hash)
             with open(file_name, 'w') as fp:
@@ -91,14 +90,12 @@ class DistributedSpaceTuner:
             if hash not in existing_files:
                 new_cutouts.append(hash)
 
-        dreport: data_report.InstrumentedDataReport = self._tuner._sdfg.get_instrumented_data()
         self._tuner.rank = rank
         self._tuner.num_ranks = num_ranks
 
         for cutout_hash in new_cutouts:
             cutout = cutouts[cutout_hash]
             evaluate_kwargs = self._tuner.pre_evaluate(cutout=cutout,
-                                                       dreport=dreport,
                                                        measurements=measurements,
                                                        **kwargs)
 
