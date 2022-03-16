@@ -856,6 +856,10 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
             return f'{expr.func}[{expr.args[0]}]'
         if str(expr.func) == 'int_floor':
             return '((%s) / (%s))' % (self._print(expr.args[0]), self._print(expr.args[1]))
+        if str(expr.func) == 'AND':
+            return f'(({self._print(expr.args[0])}) and ({self._print(expr.args[1])}))'
+        if str(expr.func) == 'OR':
+            return f'(({self._print(expr.args[0])}) or ({self._print(expr.args[1])}))'
         return super()._print_Function(expr)
 
     def _print_Mod(self, expr):
@@ -884,7 +888,7 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
     def _print_Pow(self, expr):
         base = self._print(expr.args[0])
         exponent = self._print(expr.args[1])
-        
+
         # Special case for square root
         try:
             if float(exponent) == 0.5:
