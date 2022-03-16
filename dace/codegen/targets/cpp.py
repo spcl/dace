@@ -7,6 +7,7 @@ import ast
 import copy
 import functools
 import itertools
+import math
 import warnings
 
 import sympy as sp
@@ -123,24 +124,24 @@ def memlet_copy_to_absolute_strides(dispatcher, sdfg, memlet, src_node, dst_node
         if memlet.other_subset is not None:
             if dispatcher is not None:
                 dst_expr = copy_expr(dispatcher,
-                                    sdfg,
-                                    dst_node.data,
-                                    memlet,
-                                    is_write=True,
-                                    offset=memlet.other_subset,
-                                    relative_offset=False,
-                                    packed_types=packed_types)
+                                     sdfg,
+                                     dst_node.data,
+                                     memlet,
+                                     is_write=True,
+                                     offset=memlet.other_subset,
+                                     relative_offset=False,
+                                     packed_types=packed_types)
             dst_subset = memlet.other_subset
         else:
             if dispatcher is not None:
                 dst_expr = copy_expr(dispatcher,
-                                    sdfg,
-                                    dst_node.data,
-                                    memlet,
-                                    is_write=True,
-                                    offset=None,
-                                    relative_offset=False,
-                                    packed_types=packed_types)
+                                     sdfg,
+                                     dst_node.data,
+                                     memlet,
+                                     is_write=True,
+                                     offset=None,
+                                     relative_offset=False,
+                                     packed_types=packed_types)
             dst_subset = subsets.Range.from_array(dst_nodedesc)
         src_subset = memlet.subset
 
@@ -150,24 +151,24 @@ def memlet_copy_to_absolute_strides(dispatcher, sdfg, memlet, src_node, dst_node
         if memlet.other_subset is not None:
             if dispatcher is not None:
                 src_expr = copy_expr(dispatcher,
-                                    sdfg,
-                                    src_node.data,
-                                    memlet,
-                                    is_write=False,
-                                    offset=memlet.other_subset,
-                                    relative_offset=False,
-                                    packed_types=packed_types)
+                                     sdfg,
+                                     src_node.data,
+                                     memlet,
+                                     is_write=False,
+                                     offset=memlet.other_subset,
+                                     relative_offset=False,
+                                     packed_types=packed_types)
             src_subset = memlet.other_subset
         else:
             if dispatcher is not None:
                 src_expr = copy_expr(dispatcher,
-                                    sdfg,
-                                    src_node.data,
-                                    memlet,
-                                    is_write=False,
-                                    offset=None,
-                                    relative_offset=False,
-                                    packed_types=packed_types)
+                                     sdfg,
+                                     src_node.data,
+                                     memlet,
+                                     is_write=False,
+                                     offset=None,
+                                     relative_offset=False,
+                                     packed_types=packed_types)
             src_subset = subsets.Range.from_array(src_nodedesc)
         dst_subset = memlet.subset
 
@@ -1198,11 +1199,16 @@ class DaCeKeywordRemover(ExtNodeTransformer):
     def visit_BinOp(self, node: ast.BinOp):
         # Special case for integer powers
         if isinstance(node.op, ast.Pow):
+            from dace.frontend.python import astutils
             try:
-                unparsed = symbolic.pystr_to_symbolic(unparse(node.right))
+                unparsed = symbolic.pystr_to_symbolic(
+                    astutils.evalnode(node.right, {
+                        **self.constants, 'dace': dace,
+                        'math': math
+                    }))
                 evaluated = symbolic.symstr(symbolic.evaluate(unparsed, self.constants))
                 node.right = ast.parse(evaluated).body[0].value
-            except (TypeError, AttributeError, NameError, KeyError, ValueError):
+            except (TypeError, AttributeError, NameError, KeyError, ValueError, SyntaxError):
                 return self.generic_visit(node)
 
         return self.generic_visit(node)
@@ -1277,7 +1283,8 @@ def synchronize_streams(sdfg, dfg, state_id, node, scope_exit, callsite_stream):
         for edge in dfg.out_edges(scope_exit):
             # Synchronize end of kernel with output data (multiple kernels
             # lead to same data node)
-            if (isinstance(edge.dst, nodes.AccessNode) and hasattr(edge.dst, '_cuda_stream') and edge.dst._cuda_stream != node._cuda_stream):
+            if (isinstance(edge.dst, nodes.AccessNode) and hasattr(edge.dst, '_cuda_stream')
+                    and edge.dst._cuda_stream != node._cuda_stream):
                 callsite_stream.write(
                     """{backend}EventRecord(__state->gpu_context->events[{ev}], {src_stream});
 {backend}StreamWaitEvent(__state->gpu_context->streams[{dst_stream}], __state->gpu_context->events[{ev}], 0);""".format(

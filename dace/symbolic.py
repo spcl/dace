@@ -884,12 +884,28 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
     def _print_Pow(self, expr):
         base = self._print(expr.args[0])
         exponent = self._print(expr.args[1])
+        
+        # Special case for square root
+        try:
+            if float(exponent) == 0.5:
+                return f'dace::math::sqrt({base})'
+        except ValueError:
+            pass
+
+        # Special case for integer powers
         try:
             int_exp = int(exponent)
-            assert (int_exp > 0)
+            if int_exp == 0:
+                return '1'
+            negative = int_exp < 0
+            if negative:
+                int_exp = -int_exp
             res = "({})".format(base)
             for _ in range(1, int_exp):
-                res += "*({})".format(base)
+                res += " * ({})".format(base)
+
+            if negative:
+                res = f'reciprocal({res})'
             return res
         except ValueError:
             return "dace::math::pow({f}, {s})".format(f=self._print(expr.args[0]), s=self._print(expr.args[1]))
