@@ -93,37 +93,75 @@ class ExpandTTGT(ExpandTransformation):
         # (1) It will return the tensor itself if transposition is uncessary.
         # (2) It will use matrix transpose operation for 2-mode tensors.
         state = sdfg.add_state(f"{node.label}_inp_transpose_state", is_start_state=True)
-        left_axes = [i for i in range(len(left_arr.shape)) if i not in node.left_axes]
-        left_axes.extend(node.left_axes)
-        left_tt = _transpose(None, sdfg, state, "_left_tensor", left_axes)
-        left_tt_arr = sdfg.arrays[left_tt]
-        right_axes = list(node.right_axes)
-        right_axes.extend([i for i in range(len(right_arr.shape)) if i not in node.right_axes])
-        right_tt = _transpose(None, sdfg, state, "_right_tensor", right_axes)
-        right_tt_arr = sdfg.arrays[right_tt]
+
+        if node.left_axes == list(range(len(node.left_axes))):
+            transA = True
+        else:
+            transA = False
+        if node.right_axes == list(range(len(right_arr.shape)-len(node.right_axes), len(right_arr.shape))):
+            transB = True
+        else:
+            transB = False
+        
+        if transA:
+            left_tt = "_left_tensor"
+            left_tt_arr = left_arr
+        else:
+            left_axes = [i for i in range(len(left_arr.shape)) if i not in node.left_axes]
+            left_axes.extend(node.left_axes)
+            left_tt = _transpose(None, sdfg, state, "_left_tensor", left_axes)
+            left_tt_arr = sdfg.arrays[left_tt]
+
+        if transB:
+            right_tt = "_right_tensor"
+            right_tt_arr = right_arr
+        else:
+            right_axes = list(node.right_axes)
+            right_axes.extend([i for i in range(len(right_arr.shape)) if i not in node.right_axes])
+            right_tt = _transpose(None, sdfg, state, "_right_tensor", right_axes)
+            right_tt_arr = sdfg.arrays[right_tt]
 
         from dace.libraries.blas import Gemm
         prv_state = state
         state = sdfg.add_state(f"{node.label}_gemm_state")
         sdfg.add_edge(prv_state, state, dace.InterstateEdge())
-        left_shape = [_prod(left_tt_arr.shape[:-len(node.left_axes)]), _prod(left_tt_arr.shape[len(left_tt_arr.shape)-len(node.left_axes):])]
-        left_strides = [left_tt_arr.strides[-len(node.left_axes)-1], left_tt_arr.strides[-1]]
+        
+        if transA:
+            left_shape = [_prod(left_tt_arr.shape[:len(node.left_axes)]), _prod(left_tt_arr.shape[len(node.left_axes):])]
+            left_strides = [left_tt_arr.strides[len(node.left_axes)-1], left_tt_arr.strides[-1]]
+        else:
+            left_shape = [_prod(left_tt_arr.shape[:-len(node.left_axes)]), _prod(left_tt_arr.shape[len(left_tt_arr.shape)-len(node.left_axes):])]
+            left_strides = [left_tt_arr.strides[-len(node.left_axes)-1], left_tt_arr.strides[-1]]
         left_vname, left_view = sdfg.add_view(left_tt, left_shape, left_tt_arr.dtype, left_tt_arr.storage, strides=left_strides, find_new_name=True)
         left_anode = state.add_read(left_tt)
         left_vnode = state.add_access(left_vname)
         state.add_edge(left_anode, None, left_vnode, 'views', dace.Memlet.from_array(left_tt, left_tt_arr))
-        right_shape = [_prod(right_tt_arr.shape[0:len(node.right_axes)]), _prod(right_tt_arr.shape[len(node.right_axes):]), ]
-        right_strides = [right_tt_arr.strides[len(node.right_axes)-1], right_tt_arr.strides[-1]]
+
+        if transB:
+            right_shape = [_prod(right_tt_arr.shape[:-len(node.right_axes)]), _prod(right_tt_arr.shape[len(right_tt_arr.shape)-len(node.right_axes):])]
+            right_strides = [right_tt_arr.strides[-len(node.right_axes)-1], right_tt_arr.strides[-1]]
+        else:
+            right_shape = [_prod(right_tt_arr.shape[0:len(node.right_axes)]), _prod(right_tt_arr.shape[len(node.right_axes):])]
+            right_strides = [right_tt_arr.strides[len(node.right_axes)-1], right_tt_arr.strides[-1]]
         right_vname, right_view = sdfg.add_view(right_tt, right_shape, right_tt_arr.dtype, right_tt_arr.storage, strides=right_strides, find_new_name=True)
         right_anode = state.add_read(right_tt)
         right_vnode = state.add_access(right_vname)
         state.add_edge(right_anode, None, right_vnode, 'views', dace.Memlet.from_array(right_tt, right_tt_arr))
-        tasklet = Gemm('_GEMM_', cin=False)
+
+        tasklet = Gemm('_GEMM_', cin=False, transA=transA, transB=transB)
         state.add_edge(left_vnode, None, tasklet, '_a', dace.Memlet.from_array(left_vname, left_view))
         state.add_edge(right_vnode, None, tasklet, '_b', dace.Memlet.from_array(right_vname, right_view))
 
         # Output handling
-        out_shape = [left_shape[0], right_shape[1]]
+        out_shape = []
+        if transA:
+            out_shape.append(left_shape[1])
+        else:
+            out_shape.append(left_shape[0])
+        if transB:
+            out_shape.append(right_shape[0])
+        else:
+            out_shape.append(right_shape[1])
         if node.permutation and node.permutation != list(range(len(node.permutation))):
             dot_shape = [s for i, s in enumerate(left_tensor.shape) if i not in node.left_axes]
             dot_shape.extend([s for i, s in enumerate(right_tensor.shape) if i not in node.right_axes])
