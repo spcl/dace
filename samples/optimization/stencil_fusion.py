@@ -83,18 +83,18 @@ if __name__ == '__main__':
     sdfg_path = Path(os.environ["HOME"]) / "projects/tuning-dace/aha-expanded_sub_fused.sdfg"
     sdfg.save(sdfg_path)
 
-    print("Permutation")
-    tuner = optim.MapPermutationTuner(sdfg, measurement=dace.InstrumentationType.GPU_Events)
-    tuner.optimize(apply=True)
-    measure(sdfg, arguments)
+    # print("Permutation")
+    # tuner = optim.MapPermutationTuner(sdfg, measurement=dace.InstrumentationType.GPU_Events)
+    # tuner.optimize(apply=True)
+    # measure(sdfg, arguments)
 
-    sdfg_path = Path(os.environ["HOME"]) / "projects/tuning-dace/aha-expanded_fused_permuted.sdfg"
-    sdfg.save(sdfg_path)
+    # sdfg_path = Path(os.environ["HOME"]) / "projects/tuning-dace/aha-expanded_fused_permuted.sdfg"
+    # sdfg.save(sdfg_path)
 
-    print("Tiling")
-    tuner = optim.MapTilingTuner(sdfg, measurement=dace.InstrumentationType.GPU_Events)
-    tuner.optimize(apply=True)
-    measure(sdfg, arguments)
+    # print("Tiling")
+    # tuner = optim.MapTilingTuner(sdfg, measurement=dace.InstrumentationType.GPU_Events)
+    # tuner.optimize(apply=True)
+    # measure(sdfg, arguments)
 
-    sdfg_path = Path(os.environ["HOME"]) / "projects/tuning-dace/aha-expanded_fused_permuted_tiled.sdfg"
-    sdfg.save(sdfg_path)
+    # sdfg_path = Path(os.environ["HOME"]) / "projects/tuning-dace/aha-expanded_fused_permuted_tiled.sdfg"
+    # sdfg.save(sdfg_path)

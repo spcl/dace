@@ -10,7 +10,6 @@ from typing import Dict, Generator, Any, Tuple, List
 import multiprocessing as mp
 # mp.set_start_method("spawn")
 
-from dace.codegen import exceptions as cgx
 from dace.optimization import auto_tuner
 from dace.codegen.instrumentation.data import data_report
 
@@ -101,7 +100,7 @@ class CutoutTuner(auto_tuner.AutoTuner):
 
         return result
 
-    def measure(self, sdfg: dace.SDFG, repetitions: int = 30, timeout: float = 60.0) -> float:
+    def measure(self, sdfg: dace.SDFG, repetitions: int = 30, timeout: float = 10.0) -> float:
         parent_conn, child_conn = mp.Pipe()        
         proc = MeasureProcess(target=_measure, args=(self._sdfg.to_json(), sdfg.to_json(), repetitions, child_conn))
         
@@ -122,7 +121,6 @@ class CutoutTuner(auto_tuner.AutoTuner):
             print("Error occured during measuring: ", error)
             runtime = math.inf
 
-        print("\n Runtime: ", runtime)
         return runtime
 
     def optimize(self, measurements: int = 30, apply: bool = False, **kwargs) -> Dict:
@@ -174,8 +172,12 @@ def _measure(sdfg_json: Dict, cutout_json: Dict, repetitions: int, pipe: mp.Pipe
             if array.transient:
                 continue
 
-            data = dreport.get_first_version(dnode.data)
-            arguments[dnode.data] = dace.data.make_array_from_descriptor(array, data)
+            try:
+                data = dreport.get_first_version(dnode.data)
+                arguments[dnode.data] = dace.data.make_array_from_descriptor(array, data)
+            except KeyError:
+                print("Missing data in dreport, random array")
+                arguments[dnode.data] = dace.data.make_array_from_descriptor(array)
 
     with dace.config.set_temporary('debugprint', value=False):
         with dace.config.set_temporary('instrumentation', 'report_each_invocation', value=False):
