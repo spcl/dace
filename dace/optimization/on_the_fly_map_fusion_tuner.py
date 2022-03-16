@@ -1,7 +1,9 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
+from distutils.archive_util import make_archive
 import dace
 import math
 import copy
+import numpy as np
 
 from typing import Generator, Dict, List, Tuple
 from collections import Counter
@@ -27,15 +29,16 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
         super().__init__(task="OnTheFlyMapFusion", sdfg=sdfg)
         self.instrument = measurement
 
-    def cutouts(self, sdfg=None):
-        if sdfg is None:
-            sdfg = self._sdfg
-
-        for state in sdfg.nodes():
-            state_id = sdfg.node_id(state)
+    def cutouts(self):
+        for state in self._sdfg.nodes():
+            state_id = self._sdfg.node_id(state)
             nodes = state.nodes()
-            cutout = cutter.cutout_state(state, *(nodes), make_copy=False)
-            yield cutout, f"{state_id}.{state.label}"
+
+            try:
+                cutout = cutter.cutout_state(state, *(nodes), make_copy=False)
+                yield cutout, f"{state_id}.{state.label}"
+            except AttributeError:
+                continue
 
     def config_from_key(self, key: str, cutout: dace.SDFG, **kwargs) -> Tuple[int, List[int]]:
         fusion_id = int(key)
@@ -113,10 +116,10 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
             fuse_counter = map_fusion.apply(state, self._sdfg)
             print(f"Fusing {fuse_counter} maps")
 
-    def _transfer_apply(self, sdfg: dace.SDFG, patterns: List[Tuple[str, List[int]]]):
+    def _extract_patterns(self, configs: List[Tuple[str, List[int]]]):
         # Describe successful fusions as set of map descriptors
         subgraph_patterns = []
-        for label, config in patterns:
+        for label, config in configs:
             state_id = label.split(".")[0]
             state_id = int(state_id)
             state = self._sdfg.node(state_id)
@@ -135,70 +138,99 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
 
             subgraph_patterns.append(pattern_desc)
 
-        cutouts = list(self.cutouts(sdfg))
+        return subgraph_patterns
 
-        # Split work
-        rank = optim_utils.get_world_rank()
-        num_ranks = optim_utils.get_world_size()
-        chunk_size = len(cutouts) // max(num_ranks, 1)
-        chunks = list(optim_utils.partition(cutouts, chunk_size))
+    @staticmethod
+    def transfer(sdfg: dace.SDFG, tuner, k: int = 5):
+        assert isinstance(tuner, OnTheFlyMapFusionTuner)
 
-        if rank >= len(chunks):
-            return
+        tuning_report = tuner.optimize(apply=False)
+        best_configs = cutout_tuner.CutoutTuner.top_k_configs(tuning_report, k=k)
+        subgraph_patterns = tuner._extract_patterns(best_configs)
 
-        # Find set of map descriptors in other sdfg
-        chunk = chunks[rank]
-        for cutout, label in tqdm(chunk):
+        for state in list(sdfg.nodes()):
+            top_maps = helpers.get_outermost_scope_maps(sdfg, state)
+            if len(top_maps) < 2:
+                continue
+
+            cutout = cutter.cutout_state(state, *(state.nodes()), make_copy=False)
+            cutout.start_state.instrument = dace.InstrumentationType.GPU_Events
+            initial_runtime = optim_utils.measure(cutout)
+
             # Try to apply every subgraph_pattern greedily, i.e., highest expected speedup first
             for pattern in subgraph_patterns:
-                maps = helpers.get_outermost_scope_maps(cutout, cutout.start_state)
-                cutout_maps = {}
-                cutout_desc = Counter()
+                maps = helpers.get_outermost_scope_maps(sdfg, state)
+                if len(maps) < 2:
+                    continue
+
+                maps_desc = {}
+                state_desc = Counter()
                 for map_entry in maps:
-                    map_desc = OnTheFlyMapFusionTuner.map_descriptor(cutout.start_state, map_entry)
-                    cutout_desc.update({map_desc: 1})
+                    map_desc = OnTheFlyMapFusionTuner.map_descriptor(state, map_entry)
+                    state_desc.update({map_desc: 1})
                     
-                    if not map_desc in cutout_maps:
-                        cutout_maps[map_desc] = []
+                    if not map_desc in maps_desc:
+                        maps_desc[map_desc] = []
 
-                    cutout_maps[map_desc].append(map_entry)
+                    maps_desc[map_desc].append(map_entry)
+                
+                included = True
+                for key in pattern:
+                    if not key in state_desc or pattern[key] > state_desc[key]:
+                        included = False                        
+                        break
 
-                if cutout_desc != pattern:
+                if not included:
                     continue
 
                 # Construct subgraph greedily
                 subgraph_maps = []
                 for desc in pattern:
                     num = pattern[desc]
-                    subgraph_maps.extend(cutout_maps[desc][:num])
+                    subgraph_maps.extend(maps_desc[desc][:num])
 
-                # 1. Check speedup on cutout
-                # subgraph = helpers.subgraph_from_maps(sdfg=cutout, graph=cutout.start_state, map_entries=subgraph_maps)
-                # map_fusion = sg.MapFusion(subgraph, cutout.sdfg_id, cutout.node_id(cutout.start_state))
-                # if map_fusion.can_be_applied(cutout.start_state, cutout):                    
-                #     # baseline_cutout = copy.deepcopy(cutout)
-                #     # baseline_runtime = self.measure(baseline_cutout)
+                # Apply
+                experiment_sdfg = copy.deepcopy(sdfg)
+                experiment_state = experiment_sdfg.node(sdfg.node_id(state))
+                
+                experiment_subgraph_maps = list(map(lambda me: experiment_state.node(state.node_id(me)), subgraph_maps))
+                experiment_subgraph = helpers.subgraph_from_maps(sdfg=experiment_sdfg, graph=experiment_state, map_entries=experiment_subgraph_maps)
+                
+                map_fusion = sg.MapFusion(experiment_subgraph, experiment_sdfg.sdfg_id, experiment_sdfg.node_id(experiment_state))
+                if map_fusion.can_be_applied(experiment_state, experiment_sdfg):
+                    print("Comparing")
+                    baseline = cutter.cutout_state(experiment_state, *(experiment_state.nodes()), make_copy=True)                    
+                    baseline.start_state.instrument = dace.InstrumentationType.GPU_Events
+                    base_runtime = optim_utils.measure(baseline)
 
-                #     fuse_counter = map_fusion.apply(cutout.start_state, cutout)
-                #     if fuse_counter == 0:
-                #         continue
+                    experiment_fuse_counter = map_fusion.apply(experiment_state, experiment_sdfg)
+                    if experiment_fuse_counter == 0:
+                        continue
 
-                #     print(fuse_counter)
+                    experiment_cutout = cutter.cutout_state(experiment_state, *(experiment_state.nodes()), make_copy=False)
+                    experiment_cutout.start_state.instrument = dace.InstrumentationType.GPU_Events
+                    fused_runtime = optim_utils.measure(experiment_cutout)
+                    print(base_runtime, fused_runtime, experiment_fuse_counter)
+                    if fused_runtime > base_runtime:
+                        continue
 
-                #     # runtime = self.measure(cutout)
-                #     # if runtime > baseline_runtime:
-                #     #     # Reset to original cutout
-                #     #     cutout = baseline_cutout
-                #     #     continue
+                    print(f"Fusing {experiment_fuse_counter} maps. Performance improvement: {base_runtime - fused_runtime}")
 
-                # 2. Apply to actual SDFG
-                state_id = int(label.split(".")[0])
-                state = sdfg.node(state_id)
-                subgraph = helpers.subgraph_from_maps(sdfg=sdfg, graph=state, map_entries=subgraph_maps)
-                map_fusion = sg.MapFusion(subgraph, sdfg.sdfg_id, state_id)
-                if map_fusion.can_be_applied(state, sdfg):                    
-                    fuse_counter = map_fusion.apply(state, sdfg)
-                    print(f"Fusing {fuse_counter} maps")
+                    subgraph = helpers.subgraph_from_maps(sdfg=sdfg, graph=state, map_entries=subgraph_maps)
+                    map_fusion = sg.MapFusion(subgraph, sdfg.sdfg_id, sdfg.node_id(state))
+                    actual_fuse_counter = map_fusion.apply(state, sdfg)
+                    assert actual_fuse_counter == experiment_fuse_counter
+
+            tuned_top_maps = helpers.get_outermost_scope_maps(sdfg, state)
+            print(len(top_maps), len(tuned_top_maps))
+
+            cutout_tuned = cutter.cutout_state(state, *(state.nodes()), make_copy=False)
+            cutout_tuned.start_state.instrument = dace.InstrumentationType.GPU_Events
+            tuned_runtime = optim_utils.measure(cutout_tuned)
+            
+            print(f"Tuning result of {state.label} (initial, tuned): {initial_runtime, tuned_runtime}")
+            print()
+            print()
 
     @staticmethod
     def map_descriptor(state: dace.SDFGState, map_entry: dace.nodes.MapEntry) -> str:

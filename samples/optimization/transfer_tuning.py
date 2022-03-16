@@ -1,12 +1,11 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 import os
 import dace
-import numpy as np
 
 from pathlib import Path
 
-from dace.optimization import cutout_tuner as ct
 from dace import optimization as optim
+from dace.optimization import utils as optim_utils
 
 if __name__ == '__main__':
 
@@ -16,28 +15,38 @@ if __name__ == '__main__':
     small_sample.apply_gpu_transformations()
     small_sample.simplify()
 
-    arguments = {}
-    for name, array in small_sample.arrays.items():
-        if array.transient:
-            continue
+    for state in small_sample.nodes():
+        state.instrument = dace.InstrumentationType.GPU_Events
+        for node in state.nodes():
+            if isinstance(node, dace.nodes.MapEntry):
+                node.schedule = dace.ScheduleType.GPU_Device
 
-        data = dace.data.make_array_from_descriptor(array, np.random.rand(*array.shape))
-        arguments[name] = data
-    
-    ct.CutoutTuner.dry_run(small_sample, **arguments)
-    otf_tuner = optim.OnTheFlyMapFusionTuner(small_sample, measurement=dace.InstrumentationType.GPU_Events)
-    otf_tuner.optimize(apply=False)
-
-    sf_tuner = optim.SubgraphFusionTuner(small_sample, measurement=dace.InstrumentationType.GPU_Events)
-    sf_tuner.optimize(apply=False)
-
-    sdfg_path = Path(os.environ["HOME"]) / "projects/tuning-dace/aha-expanded-2.sdfg"
+    sdfg_path = Path(os.environ["HOME"]) / "projects/tuning-dace/aha-expanded-2-copy.sdfg"
     big_sdfg = dace.SDFG.from_file(sdfg_path)
 
-    print("Transfering")
+    big_sdfg.apply_gpu_transformations()
+    big_sdfg.simplify()
+
+    for state in big_sdfg.nodes():
+        state.instrument = dace.InstrumentationType.GPU_Events
+        for node in state.nodes():
+            if isinstance(node, dace.nodes.MapEntry):
+                node.schedule = dace.ScheduleType.GPU_Device
+
+    runtime = optim_utils.measure(big_sdfg)
     
-    otf_tuner.transfer(big_sdfg)
-    sf_tuner.transfer(big_sdfg)
+    print("Transfer")
+
+    otf_tuner = optim.OnTheFlyMapFusionTuner(small_sample, measurement=dace.InstrumentationType.GPU_Events)
+    optim.OnTheFlyMapFusionTuner.transfer(big_sdfg, otf_tuner, k=10)
+    
+    otf_tuner.optimize(apply=True)
+
+    sf_tuner = optim.SubgraphFusionTuner(small_sample, measurement=dace.InstrumentationType.GPU_Events)
+    optim.SubgraphFusionTuner.transfer(big_sdfg, sf_tuner, k=10)
+
+    tuned_runtime = optim_utils.measure(big_sdfg)
+    print("Tuning speedup: ",  runtime / tuned_runtime)
 
     sdfg_path = Path(os.environ["HOME"]) / "projects/tuning-dace/aha-expanded-2-transfer.sdfg"
     big_sdfg.save(sdfg_path)

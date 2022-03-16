@@ -36,21 +36,8 @@ if __name__ == '__main__':
     sdfg.apply_gpu_transformations()
     sdfg.simplify()
 
-    # do_not_transient = set()
-    # visited = set()
-    # for state in sdfg.nodes():
-    #     for node in state.data_nodes():
-    #         in_degree = state.in_degree(node)
-    #         out_degree = state.out_degree(node)
-
-    #         if in_degree == 0 or out_degree == 0 or node.data in visited:
-    #             do_not_transient.add(node.data)
-    #         visited.add(node.data)
-
     arguments = {}
     for name, array in sdfg.arrays.items():
-        # if name not in do_not_transient:
-        #     array.transient = True
         if array.transient:
             continue
 

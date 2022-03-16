@@ -63,19 +63,6 @@ class CutoutTuner(auto_tuner.AutoTuner):
     def apply(self, config, cutout, **kwargs) -> None:
         raise NotImplementedError
 
-    def transfer(self, sdfg: dace.SDFG, k: int = 1, **kwargs):
-        # Make sure all results are available, i.e., load from cache ideally
-        tuning_report = self.optimize(apply=False)
-
-        # Find best configs
-        best_configs = CutoutTuner.top_k_configs(tuning_report, k=k)
-        
-        # Apply "patterns"
-        self._transfer_apply(sdfg=sdfg, patterns=best_configs)
-
-    def _transfer_apply(self, sdfg: dace.SDFG, patterns: List[Tuple[str, Any]]):
-        raise NotImplementedError
-
     def measure(self, sdfg: dace.SDFG, repetitions: int = 30, timeout: float = 10.0) -> float:
         parent_conn, child_conn = mp.Pipe()        
         proc = MeasureProcess(target=_measure, args=(self._sdfg.to_json(), sdfg.to_json(), repetitions, child_conn))

@@ -1,5 +1,30 @@
 import os
+import dace
 import itertools
+import numpy as np
+
+def measure(sdfg):
+    arguments = {}
+    for name, array in sdfg.arrays.items():
+        if array.transient:
+            continue
+
+        data = dace.data.make_array_from_descriptor(array, np.random.rand(*array.shape))
+        arguments[name] = data
+    
+    with dace.config.set_temporary('debugprint', value=False):
+        with dace.config.set_temporary('instrumentation', 'report_each_invocation', value=False):
+            with dace.config.set_temporary('compiler', 'allow_view_arguments', value=True):
+                csdfg = sdfg.compile()
+
+                for _ in range(50):
+                    csdfg(**arguments)
+
+                csdfg.finalize()
+
+    report = sdfg.get_latest_report()
+    durations = next(iter(next(iter(report.durations.values())).values()))
+    return np.median(np.array(durations))
 
 def partition(it, size):
     it = iter(it)
