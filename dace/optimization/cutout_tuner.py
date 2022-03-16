@@ -63,42 +63,18 @@ class CutoutTuner(auto_tuner.AutoTuner):
     def apply(self, config, cutout, **kwargs) -> None:
         raise NotImplementedError
 
-    @staticmethod
-    def dry_run(sdfg, *args, **kwargs) -> Any:
-        # Check existing instrumented data for shape mismatch
-        kwargs.update({aname: a for aname, a in zip(sdfg.arg_names, args)})
+    def transfer(self, sdfg: dace.SDFG, k: int = 1, **kwargs):
+        # Make sure all results are available, i.e., load from cache ideally
+        tuning_report = self.optimize(apply=False)
 
-        dreport = sdfg.get_instrumented_data()
-        if dreport is not None:
-            for data in dreport.keys():
-                rep_arr = dreport.get_first_version(data)
-                sdfg_arr = sdfg.arrays[data]
-                # Potential shape mismatch
-                if rep_arr.shape != sdfg_arr.shape:
-                    # Check given data first
-                    if hasattr(kwargs[data], 'shape') and rep_arr.shape != kwargs[data].shape:
-                        sdfg.clear_data_reports()
-                        dreport = None
-                        break
+        # Find best configs
+        best_configs = CutoutTuner.top_k_configs(tuning_report, k=k)
+        
+        # Apply "patterns"
+        self._transfer_apply(sdfg=sdfg, patterns=best_configs)
 
-        # If there is no valid instrumented data available yet, run in data instrumentation mode
-        if dreport is None:
-            for state in sdfg.nodes():
-                for node in state.nodes():
-                    if isinstance(node, dace.nodes.AccessNode) and not node.desc(sdfg).transient:
-                        node.instrument = dace.DataInstrumentationType.Save
-
-            result = sdfg(**kwargs)
-
-            # Disable data instrumentation from now on
-            for state in sdfg.nodes():
-                for node in state.nodes():
-                    if isinstance(node, dace.nodes.AccessNode):
-                        node.instrument = dace.DataInstrumentationType.No_Instrumentation
-        else:
-            return None
-
-        return result
+    def _transfer_apply(self, sdfg: dace.SDFG, patterns: List[Tuple[str, Any]]):
+        raise NotImplementedError
 
     def measure(self, sdfg: dace.SDFG, repetitions: int = 30, timeout: float = 10.0) -> float:
         parent_conn, child_conn = mp.Pipe()        
@@ -159,6 +135,56 @@ class CutoutTuner(auto_tuner.AutoTuner):
             results[key(config)] = runtime
 
         return results
+
+    @staticmethod
+    def top_k_configs(tuning_report, k: int):
+        all_configs = []
+        for cutout_label in tuning_report:
+            configs = tuning_report[cutout_label]
+            best_k_configs = [(key, value) for key, value in sorted(configs.items(), key=lambda item: item[1])][:min(len(configs), k)]
+            best_k_configs = filter(lambda c: c[1] != math.inf, best_k_configs)
+            best_k_configs = list(map(lambda c: (cutout_label, c[0]), best_k_configs))
+
+            all_configs.extend(best_k_configs)
+
+        return all_configs
+
+    @staticmethod
+    def dry_run(sdfg, *args, **kwargs) -> Any:
+        # Check existing instrumented data for shape mismatch
+        kwargs.update({aname: a for aname, a in zip(sdfg.arg_names, args)})
+
+        dreport = sdfg.get_instrumented_data()
+        if dreport is not None:
+            for data in dreport.keys():
+                rep_arr = dreport.get_first_version(data)
+                sdfg_arr = sdfg.arrays[data]
+                # Potential shape mismatch
+                if rep_arr.shape != sdfg_arr.shape:
+                    # Check given data first
+                    if hasattr(kwargs[data], 'shape') and rep_arr.shape != kwargs[data].shape:
+                        sdfg.clear_data_reports()
+                        dreport = None
+                        break
+
+        # If there is no valid instrumented data available yet, run in data instrumentation mode
+        if dreport is None:
+            for state in sdfg.nodes():
+                for node in state.nodes():
+                    if isinstance(node, dace.nodes.AccessNode) and not node.desc(sdfg).transient:
+                        node.instrument = dace.DataInstrumentationType.Save
+
+            result = sdfg(**kwargs)
+
+            # Disable data instrumentation from now on
+            for state in sdfg.nodes():
+                for node in state.nodes():
+                    if isinstance(node, dace.nodes.AccessNode):
+                        node.instrument = dace.DataInstrumentationType.No_Instrumentation
+        else:
+            return None
+
+        return result
 
 def _measure(sdfg_json: Dict, cutout_json: Dict, repetitions: int, pipe: mp.Pipe) -> float:
     sdfg = dace.SDFG.from_json(sdfg_json)

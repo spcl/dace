@@ -1,6 +1,4 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
-import os
-
 from collections import OrderedDict
 import dace
 import json
@@ -9,8 +7,7 @@ import itertools
 from typing import Dict
 
 from dace.optimization import cutout_tuner as ct
-from dace.sdfg.analysis import cutout as cutter
-from dace.codegen.instrumentation.data import data_report
+from dace.optimization import utils as optim_utils
 
 try:
     from tqdm import tqdm
@@ -42,10 +39,10 @@ class DistributedCutoutTuner:
                 new_cutouts.append(hash)
 
         # Split work
-        rank = get_world_rank()
-        num_ranks = get_world_size()
+        rank = optim_utils.get_world_rank()
+        num_ranks = optim_utils.get_world_size()
         chunk_size = len(new_cutouts) // max(num_ranks, 1)
-        chunks = list(partition(new_cutouts, chunk_size))
+        chunks = list(optim_utils.partition(new_cutouts, chunk_size))
 
         if rank >= len(chunks):
             return
@@ -70,8 +67,8 @@ class DistributedSpaceTuner:
         self._tuner = tuner
 
     def optimize(self, measurements: int = 30, **kwargs) -> Dict:
-        rank = get_world_rank()
-        num_ranks = get_world_size()
+        rank = optim_utils.get_world_rank()
+        num_ranks = optim_utils.get_world_size()
 
         cutouts = OrderedDict()
         existing_files = set()
@@ -117,32 +114,3 @@ class DistributedSpaceTuner:
                 file_name = self._tuner.file_name(cutout_hash)
                 with open(file_name, 'w') as fp:
                     json.dump(results, fp)
-
-
-def partition(it, size):
-    it = iter(it)
-    return iter(lambda: tuple(itertools.islice(it, size)), ())
-
-
-def get_world_rank():
-    if 'MV2_COMM_WORLD_RANK' in os.environ:
-        return int(os.environ['MV2_COMM_WORLD_RANK'])
-    elif 'OMPI_COMM_WORLD_RANK' in os.environ:
-        return int(os.environ['OMPI_COMM_WORLD_RANK'])
-    elif 'SLURM_PROCID' in os.environ:
-        return int(os.environ['SLURM_PROCID'])
-    else:
-        print('Cannot get world rank, running in sequential mode')
-        return 0
-
-
-def get_world_size():
-    if 'MV2_COMM_WORLD_SIZE' in os.environ:
-        return int(os.environ['MV2_COMM_WORLD_SIZE'])
-    elif 'OMPI_COMM_WORLD_SIZE' in os.environ:
-        return int(os.environ['OMPI_COMM_WORLD_SIZE'])
-    elif 'SLURM_NTASKS' in os.environ:
-        return int(os.environ['SLURM_NTASKS'])
-    else:
-        print('Cannot get world size, running in sequential mode')
-        return 1
