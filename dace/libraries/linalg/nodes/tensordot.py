@@ -8,7 +8,6 @@ from dace.libraries.blas import blas_helpers
 from dace.symbolic import symstr
 from dace.transformation.transformation import ExpandTransformation
 from numbers import Number
-from .. import environments
 
 
 @library.expansion
