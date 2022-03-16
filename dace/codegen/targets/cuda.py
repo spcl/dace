@@ -1223,23 +1223,24 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                             defined_type, ctype = (self._dispatcher.declared_arrays.get(aname, is_global=is_global))
                     except KeyError:
                         pass
-                ptrname = cpp.ptr(aname, data_desc, sdfg, self._frame)
-                if not defined_type:
-                    defined_type, ctype = self._dispatcher.defined_vars.get(ptrname)
-                
-                CUDACodeGen._in_device_code = True
-                inner_ptrname = cpp.ptr(aname, data_desc, sdfg, self._frame)
-                CUDACodeGen._in_device_code = False
+                    ptrname = cpp.ptr(aname, data_desc, sdfg, self._frame)
+                    if not defined_type:
+                        defined_type, ctype = self._dispatcher.defined_vars.get(ptrname)
+                    
+                    CUDACodeGen._in_device_code = True
+                    inner_ptrname = cpp.ptr(aname, data_desc, sdfg, self._frame)
+                    CUDACodeGen._in_device_code = False
 
-                self._dispatcher.defined_vars.add(inner_ptrname, defined_type, 'const %s' % ctype, allow_shadowing=True)
+                    self._dispatcher.defined_vars.add(inner_ptrname, defined_type, 'const %s' % ctype, allow_shadowing=True)
             else:
-                data_desc = sdfg.arrays[aname]
-                ptrname = cpp.ptr(aname, data_desc, sdfg, self._frame)
-                defined_type, ctype = self._dispatcher.defined_vars.get(ptrname)
-                CUDACodeGen._in_device_code = True
-                inner_ptrname = cpp.ptr(aname, data_desc, sdfg, self._frame)
-                CUDACodeGen._in_device_code = False
-                self._dispatcher.defined_vars.add(inner_ptrname, defined_type, ctype, allow_shadowing=True)
+                if aname in sdfg.arrays:
+                    data_desc = sdfg.arrays[aname]
+                    ptrname = cpp.ptr(aname, data_desc, sdfg, self._frame)
+                    defined_type, ctype = self._dispatcher.defined_vars.get(ptrname)
+                    CUDACodeGen._in_device_code = True
+                    inner_ptrname = cpp.ptr(aname, data_desc, sdfg, self._frame)
+                    CUDACodeGen._in_device_code = False
+                    self._dispatcher.defined_vars.add(inner_ptrname, defined_type, ctype, allow_shadowing=True)
 
         kernel_stream = CodeIOStream()
         self.generate_kernel_scope(sdfg, dfg_scope, state_id, scope_entry.map, kernel_name, grid_dims, block_dims,
