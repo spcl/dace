@@ -1072,12 +1072,7 @@ class CPUCodeGen(TargetCodeGenerator):
         memlet_type = conntype.dtype.ctype
 
         desc = sdfg.arrays[memlet.data]
-        if fpga.is_fpga_array(desc):
-            ptr = fpga.fpga_ptr(memlet.data, desc, sdfg, memlet.subset, output, self._dispatcher, 0,
-                                var_type == DefinedType.ArrayInterface and not isinstance(desc, data.View))
-        else:
-            ptr = cpp.ptr(memlet.data, desc, sdfg, self._frame)
-
+        ptr = cpp.ptr(memlet.data, desc, sdfg, self._frame)
         types = None
         # Non-free symbol dependent Arrays due to their shape
         dependent_shape = (isinstance(desc, data.Array) and not isinstance(desc, data.View) and any(
@@ -1092,6 +1087,10 @@ class CPUCodeGen(TargetCodeGenerator):
         if not types:
             types = self._dispatcher.defined_vars.get(ptr)
         var_type, ctypedef = types
+
+        if fpga.is_fpga_array(desc):
+            ptr = fpga.fpga_ptr(memlet.data, desc, sdfg, memlet.subset, output, self._dispatcher, 0,
+                                var_type == DefinedType.ArrayInterface and not isinstance(desc, data.View))
 
         result = ''
         expr = (cpp.cpp_array_expr(sdfg, memlet, with_brackets=False, codegen=self._frame)
