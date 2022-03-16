@@ -71,7 +71,14 @@ def sdfg_gen(subscripts: str, arrays: List[np.ndarray] = None, inp_dim: int = 30
     
     counter = 0
     state = None
-    for contraction in path_info[1].contraction_list:
+    contractions = [
+        ((3, 4), None, 'la,ma->lma'),
+        ((0, 3), None, 'ijklm,lma->ijka'),
+        ((0, 1), None, 'ja,ka->jka'),
+        ((0, 1), None, 'ijka,jka->ia')
+    ]
+    # for contraction in path_info[1].contraction_list:
+    for contraction in contractions:
 
         print(contraction)
 
