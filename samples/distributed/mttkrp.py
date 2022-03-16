@@ -2,7 +2,6 @@
 """ Explicit distributed MTTKRP sample programs. """
 import dace
 import numpy as np
-import opt_einsum as oe
 import timeit
 
 from dace.sdfg import utils
@@ -119,8 +118,22 @@ if __name__ == "__main__":
     MM = rng.random((LS[4], LR))
     out = np.zeros((LS[0], LR))
 
-    func(X=X, JM=JM, KM=KM, LM=LM, MM=MM, out=out, procs=size,
-         S0=LS[0], S1=LS[1], S2=LS[2], S3=LS[3], S4=LS[4], R=LR,
-         P0=pgrid[0], P1=pgrid[1], P2=pgrid[2], P3=pgrid[3], P4=pgrid[4], PR=pgrid[5])
+    # func(X=X, JM=JM, KM=KM, LM=LM, MM=MM, out=out, procs=size,
+    #      S0=LS[0], S1=LS[1], S2=LS[2], S3=LS[3], S4=LS[4], R=LR,
+    #      P0=pgrid[0], P1=pgrid[1], P2=pgrid[2], P3=pgrid[3], P4=pgrid[4], PR=pgrid[5])
+
+    runtimes = timeit.repeat(
+        """func(X=X, JM=JM, KM=KM, LM=LM, MM=MM, out=out, procs=size,
+                S0=LS[0], S1=LS[1], S2=LS[2], S3=LS[3], S4=LS[4], R=LR,
+                P0=pgrid[0], P1=pgrid[1], P2=pgrid[2], P3=pgrid[3], P4=pgrid[4], PR=pgrid[5])
+        """,
+        setup="commworld.Barrier()",
+        repeat=10,
+        number=1,
+        globals=locals()
+    )
+
+    if rank == 0:
+        print(f"Median runtime: {np.median(runtimes)} seconds")
 
 
