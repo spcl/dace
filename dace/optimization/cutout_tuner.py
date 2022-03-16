@@ -8,7 +8,8 @@ import numpy as np
 
 from typing import Dict, Generator, Any, Tuple, List
 import multiprocessing as mp
-# mp.set_start_method("spawn")
+if __name__ == '__main__':
+    mp.set_start_method("spawn")
 
 from dace.optimization import auto_tuner
 from dace.codegen.instrumentation.data import data_report
@@ -63,12 +64,10 @@ class CutoutTuner(auto_tuner.AutoTuner):
     def apply(self, config, cutout, **kwargs) -> None:
         raise NotImplementedError
 
-    def measure(self, sdfg: dace.SDFG, repetitions: int = 30, timeout: float = 10.0) -> float:
+    def measure(self, sdfg: dace.SDFG, repetitions: int = 30, timeout: float = 120.0) -> float:
         parent_conn, child_conn = mp.Pipe()        
         proc = MeasureProcess(target=_measure, args=(self._sdfg.to_json(), sdfg.to_json(), repetitions, child_conn))
-        
-        mp.set_start_method('forkserver', force=True)
-        
+                
         proc.start()
         
         if parent_conn.poll(timeout):
@@ -82,6 +81,7 @@ class CutoutTuner(auto_tuner.AutoTuner):
         if proc.exception:
             error, traceback = proc.exception
             print("Error occured during measuring: ", error)
+            print(traceback)
             runtime = math.inf
 
         return runtime
@@ -191,6 +191,8 @@ def _measure(sdfg_json: Dict, cutout_json: Dict, repetitions: int, pipe: mp.Pipe
             except KeyError:
                 print("Missing data in dreport, random array")
                 arguments[dnode.data] = dace.data.make_array_from_descriptor(array)
+
+    print("Nice new arrays")
 
     with dace.config.set_temporary('debugprint', value=False):
         with dace.config.set_temporary('instrumentation', 'report_each_invocation', value=False):

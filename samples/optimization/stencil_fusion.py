@@ -17,15 +17,6 @@ if __name__ == '__main__':
 
     sdfg.apply_gpu_transformations()
     sdfg.simplify()
-
-    arguments = {}
-    for name, array in sdfg.arrays.items():
-        if array.transient:
-            continue
-
-        data = dace.data.make_array_from_descriptor(array, np.random.rand(*array.shape))
-        arguments[name] = data
-    
     
     for state in sdfg.nodes():
         state.instrument = dace.InstrumentationType.GPU_Events
@@ -33,22 +24,31 @@ if __name__ == '__main__':
             if isinstance(node, dace.nodes.MapEntry):
                 node.schedule = dace.ScheduleType.GPU_Device
 
-    result = ct.CutoutTuner.dry_run(sdfg, **arguments)
 
-    print("Initial version")
     dreport = sdfg.get_instrumented_data()
-    optim_utils.measure(sdfg, dreport)
+    if dreport is None:
+        arguments = {}
+        for name, array in sdfg.arrays.items():
+            if array.transient:
+                continue
+
+            data = dace.data.make_array_from_descriptor(array, np.random.rand(*array.shape))
+            arguments[name] = data
+
+        ct.CutoutTuner.dry_run(sdfg, **arguments)
+        print("Goodbye")
+        exit()
+
+    print("We got it")
 
     tuner = optim.OnTheFlyMapFusionTuner(sdfg, measurement=dace.InstrumentationType.GPU_Events)
     tuner.optimize(apply=True)
-    optim_utils.measure(sdfg, dreport)
 
     sdfg_path = Path(os.environ["HOME"]) / "projects/tuning-dace/aha-expanded_otf_fused.sdfg"
     sdfg.save(sdfg_path)
 
     tuner = optim.SubgraphFusionTuner(sdfg, measurement=dace.InstrumentationType.GPU_Events)
     tuner.optimize(apply=True)
-    optim_utils.measure(sdfg, dreport)
 
     sdfg_path = Path(os.environ["HOME"]) / "projects/tuning-dace/aha-expanded_sub_fused.sdfg"
     sdfg.save(sdfg_path)
