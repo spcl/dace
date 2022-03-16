@@ -1,31 +1,13 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
-import shutil
 import os
 import dace
 import numpy as np
 
 from pathlib import Path
-from tqdm import tqdm
 
-from dace.sdfg.analysis import cutout as cutter
 from dace.optimization import cutout_tuner as ct
 from dace import optimization as optim
-from dace.transformation.subgraph import helpers
-from dace.transformation import subgraph as sg
-
-def measure(sdfg, arguments):
-    with dace.config.set_temporary('debugprint', value=False):
-        with dace.config.set_temporary('instrumentation', 'report_each_invocation', value=False):
-            with dace.config.set_temporary('compiler', 'allow_view_arguments', value=True):
-                csdfg = sdfg.compile()
-
-                for _ in range(30):
-                    csdfg(**arguments)
-
-                csdfg.finalize()
-
-    report = sdfg.get_latest_report()
-    print(report)
+from dace.optimization import utils as optim_utils
 
 if __name__ == '__main__':
 
@@ -54,18 +36,19 @@ if __name__ == '__main__':
     result = ct.CutoutTuner.dry_run(sdfg, **arguments)
 
     print("Initial version")
-    measure(sdfg, arguments)
+    dreport = sdfg.get_instrumented_data()
+    optim_utils.measure(sdfg, dreport)
 
     tuner = optim.OnTheFlyMapFusionTuner(sdfg, measurement=dace.InstrumentationType.GPU_Events)
     tuner.optimize(apply=True)
-    measure(sdfg, arguments)
+    optim_utils.measure(sdfg, dreport)
 
     sdfg_path = Path(os.environ["HOME"]) / "projects/tuning-dace/aha-expanded_otf_fused.sdfg"
     sdfg.save(sdfg_path)
 
     tuner = optim.SubgraphFusionTuner(sdfg, measurement=dace.InstrumentationType.GPU_Events)
     tuner.optimize(apply=True)
-    measure(sdfg, arguments)
+    optim_utils.measure(sdfg, dreport)
 
     sdfg_path = Path(os.environ["HOME"]) / "projects/tuning-dace/aha-expanded_sub_fused.sdfg"
     sdfg.save(sdfg_path)

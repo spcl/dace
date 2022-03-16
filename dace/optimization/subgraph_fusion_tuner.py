@@ -148,6 +148,9 @@ class SubgraphFusionTuner(cutout_tuner.CutoutTuner):
     def transfer(sdfg: dace.SDFG, tuner, k: int = 5):
         assert isinstance(tuner, SubgraphFusionTuner)
 
+        dreport = sdfg.get_instrumented_data()
+        assert dreport is not None
+
         tuning_report = tuner.optimize(apply=False)
         best_configs = cutout_tuner.CutoutTuner.top_k_configs(tuning_report, k=k)
         subgraph_patterns = tuner._extract_patterns(best_configs)
@@ -159,7 +162,7 @@ class SubgraphFusionTuner(cutout_tuner.CutoutTuner):
             
             cutout = cutter.cutout_state(state, *(state.nodes()), make_copy=False)
             cutout.start_state.instrument = dace.InstrumentationType.GPU_Events
-            initial_runtime = optim_utils.measure(cutout)
+            initial_runtime = optim_utils.measure(cutout, dreport)
 
             # Try to apply every subgraph_pattern greedily, i.e., highest expected speedup first
             for pattern in subgraph_patterns:
@@ -207,13 +210,13 @@ class SubgraphFusionTuner(cutout_tuner.CutoutTuner):
                     print("Comparing")
                     baseline_cutout = cutter.cutout_state(state, *(state.nodes()), make_copy=False)
                     baseline_cutout.start_state.instrument = dace.InstrumentationType.GPU_Events
-                    base_runtime = optim_utils.measure(baseline_cutout)
+                    base_runtime = optim_utils.measure(baseline_cutout, dreport)
 
                     subgraph_fusion.apply(experiment_sdfg)
 
                     experiment_cutout = cutter.cutout_state(experiment_state, *(experiment_state.nodes()), make_copy=False)
                     experiment_cutout.start_state.instrument = dace.InstrumentationType.GPU_Events
-                    fused_runtime = optim_utils.measure(experiment_cutout)
+                    fused_runtime = optim_utils.measure(experiment_cutout, dreport)
                     print(base_runtime, fused_runtime)
 
                     if fused_runtime > base_runtime:
@@ -232,7 +235,7 @@ class SubgraphFusionTuner(cutout_tuner.CutoutTuner):
 
             cutout_tuned = cutter.cutout_state(state, *(state.nodes()), make_copy=False)
             cutout_tuned.start_state.instrument = dace.InstrumentationType.GPU_Events
-            tuned_runtime = optim_utils.measure(cutout_tuned)
+            tuned_runtime = optim_utils.measure(cutout_tuned, dreport)
             
             print(f"Tuning result of {state.label} (initial, tuned): {initial_runtime, tuned_runtime}")
             print()

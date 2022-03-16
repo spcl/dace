@@ -3,15 +3,25 @@ import dace
 import itertools
 import numpy as np
 
-def measure(sdfg):
+def measure(sdfg, dreport=None):
     arguments = {}
-    for name, array in sdfg.arrays.items():
-        if array.transient:
-            continue
+    for cstate in sdfg.nodes():
+        for dnode in cstate.data_nodes():
+            array = sdfg.arrays[dnode.data]
+            if array.transient:
+                continue
 
-        data = dace.data.make_array_from_descriptor(array, np.random.rand(*array.shape))
-        arguments[name] = data
-    
+            if dreport is not None:
+                try:
+                    data = dreport.get_first_version(dnode.data)
+                    arguments[dnode.data] = dace.data.make_array_from_descriptor(array, data)
+                except KeyError:
+                    print("Missing data in dreport, random array")
+                    arguments[dnode.data] = dace.data.make_array_from_descriptor(array, np.random.rand(*array.shape))
+            else:
+                print("No dreport available")
+                arguments[dnode.data] = dace.data.make_array_from_descriptor(array, np.random.rand(*array.shape))
+
     with dace.config.set_temporary('debugprint', value=False):
         with dace.config.set_temporary('instrumentation', 'report_each_invocation', value=False):
             with dace.config.set_temporary('compiler', 'allow_view_arguments', value=True):
