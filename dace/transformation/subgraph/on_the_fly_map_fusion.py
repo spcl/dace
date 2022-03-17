@@ -60,6 +60,8 @@ class OnTheFlyMapFusion(transformation.SubgraphTransformation):
             if state.in_degree(node) == 0 and state.out_degree(node) == 0:
                 state.remove_node(node)
 
+        child_map_entry.map.label = child_map_entry.map.label + "_OTF"
+        print(child_map_entry.map.label)
 
     @staticmethod
     def _update_map_connectors(state, parent_map_entry, child_map_entry, array_accesses):

@@ -1,4 +1,5 @@
 import os
+import pickle
 import math
 import dace
 import itertools
@@ -34,6 +35,7 @@ def measure(sdfg, dreport=None):
         with dace.config.set_temporary('debugprint', value=False):
             with dace.config.set_temporary('instrumentation', 'report_each_invocation', value=False):
                 with dace.config.set_temporary('compiler', 'allow_view_arguments', value=True):
+                    sdfg.build_folder = "/dev/shm"
                     csdfg = sdfg.compile()
 
                     for _ in range(50):
@@ -48,33 +50,35 @@ def measure(sdfg, dreport=None):
     durations = next(iter(next(iter(report.durations.values())).values()))
     return np.median(np.array(durations))
 
-def subprocess_measure(cutout: dace.SDFG, sdfg: dace.SDFG, repetitions: int = 30, timeout: float = 60.0) -> float:
-    parent_conn, child_conn = mp.Pipe()        
-    proc = MeasureProcess(target=_subprocess_measure, args=(sdfg.to_json(), cutout.to_json(), repetitions, child_conn))
-            
+def subprocess_measure(cutout: dace.SDFG, sdfg, repetitions: int = 5, timeout: float = 300.0) -> float:
+    q = mp.Queue()
+    proc = MeasureProcess(target=_subprocess_measure, args=(sdfg, cutout.to_json(), repetitions, q))
     proc.start()
-    
-    if parent_conn.poll(timeout):
-        runtime = parent_conn.recv()
-    else:
-        print("Error occured during measuring: timeout")
-        runtime = math.inf
+    proc.join(timeout)
 
-    proc.join()
+    if proc.exitcode != 0:
+        print("Error occured during measuring")
+        return math.inf
 
     if proc.exception:
         error, traceback = proc.exception
         print("Error occured during measuring: ", error)
         runtime = math.inf
 
+    runtime = q.get()
+
     return runtime
 
-def _subprocess_measure(sdfg_json: Dict, cutout_json: Dict, repetitions: int, pipe: mp.Pipe) -> float:
-    sdfg = dace.SDFG.from_json(sdfg_json)
+def _subprocess_measure(sdfg_json: Dict, cutout_json: Dict, repetitions: int, q) -> float:
+    #sdfg = dace.SDFG.from_json(sdfg_json)
+    #print("SDFG loaded")
     cutout = dace.SDFG.from_json(cutout_json)
-    dreport: data_report.InstrumentedDataReport = sdfg.get_instrumented_data()
+    dreport = pickle.loads(sdfg_json)
 
     arguments = {}
+    for symbol in cutout.free_symbols:
+        arguments[str(symbol)] = 4
+
     for cstate in cutout.nodes():
         for dnode in cstate.data_nodes():
             array = cutout.arrays[dnode.data]
@@ -88,21 +92,24 @@ def _subprocess_measure(sdfg_json: Dict, cutout_json: Dict, repetitions: int, pi
                 print("Missing data in dreport, random array")
                 arguments[dnode.data] = dace.data.make_array_from_descriptor(array)
 
+    print("Nice new arrays")
+
     with dace.config.set_temporary('debugprint', value=False):
         with dace.config.set_temporary('instrumentation', 'report_each_invocation', value=False):
             with dace.config.set_temporary('compiler', 'allow_view_arguments', value=True):
+                cutout.build_folder = "/dev/shm"
                 csdfg = cutout.compile()
-
+                print("compiled")
                 for _ in range(repetitions):
                     csdfg(**arguments)
 
                 csdfg.finalize()
 
+    print("ran")
     report = cutout.get_latest_report()
     durations = next(iter(next(iter(report.durations.values())).values()))
-    pipe.send(np.median(np.array(durations)))
-    pipe.close()
-
+    q.put(np.median(np.array(durations)))
+    print("Finished")
 
 class MeasureProcess(mp.Process):
     def __init__(self, *args, **kwargs):
