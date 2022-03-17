@@ -875,10 +875,9 @@ class CPPUnparser:
                     if power == 0:
                         self.write("1")
                     else:
+                        self.write("dace::math::ipow(")
                         self.dispatch(t.left)
-                        for i in range(power - 1):
-                            self.write(" * ")
-                            self.dispatch(t.left)
+                        self.write(f", {power})")
                     self.write(")")
                     return
                 elif power is not None and float(power) == 0.5 or float(power) == -0.5:  # Square root
