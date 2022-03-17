@@ -159,10 +159,17 @@ class SubgraphFusionTuner(cutout_tuner.CutoutTuner):
             top_maps = helpers.get_outermost_scope_maps(sdfg, state)
             if len(top_maps) < 2:
                 continue
-            
-            cutout = cutter.cutout_state(state, *(state.nodes()), make_copy=False)
-            cutout.start_state.instrument = dace.InstrumentationType.GPU_Events
+
+            try:
+                cutout = cutter.cutout_state(state, *(state.nodes()), make_copy=False)
+                cutout.start_state.instrument = dace.InstrumentationType.GPU_Events
+            except AttributeError as e:
+                print(e)
+                continue
+                
             initial_runtime = optim_utils.measure(cutout, dreport)
+            if initial_runtime == math.inf:
+                continue
 
             # Try to apply every subgraph_pattern greedily, i.e., highest expected speedup first
             for pattern in subgraph_patterns:

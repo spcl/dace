@@ -64,7 +64,7 @@ class CutoutTuner(auto_tuner.AutoTuner):
     def apply(self, config, cutout, **kwargs) -> None:
         raise NotImplementedError
 
-    def measure(self, sdfg: dace.SDFG, repetitions: int = 30, timeout: float = 120.0) -> float:
+    def measure(self, sdfg: dace.SDFG, repetitions: int = 30, timeout: float = 60.0) -> float:
         parent_conn, child_conn = mp.Pipe()        
         proc = MeasureProcess(target=_measure, args=(self._sdfg.to_json(), sdfg.to_json(), repetitions, child_conn))
                 

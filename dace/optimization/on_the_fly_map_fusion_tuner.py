@@ -1,5 +1,4 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
-from distutils.archive_util import make_archive
 import dace
 import math
 import copy
@@ -150,15 +149,24 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
         tuning_report = tuner.optimize(apply=False)
         best_configs = cutout_tuner.CutoutTuner.top_k_configs(tuning_report, k=k)
         subgraph_patterns = tuner._extract_patterns(best_configs)
-
         for state in list(sdfg.nodes()):
             top_maps = helpers.get_outermost_scope_maps(sdfg, state)
             if len(top_maps) < 2:
+                print("Skipping: ", state.label)
                 continue
-
-            cutout = cutter.cutout_state(state, *(state.nodes()), make_copy=False)
-            cutout.start_state.instrument = dace.InstrumentationType.GPU_Events
+                
+            try:
+                cutout = cutter.cutout_state(state, *(state.nodes()), make_copy=False)
+                cutout.start_state.instrument = dace.InstrumentationType.GPU_Events
+            except AttributeError as e:
+                print(e)
+                print("Skipping: ", state.label)
+                continue
+                
             initial_runtime = optim_utils.measure(cutout, dreport)
+            if initial_runtime == math.inf:
+                print("Skipping: ", state.label)
+                continue
 
             # Try to apply every subgraph_pattern greedily, i.e., highest expected speedup first
             for pattern in subgraph_patterns:
