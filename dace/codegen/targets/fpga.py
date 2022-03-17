@@ -990,9 +990,10 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
         result_decl = StringIO()
         arrsize = nodedesc.total_size
         dataname = node.data
+        ptrname = cpp.ptr(dataname, nodedesc, sdfg, self._frame)
 
         # Check if array is already declared
-        if self._dispatcher.declared_arrays.has(dataname):
+        if self._dispatcher.declared_arrays.has(ptrname):
             return
 
         if nodedesc.storage == dtypes.StorageType.FPGA_Global:
@@ -1007,9 +1008,9 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                 # TODO: Distinguish between read, write, and read+write
                 # Define buffer, using proper type
                 result_decl.write("hlslib::ocl::Buffer <{}, hlslib::ocl::Access::readWrite> {};".format(
-                    nodedesc.dtype.ctype, dataname))
+                    nodedesc.dtype.ctype, ptrname))
                 self._dispatcher.declared_arrays.add(
-                    dataname, DefinedType.Pointer,
+                    ptrname, DefinedType.Pointer,
                     'hlslib::ocl::Buffer <{}, hlslib::ocl::Access::readWrite>'.format(nodedesc.dtype.ctype))
         elif (nodedesc.storage in (dtypes.StorageType.FPGA_Local, dtypes.StorageType.FPGA_Registers,
                                    dtypes.StorageType.FPGA_ShiftRegister)):
@@ -1029,7 +1030,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
         result_alloc = StringIO()
         arrsize = nodedesc.total_size
         is_dynamically_sized = dace.symbolic.issymbolic(arrsize, sdfg.constants)
-        dataname = node.data
+        dataname = cpp.ptr(node.data, nodedesc, sdfg, self._frame)
 
         if not isinstance(nodedesc, dt.Stream):
             # Unless this is a Stream, if the variable has been already defined we can return
@@ -1415,13 +1416,15 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                                                 with_brackets=False,
                                                 referenced_array=src_nodedesc,
                                                 use_other_subset=(not src_is_subset
-                                                                  and memlet.other_subset is not None))
+                                                                  and memlet.other_subset is not None),
+                                                codegen=self._frame)
             if memlet.dst_subset is not None:
                 offset_dst = cpp.cpp_array_expr(sdfg,
                                                 memlet,
                                                 with_brackets=False,
                                                 referenced_array=dst_nodedesc,
-                                                use_other_subset=(src_is_subset and memlet.other_subset is not None))
+                                                use_other_subset=(src_is_subset and memlet.other_subset is not None),
+                                                codegen=self._frame)
 
             if (not sum(copy_shape) == 1 and
                 (not isinstance(memlet.subset, subsets.Range) or any([step != 1 for _, _, step in memlet.subset]))):
@@ -1602,8 +1605,10 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                 for node in dependency_pragma_nodes:
                     self.generate_no_dependence_post(callsite_stream, sdfg, state_id, dst_node, node.data)
 
-            src_def_type, _ = self._dispatcher.defined_vars.get(src_node.data)
-            dst_def_type, _ = self._dispatcher.defined_vars.get(dst_node.data)
+            src_name = cpp.ptr(src_node.data, src_node.desc(sdfg), sdfg, self._frame)
+            dst_name = cpp.ptr(dst_node.data, dst_node.desc(sdfg), sdfg, self._frame)
+            src_def_type, _ = self._dispatcher.defined_vars.get(src_name)
+            dst_def_type, _ = self._dispatcher.defined_vars.get(dst_name)
 
             # Construct indices (if the length of the stride array is zero,
             # resolves to an empty string)

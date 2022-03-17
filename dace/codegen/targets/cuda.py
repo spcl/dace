@@ -319,8 +319,10 @@ void __dace_exit_cuda({sdfg.name}_t *__state) {{
             raise NotImplementedError("The declare_array method should only be used for variables "
                                       "that must have their declaration and allocation separate.")
 
+        ptrname = cpp.ptr(node.data, nodedesc, sdfg, self._frame)
+
         # Check if array is already declared
-        if self._dispatcher.declared_arrays.has(node.data):
+        if self._dispatcher.declared_arrays.has(ptrname):
             return
 
         result_decl = StringIO()
@@ -342,8 +344,10 @@ void __dace_exit_cuda({sdfg.name}_t *__state) {{
 
     def allocate_array(self, sdfg, dfg, state_id, node, nodedesc, function_stream, declaration_stream,
                        allocation_stream):
+        dataname = cpp.ptr(node.data, nodedesc, sdfg, self._frame)
+
         try:
-            self._dispatcher.defined_vars.get(node.data)
+            self._dispatcher.defined_vars.get(dataname)
             return
         except KeyError:
             pass  # The variable was not defined, we can continue
@@ -351,7 +355,7 @@ void __dace_exit_cuda({sdfg.name}_t *__state) {{
         # Check if array is already declared
         declared = False
         try:
-            self._dispatcher.declared_arrays.get(node.data)
+            self._dispatcher.declared_arrays.get(dataname)
             declared = True  # Array was already declared in this or upper scopes
         except KeyError:  # Array not declared yet
             pass
@@ -370,9 +374,6 @@ void __dace_exit_cuda({sdfg.name}_t *__state) {{
         arrsize_malloc = '%s * sizeof(%s)' % (sym2cpp(arrsize), nodedesc.dtype.ctype)
         ctypedef = '%s *' % nodedesc.dtype.ctype
 
-        dataname = node.data
-        allocname = cpp.ptr(dataname, nodedesc, sdfg)
-
         # Different types of GPU arrays
         if nodedesc.storage == dtypes.StorageType.GPU_Global:
             if not declared:
@@ -380,22 +381,22 @@ void __dace_exit_cuda({sdfg.name}_t *__state) {{
             self._dispatcher.defined_vars.add(dataname, DefinedType.Pointer, ctypedef)
 
             # Strides are left to the user's discretion
-            result_alloc.write('%sMalloc((void**)&%s, %s);\n' % (self.backend, allocname, arrsize_malloc))
+            result_alloc.write('%sMalloc((void**)&%s, %s);\n' % (self.backend, dataname, arrsize_malloc))
             if node.setzero:
-                result_alloc.write('%sMemset(%s, 0, %s);\n' % (self.backend, allocname, arrsize_malloc))
+                result_alloc.write('%sMemset(%s, 0, %s);\n' % (self.backend, dataname, arrsize_malloc))
             if isinstance(nodedesc, dt.Array) and nodedesc.start_offset != 0:
-                result_alloc.write(f'{allocname} += {cpp.sym2cpp(nodedesc.start_offset)};\n')
+                result_alloc.write(f'{dataname} += {cpp.sym2cpp(nodedesc.start_offset)};\n')
         elif nodedesc.storage == dtypes.StorageType.CPU_Pinned:
             if not declared:
                 result_decl.write('%s %s;\n' % (ctypedef, dataname))
             self._dispatcher.defined_vars.add(dataname, DefinedType.Pointer, ctypedef)
 
             # Strides are left to the user's discretion
-            result_alloc.write('%sMallocHost(&%s, %s);\n' % (self.backend, allocname, arrsize_malloc))
+            result_alloc.write('%sMallocHost(&%s, %s);\n' % (self.backend, dataname, arrsize_malloc))
             if node.setzero:
-                result_alloc.write('memset(%s, 0, %s);\n' % (allocname, arrsize_malloc))
+                result_alloc.write('memset(%s, 0, %s);\n' % (dataname, arrsize_malloc))
             if nodedesc.start_offset != 0:
-                result_alloc.write(f'{allocname} += {cpp.sym2cpp(nodedesc.start_offset)};\n')
+                result_alloc.write(f'{dataname} += {cpp.sym2cpp(nodedesc.start_offset)};\n')
         elif nodedesc.storage == dtypes.StorageType.GPU_Shared:
             if is_dynamically_sized:
                 raise NotImplementedError('Dynamic shared memory unsupported')
@@ -407,7 +408,7 @@ void __dace_exit_cuda({sdfg.name}_t *__state) {{
                 result_alloc.write('dace::ResetShared<{type}, {block_size}, {elements}, '
                                    '1, false>::Reset({ptr});\n'.format(type=nodedesc.dtype.ctype,
                                                                        block_size=', '.join(_topy(self._block_dims)),
-                                                                       ptr=allocname,
+                                                                       ptr=dataname,
                                                                        elements=sym2cpp(arrsize)))
         elif nodedesc.storage == dtypes.StorageType.Register:
             if is_dynamically_sized:
@@ -426,10 +427,10 @@ void __dace_exit_cuda({sdfg.name}_t *__state) {{
     def allocate_stream(self, sdfg, dfg, state_id, node, nodedesc, function_stream, declaration_stream,
                         allocation_stream):
         dataname = node.data
-        allocname = cpp.ptr(dataname, nodedesc, sdfg)
+        allocname = cpp.ptr(dataname, nodedesc, sdfg, self._frame)
         if nodedesc.storage == dtypes.StorageType.GPU_Global:
             fmtargs = {
-                'name': dataname,
+                'name': allocname,  # TODO: Handle persistent streams
                 'allocname': allocname,
                 'type': nodedesc.dtype.ctype,
                 'is_pow2': sym2cpp(sympy.log(nodedesc.buffer_size, 2).is_Integer),
@@ -437,14 +438,15 @@ void __dace_exit_cuda({sdfg.name}_t *__state) {{
             }
 
             ctypedef = 'dace::GPUStream<{type}, {is_pow2}>'.format(**fmtargs)
-            self._dispatcher.defined_vars.add(dataname, DefinedType.Stream, ctypedef)
+            self._dispatcher.defined_vars.add(allocname, DefinedType.Stream, ctypedef)
 
             if is_array_stream_view(sdfg, dfg, node):
                 edges = dfg.out_edges(node)
                 if len(edges) > 1:
                     raise NotImplementedError("Cannot handle streams writing " "to multiple arrays.")
 
-                fmtargs['ptr'] = nodedesc.sink + ' + ' + cpp_array_expr(sdfg, edges[0].data, with_brackets=False)
+                fmtargs['ptr'] = nodedesc.sink + ' + ' + cpp_array_expr(
+                    sdfg, edges[0].data, with_brackets=False, codegen=self._frame)
 
                 # Assuming 1D subset of sink/src
                 # sym2cpp(edges[0].data.subset[-1])
@@ -487,7 +489,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                                         state_id, node)
 
     def deallocate_stream(self, sdfg, dfg, state_id, node, nodedesc, function_stream, callsite_stream):
-        dataname = cpp.ptr(node.data, nodedesc, sdfg)
+        dataname = cpp.ptr(node.data, nodedesc, sdfg, self._frame)
         if nodedesc.storage == dtypes.StorageType.GPU_Global:
             if is_array_stream_view(sdfg, dfg, node):
                 callsite_stream.write('dace::FreeGPUArrayStreamView(%s);' % dataname, sdfg, state_id, node)
@@ -495,13 +497,13 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                 callsite_stream.write('dace::FreeGPUStream(%s);' % dataname, sdfg, state_id, node)
 
     def deallocate_array(self, sdfg, dfg, state_id, node, nodedesc, function_stream, callsite_stream):
-        dataname = cpp.ptr(node.data, nodedesc, sdfg)
+        dataname = cpp.ptr(node.data, nodedesc, sdfg, self._frame)
         if isinstance(nodedesc, dt.Array) and nodedesc.start_offset != 0:
             dataname = f'({dataname} - {cpp.sym2cpp(nodedesc.start_offset)})'
 
-        if self._dispatcher.declared_arrays.has(node.data):
+        if self._dispatcher.declared_arrays.has(dataname):
             is_global = nodedesc.lifetime in (dtypes.AllocationLifetime.Global, dtypes.AllocationLifetime.Persistent)
-            self._dispatcher.declared_arrays.remove(node.data, is_global=is_global)
+            self._dispatcher.declared_arrays.remove(dataname, is_global=is_global)
 
         if isinstance(nodedesc, dace.data.Stream):
             return self.deallocate_stream(sdfg, dfg, state_id, node, nodedesc, function_stream, callsite_stream)
@@ -1055,7 +1057,8 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                 and node.desc(sdfg).lifetime == dtypes.AllocationLifetime.Scope
             ]
             for stream in streams_to_reset:
-                callsite_stream.write("{}.reset();".format(stream.data), sdfg, state.node_id)
+                ptrname = cpp.ptr(stream.data, stream.desc(sdfg), sdfg, self._frame)
+                callsite_stream.write("{}.reset();".format(ptrname), sdfg, state.node_id)
 
             components = dace.sdfg.concurrent_subgraphs(state)
             for c in components:
@@ -1070,7 +1073,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
                 # Need to skip certain entry nodes to make sure that they are
                 # not processed twice
-                # TODO this in not robust, replace by better solution
+                # TODO this is not robust, replace by better solution
                 #  (or wait for new codegen)
                 entry_nodes = list(v for v in c.nodes() if len(list(c.predecessors(v))) == 0)
                 comp_same_entry = [comp for comp in components if comp != c and entry_nodes[0] in comp.nodes()]
@@ -1146,18 +1149,37 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
             kernel_args[str(e.src)] = e.src.desc(sdfg)
 
         # Add data from nested SDFGs to kernel arguments
+        extra_call_args = []
+        extra_call_args_typed = []
+        extra_kernel_args = []
+        extra_kernel_args_typed = []
         self.extra_nsdfg_args = []
-        if scope_entry.map.schedule == dtypes.ScheduleType.GPU_Persistent:
-            to_allocate = set()
-            for nested_sdfg in [node.sdfg for node in dfg_scope.nodes() if isinstance(node, nodes.NestedSDFG)]:
-                nested_shared_transients = set(nested_sdfg.shared_transients())
-                for nested_state in nested_sdfg:
-                    nested_to_allocate = (set(nested_state.top_level_transients()) - nested_shared_transients)
-                    to_allocate |= set(n for n in nested_state.data_nodes() if n.data in nested_to_allocate)
-            for nested_node in sorted(to_allocate, key=lambda n: n.data):
-                desc = nested_node.desc(nested_sdfg)
-                kernel_args[nested_node.data] = desc
-                self.extra_nsdfg_args.append((desc.as_arg(name=''), nested_node.data, nested_node.data))
+        visited = set()
+        for node, parent in dfg_scope.all_nodes_recursive():
+            if isinstance(node, nodes.AccessNode):
+                nsdfg: SDFG = parent.parent
+                desc = node.desc(nsdfg)
+                if (nsdfg, node.data) in visited:
+                    continue
+                visited.add((nsdfg, node.data))
+                if desc.transient and self._frame.where_allocated[(nsdfg, node.data)] is not nsdfg:
+                    outer_name = cpp.ptr(node.data, desc, nsdfg, self._frame)
+
+                    # Create name from within kernel
+                    oldval = CUDACodeGen._in_device_code
+                    CUDACodeGen._in_device_code = True
+                    inner_name = cpp.ptr(node.data, desc, nsdfg, self._frame)
+                    CUDACodeGen._in_device_code = oldval
+
+                    self.extra_nsdfg_args.append((desc.as_arg(name=''), inner_name, outer_name))
+                    self._dispatcher.defined_vars.add(inner_name,
+                                                      DefinedType.Pointer,
+                                                      desc.dtype.ctype,
+                                                      allow_shadowing=True)
+                    extra_call_args.append(outer_name)
+                    extra_call_args_typed.append(desc.as_arg(name=inner_name))
+                    extra_kernel_args.append(f'(void *)&{inner_name}')
+                    extra_kernel_args_typed.append(desc.as_arg(name=inner_name))
 
         const_params = _get_const_params(dfg_scope)
         # make dynamic map inputs constant
@@ -1202,9 +1224,24 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                             defined_type, ctype = (self._dispatcher.declared_arrays.get(aname, is_global=is_global))
                     except KeyError:
                         pass
-                if not defined_type:
-                    defined_type, ctype = self._dispatcher.defined_vars.get(aname)
-                self._dispatcher.defined_vars.add(aname, defined_type, 'const %s' % ctype, allow_shadowing=True)
+                    ptrname = cpp.ptr(aname, data_desc, sdfg, self._frame)
+                    if not defined_type:
+                        defined_type, ctype = self._dispatcher.defined_vars.get(ptrname)
+                    
+                    CUDACodeGen._in_device_code = True
+                    inner_ptrname = cpp.ptr(aname, data_desc, sdfg, self._frame)
+                    CUDACodeGen._in_device_code = False
+
+                    self._dispatcher.defined_vars.add(inner_ptrname, defined_type, 'const %s' % ctype, allow_shadowing=True)
+            else:
+                if aname in sdfg.arrays:
+                    data_desc = sdfg.arrays[aname]
+                    ptrname = cpp.ptr(aname, data_desc, sdfg, self._frame)
+                    defined_type, ctype = self._dispatcher.defined_vars.get(ptrname)
+                    CUDACodeGen._in_device_code = True
+                    inner_ptrname = cpp.ptr(aname, data_desc, sdfg, self._frame)
+                    CUDACodeGen._in_device_code = False
+                    self._dispatcher.defined_vars.add(inner_ptrname, defined_type, ctype, allow_shadowing=True)
 
         kernel_stream = CodeIOStream()
         self.generate_kernel_scope(sdfg, dfg_scope, state_id, scope_entry.map, kernel_name, grid_dims, block_dims,
@@ -1213,7 +1250,6 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         self._dispatcher.defined_vars.exit_scope(scope_entry)
 
         # Add extra kernel arguments for a grid barrier object
-        extra_kernel_args_typed = []
         if create_grid_barrier:
             extra_kernel_args_typed.append('cub::GridBarrier __gbar')
 
@@ -1246,7 +1282,8 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 DACE_EXPORTED void __dace_runkernel_{fname}({fargs});
 void __dace_runkernel_{fname}({fargs})
 {{
-""".format(fname=kernel_name, fargs=', '.join(state_param + kernel_args_typed)), sdfg, state_id, node)
+""".format(fname=kernel_name, fargs=', '.join(state_param + kernel_args_typed + extra_call_args_typed)), sdfg, state_id,
+            node)
 
         if is_persistent:
             self._localcode.write('''
@@ -1257,7 +1294,6 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
                            occupancy=Config.get('compiler', 'cuda', 'persistent_map_occupancy'),
                            backend=self.backend))
 
-        extra_kernel_args = []
         if create_grid_barrier:
             gbar = '__gbar_' + kernel_name
             self._localcode.write('    cub::GridBarrierLifetime %s;\n' % gbar, sdfg, state_id, node)
@@ -1315,8 +1351,9 @@ void  *{kname}_args[] = {{ {kargs} }};
         #######################
         # Add invocation to calling code (in another file)
         function_stream.write(
-            'DACE_EXPORTED void __dace_runkernel_%s(%s);\n' % (kernel_name, ', '.join(state_param + kernel_args_typed)),
-            sdfg, state_id, scope_entry)
+            'DACE_EXPORTED void __dace_runkernel_%s(%s);\n' %
+            (kernel_name, ', '.join(state_param + kernel_args_typed + extra_call_args_typed)), sdfg, state_id,
+            scope_entry)
 
         # Synchronize all events leading to dynamic map range connectors
         for e in dace.sdfg.dynamic_map_inputs(state, scope_entry):
@@ -1332,8 +1369,10 @@ void  *{kname}_args[] = {{ {kargs} }};
         # Invoke kernel call
         callsite_stream.write(
             '__dace_runkernel_%s(%s);\n' %
-            (kernel_name, ', '.join(['__state'] + [cpp.ptr(aname, arg, sdfg) for aname, arg in kernel_args.items()])),
-            sdfg, state_id, scope_entry)
+            (kernel_name,
+             ', '.join(['__state'] + [cpp.ptr(aname, arg, sdfg, self._frame)
+                                      for aname, arg in kernel_args.items()] + extra_call_args)), sdfg, state_id,
+            scope_entry)
 
         synchronize_streams(sdfg, state, state_id, scope_entry, scope_exit, callsite_stream)
 
@@ -1982,7 +2021,10 @@ void  *{kname}_args[] = {{ {kargs} }};
             result.append(('cub::GridBarrier&', '__gbar', '__gbar'))
 
         # Add data from nested SDFGs to kernel arguments
-        result.extend(self.extra_nsdfg_args)
+        result.extend([(atype, aname, aname) for atype,aname,_ in self.extra_nsdfg_args])
+        for arg in self.extra_nsdfg_args:
+            defined_type, ctype = self._dispatcher.defined_vars.get(arg[1], 1)
+            self._dispatcher.defined_vars.add(arg[1], defined_type, ctype)
 
         return result
 
