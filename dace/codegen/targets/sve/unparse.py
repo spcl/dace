@@ -345,7 +345,7 @@ class SVEUnparser(cppunparse.CPPUnparser):
 
             store_args = '{}, {}'.format(
                 self.pred_name,
-                ptr_cast + cpp_ptr_expr(self.sdfg, edge.data, DefinedType.Pointer),
+                ptr_cast + cpp_ptr_expr(self.sdfg, edge.data, DefinedType.Pointer, codegen=self.cpu_codegen._frame),
             )
 
             red_type = util.REDUCTION_TYPE_TO_SVE[reduction_type][:-1] + '_x'
