@@ -430,7 +430,7 @@ void __dace_exit_cuda({sdfg.name}_t *__state) {{
         allocname = cpp.ptr(dataname, nodedesc, sdfg, self._frame)
         if nodedesc.storage == dtypes.StorageType.GPU_Global:
             fmtargs = {
-                'name': dataname,
+                'name': allocname,  # TODO: Handle persistent streams
                 'allocname': allocname,
                 'type': nodedesc.dtype.ctype,
                 'is_pow2': sym2cpp(sympy.log(nodedesc.buffer_size, 2).is_Integer),
@@ -438,7 +438,7 @@ void __dace_exit_cuda({sdfg.name}_t *__state) {{
             }
 
             ctypedef = 'dace::GPUStream<{type}, {is_pow2}>'.format(**fmtargs)
-            self._dispatcher.defined_vars.add(dataname, DefinedType.Stream, ctypedef)
+            self._dispatcher.defined_vars.add(allocname, DefinedType.Stream, ctypedef)
 
             if is_array_stream_view(sdfg, dfg, node):
                 edges = dfg.out_edges(node)
@@ -1057,7 +1057,8 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                 and node.desc(sdfg).lifetime == dtypes.AllocationLifetime.Scope
             ]
             for stream in streams_to_reset:
-                callsite_stream.write("{}.reset();".format(stream.data), sdfg, state.node_id)
+                ptrname = cpp.ptr(stream.data, stream.desc(sdfg), sdfg, self._frame)
+                callsite_stream.write("{}.reset();".format(ptrname), sdfg, state.node_id)
 
             components = dace.sdfg.concurrent_subgraphs(state)
             for c in components:

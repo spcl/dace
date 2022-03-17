@@ -228,7 +228,7 @@ def ptr(name: str, desc: data.Data, sdfg: SDFG = None, framecode=None) -> str:
             if not CUDACodeGen._in_device_code:  # GPU kernels cannot access state
                 return f'__state->__{sdfg.sdfg_id}_{name}'
             elif (sdfg, name) in framecode.where_allocated and framecode.where_allocated[(sdfg, name)] is not sdfg:
-                return f'__{sdfg.sdfg_id}_{name}'    
+                return f'__{sdfg.sdfg_id}_{name}'
         elif (desc.transient and sdfg is not None and framecode is not None and (sdfg, name) in framecode.where_allocated
                 and framecode.where_allocated[(sdfg, name)] is not sdfg):
             # Array allocated for another SDFG, use unambiguous name
@@ -1068,6 +1068,7 @@ class DaCeKeywordRemover(ExtNodeTransformer):
             try:
                 desc = (self.sdfg.arrays[memlet.data] if memlet and memlet.data else None)
                 if memlet and memlet.data and (memlet.dynamic or isinstance(desc, data.Stream)):
+                    ptrname = ptr(memlet.data, desc, self.sdfg, self.codegen._frame)
                     if wcr is not None:
                         newnode = ast.Name(
                             id=self.codegen.write_and_resolve_expr(self.sdfg,
@@ -1081,19 +1082,18 @@ class DaCeKeywordRemover(ExtNodeTransformer):
                     elif isinstance(desc, data.Stream):
                         if desc.is_stream_array():
                             index = cpp_offset_expr(desc, memlet.subset)
-                            target = f"{memlet.data}[{index}]"
+                            target = f"{ptrname}[{index}]"
                         else:
-                            target = memlet.data
+                            target = ptrname
                         newnode = ast.Name(id="%s.push(%s);" % (
                             target,
                             cppunparse.cppunparse(value, expr_semicolon=False),
                         ))
                     else:
-                        ptrname = ptr(memlet.data, desc, self.sdfg, self.codegen._frame)
                         var_type, ctypedef = self.codegen._dispatcher.defined_vars.get(ptrname)
                         if var_type == DefinedType.Scalar:
                             newnode = ast.Name(id="%s = %s;" % (
-                                memlet.data,
+                                ptrname,
                                 cppunparse.cppunparse(value, expr_semicolon=False),
                             ))
                         elif (var_type != DefinedType.ArrayInterface or isinstance(desc, data.View)):
@@ -1103,7 +1103,7 @@ class DaCeKeywordRemover(ExtNodeTransformer):
                             ))
                         else:
                             array_interface_name = fpga.fpga_ptr(
-                                memlet.data,
+                                ptrname,
                                 desc,
                                 self.sdfg,
                                 memlet.dst_subset,
