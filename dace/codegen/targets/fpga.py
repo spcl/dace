@@ -1606,7 +1606,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                     self.generate_no_dependence_post(callsite_stream, sdfg, state_id, dst_node, node.data)
 
             src_name = cpp.ptr(src_node.data, src_node.desc(sdfg), sdfg, self._frame)
-            dst_name = cpp.ptr(src_node.data, src_node.desc(sdfg), sdfg, self._frame)
+            dst_name = cpp.ptr(dst_node.data, dst_node.desc(sdfg), sdfg, self._frame)
             src_def_type, _ = self._dispatcher.defined_vars.get(src_name)
             dst_def_type, _ = self._dispatcher.defined_vars.get(dst_name)
 
