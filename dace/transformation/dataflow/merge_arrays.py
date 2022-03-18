@@ -226,7 +226,6 @@ class MergeSourceSinkArrays(transformation.SingleStateTransformation, transforma
         return [g]
 
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
-        arr1_id = self.subgraph[MergeSourceSinkArrays.array1]
         arr1 = self.array1
 
         is_source = graph.in_degree(arr1) == 0
@@ -246,13 +245,16 @@ class MergeSourceSinkArrays(transformation.SingleStateTransformation, transforma
                         first = True
                     found = True
                 else:
-                    found = True
                     if is_source and graph.in_degree(node) == 0:
-                        return False
+                        if first:
+                            return True
+                        found = True
+                        continue
                     if is_sink and graph.out_degree(node) == 0:
-                        return False
-                    if first:
-                        return True
+                        if first:
+                            return True
+                        found = True
+                        continue
         return False
 
     def apply(self, graph, sdfg):
