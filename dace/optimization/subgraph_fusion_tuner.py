@@ -1,5 +1,6 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
+import pickle
 import math
 import copy
 
@@ -151,11 +152,15 @@ class SubgraphFusionTuner(cutout_tuner.CutoutTuner):
         dreport = sdfg.get_instrumented_data()
         assert dreport is not None
 
+        dreport_bytes = pickle.dumps(dreport)
+
         tuning_report = tuner.optimize(apply=False)
         best_configs = cutout_tuner.CutoutTuner.top_k_configs(tuning_report, k=k)
         subgraph_patterns = tuner._extract_patterns(best_configs)
 
         for state in tqdm(sdfg.nodes()):
+            print(state.label)
+            
             top_maps = helpers.get_outermost_scope_maps(sdfg, state)
             if len(top_maps) < 2:
                 continue
@@ -166,8 +171,12 @@ class SubgraphFusionTuner(cutout_tuner.CutoutTuner):
             except AttributeError as e:
                 print(e)
                 continue
-                
-            print(state.label)
+
+            #runtime = optim_utils.subprocess_measure(cutout, sdfg=dreport_bytes)
+            #if runtime == math.inf:
+            #    print("Math inf runtime")
+            #    continue
+
 
             # Try to apply every subgraph_pattern greedily, i.e., highest expected speedup first
             for pattern in subgraph_patterns:
@@ -215,13 +224,15 @@ class SubgraphFusionTuner(cutout_tuner.CutoutTuner):
                     print("Comparing")
                     baseline_cutout = cutter.cutout_state(state, *(state.nodes()), make_copy=False)
                     baseline_cutout.start_state.instrument = dace.InstrumentationType.GPU_Events
-                    base_runtime = optim_utils.subprocess_measure(cutout=baseline_cutout, sdfg=sdfg)
+                    base_runtime = optim_utils.subprocess_measure(cutout=baseline_cutout, sdfg=dreport_bytes)
+                    if base_runtime == math.inf:
+                        break
 
                     subgraph_fusion.apply(experiment_sdfg)
 
                     experiment_cutout = cutter.cutout_state(experiment_state, *(experiment_state.nodes()), make_copy=False)
                     experiment_cutout.start_state.instrument = dace.InstrumentationType.GPU_Events
-                    fused_runtime = optim_utils.subprocess_measure(cutout=experiment_cutout, sdfg=sdfg)
+                    fused_runtime = optim_utils.subprocess_measure(cutout=experiment_cutout, sdfg=dreport_bytes)
                     print(base_runtime, fused_runtime)
 
                     if fused_runtime > base_runtime:
