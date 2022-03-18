@@ -357,7 +357,6 @@ def issymbolic(value, constants=None):
     return False
 
 
-@lru_cache(maxsize=2048)
 def overapproximate(expr):
     """
     Takes a sympy expression and returns its maximal possible value
@@ -365,6 +364,11 @@ def overapproximate(expr):
     """
     if isinstance(expr, list):
         return [overapproximate(elem) for elem in expr]
+    return _overapproximate(expr)
+
+
+@lru_cache(maxsize=2048)
+def _overapproximate(expr):
     if isinstance(expr, SymExpr):
         if expr.expr != expr.approx:
             return expr.approx
