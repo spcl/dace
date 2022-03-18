@@ -235,8 +235,10 @@ class MergeSourceSinkArrays(transformation.SingleStateTransformation, transforma
             return False
 
         # Ensure array is either a source or sink node, and the first instance of that array
+        found = False
         for node in graph.data_nodes():
             if node.data == arr1.data:
+                found = True
                 if node is arr1:
                     return True
                 else:
@@ -244,7 +246,7 @@ class MergeSourceSinkArrays(transformation.SingleStateTransformation, transforma
                         return False
                     if is_sink and graph.out_degree(node) == 0:
                         return False
-        return True
+        return found
 
     def apply(self, graph, sdfg):
         array = self.array1
