@@ -152,7 +152,6 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
         for state in list(sdfg.nodes()):
             top_maps = helpers.get_outermost_scope_maps(sdfg, state)
             if len(top_maps) < 2:
-                print("Skipping: ", state.label)
                 continue
                 
             try:
@@ -160,13 +159,9 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
                 cutout.start_state.instrument = dace.InstrumentationType.GPU_Events
             except AttributeError as e:
                 print(e)
-                print("Skipping: ", state.label)
                 continue
-                
-            initial_runtime = optim_utils.measure(cutout, dreport)
-            if initial_runtime == math.inf:
-                print("Skipping: ", state.label)
-                continue
+
+            print(state.label)
 
             # Try to apply every subgraph_pattern greedily, i.e., highest expected speedup first
             for pattern in subgraph_patterns:
@@ -212,7 +207,7 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
                     print("Comparing")
                     baseline = cutter.cutout_state(experiment_state, *(experiment_state.nodes()), make_copy=True)                    
                     baseline.start_state.instrument = dace.InstrumentationType.GPU_Events
-                    base_runtime = optim_utils.measure(baseline, dreport)
+                    base_runtime = optim_utils.subprocess_measure(cutout=baseline, sdfg=sdfg)
 
                     experiment_fuse_counter = map_fusion.apply(experiment_state, experiment_sdfg)
                     if experiment_fuse_counter == 0:
@@ -220,7 +215,7 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
 
                     experiment_cutout = cutter.cutout_state(experiment_state, *(experiment_state.nodes()), make_copy=False)
                     experiment_cutout.start_state.instrument = dace.InstrumentationType.GPU_Events
-                    fused_runtime = optim_utils.measure(experiment_cutout, dreport)
+                    fused_runtime = optim_utils.subprocess_measure(cutout=experiment_cutout, sdfg=sdfg)
                     print(base_runtime, fused_runtime, experiment_fuse_counter)
                     if fused_runtime > base_runtime:
                         continue
@@ -232,14 +227,6 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
                     actual_fuse_counter = map_fusion.apply(state, sdfg)
                     assert actual_fuse_counter == experiment_fuse_counter
 
-            tuned_top_maps = helpers.get_outermost_scope_maps(sdfg, state)
-            print(len(top_maps), len(tuned_top_maps))
-
-            cutout_tuned = cutter.cutout_state(state, *(state.nodes()), make_copy=False)
-            cutout_tuned.start_state.instrument = dace.InstrumentationType.GPU_Events
-            tuned_runtime = optim_utils.measure(cutout_tuned, dreport)
-            
-            print(f"Tuning result of {state.label} (initial, tuned): {initial_runtime, tuned_runtime}")
             print()
             print()
 

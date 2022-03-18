@@ -167,9 +167,7 @@ class SubgraphFusionTuner(cutout_tuner.CutoutTuner):
                 print(e)
                 continue
                 
-            initial_runtime = optim_utils.measure(cutout, dreport)
-            if initial_runtime == math.inf:
-                continue
+            print(state.label)
 
             # Try to apply every subgraph_pattern greedily, i.e., highest expected speedup first
             for pattern in subgraph_patterns:
@@ -217,13 +215,13 @@ class SubgraphFusionTuner(cutout_tuner.CutoutTuner):
                     print("Comparing")
                     baseline_cutout = cutter.cutout_state(state, *(state.nodes()), make_copy=False)
                     baseline_cutout.start_state.instrument = dace.InstrumentationType.GPU_Events
-                    base_runtime = optim_utils.measure(baseline_cutout, dreport)
+                    base_runtime = optim_utils.subprocess_measure(cutout=baseline_cutout, sdfg=sdfg)
 
                     subgraph_fusion.apply(experiment_sdfg)
 
                     experiment_cutout = cutter.cutout_state(experiment_state, *(experiment_state.nodes()), make_copy=False)
                     experiment_cutout.start_state.instrument = dace.InstrumentationType.GPU_Events
-                    fused_runtime = optim_utils.measure(experiment_cutout, dreport)
+                    fused_runtime = optim_utils.subprocess_measure(cutout=experiment_cutout, sdfg=sdfg)
                     print(base_runtime, fused_runtime)
 
                     if fused_runtime > base_runtime:
@@ -237,14 +235,6 @@ class SubgraphFusionTuner(cutout_tuner.CutoutTuner):
                     subgraph_fusion.schedule_innermaps = dace.ScheduleType.GPU_Device
                     subgraph_fusion.apply(sdfg)
 
-            tuned_top_maps = helpers.get_outermost_scope_maps(sdfg, state)
-            print(len(top_maps), len(tuned_top_maps))
-
-            cutout_tuned = cutter.cutout_state(state, *(state.nodes()), make_copy=False)
-            cutout_tuned.start_state.instrument = dace.InstrumentationType.GPU_Events
-            tuned_runtime = optim_utils.measure(cutout_tuned, dreport)
-            
-            print(f"Tuning result of {state.label} (initial, tuned): {initial_runtime, tuned_runtime}")
             print()
             print()
 
