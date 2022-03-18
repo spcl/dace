@@ -82,6 +82,7 @@ class CUDACodeGen(TargetCodeGenerator):
         self._exitcode = CodeIOStream()
         self._global_sdfg: SDFG = sdfg
         self._toplevel_schedule = None
+        self._arglists: Dict[nodes.MapEntry, Dict[str, dt.Data]] = {}
 
         # Keep track of current "scope entry/exit" code streams for extra
         # code generation
@@ -180,6 +181,14 @@ class CUDACodeGen(TargetCodeGenerator):
 
         # Write GPU context to state structure
         self._frame.statestruct.append('dace::cuda::Context *gpu_context;')
+
+        # Collect all defined symbols and argument lists with one traversal
+        shared_transients = {}
+        for state, node, defined_syms in sdutil.traverse_sdfg_with_defined_symbols(sdfg, recursive=True):
+            if isinstance(node, nodes.MapEntry) and node.map.schedule == dtypes.ScheduleType.GPU_Device:
+                if state.parent not in shared_transients:
+                    shared_transients[state.parent] = state.parent.shared_transients()
+                self._arglists[node] = state.scope_subgraph(node).arglist(defined_syms, shared_transients[state.parent])
 
     # Generate final code
     def get_generated_codeobjects(self):
@@ -1182,7 +1191,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         is_persistent = (dfg_scope.source_nodes()[0].map.schedule == dtypes.ScheduleType.GPU_Persistent)
 
         # Get parameters of subgraph
-        kernel_args = dfg_scope.arglist()
+        kernel_args = self._arglists[scope_entry]
 
         # Handle dynamic map inputs
         for e in dace.sdfg.dynamic_map_inputs(state, scope_entry):

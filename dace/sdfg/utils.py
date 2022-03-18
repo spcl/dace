@@ -708,7 +708,7 @@ def get_view_edge(state: SDFGState, view: nd.AccessNode) -> gr.MultiConnectorEdg
         return in_edge
     if in_edge.data.data == view.data and out_edge.data.data == view.data:
         return None
-    
+
     # Check if there is a 'views' connector
     if in_edge.dst_conn and in_edge.dst_conn == 'views':
         return in_edge
@@ -1255,9 +1255,11 @@ def is_nonfree_sym_dependent(node: nd.AccessNode, desc: dt.Data, state: SDFGStat
 
 
 def _tswds_state(
-        sdfg: SDFG, state: SDFGState,
-        symbols: Dict[str,
-                      dtypes.typeclass]) -> Generator[Tuple[SDFGState, Node, Dict[str, dtypes.typeclass]], None, None]:
+    sdfg: SDFG,
+    state: SDFGState,
+    symbols: Dict[str, dtypes.typeclass],
+    recursive: bool,
+) -> Generator[Tuple[SDFGState, Node, Dict[str, dtypes.typeclass]], None, None]:
     """
     Helper function for ``traverse_sdfg_with_defined_symbols``.
     :see: traverse_sdfg_with_defined_symbols.
@@ -1274,13 +1276,16 @@ def _tswds_state(
                 inner_syms.update(symbols)
                 inner_syms.update(node.new_symbols(sdfg, state, inner_syms))
                 yield from _traverse(node, inner_syms)
+            if isinstance(node, dace.sdfg.nodes.NestedSDFG) and recursive:
+                yield from traverse_sdfg_with_defined_symbols(node.sdfg, recursive)
 
     # Start with top-level nodes
     yield from _traverse(None, symbols)
 
 
 def traverse_sdfg_with_defined_symbols(
-        sdfg: SDFG) -> Generator[Tuple[SDFGState, Node, Dict[str, dtypes.typeclass]], None, None]:
+        sdfg: SDFG,
+        recursive: bool = False) -> Generator[Tuple[SDFGState, Node, Dict[str, dtypes.typeclass]], None, None]:
     """
     Traverses the SDFG, its states and nodes, yielding the defined symbols and their types at each node.
     :return: A generator that yields tuples of (state, node in state, currently-defined symbols)
@@ -1301,17 +1306,17 @@ def traverse_sdfg_with_defined_symbols(
         # Source
         if edge.src not in visited:
             visited.add(edge.src)
-            yield from _tswds_state(sdfg, edge.src, symbols)
+            yield from _tswds_state(sdfg, edge.src, symbols, recursive)
 
         # Add edge symbols into defined symbols
         issyms = edge.data.new_symbols(sdfg, symbols)
-        symbols.update(issyms)
+        symbols.update({k: v for k, v in issyms.items() if v is not None})
 
         # Destination
         if edge.dst not in visited:
             visited.add(edge.dst)
-            yield from _tswds_state(sdfg, edge.dst, symbols)
+            yield from _tswds_state(sdfg, edge.dst, symbols, recursive)
 
     # If there is only one state, the DFS will miss it
     if start_state not in visited:
-        yield from _tswds_state(sdfg, start_state, symbols)
+        yield from _tswds_state(sdfg, start_state, symbols, recursive)
