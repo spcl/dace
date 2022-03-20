@@ -417,7 +417,7 @@ def _numpy_flip(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str, ax
     # anode = state.add_read(acpy)
     # state.add_edge(vnode, None, anode, None, Memlet(f'{view}[{sset}] -> {dset}'))
 
-    arr_copy, _ = sdfg.add_temp_transient(desc.shape, desc.dtype, desc.storage)
+    arr_copy, _ = sdfg.add_temp_transient_like(desc)
     inpidx = ','.join([f'__i{i}' for i in range(ndim)])
     outidx = ','.join([f'{s} - __i{i} - 1' if a else f'__i{i}' for i, (a, s) in enumerate(zip(axis, desc.shape))])
     state.add_mapped_tasklet(name="_numpy_flip_",
@@ -3944,14 +3944,20 @@ def size(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str) -> Size:
 @oprepo.replaces_attribute('Array', 'flat')
 @oprepo.replaces_attribute('Scalar', 'flat')
 @oprepo.replaces_attribute('View', 'flat')
-def flat(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str) -> str:
+def flat(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str, order: str = 'C') -> str:
     desc = sdfg.arrays[arr]
     totalsize = data._prod(desc.shape)
-    c_contig_strides = tuple(data._prod(desc.shape[i + 1:]) for i in range(len(desc.shape)))
+    if order not in ('C', 'F'):
+        raise NotImplementedError(f'Order "{order}" not yet supported for flattening')
 
-    if desc.total_size != totalsize or desc.strides != c_contig_strides:
-        # If data is not C-contiguous (numpy standard), create copy
-        warnings.warn(f'Generating copy for non-contiguous array "{arr}"')
+    if order == 'C':
+        contig_strides = tuple(data._prod(desc.shape[i + 1:]) for i in range(len(desc.shape)))
+    elif order == 'F':
+        contig_strides = tuple(data._prod(desc.shape[:i]) for i in range(len(desc.shape)))
+
+    if desc.total_size != totalsize or desc.strides != contig_strides:
+        # If data is not contiguous (numpy standard), create copy as explicit map
+        # warnings.warn(f'Generating explicit copy for non-contiguous array "{arr}"')
         newarr, _ = sdfg.add_array(arr, [totalsize],
                                    desc.dtype,
                                    storage=desc.storage,
@@ -3962,10 +3968,16 @@ def flat(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str) -> str:
                                    alignment=desc.alignment,
                                    transient=True,
                                    find_new_name=True)
-
-        r = state.add_read(arr)
-        w = state.add_write(newarr)
-        state.add_nedge(r, w, Memlet(data=arr))
+        maprange = {f'__i{i}': (0, s - 1, 1) for i, s in enumerate(desc.shape)}
+        out_index = sum(symbolic.pystr_to_symbolic(f'__i{i}') * s for i, s in enumerate(contig_strides))
+        state.add_mapped_tasklet(
+            'flat',
+            maprange,
+            dict(__inp=Memlet(data=arr, subset=','.join(maprange.keys()))),
+            '__out = __inp',
+            dict(__out=Memlet(data=newarr, subset=subsets.Range([(out_index, out_index, 1)]))),
+            external_edges=True,
+        )
     else:
         newarr, newdesc = sdfg.add_view(arr, [totalsize],
                                         desc.dtype,
@@ -4044,8 +4056,8 @@ def _ndarray_transpose(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: 
 @oprepo.replaces_method('Array', 'flatten')
 @oprepo.replaces_method('Scalar', 'flatten')
 @oprepo.replaces_method('View', 'flatten')
-def _ndarray_flatten(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str) -> str:
-    new_arr = flat(pv, sdfg, state, arr)
+def _ndarray_flatten(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str, order: str = 'C') -> str:
+    new_arr = flat(pv, sdfg, state, arr, order)
     # `flatten` always returns a copy
     if isinstance(new_arr, data.View):
         return _ndarray_copy(pv, sdfg, state, new_arr)
@@ -4055,9 +4067,9 @@ def _ndarray_flatten(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: st
 @oprepo.replaces_method('Array', 'ravel')
 @oprepo.replaces_method('Scalar', 'ravel')
 @oprepo.replaces_method('View', 'ravel')
-def _ndarray_ravel(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str) -> str:
+def _ndarray_ravel(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str, order: str = 'C') -> str:
     # `ravel` returns a copy only when necessary (sounds like ndarray.flat)
-    return flat(pv, sdfg, state, arr)
+    return flat(pv, sdfg, state, arr, order)
 
 
 @oprepo.replaces_method('Array', 'max')

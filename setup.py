@@ -10,7 +10,7 @@ runtime_files = [f[len(dace_path):] for f in glob.glob(dace_path + 'runtime/incl
 library_files = [f[len(dace_path):] for f in glob.glob(dace_path + 'libraries/**/include/**/*', recursive=True)]
 cmake_files = [f[len(dace_path):] for f in glob.glob(dace_path + 'codegen/**/*.cmake', recursive=True)]
 viewer_files = [
-    f[len(dace_path):] for f in (glob.glob(dace_path + 'viewer/webclient/dist/*', recursive=True) +
+    f[len(dace_path):] for f in (glob.glob(dace_path + 'viewer/webclient/dist/*.js', recursive=True) +
                                  glob.glob(dace_path + 'viewer/webclient/external_libs/**/*', recursive=True) +
                                  glob.glob(dace_path + 'viewer/webclient/*.css', recursive=True) +
                                  glob.glob(dace_path + 'viewer/webclient/*.html', recursive=True) +
