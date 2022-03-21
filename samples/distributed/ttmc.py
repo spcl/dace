@@ -46,31 +46,76 @@ weak_scaling = {
     4: 80,
     6: 90,
     8: 92,
+    12: 102,
     16: 104,
-    30: 120,
+    27: 120,
     32: 120,
     64: 136
 }
 
 grid_ijklme = {
     1: [1, 1, 1, 1, 1, 1],
+    2: [1, 1, 1, 2, 1, 1],
+    4: [1, 1, 2, 2, 1, 1],
+    8: [1, 2, 2, 2, 1, 1],
+    12: [1, 2, 2, 3, 1, 1],
+    16: [1, 2, 2, 4, 1, 1],
+    27: [1, 3, 3, 3, 1, 1],
+    32: [1, 2, 4, 4, 1, 1],
     64: [1, 4, 4, 4, 1, 1]
 }
 
 grid_ijklde = {
     1: [1, 1, 1, 1, 1, 1],
+    2: [1, 1, 2, 1, 1, 1],
+    4: [1, 2, 2, 1, 1, 1],
+    8: [2, 2, 2, 1, 1, 1],
+    12: [2, 2, 3, 1, 1, 1],
+    16: [2, 2, 4, 1, 1, 1],
+    27: [3, 3, 3, 1, 1, 1],
+    32: [2, 4, 4, 1, 1, 1],
     64: [4, 4, 4, 1, 1, 1]
 }
 
 grid_ijkcde = {
     1: [1, 1, 1, 1, 1, 1],
+    2: [1, 2, 1, 1, 1, 1],
+    4: [2, 2, 1, 1, 1, 1],
+    8: [2, 2, 1, 1, 1, 2],
+    12: [2, 3, 1, 1, 1, 2],
+    16: [2, 4, 1, 1, 1, 2],
+    27: [3, 3, 1, 1, 1, 3],
+    32: [4, 4, 1, 1, 1, 2],
     64: [4, 4, 1, 1, 1, 4]
 }
 
 grid_ijbcde = {
     1: [1, 1, 1, 1, 1, 1],
-    64: [1, 4, 1, 1, 4, 4]
+    2: [2, 1, 1, 1, 1, 1],
+    4: [2, 1, 1, 1, 1, 2],
+    8: [2, 1, 1, 1, 2, 2],
+    12: [3, 1, 1, 1, 2, 2],
+    16: [4, 1, 1, 1, 2, 2],
+    27: [3, 1, 1, 1, 3, 3],
+    32: [4, 1, 1, 1, 2, 4],
+    64: [4, 1, 1, 1, 4, 4]
 }
+
+
+@dace.program
+def mode_0_shared(X: dace.float64[S0, S1, S2, S3, S4],
+                  JM: dace.float64[S1, R1],
+                  KM: dace.float64[S2, R2],
+                  LM: dace.float64[S3, R3],
+                  MM: dace.float64[S4, R4]) -> dace.float64[S0, R1, R2, R3, R4]:
+    tmp = np.tensordot(X, MM, axes=([4], [0]))
+    tmp2 = np.transpose(tmp, axes=[4, 0, 1, 2, 3])
+    tmp3 = np.tensordot(tmp2, LM, axes=([4], [0]))
+    tmp4 = np.transpose(tmp3, axes=[4, 0, 1, 2, 3])
+    tmp5 = np.tensordot(tmp4, KM, axes=([4], [0]))
+    tmp6 = np.transpose(tmp5, axes=[4, 0, 1, 2, 3])
+    tmp7 = np.tensordot(tmp6, JM, axes=([4], [0]))
+    return np.transpose(tmp7, axes=[3, 4, 0, 1, 2])
 
 
 @dace.program
@@ -154,21 +199,32 @@ if __name__ == "__main__":
     commworld = MPI.COMM_WORLD
     rank = commworld.Get_rank()
     size = commworld.Get_size()
+    # commworld = None
+    # rank = 0
+    # size = 1
 
     if size not in grid_ijklme:
         raise ValueError("Selected number of MPI processes is not supported.")
     
     sdfg0, sdfg2, sdfg4 = None, None, None
     if rank == 0:
-        sdfg0 = mode_0.to_sdfg(simplify=True, procs=size)
+        if size == 1:
+            sdfg0 = mode_0_shared.to_sdfg(simplify=True)
+            sdfg1 = mode_0.to_sdfg(simplify=True, procs=size)
+        else:
+            sdfg0 = mode_0.to_sdfg(simplify=True, procs=size)
         # sdfg2 = mode_2.to_sdfg(simplify=True)
         # sdfg4 = mode_4.to_sdfg(simplify=True)
     func0 = utils.distributed_compile(sdfg0, commworld)
+    if size == 1:
+        func1 = utils.distributed_compile(sdfg1, commworld)
     # func2 = utils.distributed_compile(sdfg2, commworld)
     # func4 = utils.distributed_compile(sdfg4, commworld)
 
     S = weak_scaling[size]
     R = 26
+    if size == 27:
+        R = 27
 
     SG1 = [S // p for p in grid_ijklme[size][:-1]] + [S]
     RG1 = [R, R, R, R] + [R // p for p in grid_ijklme[size][-1:]]
@@ -212,18 +268,17 @@ if __name__ == "__main__":
     #         S0=LS[0], S1=LS[1], S2=LS[2], S3=LS[3], S4=LS[4], R=LR,
     #         P0=pgrid[0], P1=pgrid[1], P2=pgrid[2], P3=pgrid[3], P4=pgrid[4], PR=pgrid[5])
     
-
     runtimes = timeit.repeat(
         """func0(X=X, JM=JM, KM=KM, LM=LM, MM=MM, out=out0, procs=size,
-                 S0=S, S1=S, S2=S, S3=S, S4=S, R0=R, R1=R, R2=R, R3=R, R4=R,
-                 S0G1=SG1[0], S1G1=SG1[1], S2G1=SG1[2], S3G1=SG1[3], S4G1=SG1[4],
-                 S0G2=SG2[0], S1G2=SG2[1], S2G2=SG2[2], S3G2=SG2[3], S4G2=SG2[4],
-                 S0G3=SG3[0], S1G3=SG3[1], S2G3=SG3[2], S3G3=SG3[3], S4G3=SG3[4],
-                 S0G4=SG4[0], S1G4=SG4[1], S2G4=SG4[2], S3G4=SG4[3], S4G4=SG4[4],
-                 R0G1=RG1[0], R1G1=RG1[1], R2G1=RG1[2], R3G1=RG1[3], R4G1=RG1[4],
-                 R0G2=RG2[0], R1G2=RG2[1], R2G2=RG2[2], R3G2=RG2[3], R4G2=RG2[4],
-                 R0G3=RG3[0], R1G3=RG3[1], R2G3=RG3[2], R3G3=RG3[3], R4G3=RG3[4],
-                 R0G4=RG4[0], R1G4=RG4[1], R2G4=RG4[2], R3G4=RG4[3], R4G4=RG4[4]); commworld.Barrier()
+                S0=S, S1=S, S2=S, S3=S, S4=S, R0=R, R1=R, R2=R, R3=R, R4=R,
+                S0G1=SG1[0], S1G1=SG1[1], S2G1=SG1[2], S3G1=SG1[3], S4G1=SG1[4],
+                S0G2=SG2[0], S1G2=SG2[1], S2G2=SG2[2], S3G2=SG2[3], S4G2=SG2[4],
+                S0G3=SG3[0], S1G3=SG3[1], S2G3=SG3[2], S3G3=SG3[3], S4G3=SG3[4],
+                S0G4=SG4[0], S1G4=SG4[1], S2G4=SG4[2], S3G4=SG4[3], S4G4=SG4[4],
+                R0G1=RG1[0], R1G1=RG1[1], R2G1=RG1[2], R3G1=RG1[3], R4G1=RG1[4],
+                R0G2=RG2[0], R1G2=RG2[1], R2G2=RG2[2], R3G2=RG2[3], R4G2=RG2[4],
+                R0G3=RG3[0], R1G3=RG3[1], R2G3=RG3[2], R3G3=RG3[3], R4G3=RG3[4],
+                R0G4=RG4[0], R1G4=RG4[1], R2G4=RG4[2], R3G4=RG4[3], R4G4=RG4[4]); commworld.Barrier()
         """,
         setup="commworld.Barrier()",
         repeat=10,
@@ -233,6 +288,28 @@ if __name__ == "__main__":
 
     if rank == 0:
         print(f"Mode-0 median runtime: {np.median(runtimes)} seconds")
+    
+    if size == 1:
+        runtimes = timeit.repeat(
+            """func1(X=X, JM=JM, KM=KM, LM=LM, MM=MM, out=out0, procs=size,
+                    S0=S, S1=S, S2=S, S3=S, S4=S, R0=R, R1=R, R2=R, R3=R, R4=R,
+                    S0G1=SG1[0], S1G1=SG1[1], S2G1=SG1[2], S3G1=SG1[3], S4G1=SG1[4],
+                    S0G2=SG2[0], S1G2=SG2[1], S2G2=SG2[2], S3G2=SG2[3], S4G2=SG2[4],
+                    S0G3=SG3[0], S1G3=SG3[1], S2G3=SG3[2], S3G3=SG3[3], S4G3=SG3[4],
+                    S0G4=SG4[0], S1G4=SG4[1], S2G4=SG4[2], S3G4=SG4[3], S4G4=SG4[4],
+                    R0G1=RG1[0], R1G1=RG1[1], R2G1=RG1[2], R3G1=RG1[3], R4G1=RG1[4],
+                    R0G2=RG2[0], R1G2=RG2[1], R2G2=RG2[2], R3G2=RG2[3], R4G2=RG2[4],
+                    R0G3=RG3[0], R1G3=RG3[1], R2G3=RG3[2], R3G3=RG3[3], R4G3=RG3[4],
+                    R0G4=RG4[0], R1G4=RG4[1], R2G4=RG4[2], R3G4=RG4[3], R4G4=RG4[4]); commworld.Barrier()
+            """,
+            setup="commworld.Barrier()",
+            repeat=10,
+            number=1,
+            globals=locals()
+        )
+
+        if rank == 0:
+            print(f"Mode-0 median runtime: {np.median(runtimes)} seconds")
 
     # runtimes = timeit.repeat(
     #     """func2(X=X, IM=IM, JM=JM, LM=LM, MM=MM, out=out2,
