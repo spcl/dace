@@ -678,7 +678,9 @@ def _transpose(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, inpname: str,
         modes = len(arr1.shape)
         idx = axes.index(0)
         if axes[idx:] == list(range(modes-idx)) and axes[:idx] == list(range(axes[-1] + 1, modes)):
-            matrix = _ndarray_reshape(pv, sdfg, state, inpname, [data._prod(arr1.shape[:idx]), data._prod(arr1.shape[idx:])])
+            rows = data._prod([arr1.shape[axes[i]] for i in range(idx, len(arr1.shape))])
+            cols = data._prod([arr1.shape[axes[i]] for i in range(idx)])
+            matrix = _ndarray_reshape(pv, sdfg, state, inpname, [rows, cols])
             trans_matrix = _transpose(pv, sdfg, state, matrix)
             return _ndarray_reshape(pv, sdfg, state, trans_matrix, [arr1.shape[i] for i in axes])
 
