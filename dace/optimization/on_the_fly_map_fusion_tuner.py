@@ -16,7 +16,7 @@ from dace.transformation import subgraph as sg
 from dace.transformation.estimator import enumeration as en
 from dace.transformation.subgraph import helpers
 from dace.transformation import helpers as xfh
-from dace.optimization import utils as optim_utils
+from dace.optimization import utils2 as optim_utils
 
 try:
     from tqdm import tqdm
@@ -169,14 +169,13 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
                 
                 try:
                     cutout = cutter.cutout_state(state, *(state.nodes()), make_copy=False)
-                    cutout.start_state.instrument = dace.InstrumentationType.GPU_Events
                 except AttributeError as e:
                     print(e)
                     continue
 
                 # Try to apply every subgraph_pattern greedily, i.e., highest expected speedup first
                 base_runtime = None
-                for pattern in subgraph_patterns:
+                for j, pattern in enumerate(subgraph_patterns):
                     maps = []
                     for node in state.nodes():
                         if isinstance(node, dace.nodes.MapEntry) and xfh.get_parent_map(state, node) is None:
@@ -218,6 +217,7 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
                     
                     experiment_sdfg = copy.deepcopy(experiment_sdfg_)
                     experiment_state = experiment_sdfg.start_state
+                    experiment_state.instrument = dace.InstrumentationType.GPU_Events
                     
                     experiment_maps = list(map(lambda m_id: experiment_state.node(m_id), experiment_maps_ids))
                     experiment_subgraph = helpers.subgraph_from_maps(sdfg=experiment_sdfg, graph=experiment_state, map_entries=experiment_maps)
@@ -231,17 +231,20 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
                             base_runtime = optim_utils.subprocess_measure(cutout=baseline, sdfg=dreport_bytes)
                             if base_runtime == math.inf:
                                 break
-
-                        experiment_fuse_counter = map_fusion.apply(experiment_state, experiment_sdfg)
+                        try:
+                            experiment_fuse_counter = map_fusion.apply(experiment_state, experiment_sdfg)
+                        except:
+                            continue
+                        
                         if experiment_fuse_counter == 0:
                             continue
 
-                        experiment_state.instrument = dace.InstrumentationType.GPU_Events
                         fused_runtime = optim_utils.subprocess_measure(cutout=experiment_sdfg, sdfg=dreport_bytes)
                         print(base_runtime, fused_runtime, experiment_fuse_counter)
                         if fused_runtime > base_runtime:
                             continue
 
+                        print(j, pattern)
                         print(f"Fusing {experiment_fuse_counter} maps. Performance improvement: {base_runtime - fused_runtime}")
 
                         subgraph = helpers.subgraph_from_maps(sdfg=nsdfg, graph=state, map_entries=subgraph_maps)

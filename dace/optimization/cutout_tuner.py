@@ -5,10 +5,6 @@ import dace
 import json
 
 from typing import Dict, Generator, Any, Tuple
-import multiprocessing as mp
-if __name__ == '__main__':
-    mp.set_start_method("spawn")
-
 from dace.optimization import auto_tuner
 from dace.optimization import utils as optim_utils
 
