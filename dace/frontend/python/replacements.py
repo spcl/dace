@@ -784,8 +784,12 @@ def _transpose(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, inpname: str, a
         state.add_edge(acc1, None, tasklet, '_inp', Memlet.from_array(inpname, arr1))
         state.add_edge(tasklet, '_out', acc2, None, Memlet.from_array(outname, arr2))
     else:  # tensor transpose
-        if len(axes) != len(arr1.shape) or sorted(axes) != list(range(len(arr1.shape))):
-            raise ValueError("axes don't match array")
+        modes = len(arr1.shape)
+        idx = axes.index(0)
+        if axes[idx:] == list(range(modes-idx)) and axes[:idx] == list(range(axes[-1] + 1, modes)):
+            matrix = _ndarray_reshape(pv, sdfg, state, inpname, [data._prod(arr1.shape[:idx]), data._prod(arr1.shape[idx:])])
+            trans_matrix = _transpose(pv, sdfg, state, matrix)
+            return _ndarray_reshape(pv, sdfg, state, trans_matrix, [arr1.shape[i] for i in axes])
 
         read = state.add_read(inpname)
         write = state.add_write(outname)
