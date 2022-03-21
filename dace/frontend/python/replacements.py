@@ -675,6 +675,13 @@ def _transpose(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, inpname: str,
         if len(axes) != len(arr1.shape) or sorted(axes) != list(range(len(arr1.shape))):
             raise ValueError("axes don't match array")
 
+        modes = len(arr1.shape)
+        idx = axes.index(0)
+        if axes[idx:] == list(range(modes-idx)) and axes[:idx] == list(range(axes[-1] + 1, modes)):
+            matrix = _ndarray_reshape(pv, sdfg, state, inpname, [data._prod(arr1.shape[:idx]), data._prod(arr1.shape[idx:])])
+            trans_matrix = _transpose(pv, sdfg, state, matrix)
+            return _ndarray_reshape(pv, sdfg, state, trans_matrix, [arr1.shape[i] for i in axes])
+
         new_shape = [arr1.shape[i] for i in axes]
         outname, arr2 = sdfg.add_temp_transient(new_shape, arr1.dtype, arr1.storage)
 
