@@ -35,10 +35,32 @@ class ExpandRedistribute(ExpandTransformation):
         out_repl = ""
         for i, s in enumerate(out_symbols):
             out_repl += f"int {s} = __state->{node.redistr}_self_dst[__idx * {len(out_buffer.shape)} + {i}];\n"
-        copy_args = ", ".join([
-            f"__state->{node.redistr}_self_size[__idx * {len(inp_buffer.shape)} + {i}], {istride}, {ostride}"
-            for i, (istride, ostride) in enumerate(zip(inp_buffer.strides, out_buffer.strides))
-        ])
+        if len(inp_symbols) > 1:
+            copy_args = ", ".join([
+                f"__state->{node.redistr}_self_size[__idx * {len(inp_buffer.shape)} + {i}], {istride}, {ostride}"
+                for i, (istride, ostride) in enumerate(zip(inp_buffer.strides, out_buffer.strides)) if i > 0
+            ])
+            copy_code = f"""
+                int __m0_size = __state->{node.redistr}_self_size[__idx * {len(inp_buffer.shape)}];
+                #pragma omp parallel for
+                for (auto __m0_idx = 0; __m0_idx < __m0_size; ++__m0_idx) {{
+                    dace::CopyNDDynamic<{inp_buffer.dtype.ctype}, 1, false, {len(inp_buffer.shape) - 1}>::Dynamic::Copy(
+                        _inp_buffer + {inp_offset} + __m0_idx * {inp_buffer.strides[0]},
+                        _out_buffer + {out_offset} + __m0_idx * {out_buffer.strides[0]},
+                        {copy_args}
+                    );
+                }}
+            """
+        else:
+            copy_args = ", ".join([
+                f"__state->{node.redistr}_self_size[__idx * {len(inp_buffer.shape)} + {i}], {istride}, {ostride}"
+                for i, (istride, ostride) in enumerate(zip(inp_buffer.strides, out_buffer.strides))
+            ])
+            copy_code = f"""
+                dace::CopyNDDynamic<{inp_buffer.dtype.ctype}, 1, false, {len(inp_buffer.shape)}>::Dynamic::Copy(
+                    _inp_buffer + {inp_offset}, _out_buffer + {out_offset}, {copy_args}
+                );
+            """
 
         code = f"""
             int myrank;
@@ -59,9 +81,7 @@ class ExpandRedistribute(ExpandTransformation):
                     // fflush(stdout);
                     {inp_repl}
                     {out_repl}
-                    dace::CopyNDDynamic<{inp_buffer.dtype.ctype}, 1, false, {len(inp_buffer.shape)}>::Dynamic::Copy(
-                        _inp_buffer + {inp_offset}, _out_buffer + {out_offset}, {copy_args}
-                    );
+                    {copy_code}
                 }}
                 for (auto __idx = 0; __idx < __state->{node._redistr}_recvs; ++__idx) {{
                     // printf("({redistr.array_a} -> {redistr.array_b}) I am rank %d and I receive from %d\\n", myrank, __state->{node._redistr}_src_ranks[__idx]);
