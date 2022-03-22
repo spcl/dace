@@ -15,7 +15,7 @@ from dace.transformation import subgraph as sg
 from dace.transformation.estimator import enumeration as en
 from dace.transformation.subgraph import helpers
 from dace.transformation import helpers as xfh
-from dace.optimization import utils2 as optim_utils
+from dace.optimization import utils as optim_utils
 
 try:
     from tqdm import tqdm
@@ -33,15 +33,15 @@ class SubgraphFusionTuner(cutout_tuner.CutoutTuner):
         if sdfg is None:
             sdfg = self._sdfg
             
-        for state in sdfg.nodes():
-            state_id = sdfg.node_id(state)
-            nodes = state.nodes()
+        for nsdfg_id, nsdfg in enumerate(sdfg.all_sdfgs_recursive()):
+            for state in nsdfg.nodes():
+                state_id = nsdfg.node_id(state)
 
-            try:
-                cutout = cutter.cutout_state(state, *(nodes), make_copy=False)
-                yield cutout, f"{state_id}.{state.label}"
-            except AttributeError:
-                continue
+                try:
+                    cutout = cutter.cutout_state(state, *(state.nodes()), make_copy=False)
+                    yield cutout, f"{nsdfg_id}.{state_id}.{state.label}"
+                except AttributeError:
+                    continue
 
     def config_from_key(self, key: str, cutout: dace.SDFG, **kwargs) -> Tuple[int, List[int]]:
         fusion_id = int(key)
@@ -55,21 +55,22 @@ class SubgraphFusionTuner(cutout_tuner.CutoutTuner):
         if config[0] == 0:
             return
 
-        state_id = label.split(".")[0]
+        nsdfg_id, state_id, _ = label.split(".")
+        sdfg = list(self._sdfg.all_sdfgs_recursive())[int(nsdfg_id)]
         state_id = int(state_id)
-        state = self._sdfg.node(state_id)
+        state = sdfg.node(state_id)
         nodes = state.nodes()
         cutout = cutter.cutout_state(state, *(nodes), make_copy=False)
 
         map_ids = config[1]
         maps_ = list(map(cutout.start_state.node, map_ids))
-        subgraph = helpers.subgraph_from_maps(sdfg=self._sdfg, graph=state, map_entries=maps_)
+        subgraph = helpers.subgraph_from_maps(sdfg=sdfg, graph=state, map_entries=maps_)
 
-        subgraph_fusion = sg.CompositeFusion(subgraph, self._sdfg.sdfg_id, state_id)
+        subgraph_fusion = sg.CompositeFusion(subgraph, sdfg.sdfg_id, state_id)
         subgraph_fusion.allow_tiling = True
         subgraph_fusion.schedule_innermaps = dace.ScheduleType.GPU_Device
-        if subgraph_fusion.can_be_applied(self._sdfg, subgraph):
-            subgraph_fusion.apply(self._sdfg)
+        if subgraph_fusion.can_be_applied(sdfg, subgraph):
+            subgraph_fusion.apply(sdfg)
 
     def space(self, cutout: dace.SDFG) -> Generator[List[bool], None, None]:
         subgraphs = en.ConnectedEnumerator(cutout, cutout.start_state)
@@ -92,7 +93,10 @@ class SubgraphFusionTuner(cutout_tuner.CutoutTuner):
         return new_kwargs
 
     def evaluate(self, config, cutout, measurements: int, **kwargs) -> float:
+        dreport = self._sdfg.get_instrumented_data()
+        
         candidate = dace.SDFG.from_json(cutout)
+        candidate.start_state.instrument = dace.InstrumentationType.GPU_Events
         for node in candidate.start_state:
             if isinstance(node, dace.nodes.MapEntry):
                 break
@@ -102,7 +106,7 @@ class SubgraphFusionTuner(cutout_tuner.CutoutTuner):
 
         if config[0] == 0:
             # Baseline
-            return self.measure(candidate, measurements)
+            return self.measure(candidate, dreport, measurements)
 
         map_ids = config[1]
         if len(map_ids) < 2:
@@ -119,16 +123,16 @@ class SubgraphFusionTuner(cutout_tuner.CutoutTuner):
         else:
             return math.inf
 
-        candidate.save(f"{candidate.start_state.label}_{config[0]}.sdfg")
-        return self.measure(candidate, measurements)
+        return self.measure(candidate, dreport, measurements)
 
     def _extract_patterns(self, best_configs: List[Tuple[str, List[int]]]):
         # Describe successful fusions as set of map descriptors
         subgraph_patterns = []
         for label, config in best_configs:
-            state_id = label.split(".")[0]
+            nsdfg_id, state_id, _ = label.split(".")
+            sdfg = list(self._sdfg.all_sdfgs_recursive())[int(nsdfg_id)]
             state_id = int(state_id)
-            state = self._sdfg.node(state_id)
+            state = sdfg.node(state_id)
             nodes = state.nodes()
             cutout = cutter.cutout_state(state, *(nodes), make_copy=False)
 
@@ -239,7 +243,7 @@ class SubgraphFusionTuner(cutout_tuner.CutoutTuner):
                         if base_runtime is None:
                             baseline = cutter.cutout_state(experiment_state, *(experiment_state.nodes()), make_copy=True)                    
                             baseline.start_state.instrument = dace.InstrumentationType.GPU_Events
-                            base_runtime = optim_utils.subprocess_measure(cutout=baseline, sdfg=dreport_bytes)
+                            base_runtime = optim_utils.subprocess_measure(baseline, dreport_bytes)
                             if base_runtime == math.inf:
                                 break
                         try:
@@ -248,7 +252,7 @@ class SubgraphFusionTuner(cutout_tuner.CutoutTuner):
                             continue
 
                         experiment_state.instrument = dace.InstrumentationType.GPU_Events
-                        fused_runtime = optim_utils.subprocess_measure(cutout=experiment_sdfg, sdfg=dreport_bytes)
+                        fused_runtime = optim_utils.subprocess_measure(experiment_sdfg, dreport_bytes)
                         print(base_runtime, fused_runtime)
 
                         if fused_runtime > base_runtime:

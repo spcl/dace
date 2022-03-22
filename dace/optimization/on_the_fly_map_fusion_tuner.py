@@ -16,7 +16,7 @@ from dace.transformation import subgraph as sg
 from dace.transformation.estimator import enumeration as en
 from dace.transformation.subgraph import helpers
 from dace.transformation import helpers as xfh
-from dace.optimization import utils2 as optim_utils
+from dace.optimization import utils as optim_utils
 
 try:
     from tqdm import tqdm
@@ -31,15 +31,16 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
         self.instrument = measurement
 
     def cutouts(self):
-        for state in self._sdfg.nodes():
-            state_id = self._sdfg.node_id(state)
-            nodes = state.nodes()
+        for nsdfg_id, nsdfg in enumerate(self._sdfg.all_sdfgs_recursive()):
+            for state in nsdfg.nodes(): 
+                state_id = nsdfg.node_id(state)
+                nodes = state.nodes()
 
-            try:
-                cutout = cutter.cutout_state(state, *(nodes), make_copy=False)
-                yield cutout, f"{state_id}.{state.label}"
-            except AttributeError:
-                continue
+                try:
+                    cutout = cutter.cutout_state(state, *(nodes), make_copy=False)
+                    yield cutout, f"{nsdfg_id}.{state_id}.{state.label}"
+                except AttributeError:
+                    continue
 
     def config_from_key(self, key: str, cutout: dace.SDFG, **kwargs) -> Tuple[int, List[int]]:
         fusion_id = int(key)
@@ -70,6 +71,8 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
         return new_kwargs
 
     def evaluate(self, config, cutout, measurements: int, **kwargs) -> float:
+        dreport = self._sdfg.get_instrumented_data()
+
         candidate = dace.SDFG.from_json(cutout)
         for node in candidate.start_state:
             if isinstance(node, dace.nodes.MapEntry):
@@ -78,9 +81,10 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
             # Skip no-map-states
             return math.inf
 
+        
         if config[0] == 0:
             # Baseline
-            return self.measure(candidate, measurements)
+            return self.measure(candidate, dreport, measurements)
 
         map_ids = config[1]
         if len(map_ids) < 2:
@@ -96,34 +100,37 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
             if fuse_counter == 0:
                 return math.inf
 
-        return self.measure(candidate,  measurements)
+        return self.measure(candidate, dreport,  measurements)
 
     def apply(self, config: Tuple[int, List[int]], label: str, **kwargs) -> None:
         if config[0] == 0:
             return
 
-        state_id = label.split(".")[0]
+        nsdfg_id, state_id, state_label = label.split(".")
+        nsdfg_id = int(nsdfg_id)
         state_id = int(state_id)
-        state = self._sdfg.node(state_id)
+        sdfg = list(self._sdfg.all_sdfgs_recursive())[nsdfg_id]
+        state = sdfg.node(state_id)
         nodes = state.nodes()
         cutout = cutter.cutout_state(state, *(nodes), make_copy=False)
 
         map_ids = config[1]
         maps_ = list(map(cutout.start_state.node, map_ids))
-        subgraph = helpers.subgraph_from_maps(sdfg=self._sdfg, graph=state, map_entries=maps_)
+        subgraph = helpers.subgraph_from_maps(sdfg=sdfg, graph=state, map_entries=maps_)
 
-        map_fusion = sg.MapFusion(subgraph, self._sdfg.sdfg_id, state_id)
-        if map_fusion.can_be_applied(state, self._sdfg):
-            fuse_counter = map_fusion.apply(state, self._sdfg)
+        map_fusion = sg.MapFusion(subgraph, sdfg.sdfg_id, state_id)
+        if map_fusion.can_be_applied(state, sdfg):
+            fuse_counter = map_fusion.apply(state, sdfg)
             print(f"Fusing {fuse_counter} maps")
 
     def _extract_patterns(self, configs: List[Tuple[str, List[int]]]):
         # Describe successful fusions as set of map descriptors
         subgraph_patterns = []
         for label, config in configs:
-            state_id = label.split(".")[0]
+            nsdfg_id, state_id, _ = label.split(".")
+            nsdfg_id = int(nsdfg_id)
             state_id = int(state_id)
-            state = self._sdfg.node(state_id)
+            state = list(self._sdfg.all_sdfgs_recursive())[nsdfg_id].node(state_id)
             nodes = state.nodes()
             cutout = cutter.cutout_state(state, *(nodes), make_copy=False)
 
@@ -228,7 +235,7 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
                         if base_runtime is None:
                             baseline = cutter.cutout_state(experiment_state, *(experiment_state.nodes()), make_copy=True)                    
                             baseline.start_state.instrument = dace.InstrumentationType.GPU_Events
-                            base_runtime = optim_utils.subprocess_measure(cutout=baseline, sdfg=dreport_bytes)
+                            base_runtime = optim_utils.subprocess_measure(baseline, dreport_bytes)
                             if base_runtime == math.inf:
                                 break
                         try:
@@ -239,7 +246,7 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
                         if experiment_fuse_counter == 0:
                             continue
 
-                        fused_runtime = optim_utils.subprocess_measure(cutout=experiment_sdfg, sdfg=dreport_bytes)
+                        fused_runtime = optim_utils.subprocess_measure(experiment_sdfg, dreport_bytes)
                         print(base_runtime, fused_runtime, experiment_fuse_counter)
                         if fused_runtime > base_runtime:
                             continue
