@@ -156,8 +156,8 @@ class OnTheFlyMapFusion(transformation.SubgraphTransformation):
             # connect them to other tasklets accordingly
             for offset, edges in read_offsets.items():
                 nodes = self._copy_first_map_contents(sdfg, state, parent_map_entry, parent_map_exit)
-                tmp_name = sdfg.temp_data_name()
-                sdfg.add_scalar(tmp_name, array.dtype, transient=True)
+                tmp_name = "__otf"
+                tmp_name, _ = sdfg.add_scalar(tmp_name, array.dtype, transient=True, find_new_name=True)
                 tmp_access = state.add_access(tmp_name)
 
                 for node in nodes:
