@@ -1,14 +1,11 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 import os
+import pickle
 import math
 import dace
 import json
 
 from typing import Dict, Generator, Any, Tuple
-import multiprocessing as mp
-if __name__ == '__main__':
-    mp.set_start_method("spawn")
-
 from dace.optimization import auto_tuner
 from dace.optimization import utils as optim_utils
 
@@ -62,8 +59,8 @@ class CutoutTuner(auto_tuner.AutoTuner):
     def apply(self, config, cutout, **kwargs) -> None:
         raise NotImplementedError
 
-    def measure(self, sdfg: dace.SDFG, repetitions: int = 30, timeout: float = 60.0) -> float:
-        return optim_utils.subprocess_measure(cutout=sdfg, sdfg=self._sdfg, repetitions=repetitions, timeout=timeout)
+    def measure(self, cutout, dreport, repetitions: int = 30, timeout: float = 300.0) -> float:
+        return optim_utils.subprocess_measure(cutout=cutout, dreport=pickle.dumps(dreport), repetitions=repetitions, timeout=timeout)
 
     def optimize(self, measurements: int = 30, apply: bool = False, **kwargs) -> Dict:
         tuning_report = {}

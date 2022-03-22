@@ -210,7 +210,7 @@ class OutMergeArrays(transformation.SingleStateTransformation, transformation.Si
                                           union_inner_edges=True)
 
 
-class MergeSourceSinkArrays(transformation.SingleStateTransformation, transformation.SimplifyPass):
+class MergeSourceSinkArrays(transformation.SingleStateTransformation):
     """ Merge duplicate arrays that are source/sink nodes. """
 
     array1 = transformation.PatternNode(nodes.AccessNode)
