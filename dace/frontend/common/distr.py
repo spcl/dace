@@ -767,7 +767,20 @@ def _redistribute(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, in_buffer:
         f'int {rdistrarray_name}_recvs;', f'MPI_Datatype* {rdistrarray_name}_recv_types;',
         f'int* {rdistrarray_name}_src_ranks;', f'int {rdistrarray_name}_self_copies;',
         f'int* {rdistrarray_name}_self_src;', f'int* {rdistrarray_name}_self_dst;',
-        f'int* {rdistrarray_name}_self_size;'
+        f'int* {rdistrarray_name}_self_size;',
+        f'long long int* {rdistrarray_name}_send_sizes;',
+        f'double {rdistrarray_name}_total_send_size;',
+        f'double {rdistrarray_name}_total_copy_size;',
+        f'MPI_Request* {rdistrarray_name}_send_req;',
+        f'MPI_Request* {rdistrarray_name}_recv_req;',
+        f'MPI_Status* {rdistrarray_name}_send_status;',
+        f'MPI_Status* {rdistrarray_name}_recv_status;',
+        f'int* {rdistrarray_name}_fix_send_src;',
+        f'int* {rdistrarray_name}_fix_send_size;',
+        f'int* {rdistrarray_name}_fix_recv_dst;',
+        f'int* {rdistrarray_name}_fix_recv_size;',
+        f'{in_desc.dtype.ctype}** {rdistrarray_name}_send_buffers;',
+        f'{out_desc.dtype.ctype}** {rdistrarray_name}_recv_buffers;'
     ])
     state.add_node(tasklet)
     _, scal = sdfg.add_scalar(rdistrarray_name, dace.int32, transient=True)
