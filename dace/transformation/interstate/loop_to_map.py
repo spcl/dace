@@ -258,6 +258,17 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
                     to_visit.append(dst)
             states.add(state)
 
+        # Register WCR edges, if exist
+        wcrs: Dict[str, str] = {}
+        for state in states:
+            for e in state.edges():
+                if isinstance(e.dst, nodes.AccessNode):
+                    if e.data.wcr is not None:
+                        if e.data.data not in wcrs:
+                            wcrs[e.data.data] = e.data.wcr
+                        elif wcrs[e.data.data] != e.data.wcr:  # Ambiguous WCR, register as None
+                            wcrs[e.data.data] = None
+
         # Nest loop-body states
         if len(states) > 1:
 
@@ -267,25 +278,20 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
                 rset, wset = state.read_and_write_sets()
                 read_set |= rset
                 write_set |= wset
-                # Add to write set also scalars between tasklets
-                for src_node in state.nodes():
-                    if not isinstance(src_node, nodes.Tasklet):
+                for e in state.edges():
+                    # Add to write set also scalars between tasklets
+                    if not isinstance(e.src, nodes.Tasklet):
                         continue
-                    for dst_node in state.nodes():
-                        if src_node is dst_node:
-                            continue
-                        if not isinstance(dst_node, nodes.Tasklet):
-                            continue
-                        for e in state.edges_between(src_node, dst_node):
-                            if e.data.data and e.data.data in sdfg.arrays:
-                                write_set.add(e.data.data)
+                    if not isinstance(e.dst, nodes.Tasklet):
+                        continue
+                    if e.data.data and e.data.data in sdfg.arrays:
+                        write_set.add(e.data.data)
                 # Add data from edges
-                for src in states:
-                    for dst in states:
-                        for edge in sdfg.edges_between(src, dst):
-                            for s in edge.data.free_symbols:
-                                if s in sdfg.arrays:
-                                    read_set.add(s)
+                subgraph = gr.SubgraphView(sdfg, states)
+                for edge in subgraph.edges():
+                    for s in edge.data.free_symbols:
+                        if s in sdfg.arrays:
+                            read_set.add(s)
 
             # Find NestedSDFG's unique data
             rw_set = read_set | write_set
@@ -301,6 +307,10 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
                         if (isinstance(node, nodes.AccessNode) and node.data == name):
                             found = True
                             break
+                for isedge in sdfg.edges():
+                    if name in isedge.data.free_symbols:
+                        found = True
+                        break
                 if not found:
                     unique_set.add(name)
 
@@ -363,7 +373,10 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
                 new_body.add_edge(r, None, cnode, name, memlet.Memlet.from_array(name, sdfg.arrays[name]))
             for name in write_set:
                 w = new_body.add_write(name)
-                new_body.add_edge(cnode, name, w, None, memlet.Memlet.from_array(name, sdfg.arrays[name]))
+                mm = memlet.Memlet.from_array(name, sdfg.arrays[name])
+                if name in wcrs and wcrs[name] is not None:
+                    mm.wcr = wcrs[name]
+                new_body.add_edge(cnode, name, w, None, mm)
 
             # Fix SDFG symbols
             for sym in sdfg.free_symbols - fsymbols:
@@ -373,6 +386,9 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
 
             # Change body state reference
             body = new_body
+
+
+            
 
         if (step < 0) == True:
             # If step is negative, we have to flip start and end to produce a

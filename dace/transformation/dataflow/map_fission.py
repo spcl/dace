@@ -397,7 +397,7 @@ class MapFission(transformation.SingleStateTransformation):
                         for internal_edge in state.all_edges(node):
                             for e in state.memlet_tree(internal_edge):
                                 e.data.subset.offset(desc.offset, False)
-                                e.data.subset = helpers.unsqueeze_memlet(e.data, outer_edge.data).subset
+                                e.data.subset = helpers.unsqueeze_memlet(e.data, outer_edge.data, desc=sdfg.arrays[e.data.data]).subset
 
                         # Only after offsetting memlets we can modify the
                         # overall offset

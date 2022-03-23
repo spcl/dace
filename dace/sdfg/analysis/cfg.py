@@ -286,7 +286,27 @@ def stateorder_topological_sort(sdfg: SDFG) -> Iterator[SDFGState]:
             if not frontier:
                 frontier = {oedge.dst}
             common_frontier |= frontier
+               
         if len(common_frontier) == 1:
             branch_merges[state] = next(iter(common_frontier))
+
+        if len(common_frontier) ==2:
+                it=iter(common_frontier)
+                option1=next(it)
+                option2=next(it)
+                if adf[option1]:
+                    adfoption1=next(iter(adf[option1]))
+                else:
+                    adfoption1=None    
+                if adf[option2]:    
+                    adfoption2=next(iter(adf[option2]))
+                else:
+                    adfoption2=None    
+                if adfoption1==option2:
+                    branch_merges[state]=option2
+                elif adfoption2==option1:
+                    branch_merges[state]=option1
+        #print("Oopsie")            
+                    
 
     yield from _stateorder_topological_sort(sdfg, sdfg.start_state, ptree, branch_merges)

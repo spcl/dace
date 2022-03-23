@@ -184,7 +184,7 @@ class Range(Subset):
     @staticmethod
     def from_array(array: 'dace.data.Data'):
         """ Constructs a range that covers the full array given as input. """
-        return Range([(0, s - 1, 1) for s in array.shape])
+        return Range([(-o, s - 1 -o , 1) for s, o in zip(array.shape, array.offset)])
 
     def __hash__(self):
         return hash(tuple(r for r in self.ranges))
@@ -307,8 +307,15 @@ class Range(Subset):
             indices = set(range(len(self.ranges)))
         off = other.min_element()
         for i in indices:
+                 
             rb, re, rs = self.ranges[i]
-            self.ranges[i] = (rb + mult * off[i], re + mult * off[i], rs)
+            if rb == re and rb!=0 :
+                rbmult=0
+                remult=0
+            else: 
+                rbmult=1    
+                remult=1   
+            self.ranges[i] = (rb + rbmult * mult * off[i], re + remult * mult * off[i], rs)
 
     def offset_new(self, other, negative, indices=None):
         if not isinstance(other, Subset):

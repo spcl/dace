@@ -121,7 +121,16 @@ def find_for_loop(
     guard_inedges = sdfg.in_edges(guard)
     condition_edge = sdfg.edges_between(guard, entry)[0]
     if itervar is None:
-        itervar = list(guard_inedges[0].data.assignments.keys())[0]
+        itvars = None
+        for iedge in guard_inedges:
+            if itvars is None:
+                itvars = set(iedge.data.assignments.keys())
+            else:
+                itvars &= iedge.data.assignments.keys()
+        if itvars and len(itvars) == 1:
+            itervar = next(iter(itvars))
+        else:
+            raise ValueError('Ambiguous iteration variable')
     condition = condition_edge.data.condition_sympy()
 
     # Find the stride edge. All in-edges to the guard except for the stride edge
