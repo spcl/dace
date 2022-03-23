@@ -21,7 +21,11 @@ def test_mttkrp_io():
     # einsum_str = 'ijkl,ia,kc,ld->jacd'  # 4-mode TTMc
     # einsum_str = 'ijkl,ia,ja,ka->la'  # 4-mode MTTKRP
     # einsum_str = 'ijklm,ia,ja,la,ma->ka' # 5-mode MTTKRP
-    einsum_str = 'ijklm,ja,ka,la,ma->ia' # 5-mode MTTKRP
+    # einsum_str = 'ijklm,ja,ka,la,ma->ia' # 5-mode MTTKRP
+    # einsum_str = 'ijklm,ia,ja,ka,la->ma' # 5-mode MTTKRP
+    # einsum_str = 'ijklm,jb,kc,ld,me->ibcde' # 5-mode TTMc
+    einsum_str = 'ijklm,jb,kc,ld,me,il,ke,jd->ibcde' # 5-mode TTMc redistr
+    # einsum_str = 'ik, kj, jl, lm -> im' # 3mm
     # einsum_str = 'ijk,lj,mk->ilm'
     # decomp_params=[("p", 17), ("Ss", 1024), ("S0", 256), ("S1", 256), ("S2", 256), ("S3", 256)]
     # decomp_params=[("p", 64), ("Ss", 1024), ("S0", 6400 * 4), ("S1", 4400 * 4), ("S2", 7200 * 4), ("S3", 256)]
@@ -29,7 +33,8 @@ def test_mttkrp_io():
     decomp_params = [("p", 64), ("Ss", 1024)]
     for i in range(5):
         decomp_params.append((f"S{i}", 136))
-    decomp_params.append(('S5', 25))
+    for i in range(5):
+        decomp_params.append((f'S{5+i}', 24))
     # # p = 128
     # # NI = 6400
     # # NJ = 7200

@@ -72,10 +72,32 @@ def sdfg_gen(subscripts: str, arrays: List[np.ndarray] = None, inp_dim: int = 30
     counter = 0
     state = None
     contractions = [
-        ((3, 4), None, 'la,ma->lma'),
-        ((0, 3), None, 'ijklm,lma->ijka'),
-        ((0, 1), None, 'ja,ka->jka'),
-        ((0, 1), None, 'ijka,jka->ia')
+        # MTTKRP
+        # ((3, 4), None, 'la,ma->lma'),
+        # ((0, 3), None, 'ijklm,lma->ijka'),
+        # # ((0, 1), None, 'ja,ka->jka'),
+        # # ((0, 1), None, 'ijka,jka->ia')
+        # ((0, 1), None, 'ia,ja->ija'),
+        # ((0, 1), None, 'ijka,ija->ka')
+
+        # ((1, 2), None, 'ia,ja->ija'),
+        # ((0, 3), None, 'ijklm,ija->klma'),
+        # ((0, 1), None, 'ka,la->kla'),
+        # ((0, 1), None, 'klma,kla->ma')
+
+        # TTMc
+        # ((0, 4), None, 'ijklm,me->ijkle'),
+        # ((3, 2), None, 'ijkle,ld->ijkde'),
+        # ((2, 1), None, 'ijkde,kc->ijcde'),
+        # ((1, 0), None, 'ijcde,jb->ibcde'),
+
+        ((0, 4), None, 'ijklm,me->ijkle'),
+        ((6, 3), None, 'ijkle,il->ijkle'),
+        ((5, 2), None, 'ijkle,ld->ijkde'),
+        ((4, 2), None, 'ijkde,ke->ijkde'),
+        ((3, 1), None, 'ijkde,kc->ijcde'),
+        ((2, 1), None, 'ijcde,jd->ijcde'),
+        ((1, 0), None, 'ijcde,jb->ibcde'),
     ]
     # for contraction in path_info[1].contraction_list:
     for contraction in contractions:
