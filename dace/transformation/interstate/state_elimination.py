@@ -53,10 +53,10 @@ class EndStateElimination(transformation.MultiStateTransformation, transformatio
         edge = sdfg.in_edges(state)[0]
         sym_assign = edge.data.assignments.keys()
         sdfg.remove_node(state)
-        # Remove orphan symbols
-        for sym in sym_assign:
-            if sym in sdfg.free_symbols:
-                sdfg.remove_symbol(sym)
+        # # Remove orphan symbols
+        # for sym in sym_assign:
+        #     if sym in sdfg.free_symbols:
+        #         sdfg.remove_symbol(sym)
 
 
 class StartStateElimination(transformation.MultiStateTransformation):
