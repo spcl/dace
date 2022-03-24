@@ -333,19 +333,31 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
                 nsdfg.add_node(state)
                 state.parent = nsdfg
             for state in states:
-                if state is body:
-                    continue
+                # if state is body:
+                #     continue
                 for src, dst, data in sdfg.in_edges(state):
+                    if src is guard and dst is body:
+                        continue
                     nsymbols.update({s: sdfg.symbols[s] for s in data.assignments.keys() if s in sdfg.symbols})
+                    nsymbols.update({s: sdfg.symbols[s] for s in data.free_symbols if s in sdfg.symbols})
                     nsdfg.add_edge(src, dst, data)
-            nsdfg.add_edge(body_end, exit_state, InterstateEdge())
 
             # Move guard -> body edge to guard -> new_body
             for src, dst, data, in sdfg.edges_between(guard, body):
                 sdfg.add_edge(src, new_body, data)
-            # Move body_end -> guard edge to new_body -> guard
+            # Move body_end -> guard edge to body_end -> exit_state
             for src, dst, data in sdfg.edges_between(body_end, guard):
-                sdfg.add_edge(new_body, dst, data)
+                nsdfg.add_edge(body_end, exit_state, data)
+            sdfg.add_edge(new_body, guard, InterstateEdge())
+            # # Move body_end -> guard edge to new_body -> guard
+            # if body_end is body:
+            #     for src, dst, data in sdfg.edges_between(body_end, guard):
+            #         nsdfg.add_edge(body_end, exit_state, data)
+            #     sdfg.add_edge(new_body, guard, InterstateEdge())
+            # else:
+            #     nsdfg.add_edge(body_end, exit_state, InterstateEdge())
+            #     for src, dst, data in sdfg.edges_between(body_end, guard):
+            #         sdfg.add_edge(new_body, dst, data)
 
             # Delete loop-body states and edges from parent SDFG
             for state in states:
@@ -383,8 +395,13 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
                 del sdfg.symbols[sym]
             for sym, dtype in nsymbols.items():
                 nsdfg.symbols[sym] = dtype
+            if itervar not in nsdfg.symbols:
+                nsdfg.add_symbol(itervar, sdfg.symbols[itervar])
+            if itervar not in cnode.symbol_mapping:
+                cnode.symbol_mapping[itervar] = itervar
 
             # Change body state reference
+            multistate_nsdfg = nsdfg
             body = new_body
 
 
@@ -398,32 +415,59 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
         # If necessary, make a nested SDFG with assignments
         isedge = sdfg.edges_between(guard, body)[0]
         symbols_to_remove = set()
+        data_symbols = set()
         if len(isedge.data.assignments) > 0:
-            nsdfg = helpers.nest_state_subgraph(sdfg, body, gr.SubgraphView(body, body.nodes()))
-            for sym in isedge.data.free_symbols:
-                if sym in nsdfg.symbol_mapping or sym in nsdfg.in_connectors:
-                    continue
-                if sym in sdfg.symbols:
-                    nsdfg.symbol_mapping[sym] = symbolic.pystr_to_symbolic(sym)
-                    nsdfg.sdfg.add_symbol(sym, sdfg.symbols[sym])
-                elif sym in sdfg.arrays:
-                    if sym in nsdfg.sdfg.arrays:
-                        raise NotImplementedError
-                    rnode = body.add_read(sym)
-                    nsdfg.add_in_connector(sym)
-                    desc = copy.deepcopy(sdfg.arrays[sym])
-                    desc.transient = False
-                    nsdfg.sdfg.add_datadesc(sym, desc)
-                    body.add_edge(rnode, None, nsdfg, sym, memlet.Memlet(sym))
+            if len(states) == 1:
+                nsdfg = helpers.nest_state_subgraph(sdfg, body, gr.SubgraphView(body, body.nodes()))
+                for sym in isedge.data.free_symbols:
+                    if sym in nsdfg.symbol_mapping or sym in nsdfg.in_connectors:
+                        continue
+                    if sym in sdfg.symbols:
+                        nsdfg.symbol_mapping[sym] = symbolic.pystr_to_symbolic(sym)
+                        nsdfg.sdfg.add_symbol(sym, sdfg.symbols[sym])
+                    elif sym in sdfg.arrays:
+                        if sym in nsdfg.sdfg.arrays:
+                            raise NotImplementedError
+                        rnode = body.add_read(sym)
+                        nsdfg.add_in_connector(sym)
+                        desc = copy.deepcopy(sdfg.arrays[sym])
+                        desc.transient = False
+                        nsdfg.sdfg.add_datadesc(sym, desc)
+                        body.add_edge(rnode, None, nsdfg, sym, memlet.Memlet(sym))
+            else:
+                nsdfg = multistate_nsdfg.parent_nsdfg_node
+
+            # # If a nested SDFG was already created, then we need to ensure that all symbols are mapped properly
+            # if len(states) > 1:
+            #     for sym, dtype in nsymbols.items():
+            #         if sym in multistate_nsdfg.symbols or sym in multistate_nsdfg.free_symbols:
+            #             if sym not in nsdfg.symbol_mapping:
+            #                 nsdfg.symbol_mapping[sym] = sym
+            #             if sym not in multistate_nsdfg.parent_nsdfg_node.symbol_mapping:
+            #                 multistate_nsdfg.parent_nsdfg_node.symbol_mapping[sym] = sym
 
             nstate = nsdfg.sdfg.node(0)
-            init_state = nsdfg.sdfg.add_state_before(nstate)
+            # init_state = nsdfg.sdfg.add_state_before(nstate)
+            init_state = nsdfg.sdfg.add_state('init_state', is_start_state=True)
+            nsdfg.sdfg.add_edge(init_state, nstate, InterstateEdge())
             nisedge = nsdfg.sdfg.edges_between(init_state, nstate)[0]
             nisedge.data.assignments = isedge.data.assignments
             symbols_to_remove = set(nisedge.data.assignments.keys())
             for k in nisedge.data.assignments.keys():
                 if k in nsdfg.symbol_mapping:
                     del nsdfg.symbol_mapping[k]
+            for s in nisedge.data.free_symbols:
+                if s in sdfg.symbols:
+                    if s not in nsdfg.sdfg.symbols:
+                        nsdfg.symbol_mapping[s] = s
+                        nsdfg.sdfg.add_symbol(s, sdfg.symbols[s])
+                elif s in sdfg.arrays:
+                    if s not in nsdfg.sdfg.arrays:
+                        nsdfg.sdfg.arrays[s] = copy.deepcopy(sdfg.arrays[s])
+                        nsdfg.sdfg.arrays[s].transient = False
+                        nsdfg.add_in_connector(s)
+                        data_symbols.add(s)
+
             isedge.data.assignments = {}
 
         source_nodes = body.source_nodes()
@@ -434,6 +478,13 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
         exit = nodes.MapExit(map)
         body.add_node(entry)
         body.add_node(exit)
+
+        # Add reads for data used on the entry edge
+        if data_symbols:
+            for rd in data_symbols:
+                access_node = body.add_read(rd)
+                body.add_memlet_path(access_node, entry, nsdfg, dst_conn=rd,
+                                     memlet=memlet.Memlet.from_array(rd, sdfg.arrays[rd]))
 
         # If the map uses symbols from data containers, instantiate reads
         containers_to_read = entry.free_symbols & sdfg.arrays.keys()
@@ -485,5 +536,5 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
         if itervar in sdfg.free_symbols:
             sdfg.remove_symbol(itervar)
         for sym in symbols_to_remove:
-            if helpers.is_symbol_unused(sdfg, sym):
+            if sym in sdfg.symbols and helpers.is_symbol_unused(sdfg, sym):
                 sdfg.remove_symbol(sym)
