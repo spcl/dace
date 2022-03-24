@@ -450,11 +450,11 @@ class RedistrArray(object):
             __state->{self.name}_recv_req = new MPI_Request[max_recvs];
             __state->{self.name}_send_status = new MPI_Status[max_sends];
             __state->{self.name}_recv_status = new MPI_Status[max_recvs];
-            __state->{self.name}_fix_send_src = new int[max_sends];
-            __state->{self.name}_fix_send_size = new int[max_sends];
+            __state->{self.name}_fix_send_src = new int[max_sends * {len(array_a.shape)}];
+            __state->{self.name}_fix_send_size = new int[max_sends * {len(array_a.shape)}];
             __state->{self.name}_send_buffers = new double*[max_sends];
-            __state->{self.name}_fix_recv_dst = new int[max_recvs];
-            __state->{self.name}_fix_recv_size = new int[max_recvs];
+            __state->{self.name}_fix_recv_dst = new int[max_recvs * {len(array_b.shape)}];
+            __state->{self.name}_fix_recv_size = new int[max_recvs * {len(array_b.shape)}];
             __state->{self.name}_recv_buffers = new double*[max_recvs];
         """
         tmp += f"""
@@ -644,5 +644,17 @@ class RedistrArray(object):
                 delete[] __state->{self.name}_recv_req;
                 delete[] __state->{self.name}_send_status;
                 delete[] __state->{self.name}_recv_status;
+                delete[] __state->{self.name}_fix_send_src;
+                delete[] __state->{self.name}_fix_send_size;
+                delete[] __state->{self.name}_fix_recv_dst;
+                delete[] __state->{self.name}_fix_recv_size;
+                for (auto __idx = 0; __idx < __state->{self.name}_sends; ++__idx) {{
+                    delete[] __state->{self.name}_send_buffers[__idx];
+                }}
+                delete[] __state->{self.name}_send_buffers;
+                for (auto __idx = 0; __idx < __state->{self.name}_sends; ++__idx) {{
+                    delete[] __state->{self.name}_recv_buffers[__idx];
+                }}
+                delete[] __state->{self.name}_recv_buffers;
             }}
         """
