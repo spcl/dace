@@ -146,6 +146,9 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
 
             subgraph_patterns.append(pattern_desc)
 
+        subgraph_patterns = [dict(s) for s in set(frozenset(d.items()) for d in subgraph_patterns)]
+        subgraph_patterns = [Counter(s) for s in subgraph_patterns]
+
         return subgraph_patterns
 
     @staticmethod
@@ -176,12 +179,12 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
                 
                 try:
                     cutout = cutter.cutout_state(state, *(state.nodes()), make_copy=False)
-                except AttributeError as e:
-                    print(e)
+                except AttributeError:
                     continue
 
-                # Try to apply every subgraph_pattern greedily, i.e., highest expected speedup first
                 base_runtime = None
+                best_pattern = None
+                best_pattern_runtime = math.inf
                 for j, pattern in enumerate(subgraph_patterns):
                     maps = []
                     for node in state.nodes():
@@ -211,6 +214,15 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
                     if not included:
                         continue
 
+                    if base_runtime is None:
+                        baseline = cutter.cutout_state(state, *(state.nodes()), make_copy=False)                    
+                        baseline.start_state.instrument = dace.InstrumentationType.GPU_Events
+                        base_runtime = optim_utils.subprocess_measure(baseline, dreport_bytes)
+                        best_pattern_runtime = base_runtime
+                        if base_runtime == math.inf:
+                            break
+
+
                     # Construct subgraph greedily
                     subgraph_maps = []
                     for desc in pattern:
@@ -221,7 +233,6 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
                     experiment_sdfg_ = cutter.cutout_state(state, *(state.nodes()), make_copy=False)
                     experiment_state_ = experiment_sdfg_.start_state
                     experiment_maps_ids = list(map(lambda me: experiment_state_.node_id(me), subgraph_maps))
-                    
                     experiment_sdfg = copy.deepcopy(experiment_sdfg_)
                     experiment_state = experiment_sdfg.start_state
                     experiment_state.instrument = dace.InstrumentationType.GPU_Events
@@ -231,13 +242,6 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
                 
                     map_fusion = sg.MapFusion(experiment_subgraph, experiment_sdfg.sdfg_id, experiment_sdfg.node_id(experiment_state))
                     if map_fusion.can_be_applied(experiment_state, experiment_sdfg):
-                        print("Comparing")
-                        if base_runtime is None:
-                            baseline = cutter.cutout_state(experiment_state, *(experiment_state.nodes()), make_copy=True)                    
-                            baseline.start_state.instrument = dace.InstrumentationType.GPU_Events
-                            base_runtime = optim_utils.subprocess_measure(baseline, dreport_bytes)
-                            if base_runtime == math.inf:
-                                break
                         try:
                             experiment_fuse_counter = map_fusion.apply(experiment_state, experiment_sdfg)
                         except:
@@ -247,19 +251,20 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
                             continue
 
                         fused_runtime = optim_utils.subprocess_measure(experiment_sdfg, dreport_bytes)
-                        print(base_runtime, fused_runtime, experiment_fuse_counter)
-                        if fused_runtime > base_runtime:
+                        if fused_runtime >= best_pattern_runtime:
                             continue
 
-                        print(j, pattern)
-                        print(f"Fusing {experiment_fuse_counter} maps. Performance improvement: {base_runtime - fused_runtime}")
+                        best_pattern = subgraph_maps
+                        best_pattern_runtime = fused_runtime
 
-                        subgraph = helpers.subgraph_from_maps(sdfg=nsdfg, graph=state, map_entries=subgraph_maps)
-                        map_fusion = sg.MapFusion(subgraph, nsdfg.sdfg_id, nsdfg.node_id(state))
-                        actual_fuse_counter = map_fusion.apply(state, nsdfg)
-                        assert actual_fuse_counter == experiment_fuse_counter
 
-                        base_runtime = fused_runtime
+                if best_pattern is not None:
+                    subgraph = helpers.subgraph_from_maps(sdfg=nsdfg, graph=state, map_entries=best_pattern)
+                    map_fusion = sg.MapFusion(subgraph, nsdfg.sdfg_id, nsdfg.node_id(state))
+                    actual_fuse_counter = map_fusion.apply(state, nsdfg)
+
+                    print(base_runtime, best_pattern_runtime)
+                    print(j, pattern)
 
                 print()
                 print()

@@ -25,10 +25,8 @@ def measure(sdfg, dreport=None, repetitions = 30, print_report : bool = False):
                         data = np.random.rand(*array.shape)
                     arguments[dnode.data] = dace.data.make_array_from_descriptor(array, data)
                 except KeyError:
-                    print("Missing data in dreport, random array")
                     arguments[dnode.data] = dace.data.make_array_from_descriptor(array)
             else:
-                print("No dreport available")
                 arguments[dnode.data] = dace.data.make_array_from_descriptor(array, np.random.rand(*array.shape))
 
     
@@ -46,7 +44,6 @@ def measure(sdfg, dreport=None, repetitions = 30, print_report : bool = False):
 
                     csdfg.finalize()
     except Exception as e:
-        print(e)
         return math.inf
 
     report = sdfg.get_latest_report()
@@ -109,7 +106,6 @@ def subprocess_measure(cutout: dace.SDFG, dreport, repetitions: int = 30, timeou
     try:
         runtime = q.get(block=True, timeout=30)
     except:
-        print("Queue empty")
         return math.inf
 
     return runtime
@@ -142,7 +138,6 @@ def _subprocess_measure(dreport, cutout_json: Dict, repetitions: int, q) -> floa
                 data = dreport.get_first_version(dnode.data)
                 arguments[dnode.data] = dace.data.make_array_from_descriptor(array, data)
             except KeyError:
-                print("Missing data in dreport, random array")
                 arguments[dnode.data] = dace.data.make_array_from_descriptor(array)
            
 
@@ -154,20 +149,16 @@ def _subprocess_measure(dreport, cutout_json: Dict, repetitions: int, q) -> floa
             print("Deleted: ", name)
             del cutout.arrays[name]
 
-    print("Nice new arrays")
-
     with dace.config.set_temporary('debugprint', value=False):
         with dace.config.set_temporary('instrumentation', 'report_each_invocation', value=False):
             with dace.config.set_temporary('compiler', 'allow_view_arguments', value=True):
                 cutout.build_folder = "/dev/shm"
                 csdfg = cutout.compile()
-                print("compiled")
                 for _ in range(repetitions):
                     csdfg(**arguments)
 
                 csdfg.finalize()
 
-    print("ran")
     report = cutout.get_latest_report()
     durations = next(iter(next(iter(report.durations.values())).values()))
     q.put(np.median(np.array(durations)))
