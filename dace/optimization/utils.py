@@ -31,6 +31,8 @@ def measure(sdfg, dreport=None, repetitions = 30, print_report : bool = False):
                 print("No dreport available")
                 arguments[dnode.data] = dace.data.make_array_from_descriptor(array, np.random.rand(*array.shape))
 
+    
+
     try:
         with dace.config.set_temporary('debugprint', value=True):
             with dace.config.set_temporary('instrumentation', 'report_each_invocation', value=False):
@@ -130,9 +132,11 @@ def _subprocess_measure(dreport, cutout_json: Dict, repetitions: int, q) -> floa
         arguments["__K"] = 80
         cutout.replace("__K", 80)
 
-    for cstate in cutout.nodes():
-        for dnode in cstate.data_nodes():
+    for state in cutout.nodes():
+        for dnode in state.data_nodes():
             array = cutout.arrays[dnode.data]
+            if array.transient:
+               continue
 
             try:
                 data = dreport.get_first_version(dnode.data)
@@ -141,6 +145,14 @@ def _subprocess_measure(dreport, cutout_json: Dict, repetitions: int, q) -> floa
                 print("Missing data in dreport, random array")
                 arguments[dnode.data] = dace.data.make_array_from_descriptor(array)
            
+
+    for name, array in list(cutout.arrays.items()):
+        if array.transient:
+            continue
+
+        if not name in arguments:
+            print("Deleted: ", name)
+            del cutout.arrays[name]
 
     print("Nice new arrays")
 

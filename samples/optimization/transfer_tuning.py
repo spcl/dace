@@ -6,8 +6,6 @@ import numpy as np
 from pathlib import Path
 
 from dace import optimization as optim
-from dace.optimization import utils as optim_utils
-
 from dace.sdfg import infer_types
 
 if __name__ == '__main__':
@@ -18,13 +16,11 @@ if __name__ == '__main__':
     infer_types.infer_connector_types(small_sample)
     infer_types.set_default_schedule_and_storage_types(small_sample, None)
 
-
-    sdfg_path = Path(os.environ["HOME"]) / "projects/tuning-dace/hG-transient-plus.sdfg"
+    sdfg_path = Path(os.environ["HOME"]) / "projects/tuning-dace/hG-prepared.sdfg"
     big_sdfg = dace.SDFG.from_file(sdfg_path)
 
     infer_types.infer_connector_types(big_sdfg)
     infer_types.set_default_schedule_and_storage_types(big_sdfg, None)
-
 
     dreport = big_sdfg.get_instrumented_data()
     if dreport is None:
@@ -43,13 +39,13 @@ if __name__ == '__main__':
     print("We got it")
 
     otf_tuner = optim.OnTheFlyMapFusionTuner(small_sample, measurement=dace.InstrumentationType.GPU_Events)
-    optim.OnTheFlyMapFusionTuner.transfer(big_sdfg, otf_tuner, k=5)
+    optim.OnTheFlyMapFusionTuner.transfer(big_sdfg, otf_tuner, k=2)
     
-    big_sdfg.save(Path(os.environ["HOME"]) / "projects/tuning-dace/hG-transient-plus-otf-transfer.sdfg")
+    big_sdfg.save(Path(os.environ["HOME"]) / "projects/tuning-dace/hG-otf-transfer.sdfg")
     otf_tuner.optimize(apply=True)
 
     sf_tuner = optim.SubgraphFusionTuner(small_sample, measurement=dace.InstrumentationType.GPU_Events)
-    optim.SubgraphFusionTuner.transfer(big_sdfg, sf_tuner, k=2)
+    optim.SubgraphFusionTuner.transfer(big_sdfg, sf_tuner, k=1)
 
-    sdfg_path = Path(os.environ["HOME"]) / "projects/tuning-dace/hG-transient-plus-subgraph-transfer.sdfg"
+    sdfg_path = Path(os.environ["HOME"]) / "projects/tuning-dace/hG-SGF-transfer.sdfg"
     big_sdfg.save(sdfg_path)
