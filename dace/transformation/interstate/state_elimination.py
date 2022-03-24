@@ -608,7 +608,16 @@ class DeadStateElimination(transformation.MultiStateTransformation):
 
         domset = cfg.all_dominators(sdfg)
         states_to_remove = {k for k, v in domset.items() if state in v}
-        states_to_remove.add(state)
+        assignments = dict()
+        for s in states_to_remove:
+            for e in sdfg.all_edges(s):
+                for k, v in e.data.assignments.items():
+                    assignments[k] = v
+        if assignments:
+            edge = sdfg.in_edges(state)[0]
+            edge.data.assignments.update(assignments)
+        else:
+            states_to_remove.add(state)
         sdfg.remove_nodes_from(states_to_remove)
 
 
