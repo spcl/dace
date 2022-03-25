@@ -513,6 +513,7 @@ def remove_scalar_reads(sdfg: sd.SDFG, array_names: Dict[str, str]):
                         dst.remove_in_connector(e.dst_conn)
                         dst.sdfg.symbols[tmp_symname] = sdfg.arrays[node.data].dtype
                         dst.symbol_mapping[tmp_symname] = symname
+                        dst.sdfg.replace(e.dst_conn, tmp_symname)
                     elif isinstance(dst, (nodes.EntryNode, nodes.ExitNode)):
                         # Skip
                         continue
