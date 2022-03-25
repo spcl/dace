@@ -20,13 +20,15 @@ import dace.transformation.helpers as helpers
 from dace.transformation import transformation as xf
 
 
-def _check_range(subset, a, itersym, b, step):
+def _check_range(subset, a, itersym, b, c, step):
     found = False
     for rb, re, _ in subset.ndrange():
         m = rb.match(a * itersym + b)
         if m is None:
-            continue
-        if (m[a] >= 1) != True:
+            m = rb.match(a * (itersym + c) + b)
+            if m is None:
+                continue
+        if (m[a] >= 1) != True and (m[a] != 1/step):
             continue
         if re != rb:
             if isinstance(rb, symbolic.SymExpr):
@@ -41,8 +43,10 @@ def _check_range(subset, a, itersym, b, step):
 
             m = re.match(a * itersym + b)
             if m is None:
-                continue
-            if (m[a] >= 1) != True:
+                m = re.match(a * (itersym + c) + b)
+                if m is None:
+                    continue
+            if (m[a] >= 1) != True and (m[a] != 1/step):
                 continue
         found = True
         break
@@ -146,6 +150,7 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
         itersym = symbolic.pystr_to_symbolic(itervar)
         a = sp.Wild('a', exclude=[itersym])
         b = sp.Wild('b', exclude=[itersym])
+        c = sp.Wild('c', exclude=[itersym])
 
         for state in states:
             for dn in state.data_nodes():
@@ -154,19 +159,19 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
                 # Take all writes that are not conflicted into consideration
                 if dn.data in write_set:
                     for e in state.in_edges(dn):
-                        if e.data.dynamic and e.data.wcr is None:
-                            # If pointers are involved, give up
-                            return False
+                        # if e.data.dynamic and e.data.wcr is None:
+                        #     # If pointers are involved, give up
+                        #     return False
                         # To be sure that the value is only written at unique
                         # indices per loop iteration, we want to match symbols
                         # of the form "a*i+b" where a >= 1, and i is the iteration
                         # variable. The iteration variable must be used.
                         if e.data.wcr is None:
                             dst_subset = e.data.get_dst_subset(e, state)
-                            if not (dst_subset and _check_range(dst_subset, a, itersym, b, step)):
+                            if not (dst_subset and _check_range(dst_subset, a, itersym, b, c, step)):
                                 return False
                         # End of check
-
+                        e.data.try_initialize(sdfg, state, e)
                         write_memlets[dn.data].append(e.data)
 
         # After looping over relevant writes, consider reads that may overlap
@@ -182,11 +187,11 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
                     for e in state.out_edges(dn):
                         # If the same container is both read and written, only match if
                         # it read and written at locations that will not create data races
-                        if (e.data.dynamic and e.data.src_subset.num_elements() != 1):
-                            # If pointers are involved, give up
-                            return False
+                        # if (e.data.dynamic and e.data.src_subset.num_elements() != 1):
+                        #     # If pointers are involved, give up
+                        #     return False
                         src_subset = e.data.get_src_subset(e, state)
-                        if not _check_range(src_subset, a, itersym, b, step):
+                        if not _check_range(src_subset, a, itersym, b, c, step):
                             return False
 
                         pread = propagate_subset([e.data], sdfg.arrays[data], [itervar],
