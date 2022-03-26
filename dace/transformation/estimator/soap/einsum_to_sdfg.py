@@ -8,7 +8,7 @@ from dace import subsets
 from typing import List
 
 
-def sdfg_gen(subscripts: str, arrays: List[np.ndarray] = None, inp_dim: int = 30) -> dace.SDFG:
+def sdfg_gen(subscripts: str, arrays: List[np.ndarray] = None, inp_dim: int = 10) -> dace.SDFG:
     """ 
     Generates an SDFG for the given einsum discription. The SDFG comprises
         separates map for each contraction, based on the analysis done by the
@@ -68,39 +68,65 @@ def sdfg_gen(subscripts: str, arrays: List[np.ndarray] = None, inp_dim: int = 30
     sdfg = dace.SDFG('tensor_contractions')
     for name, arr in dace_arrays.items():
         sdfg.add_array(name, array_shapes[name], dt[arr.dtype.type])
+    sdfg.add_array('out', [symbols['i'], symbols['b'], symbols['c'], symbols['d'], symbols['e']], dt[arr.dtype.type])
+    
+    state = sdfg.add_state("contraction")
+    state.add_mapped_tasklet(
+        state.label,
+        {idx: (0, symbols[idx]-1, 1) for idx in 'ijklmbced'},
+        {
+           '__in0': dace.Memlet(f"{array_names[0]}[i,j,k,l,m]"),
+           '__in1': dace.Memlet(f"{array_names[1]}[j,b]"),
+           '__in2': dace.Memlet(f"{array_names[2]}[k,c]"),
+           '__in3': dace.Memlet(f"{array_names[3]}[l,d]"),
+           '__in4': dace.Memlet(f"{array_names[4]}[m,e]")                     
+        }, 
+        '__out = __in0 * __in1 * __in2 * __in3 * __in4',
+        {'__out': dace.Memlet(f"out[i,b,c,d,e]", wcr='lambda a, b: a + b')},
+        external_edges=True
+    )
+    return sdfg
+
     
     counter = 0
     state = None
-    contractions = [
-        # MTTKRP
-        # ((3, 4), None, 'la,ma->lma'),
-        # ((0, 3), None, 'ijklm,lma->ijka'),
-        # # ((0, 1), None, 'ja,ka->jka'),
-        # # ((0, 1), None, 'ijka,jka->ia')
-        # ((0, 1), None, 'ia,ja->ija'),
-        # ((0, 1), None, 'ijka,ija->ka')
+    # contractions = [
+    #     # MTTKRP
+    #     # ((3, 4), None, 'la,ma->lma'),
+    #     # ((0, 3), None, 'ijklm,lma->ijka'),
+    #     # # ((0, 1), None, 'ja,ka->jka'),
+    #     # # ((0, 1), None, 'ijka,jka->ia')
+    #     # ((0, 1), None, 'ia,ja->ija'),
+    #     # ((0, 1), None, 'ijka,ija->ka')
 
-        # ((1, 2), None, 'ia,ja->ija'),
-        # ((0, 3), None, 'ijklm,ija->klma'),
-        # ((0, 1), None, 'ka,la->kla'),
-        # ((0, 1), None, 'klma,kla->ma')
+    #     # ((1, 2), None, 'ia,ja->ija'),
+    #     # ((0, 3), None, 'ijklm,ija->klma'),
+    #     # ((0, 1), None, 'ka,la->kla'),
+    #     # ((0, 1), None, 'klma,kla->ma')
 
-        # TTMc
-        # ((0, 4), None, 'ijklm,me->ijkle'),
-        # ((3, 2), None, 'ijkle,ld->ijkde'),
-        # ((2, 1), None, 'ijkde,kc->ijcde'),
-        # ((1, 0), None, 'ijcde,jb->ibcde'),
+    #     # # TTMc
+    #     # ((0, 4), None, 'ijklm,me->ijkle'),
+    #     # ((3, 2), None, 'ijkle,ld->ijkde'),
+    #     # ((2, 1), None, 'ijkde,kc->ijcde'),
+    #     # ((1, 0), None, 'ijcde,jb->ibcde'),
 
-        ((0, 4), None, 'ijklm,me->ijkle'),
-        ((6, 3), None, 'ijkle,il->ijkle'),
-        ((5, 2), None, 'ijkle,ld->ijkde'),
-        ((4, 2), None, 'ijkde,ke->ijkde'),
-        ((3, 1), None, 'ijkde,kc->ijcde'),
-        ((2, 1), None, 'ijcde,jd->ijcde'),
-        ((1, 0), None, 'ijcde,jb->ibcde'),
-    ]
-    # for contraction in path_info[1].contraction_list:
-    for contraction in contractions:
+    #     # TTMc
+    #     ((3, 4), None, 'ld,me->lmde'),
+    #     ((0, 3), None, 'ijklm,lmde->ijkde'),
+    #     ((2, 1), None, 'ijkde,kc->ijcde'),
+    #     ((1, 0), None, 'ijcde,jb->ibcde'),
+
+    #     # Redistr
+    #     # ((0, 4), None, 'ijklm,me->ijkle'),
+    #     # ((6, 3), None, 'ijkle,il->ijkle'),
+    #     # ((5, 2), None, 'ijkle,ld->ijkde'),
+    #     # ((4, 2), None, 'ijkde,ke->ijkde'),
+    #     # ((3, 1), None, 'ijkde,kc->ijcde'),
+    #     # ((2, 1), None, 'ijcde,jd->ijcde'),
+    #     # ((1, 0), None, 'ijcde,jb->ibcde'),
+    # ]
+    for contraction in path_info[1].contraction_list:
+    # for contraction in contractions:
 
         print(contraction)
 

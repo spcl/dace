@@ -296,18 +296,42 @@ class SoapStatement:
                 if Config.get("soap", "decomposition", "chosen_par_setup") == "memory_dependent":
                     loc_domain_vol = sp.prod(self.variables).subs(self.stream_dim, X)
                     loc_domain_vol = loc_domain_vol.subs(zip(self.variables, loc_domain_dims))
-                    X_size = solve(self.V - (p * loc_domain_vol), X)[0]            
+                    solutions = solve(self.V - (p * loc_domain_vol), X)
+                    idx = 0
+                    if len(solutions) > 0:
+                        for i, sol in enumerate(solutions):
+                            if sp.sign(sol).args[0] != -1:
+                                idx = i
+                                break
+                    X_size = solutions[idx]
+                    # X_size = solve(self.V - (p * loc_domain_vol), X)[0]           
                     loc_domain_dims[self.variables.index(self.stream_dim)] = X_size
                 else:
                     loc_domain_vol = sp.prod(loc_domain_dims).subs(Ss, X)
                     try:
-                        X_size = solve(self.V - (p * loc_domain_vol), X)[0]
+                        solutions = solve(self.V - (p * loc_domain_vol), X)
+                        idx = 0
+                        if len(solutions) > 0:
+                            for i, sol in enumerate(solutions):
+                                if sp.sign(sol).args[0] != -1:
+                                    idx = i
+                                    break
+                        X_size = solutions[idx]
+                        # X_size = solve(self.V - (p * loc_domain_vol), X)[0]
                     except:
                         loc_domain_dims = [dim for dim in xpart_opt_dims]
                         loc_domain_vol = sp.prod(loc_domain_dims).subs(Ss, X)
                         print(loc_domain_dims)
                         print(self.V - (p * loc_domain_vol))
-                        X_size = solve(self.V - (p * loc_domain_vol), X)[0]
+                        idx = 0
+                        solutions = solve(self.V - (p * loc_domain_vol), X)
+                        if len(solutions) > 0:
+                            for i, sol in enumerate(solutions):
+                                if sp.sign(sol).args[0] != -1:
+                                    idx = i
+                                    break
+                        X_size = solutions[idx]
+                        # X_size = solve(self.V - (p * loc_domain_vol), X)[0]
                     loc_domain_dims = [dim.subs(Ss, X_size) for dim in loc_domain_dims]
                 
             self.loc_domain_dims = [sp.ceiling(dim.subs(self.param_vals)) for dim in loc_domain_dims]        
