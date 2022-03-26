@@ -29,9 +29,8 @@ class ExpandAllreduceMPI(ExpandTransformation):
         if in_place:
             buffer = 'MPI_IN_PLACE'
 
-        code = f"""
-            MPI_Allreduce({buffer}, _outbuffer, {count_str}, {mpi_dtype_str},
-                          {node.op}, {comm});
+        code += f"""
+            MPI_Allreduce({buffer}, _outbuffer, {count_str}, {mpi_dtype_str}, {node.op}, {comm});
             """
         
         if node.grid:
