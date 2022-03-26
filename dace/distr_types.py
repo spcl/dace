@@ -652,7 +652,7 @@ class RedistrArray(object):
                     delete[] __state->{self.name}_send_buffers[__idx];
                 }}
                 delete[] __state->{self.name}_send_buffers;
-                for (auto __idx = 0; __idx < __state->{self.name}_sends; ++__idx) {{
+                for (auto __idx = 0; __idx < __state->{self.name}_recvs; ++__idx) {{
                     delete[] __state->{self.name}_recv_buffers[__idx];
                 }}
                 delete[] __state->{self.name}_recv_buffers;
