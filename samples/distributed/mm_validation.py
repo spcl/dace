@@ -27,9 +27,9 @@ PR0, PR1, PR2, PR3, PR4 = (dace.symbol(s) for s in ('PR0', 'PR1', 'PR2', 'PR3', 
 
 
 # Einsums
-one_mm = 'ij, jk -> ik'
-two_mm = 'ij, jk, kl -> il'
-three_mm = 'ij, jk, kl, lm -> im'
+one_mm_str = 'ij, jk -> ik'
+two_mm_str = 'ij, jk, kl -> il'
+three_mm_str = 'ij, jk, kl, lm -> im'
 
 
 # Datatypes
@@ -65,7 +65,7 @@ def one_mm(A: dctype[S0, S1], B: dctype[S1, S2]) -> dctype[S0, S2]:
     out_reduce = dace.comm.Cart_sub(grid, [False, True, False])
 
     out = A @ B
-    dace.comm.Reduce(out, grid, 'MPI_SUM', grid=out_reduce)
+    dace.comm.Allreduce(out, 'MPI_SUM', grid=out_reduce)
     return out
 
 
@@ -97,7 +97,7 @@ if __name__ == "__main__":
     ###### Reference ######
 
     if rank == 0:
-        ref = oe.contract(one_mm, A, B)
+        ref = oe.contract(one_mm_str, A, B)
 
     commworld.Barrier()
 
@@ -125,7 +125,7 @@ if __name__ == "__main__":
         for r in range(1, size):
             commworld.Recv(buf, r)
             coords = cart_comm.Get_coords(r)
-            out[coords[0] * SG[0]: (coords[0] + 1) * SG[0], coords[2] * SG[2]: (coords[2] + 1) * SG[2]] = bif
+            out[coords[0] * SG[0]: (coords[0] + 1) * SG[0], coords[2] * SG[2]: (coords[2] + 1) * SG[2]] = buf
 
         print(f"Relative error: {np.linalg.norm(out-ref) / np.linalg.norm(out)}", flush=True)
         assert(np.allclose(out, ref))
