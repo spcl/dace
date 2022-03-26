@@ -44,13 +44,13 @@ weak_scaling = {
     1: 60,
     2: 70,
     4: 82,
-    6: 90,
+    # 6: 90,
     8: 96,
     # 12: 108,
     16: 112,
     # 27: 123,
     32: 128,
-    64: 136,
+    64: 152,
     # 125: 175,
     128: 176,
     256: 200,
@@ -387,8 +387,8 @@ if __name__ == "__main__":
     func4 = utils.distributed_compile(sdfg4, commworld)
     func5 = utils.distributed_compile(sdfg5, commworld)
 
-    # S = np.int32(weak_scaling[size])
-    S = np.int32(24)
+    S = np.int32(weak_scaling[size])
+    # S = np.int32(24)
     R = np.int32(24)
 
     rng = np.random.default_rng(42)
@@ -541,7 +541,7 @@ ijcde, jb -> ibcde: local sizes {SG4}, {RG4}, grid {grid_ijbcde[size]}""", flush
     MM = rng.random((SGU[4], RGU[4]))
 
     runtimes = timeit.repeat(
-        """func1(X=X, JM=JM, KM=KM, LM=LM, MM=MM, procs=size,
+        """func2(X=X, JM=JM, KM=KM, LM=LM, MM=MM, procs=size,
                  S0=SGU[0], S1=SGU[1], S2=SGU[2], S3=SGU[3], S4=SGU[4],
                  R0=RGU[0], R1=RGU[1], R2=RGU[2], R3=RGU[3], R4=RGU[4]); commworld.Barrier()
         """,
