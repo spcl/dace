@@ -46,8 +46,11 @@ class ExpandBcastMPI(ExpandTransformation):
             comm = f"__state->{node.grid}_comm"
 
         code = f"""
+            {f"if (__state->{node.grid}_size > 1) {{" if node.grid else ""}
             MPI_Bcast({ref}_inbuffer, {count_str}, {mpi_dtype_str}, _root, {comm});
-            _outbuffer = _inbuffer;"""
+            {"}" if node.grid else ""}
+            _outbuffer = _inbuffer;
+        """
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,
                                           node.out_connectors,
