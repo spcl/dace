@@ -237,10 +237,10 @@ def mttkrp_order_5_mode_2(X: dctype[S0, S1, S2, S3, S4],
 
 @dace.program
 def mttkrp_order_5_mode_4(X: dctype[S0, S1, S2, S3, S4],
-           IM: dctype[S0, R],
-           JM: dctype[S1, R],
-           KM: dctype[S2, R],
-           LM: dctype[S3, R]) -> dctype[S4, R]:
+                          IM: dctype[S0, R],
+                          JM: dctype[S1, R],
+                          KM: dctype[S2, R],
+                          LM: dctype[S3, R]) -> dctype[S4, R]:
 
     parent_grid = dace.comm.Cart_create([P0, P1, P2, P3, P4, PR])
     reduce_grid = dace.comm.Cart_sub(parent_grid, [True, True, True, True, False, False])
