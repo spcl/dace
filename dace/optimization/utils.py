@@ -1,5 +1,6 @@
 import os
 import pickle
+import tempfile
 import math
 import dace
 import itertools
@@ -88,9 +89,9 @@ if __name__ == '__main__':
     mp.set_start_method("spawn")
 
 
-def subprocess_measure(cutout: dace.SDFG, dreport, repetitions: int = 30, timeout: float = 600.0) -> float:
+def subprocess_measure(cutout: dace.SDFG, dreport, repetitions: int = 30, timeout: float = 600.0, i=384, j=384) -> float:
     q = mp.Queue()
-    proc = MeasureProcess(target=_subprocess_measure, args=(dreport, cutout.to_json(), repetitions, q))
+    proc = MeasureProcess(target=_subprocess_measure, args=(dreport, cutout.to_json(), repetitions, q, i, j))
     proc.start()
     proc.join(timeout)
 
@@ -100,6 +101,7 @@ def subprocess_measure(cutout: dace.SDFG, dreport, repetitions: int = 30, timeou
 
     if proc.exception:
         error, traceback = proc.exception
+        print(traceback)
         print("Error occured during measuring: ", error)
         runtime = math.inf
 
@@ -110,20 +112,21 @@ def subprocess_measure(cutout: dace.SDFG, dreport, repetitions: int = 30, timeou
 
     return runtime
 
-def _subprocess_measure(dreport, cutout_json: Dict, repetitions: int, q) -> float:
+def _subprocess_measure(dreport, cutout_json: Dict, repetitions: int, q, i, j) -> float:
     cutout = dace.SDFG.from_json(cutout_json)
-    dreport = pickle.loads(dreport)
+    
+    dreport = dace.symbolic.SympyAwareUnpickler(dreport).load()
 
     arguments = {}
     for symbol in cutout.free_symbols:
         arguments[str(symbol)] = 32
 
     if "__I" in arguments:
-        arguments["__I"] = 192
-        cutout.replace("__I", 192)
+        arguments["__I"] = i
+        cutout.replace("__I", i)
     if "__J" in arguments:
-        arguments["__J"] = 192
-        cutout.replace("__J", 192)
+        arguments["__J"] = j
+        cutout.replace("__J", j)
     if "__K" in arguments:
         arguments["__K"] = 80
         cutout.replace("__K", 80)

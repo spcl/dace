@@ -1,6 +1,6 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
-import pickle
+import tempfile
 import math
 import copy
 import numpy as np
@@ -26,8 +26,8 @@ except (ImportError, ModuleNotFoundError):
 
 class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
 
-    def __init__(self, sdfg: SDFG, measurement: dtypes.InstrumentationType = dtypes.InstrumentationType.Timer) -> None:
-        super().__init__(task="OnTheFlyMapFusion", sdfg=sdfg)
+    def __init__(self, sdfg: SDFG, i, j, measurement: dtypes.InstrumentationType = dtypes.InstrumentationType.Timer) -> None:
+        super().__init__(task="OnTheFlyMapFusion", sdfg=sdfg, i=i, j=j)
         self.instrument = measurement
 
     def cutouts(self):
@@ -158,7 +158,10 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
         dreport = sdfg.get_instrumented_data()
         assert dreport is not None
 
-        dreport_bytes = pickle.dumps(dreport)
+        dreport_bytes = tempfile.NamedTemporaryFile()
+        dace.symbolic.SympyAwarePickler(dreport_bytes).dump(dreport)
+        dreport_bytes.seek(0)
+
 
         tuning_report = tuner.optimize(apply=False)
         best_configs = cutout_tuner.CutoutTuner.top_k_configs(tuning_report, k=k)
@@ -217,7 +220,7 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
                     if base_runtime is None:
                         baseline = cutter.cutout_state(state, *(state.nodes()), make_copy=False)                    
                         baseline.start_state.instrument = dace.InstrumentationType.GPU_Events
-                        base_runtime = optim_utils.subprocess_measure(baseline, dreport_bytes)
+                        base_runtime = optim_utils.subprocess_measure(baseline, dreport_bytes, i=self._i, j=self._j)
                         best_pattern_runtime = base_runtime
                         if base_runtime == math.inf:
                             break
@@ -250,7 +253,7 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
                         if experiment_fuse_counter == 0:
                             continue
 
-                        fused_runtime = optim_utils.subprocess_measure(experiment_sdfg, dreport_bytes)
+                        fused_runtime = optim_utils.subprocess_measure(experiment_sdfg, dreport_bytes, i=self._i, j=self._j)
                         if fused_runtime >= best_pattern_runtime:
                             continue
 
@@ -268,6 +271,8 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
 
                 print()
                 print()
+
+        dreport_bytes.close()        
 
     @staticmethod
     def map_descriptor(state: dace.SDFGState, map_entry: dace.nodes.MapEntry) -> str:

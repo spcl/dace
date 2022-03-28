@@ -13,6 +13,8 @@ if __name__ == '__main__':
     sdfg_path = Path(os.environ["HOME"]) / "projects/tuning-dace/hg-fvt-192.sdfg"
     sdfg = dace.SDFG.from_file(sdfg_path)
 
+    sdfg.apply_gpu_transformations()
+
     infer_types.infer_connector_types(sdfg)
     infer_types.set_default_schedule_and_storage_types(sdfg, None)
 
@@ -21,6 +23,9 @@ if __name__ == '__main__':
         print("Need to extract")
         arguments = {}
         for name, array in sdfg.arrays.items():
+            if array.transient:
+                continue
+
             data = dace.data.make_array_from_descriptor(array, np.random.rand(*array.shape))
             arguments[name] = data
 
@@ -31,10 +36,10 @@ if __name__ == '__main__':
 
     print("We got it")
 
-    tuner = optim.OnTheFlyMapFusionTuner(sdfg, measurement=dace.InstrumentationType.GPU_Events)
+    tuner = optim.OnTheFlyMapFusionTuner(sdfg, i=192, j=192, measurement=dace.InstrumentationType.GPU_Events)
     tuner.optimize(apply=True)
 
-    tuner = optim.SubgraphFusionTuner(sdfg, measurement=dace.InstrumentationType.GPU_Events)
+    tuner = optim.SubgraphFusionTuner(sdfg, i=192, j=192, measurement=dace.InstrumentationType.GPU_Events)
     tuner.optimize(apply=True)
 
     sdfg_path = Path(os.environ["HOME"]) / "projects/tuning-dace/hg-fvt-192-tuned.sdfg"

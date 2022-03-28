@@ -25,8 +25,8 @@ except (ImportError, ModuleNotFoundError):
 
 class SubgraphFusionTuner(cutout_tuner.CutoutTuner):
 
-    def __init__(self, sdfg: SDFG, measurement: dtypes.InstrumentationType = dtypes.InstrumentationType.Timer) -> None:
-        super().__init__(task="SubgraphFusion", sdfg=sdfg)
+    def __init__(self, sdfg: SDFG, i, j, measurement: dtypes.InstrumentationType = dtypes.InstrumentationType.Timer) -> None:
+        super().__init__(task="SubgraphFusion", sdfg=sdfg, i=i, j=j)
         self.instrument = measurement
 
     def cutouts(self, sdfg=None):
@@ -160,7 +160,9 @@ class SubgraphFusionTuner(cutout_tuner.CutoutTuner):
         dreport = sdfg.get_instrumented_data()
         assert dreport is not None
 
-        dreport_bytes = pickle.dumps(dreport)
+        dreport_bytes = tempfile.NamedTemporaryFile()
+        dace.symbolic.SympyAwarePickler(dreport_bytes).dump(dreport)
+        dreport_bytes.seek(0)
 
         tuning_report = tuner.optimize(apply=False)
         best_configs = cutout_tuner.CutoutTuner.top_k_configs(tuning_report, k=k)
@@ -223,7 +225,7 @@ class SubgraphFusionTuner(cutout_tuner.CutoutTuner):
                     if base_runtime is None:
                         baseline = cutter.cutout_state(state, *(state.nodes()), make_copy=False)                    
                         baseline.start_state.instrument = dace.InstrumentationType.GPU_Events
-                        base_runtime = optim_utils.subprocess_measure(baseline, dreport_bytes)
+                        base_runtime = optim_utils.subprocess_measure(baseline, dreport_bytes, i=self._i, j=self._j)
                         best_pattern_runtime = base_runtime
                         if base_runtime == math.inf:
                             break
@@ -256,7 +258,7 @@ class SubgraphFusionTuner(cutout_tuner.CutoutTuner):
                             continue
 
                         experiment_state.instrument = dace.InstrumentationType.GPU_Events
-                        pattern_runtime = optim_utils.subprocess_measure(experiment_sdfg, dreport_bytes)
+                        pattern_runtime = optim_utils.subprocess_measure(experiment_sdfg, dreport_bytes, i=self._i, j=self._j)
 
                         if pattern_runtime >= best_pattern_runtime:
                             continue
@@ -278,6 +280,7 @@ class SubgraphFusionTuner(cutout_tuner.CutoutTuner):
                 print()
                 print()
 
+        dreport_bytes.close()
 
     @staticmethod
     def map_descriptor(state: dace.SDFGState, map_entry: dace.nodes.MapEntry) -> str:

@@ -1,6 +1,6 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 import os
-import pickle
+import tempfile
 import math
 import dace
 import json
@@ -17,9 +17,11 @@ except (ImportError, ModuleNotFoundError):
 
 class CutoutTuner(auto_tuner.AutoTuner):
 
-    def __init__(self, task: str, sdfg: dace.SDFG) -> None:
+    def __init__(self, task: str, sdfg: dace.SDFG, i, j) -> None:
         super().__init__(sdfg=sdfg)
         self._task = task
+        self._i = i
+        self._j = j
 
     @property
     def task(self) -> str:
@@ -60,7 +62,13 @@ class CutoutTuner(auto_tuner.AutoTuner):
         raise NotImplementedError
 
     def measure(self, cutout, dreport, repetitions: int = 30, timeout: float = 300.0) -> float:
-        return optim_utils.subprocess_measure(cutout=cutout, dreport=pickle.dumps(dreport), repetitions=repetitions, timeout=timeout)
+        fp = tempfile.NamedTemporaryFile()
+        dace.symbolic.SympyAwarePickler(fp).dump(dreport)
+        fp.seek(0)
+        runtime = optim_utils.subprocess_measure(cutout=cutout, dreport=fp, repetitions=repetitions, timeout=timeout, i=self._i, j=self._j)
+        
+        fp.close()
+        return runtime
 
     def optimize(self, measurements: int = 30, apply: bool = False, **kwargs) -> Dict:
         tuning_report = {}
