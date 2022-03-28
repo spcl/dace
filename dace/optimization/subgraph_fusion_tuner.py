@@ -160,10 +160,6 @@ class SubgraphFusionTuner(cutout_tuner.CutoutTuner):
         dreport = sdfg.get_instrumented_data()
         assert dreport is not None
 
-        dreport_bytes = tempfile.NamedTemporaryFile()
-        dace.symbolic.SympyAwarePickler(dreport_bytes).dump(dreport)
-        dreport_bytes.seek(0)
-
         tuning_report = tuner.optimize(apply=False)
         best_configs = cutout_tuner.CutoutTuner.top_k_configs(tuning_report, k=k)
         subgraph_patterns = tuner._extract_patterns(best_configs)
@@ -225,7 +221,20 @@ class SubgraphFusionTuner(cutout_tuner.CutoutTuner):
                     if base_runtime is None:
                         baseline = cutter.cutout_state(state, *(state.nodes()), make_copy=False)                    
                         baseline.start_state.instrument = dace.InstrumentationType.GPU_Events
-                        base_runtime = optim_utils.subprocess_measure(baseline, dreport_bytes, i=self._i, j=self._j)
+                        
+                        dreport_ = {}
+                        for cstate in baseline.nodes():
+                            for dnode in cstate.data_nodes():
+                                array = baseline.arrays[dnode.data]
+                                if array.transient:
+                                    continue
+                                try:
+                                    data = dreport.get_first_version(dnode.data)
+                                    dreport_[dnode.data] = data
+                                except:
+                                    continue
+
+                        base_runtime = optim_utils.subprocess_measure(baseline, dreport_, i=self._i, j=self._j)
                         best_pattern_runtime = base_runtime
                         if base_runtime == math.inf:
                             break
@@ -257,8 +266,20 @@ class SubgraphFusionTuner(cutout_tuner.CutoutTuner):
                         except:
                             continue
 
+                        dreport_ = {}
+                        for cstate in experiment_sdfg.nodes():
+                            for dnode in cstate.data_nodes():
+                                array = experiment_sdfg.arrays[dnode.data]
+                                if array.transient:
+                                    continue
+                                try:
+                                    data = dreport.get_first_version(dnode.data)
+                                    dreport_[dnode.data] = data
+                                except:
+                                    continue
+
                         experiment_state.instrument = dace.InstrumentationType.GPU_Events
-                        pattern_runtime = optim_utils.subprocess_measure(experiment_sdfg, dreport_bytes, i=self._i, j=self._j)
+                        pattern_runtime = optim_utils.subprocess_measure(experiment_sdfg, dreport_, i=self._i, j=self._j)
 
                         if pattern_runtime >= best_pattern_runtime:
                             continue
@@ -279,8 +300,6 @@ class SubgraphFusionTuner(cutout_tuner.CutoutTuner):
 
                 print()
                 print()
-
-        dreport_bytes.close()
 
     @staticmethod
     def map_descriptor(state: dace.SDFGState, map_entry: dace.nodes.MapEntry) -> str:

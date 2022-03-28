@@ -62,12 +62,19 @@ class CutoutTuner(auto_tuner.AutoTuner):
         raise NotImplementedError
 
     def measure(self, cutout, dreport, repetitions: int = 30, timeout: float = 300.0) -> float:
-        fp = tempfile.NamedTemporaryFile()
-        dace.symbolic.SympyAwarePickler(fp).dump(dreport)
-        fp.seek(0)
-        runtime = optim_utils.subprocess_measure(cutout=cutout, dreport=fp, repetitions=repetitions, timeout=timeout, i=self._i, j=self._j)
+        dreport_ = {}
+        for cstate in cutout.nodes():
+            for dnode in cstate.data_nodes():
+                array = cutout.arrays[dnode.data]
+                if array.transient:
+                    continue
+            try:
+                data = dreport.get_first_version(dnode.data)
+                dreport_[dnode.data] = data
+            except:
+                continue
         
-        fp.close()
+        runtime = optim_utils.subprocess_measure(cutout=cutout, dreport=dreport_, repetitions=repetitions, timeout=timeout, i=self._i, j=self._j)
         return runtime
 
     def optimize(self, measurements: int = 30, apply: bool = False, **kwargs) -> Dict:

@@ -1,4 +1,5 @@
 import os
+import json
 import pickle
 import tempfile
 import math
@@ -91,7 +92,7 @@ if __name__ == '__main__':
 
 def subprocess_measure(cutout: dace.SDFG, dreport, repetitions: int = 30, timeout: float = 600.0, i=384, j=384) -> float:
     q = mp.Queue()
-    proc = MeasureProcess(target=_subprocess_measure, args=(dreport, cutout.to_json(), repetitions, q, i, j))
+    proc = MeasureProcess(target=_subprocess_measure, args=(cutout.to_json(), dreport, repetitions, q, i, j))
     proc.start()
     proc.join(timeout)
 
@@ -112,11 +113,9 @@ def subprocess_measure(cutout: dace.SDFG, dreport, repetitions: int = 30, timeou
 
     return runtime
 
-def _subprocess_measure(dreport, cutout_json: Dict, repetitions: int, q, i, j) -> float:
+def _subprocess_measure(cutout_json: Dict, dreport, repetitions: int, q, i, j) -> float:
     cutout = dace.SDFG.from_json(cutout_json)
     
-    dreport = dace.symbolic.SympyAwareUnpickler(dreport).load()
-
     arguments = {}
     for symbol in cutout.free_symbols:
         arguments[str(symbol)] = 32
@@ -138,11 +137,11 @@ def _subprocess_measure(dreport, cutout_json: Dict, repetitions: int, q, i, j) -
                continue
 
             try:
-                data = dreport.get_first_version(dnode.data)
+                data = dreport[dnode.data]
                 arguments[dnode.data] = dace.data.make_array_from_descriptor(array, data)
             except KeyError:
                 arguments[dnode.data] = dace.data.make_array_from_descriptor(array)
-           
+
 
     for name, array in list(cutout.arrays.items()):
         if array.transient:
@@ -151,6 +150,7 @@ def _subprocess_measure(dreport, cutout_json: Dict, repetitions: int, q, i, j) -
         if not name in arguments:
             print("Deleted: ", name)
             del cutout.arrays[name]
+
 
     with dace.config.set_temporary('debugprint', value=False):
         with dace.config.set_temporary('instrumentation', 'report_each_invocation', value=False):
