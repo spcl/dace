@@ -1,4 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+from typing import Any, Dict, List, Union
 from six import StringIO
 import ast
 import ctypes
@@ -66,6 +67,7 @@ class CUDACodeGen(TargetCodeGenerator):
         self._block_dims = None
         self._grid_dims = None
         self._kernel_map = None
+        self._kernel_state = None
         self._scope_has_collaborative_copy = False
         target_type = "" if self.backend == 'cuda' else self.backend
         self._codeobject = CodeObject(sdfg.name + '_' + 'cuda',
@@ -80,6 +82,7 @@ class CUDACodeGen(TargetCodeGenerator):
         self._exitcode = CodeIOStream()
         self._global_sdfg: SDFG = sdfg
         self._toplevel_schedule = None
+        self._arglists: Dict[nodes.MapEntry, Dict[str, dt.Data]] = {}
 
         # Keep track of current "scope entry/exit" code streams for extra
         # code generation
@@ -134,11 +137,58 @@ class CUDACodeGen(TargetCodeGenerator):
             DACE_CUDA_CHECK({backend}DeviceSynchronize());'''.format(backend=self.backend))
 
     def preprocess(self, sdfg: SDFG) -> None:
+        # Find GPU<->GPU strided copies that cannot be represented by a single copy command
+        from dace.transformation.dataflow import CopyToMap
+        for e, state in list(sdfg.all_edges_recursive()):
+            nsdfg = state.parent
+            if isinstance(e.src, nodes.AccessNode) and isinstance(e.dst, nodes.AccessNode):
+                if (e.src.desc(nsdfg).storage == dtypes.StorageType.GPU_Global
+                        and e.dst.desc(nsdfg).storage == dtypes.StorageType.GPU_Global):
+                    copy_shape, src_strides, dst_strides, _, _ = memlet_copy_to_absolute_strides(
+                        None, nsdfg, e.data, e.src, e.dst)
+                    dims = len(copy_shape)
+
+                    # Skip supported copy types
+                    if dims == 1:
+                        continue
+                    elif dims == 2:
+                        if src_strides[-1] != 1 or dst_strides[-1] != 1:
+                            # NOTE: Special case of continuous copy
+                            # Example: dcol[0:I, 0:J, k] -> datacol[0:I, 0:J]
+                            # with copy shape [I, J] and strides [J*K, K], [J, 1]
+                            try:
+                                is_src_cont = src_strides[0] / src_strides[1] == copy_shape[1]
+                                is_dst_cont = dst_strides[0] / dst_strides[1] == copy_shape[1]
+                            except (TypeError, ValueError):
+                                is_src_cont = False
+                                is_dst_cont = False
+                            if is_src_cont and is_dst_cont:
+                                continue
+                        else:
+                            continue
+                    elif dims > 2:
+                        if not (src_strides[-1] != 1 or dst_strides[-1] != 1):
+                            continue
+
+                    # Turn unsupported copy to a map
+                    try:
+                        CopyToMap.apply_to(nsdfg, save=False, annotate=False, a=e.src, b=e.dst)
+                    except ValueError:  # If transformation doesn't match, continue normally
+                        continue
+
         # Annotate CUDA streams and events
         self._cuda_streams, self._cuda_events = self._compute_cudastreams(sdfg)
 
-        # Right before finalizing code, write GPU context to state structure
+        # Write GPU context to state structure
         self._frame.statestruct.append('dace::cuda::Context *gpu_context;')
+
+        # Collect all defined symbols and argument lists with one traversal
+        shared_transients = {}
+        for state, node, defined_syms in sdutil.traverse_sdfg_with_defined_symbols(sdfg, recursive=True):
+            if isinstance(node, nodes.MapEntry) and node.map.schedule == dtypes.ScheduleType.GPU_Device:
+                if state.parent not in shared_transients:
+                    shared_transients[state.parent] = state.parent.shared_transients()
+                self._arglists[node] = state.scope_subgraph(node).arglist(defined_syms, shared_transients[state.parent])
 
     # Generate final code
     def get_generated_codeobjects(self):
@@ -757,13 +807,16 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     src_strides = [src_strides[1]]
                     dst_strides = [dst_strides[1]]
                 else:
-                    raise NotImplementedError('2D copy only supported with one ' 'stride')
+                    raise NotImplementedError('2D copy only supported with one stride')
 
             # Currently we only support ND copies when they can be represented
             # as a 1D copy or as a 2D strided copy
             if dims > 2:
                 if src_strides[-1] != 1 or dst_strides[-1] != 1:
-                    raise NotImplementedError('Copies between CPU and GPU are ' 'not supported for N-dimensions')
+                    raise NotImplementedError(
+                        'GPU copies are not supported for N-dimensions if they cannot be represented by a strided copy\n'
+                        f'  Nodes: src {src_node} ({src_storage}), dst {dst_node}({dst_storage})\n'
+                        f'  Strides: src {src_strides}, dst {dst_strides}')
                 else:
                     # Write for-loop headers
                     for d in range(dims - 2):
@@ -905,16 +958,14 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     accum = '::template Accum%s' % reduction_tmpl
 
                 if any(symbolic.issymbolic(s, sdfg.constants) for s in copy_shape):
-                    callsite_stream.write(
-                        ('    {func}Dynamic<{type}, {bdims}, ' + '{dststrides}, {is_async}>{accum}({args});').format(
-                            func=funcname,
-                            type=dst_node.desc(sdfg).dtype.ctype,
-                            bdims=', '.join(_topy(self._block_dims)),
-                            dststrides=', '.join(_topy(dst_strides)),
-                            is_async='true' if state_dfg.out_degree(dst_node) > 0 else 'true',
-                            accum=accum,
-                            args=', '.join([src_expr] + _topy(src_strides) + [dst_expr] + custom_reduction +
-                                           _topy(copy_shape))), sdfg, state_id, [src_node, dst_node])
+                    callsite_stream.write(('    {func}Dynamic<{type}, {bdims}, {is_async}>{accum}({args});').format(
+                        func=funcname,
+                        type=dst_node.desc(sdfg).dtype.ctype,
+                        bdims=', '.join(_topy(self._block_dims)),
+                        is_async='true' if state_dfg.out_degree(dst_node) > 0 else 'true',
+                        accum=accum,
+                        args=', '.join([src_expr] + _topy(src_strides) + [dst_expr] + custom_reduction +
+                                       _topy(dst_strides) + _topy(copy_shape))), sdfg, state_id, [src_node, dst_node])
                 else:
                     callsite_stream.write(
                         ('    {func}<{type}, {bdims}, {copysize}, ' +
@@ -1130,21 +1181,22 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
             if scope_entry == node:
                 continue
             if (isinstance(node, nodes.EntryNode) and node.map.schedule == dtypes.ScheduleType.GPU_Device):
-                create_grid_barrier = True
+                # Create grid barrier only if there is a synchronization requirement on nested GPU_Device maps
+                if any(p is not scope_entry for p in dfg_scope.predecessors(node)):
+                    create_grid_barrier = True
 
         self.create_grid_barrier = create_grid_barrier
         kernel_name = '%s_%d_%d_%d' % (scope_entry.map.label, sdfg.sdfg_id, sdfg.node_id(state),
                                        state.node_id(scope_entry))
 
         # Comprehend grid/block dimensions from scopes
-        grid_dims, block_dims, tbmap, dtbmap =\
-            self.get_kernel_dimensions(dfg_scope)
+        grid_dims, block_dims, tbmap, dtbmap, _ = self.get_kernel_dimensions(dfg_scope)
         is_persistent = (dfg_scope.source_nodes()[0].map.schedule == dtypes.ScheduleType.GPU_Persistent)
 
         # Get parameters of subgraph
-        kernel_args = dfg_scope.arglist()
+        kernel_args = self._arglists[scope_entry]
 
-        # handle dynamic map inputs
+        # Handle dynamic map inputs
         for e in dace.sdfg.dynamic_map_inputs(state, scope_entry):
             kernel_args[str(e.src)] = e.src.desc(sdfg)
 
@@ -1392,6 +1444,7 @@ void  *{kname}_args[] = {{ {kargs} }};
                                 sym_map[k] = sym_map[k].subs(dace.symbol(kk), vv)
                         res.append((map, sym_map))
             elif isinstance(node, nodes.MapEntry) and node.schedule in (
+                    dtypes.ScheduleType.GPU_Device,
                     dtypes.ScheduleType.GPU_ThreadBlock,
                     dtypes.ScheduleType.GPU_ThreadBlock_Dynamic,
             ):
@@ -1410,8 +1463,10 @@ void  *{kname}_args[] = {{ {kargs} }};
                    size is |S| and block size is max(|T_1|,...,|T_n|) with
                    block specialization.
                 3. If block size can be overapproximated, it is (for
-                    dynamically-sized blocks that are bounded by a
-                    predefined size).
+                   dynamically-sized blocks that are bounded by a
+                   predefined size).
+                4. If nested device maps exist, they generate extra grid dimensions (block size 1)
+                   as the sum of all their sizes (|T_1| + ... + |T_n|)
 
             :note: Kernel dimensions are separate from the map
                    variables, and they should be treated as such.
@@ -1424,6 +1479,36 @@ void  *{kname}_args[] = {{ {kargs} }};
         grid_size = kernelmap_entry.map.range.size(True)[::-1]
         block_size = None
         is_persistent = (kernelmap_entry.map.schedule == dtypes.ScheduleType.GPU_Persistent)
+        int_ceil = symbolic.int_ceil
+
+        # Obtain thread-block maps from nested SDFGs
+        subgraph = dfg_scope.scope_subgraph(kernelmap_entry)
+        sub_maps = self.get_tb_maps_recursive(subgraph)
+
+        # Introduce extra grid dimensions based on device sub-maps
+        extra_dim_offsets: Dict[nodes.Map, symbolic.SymbolicType] = {}
+        extra_grid_dims: List[symbolic.SymbolicType] = None
+        for submap, sym_map in sub_maps:
+            submap: nodes.Map
+            if submap.schedule != dtypes.ScheduleType.GPU_Device or submap is kernelmap_entry.map:
+                continue
+            if extra_grid_dims is not None and len(submap.params) != len(extra_grid_dims):
+                raise NotImplementedError(
+                    'Multiple GPU_Device sub-ranges with different dimensionality not yet implemented (found: '
+                    f'{len(submap.params)}, existing: {len(extra_grid_dims)}, map: {kernelmap_entry})')
+
+            # Add and overapproximate sizes
+            gsize = [s.subs(list(sym_map.items())) for s in submap.range.size()[::-1]]
+            gsize = [symbolic.overapproximate(s) for s in gsize]
+            if extra_grid_dims is None:
+                extra_grid_dims = gsize
+                extra_dim_offsets[submap] = [0] * len(submap.params)
+            else:
+                extra_dim_offsets[submap] = extra_grid_dims
+                extra_grid_dims = [(sz + gsz) for sz, gsz in zip(extra_grid_dims, gsize)]
+        if extra_grid_dims is None:
+            extra_grid_dims = []
+        grid_size.extend(extra_grid_dims)
 
         # Linearize (flatten) rest of dimensions to third
         if len(grid_size) > 3:
@@ -1433,19 +1518,15 @@ void  *{kname}_args[] = {{ {kargs} }};
         # Extend to 3 dimensions if necessary
         grid_size = grid_size + [1] * (3 - len(grid_size))
 
-        # Obtain thread-block maps from nested SDFGs
-        subgraph = dfg_scope.scope_subgraph(kernelmap_entry)
-        tb_maps_sym_map = self.get_tb_maps_recursive(subgraph)
-
+        # Thread-block map cases
         has_dtbmap = len(
-            [tbmap
-             for tbmap, _ in tb_maps_sym_map if tbmap.schedule == dtypes.ScheduleType.GPU_ThreadBlock_Dynamic]) > 0
+            [tbmap for tbmap, _ in sub_maps if tbmap.schedule == dtypes.ScheduleType.GPU_ThreadBlock_Dynamic]) > 0
 
         # keep only thread-block maps
-        tb_maps_sym_map = [(tbmap, sym_map) for tbmap, sym_map in tb_maps_sym_map
+        tb_maps_sym_map = [(tbmap, sym_map) for tbmap, sym_map in sub_maps
                            if tbmap.schedule == dtypes.ScheduleType.GPU_ThreadBlock]
 
-        # Case (1): no thread-block maps
+        # No thread-block maps
         if len(tb_maps_sym_map) == 0:
 
             if has_dtbmap:
@@ -1464,51 +1545,47 @@ void  *{kname}_args[] = {{ {kargs} }};
                     block_size = [int(b) for b in Config.get('compiler', 'cuda', 'default_block_size').split(',')]
             assert (len(block_size) >= 1 and len(block_size) <= 3)
 
-            int_ceil = sympy.Function('int_ceil')
-
             # Grid size = ceil(|S|/32) for first dimension, rest = |S|
-            grid_size = [int_ceil(gs, bs)
-                         for gs, bs in zip(grid_size, block_size)] if not is_persistent else ['gridDim.x', '1', '1']
+            grid_size = [int_ceil(gs, bs) for gs, bs in zip(grid_size, block_size)]
 
-            return grid_size, block_size, False, has_dtbmap
+        else:
+            # Find all thread-block maps to determine overall block size
+            block_size = [1, 1, 1]
+            detected_block_sizes = [block_size]
+            for tbmap, sym_map in tb_maps_sym_map:
+                tbsize = [s.subs(list(sym_map.items())) for s in tbmap.range.size()[::-1]]
 
-        # Find all thread-block maps to determine overall block size
-        block_size = [1, 1, 1]
-        detected_block_sizes = [block_size]
-        for tbmap, sym_map in tb_maps_sym_map:
-            tbsize = [s.subs(list(sym_map.items())) for s in tbmap.range.size()[::-1]]
+                # Over-approximate block size (e.g. min(N,(i+1)*32)-i*32 --> 32)
+                # The partial trailing thread-block is emitted as an if-condition
+                # that returns on some of the participating threads
+                tbsize = [symbolic.overapproximate(s) for s in tbsize]
 
-            # Over-approximate block size (e.g. min(N,(i+1)*32)-i*32 --> 32)
-            # The partial trailing thread-block is emitted as an if-condition
-            # that returns on some of the participating threads
-            tbsize = [symbolic.overapproximate(s) for s in tbsize]
+                # Linearize (flatten) rest of dimensions to third
+                if len(tbsize) > 3:
+                    tbsize[2] = functools.reduce(sympy.Mul, tbsize[2:], 1)
+                    del tbsize[3:]
 
-            # Linearize (flatten) rest of dimensions to third
-            if len(tbsize) > 3:
-                tbsize[2] = functools.reduce(sympy.Mul, tbsize[2:], 1)
-                del tbsize[3:]
+                # Extend to 3 dimensions if necessary
+                tbsize = tbsize + [1] * (len(block_size) - len(tbsize))
 
-            # Extend to 3 dimensions if necessary
-            tbsize = tbsize + [1] * (len(block_size) - len(tbsize))
+                block_size = [sympy.Max(sz, bbsz) for sz, bbsz in zip(block_size, tbsize)]
+                if block_size != tbsize:
+                    detected_block_sizes.append(tbsize)
 
-            block_size = [sympy.Max(sz, bbsz) for sz, bbsz in zip(block_size, tbsize)]
-            if block_size != tbsize:
-                detected_block_sizes.append(tbsize)
+            # TODO: If grid/block sizes contain elements only defined within the
+            #       kernel, raise an invalid SDFG exception and recommend
+            #       overapproximation.
 
-        # TODO: If grid/block sizes contain elements only defined within the
-        #       kernel, raise an invalid SDFG exception and recommend
-        #       overapproximation.
-
-        # both thread-block map and dynamic thread-block map exist at the same
-        # time
-        if has_dtbmap:
-            raise NotImplementedError("GPU_ThreadBlock and GPU_ThreadBlock_Dynamic are currently "
-                                      "not supported in the same scope")
+            # both thread-block map and dynamic thread-block map exist at the same
+            # time
+            if has_dtbmap:
+                raise NotImplementedError("GPU_ThreadBlock and GPU_ThreadBlock_Dynamic are currently "
+                                          "not supported in the same scope")
 
         if is_persistent:
             grid_size = ['gridDim.x', '1', '1']
 
-        return grid_size, block_size, True, has_dtbmap
+        return grid_size, block_size, len(tb_maps_sym_map) > 0, has_dtbmap, extra_dim_offsets
 
     def generate_kernel_scope(self, sdfg: SDFG, dfg_scope: ScopeSubgraphView, state_id: int, kernel_map: nodes.Map,
                               kernel_name: str, grid_dims: list, block_dims: list, has_tbmap: bool, has_dtbmap: bool,
@@ -1587,6 +1664,7 @@ void  *{kname}_args[] = {{ {kargs} }};
         assert CUDACodeGen._in_device_code is False
         CUDACodeGen._in_device_code = True
         self._kernel_map = node
+        self._kernel_state = sdfg.node(state_id)
         self._block_dims = block_dims
         self._grid_dims = grid_dims
 
@@ -1631,6 +1709,7 @@ void  *{kname}_args[] = {{ {kargs} }};
 
         self._block_dims = None
         self._kernel_map = None
+        self._kernel_state = None
         CUDACodeGen._in_device_code = False
         self._grid_dims = None
 
@@ -1731,61 +1810,46 @@ void  *{kname}_args[] = {{ {kargs} }};
                                           param=scope_map.params[0]), sdfg, state_id, scope_entry)
 
         elif scope_map.schedule == dtypes.ScheduleType.GPU_Device:
-
-            grid_dims, block_dims, has_tbmap, has_dtbmap = \
-                self.get_kernel_dimensions(dfg_scope)
+            dfg_kernel = self._kernel_state.scope_subgraph(self._kernel_map)
+            grid_dims, block_dims, has_tbmap, has_dtbmap, extra_gdim_offsets = self.get_kernel_dimensions(dfg_kernel)
 
             if (self._kernel_map.map == dtypes.ScheduleType.GPU_Persistent and len(scope_map.params) > 1):
                 raise ValueError('Only one-dimensional device maps are currently supported '
                                  'for persistent kernel maps (got %d)'.format(len(scope_map.params)))
 
-            is_persistent = (self._kernel_map.schedule == dtypes.ScheduleType.GPU_Persistent)
-            block_dims = self._block_dims
-            node = dfg_scope.source_nodes()[0]
+            if self._kernel_map.schedule == dtypes.ScheduleType.GPU_Persistent:
+                block_dims = self._block_dims
+                node = dfg_scope.source_nodes()[0]
 
-            device_map_range = subsets.Range(scope_map.range[::-1])
-            device_map_dims = device_map_range.size()
-            dsym = [
-                symbolic.symbol('__DAPB%d' % i, nonnegative=True, integer=True) for i in range(len(device_map_range))
-            ]
-            bidx = device_map_range.coord_at(dsym)
+                device_map_range = subsets.Range(scope_map.range[::-1])
+                device_map_dims = device_map_range.size()
+                dsym = [
+                    symbolic.symbol('__DAPB%d' % i, nonnegative=True, integer=True)
+                    for i in range(len(device_map_range))
+                ]
+                bidx = device_map_range.coord_at(dsym)
 
-            # handle dynamic map inputs
-            for e in dace.sdfg.dynamic_map_inputs(dfg, scope_entry):
-                callsite_stream.write(
-                    self._cpu_codegen.memlet_definition(sdfg, e.data, False, e.dst_conn,
-                                                        e.dst.in_connectors[e.dst_conn]), sdfg, state_id, scope_entry)
+                # handle dynamic map inputs
+                for e in dace.sdfg.dynamic_map_inputs(dfg, scope_entry):
+                    callsite_stream.write(
+                        self._cpu_codegen.memlet_definition(sdfg, e.data, False, e.dst_conn,
+                                                            e.dst.in_connectors[e.dst_conn]), sdfg, state_id,
+                        scope_entry)
 
-            # variables that need to be declared + the value they need to be initialized with
-            declarations = []
+                # variables that need to be declared + the value they need to be initialized with
+                declarations = []
 
-            for i in range(min(len(device_map_range), 3)):
-                varname = scope_map.params[-i - 1]
-
-                # Delinearize third dimension if necessary
-                if i == 2 and len(device_map_range) > 3:
-                    block_expr = '(blockIdx.z / (%s))' % _topy(functools.reduce(sympy.Mul, device_map_dims[3:], 1))
-                else:
-                    block_expr = 'blockIdx.%s' % _named_idx(i)
-                    # If we defaulted to 32 threads per block, offset by thread ID
-                    if not has_tbmap or has_dtbmap:
-                        block_expr = '(%s * %s + threadIdx.%s)' % (block_expr, _topy(block_dims[i]), _named_idx(i))
-
-                expr = _topy(bidx[i]).replace('__DAPB%d' % i, block_expr)
-
-                declarations.append((varname, expr))
-
-                self._dispatcher.defined_vars.add(varname, DefinedType.Scalar, 'int')
-
-            # Delinearize beyond the third dimension
-            if len(device_map_range) > 3:
-                for i in range(3, len(device_map_range)):
+                for i in range(min(len(device_map_range), 3)):
                     varname = scope_map.params[-i - 1]
-                    # true dim i = z / ('*'.join(kdims[i+1:])) % kdims[i]
-                    block_expr = '(blockIdx.z / (%s)) %% (%s)' % (
-                        _topy(functools.reduce(sympy.Mul, device_map_dims[i + 1:], 1)),
-                        _topy(device_map_dims[i]),
-                    )
+
+                    # Delinearize third dimension if necessary
+                    if i == 2 and len(device_map_range) > 3:
+                        block_expr = '(blockIdx.z / (%s))' % _topy(functools.reduce(sympy.Mul, device_map_dims[3:], 1))
+                    else:
+                        block_expr = 'blockIdx.%s' % _named_idx(i)
+                        # If we defaulted to 32 threads per block, offset by thread ID
+                        if not has_tbmap or has_dtbmap:
+                            block_expr = '(%s * %s + threadIdx.%s)' % (block_expr, _topy(block_dims[i]), _named_idx(i))
 
                     expr = _topy(bidx[i]).replace('__DAPB%d' % i, block_expr)
 
@@ -1793,59 +1857,133 @@ void  *{kname}_args[] = {{ {kargs} }};
 
                     self._dispatcher.defined_vars.add(varname, DefinedType.Scalar, 'int')
 
-            kmap_min = subsets.Range(self._kernel_map.range[::-1]).min_element()
-            kmap_max = subsets.Range(self._kernel_map.range[::-1]).max_element()
-
-            # if has_tbmap == False and has_dtbmap == False:
-            dsym_end = [d + bs - 1 for d, bs in zip(dsym, self._block_dims)]
-            minels = device_map_range.min_element()
-            maxels = device_map_range.max_element()
-            for i, (v, minel, maxel) in enumerate(zip(scope_map.params[::-1], minels, maxels)):
-                condition = ''
-
-                # Optimize conditions if they are always true
-                if i >= 3 or (dsym[i] >= minel) != True:
-                    condition += '%s >= %s' % (v, _topy(minel))
-                if (i >= 3 or ((dsym_end[i] < maxel) != False and ((dsym_end[i] % self._block_dims[i]) != 0) == True)
-                        or (self._block_dims[i] > maxel) == True):
-                    if len(condition) > 0:
-                        condition += ' && '
-                    if has_dtbmap:
-                        condition += '{mapIdx} < int_ceil({max}, {bs}) * {bs}'.format(
-                            mapIdx=v,
-                            max=_topy(maxel + 1),
-                            bs=_topy(block_dims[i]),
+                # Delinearize beyond the third dimension
+                if len(device_map_range) > 3:
+                    for i in range(3, len(device_map_range)):
+                        varname = scope_map.params[-i - 1]
+                        # true dim i = z / ('*'.join(kdims[i+1:])) % kdims[i]
+                        block_expr = '(blockIdx.z / (%s)) %% (%s)' % (
+                            _topy(functools.reduce(sympy.Mul, device_map_dims[i + 1:], 1)),
+                            _topy(device_map_dims[i]),
                         )
+
+                        expr = _topy(bidx[i]).replace('__DAPB%d' % i, block_expr)
+
+                        declarations.append((varname, expr))
+
+                        self._dispatcher.defined_vars.add(varname, DefinedType.Scalar, 'int')
+
+                kmap_min = subsets.Range(self._kernel_map.range[::-1]).min_element()
+                kmap_max = subsets.Range(self._kernel_map.range[::-1]).max_element()
+
+                # if has_tbmap == False and has_dtbmap == False:
+                dsym_end = [d + bs - 1 for d, bs in zip(dsym, self._block_dims)]
+                minels = device_map_range.min_element()
+                maxels = device_map_range.max_element()
+                for i, (v, minel, maxel) in enumerate(zip(scope_map.params[::-1], minels, maxels)):
+                    condition = ''
+
+                    # Optimize conditions if they are always true
+                    if i >= 3 or (dsym[i] >= minel) != True:
+                        condition += '%s >= %s' % (v, _topy(minel))
+                    if (i >= 3
+                            or ((dsym_end[i] < maxel) != False and ((dsym_end[i] % self._block_dims[i]) != 0) == True)
+                            or (self._block_dims[i] > maxel) == True):
+                        if len(condition) > 0:
+                            condition += ' && '
+                        if has_dtbmap:
+                            condition += '{mapIdx} < int_ceil({max}, {bs}) * {bs}'.format(
+                                mapIdx=v,
+                                max=_topy(maxel + 1),
+                                bs=_topy(block_dims[i]),
+                            )
+                        else:
+                            condition += '%s < %s' % (v, _topy(maxel + 1))
+
+                    if is_persistent and not has_tbmap:
+                        stride = 'gridDim.x * {}'.format(_topy(block_dims[i]))
+                    elif is_persistent and has_tbmap:
+                        stride = 'gridDim.x'
                     else:
+                        stride = self._grid_dims[i] if has_tbmap \
+                            else (kmap_max[i] + 1 - kmap_min[i])
+
+                    if len(condition) > 0:
+                        varname, expr = declarations.pop(0)
+                        callsite_stream.write(
+                            'for (int {varname} = {expr}; {cond}; {varname} += '
+                            '{stride}) {{'.format(
+                                varname=varname,
+                                expr=expr,
+                                cond=condition,
+                                stride=stride,
+                                pers=is_persistent,
+                            ), sdfg, state_id, node)
+                    else:
+                        # will only be entered once
+                        varname, expr = declarations.pop(0)
+                        callsite_stream.write('int {varname} = {expr};\n'
+                                              '{{'.format(
+                                                  varname=varname,
+                                                  expr=expr,
+                                              ), sdfg, state_id, node)
+            else:  # Device map in Device map
+                brange = subsets.Range(scope_map.range[::-1])
+                kdims = brange.size()
+                dsym = [
+                    symbolic.symbol('__DAPT%d' % i, nonnegative=True, integer=True) - off
+                    for i, off in zip(range(len(brange)), extra_gdim_offsets[scope_map])
+                ]
+                gdims = len(self._kernel_map.params)
+                relevant_block_dims = self._block_dims[gdims:] + [1] * len(scope_map.params)
+                dsym_end = [d + (bs * rng[2]) - 1 for d, bs, rng in zip(dsym, relevant_block_dims, brange)]
+                tidx = brange.coord_at(dsym)
+                if len(brange) + gdims > 3:
+                    raise NotImplementedError('Delinearization with nested scope maps not yet implemented')
+
+                # First three dimensions are evaluated directly
+                for i in range(len(brange)):
+                    varname = scope_map.params[-i - 1]
+                    idx = _named_idx(i + gdims)
+                    block_expr = f'blockIdx.{idx}'
+                    if relevant_block_dims[i] != 1:
+                        block_expr = f'(blockIdx.{idx} * {_topy(relevant_block_dims[i])} + threadIdx.{idx})'
+
+                    expr = _topy(tidx[i]).replace('__DAPT%d' % i, block_expr)
+                    callsite_stream.write('int %s = %s;' % (varname, expr), sdfg, state_id, scope_entry)
+                    self._dispatcher.defined_vars.add(varname, DefinedType.Scalar, 'int')
+
+                # Generate conditions for this subgrid's execution using min and max
+                # element, e.g. skipping out-of-bounds threads
+                minels = brange.min_element()
+                maxels = brange.max_element()
+                for i, (v, minel, maxel) in enumerate(zip(scope_map.params[::-1], minels, maxels)):
+                    condition = ''
+
+                    # Optimize conditions if they are always true
+                    #############################################
+
+                    # Block range start
+                    if i >= 3 or (dsym[i] >= minel) != True:
+                        condition += '%s >= %s' % (v, _topy(minel))
+
+                    # Special case: block size is exactly the range of the map (0:b)
+                    if i >= 3:
+                        skipcond = False
+                    else:
+                        skipcond = dsym_end[i].subs({dsym[i]: minel}) == maxel
+
+                    # Block range end
+                    if i >= 3 or (not skipcond and (dsym_end[i] < maxel) != True):
+                        if len(condition) > 0:
+                            condition += ' && '
                         condition += '%s < %s' % (v, _topy(maxel + 1))
 
-                if is_persistent and not has_tbmap:
-                    stride = 'gridDim.x * {}'.format(_topy(block_dims[i]))
-                elif is_persistent and has_tbmap:
-                    stride = 'gridDim.x'
-                else:
-                    stride = self._grid_dims[i] if has_tbmap \
-                        else (kmap_max[i] + 1 - kmap_min[i])
-
-                if len(condition) > 0:
-                    varname, expr = declarations.pop(0)
-                    callsite_stream.write(
-                        'for (int {varname} = {expr}; {cond}; {varname} += '
-                        '{stride}) {{'.format(
-                            varname=varname,
-                            expr=expr,
-                            cond=condition,
-                            stride=stride,
-                            pers=is_persistent,
-                        ), sdfg, state_id, node)
-                else:
-                    # will only be entered once
-                    varname, expr = declarations.pop(0)
-                    callsite_stream.write('int {varname} = {expr};\n'
-                                          '{{'.format(
-                                              varname=varname,
-                                              expr=expr,
-                                          ), sdfg, state_id, node)
+                    # Emit condition in code
+                    if len(condition) > 0:
+                        callsite_stream.write('if (%s) {' % condition, sdfg, state_id, scope_entry)
+                    else:
+                        callsite_stream.write('{', sdfg, state_id, scope_entry)
 
         else:
             for dim in range(len(scope_map.range)):

@@ -10,7 +10,7 @@ class MPI:
     cmake_files = []
     cmake_variables = {}
     cmake_includes = []
-    cmake_libraries = ["${MPI_LIBRARIES}"]
+    cmake_libraries = ["${MPI_CXX_LIBRARIES}"]
     cmake_compile_flags = ["-I${MPI_CXX_HEADER_DIR}"]
     cmake_link_flags = ["${MPI_LINKER_FLAGS}"]
 

@@ -210,7 +210,7 @@ class OutMergeArrays(transformation.SingleStateTransformation, transformation.Si
                                           union_inner_edges=True)
 
 
-class MergeSourceSinkArrays(transformation.SingleStateTransformation, transformation.SimplifyPass):
+class MergeSourceSinkArrays(transformation.SingleStateTransformation):
     """ Merge duplicate arrays that are source/sink nodes. """
 
     array1 = transformation.PatternNode(nodes.AccessNode)
@@ -226,47 +226,45 @@ class MergeSourceSinkArrays(transformation.SingleStateTransformation, transforma
         return [g]
 
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
-        arr1_id = self.subgraph[MergeSourceSinkArrays.array1]
         arr1 = self.array1
 
-        # Ensure array is either a source or sink node
-        src_nodes = graph.source_nodes()
-        sink_nodes = graph.sink_nodes()
-        if arr1 in src_nodes:
-            nodes_to_consider = src_nodes
-        elif arr1 in sink_nodes:
-            nodes_to_consider = sink_nodes
-        else:
+        is_source = graph.in_degree(arr1) == 0
+        is_sink = graph.out_degree(arr1) == 0
+        if not is_source and not is_sink:
             return False
 
-        # Ensure there are more nodes with the same data
-        other_nodes = [
-            graph.node_id(n) for n in nodes_to_consider
-            if isinstance(n, nodes.AccessNode) and n.data == arr1.data and n != arr1
-        ]
-        if len(other_nodes) == 0:
-            return False
-
-        # Ensure arr1 is the first node to avoid further duplicates
-        nid = min(other_nodes)
-        if nid < arr1_id:
-            return False
-
-        return True
+        # Ensure array is either a source or sink node, and the first instance of that array
+        found = False
+        first = False
+        for node in graph.data_nodes():
+            if node.data == arr1.data:
+                if node is arr1:
+                    if found:
+                        return False
+                    else:
+                        first = True
+                    found = True
+                else:
+                    if is_source and graph.in_degree(node) == 0:
+                        if first:
+                            return True
+                        found = True
+                        continue
+                    if is_sink and graph.out_degree(node) == 0:
+                        if first:
+                            return True
+                        found = True
+                        continue
+        return False
 
     def apply(self, graph, sdfg):
         array = self.array1
-        if array in graph.source_nodes():
-            src_node = True
-            nodes_to_consider = graph.source_nodes()
-            edges_to_consider = lambda n: graph.out_edges(n)
-        else:
-            src_node = False
-            nodes_to_consider = graph.sink_nodes()
-            edges_to_consider = lambda n: graph.in_edges(n)
+        src_node = graph.in_degree(array) == 0
+        nodes_to_consider = graph.source_nodes() if src_node else graph.sink_nodes()
+        edges_to_consider = graph.out_edges if src_node else graph.in_edges
 
         for node in nodes_to_consider:
-            if node == array:
+            if node is array:
                 continue
             if not isinstance(node, nodes.AccessNode):
                 continue

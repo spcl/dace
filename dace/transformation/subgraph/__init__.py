@@ -6,3 +6,6 @@ from .reduce_expansion import ReduceExpansion
 from .expansion import MultiExpansion
 from .subgraph_fusion import SubgraphFusion
 from .stencil_tiling import StencilTiling
+from .on_the_fly_map_fusion import OnTheFlyMapFusion
+from .map_fusion import MapFusion
+from .composite import CompositeFusion

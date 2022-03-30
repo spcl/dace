@@ -392,7 +392,7 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
 
         elif detect_callables and hasattr(value, '__call__') and hasattr(value.__call__, '__sdfg__'):
             return self.global_value_to_node(value.__call__, parent_node, qualname, recurse, detect_callables)
-        elif isinstance(value, numpy.ndarray):
+        elif dtypes.is_array(value):
             # Arrays need to be stored as a new name and fed as an argument
             if id(value) in self.closure.array_mapping:
                 arrname = self.closure.array_mapping[id(value)]
