@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
 import random
+from typing import Dict
 
 import dace
 
@@ -11,10 +12,18 @@ from dace.sdfg import utils as sdutil
 from dace.transformation import transformation
 
 @make_properties
-class OnTheFlyMapFusion(transformation.SubgraphTransformation):
+class OnTheFlyMapFusion(transformation.SingleStateTransformation):
+    parent_map_exit = transformation.PatternNode(dace.nodes.MapExit)
+    access = transformation.PatternNode(dace.nodes.AccessNode)
+    child_map_entry = transformation.PatternNode(dace.nodes.MapEntry)
 
-    def can_be_applied(self, state: dace.SDFGState, sdfg: dace.SDFG, parent_map_entry, child_map_entry):
-        parent_map_exit = state.exit_node(parent_map_entry)
+    @classmethod
+    def expressions(cls):
+        return [sdutil.node_path_graph(cls.parent_map_exit, cls.access, cls.child_map_entry)]
+
+    def can_be_applied(self, state: dace.SDFGState, expr_index: int, sdfg: dace.SDFG, permissive: bool = False) -> bool:
+        parent_map_exit = self.parent_map_exit
+        child_map_entry = self.child_map_entry
         nodes = sdutil.nodes_in_all_simple_paths(state, parent_map_exit, child_map_entry)
         nodes.remove(child_map_entry)
         nodes.remove(parent_map_exit)
@@ -34,8 +43,9 @@ class OnTheFlyMapFusion(transformation.SubgraphTransformation):
 
         return True
 
-    def apply(self, state: dace.SDFGState, sdfg: dace.SDFG, parent_map_entry, child_map_entry):
-        parent_map_exit = state.exit_node(parent_map_entry)
+    def apply(self, state: dace.SDFGState, sdfg: dace.SDFG):
+        parent_map_exit = self.parent_map_exit
+        child_map_entry = self.child_map_entry
         nodes = sdutil.nodes_in_all_simple_paths(state, parent_map_exit, child_map_entry)
         array_accesses = []
         for node in nodes:
@@ -44,9 +54,12 @@ class OnTheFlyMapFusion(transformation.SubgraphTransformation):
 
             array_accesses.append(node)
 
-        OnTheFlyMapFusion._update_map_connectors(state, parent_map_entry, child_map_entry, array_accesses)
+        parent_map_entry = state.entry_node(self.parent_map_exit)
+        connmap = {}
+        OnTheFlyMapFusion._update_map_connectors(state, parent_map_entry, child_map_entry, array_accesses, connmap)
         self._replicate_first_map(
-            sdfg, parent_map_entry, parent_map_exit, child_map_entry, array_accesses
+            sdfg, parent_map_entry, parent_map_exit, child_map_entry, array_accesses,
+            connmap=connmap
         )
         state.remove_nodes_from(
             state.all_nodes_between(parent_map_entry, parent_map_exit) | {
@@ -64,16 +77,17 @@ class OnTheFlyMapFusion(transformation.SubgraphTransformation):
         print(child_map_entry.map.label)
 
     @staticmethod
-    def _update_map_connectors(state, parent_map_entry, child_map_entry, array_accesses):
+    def _update_map_connectors(state, parent_map_entry, child_map_entry: dace.nodes.MapEntry, array_accesses, connector_names):
         for array_access in array_accesses:
             for edge in state.edges_between(array_access, child_map_entry):
                 state.remove_edge_and_connectors(edge)
 
         for edge in state.in_edges(parent_map_entry):
-            if child_map_entry.add_in_connector(edge.dst_conn + "_"):
-                state.add_edge(edge.src, edge.src_conn, child_map_entry, edge.dst_conn + "_", edge.data)
-            else:
-                raise ValueError("Failed to connect")
+            conn = edge.dst_conn + "_"
+            while not child_map_entry.add_in_connector(conn):
+                conn += "_"
+            connector_names[edge.dst_conn[3:]] = conn
+            state.add_edge(edge.src, edge.src_conn, child_map_entry, conn, edge.data)
 
     @staticmethod
     def _memlet_offsets(base_memlet, offset_memlet):
@@ -142,7 +156,8 @@ class OnTheFlyMapFusion(transformation.SubgraphTransformation):
         return new_nodes
 
     def _replicate_first_map(
-        self, sdfg, parent_map_entry, parent_map_exit, child_map_entry, array_accesses
+        self, sdfg, parent_map_entry, parent_map_exit, child_map_entry, array_accesses,
+        connmap
     ):
         """Replicate tasklet of first map for each read access in second map."""
         state = sdfg.node(self.state_id)
@@ -170,8 +185,9 @@ class OnTheFlyMapFusion(transformation.SubgraphTransformation):
                     for edge in state.edges_between(parent_map_entry, node):
                         memlet = copy.deepcopy(edge.data)
                         memlet.subset.offset(list(offset), negative=False)
-                        child_map_entry.add_out_connector(edge.src_conn + "_")
-                        state.add_edge(child_map_entry, edge.src_conn + "_", node, edge.dst_conn, memlet)
+                        newconn = "OUT_" + connmap[edge.src_conn[4:]][3:]
+                        child_map_entry.add_out_connector(newconn)
+                        state.add_edge(child_map_entry, newconn, node, edge.dst_conn, memlet)
                         state.remove_edge(edge)
 
                 for edge in edges:
