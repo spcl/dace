@@ -161,6 +161,9 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
         tuning_report = tuner.optimize(apply=False)
         best_configs = cutout_tuner.CutoutTuner.top_k_configs(tuning_report, k=k)
         subgraph_patterns = tuner._extract_patterns(best_configs)
+
+        print(subgraph_patterns)
+
         i = 0
         for nsdfg in sdfg.all_sdfgs_recursive():
             for state in nsdfg.states():
@@ -228,7 +231,7 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
                                 except:
                                     continue
 
-                        base_runtime = optim_utils.subprocess_measure(baseline, dreport_, i=self._i, j=self._j)
+                        base_runtime = optim_utils.subprocess_measure(baseline, dreport_, i=192, j=192)
                         best_pattern_runtime = base_runtime
                         if base_runtime == math.inf:
                             break
@@ -273,7 +276,7 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
                                 except:
                                     continue
 
-                        fused_runtime = optim_utils.subprocess_measure(experiment_sdfg, dreport_, i=self._i, j=self._j)
+                        fused_runtime = optim_utils.subprocess_measure(experiment_sdfg, dreport_, i=192, j=192)
                         if fused_runtime >= best_pattern_runtime:
                             continue
 

@@ -164,6 +164,8 @@ class SubgraphFusionTuner(cutout_tuner.CutoutTuner):
         best_configs = cutout_tuner.CutoutTuner.top_k_configs(tuning_report, k=k)
         subgraph_patterns = tuner._extract_patterns(best_configs)
 
+        print(subgraph_patterns)
+
         i = 0
         for nsdfg in sdfg.all_sdfgs_recursive():
             for state in nsdfg.states():
@@ -234,7 +236,7 @@ class SubgraphFusionTuner(cutout_tuner.CutoutTuner):
                                 except:
                                     continue
 
-                        base_runtime = optim_utils.subprocess_measure(baseline, dreport_, i=self._i, j=self._j)
+                        base_runtime = optim_utils.subprocess_measure(baseline, dreport_, i=192, j=192)
                         best_pattern_runtime = base_runtime
                         if base_runtime == math.inf:
                             break
@@ -279,7 +281,7 @@ class SubgraphFusionTuner(cutout_tuner.CutoutTuner):
                                     continue
 
                         experiment_state.instrument = dace.InstrumentationType.GPU_Events
-                        pattern_runtime = optim_utils.subprocess_measure(experiment_sdfg, dreport_, i=self._i, j=self._j)
+                        pattern_runtime = optim_utils.subprocess_measure(experiment_sdfg, dreport_, i=192, j=192)
 
                         if pattern_runtime >= best_pattern_runtime:
                             continue
