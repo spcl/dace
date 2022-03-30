@@ -187,118 +187,125 @@ class SubgraphFusionTuner(cutout_tuner.CutoutTuner):
                 except AttributeError as e:
                     continue
  
-                base_runtime = None
-                best_pattern = None
-                best_pattern_runtime = math.inf
-                for j, pattern in enumerate(subgraph_patterns): 
-                    maps = []
-                    for node in state.nodes():
-                        if isinstance(node, dace.nodes.MapEntry) and xfh.get_parent_map(state, node) is None:
-                            maps.append(node)
+                while True:
+                    base_runtime = None
+                    best_pattern = None
+                    best_pattern_runtime = math.inf
+                    for j, pattern in enumerate(subgraph_patterns): 
+                        maps = []
+                        for node in state.nodes():
+                            if isinstance(node, dace.nodes.MapEntry) and xfh.get_parent_map(state, node) is None:
+                                maps.append(node)
 
-                    if len(maps) < 2:
+                        if len(maps) < 2:
+                            break
+
+                        maps_desc = {}
+                        state_desc = Counter()
+                        for map_entry in maps:
+                            map_desc = SubgraphFusionTuner.map_descriptor(state, map_entry)
+                            state_desc.update({map_desc: 1})
+                            
+                            if not map_desc in maps_desc:
+                                maps_desc[map_desc] = []
+
+                            maps_desc[map_desc].append(map_entry)
+                        
+                        included = True
+                        for key in pattern:
+                            if not key in state_desc or pattern[key] > state_desc[key]:
+                                included = False                        
+                                break
+
+                        if not included:
+                            continue
+
+                        # State is applicable to fusion, compute baseline once.
+                        if base_runtime is None:
+                            baseline = cutter.cutout_state(state, *(state.nodes()), make_copy=False)                    
+                            baseline.start_state.instrument = dace.InstrumentationType.GPU_Events
+                            
+                            dreport_ = {}
+                            for cstate in baseline.nodes():
+                                for dnode in cstate.data_nodes():
+                                    array = baseline.arrays[dnode.data]
+                                    if array.transient:
+                                        continue
+                                    try:
+                                        data = dreport.get_first_version(dnode.data)
+                                        dreport_[dnode.data] = data
+                                    except:
+                                        continue
+
+                            base_runtime = optim_utils.subprocess_measure(baseline, dreport_, i=192, j=192)
+                            best_pattern_runtime = base_runtime
+                            if base_runtime == math.inf:
+                                break
+
+                        # Construct subgraph greedily
+                        subgraph_maps = []
+                        for desc in pattern:
+                            num = pattern[desc]
+                            subgraph_maps.extend(maps_desc[desc][:num])
+
+                        # Apply
+                        experiment_sdfg_ = cutter.cutout_state(state, *(state.nodes()), make_copy=False)
+                        experiment_state_ = experiment_sdfg_.start_state
+                        experiment_maps_ids = list(map(lambda me: experiment_state_.node_id(me), subgraph_maps))
+                        
+                        # Unnecessary?
+                        experiment_sdfg = copy.deepcopy(experiment_sdfg_)
+                        experiment_state = experiment_sdfg.start_state
+
+                        experiment_maps = list(map(lambda m_id: experiment_state.node(m_id), experiment_maps_ids))
+                        experiment_subgraph = helpers.subgraph_from_maps(sdfg=experiment_sdfg, graph=experiment_state, map_entries=experiment_maps)
+
+                        subgraph_fusion = sg.CompositeFusion(experiment_subgraph, experiment_sdfg.sdfg_id, experiment_sdfg.node_id(experiment_state))
+                        subgraph_fusion.allow_tiling = True
+                        subgraph_fusion.schedule_innermaps = dace.ScheduleType.GPU_Device
+                        if subgraph_fusion.can_be_applied(experiment_sdfg, experiment_subgraph):
+                            try:
+                                subgraph_fusion.apply(experiment_sdfg)
+                            except:
+                                continue
+
+                            dreport_ = {}
+                            for cstate in experiment_sdfg.nodes():
+                                for dnode in cstate.data_nodes():
+                                    array = experiment_sdfg.arrays[dnode.data]
+                                    if array.transient:
+                                        continue
+                                    try:
+                                        data = dreport.get_first_version(dnode.data)
+                                        dreport_[dnode.data] = data
+                                    except:
+                                        continue
+
+                            experiment_state.instrument = dace.InstrumentationType.GPU_Events
+                            pattern_runtime = optim_utils.subprocess_measure(experiment_sdfg, dreport_, i=192, j=192)
+
+                            if pattern_runtime >= best_pattern_runtime:
+                                continue
+
+                            best_pattern_runtime = pattern_runtime
+                            best_pattern = subgraph_maps
+
+
+                    if best_pattern is not None:
+                        subgraph = helpers.subgraph_from_maps(sdfg=nsdfg, graph=state, map_entries=best_pattern)
+                        subgraph_fusion = sg.CompositeFusion(subgraph, nsdfg.sdfg_id, nsdfg.node_id(state))
+                        subgraph_fusion.allow_tiling = True
+                        subgraph_fusion.schedule_innermaps = dace.ScheduleType.GPU_Device
+                        subgraph_fusion.apply(nsdfg)
+
+                        print(base_runtime, best_pattern_runtime)
+                        print(j, pattern)
+
+                        best_pattern = None
+                        best_pattern_runtime = math.inf
+                        base_runtime = None
+                    else:
                         break
-
-                    maps_desc = {}
-                    state_desc = Counter()
-                    for map_entry in maps:
-                        map_desc = SubgraphFusionTuner.map_descriptor(state, map_entry)
-                        state_desc.update({map_desc: 1})
-                        
-                        if not map_desc in maps_desc:
-                            maps_desc[map_desc] = []
-
-                        maps_desc[map_desc].append(map_entry)
-                    
-                    included = True
-                    for key in pattern:
-                        if not key in state_desc or pattern[key] > state_desc[key]:
-                            included = False                        
-                            break
-
-                    if not included:
-                        continue
-
-                    # State is applicable to fusion, compute baseline once.
-                    if base_runtime is None:
-                        baseline = cutter.cutout_state(state, *(state.nodes()), make_copy=False)                    
-                        baseline.start_state.instrument = dace.InstrumentationType.GPU_Events
-                        
-                        dreport_ = {}
-                        for cstate in baseline.nodes():
-                            for dnode in cstate.data_nodes():
-                                array = baseline.arrays[dnode.data]
-                                if array.transient:
-                                    continue
-                                try:
-                                    data = dreport.get_first_version(dnode.data)
-                                    dreport_[dnode.data] = data
-                                except:
-                                    continue
-
-                        base_runtime = optim_utils.subprocess_measure(baseline, dreport_, i=192, j=192)
-                        best_pattern_runtime = base_runtime
-                        if base_runtime == math.inf:
-                            break
-
-                    # Construct subgraph greedily
-                    subgraph_maps = []
-                    for desc in pattern:
-                        num = pattern[desc]
-                        subgraph_maps.extend(maps_desc[desc][:num])
-
-                    # Apply
-                    experiment_sdfg_ = cutter.cutout_state(state, *(state.nodes()), make_copy=False)
-                    experiment_state_ = experiment_sdfg_.start_state
-                    experiment_maps_ids = list(map(lambda me: experiment_state_.node_id(me), subgraph_maps))
-                    
-                    # Unnecessary?
-                    experiment_sdfg = copy.deepcopy(experiment_sdfg_)
-                    experiment_state = experiment_sdfg.start_state
-
-                    experiment_maps = list(map(lambda m_id: experiment_state.node(m_id), experiment_maps_ids))
-                    experiment_subgraph = helpers.subgraph_from_maps(sdfg=experiment_sdfg, graph=experiment_state, map_entries=experiment_maps)
-
-                    subgraph_fusion = sg.CompositeFusion(experiment_subgraph, experiment_sdfg.sdfg_id, experiment_sdfg.node_id(experiment_state))
-                    subgraph_fusion.allow_tiling = True
-                    subgraph_fusion.schedule_innermaps = dace.ScheduleType.GPU_Device
-                    if subgraph_fusion.can_be_applied(experiment_sdfg, experiment_subgraph):
-                        try:
-                            subgraph_fusion.apply(experiment_sdfg)
-                        except:
-                            continue
-
-                        dreport_ = {}
-                        for cstate in experiment_sdfg.nodes():
-                            for dnode in cstate.data_nodes():
-                                array = experiment_sdfg.arrays[dnode.data]
-                                if array.transient:
-                                    continue
-                                try:
-                                    data = dreport.get_first_version(dnode.data)
-                                    dreport_[dnode.data] = data
-                                except:
-                                    continue
-
-                        experiment_state.instrument = dace.InstrumentationType.GPU_Events
-                        pattern_runtime = optim_utils.subprocess_measure(experiment_sdfg, dreport_, i=192, j=192)
-
-                        if pattern_runtime >= best_pattern_runtime:
-                            continue
-
-                        best_pattern_runtime = pattern_runtime
-                        best_pattern = subgraph_maps
-
-
-                if best_pattern is not None:
-                    subgraph = helpers.subgraph_from_maps(sdfg=nsdfg, graph=state, map_entries=best_pattern)
-                    subgraph_fusion = sg.CompositeFusion(subgraph, nsdfg.sdfg_id, nsdfg.node_id(state))
-                    subgraph_fusion.allow_tiling = True
-                    subgraph_fusion.schedule_innermaps = dace.ScheduleType.GPU_Device
-                    subgraph_fusion.apply(nsdfg)
-
-                    print(base_runtime, best_pattern_runtime)
-                    print(j, pattern)
 
                 print()
                 print()
