@@ -159,9 +159,6 @@ def mttkrp_order_5_mode_0_compute(X: dctype[S0, S1, S2, S3, S4],
                                   LM: dctype[S3, R],
                                   MM: dctype[S4, R]) -> dctype[S0, R]:
 
-    parent_grid = dace.comm.Cart_create([P0, P1, P2, P3, P4, PR])
-    reduce_grid = dace.comm.Cart_sub(parent_grid, [False, True, True, True, True, False])
-
     # 'la, ma -> lma'
     tmp = np.ndarray((S3, S4, R), dtype=nptype)
     for l, m, a in dace.map[0:S3, 0:S4, 0:R]:
@@ -227,9 +224,6 @@ def mttkrp_order_5_mode_2_compute(X: dctype[S0, S1, S2, S3, S4],
                                   LM: dctype[S3, R],
                                   MM: dctype[S4, R]) -> dctype[S2, R]:
 
-    parent_grid = dace.comm.Cart_create([P0, P1, P2, P3, P4, PR])
-    reduce_grid = dace.comm.Cart_sub(parent_grid, [True, True, False, True, True, False])
-
     # 'la, ma -> lma'
     tmp = np.ndarray((S3, S4, R), dtype=nptype)
     for l, m, a in dace.map[0:S3, 0:S4, 0:R]:
@@ -294,9 +288,6 @@ def mttkrp_order_5_mode_4_compute(X: dctype[S0, S1, S2, S3, S4],
                                   JM: dctype[S1, R],
                                   KM: dctype[S2, R],
                                   LM: dctype[S3, R]) -> dctype[S4, R]:
-
-    parent_grid = dace.comm.Cart_create([P0, P1, P2, P3, P4, PR])
-    reduce_grid = dace.comm.Cart_sub(parent_grid, [True, True, True, True, False, False])
 
     # 'ia, ja -> ija'
     tmp = np.ndarray((S0, S1, R), dtype=nptype)
@@ -382,7 +373,7 @@ if __name__ == "__main__":
     
     if rank == 0:
         print(f"Median total runtime: {np.median(runtimes)} seconds", flush=True)
-        write_time(str(datetime.now()), "mttkrp_order_5_mode_0", "dace_cpu", size, (S, S, S, R), runtimes, file_name, field_names, append=True)
+        write_time(str(datetime.now()), "mttkrp_order_5_mode_0", "dace_cpu", size, (S, S, S, S, S, R), runtimes, file_name, field_names, append=True)
 
         runtimes = timeit.repeat(
             """func1c(X=lX, JM=lJ, KM=lK, LM=lL, MM=lM,
@@ -396,7 +387,7 @@ if __name__ == "__main__":
         )
 
         print(f"Median compute runtime: {np.median(runtimes)} seconds")
-        write_time(str(datetime.now()),"mttkrp_order_5_mode_0_compute", "dace_cpu", size, (S, S, S), runtimes, file_name, field_names, append=True)
+        write_time(str(datetime.now()),"mttkrp_order_5_mode_0_compute", "dace_cpu", size, (S, S, S, S, S, R), runtimes, file_name, field_names, append=True)
     
     # MTTKRP, order 3, mode 2
 
@@ -416,7 +407,7 @@ if __name__ == "__main__":
     
     if rank == 0:
         print(f"Median total runtime: {np.median(runtimes)} seconds", flush=True)
-        write_time(str(datetime.now()), "mttkrp_order_5_mode_2", "dace_cpu", size, (S, S, S, R), runtimes, file_name, field_names, append=True)
+        write_time(str(datetime.now()), "mttkrp_order_5_mode_2", "dace_cpu", size, (S, S, S, S, S, R), runtimes, file_name, field_names, append=True)
 
         runtimes = timeit.repeat(
             """func2c(X=lX, IM=lI, JM=lJ, LM=lL, MM=lM,
@@ -430,7 +421,7 @@ if __name__ == "__main__":
         )
 
         print(f"Median compute runtime: {np.median(runtimes)} seconds")
-        write_time(str(datetime.now()),"mttkrp_order_5_mode_2_compute", "dace_cpu", size, (S, S, S, R), runtimes, file_name, field_names, append=True)
+        write_time(str(datetime.now()),"mttkrp_order_5_mode_2_compute", "dace_cpu", size, (S, S, S, S, S, R), runtimes, file_name, field_names, append=True)
 
     # MTTKRP, order 5, mode 4
 
@@ -450,7 +441,7 @@ if __name__ == "__main__":
     
     if rank == 0:
         print(f"Median total runtime: {np.median(runtimes)} seconds", flush=True)
-        write_time(str(datetime.now()), "mttkrp_order_5_mode_4", "dace_cpu", size, (S, S, S, R), runtimes, file_name, field_names, append=True)
+        write_time(str(datetime.now()), "mttkrp_order_5_mode_4", "dace_cpu", size, (S, S, S, S, S, R), runtimes, file_name, field_names, append=True)
 
         runtimes = timeit.repeat(
             """func3c(X=lX, IM=lI, JM=lJ, KM=lK, LM=lL,
@@ -464,4 +455,4 @@ if __name__ == "__main__":
         )
 
         print(f"Median compute runtime: {np.median(runtimes)} seconds")
-        write_time(str(datetime.now()),"mttkrp_order_5_mode_4_compute", "dace_cpu", size, (S, S, S, R), runtimes, file_name, field_names, append=True)
+        write_time(str(datetime.now()),"mttkrp_order_5_mode_4_compute", "dace_cpu", size, (S, S, S, S, S, R), runtimes, file_name, field_names, append=True)

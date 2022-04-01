@@ -304,7 +304,7 @@ if __name__ == "__main__":
         )
 
         print(f"Median compute runtime: {np.median(runtimes)} seconds")
-        write_time(str(datetime.now()),"mttkrp_order_3_mode_0_compute", "dace_cpu", size, (S, S, S), runtimes, file_name, field_names, append=True)
+        write_time(str(datetime.now()),"mttkrp_order_3_mode_0_compute", "dace_cpu", size, (S, S, S, R), runtimes, file_name, field_names, append=True)
     
     # MTTKRP, order 3, mode 1
 

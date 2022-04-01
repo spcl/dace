@@ -6,13 +6,13 @@ import dace.library
 class MPI:
 
     cmake_minimum_version = "3.6"
-    cmake_packages = ["MPI"]
+    cmake_packages = []
     cmake_files = []
     cmake_variables = {}
     cmake_includes = []
-    cmake_libraries = ["${MPI_LIBRARIES}"]
-    cmake_compile_flags = ["-I${MPI_CXX_HEADER_DIR}"]
-    cmake_link_flags = ["${MPI_LINKER_FLAGS}"]
+    cmake_libraries = []
+    cmake_compile_flags = ["-I /opt/cray/pe/mpt/default/gni/mpich-gnu/8.2/include"]
+    cmake_link_flags = ["-L /opt/cray/pe/mpt/default/gni/mpich-gnu/8.2/lib -lmpich"]
 
     headers = ["mpi.h"]
     state_fields = []

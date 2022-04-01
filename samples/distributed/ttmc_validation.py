@@ -22,18 +22,23 @@ R0G4, R1G4, R2G4, R3G4, R4G4 = (dace.symbol(s) for s in ('R0G4', 'R1G4', 'R2G4',
 
 # Process grid lengths for tensor modes
 P0, P1, P2, P3, P4 = (dace.symbol(s) for s in ('P0', 'P1', 'P2', 'P3', 'P4'))
+P0G1, P1G1, P2G1, P3G1, P4G1 = (dace.symbol(s) for s in ('P0G1', 'P1G1', 'P2G1', 'P3G1', 'P4G1'))
+P0G2, P1G2, P2G2, P3G2, P4G2 = (dace.symbol(s) for s in ('P0G2', 'P1G2', 'P2G2', 'P3G2', 'P4G2'))
+P0G3, P1G3, P2G3, P3G3, P4G3 = (dace.symbol(s) for s in ('P0G3', 'P1G3', 'P2G3', 'P3G3', 'P4G3'))
+P0G4, P1G4, P2G4, P3G4, P4G4 = (dace.symbol(s) for s in ('P0G4', 'P1G4', 'P2G4', 'P3G4', 'P4G4'))
 # Process grid lengths for tensor eigenvectors
 PR0, PR1, PR2, PR3, PR4 = (dace.symbol(s) for s in ('PR0', 'PR1', 'PR2', 'PR3', 'PR4'))
+PR0G1, PR1G1, PR2G1, PR3G1, PR4G1 = (dace.symbol(s) for s in ('PR0G1', 'PR1G1', 'PR2G1', 'PR3G1', 'PR4G1'))
+PR0G2, PR1G2, PR2G2, PR3G2, PR4G2 = (dace.symbol(s) for s in ('PR0G2', 'PR1G2', 'PR2G2', 'PR3G2', 'PR4G2'))
+PR0G3, PR1G3, PR2G3, PR3G3, PR4G3 = (dace.symbol(s) for s in ('PR0G3', 'PR1G3', 'PR2G3', 'PR3G3', 'PR4G3'))
+PR0G4, PR1G4, PR2G4, PR3G4, PR4G4 = (dace.symbol(s) for s in ('PR0G4', 'PR1G4', 'PR2G4', 'PR3G4', 'PR4G4'))
 
 
 # Einsums
-# Tensor modes = 5
-# mode-0 TTMc
-einsum_0 = 'ijklm, jb, kc, ld, me -> ibcde'
-# mode-2 MTTKRP
-einsum_2 = 'ijklm, ia, jb, ld, me -> abkde'
-# mode-4 MTTKRP
-einsum_4 = 'ijklm, ia, jb, kc, ld -> abcdm'
+# Tensor order 3
+order_3_mode_0_str = 'ijk, jb, kc -> ibc'
+# Tensor order 5
+order_5_mode_0_str = 'ijklm, jb, kc, ld, me -> ibcde'
 
 
 dctype = dace.float64
@@ -123,6 +128,42 @@ grid_ijbcde = {
 }
 
 
+grid_ijkb = {
+    #     [i, j,   k, b]
+    1:    [1, 1,   1, 1],
+    2:    [1, 1,   2, 1],
+    4:    [1, 1,   4, 1],
+    8:    [1, 1,   8, 1],
+    12:   [1, 1,  12, 1],
+    16:   [1, 1,  16, 1],
+    27:   [1, 1,  27, 1],
+    32:   [1, 1,  32, 1],
+    64:   [1, 1,  64, 1],
+    125:  [1, 1, 125, 1],
+    128:  [1, 1, 128, 1],
+    256:  [1, 1, 256, 1],
+    512:  [1, 1, 512, 1]
+}
+
+
+grid_ikbc = {
+    #     [i,   k, b, c]
+    1:    [1,   1, 1, 1],
+    2:    [1,   2, 1, 1],
+    4:    [1,   4, 1, 1],
+    8:    [1,   8, 1, 1],
+    12:   [1,  12, 1, 1],
+    16:   [1,  16, 1, 1],
+    27:   [1,  27, 1, 1],
+    32:   [1,  32, 1, 1],
+    64:   [1,  64, 1, 1],
+    125:  [1, 125, 1, 1],
+    128:  [1, 128, 1, 1],
+    256:  [1, 256, 1, 1],
+    512:  [1, 512, 1, 1]
+}
+
+
 @dace.program
 def mode_0_shared(X: dace.float64[S0, S1, S2, S3, S4],
                   JM: dace.float64[S1, R1],
@@ -140,22 +181,58 @@ def mode_0_shared(X: dace.float64[S0, S1, S2, S3, S4],
 
 
 @dace.program
+def ttmc_order3_mode_0(X: dace.float64[S0G1, S1G1, S2G1],
+                       JM: dace.float64[S1G1, R1G1],
+                       KM: dace.float64[S2G2, R2G2]) -> dace.float64[S0G2, R1G2, R2G2]:
+
+    # grid: ijkb
+    grid1 = dace.comm.Cart_create([P0G1, P1G1, P2G1, PR1G1])
+    # out: bik
+    grid1_out_gather = dace.comm.Cart_sub(grid1, [True, False, True, True], exact_grid=0)
+    grid1_out_reduce = dace.comm.Cart_sub(grid1, [False, True, False, False])
+    grid1_out_subarray = dace.comm.Subarray((R1, S0, S2), (R1G1, S0G1, S2G1), dace.float64,
+                                            process_grid=grid1_out_gather,
+                                            correspondence=(3, 0, 2))
+
+    # grid: ikbc
+    grid2 = dace.comm.Cart_create([P0G2, P2G2, PR1G2, PR2G2])
+    # in: bik
+    grid2_in_scatter = dace.comm.Cart_sub(grid2, [True, True, True, False], exact_grid=0)
+    grid2_in_bcast = dace.comm.Cart_sub(grid2, [False, False, False, True])
+    grid2_in_subarray = dace.comm.Subarray((R1, S0, S2), (R1G2, S0G2, S2G2), dace.float64,
+                                           process_grid=grid2_in_scatter,
+                                           correspondence=(2, 0, 1))
+    # out: ibc
+    grid2_out_reduce = dace.comm.Cart_sub(grid2, [False, True, False, False])
+
+    
+    grid1_out = np.tensordot(JM, X, axes=([0], [1]))     # bik
+    dace.comm.Reduce(grid1_out, 'MPI_SUM', grid=grid1_out_reduce)
+    grid2_in = np.empty_like(grid1_out, shape=(R1G2, S0G2, S2G2))  # Need a nice way to infer the shape here
+    dace.comm.Redistribute(grid1_out, grid1_out_subarray, grid2_in, grid2_in_subarray)
+    dace.comm.Bcast(grid2_in, grid=grid2_in_bcast)
+
+    grid2_out = np.tensordot(grid2_in, KM, axes=([2], [0]))   # bic
+    dace.comm.Allreduce(grid2_out, 'MPI_SUM', grid=grid2_out_reduce)
+    return np.transpose(grid2_out, axes=(1, 0, 2))
+
+
+@dace.program
 def mode_0_four_grids(X: dace.float64[S0G1, S1G1, S2G1, S3G1, S4G1],
                       JM: dace.float64[S1G4, R1G4],
                       KM: dace.float64[S2G3, R2G3],
                       LM: dace.float64[S3G2, R3G2],
-                      MM: dace.float64[S4G1, R4G1],
-                      procs: dace.constant) -> dace.float64[S0G4, R1G4, R2G4, R3G4, R4G4]:
+                      MM: dace.float64[S4G1, R4G1]) -> dace.float64[S0G4, R1G4, R2G4, R3G4, R4G4]:
 
     # grid: ijklme
-    grid1 = dace.comm.Cart_create(grid_ijklme[procs])
+    grid1 = dace.comm.Cart_create([P0G1, P1G1, P2G1, P3G1, P4G1,  PR4G1])
     # out: ijkle
     grid1_out_gather = dace.comm.Cart_sub(grid1, [True, True, True, True, False, True], exact_grid=0)
     grid1_out_reduce = dace.comm.Cart_sub(grid1, [False, False, False, False, True, False])
     grid1_out_subarray = dace.comm.Subarray((S0, S1, S2, S3, R4), (S0G1, S1G1, S2G1, S3G1, R4G1), dace.float64, process_grid=grid1_out_gather)
 
     # grid: ijklde
-    grid2 = dace.comm.Cart_create(grid_ijklde[procs])
+    grid2 = dace.comm.Cart_create([P0G2, P1G2, P2G2, P3G2, PR3G2,  PR4G2])
     # in: ijkle
     grid2_in_scatter = dace.comm.Cart_sub(grid2, [True, True, True, True, False, True], exact_grid=0)
     grid2_in_bcast = dace.comm.Cart_sub(grid2, [False, False, False, False, True, False])
@@ -166,7 +243,7 @@ def mode_0_four_grids(X: dace.float64[S0G1, S1G1, S2G1, S3G1, S4G1],
     grid2_out_subarray = dace.comm.Subarray((R4, S0, S1, S2, R3), (R4G2, S0G2, S1G2, S2G2, R3G2), dace.float64, process_grid=grid2_out_gather, correspondence=(4, 0, 1, 2, 3))
 
     # grid: ijkcde
-    grid3 = dace.comm.Cart_create(grid_ijkcde[procs])
+    grid3 = dace.comm.Cart_create([P0G3, P1G3, P2G3, PR2G3, PR3G3,  PR4G3])
     # in: eijkd (ijkde)
     grid3_in_scatter = dace.comm.Cart_sub(grid3, [True, True, True, False, True, True], exact_grid=0)
     grid3_in_bcast = dace.comm.Cart_sub(grid3, [False, False, False, True, False, False])
@@ -177,7 +254,7 @@ def mode_0_four_grids(X: dace.float64[S0G1, S1G1, S2G1, S3G1, S4G1],
     grid3_out_subarray = dace.comm.Subarray((R3, R4, S0, S1, R2), (R3G3, R4G3, S0G3, S1G3, R2G3), dace.float64, process_grid=grid3_out_gather, correspondence=(3, 4, 0, 1, 2))
 
     # grid: ijbcde
-    grid4 = dace.comm.Cart_create(grid_ijbcde[procs])
+    grid4 = dace.comm.Cart_create([P0G4, P1G4, PR1G4, PR2G4, PR3G4,  PR4G4])
     # in: deijc (ijcde)
     grid4_in_scatter = dace.comm.Cart_sub(grid4, [True, True, False, True, True, True], exact_grid=0)
     grid4_in_bcast = dace.comm.Cart_sub(grid4, [False, False, True, False, False, False])
@@ -219,10 +296,9 @@ def mode_0_ijkcde_grid(X: dace.float64[S0, S1, S2, S3, S4],
                        JM: dace.float64[S1, R1],
                        KM: dace.float64[S2, R2],
                        LM: dace.float64[S3, R3],
-                       MM: dace.float64[S4, R4],
-                       procs: dace.constant) -> dace.float64[S0, R1, R2, R3, R4]:
+                       MM: dace.float64[S4, R4]) -> dace.float64[S0, R1, R2, R3, R4]:
 
-    grid = dace.comm.Cart_create(grid_ijkcde[procs])
+    grid = dace.comm.Cart_create([P0G3, P1G3, P2G3, PR2G3, PR3G3,  PR4G3])
 
     out1_reduce = dace.comm.Cart_sub(grid, [False, False, False, False, True, False])
     out2_reduce = dace.comm.Cart_sub(grid, [False, False, False, True, False, False])
@@ -283,16 +359,103 @@ if __name__ == "__main__":
     if size not in grid_ijklmbcde:
         raise ValueError("Selected number of MPI processes is not supported.")
     
-    sdfg0, sdfg1, sdfg2 = None, None, None
+    sdfg0, sdfg1, sdfg2, sdfg3 = None, None, None, None
     if rank == 0:
         sdfg0 = mode_0_four_grids.to_sdfg(simplify=True, procs=size)
         sdfg1 = mode_0_ijkcde_grid.to_sdfg(simplify=True, procs=size)
         sdfg2 = mode_0_unified_grid.to_sdfg(simplify=True, procs=size)
+        sdfg3 = ttmc_order3_mode_0.to_sdfg(simplify=True)
     func0 = utils.distributed_compile(sdfg0, commworld)
     func1 = utils.distributed_compile(sdfg1, commworld)
     func2 = utils.distributed_compile(sdfg2, commworld)
+    func3 = utils.distributed_compile(sdfg3, commworld)
 
-    grid_dims = set(grid_ijklmbcde[size])
+    # TTMc order 3
+    grid_dims = grid_ijkb[size]
+    lcm = np.lcm.reduce(list(grid_dims))
+
+    S, R = np.int32(2 * lcm), np.int32(2 * lcm)
+
+    SG1 = [S // np.int32(p) for p in grid_ijkb[size][:-1]]
+    RG1 = [R, R] + [R // np.int32(p) for p in grid_ijkb[size][-1:]]
+    SG2 = [S // np.int32(p) for p in grid_ikbc[size][:-2]] + [S]
+    RG2 = [R] + [R // np.int32(p) for p in grid_ikbc[size][-2:]]
+
+    PG1 = grid_ijkb[size]
+    PG2 = grid_ikbc[size]
+
+    X = np.arange(S**3, dtype=np.float64).reshape(S, S, S).copy()
+    JM = np.arange(S*R, dtype=np.float64).reshape(S, R).copy()
+    KM = np.arange(S*R, dtype=np.float64).reshape(S, R).copy()
+
+    ###### Reference ######
+
+    if rank == 0:
+        ref = oe.contract(order_3_mode_0_str, X, JM, KM)
+
+    commworld.Barrier()
+
+    ##### One Grid per TensorDot #####
+
+    if rank == 0:
+        print(
+            f"""
+##### One Grid per TensorDot #####
+jb, ijk -> bik: local sizes {SG1}, {RG1}, grid {grid_ijkb[size]}
+bik, kc -> ibc: local sizes {SG2}, {RG2}, grid {grid_ikbc[size]}""", flush=True
+        )
+    
+    cart_comm = commworld.Create_cart(grid_ijklme[size])
+    coords = cart_comm.Get_coords(rank)
+    lX = X[
+        coords[0] * SG1[0]: (coords[0] + 1) * SG1[0],
+        coords[1] * SG1[1]: (coords[1] + 1) * SG1[1],
+        coords[2] * SG1[2]: (coords[2] + 1) * SG1[2]
+    ].copy()
+    lJM = JM[coords[1] * SG1[1]: (coords[1] + 1) * SG1[1], coords[3] * RG1[1]: (coords[3] + 1) * RG1[1]].copy()
+    cart_comm = commworld.Create_cart(grid_ijbcde[size])
+    coords = cart_comm.Get_coords(rank)
+    lKM = KM[coords[1] * SG2[2]: (coords[1] + 1) * SG2[2], coords[3] * RG2[2]: (coords[3] + 1) * RG2[2]].copy()
+
+    val = func3(X=lX, JM=lJM, KM=lKM,
+                S0=S, S1=S, S2=S, S3=S, S4=S, R0=R, R1=R, R2=R, R3=R, R4=R,
+                S0G1=SG1[0], S1G1=SG1[1], S2G1=SG1[2], 
+                S0G2=SG2[0], S1G2=SG2[1], S2G2=SG2[2], 
+                R0G1=RG1[0], R1G1=RG1[1], R2G1=RG1[2], 
+                R0G2=RG2[0], R1G2=RG2[1], R2G2=RG2[2], 
+                P0G1=PG1[0], P1G1=PG1[1], P2G1=PG1[2], PR1G1=PG1[3],
+                P0G2=PG2[0], P1G2=PG2[1], P2G2=PG2[2], PR1G2=PG2[2], PR2G2=PG2[3])
+
+    if rank > 0:
+        commworld.Send(val, 0)
+    else:
+        out = np.ndarray((S, R, R), dtype=nptype)
+        out[
+            coords[0] * SG2[0]: (coords[0] + 1) * SG2[0],
+            coords[2] * RG2[1]: (coords[2] + 1) * RG2[1],
+            coords[3] * RG2[2]: (coords[3] + 1) * RG2[2]
+        ] = val
+
+        buf = np.ndarray((SG2[0], RG2[1], RG2[2]), dtype=nptype)
+        for r in range(1, size):
+            commworld.Recv(buf, r)
+            coords = cart_comm.Get_coords(r)
+            out[
+                coords[0] * SG2[0]: (coords[0] + 1) * SG2[0],
+                coords[2] * RG2[1]: (coords[2] + 1) * RG2[1],
+                coords[3] * RG2[2]: (coords[3] + 1) * RG2[2]
+            ] = buf
+
+        print(f"\nRelative error: {np.linalg.norm(out-ref) / np.linalg.norm(out)}", flush=True)
+        assert(np.allclose(out, ref))
+    
+    commworld.Barrier()
+
+
+    # TTMc order 5
+
+    # grid_dims = set(grid_ijklmbcde[size])
+    grid_dims = set()
     grid_dims.update(grid_ijklme[size])
     grid_dims.update(grid_ijklde[size])
     grid_dims.update(grid_ijkcde[size])
@@ -313,6 +476,11 @@ if __name__ == "__main__":
     SG4 = [S // np.int32(p) for p in grid_ijbcde[size][:-4]]  + [S, S, S, S]
     RG4 = [R] + [R // np.int32(p) for p in grid_ijbcde[size][-4:]]
 
+    PG1 = grid_ijklme[size]
+    PG2 = grid_ijklde[size]
+    PG3 = grid_ijkcde[size]
+    PG4 = grid_ijbcde[size]
+
     X = np.arange(S**5, dtype=np.float64).reshape(S, S, S, S, S).copy()
     JM = np.arange(S*R, dtype=np.float64).reshape(S, R).copy()
     KM = np.arange(S*R, dtype=np.float64).reshape(S, R).copy()
@@ -322,61 +490,61 @@ if __name__ == "__main__":
     ###### Reference ######
 
     if rank == 0:
-        ref = oe.contract(einsum_0, X, JM, KM, LM, MM)
+        ref = oe.contract(order_5_mode_0_str, X, JM, KM, LM, MM)
 
     commworld.Barrier()
 
-    ###### Unified Grid #####
+    # ###### Unified Grid #####
 
-    if rank == 0:
-        print(f"##### Unified Grid #####\nLocal Sizes: {SGU}, {RGU}\nGrid: {grid_ijklmbcde[size]}""", flush=True)
+    # if rank == 0:
+    #     print(f"##### Unified Grid #####\nLocal Sizes: {SGU}, {RGU}\nGrid: {grid_ijklmbcde[size]}""", flush=True)
     
-    cart_comm = commworld.Create_cart(grid_ijklmbcde[size])
-    coords = cart_comm.Get_coords(rank)
-    lX = X[
-        coords[0] * SGU[0]: (coords[0] + 1) * SGU[0],
-        coords[1] * SGU[1]: (coords[1] + 1) * SGU[1],
-        coords[2] * SGU[2]: (coords[2] + 1) * SGU[2],
-        coords[3] * SGU[3]: (coords[3] + 1) * SGU[3],
-        coords[4] * SGU[4]: (coords[4] + 1) * SGU[4]
-    ].copy()
-    lJM = JM[coords[1] * SGU[1]: (coords[1] + 1) * SGU[1], coords[5] * RGU[1]: (coords[5] + 1) * RGU[1]].copy()
-    lKM = KM[coords[2] * SGU[2]: (coords[2] + 1) * SGU[2], coords[6] * RGU[2]: (coords[6] + 1) * RGU[2]].copy()
-    lLM = LM[coords[3] * SGU[3]: (coords[3] + 1) * SGU[3], coords[7] * RGU[3]: (coords[7] + 1) * RGU[3]].copy()
-    lMM = MM[coords[4] * SGU[4]: (coords[4] + 1) * SGU[4], coords[8] * RGU[4]: (coords[8] + 1) * RGU[4]].copy()
+    # cart_comm = commworld.Create_cart(grid_ijklmbcde[size])
+    # coords = cart_comm.Get_coords(rank)
+    # lX = X[
+    #     coords[0] * SGU[0]: (coords[0] + 1) * SGU[0],
+    #     coords[1] * SGU[1]: (coords[1] + 1) * SGU[1],
+    #     coords[2] * SGU[2]: (coords[2] + 1) * SGU[2],
+    #     coords[3] * SGU[3]: (coords[3] + 1) * SGU[3],
+    #     coords[4] * SGU[4]: (coords[4] + 1) * SGU[4]
+    # ].copy()
+    # lJM = JM[coords[1] * SGU[1]: (coords[1] + 1) * SGU[1], coords[5] * RGU[1]: (coords[5] + 1) * RGU[1]].copy()
+    # lKM = KM[coords[2] * SGU[2]: (coords[2] + 1) * SGU[2], coords[6] * RGU[2]: (coords[6] + 1) * RGU[2]].copy()
+    # lLM = LM[coords[3] * SGU[3]: (coords[3] + 1) * SGU[3], coords[7] * RGU[3]: (coords[7] + 1) * RGU[3]].copy()
+    # lMM = MM[coords[4] * SGU[4]: (coords[4] + 1) * SGU[4], coords[8] * RGU[4]: (coords[8] + 1) * RGU[4]].copy()
 
-    val = func2(X=lX, JM=lJM, KM=lKM, LM=lLM, MM=lMM, procs=size,
-                S0=SGU[0], S1=SGU[1], S2=SGU[2], S3=SGU[3], S4=SGU[4],
-                R0=RGU[0], R1=RGU[1], R2=RGU[2], R3=RGU[3], R4=RGU[4])
+    # val = func2(X=lX, JM=lJM, KM=lKM, LM=lLM, MM=lMM, procs=size,
+    #             S0=SGU[0], S1=SGU[1], S2=SGU[2], S3=SGU[3], S4=SGU[4],
+    #             R0=RGU[0], R1=RGU[1], R2=RGU[2], R3=RGU[3], R4=RGU[4])
 
-    if rank > 0:
-        commworld.Send(val, 0)
-    else:
-        out = np.ndarray((S, R, R, R, R), dtype=nptype)
-        out[
-            coords[0] * SGU[0]: (coords[0] + 1) * SGU[0],
-            coords[5] * RGU[1]: (coords[5] + 1) * RGU[1],
-            coords[6] * RGU[2]: (coords[6] + 1) * RGU[2],
-            coords[7] * RGU[3]: (coords[7] + 1) * RGU[3],
-            coords[8] * RGU[4]: (coords[8] + 1) * RGU[4]
-        ] = val
+    # if rank > 0:
+    #     commworld.Send(val, 0)
+    # else:
+    #     out = np.ndarray((S, R, R, R, R), dtype=nptype)
+    #     out[
+    #         coords[0] * SGU[0]: (coords[0] + 1) * SGU[0],
+    #         coords[5] * RGU[1]: (coords[5] + 1) * RGU[1],
+    #         coords[6] * RGU[2]: (coords[6] + 1) * RGU[2],
+    #         coords[7] * RGU[3]: (coords[7] + 1) * RGU[3],
+    #         coords[8] * RGU[4]: (coords[8] + 1) * RGU[4]
+    #     ] = val
 
-        buf = np.ndarray((SGU[0], RGU[1], RGU[2], RGU[3], RGU[4]), dtype=nptype)
-        for r in range(1, size):
-            commworld.Recv(buf, r)
-            coords = cart_comm.Get_coords(r)
-            out[
-                coords[0] * SGU[0]: (coords[0] + 1) * SGU[0],
-                coords[5] * RGU[1]: (coords[5] + 1) * RGU[1],
-                coords[6] * RGU[2]: (coords[6] + 1) * RGU[2],
-                coords[7] * RGU[3]: (coords[7] + 1) * RGU[3],
-                coords[8] * RGU[4]: (coords[8] + 1) * RGU[4]
-            ] = buf
+    #     buf = np.ndarray((SGU[0], RGU[1], RGU[2], RGU[3], RGU[4]), dtype=nptype)
+    #     for r in range(1, size):
+    #         commworld.Recv(buf, r)
+    #         coords = cart_comm.Get_coords(r)
+    #         out[
+    #             coords[0] * SGU[0]: (coords[0] + 1) * SGU[0],
+    #             coords[5] * RGU[1]: (coords[5] + 1) * RGU[1],
+    #             coords[6] * RGU[2]: (coords[6] + 1) * RGU[2],
+    #             coords[7] * RGU[3]: (coords[7] + 1) * RGU[3],
+    #             coords[8] * RGU[4]: (coords[8] + 1) * RGU[4]
+    #         ] = buf
 
-        print(f"Relative error: {np.linalg.norm(out-ref) / np.linalg.norm(out)}", flush=True)
-        assert(np.allclose(out, ref))
+    #     print(f"Relative error: {np.linalg.norm(out-ref) / np.linalg.norm(out)}", flush=True)
+    #     assert(np.allclose(out, ref))
     
-    commworld.Barrier()
+    # commworld.Barrier()
 
     ##### One Grid per TensorDot #####
 
@@ -419,7 +587,11 @@ ijcde, jb -> ibcde: local sizes {SG4}, {RG4}, grid {grid_ijbcde[size]}""", flush
                 R0G1=RG1[0], R1G1=RG1[1], R2G1=RG1[2], R3G1=RG1[3], R4G1=RG1[4],
                 R0G2=RG2[0], R1G2=RG2[1], R2G2=RG2[2], R3G2=RG2[3], R4G2=RG2[4],
                 R0G3=RG3[0], R1G3=RG3[1], R2G3=RG3[2], R3G3=RG3[3], R4G3=RG3[4],
-                R0G4=RG4[0], R1G4=RG4[1], R2G4=RG4[2], R3G4=RG4[3], R4G4=RG4[4])
+                R0G4=RG4[0], R1G4=RG4[1], R2G4=RG4[2], R3G4=RG4[3], R4G4=RG4[4],
+                P0G1=PG1[0], P1G1=PG1[1], P2G1=PG1[2], P3G1=PG1[3], P4G1=PG1[4], PR4G1=PG1[5],
+                P0G2=PG2[0], P1G2=PG2[1], P2G2=PG2[2], P3G2=PG2[3], PR3G2=PG2[4], PR4G2=PG2[5],
+                P0G3=PG3[0], P1G3=PG3[1], P2G3=PG3[2], PR2G3=PG3[3], PR3G3=PG3[4], PR4G3=PG3[5],
+                P0G4=PG4[0], P1G4=PG4[1], PR1G4=PG4[2], PR2G4=PG4[3], PR3G4=PG4[4], PR4G4=PG4[5])
 
     if rank > 0:
         commworld.Send(val, 0)
@@ -471,7 +643,11 @@ ijcde, jb -> ibcde: local sizes {SG4}, {RG4}, grid {grid_ijbcde[size]}""", flush
 
     val = func1(X=lX, JM=lJM, KM=lKM, LM=lLM, MM=lMM, procs=size,
                 S0=SG3[0], S1=SG3[1], S2=SG3[2], S3=SG3[3], S4=SG3[4],
-                R0=RG3[0], R1=RG3[1], R2=RG3[2], R3=RG3[3], R4=RG3[4])
+                R0=RG3[0], R1=RG3[1], R2=RG3[2], R3=RG3[3], R4=RG3[4],
+                P0G1=PG1[0], P1G1=PG1[1], P2G1=PG1[2], P3G1=PG1[3], P4G1=PG1[4], PR4G1=PG1[5],
+                P0G2=PG2[0], P1G2=PG2[1], P2G2=PG2[2], P3G2=PG2[3], PR3G2=PG2[4], PR4G2=PG2[5],
+                P0G3=PG3[0], P1G3=PG3[1], P2G3=PG3[2], PR2G3=PG3[3], PR3G3=PG3[4], PR4G3=PG3[5],
+                P0G4=PG4[0], P1G4=PG4[1], PR1G4=PG4[2], PR2G4=PG4[3], PR3G4=PG4[4], PR4G4=PG4[5])
 
     if rank > 0:
         commworld.Send(val, 0)

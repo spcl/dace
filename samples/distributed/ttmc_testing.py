@@ -1,10 +1,13 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 """ Explicit distributed TTMc sample programs. """
+import csv
 import dace
 import numpy as np
 import timeit
 
 from dace.sdfg import utils
+from datetime import datetime
+from os.path import exists
 
 
 # Tensor mode lengths
@@ -22,39 +25,45 @@ R0G4, R1G4, R2G4, R3G4, R4G4 = (dace.symbol(s) for s in ('R0G4', 'R1G4', 'R2G4',
 
 # Process grid lengths for tensor modes
 P0, P1, P2, P3, P4 = (dace.symbol(s) for s in ('P0', 'P1', 'P2', 'P3', 'P4'))
+P0G1, P1G1, P2G1, P3G1, P4G1 = (dace.symbol(s) for s in ('P0G1', 'P1G1', 'P2G1', 'P3G1', 'P4G1'))
+P0G2, P1G2, P2G2, P3G2, P4G2 = (dace.symbol(s) for s in ('P0G2', 'P1G2', 'P2G2', 'P3G2', 'P4G2'))
+P0G3, P1G3, P2G3, P3G3, P4G3 = (dace.symbol(s) for s in ('P0G3', 'P1G3', 'P2G3', 'P3G3', 'P4G3'))
+P0G4, P1G4, P2G4, P3G4, P4G4 = (dace.symbol(s) for s in ('P0G4', 'P1G4', 'P2G4', 'P3G4', 'P4G4'))
 # Process grid lengths for tensor eigenvectors
 PR0, PR1, PR2, PR3, PR4 = (dace.symbol(s) for s in ('PR0', 'PR1', 'PR2', 'PR3', 'PR4'))
+PR0G1, PR1G1, PR2G1, PR3G1, PR4G1 = (dace.symbol(s) for s in ('PR0G1', 'PR1G1', 'PR2G1', 'PR3G1', 'PR4G1'))
+PR0G2, PR1G2, PR2G2, PR3G2, PR4G2 = (dace.symbol(s) for s in ('PR0G2', 'PR1G2', 'PR2G2', 'PR3G2', 'PR4G2'))
+PR0G3, PR1G3, PR2G3, PR3G3, PR4G3 = (dace.symbol(s) for s in ('PR0G3', 'PR1G3', 'PR2G3', 'PR3G3', 'PR4G3'))
+PR0G4, PR1G4, PR2G4, PR3G4, PR4G4 = (dace.symbol(s) for s in ('PR0G4', 'PR1G4', 'PR2G4', 'PR3G4', 'PR4G4'))
 
 
 # Einsums
-# Tensor modes = 5
-# mode-0 TTMc
-einsum_0 = 'ijklm, jb, kc, ld, me -> ibcde'
-# mode-2 MTTKRP
-einsum_2 = 'ijklm, ia, jb, ld, me -> abkde'
-# mode-4 MTTKRP
-einsum_4 = 'ijklm, ia, jb, kc, ld -> abcdm'
+# Tensor order 3
+order_3_mode_0_str = 'ijk, jb, kc -> ibc'
+# Tensor order 5
+order_5_mode_0_str = 'ijklm, jb, kc, ld, me -> ibcde'
 
 
 dctype = dace.float64
 nptype = np.float64
 
 
-weak_scaling = {
-    1: 60,
-    2: 70,
-    4: 82,
-    # 6: 90,
-    8: 96,
-    # 12: 108,
-    16: 112,
-    # 27: 123,
-    32: 128,
-    64: 152,
-    # 125: 175,
-    128: 176,
-    256: 200,
-    512: 232
+# Scaling
+scaling = {
+    1: (60, 24),
+    2: (68, 27),
+    4: (76, 31),
+    6: (84, 33),
+    8: (88, 34),
+    16: (96, 39),
+    30: (120, 43),
+    32: (112, 43),
+    64: (120, 48),
+    121: (143, 54),
+    128: (144, 54),
+    256: (160, 61),
+    # 506: (506, 68),
+    512: (192, 68)
 }
 
 grid_ijklmbcde = {
@@ -140,6 +149,28 @@ grid_ijbcde = {
 }
 
 
+def write_csv(file_name, field_names, values, append=True):
+    write_mode = 'w'
+    if append:
+        write_mode = 'a'
+    new_file = not exists(file_name)
+    with open(file_name, mode=write_mode) as csv_file:
+        writer = csv.DictWriter(csv_file, fieldnames=field_names)
+        if new_file:
+            writer.writeheader()
+        for entry in values:
+            writer.writerow(entry)
+
+
+def write_time(dtime, bench, frmwrk, nodes, sizes, time_list, file_name, field_names, append=True):
+    entries = []
+    sockets = MPI.COMM_WORLD.Get_size()
+    for t in time_list:
+        entries.append(
+            dict(datetime=dtime, benchmark=bench, framework=frmwrk, nodes=nodes, sizes=sizes, time=t))
+    write_csv(file_name, field_names, entries, append=append)
+
+
 @dace.program
 def mode_0_shared(X: dace.float64[S0, S1, S2, S3, S4],
                   JM: dace.float64[S1, R1],
@@ -161,18 +192,17 @@ def mode_0_four_grids(X: dace.float64[S0G1, S1G1, S2G1, S3G1, S4G1],
                       JM: dace.float64[S1G4, R1G4],
                       KM: dace.float64[S2G3, R2G3],
                       LM: dace.float64[S3G2, R3G2],
-                      MM: dace.float64[S4G1, R4G1],
-                      procs: dace.constant) -> dace.float64[S0G4, R1G4, R2G4, R3G4, R4G4]:
+                      MM: dace.float64[S4G1, R4G1]) -> dace.float64[S0G4, R1G4, R2G4, R3G4, R4G4]:
 
     # grid: ijklme
-    grid1 = dace.comm.Cart_create(grid_ijklme[procs])
+    grid1 = dace.comm.Cart_create([P0G1, P1G1, P2G1, P3G1, P4G1,  PR4G1])
     # out: ijkle
     grid1_out_gather = dace.comm.Cart_sub(grid1, [True, True, True, True, False, True], exact_grid=0)
     grid1_out_reduce = dace.comm.Cart_sub(grid1, [False, False, False, False, True, False])
     grid1_out_subarray = dace.comm.Subarray((S0, S1, S2, S3, R4), (S0G1, S1G1, S2G1, S3G1, R4G1), dace.float64, process_grid=grid1_out_gather)
 
     # grid: ijklde
-    grid2 = dace.comm.Cart_create(grid_ijklde[procs])
+    grid2 = dace.comm.Cart_create([P0G2, P1G2, P2G2, P3G2, PR3G2,  PR4G2])
     # in: ijkle
     grid2_in_scatter = dace.comm.Cart_sub(grid2, [True, True, True, True, False, True], exact_grid=0)
     grid2_in_bcast = dace.comm.Cart_sub(grid2, [False, False, False, False, True, False])
@@ -183,7 +213,7 @@ def mode_0_four_grids(X: dace.float64[S0G1, S1G1, S2G1, S3G1, S4G1],
     grid2_out_subarray = dace.comm.Subarray((R4, S0, S1, S2, R3), (R4G2, S0G2, S1G2, S2G2, R3G2), dace.float64, process_grid=grid2_out_gather, correspondence=(4, 0, 1, 2, 3))
 
     # grid: ijkcde
-    grid3 = dace.comm.Cart_create(grid_ijkcde[procs])
+    grid3 = dace.comm.Cart_create([P0G3, P1G3, P2G3, PR2G3, PR3G3,  PR4G3])
     # in: eijkd (ijkde)
     grid3_in_scatter = dace.comm.Cart_sub(grid3, [True, True, True, False, True, True], exact_grid=0)
     grid3_in_bcast = dace.comm.Cart_sub(grid3, [False, False, False, True, False, False])
@@ -194,7 +224,7 @@ def mode_0_four_grids(X: dace.float64[S0G1, S1G1, S2G1, S3G1, S4G1],
     grid3_out_subarray = dace.comm.Subarray((R3, R4, S0, S1, R2), (R3G3, R4G3, S0G3, S1G3, R2G3), dace.float64, process_grid=grid3_out_gather, correspondence=(3, 4, 0, 1, 2))
 
     # grid: ijbcde
-    grid4 = dace.comm.Cart_create(grid_ijbcde[procs])
+    grid4 = dace.comm.Cart_create([P0G4, P1G4, PR1G4, PR2G4, PR3G4,  PR4G4])
     # in: deijc (ijcde)
     grid4_in_scatter = dace.comm.Cart_sub(grid4, [True, True, False, True, True, True], exact_grid=0)
     grid4_in_bcast = dace.comm.Cart_sub(grid4, [False, False, True, False, False, False])
@@ -236,8 +266,7 @@ def mode_0_four_grids_compute(X: dace.float64[S0G1, S1G1, S2G1, S3G1, S4G1],
                               JM: dace.float64[S1G4, R1G4],
                               KM: dace.float64[S2G3, R2G3],
                               LM: dace.float64[S3G2, R3G2],
-                              MM: dace.float64[S4G1, R4G1],
-                              procs: dace.constant) -> dace.float64[S0G4, R1G4, R2G4, R3G4, R4G4]:
+                              MM: dace.float64[S4G1, R4G1]) -> dace.float64[S0G4, R1G4, R2G4, R3G4, R4G4]:
 
     grid1_out = np.tensordot(X, MM, axes=([4], [0]))     #ijkle
     grid2_in = np.empty_like(grid1_out, shape=(S0G2, S1G2, S2G2, S3G2, R4G2))  # Need a nice way to infer the shape here
@@ -261,10 +290,9 @@ def mode_0_ijkcde_grid(X: dace.float64[S0, S1, S2, S3, S4],
                        JM: dace.float64[S1, R1],
                        KM: dace.float64[S2, R2],
                        LM: dace.float64[S3, R3],
-                       MM: dace.float64[S4, R4],
-                       procs: dace.constant) -> dace.float64[S0, R1, R2, R3, R4]:
+                       MM: dace.float64[S4, R4]) -> dace.float64[S0, R1, R2, R3, R4]:
 
-    grid = dace.comm.Cart_create(grid_ijkcde[procs])
+    grid = dace.comm.Cart_create([P0G3, P1G3, P2G3, PR2G3, PR3G3,  PR4G3])
 
     out1_reduce = dace.comm.Cart_sub(grid, [False, False, False, False, True, False])
     out2_reduce = dace.comm.Cart_sub(grid, [False, False, False, True, False, False])
@@ -294,8 +322,7 @@ def mode_0_ijkcde_grid_compute(X: dace.float64[S0, S1, S2, S3, S4],
                                JM: dace.float64[S1, R1],
                                KM: dace.float64[S2, R2],
                                LM: dace.float64[S3, R3],
-                               MM: dace.float64[S4, R4],
-                               procs: dace.constant) -> dace.float64[S0, R1, R2, R3, R4]:
+                               MM: dace.float64[S4, R4]) -> dace.float64[S0, R1, R2, R3, R4]:
     
     out1 = np.tensordot(X, MM, axes=([4], [0]))      # ijkle
 
@@ -366,59 +393,60 @@ if __name__ == "__main__":
     rank = commworld.Get_rank()
     size = commworld.Get_size()
 
-    if size not in weak_scaling:
+    if size not in scaling:
         raise ValueError("Selected number of MPI processes is not supported.")
     
+    file_name = "dace_cpu_{n}_nodes.csv".format(n=size)
+    field_names = ["datetime", "benchmark", "framework", "nodes", "sizes", "time"]
+
     sdfg0, sdfg1, sdfg2, sdfg3, sdfg4, sdfg5, sdfg6 = None, None, None, None, None, None, None
     if rank == 0:
         sdfg0 = mode_0_four_grids.to_sdfg(simplify=True, procs=size)
         sdfg1 = mode_0_ijkcde_grid.to_sdfg(simplify=True, procs=size)
-        sdfg2 = mode_0_unified_grid.to_sdfg(simplify=True, procs=size)
+        # sdfg2 = mode_0_unified_grid.to_sdfg(simplify=True, procs=size)
         sdfg3 = mode_0_four_grids_compute.to_sdfg(simplify=True, procs=size)
         sdfg4 = mode_0_ijkcde_grid_compute.to_sdfg(simplify=True, procs=size)
-        sdfg5 = mode_0_unified_grid_compute.to_sdfg(simplify=True, procs=size)
-        if size == 1:
-            sdfg6 = mode_0_shared.to_sdfg(simplify=True)
-            func6 = sdfg6.compile()
+        # sdfg5 = mode_0_unified_grid_compute.to_sdfg(simplify=True, procs=size)
+        # if size == 1:
+        #     sdfg6 = mode_0_shared.to_sdfg(simplify=True)
+        #     func6 = sdfg6.compile()
     func0 = utils.distributed_compile(sdfg0, commworld)
     func1 = utils.distributed_compile(sdfg1, commworld)
-    func2 = utils.distributed_compile(sdfg2, commworld)
+    # func2 = utils.distributed_compile(sdfg2, commworld)
     func3 = utils.distributed_compile(sdfg3, commworld)
     func4 = utils.distributed_compile(sdfg4, commworld)
-    func5 = utils.distributed_compile(sdfg5, commworld)
+    # func5 = utils.distributed_compile(sdfg5, commworld)
 
-    S = np.int32(weak_scaling[size])
-    # S = np.int32(24)
-    R = np.int32(24)
+    S, R = (np.int32(s) for s in scaling[size])
 
     rng = np.random.default_rng(42)
 
-    ##### Shared Memory #####
+    # ##### Shared Memory #####
 
-    if size == 1:
+    # if size == 1:
 
-        print(f"##### Shared Memory Execution #####\nSizes: {[S]*5}, {[R]*5}""", flush=True)
+    #     print(f"##### Shared Memory Execution #####\nSizes: {[S]*5}, {[R]*5}""", flush=True)
 
-        X = rng.random((S, S, S, S, S))
-        JM = rng.random((S, R))
-        KM = rng.random((S, R))
-        LM = rng.random((S, R))
-        MM = rng.random((S, R))
-        IM = rng.random((S, R))
+    #     X = rng.random((S, S, S, S, S))
+    #     JM = rng.random((S, R))
+    #     KM = rng.random((S, R))
+    #     LM = rng.random((S, R))
+    #     MM = rng.random((S, R))
+    #     IM = rng.random((S, R))
 
-        runtimes = timeit.repeat(
-            """func6(X=X, JM=JM, KM=KM, LM=LM, MM=MM,
-                    S0=S, S1=S, S2=S, S3=S, S4=S, R0=R, R1=R, R2=R, R3=R, R4=R)
-            """,
-            setup="",
-            repeat=10,
-            number=1,
-            globals=locals()
-        )
+    #     runtimes = timeit.repeat(
+    #         """func6(X=X, JM=JM, KM=KM, LM=LM, MM=MM,
+    #                 S0=S, S1=S, S2=S, S3=S, S4=S, R0=R, R1=R, R2=R, R3=R, R4=R)
+    #         """,
+    #         setup="",
+    #         repeat=10,
+    #         number=1,
+    #         globals=locals()
+    #     )
 
-        print(f"Median runtime: {np.median(runtimes)} seconds")
+    #     print(f"Median runtime: {np.median(runtimes)} seconds")
     
-    #######################
+    # #######################
 
     SGU = [S // np.int32(p) for p in grid_ijklmbcde[size][:5]]
     RGU = [R] + [R // np.int32(p) for p in grid_ijklmbcde[size][5:]]
@@ -431,6 +459,11 @@ if __name__ == "__main__":
     RG3 = [R, R] + [R // np.int32(p) for p in grid_ijkcde[size][-3:]]
     SG4 = [S // np.int32(p) for p in grid_ijbcde[size][:-4]]  + [S, S, S, S]
     RG4 = [R] + [R // np.int32(p) for p in grid_ijbcde[size][-4:]]
+
+    PG1 = grid_ijklme[size]
+    PG2 = grid_ijklde[size]
+    PG3 = grid_ijkcde[size]
+    PG4 = grid_ijbcde[size]
 
     ##### One Grid per TensorDot #####
 
@@ -460,7 +493,11 @@ ijcde, jb -> ibcde: local sizes {SG4}, {RG4}, grid {grid_ijbcde[size]}""", flush
                 R0G1=RG1[0], R1G1=RG1[1], R2G1=RG1[2], R3G1=RG1[3], R4G1=RG1[4],
                 R0G2=RG2[0], R1G2=RG2[1], R2G2=RG2[2], R3G2=RG2[3], R4G2=RG2[4],
                 R0G3=RG3[0], R1G3=RG3[1], R2G3=RG3[2], R3G3=RG3[3], R4G3=RG3[4],
-                R0G4=RG4[0], R1G4=RG4[1], R2G4=RG4[2], R3G4=RG4[3], R4G4=RG4[4]); commworld.Barrier()
+                R0G4=RG4[0], R1G4=RG4[1], R2G4=RG4[2], R3G4=RG4[3], R4G4=RG4[4],
+                P0G1=PG1[0], P1G1=PG1[1], P2G1=PG1[2], P3G1=PG1[3], P4G1=PG1[4], PR4G1=PG1[5],
+                P0G2=PG2[0], P1G2=PG2[1], P2G2=PG2[2], P3G2=PG2[3], PR3G2=PG2[4], PR4G2=PG2[5],
+                P0G3=PG3[0], P1G3=PG3[1], P2G3=PG3[2], PR2G3=PG3[3], PR3G3=PG3[4], PR4G3=PG3[5],
+                P0G4=PG4[0], P1G4=PG4[1], PR1G4=PG4[2], PR2G4=PG4[3], PR3G4=PG4[4], PR4G4=PG4[5]); commworld.Barrier()
         """,
         setup="commworld.Barrier()",
         repeat=10,
@@ -470,6 +507,7 @@ ijcde, jb -> ibcde: local sizes {SG4}, {RG4}, grid {grid_ijbcde[size]}""", flush
 
     if rank == 0:
         print(f"Median total runtime: {np.median(runtimes)} seconds", flush=True)
+        write_time(str(datetime.now()), "ttmc_order_5_mode_0", "dace_cpu", size, (S, S, S, S, S, R), runtimes, file_name, field_names, append=True)
 
         runtimes = timeit.repeat(
             """func3(X=X, JM=JM, KM=KM, LM=LM, MM=MM, procs=size,
@@ -481,7 +519,11 @@ ijcde, jb -> ibcde: local sizes {SG4}, {RG4}, grid {grid_ijbcde[size]}""", flush
                      R0G1=RG1[0], R1G1=RG1[1], R2G1=RG1[2], R3G1=RG1[3], R4G1=RG1[4],
                      R0G2=RG2[0], R1G2=RG2[1], R2G2=RG2[2], R3G2=RG2[3], R4G2=RG2[4],
                      R0G3=RG3[0], R1G3=RG3[1], R2G3=RG3[2], R3G3=RG3[3], R4G3=RG3[4],
-                     R0G4=RG4[0], R1G4=RG4[1], R2G4=RG4[2], R3G4=RG4[3], R4G4=RG4[4])
+                     R0G4=RG4[0], R1G4=RG4[1], R2G4=RG4[2], R3G4=RG4[3], R4G4=RG4[4],
+                     P0G1=PG1[0], P1G1=PG1[1], P2G1=PG1[2], P3G1=PG1[3], P4G1=PG1[4], PR4G1=PG1[5],
+                     P0G2=PG2[0], P1G2=PG2[1], P2G2=PG2[2], P3G2=PG2[3], PR3G2=PG2[4], PR4G2=PG2[5],
+                     P0G3=PG3[0], P1G3=PG3[1], P2G3=PG3[2], PR2G3=PG3[3], PR3G3=PG3[4], PR4G3=PG3[5],
+                     P0G4=PG4[0], P1G4=PG4[1], PR1G4=PG4[2], PR2G4=PG4[3], PR3G4=PG4[4], PR4G4=PG4[5])
             """,
             setup="",
             repeat=10,
@@ -490,6 +532,7 @@ ijcde, jb -> ibcde: local sizes {SG4}, {RG4}, grid {grid_ijbcde[size]}""", flush
         )
 
         print(f"Median compute runtime: {np.median(runtimes)} seconds\n", flush=True)
+        write_time(str(datetime.now()), "ttmc_order_5_mode_0_compute", "dace_cpu", size, (S, S, S, S, S, R), runtimes, file_name, field_names, append=True)
 
      ###### Intersection Grid #####
 
@@ -505,7 +548,11 @@ ijcde, jb -> ibcde: local sizes {SG4}, {RG4}, grid {grid_ijbcde[size]}""", flush
     runtimes = timeit.repeat(
         """func1(X=X, JM=JM, KM=KM, LM=LM, MM=MM, procs=size,
                  S0=SG3[0], S1=SG3[1], S2=SG3[2], S3=SG3[3], S4=SG3[4],
-                 R0=RG3[0], R1=RG3[1], R2=RG3[2], R3=RG3[3], R4=RG3[4]); commworld.Barrier()
+                 R0=RG3[0], R1=RG3[1], R2=RG3[2], R3=RG3[3], R4=RG3[4],
+                 P0G1=PG1[0], P1G1=PG1[1], P2G1=PG1[2], P3G1=PG1[3], P4G1=PG1[4], PR4G1=PG1[5],
+                 P0G2=PG2[0], P1G2=PG2[1], P2G2=PG2[2], P3G2=PG2[3], PR3G2=PG2[4], PR4G2=PG2[5],
+                 P0G3=PG3[0], P1G3=PG3[1], P2G3=PG3[2], PR2G3=PG3[3], PR3G3=PG3[4], PR4G3=PG3[5],
+                 P0G4=PG4[0], P1G4=PG4[1], PR1G4=PG4[2], PR2G4=PG4[3], PR3G4=PG4[4], PR4G4=PG4[5]); commworld.Barrier()
         """,
         setup="commworld.Barrier()",
         repeat=10,
@@ -515,11 +562,16 @@ ijcde, jb -> ibcde: local sizes {SG4}, {RG4}, grid {grid_ijbcde[size]}""", flush
 
     if rank == 0:
         print(f"Median total runtime: {np.median(runtimes)} seconds", flush=True)
+        write_time(str(datetime.now()), "ttmc_order_5_mode_0_nosoap", "dace_cpu", size, (S, S, S, S, S, R), runtimes, file_name, field_names, append=True)
 
         runtimes = timeit.repeat(
             """func4(X=X, JM=JM, KM=KM, LM=LM, MM=MM, procs=size,
                      S0=SG3[0], S1=SG3[1], S2=SG3[2], S3=SG3[3], S4=SG3[4],
-                     R0=RG3[0], R1=RG3[1], R2=RG3[2], R3=RG3[3], R4=RG3[4])
+                     R0=RG3[0], R1=RG3[1], R2=RG3[2], R3=RG3[3], R4=RG3[4],
+                     P0G1=PG1[0], P1G1=PG1[1], P2G1=PG1[2], P3G1=PG1[3], P4G1=PG1[4], PR4G1=PG1[5],
+                     P0G2=PG2[0], P1G2=PG2[1], P2G2=PG2[2], P3G2=PG2[3], PR3G2=PG2[4], PR4G2=PG2[5],
+                     P0G3=PG3[0], P1G3=PG3[1], P2G3=PG3[2], PR2G3=PG3[3], PR3G3=PG3[4], PR4G3=PG3[5],
+                     P0G4=PG4[0], P1G4=PG4[1], PR1G4=PG4[2], PR2G4=PG4[3], PR3G4=PG4[4], PR4G4=PG4[5])
             """,
             setup="",
             repeat=10,
@@ -528,44 +580,45 @@ ijcde, jb -> ibcde: local sizes {SG4}, {RG4}, grid {grid_ijbcde[size]}""", flush
         )
 
         print(f"Median compute runtime: {np.median(runtimes)} seconds\n", flush=True)
+        write_time(str(datetime.now()), "ttmc_order_5_mode_0_nosoap_compute", "dace_cpu", size, (S, S, S, S, S, R), runtimes, file_name, field_names, append=True)
 
-    ###### Unified Grid #####
+    # ###### Unified Grid #####
 
-    if rank == 0:
-        print(f"##### Unified Grid #####\nLocal Sizes: {SGU}, {RGU}\nGrid: {grid_ijklmbcde[size]}""", flush=True)
+    # if rank == 0:
+    #     print(f"##### Unified Grid #####\nLocal Sizes: {SGU}, {RGU}\nGrid: {grid_ijklmbcde[size]}""", flush=True)
 
-    X = rng.random((SGU[0], SGU[1], SGU[2], SGU[3], SGU[4]))
-    JM = rng.random((SGU[1], RGU[1]))
-    KM = rng.random((SGU[2], RGU[2]))
-    LM = rng.random((SGU[3], RGU[3]))
-    MM = rng.random((SGU[4], RGU[4]))
+    # X = rng.random((SGU[0], SGU[1], SGU[2], SGU[3], SGU[4]))
+    # JM = rng.random((SGU[1], RGU[1]))
+    # KM = rng.random((SGU[2], RGU[2]))
+    # LM = rng.random((SGU[3], RGU[3]))
+    # MM = rng.random((SGU[4], RGU[4]))
 
-    runtimes = timeit.repeat(
-        """func2(X=X, JM=JM, KM=KM, LM=LM, MM=MM, procs=size,
-                 S0=SGU[0], S1=SGU[1], S2=SGU[2], S3=SGU[3], S4=SGU[4],
-                 R0=RGU[0], R1=RGU[1], R2=RGU[2], R3=RGU[3], R4=RGU[4]); commworld.Barrier()
-        """,
-        setup="commworld.Barrier()",
-        repeat=10,
-        number=1,
-        globals=locals()
-    )
+    # runtimes = timeit.repeat(
+    #     """func2(X=X, JM=JM, KM=KM, LM=LM, MM=MM, procs=size,
+    #              S0=SGU[0], S1=SGU[1], S2=SGU[2], S3=SGU[3], S4=SGU[4],
+    #              R0=RGU[0], R1=RGU[1], R2=RGU[2], R3=RGU[3], R4=RGU[4]); commworld.Barrier()
+    #     """,
+    #     setup="commworld.Barrier()",
+    #     repeat=10,
+    #     number=1,
+    #     globals=locals()
+    # )
 
-    if rank == 0:
-        print(f"Median total runtime: {np.median(runtimes)} seconds", flush=True)
+    # if rank == 0:
+    #     print(f"Median total runtime: {np.median(runtimes)} seconds", flush=True)
 
-        runtimes = timeit.repeat(
-            """func5(X=X, JM=JM, KM=KM, LM=LM, MM=MM, procs=size,
-                     S0=SGU[0], S1=SGU[1], S2=SGU[2], S3=SGU[3], S4=SGU[4],
-                     R0=RGU[0], R1=RGU[1], R2=RGU[2], R3=RGU[3], R4=RGU[4])
-            """,
-            setup="",
-            repeat=10,
-            number=1,
-            globals=locals()
-        )
+    #     runtimes = timeit.repeat(
+    #         """func5(X=X, JM=JM, KM=KM, LM=LM, MM=MM, procs=size,
+    #                  S0=SGU[0], S1=SGU[1], S2=SGU[2], S3=SGU[3], S4=SGU[4],
+    #                  R0=RGU[0], R1=RGU[1], R2=RGU[2], R3=RGU[3], R4=RGU[4])
+    #         """,
+    #         setup="",
+    #         repeat=10,
+    #         number=1,
+    #         globals=locals()
+    #     )
 
-        print(f"Median compute runtime: {np.median(runtimes)} seconds\n", flush=True)
+    #     print(f"Median compute runtime: {np.median(runtimes)} seconds\n", flush=True)
     
     if rank == 0:
         print(f"Communication Volume for \"One Grid per TensorDot\" algorithm:", flush=True)

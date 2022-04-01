@@ -57,8 +57,8 @@ scaling = {
     64: 16384,
     125: 20645,
     128: 20648,
-    256: 26040,
-    252: 26008,
+    252: 26040,
+    256: 26008,
     512: 32768
 }
 
@@ -307,6 +307,9 @@ if __name__ == "__main__":
     func3c = utils.distributed_compile(sdfg3c, commworld)
 
     rng = np.random.default_rng(42)
+
+    # # Increase all sizes
+    # scaling = {procs: size * 4 for procs, size in scaling.items()}
 
     # Single Matrix-Multiplication
 
