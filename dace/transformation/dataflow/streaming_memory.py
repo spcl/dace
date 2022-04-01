@@ -8,7 +8,7 @@ import warnings
 import sympy
 
 from dace.transformation import transformation as xf
-from dace import (data, dtypes, nodes, properties, registry, memlet as mm, subsets, symbolic, symbol, Memlet)
+from dace import (data, dtypes, nodes, properties, registry, memlet as mm, subsets, symbolic, symbol, Memlet, ScheduleType)
 from dace.sdfg import SDFG, SDFGState, utils as sdutil, graph as gr
 from dace.libraries.standard import Gearbox
 
@@ -564,7 +564,7 @@ class StreamingMemory(xf.SingleStateTransformation):
                                               (ranges[-1][1][0], (ranges[-1][1][1] + 1) / vector_size - 1,
                                                ranges[-1][1][2]))
 
-                maps.append(state.add_map(f'__s{opname}_{mapname}', ranges, map.schedule))
+                maps.append(state.add_map(f'__s{opname}_{mapname}', ranges, map.schedule if ((not map.schedule is ScheduleType.FPGA_Double) and (not map.schedule is ScheduleType.FPGA_Double_out)) else ScheduleType.FPGA_Device)) # TODO the new external interfaces shouldn't be double pumped!))
             tasklet = state.add_tasklet(
                 f'{opname}_{mapname}',
                 {m[1]
