@@ -806,7 +806,7 @@ class SubgraphTransformation(TransformationBase):
 
     @staticmethod
     def from_json(json_obj: Dict[str, Any], context: Dict[str, Any] = None) -> 'SubgraphTransformation':
-        xform = next(ext for ext in SubgraphTransformation.extensions().keys()
+        xform = next(ext for ext in SubgraphTransformation.subclasses_recursive()
                      if ext.__name__ == json_obj['transformation'])
 
         # Reconstruct transformation

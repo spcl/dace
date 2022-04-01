@@ -121,7 +121,7 @@ class XilinxCodeGen(fpga.FPGACodeGen):
 #include "dace/dace.h"
 #include "dace/xilinx/stream.h"
 """)
-        if len(self._dispatcher.instrumentation) > 1:
+        if len(self._dispatcher.instrumentation) > 2:
             host_code.write("""\
 #include "dace/perf/reporting.h"
 #include <chrono>
@@ -235,7 +235,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                                     arr_name = node.value.id
 
                                     if arr_name not in replace_dict and arr_name in graph.arrays and graph.arrays[
-                                        arr_name].storage == dace.dtypes.StorageType.FPGA_Global:
+                                            arr_name].storage == dace.dtypes.StorageType.FPGA_Global:
                                         repl = fpga.fpga_ptr(arr_name, graph.arrays[node.value.id], sdfg, None, False,
                                                              None, None, True)
                                         replace_dict[arr_name] = repl
@@ -243,7 +243,6 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                         # Perform replacement
                         for k, v in replace_dict.items():
                             e.data.replace(k, v)
-
 
     def define_stream(self, dtype, buffer_size, var_name, array_size, function_stream, kernel_stream, sdfg):
         """
@@ -269,8 +268,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         dtype = desc.dtype
         kernel_stream.write("{} {}[{}];\n".format(dtype.ctype, var_name, cpp.sym2cpp(array_size)))
         if desc.storage == dace.dtypes.StorageType.FPGA_Registers:
-            kernel_stream.write("#pragma HLS ARRAY_PARTITION variable={} "
-                                "complete\n".format(var_name))
+            kernel_stream.write("#pragma HLS ARRAY_PARTITION variable={} " "complete\n".format(var_name))
         elif desc.storage == dace.dtypes.StorageType.FPGA_Local:
             pass
         else:
@@ -350,11 +348,13 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         Emits a conflict resolution call from a memlet.
         """
         redtype = operations.detect_reduction_type(memlet.wcr, openmp=True)
-        defined_type, _ = self._dispatcher.defined_vars.get(memlet.data)
+        ptrname = cpp.ptr(memlet.data, sdfg.arrays[memlet.data], sdfg, self._frame)
+        defined_type, _ = self._dispatcher.defined_vars.get(ptrname)
         if isinstance(indices, str):
-            ptr = '%s + %s' % (cpp.cpp_ptr_expr(sdfg, memlet, defined_type, is_write=True), indices)
+            ptr = '%s + %s' % (cpp.cpp_ptr_expr(sdfg, memlet, defined_type, is_write=True,
+                                                codegen=self._frame), indices)
         else:
-            ptr = cpp.cpp_ptr_expr(sdfg, memlet, defined_type, indices=indices, is_write=True)
+            ptr = cpp.cpp_ptr_expr(sdfg, memlet, defined_type, indices=indices, is_write=True, codegen=self._frame)
 
         if isinstance(dtype, dtypes.pointer):
             dtype = dtype.base_type
@@ -1240,8 +1240,9 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(kernel_f
 
     def generate_memlet_definition(self, sdfg, dfg, state_id, src_node, dst_node, edge, callsite_stream):
         memlet = edge.data
+        ptrname = cpp.ptr(memlet.data, sdfg.arrays[memlet.data], sdfg, self._frame)
 
-        if (self._dispatcher.defined_vars.get(memlet.data)[0] == DefinedType.FPGA_ShiftRegister):
+        if (self._dispatcher.defined_vars.get(ptrname)[0] == DefinedType.FPGA_ShiftRegister):
             raise NotImplementedError("Shift register for Xilinx NYI")
         else:
             self._cpu_codegen.copy_memory(sdfg, dfg, state_id, src_node, dst_node, edge, None, callsite_stream)
@@ -1261,7 +1262,8 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(kernel_f
         for _, _, _, vconn, in_memlet in sorted(state.in_edges(node), key=lambda e: e.dst_conn or ""):
             if in_memlet.data is None:
                 continue
-            is_memory_interface = (self._dispatcher.defined_vars.get(in_memlet.data,
+            ptrname = cpp.ptr(in_memlet.data, sdfg.arrays[in_memlet.data], sdfg, self._frame)
+            is_memory_interface = (self._dispatcher.defined_vars.get(ptrname,
                                                                      1)[0] == DefinedType.ArrayInterface)
             if is_memory_interface:
                 for bank in fpga.iterate_distributed_subset(sdfg.arrays[in_memlet.data], in_memlet, False, sdfg):
@@ -1312,8 +1314,8 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(kernel_f
                                             uconn,
                                             conntype=node.out_connectors[uconn],
                                             is_write=True)
-            is_memory_interface = (self._dispatcher.defined_vars.get(out_memlet.data,
-                                                                     1)[0] == DefinedType.ArrayInterface)
+            ptrname = cpp.ptr(out_memlet.data, sdfg.arrays[out_memlet.data], sdfg, self._frame)
+            is_memory_interface = (self._dispatcher.defined_vars.get(ptrname, 1)[0] == DefinedType.ArrayInterface)
             if is_memory_interface:
                 for bank in fpga.iterate_distributed_subset(sdfg.arrays[out_memlet.data], out_memlet, True, sdfg):
                     interface_name = fpga.fpga_ptr(uconn,

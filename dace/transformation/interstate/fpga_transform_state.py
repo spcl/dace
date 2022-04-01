@@ -6,7 +6,7 @@ import dace
 from dace import data, memlet, dtypes, registry, sdfg as sd, subsets
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
-from dace.transformation import transformation
+from dace.transformation import transformation, helpers as xfh
 
 
 def fpga_update(sdfg, state, depth):
@@ -14,7 +14,8 @@ def fpga_update(sdfg, state, depth):
     for node in state.nodes():
         if (isinstance(node, nodes.AccessNode) and node.desc(sdfg).storage == dtypes.StorageType.Default):
             nodedesc = node.desc(sdfg)
-            if depth >= 2:
+            pmap = xfh.get_parent_map(state, node)
+            if depth >= 2 or (pmap is not None and pmap[0].schedule == dtypes.ScheduleType.FPGA_Device):
                 nodedesc.storage = dtypes.StorageType.FPGA_Local
             else:
                 if scope_dict[node]:
@@ -137,6 +138,8 @@ class FPGATransformState(transformation.MultiStateTransformation):
                             # This does not trace back to the current state, so
                             # we don't care
                             continue
+                        if any(outer_node.data == n.data for n in input_nodes):
+                            continue  # Skip adding duplicates
                         input_nodes.append(outer_node)
                         wcr_input_nodes.add(outer_node)
         if input_nodes:

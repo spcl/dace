@@ -9,6 +9,7 @@ import networkx as nx
 import time
 
 import dace.sdfg.nodes
+from dace.codegen import compiled_sdfg as csdfg
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.sdfg import SDFG
 from dace.sdfg.nodes import Node, NestedSDFG
@@ -708,7 +709,7 @@ def get_view_edge(state: SDFGState, view: nd.AccessNode) -> gr.MultiConnectorEdg
         return in_edge
     if in_edge.data.data == view.data and out_edge.data.data == view.data:
         return None
-    
+
     # Check if there is a 'views' connector
     if in_edge.dst_conn and in_edge.dst_conn == 'views':
         return in_edge
@@ -1118,46 +1119,44 @@ def inline_sdfgs(sdfg: SDFG, permissive: bool = False, progress: bool = None, mu
             tqdm = None
 
     counter = 0
-    sdfgs = list(sdfg.all_sdfgs_recursive())
+    nsdfgs = [(n, p) for n, p in sdfg.all_nodes_recursive() if isinstance(n, NestedSDFG)]
     if progress is True:
-        pbar = tqdm(total=len(sdfgs), desc='Inlining SDFGs')
+        pbar = tqdm(total=len(nsdfgs), desc='Inlining SDFGs')
 
     start = time.time()
 
-    for sd in reversed(sdfgs):
-        id = sd.sdfg_id
-        for state in sd.nodes():
-            for node in state.nodes():
-                if (progress is None and tqdm is not None and (time.time() - start) > 5):
-                    progress = True
-                    pbar = tqdm(total=len(sdfgs), desc='Inlining SDFG', initial=counter)
+    for ctr, (node, state) in enumerate(reversed(nsdfgs)):
+        id = node.sdfg.sdfg_id
+        sd = state.parent
+        if (progress is None and tqdm is not None and (time.time() - start) > 5):
+            progress = True
+            pbar = tqdm(total=len(nsdfgs), desc='Inlining SDFG', initial=ctr)
 
-                if not isinstance(node, NestedSDFG):
-                    continue
-                # We have to reevaluate every time due to changing IDs
-                node_id = state.node_id(node)
-                state_id = sd.node_id(state)
-                if multistate:
-                    candidate = {
-                        InlineMultistateSDFG.nested_sdfg: node_id,
-                    }
-                    inliner = InlineMultistateSDFG(sd, id, state_id, candidate, 0, override=True)
-                    if inliner.can_be_applied(state, 0, sd, permissive=permissive):
-                        inliner.apply(state, sd)
-                        counter += 1
-                        if progress:
-                            pbar.update(1)
-                        continue
+        # We have to reevaluate every time due to changing IDs
+        node_id = state.node_id(node)
+        state_id = sd.node_id(state)
+        if multistate:
+            candidate = {
+                InlineMultistateSDFG.nested_sdfg: node_id,
+            }
+            inliner = InlineMultistateSDFG(sd, id, state_id, candidate, 0, override=True)
+            if inliner.can_be_applied(state, 0, sd, permissive=permissive):
+                inliner.apply(state, sd)
+                counter += 1
+                if progress:
+                    pbar.update(1)
+                continue
 
-                candidate = {
-                    InlineSDFG.nested_sdfg: node_id,
-                }
-                inliner = InlineSDFG(sd, id, state_id, candidate, 0, override=True)
-                if inliner.can_be_applied(state, 0, sd, permissive=permissive):
-                    inliner.apply(state, sd)
-                    counter += 1
-                    if progress:
-                        pbar.update(1)
+        candidate = {
+            InlineSDFG.nested_sdfg: node_id,
+        }
+        inliner = InlineSDFG(sd, id, state_id, candidate, 0, override=True)
+        if inliner.can_be_applied(state, 0, sd, permissive=permissive):
+            inliner.apply(state, sd)
+            counter += 1
+        if progress:
+            pbar.update(1)
+
     if progress:
         pbar.close()
     if config.Config.get_bool('debugprint') and counter > 0:
@@ -1174,11 +1173,40 @@ def load_precompiled_sdfg(folder: str):
     :param folder: Path to SDFG output folder.
     :return: A callable CompiledSDFG object.
     """
-    from dace.codegen import compiled_sdfg as csdfg
     sdfg = SDFG.from_file(os.path.join(folder, 'program.sdfg'))
     suffix = config.Config.get('compiler', 'library_extension')
     return csdfg.CompiledSDFG(sdfg,
                               csdfg.ReloadableDLL(os.path.join(folder, 'build', f'lib{sdfg.name}.{suffix}'), sdfg.name))
+
+
+def distributed_compile(sdfg: SDFG, comm: "Intracomm") -> csdfg.CompiledSDFG:
+    """
+    Compiles an SDFG in rank 0 of MPI communicator `comm`. Then, the compiled SDFG is loaded in all other ranks.
+    NOTE: This method can be used only if the module mpi4py is installed.
+    :param sdfg: SDFG to be compiled.
+    :param comm: MPI communicator. "Intracomm" is the base mpi4py communicator class.
+    :return: Compiled SDFG.
+    """
+
+    rank = comm.Get_rank()
+    func = None
+    folder = None
+
+    # Rank 0 compiles SDFG.
+    if rank == 0:
+        func = sdfg.compile()
+        folder = sdfg.build_folder
+
+    # Broadcasts build folder.
+    folder = comm.bcast(folder, root=0)
+
+    # Loads compiled SDFG.
+    if rank > 0:
+        func = load_precompiled_sdfg(folder)
+
+    comm.Barrier()
+
+    return func
 
 
 def get_next_nonempty_states(sdfg: SDFG, state: SDFGState) -> Set[SDFGState]:

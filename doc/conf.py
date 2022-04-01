@@ -14,15 +14,16 @@ import os
 import sys
 
 sys.path.insert(0, os.path.abspath('..'))
+from dace import __version__
 
 # -- Project information -----------------------------------------------------
 
 project = 'DaCe'
-copyright = '2019-2021, Scalable Parallel Computing Laboratory, ETH Zurich'
+copyright = '2019-2022, Scalable Parallel Computing Laboratory, ETH Zurich'
 author = 'Scalable Parallel Computing Laboratory, ETH Zurich and the DaCe authors'
 
 # The full version, including alpha/beta/rc tags
-release = '0.10.0a'
+release = __version__
 
 # -- General configuration ---------------------------------------------------
 

@@ -14,7 +14,7 @@ from dace.properties import (EnumProperty, Property, DictProperty, SubsetPropert
                              make_properties)
 from inspect import getframeinfo, stack
 import itertools
-from typing import (Any, AnyStr, Dict, Iterable, List, Optional, Set, Tuple, Union)
+from typing import (Any, AnyStr, Dict, Iterable, Iterator, List, Optional, Set, Tuple, Union, overload)
 import warnings
 
 
@@ -57,6 +57,17 @@ class StateGraphView(object):
         self._clear_scopedict_cache()
 
     ###################################################################
+    # Typing overrides
+    
+    @overload
+    def nodes(self) -> List[nd.Node]:
+        ...
+
+    @overload
+    def edges(self) -> List[MultiConnectorEdge[mm.Memlet]]:
+        ...
+
+    ###################################################################
     # Traversal methods
 
     def all_nodes_recursive(self):
@@ -90,7 +101,7 @@ class StateGraphView(object):
     ###################################################################
     # Memlet-tracking methods
 
-    def memlet_path(self, edge: MultiConnectorEdge) -> List[MultiConnectorEdge]:
+    def memlet_path(self, edge: MultiConnectorEdge[mm.Memlet]) -> List[MultiConnectorEdge[mm.Memlet]]:
         """ Given one edge, returns a list of edges representing a path
             between its source and sink nodes. Used for memlet tracking.
 
@@ -385,7 +396,8 @@ class StateGraphView(object):
         :note: Assumes that the graph is valid (i.e., without undefined or
                overlapping symbols).
         """
-        sdfg = self.parent
+        state = self.graph if isinstance(self, SubgraphView) else self
+        sdfg = state.parent
         new_symbols = set()
         freesyms = set()
 
@@ -419,7 +431,7 @@ class StateGraphView(object):
         state or subgraph to their types.
         """
         state = self.graph if isinstance(self, SubgraphView) else self
-        sdfg = self.parent
+        sdfg = state.parent
 
         # Start with SDFG global symbols
         defined_syms = {k: v for k, v in sdfg.symbols.items()}
@@ -1174,7 +1186,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
             :param location:   Execution location indicator.
             :param language:   Programming language in which the code is
                                written
-            :param debuginfo:  Debugging information (mostly for DIODE)
+            :param debuginfo:  Source line information
             :param external_edges: Create external access nodes and connect
                                    them with memlets automatically
             :param input_nodes: Mapping between data names and corresponding
