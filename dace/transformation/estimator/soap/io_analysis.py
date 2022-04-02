@@ -137,22 +137,54 @@ def perform_soap_analysis_einsum(einsum_string : str, decomp_params: List = [],
     Q, subgraphs= sdg.calculate_IO_of_SDG()
     solver.end_solver()
 
-    subgraphs_res = []
-    for subgr in subgraphs:
-        io_res_sg = IOAnalysisSubgraph(name= subgr.name, Q = subgr.Q, rho = subgr.rhoOpts, 
-                    variables = subgr.variables, inner_tile = subgr.inner_tile, 
-                    outer_tile = subgr.outer_tile, input_arrays = subgr.phis,
-                    tasklets = subgr.tasklet)                    
-        if generate_schedule and hasattr(subgr, 'varsOpt'):
-            if decomp_params == []:
-                decomp_list = Config.get("soap", "decomposition", "decomposition_params")
-                decomp_params = list(zip(decomp_list[::2],decomp_list[1::2]))
-            subgr.init_decomposition(decomp_params)
+    # Scaling
+    scaling = {
+        1: (1024, 24),
+        2: (1218, 30),
+        4: (1450, 34),
+        8: (1724, 42),
+        12: (1908, 48),
+        16: (2048, 48),
+        27: (2337, 57),
+        32: (2436, 60),
+        64: (2900, 68),
+        125: (3425, 85),
+        128: (3448, 88),
+        252: (4116, 126),
+        256: (4096, 96),
+        512: (4872, 120)
+    }
+
+    procs = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512]
+    for p in procs:
+
+        print(f"########## PROCS := {p} ##########\n")
+        decomp_params = [('p', p)] + [decomp_params[1]] + [(f'S{i}', scaling[p][0]) for i in range(3)] + [(f'S{i}', scaling[p][1]) for i in range(3,5)]
+        print(decomp_params)
+        subgraphs_res = []
+        for subgr in subgraphs:
+            io_res_sg = IOAnalysisSubgraph(name= subgr.name, Q = subgr.Q, rho = subgr.rhoOpts, 
+                        variables = subgr.variables, inner_tile = subgr.inner_tile, 
+                        outer_tile = subgr.outer_tile, input_arrays = subgr.phis,
+                        tasklets = subgr.tasklet)                    
+            if generate_schedule and hasattr(subgr, 'varsOpt'):
+                if decomp_params == []:
+                    decomp_list = Config.get("soap", "decomposition", "decomposition_params")
+                    decomp_params = list(zip(decomp_list[::2],decomp_list[1::2]))
+                subgr.init_decomposition(decomp_params)
+            
+                io_res_sg.loc_domain_dims = subgr.loc_domain_dims
+                io_res_sg.p_grid = subgr.p_grid
+                io_res_sg.dimensions_ordered = subgr.dimensions_ordered        
+            subgraphs_res.append(io_res_sg)
         
-            io_res_sg.loc_domain_dims = subgr.loc_domain_dims
-            io_res_sg.p_grid = subgr.p_grid
-            io_res_sg.dimensions_ordered = subgr.dimensions_ordered        
-        subgraphs_res.append(io_res_sg)
+        for i, sgraph in enumerate(subgraphs_res):
+            print(f"Subgraph {i}==================================================")
+            print(f"Variables: {sgraph.variables}")
+            print(f"Local domains: {sgraph.loc_domain_dims}")
+            print(f"Grid: {sgraph.p_grid}")
+        
+        print()
     
     return(IOAnalysis(SDFG.__name__, Q, sdg, subgraphs_res))
 
