@@ -1,5 +1,6 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" This module contains classes that implement subgraph fusion
+# Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
+"""
+This module contains classes that implement subgraph fusion using on-the-fly recomputation
 """
 import dace
 
@@ -11,9 +12,9 @@ from collections import OrderedDict
 
 from dace.transformation.subgraph import OnTheFlyMapFusion
 
-@make_properties
-class MapFusion(transformation.SubgraphTransformation):
 
+@make_properties
+class SubgraphOTFFusion(transformation.SubgraphTransformation):
     def can_be_applied(self, *args, **kwargs) -> bool:
         return True
 
@@ -35,7 +36,7 @@ class MapFusion(transformation.SubgraphTransformation):
                 fusion = OnTheFlyMapFusion(state, sdfg_id=sdfg.sdfg_id, state_id=sdfg.node_id(state))
                 if fusion.can_be_applied(state, sdfg, parent, child):
                     fusion.apply(state, sdfg, parent, child)
-                    fuse_counter += 1 
+                    fuse_counter += 1
                     break
                 else:
                     queue.append(parent)

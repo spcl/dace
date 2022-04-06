@@ -37,8 +37,6 @@ def measure(sdfg, dreport=None, repetitions = 30, print_report : bool = False):
         with dace.config.set_temporary('debugprint', value=True):
             with dace.config.set_temporary('instrumentation', 'report_each_invocation', value=False):
                 with dace.config.set_temporary('compiler', 'allow_view_arguments', value=True):
-                    sdfg.build_folder = "/dev/shm"
-                    print("Compiling")
                     csdfg = sdfg.compile()
 
                     for _ in range(repetitions):
@@ -117,18 +115,9 @@ def _subprocess_measure(cutout_json: Dict, dreport, repetitions: int, q, i, j) -
     cutout = dace.SDFG.from_json(cutout_json)
     
     arguments = {}
+    # TODO: Store symbolic arguments in file
     for symbol in cutout.free_symbols:
         arguments[str(symbol)] = 32
-
-    if "__I" in arguments:
-        arguments["__I"] = i
-        cutout.replace("__I", i)
-    if "__J" in arguments:
-        arguments["__J"] = j
-        cutout.replace("__J", j)
-    if "__K" in arguments:
-        arguments["__K"] = 80
-        cutout.replace("__K", 80)
 
     for state in cutout.nodes():
         for dnode in state.data_nodes():
@@ -148,7 +137,6 @@ def _subprocess_measure(cutout_json: Dict, dreport, repetitions: int, q, i, j) -
             continue
 
         if not name in arguments:
-            print("Deleted: ", name)
             del cutout.arrays[name]
 
 
@@ -165,7 +153,6 @@ def _subprocess_measure(cutout_json: Dict, dreport, repetitions: int, q, i, j) -
     report = cutout.get_latest_report()
     durations = next(iter(next(iter(report.durations.values())).values()))
     q.put(np.median(np.array(durations)))
-    print("Finished")
 
 class MeasureProcess(mp.Process):
     def __init__(self, *args, **kwargs):

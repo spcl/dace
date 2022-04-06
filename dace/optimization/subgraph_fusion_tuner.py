@@ -164,12 +164,9 @@ class SubgraphFusionTuner(cutout_tuner.CutoutTuner):
         best_configs = cutout_tuner.CutoutTuner.top_k_configs(tuning_report, k=k)
         subgraph_patterns = tuner._extract_patterns(best_configs)
 
-        print(subgraph_patterns)
-
         i = 0
         for nsdfg in sdfg.all_sdfgs_recursive():
             for state in nsdfg.states():
-                print(i, state.label)
                 i = i + 1      
                 
                 top_maps = []
@@ -298,17 +295,12 @@ class SubgraphFusionTuner(cutout_tuner.CutoutTuner):
                         subgraph_fusion.schedule_innermaps = dace.ScheduleType.GPU_Device
                         subgraph_fusion.apply(nsdfg)
 
-                        print(base_runtime, best_pattern_runtime)
-                        print(j, pattern)
-
                         best_pattern = None
                         best_pattern_runtime = math.inf
                         base_runtime = None
                     else:
                         break
 
-                print()
-                print()
 
     @staticmethod
     def map_descriptor(state: dace.SDFGState, map_entry: dace.nodes.MapEntry) -> str:

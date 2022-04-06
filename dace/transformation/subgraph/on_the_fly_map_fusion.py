@@ -1,6 +1,5 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
-import random
 
 import dace
 
@@ -10,9 +9,13 @@ from dace.sdfg import utils as sdutil
 
 from dace.transformation import transformation
 
+
 @make_properties
 class OnTheFlyMapFusion(transformation.SubgraphTransformation):
-
+    """
+    Performs fusion of two maps by replicating the contents of the first into the second map until all the
+    input dependencies (memlets) of the second one are met.
+    """
     def can_be_applied(self, state: dace.SDFGState, sdfg: dace.SDFG, parent_map_entry, child_map_entry):
         parent_map_exit = state.exit_node(parent_map_entry)
         nodes = sdutil.nodes_in_all_simple_paths(state, parent_map_exit, child_map_entry)
@@ -45,18 +48,14 @@ class OnTheFlyMapFusion(transformation.SubgraphTransformation):
             array_accesses.append(node)
 
         OnTheFlyMapFusion._update_map_connectors(state, parent_map_entry, child_map_entry, array_accesses)
-        self._replicate_first_map(
-            sdfg, parent_map_entry, parent_map_exit, child_map_entry, array_accesses
-        )
+        self._replicate_first_map(sdfg, parent_map_entry, parent_map_exit, child_map_entry, array_accesses)
         state.remove_nodes_from(
-            state.all_nodes_between(parent_map_entry, parent_map_exit) | {
-                parent_map_entry, parent_map_exit }
-        )
+            state.all_nodes_between(parent_map_entry, parent_map_exit) | {parent_map_entry, parent_map_exit})
 
         for node in state.nodes():
             if not isinstance(node, dace.nodes.AccessNode):
                 continue
-            
+
             if state.in_degree(node) == 0 and state.out_degree(node) == 0:
                 state.remove_node(node)
 
@@ -78,16 +77,13 @@ class OnTheFlyMapFusion(transformation.SubgraphTransformation):
     @staticmethod
     def _memlet_offsets(base_memlet, offset_memlet):
         """Compute subset offset of `offset_memlet` relative to `base_memlet`."""
-
         def offset(base_range, offset_range):
             b0, e0, s0 = base_range
             b1, e1, s1 = offset_range
             assert e1 - e0 == b1 - b0 and s0 == s1
             return int(e1 - e0)
 
-        return tuple(
-            offset(b, o) for b, o in zip(base_memlet.subset.ranges, offset_memlet.subset.ranges)
-        )
+        return tuple(offset(b, o) for b, o in zip(base_memlet.subset.ranges, offset_memlet.subset.ranges))
 
     @staticmethod
     def _read_offsets(state, array_name, first_map_exit, second_map_entry):
@@ -141,9 +137,7 @@ class OnTheFlyMapFusion(transformation.SubgraphTransformation):
 
         return new_nodes
 
-    def _replicate_first_map(
-        self, sdfg, parent_map_entry, parent_map_exit, child_map_entry, array_accesses
-    ):
+    def _replicate_first_map(self, sdfg, parent_map_entry, parent_map_exit, child_map_entry, array_accesses):
         """Replicate tasklet of first map for each read access in second map."""
         state = sdfg.node(self.state_id)
         for array_access in array_accesses:
@@ -162,9 +156,7 @@ class OnTheFlyMapFusion(transformation.SubgraphTransformation):
 
                 for node in nodes:
                     for edge in state.edges_between(node, parent_map_exit):
-                        state.add_edge(
-                            edge.src, edge.src_conn, tmp_access, None, dace.Memlet(tmp_name)
-                        )
+                        state.add_edge(edge.src, edge.src_conn, tmp_access, None, dace.Memlet(tmp_name))
                         state.remove_edge(edge)
 
                     for edge in state.edges_between(parent_map_entry, node):
