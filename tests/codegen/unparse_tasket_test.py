@@ -15,7 +15,7 @@ def test_integer_power():
 
     sdfg = powint.to_sdfg()
 
-    assert 'pow(' not in sdfg.generate_code()[0].clean_code
+    assert ':pow(' not in sdfg.generate_code()[0].clean_code
 
 
 def test_integer_power_constant():
@@ -30,7 +30,7 @@ def test_integer_power_constant():
     sdfg = powint.to_sdfg()
     sdfg.add_constant('myconst', dace.float32(2.0))
 
-    assert 'pow(' not in sdfg.generate_code()[0].clean_code
+    assert ':pow(' not in sdfg.generate_code()[0].clean_code
 
 
 if __name__ == '__main__':
