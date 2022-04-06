@@ -154,13 +154,6 @@ DACE_CONSTEXPR __device__ __forceinline__ dace::float16 max(const T& a, const da
 {
     return (dace::float16(a) > b) ? max(dace::float16(a), c...) : max(b, c...);
 }
-
-DACE_CONSTEXPR DACE_DFI dace::float16 ipow(const dace::float16& a, const unsigned int& b) {
-    dace::float16 result = a;
-    for (unsigned int i = 1; i < b; ++i)
-        result *= a;
-    return result;
-}
 #endif
 
 
@@ -505,7 +498,7 @@ namespace dace
 #endif
 
         template<typename T>
-        DACE_CONSTEXPR DACE_HDFI T ipow(const T& a, const unsigned int& b) {
+        DACE_HDFI T ipow(const T& a, const unsigned int& b) {
             T result = a;
             for (unsigned int i = 1; i < b; ++i)
                 result *= a;
