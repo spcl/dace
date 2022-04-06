@@ -44,6 +44,7 @@ def test_type_inference():
     sdfg(f2cOperator0=f2cOperator, rc1=rc, Axf0=Axf, x=x, N0=4, N1=4)
 
     assert ((rc == np.array([0, -1, -2, -3])).all())
+    return sdfg
 
 
 if __name__ == "__main__":
