@@ -4,6 +4,7 @@ import collections
 import copy
 import ctypes
 import itertools
+from numbers import Integral
 import os
 import pickle, json
 from hashlib import md5, sha256
@@ -13,7 +14,7 @@ import re
 import shutil
 import sys
 import time
-from typing import (Any, AnyStr, Dict, Iterator, List, Optional, Set, Tuple, Type, Union)
+from typing import Any, AnyStr, Dict, Iterator, List, Optional, Sequence, Set, Tuple, Type, Union
 import warnings
 import numpy as np
 import sympy as sp
@@ -30,10 +31,15 @@ from dace.sdfg import nodes as nd
 from dace.sdfg.graph import OrderedDiGraph, Edge, SubgraphView
 from dace.sdfg.state import SDFGState
 from dace.sdfg.propagation import propagate_memlets_sdfg
+from dace.distr_types import ProcessGrid, SubArray, RedistrArray
 from dace.dtypes import validate_name
 from dace.properties import (DebugInfoProperty, EnumProperty, ListProperty, make_properties, Property, CodeProperty,
                              TransformationHistProperty, SDFGReferenceProperty, DictProperty, OrderedDictProperty,
                              CodeBlock)
+
+# NOTE: In shapes, we try to convert strings to integers. In ranks, a string should be interpreted as data (scalar).
+ShapeType = Sequence[Union[Integral, str, symbolic.symbol, symbolic.SymExpr, symbolic.sympy.Basic]]
+RankType = Union[Integral, str, symbolic.symbol, symbolic.SymExpr, symbolic.sympy.Basic]
 
 
 def _arrays_to_json(arrays):
@@ -298,6 +304,22 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
     debuginfo = DebugInfoProperty(allow_none=True)
 
+    _pgrids = DictProperty(str,
+                           ProcessGrid,
+                           desc="Process-grid descriptors for this SDFG",
+                           to_json=_arrays_to_json,
+                           from_json=_arrays_from_json)
+    _subarrays = DictProperty(str,
+                              SubArray,
+                              desc="Sub-array descriptors for this SDFG",
+                              to_json=_arrays_to_json,
+                              from_json=_arrays_from_json)
+    _rdistrarrays = DictProperty(str,
+                                 RedistrArray,
+                                 desc="Sub-array redistribution descriptors for this SDFG",
+                                 to_json=_arrays_to_json,
+                                 from_json=_arrays_from_json)
+
     callback_mapping = DictProperty(str,
                                     str,
                                     desc='Mapping between callback name and its original callback '
@@ -346,6 +368,11 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         self.callback_mapping = {}
         # Counter to make it easy to create temp transients
         self._temp_transients = 0
+
+        # Grid-distribution-related fields
+        self._pgrids = {}
+        self._subarrays = {}
+        self._rdistrarrays = {}
 
         # Counter to resolve name conflicts
         self._orig_name = name
@@ -468,6 +495,21 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             in this SDFG, with an extra `None` entry for empty memlets.
         """
         return self._arrays
+
+    @property
+    def process_grids(self):
+        """ Returns a dictionary of process-grid descriptors (`ProcessGrid` objects) used in this SDFG. """
+        return self._pgrids
+
+    @property
+    def subarrays(self):
+        """ Returns a dictionary of sub-array descriptors (`SubArray` objects) used in this SDFG. """
+        return self._subarrays
+
+    @property
+    def rdistrarrays(self):
+        """ Returns a dictionary of sub-array redistribution descriptors (`RedistrArray` objects) used in this SDFG. """
+        return self._rdistrarrays
 
     def data(self, dataname: str):
         """ Looks up a data descriptor from its name, which can be an array, stream, or scalar symbol. """
@@ -1405,7 +1447,8 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
     def _find_new_name(self, name: str):
         """ Tries to find a new name by adding an underscore and a number. """
         index = 0
-        names = (self._arrays.keys() | self.constants_prop.keys())
+        names = (self._arrays.keys() | self.constants_prop.keys() | self._pgrids.keys() | self._subarrays.keys()
+                 | self._rdistrarrays.keys())
         while (name + ('_%d' % index)) in names:
             index += 1
 
@@ -1697,6 +1740,103 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                 self.add_symbol(sym.name, sym.dtype)
 
         return name
+
+    def add_pgrid(self,
+                  shape: ShapeType = None,
+                  parent_grid: str = None,
+                  color: Sequence[Union[Integral, bool]] = None,
+                  exact_grid: RankType = None,
+                  root: RankType = 0):
+        """ Adds a process-grid to the process-grid descriptor store.
+            For more details on process-grids, please read the documentation of the ProcessGrid class.
+            :param shape: Shape of the process-grid (see `dims` parameter of [MPI_Cart_create](https://www.mpich.org/static/docs/latest/www3/MPI_Cart_create.html)), e.g., [2, 3, 3].
+            :param parent_grid: Parent process-grid (similar to the `comm` parameter of [MPI_Cart_sub](https://www.mpich.org/static/docs/v3.2/www3/MPI_Cart_sub.html)).
+            :param color: The i-th entry specifies whether the i-th dimension is kept in the sub-grid or is dropped (see `remain_dims` input of [MPI_Cart_sub](https://www.mpich.org/static/docs/v3.2/www3/MPI_Cart_sub.html)).
+            :param exact_grid: If set then, out of all the sub-grids created, only the one that contains the rank with id `exact_grid` will be utilized for collective communication.
+            :param root: Root rank (used for collective communication).
+            :return: Name of the new process-grid descriptor.
+        """
+
+        if not (shape or parent_grid):
+            raise ValueError("Process-grid must either have its shape defined or be linked to a parent-grid.")
+
+        # convert strings to int if possible
+        shape = shape or []
+        newshape = []
+        for s in shape:
+            try:
+                newshape.append(int(s))
+            except:
+                newshape.append(dace.symbolic.pystr_to_symbolic(s))
+        shape = newshape
+
+        grid_name = self._find_new_name('__pgrid')
+        is_subgrid = (parent_grid is not None)
+        if parent_grid and isinstance(parent_grid, str):
+            parent_grid = self._pgrids[parent_grid]
+
+        self._pgrids[grid_name] = ProcessGrid(grid_name, is_subgrid, shape, parent_grid, color, exact_grid, root)
+
+        self.append_init_code(self._pgrids[grid_name].init_code())
+        self.append_exit_code(self._pgrids[grid_name].exit_code())
+
+        return grid_name
+
+    def add_subarray(self,
+                     dtype: dtypes.typeclass,
+                     shape: ShapeType,
+                     subshape: ShapeType,
+                     pgrid: str = None,
+                     correspondence: Sequence[Integral] = None):
+        """ Adds a sub-array to the sub-array descriptor store.
+            For more details on sub-arrays, please read the documentation of the SubArray class.
+            :param dtype: Datatype of the array (see `oldtype` parameter of [MPI_Type_create_subarray](https://www.mpich.org/static/docs/v3.2/www3/MPI_Type_create_subarray.html)).
+            :param shape: Shape of the sub-array (see `array_of_sizes` parameter of [MPI_Type_create_subarray](https://www.mpich.org/static/docs/v3.2/www3/MPI_Type_create_subarray.html)).
+            :param subshape: Sub-shape of the sub-array (see `array_of_subsizes` parameter of [MPI_Type_create_subarray](https://www.mpich.org/static/docs/v3.2/www3/MPI_Type_create_subarray.html)).
+            :param pgrid: Process-grid used for collective scatter/gather operations.
+            :param correspondence: Matching among array dimensions and process-grid dimensions.
+            :return: Name of the new sub-array descriptor.
+        """
+
+        # convert strings to int if possible
+        shape = shape or []
+        newshape = []
+        for s in shape:
+            try:
+                newshape.append(int(s))
+            except:
+                newshape.append(dace.symbolic.pystr_to_symbolic(s))
+        shape = newshape
+        subshape = subshape or []
+        newshape = []
+        for s in subshape:
+            try:
+                newshape.append(int(s))
+            except:
+                newshape.append(dace.symbolic.pystr_to_symbolic(s))
+        subshape = newshape
+
+        subarray_name = self._find_new_name('__subarray')
+        self._subarrays[subarray_name] = SubArray(subarray_name, dtype, shape, subshape, pgrid, correspondence)
+
+        self.append_init_code(self._subarrays[subarray_name].init_code())
+        self.append_exit_code(self._subarrays[subarray_name].exit_code())
+
+        return subarray_name
+
+    def add_rdistrarray(self, array_a: str, array_b: str):
+        """ Adds a sub-array redistribution to the sub-array redistribution descriptor store.
+            For more details on redistributions, please read the documentation of the RedistrArray class.
+            :param array_a: Input sub-array descriptor.
+            :param array_b: Output sub-array descriptor.
+            :return: Name of the new redistribution descriptor.
+        """
+
+        rdistrarray_name = self._find_new_name('__rdistrarray')
+        self._rdistrarrays[rdistrarray_name] = RedistrArray(rdistrarray_name, array_a, array_b)
+        self.append_init_code(self._rdistrarrays[rdistrarray_name].init_code(self))
+        self.append_exit_code(self._rdistrarrays[rdistrarray_name].exit_code(self))
+        return rdistrarray_name
 
     def add_loop(
         self,

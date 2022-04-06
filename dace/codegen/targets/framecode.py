@@ -46,6 +46,7 @@ class DaCeCodeGenerator(object):
         self.targets: Set[TargetCodeGenerator] = set()
         self.to_allocate: DefaultDict[Union[SDFG, SDFGState, nodes.EntryNode],
                                       List[Tuple[int, int, nodes.AccessNode]]] = collections.defaultdict(list)
+        self.where_allocated: Dict[Tuple[SDFG, str], SDFG] = {}
         self.fsyms: Dict[int, Set[str]] = {}
         self._symbols_and_constants: Dict[int, Set[str]] = {}
         fsyms = self.free_symbols(sdfg)
@@ -378,7 +379,7 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                                      [cflow.SingleState(dispatch_state, s, s is last) for s in states_topological], [],
                                      [], [], [])
 
-        callsite_stream.write(cft.as_cpp(self.dispatcher.defined_vars, sdfg.symbols), sdfg)
+        callsite_stream.write(cft.as_cpp(self, sdfg.symbols), sdfg)
 
         # Write exit label
         callsite_stream.write(f'__state_exit_{sdfg.sdfg_id}:;', sdfg)
@@ -483,7 +484,8 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                 definition = desc.as_arg(name=f'__{sdfg.sdfg_id}_{name}') + ';'
                 self.statestruct.append(definition)
 
-                self.to_allocate[sdfg].append((sdfg, first_state_instance, first_node_instance, True, True, True))
+                self.to_allocate[top_sdfg].append((sdfg, first_state_instance, first_node_instance, True, True, True))
+                self.where_allocated[(sdfg, name)] = top_sdfg
                 continue
             elif desc.lifetime is dtypes.AllocationLifetime.Global:
                 # Global memory is allocated in the beginning of the program
@@ -500,6 +502,7 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                 # self.to_allocate[top_sdfg].append(
                 #     (sdfg.sdfg_id, sdfg.node_id(state), node))
                 self.to_allocate[top_sdfg].append((sdfg, first_state_instance, first_node_instance, True, True, True))
+                self.where_allocated[(sdfg, name)] = top_sdfg
                 continue
 
             # The rest of the cases change the starting scope we attempt to
@@ -611,6 +614,7 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                     if cursdfg.parent_nsdfg_node is None:
                         curscope = None
                         curstate = None
+                        cursdfg = None
                     else:
                         curstate = cursdfg.parent
                         curscope = curstate.entry_node(cursdfg.parent_nsdfg_node)
@@ -643,6 +647,10 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                         (sdfg, first_state_instance, first_node_instance, False, True, True))
             else:
                 self.to_allocate[curscope].append((sdfg, first_state_instance, first_node_instance, True, True, True))
+            if isinstance(curscope, SDFG):
+                self.where_allocated[(sdfg, name)] = curscope
+            else:
+                self.where_allocated[(sdfg, name)] = cursdfg
 
     def allocate_arrays_in_scope(self, sdfg: SDFG, scope: Union[nodes.EntryNode, SDFGState, SDFG],
                                  function_stream: CodeIOStream, callsite_stream: CodeIOStream):

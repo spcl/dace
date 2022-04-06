@@ -1163,7 +1163,8 @@ class LibraryNode(CodeNode):
                 return UnregisteredLibraryNode.from_json(json_obj, context)
             return clazz.from_json(json_obj, context)
         else:  # Subclasses are actual library nodes
-            ret = cls(json_obj['attributes']['name'])
+            # Initialize library node without calling constructor
+            ret = cls.__new__(cls)
             dace.serialize.set_properties_from_json(ret, json_obj, context=context)
             return ret
 

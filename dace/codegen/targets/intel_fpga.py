@@ -178,13 +178,11 @@ DACE_EXPORTED void __dace_exit_intel_fpga({sdfg.name}_t *__state) {{
 
         return [host_code_obj] + kernel_code_objs + other_code_objs
 
-
     def _internal_preprocess(self, sdfg: dace.SDFG):
         '''
         Vendor-specific SDFG Preprocessing
         '''
         pass
-
 
     def create_mangled_channel_name(self, var_name, kernel_id, external_stream):
         '''
@@ -749,7 +747,8 @@ __kernel void \\
             if vconn in inout or in_memlet.data is None:
                 continue
             desc = sdfg.arrays[in_memlet.data]
-            defined_type, defined_ctype = self._dispatcher.defined_vars.get(in_memlet.data, 1)
+            ptrname = cpp.ptr(in_memlet.data, desc, sdfg, self._frame)
+            defined_type, defined_ctype = self._dispatcher.defined_vars.get(ptrname, 1)
 
             if isinstance(desc, dace.data.Array) and (desc.storage == dtypes.StorageType.FPGA_Global
                                                       or desc.storage == dtypes.StorageType.FPGA_Local):
@@ -760,7 +759,7 @@ __kernel void \\
                 offset = cpp.cpp_offset_expr(desc, in_memlet.subset, None)
                 offset_expr = '[' + offset + ']' if defined_type is not DefinedType.Scalar else ''
 
-                expr = self.make_ptr_vector_cast(in_memlet.data + offset_expr, desc.dtype, node.in_connectors[vconn],
+                expr = self.make_ptr_vector_cast(ptrname + offset_expr, desc.dtype, node.in_connectors[vconn],
                                                  False, defined_type)
                 if desc.storage == dtypes.StorageType.FPGA_Global:
                     typedef = "__global volatile  {}* restrict".format(vec_type)
@@ -781,7 +780,8 @@ __kernel void \\
                 if defined_type is not DefinedType.Pointer:
                     typedef = typedef + "*"
 
-                memlet_references.append((typedef, vconn, cpp.cpp_ptr_expr(sdfg, in_memlet, defined_type)))
+                memlet_references.append(
+                    (typedef, vconn, cpp.cpp_ptr_expr(sdfg, in_memlet, defined_type, codegen=self._frame)))
                 self._dispatcher.defined_vars.add(vconn, DefinedType.Pointer, typedef, allow_shadowing=True)
             else:
                 # all the other cases
@@ -795,7 +795,8 @@ __kernel void \\
         for _, uconn, _, _, out_memlet in state.out_edges(node):
             if out_memlet.data is not None:
                 desc = sdfg.arrays[out_memlet.data]
-                defined_type, defined_ctype = self._dispatcher.defined_vars.get(out_memlet.data, 1)
+                ptrname = cpp.ptr(out_memlet.data, desc, sdfg, self._frame)
+                defined_type, defined_ctype = self._dispatcher.defined_vars.get(ptrname, 1)
 
                 if isinstance(desc, dace.data.Array) and (desc.storage == dtypes.StorageType.FPGA_Global
                                                           or desc.storage == dtypes.StorageType.FPGA_Local):
@@ -809,8 +810,8 @@ __kernel void \\
                     else:
                         typedef = "{}*".format(vec_type)
                     ref = '&' if defined_type is DefinedType.Scalar else ''
-                    expr = self.make_ptr_vector_cast(out_memlet.data + offset_expr, desc.dtype,
-                                                     node.out_connectors[uconn], False, defined_type)
+                    expr = self.make_ptr_vector_cast(ptrname + offset_expr, desc.dtype, node.out_connectors[uconn],
+                                                     False, defined_type)
                     memlet_references.append((typedef, uconn, ref + expr))
                     # Register defined variable
                     self._dispatcher.defined_vars.add(uconn, DefinedType.Pointer, typedef, allow_shadowing=True)
@@ -824,7 +825,8 @@ __kernel void \\
                     typedef = defined_ctype
                     if defined_type is not DefinedType.Pointer:
                         typedef = typedef + "*"
-                    memlet_references.append((typedef, uconn, cpp.cpp_ptr_expr(sdfg, out_memlet, defined_type)))
+                    memlet_references.append(
+                        (typedef, uconn, cpp.cpp_ptr_expr(sdfg, out_memlet, defined_type, codegen=self._frame)))
                     self._dispatcher.defined_vars.add(uconn, DefinedType.Pointer, typedef, allow_shadowing=True)
                 else:
                     memlet_references.append(
@@ -858,7 +860,8 @@ __kernel void \\
         """
         name = node.data
         nodedesc = node.desc(sdfg)
-        if self._dispatcher.defined_vars.has(name):
+        ptrname = cpp.ptr(name, nodedesc, sdfg, self._frame)
+        if self._dispatcher.defined_vars.has(ptrname):
             return  # View was already allocated
 
         # Check directionality of view (referencing dst or src)
@@ -877,9 +880,10 @@ __kernel void \\
 
             qualifier = "__global volatile "
             atype = dtypes.pointer(nodedesc.dtype).ctype + " restrict"
-            aname = name
+            aname = ptrname
             viewed_desc = sdfg.arrays[edge.data.data]
-            defined_type, _ = self._dispatcher.defined_vars.get(edge.data.data, 0)
+            eptr = cpp.ptr(edge.data.data, viewed_desc, sdfg, self._frame)
+            defined_type, _ = self._dispatcher.defined_vars.get(eptr, 0)
             # Register defined variable
             self._dispatcher.defined_vars.add(aname, defined_type, atype, allow_shadowing=True)
             _, _, value = cpp.emit_memlet_reference(self._dispatcher,
@@ -947,6 +951,8 @@ __kernel void \\
                                                                 sdfg.nodes()[state_id], sdfg)
             data_name = outer_stream_node_trace[0][0][1 if is_output else 0].label
             is_global = True
+
+        data_name = cpp.ptr(data_name, data_desc, sdfg, self._frame)
 
         def_type, ctypedef = self._dispatcher.defined_vars.get(data_name, is_global=is_global)
         if def_type == DefinedType.Scalar:
@@ -1254,9 +1260,11 @@ __kernel void \\
         self.generate_channel_writes(sdfg, dfg, node, after_memlets_stream, state_id)
 
     def write_and_resolve_expr(self, sdfg, memlet, nc, outname, inname, indices=None, dtype=None):
-        offset = cpp.cpp_offset_expr(sdfg.arrays[memlet.data], memlet.subset, None)
-        defined_type, _ = self._dispatcher.defined_vars.get(memlet.data)
-        return self.make_write(defined_type, dtype, memlet.data, memlet.data, offset, inname, memlet.wcr, False, 1)
+        desc = sdfg.arrays[memlet.data]
+        offset = cpp.cpp_offset_expr(desc, memlet.subset, None)
+        ptrname = cpp.ptr(memlet.data, desc, sdfg, self._frame)
+        defined_type, _ = self._dispatcher.defined_vars.get(ptrname)
+        return self.make_write(defined_type, dtype, ptrname, ptrname, offset, inname, memlet.wcr, False, 1)
 
     def make_ptr_vector_cast(self, dst_expr, dst_dtype, src_dtype, is_scalar, defined_type):
         """
