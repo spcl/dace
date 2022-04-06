@@ -219,9 +219,13 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                                                              None, None, True)
                                         replace_dict[arr_name] = repl
 
-                        # Perform replacement
+                        # Perform replacement and update graph.arrays to allow type inference
+                        # on interstate edges
                         for k, v in replace_dict.items():
                             e.data.replace(k, v)
+                            if v not in graph.arrays:
+                                # Note: this redundancy occurs only during codegen
+                                graph.arrays[v] = graph.arrays[k]
 
     def define_stream(self, dtype, buffer_size, var_name, array_size, function_stream, kernel_stream, sdfg):
         """
@@ -967,8 +971,7 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(kernel_f
             if in_memlet.data is None:
                 continue
             ptrname = cpp.ptr(in_memlet.data, sdfg.arrays[in_memlet.data], sdfg, self._frame)
-            is_memory_interface = (self._dispatcher.defined_vars.get(ptrname,
-                                                                     1)[0] == DefinedType.ArrayInterface)
+            is_memory_interface = (self._dispatcher.defined_vars.get(ptrname, 1)[0] == DefinedType.ArrayInterface)
             if is_memory_interface:
                 for bank in fpga.iterate_distributed_subset(sdfg.arrays[in_memlet.data], in_memlet, False, sdfg):
                     interface_name = fpga.fpga_ptr(vconn,
