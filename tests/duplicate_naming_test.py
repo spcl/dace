@@ -1,6 +1,9 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+import pytest
 import dace
 import numpy as np
+
+from dace.sdfg.validation import InvalidSDFGEdgeError
 
 W = dace.symbol('W')
 
@@ -46,5 +49,20 @@ def test():
     assert diff <= 1e-5
 
 
+def test_duplicate_object():
+    sdfg = dace.SDFG('shouldfail')
+    sdfg.add_array('A', [20], dace.float64)
+    state = sdfg.add_state()
+    a = state.add_read('A')
+    b = state.add_write('A')
+    memlet = dace.Memlet('A[0]')
+    state.add_nedge(a, b, memlet)
+    state.add_nedge(a, b, memlet)
+
+    with pytest.raises(InvalidSDFGEdgeError):
+        sdfg.validate()
+
+
 if __name__ == "__main__":
-    test()
+    # test()
+    test_duplicate_object()

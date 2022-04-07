@@ -21,15 +21,26 @@ def validate(graph: 'dace.sdfg.graph.SubgraphView'):
         validate_state(graph)
 
 
-def validate_sdfg(sdfg: 'dace.sdfg.SDFG'):
+def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None):
     """ Verifies the correctness of an SDFG by applying multiple tests.
         :param sdfg: The SDFG to verify.
+        :param references: An optional set keeping seen IDs for object
+                           miscopy validation.
 
         Raises an InvalidSDFGError with the erroneous node/edge
         on failure.
     """
     # Avoid import loop
     from dace.codegen.targets import fpga
+
+    references = references or set()
+
+    # Reference check
+    if id(sdfg) in references:
+        raise InvalidSDFGError(
+            f'Duplicate SDFG detected: "{sdfg.name}". Please copy objects '
+            'rather than using multiple references to the same one', sdfg, None)
+    references.add(id(sdfg))
 
     try:
         # SDFG-level checks
@@ -44,6 +55,12 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG'):
 
         # Validate data descriptors
         for name, desc in sdfg._arrays.items():
+            if id(desc) in references:
+                raise InvalidSDFGError(
+                    f'Duplicate data descriptor object detected: "{name}". Please copy objects '
+                    'rather than using multiple references to the same one', sdfg, None)
+            references.add(id(desc))
+
             # Validate array names
             if name is not None and not dtypes.validate_name(name):
                 raise InvalidSDFGError("Invalid array name %s" % name, sdfg, None)
@@ -97,10 +114,23 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG'):
             # Source -> inter-state definition -> Destination
             ##########################################
             visited_edges.add(edge)
+
+            # Reference check
+            if id(edge) in references:
+                raise InvalidSDFGInterstateEdgeError(
+                    f'Duplicate inter-state edge object detected: "{edge}". Please '
+                    'copy objects rather than using multiple references to the same one', sdfg, sdfg.edge_id(edge))
+            references.add(id(edge))
+            if id(edge.data) in references:
+                raise InvalidSDFGInterstateEdgeError(
+                    f'Duplicate inter-state edge object detected: "{edge}". Please '
+                    'copy objects rather than using multiple references to the same one', sdfg, sdfg.edge_id(edge))
+            references.add(id(edge.data))
+
             # Source
             if edge.src not in visited:
                 visited.add(edge.src)
-                validate_state(edge.src, sdfg.node_id(edge.src), sdfg, symbols, initialized_transients)
+                validate_state(edge.src, sdfg.node_id(edge.src), sdfg, symbols, initialized_transients, references)
 
             ##########################################
             # Edge
@@ -124,17 +154,30 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG'):
             # Destination
             if edge.dst not in visited:
                 visited.add(edge.dst)
-                validate_state(edge.dst, sdfg.node_id(edge.dst), sdfg, symbols, initialized_transients)
+                validate_state(edge.dst, sdfg.node_id(edge.dst), sdfg, symbols, initialized_transients, references)
         # End of state DFS
 
         # If there is only one state, the DFS will miss it
         if start_state not in visited:
-            validate_state(start_state, sdfg.node_id(start_state), sdfg, symbols, initialized_transients)
+            validate_state(start_state, sdfg.node_id(start_state), sdfg, symbols, initialized_transients, references)
 
         # Validate all inter-state edges (including self-loops not found by DFS)
         for eid, edge in enumerate(sdfg.edges()):
             if edge in visited_edges:
                 continue
+
+            # Reference check
+            if id(edge) in references:
+                raise InvalidSDFGInterstateEdgeError(
+                    f'Duplicate inter-state edge object detected: "{edge}". Please '
+                    'copy objects rather than using multiple references to the same one', sdfg, eid)
+            references.add(id(edge))
+            if id(edge.data) in references:
+                raise InvalidSDFGInterstateEdgeError(
+                    f'Duplicate inter-state edge object detected: "{edge}". Please '
+                    'copy objects rather than using multiple references to the same one', sdfg, eid)
+            references.add(id(edge.data))
+
             issyms = edge.data.assignments.keys()
             if any(not dtypes.validate_name(s) for s in issyms):
                 invalid = next(s for s in issyms if not dtypes.validate_name(s))
@@ -150,7 +193,8 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                    state_id: int = None,
                    sdfg: 'dace.sdfg.SDFG' = None,
                    symbols: Dict[str, dtypes.typeclass] = None,
-                   initialized_transients: Set[str] = None):
+                   initialized_transients: Set[str] = None,
+                   references: Set[int] = None):
     """ Verifies the correctness of an SDFG state by applying multiple
         tests. Raises an InvalidSDFGError with the erroneous node on
         failure.
@@ -169,8 +213,16 @@ def validate_state(state: 'dace.sdfg.SDFGState',
     state_id = state_id or sdfg.node_id(state)
     symbols = symbols or {}
     initialized_transients = (initialized_transients if initialized_transients is not None else {'__pystate'})
+    references = references or set()
     scope_local_constants: dict[nd.MapEntry, list[str]] = dict()
     scope = state.scope_dict()
+
+    # Reference check
+    if id(state) in references:
+        raise InvalidSDFGError(
+            f'Duplicate SDFG state detected: "{state.label}". Please copy objects '
+            'rather than using multiple references to the same one', sdfg, state_id)
+    references.add(id(state))
 
     if not dtypes.validate_name(state._label):
         raise InvalidSDFGError("Invalid state name", sdfg, state_id)
@@ -184,6 +236,13 @@ def validate_state(state: 'dace.sdfg.SDFGState',
         raise InvalidSDFGError("Unreachable state", sdfg, state_id)
 
     for nid, node in enumerate(state.nodes()):
+        # Reference check
+        if id(node) in references:
+            raise InvalidSDFGNodeError(
+                f'Duplicate node detected: "{node}". Please copy objects '
+                'rather than using multiple references to the same one', sdfg, state_id, nid)
+        references.add(id(node))
+
         # Node validation
         try:
             node.validate(sdfg, state)
@@ -378,6 +437,18 @@ def validate_state(state: 'dace.sdfg.SDFGState',
 
     # Memlet checks
     for eid, e in enumerate(state.edges()):
+        # Reference check
+        if id(e) in references:
+            raise InvalidSDFGEdgeError(
+                f'Duplicate memlet detected: "{e}". Please copy objects '
+                'rather than using multiple references to the same one', sdfg, state_id, eid)
+        references.add(id(e))
+        if id(e.data) in references:
+            raise InvalidSDFGEdgeError(
+                f'Duplicate memlet detected: "{e.data}". Please copy objects '
+                'rather than using multiple references to the same one', sdfg, state_id, eid)
+        references.add(id(e.data))
+
         # Edge validation
         try:
             e.data.validate(sdfg, state)
