@@ -7,6 +7,7 @@ from dace.sdfg import utils as sdutil
 from dace.transformation import transformation, helpers as xfh
 from dace.properties import Property, make_properties
 from collections import defaultdict
+from copy import deepcopy as dc
 from typing import Dict
 
 
@@ -273,11 +274,11 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                 for e in in_edges:
                     state.remove_edge(e)
                     state.add_edge(e.src, e.src_conn, me, 'IN_' + e.dst_conn, e.data)
-                    state.add_edge(me, 'OUT_' + e.dst_conn, e.dst, e.dst_conn, e.data)
+                    state.add_edge(me, 'OUT_' + e.dst_conn, e.dst, e.dst_conn, dc(e.data))
                 for e in out_edges:
                     state.remove_edge(e)
                     state.add_edge(e.src, e.src_conn, mx, 'IN_' + e.src_conn, e.data)
-                    state.add_edge(mx, 'OUT_' + e.src_conn, e.dst, e.dst_conn, e.data)
+                    state.add_edge(mx, 'OUT_' + e.src_conn, e.dst, e.dst_conn, dc(e.data))
 
                 # Map without inputs
                 if len(in_edges) == 0:
