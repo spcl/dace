@@ -1086,7 +1086,7 @@ class NestSDFG(transformation.MultiStateTransformation):
                         if arrname not in inputs:
                             arrobj = nested_sdfg.arrays[arrname]
                             outer_sdfg.arrays[arrname] = dc(arrobj)
-                            nested_sdfg.arrays[arrname_nested] = arrobj
+                            nested_sdfg.arrays[arrname_nested] = dc(arrobj)
                             inputs[arrname] = arrname_nested
                         node_data_name = arrname_nested
                     if (state.in_degree(node) > 0):  # output node
@@ -1096,7 +1096,7 @@ class NestSDFG(transformation.MultiStateTransformation):
                             arrobj = nested_sdfg.arrays[arrname]
                             if arrname not in inputs:
                                 outer_sdfg.arrays[arrname] = dc(arrobj)
-                            nested_sdfg.arrays[arrname_nested] = arrobj
+                            nested_sdfg.arrays[arrname_nested] = dc(arrobj)
                             outputs[arrname] = arrname_nested
                         node_data_name = arrname_nested
                     node.data = node_data_name

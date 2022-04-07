@@ -64,5 +64,5 @@ def test_duplicate_object():
 
 
 if __name__ == "__main__":
-    # test()
+    test()
     test_duplicate_object()
