@@ -800,7 +800,29 @@ class View(Array):
         # We ensure that allocation lifetime is always set to Scope, since the
         # view is generated upon "allocation"
         if self.lifetime != dtypes.AllocationLifetime.Scope:
-            raise ValueError('Only Scope allocation lifetime is supported for ' 'Views')
+            raise ValueError('Only Scope allocation lifetime is supported for Views')
+
+    def as_array(self):
+        copy = cp.deepcopy(self)
+        copy.__class__ = Array
+        return copy
+
+
+@make_properties
+class Reference(Array):
+    """ 
+    Data descriptor that acts as a dynamic reference of another array. It can be used just like a regular array,
+    except that it could be set to an arbitrary array or sub-array at runtime. To set a reference, connect another
+    access node to it and use the "set" connector.
+    In order to enable data-centric analysis and optimizations, avoid using References as much as possible.
+    """
+    def validate(self):
+        super().validate()
+
+        # We ensure that allocation lifetime is always set to Scope, since the
+        # view is generated upon "allocation"
+        if self.lifetime != dtypes.AllocationLifetime.Scope:
+            raise ValueError('Only Scope allocation lifetime is supported for References')
 
     def as_array(self):
         copy = cp.deepcopy(self)

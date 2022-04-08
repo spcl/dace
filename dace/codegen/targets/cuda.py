@@ -366,6 +366,9 @@ void __dace_exit_cuda({sdfg.name}_t *__state) {{
         elif isinstance(nodedesc, dace.data.View):
             return self._cpu_codegen.allocate_view(sdfg, dfg, state_id, node, function_stream, declaration_stream,
                                                    allocation_stream)
+        elif isinstance(nodedesc, dace.data.Reference):
+            return self._cpu_codegen.allocate_reference(sdfg, dfg, state_id, node, function_stream, declaration_stream,
+                                                        allocation_stream)
 
         result_decl = StringIO()
         result_alloc = StringIO()
@@ -1227,12 +1230,15 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     ptrname = cpp.ptr(aname, data_desc, sdfg, self._frame)
                     if not defined_type:
                         defined_type, ctype = self._dispatcher.defined_vars.get(ptrname)
-                    
+
                     CUDACodeGen._in_device_code = True
                     inner_ptrname = cpp.ptr(aname, data_desc, sdfg, self._frame)
                     CUDACodeGen._in_device_code = False
 
-                    self._dispatcher.defined_vars.add(inner_ptrname, defined_type, 'const %s' % ctype, allow_shadowing=True)
+                    self._dispatcher.defined_vars.add(inner_ptrname,
+                                                      defined_type,
+                                                      'const %s' % ctype,
+                                                      allow_shadowing=True)
             else:
                 if aname in sdfg.arrays:
                     data_desc = sdfg.arrays[aname]
@@ -2021,7 +2027,7 @@ void  *{kname}_args[] = {{ {kargs} }};
             result.append(('cub::GridBarrier&', '__gbar', '__gbar'))
 
         # Add data from nested SDFGs to kernel arguments
-        result.extend([(atype, aname, aname) for atype,aname,_ in self.extra_nsdfg_args])
+        result.extend([(atype, aname, aname) for atype, aname, _ in self.extra_nsdfg_args])
         for arg in self.extra_nsdfg_args:
             defined_type, ctype = self._dispatcher.defined_vars.get(arg[1], 1)
             self._dispatcher.defined_vars.add(arg[1], defined_type, ctype)
