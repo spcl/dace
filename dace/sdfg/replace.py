@@ -33,7 +33,8 @@ def replace_dict(subgraph: 'dace.sdfg.state.StateGraphView',
     :param symrepl: Optional cached dictionary of ``repl`` as symbolic expressions.
     """
     symrepl = symrepl or {
-        symname: symbolic.pystr_to_symbolic(new_name) if isinstance(new_name, str) else new_name
+        symbolic.pystr_to_symbolic(symname):
+        symbolic.pystr_to_symbolic(new_name) if isinstance(new_name, str) else new_name
         for symname, new_name in repl.items()
     }
 
@@ -44,7 +45,7 @@ def replace_dict(subgraph: 'dace.sdfg.state.StateGraphView',
     # Replace in memlets
     for edge in subgraph.edges():
         if edge.data.data in repl:
-            edge.data.data = repl[edge.data.data]
+            edge.data.data = str(repl[edge.data.data])
         if (edge.data.subset is not None and repl.keys() & edge.data.subset.free_symbols):
             edge.data.subset = _replsym(edge.data.subset, symrepl)
         if (edge.data.other_subset is not None and repl.keys() & edge.data.other_subset.free_symbols):
@@ -65,8 +66,15 @@ def replace(subgraph: 'dace.sdfg.state.StateGraphView', name: str, new_name: str
     replace_dict(subgraph, {name: new_name})
 
 
-def replace_properties_dict(node: Any, repl: Dict[str, str], symrepl: Dict[symbolic.SymbolicType,
-                                                                           symbolic.SymbolicType]):
+def replace_properties_dict(node: Any,
+                            repl: Dict[str, str],
+                            symrepl: Dict[symbolic.SymbolicType, symbolic.SymbolicType] = None):
+    symrepl = symrepl or {
+        symbolic.pystr_to_symbolic(symname):
+        symbolic.pystr_to_symbolic(new_name) if isinstance(new_name, str) else new_name
+        for symname, new_name in repl.items()
+    }
+
     for propclass, propval in node.properties():
         if propval is None:
             continue
