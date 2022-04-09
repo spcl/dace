@@ -123,6 +123,8 @@ class MPITransformMap(transformation.SingleStateTransformation):
 
         # Now create a transient for each array
         for e in edges:
+            if e.data.is_empty():
+                continue
             in_local_storage_subgraph = {
                 LocalStorage.node_a: graph.node_id(outer_map),
                 LocalStorage.node_b: self.subgraph[MPITransformMap.map_entry]
@@ -137,6 +139,8 @@ class MPITransformMap(transformation.SingleStateTransformation):
         out_map_exit = graph.exit_node(outer_map)
 
         for e in graph.out_edges(out_map_exit):
+            if e.data.is_empty():
+                continue
             name = e.data.data
             outlocalstorage_subgraph = {
                 LocalStorage.node_a: graph.node_id(in_map_exit),

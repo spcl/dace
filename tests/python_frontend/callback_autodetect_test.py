@@ -497,6 +497,58 @@ def test_two_callbacks_different_type():
     assert called_cnt == 2
 
 
+def test_disallowed_keyword():
+    class Obj:
+        def hello(a):
+            try:
+                return a + 1
+            except:
+                return a + 2
+
+    @dace
+    def prog(a: dace.float64[10]):
+        b: dace.float64[10] = Obj.hello(a)
+        return b
+
+    a = np.random.rand(10)
+    assert np.allclose(prog(a), a + 1)
+
+
+def test_nested_duplicate_callbacks():
+    called = 0
+
+    @dace_inhibitor
+    def callback(*args):
+        nonlocal called
+        called += len(args)
+
+    @dace.program
+    def myprogram_1(a):
+        callback(a[0])
+        for i in range(a.shape[0]):
+            a[i] += i
+        callback(a[0], a[1])
+        return np.sum(a)
+
+    @dace.program
+    def myprogram(a):
+        myprogram_1(a)
+
+    a = np.random.rand(20, 1)
+    sdfg = myprogram.to_sdfg(a)
+    build_folder = sdfg.build_folder
+
+    myprogram(a)
+    # Ensure the cache is clear
+    myprogram._cache.clear()
+
+    myprogram.load_precompiled_sdfg(build_folder, a)
+    assert len(myprogram._cache.cache) == 1
+
+    myprogram(a)
+    assert called == 6
+
+
 if __name__ == '__main__':
     test_automatic_callback()
     test_automatic_callback_2()
@@ -519,3 +571,5 @@ if __name__ == '__main__':
     test_two_callbacks()
     test_two_callbacks_different_sig()
     test_two_callbacks_different_type()
+    test_disallowed_keyword()
+    test_nested_duplicate_callbacks()

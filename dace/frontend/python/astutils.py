@@ -10,7 +10,7 @@ import numbers
 import numpy
 import sympy
 import sys
-from typing import Any, Dict, List, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from dace import dtypes, symbolic
 
@@ -81,6 +81,7 @@ def evalnode(node: ast.AST, gvars: Dict[str, Any]) -> Any:
     cext.visit(node)
     gvars = copy.copy(gvars)
     gvars.update(cext.gvars)
+    node = ast.fix_missing_locations(node)
 
     try:
         # Ensure context is load so eval works (e.g., when using value as lhs)
@@ -227,6 +228,10 @@ def unparse(node):
     """ Unparses an AST node to a Python string, chomping trailing newline. """
     if node is None:
         return None
+    if isinstance(node, (ast.AST, list)):
+        v = StringIO()
+        ExtUnparser(node, file=v)
+        return v.getvalue().strip()
     # Support for SymPy expressions
     if isinstance(node, sympy.Basic):
         return sympy.printing.pycode(node)
@@ -237,9 +242,7 @@ def unparse(node):
     if isinstance(node, str):
         return node
 
-    v = StringIO()
-    ExtUnparser(node, file=v)
-    return v.getvalue().strip()
+    raise TypeError(f'Unsupported type "{type(node).__name__}" for unparse')
 
 
 # Helper function to convert an ND subscript AST node to a list of 3-tuple
@@ -351,9 +354,59 @@ def negate_expr(node):
     if isinstance(expr, ast.Expr):
         expr = expr.value
 
-    newexpr = ast.Expr(value=ast.UnaryOp(op=ast.Not(), operand=expr))
+    newexpr = ast.Expr(value=ast.UnaryOp(op=ast.Not(), operand=copy_tree(expr)))
     newexpr = ast.copy_location(newexpr, expr)
     return ast.fix_missing_locations(newexpr)
+
+
+def copy_tree(node: ast.AST) -> ast.AST:
+    """
+    Copies an entire AST without copying the non-AST parts (e.g., constant values).
+    A form of reduced deepcopy.
+    :param node: The tree to copy.
+    :return: The copied tree.
+    """
+    class Copier(ast.NodeTransformer):
+        def visit_Num(self, node):
+            # Ignore n
+            return ast.copy_location(ast.Num(n=node.n), node)
+
+        def visit_Constant(self, node):
+            # Ignore value
+            return ast.copy_location(ast.Constant(value=node.value, kind=node.kind), node)
+
+        def visit(self, node):
+            if node.__class__.__name__ in {'Num', 'Constant'}:
+                method = 'visit_' + node.__class__.__name__
+                visitor = getattr(self, method, self.generic_visit)
+                return visitor(node)
+            newnode = copy.copy(node)
+            return self.generic_visit(newnode)
+
+        def generic_visit(self, node):
+            for field, old_value in ast.iter_fields(node):
+                if isinstance(old_value, list):
+                    new_values = []
+                    for value in old_value:
+                        if isinstance(value, ast.AST):
+                            value = self.visit(value)
+                            if value is None:
+                                continue
+                            elif not isinstance(value, ast.AST):
+                                new_values.extend(value)
+                                continue
+                        new_values.append(value)
+                    # Copy list instead of modifying it in-place
+                    setattr(node, field, new_values)
+                elif isinstance(old_value, ast.AST):
+                    new_node = self.visit(old_value)
+                    if new_node is None:
+                        delattr(node, field)
+                    else:
+                        setattr(node, field, new_node)
+            return node
+
+    return Copier().visit(node)
 
 
 class ExtNodeTransformer(ast.NodeTransformer):
@@ -427,6 +480,7 @@ class ExtNodeVisitor(ast.NodeVisitor):
 
 class ASTFindReplace(ast.NodeTransformer):
     def __init__(self, repldict: Dict[str, str]):
+        self.replace_count = 0
         self.repldict = repldict
         # If ast.Names were given, use them as keys as well
         self.repldict.update({k.id: v for k, v in self.repldict.items() if isinstance(k, ast.Name)})
@@ -438,6 +492,7 @@ class ASTFindReplace(ast.NodeTransformer):
                 new_node = ast.copy_location(val, node)
             else:
                 new_node = ast.copy_location(ast.parse(str(self.repldict[node.id])).body[0].value, node)
+            self.replace_count += 1
             return new_node
 
         return self.generic_visit(node)
@@ -448,6 +503,7 @@ class ASTFindReplace(ast.NodeTransformer):
             if isinstance(val, ast.AST):
                 val = unparse(val)
             node.arg = val
+            self.replace_count += 1
         return self.generic_visit(node)
 
 
@@ -522,3 +578,88 @@ class ConstantExtractor(ast.NodeTransformer):
         self.gvars[newname] = node.n
         self.id += 1
         return ast.copy_location(ast.Name(id=newname, ctx=ast.Load()), node)
+
+
+class ASTHelperMixin:
+    """ A mixin that adds useful helper functions for AST node transformers and visitors """
+    def generic_visit_filtered(self, node: ast.AST, filter: Optional[Set[str]] = None):
+        """
+        Modification of ast.NodeTransformer.generic_visit that visits all fields without the
+        set of filtered fields.
+        :param node: AST to visit.
+        :param filter: Set of strings of fields to skip.
+        """
+        filter = filter or set()
+        for field, old_value in ast.iter_fields(node):
+            if field in filter:
+                continue
+            if isinstance(old_value, list):
+                new_values = []
+                for value in old_value:
+                    if isinstance(value, ast.AST):
+                        value = self.visit(value)
+                        if value is None:
+                            continue
+                        elif not isinstance(value, ast.AST):
+                            new_values.extend(value)
+                            continue
+                    new_values.append(value)
+                old_value[:] = new_values
+            elif isinstance(old_value, ast.AST):
+                new_node = self.visit(old_value)
+                if new_node is None:
+                    delattr(node, field)
+                else:
+                    setattr(node, field, new_node)
+        return node
+
+    def generic_visit_field(self, node: ast.AST, field: str) -> ast.AST:
+        """
+        Modification of ast.NodeTransformer.generic_visit that only visits one
+        field.
+        :param node: AST to visit.
+        :param field: Field to visit.
+        """
+        old_value = getattr(node, field)
+        if isinstance(old_value, list):
+            new_values = []
+            for value in old_value:
+                if isinstance(value, ast.AST):
+                    value = self.visit(value)
+                    if value is None:
+                        continue
+                    elif not isinstance(value, ast.AST):
+                        new_values.extend(value)
+                        continue
+                new_values.append(value)
+            old_value[:] = new_values
+        elif isinstance(old_value, ast.AST):
+            new_node = self.visit(old_value)
+            if new_node is None:
+                delattr(node, field)
+            else:
+                setattr(node, field, new_node)
+        return node
+
+
+def create_constant(value: Any, node: Optional[ast.AST] = None) -> ast.AST:
+    """
+    Cross-Python-AST-version helper function that creates an AST constant node from a given value.
+    :param value: The value to create a constant from.
+    :param node: An optional node to copy the source location information from.
+    :return: An AST node (``ast.Constant`` after Python 3.8) that represents this value.
+    """
+    if sys.version_info >= (3, 8):
+        newnode = ast.Constant(value=value, kind='')
+    else:
+        if value is None:
+            newnode = ast.NameConstant(value=None)
+        elif isinstance(value, str):
+            newnode = ast.Str(s=value)
+        else:
+            newnode = ast.Num(n=value)
+
+    if node is not None:
+        newnode = ast.copy_location(newnode, node)
+
+    return newnode

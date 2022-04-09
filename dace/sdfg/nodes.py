@@ -217,6 +217,10 @@ class AccessNode(Node):
     debuginfo = DebugInfoProperty()
     data = DataProperty(desc="Data (array, stream, scalar) to access")
 
+    instrument = EnumProperty(dtype=dtypes.DataInstrumentationType,
+                              desc="Instrument data contents at this access",
+                              default=dtypes.DataInstrumentationType.No_Instrumentation)
+
     def __init__(self, data, debuginfo=None):
         super(AccessNode, self).__init__()
 
@@ -236,6 +240,7 @@ class AccessNode(Node):
         node = object.__new__(AccessNode)
         node._data = self._data
         node._setzero = self._setzero
+        node._instrument = self._instrument
         node._in_connectors = dcpy(self._in_connectors, memo=memo)
         node._out_connectors = dcpy(self._out_connectors, memo=memo)
         node._debuginfo = dcpy(self._debuginfo, memo=memo)
@@ -556,13 +561,18 @@ class NestedSDFG(CodeNode):
             if not dtypes.validate_name(out_conn):
                 raise NameError('Invalid output connector "%s"' % out_conn)
         connectors = self.in_connectors.keys() | self.out_connectors.keys()
+        for conn in connectors:
+            if conn not in self.sdfg.arrays:
+                raise NameError(
+                    f'Connector "{conn}" was given but is not a registered data descriptor in the nested SDFG. '
+                    'Example: parameter passed to a function without a matching array within it.')
         for dname, desc in self.sdfg.arrays.items():
             # TODO(later): Disallow scalars without access nodes (so that this
             #              check passes for them too).
             if isinstance(desc, data.Scalar):
                 continue
             if not desc.transient and dname not in connectors:
-                raise NameError('Data descriptor "%s" not found in nested ' 'SDFG connectors' % dname)
+                raise NameError('Data descriptor "%s" not found in nested SDFG connectors' % dname)
             if dname in connectors and desc.transient:
                 raise NameError('"%s" is a connector but its corresponding array is transient' % dname)
 
@@ -1153,7 +1163,8 @@ class LibraryNode(CodeNode):
                 return UnregisteredLibraryNode.from_json(json_obj, context)
             return clazz.from_json(json_obj, context)
         else:  # Subclasses are actual library nodes
-            ret = cls(json_obj['attributes']['name'])
+            # Initialize library node without calling constructor
+            ret = cls.__new__(cls)
             dace.serialize.set_properties_from_json(ret, json_obj, context=context)
             return ret
 

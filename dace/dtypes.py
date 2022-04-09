@@ -136,15 +136,23 @@ class Language(aenum.AutoNumberEnum):
 @undefined_safe_enum
 @extensible_enum
 class InstrumentationType(aenum.AutoNumberEnum):
-    """ Types of instrumentation providers.
-        :note: Might be determined automatically in future versions.
-    """
+    """ Types of instrumentation providers. """
 
     No_Instrumentation = ()
     Timer = ()
     PAPI_Counters = ()
     GPU_Events = ()
     FPGA = ()
+
+
+@undefined_safe_enum
+@extensible_enum
+class DataInstrumentationType(aenum.AutoNumberEnum):
+    """ Types of data container instrumentation providers. """
+
+    No_Instrumentation = ()
+    Save = ()
+    Restore = ()
 
 
 @undefined_safe_enum
@@ -551,14 +559,19 @@ class opaque(typeclass):
         self.dtype = self
 
     def to_json(self):
-        return {'type': 'opaque', 'name': self.ctype}
+        return {'type': 'opaque', 'ctype': self.ctype}
 
     @staticmethod
     def from_json(json_obj, context=None):
         if json_obj['type'] != 'opaque':
             raise TypeError("Invalid type for opaque object")
 
-        return opaque(json_to_typeclass(json_obj['ctype'], context))
+        try:
+            typeclass = json_to_typeclass(json_obj['ctype'], context)
+        except KeyError:
+            typeclass = json_obj['ctype']
+
+        return opaque(typeclass)
 
     def as_ctypes(self):
         """ Returns the ctypes version of the typeclass. """
@@ -676,6 +689,13 @@ class string(pointer):
     def __init__(self):
         super().__init__(int8)
 
+    def to_json(self):
+        return {'type': 'string'}
+
+    @staticmethod
+    def from_json(json_obj, context=None):
+        return string()
+
 
 class struct(typeclass):
     """ A data type for a struct of existing typeclasses.
@@ -788,7 +808,7 @@ class constant:
     """
     @staticmethod
     def __descriptor__():
-        raise ValueError('All constant arguments must be provided in order ' 'to compile the SDFG ahead-of-time.')
+        raise ValueError('All constant arguments must be provided in order to compile the SDFG ahead-of-time.')
 
 
 ####### Utility function ##############
@@ -802,6 +822,7 @@ def ptrtocupy(ptr, inner_ctype, shape):
     import cupy as cp
     umem = cp.cuda.UnownedMemory(ptr, 0, None)
     return cp.ndarray(shape=shape, dtype=inner_ctype, memptr=cp.cuda.MemoryPointer(umem, 0))
+
 
 class callback(typeclass):
     """ Looks like dace.callback([None, <some_native_type>], *types)"""
@@ -917,6 +938,10 @@ class callback(typeclass):
                 inp_arraypos.append(index)
                 inp_types_and_sizes.append((ctypes.c_char_p, []))
                 inp_converters.append(lambda a, *args: ctypes.cast(a, ctypes.c_char_p).value.decode('utf-8'))
+            elif isinstance(arg, data.Scalar) and isinstance(arg.dtype, pointer):
+                inp_arraypos.append(index)
+                inp_types_and_sizes.append((ctypes.c_void_p, []))
+                inp_converters.append(lambda a, *args: ctypes.cast(a, ctypes.c_void_p).value)
             else:
                 inp_converters.append(lambda a: a)
         offset = len(self.input_types)
@@ -932,6 +957,10 @@ class callback(typeclass):
                 ret_arraypos.append(index + offset)
                 ret_types_and_sizes.append((ctypes.c_char_p, []))
                 ret_converters.append(lambda a, *args: ctypes.cast(a, ctypes.c_char_p).value.decode('utf-8'))
+            elif isinstance(arg, data.Scalar) and isinstance(arg.dtype, pointer):
+                ret_arraypos.append(index)
+                ret_types_and_sizes.append((ctypes.c_void_p, []))
+                ret_converters.append(lambda a, *args: ctypes.cast(a, ctypes.c_void_p).value)
             else:
                 ret_converters.append(lambda a, *args: a)
         if len(inp_arraypos) == 0 and len(ret_arraypos) == 0:

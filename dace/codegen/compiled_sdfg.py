@@ -5,7 +5,7 @@ import os
 import re
 import shutil
 import subprocess
-from typing import Any, Dict, List, Tuple, Optional, Type
+from typing import Any, Callable, Dict, List, Tuple, Optional, Type
 import warnings
 
 import numpy as np
@@ -181,7 +181,20 @@ class CompiledSDFG(object):
         # Cache SDFG argument properties
         self._typedict = self._sdfg.arglist()
         self._sig = self._sdfg.signature_arglist(with_types=False, arglist=self._typedict)
+        self._free_symbols = self._sdfg.free_symbols
         self.argnames = argnames
+
+    def get_exported_function(self, name: str, restype=None) -> Optional[Callable[..., Any]]:
+        """
+        Tries to find a symbol by name in the compiled SDFG, and convert it to a callable function
+        with the (optionally) given return type (void by default). If no such function exists, returns None.
+        :param name: Name of the function to query.
+        :return: Callable to the function, or None if doesn't exist.
+        """
+        try:
+            return self._lib.get_symbol(name, restype=restype)
+        except KeyError:  # Function not found
+            return None
 
     def get_state_struct(self) -> ctypes.Structure:
         """ Attempt to parse the SDFG source code and extract the state struct. This method will parse the first
@@ -236,7 +249,7 @@ class CompiledSDFG(object):
     def sdfg(self):
         return self._sdfg
 
-    def initialize(self, *argtuple):
+    def _initialize(self, argtuple):
         if self._init is not None:
             res = ctypes.c_void_p(self._init(*argtuple))
             if res == ctypes.c_void_p(0):
@@ -244,6 +257,25 @@ class CompiledSDFG(object):
 
             self._libhandle = res
             self._initialized = True
+
+    def initialize(self, *args, **kwargs):
+        """
+        Initializes the compiled SDFG without invoking it. 
+        :param args: Arguments to call SDFG with.
+        :param kwargs: Keyword arguments to call SDFG with.
+        :return: If successful, returns the library handle (as a ctypes pointer).
+        :note: This call requires the same arguments as it would when normally calling the program.
+        """
+        if self._initialized:
+            return
+
+        if len(args) > 0 and self.argnames is not None:
+            kwargs.update({aname: arg for aname, arg in zip(self.argnames, args)})
+
+        # Construct arguments in the exported C function order
+        _, initargtuple = self._construct_args(kwargs)
+        self._initialize(initargtuple)
+        return self._libhandle
 
     def finalize(self):
         if self._exit is not None:
@@ -260,7 +292,7 @@ class CompiledSDFG(object):
             # Call initializer function if necessary, then SDFG
             if self._initialized is False:
                 self._lib.load()
-                self.initialize(*initargtuple)
+                self._initialize(initargtuple)
             # PROFILING
             if Config.get_bool('profiling'):
                 operations.timethis(self._sdfg, 'DaCe', 0, self._cfunc, self._libhandle, *argtuple)
@@ -382,25 +414,27 @@ class CompiledSDFG(object):
         constants = sdfg.constants
 
         # Remove symbolic constants from arguments
-        callparams = tuple((arg, actype, atype) for arg, actype, atype in zip(arglist, arg_ctypes, argtypes)
+        callparams = tuple((arg, actype, atype, aname)
+                           for arg, actype, atype, aname in zip(arglist, arg_ctypes, argtypes, argnames)
                            if not symbolic.issymbolic(arg) or (hasattr(arg, 'name') and arg.name not in constants))
 
         # Replace symbols with their values
-        callparams = tuple(
-            (actype(arg.get()), actype, atype) if isinstance(arg, symbolic.symbol) else (arg, actype, atype)
-            for arg, actype, atype in callparams)
+        callparams = tuple((actype(arg.get()) if isinstance(arg, symbolic.symbol) else arg, actype, atype, aname)
+                           for arg, actype, atype, aname in callparams)
+
+        # Construct init args, which only consist of the symbols
+        symbols = self._free_symbols
+        initargs = tuple(
+            actype(arg) if (not isinstance(arg, ctypes._SimpleCData)) else arg
+            for arg, actype, atype, aname in callparams if aname in symbols)
 
         # Replace arrays with their base host/device pointers
         newargs = tuple((ctypes.c_void_p(_array_interface_ptr(arg, atype)), actype,
-                         atype) if dtypes.is_array(arg) else (arg, actype, atype) for arg, actype, atype in callparams)
-
-        initargs = tuple(atup for atup in callparams if not dtypes.is_array(atup[0]))
+                         atype) if dtypes.is_array(arg) else (arg, actype, atype)
+                        for arg, actype, atype, _ in callparams)
 
         newargs = tuple(
             actype(arg) if (not isinstance(arg, ctypes._SimpleCData)) else arg for arg, actype, atype in newargs)
-
-        initargs = tuple(
-            actype(arg) if (not isinstance(arg, ctypes._SimpleCData)) else arg for arg, actype, atype in initargs)
 
         self._lastargs = newargs, initargs
         return self._lastargs

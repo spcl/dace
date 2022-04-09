@@ -2,7 +2,7 @@
 import ast
 import collections
 from dataclasses import dataclass
-from typing import (Any, Callable, Dict, List, Optional, Sequence, Tuple, Union)
+from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple, Union
 from dace import data
 from dace.sdfg.sdfg import SDFG
 
@@ -78,12 +78,15 @@ class SDFGConvertible(object):
 
     def closure_resolver(self,
                          constant_args: Dict[str, Any],
+                         given_args: Set[str],
                          parent_closure: Optional['SDFGClosure'] = None) -> 'SDFGClosure':
         """ 
         Returns an SDFGClosure object representing the closure of the
         object to be converted to an SDFG.
         :param constant_args: Arguments whose values are already resolved to
                               compile-time values.
+        :param given_args: Arguments that were given at call-time (used for
+                           determining which arguments with defaults were provided).
         :param parent_closure: The parent SDFGClosure object (used for, e.g.,
                                recursion detection).
         :return: New SDFG closure object representing the convertible object.

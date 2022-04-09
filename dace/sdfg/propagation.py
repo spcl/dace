@@ -718,6 +718,9 @@ def propagate_states(sdfg) -> None:
     from dace.transformation.helpers import split_interstate_edges
     from dace.sdfg.analysis import cfg
 
+    # Reset the state edge annotations (which may have changed due to transformations)
+    reset_state_annotations(sdfg)
+
     # Clean up the state machine by separating combined condition and assignment
     # edges.
     split_interstate_edges(sdfg)

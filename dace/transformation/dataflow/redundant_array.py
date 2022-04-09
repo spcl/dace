@@ -184,6 +184,10 @@ class RedundantArray(pm.SingleStateTransformation, pm.SimplifyPass):
         if graph.out_degree(in_array) != 1:
             return False
 
+        # Ensure it is not an isolated copy
+        if graph.in_degree(in_array) == 0:
+            return False
+
         # Make sure that the candidate is a transient variable
         if not in_desc.transient:
             return False
@@ -413,6 +417,8 @@ class RedundantArray(pm.SingleStateTransformation, pm.SimplifyPass):
                                                out_desc.storage, out_desc.location, view_strides, in_desc.offset,
                                                out_desc.may_alias, dtypes.AllocationLifetime.Scope, in_desc.alignment,
                                                in_desc.debuginfo, in_desc.total_size)
+        in_array.add_out_connector('views', force=True)
+        e1._src_conn = 'views'
 
     def apply(self, graph, sdfg):
         in_array = self.in_array
@@ -835,6 +841,8 @@ class RedundantSecondArray(pm.SingleStateTransformation, pm.SimplifyPass):
                                                     in_desc.storage, in_desc.location, view_strides, out_desc.offset,
                                                     in_desc.may_alias, dtypes.AllocationLifetime.Scope,
                                                     out_desc.alignment, out_desc.debuginfo, out_desc.total_size)
+            out_array.add_in_connector('views', force=True)
+            e1._dst_conn = 'views'
             return
 
         # 2. Iterate over the e2 edges and traverse the memlet tree

@@ -323,10 +323,14 @@ def evaluate(expr: Union[sympy.Basic, int, float],
     :param symbols: A mapping of symbols to their values.
     :return: A constant value based on ``expr`` and ``symbols``.
     """
+    if isinstance(expr, list):
+        return [evaluate(e, symbols) for e in expr]
+    if isinstance(expr, tuple):
+        return tuple(evaluate(e, symbols) for e in expr)
     if isinstance(expr, SymExpr):
         return evaluate(expr.expr, symbols)
     if issymbolic(expr, set(map(str, symbols.keys()))):
-        raise TypeError('Expression cannot be evaluated to a constant')
+        raise TypeError(f'Symbolic expression "{expr}" cannot be evaluated to a constant')
     if isinstance(expr, (int, float, numpy.number)):
         return expr
 
@@ -416,21 +420,17 @@ def resolve_symbol_to_constant(symb, start_sdfg):
         return None
 
 
-def symbols_in_ast(tree):
+def symbols_in_ast(tree: ast.AST):
     """ Walks an AST and finds all names, excluding function names. """
-    to_visit = list(tree.__dict__.items())
     symbols = []
-    while len(to_visit) > 0:
-        (key, val) = to_visit.pop()
-        if key == "func":
+    skip = set()
+    for node in ast.walk(tree):
+        if node in skip:
             continue
-        if isinstance(val, ast.Name):
-            symbols.append(val.id)
-            continue
-        if isinstance(val, ast.expr):
-            to_visit += list(val.__dict__.items())
-        if isinstance(val, list):
-            to_visit += [(key, v) for v in val]
+        if isinstance(node, ast.Call):
+            skip.add(node.func)
+        if isinstance(node, ast.Name):
+            symbols.append(node.id)
     return dtypes.deduplicate(symbols)
 
 
@@ -757,7 +757,6 @@ class SympyBooleanConverter(ast.NodeTransformer):
         return self.visit_Constant(node)
 
 
-@lru_cache(16384)
 def pystr_to_symbolic(expr, symbol_map=None, simplify=None):
     """ Takes a Python string and converts it into a symbolic expression. """
     from dace.frontend.python.astutils import unparse  # Avoid import loops
@@ -777,11 +776,14 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None):
         'GtE': sympy.Ge,
         'LtE': sympy.Le,
         'NotEq': sympy.Ne,
+        'floor': sympy.floor,
+        'ceil': sympy.ceiling,
         # Convert and/or to special sympy functions to avoid boolean evaluation
         'And': sympy.Function('AND'),
         'Or': sympy.Function('OR'),
         'var': sympy.Symbol('var'),
         'root': sympy.Symbol('root'),
+        'arg': sympy.Symbol('arg'),
     }
     # _clash1 enables all one-letter variables like N as symbols
     # _clash also allows pi, beta, zeta and other common greek letters

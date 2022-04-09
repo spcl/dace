@@ -25,6 +25,7 @@ from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets.target import (TargetCodeGenerator, IllegalCopy, make_absolute)
 from dace.codegen import cppunparse
 from dace.properties import Property, make_properties, indirect_properties
+from dace.sdfg.state import SDFGState
 from dace.symbolic import evaluate
 from dace.transformation.dataflow import MapUnroll
 from collections import defaultdict
@@ -292,7 +293,8 @@ def unqualify_fpga_array_name(sdfg: dace.SDFG, arr_name: str):
     :param name: array name to unqualify
     '''
 
-    if arr_name not in sdfg.arrays and (arr_name.endswith('_in') or arr_name.endswith('out')) and arr_name.startswith('__'):
+    if arr_name not in sdfg.arrays and (arr_name.endswith('_in')
+                                        or arr_name.endswith('out')) and arr_name.startswith('__'):
         unqualified = re.sub('_in$|_out$', '', arr_name)
         unqualified = re.sub('^__', '', unqualified)
         return unqualified
@@ -679,7 +681,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                             seen[node.data] = sg
         return shared
 
-    def make_parameters(self, sdfg, state, subgraphs):
+    def make_parameters(self, sdfg: SDFG, state: SDFGState, subgraphs):
         """
         Determines the parameters that must be passed to the passed list of
         subgraphs, as well as to the global kernel.
@@ -718,13 +720,31 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
         subgraph_parameters = collections.OrderedDict()  # {subgraph: [params]}
         nested_global_transients = set()
         # [(Is an output, dataname string, data object, interface)]
-        external_streams: Set[tuple[bool, str, dt, dict[str, int]]] = set()
+        external_streams: Set[tuple[bool, str, dt.Data, dict[str, int]]] = set()
 
         # Mapping from global arrays to memory interfaces
         bank_assignments: Dict[str, Tuple[str, Union[int, subsets.Range]]] = {}
 
         # Mapping from symbol to a unique parameter tuple
         all_symbols = {k: (False, k, dt.Scalar(v), None) for k, v in sdfg.symbols.items() if k not in sdfg.constants}
+
+        # Add symbols from inter-state edges
+        global_symbols = copy.deepcopy(sdfg.symbols)
+        interstate_symbols = {}
+        for e in sdfg.dfs_edges(sdfg.start_state):
+            symbols = e.data.new_symbols(sdfg, global_symbols)
+            # Inferred symbols only take precedence if global symbol not defined or None
+            symbols = {
+                k: v if (k not in global_symbols or global_symbols[k] is None) else global_symbols[k]
+                for k, v in symbols.items()
+            }
+            interstate_symbols.update(symbols)
+            global_symbols.update(symbols)
+        all_symbols.update({
+            k: (False, k, dt.Scalar(v), None)
+            for k, v in interstate_symbols.items() if k not in all_symbols and k not in sdfg.constants
+        })
+
         # Symbols that will be passed as parameters to the top-level kernel
         global_symbols = set()
 
@@ -735,6 +755,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
             data_to_node.update(
                 {node.data: node
                  for node in subgraph.nodes() if isinstance(node, dace.sdfg.nodes.AccessNode)})
+            is_rtl_subgraph = any([isinstance(node, nodes.RTLTasklet) for node in subgraph.nodes()])
             subsdfg = subgraph.parent
             candidates = []  # type: List[Tuple[bool,str,Data]]
             # [(is an output, dataname string, data object)]
@@ -743,19 +764,14 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
             for n in subgraph.source_nodes():
                 # Check if the node is connected to an RTL tasklet, in which
                 # case it should be an external stream
-                dsts = [e.dst for e in state.out_edges(n)]
-                srcs = [e.src for e in state.in_edges(n)]
-                tasks = [t for t in dsts + srcs if isinstance(t, dace.nodes.Tasklet)]
-                external = any([t.language == dtypes.Language.SystemVerilog for t in tasks])
+                is_external = is_rtl_subgraph
                 is_output = True
-
-                if not external and self._num_kernels > 1:
-                    # Check if this is an external stream
+                if not is_external and self._num_kernels > 1:
                     if is_external_stream(n, subgraph):
-                        external = True
+                        is_external = True
                         is_output = False
 
-                if external:
+                if is_external:
                     external_streams |= {(is_output, e.data.data, subsdfg.arrays[e.data.data], None)
                                          for e in state.out_edges(n)
                                          if isinstance(subsdfg.arrays[e.data.data], dt.Stream)}
@@ -764,20 +780,14 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
             for n in subgraph.sink_nodes():
                 # Check if the node is connected to an RTL tasklet, in which
                 # case it should be an external stream
-                dsts = [e.dst for e in state.out_edges(n)]
-                srcs = [e.src for e in state.in_edges(n)]
-                tasks = [t for t in dsts + srcs if isinstance(t, dace.nodes.Tasklet)]
-
-                external = any([t.language == dtypes.Language.SystemVerilog for t in tasks])
+                is_external = is_rtl_subgraph
                 is_output = False
-
-                if not external and self._num_kernels > 1:
-                    # Check if this is an external stream
+                if not is_external and self._num_kernels > 1:
                     if is_external_stream(n, subgraph):
-                        external = True
+                        is_external = True
                         is_output = True
 
-                if external:
+                if is_external:
                     external_streams |= {(is_output, e.data.data, subsdfg.arrays[e.data.data], None)
                                          for e in state.in_edges(n)
                                          if isinstance(subsdfg.arrays[e.data.data], dt.Stream)}
@@ -980,9 +990,10 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
         result_decl = StringIO()
         arrsize = nodedesc.total_size
         dataname = node.data
+        ptrname = cpp.ptr(dataname, nodedesc, sdfg, self._frame)
 
         # Check if array is already declared
-        if self._dispatcher.declared_arrays.has(dataname):
+        if self._dispatcher.declared_arrays.has(ptrname):
             return
 
         if nodedesc.storage == dtypes.StorageType.FPGA_Global:
@@ -997,9 +1008,9 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                 # TODO: Distinguish between read, write, and read+write
                 # Define buffer, using proper type
                 result_decl.write("hlslib::ocl::Buffer <{}, hlslib::ocl::Access::readWrite> {};".format(
-                    nodedesc.dtype.ctype, dataname))
+                    nodedesc.dtype.ctype, ptrname))
                 self._dispatcher.declared_arrays.add(
-                    dataname, DefinedType.Pointer,
+                    ptrname, DefinedType.Pointer,
                     'hlslib::ocl::Buffer <{}, hlslib::ocl::Access::readWrite>'.format(nodedesc.dtype.ctype))
         elif (nodedesc.storage in (dtypes.StorageType.FPGA_Local, dtypes.StorageType.FPGA_Registers,
                                    dtypes.StorageType.FPGA_ShiftRegister)):
@@ -1019,7 +1030,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
         result_alloc = StringIO()
         arrsize = nodedesc.total_size
         is_dynamically_sized = dace.symbolic.issymbolic(arrsize, sdfg.constants)
-        dataname = node.data
+        dataname = cpp.ptr(node.data, nodedesc, sdfg, self._frame)
 
         if not isinstance(nodedesc, dt.Stream):
             # Unless this is a Stream, if the variable has been already defined we can return
@@ -1033,6 +1044,9 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
 
         if isinstance(nodedesc, dt.View):
             return self.allocate_view(sdfg, dfg, state_id, node, function_stream, declaration_stream, allocation_stream)
+        elif isinstance(nodedesc, dt.Reference):
+            return self.allocate_reference(sdfg, dfg, state_id, node, function_stream, declaration_stream,
+                                           allocation_stream)
         elif isinstance(nodedesc, dt.Stream):
 
             if not self._in_device_code:
@@ -1405,13 +1419,15 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                                                 with_brackets=False,
                                                 referenced_array=src_nodedesc,
                                                 use_other_subset=(not src_is_subset
-                                                                  and memlet.other_subset is not None))
+                                                                  and memlet.other_subset is not None),
+                                                codegen=self._frame)
             if memlet.dst_subset is not None:
                 offset_dst = cpp.cpp_array_expr(sdfg,
                                                 memlet,
                                                 with_brackets=False,
                                                 referenced_array=dst_nodedesc,
-                                                use_other_subset=(src_is_subset and memlet.other_subset is not None))
+                                                use_other_subset=(src_is_subset and memlet.other_subset is not None),
+                                                codegen=self._frame)
 
             if (not sum(copy_shape) == 1 and
                 (not isinstance(memlet.subset, subsets.Range) or any([step != 1 for _, _, step in memlet.subset]))):
@@ -1592,8 +1608,10 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                 for node in dependency_pragma_nodes:
                     self.generate_no_dependence_post(callsite_stream, sdfg, state_id, dst_node, node.data)
 
-            src_def_type, _ = self._dispatcher.defined_vars.get(src_node.data)
-            dst_def_type, _ = self._dispatcher.defined_vars.get(dst_node.data)
+            src_name = cpp.ptr(src_node.data, src_node.desc(sdfg), sdfg, self._frame)
+            dst_name = cpp.ptr(dst_node.data, dst_node.desc(sdfg), sdfg, self._frame)
+            src_def_type, _ = self._dispatcher.defined_vars.get(src_name)
+            dst_def_type, _ = self._dispatcher.defined_vars.get(dst_name)
 
             # Construct indices (if the length of the stride array is zero,
             # resolves to an empty string)

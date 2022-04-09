@@ -2,6 +2,7 @@
 from copy import deepcopy
 from dace import dtypes
 from dace.data import Data
+from dace.properties import Property
 from dace.sdfg.nodes import Node, Tasklet, LibraryNode
 import dace.library
 from dace.memlet import Memlet
@@ -42,6 +43,9 @@ class CodeLibraryNode(LibraryNode):
     implementations = {}
     default_implementation = None
 
+    inputdict = Property(dtype=dict, default={})
+    outputdict = Property(dtype=dict, default={})
+
     def generate_code(self, inputs: Dict[str, Data], outputs: Dict[str, Data]) -> str:
         """ Method that is responsible for generating the code related to
             this node.
@@ -58,13 +62,13 @@ class CodeLibraryNode(LibraryNode):
     def __init__(self, input_names, output_names, *args, name='Custom Code', **kwargs):
         # Store connector types, if given
         if isinstance(input_names, dict):
-            self._inputdict = input_names
+            self.inputdict = input_names
         else:
-            self._inputdict = {k: None for k in set(input_names)}
+            self.inputdict = {k: None for k in set(input_names)}
         if isinstance(output_names, dict):
-            self._outputdict = output_names
+            self.outputdict = output_names
         else:
-            self._outputdict = {k: None for k in set(output_names)}
+            self.outputdict = {k: None for k in set(output_names)}
 
         super().__init__(name, *args, inputs=set(input_names), outputs=set(output_names), **kwargs)
 
@@ -80,7 +84,7 @@ class Expansion(ExpandTransformation):
         # Generate the appropriate code
         code = node.generate_code(inputs, outputs)
         # Replace this node with a C++ tasklet
-        return Tasklet('custom_code', node._inputdict, node._outputdict, code, language=dtypes.Language.CPP)
+        return Tasklet('custom_code', node.inputdict, node.outputdict, code, language=dtypes.Language.CPP)
 
 
 CodeLibraryNode.register_implementation('default', Expansion)

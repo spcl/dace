@@ -200,10 +200,11 @@ class tasklet(metaclass=TaskletMetaclass):
         if isinstance(language, str):
             language = dtypes.Language[language]
         self.language = language
-        if language != dtypes.Language.Python:
-            raise NotImplementedError('Cannot run non-Python tasklet in Python')
 
     def __enter__(self):
+        if self.language != dtypes.Language.Python:
+            raise NotImplementedError('Cannot run non-Python tasklet in Python')
+
         # Parse and run tasklet
         frame = inspect.stack()[1][0]
         filename = inspect.getframeinfo(frame).filename
@@ -222,5 +223,12 @@ def unroll(generator):
     Explicitly annotates that a loop should be unrolled during parsing.
     :param generator: The original generator to loop over.
     :note: Only use with stateless and compile-time evaluateable loops!
+    """
+    yield from generator
+
+def nounroll(generator):
+    """
+    Explicitly annotates that a loop should not be unrolled during parsing.
+    :param generator: The original generator to loop over.
     """
     yield from generator

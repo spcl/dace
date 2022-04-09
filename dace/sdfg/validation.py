@@ -82,15 +82,15 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG'):
         # Check every state separately
         start_state = sdfg.start_state
         initialized_transients = {'__pystate'}
+        initialized_transients.update(sdfg.constants_prop.keys())
         symbols = copy.deepcopy(sdfg.symbols)
         symbols.update(sdfg.arrays)
-        symbols.update({k: dt.create_datadescriptor(v) for k, v in sdfg.constants.items()})
+        symbols.update({k: v for k, (v, _) in sdfg.constants_prop.items()})
         for desc in sdfg.arrays.values():
             for sym in desc.free_symbols:
                 symbols[str(sym)] = sym.dtype
         visited = set()
         visited_edges = set()
-        initialized_transients = set()
         # Run through states via DFS, ensuring that only the defined symbols
         # are available for validation
         for edge in sdfg.dfs_edges(start_state):
@@ -266,11 +266,18 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                 if arr.transient and state.in_degree(node) > 0:
                     initialized_transients.add(node.data)
 
-            # Find writes to input-only arrays
-            only_empty_inputs = all(e.data.is_empty() for e in state.in_edges(node))
-            if (not arr.transient) and (not only_empty_inputs):
-                nsdfg_node = sdfg.parent_nsdfg_node
-                if nsdfg_node is not None:
+            nsdfg_node = sdfg.parent_nsdfg_node
+            if nsdfg_node is not None:
+                # Find unassociated non-transients access nodes
+                if (not arr.transient and node.data not in nsdfg_node.in_connectors
+                        and node.data not in nsdfg_node.out_connectors):
+                    raise InvalidSDFGNodeError(
+                        f'Data descriptor "{node.data}" is not transient and used in a nested SDFG, '
+                        'but does not have a matching connector on the outer SDFG node.', sdfg, state_id, nid)
+
+                # Find writes to input-only arrays
+                only_empty_inputs = all(e.data.is_empty() for e in state.in_edges(node))
+                if (not arr.transient) and (not only_empty_inputs):
                     if node.data not in nsdfg_node.out_connectors:
                         raise InvalidSDFGNodeError(
                             'Data descriptor %s is '
@@ -305,17 +312,6 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                 and not isinstance(node, (nd.NestedSDFG, nd.LibraryNode))):
             dups = node.in_connectors.keys() & node.out_connectors.keys()
             raise InvalidSDFGNodeError("Duplicate connectors: " + str(dups), sdfg, state_id, nid)
-
-        # Check for connectors that are also array/symbol names
-        if isinstance(node, nd.Tasklet):
-            for conn in node.in_connectors.keys():
-                if conn in sdfg.arrays or conn in symbols:
-                    raise InvalidSDFGNodeError(f"Input connector {conn} already "
-                                               "defined as array or symbol", sdfg, state_id, nid)
-            for conn in node.out_connectors.keys():
-                if conn in sdfg.arrays or conn in symbols:
-                    raise InvalidSDFGNodeError(f"Output connector {conn} already "
-                                               "defined as array or symbol", sdfg, state_id, nid)
 
         # Check for dangling connectors (incoming)
         for conn in node.in_connectors:
@@ -428,10 +424,17 @@ def validate_state(state: 'dace.sdfg.SDFGState',
 
                 # Bounds
                 if any(((minel + off) < 0) == True for minel, off in zip(e.data.subset.min_element(), arr.offset)):
-                    raise InvalidSDFGEdgeError("Memlet subset negative out-of-bounds", sdfg, state_id, eid)
+                    # In case of dynamic memlet, only output a warning
+                    if e.data.dynamic:
+                        warnings.warn(f'Potential negative out-of-bounds memlet subset: {e}')
+                    else:
+                        raise InvalidSDFGEdgeError("Memlet subset negative out-of-bounds", sdfg, state_id, eid)
                 if any(((maxel + off) >= s) == True
                        for maxel, s, off in zip(e.data.subset.max_element(), arr.shape, arr.offset)):
-                    raise InvalidSDFGEdgeError("Memlet subset out-of-bounds", sdfg, state_id, eid)
+                    if e.data.dynamic:
+                        warnings.warn(f'Potential out-of-bounds memlet subset: {e}')
+                    else:
+                        raise InvalidSDFGEdgeError("Memlet subset out-of-bounds", sdfg, state_id, eid)
             # Test other_subset as well
             if e.data.other_subset is not None and isinstance(other_subset_node, nd.AccessNode):
                 arr = sdfg.arrays[other_subset_node.data]

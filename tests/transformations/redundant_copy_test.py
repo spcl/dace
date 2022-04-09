@@ -1,5 +1,6 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
+import pytest
 
 import dace
 from dace import nodes
@@ -282,6 +283,20 @@ def test_redundant_second_copy_isolated():
     assert state.number_of_nodes() == 0
 
 
+@pytest.mark.parametrize('order', ['C', 'F'])
+def test_invalid_redundant_array_strided(order):
+    @dace.program
+    def flip_and_flatten(a, b):
+        tmp = np.flip(a, 0)
+        b[:] = tmp.flatten(order=order)
+
+    a = np.asfortranarray(np.random.rand(20, 30))
+    b = np.random.rand(20 * 30)
+    flip_and_flatten(a, b)
+
+    assert np.allclose(b, np.flip(a, 0).flatten(order=order))
+
+
 if __name__ == '__main__':
     test_in()
     test_out()
@@ -294,3 +309,5 @@ if __name__ == '__main__':
     test_reverse_copy()
     test_conv2d()
     test_redundant_second_copy_isolated()
+    test_invalid_redundant_array_strided('C')
+    test_invalid_redundant_array_strided('F')

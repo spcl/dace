@@ -93,11 +93,10 @@ class ControlFlow:
         """
         return []
 
-    def as_cpp(self, defined_vars: 'DefinedVars', symbols: Dict[str, dtypes.typeclass]) -> str:
+    def as_cpp(self, codegen: 'DaCeCodeGenerator', symbols: Dict[str, dtypes.typeclass]) -> str:
         """ 
         Returns C++ code for this control flow block.
-        :param defined_vars: A ``DefinedVars`` object with the variables defined
-                             in the scope.
+        :param codegen: A code generator object, used for allocation information and defined variables in scope.
         :param symbols: A dictionary of symbol names and their types.
         :return: C++ string with the generated code of the control flow block.
         """
@@ -115,7 +114,7 @@ class SingleState(ControlFlow):
     # in order to avoid generating an extraneous "goto exit" statement.
     last_state: bool = False
 
-    def as_cpp(self, defined_vars, symbols) -> str:
+    def as_cpp(self, codegen, symbols) -> str:
         sdfg = self.state.parent
 
         expr = '__state_{}_{}:;\n'.format(sdfg.sdfg_id, self.state.label)
@@ -137,7 +136,8 @@ class SingleState(ControlFlow):
                             sdfg: SDFG,
                             edge: Edge[InterstateEdge],
                             successor: SDFGState = None,
-                            assignments_only: bool = False) -> str:
+                            assignments_only: bool = False,
+                            framecode: 'DaCeCodeGenerator' = None) -> str:
         """ 
         Helper function that generates a state transition (conditional goto) 
         from a state and an SDFG edge.
@@ -148,17 +148,18 @@ class SingleState(ControlFlow):
                           gotos).
         :param assignments_only: If True, generates only the assignments
                                  of the inter-state edge.
+        :param framecode: Code generator object (used for allocation information).
         :return: A c++ string representing the state transition code.
         """
         expr = ''
-        condition_string = cpp.unparse_interstate_edge(edge.data.condition.code[0], sdfg)
+        condition_string = cpp.unparse_interstate_edge(edge.data.condition.code[0], sdfg, codegen=framecode)
 
         if not edge.data.is_unconditional() and not assignments_only:
             expr += f'if ({condition_string}) {{\n'
 
         if len(edge.data.assignments) > 0:
             expr += ';\n'.join([
-                "{} = {}".format(variable, cpp.unparse_interstate_edge(value, sdfg))
+                "{} = {}".format(variable, cpp.unparse_interstate_edge(value, sdfg, codegen=framecode))
                 for variable, value in edge.data.assignments.items()
             ] + [''])
 
@@ -199,10 +200,10 @@ class GeneralBlock(ControlFlow):
     # List or set of edges to not generate inter-state assignments for.
     assignments_to_ignore: Sequence[Edge[InterstateEdge]]
 
-    def as_cpp(self, defined_vars, symbols) -> str:
+    def as_cpp(self, codegen, symbols) -> str:
         expr = ''
         for i, elem in enumerate(self.elements):
-            expr += elem.as_cpp(defined_vars, symbols)
+            expr += elem.as_cpp(codegen, symbols)
             # In a general block, emit transitions and assignments after each
             # individual state
             if isinstance(elem, SingleState):
@@ -260,14 +261,14 @@ class IfScope(ControlFlow):
     body: GeneralBlock  #: Body of if condition
     orelse: Optional[GeneralBlock] = None  #: Optional body of else condition
 
-    def as_cpp(self, defined_vars, symbols) -> str:
-        condition_string = cpp.unparse_interstate_edge(self.condition.code[0], self.sdfg)
+    def as_cpp(self, codegen, symbols) -> str:
+        condition_string = cpp.unparse_interstate_edge(self.condition.code[0], self.sdfg, codegen=codegen)
         expr = f'if ({condition_string}) {{\n'
-        expr += self.body.as_cpp(defined_vars, symbols)
+        expr += self.body.as_cpp(codegen, symbols)
         expr += '\n}'
         if self.orelse:
             expr += ' else {\n'
-            expr += self.orelse.as_cpp(defined_vars, symbols)
+            expr += self.orelse.as_cpp(codegen, symbols)
             expr += '\n}'
         expr += '\n'
         return expr
@@ -288,15 +289,15 @@ class IfElseChain(ControlFlow):
     branch_state: SDFGState  #: State that branches out to all blocks
     body: List[Tuple[CodeBlock, GeneralBlock]]  #: List of (condition, block)
 
-    def as_cpp(self, defined_vars, symbols) -> str:
+    def as_cpp(self, codegen, symbols) -> str:
         expr = ''
         for i, (condition, body) in enumerate(self.body):
             # First block in the chain is just "if", rest are "else if"
             prefix = '' if i == 0 else ' else '
 
-            condition_string = cpp.unparse_interstate_edge(condition.code[0], self.sdfg)
+            condition_string = cpp.unparse_interstate_edge(condition.code[0], self.sdfg, codegen=codegen)
             expr += f'{prefix}if ({condition_string}) {{\n'
-            expr += body.as_cpp(defined_vars, symbols)
+            expr += body.as_cpp(codegen, symbols)
             expr += '\n}'
 
         # If we generate an if/else if blocks, we cannot guarantee that all
@@ -336,9 +337,10 @@ class ForScope(ControlFlow):
     body: GeneralBlock  #: Loop body as a control flow block
     init_edges: List[InterstateEdge]  #: All initialization edges
 
-    def as_cpp(self, defined_vars, symbols) -> str:
+    def as_cpp(self, codegen, symbols) -> str:
         # Initialize to either "int i = 0" or "i = 0" depending on whether
         # the type has been defined
+        defined_vars = codegen.dispatcher.defined_vars
         init = ''
         if self.init is not None:
             if defined_vars.has(self.itervar):
@@ -354,11 +356,11 @@ class ForScope(ControlFlow):
             for edge in self.init_edges:
                 for k, v in edge.data.assignments.items():
                     if k != self.itervar:
-                        cppinit = cpp.unparse_interstate_edge(v, sdfg)
+                        cppinit = cpp.unparse_interstate_edge(v, sdfg, codegen=codegen)
                         preinit += f'{k} = {cppinit};\n'
 
         if self.condition is not None:
-            cond = cpp.unparse_interstate_edge(self.condition.code[0], sdfg)
+            cond = cpp.unparse_interstate_edge(self.condition.code[0], sdfg, codegen=codegen)
         else:
             cond = ''
 
@@ -367,7 +369,7 @@ class ForScope(ControlFlow):
             update = f'{self.itervar} = {self.update}'
 
         expr = f'{preinit}\nfor ({init}; {cond}; {update}) {{\n'
-        expr += _clean_loop_body(self.body.as_cpp(defined_vars, symbols))
+        expr += _clean_loop_body(self.body.as_cpp(codegen, symbols))
         expr += '\n}\n'
         return expr
 
@@ -387,15 +389,15 @@ class WhileScope(ControlFlow):
     test: CodeBlock  #: While-loop condition
     body: GeneralBlock  #: Loop body as control flow block
 
-    def as_cpp(self, defined_vars, symbols) -> str:
+    def as_cpp(self, codegen, symbols) -> str:
         if self.test is not None:
             sdfg = self.guard.parent
-            test = cpp.unparse_interstate_edge(self.test.code[0], sdfg)
+            test = cpp.unparse_interstate_edge(self.test.code[0], sdfg, codegen=codegen)
         else:
             test = 'true'
 
         expr = f'while ({test}) {{\n'
-        expr += _clean_loop_body(self.body.as_cpp(defined_vars, symbols))
+        expr += _clean_loop_body(self.body.as_cpp(codegen, symbols))
         expr += '\n}\n'
         return expr
 
@@ -415,14 +417,14 @@ class DoWhileScope(ControlFlow):
     test: CodeBlock  #: Do-while loop condition
     body: GeneralBlock  #: Loop body as control flow block
 
-    def as_cpp(self, defined_vars, symbols) -> str:
+    def as_cpp(self, codegen, symbols) -> str:
         if self.test is not None:
-            test = cpp.unparse_interstate_edge(self.test.code[0], self.sdfg)
+            test = cpp.unparse_interstate_edge(self.test.code[0], self.sdfg, codegen=codegen)
         else:
             test = 'true'
 
         expr = 'do {\n'
-        expr += _clean_loop_body(self.body.as_cpp(defined_vars, symbols))
+        expr += _clean_loop_body(self.body.as_cpp(codegen, symbols))
         expr += f'\n}} while ({test});\n'
         return expr
 
@@ -443,11 +445,11 @@ class SwitchCaseScope(ControlFlow):
     switchvar: str  #: C++ code for switch expression
     cases: Dict[str, GeneralBlock]  #: Mapping of cases to control flow blocks
 
-    def as_cpp(self, defined_vars, symbols) -> str:
+    def as_cpp(self, codegen, symbols) -> str:
         expr = f'switch ({self.switchvar}) {{\n'
         for case, body in self.cases.items():
             expr += f'case {case}: {{\n'
-            expr += body.as_cpp(defined_vars, symbols)
+            expr += body.as_cpp(codegen, symbols)
             expr += 'break;\n}\n'
         expr += f'default: goto __state_exit_{self.sdfg.sdfg_id};'
         expr += '\n}\n'

@@ -2,6 +2,7 @@
 import numpy as np
 import dace
 from common import compare_numpy_output
+import math
 from numpy import exp, sin, cos, sqrt, log, conj, real, imag
 import pytest
 
@@ -87,6 +88,10 @@ class TestMathFuncs:
         res = func(arg)
         assert np.allclose(mathfunc(arg), res, equal_nan=True)
 
+    @pytest.mark.parametrize("mathfunc", [math.floor, math.ceil])
+    def test_func_scalar(self, mathfunc):
+        self.test_func(mathfunc, 0.7)
+
     @pytest.mark.parametrize("mathfunc", [min, max])
     def test_func2_scalar(self, mathfunc):
         @dace.program
@@ -108,6 +113,46 @@ class TestMathFuncs:
         assert np.allclose(mathfunc(arg1, arg2), res)
 
 
+def test_scalarret_cond_1():
+    @dace.program
+    def func(arg: dace.float64):
+        n = math.floor(1.0 + arg)
+        if n > 1.0:
+            return 0.0
+        else:
+            return 1.0
+
+    res = func(3.7)
+    assert res == 0.0
+
+
+def test_scalarret_cond_2():
+    @dace.program
+    def func():
+        n = math.floor(1.0 + 2.0)
+        if n > 1.0:
+            return 0.0
+        else:
+            return 1.0
+
+    res = func()
+    assert res == 0.0
+
+
+def test_scalarret_cond_3():
+    @dace.program
+    def func():
+        cval = 2.5
+        n = math.floor(1.0 + cval)
+        if n > 1.0:
+            return 0.0
+        else:
+            return 1.0
+
+    res = func()
+    assert res == 0.0
+
+
 if __name__ == '__main__':
     test_exponent()
     test_sine()
@@ -121,3 +166,8 @@ if __name__ == '__main__':
     test_exponent_t()
     TestMathFuncs().test_func(np.abs, 0.7)
     TestMathFuncs().test_func(abs, 0.7)
+    TestMathFuncs().test_func_scalar(math.floor)
+    TestMathFuncs().test_func_scalar(math.ceil)
+    test_scalarret_cond_1()
+    test_scalarret_cond_2()
+    test_scalarret_cond_3()

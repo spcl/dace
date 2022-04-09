@@ -251,16 +251,6 @@ class InlineSDFG(transformation.SingleStateTransformation, transformation.Simpli
             if isinstance(node, nodes.CodeNode):
                 node.environments |= nsdfg_node.environments
 
-        # Constants
-        for cstname, cstval in nsdfg.constants.items():
-            if cstname in sdfg.constants:
-                if cstval != sdfg.constants[cstname]:
-                    warnings.warn('Constant value mismatch for "%s" while '
-                                  'inlining SDFG. Inner = %s != %s = outer' %
-                                  (cstname, cstval, sdfg.constants[cstname]))
-            else:
-                sdfg.add_constant(cstname, cstval)
-
         # Collect isolated nodes before inlining
         isolated_nodes = set(n for n in state.data_nodes() if state.degree(n) == 0)
 
@@ -371,6 +361,18 @@ class InlineSDFG(transformation.SingleStateTransformation, transformation.Simpli
             if (isinstance(node, nodes.AccessNode) and node.data not in transients and node.data not in reshapes):
                 new_outgoing_edges[node] = outputs[node.data]
                 sink_accesses.add(node)
+
+        # All constants (and associated transients) become constants of the parent
+        for cstname, (csttype, cstval) in nsdfg.constants_prop.items():
+            if cstname in sdfg.constants:
+                if cstname in transients:
+                    newname = transients[cstname]
+                else:
+                    newname = sdfg.find_new_constant(cstname)
+                    transients[cstname] = newname
+                sdfg.constants_prop[newname] = (csttype, cstval)
+            else:
+                sdfg.constants_prop[cstname] = (csttype, cstval)
 
         #######################################################
         # Replace data on inlined SDFG nodes/edges
@@ -707,9 +709,9 @@ class InlineSDFG(transformation.SingleStateTransformation, transformation.Simpli
                 continue
             edge = new_edges[reshp[node.data]]
             if inputs:
-                state.add_edge(edge.src, edge.src_conn, node, None, edge.data)
+                state.add_edge(edge.src, edge.src_conn, node, 'views', edge.data)
             else:
-                state.add_edge(node, None, edge.dst, edge.dst_conn, edge.data)
+                state.add_edge(node, 'views', edge.dst, edge.dst_conn, edge.data)
 
 
 @make_properties
@@ -1063,7 +1065,7 @@ class NestSDFG(transformation.MultiStateTransformation):
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
         return True
 
-    def apply(self, _, sdfg: SDFG):
+    def apply(self, _, sdfg: SDFG) -> nodes.NestedSDFG:
         outer_sdfg = sdfg
         nested_sdfg = dc(sdfg)
 
@@ -1247,3 +1249,5 @@ class NestSDFG(transformation.MultiStateTransformation):
             arrnode = outer_state.add_write(key)
             outer_state.add_edge(nested_node, val, arrnode, None,
                                  memlet.Memlet.from_array(key, arrnode.desc(outer_sdfg)))
+
+        return nested_node

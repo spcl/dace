@@ -1313,8 +1313,7 @@ class TypeClassProperty(Property):
 class LibraryImplementationProperty(Property):
     """
     Property for choosing an implementation type for a library node. On the
-    Python side it is a standard property, but can expand into a combo-box in
-    DIODE.
+    Python side it is a standard property, but can expand into a combo-box in the editor.
     """
     def typestring(self):
         return "LibraryImplementationProperty"

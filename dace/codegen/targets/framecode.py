@@ -46,11 +46,11 @@ class DaCeCodeGenerator(object):
         self.targets: Set[TargetCodeGenerator] = set()
         self.to_allocate: DefaultDict[Union[SDFG, SDFGState, nodes.EntryNode],
                                       List[Tuple[int, int, nodes.AccessNode]]] = collections.defaultdict(list)
+        self.where_allocated: Dict[Tuple[SDFG, str], SDFG] = {}
         self.fsyms: Dict[int, Set[str]] = {}
         self._symbols_and_constants: Dict[int, Set[str]] = {}
         fsyms = self.free_symbols(sdfg)
         self.arglist = sdfg.arglist(scalars_only=False, free_symbols=fsyms)
-        self.arglist_scalars_only = sdfg.arglist(scalars_only=True, free_symbols=fsyms)
 
     # Cached fields
     def symbols_and_constants(self, sdfg: SDFG):
@@ -172,7 +172,7 @@ struct {sdfg.name}_t {{
             self.statestruct.extend(env.state_fields)
 
         # Instrumentation preamble
-        if len(self._dispatcher.instrumentation) > 1:
+        if len(self._dispatcher.instrumentation) > 2:
             self.statestruct.append('dace::perf::Report report;')
             # Reset report if written every invocation
             if config.Config.get_bool('instrumentation', 'report_each_invocation'):
@@ -191,8 +191,8 @@ struct {sdfg.name}_t {{
         fname = sdfg.name
         params = sdfg.signature(arglist=self.arglist)
         paramnames = sdfg.signature(False, for_call=True, arglist=self.arglist)
-        initparams = sdfg.signature(with_arrays=False, arglist=self.arglist_scalars_only)
-        initparamnames = sdfg.signature(False, for_call=True, with_arrays=False, arglist=self.arglist_scalars_only)
+        initparams = sdfg.init_signature(free_symbols=self.free_symbols(sdfg))
+        initparamnames = sdfg.init_signature(for_call=True, free_symbols=self.free_symbols(sdfg))
 
         # Invoke all instrumentation providers
         for instr in self._dispatcher.instrumentation.values():
@@ -201,7 +201,7 @@ struct {sdfg.name}_t {{
 
         # Instrumentation saving
         if (config.Config.get_bool('instrumentation', 'report_each_invocation')
-                and len(self._dispatcher.instrumentation) > 1):
+                and len(self._dispatcher.instrumentation) > 2):
             callsite_stream.write(
                 '''__state->report.save("{path}/perf", __HASH_{name});'''.format(path=sdfg.build_folder.replace(
                     '\\', '/'),
@@ -274,7 +274,7 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
 
         # Instrumentation saving
         if (not config.Config.get_bool('instrumentation', 'report_each_invocation')
-                and len(self._dispatcher.instrumentation) > 1):
+                and len(self._dispatcher.instrumentation) > 2):
             callsite_stream.write(
                 '__state->report.save("%s/perf", __HASH_%s);' % (sdfg.build_folder.replace('\\', '/'), sdfg.name), sdfg)
 
@@ -374,7 +374,7 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                                      [cflow.SingleState(dispatch_state, s, s is last) for s in states_topological], [],
                                      [], [], [])
 
-        callsite_stream.write(cft.as_cpp(self.dispatcher.defined_vars, sdfg.symbols), sdfg)
+        callsite_stream.write(cft.as_cpp(self, sdfg.symbols), sdfg)
 
         # Write exit label
         callsite_stream.write(f'__state_exit_{sdfg.sdfg_id}:;', sdfg)
@@ -446,6 +446,9 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
         for sdfg, name, desc in top_sdfg.arrays_recursive():
             if not desc.transient:
                 continue
+            if name in sdfg.constants_prop:
+                # Constants do not need to be allocated
+                continue
 
             # NOTE: In the code below we infer where a transient should be
             # declared, allocated, and deallocated. The information is stored
@@ -476,7 +479,8 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                 definition = desc.as_arg(name=f'__{sdfg.sdfg_id}_{name}') + ';'
                 self.statestruct.append(definition)
 
-                self.to_allocate[sdfg].append((sdfg, first_state_instance, first_node_instance, True, True, True))
+                self.to_allocate[top_sdfg].append((sdfg, first_state_instance, first_node_instance, True, True, True))
+                self.where_allocated[(sdfg, name)] = top_sdfg
                 continue
             elif desc.lifetime is dtypes.AllocationLifetime.Global:
                 # Global memory is allocated in the beginning of the program
@@ -493,6 +497,7 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                 # self.to_allocate[top_sdfg].append(
                 #     (sdfg.sdfg_id, sdfg.node_id(state), node))
                 self.to_allocate[top_sdfg].append((sdfg, first_state_instance, first_node_instance, True, True, True))
+                self.where_allocated[(sdfg, name)] = top_sdfg
                 continue
 
             # The rest of the cases change the starting scope we attempt to
@@ -604,9 +609,11 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                     if cursdfg.parent_nsdfg_node is None:
                         curscope = None
                         curstate = None
+                        cursdfg = None
                     else:
                         curstate = cursdfg.parent
                         curscope = curstate.entry_node(cursdfg.parent_nsdfg_node)
+                        cursdfg = cursdfg.parent_sdfg
                 else:
                     raise TypeError
 
@@ -635,6 +642,10 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                         (sdfg, first_state_instance, first_node_instance, False, True, True))
             else:
                 self.to_allocate[curscope].append((sdfg, first_state_instance, first_node_instance, True, True, True))
+            if isinstance(curscope, SDFG):
+                self.where_allocated[(sdfg, name)] = curscope
+            else:
+                self.where_allocated[(sdfg, name)] = cursdfg
 
     def allocate_arrays_in_scope(self, sdfg: SDFG, scope: Union[nodes.EntryNode, SDFGState, SDFG],
                                  function_stream: CodeIOStream, callsite_stream: CodeIOStream):
@@ -703,10 +714,17 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
         # Invoke all instrumentation providers
         for instr in self._dispatcher.instrumentation.values():
             if instr is not None:
-                instr.on_sdfg_begin(sdfg, callsite_stream, global_stream)
+                instr.on_sdfg_begin(sdfg, callsite_stream, global_stream, self)
 
         # Allocate outer-level transients
         self.allocate_arrays_in_scope(sdfg, sdfg, global_stream, callsite_stream)
+
+        # Define constants as top-level-allocated
+        for cname, (ctype, _) in sdfg.constants_prop.items():
+            if isinstance(ctype, data.Array):
+                self.dispatcher.defined_vars.add(cname, disp.DefinedType.Pointer, ctype.dtype.ctype)
+            else:
+                self.dispatcher.defined_vars.add(cname, disp.DefinedType.Scalar, ctype.dtype.ctype)
 
         # Allocate inter-state variables
         global_symbols = copy.deepcopy(sdfg.symbols)
