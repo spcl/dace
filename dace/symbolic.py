@@ -875,8 +875,6 @@ def symstr(sym, arrayexprs: Optional[Set[str]] = None) -> str:
                        user-functions back to array expressions.
     :return: C++-compilable expression.
     """
-    def repstr(s):
-        return s.replace('Min', 'min').replace('Max', 'max').replace('Abs', 'abs')
 
     if isinstance(sym, SymExpr):
         return symstr(sym.expr, arrayexprs)
@@ -890,12 +888,12 @@ def symstr(sym, arrayexprs: Optional[Set[str]] = None) -> str:
 
         if isinstance(sym, symbol) or isinstance(sym, sympy.Symbol) or isinstance(
                 sym, sympy.Number) or dtypes.isconstant(sym):
-            return repstr(sstr)
+            return sstr
         else:
-            return '(' + repstr(sstr) + ')'
+            return '(' + sstr + ')'
     except (AttributeError, TypeError, ValueError):
         sstr = DaceSympyPrinter(arrayexprs).doprint(sym)
-        return '(' + repstr(sstr) + ')'
+        return '(' + sstr + ')'
 
 
 def safe_replace(mapping: Dict[Union[SymbolicType, str], Union[SymbolicType, str]],

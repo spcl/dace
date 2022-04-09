@@ -37,4 +37,19 @@ private:
     iterator end_;
 };
 
+
+// Sympy functions
+template <typename U, typename... T>
+static DACE_HDFI U Min(U val, T... vals) {
+    return min(val, vals...);
+}
+template <typename U, typename... T>
+static DACE_HDFI U Max(U val, T... vals) {
+    return max(val, vals...);
+}
+template <typename T>
+static DACE_HDFI T Abs(T val) {
+    return abs(val);
+}
+
 #endif  // __DACE_INTEROP_H
