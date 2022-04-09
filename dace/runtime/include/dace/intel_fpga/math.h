@@ -8,3 +8,6 @@
 
 #define int_ceil(N,D) ((int)((N+D-1)/D))
 #define int_floor(N,D) (1+(int)((N-1)/D))
+#define Min min
+#define Max max
+#define Abs abs
