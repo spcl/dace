@@ -198,6 +198,22 @@ class CPUCodeGen(TargetCodeGenerator):
             self._dispatcher.declared_arrays.add(aname, DefinedType.Pointer, ctypedef)
         allocation_stream.write(f'{aname} = {value};', sdfg, state_id, node)
 
+    def allocate_reference(self, sdfg: SDFG, dfg: SDFGState, state_id: int, node: nodes.AccessNode,
+                           global_stream: CodeIOStream, declaration_stream: CodeIOStream,
+                           allocation_stream: CodeIOStream):
+        name = node.data
+        nodedesc = node.desc(sdfg)
+        ptrname = cpp.ptr(name, nodedesc, sdfg, self._frame)
+
+        # Check if reference is already declared
+        declared = self._dispatcher.declared_arrays.has(ptrname)
+
+        if not declared:
+            declaration_stream.write(f'{nodedesc.dtype.ctype} *{ptrname};', sdfg, state_id, node)
+            ctypedef = dtypes.pointer(nodedesc.dtype).ctype
+            self._dispatcher.declared_arrays.add(ptrname, DefinedType.Pointer, ctypedef)
+            self._dispatcher.defined_vars.add(ptrname, DefinedType.Pointer, ctypedef)
+
     def declare_array(self, sdfg, dfg, state_id, node, nodedesc, function_stream, declaration_stream):
 
         fsymbols = self._frame.symbols_and_constants(sdfg)
@@ -215,8 +231,8 @@ class CPUCodeGen(TargetCodeGenerator):
         if self._dispatcher.declared_arrays.has(ptrname):
             return
 
-        # If this is a view, do not declare it here
-        if isinstance(nodedesc, data.View):
+        # If this is a view/reference, do not declare it here
+        if isinstance(nodedesc, (data.View, data.Reference)):
             return
 
         # Compute array size
@@ -273,6 +289,9 @@ class CPUCodeGen(TargetCodeGenerator):
 
         if isinstance(nodedesc, data.View):
             return self.allocate_view(sdfg, dfg, state_id, node, function_stream, declaration_stream, allocation_stream)
+        if isinstance(nodedesc, data.Reference):
+            return self.allocate_reference(sdfg, dfg, state_id, node, function_stream, declaration_stream,
+                                           allocation_stream)
         if isinstance(nodedesc, data.Scalar):
             declaration_stream.write("%s %s;\n" % (nodedesc.dtype.ctype, name), sdfg, state_id, node)
             define_var(name, DefinedType.Scalar, nodedesc.dtype.ctype)
@@ -429,11 +448,7 @@ class CPUCodeGen(TargetCodeGenerator):
             is_global = nodedesc.lifetime in (dtypes.AllocationLifetime.Global, dtypes.AllocationLifetime.Persistent)
             self._dispatcher.declared_arrays.remove(node.data, is_global=is_global)
 
-        if isinstance(nodedesc, data.Scalar):
-            return
-        elif isinstance(nodedesc, data.View):
-            return
-        elif isinstance(nodedesc, data.Stream):
+        if isinstance(nodedesc, (data.Scalar, data.View, data.Stream, data.Reference)):
             return
         elif (nodedesc.storage == dtypes.StorageType.CPU_Heap
               or (nodedesc.storage == dtypes.StorageType.Register and symbolic.issymbolic(arrsize, sdfg.constants))):
@@ -514,6 +529,7 @@ class CPUCodeGen(TargetCodeGenerator):
         stream,
     ):
         u, uconn, v, vconn, memlet = edge
+        orig_vconn = vconn
 
         # Determine memlet directionality
         if isinstance(src_node, nodes.AccessNode) and memlet.data == src_node.data:
@@ -522,7 +538,7 @@ class CPUCodeGen(TargetCodeGenerator):
             write = False
         elif isinstance(src_node, nodes.CodeNode) and isinstance(dst_node, nodes.CodeNode):
             # Code->Code copy (not read nor write)
-            raise RuntimeError("Copying between code nodes is only supported as" " part of the participating nodes")
+            raise RuntimeError("Copying between code nodes is only supported as part of the participating nodes")
         else:
             raise LookupError("Memlet does not point to any of the nodes")
 
@@ -565,6 +581,19 @@ class CPUCodeGen(TargetCodeGenerator):
                     [src_node, dst_node],
                 )
                 return
+
+            # Setting a reference
+            if isinstance(dst_nodedesc, data.Reference) and orig_vconn == 'set':
+                srcptr = cpp.ptr(src_node.data, src_nodedesc, sdfg, self._frame)
+                defined_type, _ = self._dispatcher.defined_vars.get(srcptr)
+                stream.write(
+                    "%s = %s;" % (vconn, cpp.cpp_ptr_expr(sdfg, memlet, defined_type)),
+                    sdfg,
+                    state_id,
+                    [src_node, dst_node],
+                )
+                return
+
             # Writing from/to a stream
             if isinstance(sdfg.arrays[memlet.data], data.Stream) or (isinstance(src_node, nodes.AccessNode)
                                                                      and isinstance(src_nodedesc, data.Stream)):

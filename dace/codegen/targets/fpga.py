@@ -1044,6 +1044,9 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
 
         if isinstance(nodedesc, dt.View):
             return self.allocate_view(sdfg, dfg, state_id, node, function_stream, declaration_stream, allocation_stream)
+        elif isinstance(nodedesc, dt.Reference):
+            return self.allocate_reference(sdfg, dfg, state_id, node, function_stream, declaration_stream,
+                                           allocation_stream)
         elif isinstance(nodedesc, dt.Stream):
 
             if not self._in_device_code:
