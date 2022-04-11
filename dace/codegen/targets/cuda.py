@@ -185,7 +185,8 @@ class CUDACodeGen(TargetCodeGenerator):
         # Collect all defined symbols and argument lists with one traversal
         shared_transients = {}
         for state, node, defined_syms in sdutil.traverse_sdfg_with_defined_symbols(sdfg, recursive=True):
-            if isinstance(node, nodes.MapEntry) and node.map.schedule == dtypes.ScheduleType.GPU_Device:
+            if (isinstance(node, nodes.MapEntry)
+                    and node.map.schedule in (dtypes.ScheduleType.GPU_Device, dtypes.ScheduleType.GPU_Persistent)):
                 if state.parent not in shared_transients:
                     shared_transients[state.parent] = state.parent.shared_transients()
                 self._arglists[node] = state.scope_subgraph(node).arglist(defined_syms, shared_transients[state.parent])
@@ -1279,12 +1280,15 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     ptrname = cpp.ptr(aname, data_desc, sdfg, self._frame)
                     if not defined_type:
                         defined_type, ctype = self._dispatcher.defined_vars.get(ptrname)
-                    
+
                     CUDACodeGen._in_device_code = True
                     inner_ptrname = cpp.ptr(aname, data_desc, sdfg, self._frame)
                     CUDACodeGen._in_device_code = False
 
-                    self._dispatcher.defined_vars.add(inner_ptrname, defined_type, 'const %s' % ctype, allow_shadowing=True)
+                    self._dispatcher.defined_vars.add(inner_ptrname,
+                                                      defined_type,
+                                                      'const %s' % ctype,
+                                                      allow_shadowing=True)
             else:
                 if aname in sdfg.arrays:
                     data_desc = sdfg.arrays[aname]
@@ -1818,6 +1822,7 @@ void  *{kname}_args[] = {{ {kargs} }};
                                  'for persistent kernel maps (got %d)'.format(len(scope_map.params)))
 
             if self._kernel_map.schedule == dtypes.ScheduleType.GPU_Persistent:
+                is_persistent = True
                 block_dims = self._block_dims
                 node = dfg_scope.source_nodes()[0]
 
@@ -2120,7 +2125,7 @@ void  *{kname}_args[] = {{ {kargs} }};
                 callsite_stream.write('__syncthreads();', sdfg, state_id, scope_entry)
             # Grid synchronization (kernel fusion)
             elif scope_entry.map.schedule == dtypes.ScheduleType.GPU_Device \
-                    and self._toplevel_schedule == dtypes.ScheduleType.GPU_Device:
+                    and self._kernel_map.schedule == dtypes.ScheduleType.GPU_Device:
                 callsite_stream.write('__gbar.Sync();', sdfg, state_id, scope_entry)
 
     def generate_node(self, sdfg, dfg, state_id, node, function_stream, callsite_stream):
@@ -2159,7 +2164,7 @@ void  *{kname}_args[] = {{ {kargs} }};
             result.append(('cub::GridBarrier&', '__gbar', '__gbar'))
 
         # Add data from nested SDFGs to kernel arguments
-        result.extend([(atype, aname, aname) for atype,aname,_ in self.extra_nsdfg_args])
+        result.extend([(atype, aname, aname) for atype, aname, _ in self.extra_nsdfg_args])
         for arg in self.extra_nsdfg_args:
             defined_type, ctype = self._dispatcher.defined_vars.get(arg[1], 1)
             self._dispatcher.defined_vars.add(arg[1], defined_type, ctype)
