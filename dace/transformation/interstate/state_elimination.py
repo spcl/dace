@@ -650,7 +650,7 @@ class TrueConditionElimination(transformation.MultiStateTransformation, transfor
 
 class FalseConditionElimination(transformation.MultiStateTransformation):
     """
-    If a state transition condition is always true, removes condition from edge.
+    If a state transition condition is always false, removes edge.
     """
 
     state_a = transformation.PatternNode(sdfg.SDFGState)

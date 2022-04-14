@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 """ This module initializes the subgraph transformations package."""
 
 from .gpu_persistent_fusion import GPUPersistentKernel

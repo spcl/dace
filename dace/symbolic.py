@@ -912,10 +912,7 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
             negative = int_exp < 0
             if negative:
                 int_exp = -int_exp
-            res = "({})".format(base)
-            for _ in range(1, int_exp):
-                res += " * ({})".format(base)
-
+            res = f"dace::math::ipow({base}, {int_exp})"
             if negative:
                 res = f'reciprocal({res})'
             return res
