@@ -14,8 +14,8 @@ def _construct_graph(tbsize_1=None, tbsize_2=None) -> dace.SDFG:
                         map, or None for no thread-block map.
     :return: SDFG for test.
     """
-    wsize = 32
-    size = 128 // 32
+    wsize = 128 // 32
+    size = 32
     dims = (wsize, size)
     ind = 'i, j'
     int_ceil = dace.symbolic.int_ceil
@@ -99,8 +99,8 @@ def _construct_graph(tbsize_1=None, tbsize_2=None) -> dace.SDFG:
 
 
 def _check_results(sdfg: dace.SDFG):
-    A = np.random.rand(32, 4)
-    B = np.random.rand(32, 4)
+    A = np.random.rand(4, 32)
+    B = np.random.rand(4, 32)
     sdfg(hA=A, hB=B)
     assert np.allclose(B, A[:, ::-1] * 5 + 1)
 

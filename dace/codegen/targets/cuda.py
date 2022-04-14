@@ -68,6 +68,7 @@ class CUDACodeGen(TargetCodeGenerator):
         self._grid_dims = None
         self._kernel_map = None
         self._kernel_state = None
+        self._kernel_grid_conditions: List[str] = []
         self._scope_has_collaborative_copy = False
         target_type = "" if self.backend == 'cuda' else self.backend
         self._codeobject = CodeObject(sdfg.name + '_' + 'cuda',
@@ -1696,8 +1697,10 @@ void  *{kname}_args[] = {{ {kargs} }};
                         condition += ' && '
                     condition += '%s < %s' % (v, _topy(maxel + 1))
                 if len(condition) > 0:
+                    self._kernel_grid_conditions.append(f'if ({condition}) {{')
                     kernel_stream.write('if (%s) {' % condition, sdfg, state_id, scope_entry)
                 else:
+                    self._kernel_grid_conditions.append('{')
                     kernel_stream.write('{', sdfg, state_id, scope_entry)
 
         self._dispatcher.dispatch_subgraph(sdfg,
@@ -1986,8 +1989,10 @@ void  *{kname}_args[] = {{ {kargs} }};
 
                     # Emit condition in code
                     if len(condition) > 0:
+                        self._kernel_grid_conditions.append(f'if ({condition}) {{')
                         callsite_stream.write('if (%s) {' % condition, sdfg, state_id, scope_entry)
                     else:
+                        self._kernel_grid_conditions.append('{')
                         callsite_stream.write('{', sdfg, state_id, scope_entry)
 
         else:
@@ -2126,7 +2131,17 @@ void  *{kname}_args[] = {{ {kargs} }};
             # Grid synchronization (kernel fusion)
             elif scope_entry.map.schedule == dtypes.ScheduleType.GPU_Device \
                     and self._kernel_map.schedule == dtypes.ScheduleType.GPU_Device:
+                # Escape grid conditions
+                for _ in self._kernel_grid_conditions:
+                    callsite_stream.write('}', sdfg, state_id, scope_entry)
+
+                # Synchronize entire grid
                 callsite_stream.write('__gbar.Sync();', sdfg, state_id, scope_entry)
+
+                # Rewrite grid conditions
+                for cond in self._kernel_grid_conditions:
+                    callsite_stream.write(cond, sdfg, state_id, scope_entry)
+                
 
     def generate_node(self, sdfg, dfg, state_id, node, function_stream, callsite_stream):
         if self.node_dispatch_predicate(sdfg, dfg, node):
@@ -2183,10 +2198,17 @@ void  *{kname}_args[] = {{ {kargs} }};
         self._toplevel_schedule = old_schedule
 
     def _generate_MapExit(self, sdfg, dfg, state_id, node, function_stream, callsite_stream):
-        if node.map.schedule == dtypes.ScheduleType.GPU_ThreadBlock:
+        if node.map.schedule == dtypes.ScheduleType.GPU_Device:
+            # Remove grid invocation conditions
+            for i in range(len(node.map.params)):
+                if self._kernel_grid_conditions:
+                    self._kernel_grid_conditions.pop()
+
+        elif node.map.schedule == dtypes.ScheduleType.GPU_ThreadBlock:
             # Close block invocation conditions
             for i in range(len(node.map.params)):
                 callsite_stream.write('}', sdfg, state_id, node)
+
         elif node.map.schedule == dtypes.ScheduleType.GPU_ThreadBlock_Dynamic:
             # Close lambda function
             callsite_stream.write('});', sdfg, state_id, node)

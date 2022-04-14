@@ -31,7 +31,7 @@
     #include <cuda_runtime.h>
     #include <cuda_fp16.h>
     #include <thrust/complex.h>
-    #include "../../../external/cub/cub/grid/grid_barrier.cuh"
+    #include "cuda/multidim_gbar.cuh"
 
     // Workaround so that half is defined as a scalar (for reductions)
     namespace std {
