@@ -5,9 +5,11 @@ import math
 import dace
 import json
 
-from typing import Dict, Generator, Any, Tuple
+from typing import Dict, Generator, Any, List, Tuple
 from dace.optimization import auto_tuner
 from dace.optimization import utils as optim_utils
+from dace.sdfg.sdfg import SDFG
+from dace.sdfg.state import SDFGState
 
 try:
     from tqdm import tqdm
@@ -16,12 +18,31 @@ except (ImportError, ModuleNotFoundError):
 
 
 class CutoutTuner(auto_tuner.AutoTuner):
+    """
+    An auto-tuner that cuts out subgraphs of the original SDFG to tune separately.
+    In order to tune an SDFG, a "dry run" must first be called to collect data from intermediate
+    access nodes (in order to ensure correctness of the tuned subgraph). Subsequently, sub-classes of
+    this cutout tuning interface will select subgraphs to test transformations on.
 
-    def __init__(self, task: str, sdfg: dace.SDFG, i, j) -> None:
+    For example::
+
+        tuner = DataLayoutTuner(sdfg)
+        
+        # Create instrumented data report
+        tuner.dry_run(sdfg, arg1, arg2, arg3=4)
+
+        results = tuner.optimize()
+        # results will now contain the fastest data layout configurations for each array
+    """
+
+    def __init__(self, task: str, sdfg: SDFG) -> None:
+        """
+        Creates a cutout tuner.
+        :param task: Name of tuning task (for filename labeling).
+        :param sdfg: The SDFG to tune.
+        """
         super().__init__(sdfg=sdfg)
         self._task = task
-        self._i = i
-        self._j = j
 
     @property
     def task(self) -> str:
@@ -40,13 +61,13 @@ class CutoutTuner(auto_tuner.AutoTuner):
 
         return results
 
-    def cutouts(self) -> Generator[Tuple[dace.SDFGState, str], None, None]:
+    def cutouts(self) -> Generator[Tuple[SDFGState, str], None, None]:
         raise NotImplementedError
 
     def space(self, **kwargs) -> Generator[Any, None, None]:
         raise NotImplementedError
 
-    def search(self, cutout: dace.SDFG, measurements: int, **kwargs) -> Dict:
+    def search(self, cutout: SDFG, measurements: int, **kwargs) -> Dict:
         raise NotImplementedError
 
     def pre_evaluate(self, **kwargs) -> Dict:
@@ -74,10 +95,10 @@ class CutoutTuner(auto_tuner.AutoTuner):
             except:
                 continue
         
-        runtime = optim_utils.subprocess_measure(cutout=cutout, dreport=dreport_, repetitions=repetitions, timeout=timeout, i=self._i, j=self._j)
+        runtime = optim_utils.subprocess_measure(cutout=cutout, dreport=dreport_, repetitions=repetitions, timeout=timeout)
         return runtime
 
-    def optimize(self, measurements: int = 30, apply: bool = False, **kwargs) -> Dict:
+    def optimize(self, measurements: int = 30, apply: bool = False, **kwargs) -> Dict[Any, Any]:
         tuning_report = {}
         for cutout, label in tqdm(list(self.cutouts())):
             fn = self.file_name(label)
@@ -101,7 +122,7 @@ class CutoutTuner(auto_tuner.AutoTuner):
 
         return tuning_report
 
-    def search(self, cutout: dace.SDFG, measurements: int,
+    def search(self, cutout: SDFG, measurements: int,
                **kwargs) -> Dict[str, float]:
         kwargs = self.pre_evaluate(cutout=cutout, measurements=measurements, **kwargs)
 
@@ -115,7 +136,7 @@ class CutoutTuner(auto_tuner.AutoTuner):
         return results
 
     @staticmethod
-    def top_k_configs(tuning_report, k: int):
+    def top_k_configs(tuning_report, k: int) -> List[Tuple[str, float]]:
         all_configs = []
         for cutout_label in tuning_report:
             configs = tuning_report[cutout_label]
@@ -128,7 +149,7 @@ class CutoutTuner(auto_tuner.AutoTuner):
         return all_configs
 
     @staticmethod
-    def dry_run(sdfg, *args, **kwargs) -> Any:
+    def dry_run(sdfg: SDFG, *args, **kwargs) -> Any:
         # Check existing instrumented data for shape mismatch
         kwargs.update({aname: a for aname, a in zip(sdfg.arg_names, args)})
 

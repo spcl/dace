@@ -88,9 +88,9 @@ if __name__ == '__main__':
     mp.set_start_method("spawn")
 
 
-def subprocess_measure(cutout: dace.SDFG, dreport, repetitions: int = 30, timeout: float = 600.0, i=384, j=384) -> float:
+def subprocess_measure(cutout: dace.SDFG, dreport, repetitions: int = 30, timeout: float = 600.0) -> float:
     q = mp.Queue()
-    proc = MeasureProcess(target=_subprocess_measure, args=(cutout.to_json(), dreport, repetitions, q, i, j))
+    proc = MeasureProcess(target=_subprocess_measure, args=(cutout.to_json(), dreport, repetitions, q))
     proc.start()
     proc.join(timeout)
 
@@ -111,7 +111,7 @@ def subprocess_measure(cutout: dace.SDFG, dreport, repetitions: int = 30, timeou
 
     return runtime
 
-def _subprocess_measure(cutout_json: Dict, dreport, repetitions: int, q, i, j) -> float:
+def _subprocess_measure(cutout_json: Dict, dreport, repetitions: int, q: mp.Queue) -> float:
     cutout = dace.SDFG.from_json(cutout_json)
     
     arguments = {}
