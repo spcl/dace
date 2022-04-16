@@ -763,8 +763,17 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None):
 
     if isinstance(expr, (SymExpr, sympy.Basic)):
         return expr
-    if isinstance(expr, str) and dtypes.validate_name(expr):
-        return symbol(expr)
+    if isinstance(expr, str):
+        try:
+            return sympy.Integer(int(expr))
+        except ValueError:
+            pass
+        try:
+            return sympy.Float(float(expr))
+        except ValueError:
+            pass
+        if dtypes.validate_name(expr):
+            return symbol(expr)
 
     symbol_map = symbol_map or {}
     locals = {
