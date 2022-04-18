@@ -1297,12 +1297,14 @@ def deduplicate(iterable):
     return type(iterable)([i for i in sorted(set(iterable), key=lambda x: iterable.index(x))])
 
 
+namere = re.compile(r'^[a-zA-Z_][a-zA-Z_0-9]*$')
+
 def validate_name(name):
     if not isinstance(name, str) or len(name) == 0:
         return False
     if name in {'True', 'False', 'None'}:
         return False
-    if re.match(r'^[a-zA-Z_][a-zA-Z_0-9]*$', name) is None:
+    if namere.match(name) is None:
         return False
     return True
 
