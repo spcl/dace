@@ -5,7 +5,11 @@ import copy as cp
 import sympy as sp
 import numpy
 from numbers import Number
-from typing import Set, Sequence, Tuple
+from typing import Any, Optional, Set, Sequence, Tuple
+try:
+    from numpy.typing import ArrayLike
+except (ModuleNotFoundError, ImportError):
+    ArrayLike = Any
 
 import dace.dtypes as dtypes
 from dace.codegen import cppunparse
@@ -331,6 +335,10 @@ class Scalar(Data):
     def offset(self):
         return [0]
 
+    @property
+    def start_offset(self):
+        return 0
+
     def is_equivalent(self, other):
         if not isinstance(other, Scalar):
             return False
@@ -367,7 +375,55 @@ class Scalar(Data):
 
 @make_properties
 class Array(Data):
-    """ Array/constant descriptor (dimensions, type and other properties). """
+    """
+    Array data descriptor. This object represents a multi-dimensional data container in SDFGs that can be accessed and
+    modified. The definition does not contain the actual array, but rather a description of how to construct it and
+    how it should behave.
+
+    The array definition is flexible in terms of data allocation, it allows arbitrary multidimensional, potentially
+    symbolic shapes (e.g., an array with size ``N+1 x M`` will have ``shape=(N+1, M)``), of arbitrary data 
+    typeclasses (``dtype``). The physical data layout of the array is controlled by several properties:
+       * The ``strides`` property determines the ordering and layout of the dimensions --- it specifies how many
+         elements in memory are skipped whenever one element in that dimension is advanced. For example, the contiguous
+         dimension always has a stride of ``1``; a C-style MxN array will have strides ``(N, 1)``, whereas a 
+         FORTRAN-style array of the same size will have ``(1, M)``. Strides can be larger than the shape, which allows
+         post-padding of the contents of each dimension.
+       * The ``start_offset`` property is a number of elements to pad the beginning of the memory buffer with. This is
+         used to ensure that a specific index is aligned as a form of pre-padding (that element may not necessarily be
+         the first element, e.g., in the case of halo or "ghost cells" in stencils).
+       * The ``total_size`` property determines how large the total allocation size is. Normally, it is the product of
+         the ``shape`` elements, but if pre- or post-padding is involved it may be larger.
+       * ``alignment`` provides alignment guarantees (in bytes) of the first element in the allocated array. This is
+         used by allocators in the code generator to ensure certain addresses are expected to be aligned, e.g., for
+         vectorization.
+       * Lastly, a property called ``offset`` controls the logical access of the array, i.e., what would be the first
+         element's index after padding and alignment. This mimics a language feature prominent in scientific languages
+         such as FORTRAN, where one could set an array to begin with 1, or any arbitrary index. By default this is set
+         to zero.
+
+    To summarize with an example, a two-dimensional array with pre- and post-padding looks as follows:
+    ```
+    [xxx][          |xx]
+         [          |xx]
+         [          |xx]
+         [          |xx]
+         ---------------
+         [xxxxxxxxxxxxx]
+
+    shape = (4, 10)
+    strides = (12, 1)
+    start_offset = 3
+    total_size = 63   (= 3 + 12 * 5)
+    offset = (0, 0, 0)
+    ```
+    Notice that the last padded row does not appear in strides, but is a consequence of ``total_size`` being larger.
+    
+
+    Apart from memory layout, other properties of ``Array`` help the data-centric transformation infrastructure make
+    decisions about the array. ``allow_conflicts`` states that warnings should not be printed if potential conflicted
+    acceses (e.g., data races) occur. ``may_alias`` inhibits transformations that may assume that this array does not
+    overlap with other arrays in the same context (e.g., function).
+    """
 
     # Properties
     allow_conflicts = Property(dtype=bool,
@@ -382,16 +438,17 @@ class Array(Data):
         'skip in order to obtain the next element in '
         'that dimension.')
 
-    total_size = SymbolicProperty(default=0, desc='The total allocated size of the array. Can be used for' ' padding.')
+    total_size = SymbolicProperty(default=0, desc='The total allocated size of the array. Can be used for padding.')
 
     offset = ShapeProperty(desc='Initial offset to translate all indices by.')
 
     may_alias = Property(dtype=bool,
                          default=False,
-                         desc='This pointer may alias with other pointers in '
-                         'the same function')
+                         desc='This pointer may alias with other pointers in the same function')
 
-    alignment = Property(dtype=int, default=0, desc='Allocation alignment in bytes (0 uses ' 'compiler-default)')
+    alignment = Property(dtype=int, default=0, desc='Allocation alignment in bytes (0 uses compiler-default)')
+
+    start_offset = Property(dtype=int, default=0, desc='Allocation offset elements for manual alignment (pre-padding)')
 
     def __init__(self,
                  dtype,
@@ -406,7 +463,8 @@ class Array(Data):
                  lifetime=dtypes.AllocationLifetime.Scope,
                  alignment=0,
                  debuginfo=None,
-                 total_size=None):
+                 total_size=None,
+                 start_offset=None):
 
         super(Array, self).__init__(dtype, shape, transient, storage, location, lifetime, debuginfo)
 
@@ -416,6 +474,8 @@ class Array(Data):
         self.allow_conflicts = allow_conflicts
         self.may_alias = may_alias
         self.alignment = alignment
+        if start_offset is not None:
+            self.start_offset = start_offset
 
         if strides is not None:
             self.strides = cp.copy(strides)
@@ -441,7 +501,7 @@ class Array(Data):
     def clone(self):
         return type(self)(self.dtype, self.shape, self.transient, self.allow_conflicts, self.storage, self.location,
                           self.strides, self.offset, self.may_alias, self.lifetime, self.alignment, self.debuginfo,
-                          self.total_size)
+                          self.total_size, self.start_offset)
 
     def to_json(self):
         attrs = serialize.all_properties_to_json(self)
@@ -622,6 +682,10 @@ class Stream(Data):
     def strides(self):
         return [_prod(self.shape[i + 1:]) for i in range(len(self.shape))]
 
+    @property
+    def start_offset(self):
+        return 0
+
     def clone(self):
         return type(self)(self.dtype, self.buffer_size, self.shape, self.transient, self.storage, self.location,
                           self.offset, self.lifetime, self.debuginfo)
@@ -740,9 +804,78 @@ class View(Array):
         # We ensure that allocation lifetime is always set to Scope, since the
         # view is generated upon "allocation"
         if self.lifetime != dtypes.AllocationLifetime.Scope:
-            raise ValueError('Only Scope allocation lifetime is supported for ' 'Views')
+            raise ValueError('Only Scope allocation lifetime is supported for Views')
 
     def as_array(self):
         copy = cp.deepcopy(self)
         copy.__class__ = Array
         return copy
+
+
+@make_properties
+class Reference(Array):
+    """ 
+    Data descriptor that acts as a dynamic reference of another array. It can be used just like a regular array,
+    except that it could be set to an arbitrary array or sub-array at runtime. To set a reference, connect another
+    access node to it and use the "set" connector.
+    In order to enable data-centric analysis and optimizations, avoid using References as much as possible.
+    """
+    def validate(self):
+        super().validate()
+
+        # We ensure that allocation lifetime is always set to Scope, since the
+        # view is generated upon "allocation"
+        if self.lifetime != dtypes.AllocationLifetime.Scope:
+            raise ValueError('Only Scope allocation lifetime is supported for References')
+
+    def as_array(self):
+        copy = cp.deepcopy(self)
+        copy.__class__ = Array
+        return copy
+
+
+def make_array_from_descriptor(descriptor: Array, original_array: Optional[ArrayLike] = None) -> ArrayLike:
+    """
+    Creates an array that matches the given data descriptor, and optionally copies another array to it.
+    :param descriptor: The data descriptor to create the array from.
+    :param original_array: An optional array to fill the content of the return value with.
+    :return: A NumPy-compatible array (CuPy for GPU storage) with the specified size and strides.
+    """
+    import numpy as np
+    if descriptor.storage == dtypes.StorageType.GPU_Global:
+        try:
+            import cupy as cp
+        except (ImportError, ModuleNotFoundError):
+            raise NotImplementedError('GPU memory can only be allocated in Python if cupy is installed')
+
+        def create_array(shape: Tuple[int], dtype: np.dtype, total_size: int, strides: Tuple[int]) -> ArrayLike:
+            buffer = cp.ndarray(shape=[total_size], dtype=dtype)
+            view = cp.ndarray(shape=shape,
+                              dtype=dtype,
+                              memptr=buffer.data,
+                              strides=[s * dtype.itemsize for s in strides])
+            return view
+        
+        def copy_array(dst, src):
+            dst[:] = cp.asarray(src)
+
+    elif descriptor.storage == dtypes.StorageType.FPGA_Global:
+        raise TypeError('Cannot allocate FPGA array in Python')
+    else:
+
+        def create_array(shape: Tuple[int], dtype: np.dtype, total_size: int, strides: Tuple[int]) -> ArrayLike:
+            buffer = np.ndarray([total_size], dtype=dtype)
+            view = np.ndarray(shape, dtype, buffer=buffer, strides=[s * dtype.itemsize for s in strides])
+            return view
+        
+        def copy_array(dst, src):
+            dst[:] = src
+
+
+    # Make numpy array from data descriptor
+    npdtype = descriptor.dtype.as_numpy_dtype()
+    view = create_array(descriptor.shape, npdtype, descriptor.total_size, descriptor.strides)
+    if original_array is not None:
+        copy_array(view, original_array)
+
+    return view

@@ -85,7 +85,7 @@ endreport() {
 
 echo "====== Polybench Test Runner ======"
 
-cd $SCRIPTPATH/../samples/polybench
+cd $SCRIPTPATH/polybench
 
 # Specific test(s)
 if [ $# -ne 0 ]; then
@@ -108,7 +108,7 @@ counttests() {
 }
 
 # Count tests in top-level folder
-cd $SCRIPTPATH/../samples/polybench
+cd $SCRIPTPATH/polybench
 counttests
 
 
@@ -121,7 +121,7 @@ runtests() {
     done
 }
 
-cd $SCRIPTPATH/../samples/polybench
+cd $SCRIPTPATH/polybench
 TESTPREFIX=""
 runtests
 

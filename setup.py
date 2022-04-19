@@ -6,14 +6,16 @@ import os
 # Find runtime and external library files by obtaining the module path and
 # trimming the absolute path of the resulting files.
 dace_path = os.path.dirname(os.path.abspath(__file__)) + '/dace/'
-diode_path = os.path.dirname(os.path.abspath(__file__)) + '/diode/'
 runtime_files = [f[len(dace_path):] for f in glob.glob(dace_path + 'runtime/include/**/*', recursive=True)]
 library_files = [f[len(dace_path):] for f in glob.glob(dace_path + 'libraries/**/include/**/*', recursive=True)]
 cmake_files = [f[len(dace_path):] for f in glob.glob(dace_path + 'codegen/**/*.cmake', recursive=True)]
-diode_files = [
-    f[len(diode_path):] for f in (glob.glob(diode_path + 'webclient/**/*', recursive=True) +
-                                  glob.glob(diode_path + 'templates/**/*', recursive=True) +
-                                  glob.glob(diode_path + '**/LICENSE', recursive=True))
+viewer_files = [
+    f[len(dace_path):] for f in (glob.glob(dace_path + 'viewer/webclient/dist/*.js', recursive=True) +
+                                 glob.glob(dace_path + 'viewer/webclient/external_libs/**/*', recursive=True) +
+                                 glob.glob(dace_path + 'viewer/webclient/*.css', recursive=True) +
+                                 glob.glob(dace_path + 'viewer/webclient/*.html', recursive=True) +
+                                 glob.glob(dace_path + 'viewer/templates/**/*', recursive=True) +
+                                 glob.glob(dace_path + 'viewer/**/LICENSE', recursive=True))
 ]
 cub_files = [f[len(dace_path):] for f in glob.glob(dace_path + 'external/cub/cub/**/*', recursive=True)
              ] + [dace_path + 'external/cub/LICENSE.TXT']
@@ -49,7 +51,7 @@ setup(name='dace',
           '': [
               '*.yml', 'codegen/CMakeLists.txt', 'codegen/tools/*.cpp', 'external/moodycamel/*.h',
               'external/moodycamel/LICENSE.md', 'codegen/Xilinx_HLS.tcl.in'
-          ] + runtime_files + cub_files + diode_files + hlslib_files + library_files + rtllib_files + cmake_files
+          ] + runtime_files + cub_files + viewer_files + hlslib_files + library_files + rtllib_files + cmake_files
       },
       include_package_data=True,
       install_requires=[
@@ -57,11 +59,13 @@ setup(name='dace',
           'scikit-build', 'cmake', 'aenum', 'dataclasses; python_version < "3.7"', 'dill',
           'pyreadline;platform_system=="Windows"', 'typing-compat; python_version < "3.8"'
       ],
-      extras_require={'testing': ['coverage', 'pytest-cov', 'scipy', 'absl-py', 'opt_einsum', 'pymlir', 'click']},
+      extras_require={
+          'testing': ['coverage', 'pytest-cov', 'scipy', 'absl-py', 'opt_einsum', 'pymlir', 'click'],
+          'docs': ['jinja2<3.1.0']
+      },
       entry_points={
           'console_scripts': [
               'dacelab = dace.cli.dacelab:main',
-              'diode = diode.diode_server:main',
               'sdfv = dace.cli.sdfv:main',
               'sdfgcc = dace.cli.sdfgcc:main',
               'sdprof = dace.cli.sdprof:main',

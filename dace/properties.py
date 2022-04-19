@@ -12,7 +12,7 @@ import dace.subsets as sbs
 import dace
 import dace.serialize
 from dace.symbolic import pystr_to_symbolic
-from dace.dtypes import DebugInfo
+from dace.dtypes import DebugInfo, typeclass
 from numbers import Integral, Number
 from typing import List, Set, Type, Union, TypeVar, Generic
 
@@ -1277,9 +1277,13 @@ class TypeProperty(Property):
 class TypeClassProperty(Property):
     """ Custom property type for memory as defined in dace.types,
         e.g. `dace.float32`. """
+    
+    def __get__(self, obj, objtype=None) -> typeclass:
+        return super().__get__(obj, objtype)
+    
     @property
     def dtype(self):
-        return dace.dtypes.typeclass
+        return typeclass
 
     @staticmethod
     def from_string(s):
@@ -1313,8 +1317,7 @@ class TypeClassProperty(Property):
 class LibraryImplementationProperty(Property):
     """
     Property for choosing an implementation type for a library node. On the
-    Python side it is a standard property, but can expand into a combo-box in
-    DIODE.
+    Python side it is a standard property, but can expand into a combo-box in the editor.
     """
     def typestring(self):
         return "LibraryImplementationProperty"

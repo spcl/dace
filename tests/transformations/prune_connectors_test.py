@@ -179,8 +179,65 @@ def test_prune_connectors(remove_unused_containers, n=None):
     os.remove("prune_connectors_test.txt")
 
 
-if __name__ == "__main__":
+def test_unused_retval():
+    sdfg = dace.SDFG('tester')
+    sdfg.add_transient('tmp', [1], dace.float64)
+    sdfg.add_array('output', [1], dace.float64)
+    state = sdfg.add_state()
+    nsdfg = dace.SDFG('nester')
+    nsdfg.add_array('used', [1], dace.float64)
+    nsdfg.add_array('__return', [1], dace.float64)
+    nstate = nsdfg.add_state()
+    a = nstate.add_access('used')
+    nstate.add_edge(nstate.add_tasklet('do', {}, {'out'}, 'out = 1'), 'out', a, None, dace.Memlet('used[0]'))
+    nstate.add_nedge(a, nstate.add_write('__return'), dace.Memlet('__return[0]'))
+    nsnode = state.add_nested_sdfg(nsdfg, None, {}, {'used', '__return'})
+    state.add_edge(nsnode, 'used', state.add_write('output'), None, dace.Memlet('output[0]'))
+    state.add_edge(nsnode, '__return', state.add_write('tmp'), None, dace.Memlet('tmp[0]'))
 
+    # Mark nested SDFG to not be inlineable
+    nsnode.no_inline = True
+
+    sdfg.simplify()
+    assert len(sdfg.arrays) == 1
+    assert len(nsdfg.arrays) == 1
+
+    a = np.random.rand(1)
+    sdfg(output=a)
+    assert np.allclose(a, 1)
+
+
+def test_unused_retval_2():
+    sdfg = dace.SDFG('tester')
+    sdfg.add_transient('tmp', [2], dace.float64)
+    sdfg.add_array('output', [2], dace.float64)
+    state = sdfg.add_state()
+    nsdfg = dace.SDFG('nester')
+    nsdfg.add_array('used', [1], dace.float64)
+    nsdfg.add_array('__return', [1], dace.float64)
+    nstate = nsdfg.add_state()
+    a = nstate.add_access('used')
+    nstate.add_edge(nstate.add_tasklet('do', {}, {'out'}, 'out = 1'), 'out', a, None, dace.Memlet('used[0]'))
+    nstate.add_nedge(a, nstate.add_write('__return'), dace.Memlet('__return[0]'))
+    nsnode = state.add_nested_sdfg(nsdfg, None, {}, {'used', '__return'})
+    me, mx = state.add_map('doit', dict(i='0:2'))
+    state.add_nedge(me, nsnode, dace.Memlet())
+    state.add_memlet_path(nsnode, mx, state.add_write('output'), memlet=dace.Memlet('output[i]'), src_conn='used')
+    state.add_memlet_path(nsnode, mx, state.add_write('tmp'), memlet=dace.Memlet('tmp[i]'), src_conn='__return')
+
+    # Mark nested SDFG to not be inlineable
+    nsnode.no_inline = True
+
+    sdfg.simplify()
+    assert len(sdfg.arrays) == 1
+    assert len(nsdfg.arrays) == 1
+
+    a = np.random.rand(2)
+    sdfg(output=a)
+    assert np.allclose(a, 1)
+
+
+if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--N", default=64)
     args = parser.parse_args()
@@ -188,3 +245,5 @@ if __name__ == "__main__":
     n = np.int32(args.N)
 
     test_prune_connectors(n=n)
+    test_unused_retval()
+    test_unused_retval_2()

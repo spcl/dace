@@ -2,8 +2,9 @@
 import ast
 import collections
 import copy
-import errno
+import ctypes
 import itertools
+from numbers import Integral
 import os
 import pickle, json
 from hashlib import md5, sha256
@@ -13,7 +14,7 @@ import re
 import shutil
 import sys
 import time
-from typing import (Any, AnyStr, Dict, Iterator, List, Optional, Set, Tuple, Type, Union)
+from typing import Any, AnyStr, Dict, Iterator, List, Optional, Sequence, Set, Tuple, Type, Union
 import warnings
 import numpy as np
 import sympy as sp
@@ -25,15 +26,20 @@ from dace.sdfg.scope import ScopeTree
 from dace.sdfg.replace import replace, replace_properties
 from dace.sdfg.validation import (InvalidSDFGError, validate_sdfg)
 from dace.config import Config
-from dace.frontend.python import wrappers
+from dace.frontend.python import astutils, wrappers
 from dace.sdfg import nodes as nd
 from dace.sdfg.graph import OrderedDiGraph, Edge, SubgraphView
 from dace.sdfg.state import SDFGState
 from dace.sdfg.propagation import propagate_memlets_sdfg
+from dace.distr_types import ProcessGrid, SubArray, RedistrArray
 from dace.dtypes import validate_name
 from dace.properties import (DebugInfoProperty, EnumProperty, ListProperty, make_properties, Property, CodeProperty,
                              TransformationHistProperty, SDFGReferenceProperty, DictProperty, OrderedDictProperty,
                              CodeBlock)
+
+# NOTE: In shapes, we try to convert strings to integers. In ranks, a string should be interpreted as data (scalar).
+ShapeType = Sequence[Union[Integral, str, symbolic.symbol, symbolic.SymExpr, symbolic.sympy.Basic]]
+RankType = Union[Integral, str, symbolic.symbol, symbolic.SymExpr, symbolic.sympy.Basic]
 
 
 def _arrays_to_json(arrays):
@@ -54,6 +60,12 @@ def _replace_dict(d, old, new):
             warnings.warn('"%s" already exists in SDFG' % new)
         d[new] = d[old]
         del d[old]
+
+
+def _replace_dict_values(d, old, new):
+    for k, v in d.items():
+        if v == old:
+            d[k] = new
 
 
 def _assignments_from_string(astr):
@@ -80,13 +92,10 @@ class LogicalGroup(object):
     """ Logical element groupings on a per-SDFG level.
     """
 
-    nodes = ListProperty(element_type=tuple,
-                         desc='Nodes in this group given by [State, Node] id tuples')
-    states = ListProperty(element_type=int,
-                          desc='States in this group given by their ids')
+    nodes = ListProperty(element_type=tuple, desc='Nodes in this group given by [State, Node] id tuples')
+    states = ListProperty(element_type=int, desc='States in this group given by their ids')
     name = Property(dtype=str, desc='Logical group name')
-    color = Property(dtype=str,
-                     desc='Color for the group, given as a hexadecimal string')
+    color = Property(dtype=str, desc='Color for the group, given as a hexadecimal string')
 
     def __init__(self, name, color, nodes=[], states=[]):
         self.nodes = nodes
@@ -102,8 +111,7 @@ class LogicalGroup(object):
     @staticmethod
     def from_json(json_obj, context=None):
         ret = LogicalGroup('', '')
-        dace.serialize.set_properties_from_json(ret, json_obj, context=context,
-                                                ignore_properties={'type'})
+        dace.serialize.set_properties_from_json(ret, json_obj, context=context, ignore_properties={'type'})
         return ret
 
 
@@ -183,9 +191,6 @@ class InterstateEdge(object):
         :param new_name: The replacement name.
         :param replace_keys: If False, skips replacing assignment keys.
         """
-        # Avoid import loops
-        from dace.frontend.python import astutils
-
         if replace_keys:
             _replace_dict(self.assignments, name, new_name)
 
@@ -195,11 +200,15 @@ class InterstateEdge(object):
             newv = astutils.unparse(vast)
             if newv != v:
                 self.assignments[k] = newv
-        condition = ast.parse(self.condition.as_string)
-        condition = astutils.ASTFindReplace({name: new_name}).visit(condition)
-        newc = astutils.unparse(condition)
-        if newc != condition:
-            self.condition.as_string = newc
+
+        replacer = astutils.ASTFindReplace({name: new_name})
+        if isinstance(self.condition.code, list):
+            for stmt in self.condition.code:
+                replacer.visit(stmt)
+        else:
+            replacer.visit(self.condition.code)
+
+        if replacer.replace_count > 0:
             self._uncond = None
             self._cond_sympy = None
 
@@ -287,14 +296,34 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
     orig_sdfg = SDFGReferenceProperty(allow_none=True)
     transformation_hist = TransformationHistProperty()
 
-    logical_groups = ListProperty(element_type=LogicalGroup,
-                                  desc='Logical groupings of nodes and edges')
+    logical_groups = ListProperty(element_type=LogicalGroup, desc='Logical groupings of nodes and edges')
 
     openmp_sections = Property(dtype=bool,
                                default=Config.get_bool('compiler', 'cpu', 'openmp_sections'),
                                desc='Whether to generate OpenMP sections in code')
 
     debuginfo = DebugInfoProperty(allow_none=True)
+
+    _pgrids = DictProperty(str,
+                           ProcessGrid,
+                           desc="Process-grid descriptors for this SDFG",
+                           to_json=_arrays_to_json,
+                           from_json=_arrays_from_json)
+    _subarrays = DictProperty(str,
+                              SubArray,
+                              desc="Sub-array descriptors for this SDFG",
+                              to_json=_arrays_to_json,
+                              from_json=_arrays_from_json)
+    _rdistrarrays = DictProperty(str,
+                                 RedistrArray,
+                                 desc="Sub-array redistribution descriptors for this SDFG",
+                                 to_json=_arrays_to_json,
+                                 from_json=_arrays_from_json)
+
+    callback_mapping = DictProperty(str,
+                                    str,
+                                    desc='Mapping between callback name and its original callback '
+                                    '(for when the same callback is used with a different signature)')
 
     def __init__(self,
                  name: str,
@@ -330,13 +359,20 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         self._sdfg_list = [self]
         self._start_state: Optional[int] = None
         self._arrays = {}  # type: Dict[str, dt.Array]
+        self._labels: Set[str] = set()
         self.global_code = {'frame': CodeBlock("", dtypes.Language.CPP)}
         self.init_code = {'frame': CodeBlock("", dtypes.Language.CPP)}
         self.exit_code = {'frame': CodeBlock("", dtypes.Language.CPP)}
         self.orig_sdfg = None
         self.transformation_hist = []
+        self.callback_mapping = {}
         # Counter to make it easy to create temp transients
         self._temp_transients = 0
+
+        # Grid-distribution-related fields
+        self._pgrids = {}
+        self._subarrays = {}
+        self._rdistrarrays = {}
 
         # Counter to resolve name conflicts
         self._orig_name = name
@@ -460,6 +496,21 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         """
         return self._arrays
 
+    @property
+    def process_grids(self):
+        """ Returns a dictionary of process-grid descriptors (`ProcessGrid` objects) used in this SDFG. """
+        return self._pgrids
+
+    @property
+    def subarrays(self):
+        """ Returns a dictionary of sub-array descriptors (`SubArray` objects) used in this SDFG. """
+        return self._subarrays
+
+    @property
+    def rdistrarrays(self):
+        """ Returns a dictionary of sub-array redistribution descriptors (`RedistrArray` objects) used in this SDFG. """
+        return self._rdistrarrays
+
     def data(self, dataname: str):
         """ Looks up a data descriptor from its name, which can be an array, stream, or scalar symbol. """
         if dataname in self._arrays:
@@ -486,6 +537,8 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             _replace_dict(self._arrays, name, new_name)
             _replace_dict(self.symbols, name, new_name)
             _replace_dict(self.constants_prop, name, new_name)
+            _replace_dict(self.callback_mapping, name, new_name)
+            _replace_dict_values(self.callback_mapping, name, new_name)
 
         # Replace inside data descriptors
         for array in self.arrays.values():
@@ -708,8 +761,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                 continue
             os.unlink(os.path.join(path, fname))
 
-    def get_latest_report(self) -> \
-            Optional['dace.codegen.instrumentation.InstrumentationReport']:
+    def get_latest_report(self) -> Optional['dace.codegen.instrumentation.InstrumentationReport']:
         """
         Returns an instrumentation report from the latest run of this SDFG, or
         None if the file does not exist.
@@ -725,6 +777,79 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         from dace.codegen.instrumentation import InstrumentationReport
 
         return InstrumentationReport(os.path.join(path, sorted(files, reverse=True)[0]))
+
+    def get_instrumented_data(
+        self,
+        timestamp: Optional[int] = None
+    ) -> Optional['dace.codegen.instrumentation.data.data_report.InstrumentedDataReport']:
+        """
+        Returns an instrumented data report from the latest run of this SDFG, with a given timestamp, or
+        None if no reports exist.
+        :param timestamp: An optional timestamp to use for the report.
+        :return: An InstrumentedDataReport object, or None if one does not exist.
+        """
+        # Avoid import loops
+        from dace.codegen.instrumentation.data.data_report import InstrumentedDataReport
+
+        if timestamp is None:
+            reports = self.available_data_reports()
+            if not reports:
+                return None
+            timestamp = sorted(reports)[-1]
+
+        folder = os.path.join(self.build_folder, 'data', str(timestamp))
+        if not os.path.exists(folder):
+            return None
+
+        return InstrumentedDataReport(self, folder)
+
+    def available_data_reports(self) -> List[str]:
+        """
+        Returns a list of available instrumented data reports for this SDFG.
+        """
+        path = os.path.join(self.build_folder, 'data')
+        if os.path.exists(path):
+            return os.listdir(path)
+        else:
+            return []
+
+    def clear_data_reports(self):
+        """
+        Clears the instrumented data report folders of this SDFG.
+        """
+        reports = self.available_data_reports()
+        path = os.path.join(self.build_folder, 'data')
+        for report in reports:
+            shutil.rmtree(os.path.join(path, report))
+
+    def call_with_instrumented_data(self,
+                                    dreport: 'dace.codegen.instrumentation.data.data_report.InstrumentedDataReport',
+                                    *args, **kwargs):
+        """
+        Invokes an SDFG with an instrumented data report, generating and compiling code if necessary. 
+        Arguments given as ``args`` and ``kwargs`` will be overriden by the data containers defined in the report.
+        :param dreport: The instrumented data report to use upon calling.
+        :param args: Arguments to call SDFG with.
+        :param kwargs: Keyword arguments to call SDFG with.
+        :return: The return value(s) of this SDFG.
+        """
+        from dace.codegen.compiled_sdfg import CompiledSDFG  # Avoid import loop
+
+        binaryobj: CompiledSDFG = self.compile()
+        set_report = binaryobj.get_exported_function('__dace_set_instrumented_data_report')
+        if set_report is None:
+            raise ValueError(
+                'Data instrumentation report function not found. This is likely because the SDFG is not instrumented '
+                'with `dace.DataInstrumentationType.Restore`')
+
+        # Initialize the compiled SDFG to get the handle, then set the report folder
+        handle = binaryobj.initialize(*args, **kwargs)
+        set_report(handle, ctypes.c_char_p(os.path.abspath(dreport.folder).encode('utf-8')))
+
+        # Verify passed arguments (unless disabled by the user)
+        if dace.config.Config.get_bool("execution", "general", "check_args"):
+            self.argument_typecheck(args, kwargs)
+        return binaryobj(*args, **kwargs)
 
     ##########################################
 
@@ -872,16 +997,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             :param dtype: Optional data type of the symbol, or None to deduce
                           automatically.
         """
-        def get_type(obj):
-            if isinstance(obj, np.ndarray):
-                return dt.Array(dtypes.DTYPE_TO_TYPECLASS[obj.dtype.type], shape=obj.shape)
-            elif isinstance(obj, dtypes.typeclass):
-                return dt.Scalar(type(obj))
-            elif type(obj) in dtypes.DTYPE_TO_TYPECLASS:
-                return dt.Scalar(dtypes.DTYPE_TO_TYPECLASS[type(obj)])
-            raise TypeError('Unrecognized constant type: %s' % type(obj))
-
-        self.constants_prop[name] = (dtype or get_type(value), value)
+        self.constants_prop[name] = (dtype or dt.create_datadescriptor(value), value)
 
     @property
     def propagate(self):
@@ -1087,8 +1203,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         # Get global free symbols scalar arguments
         free_symbols = free_symbols or self.free_symbols
         return ", ".join(
-            dt.Scalar(self.symbols[k]).as_arg(
-                name=k, with_types=not for_call, for_call=for_call)
+            dt.Scalar(self.symbols[k]).as_arg(name=k, with_types=not for_call, for_call=for_call)
             for k in sorted(free_symbols) if not k.startswith('__dace'))
 
     def signature_arglist(self, with_types=True, for_call=False, with_arrays=True, arglist=None) -> List[str]:
@@ -1133,7 +1248,8 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 <div id="contents_{uid}" style="position: relative; resize: vertical; overflow: auto"></div>
 <script>
     var sdfg_{uid} = {sdfg};
-    var renderer_{uid} = new SDFGRenderer(parse_sdfg(sdfg_{uid}),
+    var sdfv_{uid} = new SDFV();
+    var renderer_{uid} = new SDFGRenderer(sdfv_{uid}, parse_sdfg(sdfg_{uid}),
         document.getElementById('contents_{uid}'));
 </script>""".format(
             # Dumping to a string so that Jupyter Javascript can parse it
@@ -1240,7 +1356,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                 json_output = self.to_json(hash=hash)
                 if exception:
                     json_output['error'] = exception.to_json()
-                fp.write(dace.serialize.dumps(json_output))
+                dace.serialize.dump(json_output, fp)
             if hash and 'hash' in json_output['attributes']:
                 return json_output['attributes']['hash']
 
@@ -1281,10 +1397,13 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                                    state.
             :return: A new SDFGState object.
         """
+        if self._labels is None or len(self._labels) != self.number_of_nodes():
+            self._labels = set(s.label for s in self.nodes())
         label = label or 'state'
-        existing_labels = set(s.label for s in self.nodes())
+        existing_labels = self._labels
         label = dt.find_new_name(label, existing_labels)
         state = SDFGState(label, self)
+        self._labels.add(label)
 
         self.add_node(state, is_start_state=is_start_state)
         return state
@@ -1328,7 +1447,8 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
     def _find_new_name(self, name: str):
         """ Tries to find a new name by adding an underscore and a number. """
         index = 0
-        names = (self._arrays.keys() | self.constants_prop.keys())
+        names = (self._arrays.keys() | self.constants_prop.keys() | self._pgrids.keys() | self._subarrays.keys()
+                 | self._rdistrarrays.keys())
         while (name + ('_%d' % index)) in names:
             index += 1
 
@@ -1447,6 +1567,48 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                        debuginfo=debuginfo,
                        total_size=total_size,
                        may_alias=may_alias)
+
+        return self.add_datadesc(name, desc, find_new_name=find_new_name), desc
+
+    def add_reference(self,
+                      name: str,
+                      shape,
+                      dtype,
+                      storage=dtypes.StorageType.Default,
+                      strides=None,
+                      offset=None,
+                      debuginfo=None,
+                      allow_conflicts=False,
+                      total_size=None,
+                      find_new_name=False,
+                      alignment=0,
+                      may_alias=False) -> Tuple[str, dt.Reference]:
+        """ Adds a reference to the SDFG data descriptor store. """
+
+        # convert strings to int if possible
+        newshape = []
+        for s in shape:
+            try:
+                newshape.append(int(s))
+            except:
+                newshape.append(dace.symbolic.pystr_to_symbolic(s))
+        shape = newshape
+
+        if isinstance(dtype, type) and dtype in dtypes._CONSTANT_TYPES[:-1]:
+            dtype = dtypes.typeclass(dtype)
+
+        desc = dt.Reference(dtype,
+                            shape,
+                            storage=storage,
+                            allow_conflicts=allow_conflicts,
+                            transient=True,
+                            strides=strides,
+                            offset=offset,
+                            lifetime=dtypes.AllocationLifetime.Scope,
+                            alignment=alignment,
+                            debuginfo=debuginfo,
+                            total_size=total_size,
+                            may_alias=may_alias)
 
         return self.add_datadesc(name, desc, find_new_name=find_new_name), desc
 
@@ -1590,27 +1752,11 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             descriptor store. """
         debuginfo = debuginfo or desc.debuginfo
         dtype = dtype or desc.dtype
-        if isinstance(desc, dt.Scalar):
-            return self.add_scalar(self.temp_data_name(),
-                                   dtype,
-                                   desc.storage,
-                                   transient=True,
-                                   lifetime=desc.lifetime,
-                                   debuginfo=debuginfo)
-        return self.add_array(self.temp_data_name(),
-                              desc.shape,
-                              dtype,
-                              storage=desc.storage,
-                              location=desc.location,
-                              transient=True,
-                              strides=desc.strides,
-                              offset=desc.offset,
-                              lifetime=desc.lifetime,
-                              alignment=desc.alignment,
-                              debuginfo=debuginfo,
-                              allow_conflicts=desc.allow_conflicts,
-                              total_size=desc.total_size,
-                              may_alias=desc.may_alias)
+        newdesc = desc.clone()
+        newdesc.dtype = dtype
+        newdesc.transient = True
+        newdesc.debuginfo = debuginfo
+        return self.add_datadesc(self.temp_data_name(), newdesc), newdesc
 
     def add_datadesc(self, name: str, datadesc: dt.Data, find_new_name=False) -> str:
         """ Adds an existing data descriptor to the SDFG array store.
@@ -1636,6 +1782,103 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                 self.add_symbol(sym.name, sym.dtype)
 
         return name
+
+    def add_pgrid(self,
+                  shape: ShapeType = None,
+                  parent_grid: str = None,
+                  color: Sequence[Union[Integral, bool]] = None,
+                  exact_grid: RankType = None,
+                  root: RankType = 0):
+        """ Adds a process-grid to the process-grid descriptor store.
+            For more details on process-grids, please read the documentation of the ProcessGrid class.
+            :param shape: Shape of the process-grid (see `dims` parameter of [MPI_Cart_create](https://www.mpich.org/static/docs/latest/www3/MPI_Cart_create.html)), e.g., [2, 3, 3].
+            :param parent_grid: Parent process-grid (similar to the `comm` parameter of [MPI_Cart_sub](https://www.mpich.org/static/docs/v3.2/www3/MPI_Cart_sub.html)).
+            :param color: The i-th entry specifies whether the i-th dimension is kept in the sub-grid or is dropped (see `remain_dims` input of [MPI_Cart_sub](https://www.mpich.org/static/docs/v3.2/www3/MPI_Cart_sub.html)).
+            :param exact_grid: If set then, out of all the sub-grids created, only the one that contains the rank with id `exact_grid` will be utilized for collective communication.
+            :param root: Root rank (used for collective communication).
+            :return: Name of the new process-grid descriptor.
+        """
+
+        if not (shape or parent_grid):
+            raise ValueError("Process-grid must either have its shape defined or be linked to a parent-grid.")
+
+        # convert strings to int if possible
+        shape = shape or []
+        newshape = []
+        for s in shape:
+            try:
+                newshape.append(int(s))
+            except:
+                newshape.append(dace.symbolic.pystr_to_symbolic(s))
+        shape = newshape
+
+        grid_name = self._find_new_name('__pgrid')
+        is_subgrid = (parent_grid is not None)
+        if parent_grid and isinstance(parent_grid, str):
+            parent_grid = self._pgrids[parent_grid]
+
+        self._pgrids[grid_name] = ProcessGrid(grid_name, is_subgrid, shape, parent_grid, color, exact_grid, root)
+
+        self.append_init_code(self._pgrids[grid_name].init_code())
+        self.append_exit_code(self._pgrids[grid_name].exit_code())
+
+        return grid_name
+
+    def add_subarray(self,
+                     dtype: dtypes.typeclass,
+                     shape: ShapeType,
+                     subshape: ShapeType,
+                     pgrid: str = None,
+                     correspondence: Sequence[Integral] = None):
+        """ Adds a sub-array to the sub-array descriptor store.
+            For more details on sub-arrays, please read the documentation of the SubArray class.
+            :param dtype: Datatype of the array (see `oldtype` parameter of [MPI_Type_create_subarray](https://www.mpich.org/static/docs/v3.2/www3/MPI_Type_create_subarray.html)).
+            :param shape: Shape of the sub-array (see `array_of_sizes` parameter of [MPI_Type_create_subarray](https://www.mpich.org/static/docs/v3.2/www3/MPI_Type_create_subarray.html)).
+            :param subshape: Sub-shape of the sub-array (see `array_of_subsizes` parameter of [MPI_Type_create_subarray](https://www.mpich.org/static/docs/v3.2/www3/MPI_Type_create_subarray.html)).
+            :param pgrid: Process-grid used for collective scatter/gather operations.
+            :param correspondence: Matching among array dimensions and process-grid dimensions.
+            :return: Name of the new sub-array descriptor.
+        """
+
+        # convert strings to int if possible
+        shape = shape or []
+        newshape = []
+        for s in shape:
+            try:
+                newshape.append(int(s))
+            except:
+                newshape.append(dace.symbolic.pystr_to_symbolic(s))
+        shape = newshape
+        subshape = subshape or []
+        newshape = []
+        for s in subshape:
+            try:
+                newshape.append(int(s))
+            except:
+                newshape.append(dace.symbolic.pystr_to_symbolic(s))
+        subshape = newshape
+
+        subarray_name = self._find_new_name('__subarray')
+        self._subarrays[subarray_name] = SubArray(subarray_name, dtype, shape, subshape, pgrid, correspondence)
+
+        self.append_init_code(self._subarrays[subarray_name].init_code())
+        self.append_exit_code(self._subarrays[subarray_name].exit_code())
+
+        return subarray_name
+
+    def add_rdistrarray(self, array_a: str, array_b: str):
+        """ Adds a sub-array redistribution to the sub-array redistribution descriptor store.
+            For more details on redistributions, please read the documentation of the RedistrArray class.
+            :param array_a: Input sub-array descriptor.
+            :param array_b: Output sub-array descriptor.
+            :return: Name of the new redistribution descriptor.
+        """
+
+        rdistrarray_name = self._find_new_name('__rdistrarray')
+        self._rdistrarrays[rdistrarray_name] = RedistrArray(rdistrarray_name, array_a, array_b)
+        self.append_init_code(self._rdistrarrays[rdistrarray_name].init_code(self))
+        self.append_exit_code(self._rdistrarrays[rdistrarray_name].exit_code(self))
+        return rdistrarray_name
 
     def add_loop(
         self,
@@ -1995,6 +2238,8 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         # First step is to apply multi-state inline, before any state fusion can
         # occur
         sdutil.inline_sdfgs(self, multistate=True)
+        if validate_all:
+            self.validate()
         sdutil.fuse_states(self)
 
         self.apply_transformations_repeated([RedundantReadSlice, RedundantWriteSlice],
@@ -2208,9 +2453,17 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
         return sum(applied_transformations.values())
 
-    def apply_gpu_transformations(self, states=None, validate=True, validate_all=False, permissive=False):
+    def apply_gpu_transformations(self,
+                                  states=None,
+                                  validate=True,
+                                  validate_all=False,
+                                  permissive=False,
+                                  sequential_innermaps=True,
+                                  register_transients=True):
         """ Applies a series of transformations on the SDFG for it to
             generate GPU code.
+            :param sequential_innermaps: Make all internal maps Sequential.
+            :param register_transients: Make all transients inside GPU maps registers.
             :note: It is recommended to apply redundant array removal
             transformation after this transformation. Alternatively,
             you can simplify() after this transformation.
@@ -2220,6 +2473,8 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         from dace.transformation.interstate import GPUTransformSDFG
 
         self.apply_transformations(GPUTransformSDFG,
+                                   options=dict(sequential_innermaps=sequential_innermaps,
+                                                register_trans=register_transients),
                                    validate=validate,
                                    validate_all=validate_all,
                                    permissive=permissive,

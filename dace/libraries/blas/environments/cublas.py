@@ -14,7 +14,7 @@ class cuBLAS:
     cmake_link_flags = []
     cmake_files = []
 
-    headers = ["../include/dace_cublas.h"]
+    headers = {'frame': ["../include/dace_cublas.h"], 'cuda': ["../include/dace_cublas.h"]}
     state_fields = ["dace::blas::CublasHandle cublas_handle;"]
     init_code = ""
     finalize_code = ""

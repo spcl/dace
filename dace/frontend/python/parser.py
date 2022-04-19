@@ -242,6 +242,7 @@ class DaceProgram(pycommon.SDFGConvertible):
         # Invoke auto-optimization as necessary
         if Config.get_bool('optimizer', 'autooptimize') or self.auto_optimize:
             sdfg = self._auto_optimize(sdfg)
+            sdfg.simplify()
 
         return sdfg.compile(validate=self.validate)
 
@@ -345,6 +346,9 @@ class DaceProgram(pycommon.SDFGConvertible):
         # Add closure arguments to the call
         result.update(self.__sdfg_closure__())
 
+        # Update closure with respect to callback mapping
+        result.update({k: result[v] for k, v in sdfg.callback_mapping.items()})
+
         # Update arguments with symbols in data shapes
         result.update(
             infer_symbols_from_datadescriptor(
@@ -396,6 +400,8 @@ class DaceProgram(pycommon.SDFGConvertible):
         # Invoke auto-optimization as necessary
         if Config.get_bool('optimizer', 'autooptimize') or self.auto_optimize:
             sdfg = self._auto_optimize(sdfg, symbols=sdfg_args)
+            sdfg.simplify()
+
 
         # Compile SDFG (note: this is done after symbol inference due to shape
         # altering transformations such as Vectorization)
@@ -638,7 +644,7 @@ class DaceProgram(pycommon.SDFGConvertible):
         return sdfg, self._cache.make_key(argtypes, given_args, self.closure_array_keys, self.closure_constant_keys,
                                           constant_args)
 
-    def load_sdfg(self, path: str, *args, **kwargs) -> None:
+    def load_sdfg(self, path: str, *args, **kwargs):
         """
         Loads an external SDFG that will be used when the function is called.
         :param path: Path to SDFG file.
@@ -649,6 +655,8 @@ class DaceProgram(pycommon.SDFGConvertible):
 
         # Update SDFG cache with the SDFG (without a compiled version)
         self._cache.add(cachekey, sdfg, None)
+
+        return sdfg, cachekey
 
     def load_precompiled_sdfg(self, path: str, *args, **kwargs) -> None:
         """
@@ -666,6 +674,18 @@ class DaceProgram(pycommon.SDFGConvertible):
 
         # Update SDFG cache with the SDFG and compiled version
         self._cache.add(cachekey, csdfg.sdfg, csdfg)
+
+        return csdfg, cachekey
+
+    def get_program_hash(self, *args, **kwargs) -> cached_program.ProgramCacheKey:
+        """
+        Returns the program's hash (cache key) given the arguments and the program's closure.
+        :param args: Arguments that the SDFG will be called with.
+        :param kwargs: Keyword arguments that the SDFG will be called with.
+        :return: A hashable program cache key object.
+        """
+        _, key = self._load_sdfg(None, *args, **kwargs)
+        return key
 
     def _generate_pdp(self, args, kwargs, simplify=None) -> SDFG:
         """ Generates the parsed AST representation of a DaCe program.

@@ -80,7 +80,7 @@ class PAPIInstrumentation(InstrumentationProvider):
 
         self._papi_used = True
 
-    def on_sdfg_begin(self, sdfg, local_stream, global_stream):
+    def on_sdfg_begin(self, sdfg, local_stream, global_stream, codegen):
         if sdfg.parent is None and PAPIUtils.is_papi_used(sdfg):
             # Configure CMake project and counters
             self.configure_papi()

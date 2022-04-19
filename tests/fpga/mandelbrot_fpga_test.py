@@ -14,7 +14,7 @@ def test_mandelbrot_fpga():
     out[:] = dace.uint32(0)
     sdfg = mandelbrot.mandelbrot.to_sdfg()
     sdfg.apply_transformations(FPGATransformSDFG)
-    sdfg(output=out, MAXITER=max_iterations, W=w, H=h)
+    sdfg(output=out, maxiter=max_iterations, W=w, H=h)
     return sdfg
 
 

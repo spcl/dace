@@ -10,7 +10,7 @@ from dace import config, data as dt, dtypes, nodes, registry
 from dace.codegen import exceptions as cgx, prettycode
 from dace.codegen.targets import target
 from dace.sdfg import utils as sdutil, SDFG, SDFGState, ScopeSubgraphView
-from typing import Dict, Set, Tuple
+from typing import Dict, Set, Tuple, Union
 
 
 @registry.extensible_enum
@@ -143,17 +143,17 @@ class TargetDispatcher(object):
     def __init__(self, framecode):
         # Avoid import loop
         from dace.codegen.targets import framecode as fc
+        from dace.codegen import instrumentation
 
         self.frame: fc.DaCeCodeGenerator = framecode
         self._used_targets: Set[target.TargetCodeGenerator] = set()
         self._used_environments = set()
 
-        # type: Dict[dace.dtypes.InstrumentationType, InstrumentationProvider]
-        self.instrumentation = {}
+        self.instrumentation: Dict[Union[dtypes.InstrumentationType, dtypes.DataInstrumentationType],
+                                   instrumentation.InstrumentationProvider] = {}
 
-        self._array_dispatchers: Dict[dtypes.StorageType, target.TargetCodeGenerator] = {
-        }  # Type: dtypes.StorageType -> TargetCodeGenerator
-        self._map_dispatchers = {}  # Type: dtypes.ScheduleType -> TargetCodeGenerator
+        self._array_dispatchers: Dict[dtypes.StorageType, target.TargetCodeGenerator] = {}
+        self._map_dispatchers: Dict[dtypes.ScheduleType, target.TargetCodeGenerator] = {}
         self._copy_dispatchers = {}  # Type: (dtypes.StorageType src,
         #                                     dtypes.StorageType dst,
         #                                     dtypes.ScheduleType dst_schedule)

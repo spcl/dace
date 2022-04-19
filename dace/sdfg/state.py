@@ -14,7 +14,7 @@ from dace.properties import (EnumProperty, Property, DictProperty, SubsetPropert
                              make_properties)
 from inspect import getframeinfo, stack
 import itertools
-from typing import (Any, AnyStr, Dict, Iterable, List, Optional, Set, Tuple, Union)
+from typing import (Any, AnyStr, Dict, Iterable, Iterator, List, Optional, Set, Tuple, Union, overload)
 import warnings
 
 
@@ -57,6 +57,17 @@ class StateGraphView(object):
         self._clear_scopedict_cache()
 
     ###################################################################
+    # Typing overrides
+    
+    @overload
+    def nodes(self) -> List[nd.Node]:
+        ...
+
+    @overload
+    def edges(self) -> List[MultiConnectorEdge[mm.Memlet]]:
+        ...
+
+    ###################################################################
     # Traversal methods
 
     def all_nodes_recursive(self):
@@ -90,7 +101,7 @@ class StateGraphView(object):
     ###################################################################
     # Memlet-tracking methods
 
-    def memlet_path(self, edge: MultiConnectorEdge) -> List[MultiConnectorEdge]:
+    def memlet_path(self, edge: MultiConnectorEdge[mm.Memlet]) -> List[MultiConnectorEdge[mm.Memlet]]:
         """ Given one edge, returns a list of edges representing a path
             between its source and sink nodes. Used for memlet tracking.
 
@@ -498,7 +509,7 @@ class StateGraphView(object):
         read_set, write_set = self._read_and_write_sets()
         return set(read_set.keys()), set(write_set.keys())
 
-    def arglist(self) -> Dict[str, dt.Data]:
+    def arglist(self, defined_syms=None, shared_transients=None) -> Dict[str, dt.Data]:
         """
         Returns an ordered dictionary of arguments (names and types) required
         to invoke this SDFG state or subgraph thereof.
@@ -526,7 +537,7 @@ class StateGraphView(object):
                  the arguments, sorted as defined here.
         """
         sdfg: 'dace.sdfg.SDFG' = self.parent
-        shared_transients = sdfg.shared_transients()
+        shared_transients = shared_transients or sdfg.shared_transients()
         sdict = self.scope_dict()
 
         data_args = {}
@@ -604,7 +615,7 @@ class StateGraphView(object):
         # End of data descriptor loop
 
         # Add scalar arguments from free symbols
-        defined_syms = self.defined_symbols()
+        defined_syms = defined_syms or self.defined_symbols()
         scalar_args.update({
             k: dt.Scalar(defined_syms[k]) if k in defined_syms else sdfg.arrays[k]
             for k in self.free_symbols if not k.startswith('__dace') and k not in sdfg.constants
@@ -1175,7 +1186,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
             :param location:   Execution location indicator.
             :param language:   Programming language in which the code is
                                written
-            :param debuginfo:  Debugging information (mostly for DIODE)
+            :param debuginfo:  Source line information
             :param external_edges: Create external access nodes and connect
                                    them with memlets automatically
             :param input_nodes: Mapping between data names and corresponding

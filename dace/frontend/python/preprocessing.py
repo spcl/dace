@@ -300,7 +300,7 @@ def has_replacement(callobj: Callable, parent_object: Optional[Any] = None, node
     return oprepo.Replacements.get(astutils.rname(node)) is not None
 
 
-class GlobalResolver(ast.NodeTransformer, astutils.ASTHelperMixin):
+class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
     """ Resolves global constants and lambda expressions if not
         already defined in the given scope. """
     def __init__(self, globals: Dict[str, Any], resolve_functions: bool = False, default_args: Set[str] = None):
@@ -392,7 +392,7 @@ class GlobalResolver(ast.NodeTransformer, astutils.ASTHelperMixin):
 
         elif detect_callables and hasattr(value, '__call__') and hasattr(value.__call__, '__sdfg__'):
             return self.global_value_to_node(value.__call__, parent_node, qualname, recurse, detect_callables)
-        elif isinstance(value, numpy.ndarray):
+        elif dtypes.is_array(value):
             # Arrays need to be stored as a new name and fed as an argument
             if id(value) in self.closure.array_mapping:
                 arrname = self.closure.array_mapping[id(value)]
@@ -625,6 +625,15 @@ class GlobalResolver(ast.NodeTransformer, astutils.ASTHelperMixin):
         self.generic_visit_field(node, 'orelse')
         return node
 
+    def visit_TopLevelExpr(self, node: ast.Expr):
+        # Ignore memlet targets in tasklets
+        if isinstance(node.value, ast.BinOp):
+            if isinstance(node.value.op, (ast.LShift, ast.RShift)):
+                # Do not visit node.value.left
+                node.value.right = self.visit(node.value.right)
+                return node
+        return self.generic_visit(node)
+
     def visit_Assert(self, node: ast.Assert) -> Any:
         # Try to evaluate assertion statically
         try:
@@ -854,6 +863,10 @@ class LoopUnroller(ast.NodeTransformer):
 
         node = self.generic_visit(node)
 
+        # If this node was already designated as a no-unroll node, continue
+        if getattr(node, 'nounroll', False):
+            return node
+
         # First, skip loops that contain break/continue that is part of this
         # for loop (rather than nested ones)
         cannot_unroll = False
@@ -870,7 +883,7 @@ class LoopUnroller(ast.NodeTransformer):
         explicitly_requested = False
         if isinstance(niter, ast.Call):
             # Avoid import loop
-            from dace.frontend.python.interface import unroll
+            from dace.frontend.python.interface import nounroll, unroll
 
             try:
                 genfunc = astutils.evalnode(niter.func, self.globals)
@@ -880,6 +893,11 @@ class LoopUnroller(ast.NodeTransformer):
             if genfunc is unroll:
                 explicitly_requested = True
                 niter = niter.args[0]
+            elif genfunc is nounroll:
+                # Return the contents of the nounroll call
+                node.nounroll = True
+                node.iter = niter.args[0]
+                return node
 
         if explicitly_requested and cannot_unroll:
             raise DaceSyntaxError(None, node, 'Cannot unroll loop due to "break", "continue", or "else" statements.')
@@ -1254,6 +1272,7 @@ def preprocess_dace_program(f: Callable[..., Any],
 
     for pass_num in gen:
         try:
+            closure_resolver.toplevel_function = True
             src_ast = closure_resolver.visit(src_ast)
             src_ast = LoopUnroller(resolved, src_file, closure_resolver).visit(src_ast)
             src_ast = ContextManagerInliner(resolved, src_file, closure_resolver).visit(src_ast)

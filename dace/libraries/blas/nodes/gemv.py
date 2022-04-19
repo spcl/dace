@@ -816,7 +816,7 @@ class ExpandGemvPBLAS(ExpandTransformation):
             lx = np.empty((n // Px, ), dtype=_x.dtype)
             dace.comm.BCScatter(_A, lA, (m // Px, n // Py))
             dace.comm.BCScatter(_x, lx, (n // Px, 1))
-            ly = distr.MatMult(_A, _x, lA, lx, (m // Px, n // Py), (n // Px, 1))
+            ly = distr.MatMult(lA, lx, (m, n))
             dace.comm.BCGather(ly, _y, (m // Px, 1))
 
         @dace.program
@@ -825,7 +825,7 @@ class ExpandGemvPBLAS(ExpandTransformation):
             lx = np.empty((m // Px, ), dtype=_x.dtype)
             dace.comm.BCScatter(_A, lA, (m // Px, n // Py))
             dace.comm.BCScatter(_x, lx, (m // Px, 1))
-            ly = distr.MatMult(_x, _A, lx, lA, (m // Px, 1), (m // Px, n // Py))
+            ly = distr.MatMult(lx, lA, (m, n))
             dace.comm.BCGather(ly, _y, (n // Px, 1))
 
         # NOTE: The following is done to avoid scalar promotion, which results

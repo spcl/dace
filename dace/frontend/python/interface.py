@@ -26,7 +26,7 @@ def program(*args,
             auto_optimize=False,
             device=dtypes.DeviceType.CPU,
             constant_functions=False,
-            **kwargs) -> parser.DaceProgram:
+            **kwargs) -> Callable[..., parser.DaceProgram]:
     ...
 
 
@@ -36,7 +36,7 @@ def program(f: F,
             auto_optimize=False,
             device=dtypes.DeviceType.CPU,
             constant_functions=False,
-            **kwargs) -> parser.DaceProgram:
+            **kwargs) -> Callable[..., parser.DaceProgram]:
     """
     Entry point to a data-centric program. For methods and ``classmethod``s, use
     ``@dace.method``.
@@ -223,5 +223,12 @@ def unroll(generator):
     Explicitly annotates that a loop should be unrolled during parsing.
     :param generator: The original generator to loop over.
     :note: Only use with stateless and compile-time evaluateable loops!
+    """
+    yield from generator
+
+def nounroll(generator):
+    """
+    Explicitly annotates that a loop should not be unrolled during parsing.
+    :param generator: The original generator to loop over.
     """
     yield from generator
