@@ -496,6 +496,15 @@ namespace dace
 //#endif
         }
 #endif
+
+        template<typename T>
+        DACE_HDFI T ipow(const T& a, const unsigned int& b) {
+            T result = a;
+            for (unsigned int i = 1; i < b; ++i)
+                result *= a;
+            return result;
+        }
+
         template<typename T>
         DACE_CONSTEXPR DACE_HDFI T pow(const T& a, const int& b)
         {

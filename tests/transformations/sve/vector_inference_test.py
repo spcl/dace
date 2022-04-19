@@ -6,6 +6,7 @@ from dace import SDFG
 import dace.sdfg.nodes as nodes
 import dace.sdfg.analysis.vector_inference as vector_inference
 import pytest
+from dace.transformation.dataflow import MergeSourceSinkArrays
 
 N = dace.symbol('N')
 
@@ -227,6 +228,8 @@ def test_multi_input():
     # x_in, y_in and z_in are vectors
 
     sdfg = program.to_sdfg(simplify=True)
+    sdfg.apply_transformations_repeated(MergeSourceSinkArrays)
+    sdfg.simplify()
     inf = vectorize(sdfg)
 
     assert is_vector_connector(inf, 'a', True)
@@ -258,6 +261,8 @@ def test_multi_input_violation():
     # This is an artificial constraint test where z_in wants scal as
     # a scalar instead of a vector
     sdfg = program.to_sdfg(simplify=True)
+    sdfg.apply_transformations_repeated(MergeSourceSinkArrays)
+    sdfg.simplify()
     inf = vector_inference.VectorInferenceGraph(sdfg, sdfg.start_state, find_map_entry(sdfg), -1)
     inf.set_constraint((find_tasklet_by_connector(sdfg, 'z_in'), 'z_in', True), vector_inference.InferenceNode.Scalar)
 
@@ -265,3 +270,14 @@ def test_multi_input_violation():
     # (since someone writes a vector into it)
     with pytest.raises(vector_inference.VectorInferenceException):
         inf.infer()
+
+
+if __name__ == '__main__':
+    test_simple()
+    test_always_scalar_output()
+    test_scalar_accessnode_vector()
+    test_scalar_accessnode_scalar()
+    test_array_accessnode_scalar()
+    test_array_accessnode_violation()
+    test_multi_input()
+    test_multi_input_violation()

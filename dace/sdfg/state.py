@@ -509,7 +509,7 @@ class StateGraphView(object):
         read_set, write_set = self._read_and_write_sets()
         return set(read_set.keys()), set(write_set.keys())
 
-    def arglist(self) -> Dict[str, dt.Data]:
+    def arglist(self, defined_syms=None, shared_transients=None) -> Dict[str, dt.Data]:
         """
         Returns an ordered dictionary of arguments (names and types) required
         to invoke this SDFG state or subgraph thereof.
@@ -537,7 +537,7 @@ class StateGraphView(object):
                  the arguments, sorted as defined here.
         """
         sdfg: 'dace.sdfg.SDFG' = self.parent
-        shared_transients = sdfg.shared_transients()
+        shared_transients = shared_transients or sdfg.shared_transients()
         sdict = self.scope_dict()
 
         data_args = {}
@@ -615,7 +615,7 @@ class StateGraphView(object):
         # End of data descriptor loop
 
         # Add scalar arguments from free symbols
-        defined_syms = self.defined_symbols()
+        defined_syms = defined_syms or self.defined_symbols()
         scalar_args.update({
             k: dt.Scalar(defined_syms[k]) if k in defined_syms else sdfg.arrays[k]
             for k in self.free_symbols if not k.startswith('__dace') and k not in sdfg.constants

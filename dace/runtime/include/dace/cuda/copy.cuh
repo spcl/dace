@@ -415,11 +415,10 @@ namespace dace
     }
 
     template <typename T, int BLOCK_WIDTH, int BLOCK_HEIGHT, int BLOCK_DEPTH,
-        int DST_ZSTRIDE, int DST_YSTRIDE, int DST_XSTRIDE,
-        bool ASYNC>
+              bool ASYNC>
         static DACE_DFI void GlobalToShared3DDynamic(
             const T *ptr, int src_zstride,
-            int src_ystride, int src_xstride, T *smem,
+            int src_ystride, int src_xstride, T *smem, int DST_ZSTRIDE, int DST_YSTRIDE, int DST_XSTRIDE,
             int COPY_ZLEN, int COPY_YLEN, int COPY_XLEN)
     {
         // Linear thread ID
@@ -672,27 +671,22 @@ namespace dace
     }
 
     template <typename T, int BLOCK_WIDTH, int BLOCK_HEIGHT, int BLOCK_DEPTH,
-        int DST_XSTRIDE,
         bool ASYNC>
         static DACE_DFI void GlobalToShared1DDynamic(
-            const T *ptr, int src_xstride, T *smem, int COPY_XLEN)
+            const T *ptr, int src_xstride, T *smem, int DST_XSTRIDE, int COPY_XLEN)
     {
-        GlobalToShared3DDynamic<T, BLOCK_WIDTH, BLOCK_HEIGHT, BLOCK_DEPTH, 1,
-            1, DST_XSTRIDE, ASYNC>(
-                ptr, 1, 1, src_xstride, smem, 1, 1, COPY_XLEN);
+        GlobalToShared3DDynamic<T, BLOCK_WIDTH, BLOCK_HEIGHT, BLOCK_DEPTH, ASYNC>(
+                ptr, 1, 1, src_xstride, smem, 1, 1, DST_XSTRIDE, 1, 1, COPY_XLEN);
     }
 
     template <typename T, int BLOCK_WIDTH, int BLOCK_HEIGHT, int BLOCK_DEPTH,
-        int DST_YSTRIDE, int DST_XSTRIDE,
         bool ASYNC>
         static DACE_DFI void GlobalToShared2DDynamic(
             const T *ptr, int src_ystride, int src_xstride,
-            T *smem, int COPY_YLEN, int COPY_XLEN)
+            T *smem, int DST_YSTRIDE, int DST_XSTRIDE, int COPY_YLEN, int COPY_XLEN)
     {
-        GlobalToShared3DDynamic<T, BLOCK_WIDTH, BLOCK_HEIGHT, BLOCK_DEPTH, 1,
-            DST_YSTRIDE, DST_XSTRIDE,
-            ASYNC>(
-                ptr, 1, src_ystride, src_xstride, smem, 1, COPY_YLEN, COPY_XLEN);
+        GlobalToShared3DDynamic<T, BLOCK_WIDTH, BLOCK_HEIGHT, BLOCK_DEPTH, ASYNC>(
+                ptr, 1, src_ystride, src_xstride, smem, 1, DST_YSTRIDE, DST_XSTRIDE, 1, COPY_YLEN, COPY_XLEN);
     }
 
 
@@ -739,12 +733,11 @@ namespace dace
     };
 
     template <typename T, int BLOCK_WIDTH, int BLOCK_HEIGHT, int BLOCK_DEPTH,
-        int COPY_XLEN, int DST_XSTRIDE,
-        bool ASYNC>
+        int COPY_XLEN, bool ASYNC>
     struct SharedToGlobal1D
     {
         template <typename WCR>
-        static DACE_DFI void Accum(const T *smem, int src_xstride, T *ptr, WCR wcr)
+        static DACE_DFI void Accum(const T *smem, int src_xstride, T *ptr, int DST_XSTRIDE, WCR wcr)
         {
             if (!ASYNC)
                 __syncthreads();
@@ -772,7 +765,7 @@ namespace dace
         }
 
         template <ReductionType REDTYPE>
-        static DACE_DFI void Accum(const T *smem, int src_xstride, T *ptr)
+        static DACE_DFI void Accum(const T *smem, int src_xstride, T *ptr, int DST_XSTRIDE)
         {
             if (!ASYNC)
                 __syncthreads();
@@ -804,26 +797,23 @@ namespace dace
     template <typename T, int BLOCK_WIDTH, int BLOCK_HEIGHT, int BLOCK_DEPTH,
         int COPY_YLEN, int COPY_XLEN, int DST_YSTRIDE, int DST_XSTRIDE,
         bool ASYNC>
-        static DACE_DFI void SharedToGlobal2D(
-            const T *ptr, int src_ystride, int src_xstride,
-            T *smem)
+    static DACE_DFI void SharedToGlobal2D(
+            const T *smem, int src_ystride, int src_xstride,
+            T *ptr)
     {
         GlobalToShared3D<T, BLOCK_WIDTH, BLOCK_HEIGHT, BLOCK_DEPTH, 1,
             COPY_YLEN, COPY_XLEN, 1, DST_YSTRIDE, DST_XSTRIDE,
             ASYNC>(
-                ptr, 1, src_ystride, src_xstride, smem);
+                smem, 1, src_ystride, src_xstride, ptr);
     }
-    template <typename T, int BLOCK_WIDTH, int BLOCK_HEIGHT, int BLOCK_DEPTH,
-        int DST_YSTRIDE, int DST_XSTRIDE,
-        bool ASYNC>
-        static DACE_DFI void SharedToGlobal2DDynamic(
-            const T *ptr, int src_ystride, int src_xstride,
-            T *smem, int COPY_YLEN, int COPY_XLEN)
+    template <typename T, int BLOCK_WIDTH, int BLOCK_HEIGHT, int BLOCK_DEPTH, bool ASYNC>
+    static DACE_DFI void SharedToGlobal2DDynamic(
+            const T *smem, int src_ystride, int src_xstride,
+            T *ptr, int DST_YSTRIDE, int DST_XSTRIDE, int COPY_YLEN, int COPY_XLEN)
     {
-        GlobalToShared3DDynamic<T, BLOCK_WIDTH, BLOCK_HEIGHT, BLOCK_DEPTH, 1,
-            DST_YSTRIDE, DST_XSTRIDE,
-            ASYNC>(
-                ptr, 1, src_ystride, src_xstride, smem, 1, COPY_YLEN, COPY_XLEN);
+        GlobalToShared3DDynamic<T, BLOCK_WIDTH, BLOCK_HEIGHT, BLOCK_DEPTH, ASYNC>(
+                smem, 1, src_ystride, src_xstride, ptr, 1,
+                DST_YSTRIDE, DST_XSTRIDE, 1, COPY_YLEN, COPY_XLEN);
     }
 
     template <typename T, int BLOCK_WIDTH, int BLOCK_HEIGHT, int BLOCK_DEPTH,
@@ -846,11 +836,9 @@ namespace dace
 	}
     }
 
-    template <typename T, int BLOCK_WIDTH, int BLOCK_HEIGHT, int BLOCK_DEPTH,
-              int DST_XSTRIDE,
-              bool ASYNC>
+    template <typename T, int BLOCK_WIDTH, int BLOCK_HEIGHT, int BLOCK_DEPTH, bool ASYNC>
     static DACE_DFI void GlobalToGlobal1DDynamic(
-            const T *src, int src_xstride, T *dst, int COPY_XLEN)
+            const T *src, int src_xstride, T *dst, int DST_XSTRIDE, int COPY_XLEN)
     {
         if (src_xstride == 1)
         {

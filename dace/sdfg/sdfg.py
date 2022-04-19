@@ -792,9 +792,14 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         from dace.codegen.instrumentation.data.data_report import InstrumentedDataReport
 
         if timestamp is None:
-            timestamp = sorted(self.available_data_reports())[-1]
+            reports = self.available_data_reports()
+            if not reports:
+                return None
+            timestamp = sorted(reports)[-1]
 
         folder = os.path.join(self.build_folder, 'data', str(timestamp))
+        if not os.path.exists(folder):
+            return None
 
         return InstrumentedDataReport(self, folder)
 
@@ -992,16 +997,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             :param dtype: Optional data type of the symbol, or None to deduce
                           automatically.
         """
-        def get_type(obj):
-            if isinstance(obj, np.ndarray):
-                return dt.Array(dtypes.DTYPE_TO_TYPECLASS[obj.dtype.type], shape=obj.shape)
-            elif isinstance(obj, dtypes.typeclass):
-                return dt.Scalar(type(obj))
-            elif type(obj) in dtypes.DTYPE_TO_TYPECLASS:
-                return dt.Scalar(dtypes.DTYPE_TO_TYPECLASS[type(obj)])
-            raise TypeError('Unrecognized constant type: %s' % type(obj))
-
-        self.constants_prop[name] = (dtype or get_type(value), value)
+        self.constants_prop[name] = (dtype or dt.create_datadescriptor(value), value)
 
     @property
     def propagate(self):
@@ -2242,6 +2238,8 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         # First step is to apply multi-state inline, before any state fusion can
         # occur
         sdutil.inline_sdfgs(self, multistate=True)
+        if validate_all:
+            self.validate()
         sdutil.fuse_states(self)
 
         self.apply_transformations_repeated([RedundantReadSlice, RedundantWriteSlice],
@@ -2455,9 +2453,17 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
         return sum(applied_transformations.values())
 
-    def apply_gpu_transformations(self, states=None, validate=True, validate_all=False, permissive=False):
+    def apply_gpu_transformations(self,
+                                  states=None,
+                                  validate=True,
+                                  validate_all=False,
+                                  permissive=False,
+                                  sequential_innermaps=True,
+                                  register_transients=True):
         """ Applies a series of transformations on the SDFG for it to
             generate GPU code.
+            :param sequential_innermaps: Make all internal maps Sequential.
+            :param register_transients: Make all transients inside GPU maps registers.
             :note: It is recommended to apply redundant array removal
             transformation after this transformation. Alternatively,
             you can simplify() after this transformation.
@@ -2467,6 +2473,8 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         from dace.transformation.interstate import GPUTransformSDFG
 
         self.apply_transformations(GPUTransformSDFG,
+                                   options=dict(sequential_innermaps=sequential_innermaps,
+                                                register_trans=register_transients),
                                    validate=validate,
                                    validate_all=validate_all,
                                    permissive=permissive,
