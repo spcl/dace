@@ -6,14 +6,18 @@ coverage:
   range: 40..90
   round: nearest
   status:
-    patch: off
-    project: off
+    patch:
+      default:
+        informational: true
+    project:
+      default:
+        informational: true
 #    project:
 #      default:
 #        threshold: 1%
 
 codecov:
-    notify:
-        after_n_builds: 8
+  notify:
+    after_n_builds: 8
 
 comment: false
