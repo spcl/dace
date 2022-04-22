@@ -1,7 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Tests the scalar to symbol promotion functionality. """
 import dace
-from dace.sdfg.analysis import scalar_to_symbol
+from dace.transformation.passes import scalar_to_symbol
 from dace.sdfg.state import SDFGState
 from dace.transformation import transformation as xf, interstate as isxf
 from dace.transformation.interstate import loop_detection as ld
