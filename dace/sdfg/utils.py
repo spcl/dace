@@ -1047,6 +1047,10 @@ def fuse_states(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> 
     :return: The total number of states fused.
     """
     from dace.transformation.interstate import StateFusion  # Avoid import loop
+
+    if progress is None and not config.Config.get_bool('progress'):
+        progress = False
+
     if progress is True or progress is None:
         try:
             from tqdm import tqdm
@@ -1112,6 +1116,10 @@ def inline_sdfgs(sdfg: SDFG, permissive: bool = False, progress: bool = None, mu
     """
     # Avoid import loops
     from dace.transformation.interstate import InlineSDFG, InlineMultistateSDFG
+
+    if progress is None and not config.Config.get_bool('progress'):
+        progress = False
+
     if progress is True or progress is None:
         try:
             from tqdm import tqdm

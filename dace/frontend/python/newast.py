@@ -158,6 +158,8 @@ def parse_dace_program(name: str,
     """
     # Progress bar handling (pre-parse)
     teardown_progress = False
+    if progress is None and not Config.get_bool('progress'):
+        progress = False
     if progress is None or progress is True:
         try:
             from tqdm import tqdm
