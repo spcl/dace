@@ -283,7 +283,8 @@ def emit_memlet_reference(dispatcher,
 
     if fpga.is_fpga_array(desc):
         datadef = fpga.fpga_ptr(memlet.data, desc, sdfg, memlet.subset, is_write, dispatcher, ancestor,
-                                defined_type == DefinedType.ArrayInterface)
+                                False)
+                                # defined_type == DefinedType.ArrayInterface)
     else:
         datadef = ptr(memlet.data, desc, sdfg, dispatcher.frame)
 

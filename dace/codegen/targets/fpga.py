@@ -258,7 +258,9 @@ def fpga_ptr(name: str,
             name = f"{mem_type}{low}_{name}"
 
             subset_info = low  #used for arrayinterface name where it must be int
-    if is_array_interface:
+    if False:
+        import pdb
+        pdb.set_trace()
         # qualify the name
         if is_write is None:
             raise ValueError("is_write must be set for ArrayInterface.")
