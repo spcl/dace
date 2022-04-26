@@ -1198,12 +1198,13 @@ class ProgramVisitor(ExtNodeVisitor):
                             m.data = vname
                             self.views[k] = (vname, m)
 
-        # Return values become non-transient (accessible by the outside)
+        ####
+
         for arrname, arr in self.sdfg.arrays.items():
+            # Return values become non-transient (accessible by the outside)
             if arrname.startswith('__return'):
                 arr.transient = False
                 self.outputs[arrname] = (None, Memlet.from_array(arrname, arr), [])
-        ####
 
         def _views_to_data(state: SDFGState, nodes: List[dace.nodes.AccessNode]) -> List[dace.nodes.AccessNode]:
             new_nodes = []
@@ -1780,6 +1781,16 @@ class ProgramVisitor(ExtNodeVisitor):
                           " access {n}[{r}]".format(n=name, rng=rng, r=r))
                 return False
 
+    def _get_array_or_closure(self, name: str) -> data.Data:
+        if name in self.sdfg.arrays:
+            return self.sdfg.arrays[name]
+        elif name in self.scope_arrays:
+            return self.scope_arrays[name]
+        elif name in self.closure.closure_arrays:
+            return self.closure.closure_arrays[name][1]
+        
+        raise NameError(f'Array "{name}" not found in outer scope or closure')
+        
     def _add_dependencies(self,
                           state: SDFGState,
                           internal_node: nodes.CodeNode,
@@ -1829,10 +1840,8 @@ class ProgramVisitor(ExtNodeVisitor):
 
                 memlet: Memlet = memlet_or_node
 
-                if memlet.data in self.sdfg.arrays:
-                    arr = self.sdfg.arrays[memlet.data]
-                else:
-                    arr = self.scope_arrays[memlet.data]
+                arr = self._get_array_or_closure(memlet.data)
+
                 for s, r in symbols.items():
                     memlet = propagate_subset([memlet], arr, [s], r, use_dst=False, defined_variables=set())
                 if _subset_has_indirection(memlet.subset, self):
@@ -1842,7 +1851,6 @@ class ProgramVisitor(ExtNodeVisitor):
                     add_indirection_subgraph(self.sdfg, state, read_node, internal_node, memlet, conn, self)
                     continue
                 if memlet.data not in self.sdfg.arrays:
-                    arr = self.scope_arrays[memlet.data]
                     if entry_node:
                         scope_memlet = propagate_memlet(state, memlet, entry_node, True, arr)
                     else:
@@ -1867,6 +1875,10 @@ class ProgramVisitor(ExtNodeVisitor):
                     elif (memlet.data, scope_memlet.subset, 'r') in self.accesses:
                         vname = self.accesses[(memlet.data, scope_memlet.subset, 'r')][0]
                         memlet = Memlet.simple(vname, str(irng))
+                    elif memlet.data in self.closure.closure_arrays:
+                        self.sdfg.add_datadesc(memlet.data, copy.deepcopy(arr))
+                        vname = memlet.data
+                        self.inputs[vname] = (state, memlet, [])
                     else:
                         name = memlet.data
                         vname = "{c}_in_from_{s}{n}".format(c=conn,
@@ -1886,7 +1898,7 @@ class ProgramVisitor(ExtNodeVisitor):
                         if not strides:
                             strides = [arr.strides[-1]]
                         dtype = arr.dtype
-                        if isinstance(memlet.data, data.Stream):
+                        if isinstance(arr, data.Stream):
                             self.sdfg.add_stream(vname, dtype)
                         else:
                             self.sdfg.add_array(vname, shape, dtype, strides=strides)
@@ -1917,10 +1929,9 @@ class ProgramVisitor(ExtNodeVisitor):
                 inner_state, memlet, inner_indices = v
                 if memlet is None:  # Output already handled outside
                     continue
-                if memlet.data in self.sdfg.arrays:
-                    arr = self.sdfg.arrays[memlet.data]
-                else:
-                    arr = self.scope_arrays[memlet.data]
+
+                arr = self._get_array_or_closure(memlet.data)
+                
                 for s, r in symbols.items():
                     memlet = propagate_subset([memlet], arr, [s], r, use_dst=True, defined_variables=set())
                 if _subset_has_indirection(memlet.subset, self):
@@ -1931,7 +1942,6 @@ class ProgramVisitor(ExtNodeVisitor):
                     continue
                 inner_memlet = memlet
                 if memlet.data not in self.sdfg.arrays:
-                    arr = self.scope_arrays[memlet.data]
                     if entry_node:
                         scope_memlet = propagate_memlet(state, memlet, entry_node, True, arr)
                     else:
@@ -1955,6 +1965,10 @@ class ProgramVisitor(ExtNodeVisitor):
                         inner_memlet = Memlet.simple(vname, str(irng))
                         inner_memlet.num_accesses = memlet.num_accesses
                         inner_memlet.dynamic = memlet.dynamic
+                    elif memlet.data in self.closure.closure_arrays:
+                        self.sdfg.add_datadesc(memlet.data, copy.deepcopy(arr))
+                        vname = memlet.data
+                        self.outputs[vname] = (state, memlet, [])
                     else:
                         name = memlet.data
                         vname = "{c}_out_of_{s}{n}".format(c=conn,
@@ -1975,7 +1989,7 @@ class ProgramVisitor(ExtNodeVisitor):
                         if not strides:
                             strides = [arr.strides[-1]]
                         dtype = arr.dtype
-                        if isinstance(memlet.data, data.Stream):
+                        if isinstance(arr, data.Stream):
                             self.sdfg.add_stream(vname, dtype)
                         else:
                             self.sdfg.add_array(vname, shape, dtype, strides=strides)
@@ -3388,6 +3402,7 @@ class ProgramVisitor(ExtNodeVisitor):
             args = posargs + kwargs
             required_args = [a for a in sdfg.arglist().keys() if a not in sdfg.symbols and not a.startswith('__return')]
             all_args = required_args
+            closure_arrays = {}
             self.increment_progress()
         elif isinstance(func, SDFGConvertible) or self._has_sdfg(func):
             argnames, constant_args = func.__sdfg_signature__()
@@ -3626,6 +3641,16 @@ class ProgramVisitor(ExtNodeVisitor):
             k: copy.deepcopy(v) if k in inputs else v
             for k, v in argdict.items() if self._is_outputnode(sdfg, k)
         }
+
+
+        for arrname in closure_arrays.keys():
+            narrname = names_to_replace[arrname]
+            # Add closure to global inputs/outputs (e.g., if processed as part of a map)
+            if narrname in inputs:
+                self.inputs[arrname] = (state, inputs[narrname], [])
+            if narrname in outputs:
+                self.outputs[arrname] = (state, outputs[narrname], [])
+
         # If an argument does not register as input nor as output,
         # put it in the inputs.
         # This may happen with input argument that are used to set
