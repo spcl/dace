@@ -3,6 +3,7 @@
 import dace
 import numpy as np
 import sys
+import time
 
 
 class MyTestClass:
@@ -197,6 +198,62 @@ def test_sdfgattr_method_jit_with_scalar():
     assert np.allclose(cls.method_jit_with_scalar_arg(A, 2.0), 9.0)
 
 
+def test_nested_field_in_map():
+    class B:
+        def __init__(self) -> None:
+            self.field = np.random.rand(10, 10)
+
+        @dace.method
+        def callee(self):
+            return self.field[1, 1]
+
+    class A:
+        def __init__(self, nested: B):
+            self.nested = nested
+
+        @dace.method
+        def tester(self):
+            val = np.ndarray([2], np.float64)
+            for i in dace.map[0:2]:
+                val[i] = self.nested.callee()
+            return val
+
+    obj = A(B())
+    result = obj.tester()
+
+    assert np.allclose(result, np.array([obj.nested.field[1, 1], obj.nested.field[1, 1]]))
+
+
+def test_nested_callback_in_map():
+    class B:
+        def __init__(self) -> None:
+            self.field = np.random.rand(10, 10)
+
+        @dace.method
+        def callee(self, val, i):
+            val[i] = time.time()
+
+    class A:
+        def __init__(self, nested: B):
+            self.nested = nested
+
+        @dace.method
+        def tester(self):
+            val = np.ndarray([2], np.float64)
+            for i in dace.map[0:2]:
+                self.nested.callee(val, i)
+            return val
+
+    obj = A(B())
+    old_time = time.time()
+
+    result = obj.tester()
+
+    new_time = time.time()
+
+    assert result[0] >= old_time and result[0] <= new_time
+
+
 if __name__ == '__main__':
     test_method_jit()
     test_method()
@@ -211,3 +268,5 @@ if __name__ == '__main__':
     test_sdfgattr_callable_jit()
     test_sdfgattr_method_annotated_jit()
     test_sdfgattr_method_jit_with_scalar()
+    test_nested_field_in_map()
+    test_nested_callback_in_map()
