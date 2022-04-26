@@ -2019,9 +2019,12 @@ class ProgramVisitor(ExtNodeVisitor):
         """
         for mv in nsdfg_node.symbol_mapping.values():
             for sym in mv.free_symbols:
-                if (sym.name not in self.sdfg.symbols and sym.name in self.globals
+                if sym.name not in self.sdfg.symbols:
+                    if (sym.name in self.globals
                         and isinstance(self.globals[sym.name], symbolic.symbol)):
-                    self.sdfg.add_symbol(sym.name, self.globals[sym.name].dtype)
+                        self.sdfg.add_symbol(sym.name, self.globals[sym.name].dtype)
+                    elif sym.name in self.closure.callbacks:
+                        self.sdfg.add_symbol(sym.name, nsdfg_node.sdfg.symbols[sym.name])
 
     def _recursive_visit(self, body: List[ast.AST], name: str, lineno: int, last_state=True, extra_symbols=None):
         """ Visits a subtree of the AST, creating special states before and after the visit.
@@ -3644,9 +3647,9 @@ class ProgramVisitor(ExtNodeVisitor):
 
         # Add closure to global inputs/outputs (e.g., if processed as part of a map)
         for arrname in closure_arrays.keys():
-            narrname = arrname
-            if arrname in names_to_replace:
-                narrname = names_to_replace[arrname]
+            if arrname not in names_to_replace:
+                continue
+            narrname = names_to_replace[arrname]
 
             if narrname in inputs:
                 self.inputs[arrname] = (state, inputs[narrname], [])
