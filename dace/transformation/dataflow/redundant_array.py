@@ -833,6 +833,9 @@ class RedundantSecondArray(pm.SingleStateTransformation, pm.SimplifyPass):
                 graph.remove_node(out_array)
                 if out_array.data in sdfg.arrays:
                     del sdfg.arrays[out_array.data]
+                # If first node is now isolated, remove it
+                if len(graph.all_edges(in_array)) == 0:
+                    graph.remove_node(in_array)
                 return
             view_strides = out_desc.strides
             if (a_dims_to_pop and len(a_dims_to_pop) == len(in_desc.shape) - len(out_desc.shape)):
