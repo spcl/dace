@@ -132,7 +132,7 @@ def perform_soap_analysis_einsum(einsum_string : str, decomp_params: List = [],
     solver.start_solver()
     solver.set_timeout(300)
 
-    sdfg = sdfg_gen(einsum_string)
+    sdfg, _ = sdfg_gen(einsum_string)
     sdg = SDG(sdfg, solver)
     Q, subgraphs= sdg.calculate_IO_of_SDG()
     solver.end_solver()

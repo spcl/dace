@@ -189,7 +189,7 @@ def sdfg_gen(subscripts: str, arrays: List[np.ndarray] = None, inp_dim: int = 10
     counter -= 1
     sdfg.arrays[f'out{counter}'].transient = False
 
-    return sdfg
+    return sdfg, path_info[1].contraction_list
 
 
 if __name__ == '__main__':
