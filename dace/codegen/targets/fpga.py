@@ -216,7 +216,7 @@ def parse_location_bank(array: dt.Array) -> Tuple[str, str]:
         return None
 
 
-def fpga_ptr(name: str,
+def fpga_ptr2(name: str,
              desc: dt.Data = None,
              sdfg: SDFG = None,
              subset_info: Union[subsets.Subset, int] = None,
@@ -264,8 +264,10 @@ def fpga_ptr(name: str,
         # qualify the name
         if is_write is None:
             raise ValueError("is_write must be set for ArrayInterface.")
-        ptr_in = f"__{name}_in"
-        ptr_out = f"__{name}_out"
+        # ptr_in = f"__{name}_in"
+        # ptr_out = f"__{name}_out"
+        ptr_in = f"__{name}"
+        ptr_out = f"__{name}"
         if dispatcher is not None:
             # DaCe allows reading from an output connector, even though it
             # is not an input connector. If this occurs, panic and read
@@ -282,11 +284,87 @@ def fpga_ptr(name: str,
             # we are about to define it), so if the dispatcher is not passed, just
             # return the appropriate string
             name = ptr_out if is_write else ptr_in
+    # import pdb
+    # pdb.set_trace()
+    # Append the interface id, if provided
+    if interface_id is not None:
+        name = f"{name}_{interface_id}"
+    return name
+
+
+def fpga_ptr(name: str,
+             desc: dt.Data = None,
+             sdfg: SDFG = None,
+             subset_info: Union[subsets.Subset, int] = None,
+             is_write: bool = None,
+             dispatcher=None,
+             ancestor: int = 0,
+             is_array_interface: bool = False,
+             interface_id: int = None,
+             decouple_array_interfaces: bool = False):
+    """
+    Returns a string that points to the data based on its name, and various other conditions
+    that may apply for that data field.
+    :param name: Data name.
+    :param desc: Data descriptor.
+    :param subset_info: Any additional information about the accessed subset.
+    :param ancestor: The ancestor level where the variable should be searched for if
+        is_array_interface is True when dispatcher is not None
+    :param is_array_interface: Data is pointing to an interface in FPGA-Kernel compilation
+    :param interface_id: An optional interface id that will be added to the name (only for array interfaces)
+    :param decouple_array_interfaces: if True it will qualify the name of an array interface depending whether
+            it is used for reading from or writing to memory
+    :return: C-compatible name that can be used to access the data.
+    """
+    if (desc is not None and is_multibank_array_with_distributed_index(desc)):
+
+        location_bank = parse_location_bank(desc)
+        mem_type = ""
+        if location_bank is not None:
+            mem_type = location_bank[0].lower()
+
+        if (subset_info == None):
+            raise ValueError("Cannot generate name for bank without subset info")
+        elif (isinstance(subset_info, int)):
+            name = f"{mem_type}{subset_info}_{name}"
+        elif (isinstance(subset_info, subsets.Subset)):
+            if (sdfg == None):
+                raise ValueError("Cannot generate name for bank using subset if sdfg not provided")
+            low, high = get_multibank_ranges_from_subset(subset_info, sdfg)
+            if (low + 1 != high):
+                raise ValueError("ptr cannot generate names for subsets accessing more than one memory bank")
+
+            name = f"{mem_type}{low}_{name}"
+
+            subset_info = low  #used for arrayinterface name where it must be int
+    if is_array_interface:
+
+        if decouple_array_interfaces:
+            # qualify the name
+            if is_write is None:
+                raise ValueError("is_write must be set for ArrayInterface.")
+            ptr_in = f"__{name}_in"
+            ptr_out = f"__{name}_out"
+            if dispatcher is not None:
+                # DaCe allows reading from an output connector, even though it
+                # is not an input connector. If this occurs, panic and read
+                # from the output interface instead
+                if is_write or not dispatcher.defined_vars.has(ptr_in, ancestor):
+                    # Throw a KeyError if this pointer also doesn't exist
+                    dispatcher.defined_vars.get(ptr_out, ancestor)
+                    # Otherwise use it
+                    name = ptr_out
+                else:
+                    name = ptr_in
+            else:
+                # We might call this before the variable is even defined (e.g., because
+                # we are about to define it), so if the dispatcher is not passed, just
+                # return the appropriate string
+                name = ptr_out if is_write else ptr_in
         # Append the interface id, if provided
         if interface_id is not None:
             name = f"{name}_{interface_id}"
     return name
-
 
 def unqualify_fpga_array_name(sdfg: dace.SDFG, arr_name: str):
     '''

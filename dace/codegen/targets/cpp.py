@@ -237,8 +237,8 @@ def ptr(name: str, desc: data.Data, sdfg: SDFG = None, framecode=None) -> str:
                 return f'__state->__{sdfg.sdfg_id}_{name}'
             elif (sdfg, name) in framecode.where_allocated and framecode.where_allocated[(sdfg, name)] is not sdfg:
                 return f'__{sdfg.sdfg_id}_{name}'
-        elif (desc.transient and sdfg is not None and framecode is not None and (sdfg, name) in framecode.where_allocated
-                and framecode.where_allocated[(sdfg, name)] is not sdfg):
+        elif (desc.transient and sdfg is not None and framecode is not None
+              and (sdfg, name) in framecode.where_allocated and framecode.where_allocated[(sdfg, name)] is not sdfg):
             # Array allocated for another SDFG, use unambiguous name
             return f'__{sdfg.sdfg_id}_{name}'
 
@@ -282,9 +282,10 @@ def emit_memlet_reference(dispatcher,
     defined_type, defined_ctype = defined_types
 
     if fpga.is_fpga_array(desc):
+
         datadef = fpga.fpga_ptr(memlet.data, desc, sdfg, memlet.subset, is_write, dispatcher, ancestor,
-                                False)
-                                # defined_type == DefinedType.ArrayInterface)
+                            defined_type == DefinedType.ArrayInterface)
+
     else:
         datadef = ptr(memlet.data, desc, sdfg, dispatcher.frame)
 
