@@ -3909,6 +3909,7 @@ class ProgramVisitor(ExtNodeVisitor):
             except:
                 # TODO: Use a meaningful exception
                 pass
+            return_type = data.create_datadescriptor(return_type)
             aname, _ = self.sdfg.add_temp_transient_like(return_type)
             return_names = [aname]
             outargs.extend(return_names)
@@ -4005,11 +4006,19 @@ class ProgramVisitor(ExtNodeVisitor):
         self._add_state('callback_%d' % node.lineno)
         self.last_state.set_default_lineinfo(self.current_lineinfo)
 
-        call_args = ', '.join(str(s) for s in allargs)
-        tasklet = self.last_state.add_tasklet(f'callback_{node.lineno}', {f'__in_{name}'
-                                                                          for name in args} | {'__istate'},
-                                              {f'__out_{name}'
-                                               for name in outargs} | {'__ostate'}, f'{funcname}({call_args})')
+        if callback_type.is_scalar_function() and len(callback_type.return_types) > 0:
+            call_args = ', '.join(str(s) for s in allargs[:-1])
+            tasklet = self.last_state.add_tasklet(f'callback_{node.lineno}', {f'__in_{name}'
+                                                                              for name in args} | {'__istate'},
+                                                  {f'__out_{name}'
+                                                   for name in outargs} | {'__ostate'},
+                                                  f'__out_{outargs[0]} = {funcname}({call_args})')
+        else:
+            call_args = ', '.join(str(s) for s in allargs)
+            tasklet = self.last_state.add_tasklet(f'callback_{node.lineno}', {f'__in_{name}'
+                                                                              for name in args} | {'__istate'},
+                                                  {f'__out_{name}'
+                                                   for name in outargs} | {'__ostate'}, f'{funcname}({call_args})')
 
         # Avoid cast of output pointers to scalars in code generation
         for cname in outargs:
