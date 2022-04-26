@@ -627,8 +627,9 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                     dtype = p.dtype
 
                     # TODO: deal with const
-                    kernel_args_module.append("{} {}*{}".format(dtype.ctype, "const " if not is_output else "",
-                                                                arr_name))
+                    # kernel_args_module.append("{} {}*{}".format(dtype.ctype, "const " if not is_output else "",
+                    #                                             arr_name))
+                    kernel_args_module.append("{} *{}".format(dtype.ctype, arr_name))
                     # kernel_args_module.append(p.as_arg(with_types=True, name=arr_name))
 
             else:
