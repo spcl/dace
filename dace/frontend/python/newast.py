@@ -1788,9 +1788,9 @@ class ProgramVisitor(ExtNodeVisitor):
             return self.scope_arrays[name]
         elif name in self.closure.closure_arrays:
             return self.closure.closure_arrays[name][1]
-        
+
         raise NameError(f'Array "{name}" not found in outer scope or closure')
-        
+
     def _add_dependencies(self,
                           state: SDFGState,
                           internal_node: nodes.CodeNode,
@@ -1931,7 +1931,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     continue
 
                 arr = self._get_array_or_closure(memlet.data)
-                
+
                 for s, r in symbols.items():
                     memlet = propagate_subset([memlet], arr, [s], r, use_dst=True, defined_variables=set())
                 if _subset_has_indirection(memlet.subset, self):
@@ -3642,10 +3642,12 @@ class ProgramVisitor(ExtNodeVisitor):
             for k, v in argdict.items() if self._is_outputnode(sdfg, k)
         }
 
-
+        # Add closure to global inputs/outputs (e.g., if processed as part of a map)
         for arrname in closure_arrays.keys():
-            narrname = names_to_replace[arrname]
-            # Add closure to global inputs/outputs (e.g., if processed as part of a map)
+            narrname = arrname
+            if arrname in names_to_replace:
+                narrname = names_to_replace[arrname]
+
             if narrname in inputs:
                 self.inputs[arrname] = (state, inputs[narrname], [])
             if narrname in outputs:
