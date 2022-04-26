@@ -3644,6 +3644,8 @@ class ProgramVisitor(ExtNodeVisitor):
 
 
         for arrname in closure_arrays.keys():
+            if arrname not in names_to_replace:
+                continue
             narrname = names_to_replace[arrname]
             # Add closure to global inputs/outputs (e.g., if processed as part of a map)
             if narrname in inputs:
