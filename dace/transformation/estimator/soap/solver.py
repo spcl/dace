@@ -89,6 +89,7 @@ class Solver():
             return
         self.conn.sendall("end@".encode())
         self.status = "disconnected"
+        call('stty sane', shell=True)
         
 
     def send_command(self, cmd : str):
