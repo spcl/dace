@@ -168,7 +168,7 @@ def deinsum_program({", ".join([f"{arr}: dctype[{shape}]" for arr, shape in inpu
         reduce = [v not in tokens for v in variables]
         code += f"""
     grid{i}_{output}_reduce = dace.comm.Cart_sub(grid{i}, {reduce})
-    dace.comm.Allreduce(grid{i}_{output}, 'MPI_SUM', grid=grid{i}_{output}_{reduce})
+    dace.comm.Allreduce(grid{i}_{output}, 'MPI_SUM', grid=grid{i}_{output}{reduce})
         """
 
     print(code)
