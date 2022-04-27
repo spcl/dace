@@ -364,6 +364,7 @@ def fpga_ptr(name: str,
         # Append the interface id, if provided
         if interface_id is not None:
             name = f"{name}_{interface_id}"
+
     return name
 
 def unqualify_fpga_array_name(sdfg: dace.SDFG, arr_name: str):
@@ -424,6 +425,7 @@ class FPGACodeGen(TargetCodeGenerator):
         # a kernel is instrumented
         self._kernel_instrumentation_index: int = 0
 
+        self._decouple_array_interfaces = False
         # Register additional FPGA dispatchers
         self._dispatcher.register_map_dispatcher([dtypes.ScheduleType.FPGA_Device], self)
 
@@ -961,7 +963,8 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                             multibank_data_to_interface[data_name][is_output] = interface_id
                         else:
                             interface_id = global_interfaces[data_name]
-                            global_interfaces[data_name] += 1
+                            if self._decouple_array_interfaces:
+                                global_interfaces[data_name] += 1
                             data_to_interface[data_name] = interface_id
                     # Collect the memory bank specification, if present, by
                     # traversing outwards to where the data container is
@@ -1010,6 +1013,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                     subgraph_parameters[subgraph].add((is_output, data_name, desc, interface_id))
                     # Must be allocated outside PEs and passed to them
                     top_level_local_data.add(data_name)
+
             # Order by name
             subgraph_parameters[subgraph] = list(sorted(subgraph_parameters[subgraph], key=sort_func))
             # Append symbols used in this subgraph
