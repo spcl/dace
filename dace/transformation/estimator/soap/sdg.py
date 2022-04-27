@@ -2,7 +2,7 @@ from collections import defaultdict
 import copy
 import sympy as sp
 import networkx as nx
-import graphviz
+# import graphviz
 from numpy import nanargmax, outer
 from dace.sdfg.sdfg import SDFG
 from dace.transformation.estimator.soap.soap import AccessParams, SoapStatement
