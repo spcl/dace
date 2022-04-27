@@ -57,6 +57,10 @@ class IntelMKL:
             libfile = os.path.join(os.environ['MKLROOT'], 'lib', prefix + 'mkl_rt.' + suffix)
             if os.path.isfile(libfile):
                 return [libfile]
+            # Try with ${MKLROOT}/lib/intel64 (oneAPI on Linux)
+            libfile = os.path.join(os.environ['MKLROOT'], 'lib', 'intel64', prefix + 'mkl_rt.' + suffix)
+            if os.path.isfile(libfile):
+                return [libfile]
 
         path = ctypes.util.find_library('mkl_rt')
         if not path:
