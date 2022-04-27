@@ -46,6 +46,7 @@ class DaCeCodeGenerator(object):
         self.targets: Set[TargetCodeGenerator] = set()
         self.to_allocate: DefaultDict[Union[SDFG, SDFGState, nodes.EntryNode],
                                       List[Tuple[int, int, nodes.AccessNode]]] = collections.defaultdict(list)
+        self.where_allocated: Dict[Tuple[SDFG, str], SDFG] = {}
         self.fsyms: Dict[int, Set[str]] = {}
         self._symbols_and_constants: Dict[int, Set[str]] = {}
         fsyms = self.free_symbols(sdfg)
@@ -115,7 +116,12 @@ class DaCeCodeGenerator(object):
         # Environment-based includes
         for env in self.environments:
             if len(env.headers) > 0:
-                global_stream.write("\n".join("#include \"" + h + "\"" for h in env.headers), sdfg)
+                if not isinstance(env.headers, dict):
+                    headers = {'frame': env.headers}
+                else:
+                    headers = env.headers
+                if backend in headers:
+                    global_stream.write("\n".join("#include \"" + h + "\"" for h in headers[backend]), sdfg)
 
         #########################################################
         # Custom types
@@ -254,8 +260,7 @@ DACE_EXPORTED {sdfg.name}_t *__dace_init_{sdfg.name}({initparams})
             if None in sd.init_code:
                 callsite_stream.write(codeblock_to_cpp(sd.init_code[None]), sd)
             if 'frame' in sd.init_code:
-                callsite_stream.write(codeblock_to_cpp(sd.init_code['frame']),
-                                      sd)
+                callsite_stream.write(codeblock_to_cpp(sd.init_code['frame']), sd)
 
         callsite_stream.write(self._initcode.getvalue(), sdfg)
 
@@ -284,8 +289,7 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
             if None in sd.exit_code:
                 callsite_stream.write(codeblock_to_cpp(sd.exit_code[None]), sd)
             if 'frame' in sd.exit_code:
-                callsite_stream.write(codeblock_to_cpp(sd.exit_code['frame']),
-                                      sd)
+                callsite_stream.write(codeblock_to_cpp(sd.exit_code['frame']), sd)
 
         for target in self._dispatcher.used_targets:
             if target.has_finalizer:
@@ -375,7 +379,7 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                                      [cflow.SingleState(dispatch_state, s, s is last) for s in states_topological], [],
                                      [], [], [])
 
-        callsite_stream.write(cft.as_cpp(self.dispatcher.defined_vars, sdfg.symbols), sdfg)
+        callsite_stream.write(cft.as_cpp(self, sdfg.symbols), sdfg)
 
         # Write exit label
         callsite_stream.write(f'__state_exit_{sdfg.sdfg_id}:;', sdfg)
@@ -480,7 +484,8 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                 definition = desc.as_arg(name=f'__{sdfg.sdfg_id}_{name}') + ';'
                 self.statestruct.append(definition)
 
-                self.to_allocate[sdfg].append((sdfg, first_state_instance, first_node_instance, True, True, True))
+                self.to_allocate[top_sdfg].append((sdfg, first_state_instance, first_node_instance, True, True, True))
+                self.where_allocated[(sdfg, name)] = top_sdfg
                 continue
             elif desc.lifetime is dtypes.AllocationLifetime.Global:
                 # Global memory is allocated in the beginning of the program
@@ -497,6 +502,7 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                 # self.to_allocate[top_sdfg].append(
                 #     (sdfg.sdfg_id, sdfg.node_id(state), node))
                 self.to_allocate[top_sdfg].append((sdfg, first_state_instance, first_node_instance, True, True, True))
+                self.where_allocated[(sdfg, name)] = top_sdfg
                 continue
 
             # The rest of the cases change the starting scope we attempt to
@@ -608,9 +614,11 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                     if cursdfg.parent_nsdfg_node is None:
                         curscope = None
                         curstate = None
+                        cursdfg = None
                     else:
                         curstate = cursdfg.parent
                         curscope = curstate.entry_node(cursdfg.parent_nsdfg_node)
+                        cursdfg = cursdfg.parent_sdfg
                 else:
                     raise TypeError
 
@@ -639,6 +647,10 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                         (sdfg, first_state_instance, first_node_instance, False, True, True))
             else:
                 self.to_allocate[curscope].append((sdfg, first_state_instance, first_node_instance, True, True, True))
+            if isinstance(curscope, SDFG):
+                self.where_allocated[(sdfg, name)] = curscope
+            else:
+                self.where_allocated[(sdfg, name)] = cursdfg
 
     def allocate_arrays_in_scope(self, sdfg: SDFG, scope: Union[nodes.EntryNode, SDFGState, SDFG],
                                  function_stream: CodeIOStream, callsite_stream: CodeIOStream):

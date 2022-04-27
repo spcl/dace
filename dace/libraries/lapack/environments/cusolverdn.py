@@ -14,7 +14,7 @@ class cuSolverDn:
     cmake_link_flags = []
     cmake_files = []
 
-    headers = ["../include/dace_cusolverdn.h"]
+    headers = {'frame': ["../include/dace_cusolverdn.h"], 'cuda': ["../include/dace_cusolverdn.h"]}
     state_fields = ["dace::lapack::CusolverDnHandle cusolverDn_handle;"]
     init_code = ""
     finalize_code = ""

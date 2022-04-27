@@ -7,6 +7,7 @@ import ast
 import copy
 import functools
 import itertools
+import math
 import warnings
 
 import sympy as sp
@@ -38,6 +39,7 @@ def copy_expr(
     packed_types=False,
 ):
     data_desc = sdfg.arrays[data_name]
+    ptrname = ptr(data_name, data_desc, sdfg, dispatcher.frame)
     if relative_offset:
         s = memlet.subset
         o = offset
@@ -64,11 +66,11 @@ def copy_expr(
         # NOTE: It is hard to get access to the view-edge here, so always check
         # the declared-arrays dictionary for Views.
         if dependent_shape or isinstance(data_desc, data.View):
-            defined_types = dispatcher.declared_arrays.get(data_name, is_global=is_global)
+            defined_types = dispatcher.declared_arrays.get(ptrname, is_global=is_global)
     except KeyError:
         pass
     if not defined_types:
-        defined_types = dispatcher.defined_vars.get(data_name, is_global=is_global)
+        defined_types = dispatcher.defined_vars.get(ptrname, is_global=is_global)
     def_type, _ = defined_types
     if fpga.is_fpga_array(data_desc):
         expr = fpga.fpga_ptr(
@@ -83,7 +85,7 @@ def copy_expr(
             # If this is a view, it has already been renamed
             and not isinstance(data_desc, data.View))
     else:
-        expr = ptr(data_name, data_desc, sdfg)
+        expr = ptr(data_name, data_desc, sdfg, dispatcher.frame)
 
     add_offset = offset_cppstr != "0"
 
@@ -115,52 +117,59 @@ def memlet_copy_to_absolute_strides(dispatcher, sdfg, memlet, src_node, dst_node
     copy_shape = memlet.subset.size_exact()
     src_nodedesc = src_node.desc(sdfg)
     dst_nodedesc = dst_node.desc(sdfg)
+    src_expr, dst_expr = None, None
 
     if memlet.data == src_node.data:
-        src_expr = copy_expr(dispatcher, sdfg, src_node.data, memlet, is_write=False, packed_types=packed_types)
+        if dispatcher is not None:
+            src_expr = copy_expr(dispatcher, sdfg, src_node.data, memlet, is_write=False, packed_types=packed_types)
         if memlet.other_subset is not None:
-            dst_expr = copy_expr(dispatcher,
-                                 sdfg,
-                                 dst_node.data,
-                                 memlet,
-                                 is_write=True,
-                                 offset=memlet.other_subset,
-                                 relative_offset=False,
-                                 packed_types=packed_types)
+            if dispatcher is not None:
+                dst_expr = copy_expr(dispatcher,
+                                     sdfg,
+                                     dst_node.data,
+                                     memlet,
+                                     is_write=True,
+                                     offset=memlet.other_subset,
+                                     relative_offset=False,
+                                     packed_types=packed_types)
             dst_subset = memlet.other_subset
         else:
-            dst_expr = copy_expr(dispatcher,
-                                 sdfg,
-                                 dst_node.data,
-                                 memlet,
-                                 is_write=True,
-                                 offset=None,
-                                 relative_offset=False,
-                                 packed_types=packed_types)
+            if dispatcher is not None:
+                dst_expr = copy_expr(dispatcher,
+                                     sdfg,
+                                     dst_node.data,
+                                     memlet,
+                                     is_write=True,
+                                     offset=None,
+                                     relative_offset=False,
+                                     packed_types=packed_types)
             dst_subset = subsets.Range.from_array(dst_nodedesc)
         src_subset = memlet.subset
 
     else:
-        dst_expr = copy_expr(dispatcher, sdfg, dst_node.data, memlet, is_write=True, packed_types=packed_types)
+        if dispatcher is not None:
+            dst_expr = copy_expr(dispatcher, sdfg, dst_node.data, memlet, is_write=True, packed_types=packed_types)
         if memlet.other_subset is not None:
-            src_expr = copy_expr(dispatcher,
-                                 sdfg,
-                                 src_node.data,
-                                 memlet,
-                                 is_write=False,
-                                 offset=memlet.other_subset,
-                                 relative_offset=False,
-                                 packed_types=packed_types)
+            if dispatcher is not None:
+                src_expr = copy_expr(dispatcher,
+                                     sdfg,
+                                     src_node.data,
+                                     memlet,
+                                     is_write=False,
+                                     offset=memlet.other_subset,
+                                     relative_offset=False,
+                                     packed_types=packed_types)
             src_subset = memlet.other_subset
         else:
-            src_expr = copy_expr(dispatcher,
-                                 sdfg,
-                                 src_node.data,
-                                 memlet,
-                                 is_write=False,
-                                 offset=None,
-                                 relative_offset=False,
-                                 packed_types=packed_types)
+            if dispatcher is not None:
+                src_expr = copy_expr(dispatcher,
+                                     sdfg,
+                                     src_node.data,
+                                     memlet,
+                                     is_write=False,
+                                     offset=None,
+                                     relative_offset=False,
+                                     packed_types=packed_types)
             src_subset = subsets.Range.from_array(src_nodedesc)
         dst_subset = memlet.subset
 
@@ -209,22 +218,29 @@ def memlet_copy_to_absolute_strides(dispatcher, sdfg, memlet, src_node, dst_node
     return copy_shape, src_strides, dst_strides, src_expr, dst_expr
 
 
-def ptr(name: str, desc: data.Data, sdfg: SDFG = None) -> str:
+def ptr(name: str, desc: data.Data, sdfg: SDFG = None, framecode=None) -> str:
     """
     Returns a string that points to the data based on its name and descriptor.
     :param name: Data name.
     :param desc: Data descriptor.
     :return: C-compatible name that can be used to access the data.
     """
+    from dace.codegen.targets.framecode import DaCeCodeGenerator  # Avoid import loop
+    framecode: DaCeCodeGenerator = framecode
+
     # Special case: If memory is persistent and defined in this SDFG, add state
     # struct to name
-    if (desc.transient and desc.lifetime is dtypes.AllocationLifetime.Persistent
-            and desc.storage != dtypes.StorageType.CPU_ThreadLocal):
-        from dace.codegen.targets.cuda import CUDACodeGen  # Avoid import loop
-        if not CUDACodeGen._in_device_code:  # GPU kernels cannot access state
-            if not sdfg:
-                raise ValueError("Missing SDFG value")
-            return f'__state->__{sdfg.sdfg_id}_{name}'
+    if desc.storage != dtypes.StorageType.CPU_ThreadLocal:
+        if (desc.transient and desc.lifetime is dtypes.AllocationLifetime.Persistent):
+            from dace.codegen.targets.cuda import CUDACodeGen  # Avoid import loop
+            if not CUDACodeGen._in_device_code:  # GPU kernels cannot access state
+                return f'__state->__{sdfg.sdfg_id}_{name}'
+            elif (sdfg, name) in framecode.where_allocated and framecode.where_allocated[(sdfg, name)] is not sdfg:
+                return f'__{sdfg.sdfg_id}_{name}'
+        elif (desc.transient and sdfg is not None and framecode is not None and (sdfg, name) in framecode.where_allocated
+                and framecode.where_allocated[(sdfg, name)] is not sdfg):
+            # Array allocated for another SDFG, use unambiguous name
+            return f'__{sdfg.sdfg_id}_{name}'
 
     return name
 
@@ -248,6 +264,7 @@ def emit_memlet_reference(dispatcher,
     offset = cpp_offset_expr(desc, memlet.subset)
     offset_expr = '[' + offset + ']'
     is_scalar = not isinstance(conntype, dtypes.pointer)
+    ptrname = ptr(memlet.data, desc, sdfg, dispatcher.frame)
     ref = ''
 
     # Get defined type (pointer, stream etc.) and change the type definition
@@ -257,18 +274,18 @@ def emit_memlet_reference(dispatcher,
         if (isinstance(desc, data.Array) and not isinstance(desc, data.View) and any(
                 str(s) not in dispatcher.frame.symbols_and_constants(sdfg)
                 for s in dispatcher.frame.free_symbols(desc))):
-            defined_types = dispatcher.declared_arrays.get(memlet.data, ancestor)
+            defined_types = dispatcher.declared_arrays.get(ptrname, ancestor)
     except KeyError:
         pass
     if not defined_types:
-        defined_types = dispatcher.defined_vars.get(memlet.data, ancestor)
+        defined_types = dispatcher.defined_vars.get(ptrname, ancestor)
     defined_type, defined_ctype = defined_types
 
     if fpga.is_fpga_array(desc):
         datadef = fpga.fpga_ptr(memlet.data, desc, sdfg, memlet.subset, is_write, dispatcher, ancestor,
                                 defined_type == DefinedType.ArrayInterface)
     else:
-        datadef = ptr(memlet.data, desc, sdfg)
+        datadef = ptr(memlet.data, desc, sdfg, dispatcher.frame)
 
     if (defined_type == DefinedType.Pointer
             or (defined_type == DefinedType.ArrayInterface and isinstance(desc, data.View))):
@@ -509,7 +526,8 @@ def cpp_array_expr(sdfg,
                    packed_veclen=1,
                    use_other_subset=False,
                    indices=None,
-                   referenced_array=None):
+                   referenced_array=None,
+                   codegen=None):
     """ Converts an Indices/Range object to a C++ array access string. """
     subset = memlet.subset if not use_other_subset else memlet.other_subset
     s = subset if relative_offset else subsets.Indices(offset)
@@ -521,7 +539,7 @@ def cpp_array_expr(sdfg,
         if fpga.is_fpga_array(desc):
             ptrname = fpga.fpga_ptr(memlet.data, desc, sdfg, subset)
         else:
-            ptrname = ptr(memlet.data, desc, sdfg)
+            ptrname = ptr(memlet.data, desc, sdfg, codegen)
         return "%s[%s]" % (ptrname, offset_cppstr)
     else:
         return offset_cppstr
@@ -550,7 +568,8 @@ def cpp_ptr_expr(sdfg,
                  relative_offset=True,
                  use_other_subset=False,
                  indices=None,
-                 is_write=None):
+                 is_write=None,
+                 codegen=None):
     """ Converts a memlet to a C++ pointer expression. """
     subset = memlet.subset if not use_other_subset else memlet.other_subset
     s = subset if relative_offset else subsets.Indices(offset)
@@ -564,7 +583,7 @@ def cpp_ptr_expr(sdfg,
         dname = fpga.fpga_ptr(memlet.data, desc, sdfg, s, is_write, None, None,
                               defined_type == DefinedType.ArrayInterface)
     else:
-        dname = ptr(memlet.data, desc, sdfg)
+        dname = ptr(memlet.data, desc, sdfg, codegen)
 
     if defined_type == DefinedType.Scalar:
         dname = '&' + dname
@@ -918,8 +937,9 @@ class InterstateEdgeUnparser(cppunparse.CPPUnparser):
     multidimensional array expressions from an existing SDFGs. Used in
     inter-state edge code generation.
     """
-    def __init__(self, sdfg: SDFG, tree: ast.AST, file: IO[str], defined_symbols=None):
+    def __init__(self, sdfg: SDFG, tree: ast.AST, file: IO[str], defined_symbols=None, codegen=None):
         self.sdfg = sdfg
+        self.codegen = codegen
         super().__init__(tree, 0, cppunparse.CPPLocals(), file, expr_semicolon=False, defined_symbols=defined_symbols)
 
     def _Name(self, t: ast.Name):
@@ -929,7 +949,7 @@ class InterstateEdgeUnparser(cppunparse.CPPUnparser):
         # Replace values with their code-generated names (for example,
         # persistent arrays)
         desc = self.sdfg.arrays[t.id]
-        self.write(ptr(t.id, desc, self.sdfg))
+        self.write(ptr(t.id, desc, self.sdfg, self.codegen))
 
     def _Subscript(self, t: ast.Subscript):
         from dace.frontend.python.astutils import subscript_to_slice
@@ -944,18 +964,18 @@ class InterstateEdgeUnparser(cppunparse.CPPUnparser):
             # This could be an FPGA array whose name has been mangled
             unqualified = fpga.unqualify_fpga_array_name(self.sdfg, target)
             desc = self.sdfg.arrays[unqualified]
-            self.write(cpp_array_expr(self.sdfg, memlet, referenced_array=desc))
+            self.write(cpp_array_expr(self.sdfg, memlet, referenced_array=desc, codegen=self.codegen))
         else:
-            self.write(cpp_array_expr(self.sdfg, memlet))
+            self.write(cpp_array_expr(self.sdfg, memlet, codegen=self.codegen))
 
 
-def unparse_interstate_edge(code_ast: Union[ast.AST, str], sdfg: SDFG, symbols=None) -> str:
+def unparse_interstate_edge(code_ast: Union[ast.AST, str], sdfg: SDFG, symbols=None, codegen=None) -> str:
     # Convert from code to AST as necessary
     if isinstance(code_ast, str):
         code_ast = ast.parse(code_ast).body[0]
 
     strio = StringIO()
-    InterstateEdgeUnparser(sdfg, code_ast, strio, symbols)
+    InterstateEdgeUnparser(sdfg, code_ast, strio, symbols, codegen)
     return strio.getvalue().strip()
 
 
@@ -1056,6 +1076,7 @@ class DaCeKeywordRemover(ExtNodeTransformer):
             try:
                 desc = (self.sdfg.arrays[memlet.data] if memlet and memlet.data else None)
                 if memlet and memlet.data and (memlet.dynamic or isinstance(desc, data.Stream)):
+                    ptrname = ptr(memlet.data, desc, self.sdfg, self.codegen._frame)
                     if wcr is not None:
                         newnode = ast.Name(
                             id=self.codegen.write_and_resolve_expr(self.sdfg,
@@ -1069,28 +1090,28 @@ class DaCeKeywordRemover(ExtNodeTransformer):
                     elif isinstance(desc, data.Stream):
                         if desc.is_stream_array():
                             index = cpp_offset_expr(desc, memlet.subset)
-                            target = f"{memlet.data}[{index}]"
+                            target = f"{ptrname}[{index}]"
                         else:
-                            target = memlet.data
+                            target = ptrname
                         newnode = ast.Name(id="%s.push(%s);" % (
                             target,
                             cppunparse.cppunparse(value, expr_semicolon=False),
                         ))
                     else:
-                        var_type, ctypedef = self.codegen._dispatcher.defined_vars.get(memlet.data)
+                        var_type, ctypedef = self.codegen._dispatcher.defined_vars.get(ptrname)
                         if var_type == DefinedType.Scalar:
                             newnode = ast.Name(id="%s = %s;" % (
-                                memlet.data,
+                                ptrname,
                                 cppunparse.cppunparse(value, expr_semicolon=False),
                             ))
                         elif (var_type != DefinedType.ArrayInterface or isinstance(desc, data.View)):
                             newnode = ast.Name(id="%s = %s;" % (
-                                cpp_array_expr(self.sdfg, memlet),
+                                cpp_array_expr(self.sdfg, memlet, codegen=self.codegen._frame),
                                 cppunparse.cppunparse(value, expr_semicolon=False),
                             ))
                         else:
                             array_interface_name = fpga.fpga_ptr(
-                                memlet.data,
+                                ptrname,
                                 desc,
                                 self.sdfg,
                                 memlet.dst_subset,
@@ -1099,9 +1120,10 @@ class DaCeKeywordRemover(ExtNodeTransformer):
                                 None,
                                 True,
                             )
-                            newnode = ast.Name(id=f"{array_interface_name}"
-                                               f"[{cpp_array_expr(self.sdfg, memlet, with_brackets=False)}]"
-                                               f" = {cppunparse.cppunparse(value, expr_semicolon=False)};")
+                            newnode = ast.Name(
+                                id=f"{array_interface_name}"
+                                f"[{cpp_array_expr(self.sdfg, memlet, with_brackets=False, codegen=self.codegen._frame)}]"
+                                f" = {cppunparse.cppunparse(value, expr_semicolon=False)};")
 
                     return self._replace_assignment(newnode, node)
             except TypeError:  # cannot determine truth value of Relational
@@ -1157,15 +1179,19 @@ class DaCeKeywordRemover(ExtNodeTransformer):
         if name not in self.memlets:
             return self.generic_visit(node)
         memlet, nc, wcr, dtype = self.memlets[name]
+        if node.id in self.sdfg.arrays:
+            ptrname = ptr(node.id, self.sdfg.arrays[node.id], self.sdfg, self.codegen._frame)
+        else:
+            ptrname = node.id
         try:
-            defined_type, _ = self.codegen._dispatcher.defined_vars.get(node.id)
+            defined_type, _ = self.codegen._dispatcher.defined_vars.get(ptrname)
         except KeyError:
             defined_type = None
         if (self.allow_casts and isinstance(dtype, dtypes.pointer) and memlet.subset.num_elements() == 1):
-            return ast.Name(id="{}[0]".format(name), ctx=node.ctx)
+            return ast.parse(f"{name}[0]").body[0].value
         elif (self.allow_casts and (defined_type == DefinedType.Stream or defined_type == DefinedType.StreamArray)
               and memlet.dynamic):
-            return ast.Name(id=f"{name}.pop()", ctx=node.ctx)
+            return ast.parse(f"{name}.pop()").body[0].value
         else:
             return self.generic_visit(node)
 
@@ -1191,11 +1217,16 @@ class DaCeKeywordRemover(ExtNodeTransformer):
     def visit_BinOp(self, node: ast.BinOp):
         # Special case for integer powers
         if isinstance(node.op, ast.Pow):
+            from dace.frontend.python import astutils
             try:
-                unparsed = symbolic.pystr_to_symbolic(unparse(node.right))
+                unparsed = symbolic.pystr_to_symbolic(
+                    astutils.evalnode(node.right, {
+                        **self.constants, 'dace': dace,
+                        'math': math
+                    }))
                 evaluated = symbolic.symstr(symbolic.evaluate(unparsed, self.constants))
                 node.right = ast.parse(evaluated).body[0].value
-            except (TypeError, AttributeError, NameError, KeyError, ValueError):
+            except (TypeError, AttributeError, NameError, KeyError, ValueError, SyntaxError):
                 return self.generic_visit(node)
 
         return self.generic_visit(node)
@@ -1270,7 +1301,8 @@ def synchronize_streams(sdfg, dfg, state_id, node, scope_exit, callsite_stream):
         for edge in dfg.out_edges(scope_exit):
             # Synchronize end of kernel with output data (multiple kernels
             # lead to same data node)
-            if (isinstance(edge.dst, nodes.AccessNode) and edge.dst._cuda_stream != node._cuda_stream):
+            if (isinstance(edge.dst, nodes.AccessNode) and hasattr(edge.dst, '_cuda_stream')
+                    and edge.dst._cuda_stream != node._cuda_stream):
                 callsite_stream.write(
                     """{backend}EventRecord(__state->gpu_context->events[{ev}], {src_stream});
 {backend}StreamWaitEvent(__state->gpu_context->streams[{dst_stream}], __state->gpu_context->events[{ev}], 0);""".format(

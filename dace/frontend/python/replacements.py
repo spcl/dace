@@ -455,24 +455,50 @@ def _numpy_rot90(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str, k
 
     k %= 4
 
-    if k == 0:
-        return arr
-    if k == 2:
-        res = _numpy_flip(pv, sdfg, state, arr, axes[0])
-        state = pv._add_state(state.label + '_b')
-        return _numpy_flip(pv, sdfg, state, res, axes[1])
+    to_flip = []
+    transpose = False
 
     axes_list = list(range(ndim))
     (axes_list[axes[0]], axes_list[axes[1]]) = (axes_list[axes[1]], axes_list[axes[0]])
+    inpidx = ','.join([f'__i{i}' for i in range(ndim)])
 
-    if k == 1:
-        res = _numpy_flip(pv, sdfg, state, arr, axes[1])
-        state = pv._add_state(state.label + '_b')
-        return _transpose(pv, sdfg, state, res, axes_list)
+    if k == 0:
+        return arr
+    if k == 2:
+        to_flip = [axes[0], axes[1]]
+    elif k == 1:
+        to_flip = [axes[1]]
+        transpose = True
     else:  # k == 3
-        res = _transpose(pv, sdfg, state, arr, axes_list)
-        state = pv._add_state(state.label + '_b')
-        return _numpy_flip(pv, sdfg, state, res, axes[1])
+        to_flip = [axes[0]]
+        transpose = True
+
+    arr_copy, narr = sdfg.add_temp_transient_like(desc)
+
+    shape_list = list(narr.shape)
+    if transpose:
+        shape_list[axes[0]], shape_list[axes[1]] = shape_list[axes[1]], shape_list[axes[0]]
+
+        # Make C-contiguous array shape
+        narr.shape = shape_list
+        narr.strides = [data._prod(shape_list[i + 1:]) for i in range(len(shape_list))]
+        narr.total_size = sum(((shp - 1) * s for shp, s in zip(narr.shape, narr.strides))) + 1
+        narr.alignment_offset = 0
+
+    out_indices = [f'{s} - __i{i} - 1' if i in to_flip else f'__i{i}' for i, s in enumerate(desc.shape)]
+    if transpose:
+        out_indices[axes[0]], out_indices[axes[1]] = out_indices[axes[1]], out_indices[axes[0]]
+
+    outidx = ','.join(out_indices)
+    state.add_mapped_tasklet(name="_rot90_",
+                             map_ranges={f'__i{i}': f'0:{s}:1'
+                                         for i, s in enumerate(desc.shape)},
+                             inputs={'__inp': Memlet(f'{arr}[{inpidx}]')},
+                             code='__out = __inp',
+                             outputs={'__out': Memlet(f'{arr_copy}[{outidx}]')},
+                             external_edges=True)
+
+    return arr_copy
 
 
 @oprepo.replaces('elementwise')
@@ -656,7 +682,7 @@ def _transpose(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, inpname: str,
 
     if axes is None:
         axes = list(range(len(arr1.shape))[::-1])
-    
+
     if axes == list(range(len(arr1.shape))):
         return inpname
 
@@ -1132,6 +1158,7 @@ def _binop(sdfg: SDFG, state: SDFGState, op1: str, op2: str, opcode: str, opname
 
 # Defined as a function in order to include the op and the opcode in the closure
 def _makeunop(op, opcode):
+
     @oprepo.replaces_operator('Array', op)
     def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str, op2=None):
         return _unop(sdfg, state, op1, opcode, op)
@@ -1303,7 +1330,8 @@ def _result_type(arguments: Sequence[Union[str, Number, symbolic.symbol, sp.Basi
             casting[0] = _cast_str(result_type)
         elif operator in ('Frexp'):
             if coarse_types[0] == 3:
-                raise TypeError("ufunc '{}' not supported for complex " "input".format(operator))
+                raise TypeError("ufunc '{}' not supported for complex "
+                                "input".format(operator))
             result_type = [None, dace.int32]
             if coarse_types[0] < 2:
                 result_type[0] = dace.float64
@@ -1387,7 +1415,8 @@ def _result_type(arguments: Sequence[Union[str, Number, symbolic.symbol, sp.Basi
 
             # Only integers may be arguments of bitwise and shifting operations
             if max(type1, type2) > 1:
-                raise TypeError("unsupported operand type(s) for {}: " "'{}' and '{}'".format(operator, dtype1, dtype2))
+                raise TypeError("unsupported operand type(s) for {}: "
+                                "'{}' and '{}'".format(operator, dtype1, dtype2))
             result_type = _np_result_type(dtypes_for_result)
             if dtype1 != result_type:
                 left_cast = _cast_str(result_type)
@@ -1399,7 +1428,8 @@ def _result_type(arguments: Sequence[Union[str, Number, symbolic.symbol, sp.Basi
 
         elif operator in ('Gcd', 'Lcm'):
             if max(type1, type2) > 1:
-                raise TypeError("unsupported operand type(s) for {}: " "'{}' and '{}'".format(operator, dtype1, dtype2))
+                raise TypeError("unsupported operand type(s) for {}: "
+                                "'{}' and '{}'".format(operator, dtype1, dtype2))
             result_type = _np_result_type(dtypes_for_result)
             if dtype1 != result_type:
                 left_cast = _cast_str(result_type)
@@ -1408,7 +1438,8 @@ def _result_type(arguments: Sequence[Union[str, Number, symbolic.symbol, sp.Basi
 
         elif operator and operator in ('CopySign', 'NextAfter'):
             if max(type1, type2) > 2:
-                raise TypeError("unsupported operand type(s) for {}: " "'{}' and '{}'".format(operator, dtype1, dtype2))
+                raise TypeError("unsupported operand type(s) for {}: "
+                                "'{}' and '{}'".format(operator, dtype1, dtype2))
             if max(type1, type2) < 2:
                 result_type = dace.float64
             else:
@@ -1420,7 +1451,8 @@ def _result_type(arguments: Sequence[Union[str, Number, symbolic.symbol, sp.Basi
 
         elif operator and operator in ('Ldexp'):
             if max(type1, type2) > 2 or type2 > 1:
-                raise TypeError("unsupported operand type(s) for {}: " "'{}' and '{}'".format(operator, dtype1, dtype2))
+                raise TypeError("unsupported operand type(s) for {}: "
+                                "'{}' and '{}'".format(operator, dtype1, dtype2))
             if type1 < 2:
                 result_type = dace.float64
                 left_cast = _cast_str(result_type)
@@ -1829,6 +1861,7 @@ def _const_const_binop(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, 
 
 
 def _makebinop(op, opcode):
+
     @oprepo.replaces_operator('Array', op, otherclass='Array')
     def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _array_array_binop(visitor, sdfg, state, op1, op2, op, opcode)
@@ -2001,7 +2034,8 @@ def _matmult(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str, 
     if len(arr1.shape) > 1 and len(arr2.shape) > 1:  # matrix * matrix
 
         if len(arr1.shape) > 3 or len(arr2.shape) > 3:
-            raise SyntaxError('Matrix multiplication of tensors of dimensions > 3 ' 'not supported')
+            raise SyntaxError('Matrix multiplication of tensors of dimensions > 3 '
+                              'not supported')
 
         if arr1.shape[-1] != arr2.shape[-2]:
             raise SyntaxError('Matrix dimension mismatch %s != %s' % (arr1.shape[-1], arr2.shape[-2]))
@@ -3607,7 +3641,8 @@ def implement_ufunc_reduce(visitor: 'ProgramVisitor', ast_node: ast.Call, sdfg: 
                 intermediate_node = n
                 break
         if not intermediate_node:
-            raise ValueError("Keyword argument 'keepdims' is True, but " "intermediate access node was not found.")
+            raise ValueError("Keyword argument 'keepdims' is True, but "
+                             "intermediate access node was not found.")
         out_node = state.add_write(outputs[0])
         state.add_nedge(intermediate_node, out_node, dace.Memlet.from_array(outputs[0], sdfg.arrays[outputs[0]]))
 
@@ -4389,7 +4424,12 @@ def _inv(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, inp_op: str):
 
 @oprepo.replaces('dace.tensordot')
 @oprepo.replaces('numpy.tensordot')
-def _tensordot(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op_a: str, op_b: str, axes: Union[int, Sequence[int]] = 2):
+def _tensordot(pv: 'ProgramVisitor',
+               sdfg: SDFG,
+               state: SDFGState,
+               op_a: str,
+               op_b: str,
+               axes: Union[int, Sequence[int]] = 2):
 
     for op in (op_a, op_b):
         if not isinstance(op, str) or not op in sdfg.arrays.keys():
@@ -4414,7 +4454,7 @@ def _tensordot(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op_a: str, op
         raise ValueError("The input tensors must have the same number of contracting modes.")
     if any(arr_a.shape[l] != arr_b.shape[r] for l, r in zip(left_axes, right_axes)):
         raise ValueError("The input tensors' contracting modes must have the same length.")
-    
+
     dot_shape = [s for i, s in enumerate(arr_a.shape) if i not in left_axes]
     dot_shape.extend([s for i, s in enumerate(arr_b.shape) if i not in right_axes])
     op_c, arr_c = sdfg.add_temp_transient(dot_shape, arr_a.dtype, storage=arr_a.storage)
@@ -4429,3 +4469,83 @@ def _tensordot(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op_a: str, op
     state.add_edge(tasklet, '_out_tensor', c, None, Memlet.from_array(op_c, arr_c))
 
     return op_c
+
+
+# CuPy replacements
+
+
+@oprepo.replaces("cupy._core.core.ndarray")
+@oprepo.replaces("cupy.ndarray")
+def _define_cupy_local(
+    pv: "ProgramVisitor",
+    sdfg: SDFG,
+    state: SDFGState,
+    shape: Shape,
+    dtype: typeclass,
+):
+    """Defines a local array in a DaCe program."""
+    if not isinstance(shape, (list, tuple)):
+        shape = [shape]
+    name, _ = sdfg.add_temp_transient(shape, dtype, storage=dtypes.StorageType.GPU_Global)
+    return name
+
+
+@oprepo.replaces('cupy.full')
+def _cupy_full(pv: 'ProgramVisitor',
+               sdfg: SDFG,
+               state: SDFGState,
+               shape: Shape,
+               fill_value: Union[sp.Expr, Number],
+               dtype: dace.typeclass = None):
+    """ Creates and array of the specified shape and initializes it with
+        the fill value.
+    """
+    if isinstance(fill_value, (Number, np.bool_)):
+        vtype = dtypes.DTYPE_TO_TYPECLASS[type(fill_value)]
+    elif isinstance(fill_value, sp.Expr):
+        vtype = _sym_type(fill_value)
+    else:
+        raise mem_parser.DaceSyntaxError(pv, None, "Fill value {f} must be a number!".format(f=fill_value))
+    dtype = dtype or vtype
+    name, _ = sdfg.add_temp_transient(shape, dtype, storage=dtypes.StorageType.GPU_Global)
+
+    state.add_mapped_tasklet(
+        '_cupy_full_', {"__i{}".format(i): "0: {}".format(s)
+                        for i, s in enumerate(shape)}, {},
+        "__out = {}".format(fill_value),
+        dict(__out=dace.Memlet.simple(name, ",".join(["__i{}".format(i) for i in range(len(shape))]))),
+        external_edges=True)
+
+    return name
+
+
+@oprepo.replaces('cupy.zeros')
+def _cupy_zeros(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, shape: Shape, dtype: dace.typeclass = dace.float64):
+    """ Creates and array of the specified shape and initializes it with zeros.
+    """
+    return _cupy_full(pv, sdfg, state, shape, 0.0, dtype)
+
+
+@oprepo.replaces('cupy.empty_like')
+def _cupy_empty_like(pv: 'ProgramVisitor',
+                     sdfg: SDFG,
+                     state: SDFGState,
+                     prototype: str,
+                     dtype: dace.typeclass = None,
+                     shape: Shape = None):
+    if prototype not in sdfg.arrays.keys():
+        raise mem_parser.DaceSyntaxError(pv, None, "Prototype argument {a} is not SDFG data!".format(a=prototype))
+    desc = sdfg.arrays[prototype]
+    name, newdesc = sdfg.add_temp_transient_like(desc)
+    if dtype is not None:
+        newdesc.dtype = dtype
+    if shape is not None:
+        newdesc.shape = shape
+    return name
+
+
+@oprepo.replaces('cupy.empty')
+@oprepo.replaces('cupy_empty')
+def _cupy_empty(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, shape: Shape, dtype: dace.typeclass):
+    """ Creates an unitialized array of the specificied shape and dtype. """
+    return _define_cupy_local(pv, sdfg, state, shape, dtype)

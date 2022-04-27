@@ -137,8 +137,8 @@ class MapReduceFusion(pm.SingleStateTransformation):
             init_state.add_mapped_tasklet(
                 'freduce_init',
                 [('o%d' % i, '%s:%s:%s' % (r[0], r[1] + 1, r[2])) for i, r in enumerate(array_edge.data.subset)], {},
-                'out = %s' % reduce_node.identity, {
-                    'out':
+                '__out = %s' % reduce_node.identity, {
+                    '__out':
                     Memlet.simple(array_edge.data.data, ','.join(
                         ['o%d' % i for i in range(len(array_edge.data.subset))]))
                 },

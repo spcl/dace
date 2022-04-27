@@ -742,8 +742,9 @@ class InlineTransients(transformation.SingleStateTransformation):
             # Needs to be transient
             if not desc.transient:
                 continue
-            # Needs to be allocated in "Scope" lifetime
-            if desc.lifetime is not dtypes.AllocationLifetime.Scope:
+            # Needs to be allocated in "Scope" or "Persistent" lifetime
+            if (desc.lifetime != dtypes.AllocationLifetime.Scope
+                    and desc.lifetime != dtypes.AllocationLifetime.Persistent):
                 continue
             # If same transient is connected with multiple connectors, bail
             # for now
@@ -791,7 +792,7 @@ class InlineTransients(transformation.SingleStateTransformation):
 
         # Not every schedule is supported
         if not permissive:
-            if nsdfg.schedule not in (dtypes.ScheduleType.Default, dtypes.ScheduleType.Sequential,
+            if nsdfg.schedule not in (None, dtypes.ScheduleType.Default, dtypes.ScheduleType.Sequential,
                                       dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.GPU_Device):
                 return False
 
@@ -953,7 +954,11 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
                     continue
 
                 # Ensure outer memlets begin with 0
-                outer_edge = next(iter(outer_edges(nsdfg, cname)))
+                try:
+                    outer_edge = next(iter(outer_edges(nsdfg, cname)))
+                except StopIteration:  # Connector does not exist on this side
+                    ignore.add(cname)
+                    continue
                 if any(me != 0 for i, me in enumerate(outer_edge.data.subset.min_element()) if i in indices):
                     ignore.add(cname)
                     continue
@@ -1011,7 +1016,10 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
             # Offset memlets inside negatively by "refine", modify outer
             # memlets to be "refine"
             for aname, (refine, indices) in torefine.items():
-                outer_edge = next(iter(outer_edges(nsdfg_node, aname)))
+                try:
+                    outer_edge = next(iter(outer_edges(nsdfg_node, aname)))
+                except StopIteration:
+                    continue
                 new_memlet = helpers.unsqueeze_memlet(refine, outer_edge.data)
                 outer_edge.data.subset = subsets.Range([
                     ns if i in indices else os
@@ -1086,7 +1094,7 @@ class NestSDFG(transformation.MultiStateTransformation):
                         if arrname not in inputs:
                             arrobj = nested_sdfg.arrays[arrname]
                             outer_sdfg.arrays[arrname] = dc(arrobj)
-                            nested_sdfg.arrays[arrname_nested] = arrobj
+                            nested_sdfg.arrays[arrname_nested] = dc(arrobj)
                             inputs[arrname] = arrname_nested
                         node_data_name = arrname_nested
                     if (state.in_degree(node) > 0):  # output node
@@ -1096,7 +1104,7 @@ class NestSDFG(transformation.MultiStateTransformation):
                             arrobj = nested_sdfg.arrays[arrname]
                             if arrname not in inputs:
                                 outer_sdfg.arrays[arrname] = dc(arrobj)
-                            nested_sdfg.arrays[arrname_nested] = arrobj
+                            nested_sdfg.arrays[arrname_nested] = dc(arrobj)
                             outputs[arrname] = arrname_nested
                         node_data_name = arrname_nested
                     node.data = node_data_name

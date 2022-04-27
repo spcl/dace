@@ -21,8 +21,14 @@ class ExpandIsendMPI(ExpandTransformation):
             raise NotImplementedError
 
         code = ""
+
+        if not node.nosync and buffer.storage == dtypes.StorageType.GPU_Global:
+            code += f"""
+            cudaStreamSynchronize(__dace_current_stream);
+            """
+
         if ddt is not None:
-            code = f"""static MPI_Datatype newtype;
+            code += f"""static MPI_Datatype newtype;
                         static int init=1;
                         if (init) {{
                            MPI_Type_vector({ddt['count']}, {ddt['blocklen']}, {ddt['stride']}, {ddt['oldtype']}, &newtype);
@@ -43,6 +49,9 @@ class ExpandIsendMPI(ExpandTransformation):
                                           node.out_connectors,
                                           code,
                                           language=dace.dtypes.Language.CPP)
+        conn = tasklet.in_connectors
+        conn = {c: (dtypes.int32 if c == '_dest' else t) for c, t in conn.items()}
+        tasklet.in_connectors = conn
         conn = tasklet.out_connectors
         conn = {c: (dtypes.pointer(dtypes.opaque("MPI_Request")) if c == '_request' else t) for c, t in conn.items()}
         tasklet.out_connectors = conn
@@ -60,6 +69,8 @@ class Isend(dace.sdfg.nodes.LibraryNode):
 
     # Object fields
     n = dace.properties.SymbolicProperty(allow_none=True, default=None)
+
+    nosync = dace.properties.Property(dtype=bool, default=False, desc="Do not sync if memory is on GPU")
 
     def __init__(self, name, *args, **kwargs):
         super().__init__(name, *args, inputs={"_buffer", "_dest", "_tag"}, outputs={"_request"}, **kwargs)

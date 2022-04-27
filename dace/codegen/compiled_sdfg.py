@@ -280,6 +280,7 @@ class CompiledSDFG(object):
     def finalize(self):
         if self._exit is not None:
             self._exit(self._libhandle)
+            self._initialized = False
 
     def __call__(self, *args, **kwargs):
         # Update arguments from ordered list
@@ -459,7 +460,7 @@ class CompiledSDFG(object):
 
                 zeros = cupy.empty
             except (ImportError, ModuleNotFoundError):
-                raise NotImplementedError('GPU return values are ' 'unsupported if cupy is not ' 'installed')
+                raise NotImplementedError('GPU return values are unsupported if cupy is not installed')
         if storage is dtypes.StorageType.FPGA_Global:
             raise NotImplementedError('FPGA return values are unsupported')
 
