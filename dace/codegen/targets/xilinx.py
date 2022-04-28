@@ -1076,11 +1076,11 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(kernel_f
                                                               is_write=False)
                     memlet_references.append(interface_ref)
                     # print("Addding2 -------", interface_ref)
-                    if not self._decouple_array_interfaces and isinstance(desc, dace.data.Array):
-                        self._dispatcher.defined_vars.add(vconn,
-                                                          DefinedType.Pointer,
-                                                          interface_ref[0],
-                                                          allow_shadowing=True)
+                    # if not self._decouple_array_interfaces and isinstance(desc, dace.data.Array):
+                    #     self._dispatcher.defined_vars.add(vconn,
+                    #                                       DefinedType.Pointer,
+                    #                                       interface_ref[0],
+                    #                                       allow_shadowing=True)
             if vconn in inout:
                 continue
             if fpga.is_multibank_array_with_distributed_index(sdfg.arrays[in_memlet.data]):
@@ -1098,11 +1098,12 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(kernel_f
             # print("Addding -------", ref)
             if not is_memory_interface:
                 memlet_references.append(ref)
-                if not self._decouple_array_interfaces and isinstance(desc, dace.data.Array):
-                    self._dispatcher.defined_vars.add(vconn,
-                                                      DefinedType.Pointer,
-                                                      interface_ref[0],
-                                                      allow_shadowing=True)
+                # if not self._decouple_array_interfaces and isinstance(desc, dace.data.Array):
+                #     # register this as naked pointer
+                #     self._dispatcher.defined_vars.add(vconn,
+                #                                       DefinedType.Pointer,
+                #                                       ref[0],
+                #                                       allow_shadowing=True)
 
         for _, uconn, _, _, out_memlet in sorted(state.out_edges(node), key=lambda e: e.src_conn or ""):
             if out_memlet.data is None:
@@ -1122,6 +1123,7 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(kernel_f
                                             is_write=True)
             ptrname = cpp.ptr(out_memlet.data, sdfg.arrays[out_memlet.data], sdfg, self._frame)
             is_memory_interface = (self._dispatcher.defined_vars.get(ptrname, 1)[0] == DefinedType.ArrayInterface)
+            print(passed_memlet)
             if is_memory_interface:
                 for bank in fpga.iterate_distributed_subset(sdfg.arrays[out_memlet.data], out_memlet, True, sdfg):
                     interface_name = fpga.fpga_ptr(uconn,
@@ -1140,22 +1142,22 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(kernel_f
                                                               conntype=node.out_connectors[uconn],
                                                               is_write=True)
                     memlet_references.append(interface_ref)
-                    # print("Addding3 -------", interface_ref)
+                    print("Addding3 -------", interface_ref)
 
-                    if not self._decouple_array_interfaces and isinstance(desc, dace.data.Array):
-                        self._dispatcher.defined_vars.add(uconn,
-                                                          DefinedType.Pointer,
-                                                          interface_ref[0],
-                                                          allow_shadowing=True)
+                    # if not self._decouple_array_interfaces and isinstance(desc, dace.data.Array):
+                    #     self._dispatcher.defined_vars.add(uconn,
+                    #                                       DefinedType.Pointer,
+                    #                                       interface_ref[0],
+                    #                                       allow_shadowing=True)
             else:
                 memlet_references.append(ref)
-                # print("Addding4 -------", ref)
+                print("Addding4 -------", ref)
 
-                if not self._decouple_array_interfaces and isinstance(desc, dace.data.Array):
-                    self._dispatcher.defined_vars.add(uconn,
-                                                      DefinedType.Pointer,
-                                                      interface_ref[0],
-                                                      allow_shadowing=True)
+                # if not self._decouple_array_interfaces and isinstance(desc, dace.data.Array):
+                #     self._dispatcher.defined_vars.add(uconn,
+                #                                       DefinedType.Pointer,
+                #                                       ref[0],
+                #                                       allow_shadowing=True)
         return memlet_references
 
     def generate_nsdfg_arguments2(self, sdfg, dfg, state, node):
@@ -1319,6 +1321,8 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(kernel_f
                                                               is_write=True)
                     memlet_references.append(interface_ref)
                     print("Now out: ", interface_ref)
+                    import pdb
+                    pdb.set_trace()
                     self._dispatcher.defined_vars.add(uconn,
                                                       DefinedType.Pointer,
                                                       interface_ref[0],
@@ -1328,7 +1332,7 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(kernel_f
                                                     sdfg,
                                                     passed_memlet,
                                                     uconn,
-                                                    conntype=node.in_connectors[vconn],
+                                                    conntype=node.out_connectors[uconn],
                                                     is_write=False)
                     print(ref)
                 #######################
@@ -1357,8 +1361,6 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(kernel_f
             else:
                 memlet_references.append(ref)
         print(memlet_references)
-        import pdb
-        pdb.set_trace()
         return memlet_references
 
     def unparse_tasklet(self, *args, **kwargs):
