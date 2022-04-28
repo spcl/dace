@@ -955,7 +955,8 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                                     bank,
                                 )
                                 tmp_interface_id = global_interfaces[ptr_str]
-                                global_interfaces[ptr_str] += 1
+                                if self._decouple_array_interfaces:
+                                    global_interfaces[ptr_str] += 1
                                 tmp_interface_ids.append((bank, tmp_interface_id))
                             interface_id = tuple(tmp_interface_ids)
                             if data_name not in multibank_data_to_interface:
