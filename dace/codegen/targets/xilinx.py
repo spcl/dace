@@ -255,8 +255,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         dtype = desc.dtype
         kernel_stream.write("{} {}[{}];\n".format(dtype.ctype, var_name, cpp.sym2cpp(array_size)))
         if desc.storage == dace.dtypes.StorageType.FPGA_Registers:
-            kernel_stream.write("#pragma HLS ARRAY_PARTITION variable={} "
-                                "complete\n".format(var_name))
+            kernel_stream.write("#pragma HLS ARRAY_PARTITION variable={} " "complete\n".format(var_name))
         elif desc.storage == dace.dtypes.StorageType.FPGA_Local:
             pass
         else:
@@ -578,7 +577,13 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         for _, name, p, interface_ids in parameters:
             if isinstance(p, dt.Array):
                 for bank, _ in fpga.iterate_multibank_interface_ids(p, interface_ids):
-                    kernel_args.append(p.as_arg(False, name=fpga.fpga_ptr(name, p, sdfg, bank)))
+                    kernel_args.append(
+                        p.as_arg(False,
+                                 name=fpga.fpga_ptr(name,
+                                                    p,
+                                                    sdfg,
+                                                    bank,
+                                                    decouple_array_interfaces=self._decouple_array_interfaces)))
             elif isinstance(p, dt.Stream) and name in self._defined_external_streams:
                 if p.is_stream_array():
                     kernel_args.append(f" hlslib::ocl::SimulationOnly(&{p.as_arg(False, name=name)}[0])")
@@ -654,9 +659,11 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                     dtype = p.dtype
 
                     # TODO: deal with const
-                    # kernel_args_module.append("{} {}*{}".format(dtype.ctype, "const " if not is_output else "",
-                    #                                             arr_name))
-                    kernel_args_module.append("{} *{}".format(dtype.ctype, arr_name))
+                    if self._decouple_array_interfaces:
+                        kernel_args_module.append("{} {}*{}".format(dtype.ctype, "const " if not is_output else "",
+                                                                    arr_name))
+                    else:
+                        kernel_args_module.append("{} *{}".format(dtype.ctype, arr_name))
                     # kernel_args_module.append(p.as_arg(with_types=True, name=arr_name))
 
             else:

@@ -217,14 +217,14 @@ def parse_location_bank(array: dt.Array) -> Tuple[str, str]:
 
 
 def fpga_ptr2(name: str,
-             desc: dt.Data = None,
-             sdfg: SDFG = None,
-             subset_info: Union[subsets.Subset, int] = None,
-             is_write: bool = None,
-             dispatcher=None,
-             ancestor: int = 0,
-             is_array_interface: bool = False,
-             interface_id: int = None):
+              desc: dt.Data = None,
+              sdfg: SDFG = None,
+              subset_info: Union[subsets.Subset, int] = None,
+              is_write: bool = None,
+              dispatcher=None,
+              ancestor: int = 0,
+              is_array_interface: bool = False,
+              interface_id: int = None):
     """
     Returns a string that points to the data based on its name, and various other conditions
     that may apply for that data field.
@@ -366,6 +366,7 @@ def fpga_ptr(name: str,
             name = f"{name}_{interface_id}"
 
     return name
+
 
 def unqualify_fpga_array_name(sdfg: dace.SDFG, arr_name: str):
     '''
@@ -656,7 +657,11 @@ class FPGACodeGen(TargetCodeGenerator):
                 # Streams and Views are not passed as arguments
                 if (isinstance(arg, dt.Array)):
                     for bank, _ in iterate_multibank_interface_ids(arg, interface_id):
-                        current_name = fpga_ptr(arg_name, arg, sdfg, bank)
+                        current_name = fpga_ptr(arg_name,
+                                                arg,
+                                                sdfg,
+                                                bank,
+                                                decouple_array_interfaces=self._decouple_array_interfaces)
                         kernel_args_call_host.append(arg.as_arg(False, name=current_name))
                         kernel_args_opencl.append(FPGACodeGen.make_opencl_parameter(current_name, arg))
                 elif (not isinstance(arg, dt.Stream) and not isinstance(arg, dt.View)):
@@ -948,12 +953,11 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                             else:
                                 banks_looked_at = array_to_banks_used_in[data_name]
                             for bank in banks_looked_at:
-                                ptr_str = fpga_ptr(
-                                    data_name,
-                                    desc,
-                                    sdfg,
-                                    bank,
-                                )
+                                ptr_str = fpga_ptr(data_name,
+                                                   desc,
+                                                   sdfg,
+                                                   bank,
+                                                   decouple_array_interfaces=self._decouple_array_interfaces)
                                 tmp_interface_id = global_interfaces[ptr_str]
                                 if self._decouple_array_interfaces:
                                     global_interfaces[ptr_str] += 1
@@ -1195,7 +1199,11 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
 
                     # Define buffer, using proper type
                     for bank_index in range(memory_bank_arg_count):
-                        alloc_name = fpga_ptr(dataname, nodedesc, sdfg, bank_index)
+                        alloc_name = fpga_ptr(dataname,
+                                              nodedesc,
+                                              sdfg,
+                                              bank_index,
+                                              decouple_array_interfaces=self._decouple_array_interfaces)
                         if not declared:
                             result_decl.write("hlslib::ocl::Buffer <{}, hlslib::ocl::Access::readWrite> {};\n".format(
                                 nodedesc.dtype.ctype, alloc_name))
@@ -1558,36 +1566,62 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
             dst_subset = memlet.dst_subset or memlet.subset
             if host_to_device:
 
-                ptr_str = (fpga_ptr(src_node.data, src_nodedesc, sdfg, src_subset) +
+                ptr_str = (fpga_ptr(src_node.data,
+                                    src_nodedesc,
+                                    sdfg,
+                                    src_subset,
+                                    decouple_array_interfaces=self._decouple_array_interfaces) +
                            (" + {}".format(offset_src) if outgoing_memlet and str(offset_src) != "0" else ""))
                 if cast:
                     ptr_str = "reinterpret_cast<{} const *>({})".format(device_dtype.ctype, ptr_str)
 
                 callsite_stream.write(
-                    "{}.CopyFromHost({}, {}, {});".format(fpga_ptr(dst_node.data, dst_nodedesc, sdfg, dst_subset),
-                                                          (offset_dst if not outgoing_memlet else 0), copysize,
-                                                          ptr_str), sdfg, state_id, [src_node, dst_node])
+                    "{}.CopyFromHost({}, {}, {});".format(
+                        fpga_ptr(dst_node.data,
+                                 dst_nodedesc,
+                                 sdfg,
+                                 dst_subset,
+                                 decouple_array_interfaces=self._decouple_array_interfaces),
+                        (offset_dst if not outgoing_memlet else 0), copysize, ptr_str), sdfg, state_id,
+                    [src_node, dst_node])
 
             elif device_to_host:
 
-                ptr_str = (fpga_ptr(dst_node.data, dst_nodedesc, sdfg, dst_subset) +
+                ptr_str = (fpga_ptr(dst_node.data,
+                                    dst_nodedesc,
+                                    sdfg,
+                                    dst_subset,
+                                    decouple_array_interfaces=self._decouple_array_interfaces) +
                            (" + {}".format(offset_dst) if outgoing_memlet and str(offset_dst) != "0" else ""))
                 if cast:
                     ptr_str = "reinterpret_cast<{} *>({})".format(device_dtype.ctype, ptr_str)
 
                 callsite_stream.write(
-                    "{}.CopyToHost({}, {}, {});".format(fpga_ptr(src_node.data, src_nodedesc, sdfg, src_subset),
-                                                        (offset_src if outgoing_memlet else 0), copysize, ptr_str),
-                    sdfg, state_id, [src_node, dst_node])
+                    "{}.CopyToHost({}, {}, {});".format(
+                        fpga_ptr(src_node.data,
+                                 src_nodedesc,
+                                 sdfg,
+                                 src_subset,
+                                 decouple_array_interfaces=self._decouple_array_interfaces),
+                        (offset_src if outgoing_memlet else 0), copysize, ptr_str), sdfg, state_id,
+                    [src_node, dst_node])
 
             elif device_to_device:
 
                 callsite_stream.write(
-                    "{}.CopyToDevice({}, {}, {}, {});".format(fpga_ptr(src_node.data, src_nodedesc, sdfg, src_subset),
-                                                              (offset_src if outgoing_memlet else 0), copysize,
-                                                              fpga_ptr(dst_node.data, dst_nodedesc, sdfg, dst_subset),
-                                                              (offset_dst if not outgoing_memlet else 0)), sdfg,
-                    state_id, [src_node, dst_node])
+                    "{}.CopyToDevice({}, {}, {}, {});".format(
+                        fpga_ptr(src_node.data,
+                                 src_nodedesc,
+                                 sdfg,
+                                 src_subset,
+                                 decouple_array_interfaces=self._decouple_array_interfaces),
+                        (offset_src if outgoing_memlet else 0), copysize,
+                        fpga_ptr(dst_node.data,
+                                 dst_nodedesc,
+                                 sdfg,
+                                 dst_subset,
+                                 decouple_array_interfaces=self._decouple_array_interfaces),
+                        (offset_dst if not outgoing_memlet else 0)), sdfg, state_id, [src_node, dst_node])
 
         # Reject copying to/from local memory from/to outside the FPGA
         elif (data_to_data and
