@@ -801,7 +801,12 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
 
         global_data_parameters = set()
         # Count appearances of each global array to create multiple interfaces
-        global_interfaces: Dict[str, int] = collections.defaultdict(int)
+        if self._decouple_array_interfaces:
+            global_interfaces: Dict[str, int] = collections.defaultdict(int)
+        else:
+            # if we are not decoupling array interfaces, this is only needed when you access
+            # the same container from different PEs
+            global_interfaces: Dict[str, (int, int)] = collections.defaultdict(lambda: (0, 0))
 
         top_level_local_data = set()
         subgraph_parameters = collections.OrderedDict()  # {subgraph: [params]}
@@ -838,6 +843,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
         # Sorting by name, then by input/output, then by interface id
         sort_func = lambda t: f"{t[1]}{t[0]}{t[3]}"
 
+        subgraph_counter = 0
         for subgraph in subgraphs:
             data_to_node.update(
                 {node.data: node
@@ -958,20 +964,40 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                                                    sdfg,
                                                    bank,
                                                    decouple_array_interfaces=self._decouple_array_interfaces)
-                                tmp_interface_id = global_interfaces[ptr_str]
+
                                 if self._decouple_array_interfaces:
+                                    tmp_interface_id = global_interfaces[ptr_str]
                                     global_interfaces[ptr_str] += 1
+                                else:
+                                    if ptr_str not in global_interfaces:
+                                        global_interfaces[ptr_str] = (0, subgraph_counter)
+
+                                    tmp_interface_id, last_used_in = global_interfaces[ptr_str]
+                                    if last_used_in != subgraph_counter:
+                                        # we accessed the same container from a different data region: we need
+                                        # to use a different interface
+                                        tmp_interface_id += 1
+                                        global_interfaces[ptr_str] = (tmp_interface_id, subgraph_counter)
+
                                 tmp_interface_ids.append((bank, tmp_interface_id))
                             interface_id = tuple(tmp_interface_ids)
                             if data_name not in multibank_data_to_interface:
                                 multibank_data_to_interface[data_name] = {}
                             multibank_data_to_interface[data_name][is_output] = interface_id
                         else:
-                            interface_id = global_interfaces[data_name]
-                            # TODO: check when this is really necessary to use an additional interface
-                            # (for xilinx we need this in the case of multiple data flow region accessing the same)
-                            # if self._decouple_array_interfaces:
-                            global_interfaces[data_name] += 1
+                            if self._decouple_array_interfaces:
+                                interface_id = global_interfaces[data_name]
+                                global_interfaces[data_name] += 1
+                            else:
+                                if data_name not in global_interfaces:
+                                    global_interfaces[data_name] = (0, subgraph_counter)
+
+                                interface_id, last_used_in = global_interfaces[data_name]
+                                if last_used_in != subgraph_counter:
+                                    # we accessed the same container from a different data region: we need
+                                    # to use a different interface
+                                    global_interfaces[data_name] = (interface_id + 1, subgraph_counter)
+                                    interface_id += 1
                             data_to_interface[data_name] = interface_id
                     # Collect the memory bank specification, if present, by
                     # traversing outwards to where the data container is
@@ -988,7 +1014,8 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                             trace_type, trace_bank = parse_location_bank(trace_desc)
                             if (bank is not None and bank_type is not None
                                     and (bank != trace_bank or bank_type != trace_type)):
-                                raise cgx.CodegenError("Found inconsistent memory bank " f"specifier for {trace_name}.")
+                                raise cgx.CodegenError("Found inconsistent memory bank "
+                                                       f"specifier for {trace_name}.")
                             bank = trace_bank
                             bank_type = trace_type
 
@@ -1030,6 +1057,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                     subgraph_parameters[subgraph].append(param)
                     global_symbols.add(param)
 
+            subgraph_counter += 1
         # Order by name
         global_data_parameters = list(sorted(global_data_parameters, key=sort_func))
         global_data_parameters += sorted(global_symbols, key=sort_func)
@@ -1526,7 +1554,8 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
 
             if (not sum(copy_shape) == 1 and
                 (not isinstance(memlet.subset, subsets.Range) or any([step != 1 for _, _, step in memlet.subset]))):
-                raise NotImplementedError("Only contiguous copies currently " "supported for FPGA codegen.")
+                raise NotImplementedError("Only contiguous copies currently "
+                                          "supported for FPGA codegen.")
 
             if host_to_device or device_to_device:
                 host_dtype = sdfg.data(src_node.data).dtype
@@ -1774,7 +1803,8 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
     @staticmethod
     def make_opencl_parameter(name, desc):
         if isinstance(desc, dt.Array):
-            return (f"hlslib::ocl::Buffer<{desc.dtype.ctype}, " f"hlslib::ocl::Access::readWrite> &{name}")
+            return (f"hlslib::ocl::Buffer<{desc.dtype.ctype}, "
+                    f"hlslib::ocl::Access::readWrite> &{name}")
         else:
             return (desc.as_arg(with_types=True, name=name))
 
@@ -2034,7 +2064,8 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                                 elif np.issubdtype(np.dtype(end_type.dtype.type), np.unsignedinteger):
                                     loop_var_type = "size_t"
                     except (UnboundLocalError):
-                        raise UnboundLocalError('Pipeline scopes require ' 'specialized bound values')
+                        raise UnboundLocalError('Pipeline scopes require '
+                                                'specialized bound values')
                     except (TypeError):
                         # Raised when the evaluation of begin or skip fails.
                         # This could occur, for example, if they are defined in terms of other symbols, which
