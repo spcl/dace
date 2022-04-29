@@ -2363,6 +2363,9 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         from dace.transformation import optimizer
         from dace.transformation.transformation import PatternTransformation
 
+        if progress is None and not Config.get_bool('progress'):
+            progress = False
+
         start = time.time()
 
         applied_transformations = collections.defaultdict(int)

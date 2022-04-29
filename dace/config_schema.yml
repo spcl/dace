@@ -839,6 +839,12 @@ required:
         title: Debug printing
         description: Enable verbose printouts.
 
+    progress:
+        type: bool
+        default: true
+        title: Progress reports
+        description: Enable progress report printouts.
+
     cache:
         type: str
         default: name

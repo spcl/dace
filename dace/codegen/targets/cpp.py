@@ -1190,10 +1190,10 @@ class DaCeKeywordRemover(ExtNodeTransformer):
         except KeyError:
             defined_type = None
         if (self.allow_casts and isinstance(dtype, dtypes.pointer) and memlet.subset.num_elements() == 1):
-            return ast.Name(id="{}[0]".format(name), ctx=node.ctx)
+            return ast.parse(f"{name}[0]").body[0].value
         elif (self.allow_casts and (defined_type == DefinedType.Stream or defined_type == DefinedType.StreamArray)
               and memlet.dynamic):
-            return ast.Name(id=f"{name}.pop()", ctx=node.ctx)
+            return ast.parse(f"{name}.pop()").body[0].value
         else:
             return self.generic_visit(node)
 
