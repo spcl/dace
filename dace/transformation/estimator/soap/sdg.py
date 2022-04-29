@@ -974,7 +974,10 @@ class SDG:
 
     
     def plot_SDG(self, filename : str = 'SDG.dot') -> None:
-        nx.nx_pydot.write_dot(self.graph, filename)
+        try:
+            nx.nx_pydot.write_dot(self.graph, filename)
+        except:
+            warn('SDG could not be drawn. Please install the pydot module')
 
 
 
