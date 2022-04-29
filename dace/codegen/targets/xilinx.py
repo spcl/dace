@@ -576,21 +576,26 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         kernel_args = []
         for _, name, p, interface_ids in parameters:
             if isinstance(p, dt.Array):
-                for bank, _ in fpga.iterate_multibank_interface_ids(p, interface_ids):
+                for bank, interface_id in fpga.iterate_multibank_interface_ids(p, interface_ids):
+                    # in creating kernel arguments keep track of the interface_id (if any)
+                    # in xilinx we may have kernel argument with the same name but we want to keep all of them
+                    # if they have different interface IDs (this could be the case if the same data is accessed
+                    # from different PEs)
+
                     kernel_args.append(
-                        p.as_arg(False,
+                        (p.as_arg(False,
                                  name=fpga.fpga_ptr(name,
                                                     p,
                                                     sdfg,
                                                     bank,
-                                                    decouple_array_interfaces=self._decouple_array_interfaces)))
+                                                    decouple_array_interfaces=self._decouple_array_interfaces)), interface_id))
             elif isinstance(p, dt.Stream) and name in self._defined_external_streams:
                 if p.is_stream_array():
-                    kernel_args.append(f" hlslib::ocl::SimulationOnly(&{p.as_arg(False, name=name)}[0])")
+                    kernel_args.append((f" hlslib::ocl::SimulationOnly(&{p.as_arg(False, name=name)}[0])",0))
                 else:
-                    kernel_args.append(f" hlslib::ocl::SimulationOnly({p.as_arg(False, name=name)})")
+                    kernel_args.append((f" hlslib::ocl::SimulationOnly({p.as_arg(False, name=name)})",0))
             else:
-                kernel_args.append(p.as_arg(False, name=name))
+                kernel_args.append((p.as_arg(False, name=name),0))
 
         kernel_function_name = kernel_name
         kernel_file_name = "{}.xclbin".format(kernel_name)
@@ -609,7 +614,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
             kernel_args = dtypes.deduplicate(kernel_args)
         # Launch HLS kernel, passing synchronization events (if any)
         kernel_stream.write(
-            f"""auto {kernel_name}_kernel = program.MakeKernel({kernel_function_name}, "{kernel_function_name}", {", ".join(kernel_args)});"""
+            f"""auto {kernel_name}_kernel = program.MakeKernel({kernel_function_name}, "{kernel_function_name}", {", ".join(ka[0] for ka in kernel_args)});"""
         )
 
         kernel_stream.write(

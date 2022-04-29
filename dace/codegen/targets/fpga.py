@@ -968,8 +968,10 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                             multibank_data_to_interface[data_name][is_output] = interface_id
                         else:
                             interface_id = global_interfaces[data_name]
-                            if self._decouple_array_interfaces:
-                                global_interfaces[data_name] += 1
+                            # TODO: check when this is really necessary to use an additional interface
+                            # (for xilinx we need this in the case of multiple data flow region accessing the same)
+                            # if self._decouple_array_interfaces:
+                            global_interfaces[data_name] += 1
                             data_to_interface[data_name] = interface_id
                     # Collect the memory bank specification, if present, by
                     # traversing outwards to where the data container is
