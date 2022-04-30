@@ -804,8 +804,8 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
         if self._decouple_array_interfaces:
             global_interfaces: Dict[str, int] = collections.defaultdict(int)
         else:
-            # if we are not decoupling array interfaces, this is only needed when you access
-            # the same container from different PEs
+            # For Xilinx, even if we are not decoupling array interfaces we need anyway to use different interfaces
+            # if we access the same container from different PEs
             global_interfaces: Dict[str, (int, int)] = collections.defaultdict(lambda: (0, 0))
 
         top_level_local_data = set()

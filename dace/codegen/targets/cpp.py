@@ -252,11 +252,14 @@ def emit_memlet_reference(dispatcher,
                           conntype: dtypes.typeclass,
                           ancestor: int = 1,
                           is_write: bool = None,
-                          device_code: bool = False) -> Tuple[str, str, str]:
+                          device_code: bool = False,
+                          decouple_array_interfaces: bool = False) -> Tuple[str, str, str]:
     """
     Returns a tuple of three strings with a definition of a reference to an
     existing memlet. Used in nested SDFG arguments.
     :param device_code: boolean flag indicating whether we are in the process of generating FPGA device code
+    :param decouple_array_interfaces: boolean flag, used for Xilinx FPGA code generation. It indicates whether or not
+        we are generating code by decoupling reads/write from memory.
     :return: A tuple of the form (type, name, value).
     """
     desc = sdfg.arrays[memlet.data]
@@ -283,8 +286,15 @@ def emit_memlet_reference(dispatcher,
 
     if fpga.is_fpga_array(desc):
 
-        datadef = fpga.fpga_ptr(memlet.data, desc, sdfg, memlet.subset, is_write, dispatcher, ancestor,
-                            defined_type == DefinedType.ArrayInterface)
+        datadef = fpga.fpga_ptr(memlet.data,
+                                desc,
+                                sdfg,
+                                memlet.subset,
+                                is_write,
+                                dispatcher,
+                                ancestor,
+                                defined_type == DefinedType.ArrayInterface,
+                                decouple_array_interfaces=decouple_array_interfaces)
 
     else:
         datadef = ptr(memlet.data, desc, sdfg, dispatcher.frame)
@@ -997,6 +1007,7 @@ class DaCeKeywordRemover(ExtNodeTransformer):
         self.constants = constants
         self.codegen = codegen
         self.allow_casts = True
+        self._decouple_array_interfaces = Config.get_bool("compiler", "xilinx", "decouple_array_interfaces")
 
     def visit_TopLevelExpr(self, node):
         # This is a DaCe shift, omit it
@@ -1121,7 +1132,7 @@ class DaCeKeywordRemover(ExtNodeTransformer):
                                 None,
                                 None,
                                 True,
-                            )
+                                decouple_array_interfaces=self._decouple_array_interfaces)
                             newnode = ast.Name(
                                 id=f"{array_interface_name}"
                                 f"[{cpp_array_expr(self.sdfg, memlet, with_brackets=False, codegen=self.codegen._frame)}]"

@@ -1085,7 +1085,8 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(kernel_f
                                                               passed_memlet,
                                                               interface_name,
                                                               conntype=node.in_connectors[vconn],
-                                                              is_write=False)
+                                                              is_write=False,
+                                                              decouple_array_interfaces=self._decouple_array_interfaces)
                     memlet_references.append(interface_ref)
                     # print("Addding2 -------", interface_ref)
                     # if not self._decouple_array_interfaces and isinstance(desc, dace.data.Array):
@@ -1106,7 +1107,8 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(kernel_f
                                             passed_memlet,
                                             vconn,
                                             conntype=node.in_connectors[vconn],
-                                            is_write=False)
+                                            is_write=False,
+                                            decouple_array_interfaces=self._decouple_array_interfaces)
             # print("Addding -------", ref)
             if not is_memory_interface:
                 memlet_references.append(ref)
@@ -1132,7 +1134,8 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(kernel_f
                                             passed_memlet,
                                             uconn,
                                             conntype=node.out_connectors[uconn],
-                                            is_write=True)
+                                            is_write=True,
+                                            decouple_array_interfaces=self._decouple_array_interfaces)
             ptrname = cpp.ptr(out_memlet.data, sdfg.arrays[out_memlet.data], sdfg, self._frame)
             is_memory_interface = (self._dispatcher.defined_vars.get(ptrname, 1)[0] == DefinedType.ArrayInterface)
             print(passed_memlet)
@@ -1152,7 +1155,8 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(kernel_f
                                                               passed_memlet,
                                                               interface_name,
                                                               conntype=node.out_connectors[uconn],
-                                                              is_write=True)
+                                                              is_write=True,
+                                                              decouple_array_interfaces=self._decouple_array_interfaces)
                     memlet_references.append(interface_ref)
                     print("Addding3 -------", interface_ref)
 
@@ -1219,7 +1223,8 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(kernel_f
                                                               passed_memlet,
                                                               interface_name,
                                                               conntype=node.in_connectors[vconn],
-                                                              is_write=False)
+                                                              is_write=False,
+                                                              decouple_array_interfaces=self._decouple_array_interfaces)
                     ##########################
 
                     memlet_references.append(interface_ref)
@@ -1233,7 +1238,8 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(kernel_f
                                                     passed_memlet,
                                                     vconn,
                                                     conntype=node.in_connectors[vconn],
-                                                    is_write=False)
+                                                    is_write=False,
+                                                    decouple_array_interfaces=self._decouple_array_interfaces)
                     print(ref)
 
                 # import pdb
@@ -1256,7 +1262,8 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(kernel_f
                                                               passed_memlet,
                                                               interface_name,
                                                               conntype=node.in_connectors[vconn],
-                                                              is_write=False)
+                                                              is_write=False,
+                                                              decouple_array_interfaces=self._decouple_array_interfaces)
 
                     memlet_references.append(interface_ref)
             if vconn in inout:
@@ -1272,7 +1279,8 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(kernel_f
                                             passed_memlet,
                                             vconn,
                                             conntype=node.in_connectors[vconn],
-                                            is_write=False)
+                                            is_write=False,
+                                            decouple_array_interfaces=self._decouple_array_interfaces)
             if not is_memory_interface:
                 memlet_references.append(ref)
 
@@ -1290,7 +1298,8 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(kernel_f
                                             passed_memlet,
                                             uconn,
                                             conntype=node.out_connectors[uconn],
-                                            is_write=True)
+                                            is_write=True,
+                                            decouple_array_interfaces=self._decouple_array_interfaces)
             ptrname = cpp.ptr(out_memlet.data, sdfg.arrays[out_memlet.data], sdfg, self._frame)
             is_memory_interface = (self._dispatcher.defined_vars.get(ptrname, 1)[0] == DefinedType.ArrayInterface)
 
@@ -1330,7 +1339,8 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(kernel_f
                                                               passed_memlet,
                                                               interface_name,
                                                               conntype=node.out_connectors[uconn],
-                                                              is_write=True)
+                                                              is_write=True,
+                                                              decouple_array_interfaces=self._decouple_array_interfaces)
                     memlet_references.append(interface_ref)
                     print("Now out: ", interface_ref)
                     import pdb
@@ -1345,7 +1355,7 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(kernel_f
                                                     passed_memlet,
                                                     uconn,
                                                     conntype=node.out_connectors[uconn],
-                                                    is_write=False)
+                                                    is_write=False,decouple_array_interfaces=self._decouple_array_interfaces)
                     print(ref)
                 #######################
 
@@ -1369,7 +1379,8 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(kernel_f
                                                   passed_memlet,
                                                   interface_name,
                                                   conntype=node.out_connectors[uconn],
-                                                  is_write=True))
+                                                  is_write=True,
+                                                  decouple_array_interfaces=self._decouple_array_interfaces))
             else:
                 memlet_references.append(ref)
         print(memlet_references)
