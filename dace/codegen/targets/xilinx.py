@@ -348,10 +348,20 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         ptrname = cpp.ptr(memlet.data, sdfg.arrays[memlet.data], sdfg, self._frame)
         defined_type, _ = self._dispatcher.defined_vars.get(ptrname)
         if isinstance(indices, str):
-            ptr = '%s + %s' % (cpp.cpp_ptr_expr(sdfg, memlet, defined_type, is_write=True,
-                                                codegen=self._frame), indices)
+            ptr = '%s + %s' % (cpp.cpp_ptr_expr(sdfg,
+                                                memlet,
+                                                defined_type,
+                                                is_write=True,
+                                                codegen=self._frame,
+                                                decouple_array_interface=self._decouple_array_interfaces), indices)
         else:
-            ptr = cpp.cpp_ptr_expr(sdfg, memlet, defined_type, indices=indices, is_write=True, codegen=self._frame)
+            ptr = cpp.cpp_ptr_expr(sdfg,
+                                   memlet,
+                                   defined_type,
+                                   indices=indices,
+                                   is_write=True,
+                                   codegen=self._frame,
+                                   decouple_array_interface=self._decouple_array_interfaces)
 
         if isinstance(dtype, dtypes.pointer):
             dtype = dtype.base_type
@@ -365,6 +375,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
             else:
                 credtype = "dace::ReductionType::" + str(redtype)[str(redtype).find(".") + 1:]
                 is_sub = False
+
             if isinstance(dtype, dtypes.vector):
                 return (f'dace::xilinx_wcr_fixed_vec<{credtype}, '
                         f'{dtype.vtype.ctype}, {dtype.veclen}>::reduce('
@@ -584,18 +595,19 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
 
                     kernel_args.append(
                         (p.as_arg(False,
-                                 name=fpga.fpga_ptr(name,
-                                                    p,
-                                                    sdfg,
-                                                    bank,
-                                                    decouple_array_interfaces=self._decouple_array_interfaces)), interface_id))
+                                  name=fpga.fpga_ptr(name,
+                                                     p,
+                                                     sdfg,
+                                                     bank,
+                                                     decouple_array_interfaces=self._decouple_array_interfaces)),
+                         interface_id))
             elif isinstance(p, dt.Stream) and name in self._defined_external_streams:
                 if p.is_stream_array():
-                    kernel_args.append((f" hlslib::ocl::SimulationOnly(&{p.as_arg(False, name=name)}[0])",0))
+                    kernel_args.append((f" hlslib::ocl::SimulationOnly(&{p.as_arg(False, name=name)}[0])", 0))
                 else:
-                    kernel_args.append((f" hlslib::ocl::SimulationOnly({p.as_arg(False, name=name)})",0))
+                    kernel_args.append((f" hlslib::ocl::SimulationOnly({p.as_arg(False, name=name)})", 0))
             else:
-                kernel_args.append((p.as_arg(False, name=name),0))
+                kernel_args.append((p.as_arg(False, name=name), 0))
 
         kernel_function_name = kernel_name
         kernel_file_name = "{}.xclbin".format(kernel_name)
@@ -1355,7 +1367,8 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(kernel_f
                                                     passed_memlet,
                                                     uconn,
                                                     conntype=node.out_connectors[uconn],
-                                                    is_write=False,decouple_array_interfaces=self._decouple_array_interfaces)
+                                                    is_write=False,
+                                                    decouple_array_interfaces=self._decouple_array_interfaces)
                     print(ref)
                 #######################
 
