@@ -196,7 +196,6 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         '''
 
         if self._decouple_array_interfaces:
-            #TODO: fix this if needed
             # If array accesses are decoupled, preprocess inter state edge assignments:
             # - look at every interstate edge
             # - if any of them accesses an ArrayInterface (Global FPGA memory), qualify its name and replace it
@@ -218,8 +217,16 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
 
                                         if arr_name not in replace_dict and arr_name in graph.arrays and graph.arrays[
                                                 arr_name].storage == dace.dtypes.StorageType.FPGA_Global:
-                                            repl = fpga.fpga_ptr(arr_name, graph.arrays[node.value.id], sdfg, None,
-                                                                 False, None, None, True)
+                                            repl = fpga.fpga_ptr(
+                                                arr_name,
+                                                graph.arrays[node.value.id],
+                                                sdfg,
+                                                None,
+                                                False,
+                                                None,
+                                                None,
+                                                True,
+                                                decouple_array_interfaces=self._decouple_array_interfaces)
                                             replace_dict[arr_name] = repl
 
                             # Perform replacement and update graph.arrays to allow type inference
