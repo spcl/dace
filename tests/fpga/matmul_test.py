@@ -175,7 +175,8 @@ def test_gemm_vectorized_decoupled():
     sdfg.apply_transformations_repeated([InlineSDFG])
     # Compute ground truth
     C_regression = alpha * (A @ B) + beta * C
-    sdfg(A=A, B=B, C=C)
+    with set_temporary("compiler", "xilinx", "decouple_array_interfaces", value=True):
+        sdfg(A=A, B=B, C=C)
     assert np.allclose(C, C_regression, atol=1e-6)
     return sdfg
 
@@ -193,8 +194,7 @@ def test_gemm_size_not_multiples_of():
     sdfg.apply_transformations_repeated([InlineSDFG])
     # compute ground truth
     C_regression = A @ B + C
-    with set_temporary("compiler", "xilinx", "decouple_array_interfaces", value=True):
-        sdfg(A=A, B=B, C=C)
+    sdfg(A=A, B=B, C=C)
     assert np.allclose(C, C_regression, atol=1e-6)
     return sdfg
 
