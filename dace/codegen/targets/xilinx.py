@@ -591,7 +591,9 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         :param instrumentation_stream: Code for profiling kernel execution time.
         '''
 
-        kernel_args = []
+        # Keep track of kernel arguments as (arg, interface_id) pair
+        kernel_args: list[Tuple[str, int]] = []
+
         for _, name, p, interface_ids in parameters:
             if isinstance(p, dt.Array):
                 for bank, interface_id in fpga.iterate_multibank_interface_ids(p, interface_ids):
