@@ -944,7 +944,7 @@ class CPUCodeGen(TargetCodeGenerator):
                             if deftype == DefinedType.ArrayInterface:
                                 continue
                             array_expr = cpp.cpp_array_expr(sdfg, memlet, with_brackets=False, codegen=self._frame)
-                            _decouple_array_interfaces = Config.get_bool("compiler", "xilinx",
+                            decouple_array_interfaces = Config.get_bool("compiler", "xilinx",
                                                                          "decouple_array_interfaces")
                             ptr_str = fpga.fpga_ptr(  # we are on fpga, since this is array interface
                                 memlet.data,
@@ -955,7 +955,7 @@ class CPUCodeGen(TargetCodeGenerator):
                                 None,
                                 None,
                                 True,
-                                decouple_array_interfaces=_decouple_array_interfaces)
+                                decouple_array_interfaces=decouple_array_interfaces)
                             write_expr = f"*({ptr_str} + {array_expr}) = {in_local_name};"
                         else:
                             desc_dtype = desc.dtype
@@ -1128,7 +1128,7 @@ class CPUCodeGen(TargetCodeGenerator):
         var_type, ctypedef = types
 
         if fpga.is_fpga_array(desc):
-            _decouple_array_interfaces = Config.get_bool("compiler", "xilinx", "decouple_array_interfaces")
+            decouple_array_interfaces = Config.get_bool("compiler", "xilinx", "decouple_array_interfaces")
             ptr = fpga.fpga_ptr(memlet.data,
                                 desc,
                                 sdfg,
@@ -1137,7 +1137,7 @@ class CPUCodeGen(TargetCodeGenerator):
                                 self._dispatcher,
                                 0,
                                 var_type == DefinedType.ArrayInterface and not isinstance(desc, data.View),
-                                decouple_array_interfaces=_decouple_array_interfaces)
+                                decouple_array_interfaces=decouple_array_interfaces)
 
         result = ''
         expr = (cpp.cpp_array_expr(sdfg, memlet, with_brackets=False, codegen=self._frame)

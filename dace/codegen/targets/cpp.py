@@ -73,8 +73,7 @@ def copy_expr(
         defined_types = dispatcher.defined_vars.get(ptrname, is_global=is_global)
     def_type, _ = defined_types
     if fpga.is_fpga_array(data_desc):
-
-        # TODO: understand if this impair codegen performance/how to do more nicely
+        # get conf flag
         decouple_array_interfaces = Config.get_bool("compiler", "xilinx", "decouple_array_interfaces")
 
         expr = fpga.fpga_ptr(
@@ -554,7 +553,7 @@ def cpp_array_expr(sdfg,
 
     if with_brackets:
         if fpga.is_fpga_array(desc):
-            # TODO: understand if this impair codegen performance/how to do more nicely
+            # get conf flag
             decouple_array_interfaces = Config.get_bool("compiler", "xilinx", "decouple_array_interfaces")
             ptrname = fpga.fpga_ptr(memlet.data,
                                     desc,

@@ -216,82 +216,6 @@ def parse_location_bank(array: dt.Array) -> Tuple[str, str]:
         return None
 
 
-def fpga_ptr2(name: str,
-              desc: dt.Data = None,
-              sdfg: SDFG = None,
-              subset_info: Union[subsets.Subset, int] = None,
-              is_write: bool = None,
-              dispatcher=None,
-              ancestor: int = 0,
-              is_array_interface: bool = False,
-              interface_id: int = None):
-    """
-    Returns a string that points to the data based on its name, and various other conditions
-    that may apply for that data field.
-    :param name: Data name.
-    :param desc: Data descriptor.
-    :param subset_info: Any additional information about the accessed subset.
-    :param ancestor: The ancestor level where the variable should be searched for if
-        is_array_interface is True when dispatcher is not None
-    :param is_array_interface: Data is pointing to an interface in FPGA-Kernel compilation
-    :param interface_id: An optional interface id that will be added to the name (only for array interfaces)
-    :return: C-compatible name that can be used to access the data.
-    """
-    if (desc is not None and is_multibank_array_with_distributed_index(desc)):
-
-        location_bank = parse_location_bank(desc)
-        mem_type = ""
-        if location_bank is not None:
-            mem_type = location_bank[0].lower()
-
-        if (subset_info == None):
-            raise ValueError("Cannot generate name for bank without subset info")
-        elif (isinstance(subset_info, int)):
-            name = f"{mem_type}{subset_info}_{name}"
-        elif (isinstance(subset_info, subsets.Subset)):
-            if (sdfg == None):
-                raise ValueError("Cannot generate name for bank using subset if sdfg not provided")
-            low, high = get_multibank_ranges_from_subset(subset_info, sdfg)
-            if (low + 1 != high):
-                raise ValueError("ptr cannot generate names for subsets accessing more than one memory bank")
-
-            name = f"{mem_type}{low}_{name}"
-
-            subset_info = low  #used for arrayinterface name where it must be int
-    if False:
-        import pdb
-        pdb.set_trace()
-        # qualify the name
-        if is_write is None:
-            raise ValueError("is_write must be set for ArrayInterface.")
-        # ptr_in = f"__{name}_in"
-        # ptr_out = f"__{name}_out"
-        ptr_in = f"__{name}"
-        ptr_out = f"__{name}"
-        if dispatcher is not None:
-            # DaCe allows reading from an output connector, even though it
-            # is not an input connector. If this occurs, panic and read
-            # from the output interface instead
-            if is_write or not dispatcher.defined_vars.has(ptr_in, ancestor):
-                # Throw a KeyError if this pointer also doesn't exist
-                dispatcher.defined_vars.get(ptr_out, ancestor)
-                # Otherwise use it
-                name = ptr_out
-            else:
-                name = ptr_in
-        else:
-            # We might call this before the variable is even defined (e.g., because
-            # we are about to define it), so if the dispatcher is not passed, just
-            # return the appropriate string
-            name = ptr_out if is_write else ptr_in
-    # import pdb
-    # pdb.set_trace()
-    # Append the interface id, if provided
-    if interface_id is not None:
-        name = f"{name}_{interface_id}"
-    return name
-
-
 def fpga_ptr(name: str,
              desc: dt.Data = None,
              sdfg: SDFG = None,
@@ -312,7 +236,7 @@ def fpga_ptr(name: str,
         is_array_interface is True when dispatcher is not None
     :param is_array_interface: Data is pointing to an interface in FPGA-Kernel compilation
     :param interface_id: An optional interface id that will be added to the name (only for array interfaces)
-    :param decouple_array_interfaces: if True it will qualify the name of an array interface depending whether
+    :param decouple_array_interfaces: if True it will qualify the name of an array interface, depending whether
             it is used for reading from or writing to memory
     :return: C-compatible name that can be used to access the data.
     """
@@ -889,10 +813,9 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
             # Find other data nodes that are used internally
             for n, scope in subgraph.all_nodes_recursive():
                 if isinstance(n, dace.sdfg.nodes.AccessNode):
-                    # Add nodes if they are outer-level, or an inner-level
-                    # transient (inner-level inputs/outputs are just connected
-                    # to data in the outer layers, whereas transients can be
-                    # independent).
+                    # Add nodes if they are outer-level, or an inner-level transient
+                    # (inner-level inputs/outputs are just connected to data in the outer layers,
+                    # whereas transients can be independent).
                     # Views are not nested global transients
                     if scope == subgraph or n.desc(scope).transient:
                         desc = n.desc(scope)
@@ -974,7 +897,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
 
                                     tmp_interface_id, last_used_in = global_interfaces[ptr_str]
                                     if last_used_in != subgraph_counter:
-                                        # we accessed the same container from a different data region: we need
+                                        # we accessed the same container from a different subgraph/PE: we need
                                         # to use a different interface
                                         tmp_interface_id += 1
                                         global_interfaces[ptr_str] = (tmp_interface_id, subgraph_counter)
@@ -994,7 +917,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
 
                                 interface_id, last_used_in = global_interfaces[data_name]
                                 if last_used_in != subgraph_counter:
-                                    # we accessed the same container from a different data region: we need
+                                    # we accessed the same container from a different data subgraph/PE: we need
                                     # to use a different interface
                                     global_interfaces[data_name] = (interface_id + 1, subgraph_counter)
                                     interface_id += 1
@@ -1014,8 +937,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                             trace_type, trace_bank = parse_location_bank(trace_desc)
                             if (bank is not None and bank_type is not None
                                     and (bank != trace_bank or bank_type != trace_type)):
-                                raise cgx.CodegenError("Found inconsistent memory bank "
-                                                       f"specifier for {trace_name}.")
+                                raise cgx.CodegenError("Found inconsistent memory bank " f"specifier for {trace_name}.")
                             bank = trace_bank
                             bank_type = trace_type
 
@@ -1554,8 +1476,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
 
             if (not sum(copy_shape) == 1 and
                 (not isinstance(memlet.subset, subsets.Range) or any([step != 1 for _, _, step in memlet.subset]))):
-                raise NotImplementedError("Only contiguous copies currently "
-                                          "supported for FPGA codegen.")
+                raise NotImplementedError("Only contiguous copies currently " "supported for FPGA codegen.")
 
             if host_to_device or device_to_device:
                 host_dtype = sdfg.data(src_node.data).dtype
@@ -1803,8 +1724,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
     @staticmethod
     def make_opencl_parameter(name, desc):
         if isinstance(desc, dt.Array):
-            return (f"hlslib::ocl::Buffer<{desc.dtype.ctype}, "
-                    f"hlslib::ocl::Access::readWrite> &{name}")
+            return (f"hlslib::ocl::Buffer<{desc.dtype.ctype}, " f"hlslib::ocl::Access::readWrite> &{name}")
         else:
             return (desc.as_arg(with_types=True, name=name))
 
@@ -2064,8 +1984,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                                 elif np.issubdtype(np.dtype(end_type.dtype.type), np.unsignedinteger):
                                     loop_var_type = "size_t"
                     except (UnboundLocalError):
-                        raise UnboundLocalError('Pipeline scopes require '
-                                                'specialized bound values')
+                        raise UnboundLocalError('Pipeline scopes require ' 'specialized bound values')
                     except (TypeError):
                         # Raised when the evaluation of begin or skip fails.
                         # This could occur, for example, if they are defined in terms of other symbols, which
