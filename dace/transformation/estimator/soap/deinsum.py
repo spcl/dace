@@ -153,10 +153,10 @@ def deinsum_program({", ".join([f"{arr}: dctype[{shape}]" for arr, shape in inpu
             cinputs = [e.data.data for e in state.in_edges(node)]
             coutput = [e.data.data for e in state.out_edges(node)][0]
             if operation in ('GEMM', 'TDOT'):
-                axes_a = [tokens[1].index(t) for t in contr]
-                axes_b = [tokens[0].index(t) for t in contr]
+                axes_a = [tokens[0].index(t) for t in contr]
+                axes_b = [tokens[1].index(t) for t in contr]
                 code += f"""
-    grid{i}_{coutput} = np.tensordot(grid{i}_{cinputs[1]}, grid{i}_{cinputs[0]}, axes=({axes_a}, {axes_b}))
+    grid{i}_{coutput} = np.tensordot(grid{i}_{cinputs[0]}, grid{i}_{cinputs[1]}, axes=({axes_a}, {axes_b}))
                 """
             else:
                 params = set(tokens[0]).union(set(tokens[1]))
