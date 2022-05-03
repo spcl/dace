@@ -402,20 +402,23 @@ class Array(Data):
          to zero.
 
     To summarize with an example, a two-dimensional array with pre- and post-padding looks as follows:
-    ```
-    [xxx][          |xx]
-         [          |xx]
-         [          |xx]
-         [          |xx]
-         ---------------
-         [xxxxxxxxxxxxx]
+    
+    .. code-block:: text
 
-    shape = (4, 10)
-    strides = (12, 1)
-    start_offset = 3
-    total_size = 63   (= 3 + 12 * 5)
-    offset = (0, 0, 0)
-    ```
+        [xxx][          |xx]
+            [          |xx]
+            [          |xx]
+            [          |xx]
+            ---------------
+            [xxxxxxxxxxxxx]
+
+        shape = (4, 10)
+        strides = (12, 1)
+        start_offset = 3
+        total_size = 63   (= 3 + 12 * 5)
+        offset = (0, 0, 0)
+
+
     Notice that the last padded row does not appear in strides, but is a consequence of ``total_size`` being larger.
     
 
