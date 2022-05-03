@@ -19,7 +19,7 @@ from dace.codegen.dispatcher import DefinedType
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets.target import make_absolute
 from dace.codegen.targets import cpp, fpga
-from typing import List, Union
+from typing import List, Union, Tuple
 
 REDUCTION_TYPE_TO_HLSLIB = {
     dace.dtypes.ReductionType.Min: "hlslib::op::Min",
@@ -592,7 +592,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         '''
 
         # Keep track of kernel arguments as (arg, interface_id) pair
-        kernel_args: list[Tuple[str, int]] = []
+        kernel_args: List[Tuple[str, int]] = []
 
         for _, name, p, interface_ids in parameters:
             if isinstance(p, dt.Array):
