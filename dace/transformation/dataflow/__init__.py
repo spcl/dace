@@ -20,6 +20,7 @@ from .tiling import MapTiling
 from .tiling_with_overlap import MapTilingWithOverlap
 from .buffer_tiling import BufferTiling
 from .vectorization import Vectorization
+from .copy_to_map import CopyToMap
 
 # Data-related
 from .stream_transient import StreamTransient, AccumulateTransient

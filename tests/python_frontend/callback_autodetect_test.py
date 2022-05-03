@@ -549,6 +549,19 @@ def test_nested_duplicate_callbacks():
     assert called == 6
 
 
+def test_scalar_retval():
+    @dace.program
+    def myprogram(a):
+        res: float = time.time()
+        a[0] = res
+
+    old_time = time.time()
+    result = np.random.rand(20)
+    myprogram(result)
+    new_time = time.time()
+    assert result[0] >= old_time and result[0] <= new_time
+
+
 if __name__ == '__main__':
     test_automatic_callback()
     test_automatic_callback_2()
@@ -573,3 +586,4 @@ if __name__ == '__main__':
     test_two_callbacks_different_type()
     test_disallowed_keyword()
     test_nested_duplicate_callbacks()
+    test_scalar_retval()

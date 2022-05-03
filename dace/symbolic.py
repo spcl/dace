@@ -348,11 +348,11 @@ def issymbolic(value, constants=None):
     constants = constants or {}
     if isinstance(value, SymExpr):
         return issymbolic(value.expr)
-    if isinstance(value, symbol) and value.name not in constants:
+    if isinstance(value, (sympy.Symbol, symbol)) and value.name not in constants:
         return True
     if isinstance(value, sympy.Basic):
         for atom in value.atoms():
-            if isinstance(atom, symbol) and atom.name not in constants:
+            if isinstance(atom, (sympy.Symbol, symbol)) and atom.name not in constants:
                 return True
     return False
 
@@ -364,6 +364,11 @@ def overapproximate(expr):
     """
     if isinstance(expr, list):
         return [overapproximate(elem) for elem in expr]
+    return _overapproximate(expr)
+
+
+@lru_cache(maxsize=2048)
+def _overapproximate(expr):
     if isinstance(expr, SymExpr):
         if expr.expr != expr.approx:
             return expr.approx
@@ -371,6 +376,9 @@ def overapproximate(expr):
             return overapproximate(expr.expr)
     if not isinstance(expr, sympy.Basic):
         return expr
+    if isinstance(expr, sympy.Number):
+        return expr
+
     a = sympy.Wild('a')
     b = sympy.Wild('b')
     c = sympy.Wild('c')
@@ -569,6 +577,26 @@ class int_ceil(sympy.Function):
         return True
 
 
+class OR(sympy.Function):
+    @classmethod
+    def eval(cls, x, y):
+        if x.is_Boolean and y.is_Boolean:
+            return x or y
+
+    def _eval_is_boolean(self):
+        return True
+
+
+class AND(sympy.Function):
+    @classmethod
+    def eval(cls, x, y):
+        if x.is_Boolean and y.is_Boolean:
+            return x and y
+
+    def _eval_is_boolean(self):
+        return True
+
+
 def sympy_intdiv_fix(expr):
     """ Fix for SymPy printing out reciprocal values when they should be
         integral in "ceiling/floor" sympy functions.
@@ -763,8 +791,17 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None):
 
     if isinstance(expr, (SymExpr, sympy.Basic)):
         return expr
-    if isinstance(expr, str) and dtypes.validate_name(expr):
-        return symbol(expr)
+    if isinstance(expr, str):
+        try:
+            return sympy.Integer(int(expr))
+        except ValueError:
+            pass
+        try:
+            return sympy.Float(float(expr))
+        except ValueError:
+            pass
+        if dtypes.validate_name(expr):
+            return symbol(expr)
 
     symbol_map = symbol_map or {}
     locals = {
@@ -779,8 +816,8 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None):
         'floor': sympy.floor,
         'ceil': sympy.ceiling,
         # Convert and/or to special sympy functions to avoid boolean evaluation
-        'And': sympy.Function('AND'),
-        'Or': sympy.Function('OR'),
+        'And': AND,
+        'Or': OR,
         'var': sympy.Symbol('var'),
         'root': sympy.Symbol('root'),
         'arg': sympy.Symbol('arg'),
@@ -827,6 +864,10 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
             return f'{expr.func}[{expr.args[0]}]'
         if str(expr.func) == 'int_floor':
             return '((%s) / (%s))' % (self._print(expr.args[0]), self._print(expr.args[1]))
+        if str(expr.func) == 'AND':
+            return f'(({self._print(expr.args[0])}) and ({self._print(expr.args[1])}))'
+        if str(expr.func) == 'OR':
+            return f'(({self._print(expr.args[0])}) or ({self._print(expr.args[1])}))'
         return super()._print_Function(expr)
 
     def _print_Mod(self, expr):
@@ -855,12 +896,28 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
     def _print_Pow(self, expr):
         base = self._print(expr.args[0])
         exponent = self._print(expr.args[1])
+
+        # Special case for square root
+        try:
+            if float(exponent) == 0.5:
+                return f'dace::math::sqrt({base})'
+        except ValueError:
+            pass
+
+        # Special case for integer powers
         try:
             int_exp = int(exponent)
-            assert (int_exp > 0)
+            if int_exp == 0:
+                return '1'
+            negative = int_exp < 0
+            if negative:
+                int_exp = -int_exp
             res = "({})".format(base)
             for _ in range(1, int_exp):
-                res += "*({})".format(base)
+                res += " * ({})".format(base)
+
+            if negative:
+                res = f'reciprocal({res})'
             return res
         except ValueError:
             return "dace::math::pow({f}, {s})".format(f=self._print(expr.args[0]), s=self._print(expr.args[1]))

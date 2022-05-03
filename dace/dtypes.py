@@ -689,6 +689,9 @@ class string(pointer):
     def __init__(self):
         super().__init__(int8)
 
+    def __call__(self, *args, **kwargs):
+        return str(*args, **kwargs)
+
     def to_json(self):
         return {'type': 'string'}
 
@@ -1297,12 +1300,14 @@ def deduplicate(iterable):
     return type(iterable)([i for i in sorted(set(iterable), key=lambda x: iterable.index(x))])
 
 
+namere = re.compile(r'^[a-zA-Z_][a-zA-Z_0-9]*$')
+
 def validate_name(name):
     if not isinstance(name, str) or len(name) == 0:
         return False
     if name in {'True', 'False', 'None'}:
         return False
-    if re.match(r'^[a-zA-Z_][a-zA-Z_0-9]*$', name) is None:
+    if namere.match(name) is None:
         return False
     return True
 
@@ -1400,7 +1405,10 @@ def is_array(obj: Any) -> bool:
         # variables that require grad, or KeyError when a boolean array is used
         return True
     if hasattr(obj, 'data_ptr') or hasattr(obj, '__array_interface__'):
-        return hasattr(obj, 'shape') and len(obj.shape) > 0
+        try:
+            return hasattr(obj, 'shape') and len(obj.shape) > 0
+        except TypeError:  # NumPy scalar objects define an attribute called shape that cannot be used
+            return False
     return False
 
 

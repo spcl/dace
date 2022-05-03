@@ -116,7 +116,7 @@ class PruneConnectors(pm.SingleStateTransformation, pm.SimplifyPass):
                         break
 
 
-class PruneSymbols(pm.SingleStateTransformation, pm.SimplifyPass):
+class PruneSymbols(pm.SingleStateTransformation):
     """ 
     Removes unused symbol mappings from nested SDFGs, as well as internal
     symbols if necessary.
