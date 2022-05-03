@@ -4,6 +4,9 @@ import dace
 from dace import subsets
 from dace.fpga_testing import xilinx_test
 import numpy as np
+import pytest
+from dace.config import set_temporary
+
 
 # A test checking wcr-reduction with HBM/DDR arrays as inputs and output
 
@@ -69,50 +72,100 @@ def exec_test(N, M, banks, mem_type, name):
 def test_hbm_reduce_2x3_2b():
     return exec_test(2, 3, 2, "hbm", "red_2x3_2b")
 
+@xilinx_test()
+def test_hbm_reduce_2x3_2b_decouple_array_interfaces():
+    with set_temporary("compiler", "xilinx", "decouple_array_interfaces", value=True):
+        return exec_test(2, 3, 2, "hbm", "red_2x3_2b_decoupled")
+
 
 @xilinx_test()
 def test_hbm_reduce_10x50_4b():
     return exec_test(10, 50, 4, "hbm", "red_10x50_4b")
+
+@xilinx_test()
+def test_hbm_reduce_10x50_4b_decouple_array_interfaces():
+    with set_temporary("compiler", "xilinx", "decouple_array_interfaces", value=True):
+        return exec_test(10, 50, 4, "hbm", "red_10x50_4b_decoupled")
 
 
 @xilinx_test()
 def test_hbm_reduce_red_1x50_1b():
     return exec_test(1, 50, 1, "hbm", "red_1x50_1b")
 
+@xilinx_test()
+def test_hbm_reduce_red_1x50_1b_decouple_array_interfaces():
+    with set_temporary("compiler", "xilinx", "decouple_array_interfaces", value=True):
+        return exec_test(1, 50, 1, "hbm", "red_1x50_1b_decoupled")
+
 
 @xilinx_test()
 def test_hbm_reduce_red_1x40_8b():
     return exec_test(1, 40, 8, "hbm", "red_1x40_8b")
+
+@xilinx_test()
+def test_hbm_reduce_red_1x40_8b_decouple_array_interfaces():
+    with set_temporary("compiler", "xilinx", "decouple_array_interfaces", value=True):
+        return exec_test(1, 40, 8, "hbm", "red_1x40_8b_decoupled")
 
 
 @xilinx_test()
 def test_hbm_reduce_red_2x40_6b():
     return exec_test(2, 40, 6, "hbm", "red_2x40_6b")
 
+@xilinx_test()
+def test_hbm_reduce_red_2x40_6b_decouple_array_interfaces():
+    with set_temporary("compiler", "xilinx", "decouple_array_interfaces", value=True):
+        return exec_test(2, 40, 6, "hbm", "red_2x40_6b_decoupled")
+
 
 @xilinx_test()
 def test_ddr_reduce_2x3_2b():
     return exec_test(2, 3, 2, "ddr", "red_2x3_2b")
+
+@xilinx_test()
+def test_ddr_reduce_2x3_2b_decouple_array_interfaces():
+    with set_temporary("compiler", "xilinx", "decouple_array_interfaces", value=True):
+        return exec_test(2, 3, 2, "ddr", "red_2x3_2b_decoupled")
 
 
 @xilinx_test()
 def test_ddr_reduce_10x50_4b():
     return exec_test(10, 50, 4, "ddr", "red_10x50_4b")
 
+@xilinx_test()
+def test_ddr_reduce_10x50_4b_decouple_array_interfaces():
+    with set_temporary("compiler", "xilinx", "decouple_array_interfaces", value=True):
+        return exec_test(10, 50, 4, "ddr", "red_10x50_4b_decoupled")
+
 
 @xilinx_test()
 def test_ddr_reduce_red_1x50_1b():
     return exec_test(1, 50, 1, "ddr", "red_1x50_1b")
+
+@xilinx_test()
+def test_ddr_reduce_red_1x50_1b_decouple_array_interfaces():
+    with set_temporary("compiler", "xilinx", "decouple_array_interfaces", value=True):
+        return exec_test(1, 50, 1, "ddr", "red_1x50_1b_decoupled")
 
 
 @xilinx_test()
 def test_ddr_reduce_red_1x40_8b():
     return exec_test(1, 40, 8, "ddr", "red_1x40_8b")
 
+@xilinx_test()
+def test_ddr_reduce_red_1x40_8b_decouple_array_interfaces():
+    with set_temporary("compiler", "xilinx", "decouple_array_interfaces", value=True):
+        return exec_test(1, 40, 8, "ddr", "red_1x40_8b_decoupled")
+
 
 @xilinx_test()
 def test_ddr_reduce_red_2x40_6b():
     return exec_test(2, 40, 6, "ddr", "red_2x40_6b")
+
+@xilinx_test()
+def test_ddr_reduce_red_2x40_6b_decouple_array_interfaces():
+    with set_temporary("compiler", "xilinx", "decouple_array_interfaces", value=True):
+        return exec_test(2, 40, 6, "ddr", "red_2x40_6b_decoupled")
 
 
 if __name__ == "__main__":

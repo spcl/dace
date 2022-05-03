@@ -73,6 +73,9 @@ def copy_expr(
         defined_types = dispatcher.defined_vars.get(ptrname, is_global=is_global)
     def_type, _ = defined_types
     if fpga.is_fpga_array(data_desc):
+        # get conf flag
+        decouple_array_interfaces = Config.get_bool("compiler", "xilinx", "decouple_array_interfaces")
+
         expr = fpga.fpga_ptr(
             data_name,
             data_desc,
@@ -83,7 +86,8 @@ def copy_expr(
             0,
             def_type == DefinedType.ArrayInterface
             # If this is a view, it has already been renamed
-            and not isinstance(data_desc, data.View))
+            and not isinstance(data_desc, data.View),
+            decouple_array_interfaces=decouple_array_interfaces)
     else:
         expr = ptr(data_name, data_desc, sdfg, dispatcher.frame)
 
@@ -237,8 +241,8 @@ def ptr(name: str, desc: data.Data, sdfg: SDFG = None, framecode=None) -> str:
                 return f'__state->__{sdfg.sdfg_id}_{name}'
             elif (sdfg, name) in framecode.where_allocated and framecode.where_allocated[(sdfg, name)] is not sdfg:
                 return f'__{sdfg.sdfg_id}_{name}'
-        elif (desc.transient and sdfg is not None and framecode is not None and (sdfg, name) in framecode.where_allocated
-                and framecode.where_allocated[(sdfg, name)] is not sdfg):
+        elif (desc.transient and sdfg is not None and framecode is not None
+              and (sdfg, name) in framecode.where_allocated and framecode.where_allocated[(sdfg, name)] is not sdfg):
             # Array allocated for another SDFG, use unambiguous name
             return f'__{sdfg.sdfg_id}_{name}'
 
@@ -252,11 +256,14 @@ def emit_memlet_reference(dispatcher,
                           conntype: dtypes.typeclass,
                           ancestor: int = 1,
                           is_write: bool = None,
-                          device_code: bool = False) -> Tuple[str, str, str]:
+                          device_code: bool = False,
+                          decouple_array_interfaces: bool = False) -> Tuple[str, str, str]:
     """
     Returns a tuple of three strings with a definition of a reference to an
     existing memlet. Used in nested SDFG arguments.
     :param device_code: boolean flag indicating whether we are in the process of generating FPGA device code
+    :param decouple_array_interfaces: boolean flag, used for Xilinx FPGA code generation. It indicates whether or not
+        we are generating code by decoupling reads/write from memory.
     :return: A tuple of the form (type, name, value).
     """
     desc = sdfg.arrays[memlet.data]
@@ -282,8 +289,17 @@ def emit_memlet_reference(dispatcher,
     defined_type, defined_ctype = defined_types
 
     if fpga.is_fpga_array(desc):
-        datadef = fpga.fpga_ptr(memlet.data, desc, sdfg, memlet.subset, is_write, dispatcher, ancestor,
-                                defined_type == DefinedType.ArrayInterface)
+
+        datadef = fpga.fpga_ptr(memlet.data,
+                                desc,
+                                sdfg,
+                                memlet.subset,
+                                is_write,
+                                dispatcher,
+                                ancestor,
+                                defined_type == DefinedType.ArrayInterface,
+                                decouple_array_interfaces=decouple_array_interfaces)
+
     else:
         datadef = ptr(memlet.data, desc, sdfg, dispatcher.frame)
 
@@ -537,7 +553,13 @@ def cpp_array_expr(sdfg,
 
     if with_brackets:
         if fpga.is_fpga_array(desc):
-            ptrname = fpga.fpga_ptr(memlet.data, desc, sdfg, subset)
+            # get conf flag
+            decouple_array_interfaces = Config.get_bool("compiler", "xilinx", "decouple_array_interfaces")
+            ptrname = fpga.fpga_ptr(memlet.data,
+                                    desc,
+                                    sdfg,
+                                    subset,
+                                    decouple_array_interfaces=decouple_array_interfaces)
         else:
             ptrname = ptr(memlet.data, desc, sdfg, codegen)
         return "%s[%s]" % (ptrname, offset_cppstr)
@@ -569,7 +591,8 @@ def cpp_ptr_expr(sdfg,
                  use_other_subset=False,
                  indices=None,
                  is_write=None,
-                 codegen=None):
+                 codegen=None,
+                 decouple_array_interface=False):
     """ Converts a memlet to a C++ pointer expression. """
     subset = memlet.subset if not use_other_subset else memlet.other_subset
     s = subset if relative_offset else subsets.Indices(offset)
@@ -580,8 +603,15 @@ def cpp_ptr_expr(sdfg,
     else:
         offset_cppstr = cpp_offset_expr(desc, s, o, indices=indices)
     if fpga.is_fpga_array(desc):
-        dname = fpga.fpga_ptr(memlet.data, desc, sdfg, s, is_write, None, None,
-                              defined_type == DefinedType.ArrayInterface)
+        dname = fpga.fpga_ptr(memlet.data,
+                              desc,
+                              sdfg,
+                              s,
+                              is_write,
+                              None,
+                              None,
+                              defined_type == DefinedType.ArrayInterface,
+                              decouple_array_interfaces=decouple_array_interface)
     else:
         dname = ptr(memlet.data, desc, sdfg, codegen)
 
@@ -995,6 +1025,7 @@ class DaCeKeywordRemover(ExtNodeTransformer):
         self.constants = constants
         self.codegen = codegen
         self.allow_casts = True
+        self._decouple_array_interfaces = Config.get_bool("compiler", "xilinx", "decouple_array_interfaces")
 
     def visit_TopLevelExpr(self, node):
         # This is a DaCe shift, omit it
@@ -1119,7 +1150,7 @@ class DaCeKeywordRemover(ExtNodeTransformer):
                                 None,
                                 None,
                                 True,
-                            )
+                                decouple_array_interfaces=self._decouple_array_interfaces)
                             newnode = ast.Name(
                                 id=f"{array_interface_name}"
                                 f"[{cpp_array_expr(self.sdfg, memlet, with_brackets=False, codegen=self.codegen._frame)}]"
