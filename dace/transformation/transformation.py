@@ -569,7 +569,7 @@ class ExpandTransformation(PatternTransformation):
         return str(self._match_node)
 
     @staticmethod
-    def expansion(node):
+    def expansion(node: nd.LibraryNode, parent_state: SDFGState, parent_sdfg: SDFG, *args, **kwargs):
         raise NotImplementedError("Must be implemented by subclass")
 
     @staticmethod
