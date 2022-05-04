@@ -670,8 +670,18 @@ class StateGraphView(object):
             :param name: Name to find.
             :param new_name: Name to replace.
         """
-        from dace.sdfg.sdfg import replace
+        from dace.sdfg.replace import replace
         replace(self, name, new_name)
+
+    def replace_dict(self,
+                     repl: Dict[str, str],
+                     symrepl: Optional[Dict[symbolic.SymbolicType, symbolic.SymbolicType]] = None):
+        """ Finds and replaces all occurrences of a set of symbols or arrays in this state.
+            :param repl: Mapping from names to replacements.
+            :param symrepl: Optional symbolic version of ``repl``.
+        """
+        from dace.sdfg.replace import replace_dict
+        replace_dict(self, repl, symrepl)
 
 
 @make_properties
