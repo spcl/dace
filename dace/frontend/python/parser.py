@@ -433,7 +433,7 @@ class DaceProgram(pycommon.SDFGConvertible):
         :return: The generated SDFG object.
         """
         # Avoid import loop
-        from dace.sdfg.analysis import scalar_to_symbol as scal2sym
+        from dace.transformation.passes import scalar_to_symbol as scal2sym
         from dace.transformation import helpers as xfh
 
         # Obtain DaCe program as SDFG

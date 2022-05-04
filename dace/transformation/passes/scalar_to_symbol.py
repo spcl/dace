@@ -1,16 +1,16 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 """ Scalar to symbol promotion functionality. """
 
 import ast
 import collections
-from platform import node
 from dace import symbolic
 from dace.sdfg.sdfg import InterstateEdge
 from dace import (dtypes, nodes, sdfg as sd, data as dt, properties as props, memlet as mm, subsets)
-from dace.sdfg import graph as gr
+from dace.sdfg import graph as gr, SDFG
 from dace.frontend.python import astutils
 from dace.sdfg import utils as sdutils
-from dace.transformation import helpers as xfh
+from dace.transformation import helpers as xfh, pass_pipeline as passes
+from dataclasses import dataclass
 import re
 from typing import Any, DefaultDict, Dict, List, Optional, Set, Tuple, Union
 
@@ -534,11 +534,143 @@ def translate_cpp_tasklet_to_python(code: str):
     return newcode
 
 
+@dataclass
+class ScalarToSymbolPromotion(passes.Pass):
+    ignore: Optional[Set[str]] = None
+    transients_only: bool = True
+    integers_only: bool = True
+
+    def modifies(self) -> passes.Modifies:
+        return (passes.Modifies.Descriptors | passes.Modifies.Symbols | passes.Modifies.Nodes | passes.Modifies.Edges)
+
+    def apply_pass(self, sdfg: SDFG, _: Dict[Any, Any]) -> Set[str]:
+        """
+        Promotes all matching transient scalars to SDFG symbols, changing all
+        tasklets to inter-state assignments. This enables the transformed symbols
+        to be used within states as part of memlets, and allows further
+        transformations (such as loop detection) to use the information for
+        optimization.
+        :param sdfg: The SDFG to run the pass on.
+        :param ignore: An optional set of strings of scalars to ignore.
+        :param transients_only: If False, also considers global data descriptors (e.g., arguments).
+        :param integers_only: If False, also considers non-integral descriptors for promotion.
+        :return: Set of promoted scalars.
+        """
+        # Process:
+        # 1. Find scalars to promote
+        # 2. For every assignment tasklet/access:
+        #    2.1. Fission state to isolate assignment
+        #    2.2. Replace assignment with inter-state edge assignment
+        # 3. For every read of the scalar:
+        #    3.1. If destination is tasklet, remove node, edges, and connectors
+        #    3.2. If used in tasklet as subscript or connector, modify tasklet code
+        #    3.3. If destination is array, change to tasklet that copies symbol data
+        # 4. Remove newly-isolated access nodes
+        # 5. Remove data descriptors and add symbols to SDFG
+        # 6. Replace subscripts in all interstate conditions and assignments
+        # 7. Make indirections with symbols a single memlet
+        ignore = self.ignore
+        transients_only = self.transients_only
+        integers_only = self.integers_only
+
+        to_promote = find_promotable_scalars(sdfg, transients_only=transients_only, integers_only=integers_only)
+        if ignore:
+            to_promote -= ignore
+        if len(to_promote) == 0:
+            return to_promote
+
+        for state in sdfg.nodes():
+            scalar_nodes = [n for n in state.nodes() if isinstance(n, nodes.AccessNode) and n.data in to_promote]
+            # Step 2: Assignment tasklets
+            for node in scalar_nodes:
+                if state.in_degree(node) == 0:
+                    continue
+                in_edge = state.in_edges(node)[0]
+                input = in_edge.src
+
+                # There is only zero or one incoming edges by definition
+                tasklet_inputs = [e.src for e in state.in_edges(input)]
+                # Step 2.1
+                new_state = xfh.state_fission(sdfg, gr.SubgraphView(state, set([input, node] + tasklet_inputs)))
+                new_isedge: sd.InterstateEdge = sdfg.out_edges(new_state)[0]
+                # Step 2.2
+                node: nodes.AccessNode = new_state.sink_nodes()[0]
+                input = new_state.in_edges(node)[0].src
+                if isinstance(input, nodes.Tasklet):
+                    # Convert tasklet to interstate edge
+                    newcode: str = ''
+                    if input.language is dtypes.Language.Python:
+                        newcode = astutils.unparse(input.code.code[0].value)
+                    elif input.language is dtypes.Language.CPP:
+                        newcode = translate_cpp_tasklet_to_python(input.code.as_string.strip())
+
+                    # Replace tasklet inputs with incoming edges
+                    for e in new_state.in_edges(input):
+                        memlet_str: str = e.data.data
+                        if (e.data.subset is not None and not isinstance(sdfg.arrays[memlet_str], dt.Scalar)):
+                            memlet_str += '[%s]' % e.data.subset
+                        newcode = re.sub(r'\b%s\b' % re.escape(e.dst_conn), memlet_str, newcode)
+                    # Add interstate edge assignment
+                    new_isedge.data.assignments[node.data] = newcode
+                elif isinstance(input, nodes.AccessNode):
+                    memlet: mm.Memlet = in_edge.data
+                    if (memlet.src_subset and not isinstance(sdfg.arrays[memlet.data], dt.Scalar)):
+                        new_isedge.data.assignments[node.data] = '%s[%s]' % (input.data, memlet.src_subset)
+                    else:
+                        new_isedge.data.assignments[node.data] = input.data
+
+                # Clean up all nodes after assignment was transferred
+                new_state.remove_nodes_from(new_state.nodes())
+
+        # Step 3: Scalar reads
+        remove_scalar_reads(sdfg, {k: k for k in to_promote})
+
+        # Step 4: Isolated nodes
+        for state in sdfg.nodes():
+            scalar_nodes = [n for n in state.nodes() if isinstance(n, nodes.AccessNode) and n.data in to_promote]
+            state.remove_nodes_from([n for n in scalar_nodes if len(state.all_edges(n)) == 0])
+
+        # Step 5: Data descriptor management
+        for scalar in to_promote:
+            desc = sdfg.arrays[scalar]
+            sdfg.remove_data(scalar, validate=False)
+            # If the scalar is already a symbol (e.g., as part of an array size),
+            # do not re-add the symbol
+            if scalar not in sdfg.symbols:
+                sdfg.add_symbol(scalar, desc.dtype)
+
+        # Step 6: Inter-state edge cleanup
+        cleanup_re = {s: re.compile(fr'\b{re.escape(s)}\[.*?\]') for s in to_promote}
+        promo = TaskletPromoterDict({k: k for k in to_promote})
+        for edge in sdfg.edges():
+            ise: InterstateEdge = edge.data
+            # Condition
+            if not edge.data.is_unconditional():
+                if ise.condition.language is dtypes.Language.Python:
+                    for stmt in ise.condition.code:
+                        promo.visit(stmt)
+                elif ise.condition.language is dtypes.Language.CPP:
+                    for scalar in to_promote:
+                        ise.condition = cleanup_re[scalar].sub(scalar, ise.condition.as_string)
+
+            # Assignments
+            for aname, assignment in ise.assignments.items():
+                for scalar in to_promote:
+                    if scalar in assignment:
+                        ise.assignments[aname] = cleanup_re[scalar].sub(scalar, assignment.strip())
+
+        # Step 7: Indirection
+        remove_symbol_indirection(sdfg)
+
+        return to_promote
+
+
 def promote_scalars_to_symbols(sdfg: sd.SDFG,
                                ignore: Optional[Set[str]] = None,
                                transients_only: bool = True,
                                integers_only: bool = True) -> Set[str]:
     """
+    DEPRECATED. Use pass directly instead.
     Promotes all matching transient scalars to SDFG symbols, changing all
     tasklets to inter-state assignments. This enables the transformed symbols
     to be used within states as part of memlets, and allows further
@@ -552,106 +684,5 @@ def promote_scalars_to_symbols(sdfg: sd.SDFG,
     :return: Set of promoted scalars.
     :note: Operates in-place.
     """
-    # Process:
-    # 1. Find scalars to promote
-    # 2. For every assignment tasklet/access:
-    #    2.1. Fission state to isolate assignment
-    #    2.2. Replace assignment with inter-state edge assignment
-    # 3. For every read of the scalar:
-    #    3.1. If destination is tasklet, remove node, edges, and connectors
-    #    3.2. If used in tasklet as subscript or connector, modify tasklet code
-    #    3.3. If destination is array, change to tasklet that copies symbol data
-    # 4. Remove newly-isolated access nodes
-    # 5. Remove data descriptors and add symbols to SDFG
-    # 6. Replace subscripts in all interstate conditions and assignments
-    # 7. Make indirections with symbols a single memlet
-    to_promote = find_promotable_scalars(sdfg, transients_only=transients_only, integers_only=integers_only)
-    if ignore:
-        to_promote -= ignore
-    if len(to_promote) == 0:
-        return to_promote
-
-    for state in sdfg.nodes():
-        scalar_nodes = [n for n in state.nodes() if isinstance(n, nodes.AccessNode) and n.data in to_promote]
-        # Step 2: Assignment tasklets
-        for node in scalar_nodes:
-            if state.in_degree(node) == 0:
-                continue
-            in_edge = state.in_edges(node)[0]
-            input = in_edge.src
-
-            # There is only zero or one incoming edges by definition
-            tasklet_inputs = [e.src for e in state.in_edges(input)]
-            # Step 2.1
-            new_state = xfh.state_fission(sdfg, gr.SubgraphView(state, set([input, node] + tasklet_inputs)))
-            new_isedge: sd.InterstateEdge = sdfg.out_edges(new_state)[0]
-            # Step 2.2
-            node: nodes.AccessNode = new_state.sink_nodes()[0]
-            input = new_state.in_edges(node)[0].src
-            if isinstance(input, nodes.Tasklet):
-                # Convert tasklet to interstate edge
-                newcode: str = ''
-                if input.language is dtypes.Language.Python:
-                    newcode = astutils.unparse(input.code.code[0].value)
-                elif input.language is dtypes.Language.CPP:
-                    newcode = translate_cpp_tasklet_to_python(input.code.as_string.strip())
-
-                # Replace tasklet inputs with incoming edges
-                for e in new_state.in_edges(input):
-                    memlet_str: str = e.data.data
-                    if (e.data.subset is not None and not isinstance(sdfg.arrays[memlet_str], dt.Scalar)):
-                        memlet_str += '[%s]' % e.data.subset
-                    newcode = re.sub(r'\b%s\b' % re.escape(e.dst_conn), memlet_str, newcode)
-                # Add interstate edge assignment
-                new_isedge.data.assignments[node.data] = newcode
-            elif isinstance(input, nodes.AccessNode):
-                memlet: mm.Memlet = in_edge.data
-                if (memlet.src_subset and not isinstance(sdfg.arrays[memlet.data], dt.Scalar)):
-                    new_isedge.data.assignments[node.data] = '%s[%s]' % (input.data, memlet.src_subset)
-                else:
-                    new_isedge.data.assignments[node.data] = input.data
-
-            # Clean up all nodes after assignment was transferred
-            new_state.remove_nodes_from(new_state.nodes())
-
-    # Step 3: Scalar reads
-    remove_scalar_reads(sdfg, {k: k for k in to_promote})
-
-    # Step 4: Isolated nodes
-    for state in sdfg.nodes():
-        scalar_nodes = [n for n in state.nodes() if isinstance(n, nodes.AccessNode) and n.data in to_promote]
-        state.remove_nodes_from([n for n in scalar_nodes if len(state.all_edges(n)) == 0])
-
-    # Step 5: Data descriptor management
-    for scalar in to_promote:
-        desc = sdfg.arrays[scalar]
-        sdfg.remove_data(scalar, validate=False)
-        # If the scalar is already a symbol (e.g., as part of an array size),
-        # do not re-add the symbol
-        if scalar not in sdfg.symbols:
-            sdfg.add_symbol(scalar, desc.dtype)
-
-    # Step 6: Inter-state edge cleanup
-    cleanup_re = {s: re.compile(fr'\b{re.escape(s)}\[.*?\]') for s in to_promote}
-    promo = TaskletPromoterDict({k: k for k in to_promote})
-    for edge in sdfg.edges():
-        ise: InterstateEdge = edge.data
-        # Condition
-        if not edge.data.is_unconditional():
-            if ise.condition.language is dtypes.Language.Python:
-                for stmt in ise.condition.code:
-                    promo.visit(stmt)
-            elif ise.condition.language is dtypes.Language.CPP:
-                for scalar in to_promote:
-                    ise.condition = cleanup_re[scalar].sub(scalar, ise.condition.as_string)
-
-        # Assignments
-        for aname, assignment in ise.assignments.items():
-            for scalar in to_promote:
-                if scalar in assignment:
-                    ise.assignments[aname] = cleanup_re[scalar].sub(scalar, assignment.strip())
-
-    # Step 7: Indirection
-    remove_symbol_indirection(sdfg)
-
-    return to_promote
+    s2s = ScalarToSymbolPromotion(ignore=ignore, transients_only=transients_only, integers_only=integers_only)
+    return s2s.apply_pass(sdfg, {})
