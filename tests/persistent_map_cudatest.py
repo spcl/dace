@@ -29,9 +29,6 @@ def spmv(A_row, A_col, A_val, x, b):
 
 @pytest.mark.gpu
 def test_persistent_dynamic_map():
-
-    print('SPMV with dynamic map')
-
     sdfg = spmv.to_sdfg()
     sdfg.apply_gpu_transformations()
 
@@ -51,9 +48,6 @@ def test_persistent_dynamic_map():
 
 @pytest.mark.gpu
 def test_persistent_default():
-
-    print('SPMV with default map')
-
     sdfg = spmv.to_sdfg()
     sdfg.apply_gpu_transformations()
 
@@ -95,7 +89,6 @@ def verify(sdfg):
     sdfg(A_row=A_row, A_col=A_col, A_val=A_val, x=x, b=b, H=A_sparse.shape[0], W=A_sparse.shape[1], nnz=A_sparse.nnz)
 
     assert np.allclose(b, A_sparse.dot(x)), "Result doesn't match!"
-    print("Complete.")
 
 
 if __name__ == '__main__':

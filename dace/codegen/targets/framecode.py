@@ -116,7 +116,12 @@ class DaCeCodeGenerator(object):
         # Environment-based includes
         for env in self.environments:
             if len(env.headers) > 0:
-                global_stream.write("\n".join("#include \"" + h + "\"" for h in env.headers), sdfg)
+                if not isinstance(env.headers, dict):
+                    headers = {'frame': env.headers}
+                else:
+                    headers = env.headers
+                if backend in headers:
+                    global_stream.write("\n".join("#include \"" + h + "\"" for h in headers[backend]), sdfg)
 
         #########################################################
         # Custom types

@@ -5,12 +5,9 @@ from typing import Any, Dict, List, Set, Tuple, Union
 import os
 
 from dace import dtypes, SDFG
+from dace.data import ArrayLike  # Type hint
 
 import numpy as np
-try:
-    from numpy.typing import ArrayLike
-except (ModuleNotFoundError, ImportError):
-    ArrayLike = Any
 
 
 @dataclass
@@ -78,6 +75,24 @@ class InstrumentedDataReport:
         """ Returns the array names available in this data report. """
         return self.files.keys()
 
+    def _read_file(self, filename: str, npdtype: np.dtype) -> Tuple[ArrayLike, ArrayLike]:
+        """
+        Reads a formatted instrumented data file. 
+        :returns: A 2-tuple of (original buffer, array view)
+        """
+        with open(filename, 'rb') as fp:
+            # Recreate runtime shape and strides from buffer
+            ndims, = struct.unpack('i', fp.read(4))
+            shape = struct.unpack('i' * ndims, fp.read(4 * ndims))
+            strides = struct.unpack('i' * ndims, fp.read(4 * ndims))
+            strides = tuple(s * npdtype.itemsize for s in strides)
+
+            # Make numpy array from data descriptor
+            nparr = np.fromfile(fp, dtype=npdtype)
+            # No need to use ``start_offset`` because the unaligned version is saved
+            view = np.ndarray(shape, npdtype, buffer=nparr, strides=strides)
+        return nparr, view
+
     def __getitem__(self, item: str) -> Union[ArrayLike, List[ArrayLike]]:
         """
         Returns the instrumented (saved) data from the report according to the data descriptor (array) name. 
@@ -92,23 +107,30 @@ class InstrumentedDataReport:
 
         results = []
         for i, file in enumerate(filenames):
-            with open(file, 'rb') as fp:
-                # Recreate runtime shape and strides from buffer
-                ndims, = struct.unpack('i', fp.read(4))
-                shape = struct.unpack('i' * ndims, fp.read(4 * ndims))
-                strides = struct.unpack('i' * ndims, fp.read(4 * ndims))
-                strides = tuple(s * dtype.bytes for s in strides)
-
-                # Make numpy array from data descriptor
-                nparr = np.fromfile(fp, dtype=npdtype)
-                # No need to use ``start_offset`` because the unaligned version is saved
-                view = np.ndarray(shape, npdtype, buffer=nparr, strides=strides)
-                self.loaded_arrays[item, i] = nparr
-                results.append(view)
+            nparr, view = self._read_file(file, npdtype)
+            self.loaded_arrays[item, i] = nparr
+            results.append(view)
 
         if len(results) == 1:
             return results[0]
         return results
+
+    def get_first_version(self, item: str) -> ArrayLike:
+        """
+        Returns the first version of the instrumented (saved) data from the report according to the data descriptor
+        (array) name.
+        :param item: Name of the array to read.
+        :return: The array from the report.
+        """
+        filenames = self.files[item]
+        desc = self.sdfg.arrays[item]
+        dtype: dtypes.typeclass = desc.dtype
+        npdtype = dtype.as_numpy_dtype()
+
+        file = next(iter(filenames))
+        nparr, view = self._read_file(file, npdtype)
+        self.loaded_arrays[item, 0] = nparr
+        return view
 
     def update_report(self):
         """

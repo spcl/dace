@@ -26,7 +26,7 @@ def program(*args,
             auto_optimize=False,
             device=dtypes.DeviceType.CPU,
             constant_functions=False,
-            **kwargs) -> parser.DaceProgram:
+            **kwargs) -> Callable[..., parser.DaceProgram]:
     ...
 
 
@@ -36,7 +36,7 @@ def program(f: F,
             auto_optimize=False,
             device=dtypes.DeviceType.CPU,
             constant_functions=False,
-            **kwargs) -> parser.DaceProgram:
+            **kwargs) -> Callable[..., parser.DaceProgram]:
     """
     Entry point to a data-centric program. For methods and ``classmethod``s, use
     ``@dace.method``.

@@ -569,7 +569,7 @@ class ExpandTransformation(PatternTransformation):
         return str(self._match_node)
 
     @staticmethod
-    def expansion(node):
+    def expansion(node: nd.LibraryNode, parent_state: SDFGState, parent_sdfg: SDFG, *args, **kwargs):
         raise NotImplementedError("Must be implemented by subclass")
 
     @staticmethod
@@ -684,6 +684,13 @@ class SubgraphTransformation(TransformationBase):
             self.subgraph = subgraph
             self.sdfg_id = sdfg_id
             self.state_id = state_id
+
+    def get_subgraph(self, sdfg: SDFG) -> gr.SubgraphView:
+        sdfg = sdfg.sdfg_list[self.sdfg_id]
+        if self.state_id == -1:
+            return gr.SubgraphView(sdfg, list(map(sdfg.node, self.subgraph)))
+        state = sdfg.node(self.state_id)
+        return st.StateSubgraphView(state, list(map(state.node, self.subgraph)))
 
     @classmethod
     def subclasses_recursive(cls) -> Set[Type['PatternTransformation']]:

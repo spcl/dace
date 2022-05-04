@@ -855,24 +855,48 @@ class CPPUnparser:
             self.dispatch(t.right)
 
             self.write(")")
-        # Special case for integer power
+        # Special cases for powers
         elif t.op.__class__.__name__ == 'Pow':
-            if (isinstance(t.right, (ast.Num, ast.Constant)) and int(t.right.n) == t.right.n and t.right.n >= 0):
-                self.write("(")
-                if t.right.n == 0:
-                    self.write("1")
-                else:
-                    self.dispatch(t.left)
-                    for i in range(int(t.right.n) - 1):
-                        self.write(" * ")
+            if isinstance(t.right, (ast.Num, ast.Constant, ast.UnaryOp)):
+                power = None
+                if isinstance(t.right, (ast.Num, ast.Constant)):
+                    power = t.right.n
+                elif isinstance(t.right, ast.UnaryOp) and isinstance(t.right.op, ast.USub):
+                    if isinstance(t.right.operand, (ast.Num, ast.Constant)):
+                        power = -t.right.operand.n
+
+                if power is not None and int(power) == power:
+                    negative = power < 0
+                    power = int(-power if negative else power)
+                    if negative:
+                        self.write("reciprocal(")
+                    else:
+                        self.write("(")
+                    if power == 0:
+                        self.write("1")
+                    else:
+                        self.write("dace::math::ipow(")
                         self.dispatch(t.left)
-                self.write(")")
-            else:
-                self.write("dace::math::pow(")
-                self.dispatch(t.left)
-                self.write(", ")
-                self.dispatch(t.right)
-                self.write(")")
+                        self.write(f", {power})")
+                    self.write(")")
+                    return
+                elif power is not None and float(power) == 0.5 or float(power) == -0.5:  # Square root
+                    if float(power) == -0.5:
+                        # rsqrt
+                        self.write("reciprocal(")
+                    self.write("dace::math::sqrt(")
+                    self.dispatch(t.left)
+                    self.write(")")
+                    if float(power) == -0.5:
+                        self.write(")")
+                    return
+
+            # General pow operator
+            self.write("dace::math::pow(")
+            self.dispatch(t.left)
+            self.write(", ")
+            self.dispatch(t.right)
+            self.write(")")
         else:
             self.write("(")
 

@@ -292,17 +292,21 @@ def get_environment_flags(environments) -> Tuple[List[str], Set[str]]:
         cmake_files |= set(
             (f if os.path.isabs(f) else os.path.join(env_dir, f)) + (".cmake" if not f.endswith(".cmake") else "")
             for f in _get_or_eval(env.cmake_files))
-        for header in _get_or_eval(env.headers):
-            if os.path.isabs(header):
-                # Giving an absolute path is not good practice, but allow it
-                # for emergency overriding
-                cmake_includes.add(os.path.dirname(header))
-            abs_path = os.path.join(env_dir, header)
-            if os.path.isfile(abs_path):
-                # Allow includes stored with the library, specified with a
-                # relative path
-                cmake_includes.add(env_dir)
-                break
+        headers = _get_or_eval(env.headers)
+        if not isinstance(headers, dict):
+            headers = {'frame': headers}
+        for header_group in headers.values():
+            for header in header_group:
+                if os.path.isabs(header):
+                    # Giving an absolute path is not good practice, but allow it
+                    # for emergency overriding
+                    cmake_includes.add(os.path.dirname(header))
+                abs_path = os.path.join(env_dir, header)
+                if os.path.isfile(abs_path):
+                    # Allow includes stored with the library, specified with a
+                    # relative path
+                    cmake_includes.add(env_dir)
+                    break
 
     environment_flags = [
         "-DDACE_ENV_MINIMUM_VERSION={}".format(".".join(map(str, cmake_minimum_version))),

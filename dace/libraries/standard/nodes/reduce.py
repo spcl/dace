@@ -81,8 +81,8 @@ class ExpandReducePure(pm.ExpandTransformation):
             init_state.add_mapped_tasklet(
                 'reduce_init', {'_o%d' % i: '0:%s' % symstr(d)
                                 for i, d in enumerate(outedge.data.subset.size())}, {},
-                'out = %s' % node.identity,
-                {'out': dace.Memlet.simple('_out', ','.join(['_o%d' % i for i in range(output_dims)]))},
+                '__out = %s' % node.identity,
+                {'__out': dace.Memlet.simple('_out', ','.join(['_o%d' % i for i in range(output_dims)]))},
                 external_edges=True)
         else:
             nstate = nsdfg.add_state()
@@ -119,17 +119,17 @@ class ExpandReducePure(pm.ExpandTransformation):
              for i, axis in enumerate(sorted(axes))})
 
         # Add identity tasklet for reduction
-        t = nstate.add_tasklet('identity', {'inp'}, {'out'}, 'out = inp')
+        t = nstate.add_tasklet('identity', {'__inp'}, {'__out'}, '__out = __inp')
 
         # Connect everything
         r = nstate.add_read('_in')
         w = nstate.add_read('_out')
         if ome:
-            nstate.add_memlet_path(r, ome, ime, t, dst_conn='inp', memlet=inmm)
-            nstate.add_memlet_path(t, imx, omx, w, src_conn='out', memlet=outm)
+            nstate.add_memlet_path(r, ome, ime, t, dst_conn='__inp', memlet=inmm)
+            nstate.add_memlet_path(t, imx, omx, w, src_conn='__out', memlet=outm)
         else:
-            nstate.add_memlet_path(r, ime, t, dst_conn='inp', memlet=inmm)
-            nstate.add_memlet_path(t, imx, w, src_conn='out', memlet=outm)
+            nstate.add_memlet_path(r, ime, t, dst_conn='__inp', memlet=inmm)
+            nstate.add_memlet_path(t, imx, w, src_conn='__out', memlet=outm)
 
         # Rename outer connectors and add to node
         inedge._dst_conn = '_in'

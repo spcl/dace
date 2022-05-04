@@ -7,6 +7,7 @@ import ast
 import copy
 import functools
 import itertools
+import math
 import warnings
 
 import sympy as sp
@@ -72,6 +73,9 @@ def copy_expr(
         defined_types = dispatcher.defined_vars.get(ptrname, is_global=is_global)
     def_type, _ = defined_types
     if fpga.is_fpga_array(data_desc):
+        # get conf flag
+        decouple_array_interfaces = Config.get_bool("compiler", "xilinx", "decouple_array_interfaces")
+
         expr = fpga.fpga_ptr(
             data_name,
             data_desc,
@@ -82,7 +86,8 @@ def copy_expr(
             0,
             def_type == DefinedType.ArrayInterface
             # If this is a view, it has already been renamed
-            and not isinstance(data_desc, data.View))
+            and not isinstance(data_desc, data.View),
+            decouple_array_interfaces=decouple_array_interfaces)
     else:
         expr = ptr(data_name, data_desc, sdfg, dispatcher.frame)
 
@@ -116,52 +121,59 @@ def memlet_copy_to_absolute_strides(dispatcher, sdfg, memlet, src_node, dst_node
     copy_shape = memlet.subset.size_exact()
     src_nodedesc = src_node.desc(sdfg)
     dst_nodedesc = dst_node.desc(sdfg)
+    src_expr, dst_expr = None, None
 
     if memlet.data == src_node.data:
-        src_expr = copy_expr(dispatcher, sdfg, src_node.data, memlet, is_write=False, packed_types=packed_types)
+        if dispatcher is not None:
+            src_expr = copy_expr(dispatcher, sdfg, src_node.data, memlet, is_write=False, packed_types=packed_types)
         if memlet.other_subset is not None:
-            dst_expr = copy_expr(dispatcher,
-                                 sdfg,
-                                 dst_node.data,
-                                 memlet,
-                                 is_write=True,
-                                 offset=memlet.other_subset,
-                                 relative_offset=False,
-                                 packed_types=packed_types)
+            if dispatcher is not None:
+                dst_expr = copy_expr(dispatcher,
+                                     sdfg,
+                                     dst_node.data,
+                                     memlet,
+                                     is_write=True,
+                                     offset=memlet.other_subset,
+                                     relative_offset=False,
+                                     packed_types=packed_types)
             dst_subset = memlet.other_subset
         else:
-            dst_expr = copy_expr(dispatcher,
-                                 sdfg,
-                                 dst_node.data,
-                                 memlet,
-                                 is_write=True,
-                                 offset=None,
-                                 relative_offset=False,
-                                 packed_types=packed_types)
+            if dispatcher is not None:
+                dst_expr = copy_expr(dispatcher,
+                                     sdfg,
+                                     dst_node.data,
+                                     memlet,
+                                     is_write=True,
+                                     offset=None,
+                                     relative_offset=False,
+                                     packed_types=packed_types)
             dst_subset = subsets.Range.from_array(dst_nodedesc)
         src_subset = memlet.subset
 
     else:
-        dst_expr = copy_expr(dispatcher, sdfg, dst_node.data, memlet, is_write=True, packed_types=packed_types)
+        if dispatcher is not None:
+            dst_expr = copy_expr(dispatcher, sdfg, dst_node.data, memlet, is_write=True, packed_types=packed_types)
         if memlet.other_subset is not None:
-            src_expr = copy_expr(dispatcher,
-                                 sdfg,
-                                 src_node.data,
-                                 memlet,
-                                 is_write=False,
-                                 offset=memlet.other_subset,
-                                 relative_offset=False,
-                                 packed_types=packed_types)
+            if dispatcher is not None:
+                src_expr = copy_expr(dispatcher,
+                                     sdfg,
+                                     src_node.data,
+                                     memlet,
+                                     is_write=False,
+                                     offset=memlet.other_subset,
+                                     relative_offset=False,
+                                     packed_types=packed_types)
             src_subset = memlet.other_subset
         else:
-            src_expr = copy_expr(dispatcher,
-                                 sdfg,
-                                 src_node.data,
-                                 memlet,
-                                 is_write=False,
-                                 offset=None,
-                                 relative_offset=False,
-                                 packed_types=packed_types)
+            if dispatcher is not None:
+                src_expr = copy_expr(dispatcher,
+                                     sdfg,
+                                     src_node.data,
+                                     memlet,
+                                     is_write=False,
+                                     offset=None,
+                                     relative_offset=False,
+                                     packed_types=packed_types)
             src_subset = subsets.Range.from_array(src_nodedesc)
         dst_subset = memlet.subset
 
@@ -229,8 +241,8 @@ def ptr(name: str, desc: data.Data, sdfg: SDFG = None, framecode=None) -> str:
                 return f'__state->__{sdfg.sdfg_id}_{name}'
             elif (sdfg, name) in framecode.where_allocated and framecode.where_allocated[(sdfg, name)] is not sdfg:
                 return f'__{sdfg.sdfg_id}_{name}'
-        elif (desc.transient and sdfg is not None and framecode is not None and (sdfg, name) in framecode.where_allocated
-                and framecode.where_allocated[(sdfg, name)] is not sdfg):
+        elif (desc.transient and sdfg is not None and framecode is not None
+              and (sdfg, name) in framecode.where_allocated and framecode.where_allocated[(sdfg, name)] is not sdfg):
             # Array allocated for another SDFG, use unambiguous name
             return f'__{sdfg.sdfg_id}_{name}'
 
@@ -244,11 +256,14 @@ def emit_memlet_reference(dispatcher,
                           conntype: dtypes.typeclass,
                           ancestor: int = 1,
                           is_write: bool = None,
-                          device_code: bool = False) -> Tuple[str, str, str]:
+                          device_code: bool = False,
+                          decouple_array_interfaces: bool = False) -> Tuple[str, str, str]:
     """
     Returns a tuple of three strings with a definition of a reference to an
     existing memlet. Used in nested SDFG arguments.
     :param device_code: boolean flag indicating whether we are in the process of generating FPGA device code
+    :param decouple_array_interfaces: boolean flag, used for Xilinx FPGA code generation. It indicates whether or not
+        we are generating code by decoupling reads/write from memory.
     :return: A tuple of the form (type, name, value).
     """
     desc = sdfg.arrays[memlet.data]
@@ -274,8 +289,17 @@ def emit_memlet_reference(dispatcher,
     defined_type, defined_ctype = defined_types
 
     if fpga.is_fpga_array(desc):
-        datadef = fpga.fpga_ptr(memlet.data, desc, sdfg, memlet.subset, is_write, dispatcher, ancestor,
-                                defined_type == DefinedType.ArrayInterface)
+
+        datadef = fpga.fpga_ptr(memlet.data,
+                                desc,
+                                sdfg,
+                                memlet.subset,
+                                is_write,
+                                dispatcher,
+                                ancestor,
+                                defined_type == DefinedType.ArrayInterface,
+                                decouple_array_interfaces=decouple_array_interfaces)
+
     else:
         datadef = ptr(memlet.data, desc, sdfg, dispatcher.frame)
 
@@ -529,7 +553,13 @@ def cpp_array_expr(sdfg,
 
     if with_brackets:
         if fpga.is_fpga_array(desc):
-            ptrname = fpga.fpga_ptr(memlet.data, desc, sdfg, subset)
+            # get conf flag
+            decouple_array_interfaces = Config.get_bool("compiler", "xilinx", "decouple_array_interfaces")
+            ptrname = fpga.fpga_ptr(memlet.data,
+                                    desc,
+                                    sdfg,
+                                    subset,
+                                    decouple_array_interfaces=decouple_array_interfaces)
         else:
             ptrname = ptr(memlet.data, desc, sdfg, codegen)
         return "%s[%s]" % (ptrname, offset_cppstr)
@@ -561,7 +591,8 @@ def cpp_ptr_expr(sdfg,
                  use_other_subset=False,
                  indices=None,
                  is_write=None,
-                 codegen=None):
+                 codegen=None,
+                 decouple_array_interface=False):
     """ Converts a memlet to a C++ pointer expression. """
     subset = memlet.subset if not use_other_subset else memlet.other_subset
     s = subset if relative_offset else subsets.Indices(offset)
@@ -572,8 +603,15 @@ def cpp_ptr_expr(sdfg,
     else:
         offset_cppstr = cpp_offset_expr(desc, s, o, indices=indices)
     if fpga.is_fpga_array(desc):
-        dname = fpga.fpga_ptr(memlet.data, desc, sdfg, s, is_write, None, None,
-                              defined_type == DefinedType.ArrayInterface)
+        dname = fpga.fpga_ptr(memlet.data,
+                              desc,
+                              sdfg,
+                              s,
+                              is_write,
+                              None,
+                              None,
+                              defined_type == DefinedType.ArrayInterface,
+                              decouple_array_interfaces=decouple_array_interface)
     else:
         dname = ptr(memlet.data, desc, sdfg, codegen)
 
@@ -987,6 +1025,7 @@ class DaCeKeywordRemover(ExtNodeTransformer):
         self.constants = constants
         self.codegen = codegen
         self.allow_casts = True
+        self._decouple_array_interfaces = Config.get_bool("compiler", "xilinx", "decouple_array_interfaces")
 
     def visit_TopLevelExpr(self, node):
         # This is a DaCe shift, omit it
@@ -1111,7 +1150,7 @@ class DaCeKeywordRemover(ExtNodeTransformer):
                                 None,
                                 None,
                                 True,
-                            )
+                                decouple_array_interfaces=self._decouple_array_interfaces)
                             newnode = ast.Name(
                                 id=f"{array_interface_name}"
                                 f"[{cpp_array_expr(self.sdfg, memlet, with_brackets=False, codegen=self.codegen._frame)}]"
@@ -1180,10 +1219,10 @@ class DaCeKeywordRemover(ExtNodeTransformer):
         except KeyError:
             defined_type = None
         if (self.allow_casts and isinstance(dtype, dtypes.pointer) and memlet.subset.num_elements() == 1):
-            return ast.Name(id="{}[0]".format(name), ctx=node.ctx)
+            return ast.parse(f"{name}[0]").body[0].value
         elif (self.allow_casts and (defined_type == DefinedType.Stream or defined_type == DefinedType.StreamArray)
               and memlet.dynamic):
-            return ast.Name(id=f"{name}.pop()", ctx=node.ctx)
+            return ast.parse(f"{name}.pop()").body[0].value
         else:
             return self.generic_visit(node)
 
@@ -1209,11 +1248,16 @@ class DaCeKeywordRemover(ExtNodeTransformer):
     def visit_BinOp(self, node: ast.BinOp):
         # Special case for integer powers
         if isinstance(node.op, ast.Pow):
+            from dace.frontend.python import astutils
             try:
-                unparsed = symbolic.pystr_to_symbolic(unparse(node.right))
+                unparsed = symbolic.pystr_to_symbolic(
+                    astutils.evalnode(node.right, {
+                        **self.constants, 'dace': dace,
+                        'math': math
+                    }))
                 evaluated = symbolic.symstr(symbolic.evaluate(unparsed, self.constants))
                 node.right = ast.parse(evaluated).body[0].value
-            except (TypeError, AttributeError, NameError, KeyError, ValueError):
+            except (TypeError, AttributeError, NameError, KeyError, ValueError, SyntaxError):
                 return self.generic_visit(node)
 
         return self.generic_visit(node)
@@ -1288,7 +1332,8 @@ def synchronize_streams(sdfg, dfg, state_id, node, scope_exit, callsite_stream):
         for edge in dfg.out_edges(scope_exit):
             # Synchronize end of kernel with output data (multiple kernels
             # lead to same data node)
-            if (isinstance(edge.dst, nodes.AccessNode) and edge.dst._cuda_stream != node._cuda_stream):
+            if (isinstance(edge.dst, nodes.AccessNode) and hasattr(edge.dst, '_cuda_stream')
+                    and edge.dst._cuda_stream != node._cuda_stream):
                 callsite_stream.write(
                     """{backend}EventRecord(__state->gpu_context->events[{ev}], {src_stream});
 {backend}StreamWaitEvent(__state->gpu_context->streams[{dst_stream}], __state->gpu_context->events[{ev}], 0);""".format(
