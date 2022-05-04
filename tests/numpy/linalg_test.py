@@ -114,6 +114,52 @@ def test_tensordot_11():
         assert(np.allclose(tensordot_1(A.copy(), B.copy()), tensordot_1.f(A, B)))
 
 
+def test_tensordot_21():
+
+    @dace.program
+    def tensordot_2a(A: dace.float32[3, 3, 3, 3, 3, 3], B: dace.float32[3, 3, 3, 3, 3, 3]):
+        return np.tensordot(A, B, axes=([0, 3], [4, 2]), out_axes=[7, 6, 5, 4, 3, 2, 1, 0])
+    
+    A = np.arange(3**6, dtype=np.float32).reshape(3, 3, 3, 3, 3, 3)
+    B = np.arange(3**6, dtype=np.float32).reshape(3, 3, 3, 3, 3, 3)
+    ref = np.transpose(np.tensordot(A, B, axes=([0, 3], [4, 2])), axes=[7, 6, 5, 4, 3, 2, 1, 0])
+    with dace.config.set_temporary('library', 'linalg', 'default_implementation', value='TTGT'):
+        assert(np.allclose(tensordot_2a(A.copy(), B.copy()), ref))
+    
+    @dace.program
+    def tensordot_2b(A: dace.float32[3, 3, 3, 3, 3, 3], B: dace.float32[3, 3, 3, 3, 3, 3]):
+        return np.tensordot(A, B, axes=([0, 3], [4, 2]), out_axes=[0, 7, 1, 6, 2, 5, 3, 4])
+    
+    A = np.arange(3**6, dtype=np.float32).reshape(3, 3, 3, 3, 3, 3)
+    B = np.arange(3**6, dtype=np.float32).reshape(3, 3, 3, 3, 3, 3)
+    ref = np.transpose(np.tensordot(A, B, axes=([0, 3], [4, 2])), axes=[0, 7, 1, 6, 2, 5, 3, 4])
+    with dace.config.set_temporary('library', 'linalg', 'default_implementation', value='TTGT'):
+        assert(np.allclose(tensordot_2b(A.copy(), B.copy()), ref))
+
+
+def test_tensordot_2():
+
+    @dace.program
+    def tensordot_2a(A: dace.float32[3, 3, 3, 3, 3, 3], B: dace.float32[3, 3, 3, 3, 3, 3]):
+        return np.tensordot(A, B, axes=([0, 3], [4, 2]), out_axes=[7, 6, 5, 4, 3, 2, 1, 0])
+    
+    A = np.arange(3**6, dtype=np.float32).reshape(3, 3, 3, 3, 3, 3)
+    B = np.arange(3**6, dtype=np.float32).reshape(3, 3, 3, 3, 3, 3)
+    ref = np.transpose(np.tensordot(A, B, axes=([0, 3], [4, 2])), axes=[7, 6, 5, 4, 3, 2, 1, 0])
+    with dace.config.set_temporary('library', 'linalg', 'default_implementation', value='pure'):
+        assert(np.allclose(tensordot_2a(A.copy(), B.copy()), ref))
+    
+    @dace.program
+    def tensordot_2b(A: dace.float32[3, 3, 3, 3, 3, 3], B: dace.float32[3, 3, 3, 3, 3, 3]):
+        return np.tensordot(A, B, axes=([0, 3], [4, 2]), out_axes=[0, 7, 1, 6, 2, 5, 3, 4])
+    
+    A = np.arange(3**6, dtype=np.float32).reshape(3, 3, 3, 3, 3, 3)
+    B = np.arange(3**6, dtype=np.float32).reshape(3, 3, 3, 3, 3, 3)
+    ref = np.transpose(np.tensordot(A, B, axes=([0, 3], [4, 2])), axes=[0, 7, 1, 6, 2, 5, 3, 4])
+    with dace.config.set_temporary('library', 'linalg', 'default_implementation', value='pure'):
+        assert(np.allclose(tensordot_2b(A.copy(), B.copy()), ref))
+
+
 if __name__ == "__main__":
     test_linalg_inv()
     test_linalg_solve()
@@ -122,3 +168,5 @@ if __name__ == "__main__":
     test_tensordot_1()
     test_tensordot_01()
     test_tensordot_11()
+    test_tensordot_2()
+    test_tensordot_21()

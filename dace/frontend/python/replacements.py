@@ -4429,7 +4429,10 @@ def _tensordot(pv: 'ProgramVisitor',
                state: SDFGState,
                op_a: str,
                op_b: str,
-               axes: Union[int, Sequence[int]] = 2):
+               axes: Union[int, Sequence[int]] = 2,
+               out_axes: Sequence[int] = None):
+    
+    # NOTE: `out_axes` is a non-standard extension to `numpy.tensordot`, allowing trasposition of the output
 
     for op in (op_a, op_b):
         if not isinstance(op, str) or not op in sdfg.arrays.keys():
@@ -4457,13 +4460,19 @@ def _tensordot(pv: 'ProgramVisitor',
 
     dot_shape = [s for i, s in enumerate(arr_a.shape) if i not in left_axes]
     dot_shape.extend([s for i, s in enumerate(arr_b.shape) if i not in right_axes])
+
+    if out_axes:
+        if list(sorted(out_axes)) != list(range(len(dot_shape))):
+            raise ValueError("Output axes is not a permutation of the output's modes.")
+        dot_shape = [dot_shape[i] for i in out_axes]
+
     op_c, arr_c = sdfg.add_temp_transient(dot_shape, arr_a.dtype, storage=arr_a.storage)
 
     from dace.libraries.linalg import TensorDot
     a = state.add_read(op_a)
     b = state.add_read(op_b)
     c = state.add_write(op_c)
-    tasklet = TensorDot("_TensorDot_", left_axes, right_axes)
+    tasklet = TensorDot("_TensorDot_", left_axes, right_axes, out_axes)
     state.add_edge(a, None, tasklet, '_left_tensor', Memlet.from_array(op_a, arr_a))
     state.add_edge(b, None, tasklet, '_right_tensor', Memlet.from_array(op_b, arr_b))
     state.add_edge(tasklet, '_out_tensor', c, None, Memlet.from_array(op_c, arr_c))
