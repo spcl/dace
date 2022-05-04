@@ -6,16 +6,27 @@ Subpackages
 
 .. toctree::
 
+   dace.transformation.auto
    dace.transformation.dataflow
    dace.transformation.interstate
+   dace.transformation.passes
    dace.transformation.subgraph
 
 Submodules
 ----------
 
 
-dace.transformation.transformation module
---------------------------------------------
+Passes and Pipelines
+--------------------
+
+.. automodule:: dace.transformation.pass_pipeline
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+
+Transformations
+---------------
 
 .. automodule:: dace.transformation.transformation
    :members:
@@ -24,7 +35,7 @@ dace.transformation.transformation module
 
 
 dace.transformation.helpers module
---------------------------------------------
+----------------------------------
 
 .. automodule:: dace.transformation.helpers
    :members:

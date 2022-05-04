@@ -406,16 +406,16 @@ class Array(Data):
     .. code-block:: text
 
         [xxx][          |xx]
-            [          |xx]
-            [          |xx]
-            [          |xx]
-            ---------------
-            [xxxxxxxxxxxxx]
+             [          |xx]
+             [          |xx]
+             [          |xx]
+             ---------------
+             [xxxxxxxxxxxxx]
 
         shape = (4, 10)
         strides = (12, 1)
         start_offset = 3
-        total_size = 63   (= 3 + 12 * 5)
+        total_size = 63   [= 3 + 12 * 5]
         offset = (0, 0, 0)
 
 
