@@ -8,6 +8,7 @@ from dace.libraries.blas import blas_helpers
 from dace.symbolic import symstr
 from dace.transformation.transformation import ExpandTransformation
 from numbers import Number
+import dace.libraries.linalg.environments as environments
 
 
 @library.expansion
@@ -194,7 +195,61 @@ class ExpandCuTensor(ExpandTransformation):
     For more information, see https://developer.nvidia.com/cutensor.
     """
 
-    environments = []
+    environments = [environments.cuTensor]
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg):
+        left_tensor, right_tensor, out_tensor = node.validate(parent_sdfg, parent_state)
+
+        dtype = out_tensor.dtype.base_type
+        veclen = out_tensor.dtype.veclen
+
+        func, cuda_type, _ = blas_helpers.cublas_type_metadata(dtype)
+        func = func + 'getrf'
+
+        alpha = f"({cuda_type})1.0"
+        beta = f"({cuda_type})0.0"
+
+        left_modes = list(range(len(left_tensor.shape)))
+        right_modes = [node.left_axes[node.right_axes.index(i)] if i in node.right_axes else len(left_tensor.shape) + i
+                       for i in range(len(right_tensor.shape))]
+        out_modes = [i in left_modes if i not in node.left_axes]
+        out_modes = out_modes.extend([i for i in right_modes if i not in node.left_axes])
+        if node.permutation and node.permutation != list(range(len(node.permutation))):
+            out_modes = [node.permutation[i] for i in out_modes]
+
+        modes = f"""
+            std::vector<int> modeA{{{','.join(left_modes)}}};
+            std::vector<int> modeB{{{','.join(right_modes)}}};
+            std::vector<int> modeC{{{','.join(out_modes)}}};
+        """
+
+        code = ""
+        # code = (environments.cuTensor.handle_setup_code(node) + f"""
+        #         int __dace_workspace_size = 0;
+        #         {cuda_type}* __dace_workspace;
+        #         cusolverDn{func}_bufferSize(
+        #             __dace_cusolverDn_handle, {rows_x}, {cols_x}, ({cuda_type}*)_xin,
+        #             {stride_x}, &__dace_workspace_size);
+        #         cudaMalloc<{cuda_type}>(
+        #             &__dace_workspace,
+        #             sizeof({cuda_type}) * __dace_workspace_size);
+        #         cusolverDn{func}(
+        #             __dace_cusolverDn_handle, {rows_x}, {cols_x}, ({cuda_type}*)_xin,
+        #             {stride_x}, __dace_workspace, _ipiv, _res);
+        #         cudaFree(__dace_workspace);
+        #         """)
+
+        tasklet = dace.sdfg.nodes.Tasklet(node.name,
+                                          node.in_connectors,
+                                          node.out_connectors,
+                                          code,
+                                          language=dace.dtypes.Language.CPP)
+        conn = tasklet.out_connectors
+        conn = {c: (dace.dtypes.pointer(dace.int32) if c == '_res' else t) for c, t in conn.items()}
+        tasklet.out_connectors = conn
+
+        return tasklet
 
 
 @library.node
