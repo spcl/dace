@@ -6,7 +6,7 @@ import dace.library
 class MPI:
 
     cmake_minimum_version = "3.6"
-    cmake_packages = []
+    cmake_packages = ["MPI"]
     cmake_files = []
     cmake_variables = {}
     cmake_includes = []
