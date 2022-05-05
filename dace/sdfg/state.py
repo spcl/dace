@@ -12,7 +12,7 @@ from dace.sdfg.propagation import propagate_memlet
 from dace.sdfg.validation import validate_state
 from dace.properties import (EnumProperty, Property, DictProperty, SubsetProperty, SymbolicProperty, CodeBlock,
                              make_properties)
-from inspect import getframeinfo, stack
+import inspect
 import itertools
 from typing import (Any, AnyStr, Dict, Iterable, Iterator, List, Optional, Set, Tuple, Union, overload)
 import warnings
@@ -27,7 +27,7 @@ def _getdebuginfo(old_dinfo=None) -> dtypes.DebugInfo:
     if old_dinfo is not None:
         return old_dinfo
 
-    caller = getframeinfo(stack()[2][0])
+    caller = inspect.getframeinfo(inspect.stack()[2][0], context=0)
     return dtypes.DebugInfo(caller.lineno, 0, caller.lineno, 0, caller.filename)
 
 
