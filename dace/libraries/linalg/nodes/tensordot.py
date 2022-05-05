@@ -202,52 +202,103 @@ class ExpandCuTensor(ExpandTransformation):
         left_tensor, right_tensor, out_tensor = node.validate(parent_sdfg, parent_state)
 
         dtype = out_tensor.dtype.base_type
-        veclen = out_tensor.dtype.veclen
-
         func, cuda_type, _ = blas_helpers.cublas_type_metadata(dtype)
+        cuda_dtype = blas_helpers.dtype_to_cudadatatype(dtype)
+        compute_type = f"CUTENSOR_COMPUTE{cuda_dtype[cuda_dtype.rfind('_'):]}"
         func = func + 'getrf'
 
         alpha = f"({cuda_type})1.0"
         beta = f"({cuda_type})0.0"
+        abtext = f"""
+            {cuda_type} alpha = {alpha};
+            {cuda_type} beta = {beta};
+        """
 
         left_modes = list(range(len(left_tensor.shape)))
         right_modes = [node.left_axes[node.right_axes.index(i)] if i in node.right_axes else len(left_tensor.shape) + i
                        for i in range(len(right_tensor.shape))]
-        out_modes = [i in left_modes if i not in node.left_axes]
-        out_modes = out_modes.extend([i for i in right_modes if i not in node.left_axes])
+        out_modes = [i for i in left_modes if i not in node.left_axes]
+        out_modes.extend([i for i in right_modes if i not in node.left_axes])
         if node.permutation and node.permutation != list(range(len(node.permutation))):
             out_modes = [node.permutation[i] for i in out_modes]
 
         modes = f"""
-            std::vector<int> modeA{{{','.join(left_modes)}}};
-            std::vector<int> modeB{{{','.join(right_modes)}}};
-            std::vector<int> modeC{{{','.join(out_modes)}}};
+            std::vector<int> modeA{{{','.join(str(m) for m in left_modes)}}};
+            std::vector<int> modeB{{{','.join(str(m) for m in right_modes)}}};
+            std::vector<int> modeC{{{','.join(str(m) for m in out_modes)}}};
         """
 
-        code = ""
-        # code = (environments.cuTensor.handle_setup_code(node) + f"""
-        #         int __dace_workspace_size = 0;
-        #         {cuda_type}* __dace_workspace;
-        #         cusolverDn{func}_bufferSize(
-        #             __dace_cusolverDn_handle, {rows_x}, {cols_x}, ({cuda_type}*)_xin,
-        #             {stride_x}, &__dace_workspace_size);
-        #         cudaMalloc<{cuda_type}>(
-        #             &__dace_workspace,
-        #             sizeof({cuda_type}) * __dace_workspace_size);
-        #         cusolverDn{func}(
-        #             __dace_cusolverDn_handle, {rows_x}, {cols_x}, ({cuda_type}*)_xin,
-        #             {stride_x}, __dace_workspace, _ipiv, _res);
-        #         cudaFree(__dace_workspace);
-        #         """)
+        extents = "std::unordered_map<int, int64_t> extent;\n"
+        for i, s in zip(left_modes, left_tensor.shape):
+            extents += f"extent[{i}] = {s};\n"
+        for i, s in zip(right_modes, left_tensor.shape):
+            if i in node.right_axes:
+                continue
+            extents += f"extent[{i}] = {s};\n"
+        extents += f"""
+            std::vector<int64_t> extentA;
+            for (auto mode : modeA) extentA.push_back(extent[mode]);
+            std::vector<int64_t> extentB;
+            for (auto mode : modeB) extentB.push_back(extent[mode]);
+            std::vector<int64_t> extentC;
+            for (auto mode : modeC) extentC.push_back(extent[mode]);
+        """
+
+        tdesc = f"""
+            cutensorTensorDescriptor_t descA, descB, descC;
+            cutensorInitTensorDescriptor(
+                &__dace_cutensor_handle, &descA, modeA.size(), extentA.data(), NULL, {cuda_dtype}, CUTENSOR_OP_IDENTITY);
+            cutensorInitTensorDescriptor(
+                &__dace_cutensor_handle, &descB, modeB.size(), extentB.data(), NULL, {cuda_dtype}, CUTENSOR_OP_IDENTITY);
+            cutensorInitTensorDescriptor(
+                &__dace_cutensor_handle, &descC, modeA.size(), extentA.data(), NULL, {cuda_dtype}, CUTENSOR_OP_IDENTITY);
+        """
+
+        cdesc = f"""
+            uint32_t alignmentRequirementA, alignmentRequirementB, alignmentRequirementC;
+            cutensorGetAlignmentRequirement(&__dace_cutensor_handle, _left_tensor, &descA, &alignmentRequirementA);
+            cutensorGetAlignmentRequirement(&__dace_cutensor_handle, _right_tensor, &descB, &alignmentRequirementB);
+            cutensorGetAlignmentRequirement(&__dace_cutensor_handle, _out_tensor, &descC, &alignmentRequirementC);
+            cutensorContractionDescriptor_t desc;
+            cutensorInitContractionDescriptor(
+                &__dace_cutensor_handle, &desc,
+                &descA, modeA.data(), alignmentRequirementA,
+                &descB, modeB.data(), alignmentRequirementB,
+                &descC, modeC.data(), alignmentRequirementC,
+                &descC, modeC.data(), alignmentRequirementC,
+                {compute_type});
+        """
+
+        workspace = """
+            cutensorContractionFind_t find;
+            cutensorInitContractionFind(&__dace_cutensor_handle, &find, CUTENSOR_ALGO_DEFAULT);
+            size_t worksize = 0;
+            cutensorContractionGetWorkspace(
+                &__dace_cutensor_handle, &desc, &find, CUTENSOR_WORKSPACE_RECOMMENDED, &worksize);
+            void *work = nullptr;
+            if (worksize > 0) cudaMalloc(&work, worksize);
+        """
+
+        execute = """
+            cutensorContractionPlan_t plan;
+            cutensorInitContractionPlan(&__dace_cutensor_handle, &plan, &desc, &find, worksize);
+            cutensorContraction(
+                &__dace_cutensor_handle, &plan,
+                (void*)&alpha, _left_tensor, _right_tensor, (void*)&beta, _out_tensor, _out_tensor,
+                work, worksize, __dace_current_stream);
+            if (work) cudaFree(work);
+        """
+
+        code = f"{environments.cuTensor.handle_setup_code(node)}{abtext}{modes}{extents}{tdesc}{cdesc}{workspace}{execute}"
 
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,
                                           node.out_connectors,
                                           code,
                                           language=dace.dtypes.Language.CPP)
-        conn = tasklet.out_connectors
-        conn = {c: (dace.dtypes.pointer(dace.int32) if c == '_res' else t) for c, t in conn.items()}
-        tasklet.out_connectors = conn
+        # conn = tasklet.out_connectors
+        # conn = {c: (dace.dtypes.pointer(dace.int32) if c == '_res' else t) for c, t in conn.items()}
+        # tasklet.out_connectors = conn
 
         return tasklet
 

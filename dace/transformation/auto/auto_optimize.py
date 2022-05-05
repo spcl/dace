@@ -318,7 +318,7 @@ def find_fast_library(device: dtypes.DeviceType) -> List[str]:
     # Returns the optimized library node implementations for the given target
     # device
     if device is dtypes.DeviceType.GPU:
-        return ['cuBLAS', 'CUB', 'pure']
+        return ['cuBLAS', 'cuTENSOR', 'CUB', 'pure']
     elif device is dtypes.DeviceType.FPGA:
         return ['FPGA_PartialSums', 'FPGAPartialReduction', 'FPGA_Accumulate', 'FPGA1DSystolic', 'pure']
     elif device is dtypes.DeviceType.CPU:

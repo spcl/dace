@@ -89,6 +89,18 @@ def test_tensordot_01():
     with dace.config.set_temporary('library', 'linalg', 'default_implementation', value='TTGT'):
         assert(np.allclose(tensordot_0(A.copy(), B.copy()), tensordot_0.f(A, B)))
 
+@pytest.mark.gpu
+def test_tensordot_02():
+
+    @dace.program(device=dace.dtypes.DeviceType.GPU)
+    def tensordot_0(A: dace.float32[3, 3, 3, 3, 3, 3], B: dace.float32[3, 3, 3, 3, 3, 3]):
+        return np.tensordot(A, B)
+    
+    A = np.arange(3**6, dtype=np.float32).reshape(3, 3, 3, 3, 3, 3)
+    B = np.arange(3**6, dtype=np.float32).reshape(3, 3, 3, 3, 3, 3)
+    with dace.config.set_temporary('library', 'linalg', 'default_implementation', value='cuTENSOR'):
+        assert(np.allclose(tensordot_0(A.copy(), B.copy()), tensordot_0.f(A, B)))
+
 
 def test_tensordot_1():
 
@@ -161,12 +173,13 @@ def test_tensordot_2():
 
 
 if __name__ == "__main__":
-    test_linalg_inv()
-    test_linalg_solve()
-    test_linalg_cholesky()
-    test_tensordot_0()
-    test_tensordot_1()
-    test_tensordot_01()
-    test_tensordot_11()
-    test_tensordot_2()
-    test_tensordot_21()
+    # test_linalg_inv()
+    # test_linalg_solve()
+    # test_linalg_cholesky()
+    # test_tensordot_0()
+    # test_tensordot_1()
+    # test_tensordot_01()
+    # test_tensordot_11()
+    # test_tensordot_2()
+    # test_tensordot_21()
+    test_tensordot_02()

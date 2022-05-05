@@ -33,7 +33,7 @@ class cuTensor:
 
         code = """\
 const int __dace_cuda_device = {location};
-cutensorHandle_t &__dace_tensor_handle = __state->cutensor_handle.Get(__dace_cuda_device);
-// cutensorSetStream(__dace_tensor_handle, __dace_current_stream);\n"""
+cutensorHandle_t &__dace_cutensor_handle = __state->cutensor_handle.Get(__dace_cuda_device);
+// cutensorSetStream(__dace_cutensor_handle, __dace_current_stream);\n"""
 
         return code.format(location=location)
