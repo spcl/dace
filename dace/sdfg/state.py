@@ -34,15 +34,24 @@ def _getdebuginfo(old_dinfo=None) -> dtypes.DebugInfo:
 def _make_iterators(ndrange):
     # Input can either be a dictionary or a list of pairs
     if isinstance(ndrange, list):
-        params = [k for k, v in ndrange]
+        params = [k for k, _ in ndrange]
         ndrange = {k: v for k, v in ndrange}
     else:
         params = list(ndrange.keys())
 
-    if ndrange and isinstance(next(iter(ndrange.values())), tuple):
-        map_range = sbs.Range([ndrange[p] for p in params])
-    else:
-        map_range = SubsetProperty.from_string(", ".join([ndrange[p] for p in params]))
+    # Parse each dimension separately
+    ranges = []
+    for p in params:
+        prange: Union[str, sbs.Subset, Tuple[symbolic.SymbolicType]] = ndrange[p]
+        if isinstance(prange, sbs.Subset):
+            rng = prange.ndrange()[0]
+        elif isinstance(prange, tuple):
+            rng = prange
+        else:
+            rng = SubsetProperty.from_string(prange)[0]
+        ranges.append(rng)
+    map_range = sbs.Range(ranges)
+
     return params, map_range
 
 
@@ -58,7 +67,7 @@ class StateGraphView(object):
 
     ###################################################################
     # Typing overrides
-    
+
     @overload
     def nodes(self) -> List[nd.Node]:
         ...
@@ -1109,7 +1118,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
     def add_map(
         self,
         name,
-        ndrange: Union[Dict[str, str], List[Tuple[str, str]]],
+        ndrange: Union[Dict[str, Union[str, sbs.Subset]], List[Tuple[str, Union[str, sbs.Subset]]]],
         schedule=dtypes.ScheduleType.Default,
         unroll=False,
         debuginfo=None,
@@ -1167,7 +1176,8 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
 
     def add_mapped_tasklet(self,
                            name: str,
-                           map_ranges: Dict[str, sbs.Subset],
+                           map_ranges: Union[Dict[str, Union[str, sbs.Subset]], List[Tuple[str, Union[str,
+                                                                                                      sbs.Subset]]]],
                            inputs: Dict[str, mm.Memlet],
                            code: str,
                            outputs: Dict[str, mm.Memlet],
