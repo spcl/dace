@@ -139,6 +139,8 @@ The priority order for configuration files is as follows:
  3. A `.dace.conf` located in the current working directory
  4. The `.dace.conf` located in the user's home directory or the path pointed to by the `DACE_CONFIG` environment variable
 
+If no configuration file can be created in any of the above paths, default settings will be used.
+
 Useful environment variable configurations include:
 
  * `DACE_CONFIG` (default: `~/.dace.conf`): Override DaCe configuration file choice.
