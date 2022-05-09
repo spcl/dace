@@ -502,6 +502,58 @@ def _numpy_rot90(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str, k
     return arr_copy
 
 
+@oprepo.replaces('numpy.arange')
+@oprepo.replaces('dace.arange')
+def _arange(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, *args, **kwargs):
+    """ Implementes numpy.arange """
+
+    start = 0
+    stop = None
+    step = 1
+    if len(args) == 1:
+        stop = args[0]
+        if isinstance(stop, Number):
+            start = type(stop)(0)
+    elif len(args) == 2:
+        start, stop = args
+    else:
+        start, stop, step = args
+
+    actual_step = step
+    if isinstance(start, Number) and isinstance(stop, Number):
+        actual_step = type(start + step)(start + step) - start
+
+    if any(not isinstance(s, Number) for s in [start, stop, step]):
+        shape = (symbolic.int_ceil(stop - start, step), )
+    else:
+        shape = (np.ceil((stop - start) / step), )
+
+    if not isinstance(shape[0], Number) and ('dtype' not in kwargs or kwargs['dtype'] == None):
+        raise NotImplementedError("The current implementation of numpy.arange requires that the output dtype is given "
+                                  "when at least one of (start, stop, step) is symbolic.")
+    # TODO: Unclear what 'like' does
+    # if 'like' in kwargs and kwargs['like'] != None:
+    #     outname, outarr = sdfg.add_temp_transient_like(sdfg.arrays[kwargs['like']])
+    #     outarr.shape = shape
+    if 'dtype' in kwargs and kwargs['dtype'] != None:
+        dtype = kwargs['dtype']
+        if not isinstance(dtype, dtypes.typeclass):
+            dtype = dtypes.DTYPE_TO_TYPECLASS[dtype]
+        outname, outarr = sdfg.add_temp_transient(shape, dtype)
+    else:
+        dtype = dtypes.DTYPE_TO_TYPECLASS[type(shape[0])]
+        outname, outarr = sdfg.add_temp_transient(shape, dtype)
+
+    state.add_mapped_tasklet(name="_numpy_arange_",
+                             map_ranges={'__i': f"0:{shape[0]}"},
+                             inputs={},
+                             code=f"__out = {start} + __i * {actual_step}",
+                             outputs={'__out': dace.Memlet(f"{outname}[__i]")},
+                             external_edges=True)
+
+    return outname
+
+
 @oprepo.replaces('elementwise')
 @oprepo.replaces('dace.elementwise')
 def _elementwise(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, func: str, in_array: str, out_array=None):
