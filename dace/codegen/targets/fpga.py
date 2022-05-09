@@ -108,7 +108,7 @@ def is_multibank_array_with_distributed_index(array: dt.Data):
     if is_multibank_array(array):
         res = parse_location_bank(array)
         low, high = get_multibank_ranges_from_subset(res[1], None)
-        return high - low > 1 or str(array.shape[0]) == "1"
+        return high - low > 1 and str(array.shape[0]) == "1"
     else:
         return False
 
