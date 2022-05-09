@@ -24,21 +24,29 @@ from dace.dtypes import ScheduleType
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg import nodes as nd, graph as gr, utils as sdutil, propagation, infer_types, state as st
 from dace.properties import make_properties, Property, DictProperty, SetProperty
+from dace.transformation import pass_pipeline as ppl
 from typing import Any, Dict, Generic, List, Optional, Set, Type, TypeVar, Union
 import pydoc
 
 
-class TransformationBase(object):
+class TransformationBase(ppl.Pass):
     """
     Base class for graph rewriting transformations. An instance of a TransformationBase object represents a match
     of the transformation (i.e., including a specific subgraph candidate to apply the transformation to), as well
     as properties of the transformation, which may affect if it can apply or not.
 
+    A Transformation can also be seen as a Pass that, when applied, operates on the given subgraph.
+
     :see: PatternTransformation
     :see: SubgraphTransformation
     :see: ExpandTransformation
     """
-    pass
+    def modifies(self):
+        # Unless otherwise mentioned, a transformation modifies everything
+        return ppl.Modifies.Everything
+
+    def should_reapply(self, _: ppl.Modifies) -> bool:
+        return True
 
 
 @make_properties
@@ -122,6 +130,12 @@ class PatternTransformation(TransformationBase):
         """
         raise NotImplementedError
 
+    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Any]:
+        # It is assumed that at the time of calling the transformation, all fields (e.g., subgraph) are already set
+        self._sdfg = sdfg
+        self._pipeline_results = pipeline_results
+        return self.apply_pattern()
+
     def match_to_str(self, graph: Union[SDFG, SDFGState]) -> str:
         """ Returns a string representation of the pattern match on the
             candidate subgraph. Used when identifying matches in the console
@@ -181,6 +195,8 @@ class PatternTransformation(TransformationBase):
         if options is not None:
             for optname, optval in options.items():
                 setattr(self, optname, optval)
+
+        self._pipeline_results = None
 
     @property
     def subgraph(self):
@@ -664,6 +680,8 @@ class SubgraphTransformation(TransformationBase):
             raise TypeError('Subgraph transformation either expects a SubgraphView or a '
                             'set of node IDs, SDFG ID and state ID (or -1).')
 
+        self._pipeline_results = None
+
         # An entire graph is given as a subgraph
         if isinstance(subgraph, (SDFG, SDFGState)):
             subgraph = gr.SubgraphView(subgraph, subgraph.nodes())
@@ -732,6 +750,10 @@ class SubgraphTransformation(TransformationBase):
         :param sdfg: The SDFG that includes the subgraph.
         """
         pass
+
+    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Any]:
+        self._pipeline_results = pipeline_results
+        return self.apply(sdfg)
 
     @classmethod
     def apply_to(cls,

@@ -2268,6 +2268,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                               print_report: Optional[bool] = None) -> int:
         """ This function applies a transformation or a sequence thereof
             consecutively. Operates in-place.
+
             :param xforms: A PatternTransformation class or a sequence.
             :param options: An optional dictionary (or sequence of dictionaries)
                             to modify transformation parameters.
@@ -2290,45 +2291,27 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                         [MapTiling, MapFusion, GPUTransformSDFG],
                         options=[{'tile_size': 16}, {}, {}])
         """
-        # Avoiding import loops
-        from dace.transformation import optimizer
-        from dace.transformation.transformation import PatternTransformation
+        from dace.transformation.passes.pattern_matching import PatternMatchAndApply  # Avoid import loops
 
-        applied_transformations = collections.defaultdict(int)
-
-        if isinstance(xforms, type) and issubclass(xforms, PatternTransformation):
-            xforms = [xforms]
-
+        # Construct transformation objects as necessary
         if isinstance(options, dict):
             options = [options]
         options = options or [dict() for _ in xforms]
         if len(options) != len(xforms):
             raise ValueError('Length of options and transformations mismatch')
 
-        opt = optimizer.SDFGOptimizer(self, inplace=True)
-        for xform, opts in zip(xforms, options):
-            # Find only the first match
-            try:
-                match = next(m for m in opt.get_pattern_matches(
-                    permissive=permissive, patterns=[xform], states=states, options=[opts]))
-            except StopIteration:
-                continue
-            sdfg = self.sdfg_list[match.sdfg_id]
-            graph = sdfg.node(match.state_id) if match.state_id >= 0 else sdfg
+        # TODO!
 
-            match.apply(graph, sdfg)
-            applied_transformations[type(match).__name__] += 1
-            if validate_all:
-                self.validate()
+        pazz = PatternMatchAndApply(xforms,
+                                    permissive=permissive,
+                                    validate=validate,
+                                    validate_all=validate_all,
+                                    states=states,
+                                    print_report=print_report)
+        results = pazz.apply_pass(self, {})
 
-        if validate:
-            self.validate()
-
-        if (len(applied_transformations) > 0
-                and (print_report or (print_report is None and Config.get_bool('debugprint')))):
-            print('Applied {}.'.format(', '.join(['%d %s' % (v, k) for k, v in applied_transformations.items()])))
-
-        return sum(applied_transformations.values())
+        # Return number of transformations applied
+        return sum(len(v) for v in results.values())
 
     def apply_transformations_repeated(self,
                                        xforms: Union[Type, List[Type]],
@@ -2342,6 +2325,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                                        progress: Optional[bool] = None) -> int:
         """ This function repeatedly applies a transformation or a set of
             (unique) transformations until none can be found. Operates in-place.
+
             :param xforms: A PatternTransformation class or a set thereof.
             :param options: An optional dictionary (or sequence of dictionaries)
                             to modify transformation parameters.

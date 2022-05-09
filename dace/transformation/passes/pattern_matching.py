@@ -1,13 +1,122 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains functions related to pattern matching in transformations. """
 
+import collections
+from dataclasses import dataclass
+
+from importlib_metadata import metadata
 from dace.config import Config
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg import graph as gr, nodes as nd
 import networkx as nx
 from networkx.algorithms import isomorphism as iso
-from typing import (Any, Callable, Dict, Iterator, List, Optional, Tuple, Type, Union)
-from dace.transformation import transformation as xf
+from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional, Set, Tuple, Type, Union
+from dace.transformation import transformation as xf, pass_pipeline as ppl
+
+
+@dataclass
+class PatternMatchAndApply(ppl.Pass):
+    """
+    Applies a list of pattern-matching transformations in sequence. For every given transformation, matches the first
+    pattern in the SDFG and applies it.
+    """
+
+    transformations: List[xf.PatternTransformation]  #: The list of transformations to apply
+    permissive: bool = False  #: Whether to apply in permissive mode, i.e., apply in more cases where it may be unsafe
+    validate: bool = True  #: If True, validates the SDFG after all transformations have been applied
+    validate_all: bool = False  #: If True, validates the SDFG after each transformation applies
+    states: Optional[List[SDFGState]] = None  #: If not None, only applies transformations to the given states
+
+    print_report: Optional[bool] = None  #: Whether to show debug prints (or None to use configuration file)
+    progress: Optional[bool] = None  #: Whether to show progress printouts (or None to use configuration file)
+
+    def __init__(self,
+                 transformations: Union[xf.PatternTransformation, Iterable[xf.PatternTransformation]],
+                 permissive: bool = False,
+                 validate: bool = True,
+                 validate_all: bool = False,
+                 states: Optional[List[SDFGState]] = None,
+                 print_report: Optional[bool] = None,
+                 progress: Optional[bool] = None) -> None:
+        if isinstance(transformations, xf.TransformationBase):
+            self.transformations = [transformations]
+        else:
+            self.transformations = list(transformations)
+
+        # Precompute metadata on each transformation (how to apply it)
+        self.metadata = get_transformation_metadata([type(t) for t in self.transformations])
+
+        self.permissive = permissive
+        self.validate = validate
+        self.validate_all = validate_all
+        self.states = states
+        self.print_report = print_report
+        self.progress = progress
+
+    def depends_on(self) -> Set[Type[ppl.Pass]]:
+        result = set()
+        for p in self.transformations:
+            result.update(p.depends_on())
+        return result
+
+    def modifies(self) -> ppl.Modifies:
+        result = ppl.Modifies.Nothing
+        for p in self.transformations:
+            result |= p.modifies()
+        return result
+
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        return any(p.should_reapply(modified) for p in self.transformations)
+
+    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Dict[str, List[Any]]:
+        applied_transformations = collections.defaultdict(list)
+
+        # For every transformation in the list, find first match and apply
+        for xform, opts in zip(xforms, options):
+            # Find only the first match
+            try:
+                match = next(m for m in match_patterns(
+                    sdfg, [xform], metadata=self.metadata, permissive=self.permissive, states=self.states, options=[opts]))
+            except StopIteration:
+                continue
+
+            tsdfg = sdfg.sdfg_list[match.sdfg_id]
+            graph = tsdfg.node(match.state_id) if match.state_id >= 0 else tsdfg
+
+            # Set previous pipeline results
+            match._pipeline_results = pipeline_results
+
+            result = match.apply(graph, tsdfg)
+            applied_transformations[type(match).__name__].append(result)
+            if self.validate_all:
+                sdfg.validate()
+
+        if self.validate:
+            sdfg.validate()
+
+        if (len(applied_transformations) > 0
+                and (self.print_report or (self.print_report is None and Config.get_bool('debugprint')))):
+            print('Applied {}.'.format(', '.join(['%d %s' % (len(v), k) for k, v in applied_transformations.items()])))
+
+        return applied_transformations
+
+
+@dataclass
+class PatternMatchAndApplyRepeated(PatternMatchAndApply):
+    """
+    A fixed-point pipeline that applies a list of pattern-matching transformations in repeated succession until no
+    more transformations match. The order in which the transformations are applied is configurable (through
+    ``order_by_transformation``).
+    """
+    order_by_transformation: bool = True
+    # TODO
+    pass
+
+
+@dataclass
+class PatternMatchAndApplyEverywhere(PatternMatchAndApply):
+    # TODO
+    pass
 
 
 def collapse_multigraph_to_nx(graph: Union[gr.MultiDiGraph, gr.OrderedMultiDiGraph]) -> nx.DiGraph:
