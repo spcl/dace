@@ -201,8 +201,6 @@ def set_properties_from_json(object_with_properties, json_obj, context=None, ign
 
         if isinstance(val, dict):
             val = prop.from_json(val, context)
-            if val is None and attrs[prop_name] is not None:
-                raise ValueError("Unparsed to None from: {}".format(attrs[prop_name]))
         else:
             try:
                 val = prop.from_json(val, context)

@@ -34,8 +34,7 @@ from dace.sdfg.propagation import propagate_memlets_sdfg
 from dace.distr_types import ProcessGrid, SubArray, RedistrArray
 from dace.dtypes import validate_name
 from dace.properties import (DebugInfoProperty, EnumProperty, ListProperty, make_properties, Property, CodeProperty,
-                             TransformationHistProperty, SDFGReferenceProperty, DictProperty, OrderedDictProperty,
-                             CodeBlock)
+                             TransformationHistProperty, OptionalSDFGReferenceProperty, DictProperty, CodeBlock)
 
 # NOTE: In shapes, we try to convert strings to integers. In ranks, a string should be interpreted as data (scalar).
 ShapeType = Sequence[Union[Integral, str, symbolic.symbol, symbolic.SymExpr, symbolic.sympy.Basic]]
@@ -298,7 +297,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
     init_code = DictProperty(str, CodeBlock, desc="Code generated in the `__dace_init` function.")
     exit_code = DictProperty(str, CodeBlock, desc="Code generated in the `__dace_exit` function.")
 
-    orig_sdfg = SDFGReferenceProperty(allow_none=True)
+    orig_sdfg = OptionalSDFGReferenceProperty(allow_none=True)
     transformation_hist = TransformationHistProperty()
 
     logical_groups = ListProperty(element_type=LogicalGroup, desc='Logical groupings of nodes and edges')
