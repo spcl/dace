@@ -8,11 +8,11 @@ from dace.fpga_testing import xilinx_test
 import numpy as np
 from dace.sdfg import SDFG
 from dace.transformation.interstate import InlineSDFG
-
+from dace.config import set_temporary
 # Checks multiple interfaces attached to the same HBM/DDR-bank.
 
 
-def four_interface_to_2_banks(mem_type):
+def four_interface_to_2_banks(mem_type, decouple_interfaces):
     sdfg = SDFG("test_4_interface_to_2_banks_" + mem_type)
     state = sdfg.add_state()
 
@@ -38,10 +38,12 @@ def four_interface_to_2_banks(mem_type):
             sdfg.states()[0].out_edges(node)[0].data.subset = subsets.Range.from_string("1, 1")
             break
 
-    bank_assignment = sdfg.generate_code()[3].clean_code
-    assert bank_assignment.count("sp") == 6
-    assert bank_assignment.count(mem_type + "[0]") == 3
-    assert bank_assignment.count(mem_type + "[1]") == 3
+    with set_temporary("compiler", "xilinx", "decouple_array_interfaces", value=decouple_interfaces):
+        bank_assignment = sdfg.generate_code()[3].clean_code
+        # if we are not decoupling array interfaces we will use less mem interfaces
+        assert bank_assignment.count("sp") == 6 if decouple_interfaces else 4
+        assert bank_assignment.count(mem_type + "[0]") == 3 if decouple_interfaces else 2
+        assert bank_assignment.count(mem_type + "[1]") == 3 if decouple_interfaces else 2
 
     a = np.zeros([2, 2], np.int32)
     a[0, 0] = 2
@@ -53,15 +55,27 @@ def four_interface_to_2_banks(mem_type):
 
 
 @xilinx_test(assert_ii_1=False)
-def test_4_interface_to_2_banks_hbm():
-    return four_interface_to_2_banks(mem_type="HBM")
+def test_4_interface_to_2_banks_ddr_non_decoupled_interfaces():
+    return four_interface_to_2_banks(mem_type="DDR", decouple_interfaces=False)
 
 
 @xilinx_test(assert_ii_1=False)
-def test_4_interface_to_2_banks_ddr():
-    return four_interface_to_2_banks(mem_type="DDR")
+def test_4_interface_to_2_banks_ddr_decoupled_interfaces():
+    return four_interface_to_2_banks(mem_type="DDR", decouple_interfaces=True)
+
+
+@xilinx_test(assert_ii_1=False)
+def test_4_interface_to_2_banks_hbm_non_decoupled_interface():
+    return four_interface_to_2_banks(mem_type="HBM", decouple_interfaces=False)
+
+
+@xilinx_test(assert_ii_1=False)
+def test_4_interface_to_2_banks_hbm_decoupled_interface():
+    return four_interface_to_2_banks(mem_type="HBM", decouple_interfaces=True)
 
 
 if __name__ == "__main__":
-    test_4_interface_to_2_banks_hbm(None)
-    test_4_interface_to_2_banks_ddr(None)
+    test_4_interface_to_2_banks_hbm_decoupled_interface(None)
+    test_4_interface_to_2_banks_hbm_non_decoupled_interface(None)
+    test_4_interface_to_2_banks_ddr_decoupled_interfaces(None)
+    test_4_interface_to_2_banks_ddr_non_decoupled_interfaces(None)

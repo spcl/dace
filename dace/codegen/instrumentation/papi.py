@@ -527,7 +527,7 @@ class PAPIUtils(object):
                 for k, v in retparams.items():
                     newv = symbolic.pystr_to_symbolic(str(v))
 
-                    tarsyms = symbolic.symbols_in_sympy_expr(target).keys()
+                    tarsyms = symbolic.symlist(target).keys()
                     if x in tarsyms:
                         continue
 
@@ -736,5 +736,7 @@ class PAPIUtils(object):
             elif isinstance(node, Tasklet):
                 return itcount * symbolic.pystr_to_symbolic(
                     PAPIUtils.get_tasklet_byte_accesses(node, dfg, sdfg, state_id))
+            elif isinstance(node, nodes.AccessNode):
+                return 0
             else:
                 raise NotImplementedError

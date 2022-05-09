@@ -12,7 +12,7 @@ from dace.sdfg.propagation import propagate_memlet
 from dace.sdfg.validation import validate_state
 from dace.properties import (EnumProperty, Property, DictProperty, SubsetProperty, SymbolicProperty, CodeBlock,
                              make_properties)
-from inspect import getframeinfo, stack
+import inspect
 import itertools
 from typing import (Any, AnyStr, Dict, Iterable, Iterator, List, Optional, Set, Tuple, Union, overload)
 import warnings
@@ -27,22 +27,31 @@ def _getdebuginfo(old_dinfo=None) -> dtypes.DebugInfo:
     if old_dinfo is not None:
         return old_dinfo
 
-    caller = getframeinfo(stack()[2][0])
+    caller = inspect.getframeinfo(inspect.stack()[2][0], context=0)
     return dtypes.DebugInfo(caller.lineno, 0, caller.lineno, 0, caller.filename)
 
 
 def _make_iterators(ndrange):
     # Input can either be a dictionary or a list of pairs
     if isinstance(ndrange, list):
-        params = [k for k, v in ndrange]
+        params = [k for k, _ in ndrange]
         ndrange = {k: v for k, v in ndrange}
     else:
         params = list(ndrange.keys())
 
-    if ndrange and isinstance(next(iter(ndrange.values())), tuple):
-        map_range = sbs.Range([ndrange[p] for p in params])
-    else:
-        map_range = SubsetProperty.from_string(", ".join([ndrange[p] for p in params]))
+    # Parse each dimension separately
+    ranges = []
+    for p in params:
+        prange: Union[str, sbs.Subset, Tuple[symbolic.SymbolicType]] = ndrange[p]
+        if isinstance(prange, sbs.Subset):
+            rng = prange.ndrange()[0]
+        elif isinstance(prange, tuple):
+            rng = prange
+        else:
+            rng = SubsetProperty.from_string(prange)[0]
+        ranges.append(rng)
+    map_range = sbs.Range(ranges)
+
     return params, map_range
 
 
@@ -58,7 +67,7 @@ class StateGraphView(object):
 
     ###################################################################
     # Typing overrides
-    
+
     @overload
     def nodes(self) -> List[nd.Node]:
         ...
@@ -670,8 +679,18 @@ class StateGraphView(object):
             :param name: Name to find.
             :param new_name: Name to replace.
         """
-        from dace.sdfg.sdfg import replace
+        from dace.sdfg.replace import replace
         replace(self, name, new_name)
+
+    def replace_dict(self,
+                     repl: Dict[str, str],
+                     symrepl: Optional[Dict[symbolic.SymbolicType, symbolic.SymbolicType]] = None):
+        """ Finds and replaces all occurrences of a set of symbols or arrays in this state.
+            :param repl: Mapping from names to replacements.
+            :param symrepl: Optional symbolic version of ``repl``.
+        """
+        from dace.sdfg.replace import replace_dict
+        replace_dict(self, repl, symrepl)
 
 
 @make_properties
@@ -1099,7 +1118,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
     def add_map(
         self,
         name,
-        ndrange: Union[Dict[str, str], List[Tuple[str, str]]],
+        ndrange: Union[Dict[str, Union[str, sbs.Subset]], List[Tuple[str, Union[str, sbs.Subset]]]],
         schedule=dtypes.ScheduleType.Default,
         unroll=False,
         debuginfo=None,
@@ -1157,7 +1176,8 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
 
     def add_mapped_tasklet(self,
                            name: str,
-                           map_ranges: Dict[str, sbs.Subset],
+                           map_ranges: Union[Dict[str, Union[str, sbs.Subset]], List[Tuple[str, Union[str,
+                                                                                                      sbs.Subset]]]],
                            inputs: Dict[str, mm.Memlet],
                            code: str,
                            outputs: Dict[str, mm.Memlet],

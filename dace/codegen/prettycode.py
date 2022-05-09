@@ -44,7 +44,7 @@ class CodeIOStream(StringIO):
 
         # Annotate code generator line
         if self._lineinfo:
-            caller = inspect.getframeinfo(inspect.stack()[1][0])
+            caller = inspect.getframeinfo(inspect.stack()[1][0], context=0)
             location_identifier += f'  ////__CODEGEN;{caller.filename};{caller.lineno}'
 
         # Write each line separately
