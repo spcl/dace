@@ -289,9 +289,11 @@ DACE_EXPORTED void __dace_exit_intel_fpga({sdfg.name}_t *__state) {{
                 vec_type = data.dtype.ocltype
             else:
                 vec_type = fpga.vector_element_type_of(data.dtype).ocltype
-            return "__global volatile  {}* restrict {}".format(vec_type, var_name)
+            return f"__global volatile  {vec_type}* restrict {var_name}"
         elif isinstance(data, dace.data.Stream):
             return None  # Streams are global objects
+        elif isinstance(data, dace.data.Scalar) and data.dtype == dace.bool:
+            return f"{data.dtype.ocltype} {var_name}"
         else:
             return data.as_arg(with_types=True, name=var_name)
 
@@ -553,6 +555,7 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
         kernel_args_opencl = []
         kernel_args_host = []
         kernel_args_call = []
+
         for is_output, pname, p, _ in parameters:
             if isinstance(p, dace.data.View):
                 continue
@@ -776,10 +779,9 @@ __kernel void \\
             elif isinstance(desc, dace.data.Scalar):
                 # if this is a scalar and the argument passed is also a scalar
                 # then we have to pass it by value, as references do not exist in C99
-                typedef = defined_ctype
+                typedef = desc.dtype.ocltype
                 if defined_type is not DefinedType.Pointer:
                     typedef = typedef + "*"
-
                 memlet_references.append(
                     (typedef, vconn, cpp.cpp_ptr_expr(sdfg, in_memlet, defined_type, codegen=self._frame)))
                 self._dispatcher.defined_vars.add(vconn, DefinedType.Pointer, typedef, allow_shadowing=True)
@@ -1462,7 +1464,6 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
         memlet, nc, wcr, dtype = self.memlets[node.id]
         defined_type, _ = self.defined_vars.get(node.id)
         updated = node
-
         if ((defined_type == DefinedType.Stream or defined_type == DefinedType.StreamArray) and memlet.dynamic):
             # Input memlet, we read from channel
             # we should not need mangle here, since we are in a tasklet
