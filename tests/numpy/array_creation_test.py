@@ -115,6 +115,41 @@ def test_array_literal():
     return np.array([[1, 2], [3, 4]], dtype=np.float32)
 
 
+@compare_numpy_output()
+def test_arange_0():
+    return np.arange(10, dtype=np.int32)
+
+
+@compare_numpy_output()
+def test_arange_1():
+    return np.arange(2, 10, dtype=np.int32)
+
+
+@compare_numpy_output()
+def test_arange_2():
+    return np.arange(2, 10, 3, dtype=np.int32)
+
+
+@compare_numpy_output()
+def test_arange_3():
+    return np.arange(2.5, 10, 3, dtype=np.float32)
+
+
+@compare_numpy_output()
+def test_arange_4():
+    return np.arange(2.5, 10, 3, dtype=np.int32)
+
+
+@compare_numpy_output()
+def test_arange_5():
+    return np.arange(2, 10, 3)
+
+
+@compare_numpy_output()
+def test_arange_6():
+    return np.arange(2.5, 10, 3)
+
+
 if __name__ == "__main__":
     test_empty()
     test_empty_like1()
@@ -131,3 +166,10 @@ if __name__ == "__main__":
     test_array()
     test_array_constant()
     test_array_literal()
+    test_arange_0()
+    test_arange_1()
+    test_arange_2()
+    test_arange_3()
+    test_arange_4()
+    test_arange_5()
+    test_arange_6()
