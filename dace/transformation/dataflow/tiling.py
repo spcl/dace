@@ -81,7 +81,8 @@ class MapTiling(transformation.SingleStateTransformation):
             if tile_size == map_entry.map.range.size()[dim_idx]:
                 continue
 
-            stripmine = StripMining(sdfg, sdfg_id, self.state_id, stripmine_subgraph, self.expr_index)
+            stripmine = StripMining()
+            stripmine.setup_match(sdfg, sdfg_id, self.state_id, stripmine_subgraph, self.expr_index)
 
             # Special case: Tile size of 1 should be omitted from inner map
             if tile_size == 1 and tile_stride == 1 and self.tile_trivial == False:
@@ -111,7 +112,8 @@ class MapTiling(transformation.SingleStateTransformation):
                     MapCollapse.outer_map_entry: graph.node_id(last_map_entry),
                     MapCollapse.inner_map_entry: graph.node_id(new_map_entry)
                 }
-                mapcollapse = MapCollapse(sdfg, sdfg_id, self.state_id, mapcollapse_subgraph, 0)
+                mapcollapse = MapCollapse()
+                mapcollapse.setup_match(sdfg, sdfg_id, self.state_id, mapcollapse_subgraph, 0)
                 mapcollapse.apply(graph, sdfg)
             last_map_entry = graph.in_edges(map_entry)[0].src
         return last_map_entry

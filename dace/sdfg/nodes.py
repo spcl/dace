@@ -22,6 +22,7 @@ from dace import data, subsets as sbs, dtypes
 import pydoc
 import warnings
 
+
 # -----------------------------------------------------------------------------
 
 
@@ -1173,6 +1174,8 @@ class LibraryNode(CodeNode):
             node.
             :return: the name of the expanded implementation
         """
+        from dace.transformation.transformation import ExpandTransformation  # Avoid import loop
+
         implementation = self.implementation
         library_name = getattr(type(self), '_dace_library_name', '')
         try:
@@ -1215,7 +1218,8 @@ class LibraryNode(CodeNode):
         sdfg_id = sdfg.sdfg_id
         state_id = sdfg.nodes().index(state)
         subgraph = {transformation_type._match_node: state.node_id(self)}
-        transformation = transformation_type(sdfg, sdfg_id, state_id, subgraph, 0)
+        transformation: ExpandTransformation = transformation_type()
+        transformation.setup_match(sdfg, sdfg_id, state_id, subgraph, 0)
         if not transformation.can_be_applied(state, 0, sdfg):
             raise RuntimeError("Library node " "expansion applicability check failed.")
         sdfg.append_transformation(transformation)

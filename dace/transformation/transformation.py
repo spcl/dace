@@ -148,32 +148,33 @@ class PatternTransformation(TransformationBase):
             candidate.append(getattr(self, cname))
         return str(candidate)
 
-    def __init__(self,
-                 sdfg: SDFG,
-                 sdfg_id: int,
-                 state_id: int,
-                 subgraph: Dict['PatternNode', int],
-                 expr_index: int,
-                 override: bool = False,
-                 options: Optional[Dict[str, Any]] = None) -> None:
-        """ Initializes an instance of Transformation match.
-            :param sdfg_id: A unique ID of the SDFG.
-            :param state_id: The node ID of the SDFG state, if applicable. If
-                             transformation does not operate on a single state,
-                             the value should be -1.
-            :param subgraph: A mapping between node IDs returned from
-                             `PatternTransformation.expressions` and the nodes in
-                             `graph`.
-            :param expr_index: The list index from `PatternTransformation.expressions`
-                               that was matched.
-            :param override: If True, accepts the subgraph dictionary as-is
-                             (mostly for internal use).
-            :param options: An optional dictionary of transformation properties
-            :raise TypeError: When transformation is not subclass of
-                              PatternTransformation.
-            :raise TypeError: When state_id is not instance of int.
-            :raise TypeError: When subgraph is not a dict of
-                              PatternNode : int.
+    def setup_match(self,
+                    sdfg: SDFG,
+                    sdfg_id: int,
+                    state_id: int,
+                    subgraph: Dict['PatternNode', int],
+                    expr_index: int,
+                    override: bool = False,
+                    options: Optional[Dict[str, Any]] = None) -> None:
+        """
+        Sets the transformation to a given subgraph pattern.
+
+        :param sdfg_id: A unique ID of the SDFG.
+        :param state_id: The node ID of the SDFG state, if applicable. If
+                            transformation does not operate on a single state,
+                            the value should be -1.
+        :param subgraph: A mapping between node IDs returned from
+                            `PatternTransformation.expressions` and the nodes in
+                            `graph`.
+        :param expr_index: The list index from `PatternTransformation.expressions`
+                            that was matched.
+        :param override: If True, accepts the subgraph dictionary as-is
+                            (mostly for internal use).
+        :param options: An optional dictionary of transformation properties
+        :raise TypeError: When transformation is not subclass of
+                            PatternTransformation.
+        :raise TypeError: When state_id is not instance of int.
+        :raise TypeError: When subgraph is not a dict of {PatternNode: int}.
         """
 
         self._sdfg = sdfg
@@ -338,7 +339,8 @@ class PatternTransformation(TransformationBase):
 
         # Construct subgraph and instantiate transformation
         subgraph = {required_node_names[k]: graph.node_id(where[k]) for k in required}
-        instance = cls(sdfg, sdfg.sdfg_id, state_id, subgraph, expr_index)
+        instance = cls()
+        instance.setup_match(sdfg, sdfg.sdfg_id, state_id, subgraph, expr_index)
 
         # Construct transformation parameters
         for optname, optval in options.items():
