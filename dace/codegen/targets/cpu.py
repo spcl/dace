@@ -1124,7 +1124,7 @@ class CPUCodeGen(TargetCodeGenerator):
         except KeyError:
             pass
         if not types:
-            types = self._dispatcher.defined_vars.get(ptr)
+            types = self._dispatcher.defined_vars.get(ptr, is_global=True)
         var_type, ctypedef = types
 
         if fpga.is_fpga_array(desc):

@@ -2,6 +2,7 @@
 import ast
 from collections import OrderedDict
 import copy
+import warnings
 from dace.frontend.python.astutils import unparse, TaskletFreeSymbolVisitor
 import json
 import pydoc
@@ -710,6 +711,16 @@ class SDFGReferenceProperty(Property):
         # Parse the JSON back into an SDFG object
         return dace.SDFG.from_json(obj, context)
 
+class OptionalSDFGReferenceProperty(SDFGReferenceProperty):
+    """
+    An SDFG reference property that defaults to None if cannot be deserialized.
+    """
+    def from_json(self, obj, context=None):
+        try:
+            return super().from_json(obj, context)
+        except TypeError as ex:
+            warnings.warn(f'Could not deserialize optional SDFG ({type(ex).__name__}), defaulting to None: {str(ex)}')
+            return None
 
 class RangeProperty(Property):
     """ Custom Property type for `dace.subsets.Range` members. """
