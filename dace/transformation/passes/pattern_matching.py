@@ -3,6 +3,7 @@
 
 import collections
 from dataclasses import dataclass
+import time
 
 from importlib_metadata import metadata
 from dace.config import Config
@@ -11,6 +12,7 @@ from dace.sdfg import graph as gr, nodes as nd
 import networkx as nx
 from networkx.algorithms import isomorphism as iso
 from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional, Set, Tuple, Type, Union
+from dace.sdfg.validation import InvalidSDFGError
 from dace.transformation import transformation as xf, pass_pipeline as ppl
 
 
@@ -44,7 +46,7 @@ class PatternMatchAndApply(ppl.Pass):
             self.transformations = list(transformations)
 
         # Precompute metadata on each transformation (how to apply it)
-        self.metadata = get_transformation_metadata([type(t) for t in self.transformations])
+        self.metadata = get_transformation_metadata(self.transformations)
 
         self.permissive = permissive
         self.validate = validate
@@ -72,11 +74,11 @@ class PatternMatchAndApply(ppl.Pass):
         applied_transformations = collections.defaultdict(list)
 
         # For every transformation in the list, find first match and apply
-        for xform, opts in zip(xforms, options):
+        for xform in self.transformations:
             # Find only the first match
             try:
                 match = next(m for m in match_patterns(
-                    sdfg, [xform], metadata=self.metadata, permissive=self.permissive, states=self.states, options=[opts]))
+                    sdfg, [xform], metadata=self.metadata, permissive=self.permissive, states=self.states))
             except StopIteration:
                 continue
 
@@ -98,6 +100,8 @@ class PatternMatchAndApply(ppl.Pass):
                 and (self.print_report or (self.print_report is None and Config.get_bool('debugprint')))):
             print('Applied {}.'.format(', '.join(['%d %s' % (len(v), k) for k, v in applied_transformations.items()])))
 
+        if len(applied_transformations) == 0:  # Signal that no transformation was applied
+            return None
         return applied_transformations
 
 
@@ -109,14 +113,128 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
     ``order_by_transformation``).
     """
     order_by_transformation: bool = True
-    # TODO
-    pass
+
+    def __init__(self,
+                 transformations: Union[xf.PatternTransformation, Iterable[xf.PatternTransformation]],
+                 permissive: bool = False,
+                 validate: bool = True,
+                 validate_all: bool = False,
+                 states: Optional[List[SDFGState]] = None,
+                 print_report: Optional[bool] = None,
+                 progress: Optional[bool] = None,
+                 order_by_transformation: bool = True) -> None:
+        super().__init__(transformations, permissive, validate, validate_all, states, print_report, progress)
+        self.order_by_transformation = order_by_transformation
+
+    # Helper function for applying and validating a transformation
+    def _apply_and_validate(self, match: xf.PatternTransformation, sdfg: SDFG, start: float,
+                            pipeline_results: Dict[str, Any], applied_transformations: Dict[str, Any]):
+        tsdfg = sdfg.sdfg_list[match.sdfg_id]
+        graph = tsdfg.node(match.state_id) if match.state_id >= 0 else tsdfg
+
+        # Set previous pipeline results
+        match._pipeline_results = pipeline_results
+
+        if self.validate_all:
+            match_name = match.print_match(tsdfg)
+
+        applied_transformations[type(match).__name__].append(match.apply(graph, tsdfg))
+        if self.progress or (self.progress is None and (time.time() - start) > 5):
+            print('Applied {}.\r'.format(', '.join(['%d %s' % (len(v), k)
+                                                    for k, v in applied_transformations.items()])),
+                  end='')
+        if self.validate_all:
+            try:
+                sdfg.validate()
+            except InvalidSDFGError as err:
+                raise InvalidSDFGError(
+                    f'Validation failed after applying {match_name}. '
+                    f'{type(err).__name__}: {err}', sdfg, match.state_id) from err
+
+    def _apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any], apply_once: bool) -> Dict[str, List[Any]]:
+        """
+        Internal apply pass method that can run once through the graph or repeatedly.
+        """
+        if self.progress is None and not Config.get_bool('progress'):
+            self.progress = False
+
+        start = time.time()
+
+        applied_transformations = collections.defaultdict(list)
+        xforms = self.transformations
+        match: Optional[xf.PatternTransformation] = None
+
+        # Ensure transformations are unique
+        if len(xforms) != len(set(xforms)):
+            raise ValueError('Transformation set must be unique')
+
+        if self.order_by_transformation:
+            applied_anything = True
+            while applied_anything:
+                applied_anything = False
+                for xform in xforms:
+                    applied = True
+                    while applied:
+                        applied = False
+                        for match in match_patterns(sdfg,
+                                                    permissive=self.permissive,
+                                                    patterns=[xform],
+                                                    states=self.states,
+                                                    metadata=self.metadata):
+                            self._apply_and_validate(match, sdfg, start, pipeline_results, applied_transformations)
+                            applied = True
+                            applied_anything = True
+                            break
+                if apply_once:
+                    break
+        else:
+            applied = True
+            while applied:
+                applied = False
+                # Find and apply one of the chosen transformations
+                for match in match_patterns(sdfg,
+                                            permissive=self.permissive,
+                                            patterns=xforms,
+                                            states=self.states,
+                                            metadata=self.metadata):
+                    self._apply_and_validate(match, sdfg, start, pipeline_results, applied_transformations)
+                    applied = True
+                    break
+                if apply_once:
+                    break
+
+        if self.validate:
+            try:
+                sdfg.validate()
+            except InvalidSDFGError as err:
+                if applied and match is not None:
+                    raise InvalidSDFGError("Validation failed after applying {}.".format(match.print_match(self)), self,
+                                           match.state_id) from err
+                else:
+                    raise err
+
+        if (len(applied_transformations) > 0
+                and (self.progress or self.print_report or
+                     ((self.progress is None or self.print_report is None) and Config.get_bool('debugprint')))):
+            print('Applied {}.'.format(', '.join(['%d %s' % (len(v), k) for k, v in applied_transformations.items()])))
+
+        if len(applied_transformations) == 0:  # Signal that no transformation was applied
+            return None
+        return applied_transformations
+
+    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Dict[str, List[Any]]:
+        return self._apply_pass(sdfg, pipeline_results, apply_once=False)
 
 
 @dataclass
-class PatternMatchAndApplyEverywhere(PatternMatchAndApply):
-    # TODO
-    pass
+class PatternApplyOnceEverywhere(PatternMatchAndApplyRepeated):
+    """
+    A pass pipeline that applies all given transformations once, in every location that their pattern matched.
+    If match condition becomes False (e.g., as a result of applying a transformation), the transformation is not
+    applied on that location.
+    """
+    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Dict[str, List[Any]]:
+        return self._apply_pass(sdfg, pipeline_results, apply_once=True)
 
 
 def collapse_multigraph_to_nx(graph: Union[gr.MultiDiGraph, gr.OrderedMultiDiGraph]) -> nx.DiGraph:
@@ -201,8 +319,8 @@ def type_or_class_match(node_a, node_b):
 
 
 def _try_to_match_transformation(graph: Union[SDFG, SDFGState], collapsed_graph: nx.DiGraph, subgraph: Dict[int, int],
-                                 sdfg: SDFG, xform: Type[xf.PatternTransformation], expr_idx: int,
-                                 nxpattern: nx.DiGraph, state_id: int, permissive: bool,
+                                 sdfg: SDFG, xform: Union[xf.PatternTransformation, Type[xf.PatternTransformation]],
+                                 expr_idx: int, nxpattern: nx.DiGraph, state_id: int, permissive: bool,
                                  options: Dict[str, Any]) -> Optional[xf.PatternTransformation]:
     """ 
     Helper function that tries to instantiate a pattern match into a 
@@ -214,7 +332,20 @@ def _try_to_match_transformation(graph: Union[SDFG, SDFGState], collapsed_graph:
     }
 
     try:
-        match = xform(sdfg, sdfg.sdfg_id, state_id, subgraph, expr_idx, options=options)
+        if isinstance(xform, xf.PatternTransformation):
+            match = xform
+        else:  # Construct directly from type with options
+            opts = options or {}
+            try:
+                match = xform(**opts)
+            except TypeError:
+                # Backwards compatibility, transformation does not support ctor arguments
+                match = xform()
+                # Set manually
+                for oname, oval in opts.items():
+                    setattr(match, oname, oval)
+
+        match.setup_match(sdfg, sdfg.sdfg_id, state_id, subgraph, expr_idx, options=options)
         match_found = match.can_be_applied(graph, expr_idx, sdfg, permissive=permissive)
     except Exception as e:
         if Config.get_bool('optimizer', 'match_exception'):
@@ -250,7 +381,8 @@ def get_transformation_metadata(patterns: List[Type[xf.PatternTransformation]],
     interstate_transformations: TransformationData = []
     for pattern, opts in zip(patterns, options):
         # Find if the transformation is inter-state
-        is_interstate = issubclass(pattern, xf.MultiStateTransformation)
+        is_interstate = (isinstance(pattern, xf.MultiStateTransformation)
+                         or (isinstance(pattern, type) and issubclass(pattern, xf.MultiStateTransformation)))
         for i, expr in enumerate(pattern.expressions()):
             # Make a networkx-version of the match subgraph
             nxpattern = collapse_multigraph_to_nx(expr)
