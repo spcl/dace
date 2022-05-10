@@ -1119,11 +1119,6 @@ class DaCeKeywordRemover(ExtNodeTransformer):
                         node.value = ast.copy_location(newnode, node.value)
                         return node
                     elif isinstance(desc, data.Stream):
-                        if desc.is_stream_array():
-                            index = cpp_offset_expr(desc, memlet.subset)
-                            target = f"{ptrname}[{index}]"
-                        else:
-                            target = ptrname
                         newnode = ast.Name(id="%s.push(%s);" % (
                             target,
                             cppunparse.cppunparse(value, expr_semicolon=False),
