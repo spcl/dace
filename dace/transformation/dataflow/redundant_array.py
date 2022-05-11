@@ -3,16 +3,19 @@
 """
 
 import copy
-import networkx as nx
 import typing
 
-from dace import data, subsets, symbolic, dtypes, memlet as mm
-from dace.sdfg import nodes, SDFGState, SDFG
-from dace.sdfg import utils as sdutil
-from dace.sdfg import graph
-from dace.transformation import transformation as pm, helpers
-from dace.config import Config
+import networkx as nx
 from networkx.exception import NetworkXError, NodeNotFound
+
+from dace import data, dtypes
+from dace import memlet as mm
+from dace import subsets, symbolic
+from dace.config import Config
+from dace.sdfg import SDFG, SDFGState, graph, nodes
+from dace.sdfg import utils as sdutil
+from dace.transformation import helpers
+from dace.transformation import transformation as pm
 
 # Helper methods #############################################################
 
@@ -194,7 +197,11 @@ class RedundantArray(pm.SingleStateTransformation, pm.SimplifyPass):
 
         # 1. Get edge e1 and extract subsets for arrays A and B
         e1 = graph.edges_between(in_array, out_array)[0]
-        a1_subset, b_subset = _validate_subsets(e1, sdfg.arrays)
+        try:
+            a1_subset, b_subset = _validate_subsets(e1, sdfg.arrays)
+        except (NotImplementedError, ValueError):
+            raise
+            return False
 
         # Find the true in desc (in case in_array is a view).
         true_in_array = in_array
@@ -275,7 +282,10 @@ class RedundantArray(pm.SingleStateTransformation, pm.SimplifyPass):
                 for a in accesses:
                     subsets_intersect = False
                     for e in graph.out_edges(a):
-                        subset, _ = _validate_subsets(e, sdfg.arrays, src_name=a.data)
+                        try:
+                            subset, _ = _validate_subsets(e, sdfg.arrays, src_name=a.data)
+                        except (NotImplementedError, ValueError):
+                            return False
                         for oset in true_out_subsets:
                             res = subsets.intersects(oset, subset)
                             if res == True or res is None:
@@ -368,7 +378,7 @@ class RedundantArray(pm.SingleStateTransformation, pm.SimplifyPass):
             # 2-a. Extract/validate subsets for array A and others
             try:
                 _, a2_subset = _validate_subsets(e2, sdfg.arrays)
-            except NotImplementedError:
+            except (NotImplementedError, ValueError):
                 return False
             # 2-b. Check whether a2_subset covers a1_subset
             if not a2_subset.covers(a1_subset):
@@ -380,7 +390,7 @@ class RedundantArray(pm.SingleStateTransformation, pm.SimplifyPass):
                 if e3 is not e2:
                     try:
                         _validate_subsets(e3, sdfg.arrays, dst_name=in_array.data)
-                    except NotImplementedError:
+                    except (NotImplementedError, ValueError):
                         return False
 
         return True
@@ -596,7 +606,10 @@ class RedundantSecondArray(pm.SingleStateTransformation, pm.SimplifyPass):
 
         # 1. Get edge e1 and extract/validate subsets for arrays A and B
         e1 = graph.edges_between(in_array, out_array)[0]
-        a_subset, b1_subset = _validate_subsets(e1, sdfg.arrays)
+        try:
+            a_subset, b1_subset = _validate_subsets(e1, sdfg.arrays)
+        except (NotImplementedError, ValueError):
+            return False
 
         # Find the true in desc (in case in_array is a view).
         true_in_array = in_array
@@ -680,7 +693,10 @@ class RedundantSecondArray(pm.SingleStateTransformation, pm.SimplifyPass):
                     for a in accesses:
                         subsets_intersect = False
                         for e in graph.in_edges(a):
-                            _, subset = _validate_subsets(e, sdfg.arrays, dst_name=a.data)
+                            try:
+                                _, subset = _validate_subsets(e, sdfg.arrays, dst_name=a.data)
+                            except (NotImplementedError, ValueError):
+                                return False
                             for iset in true_in_subsets:
                                 res = subsets.intersects(iset, subset)
                                 if res == True or res is None:
@@ -768,7 +784,7 @@ class RedundantSecondArray(pm.SingleStateTransformation, pm.SimplifyPass):
             # 2-a. Extract/validate subsets for array B and others
             try:
                 b2_subset, _ = _validate_subsets(e2, sdfg.arrays)
-            except NotImplementedError:
+            except (NotImplementedError, ValueError):
                 return False
             # 2-b. Check where b1_subset covers b2_subset
             if not b1_subset.covers(b2_subset):
@@ -780,7 +796,7 @@ class RedundantSecondArray(pm.SingleStateTransformation, pm.SimplifyPass):
                 if e3 is not e2:
                     try:
                         _validate_subsets(e3, sdfg.arrays, src_name=out_array.data)
-                    except NotImplementedError:
+                    except (NotImplementedError, ValueError):
                         return False
 
         return True
