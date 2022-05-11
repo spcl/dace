@@ -349,8 +349,12 @@ def _try_to_match_transformation(graph: Union[SDFG, SDFGState], collapsed_graph:
     except Exception as e:
         if Config.get_bool('optimizer', 'match_exception'):
             raise
+        if not isinstance(xform, type):
+            xft = type(xform)
+        else:
+            xft = xform
         print('WARNING: {p}::can_be_applied triggered a {c} exception:'
-              ' {e}'.format(p=xform.__name__, c=e.__class__.__name__, e=e))
+              ' {e}'.format(p=xft.__name__, c=e.__class__.__name__, e=e))
         return None
 
     if match_found:
