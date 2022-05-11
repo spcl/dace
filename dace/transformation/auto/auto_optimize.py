@@ -552,6 +552,9 @@ def auto_optimize(sdfg: SDFG,
     make_transients_persistent(sdfg, device)
     '''
 
+    # Simplify one last time
+    sdfg.simplify()
+
     # Validate at the end
     if validate or validate_all:
         sdfg.validate()
