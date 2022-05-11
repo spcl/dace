@@ -207,14 +207,16 @@ class MapWCRFusion(pm.SingleStateTransformation):
 
     def apply(self, graph: SDFGState, sdfg: SDFG):
         # To apply, collapse the second map and then fuse the two resulting maps
-        map_collapse = MapCollapse(
+        map_collapse = MapCollapse()
+        map_collapse.setup_match(
             sdfg, self.sdfg_id, self.state_id, {
                 MapCollapse.outer_map_entry: graph.node_id(self.rmap_out_entry),
                 MapCollapse.inner_map_entry: graph.node_id(self.rmap_in_entry),
             }, 0)
         map_entry, _ = map_collapse.apply(graph, sdfg)
 
-        map_fusion = MapFusion(sdfg, self.sdfg_id, self.state_id, {
+        map_fusion = MapFusion()
+        map_fusion.setup_match(sdfg, self.sdfg_id, self.state_id, {
             MapFusion.first_map_exit: graph.node_id(self.tmap_exit),
             MapFusion.second_map_entry: graph.node_id(map_entry),
         }, 0)
