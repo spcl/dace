@@ -13,10 +13,9 @@ from typing import Set, Tuple, Union, List, Iterable, Dict
 import warnings
 
 # Transformations
-from dace.transformation.dataflow import MapCollapse, TrivialMapElimination, MapFusion
+from dace.transformation.dataflow import MapCollapse, TrivialMapElimination, MapFusion, ReduceExpansion
 from dace.transformation.interstate import LoopToMap, RefineNestedAccess
 from dace.transformation.subgraph.composite import CompositeFusion
-from dace.transformation.subgraph import ReduceExpansion
 from dace.transformation.subgraph import helpers as xfsh
 from dace.transformation import helpers as xfh
 
