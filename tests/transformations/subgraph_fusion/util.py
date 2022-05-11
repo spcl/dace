@@ -1,14 +1,12 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+from typing import List, Union
+
 import dace
-from dace.transformation.subgraph import MultiExpansion
-from dace.transformation.subgraph import SubgraphFusion
-from dace.transformation.subgraph import ReduceExpansion
-import dace.transformation.subgraph.helpers as helpers
-
-from dace.sdfg.graph import SubgraphView
-
 import dace.libraries.standard as stdlib
-from typing import Union, List
+import dace.transformation.subgraph.helpers as helpers
+from dace.sdfg.graph import SubgraphView
+from dace.transformation.dataflow import ReduceExpansion
+from dace.transformation.subgraph import MultiExpansion, SubgraphFusion
 
 
 def expand_reduce(sdfg: dace.SDFG,

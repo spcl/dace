@@ -2,7 +2,7 @@
 import dace
 import numpy as np
 import pytest
-from dace.transformation.subgraph import ReduceExpansion
+from dace.transformation.dataflow import ReduceExpansion
 
 from dace.libraries.standard.nodes.reduce import Reduce
 

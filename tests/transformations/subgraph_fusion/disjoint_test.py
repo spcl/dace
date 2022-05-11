@@ -1,14 +1,16 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
-import dace.transformation.subgraph.helpers as helpers
-from dace.transformation.subgraph import ReduceExpansion, SubgraphFusion
-from dace.sdfg.graph import SubgraphView
-import dace.sdfg.nodes as nodes
-import numpy as np
-import dace.libraries.standard as stdlib
+from typing import List, Union
 
-from typing import Union, List
-from util import expand_reduce, expand_maps, fusion
+import numpy as np
+from util import expand_maps, expand_reduce, fusion
+
+import dace
+import dace.libraries.standard as stdlib
+import dace.sdfg.nodes as nodes
+import dace.transformation.subgraph.helpers as helpers
+from dace.sdfg.graph import SubgraphView
+from dace.transformation.dataflow import ReduceExpansion
+from dace.transformation.subgraph import SubgraphFusion
 
 M = dace.symbol('M')
 N = dace.symbol('N')
