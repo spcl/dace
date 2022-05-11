@@ -105,7 +105,8 @@ def test_inputs_outputs():
     assert np.allclose(D_cpy, expected_D)
 
     subgraph = SubgraphView(sdfg.nodes()[0], sdfg.nodes()[0].nodes())
-    sf = SubgraphFusion(subgraph)
+    sf = SubgraphFusion()
+    sf.setup_match(subgraph)
     assert sf.can_be_applied(sdfg, subgraph)
     fusion(sdfg, sdfg.nodes()[0], None)
 

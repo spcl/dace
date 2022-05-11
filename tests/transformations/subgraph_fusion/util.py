@@ -24,14 +24,16 @@ def expand_reduce(sdfg: dace.SDFG,
         reduce_nodes = []
         for node in sg.nodes():
             if isinstance(node, stdlib.Reduce):
-                rexp = ReduceExpansion(sdfg, sdfg.sdfg_id, sdfg.node_id(graph),
-                                       {ReduceExpansion.reduce: graph.node_id(node)}, 0)
+                rexp = ReduceExpansion()
+                rexp.setup_match(sdfg, sdfg.sdfg_id, sdfg.node_id(graph), {ReduceExpansion.reduce: graph.node_id(node)},
+                                 0)
                 if not rexp.can_be_applied(graph, 0, sdfg):
                     print(f"WARNING: Cannot expand reduce node {node}:" "can_be_applied() failed.")
                     continue
                 reduce_nodes.append(node)
 
-        trafo_reduce = ReduceExpansion(sdfg, sdfg.sdfg_id, sdfg.node_id(graph), {}, 0)
+        trafo_reduce = ReduceExpansion()
+        trafo_reduce.setup_match(sdfg, sdfg.sdfg_id, sdfg.node_id(graph), {}, 0)
         for (property, val) in kwargs.items():
             setattr(trafo_reduce, property, val)
 
@@ -52,7 +54,8 @@ def expand_maps(sdfg: dace.SDFG,
     if not isinstance(subgraph, list):
         subgraph = [subgraph]
 
-    trafo_expansion = MultiExpansion(subgraph[0])
+    trafo_expansion = MultiExpansion()
+    trafo_expansion.setup_match(subgraph[0])
     for (property, val) in kwargs.items():
         setattr(trafo_expansion, property, val)
 
@@ -67,7 +70,8 @@ def fusion(sdfg: dace.SDFG, graph: dace.SDFGState, subgraph: Union[SubgraphView,
     if not isinstance(subgraph, list):
         subgraph = [subgraph]
 
-    map_fusion = SubgraphFusion(subgraph[0])
+    map_fusion = SubgraphFusion()
+    map_fusion.setup_match(subgraph[0])
     for (property, val) in kwargs.items():
         setattr(map_fusion, property, val)
 

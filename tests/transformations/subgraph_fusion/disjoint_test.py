@@ -93,7 +93,8 @@ def test_p1():
     del csdfg
 
     subgraph = SubgraphView(state, state.nodes())
-    sf = SubgraphFusion(subgraph)
+    sf = SubgraphFusion()
+    sf.setup_match(subgraph)
     assert sf.can_be_applied(sdfg, subgraph)
     sf.apply(sdfg)
 
@@ -111,7 +112,8 @@ def test_p2():
     assert len(sdfg.nodes()) == 1
 
     subgraph = SubgraphView(state, state.nodes())
-    sf = SubgraphFusion(subgraph)
+    sf = SubgraphFusion()
+    sf.setup_match(subgraph)
     assert not sf.can_be_applied(sdfg, subgraph)
 
 
@@ -122,7 +124,8 @@ def test_p3():
     assert len(sdfg.nodes()) == 1
 
     subgraph = SubgraphView(state, state.nodes())
-    sf = SubgraphFusion(subgraph)
+    sf = SubgraphFusion()
+    sf.setup_match(subgraph)
     assert not sf.can_be_applied(sdfg, subgraph)
 
 

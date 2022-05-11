@@ -653,7 +653,8 @@ class ExpandTransformation(PatternTransformation):
         subgraph = {expr.node(int(k)): int(v) for k, v in json_obj['_subgraph'].items()}
 
         # Reconstruct transformation
-        ret = xform(None, json_obj['sdfg_id'], json_obj['state_id'], subgraph, json_obj['expr_index'])
+        ret = xform()
+        ret.setup_match(None, json_obj['sdfg_id'], json_obj['state_id'], subgraph, json_obj['expr_index'])
         context = context or {}
         context['transformation'] = ret
         serialize.set_properties_from_json(ret,
@@ -678,7 +679,16 @@ class SubgraphTransformation(TransformationBase):
     state_id = Property(dtype=int, desc='ID of state to transform subgraph within, or -1 to transform the ' 'SDFG')
     subgraph = SetProperty(element_type=int, desc='Subgraph in transformation instance')
 
-    def __init__(self, subgraph: Union[Set[int], gr.SubgraphView], sdfg_id: int = None, state_id: int = None):
+    def setup_match(self, subgraph: Union[Set[int], gr.SubgraphView], sdfg_id: int = None, state_id: int = None):
+        """
+        Sets the transformation to a given subgraph.
+
+        :param subgraph: A set of node (or state) IDs or a subgraph view object.
+        :param sdfg_id: A unique ID of the SDFG.
+        :param state_id: The node ID of the SDFG state, if applicable. If
+                            transformation does not operate on a single state,
+                            the value should be -1.
+        """
         if (not isinstance(subgraph, (gr.SubgraphView, SDFG, SDFGState)) and (sdfg_id is None or state_id is None)):
             raise TypeError('Subgraph transformation either expects a SubgraphView or a '
                             'set of node IDs, SDFG ID and state ID (or -1).')
@@ -842,7 +852,8 @@ class SubgraphTransformation(TransformationBase):
                      if ext.__name__ == json_obj['transformation'])
 
         # Reconstruct transformation
-        ret = xform(json_obj['subgraph'], json_obj['sdfg_id'], json_obj['state_id'])
+        ret = xform()
+        ret.setup_match(json_obj['subgraph'], json_obj['sdfg_id'], json_obj['state_id'])
         context = context or {}
         context['transformation'] = ret
         serialize.set_properties_from_json(ret, json_obj, context=context, ignore_properties={'transformation', 'type'})

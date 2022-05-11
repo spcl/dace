@@ -52,7 +52,8 @@ def test_p1(in_transient, out_transient):
         if isinstance(node, dace.libraries.standard.nodes.Reduce):
             reduce_node = node
 
-    rexp = ReduceExpansion(sdfg, sdfg.sdfg_id, 0, {ReduceExpansion.reduce: state.node_id(reduce_node)}, 0)
+    rexp = ReduceExpansion()
+    rexp.setup_match(sdfg, sdfg.sdfg_id, 0, {ReduceExpansion.reduce: state.node_id(reduce_node)}, 0)
     assert rexp.can_be_applied(state, 0, sdfg) == True
 
     A = np.random.rand(M.get(), N.get()).astype(np.float64)

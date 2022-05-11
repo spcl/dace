@@ -82,7 +82,8 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
             subgraph = graph_or_subgraph
 
         # create condition function object
-        fusion_condition = CompositeFusion(SubgraphView(graph, graph.nodes()))
+        fusion_condition = CompositeFusion()
+        fusion_condition.setup_match(SubgraphView(graph, graph.nodes()))
 
         # within SDFGState: greedily enumerate fusible components
         # and apply transformation
@@ -120,7 +121,8 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
         for map_entries in enumerator:
             if len(map_entries) > 1:
                 current_subgraph = xfsh.subgraph_from_maps(sdfg, graph, map_entries)
-                cf = CompositeFusion(current_subgraph)
+                cf = CompositeFusion()
+                cf.setup_match(current_subgraph)
                 # transfer settings
                 cf.allow_tiling = fusion_condition.allow_tiling
                 cf.schedule_innermaps = fusion_condition.schedule_innermaps
