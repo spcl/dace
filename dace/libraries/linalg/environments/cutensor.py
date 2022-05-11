@@ -11,7 +11,7 @@ class cuTensor:
     cmake_includes = []
     cmake_libraries = ["cutensor"]
     cmake_compile_flags = []
-    cmake_link_flags = []
+    cmake_link_flags = ["-L /users/aziogas/libcutensor/lib/11 -lcutensor"]
     cmake_files = []
 
     headers = {'frame': ["../include/dace_cutensor.h"], 'cuda': ["../include/dace_cutensor.h"]}
