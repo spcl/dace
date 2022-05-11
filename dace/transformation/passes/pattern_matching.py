@@ -5,7 +5,6 @@ import collections
 from dataclasses import dataclass
 import time
 
-from importlib_metadata import metadata
 from dace.config import Config
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg import graph as gr, nodes as nd
