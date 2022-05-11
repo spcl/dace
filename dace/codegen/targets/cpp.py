@@ -21,6 +21,7 @@ from dace.codegen.targets.common import (sym2cpp, find_incoming_edges, codeblock
 from dace.codegen.dispatcher import DefinedType
 from dace.config import Config
 from dace.frontend import operations
+from dace.frontend.python import astutils
 from dace.frontend.python.astutils import ExtNodeTransformer, rname, unparse
 from dace.sdfg import nodes, graph as gr, utils
 from dace.properties import LambdaProperty
@@ -1100,7 +1101,7 @@ class DaCeKeywordRemover(ExtNodeTransformer):
             return self.generic_visit(node)
 
         memlet, nc, wcr, dtype = self.memlets[target]
-        value = self.visit(node.value)
+        value = self.visit(astutils.copy_tree(node.value))
 
         if not isinstance(node.targets[-1], ast.Subscript):
             # Dynamic accesses or streams -> every access counts
