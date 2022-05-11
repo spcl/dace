@@ -14,7 +14,7 @@ class MPI:
     cmake_compile_flags = ["-I${MPI_CXX_HEADER_DIR}"]
     cmake_link_flags = ["${MPI_LINKER_FLAGS}"]
 
-    headers = ["mpi.h"]
+    headers = {'frame': ["mpi.h"], 'cuda': ["../include/cuda_mpi_interop.h"]}
     state_fields = []
     init_code = "int t; MPI_Initialized(&t);  if (!t) MPI_Init(NULL, NULL);"
     finalize_code = "// MPI_Finalize();"  # actually if we finalize in the dace program we break pytest :)
