@@ -32,9 +32,42 @@ class ExpandAllreduceMPI(ExpandTransformation):
         code += f"""
             MPI_Allreduce({buffer}, _outbuffer, {count_str}, {mpi_dtype_str}, {node.op}, {comm});
             """
-        
+
         if node.grid:
             code += "}"
+        
+        # comm = "MPI_COMM_WORLD"
+        # if node.grid:
+        #     comm = f"__state->{node.grid}_comm"
+        #     code = f"if (__state->{node.grid}_size > 1) {{"
+        # else:
+        #     code = ""
+        
+        # if in_place:
+        #     if comm == "MPI_COMM_WORLD":
+        #         code += """
+        #             int __world_rank;
+        #             MPI_Comm_rank(&__world_rank, MPI_COMM_WORLD);
+        #             if (__world_rank == 0) {{
+        #         """
+        #     else:
+        #         code += f"""
+        #             if (__state->{node.grid}_rank == 0) {{
+        #         """
+        #     code += f"""
+        #             MPI_Reduce(MPI_IN_PLACE, _outbuffer, {count_str}, {mpi_dtype_str}, {node.op}, 0, {comm});
+        #             MPI_Bcast(_outbuffer, {count_str}, {mpi_dtype_str}, 0, {comm});
+        #         }} else {{            
+        #     """
+        # code += f"""
+        #     MPI_Reduce(_inbuffer, _outbuffer, {count_str}, {mpi_dtype_str}, {node.op}, 0, {comm});
+        #     MPI_Bcast(_outbuffer, {count_str}, {mpi_dtype_str}, 0, {comm});
+        # """
+        
+        # if inbuffer == outbuffer:
+        #     code += "}" 
+        # if node.grid:
+        #     code += "}"
 
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,
