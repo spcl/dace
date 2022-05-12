@@ -825,7 +825,8 @@ class ExpandReduceCUDABlockAll(pm.ExpandTransformation):
         # finally, change the implementation to cuda (block)
         # itself and expand again.
         reduce_node.implementation = 'CUDA (block)'
-        sub_expansion = ExpandReduceCUDABlock(sdfg, sdfg.sdfg_id, sdfg.node_id(state), {}, 0)
+        sub_expansion = ExpandReduceCUDABlock()
+        sub_expansion.setup_match(sdfg, sdfg.sdfg_id, sdfg.node_id(state), {}, 0)
         return sub_expansion.expansion(node=node, state=state, sdfg=sdfg)
         #return reduce_node.expand(sdfg, state)
 
