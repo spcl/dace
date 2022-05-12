@@ -231,7 +231,7 @@ class ExpandCuTensor(ExpandTransformation):
         extents = "std::unordered_map<int, int64_t> extent;\n"
         for i, s in zip(left_modes, left_tensor.shape):
             extents += f"extent[{i}] = {s};\n"
-        for i, s in zip(right_modes, left_tensor.shape):
+        for i, s in zip(right_modes, right_tensor.shape):
             if i in node.right_axes:
                 continue
             extents += f"extent[{i}] = {s};\n"
@@ -294,7 +294,7 @@ class ExpandCuTensor(ExpandTransformation):
             cutensorStatus_t err;
             err = cutensorContraction(
                 &__dace_cutensor_handle, &plan,
-                (void*)&alpha, _right_tensor, _left_tensor, (void*)&beta, _out_tensor, _out_tensor,
+                (void*)&alpha, _left_tensor, _right_tensor, (void*)&beta, _out_tensor, _out_tensor,
                 work, worksize, __dace_current_stream);
             cudaStreamSynchronize(__dace_current_stream);
             if(err != CUTENSOR_STATUS_SUCCESS) {
@@ -362,8 +362,8 @@ class TensorDot(nodes.LibraryNode):
 
         if left_tensor.dtype != right_tensor.dtype or left_tensor.dtype != out_tensor.dtype:
             raise TypeError("The datatype of the input and output tensors must match.")    
-        if left_tensor.storage != right_tensor.storage or left_tensor.storage != out_tensor.storage:
-            raise ValueError("The storage of the input and output tensors must match.")
+        # if left_tensor.storage != right_tensor.storage or left_tensor.storage != out_tensor.storage:
+        #     raise ValueError("The storage of the input and output tensors must match.")
 
         if any(a >= len(left_tensor.shape) or a < 0 for a in self.left_axes):
             raise ValueError("Axes for left tensor are out-of-bounds.")
