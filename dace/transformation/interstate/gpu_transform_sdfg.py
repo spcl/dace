@@ -232,6 +232,9 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                 if isinstance(node, nodes.AccessNode) and node.desc(sdfg).transient:
                     nodedesc = node.desc(sdfg)
 
+                    if isinstance(nodedesc, data.Scalar):  # Scalars can remain on host
+                        continue
+
                     # Special case: nodes that lead to dynamic map ranges must
                     # stay on host
                     if any(isinstance(state.memlet_path(e)[-1].dst, nodes.EntryNode) for e in state.out_edges(node)):
@@ -242,6 +245,10 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                         if any(isinstance(state.memlet_path(e)[0].src, mpinodes) for e in state.in_edges(node)):
                             continue
                         if any(isinstance(state.memlet_path(e)[-1].dst, mpinodes) for e in state.out_edges(node)):
+                            continue
+                    if any(isinstance(state.memlet_path(e)[0].src, mpi_nodes.Dummy) for e in state.in_edges(node)):
+                            continue
+                    if any(isinstance(state.memlet_path(e)[-1].dst, mpi_nodes.Dummy) for e in state.out_edges(node)):
                             continue
 
                     gpu_storage = [
@@ -268,7 +275,7 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
         for state in sdfg.nodes():
             sdict = state.scope_dict()
             for node in state.nodes():
-                if not self.cuda_aware and isinstance(node, mpinodes):
+                if isinstance(node, mpi_nodes.Dummy) or (not self.cuda_aware and isinstance(node, mpinodes)):
                     node.schedule = dtypes.ScheduleType.CPU_Multicore
                 elif sdict[node] is None:
                     if isinstance(node, (nodes.LibraryNode, nodes.NestedSDFG)):
