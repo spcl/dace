@@ -825,11 +825,11 @@ class SubgraphTransformation(TransformationBase):
             # Construct subgraph and instantiate transformation
             subgraph = gr.SubgraphView(graph, where)
             instance = cls()
-            cls.setup_match(subgraph, sdfg.sdfg_id, state_id)
+            instance.setup_match(subgraph, sdfg.sdfg_id, state_id)
         else:
             # Construct instance from subgraph directly
             instance = cls()
-            cls.setup_match(subgraph)
+            instance.setup_match(subgraph)
 
         # Construct transformation parameters
         for optname, optval in options.items():
