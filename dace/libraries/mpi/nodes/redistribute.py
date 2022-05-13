@@ -53,32 +53,68 @@ class ExpandRedistribute(ExpandTransformation):
                 );
             }}
         """
+        # if inp_buffer.storage == dtypes.StorageType.GPU_Global:
+        #     send_code = f"""
+        #         int __src_offset_0 = {inp_offset};
+        #         int __dst_offset_0 = 0;
+        #     """
+        #     if len(inp_buffer.shape) > 1:
+        #         for i in range(len(inp_buffer.shape) - 1):
+        #             send_code += f"""
+        #                 int __m{i}_size = __state->{node.redistr}_fix_send_size[__idx * {len(inp_buffer.shape)} + {i}];
+        #                 for (auto __m{i}_idx = 0; __m{i}_idx < __m{i}_size; ++__m{i}_idx) {{
+        #                     int __src_offset_{i+1} = __src_offset_{i} + __m{i}_idx * {inp_buffer.strides[i]}; 
+        #                     int __dst_offset_{i+1} = __dst_offset_{i} + __m{i}_idx * __send_strides[{i}]; 
+        #             """
+        #     i = len(inp_buffer.shape) - 1
+        #     send_code += f"""
+        #         int __m{i}_size = __state->{node.redistr}_fix_send_size[__idx * {len(inp_buffer.shape)} + {i}];
+        #         cudaMemcpyAsync((void*)(__state->{node.redistr}_send_buffers[__idx] + __dst_offset_{i}),
+        #                         (void*)(_inp_buffer + __src_offset_{i}),
+        #                         __m{i}_size * sizeof({inp_buffer.dtype.ctype}),
+        #                         cudaMemcpyDeviceToHost,
+        #                         __dace_current_stream);
+        #     """
+        #     if len(inp_buffer.shape) > 1:
+        #         for i in range(len(inp_buffer.shape) - 1):
+        #             send_code += "}\n"
+        #     send_code += f"cudaStreamSynchronize(__dace_current_stream);"
+
         if inp_buffer.storage == dtypes.StorageType.GPU_Global:
             send_code = f"""
                 int __src_offset_0 = {inp_offset};
                 int __dst_offset_0 = 0;
             """
-            if len(inp_buffer.shape) > 1:
-                for i in range(len(inp_buffer.shape) - 1):
+            if len(inp_buffer.shape) > 2:
+                for i in range(len(inp_buffer.shape) - 2):
                     send_code += f"""
                         int __m{i}_size = __state->{node.redistr}_fix_send_size[__idx * {len(inp_buffer.shape)} + {i}];
                         for (auto __m{i}_idx = 0; __m{i}_idx < __m{i}_size; ++__m{i}_idx) {{
                             int __src_offset_{i+1} = __src_offset_{i} + __m{i}_idx * {inp_buffer.strides[i]}; 
                             int __dst_offset_{i+1} = __dst_offset_{i} + __m{i}_idx * __send_strides[{i}]; 
                     """
-            i = len(inp_buffer.shape) - 1
+            i = len(inp_buffer.shape) - 2
             send_code += f"""
                 int __m{i}_size = __state->{node.redistr}_fix_send_size[__idx * {len(inp_buffer.shape)} + {i}];
-                cudaMemcpyAsync((void*)(__state->{node.redistr}_send_buffers[__idx] + __dst_offset_{i}),
-                                (void*)(_inp_buffer + __src_offset_{i}),
-                                __m{i}_size * sizeof({inp_buffer.dtype.ctype}),
-                                cudaMemcpyDeviceToHost,
-                                __dace_current_stream);
+                int __m{i+1}_size = __state->{node.redistr}_fix_send_size[__idx * {len(inp_buffer.shape)} + {i+1}];
+                cudaMemcpy2DAsync(
+                                  (void*)(__state->{node.redistr}_send_buffers[__idx] + __dst_offset_{i}),
+                                  //(void*)(__state->__rdistrarray_0_send_buffers[__idx] + __dst_offset_{i}),
+                                  __send_strides[{i}] * sizeof({inp_buffer.dtype.ctype}),
+                                  (void*)(_inp_buffer + __src_offset_{i}),
+                                  {inp_buffer.strides[i]} * sizeof({inp_buffer.dtype.ctype}),
+                                  __m{i+1}_size * sizeof({inp_buffer.dtype.ctype}),
+                                  __m{i}_size,
+                                  cudaMemcpyDeviceToHost,
+                                  //cudaMemcpyDeviceToDevice,
+                                  __dace_current_stream);
             """
-            if len(inp_buffer.shape) > 1:
-                for i in range(len(inp_buffer.shape) - 1):
+            if len(inp_buffer.shape) > 2:
+                for i in range(len(inp_buffer.shape) - 2):
                     send_code += "}\n"
             send_code += f"cudaStreamSynchronize(__dace_current_stream);"
+            # send_code += "printf(\"Send done!\\n\"); fflush(stdout);"
+
         ####### Recv
         recv_repl = ""
         for i, s in enumerate(out_symbols):
@@ -104,32 +140,67 @@ class ExpandRedistribute(ExpandTransformation):
                 );
             }}
         """
+        # if out_buffer.storage == dtypes.StorageType.GPU_Global:
+        #     recv_code = f"""
+        #         int __dst_offset_0 = {out_offset};
+        #         int __src_offset_0 = 0;
+        #     """
+        #     if len(out_buffer.shape) > 1:
+        #         for i in range(len(out_buffer.shape) - 1):
+        #             recv_code += f"""
+        #                 int __m{i}_size = __state->{node.redistr}_fix_recv_size[__idx * {len(out_buffer.shape)} + {i}];
+        #                 for (auto __m{i}_idx = 0; __m{i}_idx < __m{i}_size; ++__m{i}_idx) {{
+        #                     int __dst_offset_{i+1} = __dst_offset_{i} + __m{i}_idx * {out_buffer.strides[i]}; 
+        #                     int __src_offset_{i+1} = __src_offset_{i} + __m{i}_idx * __recv_strides[{i}]; 
+        #             """
+        #     i = len(out_buffer.shape) - 1
+        #     recv_code += f"""
+        #         int __m{i}_size = __state->{node.redistr}_fix_recv_size[__idx * {len(out_buffer.shape)} + {i}];
+        #         cudaMemcpyAsync((void*)(_out_buffer + __dst_offset_{i}),
+        #                         (void*)(__state->{node.redistr}_recv_buffers[__idx] + __src_offset_{i}),
+        #                         __m{i}_size * sizeof({out_buffer.dtype.ctype}),
+        #                         cudaMemcpyHostToDevice,
+        #                         __dace_current_stream);
+        #     """
+        #     if len(out_buffer.shape) > 1:
+        #         for i in range(len(out_buffer.shape) - 1):
+        #             recv_code += "}\n"
+        #     recv_code += f"cudaStreamSynchronize(__dace_current_stream);"
+
         if out_buffer.storage == dtypes.StorageType.GPU_Global:
             recv_code = f"""
                 int __dst_offset_0 = {out_offset};
                 int __src_offset_0 = 0;
             """
-            if len(out_buffer.shape) > 1:
-                for i in range(len(out_buffer.shape) - 1):
+            if len(out_buffer.shape) > 2:
+                for i in range(len(out_buffer.shape) - 2):
                     recv_code += f"""
                         int __m{i}_size = __state->{node.redistr}_fix_recv_size[__idx * {len(out_buffer.shape)} + {i}];
                         for (auto __m{i}_idx = 0; __m{i}_idx < __m{i}_size; ++__m{i}_idx) {{
                             int __dst_offset_{i+1} = __dst_offset_{i} + __m{i}_idx * {out_buffer.strides[i]}; 
                             int __src_offset_{i+1} = __src_offset_{i} + __m{i}_idx * __recv_strides[{i}]; 
                     """
-            i = len(out_buffer.shape) - 1
+            i = len(out_buffer.shape) - 2
             recv_code += f"""
                 int __m{i}_size = __state->{node.redistr}_fix_recv_size[__idx * {len(out_buffer.shape)} + {i}];
-                cudaMemcpyAsync((void*)(_out_buffer + __dst_offset_{i}),
-                                (void*)(__state->{node.redistr}_recv_buffers[__idx] + __src_offset_{i}),
-                                __m{i}_size * sizeof({out_buffer.dtype.ctype}),
-                                cudaMemcpyHostToDevice,
-                                __dace_current_stream);
+                int __m{i+1}_size = __state->{node.redistr}_fix_recv_size[__idx * {len(out_buffer.shape)} + {i+1}];
+                cudaMemcpy2DAsync((void*)(_out_buffer + __dst_offset_{i}),
+                                  {out_buffer.strides[i]} * sizeof({out_buffer.dtype.ctype}),
+                                  (void*)(__state->{node.redistr}_recv_buffers[__idx] + __src_offset_{i}),
+                                  //(void*)(__state->__rdistrarray_0_recv_buffers[__idx] + __src_offset_{i}),
+                                  __recv_strides[{i}] * sizeof({out_buffer.dtype.ctype}),
+                                  __m{i+1}_size * sizeof({out_buffer.dtype.ctype}),
+                                  __m{i}_size,
+                                  cudaMemcpyHostToDevice,
+                                  //cudaMemcpyDeviceToDevice,
+                                  __dace_current_stream);
             """
-            if len(out_buffer.shape) > 1:
-                for i in range(len(out_buffer.shape) - 1):
+            if len(out_buffer.shape) > 2:
+                for i in range(len(out_buffer.shape) - 2):
                     recv_code += "}\n"
-            recv_code += f"cudaStreamSynchronize(__dace_current_stream);"
+            # recv_code += f"cudaStreamSynchronize(__dace_current_stream);"
+            # recv_code += "printf(\"Recv done!\\n\"); fflush(stdout);"
+
         ####### Copy
         inp_repl = ""
         for i, s in enumerate(inp_symbols):
@@ -165,32 +236,63 @@ class ExpandRedistribute(ExpandTransformation):
             """
         copy_size = "* ".join([f"__state->{node.redistr}_self_size[__idx * {len(inp_buffer.shape)} + {i}]"
                                 for i in range(len(inp_buffer.shape))])
+        # if inp_buffer.storage == dtypes.StorageType.GPU_Global:
+        #     copy_code = f"""
+        #         int __src_offset_0 = {inp_offset};
+        #         int __dst_offset_0 = {out_offset};
+        #     """
+        #     if len(inp_buffer.shape) > 1:
+        #         for i in range(len(inp_buffer.shape) - 1):
+        #             copy_code += f"""
+        #                 int __m{i}_size = __state->{node.redistr}_self_size[__idx * {len(inp_buffer.shape)} + {i}];
+        #                 for (auto __m{i}_idx = 0; __m{i}_idx < __m{i}_size; ++__m{i}_idx) {{
+        #                     int __src_offset_{i+1} = __src_offset_{i} + __m{i}_idx * {inp_buffer.strides[i]}; 
+        #                     int __dst_offset_{i+1} = __dst_offset_{i} + __m{i}_idx * {out_buffer.strides[i]}; 
+        #             """
+        #     i = len(inp_buffer.shape) - 1
+        #     copy_code += f"""
+        #         int __m{i}_size = __state->{node.redistr}_self_size[__idx * {len(inp_buffer.shape)} + {i}];
+        #         cudaMemcpyAsync((void*)(_out_buffer + __dst_offset_{i}),
+        #                         (void*)(_inp_buffer + __src_offset_{i}),
+        #                         __m{i}_size * sizeof({inp_buffer.dtype.ctype}),
+        #                         cudaMemcpyDeviceToDevice,
+        #                         __dace_current_stream);
+        #     """
+        #     if len(inp_buffer.shape) > 1:
+        #         for i in range(len(inp_buffer.shape) - 1):
+        #             copy_code += "}\n"
+        #     copy_code += f"cudaStreamSynchronize(__dace_current_stream);"
+
         if inp_buffer.storage == dtypes.StorageType.GPU_Global:
             copy_code = f"""
                 int __src_offset_0 = {inp_offset};
                 int __dst_offset_0 = {out_offset};
             """
-            if len(inp_buffer.shape) > 1:
-                for i in range(len(inp_buffer.shape) - 1):
+            if len(inp_buffer.shape) > 2:
+                for i in range(len(inp_buffer.shape) - 2):
                     copy_code += f"""
                         int __m{i}_size = __state->{node.redistr}_self_size[__idx * {len(inp_buffer.shape)} + {i}];
                         for (auto __m{i}_idx = 0; __m{i}_idx < __m{i}_size; ++__m{i}_idx) {{
                             int __src_offset_{i+1} = __src_offset_{i} + __m{i}_idx * {inp_buffer.strides[i]}; 
                             int __dst_offset_{i+1} = __dst_offset_{i} + __m{i}_idx * {out_buffer.strides[i]}; 
                     """
-            i = len(inp_buffer.shape) - 1
+            i = len(inp_buffer.shape) - 2
             copy_code += f"""
                 int __m{i}_size = __state->{node.redistr}_self_size[__idx * {len(inp_buffer.shape)} + {i}];
-                cudaMemcpyAsync((void*)(_out_buffer + __dst_offset_{i}),
-                                (void*)(_inp_buffer + __src_offset_{i}),
-                                __m{i}_size * sizeof({inp_buffer.dtype.ctype}),
-                                cudaMemcpyDeviceToDevice,
-                                __dace_current_stream);
+                int __m{i+1}_size = __state->{node.redistr}_self_size[__idx * {len(inp_buffer.shape)} + {i+1}];
+                cudaMemcpy2DAsync((void*)(_out_buffer + __dst_offset_{i}),
+                                  {out_buffer.strides[i]} * sizeof({out_buffer.dtype.ctype}),
+                                  (void*)(_inp_buffer + __src_offset_{i}),
+                                  {inp_buffer.strides[i]} * sizeof({inp_buffer.dtype.ctype}),
+                                  __m{i+1}_size * sizeof({inp_buffer.dtype.ctype}),
+                                  __m{i}_size,
+                                  cudaMemcpyDeviceToDevice,
+                                  __dace_current_stream);
             """
-            if len(inp_buffer.shape) > 1:
-                for i in range(len(inp_buffer.shape) - 1):
+            if len(inp_buffer.shape) > 2:
+                for i in range(len(inp_buffer.shape) - 2):
                     copy_code += "}\n"
-            copy_code += f"cudaStreamSynchronize(__dace_current_stream);"
+            # copy_code += f"cudaStreamSynchronize(__dace_current_stream);"
 
         code = f"""
             // int myrank;
@@ -231,10 +333,12 @@ class ExpandRedistribute(ExpandTransformation):
                     {recv_strides}
                     {recv_code}
                 }}
+
             }}
             if (__state->{array_a.pgrid}_valid) {{
                 MPI_Waitall(__state->{node._redistr}_sends, __state->{node._redistr}_send_req, __state->{node._redistr}_send_status);
             }}
+            cudaStreamSynchronize(__dace_current_stream);
             // printf("I am rank %d and I finished the redistribution {redistr.array_a} -> {redistr.array_b}\\n", myrank);
             // fflush(stdout);
             

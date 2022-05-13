@@ -296,6 +296,8 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
         # Collect free tasklets
         for node, state in sdfg.all_nodes_recursive():
             if isinstance(node, nodes.Tasklet):
+                if node.label == '_set_root_':
+                    continue
                 if (state.entry_node(node) is None
                         and not scope.is_devicelevel_gpu(state.parent, state, node, with_gpu_default=True)):
                     global_code_nodes[state].append(node)
