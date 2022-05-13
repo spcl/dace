@@ -122,7 +122,8 @@ def write_time(dtime, bench, frmwrk, nodes, sizes, time_list, file_name, field_n
 @dace.program
 def mttkrp_order_3_mode_0(X: dctype[S0, S1, S2],
                           JM: dctype[S1, R],
-                          KM: dctype[S2, R]) -> dctype[S0, R]:
+                          KM: dctype[S2, R],
+                          out: dctype[S0, R]):
 
     grid = dace.comm.Cart_create([P0, P1, P2, PR])
     out_reduce = dace.comm.Cart_sub(grid, [False, True, True, False])
@@ -132,22 +133,23 @@ def mttkrp_order_3_mode_0(X: dctype[S0, S1, S2],
     for j, k, a in dace.map[0:S1, 0:S2, 0:R]:
         tmp[j, k, a] = JM[j, a] * KM[k, a]
     # 'ijk, jka -> ia'
-    out = np.tensordot(X, tmp, axes=([1, 2], [0, 1]))
+    out[:] = np.tensordot(X, tmp, axes=([1, 2], [0, 1]))
     dace.comm.Allreduce(out, 'MPI_SUM', grid=out_reduce)
-    return out
+    # return out
 
 
 @dace.program
 def mttkrp_order_3_mode_0_compute(X: dctype[S0, S1, S2],
                                   JM: dctype[S1, R],
-                                  KM: dctype[S2, R]) -> dctype[S0, R]:
+                                  KM: dctype[S2, R],
+                                  out: dctype[S0, R]):
 
     # 'ja, ka -> jka'
     tmp = np.ndarray((S1, S2, R), dtype=nptype)
     for j, k, a in dace.map[0:S1, 0:S2, 0:R]:
         tmp[j, k, a] = JM[j, a] * KM[k, a]
     # 'ijk, jka -> ia'
-    return np.tensordot(X, tmp, axes=([1, 2], [0, 1]))
+    out[:] = np.tensordot(X, tmp, axes=([1, 2], [0, 1]))
 
 
 # @dace.program
@@ -171,7 +173,8 @@ def mttkrp_order_3_mode_0_compute(X: dctype[S0, S1, S2],
 @dace.program
 def mttkrp_order_3_mode_1(X: dctype[S0, S1, S2],
                           IM: dctype[S0, R],
-                          KM: dctype[S2, R]) -> dctype[S1, R]:
+                          KM: dctype[S2, R],
+                          out: dctype[S1, R]):
 
     grid = dace.comm.Cart_create([P0, P1, P2, PR])
     out_reduce = dace.comm.Cart_sub(grid, [True, False, True, False])
@@ -179,33 +182,37 @@ def mttkrp_order_3_mode_1(X: dctype[S0, S1, S2],
     # 'ijk, ka -> ija'
     tmp = np.tensordot(X, KM, axes=([2], [0]))
     # 'ija, ia -> ja'
-    out = np.zeros((S1, R), dtype=nptype)
+    # out = np.zeros((S1, R), dtype=nptype)
+    out[:] = 0
     for j, a in dace.map[0:S1, 0:R]:
         for i in range(S0):
             out[j, a] += tmp[i, j, a] * IM[i, a]
     dace.comm.Allreduce(out, 'MPI_SUM', grid=out_reduce)
-    return out
+    # return out
 
 
 @dace.program
 def mttkrp_order_3_mode_1_compute(X: dctype[S0, S1, S2],
                                   IM: dctype[S0, R],
-                                  KM: dctype[S2, R]) -> dctype[S1, R]:
+                                  KM: dctype[S2, R],
+                                  out: dctype[S1, R]):
 
     # 'ijk, ka -> ija'
     tmp = np.tensordot(X, KM, axes=([2], [0]))
     # 'ija, ia -> ja'
-    out = np.zeros((S1, R), dtype=nptype)
+    # out = np.zeros((S1, R), dtype=nptype)
+    out[:] = 0
     for j, a in dace.map[0:S1, 0:R]:
         for i in range(S0):
             out[j, a] += tmp[i, j, a] * IM[i, a]
-    return out
+    # return out
 
 
 @dace.program
 def mttkrp_order_3_mode_2(X: dctype[S0, S1, S2],
                           IM: dctype[S0, R],
-                          JM: dctype[S1, R]) -> dctype[S2, R]:
+                          JM: dctype[S1, R],
+                          out: dctype[S2, R]):
 
     grid = dace.comm.Cart_create([P0, P1, P2, PR])
     out_reduce = dace.comm.Cart_sub(grid, [True, True, False, False])
@@ -215,22 +222,23 @@ def mttkrp_order_3_mode_2(X: dctype[S0, S1, S2],
     for i, j, a in dace.map[0:S0, 0:S1, 0:R]:
         tmp[i, j, a] = IM[i, a] * JM[j, a]
     # 'ijk, ija -> ka'
-    out = np.tensordot(X, tmp, axes=([0, 1], [0, 1]))
+    out[:] = np.tensordot(X, tmp, axes=([0, 1], [0, 1]))
     dace.comm.Allreduce(out, 'MPI_SUM', grid=out_reduce)
-    return out
+    # return out
 
 
 @dace.program
 def mttkrp_order_3_mode_2_compute(X: dctype[S0, S1, S2],
                                   IM: dctype[S0, R],
-                                  JM: dctype[S1, R]) -> dctype[S2, R]:
+                                  JM: dctype[S1, R],
+                                  out: dctype[S2, R]):
 
     # 'ia, ja -> ija'
     tmp = np.ndarray((S0, S1, R), dtype=nptype)
     for i, j, a in dace.map[0:S0, 0:S1, 0:R]:
         tmp[i, j, a] = IM[i, a] * JM[j, a]
     # 'ijk, ija -> ka'
-    return np.tensordot(X, tmp, axes=([0, 1], [0, 1]))
+    out[:] = np.tensordot(X, tmp, axes=([0, 1], [0, 1]))
 
 
 if __name__ == "__main__":
@@ -243,9 +251,9 @@ if __name__ == "__main__":
     if size not in grid_ijka:
         raise ValueError("Selected number of MPI processes is not supported.")
 
-    file_name = "dace_cpu_{n}_nodes.csv".format(n=size)
+    file_name = "dace_gpu_{n}_nodes.csv".format(n=size)
     field_names = ["datetime", "benchmark", "framework", "nodes", "sizes", "time"]
-
+    
     def auto_gpu(dcprog):
         sdfg = dcprog.to_sdfg(simplify=True)
         sdfg.name = f"{sdfg.name}_cupy"
@@ -253,7 +261,7 @@ if __name__ == "__main__":
             if not arr.transient:
                 arr.storage = dace.dtypes.StorageType.GPU_Global
         return auto_optimize.auto_optimize(sdfg, device=dace.dtypes.DeviceType.GPU)
-    
+
     sdfg1, sdfg1c, sdfg2, sdfg2c, sdfg3, sdfg3c = (None, ) * 6
     if rank == 0:
         sdfg1 = auto_gpu(mttkrp_order_3_mode_0)
@@ -281,6 +289,7 @@ if __name__ == "__main__":
     lI = cupy.asarray(rng.random((SG[0], SG[3])))
     lJ = cupy.asarray(rng.random((SG[1], SG[3])))
     lK = cupy.asarray(rng.random((SG[2], SG[3])))
+    val = cupy.ndarray((SG[0], SG[3]), dtype=nptype)
 
     # MTTKRP, order 3, mode 0
 
@@ -288,7 +297,7 @@ if __name__ == "__main__":
         print(f"##### MTTKRP, Order 3, Mode 0 #####\nLocal Sizes: {SG}\nGrid: {PG}""", flush=True)
     
     runtimes = timeit.repeat(
-        """func1(X=lX, JM=lJ, KM=lK,
+        """func1(X=lX, JM=lJ, KM=lK, out=val,
                  S0=SG[0], S1=SG[1], S2=SG[2], R=SG[3],
                  P0=PG[0], P1=PG[1], P2=PG[2], PR=PG[3]); commworld.Barrier()
         """,
@@ -303,7 +312,7 @@ if __name__ == "__main__":
         write_time(str(datetime.now()), "mttkrp_order_3_mode_0", "dace_gpu", size, (S, S, S, R), runtimes, file_name, field_names, append=True)
 
         runtimes = timeit.repeat(
-            """func1c(X=lX, JM=lJ, KM=lK,
+            """func1c(X=lX, JM=lJ, KM=lK, out=val,
                       S0=SG[0], S1=SG[1], S2=SG[2], R=SG[3],
                       P0=PG[0], P1=PG[1], P2=PG[2], PR=PG[3])
             """,
@@ -321,8 +330,10 @@ if __name__ == "__main__":
     if rank == 0:
         print(f"##### MTTKRP, Order 3, Mode 1 #####\nLocal Sizes: {SG}\nGrid: {PG}""", flush=True)
     
+    val = cupy.ndarray((SG[1], SG[3]), dtype=nptype)
+
     runtimes = timeit.repeat(
-        """func2(X=lX, IM=lI, KM=lK,
+        """func2(X=lX, IM=lI, KM=lK, out=val,
                  S0=SG[0], S1=SG[1], S2=SG[2], R=SG[3],
                  P0=PG[0], P1=PG[1], P2=PG[2], PR=PG[3]); commworld.Barrier()
         """,
@@ -337,7 +348,7 @@ if __name__ == "__main__":
         write_time(str(datetime.now()), "mttkrp_order_3_mode_1", "dace_gpu", size, (S, S, S, R), runtimes, file_name, field_names, append=True)
 
         runtimes = timeit.repeat(
-            """func2c(X=lX, IM=lI, KM=lK,
+            """func2c(X=lX, IM=lI, KM=lK, out=val,
                       S0=SG[0], S1=SG[1], S2=SG[2], R=SG[3],
                       P0=PG[0], P1=PG[1], P2=PG[2], PR=PG[3])
             """,
@@ -355,8 +366,10 @@ if __name__ == "__main__":
     if rank == 0:
         print(f"##### MTTKRP, Order 3, Mode 2 #####\nLocal Sizes: {SG}\nGrid: {PG}""", flush=True)
     
+    val = cupy.ndarray((SG[2], SG[3]), dtype=nptype)
+
     runtimes = timeit.repeat(
-        """func3(X=lX, IM=lI, JM=lJ,
+        """func3(X=lX, IM=lI, JM=lJ, out=val,
                  S0=SG[0], S1=SG[1], S2=SG[2], R=SG[3],
                  P0=PG[0], P1=PG[1], P2=PG[2], PR=PG[3]); commworld.Barrier()
         """,
@@ -371,7 +384,7 @@ if __name__ == "__main__":
         write_time(str(datetime.now()), "mttkrp_order_3_mode_2", "dace_gpu", size, (S, S, S, R), runtimes, file_name, field_names, append=True)
 
         runtimes = timeit.repeat(
-            """func3c(X=lX, IM=lI, JM=lJ,
+            """func3c(X=lX, IM=lI, JM=lJ, out=val,
                       S0=SG[0], S1=SG[1], S2=SG[2], R=SG[3],
                       P0=PG[0], P1=PG[1], P2=PG[2], PR=PG[3])
             """,

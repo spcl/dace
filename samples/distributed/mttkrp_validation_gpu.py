@@ -96,7 +96,8 @@ grid_ijklma = {
 @dace.program
 def mttkrp_order_3_mode_0(X: dctype[S0, S1, S2],
                           JM: dctype[S1, R],
-                          KM: dctype[S2, R]) -> dctype[S0, R]:
+                          KM: dctype[S2, R],
+                          out: dctype[S0, R]):
 
     grid = dace.comm.Cart_create([P0, P1, P2, PR])
     out_reduce = dace.comm.Cart_sub(grid, [False, True, True, False])
@@ -106,9 +107,9 @@ def mttkrp_order_3_mode_0(X: dctype[S0, S1, S2],
     for j, k, a in dace.map[0:S1, 0:S2, 0:R]:
         tmp[j, k, a] = JM[j, a] * KM[k, a]
     # 'ijk, jka -> ia'
-    out = np.tensordot(X, tmp, axes=([1, 2], [0, 1]))
+    out[:] = np.tensordot(X, tmp, axes=([1, 2], [0, 1]))
     dace.comm.Allreduce(out, 'MPI_SUM', grid=out_reduce)
-    return out
+    # return out
 
 
 # @dace.program
@@ -132,7 +133,8 @@ def mttkrp_order_3_mode_0(X: dctype[S0, S1, S2],
 @dace.program
 def mttkrp_order_3_mode_1(X: dctype[S0, S1, S2],
                           IM: dctype[S0, R],
-                          KM: dctype[S2, R]) -> dctype[S1, R]:
+                          KM: dctype[S2, R],
+                          out: dctype[S1, R]):
 
     grid = dace.comm.Cart_create([P0, P1, P2, PR])
     out_reduce = dace.comm.Cart_sub(grid, [True, False, True, False])
@@ -140,18 +142,20 @@ def mttkrp_order_3_mode_1(X: dctype[S0, S1, S2],
     # 'ijk, ka -> ija'
     tmp = np.tensordot(X, KM, axes=([2], [0]))
     # 'ija, ia -> ja'
-    out = np.zeros((S1, R), dtype=nptype)
+    # out = np.zeros((S1, R), dtype=nptype)
+    out[:] = 0
     for j, a in dace.map[0:S1, 0:R]:
         for i in range(S0):
             out[j, a] += tmp[i, j, a] * IM[i, a]
     dace.comm.Allreduce(out, 'MPI_SUM', grid=out_reduce)
-    return out
+    # return out
 
 
 @dace.program
 def mttkrp_order_3_mode_2(X: dctype[S0, S1, S2],
                           IM: dctype[S0, R],
-                          JM: dctype[S1, R]) -> dctype[S2, R]:
+                          JM: dctype[S1, R],
+                          out: dctype[S2, R]):
 
     grid = dace.comm.Cart_create([P0, P1, P2, PR])
     out_reduce = dace.comm.Cart_sub(grid, [True, True, False, False])
@@ -161,9 +165,9 @@ def mttkrp_order_3_mode_2(X: dctype[S0, S1, S2],
     for i, j, a in dace.map[0:S0, 0:S1, 0:R]:
         tmp[i, j, a] = IM[i, a] * JM[j, a]
     # 'ijk, ija -> ka'
-    out = np.tensordot(X, tmp, axes=([0, 1], [0, 1]))
+    out[:] = np.tensordot(X, tmp, axes=([0, 1], [0, 1]))
     dace.comm.Allreduce(out, 'MPI_SUM', grid=out_reduce)
-    return out
+    # return out
 
 
 @dace.program
@@ -171,7 +175,8 @@ def mttkrp_order_5_mode_0(X: dctype[S0, S1, S2, S3, S4],
                           JM: dctype[S1, R],
                           KM: dctype[S2, R],
                           LM: dctype[S3, R],
-                          MM: dctype[S4, R]) -> dctype[S0, R]:
+                          MM: dctype[S4, R],
+                          out: dctype[S0, R]):
 
     parent_grid = dace.comm.Cart_create([P0, P1, P2, P3, P4, PR])
     reduce_grid = dace.comm.Cart_sub(parent_grid, [False, True, True, True, True, False])
@@ -190,7 +195,8 @@ def mttkrp_order_5_mode_0(X: dctype[S0, S1, S2, S3, S4],
         tmp3[j, k, a] = JM[j, a] * KM[k, a]
 
     # 'ijka, jka -> ia'
-    out = np.zeros((S0, R), dtype=nptype)
+    # out = np.zeros((S0, R), dtype=nptype)
+    out[:] = 0
     for i, a in dace.map[0:S0, 0:R]:
         for j in range(S1):
             for k in range(S2):
@@ -198,7 +204,7 @@ def mttkrp_order_5_mode_0(X: dctype[S0, S1, S2, S3, S4],
     
     # Reduce
     dace.comm.Allreduce(out, 'MPI_SUM', grid=reduce_grid)
-    return out
+    # return out
 
 
 @dace.program
@@ -206,7 +212,8 @@ def mttkrp_order_5_mode_2(X: dctype[S0, S1, S2, S3, S4],
                           IM: dctype[S0, R],
                           JM: dctype[S1, R],
                           LM: dctype[S3, R],
-                          MM: dctype[S4, R]) -> dctype[S2, R]:
+                          MM: dctype[S4, R],
+                          out: dctype[S2, R]):
 
     parent_grid = dace.comm.Cart_create([P0, P1, P2, P3, P4, PR])
     reduce_grid = dace.comm.Cart_sub(parent_grid, [True, True, False, True, True, False])
@@ -225,7 +232,8 @@ def mttkrp_order_5_mode_2(X: dctype[S0, S1, S2, S3, S4],
         tmp3[i, j, a] = IM[i, a] * JM[j, a]
 
     # 'ijka, ija -> ka'
-    out = np.zeros((S2, R), dtype=nptype)
+    # out = np.zeros((S2, R), dtype=nptype)
+    out[:] = 0
     for k, a in dace.map[0:S2, 0:R]:
         for i in range(S0):
             for j in range(S1):
@@ -233,7 +241,7 @@ def mttkrp_order_5_mode_2(X: dctype[S0, S1, S2, S3, S4],
     
     # Reduce
     dace.comm.Allreduce(out, 'MPI_SUM', grid=reduce_grid)
-    return out
+    # return out
 
 
 @dace.program
@@ -241,7 +249,8 @@ def mttkrp_order_5_mode_4(X: dctype[S0, S1, S2, S3, S4],
                           IM: dctype[S0, R],
                           JM: dctype[S1, R],
                           KM: dctype[S2, R],
-                          LM: dctype[S3, R]) -> dctype[S4, R]:
+                          LM: dctype[S3, R],
+                          out: dctype[S4, R]):
 
     parent_grid = dace.comm.Cart_create([P0, P1, P2, P3, P4, PR])
     reduce_grid = dace.comm.Cart_sub(parent_grid, [True, True, True, True, False, False])
@@ -260,7 +269,8 @@ def mttkrp_order_5_mode_4(X: dctype[S0, S1, S2, S3, S4],
         tmp3[k, l, a] = KM[k, a] * LM[l, a]
 
     # 'klma, kla -> ma'
-    out = np.zeros((S4, R), dtype=nptype)
+    # out = np.zeros((S4, R), dtype=nptype)
+    out[:] = 0
     for m, a in dace.map[0:S4, 0:R]:
         for k in range(S2):
             for l in range(S3):
@@ -268,7 +278,7 @@ def mttkrp_order_5_mode_4(X: dctype[S0, S1, S2, S3, S4],
     
     # Reduce
     dace.comm.Allreduce(out, 'MPI_SUM', grid=reduce_grid)
-    return out
+    # return out
 
 
 if __name__ == "__main__":
@@ -333,9 +343,11 @@ if __name__ == "__main__":
     lJ = JM[coords[1] * SG[1]: (coords[1] + 1) * SG[1], coords[3] * SG[3]: (coords[3] + 1) * SG[3]].copy()
     lK = KM[coords[2] * SG[2]: (coords[2] + 1) * SG[2], coords[3] * SG[3]: (coords[3] + 1) * SG[3]].copy()
 
-    val = func1(X=lX, JM=lJ, KM=lK,
-                S0=SG[0], S1=SG[1], S2=SG[2], R=SG[3],
-                P0=PG[0], P1=PG[1], P2=PG[2], PR=PG[3])
+    val = np.ndarray((SG[0], SG[3]), dtype=nptype)
+
+    func1(X=lX, JM=lJ, KM=lK, out=val,
+          S0=SG[0], S1=SG[1], S2=SG[2], R=SG[3],
+          P0=PG[0], P1=PG[1], P2=PG[2], PR=PG[3])
 
     if rank > 0:
         commworld.Send(val, 0)
@@ -378,9 +390,11 @@ if __name__ == "__main__":
     lI = IM[coords[0] * SG[0]: (coords[0] + 1) * SG[0], coords[3] * SG[3]: (coords[3] + 1) * SG[3]].copy()
     lK = KM[coords[2] * SG[2]: (coords[2] + 1) * SG[2], coords[3] * SG[3]: (coords[3] + 1) * SG[3]].copy()
 
-    val = func2(X=lX, IM=lI, KM=lK,
-                S0=SG[0], S1=SG[1], S2=SG[2], R=SG[3],
-                P0=PG[0], P1=PG[1], P2=PG[2], PR=PG[3])
+    val = np.ndarray((SG[1], SG[3]), dtype=nptype)
+
+    func2(X=lX, IM=lI, KM=lK, out=val,
+          S0=SG[0], S1=SG[1], S2=SG[2], R=SG[3],
+          P0=PG[0], P1=PG[1], P2=PG[2], PR=PG[3])
 
     if rank > 0:
         commworld.Send(val, 0)
@@ -423,9 +437,11 @@ if __name__ == "__main__":
     lI = IM[coords[0] * SG[0]: (coords[0] + 1) * SG[0], coords[3] * SG[3]: (coords[3] + 1) * SG[3]].copy()
     lJ = JM[coords[1] * SG[1]: (coords[1] + 1) * SG[1], coords[3] * SG[3]: (coords[3] + 1) * SG[3]].copy()
 
-    val = func3(X=lX, IM=lI, JM=lJ,
-                S0=SG[0], S1=SG[1], S2=SG[2], R=SG[3],
-                P0=PG[0], P1=PG[1], P2=PG[2], PR=PG[3])
+    val = np.ndarray((SG[2], SG[3]), dtype=nptype)
+
+    func3(X=lX, IM=lI, JM=lJ, out=val,
+          S0=SG[0], S1=SG[1], S2=SG[2], R=SG[3],
+          P0=PG[0], P1=PG[1], P2=PG[2], PR=PG[3])
 
     if rank > 0:
         commworld.Send(val, 0)
@@ -489,9 +505,11 @@ if __name__ == "__main__":
     lL = LM[coords[3] * SG[3]: (coords[3] + 1) * SG[3], coords[5] * SG[5]: (coords[5] + 1) * SG[5]].copy()
     lM = MM[coords[4] * SG[4]: (coords[4] + 1) * SG[4], coords[5] * SG[5]: (coords[5] + 1) * SG[5]].copy()
 
-    val = func4(X=lX, JM=lJ, KM=lK, LM=lL, MM=lM,
-                S0=SG[0], S1=SG[1], S2=SG[2], S3=SG[3], S4=SG[4], R=SG[5],
-                P0=PG[0], P1=PG[1], P2=PG[2], P3=PG[3], P4=PG[4], PR=PG[5])
+    val = np.ndarray((SG[0], SG[3]), dtype=nptype)
+
+    func4(X=lX, JM=lJ, KM=lK, LM=lL, MM=lM, out=val,
+          S0=SG[0], S1=SG[1], S2=SG[2], S3=SG[3], S4=SG[4], R=SG[5],
+          P0=PG[0], P1=PG[1], P2=PG[2], P3=PG[3], P4=PG[4], PR=PG[5])
 
     if rank > 0:
         commworld.Send(val, 0)
@@ -538,7 +556,9 @@ if __name__ == "__main__":
     lL = LM[coords[3] * SG[3]: (coords[3] + 1) * SG[3], coords[5] * SG[5]: (coords[5] + 1) * SG[5]].copy()
     lM = MM[coords[4] * SG[4]: (coords[4] + 1) * SG[4], coords[5] * SG[5]: (coords[5] + 1) * SG[5]].copy()
 
-    val = func5(X=lX, IM=lI, JM=lJ, LM=lL, MM=lM,
+    val = np.ndarray((SG[2], SG[5]), dtype=nptype)
+
+    func5(X=lX, IM=lI, JM=lJ, LM=lL, MM=lM, out=val,
                 S0=SG[0], S1=SG[1], S2=SG[2], S3=SG[3], S4=SG[4], R=SG[5],
                 P0=PG[0], P1=PG[1], P2=PG[2], P3=PG[3], P4=PG[4], PR=PG[5])
 
@@ -587,9 +607,11 @@ if __name__ == "__main__":
     lK = KM[coords[2] * SG[2]: (coords[2] + 1) * SG[2], coords[5] * SG[5]: (coords[5] + 1) * SG[5]].copy()
     lL = LM[coords[3] * SG[3]: (coords[3] + 1) * SG[3], coords[5] * SG[5]: (coords[5] + 1) * SG[5]].copy()
     
-    val = func6(X=lX, IM=lI, JM=lJ, KM=lK, LM=lL,
-                S0=SG[0], S1=SG[1], S2=SG[2], S3=SG[3], S4=SG[4], R=SG[5],
-                P0=PG[0], P1=PG[1], P2=PG[2], P3=PG[3], P4=PG[4], PR=PG[5])
+    val = np.ndarray((SG[4], SG[5]), dtype=nptype)
+
+    func6(X=lX, IM=lI, JM=lJ, KM=lK, LM=lL, out=val,
+          S0=SG[0], S1=SG[1], S2=SG[2], S3=SG[3], S4=SG[4], R=SG[5],
+          P0=PG[0], P1=PG[1], P2=PG[2], P3=PG[3], P4=PG[4], PR=PG[5])
 
     if rank > 0:
         commworld.Send(val, 0)
