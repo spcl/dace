@@ -837,7 +837,7 @@ class Reference(Array):
         return copy
 
 
-def make_array_from_descriptor(descriptor: Array, original_array: Optional[ArrayLike] = None) -> ArrayLike:
+def make_array_from_descriptor(descriptor: Array, original_array: Optional[ArrayLike] = None, constants=None) -> ArrayLike:
     """
     Creates an array that matches the given data descriptor, and optionally copies another array to it.
     :param descriptor: The data descriptor to create the array from.
@@ -877,7 +877,16 @@ def make_array_from_descriptor(descriptor: Array, original_array: Optional[Array
 
     # Make numpy array from data descriptor
     npdtype = descriptor.dtype.as_numpy_dtype()
-    view = create_array(descriptor.shape, npdtype, descriptor.total_size, descriptor.strides)
+
+    shape = descriptor.shape
+    total_size = descriptor.total_size
+    strides = descriptor.strides
+    if constants is not None:
+        shape = symbolic.evaluate(shape, symbols=constants)
+        total_size = symbolic.evaluate(total_size, symbols=constants)
+        strides = symbolic.evaluate(strides, symbols=constants)
+
+    view = create_array(shape, npdtype, total_size, strides)
     if original_array is not None:
         copy_array(view, original_array)
 
