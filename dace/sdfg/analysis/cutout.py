@@ -28,7 +28,8 @@ def cutout_state(state: SDFGState, *nodes: nd.Node, make_copy: bool = True) -> S
     other_arrays = _containers_defined_outside(sdfg, state, subgraph)
 
     # Make a new SDFG with the included constants, used symbols, and data containers
-    new_sdfg = SDFG(f'{state.parent.name}_cutout', sdfg.constants_prop)
+    sdfg_name = f'{sdfg.name}_cutout_{sdfg.node_id(state)}'
+    new_sdfg = SDFG(sdfg_name, sdfg.constants_prop)
     defined_syms = subgraph.defined_symbols()
     freesyms = subgraph.free_symbols
     for sym in freesyms:
