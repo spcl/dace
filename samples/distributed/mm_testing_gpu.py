@@ -165,24 +165,24 @@ def write_time(dtime, bench, frmwrk, nodes, sizes, time_list, file_name, field_n
 
 # DaCe Programs
 @dace.program(device=dace.dtypes.DeviceType.GPU)
-def one_mm(A: dctype[S0, S1], B: dctype[S1, S2]) -> dctype[S0, S2]:
+def one_mm(A: dctype[S0, S1], B: dctype[S1, S2], out: dctype[S0, S2]):
 
     grid = dace.comm.Cart_create([P0, P1, P2])
     out_reduce = dace.comm.Cart_sub(grid, [False, True, False])
 
-    out = A @ B
+    out[:] = A @ B
     dace.comm.Allreduce(out, 'MPI_SUM', grid=out_reduce)
-    return out
+    # return out
 
 
 @dace.program(device=dace.dtypes.DeviceType.GPU)
-def one_mm_compute(A: dctype[S0, S1], B: dctype[S1, S2]) -> dctype[S0, S2]:
+def one_mm_compute(A: dctype[S0, S1], B: dctype[S1, S2], out: dctype[S0, S2]):
 
-    return A @ B
+    out[:] = A @ B
 
 
 @dace.program(device=dace.dtypes.DeviceType.GPU)
-def two_mm(A: dctype[S0G1, S1G1], B: dctype[S1G1, S2G1], C: dctype[S2G2, S3G2]) -> dctype[S0G2, S3G2]:
+def two_mm(A: dctype[S0G1, S1G1], B: dctype[S1G1, S2G1], C: dctype[S2G2, S3G2], grid2_out: dctype[S0G2, S3G2]):
 
     # grid: ijk
     grid1 = dace.comm.Cart_create([P0G1, P1G1, P2G1])
@@ -206,22 +206,22 @@ def two_mm(A: dctype[S0G1, S1G1], B: dctype[S1G1, S2G1], C: dctype[S2G2, S3G2]) 
     dace.comm.Redistribute(grid1_out, grid1_out_subarray, grid2_in, grid2_in_subarray)
     dace.comm.Bcast(grid2_in, grid=grid2_in_bcast)
 
-    grid2_out = grid2_in @ C
+    grid2_out[:] = grid2_in @ C
     dace.comm.Allreduce(grid2_out, 'MPI_SUM', grid=grid2_out_reduce)
-    return grid2_out
+    # return grid2_out
 
 
 @dace.program(device=dace.dtypes.DeviceType.GPU)
-def two_mm_compute(A: dctype[S0G1, S1G1], B: dctype[S1G1, S2G1], C: dctype[S2G2, S3G2]) -> dctype[S0G2, S3G2]:
+def two_mm_compute(A: dctype[S0G1, S1G1], B: dctype[S1G1, S2G1], C: dctype[S2G2, S3G2], grid2_out: dctype[S0G2, S3G2]):
 
     grid1_out = A @ B
     grid2_in = np.empty_like(grid1_out, shape=(S0G2, S2G2))
-    return grid2_in @ C
+    grid2_out[:] = grid2_in @ C
 
 
 @dace.program(device=dace.dtypes.DeviceType.GPU)
 def three_mm(A: dctype[S0G1, S1G1], B: dctype[S1G1, S2G1],
-             C: dctype[S2G2, S3G2], D: dctype[S3G2, S4G2]) -> dctype[S0G3, S4G3]:
+             C: dctype[S2G2, S3G2], D: dctype[S3G2, S4G2], grid3_out: dctype[S0G3, S4G3]):
 
     # grid: ijk
     grid1 = dace.comm.Cart_create([P0G1, P1G1, P2G1])
@@ -263,20 +263,20 @@ def three_mm(A: dctype[S0G1, S1G1], B: dctype[S1G1, S2G1],
     dace.comm.Redistribute(grid2_out, grid2_out_subarray, grid3_in2, grid3_in2_subarray)
     dace.comm.Bcast(grid3_in2, grid=grid3_in2_bcast)
 
-    grid3_out = grid3_in1 @ grid3_in2
+    grid3_out[:] = grid3_in1 @ grid3_in2
     dace.comm.Allreduce(grid3_out, 'MPI_SUM', grid=grid3_out_reduce)
-    return grid3_out
+    # return grid3_out
 
 
 @dace.program(device=dace.dtypes.DeviceType.GPU)
 def three_mm_compute(A: dctype[S0G1, S1G1], B: dctype[S1G1, S2G1],
-                     C: dctype[S2G2, S3G2], D: dctype[S3G2, S4G2]) -> dctype[S0G3, S4G3]:
+                     C: dctype[S2G2, S3G2], D: dctype[S3G2, S4G2], grid3_out: dctype[S0G3, S4G3]):
     
     grid1_out = A @ B
     grid3_in1 = np.empty_like(grid1_out, shape=(S0G3, S2G3))
     grid2_out = C @ D
     grid3_in2 = np.empty_like(grid2_out, shape=(S2G3, S4G3))
-    return grid3_in1 @ grid3_in2
+    grid3_out[:] = grid3_in1 @ grid3_in2
 
 
 if __name__ == "__main__":
@@ -289,7 +289,7 @@ if __name__ == "__main__":
     if size not in grid_ijk:
         raise ValueError("Selected number of MPI processes is not supported.")
 
-    file_name = "dace_cpu_{n}_nodes.csv".format(n=size)
+    file_name = "dace_gpu_{n}_nodes.csv".format(n=size)
     field_names = ["datetime", "benchmark", "framework", "nodes", "sizes", "time"]
     
     sdfg1, sdfg1c, sdfg2, sdfg2c, sdfg3, sdfg3c = (None, ) * 6
@@ -320,12 +320,13 @@ if __name__ == "__main__":
 
     lA = rng.random((SG[0], SG[1]))
     lB = rng.random((SG[1], SG[2]))
+    val = np.ndarray((SG[0], SG[2]), dtype=nptype)
 
     if rank == 0:
         print(f"##### 1MM #####\nLocal Sizes: {SG}\nGrid: {PG}""", flush=True)
     
     runtimes = timeit.repeat(
-        """func1(A=lA, B=lB,
+        """func1(A=lA, B=lB, out=val,
                  S0=SG[0], S1=SG[1], S2=SG[2],
                  P0=PG[0], P1=PG[1], P2=PG[2]); commworld.Barrier()
         """,
@@ -340,7 +341,7 @@ if __name__ == "__main__":
         write_time(str(datetime.now()), "1mm", "dace_gpu", size, (S, S, S), runtimes, file_name, field_names, append=True)
 
         runtimes = timeit.repeat(
-            """func1c(A=lA, B=lB,
+            """func1c(A=lA, B=lB, out=val,
                       S0=SG[0], S1=SG[1], S2=SG[2],
                       P0=PG[0], P1=PG[1], P2=PG[2])
             """,
@@ -364,12 +365,13 @@ if __name__ == "__main__":
     lA = rng.random((SG1[0], SG1[1]))
     lB = rng.random((SG1[1], SG1[2]))
     lC = rng.random((SG2[1], SG2[2]))
+    val = np.ndarray((SG2[0], SG2[2]), dtype=nptype)
 
     if rank == 0:
         print(f"##### 2MM #####\nLocal Sizes: {SG1}, {SG2}\nGrids: {PG1}, {PG2}""", flush=True)
     
     runtimes = timeit.repeat(
-        """func2(A=lA, B=lB, C=lC,
+        """func2(A=lA, B=lB, C=lC, grid2_out=val,
                  S0=S, S1=S, S2=S, S3=S,
                  S0G1=SG1[0], S1G1=SG1[1], S2G1=SG1[2],
                  S0G2=SG2[0], S2G2=SG2[1], S3G2=SG2[2],
@@ -387,7 +389,7 @@ if __name__ == "__main__":
         write_time(str(datetime.now()), "2mm", "dace_gpu", size, (S, S, S, S), runtimes, file_name, field_names, append=True)
 
         runtimes = timeit.repeat(
-            """func2c(A=lA, B=lB, C=lC,
+            """func2c(A=lA, B=lB, C=lC, grid2_out=val,
                       S0=S, S1=S, S2=S, S3=S,
                       S0G1=SG1[0], S1G1=SG1[1], S2G1=SG1[2],
                       S0G2=SG2[0], S2G2=SG2[1], S3G2=SG2[2],
@@ -417,12 +419,13 @@ if __name__ == "__main__":
     lB = rng.random((SG1[1], SG1[2]))
     lC = rng.random((SG2[0], SG2[1]))
     lD = rng.random((SG2[1], SG2[2]))
+    val = np.ndarray((SG3[0], SG3[2]), dtype=nptype)
 
     if rank == 0:
         print(f"##### 3MM #####\nLocal Sizes: {SG1}, {SG2}, {SG3}\nGrids: {PG1}, {PG2}, {PG3}""", flush=True)
     
     runtimes = timeit.repeat(
-        """func3(A=lA, B=lB, C=lC, D=lD,
+        """func3(A=lA, B=lB, C=lC, D=lD, grid3_out=val,
                  S0=S, S1=S, S2=S, S3=S, S4=S,
                  S0G1=SG1[0], S1G1=SG1[1], S2G1=SG1[2],
                  S2G2=SG2[0], S3G2=SG2[1], S4G2=SG2[2],
@@ -442,7 +445,7 @@ if __name__ == "__main__":
         write_time(str(datetime.now()), "3mm", "dace_gpu", size, (S, S, S, S, S), runtimes, file_name, field_names, append=True)
 
         runtimes = timeit.repeat(
-            """func3c(A=lA, B=lB, C=lC, D=lD,
+            """func3c(A=lA, B=lB, C=lC, D=lD, grid3_out=val,
                       S0=S, S1=S, S2=S, S3=S, S4=S,
                       S0G1=SG1[0], S1G1=SG1[1], S2G1=SG1[2],
                       S2G2=SG2[0], S3G2=SG2[1], S4G2=SG2[2],

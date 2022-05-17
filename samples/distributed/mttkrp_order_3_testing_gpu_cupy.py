@@ -309,7 +309,7 @@ if __name__ == "__main__":
     
     if rank == 0:
         print(f"Median total runtime: {np.median(runtimes)} seconds", flush=True)
-        write_time(str(datetime.now()), "mttkrp_order_3_mode_0", "dace_gpu", size, (S, S, S, R), runtimes, file_name, field_names, append=True)
+        write_time(str(datetime.now()), "mttkrp_order_3_mode_0", "dace_gpu_cupy", size, (S, S, S, R), runtimes, file_name, field_names, append=True)
 
         runtimes = timeit.repeat(
             """func1c(X=lX, JM=lJ, KM=lK, out=val,
@@ -323,7 +323,7 @@ if __name__ == "__main__":
         )
 
         print(f"Median compute runtime: {np.median(runtimes)} seconds")
-        write_time(str(datetime.now()),"mttkrp_order_3_mode_0_compute", "dace_gpu", size, (S, S, S, R), runtimes, file_name, field_names, append=True)
+        write_time(str(datetime.now()),"mttkrp_order_3_mode_0_compute", "dace_gpu_cupy", size, (S, S, S, R), runtimes, file_name, field_names, append=True)
     
     # MTTKRP, order 3, mode 1
 
@@ -345,7 +345,7 @@ if __name__ == "__main__":
     
     if rank == 0:
         print(f"Median total runtime: {np.median(runtimes)} seconds", flush=True)
-        write_time(str(datetime.now()), "mttkrp_order_3_mode_1", "dace_gpu", size, (S, S, S, R), runtimes, file_name, field_names, append=True)
+        write_time(str(datetime.now()), "mttkrp_order_3_mode_1", "dace_gpu_cupy", size, (S, S, S, R), runtimes, file_name, field_names, append=True)
 
         runtimes = timeit.repeat(
             """func2c(X=lX, IM=lI, KM=lK, out=val,
@@ -359,7 +359,7 @@ if __name__ == "__main__":
         )
 
         print(f"Median compute runtime: {np.median(runtimes)} seconds")
-        write_time(str(datetime.now()),"mttkrp_order_3_mode_1_compute", "dace_gpu", size, (S, S, S, R), runtimes, file_name, field_names, append=True)
+        write_time(str(datetime.now()),"mttkrp_order_3_mode_1_compute", "dace_gpu_cupy", size, (S, S, S, R), runtimes, file_name, field_names, append=True)
 
     # MTTKRP, order 3, mode 2
 
@@ -381,7 +381,7 @@ if __name__ == "__main__":
     
     if rank == 0:
         print(f"Median total runtime: {np.median(runtimes)} seconds", flush=True)
-        write_time(str(datetime.now()), "mttkrp_order_3_mode_2", "dace_gpu", size, (S, S, S, R), runtimes, file_name, field_names, append=True)
+        write_time(str(datetime.now()), "mttkrp_order_3_mode_2", "dace_gpu_cupy", size, (S, S, S, R), runtimes, file_name, field_names, append=True)
 
         runtimes = timeit.repeat(
             """func3c(X=lX, IM=lI, JM=lJ, out=val,
@@ -395,4 +395,4 @@ if __name__ == "__main__":
         )
 
         print(f"Median compute runtime: {np.median(runtimes)} seconds")
-        write_time(str(datetime.now()),"mttkrp_order_3_mode_2_compute", "dace_gpu", size, (S, S, S, R), runtimes, file_name, field_names, append=True)
+        write_time(str(datetime.now()),"mttkrp_order_3_mode_2_compute", "dace_gpu_cupy", size, (S, S, S, R), runtimes, file_name, field_names, append=True)
