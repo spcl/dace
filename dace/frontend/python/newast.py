@@ -3837,7 +3837,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
                 if isinstance(parsed_arg, str):
                     # Special case for strings
-                    parsed_arg = f'"{parsed_arg}"'
+                    parsed_arg = f'"{astutils.escape_string(parsed_arg)}"'
                 allargs.append(parsed_arg)
 
             argtypes.append(atype)
