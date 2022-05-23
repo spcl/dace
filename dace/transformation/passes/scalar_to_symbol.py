@@ -265,14 +265,14 @@ class TaskletIndirectionPromoter(ast.NodeTransformer):
     After visiting an AST, self.{in,out}_mapping will be filled with mappings
     from unique new connector names to sets of individual memlets.
     """
-    def __init__(self, in_connectors: Set[str], out_connectors: Set[str], sdfg: sd.SDFG,
+    def __init__(self, in_edges: Dict[str, mm.Memlet], out_edges: Dict[str, mm.Memlet], sdfg: sd.SDFG,
                  defined_syms: Set[str]) -> None:
         """
         Initializes AST transformer.
         
         """
-        self.iconns = in_connectors
-        self.oconns = out_connectors
+        self.in_edges = in_edges
+        self.out_edges = out_edges
         self.sdfg = sdfg
         self.defined = defined_syms
         self.in_mapping: Dict[str, Tuple[str, subsets.Range]] = {}
@@ -283,20 +283,22 @@ class TaskletIndirectionPromoter(ast.NodeTransformer):
     def visit_Subscript(self, node: ast.Subscript) -> Any:
         # Convert subscript to symbol name
         node_name = astutils.rname(node)
-        if node_name in self.iconns:
+        if node_name in self.in_edges:
             self.latest[node_name] += 1
             new_name = f'{node_name}_{self.latest[node_name]}'
-            subset = subsets.Range(astutils.subscript_to_slice(node, self.sdfg.arrays)[1])
+            orig_subset = self.in_edges[node_name].subset
+            subset = orig_subset.compose(subsets.Range(astutils.subscript_to_slice(node, self.sdfg.arrays)[1]))
             # Check if range can be collapsed
             if _range_is_promotable(subset, self.defined):
                 self.in_mapping[new_name] = (node_name, subset)
                 return ast.copy_location(ast.Name(id=new_name, ctx=ast.Load()), node)
             else:
                 self.do_not_remove.add(node_name)
-        elif node_name in self.oconns:
+        elif node_name in self.out_edges:
             self.latest[node_name] += 1
             new_name = f'{node_name}_{self.latest[node_name]}'
-            subset = subsets.Range(astutils.subscript_to_slice(node, self.sdfg.arrays)[1])
+            orig_subset = self.out_edges[node_name].subset
+            subset = orig_subset.compose(subsets.Range(astutils.subscript_to_slice(node, self.sdfg.arrays)[1]))
             # Check if range can be collapsed
             if _range_is_promotable(subset, self.defined):
                 self.out_mapping[new_name] = (node_name, subset)
@@ -390,8 +392,9 @@ def _cpp_indirection_promoter(
                 first_nonscalar_dim = 0
 
             # Make subset out of range and new sub-expression
-            subset = subsets.Range(orig_subset.ndrange()[:first_nonscalar_dim] + [(subexpr, subexpr, 1)] +
-                                   orig_subset.ndrange()[first_nonscalar_dim + 1:])
+            other_subset = subsets.Range([(0, 0, 1)] * first_nonscalar_dim + [(subexpr, subexpr, 1)] +
+                                         [(0, 0, 1)] * (len(orig_subset) - first_nonscalar_dim - 1))
+            subset = orig_subset.compose(other_subset)
 
             # Check if range can be collapsed
             if _range_is_promotable(subset, defined_syms):
@@ -427,7 +430,8 @@ def remove_symbol_indirection(sdfg: sd.SDFG):
             out_mapping = {}
             do_not_remove = {}
             if node.code.language is dtypes.Language.Python:
-                promo = TaskletIndirectionPromoter(set(node.in_connectors.keys()), set(node.out_connectors.keys()),
+                promo = TaskletIndirectionPromoter({e.dst_conn: e.data for e in state.in_edges(node)},
+                                                   {e.src_conn: e.data for e in state.out_edges(node)},
                                                    sdfg, defined_syms.keys())
                 for stmt in node.code.code:
                     promo.visit(stmt)
