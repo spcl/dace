@@ -580,9 +580,6 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
 
     def visit_Call(self, node: ast.Call) -> Any:
         from dace.frontend.python.interface import in_program  # Avoid import loop
-        BUILTIN_FUNCTIONS = {
-            in_program: True,
-        }
 
         if hasattr(node.func, 'n') and isinstance(node.func.n, SDFGConvertible):
             # Skip already-parsed calls
@@ -592,8 +589,8 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
             global_func = astutils.evalnode(node.func, self.globals)
 
             # Built-in functions are resolved directly
-            if global_func in BUILTIN_FUNCTIONS:
-                return self.global_value_to_node(BUILTIN_FUNCTIONS[global_func],
+            if global_func is in_program:
+                return self.global_value_to_node(True,
                                                  parent_node=node,
                                                  qualname=astutils.unparse(node),
                                                  recurse=True)
