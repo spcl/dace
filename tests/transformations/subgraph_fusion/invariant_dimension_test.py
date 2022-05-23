@@ -112,7 +112,8 @@ def _test_quantitatively(sdfg, graph):
     del csdfg
 
     subgraph = SubgraphView(graph, graph.nodes())
-    sf = SubgraphFusion(subgraph)
+    sf = SubgraphFusion()
+    sf.setup_match(subgraph)
     assert sf.can_be_applied(sdfg, subgraph)
 
     fusion(sdfg, graph)

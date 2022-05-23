@@ -2,15 +2,15 @@
 """ State fusion transformation """
 
 from typing import Dict, List, Set
+
 import networkx as nx
 
 from dace import dtypes, registry, sdfg, subsets
+from dace.config import Config
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.state import SDFGState
 from dace.transformation import transformation
-from dace.config import Config
-
 
 
 # Helper class for finding connected component correspondences
@@ -444,10 +444,11 @@ class StateFusion(transformation.MultiStateTransformation, transformation.Simpli
                                 found = outnode
 
         from dace.codegen.targets.fpga import is_fpga_kernel  # avoid circular import
+
         # Do not fuse FPGA and NON-FPGA states
         if is_fpga_kernel(sdfg, first_state) != is_fpga_kernel(sdfg, second_state):
             return False
-        
+
         return True
 
     def apply(self, _, sdfg):

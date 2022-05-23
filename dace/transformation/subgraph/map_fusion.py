@@ -33,7 +33,8 @@ class SubgraphOTFFusion(transformation.SubgraphTransformation):
             parents = parent_dict[child]
             while len(parents) > 0:
                 parent = parents.pop(0)
-                fusion = OnTheFlyMapFusion(state, sdfg_id=sdfg.sdfg_id, state_id=sdfg.node_id(state))
+                fusion = OnTheFlyMapFusion()
+                fusion.setup_match(state, sdfg_id=sdfg.sdfg_id, state_id=sdfg.node_id(state))
                 if fusion.can_be_applied(state, sdfg, parent, child):
                     fusion.apply(state, sdfg, parent, child)
                     fuse_counter += 1

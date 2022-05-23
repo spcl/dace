@@ -2257,6 +2257,51 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                                             permissive=False,
                                             validate_all=validate_all)
 
+    def _initialize_transformations_from_type(
+        self,
+        xforms: Union[Type, List[Type], 'dace.transformation.PatternTransformation'],
+        options: Union[Dict[str, Any], List[Dict[str, Any]], None] = None
+    ) -> List['dace.transformation.PatternTransformation']:
+        """
+        Initializes given pattern-matching transformations with the options given.
+        This method receives different formats and makes one kind of output.
+
+        :param xforms: One or more PatternTransformation objects or classes.
+        :param options: Zero or more transformation initialization option dictionaries.
+        :return: List of PatternTransformation objects inititalized with their properties.
+        """
+        from dace.transformation import PatternTransformation  # Avoid import loops
+
+        if isinstance(xforms, (PatternTransformation, type)):
+            xforms = [xforms]
+        if isinstance(options, dict):
+            options = [options]
+        options = options or [dict() for _ in xforms]
+
+        if len(options) != len(xforms):
+            raise ValueError('Length of options and transformations mismatch')
+
+        result: List[PatternTransformation] = []
+        for xftype, opts in zip(xforms, options):
+            if isinstance(xftype, PatternTransformation):
+                # Object was given, use as-is
+                result.append(xftype)
+            else:
+                # Class was given, initialize
+                opts = opts or {}
+                try:
+                    result.append(xftype(**opts))
+                except TypeError:
+                    # Backwards compatibility, transformation does not support ctor arguments
+                    t = xftype()
+                    # Set manually
+                    for oname, oval in opts.items():
+                        setattr(t, oname, oval)
+                    result.append(t)
+
+
+        return result
+
     def apply_transformations(self,
                               xforms: Union[Type, List[Type]],
                               options: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
@@ -2267,6 +2312,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                               print_report: Optional[bool] = None) -> int:
         """ This function applies a transformation or a sequence thereof
             consecutively. Operates in-place.
+
             :param xforms: A PatternTransformation class or a sequence.
             :param options: An optional dictionary (or sequence of dictionaries)
                             to modify transformation parameters.
@@ -2289,45 +2335,22 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                         [MapTiling, MapFusion, GPUTransformSDFG],
                         options=[{'tile_size': 16}, {}, {}])
         """
-        # Avoiding import loops
-        from dace.transformation import optimizer
-        from dace.transformation.transformation import PatternTransformation
+        from dace.transformation.passes.pattern_matching import PatternMatchAndApply  # Avoid import loops
 
-        applied_transformations = collections.defaultdict(int)
+        xforms = self._initialize_transformations_from_type(xforms, options)
 
-        if isinstance(xforms, type) and issubclass(xforms, PatternTransformation):
-            xforms = [xforms]
+        pazz = PatternMatchAndApply(xforms,
+                                    permissive=permissive,
+                                    validate=validate,
+                                    validate_all=validate_all,
+                                    states=states,
+                                    print_report=print_report)
+        results = pazz.apply_pass(self, {})
 
-        if isinstance(options, dict):
-            options = [options]
-        options = options or [dict() for _ in xforms]
-        if len(options) != len(xforms):
-            raise ValueError('Length of options and transformations mismatch')
-
-        opt = optimizer.SDFGOptimizer(self, inplace=True)
-        for xform, opts in zip(xforms, options):
-            # Find only the first match
-            try:
-                match = next(m for m in opt.get_pattern_matches(
-                    permissive=permissive, patterns=[xform], states=states, options=[opts]))
-            except StopIteration:
-                continue
-            sdfg = self.sdfg_list[match.sdfg_id]
-            graph = sdfg.node(match.state_id) if match.state_id >= 0 else sdfg
-
-            match.apply(graph, sdfg)
-            applied_transformations[type(match).__name__] += 1
-            if validate_all:
-                self.validate()
-
-        if validate:
-            self.validate()
-
-        if (len(applied_transformations) > 0
-                and (print_report or (print_report is None and Config.get_bool('debugprint')))):
-            print('Applied {}.'.format(', '.join(['%d %s' % (v, k) for k, v in applied_transformations.items()])))
-
-        return sum(applied_transformations.values())
+        # Return number of transformations applied
+        if results is None:
+            return 0
+        return sum(len(v) for v in results.values())
 
     def apply_transformations_repeated(self,
                                        xforms: Union[Type, List[Type]],
@@ -2341,6 +2364,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                                        progress: Optional[bool] = None) -> int:
         """ This function repeatedly applies a transformation or a set of
             (unique) transformations until none can be found. Operates in-place.
+
             :param xforms: A PatternTransformation class or a set thereof.
             :param options: An optional dictionary (or sequence of dictionaries)
                             to modify transformation parameters.
@@ -2365,102 +2389,69 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                     # Applies InlineSDFG until no more subgraphs can be inlined
                     sdfg.apply_transformations_repeated(InlineSDFG)
         """
-        # Avoiding import loops
-        from dace.transformation import optimizer
-        from dace.transformation.transformation import PatternTransformation
+        from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
 
-        if progress is None and not Config.get_bool('progress'):
-            progress = False
+        xforms = self._initialize_transformations_from_type(xforms, options)
 
-        start = time.time()
+        pazz = PatternMatchAndApplyRepeated(xforms, permissive, validate, validate_all, states, print_report, progress,
+                                            order_by_transformation)
+        results = pazz.apply_pass(self, {})
 
-        applied_transformations = collections.defaultdict(int)
+        # Return number of transformations applied
+        if results is None:
+            return 0
+        return sum(len(v) for v in results.values())
 
-        if isinstance(xforms, type) and issubclass(xforms, PatternTransformation):
-            xforms = [xforms]
+    def apply_transformations_once_everywhere(self,
+                                              xforms: Union[Type, List[Type]],
+                                              options: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
+                                              validate: bool = True,
+                                              validate_all: bool = False,
+                                              permissive: bool = False,
+                                              states: Optional[List[Any]] = None,
+                                              print_report: Optional[bool] = None,
+                                              order_by_transformation: bool = True,
+                                              progress: Optional[bool] = None) -> int:
+        """ 
+        This function applies a transformation or a set of (unique) transformations
+        until throughout the entire SDFG once. Operates in-place.
 
-        # Ensure transformations are unique
-        if len(xforms) != len(set(xforms)):
-            raise ValueError('Transformation set must be unique')
+            :param xforms: A PatternTransformation class or a set thereof.
+            :param options: An optional dictionary (or sequence of dictionaries)
+                            to modify transformation parameters.
+            :param validate: If True, validates after all transformations.
+            :param validate_all: If True, validates after every transformation.
+            :param permissive: If True, operates in permissive mode.
+            :param states: If not None, specifies a subset of states to
+                           apply transformations on.
+            :param print_report: Whether to show debug prints or not (None if
+                                 the DaCe config option 'debugprint' should
+                                 apply).
+            :param order_by_transformation: Try to apply transformations ordered
+                                            by class rather than SDFG.
+            :param progress: If True, prints every intermediate transformation
+                             applied. If False, never prints anything. If None
+                             (default), prints only after 5 seconds of
+                             transformations.
+            :return: Number of transformations applied.
 
-        if isinstance(options, dict):
-            options = [options]
-        options = options or [dict() for _ in xforms]
-        if len(options) != len(xforms):
-            raise ValueError('Length of options and transformations mismatch')
+            Examples::
 
-        opt = optimizer.SDFGOptimizer(self, inplace=True)
+                    # Tiles all maps once
+                    sdfg.apply_transformations_once_everywhere(MapTiling, options=dict(tile_size=16))
+        """
+        from dace.transformation.passes.pattern_matching import PatternApplyOnceEverywhere
 
-        params_by_xform = {x: o for x, o in zip(xforms, options)}
+        xforms = self._initialize_transformations_from_type(xforms, options)
 
-        # Helper function for applying and validating a transformation
-        def _apply_and_validate(match: PatternTransformation):
-            sdfg = self.sdfg_list[match.sdfg_id]
-            graph = sdfg.node(match.state_id) if match.state_id >= 0 else sdfg
-            if validate_all:
-                match_name = match.print_match(sdfg)
+        pazz = PatternApplyOnceEverywhere(xforms, permissive, validate, validate_all, states, print_report, progress,
+                                          order_by_transformation)
+        results = pazz.apply_pass(self, {})
 
-            match.apply(graph, sdfg)
-            applied_transformations[type(match).__name__] += 1
-            if progress or (progress is None and (time.time() - start) > 5):
-                print('Applied {}.\r'.format(', '.join(['%d %s' % (v, k) for k, v in applied_transformations.items()])),
-                      end='')
-            if validate_all:
-                try:
-                    self.validate()
-                except InvalidSDFGError as err:
-                    raise InvalidSDFGError(
-                        f'Validation failed after applying {match_name}. '
-                        f'{type(err).__name__}: {err}', sdfg, match.state_id) from err
-
-        if order_by_transformation:
-            applied_anything = True
-            while applied_anything:
-                applied_anything = False
-                for xform in xforms:
-                    applied = True
-                    while applied:
-                        applied = False
-                        for match in opt.get_pattern_matches(permissive=permissive,
-                                                             patterns=[xform],
-                                                             states=states,
-                                                             options=[params_by_xform[xform]]):
-                            _apply_and_validate(match)
-                            applied = True
-                            applied_anything = True
-                            break
-        else:
-            # Cache transformations as metadata for faster application
-            options = [params_by_xform[x] for x in xforms]
-            opt.set_transformation_metadata(xforms, options)
-            applied = True
-            while applied:
-                applied = False
-                # Find and apply one of the chosen transformations
-                for match in opt.get_pattern_matches(permissive=permissive,
-                                                     patterns=xforms,
-                                                     states=states,
-                                                     options=options):
-                    _apply_and_validate(match)
-                    applied = True
-                    break
-
-        if validate:
-            try:
-                self.validate()
-            except InvalidSDFGError as err:
-                if applied:
-                    raise InvalidSDFGError("Validation failed after applying {}.".format(match.print_match(self)), self,
-                                           match.state_id) from err
-                else:
-                    raise err
-
-        if (len(applied_transformations) > 0
-                and (progress or print_report or
-                     ((progress is None or print_report is None) and Config.get_bool('debugprint')))):
-            print('Applied {}.'.format(', '.join(['%d %s' % (v, k) for k, v in applied_transformations.items()])))
-
-        return sum(applied_transformations.values())
+        # Return number of transformations applied
+        if results is None:
+            return 0
+        return sum(len(v) for v in results.values())
 
     def apply_gpu_transformations(self,
                                   states=None,

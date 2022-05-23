@@ -95,7 +95,8 @@ class GPUTransformMap(transformation.SingleStateTransformation):
 
         # Avoiding import loops
         from dace.transformation.interstate import GPUTransformSDFG
-        transformation = GPUTransformSDFG(sdfg, 0, -1, {}, 0)
+        transformation = GPUTransformSDFG()
+        transformation.setup_match(sdfg, 0, -1, {}, 0)
         transformation.register_trans = self.register_trans
         transformation.sequential_innermaps = self.sequential_innermaps
         transformation.toplevel_trans = self.toplevel_trans

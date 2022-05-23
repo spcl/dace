@@ -32,7 +32,7 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
 
     def cutouts(self):
         for nsdfg_id, nsdfg in enumerate(self._sdfg.all_sdfgs_recursive()):
-            for state in nsdfg.nodes(): 
+            for state in nsdfg.nodes():
                 state_id = nsdfg.node_id(state)
                 nodes = state.nodes()
 
@@ -81,7 +81,7 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
             # Skip no-map-states
             return math.inf
 
-        
+
         if config[0] == 0:
             # Baseline
             return self.measure(candidate, dreport, measurements)
@@ -93,7 +93,8 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
         maps_ = list(map(candidate.start_state.node, map_ids))
         subgraph = helpers.subgraph_from_maps(sdfg=candidate, graph=candidate.start_state, map_entries=maps_)
 
-        map_fusion = sg.SubgraphOTFFusion(subgraph, candidate.sdfg_id, candidate.node_id(candidate.start_state))
+        map_fusion = sg.SubgraphOTFFusion()
+        map_fusion.setup_match(subgraph, candidate.sdfg_id, candidate.node_id(candidate.start_state))
         if map_fusion.can_be_applied(candidate.start_state, candidate):
             fuse_counter = map_fusion.apply(candidate.start_state, candidate)
 
@@ -118,7 +119,8 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
         maps_ = list(map(cutout.start_state.node, map_ids))
         subgraph = helpers.subgraph_from_maps(sdfg=sdfg, graph=state, map_entries=maps_)
 
-        map_fusion = sg.SubgraphOTFFusion(subgraph, sdfg.sdfg_id, state_id)
+        map_fusion = sg.SubgraphOTFFusion()
+        map_fusion.setup_match(subgraph, sdfg.sdfg_id, state_id)
         if map_fusion.can_be_applied(state, sdfg):
             fuse_counter = map_fusion.apply(state, sdfg)
             print(f"Fusing {fuse_counter} maps")
@@ -165,16 +167,16 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
         i = 0
         for nsdfg in sdfg.all_sdfgs_recursive():
             for state in nsdfg.states():
-                i = i + 1            
+                i = i + 1
 
                 top_maps = []
                 for node in state.nodes():
                     if isinstance(node, dace.nodes.MapEntry) and xfh.get_parent_map(state, node) is None:
                         top_maps.append(node)
-                
+
                 if len(top_maps) < 2:
                     continue
-                
+
                 try:
                     cutout = cutter.cutout_state(state, *(state.nodes()), make_copy=False)
                 except AttributeError:
@@ -198,25 +200,25 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
                         for map_entry in maps:
                             map_desc = OnTheFlyMapFusionTuner.map_descriptor(state, map_entry)
                             state_desc.update({map_desc: 1})
-                        
+
                             if not map_desc in maps_desc:
                                 maps_desc[map_desc] = []
 
                             maps_desc[map_desc].append(map_entry)
-                    
+
                         included = True
                         for key in pattern:
                             if not key in state_desc or pattern[key] > state_desc[key]:
-                                included = False                        
+                                included = False
                                 break
 
                         if not included:
                             continue
 
                         if base_runtime is None:
-                            baseline = cutter.cutout_state(state, *(state.nodes()), make_copy=False)                    
+                            baseline = cutter.cutout_state(state, *(state.nodes()), make_copy=False)
                             baseline.start_state.instrument = dace.InstrumentationType.GPU_Events
-                            
+
                             dreport_ = {}
                             for cstate in baseline.nodes():
                                 for dnode in cstate.data_nodes():
@@ -248,17 +250,19 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
                         experiment_sdfg = copy.deepcopy(experiment_sdfg_)
                         experiment_state = experiment_sdfg.start_state
                         experiment_state.instrument = dace.InstrumentationType.GPU_Events
-                        
+
                         experiment_maps = list(map(lambda m_id: experiment_state.node(m_id), experiment_maps_ids))
                         experiment_subgraph = helpers.subgraph_from_maps(sdfg=experiment_sdfg, graph=experiment_state, map_entries=experiment_maps)
-                    
-                        map_fusion = sg.SubgraphOTFFusion(experiment_subgraph, experiment_sdfg.sdfg_id, experiment_sdfg.node_id(experiment_state))
+
+                        map_fusion = sg.SubgraphOTFFusion()
+                        map_fusion.setup_match(experiment_subgraph, experiment_sdfg.sdfg_id,
+                                               experiment_sdfg.node_id(experiment_state))
                         if map_fusion.can_be_applied(experiment_state, experiment_sdfg):
                             try:
                                 experiment_fuse_counter = map_fusion.apply(experiment_state, experiment_sdfg)
                             except:
                                 continue
-                            
+
                             if experiment_fuse_counter == 0:
                                 continue
 
@@ -284,7 +288,8 @@ class OnTheFlyMapFusionTuner(cutout_tuner.CutoutTuner):
 
                     if best_pattern is not None:
                         subgraph = helpers.subgraph_from_maps(sdfg=nsdfg, graph=state, map_entries=best_pattern)
-                        map_fusion = sg.SubgraphOTFFusion(subgraph, nsdfg.sdfg_id, nsdfg.node_id(state))
+                        map_fusion = sg.SubgraphOTFFusion()
+                        map_fusion.setup_match(subgraph, nsdfg.sdfg_id, nsdfg.node_id(state))
                         actual_fuse_counter = map_fusion.apply(state, nsdfg)
 
                         best_pattern = None
