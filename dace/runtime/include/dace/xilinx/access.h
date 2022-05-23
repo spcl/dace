@@ -34,7 +34,7 @@ template <typename T, unsigned vector_length>
 vec<T, vector_length> Pack(T const *const ptr) {
   #pragma HLS INLINE
   vec<T, vector_length> val;
-  for (int i = 0; i < vector_length; ++i) {
+  for (unsigned i = 0; i < vector_length; ++i) {
     #pragma HLS UNROLL
     val[i] = ptr[i];
   }
@@ -44,7 +44,7 @@ vec<T, vector_length> Pack(T const *const ptr) {
 template <typename T, unsigned vector_length>
 void Unpack(vec<T, vector_length> const &val, T *const ptr) {
   #pragma HLS INLINE
-  for (int i = 0; i < vector_length; ++i) {
+  for (unsigned i = 0; i < vector_length; ++i) {
     #pragma HLS UNROLL
     ptr[i] = val[i];
   }

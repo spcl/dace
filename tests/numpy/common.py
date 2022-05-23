@@ -6,6 +6,10 @@ from collections import OrderedDict
 import dace
 import numpy as np
 
+from numpy.random import default_rng
+
+rng = default_rng(42)
+
 
 def compare_numpy_output(non_zero=False,
                          positive=False,
@@ -45,44 +49,33 @@ def compare_numpy_output(non_zero=False,
                     ddesc = dace.data.Scalar(ddesc)
 
                 if ddesc.dtype in [dace.float16, dace.float32, dace.float64]:
-                    res = np.random.rand(*ddesc.shape).astype(
-                        getattr(np, ddesc.dtype.to_string()))
+                    res = rng.random(ddesc.shape, dtype=getattr(np, ddesc.dtype.to_string()))
                     b = 0 if positive else -max_value
                     a = max_value
                     res = (b - a) * res + a
                     if non_zero:
                         res[res == 0] = 1
                 elif ddesc.dtype in [dace.complex64, dace.complex128]:
-                    res = (np.random.rand(*ddesc.shape).astype(
-                        getattr(np, ddesc.dtype.to_string())) +
-                           1j * np.random.rand(*ddesc.shape).astype(
-                               getattr(np, ddesc.dtype.to_string())))
+                    res = (rng.random(ddesc.shape).astype(getattr(np, ddesc.dtype.to_string())) +
+                           1j * rng.random(ddesc.shape).astype(getattr(np, ddesc.dtype.to_string())))
                     b = 0 if positive else -max_value
                     a = max_value
                     res = (b - a) * res + a
                     if non_zero:
                         res[res == 0] = 1
-                elif ddesc.dtype in [
-                        dace.int8, dace.int16, dace.int32, dace.int64, dace.bool
-                ]:
-                    res = np.random.randint(0 if positive else -max_value,
-                                            max_value,
-                                            size=ddesc.shape)
+                elif ddesc.dtype in [dace.int8, dace.int16, dace.int32, dace.int64, dace.bool]:
+                    res = rng.integers(0 if positive else -max_value, max_value, size=ddesc.shape)
                     res = res.astype(getattr(np, ddesc.dtype.to_string()))
                     if non_zero:
                         res[res == 0] = 1
-                elif ddesc.dtype in [
-                        dace.uint8, dace.uint16, dace.uint32, dace.uint64
-                ]:
-                    res = np.random.randint(0, max_value, size=ddesc.shape)
+                elif ddesc.dtype in [dace.uint8, dace.uint16, dace.uint32, dace.uint64]:
+                    res = rng.integers(0, max_value, size=ddesc.shape)
                     res = res.astype(getattr(np, ddesc.dtype.to_string()))
                     if non_zero:
                         res[res == 0] = 1
                 elif ddesc.dtype in [dace.complex64, dace.complex128]:
-                    res = np.random.rand(*ddesc.shape).astype(
-                        getattr(np, ddesc.dtype.to_string())
-                    ) + 1j * np.random.rand(*ddesc.shape).astype(
-                        getattr(np, ddesc.dtype.to_string()))
+                    res = (rng.random(ddesc.shape).astype(getattr(np, ddesc.dtype.to_string())) +
+                           1j * rng.random(ddesc.shape).astype(getattr(np, ddesc.dtype.to_string())))
                     b = 0 if positive else -10 - 10j
                     a = 10 + 10j
                     res = (b - a) * res + a
@@ -98,14 +91,11 @@ def compare_numpy_output(non_zero=False,
 
             signature = inspect.signature(func)
 
-            inputs = OrderedDict(
-                (name, get_rand_arr(param.annotation))
-                for name, param in signature.parameters.items())
+            inputs = OrderedDict((name, get_rand_arr(param.annotation)) for name, param in signature.parameters.items())
 
             dace_input = dc(inputs)
             if casting:
-                reference_input = OrderedDict(
-                    (name, casting(desc)) for name, desc in inputs.items())
+                reference_input = OrderedDict((name, casting(desc)) for name, desc in inputs.items())
             else:
                 reference_input = dc(inputs)
 
@@ -131,8 +121,7 @@ def compare_numpy_output(non_zero=False,
 
             if dace_thrown is not None or numpy_thrown is not None:
                 assert dace_thrown is not None and numpy_thrown is not None, "dace threw:\n{}: {}\nBut numpy threw:\n{}: {}\n".format(
-                    type(dace_thrown), dace_thrown, type(numpy_thrown),
-                    numpy_thrown)
+                    type(dace_thrown), dace_thrown, type(numpy_thrown), numpy_thrown)
             else:
                 if not isinstance(reference_result, (tuple, list)):
                     reference_result = [reference_result]

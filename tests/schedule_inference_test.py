@@ -12,15 +12,12 @@ def test_schedule_inference_simple():
     def simple_schedule_inference(A: dace.float64[3, 3]):
         return nested_call(A)
 
-    sdfg: dace.SDFG = simple_schedule_inference.to_sdfg(strict=False)
+    sdfg: dace.SDFG = simple_schedule_inference.to_sdfg(simplify=False)
 
     infer_types.infer_connector_types(sdfg)
 
     infer_types.set_default_schedule_and_storage_types(sdfg, None)
     sdfg.apply_transformations_repeated(StateFusion)
 
-    entry = [
-        n for n, _ in sdfg.all_nodes_recursive()
-        if isinstance(n, dace.nodes.MapEntry)
-    ][0]
+    entry = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry)][0]
     assert entry.schedule is dace.ScheduleType.CPU_Multicore

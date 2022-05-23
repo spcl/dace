@@ -1,59 +1,35 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
+""" Simple program showing the DaCe Python interface via scalar multiplication and vector addition. """
 
 import argparse
 import dace
 import numpy as np
-import scipy as sp
 
+# Define a symbol so that the vectors could have arbitrary sizes and compile the code once
+# (this step is not necessary for arrays with known sizes)
 N = dace.symbol('N')
 
 
-@dace.program(dace.float64, dace.float64[N], dace.float64[N])
-def axpy(A, X, Y):
-    @dace.map(_[0:N])
-    def multiplication(i):
-        in_A << A
-        in_X << X[i]
-        in_Y << Y[i]
-        out >> Y[i]
-
-        out = in_A * in_X + in_Y
+# Define the data-centric program with type hints
+# (without this step, Just-In-Time compilation is triggered every call)
+@dace.program
+def axpy(a: dace.float64, x: dace.float64[N], y: dace.float64[N]):
+    return a * x + y
 
 
 if __name__ == "__main__":
-    print("==== Program start ====")
-
     parser = argparse.ArgumentParser()
-    parser.add_argument("N", type=int, nargs="?", default=24)
-    args = vars(parser.parse_args())
+    parser.add_argument("N", type=int, nargs="?", default=1024)
+    args = parser.parse_args()
 
-    N.set(args["N"])
+    # Initialize arrays
+    a = np.random.rand()
+    x = np.random.rand(args.N)
+    y = np.random.rand(args.N)
 
-    print('Scalar-vector multiplication %d' % (N.get()))
+    # Call the program (the value of N is inferred by dace automatically)
+    z = axpy(a, x, y)
 
-    # Initialize arrays: Randomize A and X, zero Y
-    A = dace.float64(np.random.rand())
-    X = np.random.rand(N.get()).astype(np.float64)
-    Y = np.random.rand(N.get()).astype(np.float64)
-
-    A_regression = np.float64()
-    X_regression = np.ndarray([N.get()], dtype=np.float64)
-    Y_regression = np.ndarray([N.get()], dtype=np.float64)
-    A_regression = A
-    X_regression[:] = X[:]
-    Y_regression[:] = Y[:]
-
-    axpy(A, X, Y)
-
-    c_axpy = sp.linalg.blas.get_blas_funcs('axpy',
-                                           arrays=(X_regression, Y_regression))
-    if dace.Config.get_bool('profiling'):
-        dace.timethis('axpy', 'BLAS', (2 * N.get()), c_axpy, X_regression,
-                      Y_regression, N.get(), A_regression)
-    else:
-        c_axpy(X_regression, Y_regression, N.get(), A_regression)
-
-    diff = np.linalg.norm(Y_regression - Y) / N.get()
-    print("Difference:", diff)
-    print("==== Program end ====")
-    exit(0 if diff <= 1e-5 else 1)
+    # Check result
+    expected = a * x + y
+    print("Difference:", np.linalg.norm(z - expected))

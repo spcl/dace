@@ -1,13 +1,13 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Python interface for DaCe functions. """
 
-from functools import wraps
 import inspect
+from functools import wraps
+from typing import Any, Callable, Deque, Dict, Generator, Optional, Tuple, TypeVar, Union, overload
+
 from dace import dtypes
 from dace.dtypes import paramdec
-from dace.frontend.python import parser, ndloop, tasklet_runner
-from typing import (Any, Callable, Deque, Generator, Optional, Tuple, TypeVar,
-                    overload, Union)
+from dace.frontend.python import ndloop, parser, tasklet_runner
 
 #############################################
 
@@ -26,7 +26,8 @@ def program(f: F) -> parser.DaceProgram:
 def program(*args,
             auto_optimize=False,
             device=dtypes.DeviceType.CPU,
-            **kwargs) -> parser.DaceProgram:
+            constant_functions=False,
+            **kwargs) -> Callable[..., parser.DaceProgram]:
     ...
 
 
@@ -35,12 +36,26 @@ def program(f: F,
             *args,
             auto_optimize=False,
             device=dtypes.DeviceType.CPU,
-            **kwargs) -> parser.DaceProgram:
-    """ DaCe program, entry point to a data-centric program. """
+            constant_functions=False,
+            **kwargs) -> Callable[..., parser.DaceProgram]:
+    """
+    Entry point to a data-centric program. For methods and ``classmethod``s, use
+    ``@dace.method``.
+    :param f: The function to define as the entry point.
+    :param auto_optimize: If True, applies automatic optimization heuristics
+                          on the generated DaCe program during compilation.
+    :param device: Transform the function to run on the target device.
+    :param constant_functions: If True, assumes all external functions that do
+                               not depend on internal variables are constant.
+                               This will hardcode their return values into the
+                               resulting program.
+    :note: If arguments are defined with type hints, the program can be compiled
+           ahead-of-time with ``.compile()``.
+    """
 
     # Parses a python @dace.program function and returns an object that can
     # be translated
-    return parser.DaceProgram(f, args, kwargs, auto_optimize, device)
+    return parser.DaceProgram(f, args, kwargs, auto_optimize, device, constant_functions)
 
 
 function = program
@@ -55,6 +70,7 @@ def method(f: F) -> parser.DaceProgram:
 def method(*args,
            auto_optimize=False,
            device=dtypes.DeviceType.CPU,
+           constant_functions=False,
            **kwargs) -> parser.DaceProgram:
     ...
 
@@ -64,24 +80,39 @@ def method(f: F,
            *args,
            auto_optimize=False,
            device=dtypes.DeviceType.CPU,
+           constant_functions=False,
            **kwargs) -> parser.DaceProgram:
-    """ Entry point to a data-centric program that is a method or 
-        a ``classmethod``. """
+    """ 
+    Entry point to a data-centric program that is a method or  a ``classmethod``. 
+    :param f: The method to define as the entry point.
+    :param auto_optimize: If True, applies automatic optimization heuristics
+                          on the generated DaCe program during compilation.
+    :param device: Transform the function to run on the target device.
+    :param constant_functions: If True, assumes all external functions that do
+                               not depend on internal variables are constant.
+                               This will hardcode their return values into the
+                               resulting program.
+    :note: If arguments are defined with type hints, the program can be compiled
+           ahead-of-time with ``.compile()``.    
+    """
 
     # Create a wrapper class that can bind to the object instance
     class MethodWrapper:
-        def __init__(self, prog):
-            self.prog = prog
+        def __init__(self):
+            self.wrapped: Dict[int, parser.DaceProgram] = {}
 
-        def __get__(self, obj, objtype=None):
+        def __get__(self, obj, objtype=None) -> parser.DaceProgram:
             # Modify wrapped instance as necessary, only clearing
             # compiled program cache if needed.
-            if self.prog.methodobj is not obj:
-                self.prog.methodobj = obj
-            return self.prog
+            objid = id(obj)
+            if objid in self.wrapped:
+                return self.wrapped[objid]
+            prog = parser.DaceProgram(f, args, kwargs, auto_optimize, device, constant_functions, method=True)
+            prog.methodobj = obj
+            self.wrapped[objid] = prog
+            return prog
 
-    return MethodWrapper(
-        parser.DaceProgram(f, args, kwargs, auto_optimize, device, method=True))
+    return MethodWrapper()
 
 
 # DaCe functions
@@ -91,9 +122,7 @@ def method(f: F,
 class MapMetaclass(type):
     """ Metaclass for map, to enable ``dace.map[0:N]`` syntax. """
     @classmethod
-    def __getitem__(
-            cls, rng: Union[slice,
-                            Tuple[slice]]) -> Generator[Tuple[int], None, None]:
+    def __getitem__(cls, rng: Union[slice, Tuple[slice]]) -> Generator[Tuple[int], None, None]:
         """ 
         Iterates over an N-dimensional region in parallel.
         :param rng: A slice or a tuple of multiple slices, representing the
@@ -113,10 +142,7 @@ class map(metaclass=MapMetaclass):
 
 
 class consume:
-    def __init__(self,
-                 stream: Deque[T],
-                 processing_elements: int = 1,
-                 condition: Optional[Callable[[], bool]] = None):
+    def __init__(self, stream: Deque[T], processing_elements: int = 1, condition: Optional[Callable[[], bool]] = None):
         """ 
         Consume is a scope, like ``Map``, that creates parallel execution.
         Unlike `Map`, it creates a producer-consumer relationship between an
@@ -146,10 +172,9 @@ class TaskletMetaclass(type):
     def __enter__(self):
         # Parse and run tasklet
         frame = inspect.stack()[1][0]
-        filename = inspect.getframeinfo(frame).filename
+        filename = inspect.getframeinfo(frame, context=0).filename
         tasklet_ast = tasklet_runner.get_tasklet_ast(frame=frame)
-        tasklet_runner.run_tasklet(tasklet_ast, filename, frame.f_globals,
-                                   frame.f_locals)
+        tasklet_runner.run_tasklet(tasklet_ast, filename, frame.f_globals, frame.f_locals)
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         # Tasklets always raise exceptions (NameError due to the memlet
@@ -172,25 +197,49 @@ class tasklet(metaclass=TaskletMetaclass):
 
     The DaCe framework cannot analyze these tasklets for optimization. 
     """
-    def __init__(self,
-                 language: Union[str,
-                                 dtypes.Language] = dtypes.Language.Python):
+    def __init__(self, language: Union[str, dtypes.Language] = dtypes.Language.Python):
         if isinstance(language, str):
             language = dtypes.Language[language]
         self.language = language
-        if language != dtypes.Language.Python:
-            raise NotImplementedError('Cannot run non-Python tasklet in Python')
 
     def __enter__(self):
+        if self.language != dtypes.Language.Python:
+            raise NotImplementedError('Cannot run non-Python tasklet in Python')
+
         # Parse and run tasklet
         frame = inspect.stack()[1][0]
-        filename = inspect.getframeinfo(frame).filename
+        filename = inspect.getframeinfo(frame, context=0).filename
         tasklet_ast = tasklet_runner.get_tasklet_ast(frame=frame)
-        tasklet_runner.run_tasklet(tasklet_ast, filename, frame.f_globals,
-                                   frame.f_locals)
+        tasklet_runner.run_tasklet(tasklet_ast, filename, frame.f_globals, frame.f_locals)
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         # Tasklets always raise exceptions (NameError due to the memlet
         # syntax and undefined connector names, or TypeError due to bad shifts).
         # Thus, their contents are skipped.
         return True
+
+
+def unroll(generator):
+    """
+    Explicitly annotates that a loop should be unrolled during parsing.
+    :param generator: The original generator to loop over.
+    :note: Only use with stateless and compile-time evaluateable loops!
+    """
+    yield from generator
+
+
+def nounroll(generator):
+    """
+    Explicitly annotates that a loop should not be unrolled during parsing.
+    :param generator: The original generator to loop over.
+    """
+    yield from generator
+
+
+def in_program() -> bool:
+    """
+    Returns True if in a DaCe program parsing context. This function can be used to test whether the current
+    code runs inside the ``@dace.program`` parser.
+    :return: True if in a DaCe program parsing context, or False otherwise.
+    """
+    return False

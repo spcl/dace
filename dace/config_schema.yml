@@ -86,13 +86,12 @@ required:
                 title: Save intermediate SDFGs
                 description: Save SDFG files after every transformation.
 
-            automatic_strict_transformations:
+            automatic_simplification:
                 type: bool
                 default: true
-                title: Automatic strict transformations
+                title: Automatic SDFG simplification
                 description: >
-                    Automatically performs strict transformations
-                    that are considered to be safe.
+                    Automatically performs SDFG simplification on programs.
 
             detect_control_flow:
                 type: bool
@@ -166,43 +165,31 @@ required:
                     RelWithDebInfo, or MinSizeRel).
 
             allow_shadowing:
-                type: str
+                type: bool
                 default: true
                 title: Allow variable shadowing
                 description: >
                    Allowing shadowing of variables in the code (reduces
                    exceptions to warnings when shadowing is encountered).
 
+            codegen_lineinfo:
+                type: bool
+                default: false
+                title: Annotate code generator lines
+                description: >
+                    Keep a source mapping between generated code and the file/line
+                    of the code generator that generated it. Used for debugging
+                    code generation.
+
             default_data_types:
                 type : str
                 default: Python
                 title : Default data types
-                descrition: >
+                description: >
                     Specify the default data types to use in generating code.
                     If "Python", Python's semantics will be followed (i.e., `float`  and `int`
                     are represented using 64 bits). If the property is set to "C", C's semantcs will be
                     used (`float` and `int` are represented using 32bits).
-
-            fpga_vendor:
-                type: str
-                default: xilinx
-                title: FPGA vendor
-                description: >
-                    Target Xilinx ("xilinx") or Intel ("intel_fpga") FPGAs when
-                    generating code.
-
-
-            autobuild_bitstreams:
-                type: bool
-                default: true
-                title: Automatically build bitstreams
-                description: >
-                    If set to true, CMake will automatically build missing
-                    bitstreams when running an FPGA program. This can take a
-                    very long time, and users might want to do this manually.
-                    If set to false, the program will optimistically assume
-                    that the bitstream is present in the build directory, and
-                    will crash if this is not the case.
 
             unique_functions:
                 type: str
@@ -217,6 +204,16 @@ required:
                     decide what NestedSDFG code can be replicated and what not.
                     "none": a separate function is code generated for each NestedSDFG
 
+            allow_view_arguments:
+                type: bool
+                default: false
+                title: Allow numpy views as arguments
+                description: >
+                    If true, allows users to call DaCe programs with NumPy views
+                    (for example, "A[:, 1]" or "w.T"). As this can create pointer
+                    aliasing issues with two arrays pointing to the same memory,
+                    or analyzability issue with strides and alignment, this option
+                    is disabled by default.
 
             inline_sdfgs:
                 type: bool
@@ -396,6 +393,40 @@ required:
                         default: ''
 
             #############################################
+            # General FPGA flags
+            fpga:
+                type: dict
+                title: FPGA
+                description: "Common preferences for FPGA compilation."
+                required:
+
+                    autobuild_bitstreams:
+                        type: bool
+                        default: true
+                        title: Automatically build bitstreams
+                        description: >
+                            If set to true, CMake will automatically build missing
+                            bitstreams when running an FPGA program. This can take a
+                            very long time, and users might want to do this manually.
+                            If set to false, the program will optimistically assume
+                            that the bitstream is present in the build directory, and
+                            will crash if this is not the case.
+
+                    minimum_fifo_depth:
+                        type: int
+                        default: ''
+                        title: Minimum depth of FIFOs
+                        description: Sets the minimum depth of any generated FIFO.
+
+                    vendor:
+                        type: str
+                        default: xilinx
+                        title: FPGA vendor
+                        description: >
+                            Target Xilinx ("xilinx") or Intel ("intel_fpga") FPGAs when
+                            generating code.
+
+            #############################################
             # FPGA (Xilinx) compiler flags
             xilinx:
                 type: dict
@@ -429,8 +460,12 @@ required:
                         default: ''
                         title: Target frequency for Xilinx kernels
                         description: >
-                            Target frequency when compiling kernels for Xilinx.
-                            Will not necessarily be achieved in practice.
+                            Target frequency, in MHz, when compiling kernels
+                            for Xilinx. Will not necessarily be achieved in
+                            practice. To enable multiple clocks, enter values
+                            in the format "clock_id:frequency", with frequency
+                            being specified in MHz separated by an escaped bar,
+                            all enclosed in quotes. E.g. "0:250\|1:500".
 
                     enable_debugging:
                         type: bool
@@ -459,6 +494,18 @@ required:
                         title: Arguments
                         description: Kernel build C++ flags
                         default: ""
+
+                    decouple_array_interfaces:
+                        type: bool
+                        default: false
+                        title: Decouple array memory interfaces
+                        description: >
+                            If an array is both read and written, this option decouples
+                            its accesses, by creatin a memory interface for reading and one
+                            for writing.
+                            Note that this may hide potential Read-After-Write or
+                            Write-After-Read dependencies.
+
 
             #############################################
             # Intel FPGA compiler flags
@@ -507,14 +554,6 @@ required:
                         title: Kernel flags
                         description: High-level synthesis C++ flags
                         default: "-fp-relaxed -cl-no-signed-zeros -cl-fast-relaxed-math -cl-single-precision-constant -no-interleaving=default"
-
-                    launch_async:
-                        type: bool
-                        default: false
-                        title: Launch kernels asynchronously
-                        description: >
-                            Instead of launching kernels one-by-one, spawn a separate C++ thread using std::async and
-                            std::future. This also allows each kernel to measure its own runtime from the host code.
 
             #############################################
             # RTL (SystemVerilog) compiler
@@ -675,23 +714,6 @@ required:
                         default: 4
                         title: Number of processes
                         description: Number of MPI processes to use
-    diode:
-        type: dict
-        title: DIODE
-        description: DIODE GUI preferences
-        required:
-            general:
-                type: dict
-                title: General
-                description: General DIODE Preferences
-                required:
-                    library_autoexpand:
-                        type: bool
-                        default: True
-                        title: Auto-Expand Library Nodes
-                        description: >
-                            Automatically expand library nodes upon compilation, rather than
-                            expecting the nodes be expanded manually to the chosen implementation.
 
     instrumentation:
         type: dict
@@ -732,30 +754,127 @@ required:
                         description: >
                             Enables analysis of gcc vectorization information. Only gcc/g++ is supported.
 
+            print_fpga_runtime:
+                type: bool
+                default: false
+                title: Print FPGA runtime
+                description: Prints the runtime of instrumented FPGA kernel states to standard output.
+
+    #############################################
+    # Python frontend settings
+
+    frontend:
+        type: dict
+        title: Frontend
+        description: Python frontend preferences
+        required:
+            cache_size:
+                type: int
+                title: Program cache size
+                default: 32
+                description: >
+                    The number of compiled programs to cache (based on argument
+                    types, closure constants, and closure array types) to avoid
+                    reparsing/compiling when calling a @dace.program or method.
+
+            implicit_recursion_depth:
+                type: int
+                title: Auto-parsing recursion depth
+                default: 64
+                description: >
+                    The maximum call-stack depth allowed when automatically
+                    parsing called dace functions or methods.
+
+            raise_nested_parsing_errors:
+                type: bool
+                title: Raise nested parsing errors
+                default: false
+                description: >
+                    Raise all errors out of nested function parsing contexts
+                    instead of trying to create a callback implicitly.
+
+            verbose_errors:
+                type: bool
+                title: Show preprocessed AST on parsing errors
+                default: false
+                description: >
+                    Prints out the preprocessed unparsed AST in case of a parsing
+                    error.
+
+            preprocessing_passes:
+                type: int
+                title: Number of preprocessing passes on Python code
+                default: 5
+                description: >
+                    Number of times to run the Python preprocessing passes (e.g., constant
+                    folding) on the input code. Set to zero to disable preprocessing
+                    optimizations, set to -1 to run until the code has not changed.
+
+            dont_fuse_callbacks:
+                type: bool
+                title: Do not fuse callbacks
+                default: false
+                description: >
+                    Stricter mode of operation where callbacks into Python don't participate
+                    in state fusion transformations.
+
+            unroll_threshold:
+                type: int
+                title: Automatic unroll loop size threshold
+                default: -1
+                description: >
+                    Threshold for automatic loop unrolling of any generator (e.g., including ``range``) with a
+                    compile-time size. A value of -1 (default) means not to unroll any loop automatically, a value of
+                    0 means unrolling every loop, and a value above zero sets a size threshold beyond which a
+                    constant-sized loop will not be automatically unrolled.
+
+
+
     #############################################
     # General settings
+
     debugprint:
         type: bool
         default: false
         title: Debug printing
         description: Enable verbose printouts.
 
+    progress:
+        type: bool
+        default: true
+        title: Progress reports
+        description: Enable progress report printouts.
+
     cache:
-        type: str 
-        default: name 
-        title: Naming of cache entry 
+        type: str
+        default: name
+        title: Naming of cache entry
         description: >
             Determine the name of the generated dacecache folder.
             "name" uses the name of the SDFG directly, causing it to be
             overridden by other programs using the same SDFG name.
             "hash" uses a mangled name based on the hash of the SDFG, such that
             any change to the SDFG will generate a different cache folder.
-            "unique" uses a name based on the currently running Python process 
+            "unique" uses a name based on the currently running Python process
             at code generation time, such that no caching or clashes can happen
             between different processes or subsequent invocations of Python.
             "single" uses a single cache folder for all SDFGs, saving space and
             potentially build time, but disallows executing SDFGs in parallel
             and caching of more than one simultaneous SDFG.
+
+    store_history:
+        type: bool
+        default: true
+        title: Store SDFG transformation history
+        description: Store the history of transformations on the SDFG file.
+
+    default_build_folder:
+        type: str
+        default: .dacecache
+        title: Default SDFG build folder
+        description: >
+            Default folder in which compiled DaCe programs and SDFGs are stored.
+            Can either be a relative path (by default) or absolute.
 
     profiling:
         type: bool
@@ -808,6 +927,14 @@ required:
                 description: >
                     Before generating code, verify that a serialization/deserialization loop
                     generates the same SDFG.
+
+            deserialize_exception:
+                type: bool
+                default: false
+                title: Treat exceptions in deserialization as errors
+                description: >
+                    When an exception is raised in a deserialization process (e.g., due to missing library node),
+                    by default a warning is issued. If this setting is True, the exception will be raised as-is.
 
     #############################################
     # DaCe library settings

@@ -33,13 +33,16 @@ def onetest(instrumentation: dace.InstrumentationType, size=128):
 
     sdfg: dace.SDFG = slowmm.to_sdfg()
     sdfg.name = f"instrumentation_test_{instrumentation.name}"
-    sdfg.apply_strict_transformations()
+    sdfg.simplify()
 
     # Set instrumentation both on the state and the map
     for node, state in sdfg.all_nodes_recursive():
         if isinstance(node, nodes.MapEntry) and node.map.label == 'mult':
             node.map.instrument = instrumentation
             state.instrument = instrumentation
+    # Set Timer instrumentation on the whole SDFG
+    if instrumentation == dace.InstrumentationType.Timer:
+        sdfg.instrument = instrumentation
 
     if instrumentation == dace.InstrumentationType.GPU_Events:
         sdfg.apply_transformations(GPUTransformSDFG)
@@ -60,7 +63,8 @@ def test_timer():
     onetest(dace.InstrumentationType.Timer)
 
 
-@pytest.mark.papi
+#@pytest.mark.papi
+@pytest.mark.skip
 def test_papi():
     # Run a lighter load for the sake of performance
     onetest(dace.InstrumentationType.PAPI_Counters, 4)

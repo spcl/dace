@@ -28,13 +28,11 @@ def test_nested_symbol():
     A = np.random.rand(20)
     B = np.random.rand(20)
     nested_symbol(A, B)
-    assert np.allclose(B[0:5], A[0:5] / 2) and np.allclose(
-        B[5:20], A[5:20] * 2)
+    assert np.allclose(B[0:5], A[0:5] / 2) and np.allclose(B[5:20], A[5:20] * 2)
 
 
 def test_nested_symbol_dynamic():
-    if not dace.Config.get_bool('optimizer',
-                                'automatic_strict_transformations'):
+    if not dace.Config.get_bool('optimizer', 'automatic_simplification'):
         warnings.warn("Test disabled (missing allocation lifetime support)")
         return
 
@@ -46,6 +44,93 @@ def test_nested_symbol_dynamic():
     assert np.allclose(A, expected)
 
 
+def test_scal2sym():
+    N = dace.symbol('N', dace.float64)
+
+    @dace.program
+    def symarg(A: dace.float64[20]):
+        A[:] = N
+
+    @dace.program
+    def scalarg(A: dace.float64[20], scal: dace.float64):
+        s2 = scal + 1
+        symarg(A, N=s2)
+
+    sdfg = scalarg.to_sdfg(simplify=False)
+    A = np.random.rand(20)
+    sc = 5.0
+
+    sdfg(A, sc)
+    assert np.allclose(A, sc + 1)
+
+
+def test_arr2sym():
+    N = dace.symbol('N', dace.float64)
+
+    @dace.program
+    def symarg(A: dace.float64[20]):
+        A[:] = N
+
+    @dace.program
+    def scalarg(A: dace.float64[20], arr: dace.float64[2]):
+        symarg(A, N=arr[1])
+
+    sdfg = scalarg.to_sdfg(simplify=False)
+    A = np.random.rand(20)
+    sc = np.array([2.0, 3.0])
+
+    sdfg(A, sc)
+    assert np.allclose(A, sc[1])
+
+
+def test_nested_symbol_in_args():
+    inner = dace.SDFG('inner')
+    state = inner.add_state('inner_state')
+    inner.add_symbol('rdt', stype=float)
+    inner.add_datadesc('field', dace.float64[10])
+    state.add_mapped_tasklet('tasklet',
+                             map_ranges={'i': "0:10"},
+                             inputs={},
+                             outputs={'field_out': dace.Memlet.simple('field', subset_str="i")},
+                             code="field_out = rdt",
+                             external_edges=True)
+    inner.arg_names = ['field', 'rdt']
+
+    @dace.program
+    def funct(field, dt):
+        rdt = 1.0 / dt
+        inner(field, rdt)
+
+    sdfg = funct.to_sdfg(np.random.randn(10, ), 1.0, simplify=False)
+    sdfg(np.random.randn(10, ), 1.0)
+
+
+def test_nested_symbol_as_constant():
+    inner = dace.SDFG('inner')
+    state = inner.add_state('inner_state')
+    inner.add_symbol('rdt', stype=float)
+    inner.add_datadesc('field', dace.float64[10])
+    tasklet, map_entry, map_exit = state.add_mapped_tasklet(
+        'tasklet',
+        map_ranges={'i': "0:10"},
+        inputs={},
+        outputs={'field_out': dace.Memlet.simple('field', subset_str="i")},
+        code="field_out = rdt",
+        external_edges=True)
+    inner.arg_names = ['field', 'rdt']
+    rdt = 1e30
+
+    @dace.program
+    def funct(field):
+        inner(field, rdt)
+
+    funct(np.random.randn(10, ))
+
+
 if __name__ == '__main__':
     test_nested_symbol()
     test_nested_symbol_dynamic()
+    test_scal2sym()
+    test_arr2sym()
+    test_nested_symbol_in_args()
+    test_nested_symbol_as_constant()

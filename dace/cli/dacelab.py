@@ -29,20 +29,15 @@ def compile(inputfile):
     # Clean isolated nodes
     for state in sdfg.nodes():
         for node in state.nodes():
-            if (isinstance(node, AccessNode)
-                    and (state.in_degree(node) + state.out_degree(node) == 0)):
+            if (isinstance(node, AccessNode) and (state.in_degree(node) + state.out_degree(node) == 0)):
                 state.remove_node(node)
 
     return sdfg
 
 
 def main():
-    argparser = argparse.ArgumentParser(
-        description="dacelab: An Octave to SDFG compiler")
-    argparser.add_argument("infile",
-                           metavar='infile',
-                           type=argparse.FileType('r'),
-                           help="Input file (Octave code)")
+    argparser = argparse.ArgumentParser(description="dacelab: An Octave to SDFG compiler")
+    argparser.add_argument("infile", metavar='infile', type=argparse.FileType('r'), help="Input file (Octave code)")
     argparser.add_argument("-o",
                            "--outfile",
                            metavar='outfile',

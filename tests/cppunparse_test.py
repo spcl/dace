@@ -7,8 +7,7 @@ import six
 def _test_py2cpp(func, expected_string):
     result = cppunparse.py2cpp(func)
     if result != expected_string:
-        print("ERROR in py2cpp, expected:\n%s\n\ngot:\n%s\n" %
-              (expected_string, result))
+        print("ERROR in py2cpp, expected:\n%s\n\ngot:\n%s\n" % (expected_string, result))
         return False
     return True
 
@@ -16,8 +15,7 @@ def _test_py2cpp(func, expected_string):
 def _test_pyexpr2cpp(func, expected_string):
     result = cppunparse.pyexpr2cpp(func)
     if result != expected_string:
-        print("ERROR in pyexpr2cpp, expected:\n%s\n\ngot:\n%s\n" %
-              (expected_string, result))
+        print("ERROR in pyexpr2cpp, expected:\n%s\n\ngot:\n%s\n" % (expected_string, result))
         return False
     return True
 
@@ -47,8 +45,7 @@ def test():
 }""")
 
     if six.PY3:
-        success &= _test_py2cpp(
-            """def typed(a: int, b: float) -> float:
+        success &= _test_py2cpp("""def typed(a: int, b: float) -> float:
     c = a + b
     return c*b
 """, """float typed(int a, float b) {
@@ -57,8 +54,7 @@ def test():
 }""")
 
     # Ternary operators, strings
-    success &= _test_py2cpp("""printf('%f\\n', a if b else c);""",
-                            """printf("%f\\n", (b ? a : c));""")
+    success &= _test_py2cpp("""printf('%f\\n', a if b else c);""", """printf("%f\\n", (b ? a : c));""")
 
     # Global functions, operators
     success &= _test_py2cpp(
@@ -105,8 +101,7 @@ l = dace::math::ifloor(l / 8);""")
     success &= _test_py2cpp('A[i] = b[j]', """A[i] = b[j];""")
 
     # Named constants
-    success &= _test_py2cpp(
-        '''if x is not None:
+    success &= _test_py2cpp('''if x is not None:
     y = True if x else False
     ''', '''if ((x != nullptr)) {
     auto y = (x ? true : false);

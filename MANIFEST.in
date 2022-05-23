@@ -1,0 +1,12 @@
+global-include LICENSE LICENSE.*
+include dace/*.yml dace/codegen/CMakeLists.txt dace/codegen/tools/*.cpp dace/external/moodycamel/*.h dace/codegen/Xilinx_HLS.tcl.in dace/viewer/webclient/*.css dace/viewer/webclient/*.html dace/viewer/webclient/dist/*.js
+recursive-include dace/codegen *.cmake
+graft dace/runtime/include
+graft dace/libraries
+graft dace/viewer/webclient/external_lib
+graft dace/viewer/templates
+graft dace/external/cub/cub
+graft dace/external/hlslib/cmake
+graft dace/external/hlslib/include
+graft dace/external/rtllib/cmake
+graft dace/external/rtllib/templates

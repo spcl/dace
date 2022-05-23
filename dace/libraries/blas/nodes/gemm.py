@@ -8,9 +8,9 @@ from dace import SDFG, SDFGState
 from dace.frontend.common import op_repository as oprepo
 import dace.sdfg.nodes
 from dace.transformation.transformation import ExpandTransformation
-from dace.libraries.blas.blas_helpers import to_blastype, get_gemm_opts, check_access
-from dace.libraries.blas.nodes.matmul import (_get_matmul_operands,
-                                              _get_codegen_gemm_opts)
+from dace.libraries.blas.blas_helpers import (to_blastype, get_gemm_opts, check_access, dtype_to_cudadatatype,
+                                              to_cublas_computetype)
+from dace.libraries.blas.nodes.matmul import (_get_matmul_operands, _get_codegen_gemm_opts)
 from .. import environments
 import numpy as np
 from numbers import Number
@@ -36,8 +36,7 @@ def _cast_to_dtype_str(value, dtype: dace.dtypes.typeclass) -> str:
             imag=cast_value.imag,
         )
     else:
-        return "dace.{}({})".format(dace.DTYPE_TO_TYPECLASS[dtype].to_string(),
-                                    value)
+        return "dace.{}({})".format(dace.DTYPE_TO_TYPECLASS[dtype].to_string(), value)
 
 
 @dace.library.expansion
@@ -49,8 +48,7 @@ class ExpandGemmPure(ExpandTransformation):
     def make_sdfg(node, parent_state, parent_sdfg):
         sdfg = dace.SDFG(node.label + "_sdfg")
 
-        ((edge_a, outer_array_a, shape_a, strides_a), (edge_b, outer_array_b,
-                                                       shape_b, strides_b),
+        ((edge_a, outer_array_a, shape_a, strides_a), (edge_b, outer_array_b, shape_b, strides_b),
          cdata) = _get_matmul_operands(node, parent_state, parent_sdfg)
 
         dtype_a = outer_array_a.dtype.type
@@ -67,35 +65,21 @@ class ExpandGemmPure(ExpandTransformation):
         else:
             trans_shape_b = shape_b
 
-        if (len(trans_shape_a) != 2 or len(trans_shape_b) != 2
-                or trans_shape_a[1] != trans_shape_b[0]):
+        if (len(trans_shape_a) != 2 or len(trans_shape_b) != 2 or trans_shape_a[1] != trans_shape_b[0]):
             raise SyntaxError("Matrix sizes must match")
         M, K, N = trans_shape_a[0], trans_shape_a[1], trans_shape_b[1]
         shape_c = (M, N)
 
         storage = outer_array_a.storage
 
-        _, array_a = sdfg.add_array("_a",
-                                    shape_a,
-                                    dtype_a,
-                                    strides=strides_a,
-                                    storage=outer_array_a.storage)
-        _, array_b = sdfg.add_array("_b",
-                                    shape_b,
-                                    dtype_b,
-                                    strides=strides_b,
-                                    storage=outer_array_b.storage)
-        _, array_c = sdfg.add_array("_c",
-                                    shape_c,
-                                    dtype_c,
-                                    strides=cdata[-1],
-                                    storage=cdata[1].storage)
+        _, array_a = sdfg.add_array("_a", shape_a, dtype_a, strides=strides_a, storage=outer_array_a.storage)
+        _, array_b = sdfg.add_array("_b", shape_b, dtype_b, strides=strides_b, storage=outer_array_b.storage)
+        _, array_c = sdfg.add_array("_c", shape_c, dtype_c, strides=cdata[-1], storage=cdata[1].storage)
 
         if node.alpha == 1.0:
             mul_program = "__out = __a * __b"
         else:
-            mul_program = "__out = {} * __a * __b".format(
-                _cast_to_dtype_str(node.alpha, dtype_a))
+            mul_program = "__out = {} * __a * __b".format(_cast_to_dtype_str(node.alpha, dtype_a))
 
         if node.beta == 1:
             state = sdfg.add_state(node.label + "_state")
@@ -104,11 +88,7 @@ class ExpandGemmPure(ExpandTransformation):
             state = sdfg.add_state_after(init_state, node.label + "_state")
 
         if node.beta != 0:
-            sdfg.add_array("_cin",
-                           shape_c,
-                           dtype_c,
-                           strides=cdata[-1],
-                           storage=cdata[1].storage)
+            sdfg.add_array("_cin", shape_c, dtype_c, strides=cdata[-1], storage=cdata[1].storage)
 
         mul_out, mul_out_array = "_c", array_c
         output_nodes = None
@@ -116,23 +96,16 @@ class ExpandGemmPure(ExpandTransformation):
         # Initialization / beta map
         if node.beta == 0:
             init_state.add_mapped_tasklet(
-                'gemm_init',
-                {'_o%d' % i: '0:%s' % symstr(d)
-                 for i, d in enumerate(shape_c)}, {},
-                'out = 0', {
-                    'out':
-                    dace.Memlet.simple(
-                        mul_out, ','.join(
-                            ['_o%d' % i for i in range(len(shape_c))]))
-                },
+                'gemm_init', {'_o%d' % i: '0:%s' % symstr(d)
+                              for i, d in enumerate(shape_c)}, {},
+                'out = 0', {'out': dace.Memlet.simple(mul_out, ','.join(['_o%d' % i for i in range(len(shape_c))]))},
                 external_edges=True)
         elif node.beta == 1:
             # Do nothing for initialization, only update the values
             pass
         else:
             # Beta map
-            add_program = "__y = ({} * __c)".format(
-                _cast_to_dtype_str(node.beta, dtype_a))
+            add_program = "__y = ({} * __c)".format(_cast_to_dtype_str(node.beta, dtype_a))
 
             # manually broadcasting C to [M, N]
             if list(shape_c) == [M, N]:
@@ -144,37 +117,26 @@ class ExpandGemmPure(ExpandTransformation):
             elif list(shape_c) == [N]:
                 memlet_idx = '__i1'
             else:
-                raise ValueError(
-                    "Could not broadcast input _c to ({}, {})".format(M, N))
+                raise ValueError("Could not broadcast input _c to ({}, {})".format(M, N))
 
-            init_state.add_mapped_tasklet(
-                "gemm_init",
-                {"__i%d" % i: "0:%s" % s
-                 for i, s in enumerate([M, N])}, {
-                     "__c": dace.Memlet.simple("_cin", memlet_idx),
-                 },
-                add_program, {"__y": dace.Memlet.simple("_c", "__i0, __i1")},
-                external_edges=True)
+            init_state.add_mapped_tasklet("gemm_init", {"__i%d" % i: "0:%s" % s
+                                                        for i, s in enumerate([M, N])}, {
+                                                            "__c": dace.Memlet.simple("_cin", memlet_idx),
+                                                        },
+                                          add_program, {"__y": dace.Memlet.simple("_c", "__i0, __i1")},
+                                          external_edges=True)
 
         # Multiplication map
-        state.add_mapped_tasklet(
-            "gemm", {"__i%d" % i: "0:%s" % s
-                     for i, s in enumerate([M, N, K])},
-            {
-                "__a":
-                dace.Memlet.simple(
-                    "_a", "__i2, __i0" if node.transA else "__i0, __i2"),
-                "__b":
-                dace.Memlet.simple(
-                    "_b", "__i1, __i2" if node.transB else "__i2, __i1")
-            },
-            mul_program, {
-                "__out":
-                dace.Memlet.simple(
-                    mul_out, "__i0, __i1", wcr_str="lambda x, y: x + y")
-            },
-            external_edges=True,
-            output_nodes=output_nodes)
+        state.add_mapped_tasklet("gemm", {"__i%d" % i: "0:%s" % s
+                                          for i, s in enumerate([M, N, K])},
+                                 {
+                                     "__a": dace.Memlet.simple("_a", "__i2, __i0" if node.transA else "__i0, __i2"),
+                                     "__b": dace.Memlet.simple("_b", "__i1, __i2" if node.transB else "__i2, __i1")
+                                 },
+                                 mul_program,
+                                 {"__out": dace.Memlet.simple(mul_out, "__i0, __i1", wcr_str="lambda x, y: x + y")},
+                                 external_edges=True,
+                                 output_nodes=output_nodes)
 
         return sdfg
 
@@ -192,9 +154,7 @@ class ExpandGemmOpenBLAS(ExpandTransformation):
     @staticmethod
     def expansion(node, state, sdfg):
         node.validate(sdfg, state)
-        (_, adesc, ashape,
-         astrides), (_, bdesc, bshape,
-                     bstrides), _ = _get_matmul_operands(node, state, sdfg)
+        (_, adesc, ashape, astrides), (_, bdesc, bshape, bstrides), _ = _get_matmul_operands(node, state, sdfg)
         dtype = adesc.dtype.base_type
         func = to_blastype(dtype.type).lower() + 'gemm'
         alpha = f'{dtype.ctype}({node.alpha})'
@@ -210,8 +170,7 @@ class ExpandGemmOpenBLAS(ExpandTransformation):
 
         check_access(dtypes.ScheduleType.CPU_Multicore, adesc, bdesc, cdesc)
 
-        opt = _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc,
-                                     alpha, beta, dtype.ctype, func)
+        opt = _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, alpha, beta, dtype.ctype, func)
 
         # Adaptations for BLAS API
         opt['ta'] = 'CblasNoTrans' if opt['ta'] == 'N' else 'CblasTrans'
@@ -277,6 +236,10 @@ class ExpandGemmCuBLAS(ExpandTransformation):
         if not adesc or not bdesc or not cdesc:
             raise ValueError('Unsupported input/output arrays')
 
+        # If buffers are not on the GPU, copy them
+        needs_copy = any(desc.storage not in (dace.StorageType.GPU_Global, dace.StorageType.CPU_Pinned)
+                         for desc in (adesc, bdesc, cdesc))
+
         dtype = adesc.dtype.base_type
         func = '%sgemm' % to_blastype(dtype.type)
         if dtype == dace.float16:
@@ -302,11 +265,9 @@ class ExpandGemmCuBLAS(ExpandTransformation):
 
         # Handle alpha / beta
         constants = {
-            1.0:
-            f"__state->cublas_handle.Constants(__dace_cuda_device).{factort}Pone()",
+            1.0: f"__state->cublas_handle.Constants(__dace_cuda_device).{factort}Pone()",
             #-1.0: f"__state->cublas_handle.Constants(__dace_cuda_device).{factort}Mone()",
-            0.0:
-            f"__state->cublas_handle.Constants(__dace_cuda_device).{factort}Zero()",
+            0.0: f"__state->cublas_handle.Constants(__dace_cuda_device).{factort}Zero()",
         }
         if node.alpha not in constants or node.beta not in constants:
             # Deal with complex input constants
@@ -324,9 +285,7 @@ class ExpandGemmCuBLAS(ExpandTransformation):
             {dtype.ctype} alpha = {alpha};
             {dtype.ctype} beta = {beta};
             '''
-            call_suffix += '''
-cublasSetPointerMode(__dace_cublas_handle, CUBLAS_POINTER_MODE_DEVICE);
-            '''
+            call_suffix += '''cublasSetPointerMode(__dace_cublas_handle, CUBLAS_POINTER_MODE_DEVICE);'''
             alpha = f'({cdtype} *)&alpha'
             beta = f'({cdtype} *)&beta'
         else:
@@ -334,20 +293,54 @@ cublasSetPointerMode(__dace_cublas_handle, CUBLAS_POINTER_MODE_DEVICE);
             beta = constants[node.beta]
 
         # Set up options for code formatting
-        opt = _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc,
-                                     alpha, beta, cdtype, func)
+        opt = _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, alpha, beta, cdtype, func)
+        opt['arr_prefix'] = arr_prefix = ''
+        if needs_copy:
+            opt['arr_prefix'] = arr_prefix = '_conn'
 
         # Matrix multiplication
-        call = '''cublas{func}(__dace_cublas_handle,
-            CUBLAS_OP_{ta}, CUBLAS_OP_{tb},
-            {M}, {N}, {K},
-            {alpha},
-            ({dtype}*){x}, {lda},
-            ({dtype}*){y}, {ldb},
-            {beta},
-            ({dtype}*)_c, {ldc});'''
+        if (node.compute_type is None and node.accumulator_type is None and node.algorithm is None):
+            call = '''cublas{func}(__dace_cublas_handle,
+                CUBLAS_OP_{ta}, CUBLAS_OP_{tb},
+                {M}, {N}, {K},
+                {alpha},
+                ({dtype}*){arr_prefix}{x}, {lda},
+                ({dtype}*){arr_prefix}{y}, {ldb},
+                {beta},
+                ({dtype}*){arr_prefix}_c, {ldc});'''.format_map(opt)
+        else:
+            if node.compute_type is not None:
+                acctype = node.compute_type
+            elif node.accumulator_type is not None:
+                acc_dtype: dtypes.typeclass = node.accumulator_type
+                acctype = f'CUBLAS_COMPUTE_{to_cublas_computetype(acc_dtype)}'
+            else:
+                acctype = f'CUBLAS_COMPUTE_{to_cublas_computetype(dtype)}'
 
-        code = (call_prefix + call.format_map(opt) + call_suffix)
+            algorithm = 'CUBLAS_GEMM_DEFAULT_TENSOR_OP'
+            if node.algorithm is not None:
+                algorithm = node.algorithm
+
+            call = f'''
+            cublasGemmEx(__dace_cublas_handle,
+                CUBLAS_OP_{opt['ta']}, CUBLAS_OP_{opt['tb']},
+                {opt['M']}, {opt['N']}, {opt['K']},
+                {alpha},
+                {arr_prefix}{opt['x']},
+                {dtype_to_cudadatatype(opt['xdtype'])},
+                {opt['lda']},
+                {arr_prefix}{opt['y']},
+                {dtype_to_cudadatatype(opt['ydtype'])},
+                {opt['ldb']},
+                {beta},
+                {arr_prefix}_c,
+                {dtype_to_cudadatatype(opt['cdtype'])},
+                {opt['ldc']},
+                {acctype},
+                {algorithm});
+            '''
+
+        code = (call_prefix + call + call_suffix)
         tasklet = dace.sdfg.nodes.Tasklet(
             node.name,
             node.in_connectors,
@@ -357,9 +350,7 @@ cublasSetPointerMode(__dace_cublas_handle, CUBLAS_POINTER_MODE_DEVICE);
         )
 
         # If buffers are not on the GPU, copy them
-        if any(desc.storage not in
-               [dace.StorageType.GPU_Global, dace.StorageType.CPU_Pinned]
-               for desc in [adesc, bdesc, cdesc]):
+        if needs_copy:
             nsdfg = dace.SDFG('nested_gemm')
             for name, desc in [('_a', adesc), ('_b', bdesc), ('_c', cdesc)]:
                 if isinstance(desc, dt.View):
@@ -382,38 +373,16 @@ cublasSetPointerMode(__dace_cublas_handle, CUBLAS_POINTER_MODE_DEVICE);
             gc = nstate.add_access('_c_gpu')
 
             # Reset code and connectors
-            tasklet.in_connectors = {
-                "_conn" + k: None
-                for k in tasklet.in_connectors
-            }
-            tasklet.out_connectors = {
-                "_conn" + k: None
-                for k in tasklet.out_connectors
-            }
-
-            call = '''cublas{func}(__dace_cublas_handle,
-                CUBLAS_OP_{ta}, CUBLAS_OP_{tb},
-                {M}, {N}, {K},
-                {alpha},
-                ({dtype}*){x}, {lda},
-                ({dtype}*){y}, {ldb},
-                {beta},
-                ({dtype}*)_conn_c, {ldc});'''
-            opt['x'] = '_conn' + opt['x']
-            opt['y'] = '_conn' + opt['y']
-            tasklet.code.as_string = (call_prefix + call.format_map(opt) +
-                                      call_suffix)
+            tasklet.in_connectors = {"_conn" + k: None for k in tasklet.in_connectors}
+            tasklet.out_connectors = {"_conn" + k: None for k in tasklet.out_connectors}
 
             nstate.add_node(tasklet)
             nstate.add_nedge(a, ga, dace.Memlet.from_array('_a', adesc))
             nstate.add_nedge(b, gb, dace.Memlet.from_array('_b', bdesc))
 
-            nstate.add_edge(ga, None, tasklet, '_conn_a',
-                            dace.Memlet.from_array('_a_gpu', adesc))
-            nstate.add_edge(gb, None, tasklet, '_conn_b',
-                            dace.Memlet.from_array('_b_gpu', bdesc))
-            nstate.add_edge(tasklet, '_conn_c', gc, None,
-                            dace.Memlet.from_array('_c_gpu', cdesc))
+            nstate.add_edge(ga, None, tasklet, '_conn_a', dace.Memlet.from_array('_a_gpu', adesc))
+            nstate.add_edge(gb, None, tasklet, '_conn_b', dace.Memlet.from_array('_b_gpu', bdesc))
+            nstate.add_edge(tasklet, '_conn_c', gc, None, dace.Memlet.from_array('_c_gpu', cdesc))
             nstate.add_nedge(gc, c, dace.Memlet.from_array('_c', cdesc))
 
             if node.beta != 0.0:
@@ -421,8 +390,7 @@ cublasSetPointerMode(__dace_cublas_handle, CUBLAS_POINTER_MODE_DEVICE);
                 rgc = nstate.add_access('_c_gpu')
                 tasklet.add_in_connector('_conn_cin')
                 nstate.add_nedge(rc, rgc, dace.Memlet('_c'))
-                nstate.add_edge(rgc, None, tasklet, '_conn_cin',
-                                dace.Memlet('_c_gpu'))
+                nstate.add_edge(rgc, None, tasklet, '_conn_cin', dace.Memlet('_c_gpu'))
 
             return nsdfg
         # End of copy to GPU
@@ -438,9 +406,7 @@ class ExpandGemmPBLAS(ExpandTransformation):
     @staticmethod
     def expansion(node, state, sdfg):
         node.validate(sdfg, state)
-        (_, adesc, ashape,
-         astrides), (_, bdesc, bshape,
-                     bstrides), _ = _get_matmul_operands(node, state, sdfg)
+        (_, adesc, ashape, astrides), (_, bdesc, bshape, bstrides), _ = _get_matmul_operands(node, state, sdfg)
         dtype = adesc.dtype.base_type
 
         if node.beta != 0:
@@ -461,10 +427,10 @@ class ExpandGemmPBLAS(ExpandTransformation):
         def _gemm_pblas(_a: dtype[M, K], _b: dtype[K, N], _c: dtype[M, N]):
             lA = np.empty((M // Px, K // Py), dtype=_a.dtype)
             lB = np.empty((K // Px, N // Py), dtype=_b.dtype)
-            dace.comm.BCScatter(_a, lA, (M//Px, K//Py))
-            dace.comm.BCScatter(_b, lB, (K//Px, N//Py))
-            lC = distr.MatMult(_a, _b, lA, lB, (M//Px, K//Py), (K//Px, N//Py))
-            dace.comm.BCGather(lC, _c, (M//Px, N//Py))
+            dace.comm.BCScatter(_a, lA, (M // Px, K // Py))
+            dace.comm.BCScatter(_b, lB, (K // Px, N // Py))
+            lC = distr.MatMult(lA, lB, (M, N, K))
+            dace.comm.BCGather(lC, _c, (M // Px, N // Py))
 
         return _gemm_pblas.to_sdfg()
 
@@ -479,11 +445,7 @@ class ExpandGemmFPGA1DSystolic(ExpandTransformation):
     environments = []
 
     @staticmethod
-    def expansion(node,
-                  parent_state,
-                  parent_sdfg,
-                  num_pes=32,
-                  tile_size_m=None):
+    def expansion(node, parent_state, parent_sdfg, num_pes=32, tile_size_m=None):
         '''
         GEMM node expansion.
 
@@ -499,25 +461,20 @@ class ExpandGemmFPGA1DSystolic(ExpandTransformation):
         :return:
         '''
 
-        ((edge_a, outer_array_a, shape_a, strides_a), (edge_b, outer_array_b,
-                                                       shape_b, strides_b),
-         (edge_c, outer_array_c, shape_c,
-          strides_c)) = _get_matmul_operands(node, parent_state, parent_sdfg)
+        ((edge_a, outer_array_a, shape_a, strides_a), (edge_b, outer_array_b, shape_b, strides_b),
+         (edge_c, outer_array_c, shape_c, strides_c)) = _get_matmul_operands(node, parent_state, parent_sdfg)
 
         dtype_a = outer_array_a.dtype.type
         dtype_b = outer_array_b.dtype.type
         dtype_c = dace.DTYPE_TO_TYPECLASS[np.result_type(dtype_a, dtype_b).type]
         shape_c = (shape_a[0], shape_b[1])
         if node.transA:
-            raise NotImplementedError(
-                "GEMM FPGA expansion not implemented for transposed A.")
+            raise NotImplementedError("GEMM FPGA expansion not implemented for transposed A.")
         if node.transB:
-            raise NotImplementedError(
-                "GEMM FPGA expansion not implemented for transposed B.")
+            raise NotImplementedError("GEMM FPGA expansion not implemented for transposed B.")
 
         if outer_array_a.veclen > 1:
-            raise NotImplementedError(
-                "Vectorization not support for input array A.")
+            raise NotImplementedError("Vectorization not support for input array A.")
 
         if len(shape_a) != 2 or len(shape_b) != 2 or shape_a[1] != shape_b[0]:
             raise SyntaxError("Matrix sizes must match")
@@ -565,9 +522,7 @@ class ExpandGemmFPGA1DSystolic(ExpandTransformation):
         # That is PT <= KT.
 
         if K_constant is not None and P > K_constant:
-            raise ValueError(
-                f"GEMM-FPGA: Number of processing elements {P} must be smaller than the K-dimension {K}."
-            )
+            raise ValueError(f"GEMM-FPGA: Number of processing elements {P} must be smaller than the K-dimension {K}.")
 
         ######################################################################
         # Build the SDFG
@@ -577,28 +532,12 @@ class ExpandGemmFPGA1DSystolic(ExpandTransformation):
 
         # Add data descriptors
 
-        new_sdfg.add_array("_a",
-                           shape_a,
-                           dtype_a,
-                           strides=strides_a,
-                           storage=outer_array_a.storage)
-        new_sdfg.add_array("_b",
-                           shape_b,
-                           dtype_b,
-                           strides=strides_b,
-                           storage=outer_array_b.storage)
-        new_sdfg.add_array("_c",
-                           shape_c,
-                           dtype_c,
-                           strides=strides_c,
-                           storage=outer_array_c.storage)
+        new_sdfg.add_array("_a", shape_a, dtype_a, strides=strides_a, storage=outer_array_a.storage)
+        new_sdfg.add_array("_b", shape_b, dtype_b, strides=strides_b, storage=outer_array_b.storage)
+        new_sdfg.add_array("_c", shape_c, dtype_c, strides=strides_c, storage=outer_array_c.storage)
 
         if node.beta != 0:
-            new_sdfg.add_array("_cin",
-                               shape_c,
-                               dtype_c,
-                               strides=strides_c,
-                               storage=outer_array_c.storage)
+            new_sdfg.add_array("_cin", shape_c, dtype_c, strides=strides_c, storage=outer_array_c.storage)
 
         def make_read_A(state):
 
@@ -620,8 +559,7 @@ class ExpandGemmFPGA1DSystolic(ExpandTransformation):
 
             # Read data from memory: if we are out-of-bound do not read from memory
             # but inject dummy data
-            tasklet = state.add_tasklet(
-                "read_A", {"from_memory"}, {"to_kernel"}, f"""\
+            tasklet = state.add_tasklet("read_A", {"from_memory"}, {"to_kernel"}, f"""\
 data = from_memory if n0 * {P} + n1 < {N} else 0
 to_kernel = data""")
 
@@ -629,9 +567,7 @@ to_kernel = data""")
                                   entry,
                                   tasklet,
                                   dst_conn="from_memory",
-                                  memlet=dace.Memlet(f"_a[n0 * {P} + n1, k]",
-                                                     dynamic=True,
-                                                     allow_oob=True))
+                                  memlet=dace.Memlet(f"_a[n0 * {P} + n1, k]", dynamic=True, allow_oob=True))
             state.add_memlet_path(tasklet,
                                   exit,
                                   pipe,
@@ -658,13 +594,9 @@ to_kernel = data""")
                                transient=True,
                                storage=dace.dtypes.StorageType.FPGA_Registers)
             b_dummy = state.add_access("B_dummy")
-            init_tasklet = state.add_tasklet("init_dummy_B", {}, {"init_data"},
-                                             "init_data = 0")
+            init_tasklet = state.add_tasklet("init_dummy_B", {}, {"init_data"}, "init_data = 0")
 
-            state.add_memlet_path(init_tasklet,
-                                  b_dummy,
-                                  src_conn="init_data",
-                                  memlet=dace.Memlet("B_dummy[0]"))
+            state.add_memlet_path(init_tasklet, b_dummy, src_conn="init_data", memlet=dace.Memlet("B_dummy[0]"))
 
             mem = state.add_read("_b")
             pipe = state.add_write("B_pipe")
@@ -673,25 +605,15 @@ to_kernel = data""")
 data = from_memory if tm*{T} + m < {M} else dummy_data
 to_kernel = data""")
 
-            state.add_memlet_path(b_dummy,
-                                  entry,
-                                  tasklet,
-                                  dst_conn="dummy_data",
-                                  memlet=dace.Memlet("B_dummy[0]"))
+            state.add_memlet_path(b_dummy, entry, tasklet, dst_conn="dummy_data", memlet=dace.Memlet("B_dummy[0]"))
 
             state.add_memlet_path(mem,
                                   entry,
                                   tasklet,
                                   dst_conn="from_memory",
-                                  memlet=dace.Memlet(f"_b[k, tm*{T} + m]",
-                                                     dynamic=True,
-                                                     allow_oob=True))
+                                  memlet=dace.Memlet(f"_b[k, tm*{T} + m]", dynamic=True, allow_oob=True))
 
-            state.add_memlet_path(tasklet,
-                                  exit,
-                                  pipe,
-                                  src_conn="to_kernel",
-                                  memlet=dace.Memlet("B_pipe[0]"))
+            state.add_memlet_path(tasklet, exit, pipe, src_conn="to_kernel", memlet=dace.Memlet("B_pipe[0]"))
 
         def make_write_C(state):
 
@@ -702,14 +624,13 @@ to_kernel = data""")
                 mem_read = state.add_read("_cin")
             mem = state.add_write("_c")
 
-            entry_map, exit_map = state.add_map(
-                "write_C", {
-                    "n0": f"0:ceiling({N}/{P})",
-                    "tm": f"0:ceiling({M}/{T})",
-                    "n1": f"0:{P}",
-                    "m": f"0:{T}"
-                },
-                schedule=dace.ScheduleType.FPGA_Device)
+            entry_map, exit_map = state.add_map("write_C", {
+                "n0": f"0:ceiling({N}/{P})",
+                "tm": f"0:ceiling({M}/{T})",
+                "n1": f"0:{P}",
+                "m": f"0:{T}"
+            },
+                                                schedule=dace.ScheduleType.FPGA_Device)
 
             # write in memory by adding C when we copy that to memory
 
@@ -723,8 +644,7 @@ to_kernel = data""")
                     add_prev_c = " + prev_c"
             else:
                 add_prev_c = ""
-            tasklet_inputs = {"from_kernel", "prev_c"
-                              } if node.beta != 0 else {"from_kernel"}
+            tasklet_inputs = {"from_kernel", "prev_c"} if node.beta != 0 else {"from_kernel"}
             tasklet = state.add_tasklet(
                 "write_C", tasklet_inputs, {"to_memory"}, f"""\
 if tm * {T} + m  < {M}  and  n0 * {P} + n1 < {N} :                                               
@@ -740,19 +660,15 @@ if tm * {T} + m  < {M}  and  n0 * {P} + n1 < {N} :
                                       entry_map,
                                       tasklet,
                                       dst_conn="prev_c",
-                                      memlet=dace.Memlet(
-                                          f"_cin[n0 * {P} + n1, tm * {T} + m]",
-                                          dynamic=True,
-                                          allow_oob=True))
+                                      memlet=dace.Memlet(f"_cin[n0 * {P} + n1, tm * {T} + m]",
+                                                         dynamic=True,
+                                                         allow_oob=True))
 
             state.add_memlet_path(tasklet,
                                   exit_map,
                                   mem,
                                   src_conn="to_memory",
-                                  memlet=dace.Memlet(
-                                      f"_c[n0 * {P} + n1, tm * {T} + m]",
-                                      dynamic=True,
-                                      allow_oob=True))
+                                  memlet=dace.Memlet(f"_c[n0 * {P} + n1, tm * {T} + m]", dynamic=True, allow_oob=True))
 
         def make_compute(sdfg, state):
 
@@ -771,26 +687,22 @@ if tm * {T} + m  < {M}  and  n0 * {P} + n1 < {N} :
             # It must be computed by considering T and the latency needed to consolidate a partial result
             # (which is the latency of the add + latency for reading and writing to BRAM).
 
-            entry_pipeline, exit_pipeline = state.add_pipeline(
-                "compute_and_drain", {
-                    "n0": f"0:ceiling({N}/{P})",
-                    "tm": f"0:ceiling({M}/{T})",
-                    "k": f"0:{K}",
-                    "m": f"0:{T} + {L}"
-                },
-                drain_size=P * T,
-                drain_overlap=False,
-                additional_iterators={
-                    'm_drain': 0,
-                    'k_drain': 0
-                },
-                schedule=dace.ScheduleType.FPGA_Device)
+            entry_pipeline, exit_pipeline = state.add_pipeline("compute_and_drain", {
+                "n0": f"0:ceiling({N}/{P})",
+                "tm": f"0:ceiling({M}/{T})",
+                "k": f"0:{K}",
+                "m": f"0:{T} + {L}"
+            },
+                                                               drain_size=P * T,
+                                                               drain_overlap=False,
+                                                               additional_iterators={
+                                                                   'm_drain': 0,
+                                                                   'k_drain': 0
+                                                               },
+                                                               schedule=dace.ScheduleType.FPGA_Device)
 
             # Instantiate buffers
-            sdfg.add_scalar("A_reg",
-                            dtype=dtype_a,
-                            transient=True,
-                            storage=dace.dtypes.StorageType.FPGA_Registers)
+            sdfg.add_scalar("A_reg", dtype=dtype_a, transient=True, storage=dace.dtypes.StorageType.FPGA_Registers)
             A_reg = state.add_write("A_reg")
             A_reg_init = state.add_access("A_reg")
 
@@ -813,16 +725,10 @@ if tm * {T} + m  < {M}  and  n0 * {P} + n1 < {N} :
                                transient=True,
                                storage=dace.dtypes.StorageType.FPGA_Registers)
             C_init = state.add_access("C_init")
-            C_init_tasklet = state.add_tasklet("C_data_init", {}, {"init_data"},
-                                               "init_data = 0")
+            C_init_tasklet = state.add_tasklet("C_data_init", {}, {"init_data"}, "init_data = 0")
 
-            state.add_memlet_path(C_init_tasklet,
-                                  C_init,
-                                  src_conn="init_data",
-                                  memlet=dace.Memlet("C_init[0]"))
-            state.add_memlet_path(entry_pipeline,
-                                  C_init_tasklet,
-                                  memlet=dace.Memlet())
+            state.add_memlet_path(C_init_tasklet, C_init, src_conn="init_data", memlet=dace.Memlet("C_init[0]"))
+            state.add_memlet_path(entry_pipeline, C_init_tasklet, memlet=dace.Memlet())
 
             # Feed A
             # every PE: reads input data, buffer the data assigned to it
@@ -867,8 +773,7 @@ if  m>={L} and not {entry_pipeline.pipeline.drain_condition()}:
 
             # Compute, Forward B, and Drain
             compute_tasklet = state.add_tasklet(
-                "compute_and_drain",
-                {"a_in", "b_in", "c_in", "forward_in", "c_init_data"},
+                "compute_and_drain", {"a_in", "b_in", "c_in", "forward_in", "c_init_data"},
                 {"b_out", "c_out", "c_pipe_out"}, f"""\
 result = c_in
 if m >= {L} and not {entry_pipeline.pipeline.drain_condition()}:
@@ -909,45 +814,34 @@ else:
         m_drain = m_drain + 1
     """)
 
-            state.add_memlet_path(A_reg,
-                                  compute_tasklet,
-                                  dst_conn="a_in",
-                                  memlet=dace.Memlet("A_reg[0]"))
+            state.add_memlet_path(A_reg, compute_tasklet, dst_conn="a_in", memlet=dace.Memlet("A_reg[0]"))
             state.add_memlet_path(B_reg,
                                   compute_tasklet,
                                   memlet=dace.Memlet("B_reg[0]", dynamic=False),
                                   dst_conn="b_in")
-            state.add_memlet_path(C_init,
-                                  compute_tasklet,
-                                  memlet=dace.Memlet("C_init[0]"),
-                                  dst_conn="c_init_data")
+            state.add_memlet_path(C_init, compute_tasklet, memlet=dace.Memlet("C_init[0]"), dst_conn="c_init_data")
 
             state.add_memlet_path(compute_tasklet,
                                   exit_pipeline,
                                   B_pipe_out,
-                                  memlet=dace.Memlet("B_pipe[p + 1]",
-                                                     dynamic=True),
+                                  memlet=dace.Memlet("B_pipe[p + 1]", dynamic=True),
                                   src_conn="b_out")
             state.add_memlet_path(C_buffer_in,
                                   entry_pipeline,
                                   compute_tasklet,
                                   dst_conn="c_in",
-                                  memlet=dace.Memlet(f"C_buffer[m-{L}]",
-                                                     allow_oob=True))
+                                  memlet=dace.Memlet(f"C_buffer[m-{L}]", allow_oob=True))
 
             state.add_memlet_path(compute_tasklet,
                                   exit_pipeline,
                                   C_buffer_out,
-                                  memlet=dace.Memlet(f"C_buffer[m-{L}]",
-                                                     allow_oob=True,
-                                                     dynamic=True),
+                                  memlet=dace.Memlet(f"C_buffer[m-{L}]", allow_oob=True, dynamic=True),
                                   src_conn="c_out")
 
             state.add_memlet_path(C_pipe_in,
                                   entry_pipeline,
                                   compute_tasklet,
-                                  memlet=dace.Memlet("C_pipe[p-1]",
-                                                     dynamic=True),
+                                  memlet=dace.Memlet("C_pipe[p-1]", dynamic=True),
                                   dst_conn="forward_in")
             state.add_memlet_path(compute_tasklet,
                                   exit_pipeline,
@@ -956,45 +850,26 @@ else:
                                   src_conn="c_pipe_out")
 
             # Unroll processing elements
-            compute_entry, compute_exit = state.add_map(
-                "unroll_compute", {"p": "0:{}".format(P)},
-                schedule=dace.ScheduleType.FPGA_Device,
-                unroll=True)
+            compute_entry, compute_exit = state.add_map("unroll_compute", {"p": "0:{}".format(P)},
+                                                        schedule=dace.ScheduleType.FPGA_Device,
+                                                        unroll=True)
 
             # Bring data nodes into scope
-            state.add_memlet_path(compute_entry,
-                                  A_pipe_in,
-                                  memlet=dace.memlet.Memlet())
-            state.add_memlet_path(compute_entry,
-                                  B_pipe_in,
-                                  memlet=dace.memlet.Memlet())
-            state.add_memlet_path(compute_entry,
-                                  C_pipe_in,
-                                  memlet=dace.memlet.Memlet())
+            state.add_memlet_path(compute_entry, A_pipe_in, memlet=dace.memlet.Memlet())
+            state.add_memlet_path(compute_entry, B_pipe_in, memlet=dace.memlet.Memlet())
+            state.add_memlet_path(compute_entry, C_pipe_in, memlet=dace.memlet.Memlet())
 
-            state.add_memlet_path(B_pipe_out,
-                                  compute_exit,
-                                  memlet=dace.memlet.Memlet())
+            state.add_memlet_path(B_pipe_out, compute_exit, memlet=dace.memlet.Memlet())
 
-            state.add_memlet_path(C_pipe_out,
-                                  compute_exit,
-                                  memlet=dace.memlet.Memlet())
+            state.add_memlet_path(C_pipe_out, compute_exit, memlet=dace.memlet.Memlet())
 
-            state.add_memlet_path(compute_entry,
-                                  A_reg_init,
-                                  memlet=dace.memlet.Memlet())
-            state.add_memlet_path(A_reg_init,
-                                  entry_pipeline,
-                                  memlet=dace.memlet.Memlet())
+            state.add_memlet_path(compute_entry, A_reg_init, memlet=dace.memlet.Memlet())
+            state.add_memlet_path(A_reg_init, entry_pipeline, memlet=dace.memlet.Memlet())
             b_init = state.add_access("B_reg")
             state.add_memlet_path(compute_entry, b_init, memlet=dace.Memlet())
             state.add_memlet_path(b_init, entry_pipeline, memlet=dace.Memlet())
-            state.add_memlet_path(compute_entry,
-                                  C_buffer_in,
-                                  memlet=dace.Memlet())
-            state.add_memlet_path(C_buffer_out,
-                                  compute_exit,
-                                  memlet=dace.Memlet())
+            state.add_memlet_path(compute_entry, C_buffer_in, memlet=dace.Memlet())
+            state.add_memlet_path(C_buffer_out, compute_exit, memlet=dace.Memlet())
 
         # build the compute State
 
@@ -1042,36 +917,36 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
     default_implementation = None
 
     # Object fields
-    transA = properties.Property(
-        dtype=bool, desc="Whether to transpose A before multiplying")
-    transB = properties.Property(
-        dtype=bool, desc="Whether to transpose B before multiplying")
-    alpha = properties.Property(
-        allow_none=False,
-        default=1,
-        desc="A scalar which will be multiplied with A @ B before adding C")
-    beta = properties.Property(
-        allow_none=False,
-        default=0,
-        desc="A scalar which will be multiplied with C before adding C")
-    cin = properties.Property(
-        dtype=bool,
-        default=True,
-        desc="Whether to have a _cin connector when beta != 0")
+    transA = properties.Property(dtype=bool, desc="Whether to transpose A before multiplying")
+    transB = properties.Property(dtype=bool, desc="Whether to transpose B before multiplying")
+    alpha = properties.Property(allow_none=False,
+                                default=1,
+                                desc="A scalar which will be multiplied with A @ B before adding C")
+    beta = properties.Property(allow_none=False,
+                               default=0,
+                               desc="A scalar which will be multiplied with C before adding C")
+    cin = properties.Property(dtype=bool, default=True, desc="Whether to have a _cin connector when beta != 0")
+    algorithm = properties.Property(dtype=str,
+                                    allow_none=True,
+                                    default=None,
+                                    desc="If applicable, chooses the vendor-provided implementation "
+                                    "(algorithm) for the multiplication")
+    accumulator_type = properties.TypeClassProperty(
+        default=None,
+        choices=dtypes.Typeclasses,
+        allow_none=True,
+        desc="Accumulator or intermediate storage type used in multiplication")
+    compute_type = properties.Property(default=None,
+                                       dtype=str,
+                                       allow_none=True,
+                                       desc="If applicable, overrides computation type (CUBLAS-specific, see "
+                                       "``cublasComputeType_t``)")
 
-    def __init__(self,
-                 name,
-                 location=None,
-                 transA=False,
-                 transB=False,
-                 alpha=1,
-                 beta=0,
-                 cin=True):
-        super().__init__(
-            name,
-            location=location,
-            inputs=({"_a", "_b", "_cin"} if beta!=0 and cin else {"_a", "_b"}),
-            outputs={"_c"})
+    def __init__(self, name, location=None, transA=False, transB=False, alpha=1, beta=0, cin=True):
+        super().__init__(name,
+                         location=location,
+                         inputs=({"_a", "_b", "_cin"} if beta != 0 and cin else {"_a", "_b"}),
+                         outputs={"_c"})
         self.transA = transA
         self.transB = transB
         self.alpha = alpha
@@ -1104,15 +979,13 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
 
         out_edges = state.out_edges(self)
         if len(out_edges) != 1:
-            raise ValueError(
-                "Expected exactly one output from matrix-matrix product")
+            raise ValueError("Expected exactly one output from matrix-matrix product")
         out_memlet = out_edges[0].data
         # Function is symmetric, edge order does not matter
         if len(size0) != 2 or len(size1) != 2:
             raise ValueError("matrix-matrix product only supported on matrices")
         if size0[1] != size1[0]:
-            raise ValueError("Inputs to matrix-matrix product "
-                             "must agree in the k-dimension")
+            raise ValueError("Inputs to matrix-matrix product " "must agree in the k-dimension")
         out_subset = dc(out_memlet.subset)
         out_subset.squeeze()
         size3 = out_subset.size()
@@ -1121,15 +994,14 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
         if len(size3) != 2:
             raise ValueError("matrix-matrix product only supported on matrices")
         if len(size3) == 2 and list(size3) != [size0[-2], size1[-1]]:
-            raise ValueError(
-                "Output to matrix-matrix product must agree in the m and n "
-                "dimensions")
+            raise ValueError("Output to matrix-matrix product must agree in the m and n " "dimensions")
 
 
 # Numpy replacement
 @oprepo.replaces('dace.libraries.blas.gemm')
 @oprepo.replaces('dace.libraries.blas.Gemm')
-def gemv_libnode(sdfg: SDFG,
+def gemv_libnode(pv: 'ProgramVisitor',
+                 sdfg: SDFG,
                  state: SDFGState,
                  A,
                  B,
@@ -1142,11 +1014,7 @@ def gemv_libnode(sdfg: SDFG,
     A_in, B_in = (state.add_read(name) for name in (A, B))
     C_out = state.add_write(C)
 
-    libnode = Gemm('gemm',
-                   transA=trans_a,
-                   transB=trans_b,
-                   alpha=alpha,
-                   beta=beta)
+    libnode = Gemm('gemm', transA=trans_a, transB=trans_b, alpha=alpha, beta=beta)
     state.add_node(libnode)
 
     # Connect nodes

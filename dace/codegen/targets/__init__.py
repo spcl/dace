@@ -7,3 +7,4 @@ from .xilinx import XilinxCodeGen
 from .rtl import RTLCodeGen
 from .unroller import UnrollCodeGen
 from .mlir.mlir import MLIRCodeGen
+from .sve.codegen import SVECodeGen

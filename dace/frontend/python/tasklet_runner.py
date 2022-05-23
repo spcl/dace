@@ -31,7 +31,7 @@ def get_tasklet_ast(stack_depth=2, frame=None) -> ast.With:
     """
     if frame is None:
         frame = inspect.stack()[stack_depth][0]
-    caller = inspect.getframeinfo(frame)
+    caller = inspect.getframeinfo(frame, context=0)
     try:
         with open(caller.filename, 'r') as fp:
             pysrc = fp.read()
@@ -39,20 +39,17 @@ def get_tasklet_ast(stack_depth=2, frame=None) -> ast.With:
         try:
             pysrc = inspect.getsource(frame)
         except (OSError, FileNotFoundError):
-            raise FileNotFoundError(
-                'Cannot recover tasklet source code. This is likely because '
-                'you are calling "with dace.tasklet:" from a Python terminal. '
-                'Try to use Python code without tasklets instead, run from '
-                'IPython, or a file.')
+            raise FileNotFoundError('Cannot recover tasklet source code. This is likely because '
+                                    'you are calling "with dace.tasklet:" from a Python terminal. '
+                                    'Try to use Python code without tasklets instead, run from '
+                                    'IPython, or a file.')
 
     module: ast.Module = ast.parse(pysrc)
     for node in ast.walk(module):
-        if (getattr(node, 'lineno', -1) == caller.lineno
-                and isinstance(node, ast.With)):
+        if (getattr(node, 'lineno', -1) == caller.lineno and isinstance(node, ast.With)):
             return node
 
-    raise FileNotFoundError('Cannot recover "with" statement from calling '
-                            'function.')
+    raise FileNotFoundError('Cannot recover "with" statement from calling ' 'function.')
 
 
 def _copy_location(newnode, node):
@@ -92,21 +89,18 @@ class TaskletRewriter(astutils.ExtNodeTransformer):
         newnode: ast.With = self.visit(node)
 
         # Visit a second time to replace dynamic memlets
-        if (len(self.name_replacements) + len(self.assign_replacements) +
-                len(self.wcr_replacements)) > 0:
+        if (len(self.name_replacements) + len(self.assign_replacements) + len(self.wcr_replacements)) > 0:
             self.replace = True
             newnode: ast.With = self.visit(newnode)
 
         # Replace "with" statement with "if True:" and add memlet statements
         iftrue = ast.parse('if True: pass')
         iftrue.body[0] = _copy_location(iftrue.body[0], newnode)
-        iftrue.body[0].body = (self.pre_statements + newnode.body +
-                               self.post_statements)
+        iftrue.body[0].body = (self.pre_statements + newnode.body + self.post_statements)
 
         return iftrue
 
-    def _analyze_call(self,
-                      node: ast.Call) -> Tuple[bool, Optional[ast.Lambda]]:
+    def _analyze_call(self, node: ast.Call) -> Tuple[bool, Optional[ast.Lambda]]:
         """ 
         Analyze memlet expression if a function call (e.g.
         "A(1, lambda a,b: a+b)[:]").
@@ -114,9 +108,8 @@ class TaskletRewriter(astutils.ExtNodeTransformer):
         :return: A 2-tuple of (is memlet dynamic, write conflict resolution)
         """
         if len(node.args) < 1 or len(node.args) > 3:
-            raise SyntaxError(
-                'Memlet expression must have one or two arguments:'
-                ' (memory movement volume, write conflict resolution function)')
+            raise SyntaxError('Memlet expression must have one or two arguments:'
+                              ' (memory movement volume, write conflict resolution function)')
         try:
             volume = ast.literal_eval(node.args[0])
         except ValueError:
@@ -140,13 +133,12 @@ class TaskletRewriter(astutils.ExtNodeTransformer):
             # If A(...), strip call and get dynamic and wcr properties
             dynamic, wcr = self._analyze_call(node)
             result = node.func
-        elif (isinstance(node, ast.Subscript)
-              and isinstance(node.value, ast.Call)):
+        elif (isinstance(node, ast.Subscript) and isinstance(node.value, ast.Call)):
             # If A(...)[...], strip call from subscript value
             dynamic, wcr = self._analyze_call(node.value)
             result: ast.Subscript = node
             result.value = node.value.func
-        
+
         # If memlet is just an array name, add "[:]"
         if isinstance(result, ast.Name):
             result = ast.parse(f'{result.id}[:]').body[0].value
@@ -165,18 +157,14 @@ class TaskletRewriter(astutils.ExtNodeTransformer):
                     storenode = copy.deepcopy(node.value.left)
                     storenode.ctx = ast.Store()
                     self.pre_statements.append(
-                        _copy_location(
-                            ast.Assign(targets=[storenode],
-                                       value=cleaned_right), node))
+                        _copy_location(ast.Assign(targets=[storenode], value=cleaned_right), node))
                 else:
                     # In-place replacement
-                    self.name_replacements[rname(
-                        node.value.left)] = cleaned_right
+                    self.name_replacements[rname(node.value.left)] = cleaned_right
                 return None  # Remove from final tasklet code
             elif isinstance(node.value.op, ast.RShift):
                 # Obtain memlet metadata and clean AST node from memlet syntax
-                cleaned_right, dynamic, wcr = self._clean_memlet(
-                    node.value.right)
+                cleaned_right, dynamic, wcr = self._clean_memlet(node.value.right)
 
                 # Replace "a >> A[i]" with "A[i] = a" at the end
                 if not dynamic:
@@ -184,25 +172,18 @@ class TaskletRewriter(astutils.ExtNodeTransformer):
                     if wcr is not None:
                         # If WCR is involved, change expression to include
                         # lambda: "A[i] = (lambda a,b: a+b)(A[i], a)"
-                        rhs = _copy_location(
-                            ast.Call(func=wcr,
-                                     args=[cleaned_right, rhs],
-                                     keywords=[]), rhs)
+                        rhs = _copy_location(ast.Call(func=wcr, args=[cleaned_right, rhs], keywords=[]), rhs)
 
                     lhs = copy.deepcopy(cleaned_right)
                     lhs.ctx = ast.Store()
-                    self.post_statements.append(
-                        _copy_location(ast.Assign(targets=[lhs], value=rhs),
-                                       node))
+                    self.post_statements.append(_copy_location(ast.Assign(targets=[lhs], value=rhs), node))
                 else:
                     if wcr is not None:
                         # Replace Assignments with lambda every time
-                        self.wcr_replacements[rname(
-                            node.value.left)] = (cleaned_right, wcr)
+                        self.wcr_replacements[rname(node.value.left)] = (cleaned_right, wcr)
                     else:
                         # In-place replacement
-                        self.assign_replacements[rname(
-                            node.value.left)] = cleaned_right
+                        self.assign_replacements[rname(node.value.left)] = cleaned_right
 
                 return None  # Remove from final tasklet code
 
@@ -210,10 +191,8 @@ class TaskletRewriter(astutils.ExtNodeTransformer):
 
     def visit_Name(self, node: ast.Name):
         # Replace dynamic reads
-        if self.replace and isinstance(
-                node.ctx, ast.Load) and node.id in self.name_replacements:
-            return _copy_location(
-                copy.deepcopy(self.name_replacements[node.id]), node)
+        if self.replace and isinstance(node.ctx, ast.Load) and node.id in self.name_replacements:
+            return _copy_location(copy.deepcopy(self.name_replacements[node.id]), node)
         return self.generic_visit(node)
 
     def visit_Assign(self, node: ast.Assign):
@@ -223,37 +202,26 @@ class TaskletRewriter(astutils.ExtNodeTransformer):
         result = []
         rhs = self.visit(node.value)
         for target in node.targets:
-            if (isinstance(target, ast.Name)
-                    and target.id in self.assign_replacements):
+            if (isinstance(target, ast.Name) and target.id in self.assign_replacements):
                 # Replace assignment
                 newtarget = copy.deepcopy(self.assign_replacements[target.id])
                 newtarget.ctx = ast.Store()
-                result.append(
-                    _copy_location(ast.Assign(targets=[newtarget], value=rhs),
-                                   node))
-            elif (isinstance(target, ast.Name)
-                  and target.id in self.wcr_replacements):
+                result.append(_copy_location(ast.Assign(targets=[newtarget], value=rhs), node))
+            elif (isinstance(target, ast.Name) and target.id in self.wcr_replacements):
                 # Replace WCR assignment
                 newtarget, wcr = copy.deepcopy(self.wcr_replacements[target.id])
                 new_old_rhs = copy.deepcopy(newtarget)
                 newtarget.ctx = ast.Store()
-                rhs = _copy_location(
-                    ast.Call(func=wcr, args=[new_old_rhs, rhs], keywords=[]),
-                    rhs)
-                result.append(
-                    _copy_location(ast.Assign(targets=[newtarget], value=rhs),
-                                   node))
+                rhs = _copy_location(ast.Call(func=wcr, args=[new_old_rhs, rhs], keywords=[]), rhs)
+                result.append(_copy_location(ast.Assign(targets=[newtarget], value=rhs), node))
             else:
                 # Keep assignment as-is
                 target = self.visit(target)
-                result.append(
-                    _copy_location(ast.Assign(targets=[target], value=rhs),
-                                   node))
+                result.append(_copy_location(ast.Assign(targets=[target], value=rhs), node))
         return result
 
 
-def run_tasklet(tasklet_ast: ast.With, filename: str, gvars: Dict[str, Any],
-                lvars: Dict[str, Any]):
+def run_tasklet(tasklet_ast: ast.With, filename: str, gvars: Dict[str, Any], lvars: Dict[str, Any]):
     """
     Transforms and runs a tasklet given by its AST, filename, global, and local
     variables.

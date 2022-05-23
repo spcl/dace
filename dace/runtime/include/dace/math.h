@@ -87,6 +87,36 @@ static DACE_CONSTEXPR DACE_HDFI int sgn(T val) {
     return (T(0) < val) - (val < T(0));
 }
 
+template <typename T, typename T2>
+static DACE_CONSTEXPR DACE_HDFI T bitwise_and(const T& left_operand, const T2& right_operand) {
+    return left_operand & right_operand;
+}
+
+template <typename T, typename T2>
+static DACE_CONSTEXPR DACE_HDFI T bitwise_or(const T& left_operand, const T2& right_operand) {
+    return left_operand | right_operand;
+}
+
+template <typename T, typename T2>
+static DACE_CONSTEXPR DACE_HDFI T bitwise_xor(const T& left_operand, const T2& right_operand) {
+    return left_operand ^ right_operand;
+}
+
+template <typename T, typename T2>
+static DACE_CONSTEXPR DACE_HDFI T bitwise_invert(const T& value) {
+    return ~value;
+}
+
+template <typename T, typename T2>
+static DACE_CONSTEXPR DACE_HDFI T right_shift(const T& left_operand, const T2& right_operand) {
+    return left_operand >> right_operand;
+}
+
+template <typename T, typename T2>
+static DACE_CONSTEXPR DACE_HDFI T left_shift(const T& left_operand, const T2& right_operand) {
+    return left_operand << right_operand;
+}
+
 
 // Workarounds for float16 in CUDA
 // NOTES: * Half precision types are not trivially convertible, so other types
@@ -466,6 +496,15 @@ namespace dace
 //#endif
         }
 #endif
+
+        template<typename T>
+        DACE_HDFI T ipow(const T& a, const unsigned int& b) {
+            T result = a;
+            for (unsigned int i = 1; i < b; ++i)
+                result *= a;
+            return result;
+        }
+
         template<typename T>
         DACE_CONSTEXPR DACE_HDFI T pow(const T& a, const int& b)
         {

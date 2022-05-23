@@ -26,11 +26,11 @@ def regression(A, B):
 
 def test_unroll():
     sdfg: dace.SDFG = tounroll.to_sdfg()
-    sdfg.apply_strict_transformations()
+    sdfg.simplify()
     assert len(sdfg.nodes()) == 4
     sdfg.apply_transformations(LoopUnroll)
     assert len(sdfg.nodes()) == (5 + 2)
-    sdfg.apply_strict_transformations()
+    sdfg.simplify()
     assert len(sdfg.nodes()) == 1
     A = np.random.rand(20)
     B = np.random.rand(20)
@@ -46,11 +46,11 @@ def test_unroll():
 
 def test_peeling_start():
     sdfg: dace.SDFG = tounroll.to_sdfg()
-    sdfg.apply_strict_transformations()
+    sdfg.simplify()
     assert len(sdfg.nodes()) == 4
     sdfg.apply_transformations(LoopPeeling, dict(count=2))
     assert len(sdfg.nodes()) == 6
-    sdfg.apply_strict_transformations()
+    sdfg.simplify()
     assert len(sdfg.nodes()) == 4
     A = np.random.rand(20)
     B = np.random.rand(20)
@@ -66,11 +66,11 @@ def test_peeling_start():
 
 def test_peeling_end():
     sdfg: dace.SDFG = tounroll.to_sdfg()
-    sdfg.apply_strict_transformations()
+    sdfg.simplify()
     assert len(sdfg.nodes()) == 4
     sdfg.apply_transformations(LoopPeeling, dict(count=2, begin=False))
     assert len(sdfg.nodes()) == 6
-    sdfg.apply_strict_transformations()
+    sdfg.simplify()
     assert len(sdfg.nodes()) == 4
     A = np.random.rand(20)
     B = np.random.rand(20)

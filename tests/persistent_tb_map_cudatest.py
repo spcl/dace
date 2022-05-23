@@ -7,8 +7,8 @@ from dace import nodes
 from dace.dtypes import ScheduleType
 from dace.transformation.dataflow import StripMining
 
-
 N = dace.symbol("N")
+
 
 @dace.program
 def dot(A: dace.float32[N], B: dace.float32[N], out: dace.float64[1]):
@@ -50,8 +50,7 @@ def test_persistent_thread_block():
 
     sdfg(A=A, B=A, out=out_AA, N=N)
 
-    assert (np.allclose(out_AB, np.dot(A, B))
-            and np.allclose(out_AA, np.dot(A, A))), "Result doesn't match!"
+    assert (np.allclose(out_AB, np.dot(A, B)) and np.allclose(out_AA, np.dot(A, A))), "Result doesn't match!"
     print("Complete.")
 
 

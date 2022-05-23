@@ -41,17 +41,15 @@ class BruteForceEnumerator(MapScoringEnumerator):
         Iterate over self.map_entries and yield all fusible 
         combinations along with their score.
         '''
-        for i in range(2, len(self._map_entries)+1):
+        for i in range(2, len(self._map_entries) + 1):
             for sg in itertools.combinations(self._map_entries, i):
-               
-                current_subgraph = helpers.subgraph_from_maps(
-                    self._sdfg, self._graph, sg)
+
+                current_subgraph = helpers.subgraph_from_maps(self._sdfg, self._graph, sg)
 
                 # evaluate condition if specified
                 conditional_eval = True
                 if self._condition_function:
-                    conditional_eval = self._condition_function(
-                        self._sdfg, current_subgraph)
+                    conditional_eval = self._condition_function(self._sdfg, current_subgraph)
 
                 # evaluate score if possible
                 score = 0
@@ -60,9 +58,7 @@ class BruteForceEnumerator(MapScoringEnumerator):
 
                 # yield element if condition is True
                 if conditional_eval:
-                    yield (tuple(sg),
-                           score) if self.mode == 'map_entries' else (
-                               current_subgraph, score)
+                    yield (tuple(sg), score) if self.mode == 'map_entries' else (current_subgraph, score)
 
     def iterator(self):
         yield from self.brute_force()

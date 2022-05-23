@@ -11,7 +11,7 @@ class GPUEventProvider(InstrumentationProvider):
         self.backend = config.Config.get('compiler', 'cuda', 'backend')
         super().__init__()
 
-    def on_sdfg_begin(self, sdfg, local_stream, global_stream):
+    def on_sdfg_begin(self, sdfg, local_stream, global_stream, codegen):
         if self.backend == 'cuda':
             header_name = 'cuda_runtime.h'
         elif self.backend == 'hip':
@@ -38,18 +38,15 @@ class GPUEventProvider(InstrumentationProvider):
 {backend}EventCreate(&__dace_ev_{id});'''.format(id=id, backend=self.backend)
 
     def _destroy_event(self, id):
-        return '{backend}EventDestroy(__dace_ev_{id});'.format(
-            id=id, backend=self.backend)
+        return '{backend}EventDestroy(__dace_ev_{id});'.format(id=id, backend=self.backend)
 
     def _record_event(self, id, stream):
-        concurrent_streams = int(
-            config.Config.get('compiler', 'cuda', 'max_concurrent_streams'))
+        concurrent_streams = int(config.Config.get('compiler', 'cuda', 'max_concurrent_streams'))
         if concurrent_streams < 0 or stream == -1:
             streamstr = 'nullptr'
         else:
             streamstr = f'__state->gpu_context->streams[{stream}]'
-        return '%sEventRecord(__dace_ev_%s, %s);' % (self.backend, id,
-                                                     streamstr)
+        return '%sEventRecord(__dace_ev_%s, %s);' % (self.backend, id, streamstr)
 
     def _report(self, timer_name: str, sdfg=None, state=None, node=None):
         idstr = self._idstr(sdfg, state, node)
@@ -81,14 +78,11 @@ __state->report.add_completion("{timer_name}", "GPU", __dace_ts_start_{id}, __da
         # Create GPU events for each instrumented scope in the state
         for node in state.nodes():
             if isinstance(node, (nodes.CodeNode, nodes.EntryNode)):
-                s = (self._get_sobj(node)
-                     if isinstance(node, nodes.EntryNode) else node)
+                s = (self._get_sobj(node) if isinstance(node, nodes.EntryNode) else node)
                 if s.instrument == dtypes.InstrumentationType.GPU_Events:
                     idstr = self._idstr(sdfg, state, node)
-                    local_stream.write(self._create_event('b' + idstr), sdfg,
-                                       state_id, node)
-                    local_stream.write(self._create_event('e' + idstr), sdfg,
-                                       state_id, node)
+                    local_stream.write(self._create_event('b' + idstr), sdfg, state_id, node)
+                    local_stream.write(self._create_event('e' + idstr), sdfg, state_id, node)
 
         # Create and record a CUDA/HIP event for the entire state
         if state.instrument == dtypes.InstrumentationType.GPU_Events:
@@ -103,58 +97,44 @@ __state->report.add_completion("{timer_name}", "GPU", __dace_ts_start_{id}, __da
         # Record and measure state stream event
         if state.instrument == dtypes.InstrumentationType.GPU_Events:
             idstr = self._idstr(sdfg, state, None)
-            local_stream.write(self._record_event('e' + idstr, 0), sdfg,
-                               state_id)
-            local_stream.write(
-                self._report('State %s' % state.label, sdfg, state), sdfg,
-                state_id)
+            local_stream.write(self._record_event('e' + idstr, 0), sdfg, state_id)
+            local_stream.write(self._report('State %s' % state.label, sdfg, state), sdfg, state_id)
             local_stream.write(self._destroy_event('b' + idstr), sdfg, state_id)
             local_stream.write(self._destroy_event('e' + idstr), sdfg, state_id)
 
         # Destroy CUDA/HIP events for scopes in the state
         for node in state.nodes():
             if isinstance(node, (nodes.CodeNode, nodes.EntryNode)):
-                s = (self._get_sobj(node)
-                     if isinstance(node, nodes.EntryNode) else node)
+                s = (self._get_sobj(node) if isinstance(node, nodes.EntryNode) else node)
                 if s.instrument == dtypes.InstrumentationType.GPU_Events:
                     idstr = self._idstr(sdfg, state, node)
-                    local_stream.write(self._destroy_event('b' + idstr), sdfg,
-                                       state_id, node)
-                    local_stream.write(self._destroy_event('e' + idstr), sdfg,
-                                       state_id, node)
+                    local_stream.write(self._destroy_event('b' + idstr), sdfg, state_id, node)
+                    local_stream.write(self._destroy_event('e' + idstr), sdfg, state_id, node)
 
-    def on_scope_entry(self, sdfg, state, node, outer_stream, inner_stream,
-                       global_stream):
+    def on_scope_entry(self, sdfg, state, node, outer_stream, inner_stream, global_stream):
         state_id = sdfg.node_id(state)
         s = self._get_sobj(node)
         if s.instrument == dtypes.InstrumentationType.GPU_Events:
             if s.schedule != dtypes.ScheduleType.GPU_Device:
-                raise TypeError('GPU Event instrumentation only applies to '
-                                'GPU_Device map scopes')
+                raise TypeError('GPU Event instrumentation only applies to ' 'GPU_Device map scopes')
 
             idstr = 'b' + self._idstr(sdfg, state, node)
             stream = getattr(node, '_cuda_stream', -1)
-            outer_stream.write(self._record_event(idstr, stream),
-                               sdfg, state_id, node)
+            outer_stream.write(self._record_event(idstr, stream), sdfg, state_id, node)
 
-    def on_scope_exit(self, sdfg, state, node, outer_stream, inner_stream,
-                      global_stream):
+    def on_scope_exit(self, sdfg, state, node, outer_stream, inner_stream, global_stream):
         state_id = sdfg.node_id(state)
         entry_node = state.entry_node(node)
         s = self._get_sobj(node)
         if s.instrument == dtypes.InstrumentationType.GPU_Events:
             idstr = 'e' + self._idstr(sdfg, state, entry_node)
             stream = getattr(node, '_cuda_stream', -1)
-            outer_stream.write(self._record_event(idstr, stream),
-                               sdfg, state_id, node)
-            outer_stream.write(
-                self._report('%s %s' % (type(s).__name__, s.label), sdfg, state,
-                             entry_node), sdfg, state_id, node)
+            outer_stream.write(self._record_event(idstr, stream), sdfg, state_id, node)
+            outer_stream.write(self._report('%s %s' % (type(s).__name__, s.label), sdfg, state, entry_node), sdfg,
+                               state_id, node)
 
-    def on_node_begin(self, sdfg, state, node, outer_stream, inner_stream,
-                      global_stream):
-        if (not isinstance(node, nodes.CodeNode)
-                or is_devicelevel_gpu(sdfg, state, node)):
+    def on_node_begin(self, sdfg, state, node, outer_stream, inner_stream, global_stream):
+        if (not isinstance(node, nodes.CodeNode) or is_devicelevel_gpu(sdfg, state, node)):
             return
         # Only run for host nodes
         # TODO(later): Implement "clock64"-based GPU counters
@@ -162,13 +142,10 @@ __state->report.add_completion("{timer_name}", "GPU", __dace_ts_start_{id}, __da
             state_id = sdfg.node_id(state)
             idstr = 'b' + self._idstr(sdfg, state, node)
             stream = getattr(node, '_cuda_stream', -1)
-            outer_stream.write(self._record_event(idstr, stream),
-                               sdfg, state_id, node)
+            outer_stream.write(self._record_event(idstr, stream), sdfg, state_id, node)
 
-    def on_node_end(self, sdfg, state, node, outer_stream, inner_stream,
-                    global_stream):
-        if (not isinstance(node, nodes.Tasklet)
-                or is_devicelevel_gpu(sdfg, state, node)):
+    def on_node_end(self, sdfg, state, node, outer_stream, inner_stream, global_stream):
+        if (not isinstance(node, nodes.Tasklet) or is_devicelevel_gpu(sdfg, state, node)):
             return
         # Only run for host nodes
         # TODO(later): Implement "clock64"-based GPU counters
@@ -176,8 +153,6 @@ __state->report.add_completion("{timer_name}", "GPU", __dace_ts_start_{id}, __da
             state_id = sdfg.node_id(state)
             idstr = 'e' + self._idstr(sdfg, state, node)
             stream = getattr(node, '_cuda_stream', -1)
-            outer_stream.write(self._record_event(idstr, stream),
-                               sdfg, state_id, node)
-            outer_stream.write(
-                self._report('%s %s' % (type(node).__name__, node.label), sdfg,
-                             state, node), sdfg, state_id, node)
+            outer_stream.write(self._record_event(idstr, stream), sdfg, state_id, node)
+            outer_stream.write(self._report('%s %s' % (type(node).__name__, node.label), sdfg, state, node), sdfg,
+                               state_id, node)

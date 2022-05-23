@@ -1,9 +1,9 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-from numbers import Number
+from numbers import Integral, Number
 from typing import Sequence, Union
 
 import dace
-from dace import dtypes
+from dace import dtypes, symbolic
 from dace.frontend.common import op_repository as oprepo
 from dace.memlet import Memlet
 from dace.sdfg import SDFG, SDFGState
@@ -12,17 +12,21 @@ import sympy as sp
 
 from dace.frontend.python.replacements import _define_local_scalar
 
+ShapeType = Sequence[Union[Integral, str, symbolic.symbol, symbolic.SymExpr, symbolic.sympy.Basic]]
+RankType = Union[Integral, str, symbolic.symbol, symbolic.SymExpr, symbolic.sympy.Basic]
+
 
 @oprepo.replaces('dace.comm.Bcast')
 def _bcast(pv: 'ProgramVisitor',
            sdfg: SDFG,
            state: SDFGState,
            buffer: str,
-           root: Union[str, sp.Expr, Number] = 0):
+           root: Union[str, sp.Expr, Number] = 0,
+           grid: str = None):
 
     from dace.libraries.mpi.nodes.bcast import Bcast
 
-    libnode = Bcast('_Bcast_')
+    libnode = Bcast('_Bcast_', grid)
     desc = sdfg.arrays[buffer]
     in_buffer = state.add_read(buffer)
     out_buffer = state.add_write(buffer)
@@ -32,16 +36,56 @@ def _bcast(pv: 'ProgramVisitor',
         storage = desc.storage
         root_name = _define_local_scalar(pv, sdfg, state, dace.int32, storage)
         root_node = state.add_access(root_name)
-        root_tasklet = state.add_tasklet('_set_root_', {}, {'__out'},
-                                         '__out = {}'.format(root))
-        state.add_edge(root_tasklet, '__out', root_node, None,
-                       Memlet.simple(root_name, '0'))
-    state.add_edge(in_buffer, None, libnode, '_inbuffer',
-                   Memlet.from_array(buffer, desc))
-    state.add_edge(root_node, None, libnode, '_root',
-                   Memlet.simple(root_node.data, '0'))
-    state.add_edge(libnode, '_outbuffer', out_buffer, None,
-                   Memlet.from_array(buffer, desc))
+        root_tasklet = state.add_tasklet('_set_root_', {}, {'__out'}, '__out = {}'.format(root))
+        state.add_edge(root_tasklet, '__out', root_node, None, Memlet.simple(root_name, '0'))
+    state.add_edge(in_buffer, None, libnode, '_inbuffer', Memlet.from_array(buffer, desc))
+    state.add_edge(root_node, None, libnode, '_root', Memlet.simple(root_node.data, '0'))
+    state.add_edge(libnode, '_outbuffer', out_buffer, None, Memlet.from_array(buffer, desc))
+
+    return None
+
+
+@oprepo.replaces('dace.comm.Reduce')
+def _Reduce(pv: 'ProgramVisitor',
+            sdfg: SDFG,
+            state: SDFGState,
+            buffer: str,
+            op: str,
+            root: Union[str, sp.Expr, Number] = 0,
+            grid: str = None):
+
+    from dace.libraries.mpi.nodes.reduce import Reduce
+
+    libnode = Reduce('_Reduce_', op, grid)
+    desc = sdfg.arrays[buffer]
+    in_buffer = state.add_read(buffer)
+    out_buffer = state.add_write(buffer)
+    if isinstance(root, str) and root in sdfg.arrays.keys():
+        root_node = state.add_read(root)
+    else:
+        storage = desc.storage
+        root_name = _define_local_scalar(pv, sdfg, state, dace.int32, storage)
+        root_node = state.add_access(root_name)
+        root_tasklet = state.add_tasklet('_set_root_', {}, {'__out'}, '__out = {}'.format(root))
+        state.add_edge(root_tasklet, '__out', root_node, None, Memlet.simple(root_name, '0'))
+    state.add_edge(in_buffer, None, libnode, '_inbuffer', Memlet.from_array(buffer, desc))
+    state.add_edge(root_node, None, libnode, '_root', Memlet.simple(root_node.data, '0'))
+    state.add_edge(libnode, '_outbuffer', out_buffer, None, Memlet.from_array(buffer, desc))
+
+    return None
+
+
+@oprepo.replaces('dace.comm.Allreduce')
+def _Allreduce(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, buffer: str, op: str, grid: str = None):
+
+    from dace.libraries.mpi.nodes.allreduce import Allreduce
+
+    libnode = Allreduce('_Allreduce_', op, grid)
+    desc = sdfg.arrays[buffer]
+    in_buffer = state.add_read(buffer)
+    out_buffer = state.add_write(buffer)
+    state.add_edge(in_buffer, None, libnode, '_inbuffer', Memlet.from_array(buffer, desc))
+    state.add_edge(libnode, '_outbuffer', out_buffer, None, Memlet.from_array(buffer, desc))
 
     return None
 
@@ -67,16 +111,11 @@ def _scatter(pv: 'ProgramVisitor',
         storage = in_desc.storage
         root_name = _define_local_scalar(pv, sdfg, state, dace.int32, storage)
         root_node = state.add_access(root_name)
-        root_tasklet = state.add_tasklet('_set_root_', {}, {'__out'},
-                                         '__out = {}'.format(root))
-        state.add_edge(root_tasklet, '__out', root_node, None,
-                       Memlet.simple(root_name, '0'))
-    state.add_edge(in_node, None, libnode, '_inbuffer',
-                   Memlet.from_array(in_buffer, in_desc))
-    state.add_edge(root_node, None, libnode, '_root',
-                   Memlet.simple(root_node.data, '0'))
-    state.add_edge(libnode, '_outbuffer', out_node, None,
-                   Memlet.from_array(out_buffer, out_desc))
+        root_tasklet = state.add_tasklet('_set_root_', {}, {'__out'}, '__out = {}'.format(root))
+        state.add_edge(root_tasklet, '__out', root_node, None, Memlet.simple(root_name, '0'))
+    state.add_edge(in_node, None, libnode, '_inbuffer', Memlet.from_array(in_buffer, in_desc))
+    state.add_edge(root_node, None, libnode, '_root', Memlet.simple(root_node.data, '0'))
+    state.add_edge(libnode, '_outbuffer', out_node, None, Memlet.from_array(out_buffer, out_desc))
 
     return None
 
@@ -102,16 +141,11 @@ def _gather(pv: 'ProgramVisitor',
         storage = in_desc.storage
         root_name = _define_local_scalar(pv, sdfg, state, dace.int32, storage)
         root_node = state.add_access(root_name)
-        root_tasklet = state.add_tasklet('_set_root_', {}, {'__out'},
-                                         '__out = {}'.format(root))
-        state.add_edge(root_tasklet, '__out', root_node, None,
-                       Memlet.simple(root_name, '0'))
-    state.add_edge(in_node, None, libnode, '_inbuffer',
-                   Memlet.from_array(in_buffer, in_desc))
-    state.add_edge(root_node, None, libnode, '_root',
-                   Memlet.simple(root_node.data, '0'))
-    state.add_edge(libnode, '_outbuffer', out_node, None,
-                   Memlet.from_array(out_buffer, out_desc))
+        root_tasklet = state.add_tasklet('_set_root_', {}, {'__out'}, '__out = {}'.format(root))
+        state.add_edge(root_tasklet, '__out', root_node, None, Memlet.simple(root_name, '0'))
+    state.add_edge(in_node, None, libnode, '_inbuffer', Memlet.from_array(in_buffer, in_desc))
+    state.add_edge(root_node, None, libnode, '_root', Memlet.simple(root_node.data, '0'))
+    state.add_edge(libnode, '_outbuffer', out_node, None, Memlet.from_array(out_buffer, out_desc))
 
     return None
 
@@ -136,10 +170,7 @@ def _send(pv: 'ProgramVisitor',
 
     desc = sdfg.arrays[buf_name]
     conn = libnode.in_connectors
-    conn = {
-        c: (dtypes.pointer(desc.dtype) if c == '_buffer' else t)
-        for c, t in conn.items()
-    }
+    conn = {c: (dtypes.pointer(desc.dtype) if c == '_buffer' else t) for c, t in conn.items()}
     libnode.in_connectors = conn
     buf_node = state.add_write(buf_name)
 
@@ -154,10 +185,8 @@ def _send(pv: 'ProgramVisitor',
         storage = desc.storage
         dst_name = _define_local_scalar(pv, sdfg, state, dace.int32, storage)
         dst_node = state.add_access(dst_name)
-        dst_tasklet = state.add_tasklet('_set_dst_', {}, {'__out'},
-                                        '__out = {}'.format(dst))
-        state.add_edge(dst_tasklet, '__out', dst_node, None,
-                       Memlet.simple(dst_name, '0'))
+        dst_tasklet = state.add_tasklet('_set_dst_', {}, {'__out'}, '__out = {}'.format(dst))
+        state.add_edge(dst_tasklet, '__out', dst_node, None, Memlet.simple(dst_name, '0'))
 
     tag_range = None
     if isinstance(tag, tuple):
@@ -170,10 +199,8 @@ def _send(pv: 'ProgramVisitor',
         storage = desc.storage
         tag_name = _define_local_scalar(pv, sdfg, state, dace.int32, storage)
         tag_node = state.add_access(tag_name)
-        tag_tasklet = state.add_tasklet('_set_tag_', {}, {'__out'},
-                                        '__out = {}'.format(tag))
-        state.add_edge(tag_tasklet, '__out', tag_node, None,
-                       Memlet.simple(tag_name, '0'))
+        tag_tasklet = state.add_tasklet('_set_tag_', {}, {'__out'}, '__out = {}'.format(tag))
+        state.add_edge(tag_tasklet, '__out', tag_node, None, Memlet.simple(tag_name, '0'))
 
     if buf_range:
         buf_mem = Memlet.simple(buf_name, buf_range)
@@ -196,9 +223,8 @@ def _send(pv: 'ProgramVisitor',
 
 
 @oprepo.replaces('dace.comm.Isend')
-def _isend(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, buffer: str,
-           dst: Union[str, sp.Expr, Number], tag: Union[str, sp.Expr,
-                                                        Number], request: str):
+def _isend(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, buffer: str, dst: Union[str, sp.Expr, Number],
+           tag: Union[str, sp.Expr, Number], request: str):
 
     from dace.libraries.mpi.nodes.isend import Isend
 
@@ -221,16 +247,10 @@ def _isend(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, buffer: str,
     req_node = state.add_write(req_name)
 
     iconn = libnode.in_connectors
-    iconn = {
-        c: (dtypes.pointer(desc.dtype) if c == '_buffer' else t)
-        for c, t in iconn.items()
-    }
+    iconn = {c: (dtypes.pointer(desc.dtype) if c == '_buffer' else t) for c, t in iconn.items()}
     libnode.in_connectors = iconn
     oconn = libnode.out_connectors
-    oconn = {
-        c: (dtypes.pointer(req_desc.dtype) if c == '_request' else t)
-        for c, t in oconn.items()
-    }
+    oconn = {c: (dtypes.pointer(req_desc.dtype) if c == '_request' else t) for c, t in oconn.items()}
     libnode.out_connectors = oconn
 
     dst_range = None
@@ -244,10 +264,8 @@ def _isend(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, buffer: str,
         storage = desc.storage
         dst_name = _define_local_scalar(pv, sdfg, state, dace.int32, storage)
         dst_node = state.add_access(dst_name)
-        dst_tasklet = state.add_tasklet('_set_dst_', {}, {'__out'},
-                                        '__out = {}'.format(dst))
-        state.add_edge(dst_tasklet, '__out', dst_node, None,
-                       Memlet.simple(dst_name, '0'))
+        dst_tasklet = state.add_tasklet('_set_dst_', {}, {'__out'}, '__out = {}'.format(dst))
+        state.add_edge(dst_tasklet, '__out', dst_node, None, Memlet.simple(dst_name, '0'))
 
     tag_range = None
     if isinstance(tag, tuple):
@@ -260,10 +278,8 @@ def _isend(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, buffer: str,
         storage = desc.storage
         tag_name = _define_local_scalar(pv, sdfg, state, dace.int32, storage)
         tag_node = state.add_access(tag_name)
-        tag_tasklet = state.add_tasklet('_set_tag_', {}, {'__out'},
-                                        '__out = {}'.format(tag))
-        state.add_edge(tag_tasklet, '__out', tag_node, None,
-                       Memlet.simple(tag_name, '0'))
+        tag_tasklet = state.add_tasklet('_set_tag_', {}, {'__out'}, '__out = {}'.format(tag))
+        state.add_edge(tag_tasklet, '__out', tag_node, None, Memlet.simple(tag_name, '0'))
 
     if buf_range:
         buf_mem = Memlet.simple(buf_name, buf_range)
@@ -310,10 +326,7 @@ def _recv(pv: 'ProgramVisitor',
 
     desc = sdfg.arrays[buf_name]
     conn = libnode.out_connectors
-    conn = {
-        c: (dtypes.pointer(desc.dtype) if c == '_buffer' else t)
-        for c, t in conn.items()
-    }
+    conn = {c: (dtypes.pointer(desc.dtype) if c == '_buffer' else t) for c, t in conn.items()}
     libnode.out_connectors = conn
     buf_node = state.add_write(buf_name)
 
@@ -328,10 +341,8 @@ def _recv(pv: 'ProgramVisitor',
         storage = desc.storage
         src_name = _define_local_scalar(pv, sdfg, state, dace.int32, storage)
         src_node = state.add_access(src_name)
-        src_tasklet = state.add_tasklet('_set_src_', {}, {'__out'},
-                                        '__out = {}'.format(src))
-        state.add_edge(src_tasklet, '__out', src_node, None,
-                       Memlet.simple(src_name, '0'))
+        src_tasklet = state.add_tasklet('_set_src_', {}, {'__out'}, '__out = {}'.format(src))
+        state.add_edge(src_tasklet, '__out', src_node, None, Memlet.simple(src_name, '0'))
 
     tag_range = None
     if isinstance(tag, tuple):
@@ -344,10 +355,8 @@ def _recv(pv: 'ProgramVisitor',
         storage = desc.storage
         tag_name = _define_local_scalar(pv, sdfg, state, dace.int32, storage)
         tag_node = state.add_access(tag_name)
-        tag_tasklet = state.add_tasklet('_set_tag_', {}, {'__out'},
-                                        '__out = {}'.format(tag))
-        state.add_edge(tag_tasklet, '__out', tag_node, None,
-                       Memlet.simple(tag_name, '0'))
+        tag_tasklet = state.add_tasklet('_set_tag_', {}, {'__out'}, '__out = {}'.format(tag))
+        state.add_edge(tag_tasklet, '__out', tag_node, None, Memlet.simple(tag_name, '0'))
 
     if buf_range:
         buf_mem = Memlet.simple(buf_name, buf_range)
@@ -370,9 +379,8 @@ def _recv(pv: 'ProgramVisitor',
 
 
 @oprepo.replaces('dace.comm.Irecv')
-def _irecv(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, buffer: str,
-           src: Union[str, sp.Expr, Number], tag: Union[str, sp.Expr,
-                                                        Number], request: str):
+def _irecv(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, buffer: str, src: Union[str, sp.Expr, Number],
+           tag: Union[str, sp.Expr, Number], request: str):
 
     from dace.libraries.mpi.nodes.irecv import Irecv
 
@@ -395,14 +403,8 @@ def _irecv(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, buffer: str,
     req_node = state.add_write(req_name)
 
     conn = libnode.out_connectors
-    conn = {
-        c: (dtypes.pointer(desc.dtype) if c == '_buffer' else t)
-        for c, t in conn.items()
-    }
-    conn = {
-        c: (dtypes.pointer(req_desc.dtype) if c == '_request' else t)
-        for c, t in conn.items()
-    }
+    conn = {c: (dtypes.pointer(desc.dtype) if c == '_buffer' else t) for c, t in conn.items()}
+    conn = {c: (dtypes.pointer(req_desc.dtype) if c == '_request' else t) for c, t in conn.items()}
     libnode.out_connectors = conn
 
     src_range = None
@@ -416,10 +418,8 @@ def _irecv(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, buffer: str,
         storage = desc.storage
         src_name = _define_local_scalar(pv, sdfg, state, dace.int32, storage)
         src_node = state.add_access(src_name)
-        src_tasklet = state.add_tasklet('_set_src_', {}, {'__out'},
-                                        '__out = {}'.format(src))
-        state.add_edge(src_tasklet, '__out', src_node, None,
-                       Memlet.simple(src_name, '0'))
+        src_tasklet = state.add_tasklet('_set_src_', {}, {'__out'}, '__out = {}'.format(src))
+        state.add_edge(src_tasklet, '__out', src_node, None, Memlet.simple(src_name, '0'))
 
     tag_range = None
     if isinstance(tag, tuple):
@@ -432,10 +432,8 @@ def _irecv(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, buffer: str,
         storage = desc.storage
         tag_name = _define_local_scalar(pv, sdfg, state, dace.int32, storage)
         tag_node = state.add_access(tag_name)
-        tag_tasklet = state.add_tasklet('_set_tag_', {}, {'__out'},
-                                        '__out = {}'.format(tag))
-        state.add_edge(tag_tasklet, '__out', tag_node, None,
-                       Memlet.simple(tag_name, '0'))
+        tag_tasklet = state.add_tasklet('_set_tag_', {}, {'__out'}, '__out = {}'.format(tag))
+        state.add_edge(tag_tasklet, '__out', tag_node, None, Memlet.simple(tag_name, '0'))
 
     if buf_range:
         buf_mem = Memlet.simple(buf_name, buf_range)
@@ -489,10 +487,8 @@ def _wait(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, request: str):
         req_mem = Memlet.from_array(req_name, desc)
 
     state.add_edge(req_node, None, libnode, '_request', req_mem)
-    state.add_edge(libnode, '_stat_source', src_node, None,
-                   Memlet.from_array(*src))
-    state.add_edge(libnode, '_stat_tag', tag_node, None,
-                   Memlet.from_array(*tag))
+    state.add_edge(libnode, '_stat_source', src_node, None, Memlet.from_array(*src))
+    state.add_edge(libnode, '_stat_tag', tag_node, None, Memlet.from_array(*tag))
 
     return None
 
@@ -523,9 +519,296 @@ def _wait(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, request: str):
     return None
 
 
+@oprepo.replaces('dace.comm.Cart_create')
+def _cart_create(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, dims: ShapeType):
+    """ Creates a process-grid and adds it to the DaCe program. The process-grid is implemented with [MPI_Cart_create](https://www.mpich.org/static/docs/latest/www3/MPI_Cart_create.html).
+        :param dims: Shape of the process-grid (see `dims` parameter of `MPI_Cart_create`), e.g., [2, 3, 3].
+        :return: Name of the new process-grid descriptor.
+    """
+    pgrid_name = sdfg.add_pgrid(dims)
+
+    # Dummy tasklet adds MPI variables to the program's state.
+    from dace.libraries.mpi import Dummy
+    tasklet = Dummy(pgrid_name, [
+        f'MPI_Comm {pgrid_name}_comm;',
+        f'MPI_Group {pgrid_name}_group;',
+        f'int {pgrid_name}_coords[{len(dims)}];',
+        f'int {pgrid_name}_dims[{len(dims)}];',
+        f'int {pgrid_name}_rank;',
+        f'int {pgrid_name}_size;',
+        f'bool {pgrid_name}_valid;',
+    ])
+
+    state.add_node(tasklet)
+
+    # Pseudo-writing to a dummy variable to avoid removal of Dummy node by transformations.
+    _, scal = sdfg.add_scalar(pgrid_name, dace.int32, transient=True)
+    wnode = state.add_write(pgrid_name)
+    state.add_edge(tasklet, '__out', wnode, None, Memlet.from_array(pgrid_name, scal))
+
+    return pgrid_name
+
+
+@oprepo.replaces('dace.comm.Cart_sub')
+def _cart_sub(pv: 'ProgramVisitor',
+              sdfg: SDFG,
+              state: SDFGState,
+              parent_grid: str,
+              color: Sequence[Union[Integral, bool]],
+              exact_grid: RankType = None):
+    """ Partitions the `parent_grid` to lower-dimensional sub-grids and adds them to the DaCe program.
+        The sub-grids are implemented with [MPI_Cart_sub](https://www.mpich.org/static/docs/latest/www3/MPI_Cart_sub.html).
+        :param parent_grid: Parent process-grid (similar to the `comm` parameter of `MPI_Cart_sub`).
+        :param color: The i-th entry specifies whether the i-th dimension is kept in the sub-grid or is dropped (see `remain_dims` input of `MPI_Cart_sub`).
+        :param exact_grid: [DEVELOPER] If set then, out of all the sub-grids created, only the one that contains the rank with id `exact_grid` will be utilized for collective communication.
+        :return: Name of the new sub-grid descriptor.
+    """
+    pgrid_name = sdfg.add_pgrid(parent_grid=parent_grid, color=color, exact_grid=exact_grid)
+
+    # Count sub-grid dimensions.
+    pgrid_ndims = sum([bool(c) for c in color])
+
+    # Dummy tasklet adds MPI variables to the program's state.
+    from dace.libraries.mpi import Dummy
+    tasklet = Dummy(pgrid_name, [
+        f'MPI_Comm {pgrid_name}_comm;',
+        f'MPI_Group {pgrid_name}_group;',
+        f'int {pgrid_name}_coords[{pgrid_ndims}];',
+        f'int {pgrid_name}_dims[{pgrid_ndims}];',
+        f'int {pgrid_name}_rank;',
+        f'int {pgrid_name}_size;',
+        f'bool {pgrid_name}_valid;',
+    ])
+
+    state.add_node(tasklet)
+
+    # Pseudo-writing to a dummy variable to avoid removal of Dummy node by transformations.
+    _, scal = sdfg.add_scalar(pgrid_name, dace.int32, transient=True)
+    wnode = state.add_write(pgrid_name)
+    state.add_edge(tasklet, '__out', wnode, None, Memlet.from_array(pgrid_name, scal))
+
+    return pgrid_name
+
+
+@oprepo.replaces('dace.comm.Subarray')
+def _subarray(pv: 'ProgramVisitor',
+              sdfg: SDFG,
+              state: SDFGState,
+              array: Union[str, ShapeType],
+              subarray: Union[str, ShapeType],
+              dtype: dtypes.typeclass = None,
+              process_grid: str = None,
+              correspondence: Sequence[Integral] = None):
+    """ Adds a sub-array descriptor to the DaCe Program.
+        Sub-arrays are implemented (when `process_grid` is set) with [MPI_Type_create_subarray](https://www.mpich.org/static/docs/v3.2/www3/MPI_Type_create_subarray.html).
+        :param array: Either the name of an Array descriptor or the shape of the array (similar to the `array_of_sizes` parameter of `MPI_Type_create_subarray`).
+        :param subarray: Either the name of an Array descriptor or the sub-shape of the (sub-)array (similar to the `array_of_subsizes` parameter of `MPI_Type_create_subarray`).
+        :param dtype: Datatype of the array/sub-array (similar to the `oldtype` parameter of `MPI_Type_create_subarray`).
+        :process_grid: Name of the process-grid for collective scatter/gather operations.
+        :param correspondence: Matching of the array/sub-array's dimensions to the process-grid's dimensions.
+        :return: Name of the new sub-array descriptor.
+    """
+    # Get dtype, shape, and subshape
+    if isinstance(array, str):
+        shape = sdfg.arrays[array].shape
+        arr_dtype = sdfg.arrays[array].dtype
+    else:
+        shape = array
+        arr_dtype = None
+    if isinstance(subarray, str):
+        subshape = sdfg.arrays[subarray].shape
+        sub_dtype = sdfg.arrays[subarray].dtype
+    else:
+        subshape = subarray
+        sub_dtype = None
+    dtype = dtype or arr_dtype or sub_dtype
+
+    subarray_name = sdfg.add_subarray(dtype, shape, subshape, process_grid, correspondence)
+
+    # Generate subgraph only if process-grid is set, i.e., the sub-array will be used for collective scatter/gather ops.
+    if process_grid:
+        # Dummy tasklet adds MPI variables to the program's state.
+        from dace.libraries.mpi import Dummy
+        tasklet = Dummy(
+            subarray_name,
+            [f'MPI_Datatype {subarray_name};', f'int* {subarray_name}_counts;', f'int* {subarray_name}_displs;'])
+
+        state.add_node(tasklet)
+
+        # Pseudo-writing to a dummy variable to avoid removal of Dummy node by transformations.
+        _, scal = sdfg.add_scalar(subarray_name, dace.int32, transient=True)
+        wnode = state.add_write(subarray_name)
+        state.add_edge(tasklet, '__out', wnode, None, Memlet.from_array(subarray_name, scal))
+
+    return subarray_name
+
+
+@oprepo.replaces('dace.comm.BlockScatter')
+def _block_scatter(pv: 'ProgramVisitor',
+                   sdfg: SDFG,
+                   state: SDFGState,
+                   in_buffer: str,
+                   out_buffer: str,
+                   scatter_grid: str,
+                   bcast_grid: str = None,
+                   correspondence: Sequence[Integral] = None):
+    """ Block-scatters an Array using process-grids, sub-arrays, and the BlockScatter library node.
+        This method currently does not support Array slices and imperfect tiling.
+        :param in_buffer: Name of the (global) Array descriptor.
+        :param out_buffer: Name of the (local) Array descriptor.
+        :param scatter_grid: Name of the sub-grid used for scattering the Array (replication group leaders).
+        :param bcast_grid: Name of the sub-grid used for broadcasting the Array (replication groups). 
+        :param correspondence: Matching of the array/sub-array's dimensions to the process-grid's dimensions.
+        :return: Name of the new sub-array descriptor.
+    """
+    in_desc = sdfg.arrays[in_buffer]
+    out_desc = sdfg.arrays[out_buffer]
+
+    if in_desc.dtype != out_desc.dtype:
+        raise ValueError("Input/output buffer datatypes must match!")
+
+    subarray_name = _subarray(pv,
+                              sdfg,
+                              state,
+                              in_buffer,
+                              out_buffer,
+                              process_grid=scatter_grid,
+                              correspondence=correspondence)
+
+    from dace.libraries.mpi import BlockScatter
+    libnode = BlockScatter('_BlockScatter_', subarray_name, scatter_grid, bcast_grid)
+
+    inbuf_name = in_buffer
+    in_desc = sdfg.arrays[inbuf_name]
+    inbuf_node = state.add_read(inbuf_name)
+    inbuf_mem = Memlet.from_array(inbuf_name, in_desc)
+
+    outbuf_name = out_buffer
+    out_desc = sdfg.arrays[outbuf_name]
+    outbuf_node = state.add_write(outbuf_name)
+    outbuf_mem = Memlet.from_array(outbuf_name, out_desc)
+
+    state.add_edge(inbuf_node, None, libnode, '_inp_buffer', inbuf_mem)
+    state.add_edge(libnode, '_out_buffer', outbuf_node, None, outbuf_mem)
+
+    return subarray_name
+
+
+@oprepo.replaces('dace.comm.BlockGather')
+def _block_gather(pv: 'ProgramVisitor',
+                  sdfg: SDFG,
+                  state: SDFGState,
+                  in_buffer: str,
+                  out_buffer: str,
+                  gather_grid: str,
+                  reduce_grid: str = None,
+                  correspondence: Sequence[Integral] = None):
+    """ Block-gathers an Array using process-grids, sub-arrays, and the BlockGather library node.
+        This method currently does not support Array slices and imperfect tiling.
+        :param in_buffer: Name of the (local) Array descriptor.
+        :param out_buffer: Name of the (global) Array descriptor.
+        :param gather_grid: Name of the sub-grid used for gathering the Array (reduction group leaders).
+        :param reduce_grid: Name of the sub-grid used for broadcasting the Array (reduction groups). 
+        :param correspondence: Matching of the array/sub-array's dimensions to the process-grid's dimensions.
+        :return: Name of the new sub-array descriptor.
+    """
+    in_desc = sdfg.arrays[in_buffer]
+    out_desc = sdfg.arrays[out_buffer]
+
+    if in_desc.dtype != out_desc.dtype:
+        raise ValueError("Input/output buffer datatypes must match!")
+
+    subarray_name = _subarray(pv,
+                              sdfg,
+                              state,
+                              out_buffer,
+                              in_buffer,
+                              process_grid=gather_grid,
+                              correspondence=correspondence)
+
+    from dace.libraries.mpi import BlockGather
+    libnode = BlockGather('_BlockGather_', subarray_name, gather_grid, reduce_grid)
+
+    inbuf_name = in_buffer
+    in_desc = sdfg.arrays[inbuf_name]
+    inbuf_node = state.add_read(inbuf_name)
+    inbuf_mem = Memlet.from_array(inbuf_name, in_desc)
+
+    outbuf_name = out_buffer
+    out_desc = sdfg.arrays[outbuf_name]
+    outbuf_node = state.add_write(outbuf_name)
+    outbuf_mem = Memlet.from_array(outbuf_name, out_desc)
+
+    state.add_edge(inbuf_node, None, libnode, '_inp_buffer', inbuf_mem)
+    state.add_edge(libnode, '_out_buffer', outbuf_node, None, outbuf_mem)
+
+    return subarray_name
+
+
+@oprepo.replaces('dace.comm.Redistribute')
+def _redistribute(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, in_buffer: str, in_subarray: str, out_buffer: str,
+                  out_subarray: str):
+    """ Redistributes an Array using process-grids, sub-arrays, and the Redistribute library node.
+        :param in_buffer: Name of the (local) input Array descriptor.
+        :param in_subarray: Input sub-array descriptor.
+        :param out_buffer: Name of the (local) output Array descriptor.
+        :param out_subarray: Output sub-array descriptor.
+        :return: Name of the new redistribution descriptor.
+    """
+    in_desc = sdfg.arrays[in_buffer]
+    out_desc = sdfg.arrays[out_buffer]
+
+    rdistrarray_name = sdfg.add_rdistrarray(in_subarray, out_subarray)
+
+    from dace.libraries.mpi import Dummy, Redistribute
+    tasklet = Dummy(rdistrarray_name, [
+        f'MPI_Datatype {rdistrarray_name};', f'int {rdistrarray_name}_sends;',
+        f'MPI_Datatype* {rdistrarray_name}_send_types;', f'int* {rdistrarray_name}_dst_ranks;',
+        f'int {rdistrarray_name}_recvs;', f'MPI_Datatype* {rdistrarray_name}_recv_types;',
+        f'int* {rdistrarray_name}_src_ranks;', f'int {rdistrarray_name}_self_copies;',
+        f'int* {rdistrarray_name}_self_src;', f'int* {rdistrarray_name}_self_dst;',
+        f'int* {rdistrarray_name}_self_size;'
+    ])
+    state.add_node(tasklet)
+    _, scal = sdfg.add_scalar(rdistrarray_name, dace.int32, transient=True)
+    wnode = state.add_write(rdistrarray_name)
+    state.add_edge(tasklet, '__out', wnode, None, Memlet.from_array(rdistrarray_name, scal))
+
+    libnode = Redistribute('_Redistribute_', rdistrarray_name)
+
+    inbuf_range = None
+    if isinstance(in_buffer, tuple):
+        inbuf_name, inbuf_range = in_buffer
+    else:
+        inbuf_name = in_buffer
+    in_desc = sdfg.arrays[inbuf_name]
+    inbuf_node = state.add_read(inbuf_name)
+
+    outbuf_range = None
+    if isinstance(out_buffer, tuple):
+        outbuf_name, outbuf_range = out_buffer
+    else:
+        outbuf_name = out_buffer
+    out_desc = sdfg.arrays[outbuf_name]
+    outbuf_node = state.add_write(outbuf_name)
+
+    if inbuf_range:
+        inbuf_mem = Memlet.simple(inbuf_name, inbuf_range)
+    else:
+        inbuf_mem = Memlet.from_array(inbuf_name, in_desc)
+    if outbuf_range:
+        outbuf_mem = Memlet.simple(outbuf_name, outbuf_range)
+    else:
+        outbuf_mem = Memlet.from_array(outbuf_name, out_desc)
+
+    state.add_edge(inbuf_node, None, libnode, '_inp_buffer', inbuf_mem)
+    state.add_edge(libnode, '_out_buffer', outbuf_node, None, outbuf_mem)
+
+    return rdistrarray_name
+
+
 @oprepo.replaces('dace.comm.BCScatter')
-def _bcscatter(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
-               in_buffer: str, out_buffer: str,
+def _bcscatter(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, in_buffer: str, out_buffer: str,
                block_sizes: Union[str, Sequence[Union[sp.Expr, Number]]]):
 
     from dace.libraries.pblas.nodes.pgeadd import BlockCyclicScatter
@@ -547,16 +830,12 @@ def _bcscatter(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
             bsizes_desc = sdfg.arrays[bsizes_name]
             bsizes_node = state.add_read(bsizes_name)
         else:
-            bsizes_name, bsizes_desc = sdfg.add_temp_transient(
-                (len(block_sizes), ), dtype=dace.int32)
+            bsizes_name, bsizes_desc = sdfg.add_temp_transient((len(block_sizes), ), dtype=dace.int32)
             bsizes_node = state.add_access(bsizes_name)
             bsizes_tasklet = state.add_tasklet(
-                '_set_bsizes_', {}, {'__out'}, ";".join([
-                    "__out[{}] = {}".format(i, sz)
-                    for i, sz in enumerate(block_sizes)
-                ]))
-            state.add_edge(bsizes_tasklet, '__out', bsizes_node, None,
-                           Memlet.from_array(bsizes_name, bsizes_desc))
+                '_set_bsizes_', {}, {'__out'},
+                ";".join(["__out[{}] = {}".format(i, sz) for i, sz in enumerate(block_sizes)]))
+            state.add_edge(bsizes_tasklet, '__out', bsizes_node, None, Memlet.from_array(bsizes_name, bsizes_desc))
     else:
         bsizes_name = block_sizes
         bsizes_desc = sdfg.arrays[bsizes_name]
@@ -601,8 +880,7 @@ def _bcscatter(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
 
 
 @oprepo.replaces('dace.comm.BCGather')
-def _bcgather(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
-              in_buffer: str, out_buffer: str,
+def _bcgather(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, in_buffer: str, out_buffer: str,
               block_sizes: Union[str, Sequence[Union[sp.Expr, Number]]]):
 
     from dace.libraries.pblas.nodes.pgeadd import BlockCyclicGather
@@ -624,16 +902,12 @@ def _bcgather(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
             bsizes_desc = sdfg.arrays[bsizes_name]
             bsizes_node = state.add_read(bsizes_name)
         else:
-            bsizes_name, bsizes_desc = sdfg.add_temp_transient(
-                (len(block_sizes), ), dtype=dace.int32)
+            bsizes_name, bsizes_desc = sdfg.add_temp_transient((len(block_sizes), ), dtype=dace.int32)
             bsizes_node = state.add_access(bsizes_name)
             bsizes_tasklet = state.add_tasklet(
-                '_set_bsizes_', {}, {'__out'}, ";".join([
-                    "__out[{}] = {}".format(i, sz)
-                    for i, sz in enumerate(block_sizes)
-                ]))
-            state.add_edge(bsizes_tasklet, '__out', bsizes_node, None,
-                           Memlet.from_array(bsizes_name, bsizes_desc))
+                '_set_bsizes_', {}, {'__out'},
+                ";".join(["__out[{}] = {}".format(i, sz) for i, sz in enumerate(block_sizes)]))
+            state.add_edge(bsizes_tasklet, '__out', bsizes_node, None, Memlet.from_array(bsizes_name, bsizes_desc))
     else:
         bsizes_name = block_sizes
         bsizes_desc = sdfg.arrays[bsizes_name]
@@ -674,12 +948,9 @@ def _distr_matmult(pv: 'ProgramVisitor',
                    opa: str,
                    opb: str,
                    shape: Sequence[Union[sp.Expr, Number]],
-                   a_block_sizes: Union[str, Sequence[Union[sp.Expr,
-                                                            Number]]] = None,
-                   b_block_sizes: Union[str, Sequence[Union[sp.Expr,
-                                                            Number]]] = None,
-                   c_block_sizes: Union[str, Sequence[Union[sp.Expr,
-                                                            Number]]] = None):
+                   a_block_sizes: Union[str, Sequence[Union[sp.Expr, Number]]] = None,
+                   b_block_sizes: Union[str, Sequence[Union[sp.Expr, Number]]] = None,
+                   c_block_sizes: Union[str, Sequence[Union[sp.Expr, Number]]] = None):
 
     arra = sdfg.arrays[opa]
     arrb = sdfg.arrays[opb]
@@ -706,14 +977,11 @@ def _distr_matmult(pv: 'ProgramVisitor',
             a_bsizes_desc = sdfg.arrays[a_bsizes_name]
             a_bsizes_node = state.add_read(a_bsizes_name)
         else:
-            a_bsizes_name, a_bsizes_desc = sdfg.add_temp_transient(
-                (len(a_block_sizes), ), dtype=dace.int32)
+            a_bsizes_name, a_bsizes_desc = sdfg.add_temp_transient((len(a_block_sizes), ), dtype=dace.int32)
             a_bsizes_node = state.add_access(a_bsizes_name)
             a_bsizes_tasklet = state.add_tasklet(
-                '_set_a_bsizes_', {}, {'__out'}, ";".join([
-                    "__out[{}] = {}".format(i, sz)
-                    for i, sz in enumerate(a_block_sizes)
-                ]))
+                '_set_a_bsizes_', {}, {'__out'},
+                ";".join(["__out[{}] = {}".format(i, sz) for i, sz in enumerate(a_block_sizes)]))
             state.add_edge(a_bsizes_tasklet, '__out', a_bsizes_node, None,
                            Memlet.from_array(a_bsizes_name, a_bsizes_desc))
     else:
@@ -728,14 +996,11 @@ def _distr_matmult(pv: 'ProgramVisitor',
             b_bsizes_desc = sdfg.arrays[b_bsizes_name]
             b_bsizes_node = state.add_read(b_bsizes_name)
         else:
-            b_bsizes_name, b_bsizes_desc = sdfg.add_temp_transient(
-                (len(b_block_sizes), ), dtype=dace.int32)
+            b_bsizes_name, b_bsizes_desc = sdfg.add_temp_transient((len(b_block_sizes), ), dtype=dace.int32)
             b_bsizes_node = state.add_access(b_bsizes_name)
             b_bsizes_tasklet = state.add_tasklet(
-                '_set_b_sizes_', {}, {'__out'}, ";".join([
-                    "__out[{}] = {}".format(i, sz)
-                    for i, sz in enumerate(b_block_sizes)
-                ]))
+                '_set_b_sizes_', {}, {'__out'},
+                ";".join(["__out[{}] = {}".format(i, sz) for i, sz in enumerate(b_block_sizes)]))
             state.add_edge(b_bsizes_tasklet, '__out', b_bsizes_node, None,
                            Memlet.from_array(b_bsizes_name, b_bsizes_desc))
     else:

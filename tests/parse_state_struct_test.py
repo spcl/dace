@@ -29,20 +29,16 @@ def cuda_helper():
         } 
     } 
     """
-    program = codeobject.CodeObject("cuda_helper", helper_code, "cpp",
-                                    targets.cpu.CPUCodeGen, "CudaHelper")
+    program = codeobject.CodeObject("cuda_helper", helper_code, "cpp", targets.cpu.CPUCodeGen, "CudaHelper")
 
-    dummy_cuda_target = codeobject.CodeObject("dummy", "", "cu",
-                                              targets.cuda.CUDACodeGen,
-                                              "CudaDummy")
+    dummy_cuda_target = codeobject.CodeObject("dummy", "", "cu", targets.cuda.CUDACodeGen, "CudaDummy")
 
-    BUILD_PATH = os.path.join('.dacecache', "cuda_helper")
-    compiler.generate_program_folder(None, [program, dummy_cuda_target],
-                                     BUILD_PATH)
+    build_folder = dace.Config.get('default_build_folder')
+    BUILD_PATH = os.path.join(build_folder, "cuda_helper")
+    compiler.generate_program_folder(None, [program, dummy_cuda_target], BUILD_PATH)
     compiler.configure_and_compile(BUILD_PATH)
 
-    checker_dll = compiled_sdfg.ReloadableDLL(
-        compiler.get_binary_name(BUILD_PATH, "cuda_helper"), "cuda_helper")
+    checker_dll = compiled_sdfg.ReloadableDLL(compiler.get_binary_name(BUILD_PATH, "cuda_helper"), "cuda_helper")
 
     class CudaHelper:
         def __init__(self):
@@ -56,13 +52,10 @@ def cuda_helper():
             self.dll.unload()
 
         def host_to_gpu(self, gpu_ptr: int, numpy_array: np.ndarray):
-            size = ctypes.sizeof(
-                dtypes._FFI_CTYPES[numpy_array.dtype.type]) * numpy_array.size
+            size = ctypes.sizeof(dtypes._FFI_CTYPES[numpy_array.dtype.type]) * numpy_array.size
             result = ctypes.c_int(
-                self._host_to_gpu(
-                    ctypes.c_void_p(gpu_ptr),
-                    ctypes.c_void_p(numpy_array.__array_interface__["data"][0]),
-                    ctypes.c_size_t(size)))
+                self._host_to_gpu(ctypes.c_void_p(gpu_ptr), ctypes.c_void_p(numpy_array.__array_interface__["data"][0]),
+                                  ctypes.c_size_t(size)))
             if result.value != 0:
                 raise ValueError("host_to_gpu returned nonzero result!")
 
@@ -73,11 +66,10 @@ def cuda_helper():
 def test_preallocate_transients_in_state_struct(cuda_helper):
     @dace.program
     def persistent_transient(A: dace.float32[3, 3]):
-        persistent_transient = dace.define_local(
-            [3, 5],
-            dace.float32,
-            lifetime=dace.AllocationLifetime.Persistent,
-            storage=dace.StorageType.GPU_Global)
+        persistent_transient = dace.define_local([3, 5],
+                                                 dace.float32,
+                                                 lifetime=dace.AllocationLifetime.Persistent,
+                                                 storage=dace.StorageType.GPU_Global)
         return A @ persistent_transient
 
     sdfg: dace.SDFG = persistent_transient.to_sdfg()
@@ -86,12 +78,13 @@ def test_preallocate_transients_in_state_struct(cuda_helper):
     A = np.random.randn(3, 3).astype(np.float32)
     B = np.random.randn(3, 5).astype(np.float32)
     compiledsdfg = sdfg.compile()
-    compiledsdfg.initialize()
+    compiledsdfg._initialize(tuple())
 
     state_struct = compiledsdfg.get_state_struct()
 
     # copy the B array into the transient ptr
-    cuda_helper.host_to_gpu(state_struct.persistent_transient, B.copy())
+    ptr = getattr(state_struct, f'__{sdfg.sdfg_id}_persistent_transient')
+    cuda_helper.host_to_gpu(ptr, B.copy())
     result = np.zeros_like(B)
     compiledsdfg(A=A, __return=result)
 

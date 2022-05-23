@@ -8,11 +8,12 @@ import re
 import warnings
 import sympy as sp
 import numpy as np
-from typing import Dict, Union
+from typing import Dict, Iterable, List, Set, Tuple, Union
+import copy
 
 import dace
 from dace.codegen.targets import cpp
-from dace import subsets, data as dt, dtypes
+from dace import subsets, data as dt, dtypes, memlet, symbolic
 from dace.config import Config
 from dace.frontend import operations
 from dace.sdfg import SDFG, nodes, utils, dynamic_map_inputs
@@ -21,20 +22,22 @@ from dace.codegen import exceptions as cgx
 from dace.codegen.codeobject import CodeObject
 from dace.codegen.dispatcher import DefinedType
 from dace.codegen.prettycode import CodeIOStream
-from dace.codegen.targets.target import (TargetCodeGenerator, IllegalCopy,
-                                         make_absolute)
+from dace.codegen.targets.target import (TargetCodeGenerator, IllegalCopy, make_absolute)
 from dace.codegen import cppunparse
 from dace.properties import Property, make_properties, indirect_properties
+from dace.sdfg.state import SDFGState
 from dace.symbolic import evaluate
+from dace.transformation.dataflow import MapUnroll
 from collections import defaultdict
 
-_CPU_STORAGE_TYPES = {
-    dtypes.StorageType.CPU_Heap, dtypes.StorageType.CPU_ThreadLocal,
-    dtypes.StorageType.CPU_Pinned
-}
+_CPU_STORAGE_TYPES = {dtypes.StorageType.CPU_Heap, dtypes.StorageType.CPU_ThreadLocal, dtypes.StorageType.CPU_Pinned}
 _FPGA_STORAGE_TYPES = {
-    dtypes.StorageType.FPGA_Global, dtypes.StorageType.FPGA_Local,
-    dtypes.StorageType.FPGA_Registers, dtypes.StorageType.FPGA_ShiftRegister
+    dtypes.StorageType.FPGA_Global, dtypes.StorageType.FPGA_Local, dtypes.StorageType.FPGA_Registers,
+    dtypes.StorageType.FPGA_ShiftRegister
+}
+
+_FPGA_LOCAL_STORAGE_TYPES = {
+    dtypes.StorageType.FPGA_Local, dtypes.StorageType.FPGA_Registers, dtypes.StorageType.FPGA_ShiftRegister
 }
 
 
@@ -53,19 +56,256 @@ def is_fpga_kernel(sdfg, state):
     to the FPGA code generator.
     :return: True if this is an FPGA kernel, False otherwise.
     """
-    if ("is_FPGA_kernel" in state.location
-            and state.location["is_FPGA_kernel"] == False):
+    if ("is_FPGA_kernel" in state.location and state.location["is_FPGA_kernel"] == False):
         return False
     data_nodes = state.data_nodes()
     if len(data_nodes) == 0:
         return False
     for n in data_nodes:
-        if n.desc(sdfg).storage not in (dtypes.StorageType.FPGA_Global,
-                                        dtypes.StorageType.FPGA_Local,
-                                        dtypes.StorageType.FPGA_Registers,
-                                        dtypes.StorageType.FPGA_ShiftRegister):
+        if n.desc(sdfg).storage not in (dtypes.StorageType.FPGA_Global, dtypes.StorageType.FPGA_Local,
+                                        dtypes.StorageType.FPGA_Registers, dtypes.StorageType.FPGA_ShiftRegister):
             return False
     return True
+
+
+def is_external_stream(node: dace.sdfg.nodes.Node, subgraph: Union[dace.sdfg.SDFGState, ScopeSubgraphView]):
+    '''
+    Given a node and a subgraph, returns whether this is an external stream (the other endpoint is in
+    another FPGA Kernel) or not.
+    :return: True if node represent an external stream, False otherwise
+    '''
+
+    external = False
+
+    # If this is a stream, check if the other side of it is in the same kernel/subgraph
+    if isinstance(node, dace.nodes.AccessNode) and isinstance(node.desc(subgraph), dt.Stream):
+        for nn in subgraph.nodes():
+            if nn != node and isinstance(nn, dace.nodes.AccessNode) and node.desc(subgraph) == nn.desc(subgraph):
+                break
+        else:
+            external = True
+
+    return external
+
+
+def is_multibank_array(array: dt.Data):
+    """
+    :return: True if this array is placed on HBM/DDR on FPGA Global memory
+    """
+    if (isinstance(array, dt.Array) and array.storage == dtypes.StorageType.FPGA_Global):
+        res = parse_location_bank(array)
+        return res is not None and (res[0] == "HBM" or res[0] == "DDR")
+    else:
+        return False
+
+
+def is_multibank_array_with_distributed_index(array: dt.Data):
+    """
+    :return: True if this array is placed on HBM/DDR and has an extra first
+    dimension equal to the number of banks is placed on. For HBM/DDR arrays
+    spanning across multiple banks this is always true.
+    """
+    if is_multibank_array(array):
+        res = parse_location_bank(array)
+        low, high = get_multibank_ranges_from_subset(res[1], None)
+        return high - low > 1 or (len(array.shape) > 1 and str(array.shape[0]) == "1")
+    else:
+        return False
+
+
+def is_fpga_array(array: dt.Data):
+    """
+    :return: True if this array is placed on FPGA memory
+    """
+    return isinstance(array, dt.Array) and array.storage in _FPGA_STORAGE_TYPES
+
+
+def iterate_multibank_interface_ids(array: dt.Array, interface_ids: Union[int, List[Tuple[int, int]]]):
+    """
+    Works on the interface_ids generated by make_parameter. If the array is a hbm/ddr multibank array,
+    interface_ids is a list of tuples of the form (bank, id), and the method will yield the values
+    one by one. If it is not, it will return a tuple of 0 (bank) and the interface id once.
+    """
+    if is_multibank_array_with_distributed_index(array):
+        for bank, id in interface_ids:
+            yield (bank, id)
+    else:
+        yield (0, interface_ids)
+
+
+def iterate_distributed_subset(desc: dt.Array, access_memlet: memlet.Memlet, is_write: bool, sdfg: SDFG):
+    """
+    :param desc: The array accessed by the memlet
+    :param access_memlet: The memlet
+    :param is_write: If we care about the write or read direction. is_write means we write to desc,
+        not is_write means we read from it
+    :return: if access_memlet contains a distributed subset the method will count from the lower to the upper
+    end of it. Otherwise returns 0 once.
+    """
+    if is_multibank_array_with_distributed_index(desc):
+        if is_write:
+            subset = access_memlet.dst_subset or access_memlet.subset
+        else:
+            subset = access_memlet.src_subset or access_memlet.subset
+        if subset is None:
+            yield 0
+        else:
+            # We can assume anywhere in the FPGA codegen that distributed subsets
+            # are evaluatable, because all maps are unrolled before codegen
+            low, high = get_multibank_ranges_from_subset(subset, sdfg)
+            for k in range(low, high):
+                yield k
+    else:
+        yield 0
+
+
+def modify_distributed_subset(subset: subsets.Subset, change: int):
+    """
+    Modifies the first index of :param subset: (the one used for distributed subsets).
+    :param subset: is deepcopied before any modification to it is done.
+    :param change: the first index is set to this value, unless it's (-1) in which case
+        the first index is completly removed
+    """
+    cps = copy.deepcopy(subset)
+    if change == -1:
+        cps.pop([0])
+    else:
+        cps[0] = (change, change, 1)
+    return cps
+
+
+def get_multibank_ranges_from_subset(subset: Union[subsets.Subset, str], sdfg: SDFG) -> Tuple[int, int]:
+    """
+    Returns the upper and lower end of the accessed multibank-range, evaluated using the
+    constants on the SDFG.
+    :returns: (low, high) where low = the lowest accessed bank and high the
+        highest accessed bank + 1.
+    """
+    if isinstance(subset, str):
+        subset = subsets.Range.from_string(subset)
+    low, high, stride = subset[0]
+    if stride != 1:
+        raise NotImplementedError(f"Strided multibank subsets not supported.")
+    try:
+        low = int(symbolic.resolve_symbol_to_constant(low, sdfg))
+        high = int(symbolic.resolve_symbol_to_constant(high, sdfg))
+    except:
+        raise ValueError(f"Only constant evaluatable indices allowed for multibank-memlets on the bank index.")
+    return (low, high + 1)
+
+
+def parse_location_bank(array: dt.Array) -> Tuple[str, str]:
+    """
+    :param array: an array on FPGA global memory
+    :return: None if an array is given which does not have a location['memorytype'] value.
+        Otherwise it will return a tuple (bank_type, bank_assignment), where bank_type
+        is one of 'DDR', 'HBM' and bank_assignment a string that describes which banks are
+        used.
+    """
+    if "memorytype" in array.location:
+        if "bank" not in array.location:
+            raise ValueError("If 'memorytype' is specified for an array 'bank' must also be specified")
+        val: str = array.location["bank"]
+        memorytype: str = array.location["memorytype"]
+        memorytype = memorytype.upper()
+        if (memorytype == "DDR" or memorytype == "HBM"):
+            return (memorytype, array.location["bank"])
+        else:
+            raise ValueError(f"{memorytype} is an invalid memorytype. Supported are HBM and DDR.")
+    else:
+        return None
+
+
+def fpga_ptr(name: str,
+             desc: dt.Data = None,
+             sdfg: SDFG = None,
+             subset_info: Union[subsets.Subset, int] = None,
+             is_write: bool = None,
+             dispatcher=None,
+             ancestor: int = 0,
+             is_array_interface: bool = False,
+             interface_id: int = None,
+             decouple_array_interfaces: bool = False):
+    """
+    Returns a string that points to the data based on its name, and various other conditions
+    that may apply for that data field.
+    :param name: Data name.
+    :param desc: Data descriptor.
+    :param subset_info: Any additional information about the accessed subset.
+    :param ancestor: The ancestor level where the variable should be searched for if
+        is_array_interface is True when dispatcher is not None
+    :param is_array_interface: Data is pointing to an interface in FPGA-Kernel compilation
+    :param interface_id: An optional interface id that will be added to the name (only for array interfaces)
+    :param decouple_array_interfaces: if True it will qualify the name of an array interface, depending whether
+            it is used for reading from or writing to memory
+    :return: C-compatible name that can be used to access the data.
+    """
+    if (desc is not None and is_multibank_array_with_distributed_index(desc)):
+
+        location_bank = parse_location_bank(desc)
+        mem_type = ""
+        if location_bank is not None:
+            mem_type = location_bank[0].lower()
+
+        if (subset_info == None):
+            raise ValueError("Cannot generate name for bank without subset info")
+        elif (isinstance(subset_info, int)):
+            name = f"{mem_type}{subset_info}_{name}"
+        elif (isinstance(subset_info, subsets.Subset)):
+            if (sdfg == None):
+                raise ValueError("Cannot generate name for bank using subset if sdfg not provided")
+            low, high = get_multibank_ranges_from_subset(subset_info, sdfg)
+            if (low + 1 != high):
+                raise ValueError("ptr cannot generate names for subsets accessing more than one memory bank")
+
+            name = f"{mem_type}{low}_{name}"
+
+            subset_info = low  #used for arrayinterface name where it must be int
+    if is_array_interface:
+
+        if decouple_array_interfaces:
+            # qualify the name
+            if is_write is None:
+                raise ValueError("is_write must be set for ArrayInterface.")
+            ptr_in = f"__{name}_in"
+            ptr_out = f"__{name}_out"
+            if dispatcher is not None:
+                # DaCe allows reading from an output connector, even though it
+                # is not an input connector. If this occurs, panic and read
+                # from the output interface instead
+                if is_write or not dispatcher.defined_vars.has(ptr_in, ancestor):
+                    # Throw a KeyError if this pointer also doesn't exist
+                    dispatcher.defined_vars.get(ptr_out, ancestor)
+                    # Otherwise use it
+                    name = ptr_out
+                else:
+                    name = ptr_in
+            else:
+                # We might call this before the variable is even defined (e.g., because
+                # we are about to define it), so if the dispatcher is not passed, just
+                # return the appropriate string
+                name = ptr_out if is_write else ptr_in
+        # Append the interface id, if provided
+        if interface_id is not None:
+            name = f"{name}_{interface_id}"
+
+    return name
+
+
+def unqualify_fpga_array_name(sdfg: dace.SDFG, arr_name: str):
+    '''
+    Returns the unqualified array name if it refers to an array interface.
+    Otherwise return it as it is.
+    :param name: array name to unqualify
+    '''
+
+    if arr_name not in sdfg.arrays and (arr_name.endswith('_in')
+                                        or arr_name.endswith('out')) and arr_name.startswith('__'):
+        unqualified = re.sub('_in$|_out$', '', arr_name)
+        unqualified = re.sub('^__', '', unqualified)
+        return unqualified
+    else:
+        return arr_name
 
 
 class FPGACodeGen(TargetCodeGenerator):
@@ -106,19 +346,20 @@ class FPGACodeGen(TargetCodeGenerator):
         self._other_codes = {}
         self._bank_assignments = {}  # {(data name, sdfg): (type, id)}
         self._stream_connections = {}  # { name: [src, dst] }
+        # For generating kernel instrumentation code, is incremented every time
+        # a kernel is instrumented
+        self._kernel_instrumentation_index: int = 0
 
+        self._decouple_array_interfaces = False
         # Register additional FPGA dispatchers
-        self._dispatcher.register_map_dispatcher(
-            [dtypes.ScheduleType.FPGA_Device], self)
+        self._dispatcher.register_map_dispatcher([dtypes.ScheduleType.FPGA_Device], self)
 
-        self._dispatcher.register_state_dispatcher(self,
-                                                   predicate=is_fpga_kernel)
+        self._dispatcher.register_state_dispatcher(self, predicate=is_fpga_kernel)
 
         self._dispatcher.register_node_dispatcher(
             self,
-            predicate=lambda sdfg, state, node: self._in_device_code and not (
-                isinstance(node, nodes.Tasklet) and node.language == dtypes.
-                Language.SystemVerilog))
+            predicate=lambda sdfg, state, node: self._in_device_code and not (isinstance(
+                node, nodes.Tasklet) and node.language == dtypes.Language.SystemVerilog))
 
         fpga_storage = [
             dtypes.StorageType.FPGA_Global,
@@ -129,27 +370,22 @@ class FPGACodeGen(TargetCodeGenerator):
         self._dispatcher.register_array_dispatcher(fpga_storage, self)
 
         # Register permitted copies
-        for storage_from in itertools.chain(fpga_storage,
-                                            [dtypes.StorageType.Register]):
-            for storage_to in itertools.chain(fpga_storage,
-                                              [dtypes.StorageType.Register]):
-                if (storage_from == dtypes.StorageType.Register
-                        and storage_to == dtypes.StorageType.Register):
-                    continue
-                self._dispatcher.register_copy_dispatcher(
-                    storage_from, storage_to, None, self)
-        self._dispatcher.register_copy_dispatcher(
-            dtypes.StorageType.FPGA_Global, dtypes.StorageType.CPU_Heap, None,
-            self)
-        self._dispatcher.register_copy_dispatcher(
-            dtypes.StorageType.FPGA_Global, dtypes.StorageType.CPU_ThreadLocal,
-            None, self)
-        self._dispatcher.register_copy_dispatcher(
-            dtypes.StorageType.CPU_Heap, dtypes.StorageType.FPGA_Global, None,
-            self)
-        self._dispatcher.register_copy_dispatcher(
-            dtypes.StorageType.CPU_ThreadLocal, dtypes.StorageType.FPGA_Global,
-            None, self)
+        for storage_from in itertools.chain(fpga_storage, [dtypes.StorageType.Register]):
+            for storage_to in itertools.chain(fpga_storage, [dtypes.StorageType.Register]):
+                if (storage_from == dtypes.StorageType.Register and storage_to == dtypes.StorageType.Register):
+                    # register this as copy dispatcher only if the destination is scheduled on FPGA
+                    self._dispatcher.register_copy_dispatcher(storage_from, storage_to, dtypes.ScheduleType.FPGA_Device,
+                                                              self)
+                else:
+                    self._dispatcher.register_copy_dispatcher(storage_from, storage_to, None, self)
+        self._dispatcher.register_copy_dispatcher(dtypes.StorageType.FPGA_Global, dtypes.StorageType.CPU_Heap, None,
+                                                  self)
+        self._dispatcher.register_copy_dispatcher(dtypes.StorageType.FPGA_Global, dtypes.StorageType.CPU_ThreadLocal,
+                                                  None, self)
+        self._dispatcher.register_copy_dispatcher(dtypes.StorageType.CPU_Heap, dtypes.StorageType.FPGA_Global, None,
+                                                  self)
+        self._dispatcher.register_copy_dispatcher(dtypes.StorageType.CPU_ThreadLocal, dtypes.StorageType.FPGA_Global,
+                                                  None, self)
 
         # Memory width converters (gearboxing) to generate globally
         self.converters_to_generate = set()
@@ -162,13 +398,14 @@ class FPGACodeGen(TargetCodeGenerator):
     def has_finalizer(self):
         return False
 
-    def on_target_used(self) -> None:
+    def preprocess(self, sdfg: SDFG) -> None:
         # Right before finalizing code, write FPGA context to state structure
-        self._frame.statestruct.append('dace::fpga::Context *fpga_context;')
+        self._frame.statestruct.append('dace_fpga_context *fpga_context;')
 
-    def _kernels_subgraphs(self, graph: Union[dace.sdfg.SDFGState,
-                                              ScopeSubgraphView],
-                           dependencies: dict):
+        # Call vendor-specific preprocessing
+        self._internal_preprocess(sdfg)
+
+    def _kernels_subgraphs(self, graph: Union[dace.sdfg.SDFGState, ScopeSubgraphView], dependencies: dict):
         '''
             Finds subgraphs of an SDFGState or ScopeSubgraphView that correspond to kernels.
             This is done by looking to which kernel, each node belongs.
@@ -180,12 +417,9 @@ class FPGACodeGen(TargetCodeGenerator):
         from dace.sdfg.scope import ScopeSubgraphView
 
         if not isinstance(graph, (dace.sdfg.SDFGState, ScopeSubgraphView)):
-            raise TypeError(
-                "Expected SDFGState or ScopeSubgraphView, got: {}".format(
-                    type(graph).__name__))
+            raise TypeError("Expected SDFGState or ScopeSubgraphView, got: {}".format(type(graph).__name__))
 
-        subgraphs = collections.defaultdict(
-            list)  # {kernel_id: {nodes in subgraph}}
+        subgraphs = collections.defaultdict(list)  # {kernel_id: {nodes in subgraph}}
 
         # Go over the nodes and populate the kernels subgraphs
         for node in graph.nodes():
@@ -227,14 +461,12 @@ class FPGACodeGen(TargetCodeGenerator):
         # Use topological sort to order kernels according to their dependencies
         for kernel_id in nx.topological_sort(kernels_graph):
             # Return the subgraph and the kernel id
-            subgraph_views.append((ScopeSubgraphView(
-                graph, [n for n in all_nodes if n in subgraphs[kernel_id]],
-                None), kernel_id))
+            subgraph_views.append((ScopeSubgraphView(graph, [n for n in all_nodes if n in subgraphs[kernel_id]],
+                                                     None), kernel_id))
         del kernels_graph
         return subgraph_views
 
-    def generate_state(self, sdfg: dace.SDFG, state: dace.SDFGState,
-                       function_stream: CodeIOStream,
+    def generate_state(self, sdfg: dace.SDFG, state: dace.SDFGState, function_stream: CodeIOStream,
                        callsite_stream: CodeIOStream):
         '''
         Generate an FPGA State, possibly comprising multiple Kernels and/or PEs.
@@ -248,6 +480,19 @@ class FPGACodeGen(TargetCodeGenerator):
         state_id = sdfg.node_id(state)
 
         if not self._in_device_code:
+
+            # Unroll maps directly in the SDFG so the subgraphs can be
+            # recognized as independent processing elements
+            top_level_unrolled = [
+                n for n in state.scope_children()[None]
+                if isinstance(n, dace.sdfg.nodes.MapEntry) and n.schedule == dtypes.ScheduleType.Unrolled
+            ]
+            for map_entry in top_level_unrolled:
+                MapUnroll.apply_to(sdfg, map_entry=map_entry)
+            if top_level_unrolled:
+                disp = self._dispatcher.get_scope_dispatcher(dtypes.ScheduleType.Unrolled)
+                self._dispatcher._used_targets.add(disp)
+
             kernels = []  # List of tuples (subgraph, kernel_id)
 
             # Start a new state code generation: reset previous dependencies if any
@@ -261,9 +506,7 @@ class FPGACodeGen(TargetCodeGenerator):
             start_kernel = 0
             for sg in subgraphs:
                 # Determine kernels in state
-                num_kernels, dependencies = self.partition_kernels(
-                    sg, default_kernel=start_kernel)
-
+                num_kernels, dependencies = self.partition_kernels(sg, default_kernel=start_kernel)
                 if num_kernels > 1:
                     # For each kernel, derive the corresponding subgraphs
                     # and keep track of dependencies
@@ -274,9 +517,11 @@ class FPGACodeGen(TargetCodeGenerator):
                 start_kernel = start_kernel + num_kernels
 
             # There is no need to generate additional kernels if the number of found kernels
-            # is equal to the number of connected components: use PEs instead
+            # is equal to the number of connected components: use PEs instead (only one kernel)
             if len(subgraphs) == len(kernels):
                 kernels = [(state, 0)]
+
+            self._num_kernels = len(kernels)
 
             state_parameters = []
 
@@ -284,6 +529,7 @@ class FPGACodeGen(TargetCodeGenerator):
             # synchronize them, create transient buffers.
             state_host_header_stream = CodeIOStream()
             state_host_body_stream = CodeIOStream()
+            instrumentation_stream = CodeIOStream()
 
             # Kernels are now sorted considering their dependencies
             for kern, kern_id in kernels:
@@ -299,12 +545,10 @@ class FPGACodeGen(TargetCodeGenerator):
                     data = node.desc(sdfg)
                     if node.data not in all_transients or node.data in allocated:
                         continue
-                    if (data.storage == dtypes.StorageType.FPGA_Global
-                            and not isinstance(data, dt.View)):
+                    if (data.storage == dtypes.StorageType.FPGA_Global and not isinstance(data, dt.View)):
                         allocated.add(node.data)
-                        self._dispatcher.dispatch_allocate(
-                            sdfg, kern, state_id, node, function_stream,
-                            callsite_stream)
+                        self._dispatcher.dispatch_allocate(sdfg, kern, state_id, node, data, function_stream,
+                                                           callsite_stream)
 
                 # Create a unique kernel name to avoid name clashes
                 # If this kernels comes from a Nested SDFG, use that name also
@@ -322,20 +566,9 @@ class FPGACodeGen(TargetCodeGenerator):
                 self._kernels_names_to_id[kernel_name] = kern_id
 
                 # Generate kernel code
-                self.generate_kernel(sdfg, state, kernel_name, subgraphs,
-                                     function_stream, callsite_stream,
-                                     state_host_header_stream,
-                                     state_host_body_stream, state_parameters,
-                                     kern_id)
-
-                # Emit the connections ini file
-                if len(self._stream_connections) > 0:
-                    ini_stream = CodeIOStream()
-                    ini_stream.write('[connectivity]')
-                    for _, (src, dst) in self._stream_connections.items():
-                        ini_stream.write('stream_connect={}:{}'.format(
-                            src, dst))
-                    self._other_codes['link.ini'] = ini_stream
+                self.generate_kernel(sdfg, state, kernel_name, subgraphs, function_stream, callsite_stream,
+                                     state_host_header_stream, state_host_body_stream, instrumentation_stream,
+                                     state_parameters, kern_id)
 
             kernel_args_call_host = []
             kernel_args_opencl = []
@@ -344,51 +577,83 @@ class FPGACodeGen(TargetCodeGenerator):
             kernel_args_opencl.append(f"{self._global_sdfg.name}_t *__state")
             kernel_args_call_host.append(f"__state")
 
-            for is_output, argname, arg, _ in state_parameters:
+            for is_output, arg_name, arg, interface_id in state_parameters:
                 # Streams and Views are not passed as arguments
-                if not isinstance(arg, dt.Stream) and not isinstance(
-                        arg, dt.View):
-                    kernel_args_call_host.append(arg.as_arg(False,
-                                                            name=argname))
-                    kernel_args_opencl.append(
-                        FPGACodeGen.make_opencl_parameter(argname, arg))
+                if (isinstance(arg, dt.Array)):
+                    for bank, _ in iterate_multibank_interface_ids(arg, interface_id):
+                        current_name = fpga_ptr(arg_name,
+                                                arg,
+                                                sdfg,
+                                                bank,
+                                                decouple_array_interfaces=self._decouple_array_interfaces)
+                        kernel_args_call_host.append(arg.as_arg(False, name=current_name))
+                        kernel_args_opencl.append(FPGACodeGen.make_opencl_parameter(current_name, arg))
+                elif (not isinstance(arg, dt.Stream) and not isinstance(arg, dt.View)):
+                    kernel_args_call_host.append(arg.as_arg(False, name=arg_name))
+                    kernel_args_opencl.append(FPGACodeGen.make_opencl_parameter(arg_name, arg))
 
             kernel_args_call_host = dtypes.deduplicate(kernel_args_call_host)
             kernel_args_opencl = dtypes.deduplicate(kernel_args_opencl)
 
             ## Generate the global function here
 
-            # TODO: add profiling
             kernel_host_stream = CodeIOStream()
             host_function_name = f"__dace_runstate_{sdfg.sdfg_id}_{state.name}_{state_id}"
-            function_stream.write("\n\nDACE_EXPORTED void {}({});\n\n".format(
-                host_function_name, ", ".join(kernel_args_opencl)))
+            function_stream.write("\n\nDACE_EXPORTED void {}({});\n\n".format(host_function_name,
+                                                                              ", ".join(kernel_args_opencl)))
 
             # add generated header information
             kernel_host_stream.write(state_host_header_stream.getvalue())
 
             kernel_host_stream.write(f"""\
-DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
-      hlslib::ocl::Program program = __state->fpga_context->Get().CurrentlyLoadedProgram();"""
-                                     )
+DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{""")
+
+            if state.instrument == dtypes.InstrumentationType.FPGA:
+                kernel_host_stream.write("""\
+const unsigned long int _dace_fpga_begin_us = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now().time_since_epoch()).count();
+""")
+
+            kernel_host_stream.write(f"""\
+      hlslib::ocl::Program program = __state->fpga_context->Get().CurrentlyLoadedProgram();\
+""")
             # Create a vector to collect all events that are being generated to allow
             # waiting before exiting this state
-            kernel_host_stream.write(f"std::vector<cl::Event> all_events;", )
+            kernel_host_stream.write("std::vector<hlslib::ocl::Event> all_events;")
 
             # Kernels invocations
             kernel_host_stream.write(state_host_body_stream.getvalue())
 
             # Wait for all events
-            kernel_host_stream.write(" cl::Event::waitForEvents(all_events);")
+            kernel_host_stream.write("hlslib::ocl::WaitForEvents(all_events);")
+
+            # Instrumentation
+            if state.instrument == dtypes.InstrumentationType.FPGA:
+                kernel_host_stream.write("""
+// Begin FPGA kernel runtime instrumentation
+cl_ulong first_start = std::numeric_limits<unsigned long int>::max();
+cl_ulong last_end = std::numeric_limits<unsigned long int>::min();""")
+                if Config.get_bool("instrumentation", "print_fpga_runtime"):
+                    kernel_host_stream.write("""
+std::cout << std::scientific;""")
+                kernel_host_stream.write(instrumentation_stream.getvalue())
+                kernel_host_stream.write(f"""\
+const unsigned long int _dace_fpga_end_us = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now().time_since_epoch()).count();
+// Convert from nanoseconds (reported by OpenCL) to microseconds (expected by the profiler)
+__state->report.add_completion("Full FPGA kernel runtime for {state.label}", "FPGA", 1e-3 * first_start, 1e-3 * last_end, {sdfg.sdfg_id}, {state_id}, -1);
+__state->report.add_completion("Full FPGA state runtime for {state.label}", "FPGA", _dace_fpga_begin_us, _dace_fpga_end_us, {sdfg.sdfg_id}, {state_id}, -1);
+""")
+                if Config.get_bool("instrumentation", "print_fpga_runtime"):
+                    kernel_host_stream.write(f"""
+const double elapsed = 1e-6 * (_dace_fpga_end_us - _dace_fpga_begin_us);
+std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " seconds.\\n";\
+""")
 
             kernel_host_stream.write("}\n")
 
-            callsite_stream.write("{}({});".format(
-                host_function_name, ", ".join(kernel_args_call_host)))
+            callsite_stream.write("{}({});".format(host_function_name, ", ".join(kernel_args_call_host)))
 
             # Store code strings to be passed to compilation phase
-            self._host_codes.append(
-                (kernel_name, kernel_host_stream.getvalue()))
+            self._host_codes.append((kernel_name, kernel_host_stream.getvalue()))
 
         else:  # self._in_device_code == True
 
@@ -402,18 +667,13 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                     continue
                 # Make sure there are no global transients in the nested state
                 # that are thus not gonna be allocated
-                if data.storage == dtypes.StorageType.FPGA_Global and not isinstance(
-                        data, dt.View):
-                    raise cgx.CodegenError(
-                        "Cannot allocate global memory from device code.")
+                if data.storage == dtypes.StorageType.FPGA_Global and not isinstance(data, dt.View):
+                    raise cgx.CodegenError("Cannot allocate global memory from device code.")
                 allocated.add(node.data)
                 # Allocate transients
-                self._dispatcher.dispatch_allocate(sdfg, state, state_id, node,
-                                                   function_stream,
-                                                   callsite_stream)
+                self._dispatcher.dispatch_allocate(sdfg, state, state_id, node, data, function_stream, callsite_stream)
 
-            self.generate_nested_state(sdfg, state, state.label, subgraphs,
-                                       function_stream, callsite_stream)
+            self.generate_nested_state(sdfg, state, state.label, subgraphs, function_stream, callsite_stream)
 
     @staticmethod
     def shared_data(subgraphs):
@@ -432,7 +692,7 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                             seen[node.data] = sg
         return shared
 
-    def make_parameters(self, sdfg, state, subgraphs):
+    def make_parameters(self, sdfg: SDFG, state: SDFGState, subgraphs):
         """
         Determines the parameters that must be passed to the passed list of
         subgraphs, as well as to the global kernel.
@@ -465,106 +725,140 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
 
         global_data_parameters = set()
         # Count appearances of each global array to create multiple interfaces
-        global_interfaces: Dict[str, int] = collections.defaultdict(int)
+        if self._decouple_array_interfaces:
+            global_interfaces: Dict[str, int] = collections.defaultdict(int)
+        else:
+            # For Xilinx, even if we are not decoupling array interfaces we need anyway to use different interfaces
+            # if we access the same container from different PEs
+            global_interfaces: Dict[str, (int, int)] = collections.defaultdict(lambda: (0, 0))
 
         top_level_local_data = set()
         subgraph_parameters = collections.OrderedDict()  # {subgraph: [params]}
         nested_global_transients = set()
         # [(Is an output, dataname string, data object, interface)]
-        external_streams: Set[tuple[bool, str, dt, dict[str, int]]] = set()
+        external_streams: Set[tuple[bool, str, dt.Data, dict[str, int]]] = set()
 
         # Mapping from global arrays to memory interfaces
-        bank_assignments: Dict[str, str] = {}
+        bank_assignments: Dict[str, Tuple[str, Union[int, subsets.Range]]] = {}
 
         # Mapping from symbol to a unique parameter tuple
-        all_symbols = {
+        all_symbols = {k: (False, k, dt.Scalar(v), None) for k, v in sdfg.symbols.items() if k not in sdfg.constants}
+
+        # Add symbols from inter-state edges
+        global_symbols = copy.deepcopy(sdfg.symbols)
+        interstate_symbols = {}
+        for e in sdfg.dfs_edges(sdfg.start_state):
+            symbols = e.data.new_symbols(sdfg, global_symbols)
+            # Inferred symbols only take precedence if global symbol not defined or None
+            symbols = {
+                k: v if (k not in global_symbols or global_symbols[k] is None) else global_symbols[k]
+                for k, v in symbols.items()
+            }
+            interstate_symbols.update(symbols)
+            global_symbols.update(symbols)
+        all_symbols.update({
             k: (False, k, dt.Scalar(v), None)
-            for k, v in sdfg.symbols.items() if k not in sdfg.constants
-        }
+            for k, v in interstate_symbols.items() if k not in all_symbols and k not in sdfg.constants
+        })
+
         # Symbols that will be passed as parameters to the top-level kernel
         global_symbols = set()
 
         # Sorting by name, then by input/output, then by interface id
         sort_func = lambda t: f"{t[1]}{t[0]}{t[3]}"
 
+        subgraph_counter = 0
         for subgraph in subgraphs:
-            data_to_node.update({
-                node.data: node
-                for node in subgraph.nodes()
-                if isinstance(node, dace.sdfg.nodes.AccessNode)
-            })
+            data_to_node.update(
+                {node.data: node
+                 for node in subgraph.nodes() if isinstance(node, dace.sdfg.nodes.AccessNode)})
+            is_rtl_subgraph = any([isinstance(node, nodes.RTLTasklet) for node in subgraph.nodes()])
             subsdfg = subgraph.parent
             candidates = []  # type: List[Tuple[bool,str,Data]]
             # [(is an output, dataname string, data object)]
+            array_to_banks_used_out: Dict[str, Set[int]] = {}
+            array_to_banks_used_in: Dict[str, Set[int]] = {}
             for n in subgraph.source_nodes():
                 # Check if the node is connected to an RTL tasklet, in which
                 # case it should be an external stream
-                dsts = [e.dst for e in state.out_edges(n)]
-                srcs = [e.src for e in state.in_edges(n)]
-                tasks = [
-                    t for t in dsts + srcs if isinstance(t, dace.nodes.Tasklet)
-                ]
-                external = any([
-                    t.language == dtypes.Language.SystemVerilog for t in tasks
-                ])
-                if external:
-                    external_streams |= {
-                        (True, e.data.data, subsdfg.arrays[e.data.data], None)
-                        for e in state.out_edges(n)
-                        if isinstance(subsdfg.arrays[e.data.data], dt.Stream)
-                    }
+                is_external = is_rtl_subgraph
+                is_output = True
+                if not is_external and self._num_kernels > 1:
+                    if is_external_stream(n, subgraph):
+                        is_external = True
+                        is_output = False
+
+                if is_external:
+                    external_streams |= {(is_output, e.data.data, subsdfg.arrays[e.data.data], None)
+                                         for e in state.out_edges(n)
+                                         if isinstance(subsdfg.arrays[e.data.data], dt.Stream)}
                 else:
-                    candidates += [(False, e.data.data,
-                                    subsdfg.arrays[e.data.data])
-                                   for e in state.in_edges(n)]
+                    candidates += [(False, e.data.data, subsdfg.arrays[e.data.data]) for e in state.in_edges(n)]
             for n in subgraph.sink_nodes():
                 # Check if the node is connected to an RTL tasklet, in which
                 # case it should be an external stream
-                dsts = [e.dst for e in state.out_edges(n)]
-                srcs = [e.src for e in state.in_edges(n)]
-                tasks = [
-                    t for t in dsts + srcs if isinstance(t, dace.nodes.Tasklet)
-                ]
-                external = any([
-                    t.language == dtypes.Language.SystemVerilog for t in tasks
-                ])
-                if external:
-                    external_streams |= {
-                        (False, e.data.data, subsdfg.arrays[e.data.data], None)
-                        for e in state.in_edges(n)
-                        if isinstance(subsdfg.arrays[e.data.data], dt.Stream)
-                    }
+                is_external = is_rtl_subgraph
+                is_output = False
+                if not is_external and self._num_kernels > 1:
+                    if is_external_stream(n, subgraph):
+                        is_external = True
+                        is_output = True
+
+                if is_external:
+                    external_streams |= {(is_output, e.data.data, subsdfg.arrays[e.data.data], None)
+                                         for e in state.in_edges(n)
+                                         if isinstance(subsdfg.arrays[e.data.data], dt.Stream)}
                 else:
-                    candidates += [(True, e.data.data,
-                                    subsdfg.arrays[e.data.data])
-                                   for e in state.out_edges(n)]
+                    candidates += [(True, e.data.data, subsdfg.arrays[e.data.data]) for e in state.out_edges(n)]
             # Find other data nodes that are used internally
             for n, scope in subgraph.all_nodes_recursive():
                 if isinstance(n, dace.sdfg.nodes.AccessNode):
-                    # Add nodes if they are outer-level, or an inner-level
-                    # transient (inner-level inputs/outputs are just connected
-                    # to data in the outer layers, whereas transients can be
-                    # independent).
+                    # Add nodes if they are outer-level, or an inner-level transient
+                    # (inner-level inputs/outputs are just connected to data in the outer layers,
+                    # whereas transients can be independent).
                     # Views are not nested global transients
                     if scope == subgraph or n.desc(scope).transient:
+                        desc = n.desc(scope)
                         if scope.out_degree(n) > 0:
-                            candidates.append((False, n.data, n.desc(scope)))
+                            candidates.append((False, n.data, desc))
                         if scope.in_degree(n) > 0:
-                            candidates.append((True, n.data, n.desc(scope)))
+                            candidates.append((True, n.data, desc))
+                        if is_multibank_array_with_distributed_index(desc):
+                            # Record all banks used by this subgraph to generate interfaces for them
+                            # inputs and outputs seperate, because using a bank as an input doesn't mean
+                            # we also need an output interface
+                            current_banks_out = set()
+                            current_banks_in = set()
+                            for edge in scope.in_edges(n):
+                                for bank in iterate_distributed_subset(desc, edge.data, True, sdfg):
+                                    current_banks_out.add(bank)
+                            for edge in scope.out_edges(n):
+                                for bank in iterate_distributed_subset(desc, edge.data, False, sdfg):
+                                    current_banks_in.add(bank)
+                            if n.data in array_to_banks_used_in:
+                                array_to_banks_used_in[n.data].update(current_banks_in)
+                            else:
+                                array_to_banks_used_in[n.data] = current_banks_in
+                            if n.data in array_to_banks_used_out:
+                                array_to_banks_used_out[n.data].update(current_banks_out)
+                            else:
+                                array_to_banks_used_out[n.data] = current_banks_out
                         if scope != subgraph:
                             if (isinstance(n.desc(scope), dt.Array)
-                                    and n.desc(scope).storage
-                                    == dtypes.StorageType.FPGA_Global
+                                    and n.desc(scope).storage == dtypes.StorageType.FPGA_Global
                                     and not isinstance(n.desc(scope), dt.View)):
                                 nested_global_transients.add(n)
             subgraph_parameters[subgraph] = set()
             # For each subgraph, keep a listing of array to current interface ID
             data_to_interface: Dict[str, int] = {}
+            # multibank data name -> is_output -> List of (bank, interface id)
+            # same as data_to_interface, but for HBM/DDR-arrays with multiple banks
+            multibank_data_to_interface: Dict[str, Dict[bool, List[Tuple[int, int]]]] = {}
 
             # Differentiate global and local arrays. The former are allocated
             # from the host and passed to the device code, while the latter are
             # (statically) allocated on the device side.
-            for is_output, dataname, desc in candidates:
+            for is_output, data_name, desc in candidates:
                 # Ignore views, as these never need to be explicitly passed
                 if isinstance(desc, dt.View):
                     continue
@@ -573,91 +867,133 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                     is_output = None
                 # If this is a global array, assign the correct interface ID and
                 # memory interface (e.g., DDR or HBM bank)
-                if (isinstance(desc, dt.Array)
-                        and desc.storage == dtypes.StorageType.FPGA_Global):
-                    if dataname in data_to_interface:
-                        interface_id = data_to_interface[dataname]
+                if (isinstance(desc, dt.Array) and desc.storage == dtypes.StorageType.FPGA_Global):
+                    if data_name in data_to_interface:
+                        interface_id = data_to_interface[data_name]
+                    elif data_name in multibank_data_to_interface and is_output in multibank_data_to_interface[
+                            data_name]:
+                        interface_id = multibank_data_to_interface[data_name][is_output]
                     else:
                         # Get and update global memory interface ID
-                        interface_id = global_interfaces[dataname]
-                        global_interfaces[dataname] += 1
-                        data_to_interface[dataname] = interface_id
+                        if is_multibank_array_with_distributed_index(desc):
+                            tmp_interface_ids = []
+                            if is_output:
+                                banks_looked_at = array_to_banks_used_out[data_name]
+                            else:
+                                banks_looked_at = array_to_banks_used_in[data_name]
+                            for bank in banks_looked_at:
+                                ptr_str = fpga_ptr(data_name,
+                                                   desc,
+                                                   sdfg,
+                                                   bank,
+                                                   decouple_array_interfaces=self._decouple_array_interfaces)
+
+                                if self._decouple_array_interfaces:
+                                    tmp_interface_id = global_interfaces[ptr_str]
+                                    global_interfaces[ptr_str] += 1
+                                else:
+                                    if ptr_str not in global_interfaces:
+                                        global_interfaces[ptr_str] = (0, subgraph_counter)
+
+                                    tmp_interface_id, last_used_in = global_interfaces[ptr_str]
+                                    if last_used_in != subgraph_counter:
+                                        # we accessed the same container from a different subgraph/PE: we need
+                                        # to use a different interface
+                                        tmp_interface_id += 1
+                                        global_interfaces[ptr_str] = (tmp_interface_id, subgraph_counter)
+
+                                tmp_interface_ids.append((bank, tmp_interface_id))
+                            interface_id = tuple(tmp_interface_ids)
+                            if data_name not in multibank_data_to_interface:
+                                multibank_data_to_interface[data_name] = {}
+                            multibank_data_to_interface[data_name][is_output] = interface_id
+                        else:
+                            if self._decouple_array_interfaces:
+                                interface_id = global_interfaces[data_name]
+                                global_interfaces[data_name] += 1
+                            else:
+                                if data_name not in global_interfaces:
+                                    global_interfaces[data_name] = (0, subgraph_counter)
+
+                                interface_id, last_used_in = global_interfaces[data_name]
+                                if last_used_in != subgraph_counter:
+                                    # we accessed the same container from a different data subgraph/PE: we need
+                                    # to use a different interface
+                                    global_interfaces[data_name] = (interface_id + 1, subgraph_counter)
+                                    interface_id += 1
+                            data_to_interface[data_name] = interface_id
                     # Collect the memory bank specification, if present, by
                     # traversing outwards to where the data container is
                     # actually allocated
-                    inner_node = data_to_node[dataname]
-                    trace = utils.trace_nested_access(inner_node, subgraph,
-                                                      sdfg)
+                    inner_node = data_to_node[data_name]
+                    trace = utils.trace_nested_access(inner_node, subgraph, sdfg)
                     bank = None
+                    bank_type = None
                     for (trace_in, trace_out), _, _, trace_sdfg in trace:
                         trace_node = trace_in or trace_out
                         trace_name = trace_node.data
                         trace_desc = trace_node.desc(trace_sdfg)
                         if "bank" in trace_desc.location:
-                            trace_bank = trace_desc.location["bank"]
-                            if (bank is not None and bank != trace_bank):
-                                raise cgx.CodegenError(
-                                    "Found inconsistent memory bank "
-                                    f"specifier for {trace_name}.")
+                            trace_type, trace_bank = parse_location_bank(trace_desc)
+                            if (bank is not None and bank_type is not None
+                                    and (bank != trace_bank or bank_type != trace_type)):
+                                raise cgx.CodegenError("Found inconsistent memory bank "
+                                                       f"specifier for {trace_name}.")
                             bank = trace_bank
+                            bank_type = trace_type
+
                     # Make sure the array has been allocated on this bank in the
                     # outermost scope
-                    if bank is not None:
+                    if bank_type is not None:
                         outer_node = trace[0][0][0] or trace[0][0][1]
                         outer_desc = outer_node.desc(trace[0][2])
-                        if ("bank" not in outer_desc.location or
-                                str(outer_desc.location["bank"]) != str(bank)):
-                            raise cgx.CodegenError(
-                                "Memory bank allocation must be present on "
-                                f"outermost data descriptor {outer_node.data} "
-                                "to be allocated correctly.")
-                    bank_assignments[dataname] = bank
+                        okbank = False
+                        if ("bank" in outer_desc.location):
+                            trace_type, trace_bank = parse_location_bank(outer_desc)
+                            okbank = (trace_type == bank_type and trace_bank == bank)
+                        if not okbank:
+                            raise cgx.CodegenError("Memory bank allocation must be present on "
+                                                   f"outermost data descriptor {outer_node.data} "
+                                                   "to be allocated correctly.")
+                        bank_assignments[data_name] = (bank_type, bank)
+                    else:
+                        bank_assignments[data_name] = None
                 else:
                     interface_id = None
-                if (not desc.transient
-                        or desc.storage == dtypes.StorageType.FPGA_Global
-                        or dataname in used_outside):
+                if (not desc.transient or desc.storage == dtypes.StorageType.FPGA_Global or data_name in used_outside):
                     # Add the data as a parameter to this PE
-                    subgraph_parameters[subgraph].add(
-                        (is_output, dataname, desc, interface_id))
+                    subgraph_parameters[subgraph].add((is_output, data_name, desc, interface_id))
                     # Global data is passed from outside the kernel
-                    global_data_parameters.add(
-                        (is_output, dataname, desc, interface_id))
-                elif dataname in shared_data:
+                    global_data_parameters.add((is_output, data_name, desc, interface_id))
+                elif data_name in shared_data:
                     # Add the data as a parameter to this PE
-                    subgraph_parameters[subgraph].add(
-                        (is_output, dataname, desc, interface_id))
+                    subgraph_parameters[subgraph].add((is_output, data_name, desc, interface_id))
                     # Must be allocated outside PEs and passed to them
-                    top_level_local_data.add(dataname)
+                    top_level_local_data.add(data_name)
+
             # Order by name
-            subgraph_parameters[subgraph] = list(
-                sorted(subgraph_parameters[subgraph], key=sort_func))
+            subgraph_parameters[subgraph] = list(sorted(subgraph_parameters[subgraph], key=sort_func))
             # Append symbols used in this subgraph
-            for k in sorted(subgraph.free_symbols):
+            for k in sorted(self._frame.free_symbols(subgraph)):
                 if k not in sdfg.constants:
                     param = all_symbols[k]
                     subgraph_parameters[subgraph].append(param)
                     global_symbols.add(param)
 
+            subgraph_counter += 1
         # Order by name
-        global_data_parameters = list(
-            sorted(global_data_parameters, key=sort_func))
+        global_data_parameters = list(sorted(global_data_parameters, key=sort_func))
         global_data_parameters += sorted(global_symbols, key=sort_func)
         external_streams = list(sorted(external_streams, key=sort_func))
         nested_global_transients = list(sorted(nested_global_transients))
 
         stream_names = {sname for _, sname, _, _ in external_streams}
-        top_level_local_data = [
-            data_to_node[name] for name in sorted(top_level_local_data)
-            if name not in stream_names
-        ]
+        top_level_local_data = [data_to_node[name] for name in sorted(top_level_local_data) if name not in stream_names]
 
-        return (global_data_parameters, top_level_local_data,
-                subgraph_parameters, nested_global_transients, bank_assignments,
-                external_streams)
+        return (global_data_parameters, top_level_local_data, subgraph_parameters, nested_global_transients,
+                bank_assignments, external_streams)
 
-    def generate_nested_state(self, sdfg, state, nest_name, subgraphs,
-                              function_stream, callsite_stream):
+    def generate_nested_state(self, sdfg, state, nest_name, subgraphs, function_stream, callsite_stream):
 
         for sg in subgraphs:
             self._dispatcher.dispatch_subgraph(sdfg,
@@ -667,21 +1003,17 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                                                callsite_stream,
                                                skip_entry_node=False)
 
-    def generate_scope(self, sdfg, dfg_scope, state_id, function_stream,
-                       callsite_stream):
+    def generate_scope(self, sdfg, dfg_scope, state_id, function_stream, callsite_stream):
 
         if not self._in_device_code:
             # If we're not already generating kernel code we need to set up the
             # kernel launch
             subgraphs = [dfg_scope]
-            return self.generate_kernel(
-                sdfg, sdfg.node(state_id),
-                dfg_scope.source_nodes()[0].map.label.replace(" ", "_"),
-                subgraphs, function_stream, callsite_stream)
+            return self.generate_kernel(sdfg, sdfg.node(state_id),
+                                        dfg_scope.source_nodes()[0].map.label.replace(" ", "_"), subgraphs,
+                                        function_stream, callsite_stream)
 
-        self.generate_node(sdfg, dfg_scope, state_id,
-                           dfg_scope.source_nodes()[0], function_stream,
-                           callsite_stream)
+        self.generate_node(sdfg, dfg_scope, state_id, dfg_scope.source_nodes()[0], function_stream, callsite_stream)
 
         self._dispatcher.dispatch_subgraph(sdfg,
                                            dfg_scope,
@@ -690,63 +1022,94 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                                            callsite_stream,
                                            skip_entry_node=True)
 
-    def allocate_array(self, sdfg, dfg, state_id, node, function_stream,
-                       declaration_stream, allocation_stream):
+    def declare_array(self, sdfg, dfg, state_id, node, nodedesc, function_stream, declaration_stream):
+
+        fsymbols = self._frame.symbols_and_constants(sdfg)
+        if not utils.is_nonfree_sym_dependent(node, nodedesc, dfg, fsymbols):
+            raise NotImplementedError("The declare_array method should only be used for variables "
+                                      "that must have their declaration and allocation separate.")
+
+        result_decl = StringIO()
+        arrsize = nodedesc.total_size
+        dataname = node.data
+        ptrname = cpp.ptr(dataname, nodedesc, sdfg, self._frame)
+
+        # Check if array is already declared
+        if self._dispatcher.declared_arrays.has(ptrname):
+            return
+
+        if nodedesc.storage == dtypes.StorageType.FPGA_Global:
+
+            if self._in_device_code:
+
+                if nodedesc not in self._allocated_global_arrays:
+                    raise RuntimeError("Cannot allocate global array "
+                                       "from device code: {} in {}".format(node.label, sdfg.name))
+
+            else:
+                # TODO: Distinguish between read, write, and read+write
+                # Define buffer, using proper type
+                result_decl.write("hlslib::ocl::Buffer <{}, hlslib::ocl::Access::readWrite> {};".format(
+                    nodedesc.dtype.ctype, ptrname))
+                self._dispatcher.declared_arrays.add(
+                    ptrname, DefinedType.Pointer,
+                    'hlslib::ocl::Buffer <{}, hlslib::ocl::Access::readWrite>'.format(nodedesc.dtype.ctype))
+        elif (nodedesc.storage in (dtypes.StorageType.FPGA_Local, dtypes.StorageType.FPGA_Registers,
+                                   dtypes.StorageType.FPGA_ShiftRegister)):
+
+            raise ValueError("Dynamic allocation of FPGA "
+                             "fast memory not allowed: {}, size {}".format(dataname, arrsize))
+
+        else:
+            raise NotImplementedError("Unimplemented storage type " + str(nodedesc.storage))
+
+        declaration_stream.write(result_decl.getvalue(), sdfg, state_id, node)
+
+    def allocate_array(self, sdfg, dfg, state_id, node, nodedesc, function_stream, declaration_stream,
+                       allocation_stream):
 
         result_decl = StringIO()
         result_alloc = StringIO()
-        nodedesc = node.desc(sdfg)
         arrsize = nodedesc.total_size
         is_dynamically_sized = dace.symbolic.issymbolic(arrsize, sdfg.constants)
-        dataname = node.data
+        dataname = cpp.ptr(node.data, nodedesc, sdfg, self._frame)
 
         if not isinstance(nodedesc, dt.Stream):
             # Unless this is a Stream, if the variable has been already defined we can return
             # For Streams, we still allocate them to keep track of their names across
             # nested SDFGs (needed by Intel FPGA backend for channel mangling)
-            try:
-                self._dispatcher.defined_vars.get(dataname)
+            if self._dispatcher.defined_vars.has(dataname):
                 return
-            except KeyError:
-                pass  # The variable was not defined,  we can continue
 
-        allocname = cpp.ptr(dataname, nodedesc)
+        # Check if array is already declared
+        declared = self._dispatcher.declared_arrays.has(dataname)
 
         if isinstance(nodedesc, dt.View):
-            return self.allocate_view(sdfg, dfg, state_id, node,
-                                      function_stream, declaration_stream,
-                                      allocation_stream)
+            return self.allocate_view(sdfg, dfg, state_id, node, function_stream, declaration_stream, allocation_stream)
+        elif isinstance(nodedesc, dt.Reference):
+            return self.allocate_reference(sdfg, dfg, state_id, node, function_stream, declaration_stream,
+                                           allocation_stream)
         elif isinstance(nodedesc, dt.Stream):
 
             if not self._in_device_code:
-                raise cgx.CodegenError(
-                    "Cannot allocate FIFO from CPU code: {}".format(node.data))
+                raise cgx.CodegenError("Cannot allocate FIFO from CPU code: {}".format(node.data))
 
             if is_dynamically_sized:
-                raise cgx.CodegenError(
-                    "Arrays of streams cannot have dynamic size on FPGA")
+                raise cgx.CodegenError("Arrays of streams cannot have dynamic size on FPGA")
 
             try:
-                buffer_size = dace.symbolic.evaluate(nodedesc.buffer_size,
-                                                     sdfg.constants)
+                buffer_size = dace.symbolic.evaluate(nodedesc.buffer_size, sdfg.constants)
             except TypeError:
-                raise cgx.CodegenError(
-                    "Buffer length of stream cannot have dynamic size on FPGA")
-
-            if buffer_size < 1:
-                raise cgx.CodegenError("Streams cannot be unbounded on FPGA")
+                raise cgx.CodegenError("Buffer length of stream cannot have dynamic size on FPGA")
 
             # Language-specific implementation
-            ctype, is_global = self.define_stream(nodedesc.dtype, buffer_size,
-                                                  dataname, arrsize,
-                                                  function_stream, result_decl)
+            ctype, is_global = self.define_stream(nodedesc.dtype, buffer_size, dataname, arrsize, function_stream,
+                                                  result_decl, sdfg)
 
             # defined type: decide whether this is a stream array or a single stream
-            def_type = DefinedType.StreamArray if cpp.sym2cpp(
-                arrsize) != "1" else DefinedType.Stream
+            def_type = (DefinedType.StreamArray if arrsize != 1 else DefinedType.Stream)
             if is_global:
-                self._dispatcher.defined_vars.add_global(
-                    dataname, def_type, ctype)
+                self._dispatcher.defined_vars.add_global(dataname, def_type, ctype)
             else:
                 self._dispatcher.defined_vars.add(dataname, def_type, ctype)
 
@@ -758,53 +1121,63 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
 
                     if nodedesc not in self._allocated_global_arrays:
                         raise RuntimeError("Cannot allocate global array "
-                                           "from device code: {} in {}".format(
-                                               node.label, sdfg.name))
+                                           "from device code: {} in {}".format(node.label, sdfg.name))
 
                 else:
-                    if isinstance(nodedesc, dt.Array):
+                    # TODO: Distinguish between read, write, and read+write
+                    self._allocated_global_arrays.add(node.data)
+                    memory_bank_arg_count = 1
+                    bank_offset = -1
+                    storage_type_str = "hlslib::ocl::StorageType::DDR"  # DDR to use unspecified memory
 
-                        # TODO: Distinguish between read, write, and read+write
-                        self._allocated_global_arrays.add(node.data)
-                        memory_bank_arg = ""
-                        if "bank" in nodedesc.location:
-                            try:
-                                bank = int(nodedesc.location["bank"])
-                            except ValueError:
-                                raise ValueError(
-                                    "FPGA memory bank specifier "
-                                    "must be an integer: {}".format(
-                                        nodedesc.location["bank"]))
-                            memory_bank_arg = (
-                                f"hlslib::ocl::MemoryBank::bank{bank}, ")
+                    # Fix bankassignments if present
+                    bank_info = parse_location_bank(nodedesc)
+                    if bank_info is not None:
+                        bank_type, bank = bank_info
 
-                        # Define buffer, using proper type
-                        result_decl.write(
-                            "hlslib::ocl::Buffer <{}, hlslib::ocl::Access::readWrite> {};"
-                            .format(nodedesc.dtype.ctype, dataname))
-                        result_alloc.write(
-                            "{} = __state->fpga_context->Get()."
-                            "MakeBuffer<{}, hlslib::ocl::Access::readWrite>"
-                            "({}{});".format(allocname, nodedesc.dtype.ctype,
-                                             memory_bank_arg,
-                                             cpp.sym2cpp(arrsize)))
+                        bank_low, bank_high = get_multibank_ranges_from_subset(bank, sdfg)
+                        memory_bank_arg_count = bank_high - bank_low
+                        if bank_high - bank_low > 1:
+                            arrsize = dace.symbolic.pystr_to_symbolic(
+                                f"int_ceil(({str(arrsize)}) , ({str(bank_high - bank_low)}))")
+                        else:
+                            arrsize = dace.symbolic.pystr_to_symbolic(f"({str(arrsize)})")
+
+                        bank_offset = bank_low
+
+                        if bank_type == "HBM":
+                            storage_type_str = "hlslib::ocl::StorageType::HBM"
+                        else:
+                            storage_type_str = "hlslib::ocl::StorageType::DDR"
+
+                    # Define buffer, using proper type
+                    for bank_index in range(memory_bank_arg_count):
+                        alloc_name = fpga_ptr(dataname,
+                                              nodedesc,
+                                              sdfg,
+                                              bank_index,
+                                              decouple_array_interfaces=self._decouple_array_interfaces)
+                        if not declared:
+                            result_decl.write("hlslib::ocl::Buffer <{}, hlslib::ocl::Access::readWrite> {};\n".format(
+                                nodedesc.dtype.ctype, alloc_name))
+                        result_alloc.write(f"{alloc_name} = __state->fpga_context->Get()."
+                                           f"MakeBuffer<{nodedesc.dtype.ctype}, hlslib::ocl::Access::readWrite>"
+                                           f"({storage_type_str}, {bank_offset + bank_index}, "
+                                           f"{cpp.sym2cpp(arrsize)});\n")
+
                         self._dispatcher.defined_vars.add(
-                            dataname, DefinedType.Pointer,
-                            'hlslib::ocl::Buffer <{}, hlslib::ocl::Access::readWrite>'
-                            .format(nodedesc.dtype.ctype))
-            elif (nodedesc.storage in (dtypes.StorageType.FPGA_Local,
-                                       dtypes.StorageType.FPGA_Registers,
+                            alloc_name, DefinedType.Pointer,
+                            'hlslib::ocl::Buffer <{}, hlslib::ocl::Access::readWrite>'.format(nodedesc.dtype.ctype))
+
+            elif (nodedesc.storage in (dtypes.StorageType.FPGA_Local, dtypes.StorageType.FPGA_Registers,
                                        dtypes.StorageType.FPGA_ShiftRegister)):
 
                 if not self._in_device_code:
-                    raise cgx.CodegenError(
-                        "Tried to allocate local FPGA memory "
-                        "outside device code: {}".format(dataname))
+                    raise cgx.CodegenError("Tried to allocate local FPGA memory "
+                                           "outside device code: {}".format(dataname))
                 if is_dynamically_sized:
-                    raise ValueError(
-                        "Dynamic allocation of FPGA "
-                        "fast memory not allowed: {}, size {}".format(
-                            dataname, arrsize))
+                    raise ValueError("Dynamic allocation of FPGA "
+                                     "fast memory not allowed: {}, size {}".format(dataname, arrsize))
 
                 generate_scalar = cpp.sym2cpp(arrsize) == "1"
 
@@ -813,39 +1186,32 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                     ctype = self.make_vector_type(nodedesc.dtype, False)
                     define_str = "{} {};".format(ctype, dataname)
                     result_decl.write(define_str)
-                    self._dispatcher.defined_vars.add(dataname,
-                                                      DefinedType.Scalar, ctype)
+                    self._dispatcher.defined_vars.add(dataname, DefinedType.Scalar, ctype)
                 else:
                     # Language-specific
-                    if (nodedesc.storage ==
-                            dtypes.StorageType.FPGA_ShiftRegister):
-                        self.define_shift_register(dataname, nodedesc, arrsize,
-                                                   function_stream, result_decl,
-                                                   sdfg, state_id, node)
+                    if (nodedesc.storage == dtypes.StorageType.FPGA_ShiftRegister):
+                        self.define_shift_register(dataname, nodedesc, arrsize, function_stream, result_decl, sdfg,
+                                                   state_id, node)
                     else:
-                        self.define_local_array(dataname, nodedesc, arrsize,
-                                                function_stream, result_decl,
-                                                sdfg, state_id, node)
+                        self.define_local_array(dataname, nodedesc, arrsize, function_stream, result_decl, sdfg,
+                                                state_id, node)
 
             else:
-                raise NotImplementedError("Unimplemented storage type " +
-                                          str(nodedesc.storage))
+                raise NotImplementedError("Unimplemented storage type " + str(nodedesc.storage))
 
         elif isinstance(nodedesc, dt.Scalar):
 
-            result_decl.write("{} {};\n".format(nodedesc.dtype.ctype, dataname))
-            self._dispatcher.defined_vars.add(dataname, DefinedType.Scalar,
-                                              nodedesc.dtype.ctype)
+            ctype = self.make_vector_type(nodedesc.dtype, False)
+            result_decl.write("{} {};\n".format(ctype, dataname))
+            self._dispatcher.defined_vars.add(dataname, DefinedType.Scalar, ctype)
 
         else:
-            raise TypeError("Unhandled data type: {}".format(
-                type(nodedesc).__name__))
+            raise TypeError("Unhandled data type: {}".format(type(nodedesc).__name__))
 
         declaration_stream.write(result_decl.getvalue(), sdfg, state_id, node)
         allocation_stream.write(result_alloc.getvalue(), sdfg, state_id, node)
 
-    def deallocate_array(self, sdfg, dfg, state_id, node, function_stream,
-                         callsite_stream):
+    def deallocate_array(self, sdfg, dfg, state_id, node, nodedesc, function_stream, callsite_stream):
         pass  # Handled by destructor
 
     def partition_kernels(self, state: dace.SDFGState, default_kernel: int = 0):
@@ -871,16 +1237,16 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
         dependencies = dict()
 
         source_nodes = state.source_nodes()
-        max_kernels = default_kernel
+        sink_nodes = state.sink_nodes()
 
+        max_kernels = default_kernel
         # First step: assign a different Kernel ID
         # to each source node which is not an AccessNode
         for i, node in enumerate(source_nodes):
             if isinstance(node, nodes.AccessNode):
                 continue
 
-            self._node_to_kernel[utils.unique_node_repr(state,
-                                                        node)] = max_kernels
+            self._node_to_kernel[utils.unique_node_repr(state, node)] = max_kernels
             max_kernels = increment(max_kernels)
 
         # Consecutive nodes that are not crossroads can be in the same Kernel
@@ -898,24 +1264,21 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
             if e_src_repr in self._node_to_kernel:
                 kernel = self._node_to_kernel[e_src_repr]
 
-                if (isinstance(e.dst, nodes.AccessNode)
-                        and isinstance(sdfg.arrays[e.dst.data], dt.View)):
+                if (isinstance(e.dst, nodes.AccessNode) and isinstance(sdfg.arrays[e.dst.data], dt.View)):
                     # Skip views
-                    self._node_to_kernel[utils.unique_node_repr(state,
-                                                                e.dst)] = kernel
+                    self._node_to_kernel[utils.unique_node_repr(state, e.dst)] = kernel
                     continue
 
-                # Does this node need to be in another kernel?
-                # If it is a crossroad node (has more than one predecessor and its predecessors contain some compute)
-                # then it should be on a separate kernel.
+                # Does this node (e.dst) need to be in another kernel?
+                # If it is a crossroad node (has more than one predecessor, its predecessors contain some compute,
+                # no local buffers, the destination is not a sink) then it should be on a separate kernel.
 
                 if len(list(state.predecessors(e.dst))) > 1 and not isinstance(
-                        e.dst, nodes.ExitNode) and scopes[e.dst] == None:
+                        e.dst, nodes.ExitNode) and e.dst not in sink_nodes and scopes[e.dst] == None:
                     # Loop over all predecessors (except this edge)
                     crossroad_node = False
                     for pred_edge in state.in_edges(e.dst):
-                        if pred_edge != e and self._trace_back_edge(
-                                pred_edge, state):
+                        if pred_edge != e and self._trace_back_edge(pred_edge, state):
                             crossroad_node = True
                             break
 
@@ -928,12 +1291,9 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                 # From this edge we don't have any kernel id.
                 # Look up for the other predecessor nodes, if any of them has a kernel
                 # ID, use that.
-
                 for pred_edge in state.in_edges(e.dst):
                     if pred_edge != e:
-                        kernel = self._trace_back_edge(pred_edge,
-                                                       state,
-                                                       look_for_kernel_id=True)
+                        kernel = self._trace_back_edge(pred_edge, state, look_for_kernel_id=True)
                         if kernel is not None:
                             break
                 else:
@@ -948,21 +1308,25 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                     # maybe we don't want to generate a different kernel.
 
                     for succ_edge in state.out_edges(e.dst):
-                        succ_edge_dst_repr = utils.unique_node_repr(
-                            state, succ_edge.dst)
+                        succ_edge_dst_repr = utils.unique_node_repr(state, succ_edge.dst)
                         if succ_edge_dst_repr in self._node_to_kernel and isinstance(
-                                succ_edge.src, nodes.Tasklet) and isinstance(
-                                    succ_edge.dst, nodes.Tasklet):
+                                succ_edge.src, nodes.Tasklet) and isinstance(succ_edge.dst, nodes.Tasklet):
                             kernel = self._node_to_kernel[succ_edge_dst_repr]
                             break
                     else:
-                        kernel = max_kernels
-                        if (isinstance(e.dst, nodes.AccessNode) and isinstance(
-                                sdfg.arrays[e.dst.data], dt.View)):
-                            # Skip views
-                            pass
+                        # Trace this edge forward: if it finds something that has a kernel id and
+                        # there is at least one local buffer along the way, then reuse that kernel id
+                        only_global, kern = self._trace_forward_edge(e, state)
+                        if not only_global and kern is not None:
+                            kernel = kern
                         else:
-                            max_kernels = increment(max_kernels)
+                            kernel = max_kernels
+                            if (isinstance(e.dst, nodes.AccessNode) and (isinstance(sdfg.arrays[e.dst.data], dt.View))):
+                                # Skip views and local buffers
+                                pass
+                            else:
+                                max_kernels = increment(max_kernels)
+
             self._node_to_kernel[utils.unique_node_repr(state, e.dst)] = kernel
 
         # do another pass and track dependencies among Kernels
@@ -973,34 +1337,42 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                 # get all predecessors and see their associated kernel ID
                 for pred in state.predecessors(node):
                     pred_repr = utils.unique_node_repr(state, pred)
-                    if pred_repr in self._node_to_kernel and self._node_to_kernel[
-                            pred_repr] != this_kernel:
+                    if pred_repr in self._node_to_kernel and self._node_to_kernel[pred_repr] != this_kernel:
                         if this_kernel not in dependencies:
                             dependencies[this_kernel] = set()
-                        dependencies[this_kernel].add(
-                            self._node_to_kernel[pred_repr])
+                        dependencies[this_kernel].add(self._node_to_kernel[pred_repr])
 
         max_kernels = max_kernels if concurrent_kernels == 0 else concurrent_kernels
         return max_kernels, dependencies
 
-    def _trace_back_edge(self, edge, state, look_for_kernel_id=False):
+    def _trace_back_edge(self,
+                         edge: dace.sdfg.sdfg.Edge,
+                         state: dace.SDFGState,
+                         look_for_kernel_id: bool = False) -> Union[bool, int]:
         '''
-        Given ad edge, this traverses the edges backwards.
+        Given an edge, this traverses the edges backwards.
         It can be used either for:
-        - understanding if along the backward path there is some compute node, or
+        - understanding if along the backward path there is some compute node but no local buffers,  or
         - looking for the kernel_id of a predecessor (look_for_kernel_id must be set to True)
+        :return if look_for_kernel_id is false it returns a boolean indicating if there is a
+            compute node on the backward path and no access nodes to local buffers. Otherwise, it returns
+            the kernel_id of a predecessor node.
         '''
 
         curedge = edge
         source_nodes = state.source_nodes()
+        contains_compute = False
+        contains_only_global_buffers = True
         while not curedge.src in source_nodes:
 
             if not look_for_kernel_id:
-                if isinstance(
-                        curedge.src,
-                    (nodes.EntryNode, nodes.ExitNode, nodes.CodeNode)):
+                if isinstance(curedge.src, (nodes.EntryNode, nodes.ExitNode, nodes.CodeNode)):
                     # We can stop here: this is a scope which will contain some compute, or a tasklet/libnode
-                    return True
+                    contains_compute = True
+                elif isinstance(curedge.src, nodes.AccessNode):
+                    if curedge.src.desc(state).storage in _FPGA_LOCAL_STORAGE_TYPES:
+                        contains_only_global_buffers = False
+
             else:
                 src_repr = utils.unique_node_repr(state, curedge.src)
                 if src_repr in self._node_to_kernel:
@@ -1011,26 +1383,51 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
 
         # We didn't return before
         if not look_for_kernel_id:
-            return False
+            return contains_compute and contains_only_global_buffers
         else:
             src_repr = utils.unique_node_repr(state, curedge.src)
-            return self._node_to_kernel[
-                src_repr] if src_repr in self._node_to_kernel else None
+            return self._node_to_kernel[src_repr] if src_repr in self._node_to_kernel else None
 
-    def _emit_copy(self, sdfg, state_id, src_node, src_storage, dst_node,
-                   dst_storage, dst_schedule, edge, dfg, function_stream,
-                   callsite_stream):
+    def _trace_forward_edge(self, edge: dace.sdfg.sdfg.Edge, state: dace.SDFGState) -> Tuple[bool, int]:
+        '''
+        Given ad edge, this traverses the edges forward.
+        It can be used either for:
+        - understanding if along the forward path there is a local buffer,  and
+        - returning the the kernel_id of a successor if any
+        :return: a tuple containing two booleans indicating if the path contains only global buffers
+            and the kernel_id of a successor if any
+        '''
+
+        curedge = edge
+        sink_nodes = state.sink_nodes()
+        contains_compute = False
+        contains_only_global_buffers = True
+        while not curedge.dst in sink_nodes:
+
+            if isinstance(curedge.dst, nodes.AccessNode):
+                if curedge.dst.desc(state).storage in _FPGA_LOCAL_STORAGE_TYPES:
+                    contains_only_global_buffers = False
+            dst_repr = utils.unique_node_repr(state, curedge.dst)
+            if dst_repr in self._node_to_kernel:
+                # Found a node with a kernel id. Use that
+                return contains_only_global_buffers, self._node_to_kernel[dst_repr]
+            next_edge = next(e for e in state.out_edges(curedge.dst))
+            curedge = next_edge
+
+        # We didn't return before
+        dst_repr = utils.unique_node_repr(state, curedge.dst)
+        kernel_id = self._node_to_kernel[dst_repr] if dst_repr in self._node_to_kernel else None
+        return contains_only_global_buffers, kernel_id
+
+    def _emit_copy(self, sdfg, state_id, src_node, src_storage, dst_node, dst_storage, dst_schedule, edge, dfg,
+                   function_stream, callsite_stream):
 
         u, v, memlet = edge.src, edge.dst, edge.data
 
         # Determine directionality
-        if isinstance(
-                src_node,
-                dace.sdfg.nodes.AccessNode) and memlet.data == src_node.data:
+        if isinstance(src_node, dace.sdfg.nodes.AccessNode) and memlet.data == src_node.data:
             outgoing_memlet = True
-        elif isinstance(
-                dst_node,
-                dace.sdfg.nodes.AccessNode) and memlet.data == dst_node.data:
+        elif isinstance(dst_node, dace.sdfg.nodes.AccessNode) and memlet.data == dst_node.data:
             outgoing_memlet = False
         else:
             raise LookupError("Memlet does not point to any of the nodes")
@@ -1040,27 +1437,46 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
 
         host_to_device = (data_to_data and src_storage in _CPU_STORAGE_TYPES
                           and dst_storage == dtypes.StorageType.FPGA_Global)
-        device_to_host = (data_to_data
-                          and src_storage == dtypes.StorageType.FPGA_Global
+        device_to_host = (data_to_data and src_storage == dtypes.StorageType.FPGA_Global
                           and dst_storage in _CPU_STORAGE_TYPES)
-        device_to_device = (data_to_data
-                            and src_storage == dtypes.StorageType.FPGA_Global
+        device_to_device = (data_to_data and src_storage == dtypes.StorageType.FPGA_Global
                             and dst_storage == dtypes.StorageType.FPGA_Global)
 
         if (host_to_device or device_to_host) and self._in_device_code:
-            raise RuntimeError(
-                "Cannot copy between host and device from device")
+            raise RuntimeError("Cannot copy between host and device from device")
 
-        if (host_to_device or device_to_host
-                or (device_to_device and not self._in_device_code)):
+        if (host_to_device or device_to_host or (device_to_device and not self._in_device_code)):
 
             dims = memlet.subset.dims()
-            copy_shape = memlet.subset.bounding_box_size()
-            offset = cpp.cpp_array_expr(sdfg, memlet, with_brackets=False)
+            src_nodedesc = src_node.desc(sdfg)
+            dst_nodedesc = dst_node.desc(sdfg)
+            src_is_subset = memlet._is_data_src is None or memlet._is_data_src
 
-            if (not sum(copy_shape) == 1
-                    and (not isinstance(memlet.subset, subsets.Range)
-                         or any([step != 1 for _, _, step in memlet.subset]))):
+            copy_shape = memlet.subset.bounding_box_size()
+            is_src_using_multibank = (src_is_subset and is_multibank_array_with_distributed_index(src_nodedesc))
+            is_dst_using_multibank = (not src_is_subset and is_multibank_array_with_distributed_index(dst_nodedesc))
+            if is_src_using_multibank or is_dst_using_multibank:
+                copy_shape = copy_shape[1:]
+
+            offset_src, offset_dst = "0", "0"
+            if memlet.src_subset is not None:
+                offset_src = cpp.cpp_array_expr(sdfg,
+                                                memlet,
+                                                with_brackets=False,
+                                                referenced_array=src_nodedesc,
+                                                use_other_subset=(not src_is_subset
+                                                                  and memlet.other_subset is not None),
+                                                codegen=self._frame)
+            if memlet.dst_subset is not None:
+                offset_dst = cpp.cpp_array_expr(sdfg,
+                                                memlet,
+                                                with_brackets=False,
+                                                referenced_array=dst_nodedesc,
+                                                use_other_subset=(src_is_subset and memlet.other_subset is not None),
+                                                codegen=self._frame)
+
+            if (not sum(copy_shape) == 1 and
+                (not isinstance(memlet.subset, subsets.Range) or any([step != 1 for _, _, step in memlet.subset]))):
                 raise NotImplementedError("Only contiguous copies currently "
                                           "supported for FPGA codegen.")
 
@@ -1072,85 +1488,103 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                 host_dtype = sdfg.data(dst_node.data).dtype
             cast = False
             if not device_to_device and host_dtype != device_dtype:
-                if ((isinstance(host_dtype, dace.vector)
-                     or isinstance(device_dtype, dace.vector))
-                        and host_dtype.base_type == device_dtype.base_type):
-                    if ((host_to_device and memlet.data == src_node.data) or
-                        (device_to_host and memlet.data == dst_node.data)):
-                        if host_dtype.veclen > device_dtype.veclen:
-                            copy_shape[-1] *= (host_dtype.veclen //
-                                               device_dtype.veclen)
+                host_dtype_base = host_dtype
+                while True:
+                    updated = host_dtype_base.base_type
+                    if updated != host_dtype_base:
+                        host_dtype_base = updated
+                        continue
+                    break
+                device_dtype_base = device_dtype
+                while True:
+                    updated = device_dtype_base.base_type
+                    if updated != device_dtype_base:
+                        device_dtype_base = updated
+                        continue
+                    break
+                if ((isinstance(host_dtype, dace.vector) or isinstance(device_dtype, dace.vector))
+                        and host_dtype_base == device_dtype_base):
+                    if ((host_to_device and memlet.data == src_node.data)
+                            or (device_to_host and memlet.data == dst_node.data)):
+                        if host_dtype.bytes > device_dtype.bytes:
+                            copy_shape[-1] *= (host_dtype.bytes // device_dtype.bytes)
                         else:
-                            copy_shape[-1] //= (device_dtype.veclen //
-                                                host_dtype.veclen)
+                            copy_shape[-1] //= (device_dtype.bytes // host_dtype.bytes)
                     cast = True
                 else:
-                    raise TypeError(
-                        "Memory copy type mismatch: {} vs {}".format(
-                            host_dtype, device_dtype))
+                    raise TypeError("Memory copy type mismatch: {} vs {}".format(host_dtype, device_dtype))
 
-            copysize = " * ".join([
-                cppunparse.pyexpr2cpp(dace.symbolic.symstr(s))
-                for s in copy_shape
-            ])
+            copysize = " * ".join([cppunparse.pyexpr2cpp(dace.symbolic.symstr(s)) for s in copy_shape])
 
-            src_nodedesc = src_node.desc(sdfg)
-            dst_nodedesc = dst_node.desc(sdfg)
-
+            src_subset = memlet.src_subset or memlet.subset
+            dst_subset = memlet.dst_subset or memlet.subset
             if host_to_device:
 
-                ptr_str = (cpp.ptr(src_node.data, src_nodedesc) +
-                           (" + {}".format(offset)
-                            if outgoing_memlet and str(offset) != "0" else ""))
+                ptr_str = (fpga_ptr(src_node.data,
+                                    src_nodedesc,
+                                    sdfg,
+                                    src_subset,
+                                    decouple_array_interfaces=self._decouple_array_interfaces) +
+                           (" + {}".format(offset_src) if outgoing_memlet and str(offset_src) != "0" else ""))
                 if cast:
-                    ptr_str = "reinterpret_cast<{} const *>({})".format(
-                        device_dtype.ctype, ptr_str)
+                    ptr_str = "reinterpret_cast<{} const *>({})".format(device_dtype.ctype, ptr_str)
 
                 callsite_stream.write(
                     "{}.CopyFromHost({}, {}, {});".format(
-                        cpp.ptr(dst_node.data, dst_nodedesc),
-                        (offset if not outgoing_memlet else 0), copysize,
-                        ptr_str), sdfg, state_id, [src_node, dst_node])
+                        fpga_ptr(dst_node.data,
+                                 dst_nodedesc,
+                                 sdfg,
+                                 dst_subset,
+                                 decouple_array_interfaces=self._decouple_array_interfaces),
+                        (offset_dst if not outgoing_memlet else 0), copysize, ptr_str), sdfg, state_id,
+                    [src_node, dst_node])
 
             elif device_to_host:
 
-                ptr_str = (cpp.ptr(dst_node.data, dst_nodedesc) +
-                           (" + {}".format(offset)
-                            if outgoing_memlet and str(offset) != "0" else ""))
+                ptr_str = (fpga_ptr(dst_node.data,
+                                    dst_nodedesc,
+                                    sdfg,
+                                    dst_subset,
+                                    decouple_array_interfaces=self._decouple_array_interfaces) +
+                           (" + {}".format(offset_dst) if outgoing_memlet and str(offset_dst) != "0" else ""))
                 if cast:
-                    ptr_str = "reinterpret_cast<{} *>({})".format(
-                        device_dtype.ctype, ptr_str)
+                    ptr_str = "reinterpret_cast<{} *>({})".format(device_dtype.ctype, ptr_str)
 
                 callsite_stream.write(
                     "{}.CopyToHost({}, {}, {});".format(
-                        cpp.ptr(src_node.data, src_nodedesc),
-                        (offset if outgoing_memlet else 0), copysize, ptr_str),
-                    sdfg, state_id, [src_node, dst_node])
+                        fpga_ptr(src_node.data,
+                                 src_nodedesc,
+                                 sdfg,
+                                 src_subset,
+                                 decouple_array_interfaces=self._decouple_array_interfaces),
+                        (offset_src if outgoing_memlet else 0), copysize, ptr_str), sdfg, state_id,
+                    [src_node, dst_node])
 
             elif device_to_device:
 
                 callsite_stream.write(
                     "{}.CopyToDevice({}, {}, {}, {});".format(
-                        cpp.ptr(src_node.data, src_nodedesc),
-                        (offset if outgoing_memlet else 0), copysize,
-                        cpp.ptr(dst_node.data, dst_nodedesc),
-                        (offset if not outgoing_memlet else 0)), sdfg, state_id,
-                    [src_node, dst_node])
+                        fpga_ptr(src_node.data,
+                                 src_nodedesc,
+                                 sdfg,
+                                 src_subset,
+                                 decouple_array_interfaces=self._decouple_array_interfaces),
+                        (offset_src if outgoing_memlet else 0), copysize,
+                        fpga_ptr(dst_node.data,
+                                 dst_nodedesc,
+                                 sdfg,
+                                 dst_subset,
+                                 decouple_array_interfaces=self._decouple_array_interfaces),
+                        (offset_dst if not outgoing_memlet else 0)), sdfg, state_id, [src_node, dst_node])
 
         # Reject copying to/from local memory from/to outside the FPGA
-        elif (data_to_data
-              and (((src_storage in (dtypes.StorageType.FPGA_Local,
-                                     dtypes.StorageType.FPGA_Registers,
-                                     dtypes.StorageType.FPGA_ShiftRegister))
-                    and dst_storage not in _FPGA_STORAGE_TYPES) or
-                   ((dst_storage in (dtypes.StorageType.FPGA_Local,
-                                     dtypes.StorageType.FPGA_Registers,
-                                     dtypes.StorageType.FPGA_ShiftRegister))
-                    and src_storage not in _FPGA_STORAGE_TYPES))):
-            raise NotImplementedError(
-                "Copies between host memory and FPGA "
-                "local memory not supported: from {} to {}".format(
-                    src_node, dst_node))
+        elif (data_to_data and
+              (((src_storage in (dtypes.StorageType.FPGA_Local, dtypes.StorageType.FPGA_Registers,
+                                 dtypes.StorageType.FPGA_ShiftRegister)) and dst_storage not in _FPGA_STORAGE_TYPES) or
+               ((dst_storage in (dtypes.StorageType.FPGA_Local, dtypes.StorageType.FPGA_Registers,
+                                 dtypes.StorageType.FPGA_ShiftRegister)) and src_storage not in _FPGA_STORAGE_TYPES))):
+            raise NotImplementedError("Copies between host memory and FPGA "
+                                      "local memory not supported: from {} to {}".format(src_node, dst_node))
 
         elif data_to_data:
 
@@ -1158,27 +1592,19 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                 raise NotImplementedError("WCR not implemented for copy edges")
 
             if src_storage == dtypes.StorageType.FPGA_ShiftRegister:
-                raise NotImplementedError(
-                    "Reads from shift registers only supported from tasklets.")
+                raise NotImplementedError("Reads from shift registers only supported from tasklets.")
 
             # Try to turn into degenerate/strided ND copies
-            copy_shape, src_strides, dst_strides, src_expr, dst_expr = (
-                cpp.memlet_copy_to_absolute_strides(self._dispatcher,
-                                                    sdfg,
-                                                    memlet,
-                                                    src_node,
-                                                    dst_node,
-                                                    packed_types=True))
+            copy_shape, src_strides, dst_strides, src_expr, dst_expr = (cpp.memlet_copy_to_absolute_strides(
+                self._dispatcher, sdfg, memlet, src_node, dst_node, packed_types=True))
 
             dtype = src_node.desc(sdfg).dtype
             ctype = dtype.ctype
 
             if dst_storage == dtypes.StorageType.FPGA_ShiftRegister:
                 if len(copy_shape) != 1:
-                    raise ValueError(
-                        "Only single-dimensional writes "
-                        "to shift registers supported: {}{}".format(
-                            dst_node.data, copy_shape))
+                    raise ValueError("Only single-dimensional writes "
+                                     "to shift registers supported: {}{}".format(dst_node.data, copy_shape))
 
             # Check if we are copying between vectorized and non-vectorized
             # types
@@ -1189,111 +1615,85 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                 is_unpack = False
                 packing_factor = memwidth_dst // memwidth_src
                 if memwidth_dst % memwidth_src != 0:
-                    raise ValueError(
-                        "Destination vectorization width {} "
-                        "is not divisible by source vectorization width {}.".
-                        format(memwidth_dst, memwidth_src))
-                self.converters_to_generate.add(
-                    (False, vector_element_type_of(dtype).ctype,
-                     packing_factor))
+                    raise ValueError("Destination vectorization width {} "
+                                     "is not divisible by source vectorization width {}.".format(
+                                         memwidth_dst, memwidth_src))
+                self.converters_to_generate.add((False, vector_element_type_of(dtype).ctype, packing_factor))
             elif memwidth_src > memwidth_dst:
                 is_pack = False
                 is_unpack = True
                 packing_factor = memwidth_src // memwidth_dst
                 if memwidth_src % memwidth_dst != 0:
-                    raise ValueError(
-                        "Source vectorization width {} is not divisible "
-                        "by destination vectorization width {}.".format(
-                            memwidth_dst, memwidth_src))
-                self.converters_to_generate.add(
-                    (True, vector_element_type_of(dtype).ctype, packing_factor))
+                    raise ValueError("Source vectorization width {} is not divisible "
+                                     "by destination vectorization width {}.".format(memwidth_dst, memwidth_src))
+                self.converters_to_generate.add((True, vector_element_type_of(dtype).ctype, packing_factor))
             else:
                 is_pack = False
                 is_unpack = False
                 packing_factor = 1
 
             # TODO: detect in which cases we shouldn't unroll
-            register_to_register = (src_node.desc(sdfg).storage
-                                    == dtypes.StorageType.FPGA_Registers
-                                    or dst_node.desc(sdfg).storage
-                                    == dtypes.StorageType.FPGA_Registers)
+            register_to_register = (src_node.desc(sdfg).storage == dtypes.StorageType.FPGA_Registers
+                                    or dst_node.desc(sdfg).storage == dtypes.StorageType.FPGA_Registers)
 
-            num_loops = len([dim for dim in copy_shape if dim != 1])
-            if num_loops > 0:
-                if not register_to_register:
-                    # Language-specific
-                    self.generate_pipeline_loop_pre(callsite_stream, sdfg,
-                                                    state_id, dst_node)
+            num_loops = sum((d != 1 for d in copy_shape), 0)
+            has_pipelined_loops = (num_loops > 0 and not register_to_register)
+
+            # Determine data that should have dependency pragmas injected
+            dependency_pragma_nodes = []
+            for node in ((src_node, ) if src_node.data == dst_node.data else (src_node, dst_node)):
+                desc = node.desc(sdfg)
+                if (isinstance(desc, dt.Array) and desc.storage == dtypes.StorageType.FPGA_Local
+                        and desc.total_size != 1):
+                    dependency_pragma_nodes.append(node)
+
+            if has_pipelined_loops:
+                # Language-specific
+                self.generate_pipeline_loop_pre(callsite_stream, sdfg, state_id, dst_node)
                 if len(copy_shape) > 1:
                     # Language-specific
-                    self.generate_flatten_loop_pre(callsite_stream, sdfg,
-                                                   state_id, dst_node)
-                for node in [src_node, dst_node]:
-                    if (isinstance(node.desc(sdfg), dt.Array)
-                            and node.desc(sdfg).storage in [
-                                dtypes.StorageType.FPGA_Local,
-                                dace.StorageType.FPGA_Registers
-                            ]):
-                        # Language-specific
-                        self.generate_no_dependence_pre(callsite_stream, sdfg,
-                                                        state_id, dst_node,
-                                                        node.data)
+                    self.generate_flatten_loop_pre(callsite_stream, sdfg, state_id, dst_node)
+                for node in dependency_pragma_nodes:
+                    # Inject dependence pragmas
+                    self.generate_no_dependence_pre(callsite_stream, sdfg, state_id, dst_node, node.data)
 
             # Loop intro
             for i, copy_dim in enumerate(copy_shape):
                 if copy_dim != 1:
                     if register_to_register:
                         # Language-specific
-                        self.generate_unroll_loop_pre(callsite_stream, None,
-                                                      sdfg, state_id, dst_node)
-                    # If we are copying from a container to itself, and the memlet subsets do not intersect,
-                    # then we can safely ignore loop carried dependencies
+                        self.generate_unroll_loop_pre(callsite_stream, None, sdfg, state_id, dst_node)
 
-                    ignore_dependencies = src_node.data == dst_node.data and not dace.subsets.intersects(
-                        memlet.src_subset, memlet.dst_subset)
-                    if ignore_dependencies:
-                        self.generate_no_dependence_pre(callsite_stream, sdfg,
-                                                        state_id, dst_node)
                     callsite_stream.write(
                         "for (int __dace_copy{} = 0; __dace_copy{} < {}; "
-                        "++__dace_copy{}) {{".format(i, i,
-                                                     cpp.sym2cpp(copy_dim), i),
-                        sdfg, state_id, dst_node)
-
-                    if ignore_dependencies:
-                        self.generate_no_dependence_post(
-                            callsite_stream, sdfg, state_id, dst_node,
-                            node.data)
+                        "++__dace_copy{}) {{".format(i, i, cpp.sym2cpp(copy_dim), i), sdfg, state_id, dst_node)
 
                     if register_to_register:
                         # Language-specific
-                        self.generate_unroll_loop_post(callsite_stream, None,
-                                                       sdfg, state_id, dst_node)
+                        self.generate_unroll_loop_post(callsite_stream, None, sdfg, state_id, dst_node)
 
             # Pragmas
-            if num_loops > 0:
-                if not register_to_register:
-                    # Language-specific
-                    self.generate_pipeline_loop_post(callsite_stream, sdfg,
-                                                     state_id, dst_node)
-                if len(copy_shape) > 1:
-                    # Language-specific
-                    self.generate_flatten_loop_post(callsite_stream, sdfg,
-                                                    state_id, dst_node)
+            if has_pipelined_loops:
+                # Language-specific
+                self.generate_pipeline_loop_post(callsite_stream, sdfg, state_id, dst_node)
+                self.generate_flatten_loop_post(callsite_stream, sdfg, state_id, dst_node)
+                # Inject dependence pragmas
+                for node in dependency_pragma_nodes:
+                    self.generate_no_dependence_post(callsite_stream, sdfg, state_id, dst_node, node.data)
 
-            src_def_type, _ = self._dispatcher.defined_vars.get(src_node.data)
-            dst_def_type, _ = self._dispatcher.defined_vars.get(dst_node.data)
+            src_name = cpp.ptr(src_node.data, src_node.desc(sdfg), sdfg, self._frame)
+            dst_name = cpp.ptr(dst_node.data, dst_node.desc(sdfg), sdfg, self._frame)
+            src_def_type, _ = self._dispatcher.defined_vars.get(src_name)
+            dst_def_type, _ = self._dispatcher.defined_vars.get(dst_name)
 
             # Construct indices (if the length of the stride array is zero,
             # resolves to an empty string)
             src_index = " + ".join([
-                "__dace_copy{}{}".format(
-                    i, " * " + cpp.sym2cpp(stride) if stride != 1 else "")
+                "__dace_copy{}{}".format(i, " * " + cpp.sym2cpp(stride) if stride != 1 else "")
                 for i, stride in enumerate(src_strides) if copy_shape[i] != 1
             ])
             dst_index = " + ".join([
-                "__dace_copy{}{}".format(
-                    i, " * " + cpp.sym2cpp(stride) if stride != 1 else "")
+                "__dace_copy{}{}".format(i, " * " + cpp.sym2cpp(stride) if stride != 1 else "")
                 for i, stride in enumerate(dst_strides) if copy_shape[i] != 1
             ])
             if not src_index:
@@ -1302,34 +1702,18 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                 dst_index = "0"
 
             # Language specific
-            read_expr = self.make_read(src_def_type, dtype, src_node.label,
-                                       src_expr, src_index, is_pack,
+            read_expr = self.make_read(src_def_type, dtype, src_node.label, src_expr, src_index, is_pack,
                                        packing_factor)
 
             # Language specific
             if dst_storage == dtypes.StorageType.FPGA_ShiftRegister:
-                write_expr = self.make_shift_register_write(
-                    dst_def_type, dtype, dst_node.label, dst_expr, dst_index,
-                    read_expr, None, is_unpack, packing_factor, sdfg)
+                write_expr = self.make_shift_register_write(dst_def_type, dtype, dst_node.label, dst_expr, dst_index,
+                                                            read_expr, None, is_unpack, packing_factor, sdfg)
             else:
-                write_expr = self.make_write(dst_def_type, dtype,
-                                             dst_node.label, dst_expr,
-                                             dst_index, read_expr, None,
+                write_expr = self.make_write(dst_def_type, dtype, dst_node.label, dst_expr, dst_index, read_expr, None,
                                              is_unpack, packing_factor)
 
             callsite_stream.write(write_expr)
-
-            # Inject dependence pragmas (DACE semantics implies no conflict)
-            for node in [src_node, dst_node]:
-                if (isinstance(node.desc(sdfg), dt.Array)
-                        and node.desc(sdfg).storage in [
-                            dtypes.StorageType.FPGA_Local,
-                            dace.StorageType.FPGA_Registers
-                        ]):
-                    # Language-specific
-                    self.generate_no_dependence_post(callsite_stream, sdfg,
-                                                     state_id, dst_node,
-                                                     node.data)
 
             # Loop outtro
             for _ in range(num_loops):
@@ -1337,8 +1721,7 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
 
         else:
 
-            self.generate_memlet_definition(sdfg, dfg, state_id, src_node,
-                                            dst_node, edge, callsite_stream)
+            self.generate_memlet_definition(sdfg, dfg, state_id, src_node, dst_node, edge, callsite_stream)
 
     @staticmethod
     def make_opencl_parameter(name, desc):
@@ -1353,15 +1736,11 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
         parent_scope = dfg.scope_subgraph(parent_scope_entry)
 
         # Get all scopes from the same level
-        all_scopes = [
-            node for node in parent_scope.topological_sort()
-            if isinstance(node, dace.sdfg.nodes.EntryNode)
-        ]
+        all_scopes = [node for node in parent_scope.topological_sort() if isinstance(node, dace.sdfg.nodes.EntryNode)]
 
         return all_scopes[all_scopes.index(scope_entry) + 1:]
 
-    def generate_node(self, sdfg, dfg, state_id, node, function_stream,
-                      callsite_stream):
+    def generate_node(self, sdfg, dfg, state_id, node, function_stream, callsite_stream):
         method_name = "_generate_" + type(node).__name__
         # Fake inheritance... use this class' method if it exists,
         # otherwise fall back on CPU codegen
@@ -1374,19 +1753,16 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                               "Ignoring.".format(node.schedule,
                                                  type(node).__name__))
 
-            getattr(self, method_name)(sdfg, dfg, state_id, node,
-                                       function_stream, callsite_stream)
+            getattr(self, method_name)(sdfg, dfg, state_id, node, function_stream, callsite_stream)
         else:
             old_codegen = self._cpu_codegen.calling_codegen
             self._cpu_codegen.calling_codegen = self
 
-            self._cpu_codegen.generate_node(sdfg, dfg, state_id, node,
-                                            function_stream, callsite_stream)
+            self._cpu_codegen.generate_node(sdfg, dfg, state_id, node, function_stream, callsite_stream)
 
             self._cpu_codegen.calling_codegen = old_codegen
 
-    def copy_memory(self, sdfg, dfg, state_id, src_node, dst_node, edge,
-                    function_stream, callsite_stream):
+    def copy_memory(self, sdfg, dfg, state_id, src_node, dst_node, edge, function_stream, callsite_stream):
 
         if isinstance(src_node, dace.sdfg.nodes.CodeNode):
             src_storage = dtypes.StorageType.Register
@@ -1394,8 +1770,7 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                 src_parent = dfg.entry_node(src_node)
             except KeyError:
                 src_parent = None
-            dst_schedule = (None
-                            if src_parent is None else src_parent.map.schedule)
+            dst_schedule = (None if src_parent is None else src_parent.map.schedule)
         else:
             src_storage = src_node.desc(sdfg).storage
 
@@ -1411,10 +1786,44 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
         dst_schedule = None if dst_parent is None else dst_parent.map.schedule
         state_dfg = sdfg.nodes()[state_id]
 
+        # Check if this is a copy memlet using at least one multibank array
+        edge_list = []
+        if (isinstance(src_node, dace.sdfg.nodes.AccessNode) and isinstance(dst_node, dace.sdfg.nodes.AccessNode)):
+            src_array = src_node.desc(sdfg)
+            dst_array = dst_node.desc(sdfg)
+            src_is_multibank = is_multibank_array_with_distributed_index(src_array)
+            dst_is_multibank = is_multibank_array_with_distributed_index(dst_array)
+            if src_is_multibank or dst_is_multibank:
+                modedge = copy.deepcopy(edge)
+                mem: memlet.Memlet = modedge.data
+                if mem.src_subset is None:
+                    mem.src_subset = subsets.Range.from_array(src_array)
+                if mem.dst_subset is None:
+                    mem.dst_subset = subsets.Range.from_array(dst_array)
+                if src_is_multibank:
+                    bankbeg, bankend = get_multibank_ranges_from_subset(mem.src_subset, sdfg)
+                if dst_is_multibank:
+                    bankbeg, bankend = get_multibank_ranges_from_subset(mem.dst_subset, sdfg)
+                num_accessed_banks = bankend - bankbeg
+                oldmem = copy.deepcopy(mem)
+                for i in range(num_accessed_banks):
+                    src_index = oldmem.src_subset[0][0] + i
+                    dst_index = oldmem.dst_subset[0][0] + i
+                    # Support for ignoring the distributed index if it's not required, e.g. on the host
+                    if src_is_multibank or num_accessed_banks > 1:
+                        mem.src_subset = modify_distributed_subset(mem.src_subset, src_index)
+                    if dst_is_multibank or num_accessed_banks > 1:
+                        mem.dst_subset = modify_distributed_subset(mem.dst_subset, dst_index)
+                    edge_list.append(copy.deepcopy(modedge))
+            else:
+                edge_list.append(edge)
+        else:
+            edge_list.append(edge)
+
         # Emit actual copy
-        self._emit_copy(sdfg, state_id, src_node, src_storage, dst_node,
-                        dst_storage, dst_schedule, edge, state_dfg,
-                        function_stream, callsite_stream)
+        for current_edge in edge_list:
+            self._emit_copy(sdfg, state_id, src_node, src_storage, dst_node, dst_storage, dst_schedule, current_edge,
+                            state_dfg, function_stream, callsite_stream)
 
     def _generate_PipelineEntry(self, *args, **kwargs):
         self._generate_MapEntry(*args, **kwargs)
@@ -1423,9 +1832,7 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
         to_search = list(scope)
         while len(to_search) > 0:
             x = to_search.pop()
-            if (isinstance(
-                    x,
-                (dace.sdfg.nodes.MapEntry, dace.sdfg.nodes.PipelineEntry))):
+            if (isinstance(x, (dace.sdfg.nodes.MapEntry, dace.sdfg.nodes.PipelineEntry))):
                 # Degenerate loops should not be pipelined
                 fully_degenerate = True
                 for begin, end, skip in x.map.range:
@@ -1439,8 +1846,7 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                 to_search += scope_dict[x]
             elif isinstance(x, dace.sdfg.nodes.NestedSDFG):
                 for state in x.sdfg:
-                    if not self._is_innermost(state.nodes(),
-                                              state.scope_children(), x.sdfg):
+                    if not self._is_innermost(state.nodes(), state.scope_children(), x.sdfg):
                         return False
         return True
 
@@ -1455,8 +1861,7 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
         except TypeError:  # Cannot statically evaluate expression
             return False, begin
 
-    def _generate_MapEntry(self, sdfg, dfg, state_id, node, function_stream,
-                           callsite_stream):
+    def _generate_MapEntry(self, sdfg, dfg, state_id, node, function_stream, callsite_stream):
 
         result = callsite_stream
 
@@ -1477,10 +1882,8 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
             for e in dynamic_map_inputs(sdfg.node(state_id), node):
                 if e.data.data != e.dst_conn:
                     callsite_stream.write(
-                        self._cpu_codegen.memlet_definition(
-                            sdfg, e.data, False, e.dst_conn,
-                            e.dst.in_connectors[e.dst_conn]), sdfg, state_id,
-                        node)
+                        self._cpu_codegen.memlet_definition(sdfg, e.data, False, e.dst_conn,
+                                                            e.dst.in_connectors[e.dst_conn]), sdfg, state_id, node)
 
             # Pipeline innermost loops
             scope_children = dfg.scope_children()
@@ -1491,8 +1894,7 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
             # flattened) loop
             if isinstance(node, dace.sdfg.nodes.PipelineEntry):
                 for i in range(len(node.map.range)):
-                    result.write("long {} = {};\n".format(
-                        node.map.params[i], node.map.range[i][0]))
+                    result.write("long {} = {};\n".format(node.map.params[i], node.map.range[i][0]))
                 for var, value in node.pipeline.additional_iterators.items():
                     result.write("long {} = {};\n".format(var, value))
 
@@ -1518,9 +1920,8 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
             for _, _, _, _, memlet in state.in_edges(node):
                 if memlet.data is not None:
                     desc = sdfg.arrays[memlet.data]
-                    if (isinstance(desc, dt.Array) and
-                        (desc.storage == dtypes.StorageType.FPGA_Global
-                         or desc.storage == dtypes.StorageType.FPGA_Local)
+                    if (isinstance(desc, dt.Array) and (desc.storage == dtypes.StorageType.FPGA_Global
+                                                        or desc.storage == dtypes.StorageType.FPGA_Local)
                             and memlet.wcr is None):
                         candidates_in.add(memlet.data)
                     elif memlet.wcr is not None:
@@ -1529,16 +1930,13 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
             for _, _, _, _, memlet in state.out_edges(map_exit_node):
                 if memlet.data is not None:
                     desc = sdfg.arrays[memlet.data]
-                    if (isinstance(desc, dt.Array) and
-                        (desc.storage == dtypes.StorageType.FPGA_Global
-                         or desc.storage == dtypes.StorageType.FPGA_Local)
-                            and memlet.wcr is None):
+                    if (isinstance(desc, dt.Array) and (desc.storage == dtypes.StorageType.FPGA_Global
+                                                        or desc.storage == dtypes.StorageType.FPGA_Local)
+                            and memlet.wcr is None and desc.total_size != 1):
                         candidates_out.add(memlet.data)
                     elif memlet.wcr is not None:
                         is_there_a_wcr = True
             in_out_data = candidates_in.intersection(candidates_out)
-
-            # add pragmas
 
             # Generate nested loops
             if not isinstance(node, dace.sdfg.nodes.PipelineEntry):
@@ -1548,24 +1946,19 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                     # Add pragmas
                     if not fully_degenerate and not is_degenerate[i]:
                         if node.map.unroll:
-                            self.generate_unroll_loop_pre(
-                                result, None, sdfg, state_id, node)
+                            self.generate_unroll_loop_pre(result, None, sdfg, state_id, node)
                         elif is_innermost:
-                            self.generate_pipeline_loop_pre(
-                                result, sdfg, state_id, node)
+                            self.generate_pipeline_loop_pre(result, sdfg, state_id, node)
                             # Do not put pragma if this is degenerate (loop does not exist)
-                            self.generate_flatten_loop_pre(
-                                result, sdfg, state_id, node)
+                            self.generate_flatten_loop_pre(result, sdfg, state_id, node)
                         if not node.map.unroll:
                             if len(in_out_data) > 0 and is_there_a_wcr == False:
                                 # add pragma to ignore all loop carried dependencies
-                                self.generate_no_dependence_pre(
-                                    result, sdfg, state_id, node)
+                                self.generate_no_dependence_pre(result, sdfg, state_id, node)
                             else:
                                 # add specific pragmas
                                 for candidate in in_out_data:
-                                    self.generate_no_dependence_pre(
-                                        result, sdfg, state_id, node, candidate)
+                                    self.generate_no_dependence_pre(result, sdfg, state_id, node, candidate)
 
                     var = node.map.params[i]
                     begin, end, skip = r
@@ -1573,8 +1966,7 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                     loop_var_type = "int"
                     # try to decide type of loop variable
                     try:
-                        if (evaluate(begin, sdfg.constants) >= 0
-                                and evaluate(skip, sdfg.constants) > 0):
+                        if (evaluate(begin, sdfg.constants) >= 0 and evaluate(skip, sdfg.constants) > 0):
                             # it could be an unsigned (uint32) variable: we need
                             # to check to the type of 'end',
                             # if we are able to determine it
@@ -1590,12 +1982,9 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                             else:
                                 end_type = None
                             if end_type is not None:
-                                if np.dtype(end_type.dtype.type) > np.dtype(
-                                        'uint32'):
+                                if np.dtype(end_type.dtype.type) > np.dtype('uint32'):
                                     loop_var_type = end_type.ctype
-                                elif np.issubdtype(
-                                        np.dtype(end_type.dtype.type),
-                                        np.unsignedinteger):
+                                elif np.issubdtype(np.dtype(end_type.dtype.type), np.unsignedinteger):
                                     loop_var_type = "size_t"
                     except (UnboundLocalError):
                         raise UnboundLocalError('Pipeline scopes require '
@@ -1607,21 +1996,17 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                         pass
 
                     if is_degenerate[i]:
-                        result.write(
-                            "{{\nconst {} {} = {}; // Degenerate loop".format(
-                                loop_var_type, var, degenerate_values[i]))
+                        result.write("{{\nconst {} {} = {}; // Degenerate loop".format(
+                            loop_var_type, var, degenerate_values[i]))
                     else:
                         result.write(
-                            "for ({} {} = {}; {} < {}; {} += {}) {{\n".format(
-                                loop_var_type, var, cpp.sym2cpp(begin), var,
-                                cpp.sym2cpp(end + 1), var, cpp.sym2cpp(skip)),
-                            sdfg, state_id, node)
+                            "for ({} {} = {}; {} < {}; {} += {}) {{\n".format(loop_var_type, var, cpp.sym2cpp(begin),
+                                                                              var, cpp.sym2cpp(end + 1), var,
+                                                                              cpp.sym2cpp(skip)), sdfg, state_id, node)
 
                     #Add unroll pragma
-                    if not fully_degenerate and not is_degenerate[
-                            i] and node.map.unroll:
-                        self.generate_unroll_loop_post(result, None, sdfg,
-                                                       state_id, node)
+                    if not fully_degenerate and not is_degenerate[i] and node.map.unroll:
+                        self.generate_unroll_loop_post(result, None, sdfg, state_id, node)
 
             else:
                 pipeline = node.pipeline
@@ -1631,44 +2016,34 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                 if len(in_out_data) > 0:
                     if is_there_a_wcr == False:
                         # add pragma to ignore all loop carried dependencies
-                        self.generate_no_dependence_pre(result, sdfg, state_id,
-                                                        node)
+                        self.generate_no_dependence_pre(result, sdfg, state_id, node)
                     else:
                         # add specific pragmas
                         for candidate in in_out_data:
-                            self.generate_no_dependence_pre(
-                                result, sdfg, state_id, node, candidate)
-                result.write(
-                    "for (long {it} = 0; {it} < {bound}; ++{it}) {{\n".format(
-                        it=flat_it, bound=node.pipeline.loop_bound_str()))
+                            self.generate_no_dependence_pre(result, sdfg, state_id, node, candidate)
+                result.write("for (long {it} = 0; {it} < {bound}; ++{it}) {{\n".format(
+                    it=flat_it, bound=node.pipeline.loop_bound_str()))
                 if pipeline.init_size != 0:
-                    result.write("const bool {} = {} < {};\n".format(
-                        node.pipeline.init_condition(), flat_it,
-                        cpp.sym2cpp(pipeline.init_size)))
+                    result.write("const bool {} = {} < {};\n".format(node.pipeline.init_condition(), flat_it,
+                                                                     cpp.sym2cpp(pipeline.init_size)))
                 if pipeline.drain_size != 0:
                     result.write("const bool {} = {} >= {};\n".format(
                         node.pipeline.drain_condition(), flat_it,
-                        bound + (" - " + cpp.sym2cpp(pipeline.drain_size)
-                                 if pipeline.drain_size != 0 else "")))
+                        bound + (" - " + cpp.sym2cpp(pipeline.drain_size) if pipeline.drain_size != 0 else "")))
 
             # Add pragmas
             if not fully_degenerate:
                 if not node.map.unroll:
                     if is_innermost:
-                        self.generate_pipeline_loop_post(
-                            result, sdfg, state_id, node)
-                        self.generate_flatten_loop_post(result, sdfg, state_id,
-                                                        node)
+                        self.generate_pipeline_loop_post(result, sdfg, state_id, node)
+                        self.generate_flatten_loop_post(result, sdfg, state_id, node)
                     # add pragmas for data read/written inside this map, but only for local arrays
                     for candidate in in_out_data:
-                        if sdfg.arrays[
-                                candidate].storage != dtypes.StorageType.FPGA_Global:
-                            self.generate_no_dependence_post(
-                                result, sdfg, state_id, node, candidate)
+                        if sdfg.arrays[candidate].storage != dtypes.StorageType.FPGA_Global:
+                            self.generate_no_dependence_post(result, sdfg, state_id, node, candidate)
 
         # Emit internal transient array allocation
-        to_allocate = dace.sdfg.local_transients(sdfg, sdfg.node(state_id),
-                                                 node)
+        to_allocate = dace.sdfg.local_transients(sdfg, sdfg.node(state_id), node)
         allocated = set()
         for child in dfg.scope_children()[node]:
             if not isinstance(child, dace.sdfg.nodes.AccessNode):
@@ -1676,14 +2051,12 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
             if child.data not in to_allocate or child.data in allocated:
                 continue
             allocated.add(child.data)
-            self._dispatcher.dispatch_allocate(sdfg, dfg, state_id, child, None,
-                                               result)
+            self._dispatcher.dispatch_allocate(sdfg, dfg, state_id, child, child.desc(sdfg), None, result)
 
     def _generate_PipelineExit(self, *args, **kwargs):
         self._generate_MapExit(*args, **kwargs)
 
-    def _generate_MapExit(self, sdfg, dfg, state_id, node, function_stream,
-                          callsite_stream):
+    def _generate_MapExit(self, sdfg, dfg, state_id, node, function_stream, callsite_stream):
         scope_dict = dfg.scope_dict()
         entry_node = scope_dict[node]
         if entry_node.map in self._unrolled_pes:
@@ -1704,22 +2077,18 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
             # ranges could have been defined in terms of floor/ceiling. Before printing the code
             # they are converted from a symbolic expression to a C++ compilable expression
             for it, r in reversed(list(zip(pipeline.params, pipeline.range))):
-                callsite_stream.write(
-                    "if ({it} >= {end}) {{\n{it} = {begin};\n".format(
-                        it=it,
-                        begin=dace.symbolic.symstr(r[0]),
-                        end=dace.symbolic.symstr(r[1])))
+                callsite_stream.write("if ({it} >= {end}) {{\n{it} = {begin};\n".format(it=it,
+                                                                                        begin=dace.symbolic.symstr(
+                                                                                            r[0]),
+                                                                                        end=dace.symbolic.symstr(r[1])))
             for it, r in zip(pipeline.params, pipeline.range):
-                callsite_stream.write(
-                    "}} else {{\n{it} += {step};\n}}\n".format(
-                        it=it, step=dace.symbolic.symstr(r[2])))
+                callsite_stream.write("}} else {{\n{it} += {step};\n}}\n".format(it=it,
+                                                                                 step=dace.symbolic.symstr(r[2])))
             if len(cond) > 0:
                 callsite_stream.write("}\n")
             callsite_stream.write("}\n}\n")
         else:
-            self._cpu_codegen._generate_MapExit(sdfg, dfg, state_id, node,
-                                                function_stream,
-                                                callsite_stream)
+            self._cpu_codegen._generate_MapExit(sdfg, dfg, state_id, node, function_stream, callsite_stream)
 
     def generate_kernel(self,
                         sdfg: dace.SDFG,
@@ -1730,6 +2099,7 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                         callsite_stream: CodeIOStream,
                         state_host_header_stream: CodeIOStream,
                         state_host_body_stream: CodeIOStream,
+                        instrumentation_stream: CodeIOStream,
                         state_parameters: list,
                         kernel_id: int = None):
         '''
@@ -1744,6 +2114,7 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
             for the state global declarations.
         :param state_host_body_stream: Device-specific host code stream: contains all the code related
             to this state, for creating transient buffers, spawning kernels, and synchronizing them.
+        :param instrumentation_stream: Code for profiling kernel execution time.
         :param state_parameters: a list of parameters that must be passed to the state. It will get populated
             considering all the parameters needed by the kernels in this state.
         :param kernel_id: Unique ID of this kernels as computed in the generate_state function
@@ -1763,20 +2134,16 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                 for key, value in self._kernels_names_to_id.items():
                     if val == value:
                         return key
-                raise RuntimeError(
-                    f"Error while generating kernel dependencies. Kernel {val} not found."
-                )
+                raise RuntimeError(f"Error while generating kernel dependencies. Kernel {val} not found.")
 
             # Build a list containing all the name of kernels from which this one depends
             for pred in self._kernels_dependencies[kernel_id]:
                 predecessors.append(get_kernel_name(pred))
 
         # Actual kernel code generation
-        self.generate_kernel_internal(sdfg, state, kernel_name, predecessors,
-                                      subgraphs, kernel_stream,
-                                      state_host_header_stream,
-                                      state_host_body_stream, function_stream,
-                                      callsite_stream, state_parameters)
+        self.generate_kernel_internal(sdfg, state, kernel_name, predecessors, subgraphs, kernel_stream,
+                                      state_host_header_stream, state_host_body_stream, instrumentation_stream,
+                                      function_stream, callsite_stream, state_parameters)
         self._kernel_count = self._kernel_count + 1
         self._in_device_code = False
         self._cpu_codegen._packed_types = False
@@ -1786,51 +2153,46 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
 
         self._allocated_global_arrays = set()
 
-    def generate_modules(self, sdfg, state, kernel_name, subgraphs,
-                         subgraph_parameters, module_stream, entry_stream,
-                         host_stream):
-        """Generate all PEs inside an FPGA Kernel"""
+    def _module_name(self, subgraph, state):
+        """
+        Generate the name of an FPGA module produced from the given subgraph.
+        """
+        to_traverse = subgraph.source_nodes()
+        seen = set()
+        tasklet_list = []
+        access_nodes = []
+        while len(to_traverse) > 0:
+            n = to_traverse.pop()
+            if n in seen:
+                continue
+            seen.add(n)
+            if (isinstance(n, dace.sdfg.nodes.Tasklet) or isinstance(n, dace.sdfg.nodes.NestedSDFG)):
+                tasklet_list.append(n)
+            else:
+                if isinstance(n, dace.sdfg.nodes.AccessNode):
+                    access_nodes.append(n)
+                for e in subgraph.out_edges(n):
+                    if e.dst not in seen:
+                        to_traverse.append(e.dst)
+        # Name module according to all reached tasklets (can be just one)
+        labels = [n.label.replace(" ", "_") + f"_{state.node_id(n)}" for n in tasklet_list]
+        # If there are no tasklets, name it after access nodes in the
+        # subgraph
+        if len(labels) == 0:
+            labels = [n.label.replace(" ", "_") for n in access_nodes]
+        if len(labels) == 0:
+            raise RuntimeError("Expected at least one tasklet or data node.")
+        return "_".join(labels)
 
-        # Module generation
+    def generate_modules(self, sdfg, state, kernel_name, subgraphs, subgraph_parameters, module_stream, entry_stream,
+                         host_stream, instrumentation_stream):
+        """Generate all PEs inside an FPGA Kernel."""
         for subgraph in subgraphs:
-            # Traverse to find first tasklets reachable in topological order
-            to_traverse = subgraph.source_nodes()
-            seen = set()
-            tasklet_list = []
-            access_nodes = []
-            while len(to_traverse) > 0:
-                n = to_traverse.pop()
-                if n in seen:
-                    continue
-                seen.add(n)
-                if (isinstance(n, dace.sdfg.nodes.Tasklet)
-                        or isinstance(n, dace.sdfg.nodes.NestedSDFG)):
-                    tasklet_list.append(n)
-                else:
-                    if isinstance(n, dace.sdfg.nodes.AccessNode):
-                        access_nodes.append(n)
-                    for e in subgraph.out_edges(n):
-                        if e.dst not in seen:
-                            to_traverse.append(e.dst)
-            # Name module according to all reached tasklets (can be just one)
-            labels = [
-                n.label.replace(" ", "_") + f"_{state.node_id(n)}"
-                for n in tasklet_list
-            ]
-            # If there are no tasklets, name it after access nodes in the
-            # subgraph
-            if len(labels) == 0:
-                labels = [n.label.replace(" ", "_") for n in access_nodes]
-            if len(labels) == 0:
-                raise RuntimeError("Expected at least one tasklet or data node")
-            module_name = "_".join(labels)
+            module_name = self._module_name(subgraph, state)
+            self.generate_module(sdfg, state, kernel_name, module_name, subgraph, subgraph_parameters[subgraph],
+                                 module_stream, entry_stream, host_stream, instrumentation_stream)
 
-            self.generate_module(sdfg, state, kernel_name, module_name,
-                                 subgraph, subgraph_parameters[subgraph],
-                                 module_stream, entry_stream, host_stream)
-
-    def generate_nsdfg_header(self, sdfg, state, state_id, node,
-                              memlet_references, sdfg_label):
+    def generate_nsdfg_header(self, sdfg, state, state_id, node, memlet_references, sdfg_label):
         return self._cpu_codegen.generate_nsdfg_header(sdfg,
                                                        state,
                                                        state_id,
@@ -1839,8 +2201,7 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                                                        sdfg_label,
                                                        state_struct=False)
 
-    def generate_nsdfg_call(self, sdfg, state, node, memlet_references,
-                            sdfg_label):
+    def generate_nsdfg_call(self, sdfg, state, node, memlet_references, sdfg_label):
         return self._cpu_codegen.generate_nsdfg_call(sdfg,
                                                      state,
                                                      node,
@@ -1849,12 +2210,9 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
                                                      state_struct=False)
 
     def generate_nsdfg_arguments(self, sdfg, dfg, state, node):
-        return self._cpu_codegen.generate_nsdfg_arguments(
-            sdfg, state, dfg, node)
+        return self._cpu_codegen.generate_nsdfg_arguments(sdfg, state, dfg, node)
 
-    def generate_host_function_boilerplate(self, sdfg, state,
-                                           nested_global_transients,
-                                           host_code_stream):
+    def generate_host_function_boilerplate(self, sdfg, state, nested_global_transients, host_code_stream):
         '''
         Generates global transients that must be passed to the state (required by a kernel)
         '''
@@ -1862,17 +2220,14 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
         # Any extra transients stored in global memory on the FPGA must now be
         # allocated and passed to the kernel
         for arr_node in nested_global_transients:
-            self._dispatcher.dispatch_allocate(sdfg, state, None, arr_node,
-                                               None, host_code_stream)
+            self._dispatcher.dispatch_allocate(sdfg, state, None, arr_node, arr_node.desc(sdfg), None, host_code_stream)
 
     def _generate_Tasklet(self, *args, **kwargs):
         # Call CPU implementation with this code generator as callback
         self._cpu_codegen._generate_Tasklet(*args, codegen=self, **kwargs)
 
-    def define_out_memlet(self, sdfg, state_dfg, state_id, src_node, dst_node,
-                          edge, function_stream, callsite_stream):
-        self._dispatcher.dispatch_copy(src_node, dst_node, edge, sdfg,
-                                       state_dfg, state_id, function_stream,
+    def define_out_memlet(self, sdfg, state_dfg, state_id, src_node, dst_node, edge, function_stream, callsite_stream):
+        self._dispatcher.dispatch_copy(src_node, dst_node, edge, sdfg, state_dfg, state_id, function_stream,
                                        callsite_stream)
 
     def process_out_memlets(self, *args, **kwargs):
@@ -1883,25 +2238,57 @@ DACE_EXPORTED void {host_function_name}({', '.join(kernel_args_opencl)}) {{
         # Fall back on CPU implementation
         self._cpu_codegen.generate_tasklet_preamble(*args, **kwargs)
 
-    def generate_tasklet_postamble(self, sdfg, dfg, state_id, node,
-                                   function_stream, before_memlets_stream,
+    def generate_tasklet_postamble(self, sdfg, dfg, state_id, node, function_stream, before_memlets_stream,
                                    after_memlets_stream):
         # Inject dependency pragmas on memlets
         for edge in dfg.out_edges(node):
-            datadesc = sdfg.arrays[edge.data.data]
-            if (isinstance(datadesc, dt.Array)
-                    and (datadesc.storage == dace.StorageType.FPGA_Local
-                         or datadesc.storage == dace.StorageType.FPGA_Registers)
-                    and not cpp.is_write_conflicted(dfg, edge)
-                    and self._dispatcher.defined_vars.has(edge.src_conn)):
+            dataname = edge.data.data
+            if not dataname:
+                continue  # Empty memlet
+            datadesc = sdfg.arrays[dataname]
+            if (isinstance(datadesc, dt.Array) and datadesc.storage == dace.StorageType.FPGA_Local
+                    and not cpp.is_write_conflicted(dfg, edge) and self._dispatcher.defined_vars.has(edge.src_conn)
+                    and datadesc.total_size != 1):
+                if is_multibank_array_with_distributed_index(datadesc):
+                    accessed_subset, _ = get_multibank_ranges_from_subset(edge.data.dst_subset or edge.data.subset,
+                                                                          sdfg)
+                else:
+                    accessed_subset = 0
 
-                self.generate_no_dependence_post(after_memlets_stream, sdfg,
-                                                 state_id, node, edge.src_conn)
+                self.generate_no_dependence_post(after_memlets_stream, sdfg, state_id, node, dataname, accessed_subset)
 
     def make_ptr_vector_cast(self, *args, **kwargs):
         return cpp.make_ptr_vector_cast(*args, **kwargs)
 
     def make_ptr_assignment(self, *args, **kwargs):
-        return self._cpu_codegen.make_ptr_assignment(*args,
-                                                     codegen=self,
-                                                     **kwargs)
+        return self._cpu_codegen.make_ptr_assignment(*args, codegen=self, **kwargs)
+
+    def instrument_opencl_kernel(self, kernel_name: str, state_id: int, sdfg_id: int, code_stream: CodeIOStream):
+        """
+        Emits code to instrument the OpenCL kernel with the given `kernel_name`.
+        """
+        kernel_index = self._kernel_instrumentation_index
+        self._kernel_instrumentation_index += 1
+        if Config.get_bool("instrumentation", "print_fpga_runtime"):
+            print_str = f"""
+const double elapsed = 1e-9 * (event_end - event_start);
+std::cout << "FPGA OpenCL kernel \\"{kernel_name}\\" executed in " << elapsed << " seconds.\\n";\
+    """
+        else:
+            print_str = ""
+        code_stream.write(f"""\
+    {{
+cl_ulong event_start = 0;
+cl_ulong event_end = 0;
+hlslib::ocl::Event const &event = all_events[{kernel_index}];
+event.getProfilingInfo(CL_PROFILING_COMMAND_START, &event_start);
+event.getProfilingInfo(CL_PROFILING_COMMAND_END, &event_end);
+if (event_start < first_start) {{
+    first_start = event_start;
+}}
+if (event_end > last_end) {{
+    last_end = event_end;
+}}
+// Convert from nanoseconds (reported by OpenCL) to microseconds (expected by the profiler)
+__state->report.add_completion("{kernel_name}", "FPGA", 1e-3 * event_start, 1e-3 * event_end, {sdfg_id}, {state_id}, -1);{print_str}
+}}""")

@@ -2,7 +2,7 @@
 #ifndef __DACE_VECTOR_H
 #define __DACE_VECTOR_H
 
-#ifdef DACE_XILINX_DEVICE_CODE
+#ifdef DACE_XILINX
 #include "xilinx/vec.h"
 #else // Don't include this file if building for Xilinx
 
@@ -24,8 +24,8 @@ namespace dace
     template <typename T>
     struct _vtype<T, 1>
     {
-        typedef T aligned;
-        typedef T unaligned;
+        using aligned = T;
+        using unaligned = T;
     };
 
 #if defined(__CUDACC__) || defined(__HIPCC__)
@@ -217,8 +217,8 @@ namespace dace
         template<>                                                          \
         struct _vtype<T, N>                                                 \
         {                                                                   \
-            typedef simplevec<T, N> aligned;                                \
-            typedef aligned unaligned;                                      \
+            using aligned = simplevec<T, N>;                                \
+            using unaligned = aligned;                                      \
         };                                                                  
 
     #else
@@ -226,8 +226,8 @@ namespace dace
         template<>                                                          \
         struct _vtype<T, N>                                                 \
         {                                                                   \
-            typedef T aligned __attribute__((vector_size(N * BASE_SIZE)));  \
-            typedef aligned __attribute__((aligned(BASE_SIZE))) unaligned;  \
+            using aligned = T __attribute__((vector_size(N * BASE_SIZE)));  \
+            using unaligned = aligned __attribute__((aligned(BASE_SIZE)));  \
         };
     #endif
         #define DEFINE_VECTYPE_ALLSIZES(T, BASE_SIZE)                       \
@@ -255,20 +255,62 @@ namespace dace
     //////////////////////////////////////////////////////////////////
 
     template <typename T, unsigned int N>
+    struct generalvec {
+        T s[N];
+        inline T const &operator[](size_t ind) const { return s[ind]; }
+        inline T &operator[](size_t ind) { return s[ind]; }
+    };
+
+    namespace detail
+    {
+        // If the element type is not fundamental, for example when nesting
+        // vector types within vector types, fall back on a generic 
+        // implementation.
+
+        template <typename T, unsigned int N, bool = std::is_fundamental<T>::value>
+        struct simple_or_general;
+
+        template <typename T, unsigned int N>
+        struct simple_or_general<T, N, true> {
+            using aligned = typename _vtype<T, N>::aligned;
+            using unaligned = typename _vtype<T, N>::unaligned;
+        };
+
+        template <typename T, unsigned int N>
+        struct simple_or_general<T, N, false> {
+            using aligned = generalvec<T, N>;
+            using unaligned = generalvec<T, N>;
+        };
+
+        template <typename T>
+        struct simple_or_general<T, 1, true> {
+            using aligned = T;
+            using unaligned = T;
+        };
+
+        template <typename T>
+        struct simple_or_general<T, 1, false> {
+            using aligned = T;
+            using unaligned = T;
+        };
+
+    }  // namespace detail
+
+    template <typename T, unsigned int N>
     struct vector_type
     {
-        typedef typename _vtype<T, N>::aligned aligned;
-        typedef typename _vtype<T, N>::unaligned unaligned;
-        typedef T element_type;
+        using aligned = typename detail::simple_or_general<T, N>::aligned;
+        using unaligned = typename detail::simple_or_general<T, N>::unaligned;
+        using element_type = T;
         static constexpr unsigned int size = N;
-        typedef union {
+        using access_aligned = union {
             aligned v;
             T s[N];
-        } access_aligned;
-        typedef union {
+        };
+        using access_unaligned = union {
             unaligned v;
             T s[N];
-        } access_unaligned;
+        };
     };
 
     template <typename T, unsigned int N>

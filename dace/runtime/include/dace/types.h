@@ -31,12 +31,14 @@
     #include <cuda_runtime.h>
     #include <cuda_fp16.h>
     #include <thrust/complex.h>
-    #include "../../../external/cub/cub/grid/grid_barrier.cuh"
+    #include "cuda/multidim_gbar.cuh"
 
     // Workaround so that half is defined as a scalar (for reductions)
     namespace std {
         template <>
         struct is_scalar<half> : std::integral_constant<bool, true> {};
+        template <>
+        struct is_fundamental<half> : std::integral_constant<bool, true> {};
     }  // namespace std
 #elif defined(__HIPCC__)
     #include <hip/hip_runtime.h>
@@ -84,7 +86,18 @@ namespace dace
     #else
     typedef std::complex<float> complex64;
     typedef std::complex<double> complex128;
-    typedef short half;
+    struct half {
+        // source: https://stackoverflow.com/a/26779139/15853075
+        half(float f) {
+            uint32_t x = *((uint32_t*)&f);
+            h = ((x>>16)&0x8000)|((((x&0x7f800000)-0x38000000)>>13)&0x7c00)|((x>>13)&0x03ff);
+        }
+        operator float() {
+            float f = ((h&0x8000)<<16) | (((h&0x7c00)+0x1C000)<<13) | ((h&0x03FF)<<13);
+            return f;
+        }
+        uint16_t h;
+    };
     typedef half float16;
     #endif
 

@@ -42,44 +42,17 @@ def mapfission_sdfg():
 
     # Edges
     state.add_nedge(ome, scalar, dace.Memlet())
-    state.add_memlet_path(rnode,
-                          ome,
-                          t1,
-                          memlet=dace.Memlet.simple('A', '2*i:2*i+2'),
-                          dst_conn='a')
-    state.add_memlet_path(rnode,
-                          ome,
-                          ime2,
-                          t2,
-                          memlet=dace.Memlet.simple('A', '2*i+j'),
-                          dst_conn='a')
-    state.add_memlet_path(t2,
-                          imx2,
-                          s24node,
-                          memlet=dace.Memlet.simple('s2', 'j'),
-                          src_conn='b')
-    state.add_memlet_path(rnode,
-                          ome,
-                          ime3,
-                          t3,
-                          memlet=dace.Memlet.simple('A', '2*i:2*i+2'),
-                          dst_conn='a')
-    state.add_memlet_path(t3,
-                          imx3,
-                          s34node,
-                          memlet=dace.Memlet.simple('s3out', '0'),
-                          src_conn='b')
+    state.add_memlet_path(rnode, ome, t1, memlet=dace.Memlet.simple('A', '2*i:2*i+2'), dst_conn='a')
+    state.add_memlet_path(rnode, ome, ime2, t2, memlet=dace.Memlet.simple('A', '2*i+j'), dst_conn='a')
+    state.add_memlet_path(t2, imx2, s24node, memlet=dace.Memlet.simple('s2', 'j'), src_conn='b')
+    state.add_memlet_path(rnode, ome, ime3, t3, memlet=dace.Memlet.simple('A', '2*i:2*i+2'), dst_conn='a')
+    state.add_memlet_path(t3, imx3, s34node, memlet=dace.Memlet.simple('s3out', '0'), src_conn='b')
 
     state.add_edge(t1, 'b', t4, 'ione', dace.Memlet.simple('s1', '0'))
     state.add_edge(s24node, None, t4, 'itwo', dace.Memlet.simple('s2', '0:2'))
-    state.add_edge(s34node, None, t4, 'ithree',
-                   dace.Memlet.simple('s3out', '0'))
+    state.add_edge(s34node, None, t4, 'ithree', dace.Memlet.simple('s3out', '0'))
     state.add_edge(scalar, 'out', t4, 'sc', dace.Memlet.simple('scal', '0'))
-    state.add_memlet_path(t4,
-                          omx,
-                          wnode,
-                          memlet=dace.Memlet.simple('B', 'i'),
-                          src_conn='out')
+    state.add_memlet_path(t4, omx, wnode, memlet=dace.Memlet.simple('B', 'i'), src_conn='out')
 
     sdfg.validate()
     return sdfg
@@ -110,7 +83,8 @@ def test_subgraph():
     graph.validate()
 
     subgraph = SubgraphView(graph.nodes()[0], graph.nodes()[0].nodes())
-    sf = SubgraphFusion(subgraph)
+    sf = SubgraphFusion()
+    sf.setup_match(subgraph)
     assert sf.can_be_applied(graph, subgraph)
     fusion(graph, graph.nodes()[0], None)
     ccgraph = graph.compile()

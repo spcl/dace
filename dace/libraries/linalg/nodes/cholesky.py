@@ -13,8 +13,7 @@ from dace.libraries.blas import environments as blas_environments
 
 def _make_sdfg(node, parent_state, parent_sdfg, implementation):
 
-    inp_desc, inp_shape, out_desc, out_shape = node.validate(parent_sdfg,
-                                                             parent_state)
+    inp_desc, inp_shape, out_desc, out_shape = node.validate(parent_sdfg, parent_state)
     dtype = inp_desc.dtype
 
     sdfg = dace.SDFG("{l}_sdfg".format(l=node.label))
@@ -29,16 +28,16 @@ def _make_sdfg(node, parent_state, parent_sdfg, implementation):
 
     state = sdfg.add_state("{l}_state".format(l=node.label))
 
-    potrf_node = Potrf('potrf', lower=node._lower)
+    potrf_node = Potrf('potrf', lower=node.lower)
     potrf_node.implementation = implementation
 
-    _, me, mx = state.add_mapped_tasklet(
-        '_uzero_',
-        dict(__i="0:%s" % out_shape[0], __j="0:%s" % out_shape[1]),
-        dict(_inp=Memlet.simple('_b', '__i, __j')),
-        '_out = (__i < __j) ? 0 : _inp;',
-        dict(_out=Memlet.simple('_b', '__i, __j')),
-        language=dace.dtypes.Language.CPP, external_edges=True)
+    _, me, mx = state.add_mapped_tasklet('_uzero_',
+                                         dict(__i="0:%s" % out_shape[0], __j="0:%s" % out_shape[1]),
+                                         dict(_inp=Memlet.simple('_b', '__i, __j')),
+                                         '_out = (__i < __j) ? 0 : _inp;',
+                                         dict(_out=Memlet.simple('_b', '__i, __j')),
+                                         language=dace.dtypes.Language.CPP,
+                                         external_edges=True)
 
     ain = state.add_read('_a')
     if implementation == 'cuSolverDn':
@@ -62,18 +61,9 @@ def _make_sdfg(node, parent_state, parent_sdfg, implementation):
 
     info = state.add_write('_info')
 
-    state.add_memlet_path(binout1,
-                          potrf_node,
-                          dst_conn="_xin",
-                          memlet=Memlet.from_array(*binout_arr))
-    state.add_memlet_path(potrf_node,
-                          info,
-                          src_conn="_res",
-                          memlet=Memlet.from_array(*info_arr))
-    state.add_memlet_path(potrf_node,
-                          binout2,
-                          src_conn="_xout",
-                          memlet=Memlet.from_array(*binout_arr))
+    state.add_memlet_path(binout1, potrf_node, dst_conn="_xin", memlet=Memlet.from_array(*binout_arr))
+    state.add_memlet_path(potrf_node, info, src_conn="_res", memlet=Memlet.from_array(*info_arr))
+    state.add_memlet_path(potrf_node, binout2, src_conn="_xout", memlet=Memlet.from_array(*binout_arr))
 
     return sdfg
 
@@ -107,6 +97,7 @@ class ExpandCholeskyMKL(ExpandTransformation):
     environments = [blas_environments.intel_mkl.IntelMKL]
 
     staticmethod
+
     def expansion(node, parent_state, parent_sdfg, **kwargs):
         return _make_sdfg(node, parent_state, parent_sdfg, "MKL")
 
@@ -119,6 +110,7 @@ class ExpandCholeskyCuSolverDn(ExpandTransformation):
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, **kwargs):
         staticmethod
+
     def expansion(node, parent_state, parent_sdfg, **kwargs):
         return _make_sdfg(node, parent_state, parent_sdfg, "cuSolverDn")
 
@@ -137,11 +129,9 @@ class Cholesky(dace.sdfg.nodes.LibraryNode):
     lower = dace.properties.Property(dtype=bool, default=True)
 
     def __init__(self, name, lower=True, *args, **kwargs):
-        super().__init__(name,
-                         *args,
-                         inputs={"_a"},
-                         outputs={"_b",},
-                         **kwargs)
+        super().__init__(name, *args, inputs={"_a"}, outputs={
+            "_b",
+        }, **kwargs)
         self.lower = lower
 
     def validate(self, sdfg, state):
@@ -154,8 +144,7 @@ class Cholesky(dace.sdfg.nodes.LibraryNode):
         in_memlet = in_edges[0].data
         out_edges = state.out_edges(self)
         if len(out_edges) != 1:
-            raise ValueError(
-                "Expected exactly one input from cholesky node")
+            raise ValueError("Expected exactly one input from cholesky node")
         out_memlet = out_edges[0].data
 
         # Squeeze input memlets

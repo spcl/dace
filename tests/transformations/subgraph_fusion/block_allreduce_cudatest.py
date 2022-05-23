@@ -2,7 +2,7 @@
 import dace
 import numpy as np
 import pytest
-from dace.transformation.subgraph import ReduceExpansion
+from dace.transformation.dataflow import ReduceExpansion
 
 from dace.libraries.standard.nodes.reduce import Reduce
 
@@ -35,11 +35,12 @@ def test_blockallreduce():
 
     sdfg_id = 0
     state_id = 0
-    subgraph = {ReduceExpansion._reduce: graph.nodes().index(reduce_node)}
+    subgraph = {ReduceExpansion.reduce: graph.node_id(reduce_node)}
     # expand first
-    transform = ReduceExpansion(sdfg_id, state_id, subgraph, 0)
+    transform = ReduceExpansion()
+    transform.setup_match(sdfg, sdfg_id, state_id, subgraph, 0)
     transform.reduce_implementation = 'CUDA (block allreduce)'
-    transform.apply(sdfg)
+    transform.apply(sdfg.node(0), sdfg)
     csdfg = sdfg.compile()
     result2 = csdfg(A=A, M=M, N=N)
     del csdfg

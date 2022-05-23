@@ -4,8 +4,7 @@ import dace.properties
 import dace.sdfg.nodes
 from dace.transformation.transformation import ExpandTransformation
 from dace.libraries.blas import environments
-from dace import (config, data as dt, dtypes, memlet as mm, SDFG, SDFGState,
-                  symbolic)
+from dace import (config, data as dt, dtypes, memlet as mm, SDFG, SDFGState, symbolic)
 from dace.frontend.common import op_repository as oprepo
 
 
@@ -18,10 +17,7 @@ class ExpandAxpyVectorized(ExpandTransformation):
     environments = []
 
     @staticmethod
-    def expansion(node,
-                  parent_state: SDFGState,
-                  parent_sdfg,
-                  schedule=dace.ScheduleType.Default):
+    def expansion(node, parent_state: SDFGState, parent_sdfg, schedule=dace.ScheduleType.Default):
         """
         :param node: Node to expand.
         :param parent_state: State that the node is in.
@@ -31,12 +27,9 @@ class ExpandAxpyVectorized(ExpandTransformation):
         """
         node.validate(parent_sdfg, parent_state)
 
-        x_outer = parent_sdfg.arrays[next(
-            parent_state.in_edges_by_connector(node, "_x")).data.data]
-        y_outer = parent_sdfg.arrays[next(
-            parent_state.in_edges_by_connector(node, "_y")).data.data]
-        res_outer = parent_sdfg.arrays[next(
-            parent_state.out_edges_by_connector(node, "_res")).data.data]
+        x_outer = parent_sdfg.arrays[next(parent_state.in_edges_by_connector(node, "_x")).data.data]
+        y_outer = parent_sdfg.arrays[next(parent_state.in_edges_by_connector(node, "_y")).data.data]
+        res_outer = parent_sdfg.arrays[next(parent_state.out_edges_by_connector(node, "_res")).data.data]
 
         a = node.a
         n = node.n / x_outer.dtype.veclen
@@ -59,12 +52,10 @@ class ExpandAxpyVectorized(ExpandTransformation):
         y_in = axpy_state.add_read("_y")
         z_out = axpy_state.add_write("_res")
 
-        vec_map_entry, vec_map_exit = axpy_state.add_map(
-            "axpy", {"i": f"0:{n}"}, schedule=schedule)
+        vec_map_entry, vec_map_exit = axpy_state.add_map("axpy", {"i": f"0:{n}"}, schedule=schedule)
 
-        axpy_tasklet = axpy_state.add_tasklet(
-            "axpy", ["x_conn", "y_conn"], ["z_conn"],
-            f"z_conn = {a} * x_conn + y_conn")
+        axpy_tasklet = axpy_state.add_tasklet("axpy", ["x_conn", "y_conn"], ["z_conn"],
+                                              f"z_conn = {a} * x_conn + y_conn")
 
         # Access container either as an array or as a stream
         index = "0" if isinstance(x_inner, dt.Stream) else "i"
@@ -107,12 +98,11 @@ class ExpandAxpyFpga(ExpandTransformation):
         :param parent_state: State that the node is in.
         :param parent_sdfg: SDFG that the node is in.
         """
-        return ExpandAxpyVectorized.expansion(
-            node,
-            parent_state,
-            parent_sdfg,
-            schedule=dace.ScheduleType.FPGA_Device,
-            **kwargs)
+        return ExpandAxpyVectorized.expansion(node,
+                                              parent_state,
+                                              parent_sdfg,
+                                              schedule=dace.ScheduleType.FPGA_Device,
+                                              **kwargs)
 
 
 @dace.library.node
@@ -131,24 +121,17 @@ class Axpy(dace.sdfg.nodes.LibraryNode):
     default_implementation = None
 
     # Object fields
-    a = dace.properties.SymbolicProperty(allow_none=False,
-                                         default=dace.symbolic.symbol("a"))
-    n = dace.properties.SymbolicProperty(allow_none=False,
-                                         default=dace.symbolic.symbol("n"))
+    a = dace.properties.SymbolicProperty(allow_none=False, default=dace.symbolic.symbol("a"))
+    n = dace.properties.SymbolicProperty(allow_none=False, default=dace.symbolic.symbol("n"))
 
     def __init__(self, name, a=None, n=None, *args, **kwargs):
-        super().__init__(name,
-                         *args,
-                         inputs={"_x", "_y"},
-                         outputs={"_res"},
-                         **kwargs)
+        super().__init__(name, *args, inputs={"_x", "_y"}, outputs={"_res"}, **kwargs)
         self.a = a or dace.symbolic.symbol("a")
         self.n = n or dace.symbolic.symbol("n")
 
     def compare(self, other):
 
-        if (self.veclen == other.veclen
-                and self.implementation == other.implementation):
+        if (self.veclen == other.veclen and self.implementation == other.implementation):
 
             return True
         else:
@@ -177,8 +160,7 @@ class Axpy(dace.sdfg.nodes.LibraryNode):
         if size != out_memlet.subset.size():
             raise ValueError("Output of axpy must have same size as input")
 
-        if (in_memlets[0].wcr is not None or in_memlets[1].wcr is not None
-                or out_memlet.wcr is not None):
+        if (in_memlets[0].wcr is not None or in_memlets[1].wcr is not None or out_memlet.wcr is not None):
             raise ValueError("WCR on axpy memlets not supported")
 
         return True
@@ -187,7 +169,7 @@ class Axpy(dace.sdfg.nodes.LibraryNode):
 # Numpy replacement
 @oprepo.replaces('dace.libraries.blas.axpy')
 @oprepo.replaces('dace.libraries.blas.Axpy')
-def axpy_libnode(sdfg: SDFG, state: SDFGState, a, x, y, result):
+def axpy_libnode(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a, x, y, result):
     # Add nodes
     x_in, y_in = (state.add_read(name) for name in (x, y))
     res = state.add_write(result)

@@ -56,6 +56,7 @@ def test_ufunc_true_divide_uu(A: dace.uint32[10], B: dace.uint32[10]):
     return np.true_divide(A, B)
 
 
+@pytest.mark.skip
 @compare_numpy_output(non_zero=True, check_dtype=True)
 def test_ufunc_floor_divide_cc(A: dace.complex64[10], B: dace.complex64[10]):
     return np.floor_divide(A, B)
@@ -996,12 +997,13 @@ def test_ufunc_fmin_nan_ff(A: dace.float32[10], B: dace.float32[10]):
     return np.fmin(C, B)
 
 
-def test_ufunc_isfinite_c(): 
+def test_ufunc_isfinite_c():
     @compare_numpy_output(check_dtype=True)
     def ufunc_isfinite_c(A: dace.complex64[10]):
         A[0] = np.inf
         A[1] = np.NaN
         return np.isfinite(A)
+
     args = dace.Config.get('compiler', 'cpu', 'args')
     print(args)
     if args.find('-ffast-math') >= 0:
@@ -1019,6 +1021,7 @@ def test_ufunc_isfinite_f():
         A[0] = np.inf
         A[1] = np.NaN
         return np.isfinite(A)
+
     args = dace.Config.get('compiler', 'cpu', 'args')
     print(args)
     if args.find('-ffast-math') >= 0:
@@ -1047,6 +1050,7 @@ def test_ufunc_isinf_c():
         A[0] = np.inf
         A[1] = np.NaN
         return np.isinf(A)
+
     args = dace.Config.get('compiler', 'cpu', 'args')
     print(args)
     if args.find('-ffast-math') >= 0:
@@ -1064,6 +1068,7 @@ def test_ufunc_isinf_f():
         A[0] = np.inf
         A[1] = np.NaN
         return np.isinf(A)
+
     args = dace.Config.get('compiler', 'cpu', 'args')
     print(args)
     if args.find('-ffast-math') >= 0:
@@ -1092,6 +1097,7 @@ def test_ufunc_isnan_c():
         A[0] = np.inf
         A[1] = np.NaN
         return np.isnan(A)
+
     args = dace.Config.get('compiler', 'cpu', 'args')
     print(args)
     if args.find('-ffast-math') >= 0:
@@ -1109,6 +1115,7 @@ def test_ufunc_isnan_f():
         A[0] = np.inf
         A[1] = np.NaN
         return np.isnan(A)
+
     args = dace.Config.get('compiler', 'cpu', 'args')
     print(args)
     if args.find('-ffast-math') >= 0:
@@ -1308,7 +1315,7 @@ if __name__ == "__main__":
     test_ufunc_logaddexp2_ff()
     test_ufunc_true_divide_ff()
     test_ufunc_true_divide_uu()
-    test_ufunc_floor_divide_cc()
+    # test_ufunc_floor_divide_cc()
     test_ufunc_floor_divide_ff()
     test_ufunc_floor_divide_uu()
     test_ufunc_floor_divide_ss()

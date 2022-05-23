@@ -2,7 +2,9 @@
 import contextlib
 import os
 import platform
+import tempfile
 import yaml
+import warnings
 
 
 @contextlib.contextmanager
@@ -21,6 +23,22 @@ def set_temporary(*path, value):
     Config.set(*path, value=value)
     yield
     Config.set(*path, value=old_value)
+
+
+@contextlib.contextmanager
+def temporary_config():
+    """
+    Creates a context where all configuration options changed will be reset when the context exits.
+
+    with temporary_config():
+        Config.set("testing", "serialization", value=True)
+        Config.set("optimizer", "autooptimize", value=True)
+        foo()
+    """
+    with tempfile.NamedTemporaryFile() as fp:
+        Config.save(fp.name)
+        yield
+        Config.load(fp.name)
 
 
 def _env2bool(envval):
@@ -79,10 +97,10 @@ class Config(object):
 
     @staticmethod
     def initialize():
-        """ Initializes configuration.
-        
-            B{Note:} This function runs automatically when the module
-                     is loaded.
+        """
+        Initializes configuration.
+
+        :note: This function runs automatically when the module is loaded.
         """
 
         # If already initialized, skip
@@ -90,13 +108,12 @@ class Config(object):
             return
 
         # Override default configuration file path
+        default_filename = '.dace.conf'
         if 'DACE_CONFIG' in os.environ:
-            cfg_filename = os.environ['DACE_CONFIG']
+            default_cfg_filename = os.environ['DACE_CONFIG']
         else:
             home = os.path.expanduser("~")
-            cfg_filename = os.path.join(home, ".dace.conf")
-
-        Config._cfg_filename = cfg_filename
+            default_cfg_filename = os.path.join(home, default_filename)
 
         dace_path = os.path.dirname(os.path.abspath(__file__))
         Config._metadata_filename = os.path.join(dace_path, 'config_schema.yml')
@@ -104,13 +121,34 @@ class Config(object):
         # Load configuration schema (for validation and defaults)
         Config.load_schema()
 
-        if os.path.isfile(cfg_filename):
-            Config.load()
+        # Priority order: current working directory, default configuration file (DACE_CONFIG), then ~/.dace.conf
+        for filename in [default_filename, default_cfg_filename]:
+            Config._cfg_filename = filename
+            try:
+                if os.path.isfile(filename):
+                    Config.load()
+                    break
+            except (FileNotFoundError, PermissionError, OSError):
+                # If any filesystem-related error happened during file load, move on to next candidate
+                continue
         else:
-            # Load the defaults from metadata and save new conf file
+            # None of the files were found
+
+            # Load the defaults from metadata
             Config._config = {}
             _add_defaults(Config._config, Config._config_metadata['required'])
-            Config.save()
+
+            # Try to create a new config file in reversed priority order, and if all else fails keep config in memory
+            for filename in [default_cfg_filename, default_filename, None]:
+                Config._cfg_filename = filename
+                try:
+                    Config.save()
+                    break
+                except (FileNotFoundError, PermissionError, OSError):
+                    # If any filesystem-related error happened during file save, move on to next candidate
+                    continue
+            else:
+                warnings.warn('No DaCe configuration file was able to be saved')
 
     @staticmethod
     def load(filename=None):
@@ -129,8 +167,7 @@ class Config(object):
             Config._config = {}
 
         # Add defaults from metadata
-        modified = _add_defaults(Config._config,
-                                 Config._config_metadata['required'])
+        modified = _add_defaults(Config._config, Config._config_metadata['required'])
         if modified:  # Update file if changed
             Config.save()
 
@@ -143,8 +180,7 @@ class Config(object):
         if filename is None:
             filename = Config._metadata_filename
         with open(filename, 'r') as f:
-            Config._config_metadata = yaml.load(f.read(),
-                                                Loader=yaml.SafeLoader)
+            Config._config_metadata = yaml.load(f.read(), Loader=yaml.SafeLoader)
 
     @staticmethod
     def save(path=None):
@@ -154,16 +190,17 @@ class Config(object):
         """
         if path is None:
             path = Config._cfg_filename
-        # Write configuration file
-        with open(path, 'w') as f:
-            yaml.dump(Config._config, f, default_flow_style=False)
+        if path is not None:
+            # Write configuration file
+            with open(path, 'w') as f:
+                yaml.dump(Config._config, f, default_flow_style=False)
 
     @staticmethod
     def get_metadata(*key_hierarchy):
         """ Returns the configuration specification of a given entry
             from the schema.
             :param key_hierarchy: A tuple of strings leading to the
-                                  configuration entry. 
+                                  configuration entry.
                                   For example: ('a', 'b', 'c') would be
                                   configuration entry c which is in the
                                   path a->b.
@@ -180,7 +217,7 @@ class Config(object):
         """ Returns the default value of a given configuration entry.
             Takes into accound current operating system.
             :param key_hierarchy: A tuple of strings leading to the
-                                  configuration entry. 
+                                  configuration entry.
                                   For example: ('a', 'b', 'c') would be
                                   configuration entry c which is in the
                                   path a->b.
@@ -198,7 +235,7 @@ class Config(object):
     def get(*key_hierarchy):
         """ Returns the current value of a given configuration entry.
             :param key_hierarchy: A tuple of strings leading to the
-                                  configuration entry. 
+                                  configuration entry.
                                   For example: ('a', 'b', 'c') would be
                                   configuration entry c which is in the
                                   path a->b.
@@ -220,10 +257,10 @@ class Config(object):
     @staticmethod
     def get_bool(*key_hierarchy):
         """ Returns the current value of a given boolean configuration entry.
-            This specialization allows more string types to be converted to 
+            This specialization allows more string types to be converted to
             boolean, e.g., due to environment variable overrides.
             :param key_hierarchy: A tuple of strings leading to the
-                                  configuration entry. 
+                                  configuration entry.
                                   For example: ('a', 'b', 'c') would be
                                   configuration entry c which is in the
                                   path a->b.
@@ -237,10 +274,10 @@ class Config(object):
     @staticmethod
     def append(*key_hierarchy, value=None, autosave=False):
         """ Appends to the current value of a given configuration entry
-            and sets it. Example usage: 
+            and sets it. Example usage:
             `Config.append('compiler', 'cpu', 'args', value='-fPIC')`
             :param key_hierarchy: A tuple of strings leading to the
-                                  configuration entry. 
+                                  configuration entry.
                                   For example: ('a', 'b', 'c') would be
                                   configuration entry c which is in the
                                   path a->b.
@@ -263,10 +300,10 @@ class Config(object):
     @staticmethod
     def set(*key_hierarchy, value=None, autosave=False):
         """ Sets the current value of a given configuration entry.
-            Example usage: 
+            Example usage:
             `Config.set('profiling', value=True)`
             :param key_hierarchy: A tuple of strings leading to the
-                                  configuration entry. 
+                                  configuration entry.
                                   For example: ('a', 'b', 'c') would be
                                   configuration entry c which is in the
                                   path a->b.

@@ -11,20 +11,26 @@ also address any questions you have to alziogas@inf.ethz.ch
 
 ## Supported Python Versions
 
-The DaCe framework officially supports Python 3 up to version 3.7.
-The Python-Frontend also works with version 3.8. However, the module SymPy
+The DaCe framework officially supports Python 3 from version 3.7.
+The Python-Frontend also works with version 3.8-3.10. However, the module SymPy
 must be updated to version 1.6.2 or newer. Please note that there are some
 issues between DaCe and SymPy 1.6.2 (see [#367](https://github.com/spcl/dace/pull/367)).  
 
-**Neither the DaCe framework nor the Python-Frontend have been tested with
-Python version 3.9**
-
 ## Main Limitations
 
-- Classes are not supported.
+- Classes are only supported in JIT mode.
 - Lists, sets, and dictionaries are not supported as data. There is limited support for other uses, e.g., as arguments to some methods.
 - Only `range`, `parrange`, and `dace.map` iterators are supported.
 - Recursion is not supported.
+
+## Automatic parsing
+
+By default, DaCe tries to parse every call as a dace.program. If the object being called has an `__sdfg__` method, it will
+be used instead of trying to parse `__call__`. Additionally, a function called `dace.in_program()` returns `True` while in a
+DaCe parsing context.
+
+If parsing fails, DaCe will try to automatically generate a callback to the Python interpreter, marshalling types such
+as NumPy/CuPy arrays such that they match internal data containers. A warning will also be raised when this happens.
 
 ## NumPy Compatibility
 
@@ -44,9 +50,9 @@ There is also upcoming support for NumPy ufuncs. You may preview ufunc support w
 
 ## Known Issues
 
-### Issues when automatic strict transformations are enabled
+### Issues when automatic simplification is enabled
 
-When automatic strict transformations are enabled, SDFGs created using the
+When automatic simplification is enabled, SDFGs created using the
 Python-Frontend are automatically transformed using:
 - InlineSDFG
 - EndStateElimination
@@ -67,4 +73,4 @@ ranges, leading to RW/WR/WW dependencies, InlineSDFG and StateFusion may violate
 - When there are sequential dependencies between statements due to updating a loop variable,
 StateFusion may erroneously lead to concurrent execution of those statements (see [#315](https://github.com/spcl/dace/issues/315)).
   
-Temporary workaround: Disable the automatic strict transformations flag in the configuration file `.dace.conf`.
+Temporary workaround: Disable the automatic simplification pass flag in the configuration file `.dace.conf`.

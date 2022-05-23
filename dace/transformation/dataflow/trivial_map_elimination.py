@@ -1,16 +1,14 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains classes that implement the trivial-map-elimination transformation. """
 
-from dace import registry
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation
 from dace.properties import make_properties
 
 
-@registry.autoregister_params(singlestate=True)
 @make_properties
-class TrivialMapElimination(transformation.Transformation):
+class TrivialMapElimination(transformation.SingleStateTransformation):
     """ Implements the Trivial-Map Elimination pattern.
 
         Trivial-Map Elimination removes all dimensions containing only one
@@ -19,25 +17,18 @@ class TrivialMapElimination(transformation.Transformation):
         Example: Map[i=0  ,j=7] -> nothing
     """
 
-    _map_entry = nodes.MapEntry(nodes.Map("", [], []))
+    map_entry = transformation.PatternNode(nodes.MapEntry)
 
-    @staticmethod
-    def expressions():
-        return [sdutil.node_path_graph(TrivialMapElimination._map_entry)]
+    @classmethod
+    def expressions(cls):
+        return [sdutil.node_path_graph(cls.map_entry)]
 
-    @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
-        map_entry = graph.nodes()[candidate[TrivialMapElimination._map_entry]]
+    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
+        map_entry = self.map_entry
         return any(r[0] == r[1] for r in map_entry.map.range)
 
-    @staticmethod
-    def match_to_str(graph, candidate):
-        map_entry = graph.nodes()[candidate[TrivialMapElimination._map_entry]]
-        return map_entry.map.label + ': ' + str(map_entry.map.params)
-
-    def apply(self, sdfg):
-        graph = sdfg.nodes()[self.state_id]
-        map_entry = graph.nodes()[self.subgraph[TrivialMapElimination._map_entry]]
+    def apply(self, graph, sdfg):
+        map_entry = self.map_entry
         map_exit = graph.exit_node(map_entry)
 
         remaining_ranges = []
@@ -62,8 +53,7 @@ class TrivialMapElimination(transformation.Transformation):
                 index = path.index(edge)
 
                 # Add an edge directly from the previous source connector to the destination
-                graph.add_edge(path[index - 1].src, path[index - 1].src_conn,
-                            edge.dst, edge.dst_conn, edge.data)
+                graph.add_edge(path[index - 1].src, path[index - 1].src_conn, edge.dst, edge.dst_conn, edge.data)
 
             # Redirect map exit's in edges.
             for edge in graph.in_edges(map_exit):
@@ -71,8 +61,8 @@ class TrivialMapElimination(transformation.Transformation):
                 index = path.index(edge)
 
                 # Add an edge directly from the source to the next destination connector
-                graph.add_edge(edge.src, edge.src_conn,
-                            path[index + 1].dst, path[index + 1].dst_conn, edge.data)
-            
+                if len(path) > index + 1:
+                    graph.add_edge(edge.src, edge.src_conn, path[index + 1].dst, path[index + 1].dst_conn, edge.data)
+
             # Remove map
             graph.remove_nodes_from([map_entry, map_exit])

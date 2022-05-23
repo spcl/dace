@@ -3,7 +3,6 @@ import dace
 import numpy as np
 from common import compare_numpy_output
 
-
 # M = dace.symbol('M')
 # N = dace.symbol('N')
 
@@ -18,8 +17,8 @@ def empty():
 
 def test_empty():
     out = empty()
-    assert(list(out.shape) == [M, N])
-    assert(out.dtype == np.uint32)
+    assert (list(out.shape) == [M, N])
+    assert (out.dtype == np.uint32)
 
 
 @dace.program
@@ -30,8 +29,8 @@ def empty_like1(A: dace.complex64[N, M, 2]):
 def test_empty_like1():
     A = np.ndarray([N, M, 2], dtype=np.complex64)
     out = empty_like1(A)
-    assert(list(out.shape) == [N, M, 2])
-    assert(out.dtype == np.complex64)
+    assert (list(out.shape) == [N, M, 2])
+    assert (out.dtype == np.complex64)
 
 
 @dace.program
@@ -42,8 +41,8 @@ def empty_like2(A: dace.complex64[N, M, 2]):
 def test_empty_like2():
     A = np.ndarray([N, M, 2], dtype=np.complex64)
     out = empty_like2(A)
-    assert(list(out.shape) == [2, N, N])
-    assert(out.dtype == np.complex64)
+    assert (list(out.shape) == [2, N, N])
+    assert (out.dtype == np.complex64)
 
 
 @dace.program
@@ -54,8 +53,8 @@ def empty_like3(A: dace.complex64[N, M, 2]):
 def test_empty_like3():
     A = np.ndarray([N, M, 2], dtype=np.complex64)
     out = empty_like3(A)
-    assert(list(out.shape) == [N, M, 2])
-    assert(out.dtype == np.uint8)
+    assert (list(out.shape) == [N, M, 2])
+    assert (out.dtype == np.uint8)
 
 
 @compare_numpy_output()
@@ -98,6 +97,59 @@ def test_identity():
     return np.identity(M)
 
 
+@compare_numpy_output()
+def test_array(A: dace.float64[N, M]):
+    return np.array(A)
+
+
+cst = np.random.rand(10, 10).astype(np.float32)
+
+
+@compare_numpy_output()
+def test_array_constant():
+    return np.array(cst, dtype=np.float32)
+
+
+@compare_numpy_output()
+def test_array_literal():
+    return np.array([[1, 2], [3, 4]], dtype=np.float32)
+
+
+@compare_numpy_output()
+def test_arange_0():
+    return np.arange(10, dtype=np.int32)
+
+
+@compare_numpy_output()
+def test_arange_1():
+    return np.arange(2, 10, dtype=np.int32)
+
+
+@compare_numpy_output()
+def test_arange_2():
+    return np.arange(2, 10, 3, dtype=np.int32)
+
+
+@compare_numpy_output()
+def test_arange_3():
+    return np.arange(2.5, 10, 3, dtype=np.float32)
+
+
+@compare_numpy_output()
+def test_arange_4():
+    return np.arange(2.5, 10, 3, dtype=np.int32)
+
+
+@compare_numpy_output()
+def test_arange_5():
+    return np.arange(2, 10, 3)
+
+
+@compare_numpy_output()
+def test_arange_6():
+    return np.arange(2.5, 10, 3)
+
+
 if __name__ == "__main__":
     test_empty()
     test_empty_like1()
@@ -111,3 +163,13 @@ if __name__ == "__main__":
     test_full_like()
     test_copy()
     test_identity()
+    test_array()
+    test_array_constant()
+    test_array_literal()
+    test_arange_0()
+    test_arange_1()
+    test_arange_2()
+    test_arange_3()
+    test_arange_4()
+    test_arange_5()
+    test_arange_6()

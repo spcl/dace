@@ -13,11 +13,9 @@ def test_cache_same_args():
         return x * x
 
     test(5)
-    compiled_id = id(test._cache)
+    assert len(test._cache.cache) == 1
     test(5)
-    compiled_id2 = id(test._cache)
-
-    assert compiled_id == compiled_id2
+    assert len(test._cache.cache) == 1
 
 
 def test_cache_different_args():
@@ -32,13 +30,12 @@ def test_cache_different_args():
     a = np.random.rand(2)
     b = np.random.rand(3)
     ra = test(a)
-    compiled_id = id(test._cache)
+    assert len(test._cache.cache) == 1
     rb = test(b)
-    compiled_id2 = id(test._cache)
+    assert len(test._cache.cache) == 2
 
     assert np.allclose(a * a, ra)
     assert np.allclose(b * b, rb)
-    assert compiled_id != compiled_id2
 
 
 def test_cache_return_values():

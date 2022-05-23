@@ -1,0 +1,85 @@
+name: General Tests
+
+on:
+  push:
+    branches: [ master, ci-fix ]
+  pull_request:
+    branches: [ master, ci-fix ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: [3.7,'3.10']
+        simplify: [0,1,autoopt]
+
+    steps:
+    - uses: actions/checkout@v2
+      with:
+        submodules: 'recursive'
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v2
+      with:
+        python-version: ${{ matrix.python-version }}
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libyaml-dev cmake
+        sudo apt-get install -y libblas-dev libopenblas-dev liblapacke-dev
+        sudo apt-get install -y libpapi-dev papi-tools  # Instrumentation dependencies
+        sudo apt-get install -y verilator # RTL simulation dependencies
+        python -m pip install --upgrade pip
+        pip install flake8 pytest-xdist coverage codecov
+        pip install -e ".[testing]"
+
+    - name: Test dependencies
+      run: |
+        papi_avail
+
+    - name: Test with pytest
+      run: |
+        export NOSTATUSBAR=1
+        export DACE_testing_serialization=1
+        export DACE_testing_deserialize_exception=1
+        export DACE_cache=unique
+        export DACE_optimizer_interface=" "
+        if [ "${{ matrix.simplify }}" = "autoopt" ]; then
+            export DACE_optimizer_automatic_simplification=1
+            export DACE_optimizer_autooptimize=1
+            echo "Auto-optimization heuristics"
+        else
+            export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
+        fi
+        pytest -n auto --cov-report=xml --cov=dace --tb=short -m "not gpu and not verilator and not tensorflow and not mkl and not sve and not papi and not mlir and not lapack and not fpga and not mpi and not rtl_hardware"
+        codecov
+
+    - name: Test OpenBLAS LAPACK
+      run: |
+        export NOSTATUSBAR=1
+        export DACE_testing_serialization=1
+        export DACE_testing_deserialize_exception=1
+        export DACE_cache=unique
+        export DACE_optimizer_interface=" "
+        if [ "${{ matrix.simplify }}" = "autoopt" ]; then
+            export DACE_optimizer_automatic_simplification=1
+            export DACE_optimizer_autooptimize=1
+            echo "Auto-optimization heuristics"
+        else
+            export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
+        fi
+        pytest -n 1 --cov-report=xml --cov=dace --tb=short -m "lapack"
+        codecov
+
+    - name: Run other tests
+      run: |
+        export NOSTATUSBAR=1
+        export DACE_testing_serialization=1
+        export DACE_testing_deserialize_exception=1
+        export DACE_cache=single
+        export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
+        export PYTHON_BINARY="coverage run --source=dace --parallel-mode"
+        ./tests/polybench_test.sh
+        ./tests/xform_test.sh
+        coverage combine .; coverage report; coverage xml
+        codecov

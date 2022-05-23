@@ -3,10 +3,12 @@
 #define __DACE_PERF_REPORTING_H
 
 #include <chrono>
+#include <cstring>
 #include <fstream>
 #include <map>
 #include <mutex>
 #include <sstream>
+#include <thread>
 #include <vector>
 
 #ifdef _WIN32

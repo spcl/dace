@@ -1,4 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+from dace.sdfg.nodes import EntryNode
 from typing import Optional, Set, Tuple
 
 import collections
@@ -13,10 +14,11 @@ from dace.codegen.targets.common import codeblock_to_cpp, sym2cpp
 from dace.codegen.targets.cpp import unparse_interstate_edge
 from dace.codegen.targets.target import TargetCodeGenerator
 from dace.sdfg import SDFG, SDFGState, ScopeSubgraphView
-from dace.sdfg import nodes
+from dace.sdfg import nodes, utils
 from dace.sdfg.infer_types import set_default_schedule_and_storage_types
+from dace.sdfg import scope as sdscope
 from dace import dtypes, data, config
-from typing import Any, List
+from typing import Any, DefaultDict, Dict, List, Tuple, Union
 
 from dace.frontend.python import wrappers
 
@@ -29,17 +31,42 @@ def _get_or_eval_sdfg_first_arg(func, sdfg):
         return func(sdfg)
     return func
 
+
 class DaCeCodeGenerator(object):
     """ DaCe code generator class that writes the generated code for SDFG
         state machines, and uses a dispatcher to generate code for
         individual states based on the target. """
-    def __init__(self, *args, **kwargs):
+    def __init__(self, sdfg: SDFG):
         self._dispatcher = disp.TargetDispatcher(self)
         self._dispatcher.register_state_dispatcher(self)
         self._initcode = CodeIOStream()
         self._exitcode = CodeIOStream()
         self.statestruct: List[str] = []
         self.environments: List[Any] = []
+        self.targets: Set[TargetCodeGenerator] = set()
+        self.to_allocate: DefaultDict[Union[SDFG, SDFGState, nodes.EntryNode],
+                                      List[Tuple[int, int, nodes.AccessNode]]] = collections.defaultdict(list)
+        self.where_allocated: Dict[Tuple[SDFG, str], SDFG] = {}
+        self.fsyms: Dict[int, Set[str]] = {}
+        self._symbols_and_constants: Dict[int, Set[str]] = {}
+        fsyms = self.free_symbols(sdfg)
+        self.arglist = sdfg.arglist(scalars_only=False, free_symbols=fsyms)
+
+    # Cached fields
+    def symbols_and_constants(self, sdfg: SDFG):
+        if sdfg.sdfg_id in self._symbols_and_constants:
+            return self._symbols_and_constants[sdfg.sdfg_id]
+        result = sdfg.free_symbols.union(sdfg.constants.keys())
+        self._symbols_and_constants[sdfg.sdfg_id] = result
+        return result
+
+    def free_symbols(self, obj: Any):
+        k = id(obj)
+        if k in self.fsyms:
+            return self.fsyms[k]
+        result = obj.free_symbols
+        self.fsyms[k] = result
+        return result
 
     ##################################################################
     # Target registry
@@ -50,6 +77,14 @@ class DaCeCodeGenerator(object):
 
     ##################################################################
     # Code generation
+
+    def preprocess(self, sdfg: SDFG) -> None:
+        """
+        Called before code generation. Used for making modifications on the SDFG prior to code generation.
+        :note: Post-conditions assume that the SDFG will NOT be changed after this point.
+        :param sdfg: The SDFG to modify in-place.
+        """
+        pass
 
     def generate_constants(self, sdfg: SDFG, callsite_stream: CodeIOStream):
         # Write constants
@@ -64,14 +99,9 @@ class DaCeCodeGenerator(object):
                 const_str += str(it[0]) + "};\n"
                 callsite_stream.write(const_str, sdfg)
             else:
-                callsite_stream.write(
-                    "constexpr %s %s = %s;\n" %
-                    (csttype.dtype.ctype, cstname, sym2cpp(cstval)), sdfg)
+                callsite_stream.write("constexpr %s %s = %s;\n" % (csttype.dtype.ctype, cstname, sym2cpp(cstval)), sdfg)
 
-    def generate_fileheader(self,
-                            sdfg: SDFG,
-                            global_stream: CodeIOStream,
-                            backend: str = 'frame'):
+    def generate_fileheader(self, sdfg: SDFG, global_stream: CodeIOStream, backend: str = 'frame'):
         """ Generate a header in every output file that includes custom types
             and constants.
             :param sdfg: The input SDFG.
@@ -86,9 +116,12 @@ class DaCeCodeGenerator(object):
         # Environment-based includes
         for env in self.environments:
             if len(env.headers) > 0:
-                global_stream.write(
-                    "\n".join("#include \"" + h + "\"" for h in env.headers),
-                    sdfg)
+                if not isinstance(env.headers, dict):
+                    headers = {'frame': env.headers}
+                else:
+                    headers = env.headers
+                if backend in headers:
+                    global_stream.write("\n".join("#include \"" + h + "\"" for h in headers[backend]), sdfg)
 
         #########################################################
         # Custom types
@@ -116,8 +149,7 @@ class DaCeCodeGenerator(object):
         #########################################################
         # Write state struct
         structstr = '\n'.join(self.statestruct)
-        global_stream.write(
-            f'''
+        global_stream.write(f'''
 struct {sdfg.name}_t {{
     {structstr}
 }};
@@ -128,11 +160,9 @@ struct {sdfg.name}_t {{
             if None in sd.global_code:
                 global_stream.write(codeblock_to_cpp(sd.global_code[None]), sd)
             if backend in sd.global_code:
-                global_stream.write(codeblock_to_cpp(sd.global_code[backend]),
-                                    sd)
+                global_stream.write(codeblock_to_cpp(sd.global_code[backend]), sd)
 
-    def generate_header(self, sdfg: SDFG, global_stream: CodeIOStream,
-                        callsite_stream: CodeIOStream):
+    def generate_header(self, sdfg: SDFG, global_stream: CodeIOStream, callsite_stream: CodeIOStream):
         """ Generate the header of the frame-code. Code exists in a separate
             function for overriding purposes.
             :param sdfg: The input SDFG.
@@ -140,26 +170,22 @@ struct {sdfg.name}_t {{
             :param callsite_stream: Stream to write to (at call site).
         """
         # Write frame code - header
-        global_stream.write(
-            '/* DaCe AUTO-GENERATED FILE. DO NOT MODIFY */\n' +
-            '#include <dace/dace.h>\n', sdfg)
+        global_stream.write('/* DaCe AUTO-GENERATED FILE. DO NOT MODIFY */\n' + '#include <dace/dace.h>\n', sdfg)
 
         # Write header required by environments
         for env in self.environments:
             self.statestruct.extend(env.state_fields)
 
         # Instrumentation preamble
-        if len(self._dispatcher.instrumentation) > 1:
+        if len(self._dispatcher.instrumentation) > 2:
             self.statestruct.append('dace::perf::Report report;')
             # Reset report if written every invocation
-            if config.Config.get_bool('instrumentation',
-                                      'report_each_invocation'):
+            if config.Config.get_bool('instrumentation', 'report_each_invocation'):
                 callsite_stream.write('__state->report.reset();', sdfg)
 
         self.generate_fileheader(sdfg, global_stream, 'frame')
 
-    def generate_footer(self, sdfg: SDFG, global_stream: CodeIOStream,
-                        callsite_stream: CodeIOStream):
+    def generate_footer(self, sdfg: SDFG, global_stream: CodeIOStream, callsite_stream: CodeIOStream):
         """ Generate the footer of the frame-code. Code exists in a separate
             function for overriding purposes.
             :param sdfg: The input SDFG.
@@ -168,10 +194,10 @@ struct {sdfg.name}_t {{
         """
         import dace.library
         fname = sdfg.name
-        params = sdfg.signature()
-        paramnames = sdfg.signature(False, for_call=True)
-        initparams = sdfg.signature(with_arrays=False)
-        initparamnames = sdfg.signature(False, for_call=True, with_arrays=False)
+        params = sdfg.signature(arglist=self.arglist)
+        paramnames = sdfg.signature(False, for_call=True, arglist=self.arglist)
+        initparams = sdfg.init_signature(free_symbols=self.free_symbols(sdfg))
+        initparamnames = sdfg.init_signature(for_call=True, free_symbols=self.free_symbols(sdfg))
 
         # Invoke all instrumentation providers
         for instr in self._dispatcher.instrumentation.values():
@@ -180,11 +206,11 @@ struct {sdfg.name}_t {{
 
         # Instrumentation saving
         if (config.Config.get_bool('instrumentation', 'report_each_invocation')
-                and len(self._dispatcher.instrumentation) > 1):
+                and len(self._dispatcher.instrumentation) > 2):
             callsite_stream.write(
-                '''__state->report.save("{path}/perf", __HASH_{name});'''
-                .format(path=sdfg.build_folder.replace('\\', '/'),
-                        name=sdfg.name), sdfg)
+                '''__state->report.save("{path}/perf", __HASH_{name});'''.format(path=sdfg.build_folder.replace(
+                    '\\', '/'),
+                                                                                 name=sdfg.name), sdfg)
 
         # Write closing brace of program
         callsite_stream.write('}', sdfg)
@@ -208,8 +234,7 @@ DACE_EXPORTED void __program_{fname}({fname}_t *__state{params_comma})
                     (target.target_name, sdfg.name, initparams_comma), sdfg)
             if target.has_finalizer:
                 callsite_stream.write(
-                    'DACE_EXPORTED int __dace_exit_%s(%s_t *__state);\n' %
-                    (target.target_name, sdfg.name), sdfg)
+                    'DACE_EXPORTED int __dace_exit_%s(%s_t *__state);\n' % (target.target_name, sdfg.name), sdfg)
 
         callsite_stream.write(
             f"""
@@ -223,20 +248,19 @@ DACE_EXPORTED {sdfg.name}_t *__dace_init_{sdfg.name}({initparams})
         for target in self._dispatcher.used_targets:
             if target.has_initializer:
                 callsite_stream.write(
-                    '__result |= __dace_init_%s(__state%s);' %
-                    (target.target_name, initparamnames_comma), sdfg)
+                    '__result |= __dace_init_%s(__state%s);' % (target.target_name, initparamnames_comma), sdfg)
         for env in self.environments:
             init_code = _get_or_eval_sdfg_first_arg(env.init_code, sdfg)
             if init_code:
-                callsite_stream.write("{  // Environment: " + env.__name__,
-                                      sdfg)
+                callsite_stream.write("{  // Environment: " + env.__name__, sdfg)
                 callsite_stream.write(init_code)
                 callsite_stream.write("}")
 
         for sd in sdfg.all_sdfgs_recursive():
             if None in sd.init_code:
                 callsite_stream.write(codeblock_to_cpp(sd.init_code[None]), sd)
-            callsite_stream.write(codeblock_to_cpp(sd.init_code['frame']), sd)
+            if 'frame' in sd.init_code:
+                callsite_stream.write(codeblock_to_cpp(sd.init_code['frame']), sd)
 
         callsite_stream.write(self._initcode.getvalue(), sdfg)
 
@@ -254,94 +278,44 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
 """, sdfg)
 
         # Instrumentation saving
-        if (not config.Config.get_bool('instrumentation',
-                                       'report_each_invocation')
-                and len(self._dispatcher.instrumentation) > 1):
+        if (not config.Config.get_bool('instrumentation', 'report_each_invocation')
+                and len(self._dispatcher.instrumentation) > 2):
             callsite_stream.write(
-                '__state->report.save("%s/perf", __HASH_%s);' %
-                (sdfg.build_folder.replace('\\', '/'), sdfg.name), sdfg)
+                '__state->report.save("%s/perf", __HASH_%s);' % (sdfg.build_folder.replace('\\', '/'), sdfg.name), sdfg)
 
         callsite_stream.write(self._exitcode.getvalue(), sdfg)
 
         for sd in sdfg.all_sdfgs_recursive():
             if None in sd.exit_code:
                 callsite_stream.write(codeblock_to_cpp(sd.exit_code[None]), sd)
-            callsite_stream.write(codeblock_to_cpp(sd.exit_code['frame']), sd)
+            if 'frame' in sd.exit_code:
+                callsite_stream.write(codeblock_to_cpp(sd.exit_code['frame']), sd)
 
         for target in self._dispatcher.used_targets:
             if target.has_finalizer:
-                callsite_stream.write(
-                    '__dace_exit_%s(__state);' % target.target_name, sdfg)
+                callsite_stream.write('__dace_exit_%s(__state);' % target.target_name, sdfg)
         for env in reversed(self.environments):
             finalize_code = _get_or_eval_sdfg_first_arg(env.finalize_code, sdfg)
             if finalize_code:
-                callsite_stream.write("{  // Environment: " + env.__name__,
-                                      sdfg)
+                callsite_stream.write("{  // Environment: " + env.__name__, sdfg)
                 callsite_stream.write(finalize_code)
                 callsite_stream.write("}")
 
         callsite_stream.write('delete __state;\n}\n', sdfg)
 
-    def generate_state(self,
-                       sdfg,
-                       state,
-                       global_stream,
-                       callsite_stream,
-                       generate_state_footer=True):
+    def generate_state(self, sdfg, state, global_stream, callsite_stream, generate_state_footer=True):
 
         sid = sdfg.node_id(state)
 
         # Emit internal transient array allocation
-        # Don't allocate transients shared with another state
-        data_to_allocate = (set(state.top_level_transients()) -
-                            set(sdfg.shared_transients()))
-        allocated = set()
-        for node in state.data_nodes():
-            if node.data not in data_to_allocate or node.data in allocated:
-                continue
-            allocated.add(node.data)
-            self._dispatcher.dispatch_allocate(sdfg, state, sid, node,
-                                               global_stream, callsite_stream)
-
-        callsite_stream.write('\n')
-
-        # Emit internal transient array allocation for nested SDFGs
-        # TODO: Replace with global allocation management
-        gpu_persistent_subgraphs = [
-            state.scope_subgraph(node) for node in state.nodes()
-            if isinstance(node, dace.nodes.MapEntry)
-            and node.map.schedule == dace.ScheduleType.GPU_Persistent
-        ]
-        nested_allocated = set()
-        for sub_graph in gpu_persistent_subgraphs:
-            for nested_sdfg in [
-                    n.sdfg for n in sub_graph.nodes()
-                    if isinstance(n, nodes.NestedSDFG)
-            ]:
-                nested_shared_transients = set(nested_sdfg.shared_transients())
-                for nested_state in nested_sdfg.nodes():
-                    nested_sid = nested_sdfg.node_id(nested_state)
-                    nested_to_allocate = (
-                        set(nested_state.top_level_transients()) -
-                        nested_shared_transients)
-                    nodes_to_allocate = [
-                        n for n in nested_state.data_nodes()
-                        if n.data in nested_to_allocate
-                        and n.data not in nested_allocated
-                    ]
-                    for nested_node in nodes_to_allocate:
-                        nested_allocated.add(nested_node.data)
-                        self._dispatcher.dispatch_allocate(
-                            nested_sdfg, nested_state, nested_sid, nested_node,
-                            global_stream, callsite_stream)
+        self.allocate_arrays_in_scope(sdfg, state, global_stream, callsite_stream)
 
         callsite_stream.write('\n')
 
         # Invoke all instrumentation providers
         for instr in self._dispatcher.instrumentation.values():
             if instr is not None:
-                instr.on_state_begin(sdfg, state, callsite_stream,
-                                     global_stream)
+                instr.on_state_begin(sdfg, state, callsite_stream, global_stream)
 
         #####################
         # Create dataflow graph for state's children.
@@ -353,24 +327,14 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
         components = dace.sdfg.concurrent_subgraphs(state)
 
         if len(components) == 1:
-            self._dispatcher.dispatch_subgraph(sdfg,
-                                               state,
-                                               sid,
-                                               global_stream,
-                                               callsite_stream,
-                                               skip_entry_node=False)
+            self._dispatcher.dispatch_subgraph(sdfg, state, sid, global_stream, callsite_stream, skip_entry_node=False)
         else:
             if sdfg.openmp_sections:
                 callsite_stream.write("#pragma omp parallel sections\n{")
             for c in components:
                 if sdfg.openmp_sections:
                     callsite_stream.write("#pragma omp section\n{")
-                self._dispatcher.dispatch_subgraph(sdfg,
-                                                   c,
-                                                   sid,
-                                                   global_stream,
-                                                   callsite_stream,
-                                                   skip_entry_node=False)
+                self._dispatcher.dispatch_subgraph(sdfg, c, sid, global_stream, callsite_stream, skip_entry_node=False)
                 if sdfg.openmp_sections:
                     callsite_stream.write("} // End omp section")
             if sdfg.openmp_sections:
@@ -380,56 +344,13 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
         # Write state footer
 
         if generate_state_footer:
-
-            # Emit internal transient array deallocation for nested SDFGs
-            # TODO: Replace with global allocation management
-            gpu_persistent_subgraphs = [
-                state.scope_subgraph(node) for node in state.nodes()
-                if isinstance(node, dace.nodes.MapEntry)
-                and node.map.schedule == dace.ScheduleType.GPU_Persistent
-            ]
-            nested_deallocated = set()
-            for sub_graph in gpu_persistent_subgraphs:
-                for nested_sdfg in [
-                        n.sdfg for n in sub_graph.nodes()
-                        if isinstance(n, nodes.NestedSDFG)
-                ]:
-                    nested_shared_transients = \
-                        set(nested_sdfg.shared_transients())
-                    for nested_state in nested_sdfg:
-                        nested_sid = nested_sdfg.node_id(nested_state)
-                        nested_to_allocate = (
-                            set(nested_state.top_level_transients()) -
-                            nested_shared_transients)
-                        nodes_to_deallocate = [
-                            n for n in nested_state.data_nodes()
-                            if n.data in nested_to_allocate
-                            and n.data not in nested_deallocated
-                        ]
-                        for nested_node in nodes_to_deallocate:
-                            nested_deallocated.add(nested_node.data)
-                            self._dispatcher.dispatch_deallocate(
-                                nested_sdfg, nested_state, nested_sid,
-                                nested_node, global_stream, callsite_stream)
-
             # Emit internal transient array deallocation
-            deallocated = set()
-            for node in state.data_nodes():
-                if (node.data not in data_to_allocate
-                        or node.data in deallocated
-                        or (node.data in sdfg.arrays
-                            and sdfg.arrays[node.data].transient == False)):
-                    continue
-                deallocated.add(node.data)
-                self._dispatcher.dispatch_deallocate(sdfg, state, sid, node,
-                                                     global_stream,
-                                                     callsite_stream)
+            self.deallocate_arrays_in_scope(sdfg, state, global_stream, callsite_stream)
 
             # Invoke all instrumentation providers
             for instr in self._dispatcher.instrumentation.values():
                 if instr is not None:
-                    instr.on_state_end(sdfg, state, callsite_stream,
-                                       global_stream)
+                    instr.on_state_end(sdfg, state, callsite_stream, global_stream)
 
     def generate_states(self, sdfg, global_stream, callsite_stream):
         states_generated = set()
@@ -454,25 +375,314 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
             # If disabled, generate entire graph as general control flow block
             states_topological = list(sdfg.topological_sort(sdfg.start_state))
             last = states_topological[-1]
-            cft = cflow.GeneralBlock(dispatch_state, [
-                cflow.SingleState(dispatch_state, s, s is last)
-                for s in states_topological
-            ], [], [])
+            cft = cflow.GeneralBlock(dispatch_state,
+                                     [cflow.SingleState(dispatch_state, s, s is last) for s in states_topological], [],
+                                     [], [], [])
 
-        callsite_stream.write(
-            cft.as_cpp(self.dispatcher.defined_vars, sdfg.symbols), sdfg)
+        callsite_stream.write(cft.as_cpp(self, sdfg.symbols), sdfg)
 
         # Write exit label
         callsite_stream.write(f'__state_exit_{sdfg.sdfg_id}:;', sdfg)
 
         return states_generated
 
-    def generate_code(
-        self,
-        sdfg: SDFG,
-        schedule: Optional[dtypes.ScheduleType],
-        sdfg_id: str = ""
-    ) -> Tuple[str, str, Set[TargetCodeGenerator], Set[str]]:
+    def _get_schedule(self, scope: Union[nodes.EntryNode, SDFGState, SDFG]) -> dtypes.ScheduleType:
+        TOP_SCHEDULE = dtypes.ScheduleType.Sequential
+        if scope is None:
+            return TOP_SCHEDULE
+        elif isinstance(scope, nodes.EntryNode):
+            return scope.schedule
+        elif isinstance(scope, (SDFGState, SDFG)):
+            sdfg: SDFG = (scope if isinstance(scope, SDFG) else scope.parent)
+            if sdfg.parent_nsdfg_node is None:
+                return TOP_SCHEDULE
+            return (sdfg.parent_nsdfg_node.schedule or TOP_SCHEDULE)
+        else:
+            raise TypeError
+
+    def _can_allocate(self, sdfg: SDFG, state: SDFGState, desc: data.Data, scope: Union[nodes.EntryNode, SDFGState,
+                                                                                        SDFG]) -> bool:
+        schedule = self._get_schedule(scope)
+        # if not dtypes.can_allocate(desc.storage, schedule):
+        #     return False
+        if dtypes.can_allocate(desc.storage, schedule):
+            return True
+
+        # Check for device-level memory recursively
+        node = scope if isinstance(scope, nodes.EntryNode) else None
+        cstate = scope if isinstance(scope, SDFGState) else state
+        csdfg = scope if isinstance(scope, SDFG) else sdfg
+
+        if desc.storage in dtypes.FPGA_STORAGES:
+            return sdscope.is_devicelevel_fpga(csdfg, cstate, node)
+        elif desc.storage in dtypes.GPU_STORAGES:
+            return sdscope.is_devicelevel_gpu(csdfg, cstate, node)
+
+        return False
+
+    def determine_allocation_lifetime(self, top_sdfg: SDFG):
+        """
+        Determines where (at which scope/state/SDFG) each data descriptor
+        will be allocated/deallocated.
+        :param top_sdfg: The top-level SDFG to determine for.
+        """
+        # Gather shared transients, free symbols, and first/last appearance
+        shared_transients = {}
+        fsyms = {}
+        first_instance: Dict[int, Dict[str, Tuple[int, nodes.AccessNode]]] = {}
+        last_instance: Dict[int, Dict[str, Tuple[int, nodes.AccessNode]]] = {}
+        for sdfg in top_sdfg.all_sdfgs_recursive():
+            shared_transients[sdfg.sdfg_id] = sdfg.shared_transients(check_toplevel=False)
+            fsyms[sdfg.sdfg_id] = self.symbols_and_constants(sdfg)
+
+            # Possibly confusing control flow below finds the first/last state
+            # and node of the data descriptor
+            finst: Dict[str, Tuple[int, nodes.AccessNode]] = {}
+            linst: Dict[str, Tuple[int, nodes.AccessNode]] = {}
+            for state in sdfg.topological_sort():
+                id = sdfg.node_id(state)
+                for node in state.data_nodes():
+                    if node.data not in finst:
+                        finst[node.data] = (id, node)
+                    linst[node.data] = (id, node)
+            first_instance[sdfg.sdfg_id] = finst
+            last_instance[sdfg.sdfg_id] = linst
+
+        for sdfg, name, desc in top_sdfg.arrays_recursive():
+            if not desc.transient:
+                continue
+            if name in sdfg.constants_prop:
+                # Constants do not need to be allocated
+                continue
+
+            # NOTE: In the code below we infer where a transient should be
+            # declared, allocated, and deallocated. The information is stored
+            # in the `to_allocate` dictionary. The key of each entry is the
+            # scope where one of the above actions must occur, while the value
+            # is a tuple containing the following information:
+            # 1. The SDFG object that containts the transient.
+            # 2. The State id where the action should (approx.) take place.
+            # 3. The Access Node id of the transient in the above State.
+            # 4. True if declaration should take place, otherwise False.
+            # 5. True if allocation should take place, otherwise False.
+            # 6. True if deallocation should take place, otherwise False.
+
+            first_state_instance, first_node_instance = \
+                first_instance[sdfg.sdfg_id].get(name, (None, None))
+            last_state_instance, last_node_instance = \
+                last_instance[sdfg.sdfg_id].get(name, (None, None))
+
+            # Cases
+            if desc.lifetime is dtypes.AllocationLifetime.Persistent:
+                # Persistent memory is allocated in initialization code and
+                # exists in the library state structure
+
+                # If unused, skip
+                if first_node_instance is None:
+                    continue
+
+                definition = desc.as_arg(name=f'__{sdfg.sdfg_id}_{name}') + ';'
+                self.statestruct.append(definition)
+
+                self.to_allocate[top_sdfg].append((sdfg, first_state_instance, first_node_instance, True, True, True))
+                self.where_allocated[(sdfg, name)] = top_sdfg
+                continue
+            elif desc.lifetime is dtypes.AllocationLifetime.Global:
+                # Global memory is allocated in the beginning of the program
+                # exists in the library state structure (to be passed along
+                # to the right SDFG)
+
+                # If unused, skip
+                if first_node_instance is None:
+                    continue
+
+                definition = desc.as_arg(name=f'__{sdfg.sdfg_id}_{name}') + ';'
+                self.statestruct.append(definition)
+
+                # self.to_allocate[top_sdfg].append(
+                #     (sdfg.sdfg_id, sdfg.node_id(state), node))
+                self.to_allocate[top_sdfg].append((sdfg, first_state_instance, first_node_instance, True, True, True))
+                self.where_allocated[(sdfg, name)] = top_sdfg
+                continue
+
+            # The rest of the cases change the starting scope we attempt to
+            # allocate from, since the descriptors may only be allocated higher
+            # in the hierarchy (e.g., in the case of GPU global memory inside
+            # a kernel).
+            alloc_scope: Union[nodes.EntryNode, SDFGState, SDFG] = None
+            alloc_state: SDFGState = None
+            access_node: nodes.AccessNode = None
+            if (name in shared_transients[sdfg.sdfg_id] or desc.lifetime is dtypes.AllocationLifetime.SDFG):
+                # SDFG memory and shared transients are allocated in the
+                # beginning of their SDFG
+                alloc_scope = sdfg
+                if first_state_instance is not None:
+                    alloc_state = sdfg.nodes()[first_state_instance]
+                # If unused, skip
+                if first_node_instance is None:
+                    continue
+            elif desc.lifetime is dtypes.AllocationLifetime.State:
+                # State memory is either allocated in the beginning of the
+                # containing state or the SDFG (if used in more than one state)
+                curstate: SDFGState = None
+                multistate = False
+                for state in sdfg.nodes():
+                    if any(n.data == name for n in state.data_nodes()):
+                        if curstate is not None:
+                            multistate = True
+                            break
+                        curstate = state
+                if multistate:
+                    alloc_scope = sdfg
+                else:
+                    alloc_scope = curstate
+                    alloc_state = curstate
+            elif desc.lifetime is dtypes.AllocationLifetime.Scope:
+                # Scope memory (default) is either allocated in the innermost
+                # scope (e.g., Map, Consume) it is used in (i.e., greatest
+                # common denominator), or in the SDFG if used in multiple states
+                curscope: Union[nodes.EntryNode, SDFGState] = None
+                curstate: SDFGState = None
+                multistate = False
+
+                # Does the array appear in inter-state edges?
+                for isedge in sdfg.edges():
+                    if name in self.free_symbols(isedge.data):
+                        multistate = True
+
+                for state in sdfg.nodes():
+                    if multistate:
+                        break
+                    sdict = state.scope_dict()
+                    for node in state.nodes():
+                        if not isinstance(node, nodes.AccessNode):
+                            continue
+                        if node.data != name:
+                            continue
+
+                        # If already found in another state, set scope to SDFG
+                        if curstate is not None and curstate != state:
+                            multistate = True
+                            break
+                        curstate = state
+
+                        # Current scope (or state object if top-level)
+                        scope = sdict[node] or state
+                        if curscope is None:
+                            curscope = scope
+                            continue
+                        # States always win
+                        if isinstance(scope, SDFGState):
+                            curscope = scope
+                            continue
+                        # Lower/Higher/Disjoint scopes: find common denominator
+                        if isinstance(curscope, SDFGState):
+                            if scope in curscope.nodes():
+                                continue
+                        curscope = sdscope.common_parent_scope(sdict, scope, curscope)
+
+                    if multistate:
+                        break
+
+                if multistate:
+                    alloc_scope = sdfg
+                else:
+                    alloc_scope = curscope
+                    alloc_state = curstate
+            else:
+                raise TypeError('Unrecognized allocation lifetime "%s"' % desc.lifetime)
+
+            if alloc_scope is None:  # No allocation necessary
+                continue
+
+            # If descriptor cannot be allocated in this scope, traverse up the
+            # scope tree until it is possible
+            cursdfg = sdfg
+            curstate = alloc_state
+            curscope = alloc_scope
+            while not self._can_allocate(cursdfg, curstate, desc, curscope):
+                if curscope is None:
+                    break
+                if isinstance(curscope, nodes.EntryNode):
+                    # Go one scope up
+                    curscope = curstate.entry_node(curscope)
+                    if curscope is None:
+                        curscope = curstate
+                elif isinstance(curscope, (SDFGState, SDFG)):
+                    cursdfg: SDFG = (curscope if isinstance(curscope, SDFG) else curscope.parent)
+                    # Go one SDFG up
+                    if cursdfg.parent_nsdfg_node is None:
+                        curscope = None
+                        curstate = None
+                        cursdfg = None
+                    else:
+                        curstate = cursdfg.parent
+                        curscope = curstate.entry_node(cursdfg.parent_nsdfg_node)
+                        cursdfg = cursdfg.parent_sdfg
+                else:
+                    raise TypeError
+
+            if curscope is None:
+                curscope = top_sdfg
+
+            # Check if Array/View is dependent on non-free SDFG symbols
+            # NOTE: Tuple is (SDFG, State, Node, declare, allocate, deallocate)
+            fsymbols = fsyms[sdfg.sdfg_id]
+            if (not isinstance(curscope, nodes.EntryNode)
+                    and utils.is_nonfree_sym_dependent(first_node_instance, desc, alloc_state, fsymbols)):
+                # Declare in current (SDFG) scope
+                self.to_allocate[curscope].append((sdfg, first_state_instance, first_node_instance, True, False, False))
+                # Allocate in first State
+                # Deallocate in last State
+                if first_state_instance != last_state_instance:
+                    curscope = sdfg.nodes()[first_state_instance]
+                    self.to_allocate[curscope].append(
+                        (sdfg, first_state_instance, first_node_instance, False, True, False))
+                    curscope = sdfg.nodes()[last_state_instance]
+                    self.to_allocate[curscope].append(
+                        (sdfg, last_state_instance, last_node_instance, False, False, True))
+                else:
+                    curscope = sdfg.nodes()[first_state_instance]
+                    self.to_allocate[curscope].append(
+                        (sdfg, first_state_instance, first_node_instance, False, True, True))
+            else:
+                self.to_allocate[curscope].append((sdfg, first_state_instance, first_node_instance, True, True, True))
+            if isinstance(curscope, SDFG):
+                self.where_allocated[(sdfg, name)] = curscope
+            else:
+                self.where_allocated[(sdfg, name)] = cursdfg
+
+    def allocate_arrays_in_scope(self, sdfg: SDFG, scope: Union[nodes.EntryNode, SDFGState, SDFG],
+                                 function_stream: CodeIOStream, callsite_stream: CodeIOStream):
+        """ Dispatches allocation of all arrays in the given scope. """
+        for tsdfg, state_id, node, declare, allocate, _ in self.to_allocate[scope]:
+            if state_id is not None:
+                state = tsdfg.node(state_id)
+            else:
+                state = None
+            desc = node.desc(tsdfg)
+
+            self._dispatcher.dispatch_allocate(tsdfg, state, state_id, node, desc, function_stream, callsite_stream,
+                                               declare, allocate)
+
+    def deallocate_arrays_in_scope(self, sdfg: SDFG, scope: Union[nodes.EntryNode, SDFGState, SDFG],
+                                   function_stream: CodeIOStream, callsite_stream: CodeIOStream):
+        """ Dispatches deallocation of all arrays in the given scope. """
+        for tsdfg, state_id, node, _, _, deallocate in self.to_allocate[scope]:
+            if not deallocate:
+                continue
+            if state_id is not None:
+                state = tsdfg.node(state_id)
+            else:
+                state = None
+            desc = node.desc(tsdfg)
+
+            self._dispatcher.dispatch_deallocate(tsdfg, state, state_id, node, desc, function_stream, callsite_stream)
+
+    def generate_code(self,
+                      sdfg: SDFG,
+                      schedule: Optional[dtypes.ScheduleType],
+                      sdfg_id: str = "") -> Tuple[str, str, Set[TargetCodeGenerator], Set[str]]:
         """ Generate frame code for a given SDFG, calling registered targets'
             code generation callbacks for them to generate their own code.
             :param sdfg: The SDFG to generate code for.
@@ -492,6 +702,10 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
 
         is_top_level = sdfg.parent is None
 
+        # Analyze allocation lifetime of SDFG and all nested SDFGs
+        if is_top_level:
+            self.determine_allocation_lifetime(sdfg)
+
         # Generate code
         ###########################
 
@@ -505,52 +719,46 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
         # Invoke all instrumentation providers
         for instr in self._dispatcher.instrumentation.values():
             if instr is not None:
-                instr.on_sdfg_begin(sdfg, callsite_stream, global_stream)
+                instr.on_sdfg_begin(sdfg, callsite_stream, global_stream, self)
 
         # Allocate outer-level transients
-        shared_transients = sdfg.shared_transients()
-        for state in sdfg.nodes():
-            for node in state.data_nodes():
-                if (node.data in shared_transients
-                        and node.data not in allocated):
-                    self._dispatcher.dispatch_allocate(sdfg, state, None, node,
-                                                       global_stream,
-                                                       callsite_stream)
-                    allocated.add(node.data)
+        self.allocate_arrays_in_scope(sdfg, sdfg, global_stream, callsite_stream)
+
+        # Define constants as top-level-allocated
+        for cname, (ctype, _) in sdfg.constants_prop.items():
+            if isinstance(ctype, data.Array):
+                self.dispatcher.defined_vars.add(cname, disp.DefinedType.Pointer, ctype.dtype.ctype)
+            else:
+                self.dispatcher.defined_vars.add(cname, disp.DefinedType.Scalar, ctype.dtype.ctype)
 
         # Allocate inter-state variables
         global_symbols = copy.deepcopy(sdfg.symbols)
-        global_symbols.update(
-            {aname: arr.dtype
-             for aname, arr in sdfg.arrays.items()})
+        global_symbols.update({aname: arr.dtype for aname, arr in sdfg.arrays.items()})
         interstate_symbols = {}
-        for e in sdfg.edges():
-            symbols = e.data.new_symbols(global_symbols)
-            # Inferred symbols only take precedence if global symbol not defined
+        for e in sdfg.dfs_edges(sdfg.start_state):
+            symbols = e.data.new_symbols(sdfg, global_symbols)
+            # Inferred symbols only take precedence if global symbol not defined or None
             symbols = {
-                k: v if k not in global_symbols else global_symbols[k]
+                k: v if (k not in global_symbols or global_symbols[k] is None) else global_symbols[k]
                 for k, v in symbols.items()
             }
             interstate_symbols.update(symbols)
             global_symbols.update(symbols)
 
         for isvarName, isvarType in interstate_symbols.items():
-            # Skip symbols that have been declared as outer-level transients
-            if isvarName in allocated:
-                continue
+            if isvarType is None:
+                raise TypeError(f'Type inference failed for symbol {isvarName}')
+
             isvar = data.Scalar(isvarType)
-            callsite_stream.write(
-                '%s;\n' % (isvar.as_arg(with_types=True, name=isvarName)), sdfg)
-            self.dispatcher.defined_vars.add(isvarName, isvarType,
-                                             isvarType.ctype)
+            callsite_stream.write('%s;\n' % (isvar.as_arg(with_types=True, name=isvarName)), sdfg)
+            self.dispatcher.defined_vars.add(isvarName, disp.DefinedType.Scalar, isvarType.ctype)
 
         callsite_stream.write('\n', sdfg)
 
         #######################################################################
         # Generate actual program body
 
-        states_generated = self.generate_states(sdfg, global_stream,
-                                                callsite_stream)
+        states_generated = self.generate_states(sdfg, global_stream, callsite_stream)
 
         #######################################################################
 
@@ -558,29 +766,15 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
         if len(states_generated) != len(sdfg.nodes()):
             raise RuntimeError(
                 "Not all states were generated in SDFG {}!"
-                "\n  Generated: {}\n  Missing: {}".format(
-                    sdfg.label, [s.label for s in states_generated],
-                    [s.label for s in (set(sdfg.nodes()) - states_generated)]))
+                "\n  Generated: {}\n  Missing: {}".format(sdfg.label, [s.label for s in states_generated],
+                                                          [s.label for s in (set(sdfg.nodes()) - states_generated)]))
 
         # Deallocate transients
-        shared_transients = sdfg.shared_transients()
-        deallocated = set()
-        for state in sdfg.nodes():
-            for node in state.data_nodes():
-                if (node.data in shared_transients
-                        and node.data not in deallocated):
-                    self._dispatcher.dispatch_deallocate(
-                        sdfg, state, None, node, global_stream, callsite_stream)
-                    deallocated.add(node.data)
+        self.deallocate_arrays_in_scope(sdfg, sdfg, global_stream, callsite_stream)
 
         # Now that we have all the information about dependencies, generate
         # header and footer
         if is_top_level:
-            # Let each target append code to frame code state before generating
-            # header and footer
-            for target in self._dispatcher.used_targets:
-                target.on_target_used()
-
             header_stream = CodeIOStream()
             header_global_stream = CodeIOStream()
             footer_stream = CodeIOStream()
@@ -589,18 +783,15 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
             # Get all environments used in the generated code, including
             # dependent environments
             import dace.library  # Avoid import loops
-            self.environments = dace.library.get_environments_and_dependencies(
-                self._dispatcher.used_environments)
+            self.environments = dace.library.get_environments_and_dependencies(self._dispatcher.used_environments)
 
             self.generate_header(sdfg, header_global_stream, header_stream)
 
             # Open program function
-            params = sdfg.signature()
+            params = sdfg.signature(arglist=self.arglist)
             if params:
                 params = ', ' + params
-            function_signature = (
-                'void __program_%s_internal(%s_t *__state%s)\n{\n' %
-                (sdfg.name, sdfg.name, params))
+            function_signature = ('void __program_%s_internal(%s_t *__state%s)\n{\n' % (sdfg.name, sdfg.name, params))
 
             self.generate_footer(sdfg, footer_global_stream, footer_stream)
 
@@ -619,20 +810,18 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
             generated_code = callsite_stream.getvalue()
 
         # Clean up generated code
-        gotos = re.findall(r'goto (.*);', generated_code)
+        gotos = re.findall(r'goto (.*?);', generated_code)
         clean_code = ''
         for line in generated_code.split('\n'):
             # Empty line with semicolon
             if re.match(r'^\s*;\s*', line):
                 continue
             # Label that might be unused
-            label = re.findall(
-                r'^\s*([a-zA-Z_][a-zA-Z_0-9]*):\s*[;]?\s*////.*$', line)
+            label = re.findall(r'^\s*([a-zA-Z_][a-zA-Z_0-9]*):\s*[;]?\s*////.*$', line)
             if len(label) > 0:
                 if label[0] not in gotos:
                     continue
             clean_code += line + '\n'
 
         # Return the generated global and local code strings
-        return (generated_header, clean_code, self._dispatcher.used_targets,
-                self._dispatcher.used_environments)
+        return (generated_header, clean_code, self._dispatcher.used_targets, self._dispatcher.used_environments)

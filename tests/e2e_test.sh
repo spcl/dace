@@ -1,5 +1,5 @@
 #!/bin/bash
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 
 set -a
 
@@ -18,7 +18,7 @@ NC='\033[0m'
         
 
 runtest() {
-    yes | timeout $TEST_TIMEOUT $PYTHON_BINARY $PYTHONPATH/samples/simple/$1
+    yes | timeout $TEST_TIMEOUT $PYTHON_BINARY $PYTHONPATH/samples/$1
     if [ $? -ne 0 ]; then
         /bin/echo -e "${RED}ERROR${NC} in test $1 ($2)" 1>&2
         ERRORS=`expr $ERRORS + 1`
@@ -28,7 +28,7 @@ runtest() {
 }
 
 runtestopt() {
-    echo "$3\ny" | timeout $TEST_TIMEOUT $PYTHON_BINARY $PYTHONPATH/samples/simple/$1
+    echo "$3\ny" | timeout $TEST_TIMEOUT $PYTHON_BINARY $PYTHONPATH/samples/$1
     if [ $? -ne 0 ]; then
         /bin/echo -e "${RED}ERROR${NC} in test $1 ($2, optimized)" 1>&2
         ERRORS=`expr $ERRORS + 1`
@@ -40,19 +40,14 @@ runtestopt() {
 
 runall() {
     echo "Running $PYTHON_BINARY"
-    runtest axpy.py $1
-    runtest ddot.py $1
-    runtest fibonacci.py $1
-    runtest filter.py $1
-    runtest matmul.py $1
-    runtest histogram.py $1
-    runtest histogram_declarative.py $1
-    runtest jacobi.py $1
-    runtest mandelbrot.py $1
-    runtest mat_add.py $1
-    runtest spmv.py $1
-    runtest sum.py $1
-    runtest transpose.py $1
+    runtest simple/axpy.py $1
+    runtest simple/laplace.py $1
+    runtest simple/mandelbrot.py $1
+    runtest simple/spmv.py $1
+    runtest explicit/fibonacci.py $1
+    runtest explicit/filter.py $1
+    runtest explicit/histogram.py $1
+    runtest optimization/matmul.py $1  
 }
 
 DACE_compiler_use_cache=0

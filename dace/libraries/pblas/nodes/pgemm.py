@@ -3,6 +3,7 @@ import dace.library
 import dace.sdfg.nodes
 from dace.transformation.transformation import ExpandTransformation
 from .. import environments
+from dace.libraries.blas import blas_helpers
 
 
 @dace.library.expansion
@@ -11,10 +12,9 @@ class ExpandPgemmMKL(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, **kwargs):
-        a, b, c, desca, descb, gdescc, ldesc = node.validate(
-            parent_sdfg, parent_state)
-        from dace.libraries.lapack import utils
-        lapack_dtype_str = utils.LAPACK_DTYPE_CHR(a.dtype.base_type)
+        a, b, c, desca, descb, gdescc, ldesc = node.validate(parent_sdfg, parent_state)
+        dtype = a.dtype.base_type
+        lapack_dtype_str = blas_helpers.to_blastype(dtype.type).lower()
 
         code = f"""
             const double  zero = 0.0E+0, one = 1.0E+0;
@@ -66,12 +66,7 @@ class Pgemm(dace.sdfg.nodes.LibraryNode):
     default_implementation = "MKL"
 
     def __init__(self, name, m=None, n=None, k=None, *args, **kwargs):
-        super().__init__(
-            name,
-            *args,
-            inputs={"_a", "_b", "_a_block_sizes", "_b_block_sizes"},
-            outputs={"_c"},
-            **kwargs)
+        super().__init__(name, *args, inputs={"_a", "_b", "_a_block_sizes", "_b_block_sizes"}, outputs={"_c"}, **kwargs)
         self._m = m
         self._n = n
         self._k = k

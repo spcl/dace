@@ -3,6 +3,7 @@ from dace import dtypes, symbolic
 from dace.sdfg import SDFG
 from dace.properties import CodeBlock
 from dace.codegen import cppunparse
+from functools import lru_cache
 from typing import List, Optional, Set, Union
 import sympy
 import warnings
@@ -30,6 +31,11 @@ def find_outgoing_edges(node, dfg):
         return list(dfg.out_edges(node))
 
 
+@lru_cache(maxsize=16384)
+def _sym2cpp(s, arrayexprs):
+    return cppunparse.pyexpr2cpp(symbolic.symstr(s, arrayexprs))
+
+
 def sym2cpp(s, arrayexprs: Optional[Set[str]] = None) -> Union[str, List[str]]:
     """ 
     Converts an array of symbolic variables (or one) to C++ strings. 
@@ -39,8 +45,8 @@ def sym2cpp(s, arrayexprs: Optional[Set[str]] = None) -> Union[str, List[str]]:
     :return: C++-compilable expression or list thereof.
     """
     if not isinstance(s, list):
-        return symbolic.symstr(s, arrayexprs)
-    return [symbolic.symstr(d, arrayexprs) for d in s]
+        return _sym2cpp(s, None if arrayexprs is None else frozenset(arrayexprs))
+    return [sym2cpp(d, arrayexprs) for d in s]
 
 
 def codeblock_to_cpp(cb: CodeBlock):

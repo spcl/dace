@@ -11,12 +11,9 @@ N, M, O, P, Q, R = [dace.symbol(s) for s in ['N', 'M', 'O', 'P', 'Q', 'R']]
 
 
 @dace.program
-def subgraph_fusion_parallel(A: dace.float64[N], B: dace.float64[M],
-                             C: dace.float64[O], D: dace.float64[M],
-                             E: dace.float64[N], F: dace.float64[P],
-                             G: dace.float64[M], H: dace.float64[P],
-                             I: dace.float64[N], J: dace.float64[R],
-                             X: dace.float64[N], Y: dace.float64[M],
+def subgraph_fusion_parallel(A: dace.float64[N], B: dace.float64[M], C: dace.float64[O], D: dace.float64[M],
+                             E: dace.float64[N], F: dace.float64[P], G: dace.float64[M], H: dace.float64[P],
+                             I: dace.float64[N], J: dace.float64[R], X: dace.float64[N], Y: dace.float64[M],
                              Z: dace.float64[P]):
 
     tmp1 = np.ndarray([N, M, O], dtype=dace.float64)
@@ -70,7 +67,7 @@ def test_p1():
     R.set(25)
 
     sdfg = subgraph_fusion_parallel.to_sdfg()
-    sdfg.apply_strict_transformations()
+    sdfg.simplify()
     state = sdfg.nodes()[0]
 
     A = np.random.rand(N.get()).astype(np.float64)
@@ -93,14 +90,18 @@ def test_p1():
     del csdfg
 
     subgraph = SubgraphView(state, [node for node in state.nodes()])
-    expansion = MultiExpansion(subgraph)
-    fusion = SubgraphFusion(subgraph)
+    expansion = MultiExpansion()
+    expansion.setup_match(subgraph)
+    fusion = SubgraphFusion()
+    fusion.setup_match(subgraph)
 
-    me = MultiExpansion(subgraph)
+    me = MultiExpansion()
+    me.setup_match(subgraph)
     assert me.can_be_applied(sdfg, subgraph)
     me.apply(sdfg)
 
-    sf = SubgraphFusion(subgraph)
+    sf = SubgraphFusion()
+    sf.setup_match(subgraph)
     assert sf.can_be_applied(sdfg, subgraph)
     sf.apply(sdfg)
 

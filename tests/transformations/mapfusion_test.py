@@ -6,8 +6,7 @@ from dace.transformation.dataflow import MapFusion
 
 
 @dace.program
-def fusion(A: dace.float32[10, 20], B: dace.float32[10, 20],
-           out: dace.float32[1]):
+def fusion(A: dace.float32[10, 20], B: dace.float32[10, 20], out: dace.float32[1]):
     tmp = dace.define_local([10, 20], dtype=A.dtype)
     tmp_2 = dace.define_local([10, 20], dtype=A.dtype)
     for i, j in dace.map[0:10, 0:20]:
@@ -34,8 +33,7 @@ def fusion(A: dace.float32[10, 20], B: dace.float32[10, 20],
 
 
 @dace.program
-def multiple_fusions(A: dace.float32[10, 20], B: dace.float32[10, 20],
-                     C: dace.float32[10, 20], out: dace.float32[1]):
+def multiple_fusions(A: dace.float32[10, 20], B: dace.float32[10, 20], C: dace.float32[10, 20], out: dace.float32[1]):
     A_prime = dace.define_local([10, 20], dtype=A.dtype)
     A_prime_copy = dace.define_local([10, 20], dtype=A.dtype)
     for i, j in dace.map[0:10, 0:20]:
@@ -71,7 +69,7 @@ def fusion_chain(A: dace.float32[10, 20], B: dace.float32[10, 20]):
 def test_fusion_simple():
     sdfg = fusion.to_sdfg()
     sdfg.save(os.path.join('_dacegraphs', 'before1.sdfg'))
-    sdfg.apply_strict_transformations()
+    sdfg.simplify()
     sdfg.apply_transformations_repeated(MapFusion)
     sdfg.save(os.path.join('_dacegraphs', 'after1.sdfg'))
 
@@ -87,21 +85,18 @@ def test_fusion_simple():
 
 def test_multiple_fusions():
     sdfg = multiple_fusions.to_sdfg()
-    num_nodes_before = len(
-        [node for state in sdfg.nodes() for node in state.nodes()])
+    num_nodes_before = len([node for state in sdfg.nodes() for node in state.nodes()])
 
     sdfg.save(os.path.join('_dacegraphs', 'before2.sdfg'))
-    sdfg.apply_strict_transformations()
+    sdfg.simplify()
     sdfg.apply_transformations_repeated(MapFusion)
     sdfg.save(os.path.join('_dacegraphs', 'after2.sdfg'))
 
-    num_nodes_after = len(
-        [node for state in sdfg.nodes() for node in state.nodes()])
+    num_nodes_after = len([node for state in sdfg.nodes() for node in state.nodes()])
     # Ensure that the number of nodes was reduced after transformation
     if num_nodes_after >= num_nodes_before:
         raise RuntimeError('SDFG was not properly transformed '
-                           '(nodes before: %d, after: %d)' %
-                           (num_nodes_before, num_nodes_after))
+                           '(nodes before: %d, after: %d)' % (num_nodes_before, num_nodes_after))
 
     A = np.random.rand(10, 20).astype(np.float32)
     B = np.zeros_like(A)
@@ -120,21 +115,18 @@ def test_multiple_fusions():
 def test_fusion_chain():
     sdfg = fusion_chain.to_sdfg()
     sdfg.save(os.path.join('_dacegraphs', 'before3.sdfg'))
-    sdfg.apply_strict_transformations()
+    sdfg.simplify()
     sdfg.apply_transformations(MapFusion)
-    num_nodes_before = len(
-        [node for state in sdfg.nodes() for node in state.nodes()])
+    num_nodes_before = len([node for state in sdfg.nodes() for node in state.nodes()])
     sdfg.apply_transformations(MapFusion)
     sdfg.apply_transformations(MapFusion)
     sdfg.save(os.path.join('_dacegraphs', 'after3.sdfg'))
 
-    num_nodes_after = len(
-        [node for state in sdfg.nodes() for node in state.nodes()])
+    num_nodes_after = len([node for state in sdfg.nodes() for node in state.nodes()])
     # Ensure that the number of nodes was reduced after transformation
     if num_nodes_after >= num_nodes_before:
         raise RuntimeError('SDFG was not properly transformed '
-                           '(nodes before: %d, after: %d)' %
-                           (num_nodes_before, num_nodes_after))
+                           '(nodes before: %d, after: %d)' % (num_nodes_before, num_nodes_after))
 
     A = np.random.rand(10, 20).astype(np.float32)
     B = np.zeros_like(A)
@@ -165,7 +157,7 @@ def test_fusion_with_transient():
     A = np.random.rand(2, 20)
     expected = A * A * 2
     sdfg = fusion_with_transient.to_sdfg()
-    sdfg.apply_strict_transformations()
+    sdfg.simplify()
     sdfg.apply_transformations(MapFusion)
     sdfg(A=A)
     assert np.allclose(A, expected)

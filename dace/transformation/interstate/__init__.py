@@ -2,7 +2,8 @@
 """ This module initializes the inter-state transformations package."""
 
 from .state_fusion import StateFusion
-from .state_elimination import EndStateElimination, StateAssignElimination, HoistState
+from .state_elimination import (EndStateElimination, StartStateElimination, StateAssignElimination,
+                                SymbolAliasPromotion, HoistState)
 from .fpga_transform_state import FPGATransformState
 from .fpga_transform_sdfg import FPGATransformSDFG
 from .gpu_transform_sdfg import GPUTransformSDFG
@@ -12,3 +13,4 @@ from .loop_peeling import LoopPeeling
 from .loop_to_map import LoopToMap
 from .move_loop_into_map import MoveLoopIntoMap
 from .trivial_loop_elimination import TrivialLoopElimination
+from .multistate_inline import InlineMultistateSDFG

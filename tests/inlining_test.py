@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
+from dace.transformation.interstate import InlineSDFG
 import numpy as np
 import pytest
 
@@ -58,8 +59,8 @@ def test_regression_reshape_unsqueeze():
     def test_reshape_unsqueeze(A: dace.float64[3, 3], B: dace.float64[9]):
         nsdfg(input=A, output=B)
 
-    sdfg = test_reshape_unsqueeze.to_sdfg(strict=False)
-    sdfg.apply_strict_transformations()
+    sdfg = test_reshape_unsqueeze.to_sdfg(simplify=False)
+    sdfg.simplify()
     sdfg.validate()
 
     a = np.random.rand(3, 3)
@@ -84,29 +85,211 @@ def test_empty_memlets():
     nsdfg1.add_array('field_b', shape=[1], dtype=float)
     nstate1.add_edge(nstate1.add_read('field_a'), None, tasklet1, 'a', dace.Memlet.simple('field_a', subset_str='0'))
     nstate1.add_edge(tasklet1, 'b', nstate1.add_write('field_b'), None, dace.Memlet.simple('field_b', subset_str='0'))
-    
+
     nsdfg2 = dace.SDFG('nsdfg2')
     nstate2 = nsdfg2.add_state('nstate2')
     tasklet2 = nstate2.add_tasklet('tasklet2', code='tmp=a;a_res=a+1', inputs={'a'}, outputs={'a_res'})
     nsdfg2.add_array('field_a', shape=[1], dtype=float)
     nstate2.add_edge(nstate2.add_read('field_a'), None, tasklet2, 'a', dace.Memlet.simple('field_a', subset_str='0'))
-    nstate2.add_edge(tasklet2, 'a_res', nstate2.add_write('field_a'), None, dace.Memlet.simple('field_a', subset_str='0'))
-    
+    nstate2.add_edge(tasklet2, 'a_res', nstate2.add_write('field_a'), None, dace.Memlet.simple('field_a',
+                                                                                               subset_str='0'))
+
     nsdfg1_node = state.add_nested_sdfg(nsdfg1, None, {'field_a'}, {'field_b'})
     nsdfg2_node = state.add_nested_sdfg(nsdfg2, None, {'field_a'}, {'field_a'})
-    
+
     a_read = state.add_read('field_a')
     state.add_edge(a_read, None, nsdfg1_node, 'field_a', dace.Memlet.simple('field_a', subset_str='0'))
-    state.add_edge(nsdfg1_node, 'field_b',state.add_write('field_b'), None,  dace.Memlet.simple('field_b', subset_str='0'))
+    state.add_edge(nsdfg1_node, 'field_b', state.add_write('field_b'), None,
+                   dace.Memlet.simple('field_b', subset_str='0'))
     state.add_edge(a_read, None, nsdfg2_node, 'field_a', dace.Memlet.simple('field_a', subset_str='0'))
-    state.add_edge(nsdfg2_node, 'field_a', state.add_write('field_a'), None, dace.Memlet.simple('field_a', subset_str='0'))
+    state.add_edge(nsdfg2_node, 'field_a', state.add_write('field_a'), None,
+                   dace.Memlet.simple('field_a', subset_str='0'))
     state.add_edge(nsdfg1_node, None, nsdfg2_node, None, dace.Memlet())
-    
+
     sdfg.validate()
-    sdfg.apply_strict_transformations()
+    sdfg.simplify()
+
+
+def test_multistate_inline():
+    @dace.program
+    def nested(A: dace.float64[20]):
+        for i in range(5):
+            A[i] += A[i - 1]
+
+    @dace.program
+    def outerprog(A: dace.float64[20]):
+        nested(A)
+
+    sdfg = outerprog.to_sdfg(simplify=True)
+    from dace.transformation.interstate import InlineMultistateSDFG
+    sdfg.apply_transformations(InlineMultistateSDFG)
+    assert sdfg.number_of_nodes() in (4, 5)
+
+    A = np.random.rand(20)
+    expected = np.copy(A)
+    outerprog.f(expected)
+
+    outerprog(A)
+    assert np.allclose(A, expected)
+
+
+def test_multistate_inline_samename():
+    @dace.program
+    def nested(A: dace.float64[20]):
+        for i in range(5):
+            A[i] += A[i - 1]
+
+    @dace.program
+    def outerprog(A: dace.float64[20]):
+        for i in range(5):
+            nested(A)
+
+    sdfg = outerprog.to_sdfg(simplify=True)
+    from dace.transformation.interstate import InlineMultistateSDFG
+    sdfg.apply_transformations(InlineMultistateSDFG)
+    assert sdfg.number_of_nodes() in (7, 8)
+
+    A = np.random.rand(20)
+    expected = np.copy(A)
+    outerprog.f(expected)
+
+    outerprog(A)
+    assert np.allclose(A, expected)
+
+
+def test_inline_symexpr():
+    nsdfg = dace.SDFG('inner')
+    nsdfg.add_array('a', [20], dace.float64)
+    nstate = nsdfg.add_state()
+    nstate.add_mapped_tasklet('doit', {'k': '0:20'}, {},
+                              '''if k < j:
+    o = 2.0''', {'o': dace.Memlet('a[k]', dynamic=True)},
+                              external_edges=True)
+
+    sdfg = dace.SDFG('outer')
+    sdfg.add_array('A', [20], dace.float64)
+    sdfg.add_symbol('i', dace.int32)
+    state = sdfg.add_state()
+    w = state.add_write('A')
+    nsdfg_node = state.add_nested_sdfg(nsdfg, None, {}, {'a'}, {'j': 'min(i, 10)'})
+    state.add_edge(nsdfg_node, 'a', w, None, dace.Memlet('A'))
+
+    # Verify that compilation works before inlining
+    sdfg.compile()
+
+    sdfg.apply_transformations(InlineSDFG)
+
+    # Compile and run
+    a = np.random.rand(20)
+    sdfg(A=a, i=15)
+    assert np.allclose(a[:10], 2.0)
+    assert not np.allclose(a[10:], 2.0)
+
+
+def test_inline_unsqueeze():
+
+    @dace.program
+    def nested_squeezed(c: dace.int32[5], d: dace.int32[5]):
+        d[:] = c
+    
+    @dace.program
+    def inline_unsqueeze(A: dace.int32[2, 5], B: dace.int32[5, 3]):
+        nested_squeezed(A[1, :], B[:, 1])
+    
+    sdfg = inline_unsqueeze.to_sdfg()
+    sdfg.apply_transformations(InlineSDFG)
+
+    A = np.arange(10, dtype=np.int32).reshape(2, 5).copy()
+    B = np.zeros((5, 3), np.int32)
+    sdfg(A, B)
+    for i in range(3):
+        if i == 1:
+            assert(np.array_equal(B[:, i], A[1, :]))
+        else:
+            assert(np.array_equal(B[:, i], np.zeros((5,), np.int32)))
+
+
+def test_inline_unsqueeze2():
+
+    @dace.program
+    def nested_squeezed(c, d):
+        d[:] = c
+    
+    @dace.program
+    def inline_unsqueeze(A: dace.int32[2, 5], B: dace.int32[5, 3]):
+        for i in range(2):
+            nested_squeezed(A[i, :], B[:, 1-i])
+    
+    sdfg = inline_unsqueeze.to_sdfg()
+    sdfg.apply_transformations(InlineSDFG)
+
+    A = np.arange(10, dtype=np.int32).reshape(2, 5).copy()
+    B = np.zeros((5, 3), np.int32)
+    sdfg(A, B)
+    for i in range(3):
+        if i < 2:
+            assert(np.array_equal(B[:, 1-i], A[i, :]))
+        else:
+            assert(np.array_equal(B[:, i], np.zeros((5,), np.int32)))
+
+
+def test_inline_unsqueeze3():
+
+    @dace.program
+    def nested_squeezed(c, d):
+        d[:] = c
+    
+    @dace.program
+    def inline_unsqueeze(A: dace.int32[2, 5], B: dace.int32[5, 3]):
+        for i in range(2):
+            nested_squeezed(A[i, i:i+2], B[i+1:i+3, 1-i])
+    
+    sdfg = inline_unsqueeze.to_sdfg()
+    sdfg.apply_transformations(InlineSDFG)
+
+    A = np.arange(10, dtype=np.int32).reshape(2, 5).copy()
+    B = np.zeros((5, 3), np.int32)
+    sdfg(A, B)
+    for i in range(3):
+        if i < 2:
+            assert(np.array_equal(B[i+1:i+3, 1-i], A[i, i:i+2]))
+        else:
+            assert(np.array_equal(B[:, i], np.zeros((5,), np.int32)))
+
+
+def test_inline_unsqueeze4():
+
+    @dace.program
+    def nested_squeezed(c, d):
+        d[:] = c
+    
+    @dace.program
+    def inline_unsqueeze(A: dace.int32[2, 5], B: dace.int32[5, 3]):
+        for i in range(2):
+            nested_squeezed(A[i, i:2*i+2], B[i+1:2*i+3, 1-i])
+    
+    sdfg = inline_unsqueeze.to_sdfg()
+    sdfg.apply_transformations(InlineSDFG)
+
+    A = np.arange(10, dtype=np.int32).reshape(2, 5).copy()
+    B = np.zeros((5, 3), np.int32)
+    sdfg(A, B)
+    for i in range(3):
+        if i < 2:
+            assert(np.array_equal(B[i+1:2*i+3, 1-i], A[i, i:2*i+2]))
+        else:
+            assert(np.array_equal(B[:, i], np.zeros((5,), np.int32)))
+
 
 if __name__ == "__main__":
     test()
     # Skipped to to bug that cannot be reproduced
     # test_regression_reshape_unsqueeze()
     test_empty_memlets()
+    test_multistate_inline()
+    test_multistate_inline_samename()
+    test_inline_symexpr()
+    test_inline_unsqueeze()
+    test_inline_unsqueeze2()
+    test_inline_unsqueeze3()
+    test_inline_unsqueeze4()

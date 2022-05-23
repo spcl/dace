@@ -6,8 +6,7 @@ from common import compare_numpy_output
 
 def test_multiassign():
     @dace.program
-    def multiassign(A: dace.float64[20], B: dace.float64[1],
-                    C: dace.float64[2]):
+    def multiassign(A: dace.float64[20], B: dace.float64[1], C: dace.float64[2]):
         tmp = C[0] = A[5]
         B[0] = tmp
 
@@ -91,10 +90,31 @@ def test_assign_wild(A: dace.float32[3, 5, 10, 13], B: dace.float32[2, 1, 4]):
 
 
 @compare_numpy_output(positive=True)
-def test_assign_squeezed(A: dace.float32[3, 5, 10, 20, 13],
-                         B: dace.float32[2, 1, 4]):
+def test_assign_squeezed(A: dace.float32[3, 5, 10, 20, 13], B: dace.float32[2, 1, 4]):
     A[2, 2:4, :, 1, 8:12] = B
     return A
+
+
+def test_annotated_assign_type():
+    @dace.program
+    def annassign(a: dace.float64[20], t: dace.int64):
+        b: dace.float64
+        for i in dace.map[0:t]:
+            b = t
+            a[i] = b
+
+    # Test types
+    sdfg = annassign.to_sdfg()
+    assert 't' not in sdfg.symbols or sdfg.symbols['t'] == dace.int64
+    b = next(arr for _, name, arr in sdfg.arrays_recursive() if name == 'b')
+    assert b.dtype == dace.float64
+
+    # Test program correctness
+    a = np.random.rand(20)
+    t = 5
+    sdfg(a, t)
+    assert np.allclose(a[0:5], t)
+    assert not np.allclose(a[5:], t)
 
 
 if __name__ == '__main__':
@@ -111,3 +131,4 @@ if __name__ == '__main__':
     test_broadcast4()
     test_broadcast5()
     test_assign_wild()
+    test_annotated_assign_type()
