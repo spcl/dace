@@ -487,6 +487,83 @@ def test_nested_promotion_connector(with_subscript):
     assert B[0] == A[5, 6]
 
 
+@pytest.mark.parametrize('language', [dace.Language.CPP, dace.Language.Python])
+def test_indirection_with_reindex(language):
+
+    N = dace.symbol('N')
+    S = dace.symbol('S')
+
+    sdfg = dace.SDFG(f"test_indirection_with_reindex")
+    sdfg.add_array('A', shape=[N], dtype=dace.float32, transient=False)
+    sdfg.add_array('index_0', shape=[1], dtype=dace.int32, transient=True)
+    sdfg.add_array('index_1', shape=[1], dtype=dace.int32, transient=True)
+    sdfg.add_array('index_2', shape=[1], dtype=dace.int32, transient=True)
+    sdfg.add_array('out', shape=[N], dtype=dace.float32, transient=False)
+    sdfg.add_symbol('S', S.dtype)
+
+    state_init1 = sdfg.add_state()
+    state_init2 = sdfg.add_state()
+    state_init3 = sdfg.add_state()
+    state_compute = sdfg.add_state()
+
+    sdfg.add_edge(state_init1, state_init2, dace.InterstateEdge())
+    sdfg.add_edge(state_init2, state_init3, dace.InterstateEdge())
+    sdfg.add_edge(state_init3, state_compute, dace.InterstateEdge())
+
+    tasklet1 = state_init1.add_tasklet(name="init1", inputs=[], outputs=["out"],
+            code="out = 1;", language=dace.Language.CPP)
+    tasklet2 = state_init2.add_tasklet(name="init2", inputs=[], outputs=["out"],
+            code="out = 2;", language=dace.Language.CPP)
+    tasklet3 = state_init3.add_tasklet(name="init3", inputs=[], outputs=["out"],
+            code="out = 3;", language=dace.Language.CPP)
+
+    dst = state_init1.add_write("index_0")
+    memlet = dace.Memlet(expr="index_0", subset="0")
+    state_init1.add_memlet_path(tasklet1, dst, src_conn="out", memlet=memlet)
+
+    dst = state_init2.add_write("index_1")
+    memlet = dace.Memlet(expr="index_1", subset="0")
+    state_init2.add_memlet_path(tasklet2, dst, src_conn="out", memlet=memlet)
+
+    dst = state_init3.add_write("index_2")
+    memlet = dace.Memlet(expr="index_2", subset="0")
+    state_init3.add_memlet_path(tasklet3, dst, src_conn="out", memlet=memlet)
+
+    semicolon = ';' if language == dace.Language.CPP else ''
+    tasklet = state_compute.add_tasklet(name="add", inputs=["_A", "_index_0",
+        "_index_1", "_index_2"], outputs=["_out"],
+            code=f"_out[_index_2] = _A[_index_0] + _A[_index_1]{semicolon}", language=language)
+
+    src = state_compute.add_read("A")
+    memlet = dace.Memlet(expr="A", subset="S:N")
+    state_compute.add_memlet_path(src, tasklet, dst_conn="_A", memlet=memlet)
+
+    src = state_compute.add_read("index_0")
+    memlet = dace.Memlet(expr="index_0", subset="0")
+    state_compute.add_memlet_path(src, tasklet, dst_conn="_index_0", memlet=memlet)
+
+    src = state_compute.add_read("index_1")
+    memlet = dace.Memlet(expr="index_1", subset="0")
+    state_compute.add_memlet_path(src, tasklet, dst_conn="_index_1", memlet=memlet)
+
+    src = state_compute.add_read("index_2")
+    memlet = dace.Memlet(expr="index_2", subset="0")
+    state_compute.add_memlet_path(src, tasklet, dst_conn="_index_2", memlet=memlet)
+
+    dst = state_compute.add_write("out")
+    memlet = dace.Memlet(expr="out", subset="S:N")
+    state_compute.add_memlet_path(tasklet, dst, src_conn="_out", memlet=memlet)
+
+    scalar_to_symbol.promote_scalars_to_symbols(sdfg)
+    sdfg.simplify()
+
+    A = np.array(list(range(10)), dtype=np.float32)
+    out = np.zeros((10,), dtype=np.float32)
+    sdfg(A=A, out=out, N=10, S=5)
+
+    assert(np.allclose(A[6] + A[7], out[8]))
+
+
 if __name__ == '__main__':
     test_find_promotable()
     test_promote_simple()
@@ -503,3 +580,5 @@ if __name__ == '__main__':
     test_promote_indirection_impossible()
     test_nested_promotion_connector(False)
     test_nested_promotion_connector(True)
+    test_indirection_with_reindex(dace.Language.CPP)
+    test_indirection_with_reindex(dace.Language.Python)
