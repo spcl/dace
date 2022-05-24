@@ -4695,6 +4695,8 @@ class ProgramVisitor(ExtNodeVisitor):
         array, arrtype = node_parsed[0]
         if arrtype == 'str' or arrtype in dtypes._CTYPES:
             raise DaceSyntaxError(self, node, 'Type "%s" cannot be sliced' % arrtype)
+        if arrtype == 'NumConstant':
+            return array
 
         # Visit slice contents
         # TODO: Maybe we actually want to do scalar promotion even in inference
