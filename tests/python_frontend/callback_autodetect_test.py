@@ -562,6 +562,73 @@ def test_scalar_retval():
     assert result[0] >= old_time and result[0] <= new_time
 
 
+def test_callback_kwargs():
+    called_with = (None, None, None)
+    called_2_with = (None, None, None)
+    called_3_with = None
+
+    @dace_inhibitor
+    def mycb(a, b=1, **kwargs):
+        nonlocal called_with
+        called_with = (a, b, kwargs['c'])
+
+    @dace_inhibitor
+    def mycb2(d, **kwargs):
+        nonlocal called_2_with
+        called_2_with = (d, kwargs['e'], kwargs['f'])
+
+    @dace_inhibitor
+    def mycb3(**kwargs):
+        nonlocal called_3_with
+        called_3_with = kwargs['ghi']
+
+    # Call three callbacks with similar types to ensure trampolines are unique
+    @dace
+    def myprogram():
+        mycb(a=1, b=2, c=3)
+        mycb2(4, f=5, e=6)
+        mycb3(ghi=7)
+
+    myprogram()
+
+    assert called_with == (1, 2, 3)
+    assert called_2_with == (4, 6, 5)
+    assert called_3_with == 7
+
+
+def test_same_callback_kwargs():
+    """ Calls the same callback twice, with different kwargs each time. """
+    called_with = (None, None, None)
+    called_2_with = (None, None, None)
+
+    @dace_inhibitor
+    def mycb(**kwargs):
+        nonlocal called_with
+        nonlocal called_2_with
+        if 'a' in kwargs:
+            called_with = (kwargs['a'], kwargs['b'], kwargs['c'])
+        else:
+            called_2_with = (kwargs['d'], kwargs['e'], kwargs['f'])
+
+    @dace
+    def myprogram():
+        mycb(a=1, b=2, c=3)
+        mycb(d=4, f=5, e=6)
+
+    myprogram()
+
+    assert called_with == (1, 2, 3)
+    assert called_2_with == (4, 6, 5)
+
+
+def test_builtin_callback_kwargs():
+    @dace
+    def callprint():
+        print('hi', end=',\n')
+
+    callprint()
+
+
 if __name__ == '__main__':
     test_automatic_callback()
     test_automatic_callback_2()
@@ -587,3 +654,6 @@ if __name__ == '__main__':
     test_disallowed_keyword()
     test_nested_duplicate_callbacks()
     test_scalar_retval()
+    test_callback_kwargs()
+    test_same_callback_kwargs()
+    test_builtin_callback_kwargs()

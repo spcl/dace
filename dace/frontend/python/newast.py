@@ -3811,13 +3811,12 @@ class ProgramVisitor(ExtNodeVisitor):
         _, func, _ = self.closure.callbacks[funcname]
 
         # Infer the type of the function arguments and return value
-        # TODO(later): Use inspect.signature and node.keywords to
-        #              work with keyword arguments
         argtypes = []
         args = []
         outargs = []
         allargs = []
-        for arg in node.args:
+        kwargs = [kw.value for kw in node.keywords]
+        for arg in itertools.chain(node.args, kwargs):
             parsed_arg = self._parse_function_arg(arg)
             if parsed_arg in self.defined:
                 atype = self.defined[parsed_arg]
@@ -3837,42 +3836,10 @@ class ProgramVisitor(ExtNodeVisitor):
 
                 if isinstance(parsed_arg, str):
                     # Special case for strings
-                    parsed_arg = f'"{parsed_arg}"'
+                    parsed_arg = f'"{astutils.escape_string(parsed_arg)}"'
                 allargs.append(parsed_arg)
 
             argtypes.append(atype)
-
-        if node.keywords:
-            sig = inspect.signature(func)
-            keys = list(sig.parameters.keys())
-            order = []
-            for kw in node.keywords:
-                order.append(keys.index(kw.arg))
-            sorted_keywords = sorted(zip(order, node.keywords))
-            for _, kw in sorted_keywords:
-                parsed_arg = self._parse_function_arg(kw.value)
-                if parsed_arg in self.defined:
-                    atype = self.defined[parsed_arg]
-                    args.append(parsed_arg)
-                    if isinstance(atype, data.Array):
-                        outargs.append(parsed_arg)
-                        allargs.append(f'__out_{parsed_arg}')
-                    elif isinstance(atype, data.Scalar):
-                        allargs.append(f'__in_{parsed_arg}')
-                    else:
-                        allargs.append(parsed_arg)
-                else:
-                    if isinstance(parsed_arg, (Number, numpy.number)):
-                        atype = data.create_datadescriptor(type(parsed_arg))
-                    else:
-                        atype = data.create_datadescriptor(parsed_arg)
-
-                    if isinstance(parsed_arg, str):
-                        # Special case for strings
-                        parsed_arg = f'"{parsed_arg}"'
-                    allargs.append(parsed_arg)
-
-                argtypes.append(atype)
 
         # Return type inference
         return_type = None
