@@ -1107,3 +1107,25 @@ class SubgraphFusion(transformation.SubgraphTransformation):
             for node in graph.scope_children()[global_map_entry]:
                 if isinstance(node, nodes.MapEntry):
                     node.map.schedule = self.schedule_innermaps
+
+        # Try to remove intermediate nodes that are not contained in the subgraph
+        # by reconnecting their adjacent edges to nodes outside the subgraph.
+        for node in intermediate_nodes:
+            if not subgraph_contains_data[node.data] and node not in out_nodes:
+                onode = graph.add_access(node.data)
+                for ie in graph.in_edges(node):
+                    for oe in graph.out_edges(node):
+                        if ie.data.dst_subset.intersects(oe.data.src_subset):
+                            continue
+                        inode = None
+                        for n in in_nodes:
+                            if node.data == n.data:
+                                inode = n
+                                break
+                        if not inode:
+                            inode = graph.add_access(node.data)
+                        graph.remove_edge(oe)
+                        graph.add_memlet_path(inode, global_map_entry, oe.dst, memlet=oe.data, dst_conn=oe.dst_conn)
+                    graph.remove_edge(ie)
+                    graph.add_memlet_path(ie.src, global_map_exit, onode, memlet=ie.data, src_conn=ie.src_conn)
+                graph.remove_node(node)
