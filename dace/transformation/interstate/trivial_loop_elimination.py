@@ -46,7 +46,6 @@ class TrivialLoopElimination(DetectLoop, transformation.MultiStateTransformation
         # Obtain iteration variable, range and stride
         itervar, (start, end, step), _ = find_for_loop(sdfg, guard, body)
         
-        body.free_symbols.remove(itervar)
         body.replace(itervar, start)
 
         # remove loop
