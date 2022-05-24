@@ -476,12 +476,17 @@ def consolidate_edges_scope(state: SDFGState, scope_node: Union[nd.EntryNode, nd
 
     for conn in connectors_to_remove:
         e = edges_by_connector[conn][0]
+        offset = 3 if conn.startswith('IN_') else (4 if conn.startswith('OUT_') else len(oprefix))
         # Outer side of the scope - remove edge and union subsets
-        target_conn = prefix + data_to_conn[e.data.data][len(oprefix):]
-        conn_to_remove = prefix + conn[len(oprefix):]
+        target_conn = prefix + data_to_conn[e.data.data][offset:]
+        conn_to_remove = prefix + conn[offset:]
         remove_outer_connector(conn_to_remove)
-        out_edge = next(ed for ed in outer_edges(scope_node) if ed.dst_conn == target_conn)
-        edge_to_remove = next(ed for ed in outer_edges(scope_node) if ed.dst_conn == conn_to_remove)
+        if isinstance(scope_node, nd.EntryNode):
+            out_edge = next(ed for ed in outer_edges(scope_node) if ed.dst_conn == target_conn)
+            edge_to_remove = next(ed for ed in outer_edges(scope_node) if ed.dst_conn == conn_to_remove)
+        else:
+            out_edge = next(ed for ed in outer_edges(scope_node) if ed.src_conn == target_conn)
+            edge_to_remove = next(ed for ed in outer_edges(scope_node) if ed.src_conn == conn_to_remove)
         out_edge.data.subset = sbs.union(out_edge.data.subset, edge_to_remove.data.subset)
 
         # Check if dangling connectors have been created and remove them,
@@ -490,9 +495,14 @@ def consolidate_edges_scope(state: SDFGState, scope_node: Union[nd.EntryNode, nd
 
         consolidated += 1
         # Inner side of the scope - remove and reconnect
-        remove_inner_connector(e.src_conn)
-        for e in edges_by_connector[conn]:
-            e._src_conn = data_to_conn[e.data.data]
+        if isinstance(scope_node, nd.EntryNode):
+            remove_inner_connector(e.src_conn)
+            for e in edges_by_connector[conn]:
+                e._src_conn = data_to_conn[e.data.data]
+        else:
+            remove_inner_connector(e.dst_conn)
+            for e in edges_by_connector[conn]:
+                e._dst_conn = data_to_conn[e.data.data]
 
     return consolidated
 
