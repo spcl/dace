@@ -46,9 +46,22 @@ class MoveLoopIntoMap(DetectLoop, transformation.MultiStateTransformation):
             return False
 
         # Check if body contains exactly one map
-        is_map = [isinstance(node, nodes.MapEntry) for node in body.nodes()]
-        if is_map.count(True) != 1:
+        maps = [node for node in body.nodes() if isinstance(node, nodes.MapEntry)]
+        if len(maps) != 1:
             return False
+
+        # Check that everything else is independent of the loop's itervar
+        subgraph = body.scope_subgraph(maps[0])
+        map_exit = body.exit_node(maps[0])
+        for e in body.edges():
+            if e.src in subgraph.nodes() or e.dst in subgraph.nodes():
+                continue
+            if e.dst is maps[0] and isinstance(e.src, nodes.AccessNode):
+                continue
+            if e.src is map_exit and isinstance(e.dst, nodes.AccessNode):
+                continue
+            if str(itervar) in e.data.free_symbols:
+                return False
 
         #TODO: Add test that map is independant of itervar!
 
@@ -152,7 +165,8 @@ class MoveLoopIntoMap(DetectLoop, transformation.MultiStateTransformation):
             sdfg.add_edge(body, guard_outedge.dst, guard_outedge.data)
             sdfg.remove_edge(guard_outedge)
         sdfg.remove_node(guard)
-        del nsdfg.symbol_mapping[itervar]
+        if itervar in nsdfg.symbol_mapping:
+            del nsdfg.symbol_mapping[itervar]
         if itervar in sdfg.symbols:
             del sdfg.symbols[itervar]
 
