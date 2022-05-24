@@ -3,11 +3,12 @@
 
 import dace.transformation.helpers as helpers
 from dace.sdfg.scope import ScopeTree
-from dace import nodes, registry, sdfg as sd, symbolic, symbol
+from dace import nodes, registry, sdfg as sd, subsets as sbs, symbolic, symbol
 from dace.properties import CodeBlock
 from dace.sdfg import nodes, propagation
 from dace.transformation import transformation
 from dace.transformation.interstate.loop_detection import (DetectLoop, find_for_loop)
+from typing import List, Set, Tuple, Union
 
 
 def fold(memlet_subset_ranges, itervar, lower, upper):
@@ -63,7 +64,43 @@ class MoveLoopIntoMap(DetectLoop, transformation.MultiStateTransformation):
             if str(itervar) in e.data.free_symbols:
                 return False
 
-        #TODO: Add test that map is independant of itervar!
+        def test_subset_dependency(subset: sbs.Subset, mparams: Set[int]) -> Tuple[bool, List[int]]:
+            dims = []
+            for i, r in enumerate(subset):
+                if not isinstance(r, (list, tuple)):
+                    r = [r]
+                fsymbols = set()
+                for token in r:
+                    if symbolic.issymbolic(token):
+                        fsymbols = fsymbols.union({str(s) for s in token.free_symbols})
+                if itervar in fsymbols:
+                    if fsymbols.intersection(mparams):
+                        return (False, [])
+                    else:
+                        dims.append(i)
+            return (True, dims)
+
+        # TODO: Add test that map is independant of itervar!
+        mparams = set(maps[0].map.params)
+        data_dependency = dict()
+        for e in body.edges():
+            if e.src in subgraph.nodes() and e.dst in subgraph.nodes():
+                if itervar in e.data.free_symbols:
+                    for i, subset in enumerate((e.data.src_subset, e.data.dst_subset)):
+                        if subset:
+                            if i == 0:
+                                access = body.memlet_path(e)[0].src
+                            else:
+                                access = body.memlet_path(e)[-1].dst
+                            passed, dims = test_subset_dependency(subset, mparams)
+                            if not passed:
+                                return False
+                            if dims:
+                                if access.data in data_dependency:
+                                    if data_dependency[access.data] != dims:
+                                        return False
+                                else:
+                                    data_dependency[access.data] = dims
 
         for node in body.nodes():
             if isinstance(node, nodes.AccessNode):
