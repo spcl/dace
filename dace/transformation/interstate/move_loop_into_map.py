@@ -6,6 +6,7 @@ from dace.sdfg.scope import ScopeTree
 from dace import nodes, registry, sdfg as sd, symbolic, symbol
 from dace.properties import CodeBlock
 from dace.sdfg import nodes, propagation
+from dace.transformation import transformation
 from dace.transformation.interstate.loop_detection import (DetectLoop, find_for_loop)
 
 
@@ -22,20 +23,21 @@ def offset(memlet_subset_ranges, value):
         memlet_subset_ranges[2]
         )
 
-@registry.autoregister
-class MoveLoopIntoMap(DetectLoop):
+
+class MoveLoopIntoMap(DetectLoop, transformation.MultiStateTransformation):
     """
     Moves a loop around a map into the map
     """
-    @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
-        if not DetectLoop.can_be_applied(graph, candidate, expr_index, sdfg, strict):
+
+    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
+        # Is this even a loop
+        if not super().can_be_applied(graph, expr_index, sdfg, permissive):
             return False
 
         # Obtain loop information
-        guard: sd.SDFGState = sdfg.node(candidate[DetectLoop._loop_guard])
-        body: sd.SDFGState = sdfg.node(candidate[DetectLoop._loop_begin])
-        after: sd.SDFGState = sdfg.node(candidate[DetectLoop._exit_state])
+        guard: sd.SDFGState = self.loop_guard
+        body: sd.SDFGState = self.loop_begin
+        after: sd.SDFGState = self.exit_state
 
         # Obtain iteration variable, range, and stride
         itervar, (start, end, step), _ = find_for_loop(sdfg, guard, body)
@@ -60,11 +62,11 @@ class MoveLoopIntoMap(DetectLoop):
         return True
    
         
-    def apply(self, sdfg: sd.SDFG):
+    def apply(self, _, sdfg: sd.SDFG):
         # Obtain loop information
-        guard: sd.SDFGState = sdfg.node(self.subgraph[DetectLoop._loop_guard])
-        body: sd.SDFGState = sdfg.node(self.subgraph[DetectLoop._loop_begin])
-        after: sd.SDFGState = sdfg.node(self.subgraph[DetectLoop._exit_state])
+        guard: sd.SDFGState = self.loop_guard
+        body: sd.SDFGState = self.loop_begin
+        after: sd.SDFGState = self.exit_state
 
         # Obtain iteration variable, range, and stride
         itervar, (start, end, step), _ = find_for_loop(sdfg, guard, body)

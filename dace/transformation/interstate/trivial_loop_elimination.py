@@ -3,23 +3,24 @@
 
 from dace import registry, sdfg as sd
 from dace.properties import CodeBlock
-from dace.transformation.interstate.loop_detection import (DetectLoop,
-                                                           find_for_loop)
+from dace.transformation import transformation
+from dace.transformation.interstate.loop_detection import (DetectLoop, find_for_loop)
 
-@registry.autoregister
-class TrivialLoopElimination(DetectLoop):
+
+class TrivialLoopElimination(DetectLoop, transformation.MultiStateTransformation, transformation.SimplifyPass):
     """
     Eliminates loops with a single loop iteration.
     """
-    @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
-        if not DetectLoop.can_be_applied(graph, candidate, expr_index, sdfg, strict):
+
+    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
+        # Is this even a loop
+        if not super().can_be_applied(graph, expr_index, sdfg, permissive):
             return False
 
         # Obtain loop information
-        guard: sd.SDFGState = sdfg.node(candidate[DetectLoop._loop_guard])
-        body: sd.SDFGState = sdfg.node(candidate[DetectLoop._loop_begin])
-        after: sd.SDFGState = sdfg.node(candidate[DetectLoop._exit_state])
+        guard: sd.SDFGState = self.loop_guard
+        body: sd.SDFGState = self.loop_begin
+        after: sd.SDFGState = self.exit_state
 
         # Obtain iteration variable, range, and stride
         itervar, (start, end, step), _ = find_for_loop(sdfg, guard, body)
@@ -36,11 +37,11 @@ class TrivialLoopElimination(DetectLoop):
         return True
       
         
-    def apply(self, sdfg: sd.SDFG):
+    def apply(self, _, sdfg: sd.SDFG):
         # Obtain loop information
-        guard: sd.SDFGState = sdfg.node(self.subgraph[DetectLoop._loop_guard])
-        body: sd.SDFGState = sdfg.node(self.subgraph[DetectLoop._loop_begin])
-        after: sd.SDFGState = sdfg.node(self.subgraph[DetectLoop._exit_state])
+        guard: sd.SDFGState = self.loop_guard
+        body: sd.SDFGState = self.loop_begin
+        after: sd.SDFGState = self.exit_state
 
         # Obtain iteration variable, range and stride
         itervar, (start, end, step), _ = find_for_loop(sdfg, guard, body)
