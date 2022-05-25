@@ -26,9 +26,9 @@ class TrivialLoopElimination(DetectLoop, transformation.MultiStateTransformation
         itervar, (start, end, step), _ = find_for_loop(sdfg, guard, body)
 
         try:
-            if step > 0 and start + step < end:
+            if step > 0 and start + step < end + 1:
                 return False
-            if step < 0 and start + step > end:
+            if step < 0 and start + step > end - 1:
                 return False
         except:
             # if the relation can't be determined it's not a trivial loop
