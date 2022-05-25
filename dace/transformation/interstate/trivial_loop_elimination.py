@@ -44,14 +44,25 @@ class TrivialLoopElimination(DetectLoop, transformation.MultiStateTransformation
         after: sd.SDFGState = self.exit_state
 
         # Obtain iteration variable, range and stride
-        itervar, (start, end, step), _ = find_for_loop(sdfg, guard, body)
+        itervar, (start, end, step), (_, body_end) = find_for_loop(sdfg, guard, body)
+
+        # Find all loop-body states
+        states = set()
+        to_visit = [body]
+        while to_visit:
+            state = to_visit.pop(0)
+            for _, dst, _ in sdfg.out_edges(state):
+                if dst not in states and dst is not guard:
+                    to_visit.append(dst)
+            states.add(state)
         
-        body.replace(itervar, start)
+        for state in states:
+            state.replace(itervar, start)
 
         # remove loop
         for body_inedge in sdfg.in_edges(body):
             sdfg.remove_edge(body_inedge)
-        for body_outedge in sdfg.out_edges(body):
+        for body_outedge in sdfg.out_edges(body_end):
             sdfg.remove_edge(body_outedge)
 
         for guard_inedge in sdfg.in_edges(guard):
@@ -60,7 +71,7 @@ class TrivialLoopElimination(DetectLoop, transformation.MultiStateTransformation
             sdfg.remove_edge(guard_inedge)
         for guard_outedge in sdfg.out_edges(guard):
             guard_outedge.data.condition = CodeBlock("1")
-            sdfg.add_edge(body, guard_outedge.dst, guard_outedge.data)
+            sdfg.add_edge(body_end, guard_outedge.dst, guard_outedge.data)
             sdfg.remove_edge(guard_outedge)
         sdfg.remove_node(guard)
         if itervar in sdfg.symbols:
