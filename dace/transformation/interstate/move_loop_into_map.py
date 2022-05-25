@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Moves a loop around a map into the map """
 
+import copy
 import dace.transformation.helpers as helpers
 from dace.sdfg.scope import ScopeTree
 from dace import Memlet, nodes, registry, sdfg as sd, subsets as sbs, symbolic, symbol
@@ -150,7 +151,7 @@ class MoveLoopIntoMap(DetectLoop, transformation.MultiStateTransformation):
             elif edge.data.other_subset:
                 subset = edge.data.other_subset
             else:
-                raise NotImplementedError
+                raise ValueError(f"Edge {edge} carries data but all subsets are None.")
             if edge.data.data in old_in_memlets:
                 old_in_memlets[edge.data.data].append(subset.ranges)
             else:
@@ -163,7 +164,7 @@ class MoveLoopIntoMap(DetectLoop, transformation.MultiStateTransformation):
             elif edge.data.other_subset:
                 subset = edge.data.other_subset
             else:
-                raise NotImplementedError
+                raise ValueError(f"Edge {edge} carries data but all subsets are None.")
             if edge.data.data in old_out_memlets:
                 old_out_memlets[edge.data.data].append(subset.ranges)
             else:
@@ -175,45 +176,54 @@ class MoveLoopIntoMap(DetectLoop, transformation.MultiStateTransformation):
         # nest map's content in sdfg
         map_subgraph = body.scope_subgraph(map_entry, include_entry=False, include_exit=False)
         nsdfg = helpers.nest_state_subgraph(sdfg, body, map_subgraph, full_data=True)
+        # nsdfg = helpers.nest_state_subgraph(sdfg, body, map_subgraph)
         nstate = nsdfg.sdfg.nodes()[0]
 
-        # correct the memlets going into the nsdfg
-        for edge in body.out_edges(map_entry):
-            if edge.data.subset:
-                edge.data.subset.ranges = fold(edge.data.subset.ranges, itervar, lower_loop_bound, upper_loop_bound)
-            elif edge.data.other_subset:
-                edge.data.other_subset.ranges = fold(edge.data.other_subset.ranges, itervar, lower_loop_bound, upper_loop_bound)
+        # # correct the memlets going into the nsdfg
+        # for edge in body.out_edges(map_entry):
+        #     if not edge.data.data:
+        #         continue
+        #     if edge.data.subset:
+        #         edge.data.subset.ranges = fold(edge.data.subset.ranges, itervar, lower_loop_bound, upper_loop_bound)
+        #     elif edge.data.other_subset:
+        #         edge.data.other_subset.ranges = fold(edge.data.other_subset.ranges, itervar, lower_loop_bound, upper_loop_bound)
+        #     else:
+        #         raise ValueError(f"Edge {edge} carries data but all subsets are None.")
 
-        # correct the memlets coming from the nsdfg
-        for edge in body.in_edges(map_exit):
-            if edge.data.subset:
-                edge.data.subset.ranges = fold(edge.data.subset.ranges, itervar, lower_loop_bound, upper_loop_bound)
-            elif edge.data.other_subset:
-                edge.data.other_subset.ranges = fold(edge.data.other_subset.ranges, itervar, lower_loop_bound, upper_loop_bound)
-        
-        # correct the input and output memlets inside the nsdfg
-        for access_node in nstate.nodes():
-            if isinstance(access_node, nodes.AccessNode):
-                # input memlets
-                for internal_edge in nstate.out_edges(access_node):
-                    new_range = []
-                    if internal_edge.data.data in old_in_memlets:
-                        for old_r, new_r in zip(old_in_memlets[internal_edge.data.data][0], internal_edge.data.subset.ranges):
-                            if any(symbolic.issymbolic(x) and symbol(itervar) in x.free_symbols for x in old_r):
-                                new_range.append(offset(new_r, symbol(itervar) - lower_loop_bound))
-                            else:
-                                new_range.append(new_r)
-                        internal_edge.data.subset.ranges = new_range
-                # output memlets
-                for internal_edge in nstate.in_edges(access_node):
-                    new_range = []
-                    if internal_edge.data.data in old_out_memlets:
-                        for old_r, new_r in zip(old_out_memlets[internal_edge.data.data][0], internal_edge.data.subset.ranges):
-                            if any(symbolic.issymbolic(x) and symbol(itervar) in x.free_symbols for x in old_r):
-                                new_range.append(offset(new_r, symbol(itervar) - lower_loop_bound))
-                            else:
-                                new_range.append(new_r)
-                        internal_edge.data.subset.ranges = new_range
+        # # correct the memlets coming from the nsdfg
+        # for edge in body.in_edges(map_exit):
+        #     if not edge.data.data:
+        #         continue
+        #     if edge.data.subset:
+        #         edge.data.subset.ranges = fold(edge.data.subset.ranges, itervar, lower_loop_bound, upper_loop_bound)
+        #     elif edge.data.other_subset:
+        #         edge.data.other_subset.ranges = fold(edge.data.other_subset.ranges, itervar, lower_loop_bound, upper_loop_bound)
+        #     else:
+        #         raise ValueError(f"Edge {edge} carries data but all subsets are None.")
+
+        # # correct the input and output memlets inside the nsdfg
+        # for access_node in nstate.nodes():
+        #     if isinstance(access_node, nodes.AccessNode):
+        #         # input memlets
+        #         for internal_edge in nstate.out_edges(access_node):
+        #             new_range = []
+        #             if internal_edge.data.data in old_in_memlets:
+        #                 for old_r, new_r in zip(old_in_memlets[internal_edge.data.data][0], internal_edge.data.subset.ranges):
+        #                     if any(symbolic.issymbolic(x) and symbol(itervar) in x.free_symbols for x in old_r):
+        #                         new_range.append(offset(new_r, symbol(itervar) - lower_loop_bound))
+        #                     else:
+        #                         new_range.append(new_r)
+        #                 internal_edge.data.subset.ranges = new_range
+        #         # output memlets
+        #         for internal_edge in nstate.in_edges(access_node):
+        #             new_range = []
+        #             if internal_edge.data.data in old_out_memlets:
+        #                 for old_r, new_r in zip(old_out_memlets[internal_edge.data.data][0], internal_edge.data.subset.ranges):
+        #                     if any(symbolic.issymbolic(x) and symbol(itervar) in x.free_symbols for x in old_r):
+        #                         new_range.append(offset(new_r, symbol(itervar) - lower_loop_bound))
+        #                     else:
+        #                         new_range.append(new_r)
+        #                 internal_edge.data.subset.ranges = new_range
 
         # replicate loop in nested sdfg
         new_before, new_guard, new_after = nsdfg.sdfg.add_loop(
@@ -269,7 +279,7 @@ class MoveLoopIntoMap(DetectLoop, transformation.MultiStateTransformation):
             elif s in sdfg.arrays:
                 desc = sdfg.arrays[s]
                 access = body.add_access(s)
-                conn = nsdfg.sdfg.add_datadesc(s, desc)
+                conn = nsdfg.sdfg.add_datadesc(s, copy.deepcopy(desc))
                 nsdfg.sdfg.arrays[s].transient = False
                 nsdfg.add_in_connector(conn)
                 body.add_memlet_path(access, map_entry, nsdfg, memlet=Memlet.from_array(s, desc), dst_conn=conn)
