@@ -140,31 +140,53 @@ class MoveLoopIntoMap(DetectLoop, transformation.MultiStateTransformation):
         # save old in and out memlets { name : ranges }
         old_in_memlets, old_out_memlets = dict(), dict()
         for edge in body.out_edges(map_entry):
+            if not edge.data.data:
+                continue
+            if edge.data.subset:
+                subset = edge.data.subset
+            elif edge.data.other_subset:
+                subset = edge.data.other_subset
+            else:
+                raise NotImplementedError
             if edge.data.data in old_in_memlets:
-                old_in_memlets[edge.data.data].append(edge.data.subset.ranges)
+                old_in_memlets[edge.data.data].append(subset.ranges)
             else:
-                old_in_memlets[edge.data.data] = [edge.data.subset.ranges]
+                old_in_memlets[edge.data.data] = [subset.ranges]
         for edge in body.in_edges(map_exit):
-            if edge.data.data in old_out_memlets:
-                old_out_memlets[edge.data.data].append(edge.data.subset.ranges)
+            if not edge.data.data:
+                continue
+            if edge.data.subset:
+                subset = edge.data.subset
+            elif edge.data.other_subset:
+                subset = edge.data.other_subset
             else:
-                old_out_memlets[edge.data.data] = [edge.data.subset.ranges]
+                raise NotImplementedError
+            if edge.data.data in old_out_memlets:
+                old_out_memlets[edge.data.data].append(subset.ranges)
+            else:
+                old_out_memlets[edge.data.data] = [subset.ranges]
 
         # old_in_memlets = { edge.data.data : edge.data.subset.ranges for edge in body.out_edges(map_entry) }
         # old_out_memlets = { edge.data.data : edge.data.subset.ranges for edge in body.in_edges(map_exit) }
 
         # nest map's content in sdfg
         map_subgraph = body.scope_subgraph(map_entry, include_entry=False, include_exit=False)
-        nsdfg = helpers.nest_state_subgraph(sdfg, body, map_subgraph)
+        nsdfg = helpers.nest_state_subgraph(sdfg, body, map_subgraph, full_data=True)
         nstate = nsdfg.sdfg.nodes()[0]
 
         # correct the memlets going into the nsdfg
         for edge in body.out_edges(map_entry):
-            edge.data.subset.ranges = fold(edge.data.subset.ranges, itervar, lower_loop_bound, upper_loop_bound)
+            if edge.data.subset:
+                edge.data.subset.ranges = fold(edge.data.subset.ranges, itervar, lower_loop_bound, upper_loop_bound)
+            elif edge.data.other_subset:
+                edge.data.other_subset.ranges = fold(edge.data.other_subset.ranges, itervar, lower_loop_bound, upper_loop_bound)
 
         # correct the memlets coming from the nsdfg
         for edge in body.in_edges(map_exit):
-            edge.data.subset.ranges = fold(edge.data.subset.ranges, itervar, lower_loop_bound, upper_loop_bound)
+            if edge.data.subset:
+                edge.data.subset.ranges = fold(edge.data.subset.ranges, itervar, lower_loop_bound, upper_loop_bound)
+            elif edge.data.other_subset:
+                edge.data.other_subset.ranges = fold(edge.data.other_subset.ranges, itervar, lower_loop_bound, upper_loop_bound)
         
         # correct the input and output memlets inside the nsdfg
         for access_node in nstate.nodes():
@@ -257,6 +279,11 @@ class MoveLoopIntoMap(DetectLoop, transformation.MultiStateTransformation):
         for s in to_delete:
             del nsdfg.symbol_mapping[s]
             del sdfg.symbols[s]
+        
+        from dace.transformation.interstate import RefineNestedAccess
+        transformation = RefineNestedAccess()
+        transformation.setup_match(sdfg, 0, sdfg.node_id(body), {RefineNestedAccess.nsdfg: body.node_id(nsdfg)}, 0)
+        transformation.apply(body, sdfg)
 
         # propagate scope for correct volumes
         scope_tree = ScopeTree(map_entry, map_exit)
