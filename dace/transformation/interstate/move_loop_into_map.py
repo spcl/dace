@@ -80,7 +80,9 @@ class MoveLoopIntoMap(DetectLoop, transformation.MultiStateTransformation):
                         dims.append(i)
             return (True, dims)
 
-        # TODO: Add test that map is independant of itervar!
+        # Check that Map memlets depend on itervar in a consistent manner
+        # a. A container must either not depend at all on itervar, or depend on it always in the same dimensions.
+        # b. Abort when a dimension depends on both the itervar and a Map parameter.
         mparams = set(maps[0].map.params)
         data_dependency = dict()
         for e in body.edges():
@@ -136,8 +138,20 @@ class MoveLoopIntoMap(DetectLoop, transformation.MultiStateTransformation):
                 map_exit = node
 
         # save old in and out memlets { name : ranges }
-        old_in_memlets = { edge.data.data : edge.data.subset.ranges for edge in body.out_edges(map_entry) }
-        old_out_memlets = { edge.data.data : edge.data.subset.ranges for edge in body.in_edges(map_exit) }
+        old_in_memlets, old_out_memlets = dict(), dict()
+        for edge in body.out_edges(map_entry):
+            if edge.data.data in old_in_memlets:
+                old_in_memlets[edge.data.data].append(edge.data.subset.ranges)
+            else:
+                old_in_memlets[edge.data.data] = [edge.data.subset.ranges]
+        for edge in body.in_edges(map_exit):
+            if edge.data.data in old_out_memlets:
+                old_out_memlets[edge.data.data].append(edge.data.subset.ranges)
+            else:
+                old_out_memlets[edge.data.data] = [edge.data.subset.ranges]
+
+        # old_in_memlets = { edge.data.data : edge.data.subset.ranges for edge in body.out_edges(map_entry) }
+        # old_out_memlets = { edge.data.data : edge.data.subset.ranges for edge in body.in_edges(map_exit) }
 
         # nest map's content in sdfg
         map_subgraph = body.scope_subgraph(map_entry, include_entry=False, include_exit=False)
@@ -159,7 +173,7 @@ class MoveLoopIntoMap(DetectLoop, transformation.MultiStateTransformation):
                 for internal_edge in nstate.out_edges(access_node):
                     new_range = []
                     if internal_edge.data.data in old_in_memlets:
-                        for old_r, new_r in zip(old_in_memlets[internal_edge.data.data], internal_edge.data.subset.ranges):
+                        for old_r, new_r in zip(old_in_memlets[internal_edge.data.data][0], internal_edge.data.subset.ranges):
                             if any(symbolic.issymbolic(x) and symbol(itervar) in x.free_symbols for x in old_r):
                                 new_range.append(offset(new_r, symbol(itervar) - lower_loop_bound))
                             else:
@@ -169,7 +183,7 @@ class MoveLoopIntoMap(DetectLoop, transformation.MultiStateTransformation):
                 for internal_edge in nstate.in_edges(access_node):
                     new_range = []
                     if internal_edge.data.data in old_out_memlets:
-                        for old_r, new_r in zip(old_out_memlets[internal_edge.data.data], internal_edge.data.subset.ranges):
+                        for old_r, new_r in zip(old_out_memlets[internal_edge.data.data][0], internal_edge.data.subset.ranges):
                             if any(symbolic.issymbolic(x) and symbol(itervar) in x.free_symbols for x in old_r):
                                 new_range.append(offset(new_r, symbol(itervar) - lower_loop_bound))
                             else:
