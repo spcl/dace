@@ -21,8 +21,7 @@ class TrivialLoopEliminationTest(unittest.TestCase):
         A1 = np.random.rand(16, 16)
         A2 = np.copy(A1)
 
-        sdfg = trivial_loop.to_sdfg()
-        sdfg.apply_strict_transformations()
+        sdfg = trivial_loop.to_sdfg(simplify=False)
         sdfg(A1, I=A1.shape[0], J=A1.shape[1])
 
         count = sdfg.apply_transformations(TrivialLoopElimination)
