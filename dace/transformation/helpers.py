@@ -244,7 +244,7 @@ def nest_state_subgraph(sdfg: SDFG,
             data = Memlet.from_array(edge.data.data, sdfg.arrays[edge.data.data])
         else:
             data = copy.deepcopy(edge.data)
-            data.subset = global_subsets[edge.data.data][1]
+            data.subset = copy.deepcopy(global_subsets[edge.data.data][1])
         state.add_edge(edge.src, edge.src_conn, nested_sdfg, name, data)
         reconnected_in.add(name)
 
@@ -260,7 +260,7 @@ def nest_state_subgraph(sdfg: SDFG,
             data = Memlet.from_array(edge.data.data, sdfg.arrays[edge.data.data])
         else:
             data = copy.deepcopy(edge.data)
-            data.subset = global_subsets[edge.data.data][1]
+            data.subset = copy.deepcopy(global_subsets[edge.data.data][1])
         data.wcr = edge.data.wcr
         state.add_edge(nested_sdfg, name, edge.dst, edge.dst_conn, data)
         reconnected_out.add(name)
