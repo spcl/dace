@@ -69,11 +69,6 @@ class symbol(sympy.Symbol):
     def __hash__(self) -> int:
         return super().__hash__()
 
-    def __eq__(self, other):
-        if isinstance(other, (sympy.Symbol, symbol)):
-            return self.name == other.name
-        return super().__eq__(other)
-
     def is_initialized(self):
         return self.value is not None
 
