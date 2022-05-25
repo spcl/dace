@@ -3,7 +3,7 @@
 
 import dace.transformation.helpers as helpers
 from dace.sdfg.scope import ScopeTree
-from dace import nodes, registry, sdfg as sd, subsets as sbs, symbolic, symbol
+from dace import Memlet, nodes, registry, sdfg as sd, subsets as sbs, symbolic, symbol
 from dace.properties import CodeBlock
 from dace.sdfg import nodes, propagation
 from dace.transformation import transformation
@@ -191,7 +191,7 @@ class MoveLoopIntoMap(DetectLoop, transformation.MultiStateTransformation):
                         internal_edge.data.subset.ranges = new_range
 
         # replicate loop in nested sdfg
-        nsdfg.sdfg.add_loop(
+        new_before, new_guard, new_after = nsdfg.sdfg.add_loop(
             before_state = None,
             loop_state = nsdfg.sdfg.nodes()[0],
             loop_end_state = None,
@@ -203,15 +203,29 @@ class MoveLoopIntoMap(DetectLoop, transformation.MultiStateTransformation):
         )
 
         # remove outer loop
+        before_guard_edge = nsdfg.sdfg.edges_between(new_before, new_guard)[0]
+        for e in nsdfg.sdfg.out_edges(new_guard):
+            if e.dst is new_after:
+                guard_after_edge = e
+            else:
+                guard_body_edge = e
+
         for body_inedge in sdfg.in_edges(body):
+            if body_inedge.src is guard:
+                guard_body_edge.data.assignments.update(body_inedge.data.assignments)
             sdfg.remove_edge(body_inedge)
         for body_outedge in sdfg.out_edges(body):
             sdfg.remove_edge(body_outedge)
         for guard_inedge in sdfg.in_edges(guard):
+            before_guard_edge.data.assignments.update(guard_inedge.data.assignments)
             guard_inedge.data.assignments = {}
             sdfg.add_edge(guard_inedge.src, body, guard_inedge.data)
             sdfg.remove_edge(guard_inedge)
         for guard_outedge in sdfg.out_edges(guard):
+            if guard_outedge.dst is body:
+                guard_body_edge.data.assignments.update(guard_outedge.data.assignments)
+            else:
+                guard_after_edge.data.assignments.update(guard_outedge.data.assignments)
             guard_outedge.data.condition = CodeBlock("1")
             sdfg.add_edge(body, guard_outedge.dst, guard_outedge.data)
             sdfg.remove_edge(guard_outedge)
@@ -220,6 +234,29 @@ class MoveLoopIntoMap(DetectLoop, transformation.MultiStateTransformation):
             del nsdfg.symbol_mapping[itervar]
         if itervar in sdfg.symbols:
             del sdfg.symbols[itervar]
+        
+        # Add missing data/symbols
+        for s in nsdfg.sdfg.free_symbols:
+            if s in nsdfg.symbol_mapping:
+                continue
+            if s in sdfg.symbols:
+                nsdfg.symbol_mapping[s] = s
+            elif s in sdfg.arrays:
+                desc = sdfg.arrays[s]
+                access = body.add_access(s)
+                conn = nsdfg.sdfg.add_datadesc(s, desc)
+                nsdfg.sdfg.arrays[s].transient = False
+                nsdfg.add_in_connector(conn)
+                body.add_memlet_path(access, map_entry, nsdfg, memlet=Memlet.from_array(s, desc), dst_conn=conn)
+            else:
+                raise NotImplementedError
+        to_delete = set()
+        for s in nsdfg.symbol_mapping:
+            if s not in nsdfg.sdfg.free_symbols:
+                to_delete.add(s)
+        for s in to_delete:
+            del nsdfg.symbol_mapping[s]
+            del sdfg.symbols[s]
 
         # propagate scope for correct volumes
         scope_tree = ScopeTree(map_entry, map_exit)
