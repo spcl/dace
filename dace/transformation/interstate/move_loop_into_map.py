@@ -41,7 +41,10 @@ class MoveLoopIntoMap(DetectLoop, transformation.MultiStateTransformation):
         after: sd.SDFGState = self.exit_state
 
         # Obtain iteration variable, range, and stride
-        itervar, (start, end, step), _ = find_for_loop(sdfg, guard, body)
+        loop_info = find_for_loop(sdfg, guard, body)
+        if not loop_info:
+            return False
+        itervar, (start, end, step), _ = loop_info
 
         if step not in [-1, 1]:
             return False
