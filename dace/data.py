@@ -19,16 +19,16 @@ from dace.properties import (EnumProperty, Property, make_properties, DictProper
                              ListProperty)
 
 
-def create_datadescriptor(obj):
+def create_datadescriptor(obj, no_custom_desc=False):
     """ Creates a data descriptor from various types of objects.
         @see: dace.data.Data
     """
     from dace import dtypes  # Avoiding import loops
     if isinstance(obj, Data):
         return obj
-    elif hasattr(obj, '__descriptor__'):
+    elif not no_custom_desc and hasattr(obj, '__descriptor__'):
         return obj.__descriptor__()
-    elif hasattr(obj, 'descriptor'):
+    elif not no_custom_desc and hasattr(obj, 'descriptor'):
         return obj.descriptor
     elif isinstance(obj, (list, tuple, numpy.ndarray)):
         if isinstance(obj, (list, tuple)):  # Lists and tuples are cast to numpy
@@ -858,7 +858,7 @@ def make_array_from_descriptor(descriptor: Array, original_array: Optional[Array
                               memptr=buffer.data,
                               strides=[s * dtype.itemsize for s in strides])
             return view
-        
+
         def copy_array(dst, src):
             dst[:] = cp.asarray(src)
 
@@ -870,7 +870,7 @@ def make_array_from_descriptor(descriptor: Array, original_array: Optional[Array
             buffer = np.ndarray([total_size], dtype=dtype)
             view = np.ndarray(shape, dtype, buffer=buffer, strides=[s * dtype.itemsize for s in strides])
             return view
-        
+
         def copy_array(dst, src):
             dst[:] = src
 
