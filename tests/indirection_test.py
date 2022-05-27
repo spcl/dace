@@ -50,7 +50,7 @@ def test_two_nested_levels_indirection():
     W.set(5)
     H.set(5)
 
-    A = dp.ndarray([W ** 2])
+    A = dp.ndarray([W * W])
     B = dp.ndarray([W])
     x = dp.ndarray([W], dtype=dp.uint32)
 

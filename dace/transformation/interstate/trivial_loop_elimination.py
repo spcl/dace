@@ -1,9 +1,9 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Eliminates trivial loop """
 
-from dace import registry, sdfg as sd
+from dace import sdfg as sd
 from dace.properties import CodeBlock
-from dace.transformation import transformation
+from dace.transformation import helpers, transformation
 from dace.transformation.interstate.loop_detection import (DetectLoop, find_for_loop)
 
 
@@ -20,13 +20,12 @@ class TrivialLoopElimination(DetectLoop, transformation.MultiStateTransformation
         # Obtain loop information
         guard: sd.SDFGState = self.loop_guard
         body: sd.SDFGState = self.loop_begin
-        after: sd.SDFGState = self.exit_state
 
         # Obtain iteration variable, range, and stride
         loop_info = find_for_loop(sdfg, guard, body)
         if not loop_info:
             return False
-        itervar, (start, end, step), _ = loop_info
+        _, (start, end, step), _ = loop_info
 
         try:
             if step > 0 and start + step < end + 1:
@@ -44,7 +43,6 @@ class TrivialLoopElimination(DetectLoop, transformation.MultiStateTransformation
         # Obtain loop information
         guard: sd.SDFGState = self.loop_guard
         body: sd.SDFGState = self.loop_begin
-        after: sd.SDFGState = self.exit_state
 
         # Obtain iteration variable, range and stride
         itervar, (start, end, step), (_, body_end) = find_for_loop(sdfg, guard, body)
@@ -77,5 +75,5 @@ class TrivialLoopElimination(DetectLoop, transformation.MultiStateTransformation
             sdfg.add_edge(body_end, guard_outedge.dst, guard_outedge.data)
             sdfg.remove_edge(guard_outedge)
         sdfg.remove_node(guard)
-        if itervar in sdfg.symbols:
-            del sdfg.symbols[itervar]
+        if itervar in sdfg.symbols and helpers.is_symbol_unused(sdfg, itervar):
+            sdfg.remove_symbol(itervar)
