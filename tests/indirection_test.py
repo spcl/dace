@@ -37,9 +37,6 @@ def test():
 
 def test_two_nested_levels_indirection():
 
-    W = dp.symbol('W')
-    H = dp.symbol('H')
-
     @dp.program
     def indirection(A, x, B):
         for j in dp.map[0:H]:
@@ -53,7 +50,7 @@ def test_two_nested_levels_indirection():
     W.set(5)
     H.set(5)
 
-    A = dp.ndarray([W * W])
+    A = dp.ndarray([W ** 2])
     B = dp.ndarray([W])
     x = dp.ndarray([W], dtype=dp.uint32)
 
