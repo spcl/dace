@@ -66,9 +66,6 @@ class symbol(sympy.Symbol):
     def __getstate__(self):
         return dict(self.assumptions0, **{'value': self.value, 'dtype': self.dtype, '_constraints': self._constraints})
 
-    def __hash__(self) -> int:
-        return super().__hash__()
-
     def is_initialized(self):
         return self.value is not None
 
