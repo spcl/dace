@@ -18,13 +18,13 @@ def test_simple_constants():
 
     sdfg = program.to_sdfg()
     ScalarToSymbolPromotion().apply_pass(sdfg, {})
-    res = Pipeline([ConstantPropagation()]).apply_pass(sdfg, {})
+    ConstantPropagation().apply_pass(sdfg, {})
 
     assert len(sdfg.symbols) == 0
     for e in sdfg.edges():
         assert len(e.data.assignments) == 0
     a = np.random.rand(20)
-    program(a)
+    sdfg(a)
     assert np.allclose(a, 5)
 
 
@@ -38,7 +38,7 @@ def test_nested_constants():
         A[l] = k
 
     sdfg = program.to_sdfg()
-    Pipeline([ConstantPropagation()]).apply_pass(sdfg, {})
+    ConstantPropagation().apply_pass(sdfg, {})
 
     assert set(sdfg.symbols.keys()) == {'i'}
 
@@ -61,7 +61,7 @@ def test_simple_loop():
         a[0] = i  # Use i - should be const
 
     sdfg = program.to_sdfg()
-    Pipeline([ConstantPropagation()]).apply_pass(sdfg, {})
+    ConstantPropagation().apply_pass(sdfg, {})
 
     assert set(sdfg.symbols.keys()) == {'i'}
     # Test tasklets
@@ -81,7 +81,7 @@ def test_cprop_inside_loop():
         a[i] = i  # Use i - not const
 
     sdfg = program.to_sdfg()
-    Pipeline([ConstantPropagation()]).apply_pass(sdfg, {})
+    ConstantPropagation().apply_pass(sdfg, {})
 
     assert set(sdfg.symbols.keys()) == {'i'}
 
@@ -106,7 +106,7 @@ def test_cprop_outside_loop():
         a[j, k] = 1
 
     sdfg = program.to_sdfg()
-    Pipeline([ConstantPropagation()]).apply_pass(sdfg, {})
+    ConstantPropagation().apply_pass(sdfg, {})
 
     assert set(sdfg.symbols.keys()) == {'i', 'j'}
 
@@ -132,7 +132,7 @@ def test_cond():
         a[i, j] = 3
 
     sdfg = program.to_sdfg()
-    Pipeline([ConstantPropagation()]).apply_pass(sdfg, {})
+    ConstantPropagation().apply_pass(sdfg, {})
 
     assert set(sdfg.symbols.keys()) == {'i'}
 
@@ -148,26 +148,26 @@ def test_complex_case():
     """ Tests a complex control flow case. """
     sdfg = dace.SDFG('program')
     sdfg.add_scalar('a', dace.float64)
-    init = sdfg.add_state()
-    guard = sdfg.add_state()
-    branch2 = sdfg.add_state()
-    branch2_1 = sdfg.add_state()
-    afterloop = sdfg.add_state()  # uses i, should not be constant
-    inside_loop1 = sdfg.add_state()
-    inside_loop2 = sdfg.add_state()
-    merge = sdfg.add_state()
-    usei = sdfg.add_state()  # uses i, should be constant
-    loop2 = sdfg.add_state()
-    last = sdfg.add_state()
+    init = sdfg.add_state('init')
+    guard = sdfg.add_state('guard')
+    branch2 = sdfg.add_state('branch2')
+    branch2_1 = sdfg.add_state('branch2_1')
+    afterloop = sdfg.add_state('afterloop')  # uses i, should not be constant
+    inside_loop1 = sdfg.add_state('inside_loop1')
+    inside_loop2 = sdfg.add_state('inside_loop2')
+    merge = sdfg.add_state('merge')
+    usei = sdfg.add_state('usei')  # uses i, should be constant
+    loop2 = sdfg.add_state('loop2')
+    last = sdfg.add_state('last')
     sdfg.add_edge(init, guard, dace.InterstateEdge('a > 0', {'i': 5}))
-    sdfg.add_edge(init, branch2, dace.InterstateEdge('a <= 0', {'i': 6}))
+    sdfg.add_edge(init, branch2, dace.InterstateEdge('a <= 0', {'i': 7}))
     sdfg.add_edge(branch2, branch2_1, dace.InterstateEdge())
     sdfg.add_edge(guard, inside_loop1, dace.InterstateEdge('i < 6'))
     sdfg.add_edge(guard, afterloop, dace.InterstateEdge('i >= 6'))
     sdfg.add_edge(inside_loop1, inside_loop2, dace.InterstateEdge(assignments={'i': 6}))
     sdfg.add_edge(inside_loop2, guard, dace.InterstateEdge(assignments={'i': 'i+1'}))
 
-    sdfg.add_edge(afterloop, merge, dace.InterstateEdge(assignments={'i': 6, 'j': 1}))
+    sdfg.add_edge(afterloop, merge, dace.InterstateEdge(assignments={'i': 7, 'j': 1}))
     sdfg.add_edge(branch2_1, merge, dace.InterstateEdge(assignments={'j': 1}))
 
     sdfg.add_edge(merge, loop2, dace.InterstateEdge('j < 2'))
@@ -176,8 +176,18 @@ def test_complex_case():
     sdfg.add_edge(merge, last, dace.InterstateEdge('j >= 2'))
 
     propagated = ConstantPropagation().collect_constants(sdfg)  #, reachability
-    assert 'i' in propagated[usei] and propagated[usei]['i'] == 6
-    assert 'i' not in propagated[afterloop]
+    assert len(propagated[init]) == 0
+    assert propagated[branch2]['i'] == '7'
+    assert propagated[guard]['i'] is _UnknownValue
+    assert propagated[inside_loop1]['i'] is _UnknownValue
+    assert propagated[inside_loop2]['i'] == '6'
+    assert propagated[usei]['i'] == '7'
+    assert propagated[afterloop]['i'] is _UnknownValue
+    assert propagated[merge]['i'] == '7'
+    assert propagated[last]['i'] == '7'
+    for pstate in propagated.values():
+        if 'j' in pstate:
+            assert pstate['j'] is _UnknownValue
 
 
 def test_early_exit():
