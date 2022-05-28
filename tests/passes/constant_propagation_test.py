@@ -216,6 +216,25 @@ def test_early_exit():
     assert ConstantPropagation().should_apply(sdfg_yes) is True
 
 
+def test_recursive_cprop():
+    sdfg = dace.SDFG('program')
+    a = sdfg.add_state()
+    b = sdfg.add_state()
+    sdfg.add_edge(a, b, dace.InterstateEdge(assignments=dict(i=1)))
+
+    nsdfg = dace.SDFG('nested')
+    b.add_nested_sdfg(nsdfg, None, {}, {}, symbol_mapping={'i': 'i + 1'})
+
+    nstate = nsdfg.add_state()
+    t = nstate.add_tasklet('doprint', {}, {}, 'printf("%d\\n", i)')
+
+    ConstantPropagation().apply_pass(sdfg, {})
+
+    assert len(sdfg.symbols) == 0
+    assert len(nsdfg.symbols) == 0
+    assert '2' in t.code.as_string
+
+
 if __name__ == '__main__':
     test_simple_constants()
     test_nested_constants()
@@ -225,3 +244,4 @@ if __name__ == '__main__':
     test_cond()
     test_complex_case()
     test_early_exit()
+    test_recursive_cprop()

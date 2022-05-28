@@ -1,9 +1,10 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 
 import ast
+from dataclasses import dataclass
 from dace.frontend.python import astutils
 from dace.sdfg.sdfg import InterstateEdge
-from dace.sdfg import utils as sdutil
+from dace.sdfg import nodes, utils as sdutil
 from dace.transformation import pass_pipeline as ppl
 from dace import SDFG, SDFGState, symbolic
 from typing import Any, Dict, Set, Optional
@@ -16,11 +17,15 @@ class _UnknownValue:
     pass
 
 
+@dataclass
 class ConstantPropagation(ppl.Pass):
     """
     Propagates constants and symbols that were assigned to one value forward through the SDFG, reducing
     the number of overall symbols.
     """
+
+    recursive: bool = True
+
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Symbols | ppl.Modifies.Edges | ppl.Modifies.Nodes
 
@@ -42,21 +47,24 @@ class ConstantPropagation(ppl.Pass):
 
         return False
 
-    def apply_pass(self, sdfg: SDFG, _) -> Optional[Set[str]]:
+    def apply_pass(self, sdfg: SDFG, _, initial_symbols: Optional[Dict[str, Any]] = None) -> Optional[Set[str]]:
         """
         Propagates constants throughout the SDFG.
         :param sdfg: The SDFG to modify.
         :param pipeline_results: If in the context of a ``Pipeline``, a dictionary that is populated with prior Pass
                                  results as ``{Pass subclass name: returned object from pass}``. If not run in a
                                  pipeline, an empty dictionary is expected.
+        :param initial_symbols: If not None, sets values of initial symbols.
         :return: A set of propagated constants, or None if nothing was changed.
         """
+        initial_symbols = initial_symbols or {}
+
         # Early exit if no constants can be propagated
-        if not self.should_apply(sdfg):
+        if not initial_symbols and not self.should_apply(sdfg):
             return None
 
         # Trace all constants and symbols through states
-        per_state_constants: Dict[SDFGState, Dict[str, Any]] = self.collect_constants(sdfg)
+        per_state_constants: Dict[SDFGState, Dict[str, Any]] = self.collect_constants(sdfg, initial_symbols)
 
         # Keep track of replaced and ambiguous symbols
         symbols_replaced: Set[str] = set()
@@ -87,15 +95,25 @@ class ConstantPropagation(ppl.Pass):
             for sym in intersection:
                 del edge.data.assignments[sym]
 
+        if self.recursive:
+            for state in sdfg.nodes():
+                for node in state.nodes():
+                    if isinstance(node, nodes.NestedSDFG):
+                        const_syms = {k: v for k, v in node.symbol_mapping.items() if not symbolic.issymbolic(v)}
+                        result |= self.apply_pass(node.sdfg, _, const_syms)
+
         # Return result
         if not result:
             return None
         return result
 
-    def collect_constants(self, sdfg: SDFG) -> Dict[SDFGState, Dict[str, Any]]:
+    def collect_constants(self,
+                          sdfg: SDFG,
+                          initial_symbols: Optional[Dict[str, Any]] = None) -> Dict[SDFGState, Dict[str, Any]]:
         """
         Finds all constants and constant-assigned symbols in the SDFG for each state.
         :param sdfg: The SDFG to traverse.
+        :param initial_symbols: If not None, sets values of initial symbols.
         :return: A dictionary mapping an SDFG state to a mapping of constants and their corresponding values.
         """
         arrays: Set[str] = set(sdfg.arrays.keys() | sdfg.constants_prop.keys())
@@ -107,8 +125,13 @@ class ConstantPropagation(ppl.Pass):
         # * If unvisited state has more than one incoming edge, consider all paths (use reverse DFS on unvisited paths)
         #   * If value is ambiguous (not the same), set value to UNKNOWN
 
+        start_state = sdfg.start_state
+        if initial_symbols:
+            result[start_state] = {}
+            result[start_state].update(initial_symbols)
+
         # Traverse SDFG topologically
-        for state in sdfg.topological_sort(sdfg.start_state):
+        for state in sdfg.topological_sort(start_state):
             if state in result:
                 continue
             result[state] = {}
