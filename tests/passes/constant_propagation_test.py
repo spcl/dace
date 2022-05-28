@@ -30,7 +30,7 @@ def test_simple_constants():
 
 def test_nested_constants():
     @dace.program
-    def program(A: dace.int32[20]):
+    def program(A: dace.int64[20]):
         i = A[0]
         j = i + 1
         k = j + 1  # Should become i + 2
