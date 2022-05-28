@@ -66,18 +66,23 @@ class ConstantPropagation(ppl.Pass):
             mapping = {k: v for k, v in mapping.items() if v is not _UnknownValue}
             symbols_replaced.update(mapping.keys())
 
-            # TODO: Remove symbol assignments in interstate edges
-
-            # Replace in state contents
-            state.replace_dict(mapping)
-            # Replace in outgoing edges as well
-            for e in sdfg.out_edges(state):
-                e.data.replace_dict(mapping)
+            if mapping:
+                # Replace in state contents
+                state.replace_dict(mapping)
+                # Replace in outgoing edges as well
+                for e in sdfg.out_edges(state):
+                    e.data.replace_dict(mapping)
 
         # If symbols are never unknown any longer, remove from SDFG
         result = (symbols_replaced - remaining_unknowns)
         for sym in result:
             sdfg.remove_symbol(sym)
+
+        # Remove constant symbol assignments in interstate edges
+        for edge in sdfg.edges():
+            intersection = result & edge.data.assignments.keys()
+            for sym in intersection:
+                del edge.data.assignments[sym]
 
         # Return result
         if not result:
@@ -119,9 +124,9 @@ class ConstantPropagation(ppl.Pass):
             assignments = {}
             for edge in in_edges:
                 # If source was already visited, use its propagated constants
-                constants: Dict[str, Any]
+                constants: Dict[str, Any] = {}
                 if edge.src in result:
-                    constants = result[edge.src]
+                    constants.update(result[edge.src])
                 else:  # Otherwise, reverse DFS to find constants until a visited state
                     constants = self._constants_from_unvisited_state(sdfg, edge.src, arrays, result)
 
