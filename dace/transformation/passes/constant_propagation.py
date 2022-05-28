@@ -1,5 +1,7 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 
+import ast
+from dace.frontend.python import astutils
 from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg import utils as sdutil
 from dace.transformation import pass_pipeline as ppl
@@ -151,13 +153,25 @@ class ConstantPropagation(ppl.Pass):
         :param new_symbols: The new symbols to include (and propagate ``symbols`` into).
         :param backward: If True, assumes symbol back-propagation (i.e., only update keys in symbols if newer).
         """
-        # TODO: Update results with values of other propagated symbols
+        # If propagating backwards, ensure symbols are only added if they are not overridden
         if backward:
             for k, v in new_symbols.items():
                 if k not in symbols:
                     symbols[k] = v
-        else:
-            symbols.update(new_symbols)
+            return
+
+        # Replace interstate edge assignment (which is Python code)
+        def _replace_assignment(v, repl):
+            vast = ast.parse(v)
+            vast = astutils.ASTFindReplace(repl).visit(vast)
+            return astutils.unparse(vast)
+
+        # Update results with values of other propagated symbols
+        propagated_symbols = {
+            k: _replace_assignment(v, symbols) if v is not _UnknownValue else _UnknownValue
+            for k, v in new_symbols.items()
+        }
+        symbols.update(propagated_symbols)
 
     def _data_independent_assignments(self, edge: InterstateEdge, arrays: Set[str]) -> Dict[str, Any]:
         """
