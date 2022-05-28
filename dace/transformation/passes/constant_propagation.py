@@ -114,10 +114,10 @@ class ConstantPropagation(ppl.Pass):
             in_edges = sdfg.in_edges(state)
             if len(in_edges) == 1:  # Special case, propagate as-is
                 # First the prior state
-                result[state].update(result[in_edges[0].src])
+                self._propagate(result[state], result[in_edges[0].src])
 
                 # Then assignments on the incoming edge
-                result[state].update(self._data_independent_assignments(in_edges[0].data, arrays))
+                self._propagate(result[state], self._data_independent_assignments(in_edges[0].data, arrays))
                 continue
 
             # More than one incoming edge: may require reversed traversal
@@ -131,7 +131,7 @@ class ConstantPropagation(ppl.Pass):
                     constants = self._constants_from_unvisited_state(sdfg, edge.src, arrays, result)
 
                 # Update constants with incoming edge
-                constants.update(self._data_independent_assignments(edge.data, arrays))
+                self._propagate(constants, self._data_independent_assignments(edge.data, arrays))
 
                 for aname, aval in constants.items():
                     # If something was assigned more than once (to a different value), it's not a constant
@@ -140,11 +140,24 @@ class ConstantPropagation(ppl.Pass):
                     else:
                         assignments[aname] = aval
 
-            result[state].update(assignments)
-
-            # TODO: Update results with values of other propagated symbols
+            self._propagate(result[state], assignments)
 
         return result
+
+    def _propagate(self, symbols: Dict[str, Any], new_symbols: Dict[str, Any], backward: bool = False):
+        """
+        Updates symbols dictionary in-place with new symbols, propagating existing ones within.
+        :param symbols: The symbols dictionary to update.
+        :param new_symbols: The new symbols to include (and propagate ``symbols`` into).
+        :param backward: If True, assumes symbol back-propagation (i.e., only update keys in symbols if newer).
+        """
+        # TODO: Update results with values of other propagated symbols
+        if backward:
+            for k, v in new_symbols.items():
+                if k not in symbols:
+                    symbols[k] = v
+        else:
+            symbols.update(new_symbols)
 
     def _data_independent_assignments(self, edge: InterstateEdge, arrays: Set[str]) -> Dict[str, Any]:
         """
@@ -160,11 +173,6 @@ class ConstantPropagation(ppl.Pass):
         """
         result: Dict[str, Any] = {}
 
-        def _update_if_new(existing: Dict[Any, Any], new: Dict[Any, Any]) -> None:
-            for k, v in new.items():
-                if k not in existing:
-                    existing[k] = v
-
         for parent, node in sdutil.dfs_conditional(sdfg,
                                                    sources=[state],
                                                    reverse=True,
@@ -179,8 +187,8 @@ class ConstantPropagation(ppl.Pass):
 
             # If node already has propagated constants, update dictionary and stop traversal
             if node in existing_constants:
-                self._data_independent_assignments(edge.data, arrays)
-                _update_if_new(result, existing_constants[node])
+                self._propagate(result, self._data_independent_assignments(edge.data, arrays), True)
+                self._propagate(result, existing_constants[node], True)
                 continue
 
         return result
