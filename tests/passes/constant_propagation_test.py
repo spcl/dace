@@ -38,6 +38,7 @@ def test_nested_constants():
         A[l] = k
 
     sdfg = program.to_sdfg()
+    ScalarToSymbolPromotion().apply_pass(sdfg, {})
     ConstantPropagation().apply_pass(sdfg, {})
 
     assert set(sdfg.symbols.keys()) == {'i'}
@@ -61,6 +62,7 @@ def test_simple_loop():
         a[0] = i  # Use i - should be const
 
     sdfg = program.to_sdfg()
+    ScalarToSymbolPromotion().apply_pass(sdfg, {})
     ConstantPropagation().apply_pass(sdfg, {})
 
     assert set(sdfg.symbols.keys()) == {'i'}
@@ -81,6 +83,7 @@ def test_cprop_inside_loop():
         a[i] = i  # Use i - not const
 
     sdfg = program.to_sdfg()
+    ScalarToSymbolPromotion().apply_pass(sdfg, {})
     ConstantPropagation().apply_pass(sdfg, {})
 
     assert set(sdfg.symbols.keys()) == {'i'}
@@ -106,6 +109,7 @@ def test_cprop_outside_loop():
         a[j, k] = 1
 
     sdfg = program.to_sdfg()
+    ScalarToSymbolPromotion().apply_pass(sdfg, {})
     ConstantPropagation().apply_pass(sdfg, {})
 
     assert set(sdfg.symbols.keys()) == {'i', 'j'}
@@ -132,6 +136,7 @@ def test_cond():
         a[i, j] = 3
 
     sdfg = program.to_sdfg()
+    ScalarToSymbolPromotion().apply_pass(sdfg, {})
     ConstantPropagation().apply_pass(sdfg, {})
 
     assert set(sdfg.symbols.keys()) == {'i'}

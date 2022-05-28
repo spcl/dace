@@ -73,12 +73,13 @@ class ConstantPropagation(ppl.Pass):
                 state.replace_dict(mapping)
                 # Replace in outgoing edges as well
                 for e in sdfg.out_edges(state):
-                    e.data.replace_dict(mapping)
+                    e.data.replace_dict(mapping, replace_keys=False)
 
         # If symbols are never unknown any longer, remove from SDFG
         result = (symbols_replaced - remaining_unknowns)
         for sym in result:
-            sdfg.remove_symbol(sym)
+            if sym in sdfg.symbols:
+                sdfg.remove_symbol(sym)
 
         # Remove constant symbol assignments in interstate edges
         for edge in sdfg.edges():
@@ -163,12 +164,14 @@ class ConstantPropagation(ppl.Pass):
         # Replace interstate edge assignment (which is Python code)
         def _replace_assignment(v, repl):
             vast = ast.parse(v)
-            vast = astutils.ASTFindReplace(repl).visit(vast)
+            replacer = astutils.ASTFindReplace(repl)
+            vast = replacer.visit(vast)
             return astutils.unparse(vast)
 
         # Update results with values of other propagated symbols
+        repl = {k: v for k, v in symbols.items() if v is not _UnknownValue}
         propagated_symbols = {
-            k: _replace_assignment(v, symbols) if v is not _UnknownValue else _UnknownValue
+            k: _replace_assignment(v, repl) if v is not _UnknownValue else _UnknownValue
             for k, v in new_symbols.items()
         }
         symbols.update(propagated_symbols)
@@ -200,9 +203,8 @@ class ConstantPropagation(ppl.Pass):
             edge = sdfg.edges_between(node, parent)[0]
 
             # If node already has propagated constants, update dictionary and stop traversal
+            self._propagate(result, self._data_independent_assignments(edge.data, arrays), True)
             if node in existing_constants:
-                self._propagate(result, self._data_independent_assignments(edge.data, arrays), True)
                 self._propagate(result, existing_constants[node], True)
-                continue
 
         return result
