@@ -691,6 +691,8 @@ class OrderedDiGraph(Graph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
         return nx.simple_cycles(self._nx)
 
     def edges_between(self, source: NodeT, destination: NodeT) -> List[Edge[EdgeT]]:
+        if (source, destination) in self._edges:
+            return [self._edges[(source, destination)]]
         if source not in self.nodes(): return []
         return [e for e in self.out_edges(source) if e.dst == destination]
 

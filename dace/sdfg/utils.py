@@ -167,13 +167,33 @@ def dfs_topological_sort(G, sources=None, condition=None):
                 stack.pop()
 
 
-def dfs_conditional(G, sources=None, condition=None):
-    """ Produce nodes in a depth-first ordering.
+class StopTraversal(Exception):
+    """
+    Special exception that stops DFS conditional traversal beyond the current node. 
+    
+    :see: dfs_conditional
+    """
+    pass
+
+
+def dfs_conditional(G, sources=None, condition=None, reverse=False, yield_parent=False):
+    """
+    Produce nodes in a depth-first ordering with an optional condition to stop traversal.
+    If ``StopTraversal`` is raised during iteration, the outgoing edges of the current node
+    will not be traversed.
+    
 
     :param G: An input DiGraph (assumed acyclic).
     :param sources: (optional) node or list of nodes that
                     specify starting point(s) for depth-first search and return
-                    edges in the component reachable from source.
+                    edges in the component reachable from source. If None, traverses from
+                    every node in the graph.
+    :param condition: (optional) a callback that receives the traversed parent and child.
+                      Called before each child node is traversed.
+                      If it returns True, traversal proceeds normally. If False, the child
+                      and reachable nodes are not traversed.
+    :param reverse: If True, traverses the graph backwards from the sources.
+    :param yield_parent: If True, yields a 2-tuple of (parent, child)
     :return: A generator of edges in the lastvisit depth-first-search.
 
     :note: Based on http://www.ics.uci.edu/~eppstein/PADS/DFS.py
@@ -183,6 +203,11 @@ def dfs_conditional(G, sources=None, condition=None):
     repeatedly until all components in the graph are searched.
 
     """
+    if reverse:
+        successors = G.predecessors
+    else:
+        successors = G.successors
+
     if sources is None:
         # produce edges for all components
         nodes = G
@@ -197,9 +222,15 @@ def dfs_conditional(G, sources=None, condition=None):
     for start in nodes:
         if start in visited:
             continue
-        yield start
+        try:
+            if yield_parent:
+                yield None, start
+            else:
+                yield start
+        except StopTraversal:
+            return
         visited.add(start)
-        stack = [(start, iter(G.successors(start)))]
+        stack = [(start, iter(successors(start)))]
         while stack:
             parent, children = stack[-1]
             try:
@@ -207,8 +238,15 @@ def dfs_conditional(G, sources=None, condition=None):
                 if child not in visited:
                     visited.add(child)
                     if condition is None or condition(parent, child):
-                        yield child
-                        stack.append((child, iter(G.successors(child))))
+                        try:
+                            if yield_parent:
+                                yield parent, child
+                            else:
+                                yield child
+                            stack.append((child, iter(successors(child))))
+                        except Exception as ex:
+                            print('elllo')
+                            pass
             except StopIteration:
                 stack.pop()
 
