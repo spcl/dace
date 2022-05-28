@@ -244,8 +244,7 @@ def dfs_conditional(G, sources=None, condition=None, reverse=False, yield_parent
                             else:
                                 yield child
                             stack.append((child, iter(successors(child))))
-                        except Exception as ex:
-                            print('elllo')
+                        except StopTraversal:
                             pass
             except StopIteration:
                 stack.pop()

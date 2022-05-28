@@ -7,7 +7,6 @@ from dace import SDFG, SDFGState, symbolic
 from typing import Any, Dict, Set, Optional
 
 from dace.transformation.passes.scalar_to_symbol import ScalarToSymbolPromotion
-from dace.transformation.passes.analysis import StateReachability
 
 
 class _UnknownValue:
