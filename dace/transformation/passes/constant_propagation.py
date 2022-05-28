@@ -26,6 +26,20 @@ class ConstantPropagation(ppl.Pass):
         # If anything was modified, reapply
         return modified != ppl.Modifies.Nothing
 
+    def should_apply(self, sdfg: SDFG) -> bool:
+        """
+        Fast check (O(m)) whether the pass should early-exit without traversing the SDFG.
+        """
+        for edge in sdfg.edges():
+            # If there are no assignments, there are no constants to propagate
+            if len(edge.data.assignments) == 0:
+                continue
+            # If no assignment assigns a constant to a symbol, no constants can be propagated
+            if any(not symbolic.issymbolic(aval) for aval in edge.data.assignments.values()):
+                return True
+
+        return False
+
     def apply_pass(self, sdfg: SDFG, _) -> Optional[Set[str]]:
         """
         Propagates constants throughout the SDFG.
@@ -35,7 +49,9 @@ class ConstantPropagation(ppl.Pass):
                                  pipeline, an empty dictionary is expected.
         :return: A set of propagated constants, or None if nothing was changed.
         """
-        # TODO(later): Early exit if no constants can be propagated?
+        # Early exit if no constants can be propagated
+        if not self.should_apply(sdfg):
+            return None
 
         # Trace all constants and symbols through states
         per_state_constants: Dict[SDFGState, Dict[str, Any]] = self.collect_constants(sdfg)

@@ -1,9 +1,7 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 
 import dace
-from dace.transformation.pass_pipeline import Pipeline
-from dace.transformation.passes.analysis import StateReachability
-from dace.transformation.passes.constant_propagation import ConstantPropagation
+from dace.transformation.passes.constant_propagation import ConstantPropagation, _UnknownValue
 from dace.transformation.passes.scalar_to_symbol import ScalarToSymbolPromotion
 import numpy as np
 
@@ -182,6 +180,27 @@ def test_complex_case():
     assert 'i' not in propagated[afterloop]
 
 
+def test_early_exit():
+    a = np.random.rand(20)
+
+    @dace.program
+    def should_not_apply(a):
+        return a + 1
+
+    sdfg_no = should_not_apply.to_sdfg(a, simplify=False)
+    ScalarToSymbolPromotion().apply_pass(sdfg_no, {})
+    assert ConstantPropagation().should_apply(sdfg_no) is False
+
+    @dace.program
+    def should_apply(a):
+        i = 1
+        return a + i
+
+    sdfg_yes = should_apply.to_sdfg(a, simplify=False)
+    ScalarToSymbolPromotion().apply_pass(sdfg_yes, {})
+    assert ConstantPropagation().should_apply(sdfg_yes) is True
+
+
 if __name__ == '__main__':
     test_simple_constants()
     test_nested_constants()
@@ -190,3 +209,4 @@ if __name__ == '__main__':
     test_cprop_outside_loop()
     test_cond()
     test_complex_case()
+    test_early_exit()
