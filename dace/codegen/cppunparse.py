@@ -70,6 +70,7 @@
 ### END OF astunparse LICENSES
 
 from __future__ import print_function, unicode_literals
+from functools import lru_cache
 import inspect
 import six
 import sys
@@ -1110,6 +1111,6 @@ def py2cpp(code, expr_semicolon=True, defined_symbols=None):
     else:
         raise NotImplementedError('Unsupported type for py2cpp')
 
-
+@lru_cache(maxsize=16384)
 def pyexpr2cpp(expr):
     return py2cpp(expr, expr_semicolon=False)
