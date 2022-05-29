@@ -4,6 +4,7 @@ import collections
 import copy
 import ctypes
 import itertools
+import gzip
 from numbers import Integral
 import os
 import pickle, json
@@ -35,6 +36,7 @@ from dace.distr_types import ProcessGrid, SubArray, RedistrArray
 from dace.dtypes import validate_name
 from dace.properties import (DebugInfoProperty, EnumProperty, ListProperty, make_properties, Property, CodeProperty,
                              TransformationHistProperty, OptionalSDFGReferenceProperty, DictProperty, CodeBlock)
+from typing import BinaryIO
 
 # NOTE: In shapes, we try to convert strings to integers. In ranks, a string should be interpreted as data (scalar).
 ShapeType = Sequence[Union[Integral, str, symbolic.symbol, symbolic.SymExpr, symbolic.sympy.Basic]]
@@ -456,6 +458,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         :param jsondict: If not None, uses given JSON dictionary as input.
         :return: The hash (in SHA-256 format).
         '''
+
         def keyword_remover(json_obj: Any, last_keyword=""):
             # Makes non-unique in SDFG hierarchy v2
             # Recursively remove attributes from the SDFG which are not used in
@@ -1335,7 +1338,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                         result.append(node)
         return result
 
-    def save(self, filename: str, use_pickle=False, hash=None, exception=None) -> Optional[str]:
+    def save(self, filename: str, use_pickle=False, hash=None, exception=None, compress=False) -> Optional[str]:
         """ Save this SDFG to a file.
             :param filename: File name to save to.
             :param use_pickle: Use Python pickle as the SDFG format (default:
@@ -1344,21 +1347,27 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                          Otherwise, if True, saves the hash along with the SDFG.
             :param exception: If not None, stores error information along with
                               SDFG.
+            :param compress: If True, uses gzip to compress the file upon saving.
             :return: The hash of the SDFG, or None if failed/not requested.
         """
+        if compress:
+            fileopen = lambda file, mode: gzip.open(file, mode + 't')
+        else:
+            fileopen = open
+
         try:
             os.makedirs(os.path.dirname(filename), exist_ok=True)
         except (FileNotFoundError, FileExistsError):
             pass
 
         if use_pickle:
-            with open(filename, "wb") as fp:
+            with fileopen(filename, "wb") as fp:
                 symbolic.SympyAwarePickler(fp).dump(self)
             if hash is True:
                 return self.hash_sdfg()
         else:
             hash = True if hash is None else hash
-            with open(filename, "w") as fp:
+            with fileopen(filename, "w") as fp:
                 json_output = self.to_json(hash=hash)
                 if exception:
                     json_output['error'] = exception.to_json()
@@ -1376,23 +1385,32 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         view(self, filename=filename)
 
     @staticmethod
+    def _from_file(fp: BinaryIO) -> 'SDFG':
+        firstbyte = fp.read(1)
+        fp.seek(0)
+        if firstbyte == b'{':  # JSON file
+            sdfg_json = json.load(fp)
+            sdfg = SDFG.from_json(sdfg_json)
+        else:  # Pickle
+            sdfg = symbolic.SympyAwareUnpickler(fp).load()
+
+        if not isinstance(sdfg, SDFG):
+            raise TypeError("Loaded file is not an SDFG (loaded type: %s)" % type(sdfg).__name__)
+        return sdfg
+
+    @staticmethod
     def from_file(filename: str) -> 'SDFG':
         """ Constructs an SDFG from a file.
             :param filename: File name to load SDFG from.
             :return: An SDFG.
         """
-        with open(filename, "rb") as fp:
-            firstbyte = fp.read(1)
-            fp.seek(0)
-            if firstbyte == b'{':  # JSON file
-                sdfg_json = json.load(fp)
-                sdfg = SDFG.from_json(sdfg_json)
-            else:  # Pickle
-                sdfg = symbolic.SympyAwareUnpickler(fp).load()
-
-            if not isinstance(sdfg, SDFG):
-                raise TypeError("Loaded file is not an SDFG (loaded " "type: %s)" % type(sdfg).__name__)
-            return sdfg
+        # Try compressed first. If fails, try uncompressed
+        try:
+            with gzip.open(filename, 'rb') as fp:
+                return SDFG._from_file(fp)
+        except OSError:
+            with open(filename, "rb") as fp:
+                return SDFG._from_file(fp)
 
     # Dynamic SDFG creation API
     ##############################
@@ -2298,7 +2316,6 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                     for oname, oval in opts.items():
                         setattr(t, oname, oval)
                     result.append(t)
-
 
         return result
 
