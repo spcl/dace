@@ -11,17 +11,25 @@ import warnings
 
 tokenize_cpp = re.compile(r'[^\w]\w+[^\w]')
 
+def _internal_replace(sym, symrepl):
+    if not isinstance(sym, sp.Basic):
+        return sym
+    newrepl = {k: symrepl[k] for k in (sym.free_symbols & symrepl.keys())}
+    if not newrepl:
+        return sym
+    return sym.subs(newrepl)
+
 def _replsym(symlist, symrepl):
     """ Helper function to replace symbols in various symbolic expressions. """
     if symlist is None:
         return None
     if isinstance(symlist, (symbolic.SymExpr, symbolic.symbol, sp.Basic)):
-        return symlist.subs(symrepl)
+        return _internal_replace(symlist, symrepl)
     for i, dim in enumerate(symlist):
         try:
-            symlist[i] = tuple(d.subs(symrepl) if symbolic.issymbolic(d) else d for d in dim)
+            symlist[i] = tuple(_internal_replace(d, symrepl) for d in dim)
         except TypeError:
-            symlist[i] = (dim.subs(symrepl) if symbolic.issymbolic(dim) else dim)
+            symlist[i] = _internal_replace(dim, symrepl)
     return symlist
 
 
