@@ -437,16 +437,18 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                                                 json_obj,
                                                 ignore_properties={'constants_prop', 'name', 'hash', 'start_state'})
 
+        nodelist = []
         for n in nodes:
             nci = copy.copy(context_info)
             nci['sdfg'] = ret
 
             state = SDFGState.from_json(n, context=nci)
             ret.add_node(state)
+            nodelist.append(state)
 
         for e in edges:
             e = dace.serialize.from_json(e)
-            ret.add_edge(ret.node(int(e.src)), ret.node(int(e.dst)), e.data)
+            ret.add_edge(nodelist[int(e.src)], nodelist[int(e.dst)], e.data)
 
         if 'start_state' in json_obj:
             ret._start_state = json_obj['start_state']
@@ -1425,8 +1427,9 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             with gzip.open(filename, 'rb') as fp:
                 return SDFG._from_file(fp)
         except OSError:
-            with open(filename, "rb") as fp:
-                return SDFG._from_file(fp)
+            pass
+        with open(filename, "rb") as fp:
+            return SDFG._from_file(fp)
 
     # Dynamic SDFG creation API
     ##############################
