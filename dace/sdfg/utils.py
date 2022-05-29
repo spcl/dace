@@ -1106,7 +1106,7 @@ def fuse_states(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> 
 
                 if u in skip_nodes or v in skip_nodes:
                     continue
-                candidate = {StateFusion.first_state: sd.node_id(u), StateFusion.second_state: sd.node_id(v)}
+                candidate = {StateFusion.first_state: u, StateFusion.second_state: v}
                 sf = StateFusion()
                 sf.setup_match(sd, id, -1, candidate, 0, override=True)
                 if sf.can_be_applied(sd, 0, sd, permissive=permissive):
@@ -1167,11 +1167,10 @@ def inline_sdfgs(sdfg: SDFG, permissive: bool = False, progress: bool = None, mu
             pbar = tqdm(total=len(nsdfgs), desc='Inlining SDFG', initial=ctr)
 
         # We have to reevaluate every time due to changing IDs
-        node_id = state.node_id(node)
         state_id = sd.node_id(state)
         if multistate:
             candidate = {
-                InlineMultistateSDFG.nested_sdfg: node_id,
+                InlineMultistateSDFG.nested_sdfg: node,
             }
             inliner = InlineMultistateSDFG()
             inliner.setup_match(sd, id, state_id, candidate, 0, override=True)
@@ -1183,7 +1182,7 @@ def inline_sdfgs(sdfg: SDFG, permissive: bool = False, progress: bool = None, mu
                 continue
 
         candidate = {
-            InlineSDFG.nested_sdfg: node_id,
+            InlineSDFG.nested_sdfg: node,
         }
         inliner = InlineSDFG()
         inliner.setup_match(sd, id, state_id, candidate, 0, override=True)
