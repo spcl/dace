@@ -15,6 +15,7 @@ from dace.transformation import transformation
 
 # Helper class for finding connected component correspondences
 class CCDesc:
+
     def __init__(self, first_input_nodes: Set[nodes.AccessNode], first_output_nodes: Set[nodes.AccessNode],
                  second_input_nodes: Set[nodes.AccessNode], second_output_nodes: Set[nodes.AccessNode]) -> None:
         self.first_inputs = {n.data for n in first_input_nodes}
@@ -253,7 +254,7 @@ class StateFusion(transformation.MultiStateTransformation, transformation.Simpli
             second_cc = [cc_nodes for cc_nodes in nx.weakly_connected_components(second_state._nx)]
 
             # Find source/sink (data) nodes
-            first_input = {node for node in sdutil.find_source_nodes(first_state) if isinstance(node, nodes.AccessNode)}
+            first_input = {node for node in first_state.source_nodes() if isinstance(node, nodes.AccessNode)}
             first_output = {
                 node
                 for node in first_state.scope_children()[None]
@@ -261,7 +262,7 @@ class StateFusion(transformation.MultiStateTransformation, transformation.Simpli
             }
             second_input = {
                 node
-                for node in sdutil.find_source_nodes(second_state) if isinstance(node, nodes.AccessNode)
+                for node in second_state.source_nodes() if isinstance(node, nodes.AccessNode)
             }
             second_output = {
                 node
@@ -481,9 +482,9 @@ class StateFusion(transformation.MultiStateTransformation, transformation.Simpli
         # Normal case: both states are not empty
 
         # Find source/sink (data) nodes
-        first_input = [node for node in sdutil.find_source_nodes(first_state) if isinstance(node, nodes.AccessNode)]
-        first_output = [node for node in sdutil.find_sink_nodes(first_state) if isinstance(node, nodes.AccessNode)]
-        second_input = [node for node in sdutil.find_source_nodes(second_state) if isinstance(node, nodes.AccessNode)]
+        first_input = [node for node in first_state.source_nodes() if isinstance(node, nodes.AccessNode)]
+        first_output = [node for node in first_state.sink_nodes() if isinstance(node, nodes.AccessNode)]
+        second_input = [node for node in second_state.source_nodes() if isinstance(node, nodes.AccessNode)]
 
         top2 = top_level_nodes(second_state)
 

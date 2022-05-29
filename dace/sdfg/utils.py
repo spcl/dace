@@ -366,29 +366,6 @@ def change_edge_src(graph: gr.OrderedDiGraph, node_a: Union[nd.Node, gr.OrderedM
             graph.add_edge(node_b, e.dst, e.data)
 
 
-def find_source_nodes(graph):
-    """ Finds the source nodes of a graph.
-
-        The function finds the source nodes of a graph, i.e. the nodes with
-        zero in-degree.
-
-        :param graph: The graph whose source nodes are being searched for.
-        :return: A list of the source nodes found.
-    """
-    return [n for n in graph.nodes() if graph.in_degree(n) == 0]
-
-
-def find_sink_nodes(graph):
-    """ Finds the sink nodes of a graph.
-
-        The function finds the sink nodes of a graph, i.e. the nodes with zero out-degree.
-
-        :param graph: The graph whose sink nodes are being searched for.
-        :return: A list of the sink nodes found.
-    """
-    return [n for n in graph.nodes() if graph.out_degree(n) == 0]
-
-
 ParamsType = List['dace.symbolic.symbol']
 RangesType = List[sbs.Subset]
 
@@ -1117,6 +1094,7 @@ def fuse_states(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> 
 
     for sd in sdfg.all_sdfgs_recursive():
         id = sd.sdfg_id
+
         while True:
             edges = list(sd.nx.edges)
             applied = 0
