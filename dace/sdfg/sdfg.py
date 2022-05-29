@@ -364,6 +364,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         self._parent_nsdfg_node = None
         self._sdfg_list = [self]
         self._start_state: Optional[int] = None
+        self._cached_start_state: Optional[SDFGState] = None
         self._arrays = {}  # type: Dict[str, dt.Array]
         self._labels: Set[str] = set()
         self.global_code = {'frame': CodeBlock("", dtypes.Language.CPP)}
@@ -595,13 +596,18 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
     @property
     def start_state(self):
         """ Returns the starting state of this SDFG. """
+        if self._cached_start_state is not None:
+            return self._cached_start_state
+
         source_nodes = self.source_nodes()
         if len(source_nodes) == 1:
+            self._cached_start_state = source_nodes[0]
             return source_nodes[0]
         # If starting state is ambiguous (i.e., loop to initial state or more
         # than one possible start state), allow manually overriding start state
         if self._start_state is not None:
-            return self.node(self._start_state)
+            self._cached_start_state = self.node(self._start_state)
+            return self._cached_start_state
         raise ValueError('Ambiguous or undefined starting state for SDFG, '
                          'please use "is_start_state=True" when adding the '
                          'starting state with "add_state"')
@@ -615,6 +621,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         if state_id < 0 or state_id >= self.number_of_nodes():
             raise ValueError("Invalid state ID")
         self._start_state = state_id
+        self._cached_start_state = self.node(state_id)
 
     def set_global_code(self, cpp_code: str, location: str = 'frame'):
         """
@@ -1053,8 +1060,15 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         if not isinstance(node, SDFGState):
             raise TypeError("Expected SDFGState, got " + str(type(node)))
         super(SDFG, self).add_node(node)
-        if is_start_state == True:
+        self._cached_start_state = None
+        if is_start_state is True:
             self.start_state = len(self.nodes()) - 1
+            self._cached_start_state = node
+    
+    def remove_node(self, node: SDFGState):
+        if node is self._cached_start_state:
+            self._cached_start_state = None
+        return super().remove_node(node)
 
     def add_edge(self, u, v, edge):
         """ Adds a new edge to the SDFG. Must be an InterstateEdge or a
@@ -1069,6 +1083,8 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             raise TypeError("Expected SDFGState, got: {}".format(type(v).__name__))
         if not isinstance(edge, InterstateEdge):
             raise TypeError("Expected InterstateEdge, got: {}".format(type(edge).__name__))
+        if v is self._cached_start_state:
+            self._cached_start_state = None
         return super(SDFG, self).add_edge(u, v, edge)
 
     def states(self):
