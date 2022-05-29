@@ -61,46 +61,58 @@ class ConstantPropagation(ppl.Pass):
 
         # Early exit if no constants can be propagated
         if not initial_symbols and not self.should_apply(sdfg):
-            return None
+            result = set()
+        else: 
+            # Trace all constants and symbols through states
+            per_state_constants: Dict[SDFGState, Dict[str, Any]] = self.collect_constants(sdfg, initial_symbols)
 
-        # Trace all constants and symbols through states
-        per_state_constants: Dict[SDFGState, Dict[str, Any]] = self.collect_constants(sdfg, initial_symbols)
+            # Keep track of replaced and ambiguous symbols
+            symbols_replaced: Set[str] = set()
+            remaining_unknowns: Set[str] = set()
 
-        # Keep track of replaced and ambiguous symbols
-        symbols_replaced: Set[str] = set()
-        remaining_unknowns: Set[str] = set()
+            import time
+            s = time.time()
+            fsyms = {}
+            for state in sdfg.nodes():
+                fsyms[state] = state.free_symbols
+            for e in sdfg.edges():
+                fsyms[e] = e.data.free_symbols
+            print('Free symbol collection time:', time.time() - s, 's')
 
-        # Replace constants per state
-        for state, mapping in per_state_constants.items():
-            remaining_unknowns.update({k for k, v in mapping.items() if v is _UnknownValue})
-            mapping = {k: v for k, v in mapping.items() if v is not _UnknownValue}
-            symbols_replaced.update(mapping.keys())
+            # Replace constants per state
+            for state, mapping in per_state_constants.items():
+                remaining_unknowns.update({k for k, v in mapping.items() if v is _UnknownValue})
+                mapping = {k: v for k, v in mapping.items() if v is not _UnknownValue}
+                symbols_replaced.update(mapping.keys())
 
-            if mapping:
-                # Replace in state contents
-                state.replace_dict(mapping)
+                if mapping.keys() & fsyms[state]:
+                    # Replace in state contents
+                    state.replace_dict(mapping)
                 # Replace in outgoing edges as well
                 for e in sdfg.out_edges(state):
-                    e.data.replace_dict(mapping, replace_keys=False)
+                    if mapping.keys() & fsyms[e]:
+                        e.data.replace_dict(mapping, replace_keys=False)
 
-        # If symbols are never unknown any longer, remove from SDFG
-        result = (symbols_replaced - remaining_unknowns)
-        for sym in result:
-            if sym in sdfg.symbols:
-                sdfg.remove_symbol(sym)
+            # If symbols are never unknown any longer, remove from SDFG
+            result = (symbols_replaced - remaining_unknowns)
+            for sym in result:
+                if sym in sdfg.symbols:
+                    sdfg.remove_symbol(sym)
 
-        # Remove constant symbol assignments in interstate edges
-        for edge in sdfg.edges():
-            intersection = result & edge.data.assignments.keys()
-            for sym in intersection:
-                del edge.data.assignments[sym]
+            # Remove constant symbol assignments in interstate edges
+            for edge in sdfg.edges():
+                intersection = result & edge.data.assignments.keys()
+                for sym in intersection:
+                    del edge.data.assignments[sym]
 
         if self.recursive:
             for state in sdfg.nodes():
                 for node in state.nodes():
                     if isinstance(node, nodes.NestedSDFG):
                         const_syms = {k: v for k, v in node.symbol_mapping.items() if not symbolic.issymbolic(v)}
-                        result |= self.apply_pass(node.sdfg, _, const_syms)
+                        internal = self.apply_pass(node.sdfg, _, const_syms)
+                        if internal:
+                            result |= internal
 
         # Return result
         if not result:
