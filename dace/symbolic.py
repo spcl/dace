@@ -307,7 +307,7 @@ def symlist(values):
             true_expr = expr
         else:
             continue
-        for atom in true_expr.atoms():
+        for atom in sympy.preorder_traversal(true_expr):
             if isinstance(atom, symbol):
                 result[atom.name] = atom
     return result
