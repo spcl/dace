@@ -443,10 +443,8 @@ class StateFusion(transformation.MultiStateTransformation, transformation.Simpli
                                         return False
                                 found = outnode
 
-        from dace.codegen.targets.fpga import is_fpga_kernel  # avoid circular import
-
         # Do not fuse FPGA and NON-FPGA states
-        if is_fpga_kernel(sdfg, first_state) != is_fpga_kernel(sdfg, second_state):
+        if sdutil.is_fpga_kernel(sdfg, first_state) != sdutil.is_fpga_kernel(sdfg, second_state):
             return False
 
         return True
