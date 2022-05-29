@@ -9,8 +9,6 @@ from dace.transformation import pass_pipeline as ppl
 from dace import SDFG, SDFGState, symbolic
 from typing import Any, Dict, Set, Optional
 
-from dace.transformation.passes.scalar_to_symbol import ScalarToSymbolPromotion
-
 
 class _UnknownValue:
     """ A helper class that indicates a symbol value is ambiguous. """
@@ -62,7 +60,7 @@ class ConstantPropagation(ppl.Pass):
         # Early exit if no constants can be propagated
         if not initial_symbols and not self.should_apply(sdfg):
             result = set()
-        else: 
+        else:
             # Trace all constants and symbols through states
             per_state_constants: Dict[SDFGState, Dict[str, Any]] = self.collect_constants(sdfg, initial_symbols)
 

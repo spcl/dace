@@ -227,14 +227,16 @@ class StateFusion(transformation.MultiStateTransformation, transformation.Simpli
             # Wait), until we have a better SDFG representation of the buffer
             # dependencies.
             try:
-                from dace.libraries.mpi import Waitall
-                next(node for node in first_state.nodes() if isinstance(node, Waitall) or node.label == '_Waitall_')
+                next(node for node in first_state.nodes()
+                     if (isinstance(node, nodes.LibraryNode) and type(node).__name__ == 'Waitall')
+                     or node.label == '_Waitall_')
                 return False
             except StopIteration:
                 pass
             try:
-                from dace.libraries.mpi import Waitall
-                next(node for node in second_state.nodes() if isinstance(node, Waitall) or node.label == '_Waitall_')
+                next(node for node in second_state.nodes()
+                     if (isinstance(node, nodes.LibraryNode) and type(node).__name__ == 'Waitall')
+                     or node.label == '_Waitall_')
                 return False
             except StopIteration:
                 pass
