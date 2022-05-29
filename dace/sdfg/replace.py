@@ -2,12 +2,14 @@
 """ Contains functionality to perform find-and-replace of symbols in SDFGs. """
 
 from dace import dtypes, properties, symbolic
+from dace.codegen import cppunparse
 from dace.frontend.python.astutils import ASTFindReplace
 import re
 import sympy as sp
 from typing import Any, Dict, Optional, Union
 import warnings
 
+tokenize_cpp = re.compile(r'[^\w]\w+[^\w]')
 
 def _replsym(symlist, symrepl):
     """ Helper function to replace symbols in various symbolic expressions. """
@@ -93,23 +95,25 @@ def replace_properties_dict(node: Any,
             if hasattr(node, 'in_connectors'):
                 reduced_repl -= set(node.in_connectors.keys()) | set(node.out_connectors.keys())
             reduced_repl = {k: repl[k] for k in reduced_repl}
-            if isinstance(propval.code, str):
-                for name, new_name in reduced_repl.items():
-                    lang = propval.language
-                    newcode = propval.code
-                    if not re.findall(r'[^\w]%s[^\w]' % name, newcode):
-                        continue
-
-                    if lang is dtypes.Language.CPP:  # Replace in C++ code
-                        # Avoid import loop
-                        from dace.codegen.targets.cpp import sym2cpp
+            code = propval.code
+            if isinstance(code, str):
+                lang = propval.language
+                if lang is dtypes.Language.CPP:  # Replace in C++ code
+                    prefix = ''
+                    tokenized = tokenize_cpp.findall(code)
+                    for name, new_name in reduced_repl.items():
+                        if name not in tokenized:
+                            continue
 
                         # Use local variables and shadowing to replace
-                        replacement = 'auto %s = %s;\n' % (name, sym2cpp(new_name))
-                        propval.code = replacement + newcode
-                    else:
-                        warnings.warn('Replacement of %s with %s was not made '
-                                      'for string tasklet code of language %s' % (name, new_name, lang))
+                        replacement = f'auto {name} = {cppunparse.pyexpr2cpp(new_name)};\n'
+                        prefix = replacement + prefix
+                    if prefix:
+                        propval.code = prefix + code
+                else:
+                    warnings.warn('Replacement of %s with %s was not made '
+                                    'for string tasklet code of language %s' % (name, new_name, lang))
+
             elif propval.code is not None:
                 afr = ASTFindReplace(reduced_repl)
                 for stmt in propval.code:
