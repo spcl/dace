@@ -620,10 +620,16 @@ class OrderedDiGraph(Graph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
         return self._nx
 
     def node(self, id: int) -> NodeT:
-        return next(n for i, n in enumerate(self._nodes.keys()) if i == id)
+        try:
+            return next(n for i, n in enumerate(self._nodes.keys()) if i == id)
+        except StopIteration:
+            raise IndexError
 
     def node_id(self, node: NodeT) -> int:
-        return next(i for i, n in enumerate(self._nodes.keys()) if n is node)
+        try:
+            return next(i for i, n in enumerate(self._nodes.keys()) if n is node)
+        except StopIteration:
+            raise NodeNotFoundError(node)
 
     def nodes(self) -> List[NodeT]:
         return list(self._nodes.keys())
