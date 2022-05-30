@@ -208,7 +208,7 @@ class StateFusion(transformation.MultiStateTransformation, transformation.Simpli
                 if e.data.assignments.keys() & symbols_used:
                     return False
                 # Also fail in the inverse; symbols assigned on the second edge are free symbols on the first edge
-                if out_edges[0].data.assignments.keys() & set(e.data.free_symbols):
+                if new_assignments & set(e.data.free_symbols):
                     return False
 
         # There can be no state that have output edges pointing to both the
