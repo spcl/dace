@@ -157,7 +157,7 @@ def test_while_symbol():
 
     if dace.Config.get_bool('optimizer', 'detect_control_flow'):
         code = whiletest_symbol.to_sdfg().generate_code()[0].clean_code
-        assert 'while ' in code
+        assert 'while ' in code or 'for ' in code
         assert 'goto ' not in code
 
 
