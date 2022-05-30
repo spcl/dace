@@ -11,4 +11,6 @@ from .sdfg_nesting import NestSDFG, InlineSDFG, InlineTransients, RefineNestedAc
 from .loop_unroll import LoopUnroll
 from .loop_peeling import LoopPeeling
 from .loop_to_map import LoopToMap
+from .move_loop_into_map import MoveLoopIntoMap
+from .trivial_loop_elimination import TrivialLoopElimination
 from .multistate_inline import InlineMultistateSDFG
