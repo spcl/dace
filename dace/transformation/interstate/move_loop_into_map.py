@@ -204,6 +204,14 @@ class MoveLoopIntoMap(DetectLoop, transformation.MultiStateTransformation):
                 to_delete.add(s)
         for s in to_delete:
             del nsdfg.symbol_mapping[s]
+
+        # propagate scope for correct volumes
+        scope_tree = ScopeTree(map_entry, map_exit)
+        scope_tree.parent = ScopeTree(None, None)
+        # The first execution helps remove apperances of symbols that are now defined only in the nested SDFG in memlets.
+        propagation.propagate_memlets_scope(sdfg, body, scope_tree)
+
+        for s in to_delete:
             if helpers.is_symbol_unused(sdfg, s):
                 sdfg.remove_symbol(s)
         
@@ -212,7 +220,5 @@ class MoveLoopIntoMap(DetectLoop, transformation.MultiStateTransformation):
         transformation.setup_match(sdfg, 0, sdfg.node_id(body), {RefineNestedAccess.nsdfg: body.node_id(nsdfg)}, 0)
         transformation.apply(body, sdfg)
 
-        # propagate scope for correct volumes
-        scope_tree = ScopeTree(map_entry, map_exit)
-        scope_tree.parent = ScopeTree(None, None)
+        # Second propagation for refined accesses.
         propagation.propagate_memlets_scope(sdfg, body, scope_tree)
