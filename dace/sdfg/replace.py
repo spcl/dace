@@ -9,7 +9,7 @@ import sympy as sp
 from typing import Any, Dict, Optional, Union
 import warnings
 
-tokenize_cpp = re.compile(r'[^\w]\w+[^\w]')
+tokenize_cpp = re.compile(r'\b\w+\b')
 
 def _internal_replace(sym, symrepl):
     if not isinstance(sym, sp.Basic):
@@ -104,7 +104,7 @@ def replace_properties_dict(node: Any,
                 reduced_repl -= set(node.in_connectors.keys()) | set(node.out_connectors.keys())
             reduced_repl = {k: repl[k] for k in reduced_repl}
             code = propval.code
-            if isinstance(code, str):
+            if isinstance(code, str) and code:
                 lang = propval.language
                 if lang is dtypes.Language.CPP:  # Replace in C++ code
                     prefix = ''
