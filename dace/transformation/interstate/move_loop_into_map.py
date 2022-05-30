@@ -13,17 +13,12 @@ from typing import List, Set, Tuple
 
 
 def fold(memlet_subset_ranges, itervar, lower, upper):
-    return [
-        (r[0].replace(symbol(itervar), lower), r[1].replace(symbol(itervar), upper), r[2])
-        for r in memlet_subset_ranges
-    ]
+    return [(r[0].replace(symbol(itervar), lower), r[1].replace(symbol(itervar), upper), r[2])
+            for r in memlet_subset_ranges]
+
 
 def offset(memlet_subset_ranges, value):
-    return (
-        memlet_subset_ranges[0] + value,
-        memlet_subset_ranges[1] + value,
-        memlet_subset_ranges[2]
-        )
+    return (memlet_subset_ranges[0] + value, memlet_subset_ranges[1] + value, memlet_subset_ranges[2])
 
 
 class MoveLoopIntoMap(DetectLoop, transformation.MultiStateTransformation):
@@ -116,8 +111,7 @@ class MoveLoopIntoMap(DetectLoop, transformation.MultiStateTransformation):
                     return False
 
         return True
-   
-        
+
     def apply(self, _, sdfg: sd.SDFG):
         # Obtain loop information
         guard: sd.SDFGState = self.loop_guard
@@ -127,7 +121,7 @@ class MoveLoopIntoMap(DetectLoop, transformation.MultiStateTransformation):
         itervar, (start, end, step), _ = find_for_loop(sdfg, guard, body)
 
         forward_loop = step > 0
-        
+
         for node in body.nodes():
             if isinstance(node, nodes.MapEntry):
                 map_entry = node
@@ -140,15 +134,14 @@ class MoveLoopIntoMap(DetectLoop, transformation.MultiStateTransformation):
 
         # replicate loop in nested sdfg
         new_before, new_guard, new_after = nsdfg.sdfg.add_loop(
-            before_state = None,
-            loop_state = nsdfg.sdfg.nodes()[0],
-            loop_end_state = None,
-            after_state = None,
-            loop_var = itervar,
-            initialize_expr = f'{start}',
-            condition_expr = f'{itervar} <= {end}' if forward_loop else f'{itervar} >= {end}',
-            increment_expr = f'{itervar} + {step}' if forward_loop else f'{itervar} - {abs(step)}'
-        )
+            before_state=None,
+            loop_state=nsdfg.sdfg.nodes()[0],
+            loop_end_state=None,
+            after_state=None,
+            loop_var=itervar,
+            initialize_expr=f'{start}',
+            condition_expr=f'{itervar} <= {end}' if forward_loop else f'{itervar} >= {end}',
+            increment_expr=f'{itervar} + {step}' if forward_loop else f'{itervar} - {abs(step)}')
 
         # remove outer loop
         before_guard_edge = nsdfg.sdfg.edges_between(new_before, new_guard)[0]
@@ -182,7 +175,7 @@ class MoveLoopIntoMap(DetectLoop, transformation.MultiStateTransformation):
             del nsdfg.symbol_mapping[itervar]
         if itervar in sdfg.symbols:
             del sdfg.symbols[itervar]
-        
+
         # Add missing data/symbols
         for s in nsdfg.sdfg.free_symbols:
             if s in nsdfg.symbol_mapping:
@@ -208,13 +201,14 @@ class MoveLoopIntoMap(DetectLoop, transformation.MultiStateTransformation):
         # propagate scope for correct volumes
         scope_tree = ScopeTree(map_entry, map_exit)
         scope_tree.parent = ScopeTree(None, None)
-        # The first execution helps remove apperances of symbols that are now defined only in the nested SDFG in memlets.
+        # The first execution helps remove apperances of symbols
+        # that are now defined only in the nested SDFG in memlets.
         propagation.propagate_memlets_scope(sdfg, body, scope_tree)
 
         for s in to_delete:
             if helpers.is_symbol_unused(sdfg, s):
                 sdfg.remove_symbol(s)
-        
+
         from dace.transformation.interstate import RefineNestedAccess
         transformation = RefineNestedAccess()
         transformation.setup_match(sdfg, 0, sdfg.node_id(body), {RefineNestedAccess.nsdfg: body.node_id(nsdfg)}, 0)

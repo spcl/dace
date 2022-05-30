@@ -9,14 +9,16 @@ import numpy as np
 I = dace.symbol("I")
 J = dace.symbol("J")
 
+
 @dace.program
 def trivial_loop(data: dace.float64[I, J]):
-    for i in range(1,2):
+    for i in range(1, 2):
         for j in dace.map[0:J]:
-            data[i, j] = data[i, j] + data[i-1, j]
+            data[i, j] = data[i, j] + data[i - 1, j]
 
 
 class TrivialLoopEliminationTest(unittest.TestCase):
+
     def test_semantic_eq(self):
         A1 = np.random.rand(16, 16)
         A2 = np.copy(A1)

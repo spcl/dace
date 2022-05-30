@@ -37,8 +37,7 @@ class TrivialLoopElimination(DetectLoop, transformation.MultiStateTransformation
             return False
 
         return True
-      
-        
+
     def apply(self, _, sdfg: sd.SDFG):
         # Obtain loop information
         guard: sd.SDFGState = self.loop_guard
@@ -56,7 +55,7 @@ class TrivialLoopElimination(DetectLoop, transformation.MultiStateTransformation
                 if dst not in states and dst is not guard:
                     to_visit.append(dst)
             states.add(state)
-        
+
         for state in states:
             state.replace(itervar, start)
 

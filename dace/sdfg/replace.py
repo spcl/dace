@@ -17,7 +17,8 @@ def _replsym(symlist, symrepl):
         return symlist.subs(symrepl)
     for i, dim in enumerate(symlist):
         try:
-            symlist[i] = tuple(symbolic.pystr_to_symbolic(str(d)).subs(symrepl) if symbolic.issymbolic(d) else d for d in dim)
+            symlist[i] = tuple(
+                symbolic.pystr_to_symbolic(str(d)).subs(symrepl) if symbolic.issymbolic(d) else d for d in dim)
         except TypeError:
             symlist[i] = (symbolic.pystr_to_symbolic(str(dim)).subs(symrepl) if symbolic.issymbolic(dim) else dim)
     return symlist

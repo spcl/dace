@@ -351,7 +351,7 @@ def _get_internal_subset(internal_memlet: Memlet,
     if not use_src_subset and not use_dst_subset:
         return internal_memlet.subset
     if use_src_subset and use_dst_subset:
-        raise ValueError('Source and destination subsets cannot be ' 'specified at the same time')
+        raise ValueError('Source and destination subsets cannot be specified at the same time')
     if use_src_subset:
         return internal_memlet.src_subset
     if use_dst_subset:
@@ -553,7 +553,7 @@ def are_subsets_contiguous(subset_a: subsets.Subset, subset_b: subsets.Subset, d
         # A version that only checks for contiguity in certain
         # dimension (e.g., to prioritize stride-1 range)
         if (not isinstance(subset_a, subsets.Range) or not isinstance(subset_b, subsets.Range)):
-            raise NotImplementedError('Contiguous subset check only ' 'implemented for ranges')
+            raise NotImplementedError('Contiguous subset check only implemented for ranges')
 
         # Other dimensions must be equal
         for i, (s1, s2) in enumerate(zip(subset_a.ranges, subset_b.ranges)):
