@@ -192,7 +192,26 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                                                                                    dst_array.desc(sdfg)))
 
         #######################################################
-        # Step 3: Collect free tasklets and check for scalars that have to be moved to the GPU
+        # Step 3.5: Change all top-level maps and library nodes to GPU schedule
+
+        for state in sdfg.nodes():
+            sdict = state.scope_dict()
+            for node in state.nodes():
+                if sdict[node] is None:
+                    if isinstance(node, (nodes.LibraryNode, nodes.NestedSDFG)):
+                        node.schedule = dtypes.ScheduleType.GPU_Default
+                    elif isinstance(node, nodes.EntryNode):
+                        node.schedule = dtypes.ScheduleType.GPU_Device
+                elif self.sequential_innermaps:
+                    if isinstance(node, (nodes.EntryNode, nodes.LibraryNode)):
+                        node.schedule = dtypes.ScheduleType.Sequential
+                    elif isinstance(node, nodes.NestedSDFG):
+                        for nnode, _ in node.sdfg.all_nodes_recursive():
+                            if isinstance(nnode, (nodes.EntryNode, nodes.LibraryNode)):
+                                nnode.schedule = dtypes.ScheduleType.Sequential
+
+        #######################################################
+        # Step 3.6: Collect free tasklets and check for scalars that have to be moved to the GPU
 
         gpu_storage = [dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared, dtypes.StorageType.CPU_Pinned]
 
@@ -264,23 +283,23 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                             nodedesc.storage = dtypes.StorageType.Register
 
         #######################################################
-        # Step 5: Change all top-level maps and library nodes to GPU schedule
+        # # Step 5: Change all top-level maps and library nodes to GPU schedule
 
-        for state in sdfg.nodes():
-            sdict = state.scope_dict()
-            for node in state.nodes():
-                if sdict[node] is None:
-                    if isinstance(node, (nodes.LibraryNode, nodes.NestedSDFG)):
-                        node.schedule = dtypes.ScheduleType.GPU_Default
-                    elif isinstance(node, nodes.EntryNode):
-                        node.schedule = dtypes.ScheduleType.GPU_Device
-                elif self.sequential_innermaps:
-                    if isinstance(node, (nodes.EntryNode, nodes.LibraryNode)):
-                        node.schedule = dtypes.ScheduleType.Sequential
-                    elif isinstance(node, nodes.NestedSDFG):
-                        for nnode, _ in node.sdfg.all_nodes_recursive():
-                            if isinstance(nnode, (nodes.EntryNode, nodes.LibraryNode)):
-                                nnode.schedule = dtypes.ScheduleType.Sequential
+        # for state in sdfg.nodes():
+        #     sdict = state.scope_dict()
+        #     for node in state.nodes():
+        #         if sdict[node] is None:
+        #             if isinstance(node, (nodes.LibraryNode, nodes.NestedSDFG)):
+        #                 node.schedule = dtypes.ScheduleType.GPU_Default
+        #             elif isinstance(node, nodes.EntryNode):
+        #                 node.schedule = dtypes.ScheduleType.GPU_Device
+        #         elif self.sequential_innermaps:
+        #             if isinstance(node, (nodes.EntryNode, nodes.LibraryNode)):
+        #                 node.schedule = dtypes.ScheduleType.Sequential
+        #             elif isinstance(node, nodes.NestedSDFG):
+        #                 for nnode, _ in node.sdfg.all_nodes_recursive():
+        #                     if isinstance(nnode, (nodes.EntryNode, nodes.LibraryNode)):
+        #                         nnode.schedule = dtypes.ScheduleType.Sequential
 
         #######################################################
         # Step 6: Wrap free tasklets and nested SDFGs with a GPU map
