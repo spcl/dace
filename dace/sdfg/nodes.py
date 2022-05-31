@@ -768,6 +768,9 @@ class Map(object):
     instrument = EnumProperty(dtype=dtypes.InstrumentationType,
                               desc="Measure execution statistics with given method",
                               default=dtypes.InstrumentationType.No_Instrumentation)
+    omp_num_threads = Property(dtype=int, desc="Number of OpenMP threads", default=0)
+    omp_schedule = EnumProperty(dtype=dtypes.OMPScheduleType, desc="OpenMP schedule", default=dtypes.OMPScheduleType.Default)
+    omp_chunk_size = Property(dtype=int, desc="OpenMP sheduling chunk size", default=0)
 
     def __init__(self,
                  label,
@@ -777,7 +780,10 @@ class Map(object):
                  unroll=False,
                  collapse=1,
                  fence_instrumentation=False,
-                 debuginfo=None):
+                 debuginfo=None,
+                 omp_num_threads=0,
+                 omp_schedule=dtypes.OMPScheduleType.Default,
+                 omp_chunk_size=0):
         super(Map, self).__init__()
 
         # Assign properties
@@ -789,6 +795,9 @@ class Map(object):
         self.range = ndrange
         self.debuginfo = debuginfo
         self._fence_instrumentation = fence_instrumentation
+        self.omp_num_threads = omp_num_threads
+        self.omp_schedule = omp_schedule
+        self.omp_chunk_size = omp_chunk_size
 
     def __str__(self):
         return self.label + "[" + ", ".join(
