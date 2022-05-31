@@ -22,7 +22,6 @@ from dace import data, subsets as sbs, dtypes
 import pydoc
 import warnings
 
-
 # -----------------------------------------------------------------------------
 
 
@@ -597,6 +596,7 @@ class NestedSDFG(CodeNode):
 # Scope entry class
 class EntryNode(Node):
     """ A type of node that opens a scope (e.g., Map or Consume). """
+
     def validate(self, sdfg, state):
         self.map.validate(sdfg, state, self)
 
@@ -607,6 +607,7 @@ class EntryNode(Node):
 # Scope exit class
 class ExitNode(Node):
     """ A type of node that closes a scope (e.g., Map or Consume). """
+
     def validate(self, sdfg, state):
         self.map.validate(sdfg, state, self)
 
@@ -619,6 +620,7 @@ class MapEntry(EntryNode):
     """ Node that opens a Map scope.
         @see: Map
     """
+
     def __init__(self, map: 'Map', dynamic_inputs=None):
         super(MapEntry, self).__init__(dynamic_inputs or set())
         if map is None:
@@ -694,6 +696,7 @@ class MapExit(ExitNode):
     """ Node that closes a Map scope.
         @see: Map
     """
+
     def __init__(self, map: 'Map'):
         super(MapExit, self).__init__()
         if map is None:
@@ -761,16 +764,13 @@ class Map(object):
     range = RangeProperty(desc="Ranges of map parameters", default=sbs.Range([]))
     schedule = EnumProperty(dtype=dtypes.ScheduleType, desc="Map schedule", default=dtypes.ScheduleType.Default)
     unroll = Property(dtype=bool, desc="Map unrolling")
-    collapse = Property(dtype=int, default=1, desc="How many dimensions to" " collapse into the parallel range")
+    collapse = Property(dtype=int, default=1, desc="How many dimensions to collapse into the parallel range")
     debuginfo = DebugInfoProperty()
     is_collapsed = Property(dtype=bool, desc="Show this node/scope/state as collapsed", default=False)
 
     instrument = EnumProperty(dtype=dtypes.InstrumentationType,
                               desc="Measure execution statistics with given method",
                               default=dtypes.InstrumentationType.No_Instrumentation)
-    omp_num_threads = Property(dtype=int, desc="Number of OpenMP threads", default=0)
-    omp_schedule = EnumProperty(dtype=dtypes.OMPScheduleType, desc="OpenMP schedule", default=dtypes.OMPScheduleType.Default)
-    omp_chunk_size = Property(dtype=int, desc="OpenMP sheduling chunk size", default=0)
 
     def __init__(self,
                  label,
@@ -780,10 +780,7 @@ class Map(object):
                  unroll=False,
                  collapse=1,
                  fence_instrumentation=False,
-                 debuginfo=None,
-                 omp_num_threads=0,
-                 omp_schedule=dtypes.OMPScheduleType.Default,
-                 omp_chunk_size=0):
+                 debuginfo=None):
         super(Map, self).__init__()
 
         # Assign properties
@@ -795,9 +792,6 @@ class Map(object):
         self.range = ndrange
         self.debuginfo = debuginfo
         self._fence_instrumentation = fence_instrumentation
-        self.omp_num_threads = omp_num_threads
-        self.omp_schedule = omp_schedule
-        self.omp_chunk_size = omp_chunk_size
 
     def __str__(self):
         return self.label + "[" + ", ".join(
@@ -824,6 +818,7 @@ class ConsumeEntry(EntryNode):
     """ Node that opens a Consume scope.
         @see: Consume
     """
+
     def __init__(self, consume, dynamic_inputs=None):
         super(ConsumeEntry, self).__init__(dynamic_inputs or set())
         if consume is None:
@@ -901,6 +896,7 @@ class ConsumeExit(ExitNode):
     """ Node that closes a Consume scope.
         @see: Consume
     """
+
     def __init__(self, consume):
         super(ConsumeExit, self).__init__()
         if consume is None:
@@ -1012,6 +1008,7 @@ ConsumeEntry = indirect_properties(Consume, lambda obj: obj.consume)(ConsumeEntr
 
 @dace.serialize.serializable
 class PipelineEntry(MapEntry):
+
     @staticmethod
     def map_type():
         return Pipeline
@@ -1044,6 +1041,7 @@ class PipelineEntry(MapEntry):
 
 @dace.serialize.serializable
 class PipelineExit(MapExit):
+
     @staticmethod
     def map_type():
         return Pipeline
@@ -1220,7 +1218,7 @@ class LibraryNode(CodeNode):
                     implementation = config_implementation
                     # Otherwise we don't know how to expand
                     if implementation is None:
-                        raise ValueError("No implementation or default " "implementation specified.")
+                        raise ValueError("No implementation or default implementation specified.")
         if implementation not in self.implementations.keys():
             raise KeyError("Unknown implementation for node {}: {}".format(type(self).__name__, implementation))
         transformation_type = type(self).implementations[implementation]
@@ -1230,7 +1228,7 @@ class LibraryNode(CodeNode):
         transformation: ExpandTransformation = transformation_type()
         transformation.setup_match(sdfg, sdfg_id, state_id, subgraph, 0)
         if not transformation.can_be_applied(state, 0, sdfg):
-            raise RuntimeError("Library node " "expansion applicability check failed.")
+            raise RuntimeError("Library node expansion applicability check failed.")
         sdfg.append_transformation(transformation)
         transformation.apply(state, sdfg, *args, **kwargs)
         return implementation
