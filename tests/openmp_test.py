@@ -4,13 +4,12 @@ import numpy as np
 from dace import dtypes, nodes
 
 N = dace.symbol("N")
-J = dace.symbol("J")
 
 
 @dace.program
 def arrayop(inp: dace.float32[N], out: dace.float32[N]):
     for i in dace.map[0:N]:
-        out = 2 * inp
+        out[i] = 2 * inp[i]
 
 
 def test_openmp():
@@ -23,9 +22,10 @@ def test_openmp():
     for node, state in sdfg.all_nodes_recursive():
         if isinstance(node, nodes.EntryNode):
             assert(isinstance(node, nodes.MapEntry))
-            node.map.omp_num_threads = 3
-            node.map.omp_schedule = dtypes.OMPScheduleType.Guided
-            node.map.omp_chunk_size = 5
+            node.map.schedule = dtypes.ScheduleType.CPU_Multicore
+            node.map.schedule.omp_num_threads = 3
+            node.map.schedule.omp_schedule = dtypes.OMPScheduleType.Guided
+            node.map.schedule.omp_chunk_size = 5
             break
     
     sdfg(inp=A, out=B, N=N)
