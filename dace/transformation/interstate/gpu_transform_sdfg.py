@@ -264,18 +264,6 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
             if isinstance(node, nodes.Tasklet):
                 if (state.entry_node(node) is None
                         and not scope.is_devicelevel_gpu(state.parent, state, node, with_gpu_default=True)):
-                    # scalar_output = True
-                    # scalars = set()
-                    # for e in state.out_edges(node):
-                    #     last_edge = state.memlet_path(e)[-1]
-                    #     if isinstance(last_edge.dst, nodes.AccessNode):
-                    #         desc = sdfg.arrays[last_edge.dst.data]
-                    #         if isinstance(desc, data.Scalar):
-                    #             scalars.add(last_edge.dst.data)
-                    #             continue
-                    #         if desc.storage not in gpu_storage and last_edge.data.num_elements() == 1:
-                    #             continue
-                    #         scalar_output = False
                     scalars, scalar_output = _recursive_out_check(node, state)
                     sset, ssout = _recursive_in_check(node, state)
                     scalars = scalars.union(sset)
@@ -289,6 +277,13 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
 
         const_syms = xfh.constant_symbols(sdfg)
 
+        def _codenode_condition(node):
+            return (
+                (isinstance(node, nodes.Tasklet) and scope.is_devicelevel_gpu(state.parent, state, node)) or
+                (isinstance(node, (nodes.LibraryNode, nodes.NestedSDFG)) and
+                 node.schedule == dtypes.ScheduleType.GPU_Default)
+            )
+
         for state in sdfg.nodes():
             sdict = state.scope_dict()
             for node in state.nodes():
@@ -300,21 +295,22 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                     if any(isinstance(state.memlet_path(e)[-1].dst, nodes.EntryNode) for e in state.out_edges(node)):
                         continue
 
-                    # gpu_storage = [
-                    #     dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared, dtypes.StorageType.CPU_Pinned
-                    # ]
                     if sdict[node] is None and nodedesc.storage not in gpu_storage:
 
+                        # Ensure that scalars not already GPU-marked are actually used in a GPU scope.
                         if isinstance(nodedesc, data.Scalar) and not node.data in gpu_scalars:
-                            continue
-                            # written_by_map = False
-                            # for e in state.in_edges(node):
-                            #     src = state.memlet_path(e)[0].src
-                            #     if isinstance(src, nodes.AccessNode) and sdict[src]:
-                            #         written_by_map = True
-                            #         break
-                            # if not written_by_map:
-                            #     continue
+                            used_in_gpu_scope = False
+                            for e in state.in_edges(node):
+                                if _codenode_condition(state.memlet_path(e)[0].src):
+                                    used_in_gpu_scope = True
+                                    break
+                            if not used_in_gpu_scope:
+                                for e in state.out_edges(node):
+                                    if _codenode_condition(state.memlet_path(e)[-1].dst):
+                                        used_in_gpu_scope = True
+                                        break
+                            if not used_in_gpu_scope:
+                                continue
                         
                         # NOTE: the cloned arrays match too but it's the same
                         # storage so we don't care
