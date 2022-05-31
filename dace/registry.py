@@ -2,7 +2,7 @@
 """ Contains class decorators to ease creating classes and enumerations whose
     subclasses and values can be registered externally. """
 
-from aenum import Enum, extend_enum
+from aenum import AutoNumberEnum, Enum, EnumType, extend_enum
 from typing import Dict, Type
 
 
@@ -82,3 +82,61 @@ def extensible_enum(cls: Type):
 
     cls.register = lambda name, *args: _extend_enum(cls, name, *args)
     return cls
+
+
+class EnumElement:
+
+    def __str__(self):
+        return type(self).__name__
+
+    def __hash__(self):
+        return hash(str(self))
+
+    def __eq__(self, other):
+        return type(self).__name__ == type(other).__name__
+    
+    def to_json(self):
+        from dace.serialize import to_json
+        attr = {attr: to_json(value) for attr, value in self.__dict__.items()}
+        ret = {'type': str(self), 'attributes': attr}
+        return ret
+
+
+class EMC(EnumType):
+
+    def __init__(cls, *args, **kwds):
+        super().__init__(*args, **kwds)
+        elems = {
+            k: v
+            for k, v in object.__getattribute__(cls, '__dict__').items()
+            if isinstance(v, type) and issubclass(v, EnumElement)
+        }
+        cls._classmembers_ = elems
+
+    def __getattribute__(cls, name):
+        try:
+            clsmembers = object.__getattribute__(cls, '_classmembers_')
+            if name in clsmembers:
+                return object.__getattribute__(cls, name)()
+        except AttributeError:
+            pass
+        return super().__getattribute__(name)
+
+    def __instancecheck__(cls, instance):
+        if isinstance(instance, str):
+            return False
+        try:
+            object.__getattribute__(cls, str(instance))
+        except AttributeError:
+            return False
+        return True
+    
+    def __getitem__(cls, name):
+        item = cls.__class__.__getattribute__(cls, name)
+        if isinstance(item, type):
+            return item()
+        return item
+
+
+class AttributedEnum(AutoNumberEnum, metaclass=EMC):
+    pass

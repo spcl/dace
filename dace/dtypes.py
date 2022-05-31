@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from functools import wraps
 from typing import Any, Callable, Optional, Tuple
 from dace.config import Config
-from dace.registry import extensible_enum, undefined_safe_enum
+from dace.registry import AttributedEnum, EnumElement, extensible_enum, undefined_safe_enum
 
 
 @undefined_safe_enum
@@ -40,51 +40,6 @@ class StorageType(aenum.AutoNumberEnum):
     FPGA_ShiftRegister = ()  #: Only accessible at constant indices
     SVE_Register = ()  #: SVE register
 
-
-class EnumElement:
-
-    def __str__(self):
-        return type(self).__name__
-
-    def __hash__(self):
-        return hash(str(self))
-
-    def __eq__(self, other):
-        return type(self).__name__ == type(other).__name__
-
-
-class EMC(aenum.EnumType):
-
-    def __init__(cls, *args, **kwds):
-        super().__init__(*args, **kwds)
-        elems = {
-            k: v
-            for k, v in object.__getattribute__(cls, '__dict__').items()
-            if isinstance(v, type) and issubclass(v, EnumElement)
-        }
-        cls._classmembers_ = elems
-
-    def __getattribute__(cls, name):
-        try:
-            clsmembers = object.__getattribute__(cls, '_classmembers_')
-            if name in clsmembers:
-                return object.__getattribute__(cls, name)()
-        except AttributeError:
-            pass
-        return super().__getattribute__(name)
-
-    def __instancecheck__(cls, instance):
-        try:
-            object.__getattribute__(cls, str(instance))
-        except AttributeError:
-            return False
-        return True
-
-
-class AttributedEnum(aenum.AutoNumberEnum, metaclass=EMC):
-    pass
-
-
 @undefined_safe_enum
 @extensible_enum
 class OMPScheduleType(aenum.AutoNumberEnum):
@@ -108,7 +63,7 @@ class ScheduleType(AttributedEnum):
         """ OpenMP schedule """
         omp_num_threads: int = 0
         omp_schedule: OMPScheduleType = OMPScheduleType.Default
-        omp_chunck_size: int = 0
+        omp_chunk_size: int = 0
 
     @dataclass(eq=False)  # Needed for `__hash__` to be set to `super().__hash__`
     class GPU_Device(EnumElement):
