@@ -64,6 +64,16 @@ class ScheduleType(aenum.AutoNumberEnum):
     FPGA_Device = ()
 
 
+@undefined_safe_enum
+@extensible_enum
+class OMPScheduleType(aenum.AutoNumberEnum):
+    """ Available OpenMP shedule types for Maps with CPU-Multicore schedule. """
+    Default = ()  #: OpenMP library default
+    Static = ()  #: Static schedule
+    Dynamic = ()  #: Dynamic schedule
+    Guided = ()  #: Guided schedule
+
+
 # A subset of GPU schedule types
 GPU_SCHEDULES = [
     ScheduleType.GPU_Device,
