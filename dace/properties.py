@@ -1,4 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+import aenum
 import ast
 from collections import OrderedDict
 import copy
@@ -671,6 +672,15 @@ class EnumProperty(Property):
                 return None
             if isinstance(s, dtype):
                 return s
+            if isinstance(s, dict):
+                p = dtype[s['type']]
+                for attr, value in s['attributes'].items():
+                    atype = type(getattr(p, attr))
+                    if issubclass(atype, aenum.Enum):
+                        setattr(p, attr, atype[value])
+                    else:
+                        setattr(p, attr, atype(value))
+                return p
             try:
                 self._undefined_val = None
                 return dtype[s]
