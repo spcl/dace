@@ -279,7 +279,7 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
 
         def _codenode_condition(node):
             return (
-                (isinstance(node, nodes.Tasklet) and scope.is_devicelevel_gpu(state.parent, state, node)) or
+                # (isinstance(node, nodes.Tasklet) and scope.is_devicelevel_gpu(state.parent, state, node)) or
                 (isinstance(node, (nodes.LibraryNode, nodes.NestedSDFG)) and
                  node.schedule == dtypes.ScheduleType.GPU_Default)
             )
