@@ -136,6 +136,13 @@ def _add_transient_data(sdfg: SDFG, sample_data: data.Data, dtype: dtypes.typecl
         return func(sdfg, sample_data, dtype)
 
 
+def _is_equivalent(first: data.Data, second: data.Data):
+    if not first.is_equivalent(second):
+        if any(not isinstance(d, data.Scalar) and not (isinstance(d, data.Array) and d.shape == (1, )) for d in (first, second)):
+            return False
+    return True
+
+
 def parse_dace_program(name: str,
                        preprocessed_ast: ast.AST,
                        argtypes: Dict[str, data.Data],
@@ -3008,7 +3015,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
             if is_return and true_name:
                 if (isinstance(result, str) and result in self.sdfg.arrays
-                        and not self.sdfg.arrays[result].is_equivalent(true_array)):
+                        and not _is_equivalent(self.sdfg.arrays[result], true_array)):
                     raise DaceSyntaxError(
                         self, target, 'Return values of a data-centric function must always '
                         'have the same type and shape')
