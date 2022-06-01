@@ -3,6 +3,7 @@
 
 import dace
 import sympy
+from dace.sdfg import infer_types
 from dace.sdfg.state import SDFGState
 from dace.sdfg.graph import SubgraphView
 from dace.sdfg.propagation import propagate_states
@@ -360,6 +361,14 @@ def move_small_arrays_to_stack(sdfg: SDFG) -> None:
         print(f'Statically allocating {converted} transient arrays')
 
 
+def _is_devicelevel_gpu(sdfg, state, node):
+    is_parent_nested = (sdfg.parent is not None)
+    if is_parent_nested:
+        return is_devicelevel_gpu(sdfg.parent.parent, sdfg.parent, sdfg.parent_nsdfg_node, with_gpu_default=True)
+    else:
+        return is_devicelevel_gpu(state.parent, state, node, with_gpu_default=True) 
+
+
 def set_fast_implementations(sdfg: SDFG, device: dtypes.DeviceType, blocklist: List[str] = None):
     """
     Set fast library node implementations for the given device
@@ -407,7 +416,7 @@ def set_fast_implementations(sdfg: SDFG, device: dtypes.DeviceType, blocklist: L
                     node.implementation = "pure"
                     continue
                 # Use CUB for device-level reductions
-                if ('CUDA (device)' in node.implementations and not is_devicelevel_gpu(state.parent, state, node)
+                if ('CUDA (device)' in node.implementations and not _is_devicelevel_gpu(state.parent, state, node)
                         and state.scope_dict()[node] is None):
                     node.implementation = 'CUDA (device)'
 
@@ -529,6 +538,8 @@ def auto_optimize(sdfg: SDFG,
     # Set all library nodes to expand to fast library calls
     set_fast_implementations(sdfg, device)
 
+    infer_types.infer_connector_types(sdfg)
+    infer_types.set_default_schedule_and_storage_types(sdfg, None)
     sdfg.expand_library_nodes()
 
     # TODO(later): Safe vectorization
