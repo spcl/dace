@@ -259,16 +259,29 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                     scalout = False
             return scalset, scalout
 
+        def _is_devicelevel_gpu(sdfg, state, node):
+            # Returns True only for nodes that are actually on a GPU scope.
+            # This excludes NestedSDFGs that have a GPU-Device schedule but are not in a GPU kernel.
+            is_parent_nested = (sdfg.parent is not None)
+            if is_parent_nested:
+                return scope.is_devicelevel_gpu(sdfg.parent.parent, sdfg.parent, sdfg.parent_nsdfg_node,
+                                                with_gpu_default=True)
+            else:
+                return scope.is_devicelevel_gpu(state.parent, state, node, with_gpu_default=True) 
+
         gpu_scalars = {}
         for node, state in sdfg.all_nodes_recursive():
             if isinstance(node, nodes.Tasklet):
-                if (state.entry_node(node) is None
-                        and not scope.is_devicelevel_gpu(state.parent, state, node, with_gpu_default=True)):
+                if state.entry_node(node) is None and not _is_devicelevel_gpu(state.parent, state, node):
                     scalars, scalar_output = _recursive_out_check(node, state)
                     sset, ssout = _recursive_in_check(node, state)
                     scalars = scalars.union(sset)
                     scalar_output = scalar_output and ssout
-                    if not scalar_output:
+                    csdfg = state.parent
+                    # If the tasklet is not adjacent only to scalars or it is in a GPU scope.
+                    # The latter includes NestedSDFGs that have a GPU-Device schedule but are not in a GPU kernel.
+                    if (not scalar_output or (csdfg.parent is not None and
+                            csdfg.parent_nsdfg_node.schedule == dtypes.ScheduleType.GPU_Default)):
                         global_code_nodes[state].append(node)
                         gpu_scalars.update({k: None for k in scalars})
 
@@ -279,7 +292,6 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
 
         def _codenode_condition(node):
             return (
-                # (isinstance(node, nodes.Tasklet) and scope.is_devicelevel_gpu(state.parent, state, node)) or
                 (isinstance(node, (nodes.LibraryNode, nodes.NestedSDFG)) and
                  node.schedule == dtypes.ScheduleType.GPU_Default)
             )
@@ -311,6 +323,13 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                                         break
                             if not used_in_gpu_scope:
                                 continue
+                            for e in state.all_edges(node):
+                                for node in (e.src, e.dst):
+                                    if isinstance(node, nodes.Tasklet):
+                                        if (state.entry_node(node) is None
+                                                and not scope.is_devicelevel_gpu(state.parent, state, e.node,
+                                                                                 with_gpu_default=True)):
+                                            global_code_nodes[state].append(node)
                         
                         # NOTE: the cloned arrays match too but it's the same
                         # storage so we don't care
@@ -424,7 +443,7 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                             desc = sdfg.arrays[nname].clone()
                             desc.storage = dtypes.StorageType.CPU_Heap
                             desc.transient = True
-                            hostname = sdfg.add_datadesc('host_' + nname, newdesc, find_new_name=True)
+                            hostname = sdfg.add_datadesc('host_' + nname, desc, find_new_name=True)
                             gpu_scalars[nname] = hostname
                         else:
                             desc = sdfg.arrays[hostname]
