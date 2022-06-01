@@ -1,5 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" SDFG visualizer that uses Flask, HTML5, and Javascript. """
+""" SDFG visualizer that uses Jinja, HTML5, and Javascript. """
 
 import json
 import tempfile
@@ -8,6 +8,8 @@ import os
 import platform
 from typing import Optional, Union
 import functools
+import http.server
+import threading
 
 import dace
 import tempfile
@@ -64,10 +66,25 @@ def view(sdfg: dace.SDFG, filename: Optional[Union[str, int]] = None):
         os.symlink(os.path.join(basepath, 'webclient'), os.path.join(dirname, 'webclient'))
 
         # start the web server
-        import http.server
         handler = partialclass(http.server.SimpleHTTPRequestHandler, directory=dirname)
-        httpd = http.server.HTTPServer(('localhost', 8000), handler)
-        httpd.serve_forever()
+        httpd = http.server.HTTPServer(('localhost', filename), handler)
+        print(f"Serving at localhost:{filename}, press enter to stop...")
+
+        # start the server in a different thread
+        def serve():
+            httpd.serve_forever()
+
+        thread = threading.Thread(target=serve)
+        thread.start()
+
+        # wait for user input
+        input()
+
+        # kill the server
+        httpd.shutdown()
+        httpd.server_close()
+        thread.join()
+        print("Server shutdown")
     else:
         system = platform.system()
 
