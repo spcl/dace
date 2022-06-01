@@ -22,10 +22,12 @@ def test_openmp():
     for node, state in sdfg.all_nodes_recursive():
         if isinstance(node, nodes.EntryNode):
             assert(isinstance(node, nodes.MapEntry))
-            node.map.schedule = dtypes.ScheduleType.CPU_Multicore
-            node.map.schedule.omp_num_threads = 3
-            node.map.schedule.omp_schedule = dtypes.OMPScheduleType.Guided
-            node.map.schedule.omp_chunk_size = 5
+            # node.map.schedule = dtypes.ScheduleType.CPU_Multicore
+            # node.map.schedule.omp_num_threads = 3
+            # node.map.schedule.omp_schedule = dtypes.OMPScheduleType.Guided
+            # node.map.schedule.omp_chunk_size = 5
+            node.map.schedule = dtypes.ScheduleType.Default
+            node.map.omp_num_threads = 10
             break
     
     sdfg(inp=A, out=B, N=N)

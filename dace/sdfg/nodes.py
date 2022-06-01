@@ -771,6 +771,8 @@ class Map(object):
     instrument = EnumProperty(dtype=dtypes.InstrumentationType,
                               desc="Measure execution statistics with given method",
                               default=dtypes.InstrumentationType.No_Instrumentation)
+    
+    omp_num_threads = Property(dtype=int, default=0, desc="Number of OpenMP threads executing the Map", optional=True, optional_condition = lambda m: m.schedule == dtypes.ScheduleType.CPU_Multicore)
 
     def __init__(self,
                  label,
