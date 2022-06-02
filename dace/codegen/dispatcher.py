@@ -87,6 +87,7 @@ class DefinedMemlets:
         if not isinstance(name, str):
             raise TypeError('Variable name type cannot be %s' % type(name).__name__)
 
+        i = len(self._scopes)
         for _, scope, can_access_parent in reversed(self._scopes):
             if name in scope:
                 err_str = "Shadowing variable {} from type {} to {}".format(name, scope[name], dtype)
@@ -95,9 +96,11 @@ class DefinedMemlets:
                         print("WARNING: " + err_str)
                 else:
                     raise cgx.CodegenError(err_str)
+            i -= 1
             if not can_access_parent:
                 break
-        self._scopes[-1 - ancestor][1][name] = (dtype, ctype)
+        i = max(i - ancestor, 0)
+        self._scopes[i - ancestor][1][name] = (dtype, ctype)
 
     def add_global(self, name: str, dtype: DefinedType, ctype: str):
         ''' Adds a global variable (top scope) '''
