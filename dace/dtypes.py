@@ -7,11 +7,10 @@ import inspect
 import itertools
 import numpy
 import re
-from dataclasses import dataclass
 from functools import wraps
-from typing import Any, Callable, Optional, Tuple
+from typing import Any
 from dace.config import Config
-from dace.registry import AttributedEnum, EnumElement, extensible_enum, undefined_safe_enum
+from dace.registry import extensible_enum, undefined_safe_enum
 
 
 @undefined_safe_enum
@@ -40,6 +39,7 @@ class StorageType(aenum.AutoNumberEnum):
     FPGA_ShiftRegister = ()  #: Only accessible at constant indices
     SVE_Register = ()  #: SVE register
 
+
 @undefined_safe_enum
 @extensible_enum
 class OMPScheduleType(aenum.AutoNumberEnum):
@@ -52,29 +52,18 @@ class OMPScheduleType(aenum.AutoNumberEnum):
 
 @undefined_safe_enum
 @extensible_enum
-class ScheduleType(AttributedEnum):
+class ScheduleType(aenum.AutoNumberEnum):
     """ Available map schedule types in the SDFG. """
     Default = ()  #: Scope-default parallel schedule
     Sequential = ()  #: Sequential code (single-thread)
     MPI = ()  #: MPI processes
-
-    @dataclass(eq=False)  # Needed for `__hash__` to be set to `super().__hash__`
-    class CPU_Multicore(EnumElement):
-        """ OpenMP schedule """
-        omp_num_threads: int = 0
-        omp_schedule: OMPScheduleType = OMPScheduleType.Default
-        omp_chunk_size: int = 0
-
-    @dataclass(eq=False)  # Needed for `__hash__` to be set to `super().__hash__`
-    class GPU_Device(EnumElement):
-        """ GPU Kernel """
-        block_size: Optional[Tuple[int, int, int]] = None
-
+    CPU_Multicore = ()  #: OpenMP
     Unrolled = ()  #: Unrolled code
     SVE_Map = ()  #: Arm SVE
 
     #: Default scope schedule for GPU code. Specializes to schedule GPU_Device and GPU_Global during inference.
     GPU_Default = ()
+    GPU_Device = ()  #: Kernel
     GPU_ThreadBlock = ()  #: Thread-block code
     GPU_ThreadBlock_Dynamic = ()  #: Allows rescheduling work within a block
     GPU_Persistent = ()

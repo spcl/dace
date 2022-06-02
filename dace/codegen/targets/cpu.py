@@ -1684,22 +1684,22 @@ class CPUCodeGen(TargetCodeGenerator):
         #  generator (that CPU inherits from) is implemented
         if node.map.schedule == dtypes.ScheduleType.CPU_Multicore:
             map_header += "#pragma omp parallel for"
-            if node.map.schedule.omp_schedule != dtypes.OMPScheduleType.Default:
+            if node.map.omp_schedule != dtypes.OMPScheduleType.Default:
                 schedule = " schedule("
-                if node.map.schedule.omp_schedule == dtypes.OMPScheduleType.Static:
+                if node.map.omp_schedule == dtypes.OMPScheduleType.Static:
                     schedule += "static"
-                elif node.map.schedule.omp_schedule == dtypes.OMPScheduleType.Dynamic:
+                elif node.map.omp_schedule == dtypes.OMPScheduleType.Dynamic:
                     schedule += "dynamic"
-                elif node.map.schedule.omp_schedule == dtypes.OMPScheduleType.Guided:
+                elif node.map.omp_schedule == dtypes.OMPScheduleType.Guided:
                     schedule += "guided"
                 else:
                     raise ValueError("Unknown OpenMP schedule type")
-                if node.map.schedule.omp_chunk_size > 0:
-                    schedule += f", {node.map.schedule.omp_chunk_size}"
+                if node.map.omp_chunk_size > 0:
+                    schedule += f", {node.map.omp_chunk_size}"
                 schedule += ")"
                 map_header += schedule
-            if node.map.schedule.omp_num_threads > 0:
-                map_header += f" num_threads({node.map.schedule.omp_num_threads})"
+            if node.map.omp_num_threads > 0:
+                map_header += f" num_threads({node.map.omp_num_threads})"
             if node.map.collapse > 1:
                 map_header += ' collapse(%d)' % node.map.collapse
             # Loop over outputs, add OpenMP reduction clauses to detected cases
