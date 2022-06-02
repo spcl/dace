@@ -813,9 +813,9 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
         if not isinstance(memlet, mm.Memlet):
             raise TypeError("Memlet is not of type Memlet (type: %s)" % str(type(memlet)))
 
-        if u_connector and isinstance(u, nd.AccessNode):
+        if u_connector and isinstance(u, nd.AccessNode) and u_connector not in u.out_connectors:
             u.add_out_connector(u_connector, force=True)
-        if v_connector and isinstance(v, nd.AccessNode):
+        if v_connector and isinstance(v, nd.AccessNode) and v_connector not in v.in_connectors:
             v.add_in_connector(v_connector, force=True)
 
         self._clear_scopedict_cache()
