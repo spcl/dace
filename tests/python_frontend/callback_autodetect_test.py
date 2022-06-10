@@ -29,6 +29,7 @@ def scale(C, beta):
 
 
 def test_automatic_callback():
+
     @dace.program
     def autocallback(A: dace.float64[N, N], B: dace.float64[N, N], C: dace.float64[N, N], beta: dace.float64):
         tmp: dace.float64[N, N] = almost_gemm(A, 0.5, B)
@@ -47,6 +48,7 @@ def test_automatic_callback():
 
 
 def test_automatic_callback_2():
+
     @dace.program
     def autocallback(A: dace.float64[N, N], B: dace.float64[N, N], C: dace.float64[N, N], beta: dace.float64):
         tmp: dace.float64[N, N]
@@ -67,6 +69,7 @@ def test_automatic_callback_2():
 
 
 def test_automatic_callback_inference():
+
     @dace.program
     def autocallback_ret(A: dace.float64[N, N], B: dace.float64[N, N], C: dace.float64[N, N], beta: dace.float64):
         tmp = np.ndarray([N, N], dace.float64)
@@ -86,6 +89,7 @@ def test_automatic_callback_inference():
 
 
 def test_automatic_callback_inference_2():
+
     @dace.program
     def autocallback_ret(A: dace.float64[N, N], B: dace.float64[N, N], C: dace.float64[N, N], beta: dace.float64):
         tmp = np.ndarray([N, N], dace.float64)
@@ -106,7 +110,9 @@ def test_automatic_callback_inference_2():
 
 
 def test_automatic_callback_method():
+
     class NotDace:
+
         def __init__(self):
             self.q = np.random.rand()
 
@@ -166,6 +172,7 @@ def test_callback_tasklet():
 
 
 def test_view_callback():
+
     @dace.program
     def autocallback(A: dace.float64[2 * N, N], B: dace.float64[N, N], C: dace.float64[N, N], beta: dace.float64):
         A[N:, :] = almost_gemm(A[:N, :], 0.5, B)
@@ -184,6 +191,7 @@ def test_view_callback():
 
 
 def test_print():
+
     @dace.program
     def printprog(a: dace.float64[2, 2]):
         print(a, 'hello')
@@ -266,6 +274,7 @@ def test_callback_samename():
     should_be_one, should_be_two = 0, 0
 
     def get_func_a():
+
         @dace_inhibitor
         def b():
             nonlocal counter
@@ -279,6 +288,7 @@ def test_callback_samename():
         return call_a
 
     def get_func_b():
+
         @dace_inhibitor
         def b():
             nonlocal counter
@@ -337,6 +347,7 @@ def test_bad_closure():
     Testing functions that should not be in the closure (must be implemented as
     callbacks).
     """
+
     @dace.program
     def timeprog(A: dace.float64[20]):
         # Library function that does not return the same value every time
@@ -360,6 +371,7 @@ def test_object_with_nested_callback():
         c[:] = a + b
 
     class MyObject:
+
         def __call__(self, a, b):
             c = dict(a=a, b=b)
             call_another_function(**c)
@@ -377,6 +389,7 @@ def test_object_with_nested_callback():
 
 
 def test_two_parameters_same_name():
+
     @dace_inhibitor
     def add(a, b):
         return a + b
@@ -392,6 +405,7 @@ def test_two_parameters_same_name():
 
 
 def test_inout_same_name():
+
     @dace_inhibitor
     def add(a, b):
         return a + b
@@ -408,6 +422,7 @@ def test_inout_same_name():
 
 def test_inhibit_state_fusion():
     """ Tests that state fusion is inhibited around callbacks if configured as such. """
+
     @dace_inhibitor
     def add(a, b):
         return a + b
@@ -498,7 +513,9 @@ def test_two_callbacks_different_type():
 
 
 def test_disallowed_keyword():
+
     class Obj:
+
         def hello(a):
             try:
                 return a + 1
@@ -550,6 +567,7 @@ def test_nested_duplicate_callbacks():
 
 
 def test_scalar_retval():
+
     @dace.program
     def myprogram(a):
         res: float = time.time()
@@ -622,11 +640,60 @@ def test_same_callback_kwargs():
 
 
 def test_builtin_callback_kwargs():
+
     @dace
     def callprint():
         print('hi', end=',\n')
 
     callprint()
+
+
+@pytest.mark.parametrize('as_kwarg', (False, True))
+def test_callback_literal_list(as_kwarg):
+    success = False
+
+    @dace_inhibitor
+    def callback(array, arrlist):
+        nonlocal success
+        if len(arrlist) == 2 and array[0, 0, 0] == arrlist[0][0, 0, 0]:
+            success = True
+
+    if as_kwarg:
+
+        @dace
+        def caller(a, b):
+            callback(arrlist=[a, b], array=a)
+    else:
+
+        @dace
+        def caller(a, b):
+            callback(a, [a, b])
+
+    a = np.zeros((2, 2, 2))
+    b = np.ones((2, 2, 2))
+    caller(a, b)
+    assert success is True
+
+
+def test_callback_literal_dict():
+    success = False
+
+    @dace_inhibitor
+    def callback(adict1, adict2):
+        nonlocal success
+        if len(adict1) == 3 and len(adict2) == 3:
+            if adict1['b'][0, 0, 0] == 0.0 and adict1['a'][0, 0, 0] == 1.0 and adict1[1][0, 0, 0] == 0.0:
+                if adict2['b'][0, 0, 0] == 1.0 and adict2['a'][0, 0, 0] == 1.0 and adict2[1][0, 0, 0] == 1.0:
+                    success = True
+
+    @dace
+    def caller(a, b):
+        callback({'b': a, 'a': b, 1: a}, {1: b, 'a': b, 'b': b})
+
+    a = np.zeros((2, 2, 2))
+    b = np.ones((2, 2, 2))
+    caller(a, b)
+    assert success is True
 
 
 if __name__ == '__main__':
@@ -657,3 +724,6 @@ if __name__ == '__main__':
     test_callback_kwargs()
     test_same_callback_kwargs()
     test_builtin_callback_kwargs()
+    test_callback_literal_list(False)
+    test_callback_literal_list(True)
+    test_callback_literal_dict()
