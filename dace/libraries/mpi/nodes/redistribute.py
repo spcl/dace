@@ -338,7 +338,7 @@ class ExpandRedistribute(ExpandTransformation):
             if (__state->{array_a.pgrid}_valid) {{
                 MPI_Waitall(__state->{node._redistr}_sends, __state->{node._redistr}_send_req, __state->{node._redistr}_send_status);
             }}
-            cudaStreamSynchronize(__dace_current_stream);
+            {"cudaStreamSynchronize(__dace_current_stream);" if inp_buffer.storage == dtypes.StorageType.GPU_Global else ""}
             // printf("I am rank %d and I finished the redistribution {redistr.array_a} -> {redistr.array_b}\\n", myrank);
             // fflush(stdout);
             
