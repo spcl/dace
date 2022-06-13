@@ -50,13 +50,9 @@ def test_two_nested_levels_indirection():
     W.set(5)
     H.set(5)
 
-    A = dp.ndarray([W * W])
-    B = dp.ndarray([W])
-    x = dp.ndarray([W], dtype=dp.uint32)
-
-    A[:] = np.arange(10, 10 + W.get() * W.get())
-    B[:] = dp.float32(0)
-    x[:] = np.random.randint(0, W.get() * W.get(), W.get())
+    A = np.arange(10, 10 + W.get() * W.get(), dtype=np.float64)
+    B = np.zeros((W.get(), ), dtype=np.float64)
+    x = np.random.randint(0, W.get() * W.get(), W.get(), dtype=np.uint32)
 
     indirection(A, x, B, W=W, H=H)
 

@@ -136,6 +136,14 @@ def _add_transient_data(sdfg: SDFG, sample_data: data.Data, dtype: dtypes.typecl
         return func(sdfg, sample_data, dtype)
 
 
+def _is_equivalent(first: data.Data, second: data.Data):
+    if not first.is_equivalent(second):
+        if any(not isinstance(d, data.Scalar) and not (isinstance(d, data.Array) and d.shape == (1, ))
+               for d in (first, second)):
+            return False
+    return True
+
+
 def parse_dace_program(name: str,
                        preprocessed_ast: ast.AST,
                        argtypes: Dict[str, data.Data],
@@ -572,6 +580,7 @@ class TaskletTransformer(ExtNodeTransformer):
     """ A visitor that traverses a data-centric tasklet, removes memlet
         annotations and returns input and output memlets.
     """
+
     def __init__(self,
                  visitor,
                  defined,
@@ -1223,7 +1232,7 @@ class ProgramVisitor(ExtNodeVisitor):
                         state.add_edge(vnode, 'views', w, None, copy.deepcopy(m))
                         new_nodes.append(w)
                     else:
-                        raise ValueError(f'View "{vnode.data}" already has' 'both incoming and outgoing edges')
+                        raise ValueError(f'View "{vnode.data}" already has both incoming and outgoing edges')
             return new_nodes
 
         # Map view access nodes to their respective data
@@ -1477,7 +1486,7 @@ class ProgramVisitor(ExtNodeVisitor):
             self._add_dependencies(state, internal_node, entry, exit, inputs, outputs, map_inputs)
 
         elif dec == 'dace.program':  # Nested SDFG
-            raise DaceSyntaxError(self, node, 'Nested programs must be ' 'defined outside existing programs')
+            raise DaceSyntaxError(self, node, 'Nested programs must be defined outside existing programs')
         else:
             raise DaceSyntaxError(self, node, 'Unsupported function decorator')
 
@@ -1759,11 +1768,11 @@ class ProgramVisitor(ExtNodeVisitor):
             else:
                 chunksize = 1
         else:
-            raise DaceSyntaxError(self, node, 'Consume scope decorator must ' 'contain at least two arguments')
+            raise DaceSyntaxError(self, node, 'Consume scope decorator must contain at least two arguments')
 
         # Parse function
         if len(node.args.args) != 2:
-            raise DaceSyntaxError(self, node, 'Consume scope function must ' 'contain two arguments')
+            raise DaceSyntaxError(self, node, 'Consume scope function must contain two arguments')
 
         stream_elem, PE_index = tuple(a.arg for a in node.args.args)
 
@@ -1775,10 +1784,9 @@ class ProgramVisitor(ExtNodeVisitor):
                 if r == rng:
                     return True
                 elif r.covers(rng):
-                    print("WARNING: New access {n}[{rng}] already covered by" " {n}[{r}]".format(n=name, rng=rng, r=r))
+                    print("WARNING: New access {n}[{rng}] already covered by {n}[{r}]".format(n=name, rng=rng, r=r))
                 elif rng.covers(r):
-                    print("WARNING: New access {n}[{rng}] covers previous"
-                          " access {n}[{r}]".format(n=name, rng=rng, r=r))
+                    print("WARNING: New access {n}[{rng}] covers previous access {n}[{r}]".format(n=name, rng=rng, r=r))
                 return False
 
     def _get_array_or_closure(self, name: str) -> data.Data:
@@ -1829,7 +1837,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     if isinstance(internal_node, nodes.NestedSDFG):
                         dtype = internal_node.sdfg.arrays[conn].dtype
                     else:
-                        raise SyntaxError('Cannot determine connector type for ' 'tasklet input dependency')
+                        raise SyntaxError('Cannot determine connector type for tasklet input dependency')
                     self.sdfg.add_scalar(new_scalar, dtype, transient=True)
                     accessnode = state.add_access(new_scalar)
                     state.add_edge(tasklet, conn, accessnode, None, dace.Memlet.simple(new_scalar, '0'))
@@ -2020,8 +2028,7 @@ class ProgramVisitor(ExtNodeVisitor):
         for mv in nsdfg_node.symbol_mapping.values():
             for sym in mv.free_symbols:
                 if sym.name not in self.sdfg.symbols:
-                    if (sym.name in self.globals
-                        and isinstance(self.globals[sym.name], symbolic.symbol)):
+                    if (sym.name in self.globals and isinstance(self.globals[sym.name], symbolic.symbol)):
                         self.sdfg.add_symbol(sym.name, self.globals[sym.name].dtype)
                     elif sym.name in self.closure.callbacks:
                         self.sdfg.add_symbol(sym.name, nsdfg_node.sdfg.symbols[sym.name])
@@ -2325,7 +2332,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
     def visit_Continue(self, node: ast.Continue):
         if self.loop_idx < 0:
-            error_msg = ("'continue' is only supported inside for and while " "loops ")
+            error_msg = ("'continue' is only supported inside for and while loops ")
             if self.nested:
                 error_msg += ("('continue' is not supported in Maps and cannot "
                               " be used in nested DaCe program calls to "
@@ -3008,7 +3015,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
             if is_return and true_name:
                 if (isinstance(result, str) and result in self.sdfg.arrays
-                        and not self.sdfg.arrays[result].is_equivalent(true_array)):
+                        and not _is_equivalent(self.sdfg.arrays[result], true_array)):
                     raise DaceSyntaxError(
                         self, target, 'Return values of a data-centric function must always '
                         'have the same type and shape')
@@ -3117,9 +3124,9 @@ class ProgramVisitor(ExtNodeVisitor):
                         array_indirection = boolarr is None
 
                 if array_indirection:
-                    raise NotImplementedError('Array indexing as assignment target not yet ' 'implemented')
+                    raise NotImplementedError('Array indexing as assignment target not yet implemented')
                 if boolarr is not None and _subset_has_indirection(rng, self):
-                    raise IndexError('Boolean array indexing cannot be combined ' 'with indirect access')
+                    raise IndexError('Boolean array indexing cannot be combined with indirect access')
 
             if self.nested and not new_data:
                 new_name, new_rng = self._add_write_access(name, rng, target)
@@ -3716,7 +3723,7 @@ class ProgramVisitor(ExtNodeVisitor):
                                         sub = s
                                         break
                             if not sub:
-                                raise KeyError("Did not find output " "subscript")
+                                raise KeyError("Did not find output subscript")
                             output_slices.add((sub, ast.Name(id=aname)))
                             slice_state.remove_edge(e)
                             slice_state.remove_node(e.src)
@@ -3783,7 +3790,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
         if output_slices:
             if len(rets) > 0:
-                raise DaceSyntaxError(self, node, 'Both return values and output slices ' 'unsupported')
+                raise DaceSyntaxError(self, node, 'Both return values and output slices unsupported')
 
             assign_node = ast.Assign()
             targets = []
@@ -4579,6 +4586,7 @@ class ProgramVisitor(ExtNodeVisitor):
         """ Parses the slice attribute of an ast.Subscript node.
             Scalar data are promoted to symbols.
         """
+
         def _promote(node: ast.AST) -> Union[Any, str, symbolic.symbol]:
             node_str = astutils.unparse(node)
             sym = None
@@ -4798,7 +4806,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     desc = self.sdfg.constants[arrname]
                     constant_indices[i] = arrname
                 else:
-                    raise NameError(f'Array "{arrname}" used in indexing ' f'"{aname}" not found')
+                    raise NameError(f'Array "{arrname}" used in indexing "{aname}" not found')
                 shape = desc.shape
             else:  # Literal list or tuple, add as constant and use shape
                 arrname = [v if isinstance(v, Number) else self._parse_value(v) for v in arrname]
