@@ -6,8 +6,8 @@ from dace.frontend.python import astutils
 from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg import nodes, utils as sdutil
 from dace.transformation import pass_pipeline as ppl
-from dace import SDFG, SDFGState, symbolic
-from typing import Any, Dict, Set, Optional
+from dace import SDFG, SDFGState, dtypes, symbolic
+from typing import Any, Dict, Set, Optional, Tuple
 
 
 class _UnknownValue:
@@ -59,29 +59,37 @@ class ConstantPropagation(ppl.Pass):
 
         # Early exit if no constants can be propagated
         if not initial_symbols and not self.should_apply(sdfg):
-            result = set()
+            result = {}
         else:
             # Trace all constants and symbols through states
             per_state_constants: Dict[SDFGState, Dict[str, Any]] = self.collect_constants(sdfg, initial_symbols)
 
             # Keep track of replaced and ambiguous symbols
-            symbols_replaced: Set[str] = set()
+            symbols_replaced: Dict[str, Any] = {}
             remaining_unknowns: Set[str] = set()
 
-            import time
-            s = time.time()
+            # Collect symbols from symbol-dependent data descriptors
+            # If there can be multiple values over the SDFG, the symbols are not propagated
+            desc_symbols, multivalue_desc_symbols = self._find_desc_symbols(sdfg, per_state_constants)
+
             fsyms = {}
             for state in sdfg.nodes():
                 fsyms[state] = state.free_symbols
             for e in sdfg.edges():
                 fsyms[e] = e.data.free_symbols
-            print('Free symbol collection time:', time.time() - s, 's')
 
             # Replace constants per state
             for state, mapping in per_state_constants.items():
-                remaining_unknowns.update({k for k, v in mapping.items() if v is _UnknownValue})
-                mapping = {k: v for k, v in mapping.items() if v is not _UnknownValue}
-                symbols_replaced.update(mapping.keys())
+                remaining_unknowns.update(
+                    {k
+                     for k, v in mapping.items() if v is _UnknownValue or k in multivalue_desc_symbols})
+                mapping = {
+                    k: v
+                    for k, v in mapping.items() if v is not _UnknownValue and k not in multivalue_desc_symbols
+                }
+
+                # Update replaced symbols for later replacements
+                symbols_replaced.update(mapping)
 
                 if mapping.keys() & fsyms[state]:
                     # Replace in state contents
@@ -92,10 +100,17 @@ class ConstantPropagation(ppl.Pass):
                         e.data.replace_dict(mapping, replace_keys=False)
 
             # If symbols are never unknown any longer, remove from SDFG
-            result = (symbols_replaced - remaining_unknowns)
+            result = {k: v for k, v in symbols_replaced.items() if k not in remaining_unknowns}
+            # Remove from symbol repository
             for sym in result:
                 if sym in sdfg.symbols:
                     sdfg.remove_symbol(sym)
+
+            # Remove single-valued symbols from data descriptors (e.g., symbolic array size)
+            sdfg.replace_dict({k: v
+                               for k, v in result.items() if k in desc_symbols},
+                              replace_in_graph=False,
+                              replace_keys=False)
 
             # Remove constant symbol assignments in interstate edges
             for edge in sdfg.edges():
@@ -103,14 +118,25 @@ class ConstantPropagation(ppl.Pass):
                 for sym in intersection:
                     del edge.data.assignments[sym]
 
+        result = set(result.keys())
+
         if self.recursive:
+            # Change result to set of tuples
+            sid = sdfg.sdfg_id
+            result = set((sid, sym) for sym in result)
+
             for state in sdfg.nodes():
                 for node in state.nodes():
                     if isinstance(node, nodes.NestedSDFG):
+                        nested_id = node.sdfg.sdfg_id
                         const_syms = {k: v for k, v in node.symbol_mapping.items() if not symbolic.issymbolic(v)}
                         internal = self.apply_pass(node.sdfg, _, const_syms)
                         if internal:
-                            result |= internal
+                            for nid, removed in internal:
+                                result.add((nid, removed))
+                                # Remove symbol mapping if constant was completely propagated
+                                if nid == nested_id and removed in node.symbol_mapping:
+                                    del node.symbol_mapping[removed]
 
         # Return result
         if not result:
@@ -180,6 +206,34 @@ class ConstantPropagation(ppl.Pass):
 
         return result
 
+    def _find_desc_symbols(self, sdfg: SDFG, constants: Dict[SDFGState, Dict[str, Any]]) -> Tuple[Set[str], Set[str]]:
+        """
+        Finds constant symbols that data descriptors (e.g., arrays) depend on.
+        :param sdfg: The SDFG to scan.
+        :param constants: Constant symbols found in ``collect_constants``.
+        :return: A tuple of two sets: (all descriptor-related symbols, symbols that take multiple values).
+        """
+        symbols_in_data: Set[str] = set()
+        symbols_in_data_with_multiple_values: Set[str] = set()
+        for arr in sdfg.arrays.values():
+            symbols_in_data |= set(map(str, arr.free_symbols))
+
+        values: Dict[str, Any] = {}
+        for mapping in constants.values():
+            # Symbols that data descriptors depend on must receive a single value, otherwise mark as unknown
+            for k, v in mapping.items():
+                if k not in symbols_in_data:
+                    continue
+                if k in values:
+                    if v is _UnknownValue or v != values[k]:
+                        symbols_in_data_with_multiple_values.add(k)
+                else:
+                    if v is _UnknownValue:
+                        symbols_in_data_with_multiple_values.add(k)
+                    values[k] = v
+
+        return symbols_in_data, symbols_in_data_with_multiple_values
+
     def _propagate(self, symbols: Dict[str, Any], new_symbols: Dict[str, Any], backward: bool = False):
         """
         Updates symbols dictionary in-place with new symbols, propagating existing ones within.
@@ -196,6 +250,13 @@ class ConstantPropagation(ppl.Pass):
 
         # Replace interstate edge assignment (which is Python code)
         def _replace_assignment(v, repl):
+            # Special cases to speed up replacement
+            v = str(v)
+            if not v:
+                return v
+            if dtypes.validate_name(v) and v in repl:
+                return repl[v]
+
             vast = ast.parse(v)
             replacer = astutils.ASTFindReplace(repl)
             vast = replacer.visit(vast)
@@ -213,7 +274,7 @@ class ConstantPropagation(ppl.Pass):
         """
         Return symbol assignments that only depend on other symbols and constants, rather than data descriptors.
         """
-        return {k: v for k, v in edge.assignments.items() if not symbolic.free_symbols_and_functions(v) & arrays}
+        return {k: v if (not (symbolic.free_symbols_and_functions(v) & arrays)) else _UnknownValue for k, v in edge.assignments.items()}
 
     def _constants_from_unvisited_state(self, sdfg: SDFG, state: SDFGState, arrays: Set[str],
                                         existing_constants: Dict[SDFGState, Dict[str, Any]]) -> Dict[str, Any]:

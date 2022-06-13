@@ -1,5 +1,6 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 
+import pytest
 import dace
 from dace.transformation.passes.constant_propagation import ConstantPropagation, _UnknownValue
 from dace.transformation.passes.scalar_to_symbol import ScalarToSymbolPromotion
@@ -7,6 +8,7 @@ import numpy as np
 
 
 def test_simple_constants():
+
     @dace.program
     def program(A: dace.float64[20]):
         val = 5
@@ -29,6 +31,7 @@ def test_simple_constants():
 
 
 def test_nested_constants():
+
     @dace.program
     def program(A: dace.int64[20]):
         i = A[0]
@@ -54,6 +57,7 @@ def test_nested_constants():
 
 
 def test_simple_loop():
+
     @dace.program
     def program(a: dace.float64[20]):
         for i in range(3):
@@ -74,6 +78,7 @@ def test_simple_loop():
 
 
 def test_cprop_inside_loop():
+
     @dace.program
     def program(a: dace.float64[20]):
         for i in range(5):
@@ -98,6 +103,7 @@ def test_cprop_inside_loop():
 
 
 def test_cprop_outside_loop():
+
     @dace.program
     def program(a: dace.float64[20, 20]):
         k = 5
@@ -123,6 +129,7 @@ def test_cprop_outside_loop():
 
 
 def test_cond():
+
     @dace.program
     def program(a: dace.float64[20, 20], scal: dace.int32):
         if scal > 0:
@@ -235,6 +242,86 @@ def test_recursive_cprop():
     assert '2' in t.code.as_string
 
 
+def test_allocation_static():
+    """
+    Allocate an array with a constant-propagated symbolic size.
+    """
+    sdfg = dace.SDFG('program')
+    N = dace.symbol('N', dace.int32)
+    sdfg.add_symbol('N', dace.int32)
+    sdfg.add_array('tmp', [N], dace.int32, transient=True)
+    sdfg.add_array('output', [1], dace.int32)
+
+    a = sdfg.add_state()
+    b = sdfg.add_state()
+    c = sdfg.add_state_after(b)
+
+    # First state, N=1
+    sdfg.add_edge(a, b, dace.InterstateEdge(assignments=dict(N=1)))
+    t = b.add_tasklet('somecode', {}, {'out'}, 'out = 2')
+    w = b.add_write('tmp')
+    b.add_edge(t, 'out', w, None, dace.Memlet('tmp'))
+
+    # Third state outputs value
+    c.add_nedge(c.add_read('tmp'), c.add_write('output'), dace.Memlet('tmp[0]'))
+
+    # Do not perform scalar-to-symbol promotion
+    ConstantPropagation().apply_pass(sdfg, {})
+
+    assert len(sdfg.symbols) == 0
+
+    val = np.random.rand(1).astype(np.int32)
+    sdfg(output=val)
+    assert np.allclose(val, 2)
+
+
+@pytest.mark.parametrize('parametric', [False, True])
+def test_allocation_varying(parametric):
+    """
+    Allocate an array with an initial (symbolic) size, then allocate an array with another size, and ensure
+    constants are propagated properly.
+    """
+    sdfg = dace.SDFG('program')
+    N = dace.symbol('N', dace.int32)
+    sdfg.add_symbol('N', dace.int32)
+    sdfg.add_array('tmp1', [N], dace.int32, transient=True)
+    sdfg.add_array('tmp2', [N], dace.int32, transient=True)
+    sdfg.add_array('output', [1], dace.int32)
+
+    a = sdfg.add_state()
+    b = sdfg.add_state()
+    c = sdfg.add_state()
+
+    # First state, N=1
+    sdfg.add_edge(a, b, dace.InterstateEdge(assignments=dict(N=1)))
+    t = b.add_tasklet('somecode', {}, {'out'}, 'out = 2')
+    w = b.add_write('tmp1')
+    b.add_edge(t, 'out', w, None, dace.Memlet('tmp1[0]'))
+
+    # Second state, N=tmp1[0] (=2)
+    if parametric:
+        sdfg.add_edge(b, c, dace.InterstateEdge(assignments=dict(N='tmp1[0]')))
+    else:
+        sdfg.add_edge(b, c, dace.InterstateEdge(assignments=dict(N=2)))
+    t2 = c.add_tasklet('somecode2', {}, {'out'}, 'out = 3')
+    t3 = c.add_tasklet('somecode2', {}, {'out'}, 'out = 4')
+    w = c.add_write('tmp2')
+    c.add_edge(t2, 'out', w, None, dace.Memlet('tmp2[0]'))
+    c.add_edge(t3, 'out', w, None, dace.Memlet('tmp2[1]'))
+
+    # Third state outputs value
+    c.add_nedge(w, c.add_write('output'), dace.Memlet('tmp2[1]'))
+
+    # Do not perform scalar-to-symbol promotion
+    ConstantPropagation().apply_pass(sdfg, {})
+
+    assert len(sdfg.symbols) == 1
+
+    val = np.random.rand(1).astype(np.int32)
+    sdfg(output=val)
+    assert np.allclose(val, 4)
+
+
 if __name__ == '__main__':
     test_simple_constants()
     test_nested_constants()
@@ -245,3 +332,6 @@ if __name__ == '__main__':
     test_complex_case()
     test_early_exit()
     test_recursive_cprop()
+    test_allocation_static()
+    test_allocation_varying(False)
+    test_allocation_varying(True)
