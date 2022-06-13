@@ -10,7 +10,7 @@ import sympy
 import sys
 import warnings
 
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, OrderedDict, Set, Tuple, Union
 import dace
 from dace import data, dtypes, subsets, symbolic, sdfg as sd
 from dace.config import Config
@@ -354,44 +354,42 @@ def flatten_callback(func: Callable, node: ast.Call):
     """
 
     # Find out if any Python arguments should be flattened
-    unflatten_instructions: Dict[int, Tuple[Callable, int]] = {}
+    unflatten_instructions: Dict[int, Tuple[Callable, int]] = OrderedDict()
     curarg = 0
+    instructions_exist = False
     for arg in node.args:
         call, inc = _create_unflatten_instruction(arg)
         if call is not None:
-            unflatten_instructions[curarg] = call, inc
+            instructions_exist = True
+        else:
+            call = lambda x: x[0]
+        unflatten_instructions[curarg] = call, inc
         curarg += inc
     for kw in node.keywords:
         call, inc = _create_unflatten_instruction(kw.value)
         if call is not None:
-            unflatten_instructions[curarg] = call, inc
+            instructions_exist = True
+        else:
+            call = lambda x: x[0]
+        unflatten_instructions[curarg] = call, inc
         curarg += inc
 
     # Nothing to do, early exit
-    if not node.keywords and not unflatten_instructions:
+    if not node.keywords and not instructions_exist:
         return func
 
     keywords = [kw.arg for kw in node.keywords]
     poscount = len(node.args)
 
     # Using two levels of functions to ensure keywords are stored with the callback
-    if unflatten_instructions:
+    if instructions_exist:
         # If unflattening is necessary, have one version of the callback
         def make_cb(keywords, poscount, instructions):
             def cb_func(*all_args):
                 # Create an unflattened version of the original arguments
                 unflattened = []
-                skip = 0
-                for i, arg in enumerate(all_args):
-                    if skip:  # Skip processed arguments
-                        skip -= 1
-                        continue
-                    if i in instructions:
-                        unflatten, skip = instructions[i]
-                        unflattened.append(unflatten(all_args[i:i + skip]))
-                        skip -= 1
-                    else:
-                        unflattened.append(arg)
+                for i, (unflatten, skip) in instructions.items():
+                    unflattened.append(unflatten(all_args[i:i + skip]))
 
                 args = unflattened[:poscount]
                 kwargs = {kw: arg for kw, arg in zip(keywords, unflattened[poscount:])}
@@ -399,22 +397,13 @@ def flatten_callback(func: Callable, node: ast.Call):
 
             return cb_func        
     else:
-        # Optimization: In the keyword argument case, make the callback itself faster based on existence of pos. arguments
-        if poscount == 0:
-            def make_cb(keywords, _, __):
-                def cb_func(*all_args):
-                    kwargs = {kw: arg for kw, arg in zip(keywords, all_args)}
-                    return func(**kwargs)
+        def make_cb(keywords, poscount, _):
+            def cb_func(*all_args):
+                args = all_args[:poscount]
+                kwargs = {kw: arg for kw, arg in zip(keywords, all_args[poscount:])}
+                return func(*args, **kwargs)
 
-                return cb_func
-        else:
-            def make_cb(keywords, poscount, _):
-                def cb_func(*all_args):
-                    args = all_args[:poscount]
-                    kwargs = {kw: arg for kw, arg in zip(keywords, all_args[poscount:])}
-                    return func(*args, **kwargs)
-
-                return cb_func
+            return cb_func
 
     return make_cb(keywords, poscount, unflatten_instructions)
 
