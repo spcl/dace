@@ -675,7 +675,8 @@ def test_callback_literal_list(as_kwarg):
     assert success is True
 
 
-def test_callback_literal_dict():
+@pytest.mark.parametrize('as_kwarg', (False, True))
+def test_callback_literal_dict(as_kwarg):
     success = False
 
     @dace_inhibitor
@@ -686,9 +687,17 @@ def test_callback_literal_dict():
                 if adict2['b'][0, 0, 0] == 1.0 and adict2['a'][0, 0, 0] == 1.0 and adict2[1][0, 0, 0] == 1.0:
                     success = True
 
-    @dace
-    def caller(a, b):
-        callback({'b': a, 'a': b, 1: a}, {1: b, 'a': b, 'b': b})
+    if as_kwarg:
+
+        @dace
+        def caller(a, b):
+            callback({'b': a, 'a': b, 1: a}, adict2={1: b, 'a': b, 'b': b})
+
+    else:
+
+        @dace
+        def caller(a, b):
+            callback({'b': a, 'a': b, 1: a}, {1: b, 'a': b, 'b': b})
 
     a = np.zeros((2, 2, 2))
     b = np.ones((2, 2, 2))
@@ -727,3 +736,5 @@ if __name__ == '__main__':
     test_callback_literal_list(False)
     test_callback_literal_list(True)
     test_callback_literal_dict()
+    test_callback_literal_dict(False)
+    test_callback_literal_dict(True)
