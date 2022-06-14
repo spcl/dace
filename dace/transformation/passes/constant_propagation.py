@@ -72,12 +72,6 @@ class ConstantPropagation(ppl.Pass):
             # If there can be multiple values over the SDFG, the symbols are not propagated
             desc_symbols, multivalue_desc_symbols = self._find_desc_symbols(sdfg, per_state_constants)
 
-            fsyms = {}
-            for state in sdfg.nodes():
-                fsyms[state] = state.free_symbols
-            for e in sdfg.edges():
-                fsyms[e] = e.data.free_symbols
-
             # Replace constants per state
             for state, mapping in per_state_constants.items():
                 remaining_unknowns.update(
@@ -91,13 +85,11 @@ class ConstantPropagation(ppl.Pass):
                 # Update replaced symbols for later replacements
                 symbols_replaced.update(mapping)
 
-                if mapping.keys() & fsyms[state]:
-                    # Replace in state contents
-                    state.replace_dict(mapping)
+                # Replace in state contents
+                state.replace_dict(mapping)
                 # Replace in outgoing edges as well
                 for e in sdfg.out_edges(state):
-                    if mapping.keys() & fsyms[e]:
-                        e.data.replace_dict(mapping, replace_keys=False)
+                    e.data.replace_dict(mapping, replace_keys=False)
 
             # If symbols are never unknown any longer, remove from SDFG
             result = {k: v for k, v in symbols_replaced.items() if k not in remaining_unknowns}
