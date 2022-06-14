@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
+from dace import nodes
 from dace.transformation.dataflow import GPUTransformMap, InLocalStorage
 import pytest
 
@@ -106,7 +107,15 @@ def test_gpu_2shared_for():
 
     sdfg = addtwoandmult.to_sdfg()
     sdfg.name = "cuda_2_shared_for"
-    assert sdfg.apply_transformations([GPUTransformMap]) == 1
+    state = sdfg.nodes()[0]
+    map_entry = -1
+    for node in state.nodes():
+        if isinstance(node, nodes.MapEntry) and 'i' in node.map.params:
+            map_entry = state.node_id(node)
+            break
+    transformation = GPUTransformMap()
+    transformation.setup_match(sdfg, 0, 0, {GPUTransformMap.map_entry: map_entry}, 0)
+    transformation.apply(state, sdfg)
 
     A = np.random.rand(128, 64)
     B = np.random.rand(128, 64)

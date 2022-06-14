@@ -261,7 +261,7 @@ def tile_wcrs(graph_or_subgraph: GraphViewType, validate_all: bool, prefer_parti
             # If smaller than tile size, don't transform and instead
             # make map sequential
             if debugprint:
-                print(f'Making map "{mapentry}" sequential due to being ' 'smaller than tile size')
+                print(f'Making map "{mapentry}" sequential due to being smaller than tile size')
             mapentry.map.schedule = dtypes.ScheduleType.Sequential
             continue
 
@@ -492,6 +492,10 @@ def auto_optimize(sdfg: SDFG,
 
     # fuse stencils greedily
     greedy_fuse(sdfg, device=device, validate_all=validate_all, recursive=False, stencil=True)
+
+    # Move Loops inside Maps when possible
+    from dace.transformation.interstate import MoveLoopIntoMap
+    sdfg.apply_transformations_repeated([MoveLoopIntoMap])
 
     if device == dtypes.DeviceType.FPGA:
         # apply FPGA Transformations

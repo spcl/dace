@@ -208,6 +208,9 @@ class StateFusion(transformation.MultiStateTransformation, transformation.Simpli
             for e in in_edges:
                 if e.data.assignments.keys() & symbols_used:
                     return False
+                # Also fail in the inverse; symbols assigned on the second edge are free symbols on the first edge
+                if new_assignments & set(e.data.free_symbols):
+                    return False
 
         # There can be no state that have output edges pointing to both the
         # first and the second state. Such a case will produce a multi-graph.
