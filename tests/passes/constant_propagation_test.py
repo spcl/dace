@@ -246,7 +246,7 @@ def test_allocation_static():
     """
     Allocate an array with a constant-propagated symbolic size.
     """
-    sdfg = dace.SDFG('program')
+    sdfg = dace.SDFG('cprop_static_alloc')
     N = dace.symbol('N', dace.int32)
     sdfg.add_symbol('N', dace.int32)
     sdfg.add_array('tmp', [N], dace.int32, transient=True)
@@ -281,7 +281,7 @@ def test_allocation_varying(parametric):
     Allocate an array with an initial (symbolic) size, then allocate an array with another size, and ensure
     constants are propagated properly.
     """
-    sdfg = dace.SDFG('program')
+    sdfg = dace.SDFG(f'cprop_alloc_{parametric}')
     N = dace.symbol('N', dace.int32)
     sdfg.add_symbol('N', dace.int32)
     sdfg.add_array('tmp1', [N], dace.int32, transient=True)
