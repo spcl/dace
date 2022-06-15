@@ -27,9 +27,9 @@ def _replsym(symlist, symrepl):
         return _internal_replace(symlist, symrepl)
     for i, dim in enumerate(symlist):
         try:
-            symlist[i] = tuple(_internal_replace(symbolic.pystr_to_symbolic(str(d)), symrepl) for d in dim)
+            symlist[i] = tuple(_internal_replace(symbolic.pystr_to_symbolic(d), symrepl) for d in dim)
         except TypeError:
-            symlist[i] = _internal_replace(symbolic.pystr_to_symbolic(str(dim)), symrepl)
+            symlist[i] = _internal_replace(symbolic.pystr_to_symbolic(dim), symrepl)
     return symlist
 
 
