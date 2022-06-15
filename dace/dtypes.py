@@ -8,7 +8,7 @@ import itertools
 import numpy
 import re
 from functools import wraps
-from typing import Any, Callable, Optional
+from typing import Any
 from dace.config import Config
 from dace.registry import extensible_enum, undefined_safe_enum
 
@@ -42,12 +42,18 @@ class StorageType(aenum.AutoNumberEnum):
 
 @undefined_safe_enum
 @extensible_enum
+class OMPScheduleType(aenum.AutoNumberEnum):
+    """ Available OpenMP shedule types for Maps with CPU-Multicore schedule. """
+    Default = ()  #: OpenMP library default
+    Static = ()  #: Static schedule
+    Dynamic = ()  #: Dynamic schedule
+    Guided = ()  #: Guided schedule
+
+
+@undefined_safe_enum
+@extensible_enum
 class ScheduleType(aenum.AutoNumberEnum):
     """ Available map schedule types in the SDFG. """
-    # TODO: Address different targets w.r.t. sequential
-    # TODO: Add per-type properties for scope nodes. Consider TargetType enum
-    #       and a MapScheduler class
-
     Default = ()  #: Scope-default parallel schedule
     Sequential = ()  #: Sequential code (single-thread)
     MPI = ()  #: MPI processes
