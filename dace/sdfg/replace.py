@@ -16,7 +16,7 @@ def _internal_replace(sym, symrepl):
         return sym
     
     # Filter out only relevant replacements
-    fsyms = map(str, sym.free_symbols)
+    fsyms = set(map(str, sym.free_symbols))
     newrepl = {k: v for k, v in symrepl.items() if str(k) in fsyms}
     if not newrepl:
         return sym
