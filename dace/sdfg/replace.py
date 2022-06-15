@@ -14,9 +14,13 @@ tokenize_cpp = re.compile(r'\b\w+\b')
 def _internal_replace(sym, symrepl):
     if not isinstance(sym, sp.Basic):
         return sym
-    newrepl = {k: symrepl[k] for k in (sym.free_symbols & symrepl.keys())}
+    
+    # Filter out only relevant replacements
+    fsyms = map(str, sym.free_symbols)
+    newrepl = {k: v for k, v in symrepl.items() if str(k) in fsyms}
     if not newrepl:
         return sym
+    
     return sym.subs(newrepl)
 
 def _replsym(symlist, symrepl):
@@ -27,9 +31,9 @@ def _replsym(symlist, symrepl):
         return _internal_replace(symlist, symrepl)
     for i, dim in enumerate(symlist):
         try:
-            symlist[i] = tuple(_internal_replace(symbolic.pystr_to_symbolic(d), symrepl) for d in dim)
+            symlist[i] = tuple(_internal_replace(d, symrepl) for d in dim)
         except TypeError:
-            symlist[i] = _internal_replace(symbolic.pystr_to_symbolic(dim), symrepl)
+            symlist[i] = _internal_replace(dim, symrepl)
     return symlist
 
 

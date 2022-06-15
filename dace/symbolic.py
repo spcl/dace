@@ -66,6 +66,24 @@ class symbol(sympy.Symbol):
     def __getstate__(self):
         return dict(self.assumptions0, **{'value': self.value, 'dtype': self.dtype, '_constraints': self._constraints})
 
+    def _eval_subs(self, old, new):
+        """
+        From sympy: Override this stub if you want to do anything more than
+        attempt a replacement of old with new in the arguments of self.
+
+        See also
+        ========
+
+        _subs
+        """
+        try:
+            # Compare DaCe symbols by name rather than type/assumptions
+            if self.name == old.name:
+                return new
+            return None
+        except AttributeError:
+            return None
+
     def is_initialized(self):
         return self.value is not None
 
