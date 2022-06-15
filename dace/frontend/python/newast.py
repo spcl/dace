@@ -259,8 +259,8 @@ DISALLOWED_STMTS = [
 ]
 # Extra AST node types that are disallowed after preprocessing
 _DISALLOWED_STMTS = DISALLOWED_STMTS + [
-    'Global', 'Assert', 'Print', 'Nonlocal', 'Raise', 'Starred', 'AsyncFor', 'Bytes', 'Set', 'Dict', 'ListComp',
-    'GeneratorExp', 'SetComp', 'DictComp', 'comprehension'
+    'Global', 'Assert', 'Print', 'Nonlocal', 'Raise', 'Starred', 'AsyncFor', 'Bytes', 'ListComp', 'GeneratorExp',
+    'SetComp', 'DictComp', 'comprehension'
 ]
 
 TaskletType = Union[ast.FunctionDef, ast.With, ast.For]
@@ -3824,29 +3824,41 @@ class ProgramVisitor(ExtNodeVisitor):
         allargs = []
         kwargs = [kw.value for kw in node.keywords]
         for arg in itertools.chain(node.args, kwargs):
-            parsed_arg = self._parse_function_arg(arg)
-            if parsed_arg in self.defined:
-                atype = self.defined[parsed_arg]
-                args.append(parsed_arg)
-                if isinstance(atype, data.Array):
-                    outargs.append(parsed_arg)
-                    allargs.append(f'__out_{parsed_arg}')
-                elif isinstance(atype, data.Scalar):
-                    allargs.append(f'__in_{parsed_arg}')
+            parsed_args = self._parse_function_arg(arg)
+
+            # Flatten literal arguments in call (will be unflattened in callback,
+            # see ``flatten_callback`` in preprocessing)
+            if isinstance(parsed_args, (list, tuple)):
+                pass  # If already list or tuple, keep as-is
+            elif isinstance(parsed_args, dict):
+                # Keep dictionary entries in order of call
+                parsed_args = list(parsed_args.values())
+            else:  # If a standard argument
+                parsed_args = [parsed_args]
+
+            for parsed_arg in parsed_args:
+                if parsed_arg in self.defined:
+                    atype = self.defined[parsed_arg]
+                    args.append(parsed_arg)
+                    if isinstance(atype, data.Array):
+                        outargs.append(parsed_arg)
+                        allargs.append(f'__out_{parsed_arg}')
+                    elif isinstance(atype, data.Scalar):
+                        allargs.append(f'__in_{parsed_arg}')
+                    else:
+                        allargs.append(parsed_arg)
                 else:
+                    if isinstance(parsed_arg, (Number, numpy.number, type(None))):
+                        atype = data.create_datadescriptor(type(parsed_arg))
+                    else:
+                        atype = data.create_datadescriptor(parsed_arg)
+
+                    if isinstance(parsed_arg, str):
+                        # Special case for strings
+                        parsed_arg = f'"{astutils.escape_string(parsed_arg)}"'
                     allargs.append(parsed_arg)
-            else:
-                if isinstance(parsed_arg, (Number, numpy.number, type(None))):
-                    atype = data.create_datadescriptor(type(parsed_arg))
-                else:
-                    atype = data.create_datadescriptor(parsed_arg)
 
-                if isinstance(parsed_arg, str):
-                    # Special case for strings
-                    parsed_arg = f'"{astutils.escape_string(parsed_arg)}"'
-                allargs.append(parsed_arg)
-
-            argtypes.append(atype)
+                argtypes.append(atype)
 
         # Return type inference
         return_type = None
@@ -4405,6 +4417,14 @@ class ProgramVisitor(ExtNodeVisitor):
     def visit_Tuple(self, node: ast.Tuple):
         # Recursively loop over elements
         return tuple(self.visit(a) for a in node.elts)
+
+    def visit_Set(self, node: ast.Set):
+        # Recursively loop over elements
+        return set(self.visit(a) for a in node.elts)
+
+    def visit_Dict(self, node: ast.Dict):
+        # Recursively loop over elements and return an ordered dictionary (for callback consistency)
+        return OrderedDict([(self.visit(k), self.visit(v)) for k, v in zip(node.keys, node.values)])
 
     def visit_Lambda(self, node: ast.Lambda):
         # Return a string representation of the function
