@@ -40,9 +40,13 @@ class MoveLoopIntoMap(DetectLoop, transformation.MultiStateTransformation):
         loop_info = find_for_loop(sdfg, guard, body)
         if not loop_info:
             return False
-        itervar, (start, end, step), _ = loop_info
+        itervar, (start, end, step), (_, body_end) = loop_info
 
         if step not in [-1, 1]:
+            return False
+
+        # Body must contain a single state
+        if body != body_end:
             return False
 
         # Check if body contains exactly one map
@@ -61,6 +65,11 @@ class MoveLoopIntoMap(DetectLoop, transformation.MultiStateTransformation):
             if e.src is map_exit and isinstance(e.dst, nodes.AccessNode):
                 continue
             if str(itervar) in e.data.free_symbols:
+                return False
+        for n in body.nodes():
+            if n in subgraph.nodes():
+                continue
+            if str(itervar) in n.free_symbols:
                 return False
 
         def test_subset_dependency(subset: sbs.Subset, mparams: Set[int]) -> Tuple[bool, List[int]]:

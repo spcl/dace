@@ -84,12 +84,16 @@ class Property(Generic[T]):
             allow_none=False,
             indirected=False,  # This property belongs to a different class
             category='General',
-            desc=""):
+            desc="",
+            optional=False,
+            optional_condition=lambda _: True):
 
         self._getter = getter
         self._setter = setter
         self._dtype = dtype
         self._default = default
+        self._optional = optional
+        self._optional_condition = optional_condition
 
         if allow_none is False and default is None:
             try:
@@ -252,6 +256,14 @@ class Property(Generic[T]):
     @property
     def dtype(self):
         return self._dtype
+
+    @property
+    def optional(self):
+        return self._optional
+
+    @property
+    def optional_condition(self):
+        return self._optional_condition
 
     def typestring(self):
         typestr = ""
