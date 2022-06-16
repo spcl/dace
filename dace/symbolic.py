@@ -66,6 +66,24 @@ class symbol(sympy.Symbol):
     def __getstate__(self):
         return dict(self.assumptions0, **{'value': self.value, 'dtype': self.dtype, '_constraints': self._constraints})
 
+    def _eval_subs(self, old, new):
+        """
+        From sympy: Override this stub if you want to do anything more than
+        attempt a replacement of old with new in the arguments of self.
+
+        See also
+        ========
+
+        _subs
+        """
+        try:
+            # Compare DaCe symbols by name rather than type/assumptions
+            if self.name == old.name:
+                return new
+            return None
+        except AttributeError:
+            return None
+
     def is_initialized(self):
         return self.value is not None
 
@@ -129,6 +147,7 @@ class symbol(sympy.Symbol):
 class SymExpr(object):
     """ Symbolic expressions with support for an overapproximation expression.
     """
+
     def __init__(self, main_expr: Union[str, 'SymExpr'], approx_expr: Optional[Union[str, 'SymExpr']] = None):
         self._main_expr = pystr_to_symbolic(main_expr)
         if approx_expr is None:
@@ -307,7 +326,7 @@ def symlist(values):
             true_expr = expr
         else:
             continue
-        for atom in true_expr.atoms():
+        for atom in sympy.preorder_traversal(true_expr):
             if isinstance(atom, symbol):
                 result[atom.name] = atom
     return result
@@ -501,7 +520,8 @@ def swalk(expr, enter_functions=False):
 
 
 _builtin_userfunctions = {
-    'int_floor', 'int_ceil', 'abs', 'Abs', 'min', 'Min', 'max', 'Max', 'not', 'Not', 'Eq', 'NotEq', 'Ne', 'AND', 'OR'
+    'int_floor', 'int_ceil', 'abs', 'Abs', 'min', 'Min', 'max', 'Max', 'not', 'Not', 'Eq', 'NotEq', 'Ne', 'AND', 'OR',
+    'pow'
 }
 
 
@@ -558,6 +578,7 @@ def sympy_numeric_fix(expr):
 
 
 class int_floor(sympy.Function):
+
     @classmethod
     def eval(cls, x, y):
         if x.is_Number and y.is_Number:
@@ -568,6 +589,7 @@ class int_floor(sympy.Function):
 
 
 class int_ceil(sympy.Function):
+
     @classmethod
     def eval(cls, x, y):
         if x.is_Number and y.is_Number:
@@ -578,6 +600,7 @@ class int_ceil(sympy.Function):
 
 
 class OR(sympy.Function):
+
     @classmethod
     def eval(cls, x, y):
         if x.is_Boolean and y.is_Boolean:
@@ -588,6 +611,7 @@ class OR(sympy.Function):
 
 
 class AND(sympy.Function):
+
     @classmethod
     def eval(cls, x, y):
         if x.is_Boolean and y.is_Boolean:
@@ -763,7 +787,15 @@ class SympyBooleanConverter(ast.NodeTransformer):
 
     def visit_BoolOp(self, node):
         func_node = ast.copy_location(ast.Name(id=type(node.op).__name__, ctx=ast.Load()), node)
-        new_node = ast.Call(func=func_node, args=[self.visit(value) for value in node.values], keywords=[])
+
+        # First two arguments are given as one call
+        new_node = ast.Call(func=func_node, args=[self.visit(value) for value in node.values[:2]], keywords=[])
+        new_node = ast.copy_location(new_node, node)
+        # If more than two arguments, chain bool op calls (``and(and(x,y), z)``)
+        for i in range(2, len(node.values)):
+            new_node = ast.Call(func=func_node, args=[new_node, self.visit(node.values[i])], keywords=[])
+            new_node = ast.copy_location(new_node, node)
+
         return ast.copy_location(new_node, node)
 
     def visit_Compare(self, node: ast.Compare):
@@ -786,7 +818,7 @@ class SympyBooleanConverter(ast.NodeTransformer):
 
 
 @lru_cache(maxsize=16384)
-def pystr_to_symbolic(expr, symbol_map=None, simplify=None):
+def pystr_to_symbolic(expr, symbol_map=None, simplify=None) -> sympy.Basic:
     """ Takes a Python string and converts it into a symbolic expression. """
     from dace.frontend.python.astutils import unparse  # Avoid import loops
 
@@ -850,6 +882,7 @@ def simplify(expr: SymbolicType) -> SymbolicType:
 class DaceSympyPrinter(sympy.printing.str.StrPrinter):
     """ Several notational corrections for integer math and C++ translation
         that sympy.printing.cxxcode does not provide. """
+
     def __init__(self, arrays, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.arrays = arrays or set()
@@ -1021,6 +1054,7 @@ class SympyAwarePickler(pickle.Pickler):
     Custom Pickler class that safely saves SymPy expressions
     with function definitions in expressions (e.g., int_ceil).
     """
+
     def persistent_id(self, obj):
         if isinstance(obj, sympy.Basic):
             # Save sympy expression as srepr
@@ -1035,6 +1069,7 @@ class SympyAwareUnpickler(pickle.Unpickler):
     Custom Unpickler class that safely restores SymPy expressions
     with function definitions in expressions (e.g., int_ceil).
     """
+
     def persistent_load(self, pid):
         type_tag, value = pid
         if type_tag == "DaCeSympyExpression":

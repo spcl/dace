@@ -15,6 +15,7 @@ import pytest
 
 def test_find_promotable():
     """ Find promotable and non-promotable symbols. """
+
     @dace.program
     def testprog1(A: dace.float32[20, 20], scal: dace.float32):
         tmp = dace.ndarray([20, 20], dtype=dace.float32)
@@ -41,6 +42,7 @@ def test_find_promotable():
 
 def test_promote_simple():
     """ Simple promotion with Python tasklets. """
+
     @dace.program
     def testprog2(A: dace.float64[20, 20]):
         j = 5
@@ -68,6 +70,7 @@ def test_promote_simple():
 
 def test_promote_simple_c():
     """ Simple promotion with C++ tasklets. """
+
     @dace.program
     def testprog3(A: dace.float32[20, 20]):
         i = 0
@@ -110,6 +113,7 @@ def test_promote_simple_c():
 
 def test_promote_disconnect():
     """ Promotion that disconnects tasklet from map. """
+
     @dace.program
     def testprog4(A: dace.float64[20, 20]):
         j = 5
@@ -176,6 +180,7 @@ def test_promote_copy():
 
 def test_promote_array_assignment():
     """ Simple promotion with array assignment. """
+
     @dace.program
     def testprog6(A: dace.float64[20, 20]):
         j = A[1, 1]
@@ -204,6 +209,7 @@ def test_promote_array_assignment():
 
 def test_promote_array_assignment_tasklet():
     """ Simple promotion with array assignment. """
+
     @dace.program
     def testprog7(A: dace.float64[20, 20]):
         j = dace.define_local_scalar(dace.int64)
@@ -233,6 +239,7 @@ def test_promote_array_assignment_tasklet():
 
 class LoopTester(ld.DetectLoop, xf.MultiStateTransformation):
     """ Tester method that sets loop index on a guard state. """
+
     def can_be_applied(self, graph, expr_index, sdfg, permissive):
         if super().can_be_applied(graph, expr_index, sdfg, permissive):
             return False
@@ -297,6 +304,7 @@ def test_promote_loops():
 
 def test_promote_indirection():
     """ Indirect access in promotion. """
+
     @dace.program
     def testprog10(A: dace.float64[2, 3, 4, 5], B: dace.float64[4]):
         i = 2
@@ -347,6 +355,7 @@ def test_promote_indirection():
 
 def test_promote_output_indirection():
     """ Indirect output access in promotion. """
+
     @dace.program
     def testprog11(A: dace.float64[10]):
         i = 2
@@ -375,6 +384,7 @@ def test_promote_output_indirection():
 
 def test_promote_indirection_c():
     """ Indirect access in promotion with C++ tasklets. """
+
     @dace.program
     def testprog12(A: dace.float64[10]):
         i = 2
@@ -407,6 +417,7 @@ def test_promote_indirection_c():
 
 def test_promote_indirection_impossible():
     """ Indirect access that cannot be promoted. """
+
     @dace.program
     def testprog13(A: dace.float64[20, 20], scal: dace.int32):
         i = 2
@@ -510,12 +521,21 @@ def test_indirection_with_reindex(language):
     sdfg.add_edge(state_init2, state_init3, dace.InterstateEdge())
     sdfg.add_edge(state_init3, state_compute, dace.InterstateEdge())
 
-    tasklet1 = state_init1.add_tasklet(name="init1", inputs=[], outputs=["out"],
-            code="out = 1;", language=dace.Language.CPP)
-    tasklet2 = state_init2.add_tasklet(name="init2", inputs=[], outputs=["out"],
-            code="out = 2;", language=dace.Language.CPP)
-    tasklet3 = state_init3.add_tasklet(name="init3", inputs=[], outputs=["out"],
-            code="out = 3;", language=dace.Language.CPP)
+    tasklet1 = state_init1.add_tasklet(name="init1",
+                                       inputs=[],
+                                       outputs=["out"],
+                                       code="out = 1;",
+                                       language=dace.Language.CPP)
+    tasklet2 = state_init2.add_tasklet(name="init2",
+                                       inputs=[],
+                                       outputs=["out"],
+                                       code="out = 2;",
+                                       language=dace.Language.CPP)
+    tasklet3 = state_init3.add_tasklet(name="init3",
+                                       inputs=[],
+                                       outputs=["out"],
+                                       code="out = 3;",
+                                       language=dace.Language.CPP)
 
     dst = state_init1.add_write("index_0")
     memlet = dace.Memlet(expr="index_0", subset="0")
@@ -530,9 +550,11 @@ def test_indirection_with_reindex(language):
     state_init3.add_memlet_path(tasklet3, dst, src_conn="out", memlet=memlet)
 
     semicolon = ';' if language == dace.Language.CPP else ''
-    tasklet = state_compute.add_tasklet(name="add", inputs=["_A", "_index_0",
-        "_index_1", "_index_2"], outputs=["_out"],
-            code=f"_out[_index_2] = _A[_index_0] + _A[_index_1]{semicolon}", language=language)
+    tasklet = state_compute.add_tasklet(name="add",
+                                        inputs=["_A", "_index_0", "_index_1", "_index_2"],
+                                        outputs=["_out"],
+                                        code=f"_out[_index_2] = _A[_index_0] + _A[_index_1]{semicolon}",
+                                        language=language)
 
     src = state_compute.add_read("A")
     memlet = dace.Memlet(expr="A", subset="S:N")
@@ -558,10 +580,29 @@ def test_indirection_with_reindex(language):
     sdfg.simplify()
 
     A = np.array(list(range(10)), dtype=np.float32)
-    out = np.zeros((10,), dtype=np.float32)
+    out = np.zeros((10, ), dtype=np.float32)
     sdfg(A=A, out=out, N=10, S=5)
 
-    assert(np.allclose(A[6] + A[7], out[8]))
+    assert (np.allclose(A[6] + A[7], out[8]))
+
+
+def test_multiple_boolop():
+
+    @dace.program
+    def tester():
+        a = 1
+        b = 0
+        c = 1
+        if a and b and c:
+            return 1
+        else:
+            return 0
+
+    sdfg = tester.to_sdfg(simplify=False)
+    scalar_to_symbol.promote_scalars_to_symbols(sdfg)
+    sdfg.validate()
+
+    assert tester() == 0
 
 
 if __name__ == '__main__':
@@ -582,3 +623,4 @@ if __name__ == '__main__':
     test_nested_promotion_connector(True)
     test_indirection_with_reindex(dace.Language.CPP)
     test_indirection_with_reindex(dace.Language.Python)
+    test_multiple_boolop()

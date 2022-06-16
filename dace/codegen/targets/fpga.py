@@ -26,6 +26,7 @@ from dace.codegen.targets.target import (TargetCodeGenerator, IllegalCopy, make_
 from dace.codegen import cppunparse
 from dace.properties import Property, make_properties, indirect_properties
 from dace.sdfg.state import SDFGState
+from dace.sdfg.utils import is_fpga_kernel
 from dace.symbolic import evaluate
 from dace.transformation.dataflow import MapUnroll
 from collections import defaultdict
@@ -48,24 +49,6 @@ def vector_element_type_of(dtype):
     elif isinstance(dtype, dace.vector):
         return dtype.base_type
     return dtype
-
-
-def is_fpga_kernel(sdfg, state):
-    """
-    Returns whether the given state is an FPGA kernel and should be dispatched
-    to the FPGA code generator.
-    :return: True if this is an FPGA kernel, False otherwise.
-    """
-    if ("is_FPGA_kernel" in state.location and state.location["is_FPGA_kernel"] == False):
-        return False
-    data_nodes = state.data_nodes()
-    if len(data_nodes) == 0:
-        return False
-    for n in data_nodes:
-        if n.desc(sdfg).storage not in (dtypes.StorageType.FPGA_Global, dtypes.StorageType.FPGA_Local,
-                                        dtypes.StorageType.FPGA_Registers, dtypes.StorageType.FPGA_ShiftRegister):
-            return False
-    return True
 
 
 def is_external_stream(node: dace.sdfg.nodes.Node, subgraph: Union[dace.sdfg.SDFGState, ScopeSubgraphView]):

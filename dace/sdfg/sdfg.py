@@ -437,16 +437,18 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                                                 json_obj,
                                                 ignore_properties={'constants_prop', 'name', 'hash', 'start_state'})
 
+        nodelist = []
         for n in nodes:
             nci = copy.copy(context_info)
             nci['sdfg'] = ret
 
             state = SDFGState.from_json(n, context=nci)
             ret.add_node(state)
+            nodelist.append(state)
 
         for e in edges:
             e = dace.serialize.from_json(e)
-            ret.add_edge(ret.node(int(e.src)), ret.node(int(e.dst)), e.data)
+            ret.add_edge(nodelist[int(e.src)], nodelist[int(e.dst)], e.data)
 
         if 'start_state' in json_obj:
             ret._start_state = json_obj['start_state']
@@ -539,12 +541,17 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
     def replace_dict(self,
                      repldict: Dict[str, str],
-                     symrepl: Optional[Dict[symbolic.SymbolicType, symbolic.SymbolicType]] = None) -> None:
+                     symrepl: Optional[Dict[symbolic.SymbolicType, symbolic.SymbolicType]] = None,
+                     replace_in_graph: bool = True,
+                     replace_keys: bool = True) -> None:
         """
         Replaces all occurrences of keys in the given dictionary with the mapped
         values.
         :param repldict: The replacement dictionary.
         :param replace_keys: If False, skips replacing assignment keys.
+        :param symrepl: A symbolic expression replacement dictionary (for performance reasons).
+        :param replace_in_graph: Whether to replace in SDFG nodes / edges.
+        :param replace_keys: If True, replaces in SDFG property names (e.g., array, symbol, and constant names).
         """
         symrepl = symrepl or {
             symbolic.symbol(k): symbolic.pystr_to_symbolic(v) if isinstance(k, str) else v
@@ -552,25 +559,27 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         }
 
         # Replace in arrays and symbols (if a variable name)
-        for name, new_name in repldict.items():
-            if validate_name(new_name):
-                _replace_dict_keys(self._arrays, name, new_name)
-                _replace_dict_keys(self.symbols, name, new_name)
-                _replace_dict_keys(self.constants_prop, name, new_name)
-                _replace_dict_keys(self.callback_mapping, name, new_name)
-                _replace_dict_values(self.callback_mapping, name, new_name)
+        if replace_keys:
+            for name, new_name in repldict.items():
+                if validate_name(new_name):
+                    _replace_dict_keys(self._arrays, name, new_name)
+                    _replace_dict_keys(self.symbols, name, new_name)
+                    _replace_dict_keys(self.constants_prop, name, new_name)
+                    _replace_dict_keys(self.callback_mapping, name, new_name)
+                    _replace_dict_values(self.callback_mapping, name, new_name)
 
         # Replace inside data descriptors
         for array in self.arrays.values():
             replace_properties_dict(array, repldict, symrepl)
 
-        # Replace in inter-state edges
-        for edge in self.edges():
-            edge.data.replace_dict(repldict)
+        if replace_in_graph:
+            # Replace in inter-state edges
+            for edge in self.edges():
+                edge.data.replace_dict(repldict)
 
-        # Replace in states
-        for state in self.nodes():
-            state.replace_dict(repldict, symrepl)
+            # Replace in states
+            for state in self.nodes():
+                state.replace_dict(repldict, symrepl)
 
     def add_symbol(self, name, stype):
         """ Adds a symbol to the SDFG.
@@ -1064,7 +1073,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         if is_start_state is True:
             self.start_state = len(self.nodes()) - 1
             self._cached_start_state = node
-    
+
     def remove_node(self, node: SDFGState):
         if node is self._cached_start_state:
             self._cached_start_state = None
@@ -1425,8 +1434,9 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             with gzip.open(filename, 'rb') as fp:
                 return SDFG._from_file(fp)
         except OSError:
-            with open(filename, "rb") as fp:
-                return SDFG._from_file(fp)
+            pass
+        with open(filename, "rb") as fp:
+            return SDFG._from_file(fp)
 
     # Dynamic SDFG creation API
     ##############################
@@ -1813,7 +1823,8 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             if find_new_name:
                 name = self._find_new_name(name)
             else:
-                raise NameError('Array or Stream with name "%s" already exists ' "in SDFG" % name)
+                raise NameError('Array or Stream with name "%s" already exists '
+                                "in SDFG" % name)
         self._arrays[name] = datadesc
 
         # Add free symbols to the SDFG global symbol storage
@@ -1964,7 +1975,8 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
         # Argument checks
         if loop_var is None and (initialize_expr or increment_expr):
-            raise ValueError("Cannot initalize or increment an empty loop" " variable")
+            raise ValueError("Cannot initalize or increment an empty loop"
+                             " variable")
 
         # Handling empty states
         if loop_end_state is None:
@@ -2175,7 +2187,8 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                 unnecessary_args.extend(kwargs.keys())
             else:
                 unnecessary_args = [k for k in kwargs.keys() if k not in expected_args]
-            raise RuntimeError("Too many arguments to SDFG. Unnecessary " "arguments: %s" % ', '.join(unnecessary_args))
+            raise RuntimeError("Too many arguments to SDFG. Unnecessary "
+                               "arguments: %s" % ', '.join(unnecessary_args))
         positional_args = list(args)
         for i, arg in enumerate(expected_args):
             expected = expected_args[arg]
@@ -2188,7 +2201,8 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             if types_only:
                 desc = dt.create_datadescriptor(passed)
                 if not expected.is_equivalent(desc):
-                    raise TypeError("Type mismatch for argument: " "expected %s, got %s" % (expected, desc))
+                    raise TypeError("Type mismatch for argument: "
+                                    "expected %s, got %s" % (expected, desc))
                 else:
                     continue
             if isinstance(expected, dace.data.Array):
