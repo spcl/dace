@@ -167,13 +167,33 @@ def dfs_topological_sort(G, sources=None, condition=None):
                 stack.pop()
 
 
-def dfs_conditional(G, sources=None, condition=None):
-    """ Produce nodes in a depth-first ordering.
+class StopTraversal(Exception):
+    """
+    Special exception that stops DFS conditional traversal beyond the current node. 
+    
+    :see: dfs_conditional
+    """
+    pass
+
+
+def dfs_conditional(G, sources=None, condition=None, reverse=False, yield_parent=False):
+    """
+    Produce nodes in a depth-first ordering with an optional condition to stop traversal.
+    If ``StopTraversal`` is raised during iteration, the outgoing edges of the current node
+    will not be traversed.
+    
 
     :param G: An input DiGraph (assumed acyclic).
     :param sources: (optional) node or list of nodes that
                     specify starting point(s) for depth-first search and return
-                    edges in the component reachable from source.
+                    edges in the component reachable from source. If None, traverses from
+                    every node in the graph.
+    :param condition: (optional) a callback that receives the traversed parent and child.
+                      Called before each child node is traversed.
+                      If it returns True, traversal proceeds normally. If False, the child
+                      and reachable nodes are not traversed.
+    :param reverse: If True, traverses the graph backwards from the sources.
+    :param yield_parent: If True, yields a 2-tuple of (parent, child)
     :return: A generator of edges in the lastvisit depth-first-search.
 
     :note: Based on http://www.ics.uci.edu/~eppstein/PADS/DFS.py
@@ -183,6 +203,11 @@ def dfs_conditional(G, sources=None, condition=None):
     repeatedly until all components in the graph are searched.
 
     """
+    if reverse:
+        successors = G.predecessors
+    else:
+        successors = G.successors
+
     if sources is None:
         # produce edges for all components
         nodes = G
@@ -197,9 +222,15 @@ def dfs_conditional(G, sources=None, condition=None):
     for start in nodes:
         if start in visited:
             continue
-        yield start
+        try:
+            if yield_parent:
+                yield None, start
+            else:
+                yield start
+        except StopTraversal:
+            return
         visited.add(start)
-        stack = [(start, iter(G.successors(start)))]
+        stack = [(start, iter(successors(start)))]
         while stack:
             parent, children = stack[-1]
             try:
@@ -207,8 +238,14 @@ def dfs_conditional(G, sources=None, condition=None):
                 if child not in visited:
                     visited.add(child)
                     if condition is None or condition(parent, child):
-                        yield child
-                        stack.append((child, iter(G.successors(child))))
+                        try:
+                            if yield_parent:
+                                yield parent, child
+                            else:
+                                yield child
+                            stack.append((child, iter(successors(child))))
+                        except StopTraversal:
+                            pass
             except StopIteration:
                 stack.pop()
 
@@ -327,29 +364,6 @@ def change_edge_src(graph: gr.OrderedDiGraph, node_a: Union[nd.Node, gr.OrderedM
             graph.add_edge(node_b, e.src_conn, e.dst, e.dst_conn, e.data)
         else:
             graph.add_edge(node_b, e.dst, e.data)
-
-
-def find_source_nodes(graph):
-    """ Finds the source nodes of a graph.
-
-        The function finds the source nodes of a graph, i.e. the nodes with
-        zero in-degree.
-
-        :param graph: The graph whose source nodes are being searched for.
-        :return: A list of the source nodes found.
-    """
-    return [n for n in graph.nodes() if graph.in_degree(n) == 0]
-
-
-def find_sink_nodes(graph):
-    """ Finds the sink nodes of a graph.
-
-        The function finds the sink nodes of a graph, i.e. the nodes with zero out-degree.
-
-        :param graph: The graph whose sink nodes are being searched for.
-        :return: A list of the sink nodes found.
-    """
-    return [n for n in graph.nodes() if graph.out_degree(n) == 0]
 
 
 ParamsType = List['dace.symbolic.symbol']
@@ -476,12 +490,17 @@ def consolidate_edges_scope(state: SDFGState, scope_node: Union[nd.EntryNode, nd
 
     for conn in connectors_to_remove:
         e = edges_by_connector[conn][0]
+        offset = 3 if conn.startswith('IN_') else (4 if conn.startswith('OUT_') else len(oprefix))
         # Outer side of the scope - remove edge and union subsets
-        target_conn = prefix + data_to_conn[e.data.data][len(oprefix):]
-        conn_to_remove = prefix + conn[len(oprefix):]
+        target_conn = prefix + data_to_conn[e.data.data][offset:]
+        conn_to_remove = prefix + conn[offset:]
         remove_outer_connector(conn_to_remove)
-        out_edge = next(ed for ed in outer_edges(scope_node) if ed.dst_conn == target_conn)
-        edge_to_remove = next(ed for ed in outer_edges(scope_node) if ed.dst_conn == conn_to_remove)
+        if isinstance(scope_node, nd.EntryNode):
+            out_edge = next(ed for ed in outer_edges(scope_node) if ed.dst_conn == target_conn)
+            edge_to_remove = next(ed for ed in outer_edges(scope_node) if ed.dst_conn == conn_to_remove)
+        else:
+            out_edge = next(ed for ed in outer_edges(scope_node) if ed.src_conn == target_conn)
+            edge_to_remove = next(ed for ed in outer_edges(scope_node) if ed.src_conn == conn_to_remove)
         out_edge.data.subset = sbs.union(out_edge.data.subset, edge_to_remove.data.subset)
 
         # Check if dangling connectors have been created and remove them,
@@ -490,9 +509,14 @@ def consolidate_edges_scope(state: SDFGState, scope_node: Union[nd.EntryNode, nd
 
         consolidated += 1
         # Inner side of the scope - remove and reconnect
-        remove_inner_connector(e.src_conn)
-        for e in edges_by_connector[conn]:
-            e._src_conn = data_to_conn[e.data.data]
+        if isinstance(scope_node, nd.EntryNode):
+            remove_inner_connector(e.src_conn)
+            for e in edges_by_connector[conn]:
+                e._src_conn = data_to_conn[e.data.data]
+        else:
+            remove_inner_connector(e.dst_conn)
+            for e in edges_by_connector[conn]:
+                e._dst_conn = data_to_conn[e.data.data]
 
     return consolidated
 
@@ -1070,6 +1094,7 @@ def fuse_states(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> 
 
     for sd in sdfg.all_sdfgs_recursive():
         id = sd.sdfg_id
+
         while True:
             edges = list(sd.nx.edges)
             applied = 0
@@ -1081,8 +1106,9 @@ def fuse_states(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> 
 
                 if u in skip_nodes or v in skip_nodes:
                     continue
-                candidate = {StateFusion.first_state: sd.node_id(u), StateFusion.second_state: sd.node_id(v)}
-                sf = StateFusion(sd, id, -1, candidate, 0, override=True)
+                candidate = {StateFusion.first_state: u, StateFusion.second_state: v}
+                sf = StateFusion()
+                sf.setup_match(sd, id, -1, candidate, 0, override=True)
                 if sf.can_be_applied(sd, 0, sd, permissive=permissive):
                     sf.apply(sd, sd)
                     applied += 1
@@ -1141,13 +1167,13 @@ def inline_sdfgs(sdfg: SDFG, permissive: bool = False, progress: bool = None, mu
             pbar = tqdm(total=len(nsdfgs), desc='Inlining SDFG', initial=ctr)
 
         # We have to reevaluate every time due to changing IDs
-        node_id = state.node_id(node)
         state_id = sd.node_id(state)
         if multistate:
             candidate = {
-                InlineMultistateSDFG.nested_sdfg: node_id,
+                InlineMultistateSDFG.nested_sdfg: node,
             }
-            inliner = InlineMultistateSDFG(sd, id, state_id, candidate, 0, override=True)
+            inliner = InlineMultistateSDFG()
+            inliner.setup_match(sd, id, state_id, candidate, 0, override=True)
             if inliner.can_be_applied(state, 0, sd, permissive=permissive):
                 inliner.apply(state, sd)
                 counter += 1
@@ -1156,9 +1182,10 @@ def inline_sdfgs(sdfg: SDFG, permissive: bool = False, progress: bool = None, mu
                 continue
 
         candidate = {
-            InlineSDFG.nested_sdfg: node_id,
+            InlineSDFG.nested_sdfg: node,
         }
-        inliner = InlineSDFG(sd, id, state_id, candidate, 0, override=True)
+        inliner = InlineSDFG()
+        inliner.setup_match(sd, id, state_id, candidate, 0, override=True)
         if inliner.can_be_applied(state, 0, sd, permissive=permissive):
             inliner.apply(state, sd)
             counter += 1
@@ -1358,3 +1385,21 @@ def traverse_sdfg_with_defined_symbols(
     # If there is only one state, the DFS will miss it
     if start_state not in visited:
         yield from _tswds_state(sdfg, start_state, symbols, recursive)
+
+
+def is_fpga_kernel(sdfg, state):
+    """
+    Returns whether the given state is an FPGA kernel and should be dispatched
+    to the FPGA code generator.
+    :return: True if this is an FPGA kernel, False otherwise.
+    """
+    if ("is_FPGA_kernel" in state.location and state.location["is_FPGA_kernel"] == False):
+        return False
+    data_nodes = state.data_nodes()
+    if len(data_nodes) == 0:
+        return False
+    for n in data_nodes:
+        if n.desc(sdfg).storage not in (dtypes.StorageType.FPGA_Global, dtypes.StorageType.FPGA_Local,
+                                        dtypes.StorageType.FPGA_Registers, dtypes.StorageType.FPGA_ShiftRegister):
+            return False
+    return True

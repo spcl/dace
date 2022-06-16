@@ -7,9 +7,10 @@ import numbers
 import numpy
 import re
 import sympy
+import sys
 import warnings
 
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, OrderedDict, Set, Tuple, Union
 import dace
 from dace import data, dtypes, subsets, symbolic, sdfg as sd
 from dace.config import Config
@@ -24,11 +25,13 @@ class DaceRecursionError(Exception):
     The exception includes the id of the topmost function as a stopping
     condition for parsing.
     """
+
     def __init__(self, fid: int):
         self.fid = fid
 
     def __str__(self) -> str:
-        return ('Non-analyzable recursion detected, function cannot be parsed ' 'as data-centric')
+        return ('Non-analyzable recursion detected, function cannot be parsed '
+                'as data-centric')
 
 
 @dataclass
@@ -47,6 +50,7 @@ class PreprocessedAST:
 class StructTransformer(ast.NodeTransformer):
     """ A Python AST transformer that replaces `Call`s to create structs with
         the custom StructInitializer AST node. """
+
     def __init__(self, gvars):
         super().__init__()
         self._structs = {k: v for k, v in gvars.items() if isinstance(v, dtypes.struct)}
@@ -75,6 +79,7 @@ class StructTransformer(ast.NodeTransformer):
 
 # Replaces instances of modules Y imported with "import X as Y" by X
 class ModuleResolver(ast.NodeTransformer):
+
     def __init__(self, modules: Dict[str, str], always_replace=False):
         self.modules = modules
         self.should_replace = False
@@ -107,6 +112,7 @@ class RewriteSympyEquality(ast.NodeTransformer):
     This is done because a test ``if x == 0`` where ``x`` is a symbol would
     result in False, even in indeterminate cases.
     """
+
     def __init__(self, globals: Dict[str, Any]) -> None:
         super().__init__()
         self.globals = globals
@@ -143,6 +149,7 @@ class ConditionalCodeResolver(ast.NodeTransformer):
     """ 
     Replaces if conditions by their bodies if can be evaluated at compile time.
     """
+
     def __init__(self, globals: Dict[str, Any]):
         super().__init__()
         self.globals_and_locals = copy.copy(globals)
@@ -192,6 +199,7 @@ class _FindBreakContinueStmts(ast.NodeVisitor):
     Find control statements in the given loop (break / continue), without
     traversing into nested loops.
     """
+
     def __init__(self) -> None:
         super().__init__()
         self.has_cflow = False
@@ -219,6 +227,7 @@ class _FindBreakContinueStmts(ast.NodeVisitor):
 
 class DeadCodeEliminator(ast.NodeTransformer):
     """ Removes any code within scope after return/break/continue/raise. """
+
     def generic_visit(self, node: ast.AST):
         for field, old_value in ast.iter_fields(node):
             if isinstance(old_value, list):
@@ -300,9 +309,109 @@ def has_replacement(callobj: Callable, parent_object: Optional[Any] = None, node
     return oprepo.Replacements.get(astutils.rname(node)) is not None
 
 
+def _create_unflatten_instruction(arg: ast.AST) -> Tuple[Callable, int]:
+    """
+    Creates a lambda function for recreating the original Python object and returns the number of 
+    arguments to increment.
+    """
+    if isinstance(arg, ast.List):
+        return (list, len(arg.elts))
+    elif isinstance(arg, ast.Tuple):
+        return (tuple, len(arg.elts))
+    elif isinstance(arg, ast.Set):
+        return (set, len(arg.elts))
+    elif isinstance(arg, ast.Dict):
+        # Use two levels of functions to preserve keyword names
+        def make_remake(kwnames):
+            def remake_dict(args):
+                return {k: a for k, a in zip(kwnames, args)}
+            return remake_dict
+
+        # Remake keyword argument names from AST
+        kwarg_names = []
+        for kw in arg.keys:
+            if isinstance(kw, ast.Num):
+                kwarg_names.append(kw.n)
+            elif isinstance(kw, (ast.Str, ast.Bytes)):
+                kwarg_names.append(kw.s)
+            elif isinstance(kw, ast.NameConstant):
+                kwarg_names.append(kw.value)
+            elif sys.version_info >= (3, 8) and isinstance(kw, ast.Constant):
+                kwarg_names.append(kw.value)
+            else:
+                raise NotImplementedError(f'Key type {type(kw).__name__} is not supported')
+
+        return (make_remake(kwarg_names), len(arg.keys))
+    return (None, 1)
+
+
+def flatten_callback(func: Callable, node: ast.Call):
+    """
+    Creates a version of the function that has only marshallable arguments and no keyword arguments.
+    Arguments in callback matches the number of arguments used exactly.
+    Used for creating callbacks from C to Python with keyword arguments or other Pythonic structures 
+    (such as literal lists).
+    """
+
+    # Find out if any Python arguments should be flattened
+    unflatten_instructions: Dict[int, Tuple[Callable, int]] = OrderedDict()
+    curarg = 0
+    instructions_exist = False
+    for arg in node.args:
+        call, inc = _create_unflatten_instruction(arg)
+        if call is not None:
+            instructions_exist = True
+        else:
+            call = lambda x: x[0]
+        unflatten_instructions[curarg] = call, inc
+        curarg += inc
+    for kw in node.keywords:
+        call, inc = _create_unflatten_instruction(kw.value)
+        if call is not None:
+            instructions_exist = True
+        else:
+            call = lambda x: x[0]
+        unflatten_instructions[curarg] = call, inc
+        curarg += inc
+
+    # Nothing to do, early exit
+    if not node.keywords and not instructions_exist:
+        return func
+
+    keywords = [kw.arg for kw in node.keywords]
+    poscount = len(node.args)
+
+    # Using two levels of functions to ensure keywords are stored with the callback
+    if instructions_exist:
+        # If unflattening is necessary, have one version of the callback
+        def make_cb(keywords, poscount, instructions):
+            def cb_func(*all_args):
+                # Create an unflattened version of the original arguments
+                unflattened = []
+                for i, (unflatten, skip) in instructions.items():
+                    unflattened.append(unflatten(all_args[i:i + skip]))
+
+                args = unflattened[:poscount]
+                kwargs = {kw: arg for kw, arg in zip(keywords, unflattened[poscount:])}
+                return func(*args, **kwargs)
+
+            return cb_func        
+    else:
+        def make_cb(keywords, poscount, _):
+            def cb_func(*all_args):
+                args = all_args[:poscount]
+                kwargs = {kw: arg for kw, arg in zip(keywords, all_args[poscount:])}
+                return func(*args, **kwargs)
+
+            return cb_func
+
+    return make_cb(keywords, poscount, unflatten_instructions)
+
+
 class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
     """ Resolves global constants and lambda expressions if not
         already defined in the given scope. """
+
     def __init__(self, globals: Dict[str, Any], resolve_functions: bool = False, default_args: Set[str] = None):
         self._globals = globals
         self.resolve_functions = resolve_functions
@@ -435,7 +544,15 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
                 else:
                     cbqualname = astutils.rname(parent_node)
                 cbname = self._qualname_to_array_name(cbqualname, prefix='')
-                self.closure.callbacks[cbname] = (cbqualname, value, False)
+
+                # Make a version of the callback without keyword arguments or Python literal objects (list, tuple, ...)
+                cb_func = flatten_callback(value, parent_node)
+
+                # If the callback already exists, and the details differ (e.g., different kwarg names), make new
+                if cbname in self.closure.callbacks and cb_func is not self.closure.callbacks[cbname][1]:
+                    cbname = data.find_new_name(cbname, self.closure.callbacks)
+
+                self.closure.callbacks[cbname] = (cbqualname, cb_func, False)
 
                 # From this point on, any failure will result in a callback
                 newnode = ast.Name(id=cbname, ctx=ast.Load())
@@ -579,12 +696,19 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
         return self.visit_Attribute(node)
 
     def visit_Call(self, node: ast.Call) -> Any:
+        from dace.frontend.python.interface import in_program  # Avoid import loop
+
         if hasattr(node.func, 'n') and isinstance(node.func.n, SDFGConvertible):
             # Skip already-parsed calls
             return self.generic_visit(node)
 
         try:
             global_func = astutils.evalnode(node.func, self.globals)
+
+            # Built-in functions are resolved directly
+            if global_func is in_program:
+                return self.global_value_to_node(True, parent_node=node, qualname=astutils.unparse(node), recurse=True)
+
             if self.resolve_functions:
                 global_val = astutils.evalnode(node, self.globals)
             else:
@@ -686,6 +810,7 @@ class ContextManagerInliner(ast.NodeTransformer, astutils.ASTHelperMixin):
     in the right places, i.e., at the end of the body or when the context is left due to
     a return statement, or top-level break/continue statements.
     """
+
     def __init__(self, globals: Dict[str, Any], filename: str, closure_resolver: GlobalResolver) -> None:
         super().__init__()
         self.with_statements: List[ast.With] = []
@@ -1015,6 +1140,7 @@ class LoopUnroller(ast.NodeTransformer):
 
 
 class CallTreeResolver(ast.NodeVisitor):
+
     def __init__(self, closure: SDFGClosure, globals: Dict[str, Any]) -> None:
         self.closure = closure
         self.seen_calls: Set[str] = set()
@@ -1160,6 +1286,7 @@ class CallTreeResolver(ast.NodeVisitor):
 
 
 class ArrayClosureResolver(ast.NodeVisitor):
+
     def __init__(self, closure: SDFGClosure):
         self.closure = closure
         self.arrays: Set[str] = set()
@@ -1171,6 +1298,7 @@ class ArrayClosureResolver(ast.NodeVisitor):
 
 
 class AugAssignExpander(ast.NodeTransformer):
+
     def visit_AugAssign(self, node: ast.AugAssign) -> ast.Assign:
         target = self.generic_visit(node.target)
         value = self.generic_visit(node.value)
@@ -1289,7 +1417,8 @@ def preprocess_dace_program(f: Callable[..., Any],
         ctr.visit(src_ast)
     except DaceRecursionError as ex:
         if id(f) == ex.fid:
-            raise TypeError('Parsing failed due to recursion in a data-centric ' 'context called from this function')
+            raise TypeError('Parsing failed due to recursion in a data-centric '
+                            'context called from this function')
         else:
             raise ex
     used_arrays = ArrayClosureResolver(closure_resolver.closure)

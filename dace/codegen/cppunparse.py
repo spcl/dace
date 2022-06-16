@@ -70,6 +70,7 @@
 ### END OF astunparse LICENSES
 
 from __future__ import print_function, unicode_literals
+from functools import lru_cache
 import inspect
 import six
 import sys
@@ -77,6 +78,8 @@ import ast
 import numpy as np
 import os
 import tokenize
+
+import sympy
 import dace
 from numbers import Number
 from six import StringIO
@@ -1092,6 +1095,9 @@ def py2cpp(code, expr_semicolon=True, defined_symbols=None):
         return cppunparse(code, expr_semicolon, defined_symbols=defined_symbols)
     elif isinstance(code, list):
         return '\n'.join(py2cpp(stmt) for stmt in code)
+    elif isinstance(code, sympy.Basic):
+        from dace import symbolic
+        return cppunparse(ast.parse(symbolic.symstr(code)), expr_semicolon, defined_symbols=defined_symbols)
     elif code.__class__.__name__ == 'function':
         try:
             code_str = inspect.getsource(code)
@@ -1110,6 +1116,6 @@ def py2cpp(code, expr_semicolon=True, defined_symbols=None):
     else:
         raise NotImplementedError('Unsupported type for py2cpp')
 
-
+@lru_cache(maxsize=16384)
 def pyexpr2cpp(expr):
     return py2cpp(expr, expr_semicolon=False)

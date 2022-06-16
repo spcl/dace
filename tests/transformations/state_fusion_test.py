@@ -22,6 +22,25 @@ def test_fuse_assignments():
     assert sdfg.number_of_nodes() == 3
 
 
+def test_fuse_assignments_2():
+    """
+    Two states in which the first's state's input assignment depends on a symbol assigned (again)
+    on the common interstate edge. Should fail.
+    """
+    sdfg = dace.SDFG('state_fusion_test')
+    state1 = sdfg.add_state()
+    state2 = sdfg.add_state()
+    state3 = sdfg.add_state()
+    state4 = sdfg.add_state()
+    state5 = sdfg.add_state()
+    sdfg.add_edge(state1, state2, dace.InterstateEdge(assignments=dict(k=1)))
+    sdfg.add_edge(state2, state3, dace.InterstateEdge(assignments=dict(k='k + 1')))
+    sdfg.add_edge(state3, state4, dace.InterstateEdge(assignments=dict(l='k + 1')))
+    sdfg.add_edge(state4, state5, dace.InterstateEdge(assignments=dict(k='k + 1')))
+    sdfg.apply_transformations_repeated(StateFusion)
+    assert sdfg.number_of_nodes() == 5
+
+
 def test_fuse_assignment_in_use():
     """ 
     Two states with an interstate assignment in between, where the assigned
@@ -380,6 +399,7 @@ def test_inout_second_state_2():
 
 if __name__ == '__main__':
     test_fuse_assignments()
+    test_fuse_assignments_2()
     test_fuse_assignment_in_use()
     test_two_to_one_cc_fusion()
     test_one_to_two_cc_fusion()

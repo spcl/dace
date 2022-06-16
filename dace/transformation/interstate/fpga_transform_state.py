@@ -105,11 +105,11 @@ class FPGATransformState(transformation.MultiStateTransformation):
         # kernel
         shared_transients = set(sdfg.shared_transients())
         input_nodes = [
-            n for n in sdutil.find_source_nodes(state)
+            n for n in state.source_nodes()
             if isinstance(n, nodes.AccessNode) and (not sdfg.arrays[n.data].transient or n.data in shared_transients)
         ]
         output_nodes = [
-            n for n in sdutil.find_sink_nodes(state)
+            n for n in state.sink_nodes()
             if isinstance(n, nodes.AccessNode) and (not sdfg.arrays[n.data].transient or n.data in shared_transients)
         ]
 

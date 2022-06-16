@@ -98,7 +98,8 @@ def test_offsets():
     assert (np.allclose(A_cpy, expected))
 
     subgraph = SubgraphView(sdfg.nodes()[0], sdfg.nodes()[0].nodes())
-    sf = SubgraphFusion(subgraph)
+    sf = SubgraphFusion()
+    sf.setup_match(subgraph)
     assert sf.can_be_applied(sdfg, subgraph)
     fusion(sdfg, sdfg.nodes()[0], None)
 

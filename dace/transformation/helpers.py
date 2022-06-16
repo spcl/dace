@@ -174,6 +174,7 @@ def nest_state_subgraph(sdfg: SDFG,
     ###################
 
     # Add scope symbols to the nested SDFG
+    symbols_at_top = state.symbols_defined_at(top_scopenode)
     defined_vars = set(
         symbolic.pystr_to_symbolic(s) for s in (state.symbols_defined_at(top_scopenode).keys()
                                                 | sdfg.symbols))
@@ -243,7 +244,7 @@ def nest_state_subgraph(sdfg: SDFG,
             data = Memlet.from_array(edge.data.data, sdfg.arrays[edge.data.data])
         else:
             data = copy.deepcopy(edge.data)
-            data.subset = global_subsets[edge.data.data][1]
+            data.subset = copy.deepcopy(global_subsets[edge.data.data][1])
         state.add_edge(edge.src, edge.src_conn, nested_sdfg, name, data)
         reconnected_in.add(name)
 
@@ -259,7 +260,7 @@ def nest_state_subgraph(sdfg: SDFG,
             data = Memlet.from_array(edge.data.data, sdfg.arrays[edge.data.data])
         else:
             data = copy.deepcopy(edge.data)
-            data.subset = global_subsets[edge.data.data][1]
+            data.subset = copy.deepcopy(global_subsets[edge.data.data][1])
         data.wcr = edge.data.wcr
         state.add_edge(nested_sdfg, name, edge.dst, edge.dst_conn, data)
         reconnected_out.add(name)
@@ -350,7 +351,7 @@ def _get_internal_subset(internal_memlet: Memlet,
     if not use_src_subset and not use_dst_subset:
         return internal_memlet.subset
     if use_src_subset and use_dst_subset:
-        raise ValueError('Source and destination subsets cannot be ' 'specified at the same time')
+        raise ValueError('Source and destination subsets cannot be specified at the same time')
     if use_src_subset:
         return internal_memlet.src_subset
     if use_dst_subset:
@@ -552,7 +553,7 @@ def are_subsets_contiguous(subset_a: subsets.Subset, subset_b: subsets.Subset, d
         # A version that only checks for contiguity in certain
         # dimension (e.g., to prioritize stride-1 range)
         if (not isinstance(subset_a, subsets.Range) or not isinstance(subset_b, subsets.Range)):
-            raise NotImplementedError('Contiguous subset check only ' 'implemented for ranges')
+            raise NotImplementedError('Contiguous subset check only implemented for ranges')
 
         # Other dimensions must be equal
         for i, (s1, s2) in enumerate(zip(subset_a.ranges, subset_b.ranges)):

@@ -61,11 +61,13 @@ def _test_quantitatively(sdfg):
 
     subgraph = SubgraphView(graph, [node for node in graph.nodes()])
 
-    me = MultiExpansion(subgraph)
+    me = MultiExpansion()
+    me.setup_match(subgraph)
     assert me.can_be_applied(sdfg, subgraph) == True
     me.apply(sdfg)
 
-    sf = SubgraphFusion(subgraph)
+    sf = SubgraphFusion()
+    sf.setup_match(subgraph)
     assert sf.can_be_applied(sdfg, subgraph) == True
     sf.apply(sdfg)
 

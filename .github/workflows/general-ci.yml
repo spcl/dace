@@ -41,6 +41,7 @@ jobs:
       run: |
         export NOSTATUSBAR=1
         export DACE_testing_serialization=1
+        export DACE_testing_deserialize_exception=1
         export DACE_cache=unique
         export DACE_optimizer_interface=" "
         if [ "${{ matrix.simplify }}" = "autoopt" ]; then
@@ -57,6 +58,7 @@ jobs:
       run: |
         export NOSTATUSBAR=1
         export DACE_testing_serialization=1
+        export DACE_testing_deserialize_exception=1
         export DACE_cache=unique
         export DACE_optimizer_interface=" "
         if [ "${{ matrix.simplify }}" = "autoopt" ]; then
@@ -73,6 +75,7 @@ jobs:
       run: |
         export NOSTATUSBAR=1
         export DACE_testing_serialization=1
+        export DACE_testing_deserialize_exception=1
         export DACE_cache=single
         export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
         export PYTHON_BINARY="coverage run --source=dace --parallel-mode"

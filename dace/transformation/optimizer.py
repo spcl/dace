@@ -12,7 +12,7 @@ import dace
 from dace.config import Config
 from dace.sdfg import propagation
 from dace.sdfg.graph import SubgraphView
-from dace.transformation import pattern_matching
+from dace.transformation.passes import pattern_matching
 from dace.transformation.transformation import PatternTransformation
 
 # This import is necessary since it registers all the patterns

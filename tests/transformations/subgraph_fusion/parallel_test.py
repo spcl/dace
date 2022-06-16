@@ -90,14 +90,18 @@ def test_p1():
     del csdfg
 
     subgraph = SubgraphView(state, [node for node in state.nodes()])
-    expansion = MultiExpansion(subgraph)
-    fusion = SubgraphFusion(subgraph)
+    expansion = MultiExpansion()
+    expansion.setup_match(subgraph)
+    fusion = SubgraphFusion()
+    fusion.setup_match(subgraph)
 
-    me = MultiExpansion(subgraph)
+    me = MultiExpansion()
+    me.setup_match(subgraph)
     assert me.can_be_applied(sdfg, subgraph)
     me.apply(sdfg)
 
-    sf = SubgraphFusion(subgraph)
+    sf = SubgraphFusion()
+    sf.setup_match(subgraph)
     assert sf.can_be_applied(sdfg, subgraph)
     sf.apply(sdfg)
 

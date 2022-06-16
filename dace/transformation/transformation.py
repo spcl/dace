@@ -24,21 +24,29 @@ from dace.dtypes import ScheduleType
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg import nodes as nd, graph as gr, utils as sdutil, propagation, infer_types, state as st
 from dace.properties import make_properties, Property, DictProperty, SetProperty
+from dace.transformation import pass_pipeline as ppl
 from typing import Any, Dict, Generic, List, Optional, Set, Type, TypeVar, Union
 import pydoc
 
 
-class TransformationBase(object):
+class TransformationBase(ppl.Pass):
     """
     Base class for graph rewriting transformations. An instance of a TransformationBase object represents a match
     of the transformation (i.e., including a specific subgraph candidate to apply the transformation to), as well
     as properties of the transformation, which may affect if it can apply or not.
 
+    A Transformation can also be seen as a Pass that, when applied, operates on the given subgraph.
+
     :see: PatternTransformation
     :see: SubgraphTransformation
     :see: ExpandTransformation
     """
-    pass
+    def modifies(self):
+        # Unless otherwise mentioned, a transformation modifies everything
+        return ppl.Modifies.Everything
+
+    def should_reapply(self, _: ppl.Modifies) -> bool:
+        return True
 
 
 @make_properties
@@ -122,6 +130,12 @@ class PatternTransformation(TransformationBase):
         """
         raise NotImplementedError
 
+    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Any]:
+        # It is assumed that at the time of calling the transformation, all fields (e.g., subgraph) are already set
+        self._sdfg = sdfg
+        self._pipeline_results = pipeline_results
+        return self.apply_pattern()
+
     def match_to_str(self, graph: Union[SDFG, SDFGState]) -> str:
         """ Returns a string representation of the pattern match on the
             candidate subgraph. Used when identifying matches in the console
@@ -134,32 +148,33 @@ class PatternTransformation(TransformationBase):
             candidate.append(getattr(self, cname))
         return str(candidate)
 
-    def __init__(self,
-                 sdfg: SDFG,
-                 sdfg_id: int,
-                 state_id: int,
-                 subgraph: Dict['PatternNode', int],
-                 expr_index: int,
-                 override: bool = False,
-                 options: Optional[Dict[str, Any]] = None) -> None:
-        """ Initializes an instance of Transformation match.
-            :param sdfg_id: A unique ID of the SDFG.
-            :param state_id: The node ID of the SDFG state, if applicable. If
-                             transformation does not operate on a single state,
-                             the value should be -1.
-            :param subgraph: A mapping between node IDs returned from
-                             `PatternTransformation.expressions` and the nodes in
-                             `graph`.
-            :param expr_index: The list index from `PatternTransformation.expressions`
-                               that was matched.
-            :param override: If True, accepts the subgraph dictionary as-is
-                             (mostly for internal use).
-            :param options: An optional dictionary of transformation properties
-            :raise TypeError: When transformation is not subclass of
-                              PatternTransformation.
-            :raise TypeError: When state_id is not instance of int.
-            :raise TypeError: When subgraph is not a dict of
-                              PatternNode : int.
+    def setup_match(self,
+                    sdfg: SDFG,
+                    sdfg_id: int,
+                    state_id: int,
+                    subgraph: Dict['PatternNode', int],
+                    expr_index: int,
+                    override: bool = False,
+                    options: Optional[Dict[str, Any]] = None) -> None:
+        """
+        Sets the transformation to a given subgraph pattern.
+
+        :param sdfg_id: A unique ID of the SDFG.
+        :param state_id: The node ID of the SDFG state, if applicable. If
+                            transformation does not operate on a single state,
+                            the value should be -1.
+        :param subgraph: A mapping between node IDs returned from
+                            `PatternTransformation.expressions` and the nodes in
+                            `graph`.
+        :param expr_index: The list index from `PatternTransformation.expressions`
+                            that was matched.
+        :param override: If True, accepts the subgraph dictionary as-is
+                            (mostly for internal use).
+        :param options: An optional dictionary of transformation properties
+        :raise TypeError: When transformation is not subclass of
+                            PatternTransformation.
+        :raise TypeError: When state_id is not instance of int.
+        :raise TypeError: When subgraph is not a dict of {PatternNode: int}.
         """
 
         self._sdfg = sdfg
@@ -181,6 +196,8 @@ class PatternTransformation(TransformationBase):
         if options is not None:
             for optname, optval in options.items():
                 setattr(self, optname, optval)
+
+        self._pipeline_results = None
 
     @property
     def subgraph(self):
@@ -322,7 +339,8 @@ class PatternTransformation(TransformationBase):
 
         # Construct subgraph and instantiate transformation
         subgraph = {required_node_names[k]: graph.node_id(where[k]) for k in required}
-        instance = cls(sdfg, sdfg.sdfg_id, state_id, subgraph, expr_index)
+        instance = cls()
+        instance.setup_match(sdfg, sdfg.sdfg_id, state_id, subgraph, expr_index)
 
         # Construct transformation parameters
         for optname, optval in options.items():
@@ -368,7 +386,8 @@ class PatternTransformation(TransformationBase):
         subgraph = {expr.node(int(k)): int(v) for k, v in json_obj['_subgraph'].items()}
 
         # Reconstruct transformation
-        ret = xform(None, json_obj['sdfg_id'], json_obj['state_id'], subgraph, json_obj['expr_index'])
+        ret = xform()
+        ret.setup_match(None, json_obj['sdfg_id'], json_obj['state_id'], subgraph, json_obj['expr_index'])
         context = context or {}
         context['transformation'] = ret
         serialize.set_properties_from_json(ret, json_obj, context=context, ignore_properties={'transformation', 'type'})
@@ -539,6 +558,9 @@ class PatternNode(Generic[T]):
         node_id: int = instance.subgraph[self]
         state_id: int = instance.state_id
 
+        if not isinstance(node_id, int):  # Node ID is already an object
+            return node_id
+
         # Inter-state transformation
         if state_id == -1:
             return instance._sdfg.node(node_id)
@@ -634,7 +656,8 @@ class ExpandTransformation(PatternTransformation):
         subgraph = {expr.node(int(k)): int(v) for k, v in json_obj['_subgraph'].items()}
 
         # Reconstruct transformation
-        ret = xform(None, json_obj['sdfg_id'], json_obj['state_id'], subgraph, json_obj['expr_index'])
+        ret = xform()
+        ret.setup_match(None, json_obj['sdfg_id'], json_obj['state_id'], subgraph, json_obj['expr_index'])
         context = context or {}
         context['transformation'] = ret
         serialize.set_properties_from_json(ret,
@@ -659,10 +682,21 @@ class SubgraphTransformation(TransformationBase):
     state_id = Property(dtype=int, desc='ID of state to transform subgraph within, or -1 to transform the ' 'SDFG')
     subgraph = SetProperty(element_type=int, desc='Subgraph in transformation instance')
 
-    def __init__(self, subgraph: Union[Set[int], gr.SubgraphView], sdfg_id: int = None, state_id: int = None):
+    def setup_match(self, subgraph: Union[Set[int], gr.SubgraphView], sdfg_id: int = None, state_id: int = None):
+        """
+        Sets the transformation to a given subgraph.
+
+        :param subgraph: A set of node (or state) IDs or a subgraph view object.
+        :param sdfg_id: A unique ID of the SDFG.
+        :param state_id: The node ID of the SDFG state, if applicable. If
+                            transformation does not operate on a single state,
+                            the value should be -1.
+        """
         if (not isinstance(subgraph, (gr.SubgraphView, SDFG, SDFGState)) and (sdfg_id is None or state_id is None)):
             raise TypeError('Subgraph transformation either expects a SubgraphView or a '
                             'set of node IDs, SDFG ID and state ID (or -1).')
+
+        self._pipeline_results = None
 
         # An entire graph is given as a subgraph
         if isinstance(subgraph, (SDFG, SDFGState)):
@@ -733,6 +767,10 @@ class SubgraphTransformation(TransformationBase):
         """
         pass
 
+    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Any]:
+        self._pipeline_results = pipeline_results
+        return self.apply(sdfg)
+
     @classmethod
     def apply_to(cls,
                  sdfg: SDFG,
@@ -789,10 +827,12 @@ class SubgraphTransformation(TransformationBase):
 
             # Construct subgraph and instantiate transformation
             subgraph = gr.SubgraphView(graph, where)
-            instance = cls(subgraph, sdfg.sdfg_id, state_id)
+            instance = cls()
+            instance.setup_match(subgraph, sdfg.sdfg_id, state_id)
         else:
             # Construct instance from subgraph directly
-            instance = cls(subgraph)
+            instance = cls()
+            instance.setup_match(subgraph)
 
         # Construct transformation parameters
         for optname, optval in options.items():
@@ -817,7 +857,8 @@ class SubgraphTransformation(TransformationBase):
                      if ext.__name__ == json_obj['transformation'])
 
         # Reconstruct transformation
-        ret = xform(json_obj['subgraph'], json_obj['sdfg_id'], json_obj['state_id'])
+        ret = xform()
+        ret.setup_match(json_obj['subgraph'], json_obj['sdfg_id'], json_obj['state_id'])
         context = context or {}
         context['transformation'] = ret
         serialize.set_properties_from_json(ret, json_obj, context=context, ignore_properties={'transformation', 'type'})

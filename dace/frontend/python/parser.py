@@ -47,7 +47,7 @@ def _get_locals_and_globals(f):
     """ Retrieves a list of local and global variables for the function ``f``.
         This is used to retrieve variables around and defined before  @dace.programs for adding symbols and constants.
     """
-    result = {}
+    result = {'__dace__': True}
     # Update globals, then locals
     result.update(f.__globals__)
     # grab the free variables (i.e. locals)
@@ -77,6 +77,7 @@ def infer_symbols_from_datadescriptor(sdfg: SDFG, args: Dict[str, Any],
     exclude = set(symbolic.symbol(s) for s in exclude)
     equations = []
     symbols = set()
+    
     # Collect equations and symbols from arguments and shapes
     for arg_name, arg_val in args.items():
         if arg_name in sdfg.arrays:

@@ -32,7 +32,7 @@ class SubgraphFusionTuner(cutout_tuner.CutoutTuner):
     def cutouts(self, sdfg=None):
         if sdfg is None:
             sdfg = self._sdfg
-            
+
         for nsdfg_id, nsdfg in enumerate(sdfg.all_sdfgs_recursive()):
             for state in nsdfg.nodes():
                 state_id = nsdfg.node_id(state)
@@ -66,7 +66,8 @@ class SubgraphFusionTuner(cutout_tuner.CutoutTuner):
         maps_ = list(map(cutout.start_state.node, map_ids))
         subgraph = helpers.subgraph_from_maps(sdfg=sdfg, graph=state, map_entries=maps_)
 
-        subgraph_fusion = sg.CompositeFusion(subgraph, sdfg.sdfg_id, state_id)
+        subgraph_fusion = sg.CompositeFusion()
+        subgraph_fusion.setup_match(subgraph, sdfg.sdfg_id, state_id)
         subgraph_fusion.allow_tiling = True
         subgraph_fusion.schedule_innermaps = dace.ScheduleType.GPU_Device
         if subgraph_fusion.can_be_applied(sdfg, subgraph):
@@ -94,7 +95,7 @@ class SubgraphFusionTuner(cutout_tuner.CutoutTuner):
 
     def evaluate(self, config, cutout, measurements: int, **kwargs) -> float:
         dreport = self._sdfg.get_instrumented_data()
-        
+
         candidate = dace.SDFG.from_json(cutout)
         candidate.start_state.instrument = dace.InstrumentationType.GPU_Events
         for node in candidate.start_state:
@@ -115,7 +116,8 @@ class SubgraphFusionTuner(cutout_tuner.CutoutTuner):
         maps_ = list(map(candidate.start_state.node, map_ids))
         subgraph = helpers.subgraph_from_maps(sdfg=candidate, graph=candidate.start_state, map_entries=maps_)
 
-        subgraph_fusion = sg.CompositeFusion(subgraph, candidate.sdfg_id, candidate.node_id(candidate.start_state))
+        subgraph_fusion = sg.CompositeFusion()
+        subgraph_fusion.setup_match(subgraph, candidate.sdfg_id, candidate.node_id(candidate.start_state))
         subgraph_fusion.allow_tiling = True
         subgraph_fusion.schedule_innermaps = dace.ScheduleType.GPU_Device
         if subgraph_fusion.can_be_applied(candidate, subgraph):
@@ -148,9 +150,9 @@ class SubgraphFusionTuner(cutout_tuner.CutoutTuner):
 
             subgraph_patterns.append(pattern_desc)
 
-        subgraph_patterns = [dict(s) for s in set(frozenset(d.items()) for d in subgraph_patterns)] 
-        subgraph_patterns = [Counter(s) for s in subgraph_patterns] 
-        
+        subgraph_patterns = [dict(s) for s in set(frozenset(d.items()) for d in subgraph_patterns)]
+        subgraph_patterns = [Counter(s) for s in subgraph_patterns]
+
         return subgraph_patterns
 
     @staticmethod
@@ -167,13 +169,13 @@ class SubgraphFusionTuner(cutout_tuner.CutoutTuner):
         i = 0
         for nsdfg in sdfg.all_sdfgs_recursive():
             for state in nsdfg.states():
-                i = i + 1      
-                
+                i = i + 1
+
                 top_maps = []
                 for node in state.nodes():
                     if isinstance(node, dace.nodes.MapEntry) and xfh.get_parent_map(state, node) is None:
                         top_maps.append(node)
-                
+
                 if len(top_maps) < 2:
                     continue
 
@@ -183,12 +185,12 @@ class SubgraphFusionTuner(cutout_tuner.CutoutTuner):
                     cutout.start_state.instrument = dace.InstrumentationType.GPU_Events
                 except AttributeError as e:
                     continue
- 
+
                 while True:
                     base_runtime = None
                     best_pattern = None
                     best_pattern_runtime = math.inf
-                    for j, pattern in enumerate(subgraph_patterns): 
+                    for j, pattern in enumerate(subgraph_patterns):
                         maps = []
                         for node in state.nodes():
                             if isinstance(node, dace.nodes.MapEntry) and xfh.get_parent_map(state, node) is None:
@@ -202,16 +204,16 @@ class SubgraphFusionTuner(cutout_tuner.CutoutTuner):
                         for map_entry in maps:
                             map_desc = SubgraphFusionTuner.map_descriptor(state, map_entry)
                             state_desc.update({map_desc: 1})
-                            
+
                             if not map_desc in maps_desc:
                                 maps_desc[map_desc] = []
 
                             maps_desc[map_desc].append(map_entry)
-                        
+
                         included = True
                         for key in pattern:
                             if not key in state_desc or pattern[key] > state_desc[key]:
-                                included = False                        
+                                included = False
                                 break
 
                         if not included:
@@ -219,9 +221,9 @@ class SubgraphFusionTuner(cutout_tuner.CutoutTuner):
 
                         # State is applicable to fusion, compute baseline once.
                         if base_runtime is None:
-                            baseline = cutter.cutout_state(state, *(state.nodes()), make_copy=False)                    
+                            baseline = cutter.cutout_state(state, *(state.nodes()), make_copy=False)
                             baseline.start_state.instrument = dace.InstrumentationType.GPU_Events
-                            
+
                             dreport_ = {}
                             for cstate in baseline.nodes():
                                 for dnode in cstate.data_nodes():
@@ -249,7 +251,7 @@ class SubgraphFusionTuner(cutout_tuner.CutoutTuner):
                         experiment_sdfg_ = cutter.cutout_state(state, *(state.nodes()), make_copy=False)
                         experiment_state_ = experiment_sdfg_.start_state
                         experiment_maps_ids = list(map(lambda me: experiment_state_.node_id(me), subgraph_maps))
-                        
+
                         # Unnecessary?
                         experiment_sdfg = copy.deepcopy(experiment_sdfg_)
                         experiment_state = experiment_sdfg.start_state
@@ -257,7 +259,9 @@ class SubgraphFusionTuner(cutout_tuner.CutoutTuner):
                         experiment_maps = list(map(lambda m_id: experiment_state.node(m_id), experiment_maps_ids))
                         experiment_subgraph = helpers.subgraph_from_maps(sdfg=experiment_sdfg, graph=experiment_state, map_entries=experiment_maps)
 
-                        subgraph_fusion = sg.CompositeFusion(experiment_subgraph, experiment_sdfg.sdfg_id, experiment_sdfg.node_id(experiment_state))
+                        subgraph_fusion = sg.CompositeFusion()
+                        subgraph_fusion.setup_match(experiment_subgraph, experiment_sdfg.sdfg_id,
+                                                    experiment_sdfg.node_id(experiment_state))
                         subgraph_fusion.allow_tiling = True
                         subgraph_fusion.schedule_innermaps = dace.ScheduleType.GPU_Device
                         if subgraph_fusion.can_be_applied(experiment_sdfg, experiment_subgraph):
@@ -290,7 +294,8 @@ class SubgraphFusionTuner(cutout_tuner.CutoutTuner):
 
                     if best_pattern is not None:
                         subgraph = helpers.subgraph_from_maps(sdfg=nsdfg, graph=state, map_entries=best_pattern)
-                        subgraph_fusion = sg.CompositeFusion(subgraph, nsdfg.sdfg_id, nsdfg.node_id(state))
+                        subgraph_fusion = sg.CompositeFusion()
+                        subgraph_fusion.setup_match(subgraph, nsdfg.sdfg_id, nsdfg.node_id(state))
                         subgraph_fusion.allow_tiling = True
                         subgraph_fusion.schedule_innermaps = dace.ScheduleType.GPU_Device
                         subgraph_fusion.apply(nsdfg)
