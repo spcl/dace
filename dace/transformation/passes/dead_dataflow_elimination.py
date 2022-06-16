@@ -15,6 +15,7 @@ class DeadDataflowElimination(ppl.Pass):
     that are not used again. Removal propagates through scopes (maps), tasklets, and optionally library nodes.
     """
     remove_library_nodes: bool = False  #: If True, removes library nodes if their results are unused (disabled by default as it could lead to removing side effects)
+    remove_persistent_memory: bool = True  #: If True, marks code with Persistent allocation lifetime as dead
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Nodes | ppl.Modifies.Edges | ppl.Modifies.Descriptors
@@ -34,7 +35,11 @@ class DeadDataflowElimination(ppl.Pass):
         :return: A dictionary mapping states to their removed descriptors, or None if nothing was changed.
         """
         result: Dict[SDFGState, Set[str]] = defaultdict(set)
+        # Potentially depends on the following analysis passes:
+        #  * State reachability
+        #  * Read/write access sets
+        # Alternatively, array live-set as one analysis pass
 
-        # TODO: If a tasklet has dead outputs but also callbacks, mark as "live"
-
+        # TODO: If a tasklet has any callbacks, mark as "live" due to possible side effects
+        # TODO: If access node is persistent, mark as dead only if self.remove_persistent_memory is set
         return result or None
