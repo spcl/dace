@@ -558,6 +558,9 @@ class PatternNode(Generic[T]):
         node_id: int = instance.subgraph[self]
         state_id: int = instance.state_id
 
+        if not isinstance(node_id, int):  # Node ID is already an object
+            return node_id
+
         # Inter-state transformation
         if state_id == -1:
             return instance._sdfg.node(node_id)

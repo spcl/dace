@@ -129,17 +129,20 @@ class Property(Generic[T]):
             self._to_string = str
 
         if from_json is None:
+            if self._from_string is not None:
 
-            def f(obj, *args, **kwargs):
-                if isinstance(obj, str) and self._from_string is not None:
-                    # The serializer does not know about this property, so if
-                    # we can convert using our to_string method, do that here
-                    return self._from_string(obj)
-                # Otherwise ship off to the serializer, telling it which type
-                # it's dealing with as a sanity check
-                return dace.serialize.from_json(obj, *args, known_type=dtype, **kwargs)
+                def fs(obj, *args, **kwargs):
+                    if isinstance(obj, str):
+                        # The serializer does not know about this property, so if
+                        # we can convert using our to_string method, do that here
+                        return self._from_string(obj)
+                    # Otherwise ship off to the serializer, telling it which type
+                    # it's dealing with as a sanity check
+                    return dace.serialize.from_json(obj, *args, known_type=dtype, **kwargs)
 
-            self._from_json = f
+                self._from_json = fs
+            else:
+                self._from_json = lambda *args, **kwargs: dace.serialize.from_json(*args, known_type=dtype, **kwargs)
         else:
             self._from_json = from_json
 

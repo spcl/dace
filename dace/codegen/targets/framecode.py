@@ -429,22 +429,33 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
         # Gather shared transients, free symbols, and first/last appearance
         shared_transients = {}
         fsyms = {}
-        first_instance: Dict[int, Dict[str, Tuple[int, nodes.AccessNode]]] = {}
-        last_instance: Dict[int, Dict[str, Tuple[int, nodes.AccessNode]]] = {}
+        first_instance: Dict[int, Dict[str, Tuple[SDFGState, nodes.AccessNode]]] = {}
+        last_instance: Dict[int, Dict[str, Tuple[SDFGState, nodes.AccessNode]]] = {}
         for sdfg in top_sdfg.all_sdfgs_recursive():
             shared_transients[sdfg.sdfg_id] = sdfg.shared_transients(check_toplevel=False)
             fsyms[sdfg.sdfg_id] = self.symbols_and_constants(sdfg)
 
             # Possibly confusing control flow below finds the first/last state
             # and node of the data descriptor
-            finst: Dict[str, Tuple[int, nodes.AccessNode]] = {}
-            linst: Dict[str, Tuple[int, nodes.AccessNode]] = {}
+            finst: Dict[str, Tuple[SDFGState, nodes.AccessNode]] = {}
+            linst: Dict[str, Tuple[SDFGState, nodes.AccessNode]] = {}
+            array_names = set(sdfg.arrays.keys())
             for state in sdfg.topological_sort():
-                id = sdfg.node_id(state)
                 for node in state.data_nodes():
                     if node.data not in finst:
-                        finst[node.data] = (id, node)
-                    linst[node.data] = (id, node)
+                        finst[node.data] = (state, node)
+                    linst[node.data] = (state, node)
+
+                # Look in the surrounding edges for usage
+                edge_fsyms: Set[str] = set()
+                for e in sdfg.all_edges(state):
+                    edge_fsyms |= e.data.free_symbols
+                for edge_array in edge_fsyms & array_names:
+                    if edge_array not in finst:
+                        finst[edge_array] = (state, nodes.AccessNode(edge_array))
+                    linst[edge_array] = (state, nodes.AccessNode(edge_array))
+                
+
             first_instance[sdfg.sdfg_id] = finst
             last_instance[sdfg.sdfg_id] = linst
 
@@ -517,7 +528,7 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                 # beginning of their SDFG
                 alloc_scope = sdfg
                 if first_state_instance is not None:
-                    alloc_state = sdfg.nodes()[first_state_instance]
+                    alloc_state = first_state_instance
                 # If unused, skip
                 if first_node_instance is None:
                     continue
@@ -635,14 +646,14 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                 # Allocate in first State
                 # Deallocate in last State
                 if first_state_instance != last_state_instance:
-                    curscope = sdfg.nodes()[first_state_instance]
+                    curscope = first_state_instance
                     self.to_allocate[curscope].append(
                         (sdfg, first_state_instance, first_node_instance, False, True, False))
-                    curscope = sdfg.nodes()[last_state_instance]
+                    curscope = last_state_instance
                     self.to_allocate[curscope].append(
                         (sdfg, last_state_instance, last_node_instance, False, False, True))
                 else:
-                    curscope = sdfg.nodes()[first_state_instance]
+                    curscope = first_state_instance
                     self.to_allocate[curscope].append(
                         (sdfg, first_state_instance, first_node_instance, False, True, True))
             else:
@@ -655,11 +666,12 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
     def allocate_arrays_in_scope(self, sdfg: SDFG, scope: Union[nodes.EntryNode, SDFGState, SDFG],
                                  function_stream: CodeIOStream, callsite_stream: CodeIOStream):
         """ Dispatches allocation of all arrays in the given scope. """
-        for tsdfg, state_id, node, declare, allocate, _ in self.to_allocate[scope]:
-            if state_id is not None:
-                state = tsdfg.node(state_id)
+        for tsdfg, state, node, declare, allocate, _ in self.to_allocate[scope]:
+            if state is not None:
+                state_id = tsdfg.node_id(state)
             else:
-                state = None
+                state_id = -1
+   
             desc = node.desc(tsdfg)
 
             self._dispatcher.dispatch_allocate(tsdfg, state, state_id, node, desc, function_stream, callsite_stream,
@@ -668,13 +680,14 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
     def deallocate_arrays_in_scope(self, sdfg: SDFG, scope: Union[nodes.EntryNode, SDFGState, SDFG],
                                    function_stream: CodeIOStream, callsite_stream: CodeIOStream):
         """ Dispatches deallocation of all arrays in the given scope. """
-        for tsdfg, state_id, node, _, _, deallocate in self.to_allocate[scope]:
+        for tsdfg, state, node, _, _, deallocate in self.to_allocate[scope]:
             if not deallocate:
                 continue
-            if state_id is not None:
-                state = tsdfg.node(state_id)
+            if state is not None:
+                state_id = tsdfg.node_id(state)
             else:
-                state = None
+                state_id = -1
+            
             desc = node.desc(tsdfg)
 
             self._dispatcher.dispatch_deallocate(tsdfg, state, state_id, node, desc, function_stream, callsite_stream)
