@@ -1414,6 +1414,8 @@ def is_array(obj: Any) -> bool:
     :param obj: The given object.
     :return: True iff the object implements the array interface.
     """
+    if isinstance(obj, type):
+        return False
     try:
         if hasattr(obj, '__cuda_array_interface__'):
             return True

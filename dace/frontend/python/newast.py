@@ -3082,9 +3082,9 @@ class ProgramVisitor(ExtNodeVisitor):
                 rng = rng or dace.subsets.Range.from_array(new_data)
             else:
                 true_target = copy.copy(target)
+                nslice = None
                 if isinstance(target, ast.Name):
                     true_target.id = true_name
-                    nslice = None
                 elif isinstance(target, ast.Subscript):
                     true_target.value = copy.copy(true_target.value)
                     true_target.value.id = true_name

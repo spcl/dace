@@ -142,6 +142,7 @@ def test_persistent_gpu_copy_regression():
 
 @pytest.mark.gpu
 def test_persistent_gpu_transpose_regression():
+
     @dace.program
     def test_persistent_transpose(A: dace.float64[5, 3]):
         return np.transpose(A)
@@ -162,6 +163,7 @@ def test_persistent_gpu_transpose_regression():
 
 def test_alloc_persistent_register():
     """ Tries to allocate persistent register array. Should fail. """
+
     @dace.program
     def lifetimetest(input: dace.float64[N]):
         tmp = dace.ndarray([1], input.dtype)
@@ -179,6 +181,7 @@ def test_alloc_persistent_register():
 
 
 def test_alloc_persistent():
+
     @dace.program
     def persistentmem(output: dace.int32[1]):
         tmp = dace.ndarray([1], output.dtype, lifetime=dace.AllocationLifetime.Persistent)
@@ -204,6 +207,7 @@ def test_alloc_persistent():
 
 
 def test_alloc_persistent_threadlocal():
+
     @dace.program
     def persistentmem(output: dace.int32[2]):
         tmp = dace.ndarray([2],
@@ -266,6 +270,7 @@ def test_alloc_multistate():
 
 
 def test_nested_view_samename():
+
     @dace.program
     def incall(a, b):
         tmp = a.reshape([10, 2])
@@ -286,6 +291,7 @@ def test_nested_view_samename():
 
 
 def test_nested_persistent():
+
     @dace.program
     def nestpers(a):
         tmp = np.ndarray([20], np.float64)
@@ -307,6 +313,7 @@ def test_nested_persistent():
 
 
 def test_persistent_scalar():
+
     @dace.program
     def perscal(a: dace.float64[20]):
         tmp = dace.define_local_scalar(dace.float64, lifetime=dace.AllocationLifetime.Persistent)
@@ -319,6 +326,7 @@ def test_persistent_scalar():
 
 
 def test_persistent_scalar_in_map():
+
     @dace.program
     def perscal(a: dace.float64[20, 20]):
         tmp = dace.define_local_scalar(dace.int32, lifetime=dace.AllocationLifetime.Persistent)
@@ -337,6 +345,7 @@ def test_persistent_scalar_in_map():
 
 
 def test_persistent_array_access():
+
     @dace.program
     def perscal(a: dace.float64[20]):
         tmp = dace.define_local_scalar(dace.int32, lifetime=dace.AllocationLifetime.Persistent)
@@ -351,6 +360,28 @@ def test_persistent_array_access():
     a = np.random.rand(20)
     perscal(a)
     assert np.allclose(a[3], 5)
+
+
+def test_double_nested_persistent_write():
+    sdfg = dace.SDFG('npw_inner')
+    sdfg.add_array('pers', [20], dace.float64)
+    state = sdfg.add_state()
+    t = state.add_tasklet('doit', {}, {'o'}, 'o = 1')
+    state.add_edge(t, 'o', state.add_write('pers'), None, dace.Memlet('pers[0]'))
+
+    osdfg = dace.SDFG('npw')
+    osdfg.add_transient('pers', [20], dace.float64, lifetime=dace.AllocationLifetime.Persistent)
+    state = osdfg.add_state()
+    me, mx = state.add_map('mapit', dict(i='0:20'))
+    nsdfg = state.add_nested_sdfg(sdfg, None, {}, {'pers'})
+    state.add_nedge(me, nsdfg, dace.Memlet())
+    state.add_memlet_path(nsdfg, mx, state.add_write('pers'), src_conn='pers', memlet=dace.Memlet('pers[0:20]'))
+
+    oosdfg = dace.SDFG('npw_outer')
+    state = oosdfg.add_state()
+    nsdfg = state.add_nested_sdfg(osdfg, None, {}, {})
+
+    oosdfg.compile()
 
 
 if __name__ == '__main__':
@@ -369,3 +400,4 @@ if __name__ == '__main__':
     test_persistent_scalar()
     test_persistent_scalar_in_map()
     test_persistent_array_access()
+    test_double_nested_persistent_write()
