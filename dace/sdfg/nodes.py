@@ -1174,6 +1174,15 @@ class LibraryNode(CodeNode):
     def __jsontype__(self):
         return 'LibraryNode'
 
+    @property
+    def has_side_effects(self) -> bool:
+        """
+        Returns True if this library node has other side effects (e.g., calling stateful libraries, communicating)
+        when expanded.
+        This method is meant to be extended by subclasses.
+        """
+        return False
+
     def to_json(self, parent):
         jsonobj = super().to_json(parent)
         jsonobj['classpath'] = full_class_path(self)
