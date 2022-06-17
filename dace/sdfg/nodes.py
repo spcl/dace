@@ -326,6 +326,13 @@ class Tasklet(CodeNode):
     instrument = EnumProperty(dtype=dtypes.InstrumentationType,
                               desc="Measure execution statistics with given method",
                               default=dtypes.InstrumentationType.No_Instrumentation)
+    side_effects = Property(dtype=bool,
+                            allow_none=True,
+                            default=None,
+                            desc='If True, this tasklet calls a function that may have '
+                            'additional side effects on the system state (e.g., callback). '
+                            'Defaults to None, which lets the framework make assumptions based on '
+                            'the tasklet contents')
 
     def __init__(self,
                  label,
@@ -338,6 +345,7 @@ class Tasklet(CodeNode):
                  code_init="",
                  code_exit="",
                  location=None,
+                 side_effects=None,
                  debuginfo=None):
         super(Tasklet, self).__init__(label, location, inputs, outputs)
 
@@ -347,6 +355,7 @@ class Tasklet(CodeNode):
         self.code_global = CodeBlock(code_global, dtypes.Language.CPP)
         self.code_init = CodeBlock(code_init, dtypes.Language.CPP)
         self.code_exit = CodeBlock(code_exit, dtypes.Language.CPP)
+        self.side_effects = side_effects
         self.debuginfo = debuginfo
 
     @property
@@ -596,7 +605,6 @@ class NestedSDFG(CodeNode):
 # Scope entry class
 class EntryNode(Node):
     """ A type of node that opens a scope (e.g., Map or Consume). """
-
     def validate(self, sdfg, state):
         self.map.validate(sdfg, state, self)
 
@@ -607,7 +615,6 @@ class EntryNode(Node):
 # Scope exit class
 class ExitNode(Node):
     """ A type of node that closes a scope (e.g., Map or Consume). """
-
     def validate(self, sdfg, state):
         self.map.validate(sdfg, state, self)
 
@@ -620,7 +627,6 @@ class MapEntry(EntryNode):
     """ Node that opens a Map scope.
         @see: Map
     """
-
     def __init__(self, map: 'Map', dynamic_inputs=None):
         super(MapEntry, self).__init__(dynamic_inputs or set())
         if map is None:
@@ -696,7 +702,6 @@ class MapExit(ExitNode):
     """ Node that closes a Map scope.
         @see: Map
     """
-
     def __init__(self, map: 'Map'):
         super(MapExit, self).__init__()
         if map is None:
@@ -834,7 +839,6 @@ class ConsumeEntry(EntryNode):
     """ Node that opens a Consume scope.
         @see: Consume
     """
-
     def __init__(self, consume, dynamic_inputs=None):
         super(ConsumeEntry, self).__init__(dynamic_inputs or set())
         if consume is None:
@@ -912,7 +916,6 @@ class ConsumeExit(ExitNode):
     """ Node that closes a Consume scope.
         @see: Consume
     """
-
     def __init__(self, consume):
         super(ConsumeExit, self).__init__()
         if consume is None:
@@ -1024,7 +1027,6 @@ ConsumeEntry = indirect_properties(Consume, lambda obj: obj.consume)(ConsumeEntr
 
 @dace.serialize.serializable
 class PipelineEntry(MapEntry):
-
     @staticmethod
     def map_type():
         return Pipeline
@@ -1057,7 +1059,6 @@ class PipelineEntry(MapEntry):
 
 @dace.serialize.serializable
 class PipelineExit(MapExit):
-
     @staticmethod
     def map_type():
         return Pipeline
