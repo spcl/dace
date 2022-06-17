@@ -3,8 +3,9 @@
 from collections import defaultdict
 from dataclasses import dataclass
 from dace.transformation import pass_pipeline as ppl
+from dace.transformation.passes import analysis as ap
 from dace import SDFG, SDFGState
-from typing import Dict, Set, Optional
+from typing import Any, Dict, Set, Optional, Tuple, Type
 
 
 @dataclass
@@ -24,21 +25,24 @@ class DeadDataflowElimination(ppl.Pass):
         # If dataflow or states changed, new dead code may be exposed
         return modified & (ppl.Modifies.Nodes | ppl.Modifies.Edges | ppl.Modifies.States)
 
-    def apply_pass(self, sdfg: SDFG, _) -> Optional[Dict[SDFGState, Set[str]]]:
+    def depends_on(self) -> Set[Type[ppl.Pass]]:
+        return {ap.StateReachability, ap.AccessSets}
+
+    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[SDFGState, Set[str]]]:
         """
         Removes unreachable dataflow throughout SDFG states.
         :param sdfg: The SDFG to modify.
         :param pipeline_results: If in the context of a ``Pipeline``, a dictionary that is populated with prior Pass
                                  results as ``{Pass subclass name: returned object from pass}``. If not run in a
                                  pipeline, an empty dictionary is expected.
-        :param initial_symbols: If not None, sets values of initial symbols.
         :return: A dictionary mapping states to their removed descriptors, or None if nothing was changed.
         """
+        reachable: Dict[SDFGState, Set[SDFGState]] = pipeline_results['StateReachability']
+        access_sets: Dict[SDFGState, Tuple[Set[str], Set[str]]] = pipeline_results['AccessSets']
         result: Dict[SDFGState, Set[str]] = defaultdict(set)
         # Potentially depends on the following analysis passes:
         #  * State reachability
-        #  * Read/write access sets
-        # Alternatively, array live-set as one analysis pass
+        #  * Read/write access sets per state
 
         # TODO: If a tasklet has any callbacks, mark as "live" due to possible side effects
         # TODO: If access node is persistent, mark as dead only if self.remove_persistent_memory is set
