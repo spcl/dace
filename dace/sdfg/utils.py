@@ -102,7 +102,7 @@ def depth_limited_dfs_iter(source, depth):
             stack.pop()
 
 
-def dfs_topological_sort(G, sources=None, condition=None):
+def dfs_topological_sort(G, sources=None, condition=None, reverse=False):
     """ Produce nodes in a depth-first topological ordering.
 
     The function produces nodes in a depth-first topological ordering
@@ -114,6 +114,7 @@ def dfs_topological_sort(G, sources=None, condition=None):
     :param sources: (optional) node or list of nodes that
                     specify starting point(s) for depth-first search and return
                     edges in the component reachable from source.
+    :param reverse: If True, traverses the graph backwards from the sources.
     :return: A generator of nodes in the lastvisit depth-first-search.
 
     :note: Based on http://www.ics.uci.edu/~eppstein/PADS/DFS.py
@@ -123,13 +124,20 @@ def dfs_topological_sort(G, sources=None, condition=None):
     repeatedly until all components in the graph are searched.
 
     """
+    if reverse:
+        source_nodes = 'sink_nodes'
+        predecessors = G.successors
+        neighbors = G.in_edges
+    else:
+        source_nodes = 'source_nodes'
+        predecessors = G.predecessors
+        neighbors = G.out_edges
+
     if sources is None:
         # produce edges for all components
-        if hasattr(G, 'source_nodes'):
-            nodes = list(G.source_nodes())
-            if len(nodes) == 0:
-                nodes = G
-        else:
+        src_nodes = getattr(G, source_nodes, lambda: G)
+        nodes = list(src_nodes())
+        if len(nodes) == 0:
             nodes = G
     else:
         # produce edges for components with source
@@ -144,7 +152,7 @@ def dfs_topological_sort(G, sources=None, condition=None):
             continue
         yield start
         visited.add(start)
-        stack = [(start, iter(G.neighbors(start)))]
+        stack = [(start, iter(neighbors(start)))]
         while stack:
             parent, children = stack[-1]
             try:
@@ -152,7 +160,7 @@ def dfs_topological_sort(G, sources=None, condition=None):
                 if child not in visited:
                     # Make sure that all predecessors have been visited
                     skip = False
-                    for pred in G.predecessors(child):
+                    for pred in predecessors(child):
                         if pred not in visited:
                             skip = True
                             break
@@ -162,7 +170,7 @@ def dfs_topological_sort(G, sources=None, condition=None):
                     visited.add(child)
                     if condition is None or condition(parent, child):
                         yield child
-                        stack.append((child, iter(G.neighbors(child))))
+                        stack.append((child, iter(neighbors(child))))
             except StopIteration:
                 stack.pop()
 
