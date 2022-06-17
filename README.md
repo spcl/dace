@@ -17,7 +17,7 @@ programs, which can be optimized to achieve state-of-the-art. Internally, DaCe
 uses the Stateful DataFlow multiGraph (SDFG) *data-centric intermediate 
 representation*: A transformable, interactive representation of code based on 
 data movement.
-Since the input code and the SDFG are separate, it is posible to optimize a 
+Since the input code and the SDFG are separate, it is possible to optimize a 
 program without changing its source, so that it stays readable. On the other 
 hand, transformations are customizable and user-extensible, so they can be written 
 once and reused in many applications.
@@ -30,7 +30,7 @@ DaCe generates high-performance programs for:
  * Xilinx and Intel FPGAs
 
 DaCe can be written inline in Python and transformed in the command-line/Jupyter 
-Notebooks, or SDFGs can be interactively modified using the Data-centric 
+Notebooks or SDFGs can be interactively modified using the Data-centric 
 Interactive Optimization Development Environment [Visual Studio Code extension](https://marketplace.visualstudio.com/items?itemName=phschaad.sdfv).
 
 For more information, see our [paper](http://www.arxiv.org/abs/1902.10345).
@@ -131,7 +131,7 @@ Other issues? Look for similar issues or start a discussion on our [GitHub Discu
 Configuration
 -------------
 
-DaCe creates a file called `.dace.conf` in the user's home directory. It provides useful settings that can be modified either directly in the file (YAML), or overriden on a case-by-case basis using environment variables that begin with `DACE_` and specify the setting (where categories are separated by underscores). The full configuration schema is located [here](dace/config_schema.yml).
+DaCe creates a file called `.dace.conf` in the user's home directory. It provides useful settings that can be modified either directly in the file (YAML) or overridden on a case-by-case basis using environment variables that begin with `DACE_` and specify the setting (where categories are separated by underscores). The full configuration schema is located [here](dace/config_schema.yml).
 
 The priority order for configuration files is as follows:
  1. If a `DACE_*` environment variable is found, its value will always be used
