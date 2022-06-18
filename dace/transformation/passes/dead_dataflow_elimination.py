@@ -63,6 +63,9 @@ class DeadDataflowElimination(ppl.Pass):
                 if isinstance(node, nodes.ExitNode) and state.entry_node(node) not in dead_nodes:
                     dead_nodes.remove(node)
 
+            if not dead_nodes:
+                continue
+
             # Remove nodes while preserving scopes
             scopes_to_reconnect: Set[nodes.Node] = set()
             for node in state.nodes():
@@ -77,6 +80,12 @@ class DeadDataflowElimination(ppl.Pass):
 
             state.remove_nodes_from(dead_nodes)
             result[state].update(dead_nodes)
+
+            # Remove isolated access nodes after elimination
+            for node in list(state.data_nodes()):
+                if state.degree(node) == 0:
+                    state.remove_node(node)
+                    result[state].add(node)
 
         return result or None
 
@@ -98,7 +107,7 @@ class DeadDataflowElimination(ppl.Pass):
             # Library nodes must not have any side effects to be considered dead
             if self.skip_library_nodes:
                 return False
-            return not node.has_side_effects()
+            return not node.has_side_effects
         elif isinstance(node, nodes.Tasklet):
             if node.side_effects is True:
                 return False
@@ -107,9 +116,14 @@ class DeadDataflowElimination(ppl.Pass):
                 pass
 
         elif isinstance(node, nodes.AccessNode):
-            # If access node is persistent, mark as dead only if self.remove_persistent_memory is set
+            desc = sdfg.arrays[node.data]
+
+            # If data descriptor is global, it cannot be removed
+            if not desc.transient:
+                return False
+
+            # If access node is persistent, mark as dead only if self.remove_persistent_memory is set            
             if not self.remove_persistent_memory:
-                desc = sdfg.arrays[node.data]
                 if desc.lifetime == dtypes.AllocationLifetime.Persistent:
                     return False
 
