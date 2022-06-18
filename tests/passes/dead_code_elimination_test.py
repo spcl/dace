@@ -100,6 +100,27 @@ def test_dde_access_node_in_scope(second_tasklet):
     sdfg.validate()
 
 
+def test_dde_connectors():
+    """ Tests removal of connectors on tasklets and nested SDFGs. """
+    @dace.program
+    def dde_conntest(a: dace.float64[20], b: dace.float64[20]):
+        c = dace.ndarray([20], dace.float64)
+        for i in dace.map[0:20]:
+            with dace.tasklet:
+                inp << a[i]
+
+                out1 = inp * 2
+                out2 = inp + 3
+
+                out1 >> c[i]
+                out2 >> b[i]
+
+    sdfg = dde_conntest.to_sdfg()  # Nested SDFG or tasklet depends on simplify configuration
+    Pipeline([DeadDataflowElimination()]).apply_pass(sdfg, {})
+    assert all('c' not in [n.data for n in state.data_nodes()] for state in sdfg.nodes())
+    sdfg.validate()
+
+
 def test_dde_scope_reconnect():
     '''
     Corner case:
@@ -108,9 +129,23 @@ def test_dde_scope_reconnect():
     }
     expected map to stay connected
     '''
-    # TODO
-    # Pipeline([DeadDataflowElimination()]).apply_pass(sdfg, {})
-    pass
+    sdfg = dace.SDFG('dde_scope_tester')
+    sdfg.add_symbol('cb', dace.callback(dace.float64))
+    sdfg.add_scalar('s', dace.float64, transient=True)
+
+    state = sdfg.add_state()
+    me, mx = state.add_map('doit', dict(i='0:2'))
+    # Tasklet has a callback and cannot be removed
+    t1 = state.add_tasklet('callback', {}, {'o'}, 'o = cb()', side_effects=True)
+    # Tasklet has no output and thus can be removed
+    t2 = state.add_tasklet('nothing', {'inp'}, {}, '')
+    state.add_nedge(me, t1, dace.Memlet())
+    state.add_edge(t1, 'o', t2, 'inp', dace.Memlet('s'))
+    state.add_nedge(t2, mx, dace.Memlet())
+
+    Pipeline([DeadDataflowElimination()]).apply_pass(sdfg, {})
+    assert set(state.nodes()) == {me, t1, mx}
+    sdfg.validate()
 
 
 def test_dce():
@@ -147,5 +182,6 @@ if __name__ == '__main__':
     test_dde_libnode()
     test_dde_access_node_in_scope(False)
     test_dde_access_node_in_scope(True)
+    test_dde_connectors()
     test_dde_scope_reconnect()
     test_dce()

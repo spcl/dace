@@ -5,9 +5,9 @@ from dataclasses import dataclass
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes import analysis as ap
 from dace.sdfg.analysis import cfg
-from dace import SDFG, SDFGState, dtypes
+from dace import SDFG, SDFGState, dtypes, Memlet
 from dace.sdfg import nodes, utils as sdutil
-from typing import Any, Dict, Set, Optional, Tuple, Type
+from typing import Any, Dict, List, Set, Optional, Tuple, Type
 
 
 @dataclass(unsafe_hash=True)
@@ -48,6 +48,10 @@ class DeadDataflowElimination(ppl.Pass):
 
         # Traverse SDFG backwards
         for state in reversed(list(cfg.stateorder_topological_sort(sdfg))):
+            #############################################
+            # Analysis
+            #############################################
+
             # Compute states where memory will no longer be read
             writes = access_sets[state][1]
             descendants = reachable[state]
@@ -55,19 +59,19 @@ class DeadDataflowElimination(ppl.Pass):
             no_longer_used: Set[str] = set(data for data in writes if data not in descendant_reads)
 
             # Compute dead nodes
-            dead_nodes: Set[nodes.Node] = set()
+            dead_nodes: List[nodes.Node] = []
 
             # Propagate deadness backwards within a state
             for node in sdutil.dfs_topological_sort(state, reverse=True):
                 if self._is_node_dead(node, sdfg, state, dead_nodes, no_longer_used):
-                    dead_nodes.add(node)
+                    dead_nodes.append(node)
 
             # Scope exit nodes are only dead if their corresponding entry nodes are
             live_nodes = set()
             for node in dead_nodes:
                 if isinstance(node, nodes.ExitNode) and state.entry_node(node) not in dead_nodes:
                     live_nodes.add(node)
-            dead_nodes -= live_nodes
+            dead_nodes = dtypes.deduplicate([n for n in dead_nodes if n not in live_nodes])
 
             if not dead_nodes:
                 continue
@@ -80,11 +84,42 @@ class DeadDataflowElimination(ppl.Pass):
                     if any(n in dead_nodes for n in state.predecessors(node)):
                         scopes_to_reconnect.add(node)
 
-            # TODO: Reconnect scopes
+            # Two types of scope disconnections may occur:
+            # 1. Two scope exits will no longer be connected
+            # 2. A predecessor of dead nodes is in a scope and not connected to its exit
+            # Case (1) is taken care of by ``remove_memlet_path``
+            # Case (2) is handled below
+            # Reconnect scopes
             if scopes_to_reconnect:
-                raise NotImplementedError
+                schildren = state.scope_children()
+                for exit_node in scopes_to_reconnect:
+                    entry_node = state.entry_node(exit_node)
+                    for node in schildren[entry_node]:
+                        if node is exit_node:
+                            continue
+                        if isinstance(node, nodes.EntryNode):
+                            node = state.exit_node(node)
+                        # If node will be disconnected from exit node, add an empty memlet
+                        if all(succ in dead_nodes for succ in state.successors(node)):
+                            state.add_nedge(node, exit_node, Memlet())
 
-            state.remove_nodes_from(dead_nodes)
+            #############################################
+            # Removal
+            #############################################
+            predecessor_nsdfgs: Dict[nodes.NestedSDFG, Set[str]] = defaultdict(set)
+            for node in dead_nodes:
+                # Remove memlet paths and connectors pertaining to dead nodes
+                for e in state.in_edges(node):
+                    mtree = state.memlet_tree(e)
+                    for leaf in mtree.leaves():
+                        # Keep track of predecessors of removed nodes for connector pruning
+                        if isinstance(leaf.src, nodes.NestedSDFG):
+                            predecessor_nsdfgs[leaf.src].add(leaf.src_conn)
+                        state.remove_memlet_path(leaf)
+
+                # Remove the node itself as necessary
+                state.remove_node(node)
+            
             result[state].update(dead_nodes)
 
             # Remove isolated access nodes after elimination
@@ -93,7 +128,15 @@ class DeadDataflowElimination(ppl.Pass):
                 if state.degree(node) == 0:
                     state.remove_node(node)
                     result[state].add(node)
-                
+
+            # Prune now-dead connectors
+            for node, dead_conns in predecessor_nsdfgs.items():
+                for conn in dead_conns:
+                    # If removed connector belonged to a nested SDFG, and no other input connector shares name,
+                    # make nested data transient (dead dataflow elimination would remove internally as necessary)
+                    if conn not in node.in_connectors:
+                        node.sdfg.arrays[conn].transient = True
+
             # Update read sets for the predecessor states to reuse
             access_nodes -= result[state]
             access_node_names = set(n.data for n in access_nodes if state.out_degree(n) > 0)
@@ -109,7 +152,7 @@ class DeadDataflowElimination(ppl.Pass):
         #   * Sub-case: Persistent allocation lifetime may block this, if configured
         # * Dead tasklets may not contain any callbacks
         # * Library nodes being dead depend on configuration (and side-effects)
-        
+
         # Check that all successors are dead
         if any(succ not in dead_nodes for succ in state.successors(node)):
             return False
@@ -134,7 +177,7 @@ class DeadDataflowElimination(ppl.Pass):
             if not desc.transient:
                 return False
 
-            # If access node is persistent, mark as dead only if self.remove_persistent_memory is set            
+            # If access node is persistent, mark as dead only if self.remove_persistent_memory is set
             if not self.remove_persistent_memory:
                 if desc.lifetime == dtypes.AllocationLifetime.Persistent:
                     return False
