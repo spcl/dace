@@ -18,10 +18,6 @@ from dace.codegen.targets.cpp import sym2cpp
 from dace.codegen.dispatcher import DefinedType, TargetDispatcher
 from sympy.core.symbol import Symbol
 
-# make mapping int -> int instead of int -> long long
-config.Config.set('compiler', 'default_data_types', value='c')
-dace.dtypes.DTYPE_TO_TYPECLASS[int] = dace.dtypes.typeclass(int)
-
 MAX_SSR_STREAMERS = 2
 # number of snitch cores executing parallel regions
 N_THREADS = 8
