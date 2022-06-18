@@ -75,6 +75,7 @@ class DeadDataflowElimination(ppl.Pass):
                 raise NotImplementedError
 
             state.remove_nodes_from(dead_nodes)
+            result[state].update(dead_nodes)
 
         return result or None
 
