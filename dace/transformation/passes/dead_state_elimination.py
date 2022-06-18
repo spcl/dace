@@ -59,12 +59,10 @@ class DeadStateElimination(ppl.Pass):
             if node in visited:
                 continue
             visited.add(node)
+
+            # First, check for unconditional edges
             unconditional = None
-
-            # Check outgoing edges
             for e in sdfg.out_edges(node):
-                next_node = e.dst
-
                 # If an unconditional edge is found, ignore all other outgoing edges
                 if self.is_definitely_taken(e.data):
                     # If more than one unconditional outgoing edge exist, fail with Invalid SDFG
@@ -75,13 +73,18 @@ class DeadStateElimination(ppl.Pass):
                     if set_unconditional_edges and not e.data.is_unconditional():
                         # Annotate edge as unconditional
                         e.data.condition = CodeBlock('1')
+
                     # Continue traversal through edge
-                    if next_node not in visited:
-                        queue.append(next_node)
+                    if e.dst not in visited:
+                        queue.append(e.dst)
                         continue
-                if unconditional is not None:  # Other unconditional edge exists, skip
-                    continue
-                # End of unconditional check
+            if unconditional is not None:  # Unconditional edge exists, skip traversal
+                continue
+            # End of unconditional check
+
+            # Check outgoing edges normally
+            for e in sdfg.out_edges(node):
+                next_node = e.dst
 
                 # Test for edges that definitely evaluate to False
                 if self.is_definitely_not_taken(e.data):
