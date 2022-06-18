@@ -1416,8 +1416,14 @@ def _result_type(arguments: Sequence[Union[str, Number, symbolic.symbol, sp.Basi
                 else:
                     result_type = dace.float64
             # Floor division between integers
-            elif operator == 'FloorDiv' and max(type1, type2) < 2:
+            elif operator in 'FloorDiv' and max(type1, type2) < 2:
                 if type1 == type2 and type1 == 0:  # Unsigned integers
+                    result_type = eval('dace.uint{}'.format(8 * max_bytes))
+                else:
+                    result_type = eval('dace.int{}'.format(8 * max_bytes))
+            # Multiplication between integers
+            elif operator in 'Mult' and max(type1, type2) < 2:
+                if type1 == 0 or type2 == 0:  # Unsigned integers
                     result_type = eval('dace.uint{}'.format(8 * max_bytes))
                 else:
                     result_type = eval('dace.int{}'.format(8 * max_bytes))
