@@ -10,7 +10,7 @@ from dace.sdfg import nodes, utils as sdutil
 from typing import Any, Dict, Set, Optional, Tuple, Type
 
 
-@dataclass
+@dataclass(unsafe_hash=True)
 class DeadDataflowElimination(ppl.Pass):
     """
     Removes unused computations from SDFG states.
@@ -47,20 +47,21 @@ class DeadDataflowElimination(ppl.Pass):
         result: Dict[SDFGState, Set[str]] = defaultdict(set)
 
         # TODO: Compute states where memory will no longer be read
+        no_longer_used = set()
 
         # Traverse SDFG backwards
-        for state in reversed(cfg.stateorder_topological_sort(sdfg)):
-            state: SDFGState
+        for state in reversed(list(cfg.stateorder_topological_sort(sdfg))):
             dead_nodes: Set[nodes.Node] = set()
 
             # Propagate deadness backwards within a state
             for node in sdutil.dfs_topological_sort(state, reverse=True):
-                if self._is_node_dead(node, dead_nodes):
+                if self._is_node_dead(node, sdfg, state, dead_nodes, no_longer_used):
                     dead_nodes.add(node)
 
-                    # If a scope entry node is marked dead, mark exit node as dead as well
-                    if isinstance(node, nodes.EntryNode):
-                        dead_nodes.add(state.exit_node(node))
+            # Scope exit nodes are only dead if their corresponding entry nodes are
+            for node in dead_nodes:
+                if isinstance(node, nodes.ExitNode) and state.entry_node(node) not in dead_nodes:
+                    dead_nodes.remove(node)
 
             # Remove nodes while preserving scopes
             scopes_to_reconnect: Set[nodes.Node] = set()
@@ -87,15 +88,13 @@ class DeadDataflowElimination(ppl.Pass):
         #   * Sub-case: Persistent allocation lifetime may block this, if configured
         # * Dead tasklets may not contain any callbacks
         # * Library nodes being dead depend on configuration (and side-effects)
-
-        if any(not isinstance(succ, nodes.ExitNode) and succ not in dead_nodes for succ in state.successors(node)):
-            # Scope exit nodes do not count for dead dataflow analysis. Instead they are dead if the entry node is dead
+        
+        # Check that all successors are dead
+        if any(succ not in dead_nodes for succ in state.successors(node)):
             return False
 
         # Determine on a case-by-case basis
-        if isinstance(node, nodes.ExitNode):
-            return False
-        elif isinstance(node, nodes.LibraryNode):
+        if isinstance(node, nodes.LibraryNode):
             # Library nodes must not have any side effects to be considered dead
             if self.skip_library_nodes:
                 return False
