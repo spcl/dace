@@ -49,33 +49,40 @@ class SnitchCodeGen(TargetCodeGenerator):
         # nodes, memory copy/allocation, scopes, states, and more.
         
         # In this case, register scopes
-        self.dispatcher._map_dispatchers[dace.ScheduleType.Sequential] = self
         self.dispatcher.register_map_dispatcher(dace.ScheduleType.Snitch, self)
         self.dispatcher.register_map_dispatcher(dace.ScheduleType.Snitch_Multicore, self)
         # Snitch_TCDM -> Register
 
         snitch_storage = [
             dace.StorageType.Snitch_TCDM, dace.StorageType.Snitch_L2, dace.StorageType.Snitch_SSR,
+        ]
+        snitch_or_cpu_storage = [
+            *snitch_storage,
             dace.StorageType.Register, dace.StorageType.CPU_Heap, dace.StorageType.CPU_ThreadLocal
         ]
-        for src_storage, dst_storage in itertools.product(
-                snitch_storage, snitch_storage):
+        for src_storage, dst_storage in itertools.chain(
+            itertools.product(snitch_storage, snitch_or_cpu_storage),
+            itertools.product(snitch_or_cpu_storage, snitch_storage)):
             self.dispatcher.register_copy_dispatcher(src_storage, dst_storage, None,
                                                 self)
 
         # for generate_state
         self.dispatcher.register_state_dispatcher(
-            self)
+            self, self.state_dispatch_predicate)
         # Registers a function that processes data allocation, 
         # initialization, and deinitialization (allocate_array)
         self.dispatcher.register_array_dispatcher(dace.StorageType.Snitch_TCDM, self)
         self.dispatcher.register_array_dispatcher(dace.StorageType.Snitch_SSR, self)
-        self.dispatcher.register_array_dispatcher(dace.StorageType.CPU_ThreadLocal, self)
-        self.dispatcher.register_array_dispatcher(dace.StorageType.CPU_Heap, self)
 
-        # Overwrite write_and_resolve_expr of the cpu codegen to emit my custom 
-        # write conflict resolutions
-        dace.codegen.targets.CPUCodeGen.write_and_resolve_expr = self.write_and_resolve_expr
+    def state_dispatch_predicate(self, sdfg, state):
+        for node in state.nodes():
+            if isinstance(node, nodes.AccessNode):
+                if "Snitch" in sdfg.arrays[node.label].storage.name:
+                    return True
+            if isinstance(node, nodes.MapEntry):
+                if "Snitch" in node.map.schedule.name:
+                    return True
+        return False
 
     def emit_ssr_setup(self, sdfg, state, para, global_stream, callsite_stream):
         if sum([x is not None for x in self.ssrs]) == 0:
@@ -422,6 +429,7 @@ class SnitchCodeGen(TargetCodeGenerator):
 
     def allocate_array(self, sdfg, dfg, state_id,
                        node, global_stream,
+                       function_stream,
                        declaration_stream,
                        allocation_stream) -> None:
         dbg('-- allocate_array')
@@ -500,9 +508,8 @@ class SnitchCodeGen(TargetCodeGenerator):
                 raise NotImplementedError("Unimplemented storage type " +
                                           str(nodedesc.storage))
 
-    def deallocate_array(self, sdfg, dfg, state_id, node, function_stream,
+    def deallocate_array(self, sdfg, dfg, state_id, node, nodedesc, function_stream,
                          callsite_stream):
-        nodedesc = node.desc(sdfg)
         arrsize = nodedesc.total_size
         alloc_name = cpp.ptr(node.data, nodedesc)
         dbg(f'-- deallocate_array storate="{nodedesc.storage}" arrsize="{arrsize}" alloc_name="{alloc_name}"')
