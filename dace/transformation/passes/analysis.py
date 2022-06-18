@@ -50,7 +50,7 @@ class AccessSets(ppl.Pass):
                 if state.in_degree(anode) > 0:
                     writeset.add(anode.data)
                 if state.out_degree(anode) > 0:
-                    readset.add(anode)
+                    readset.add(anode.data)
 
             result[state] = (readset, writeset)
 

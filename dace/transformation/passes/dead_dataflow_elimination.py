@@ -46,11 +46,15 @@ class DeadDataflowElimination(ppl.Pass):
         access_sets: Dict[SDFGState, Tuple[Set[str], Set[str]]] = pipeline_results['AccessSets']
         result: Dict[SDFGState, Set[str]] = defaultdict(set)
 
-        # TODO: Compute states where memory will no longer be read
-        no_longer_used = set()
-
         # Traverse SDFG backwards
         for state in reversed(list(cfg.stateorder_topological_sort(sdfg))):
+            # Compute states where memory will no longer be read
+            writes = access_sets[state][1]
+            descendants = reachable[state]
+            descendant_reads = set().union(*(access_sets[succ][0] for succ in descendants))
+            no_longer_used: Set[str] = set(data for data in writes if data not in descendant_reads)
+
+            # Compute dead nodes
             dead_nodes: Set[nodes.Node] = set()
 
             # Propagate deadness backwards within a state
@@ -59,9 +63,11 @@ class DeadDataflowElimination(ppl.Pass):
                     dead_nodes.add(node)
 
             # Scope exit nodes are only dead if their corresponding entry nodes are
+            live_nodes = set()
             for node in dead_nodes:
                 if isinstance(node, nodes.ExitNode) and state.entry_node(node) not in dead_nodes:
-                    dead_nodes.remove(node)
+                    live_nodes.add(node)
+            dead_nodes -= live_nodes
 
             if not dead_nodes:
                 continue
@@ -82,10 +88,16 @@ class DeadDataflowElimination(ppl.Pass):
             result[state].update(dead_nodes)
 
             # Remove isolated access nodes after elimination
-            for node in list(state.data_nodes()):
+            access_nodes = set(state.data_nodes())
+            for node in access_nodes:
                 if state.degree(node) == 0:
                     state.remove_node(node)
                     result[state].add(node)
+                
+            # Update read sets for the predecessor states to reuse
+            access_nodes -= result[state]
+            access_node_names = set(n.data for n in access_nodes if state.out_degree(n) > 0)
+            access_sets[state] = (access_node_names, access_sets[state][1])
 
         return result or None
 

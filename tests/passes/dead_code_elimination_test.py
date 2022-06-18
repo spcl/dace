@@ -51,7 +51,7 @@ def test_dde_simple():
         b[:] = a
 
     sdfg = dde_tester.to_sdfg()
-    removed = Pipeline(DeadDataflowElimination()).apply_pass(sdfg, {})
+    Pipeline([DeadDataflowElimination()]).apply_pass(sdfg, {})
     sdfg.simplify()
     assert sdfg.number_of_nodes() == 1
     # Access node with c should not exist
@@ -65,7 +65,7 @@ def test_dde_libnode():
         b[:] = a
 
     sdfg = dde_tester.to_sdfg()
-    removed = Pipeline(DeadDataflowElimination()).apply_pass(sdfg, {})
+    Pipeline([DeadDataflowElimination()]).apply_pass(sdfg, {})
     sdfg.simplify()
     assert sdfg.number_of_nodes() == 1
     # Access node with c should not exist
@@ -74,8 +74,30 @@ def test_dde_libnode():
 
 @pytest.mark.parametrize('second_tasklet', (False, True))
 def test_dde_access_node_in_scope(second_tasklet):
-    # TODO: map->map->tasklet[,tasklet]->mapexit->(accessnode)->mapexit
-    pass
+    sdfg = dace.SDFG('dde_anis')
+    sdfg.add_transient('a', [20], dace.float64)
+    state = sdfg.add_state()
+
+    # map->map->tasklet[,tasklet]->mapexit->(accessnode)->mapexit
+    ome, omx = state.add_map('outer', dict(i='0:10'))
+    ime, imx = state.add_map('inner', dict(j='0:2'))
+    t = state.add_tasklet('doit', {}, {'out'}, 'out = 1')
+    w = state.add_write('a')
+    state.add_memlet_path(ome, ime, t, memlet=dace.Memlet())
+    state.add_memlet_path(t, imx, w, memlet=dace.Memlet('a[i*2+j]'), src_conn='out')
+    state.add_nedge(w, omx, dace.Memlet())
+
+    if second_tasklet:
+        t2 = state.add_tasklet('stateful', {}, {}, '', side_effects=True)
+        state.add_nedge(ime, t2, dace.Memlet())
+        state.add_nedge(t2, imx, dace.Memlet())
+
+    Pipeline([DeadDataflowElimination()]).apply_pass(sdfg, {})
+    if second_tasklet:
+        assert set(state.nodes()) == {ome, ime, t2, imx, omx}
+    else:
+        assert state.number_of_nodes() == 0
+    sdfg.validate()
 
 
 def test_dde_scope_reconnect():
@@ -87,7 +109,7 @@ def test_dde_scope_reconnect():
     expected map to stay connected
     '''
     # TODO
-    # Pipeline(DeadDataflowElimination()).apply_pass(sdfg, {})
+    # Pipeline([DeadDataflowElimination()]).apply_pass(sdfg, {})
     pass
 
 
@@ -101,18 +123,21 @@ def test_dce():
         e = 5
         f = c + e
         # Unused branch
-        if f[0] > 1:
+        if a[0] > 1:
             b[:] = 5
         b[:] = a + 1  # Ends up overwritten
         b[:] = a + 2
         b += 1
 
     sdfg = dce_tester.to_sdfg(simplify=False)
-    Pipeline(DeadDataflowElimination()).apply_pass(sdfg, {})
-    DeadStateElimination().apply_pass(sdfg, {})
+    result = Pipeline([DeadDataflowElimination(), DeadStateElimination()]).apply_pass(sdfg, {})
     sdfg.simplify()
+    assert sdfg.number_of_nodes() <= 4
 
-    sdfg.save('bla.sdfg')
+    # Check that arrays were removed
+    assert all('c' not in [n.data for n in state.data_nodes()] for state in sdfg.nodes())
+    assert any('f' in [n.data for n in rstate if isinstance(n, dace.nodes.AccessNode)]
+               for rstate in result['DeadDataflowElimination'].values())
 
 
 if __name__ == '__main__':

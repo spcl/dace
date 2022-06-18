@@ -1,7 +1,6 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 
 import collections
-from dataclasses import dataclass
 from dace.properties import CodeBlock
 from dace.transformation import pass_pipeline as ppl
 from dace import SDFG, SDFGState, InterstateEdge
@@ -9,7 +8,6 @@ from dace.sdfg.validation import InvalidSDFGInterstateEdgeError
 from typing import Set, Optional
 
 
-@dataclass
 class DeadStateElimination(ppl.Pass):
     """
     Removes all unreachable states (e.g., due to a branch that will never be taken) from an SDFG.
