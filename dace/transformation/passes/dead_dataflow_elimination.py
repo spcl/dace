@@ -4,7 +4,9 @@ from collections import defaultdict
 from dataclasses import dataclass
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes import analysis as ap
-from dace import SDFG, SDFGState
+from dace.sdfg.analysis import cfg
+from dace import SDFG, SDFGState, dtypes
+from dace.sdfg import nodes, utils as sdutil
 from typing import Any, Dict, Set, Optional, Tuple, Type
 
 
@@ -15,7 +17,7 @@ class DeadDataflowElimination(ppl.Pass):
     Traverses the graph backwards, removing any computations that result in transient descriptors
     that are not used again. Removal propagates through scopes (maps), tasklets, and optionally library nodes.
     """
-    remove_library_nodes: bool = False  #: If True, removes library nodes if their results are unused (disabled by default as it could lead to removing side effects)
+    skip_library_nodes: bool = False  #: If True, does not remove library nodes if their results are unused. Otherwise removes library nodes without side effects.
     remove_persistent_memory: bool = True  #: If True, marks code with Persistent allocation lifetime as dead
 
     def modifies(self) -> ppl.Modifies:
@@ -35,15 +37,85 @@ class DeadDataflowElimination(ppl.Pass):
         :param pipeline_results: If in the context of a ``Pipeline``, a dictionary that is populated with prior Pass
                                  results as ``{Pass subclass name: returned object from pass}``. If not run in a
                                  pipeline, an empty dictionary is expected.
-        :return: A dictionary mapping states to their removed descriptors, or None if nothing was changed.
+        :return: A dictionary mapping states to removed data descriptor names, or None if nothing changed.
         """
+        # Depends on the following analysis passes:
+        #  * State reachability
+        #  * Read/write access sets per state
         reachable: Dict[SDFGState, Set[SDFGState]] = pipeline_results['StateReachability']
         access_sets: Dict[SDFGState, Tuple[Set[str], Set[str]]] = pipeline_results['AccessSets']
         result: Dict[SDFGState, Set[str]] = defaultdict(set)
-        # Potentially depends on the following analysis passes:
-        #  * State reachability
-        #  * Read/write access sets per state
 
-        # TODO: If a tasklet has any callbacks, mark as "live" due to possible side effects
-        # TODO: If access node is persistent, mark as dead only if self.remove_persistent_memory is set
+        # TODO: Compute states where memory will no longer be read
+
+        # Traverse SDFG backwards
+        for state in reversed(cfg.stateorder_topological_sort(sdfg)):
+            state: SDFGState
+            dead_nodes: Set[nodes.Node] = set()
+
+            # Propagate deadness backwards within a state
+            for node in sdutil.dfs_topological_sort(state, reverse=True):
+                if self._is_node_dead(node, dead_nodes):
+                    dead_nodes.add(node)
+
+                    # If a scope entry node is marked dead, mark exit node as dead as well
+                    if isinstance(node, nodes.EntryNode):
+                        dead_nodes.add(state.exit_node(node))
+
+            # Remove nodes while preserving scopes
+            scopes_to_reconnect: Set[nodes.Node] = set()
+            for node in state.nodes():
+                # Look for scope exits that will be disconnected
+                if isinstance(node, nodes.ExitNode) and node not in dead_nodes:
+                    if any(n in dead_nodes for n in state.predecessors(node)):
+                        scopes_to_reconnect.add(node)
+
+            # TODO: Reconnect scopes
+            if scopes_to_reconnect:
+                raise NotImplementedError
+
+            state.remove_nodes_from(dead_nodes)
+
         return result or None
+
+    def _is_node_dead(self, node: nodes.Node, sdfg: SDFG, state: SDFGState, dead_nodes: Set[nodes.Node],
+                      no_longer_used: Set[str]) -> bool:
+        # Conditions for dead node:
+        # * All successors are dead
+        # * Access node that can no longer be read
+        #   * Sub-case: Persistent allocation lifetime may block this, if configured
+        # * Dead tasklets may not contain any callbacks
+        # * Library nodes being dead depend on configuration (and side-effects)
+
+        if any(not isinstance(succ, nodes.ExitNode) and succ not in dead_nodes for succ in state.successors(node)):
+            # Scope exit nodes do not count for dead dataflow analysis. Instead they are dead if the entry node is dead
+            return False
+
+        # Determine on a case-by-case basis
+        if isinstance(node, nodes.ExitNode):
+            return False
+        elif isinstance(node, nodes.LibraryNode):
+            # Library nodes must not have any side effects to be considered dead
+            if self.skip_library_nodes:
+                return False
+            return not node.has_side_effects()
+        elif isinstance(node, nodes.Tasklet):
+            if node.side_effects is True:
+                return False
+            elif node.side_effects is None:
+                # TODO(later): If a tasklet has any callbacks, mark as "live" due to potential side effects
+                pass
+
+        elif isinstance(node, nodes.AccessNode):
+            # If access node is persistent, mark as dead only if self.remove_persistent_memory is set
+            if not self.remove_persistent_memory:
+                desc = sdfg.arrays[node.data]
+                if desc.lifetime == dtypes.AllocationLifetime.Persistent:
+                    return False
+
+            # If data will be used later, cannot remove
+            if node.data not in no_longer_used:
+                return False
+
+        # Any other case can be marked as dead
+        return True
