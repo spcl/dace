@@ -127,11 +127,11 @@ def dfs_topological_sort(G, sources=None, condition=None, reverse=False):
     if reverse:
         source_nodes = 'sink_nodes'
         predecessors = G.successors
-        neighbors = G.in_edges
+        neighbors = G.predecessors
     else:
         source_nodes = 'source_nodes'
         predecessors = G.predecessors
-        neighbors = G.out_edges
+        neighbors = G.successors
 
     if sources is None:
         # produce edges for all components
