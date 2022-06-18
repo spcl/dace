@@ -9,20 +9,20 @@ from dace.transformation.passes.dead_dataflow_elimination import DeadDataflowEli
 
 
 def test_dse_simple():
-    @dace.program
-    def dsetester(a: dace.float64[20], b: dace.float64[20], s: dace.uint32):
-        if s > 2 * s:  # Always False
-            b[:] = s
-        else:
-            b[:] = a
+    sdfg = dace.SDFG('dsetester')
+    sdfg.add_array('a', [20], dace.float64)
+    sdfg.add_symbol('s', dace.uint64)
+    init = sdfg.add_state()
+    s1 = sdfg.add_state()
+    s2 = sdfg.add_state()
+    s1.add_mapped_tasklet('doit', dict(i='0:20'), {}, 'out = 1', dict(out=dace.Memlet('a[i]')), external_edges=True)
+    s2.add_mapped_tasklet('doit', dict(i='0:20'), {}, 'out = 2', dict(out=dace.Memlet('a[i]')), external_edges=True)
 
-    sdfg = dsetester.to_sdfg(simplify=True)
+    sdfg.add_edge(init, s1, dace.InterstateEdge('s > s'))  # Always false
+    sdfg.add_edge(init, s2, dace.InterstateEdge('s <= s'))
+
     DeadStateElimination().apply_pass(sdfg, {})
-    sdfg.simplify()
-    assert sdfg.number_of_nodes() == 1
-    src_nodes = sdfg.node(0).source_nodes()
-    assert len(src_nodes) == 1
-    assert isinstance(src_nodes[0], dace.nodes.AccessNode) and src_nodes[0].data == 'a'
+    assert set(sdfg.nodes()) == {init, s2}
 
 
 def test_dse_unconditional():
