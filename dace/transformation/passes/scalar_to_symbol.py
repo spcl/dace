@@ -633,7 +633,7 @@ class ScalarToSymbolPromotion(passes.Pass):
                     newcode: str = ''
                     if input.language is dtypes.Language.Python:
                         # Remove attributed calls of constant values (e.g., dace.int32(2))
-                        RemoveConstantAttributes().visit(input.code.code[0].value)
+                        RemoveConstantAttributes().visit(input.code.code[0])
 
                         newcode = astutils.unparse(input.code.code[0].value)
                     elif input.language is dtypes.Language.CPP:
