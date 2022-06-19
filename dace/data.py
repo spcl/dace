@@ -452,6 +452,7 @@ class Array(Data):
     alignment = Property(dtype=int, default=0, desc='Allocation alignment in bytes (0 uses compiler-default)')
 
     start_offset = Property(dtype=int, default=0, desc='Allocation offset elements for manual alignment (pre-padding)')
+    optional = Property(dtype=bool, default=True, desc='If True, the array may have a value of None')
 
     def __init__(self,
                  dtype,
@@ -467,7 +468,8 @@ class Array(Data):
                  alignment=0,
                  debuginfo=None,
                  total_size=None,
-                 start_offset=None):
+                 start_offset=None,
+                 optional=None):
 
         super(Array, self).__init__(dtype, shape, transient, storage, location, lifetime, debuginfo)
 
@@ -479,6 +481,11 @@ class Array(Data):
         self.alignment = alignment
         if start_offset is not None:
             self.start_offset = start_offset
+        if optional is not None:
+            self.optional = optional
+        else:
+            # By default, transient arrays are not optional
+            self.optional = not self.transient
 
         if strides is not None:
             self.strides = cp.copy(strides)
@@ -504,7 +511,7 @@ class Array(Data):
     def clone(self):
         return type(self)(self.dtype, self.shape, self.transient, self.allow_conflicts, self.storage, self.location,
                           self.strides, self.offset, self.may_alias, self.lifetime, self.alignment, self.debuginfo,
-                          self.total_size, self.start_offset)
+                          self.total_size, self.start_offset, self.optional)
 
     def to_json(self):
         attrs = serialize.all_properties_to_json(self)
@@ -873,7 +880,6 @@ def make_array_from_descriptor(descriptor: Array, original_array: Optional[Array
 
         def copy_array(dst, src):
             dst[:] = src
-
 
     # Make numpy array from data descriptor
     npdtype = descriptor.dtype.as_numpy_dtype()
