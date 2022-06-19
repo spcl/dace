@@ -11,7 +11,7 @@ import dace.serialize
 from typing import Any, Dict, Set, Union
 from dace.config import Config
 from dace.sdfg import graph
-from dace.frontend.python.astutils import unparse
+from dace.frontend.python.astutils import unparse, rname
 from dace.properties import (EnumProperty, Property, CodeProperty, LambdaProperty, RangeProperty, DebugInfoProperty,
                              SetProperty, make_properties, indirect_properties, DataProperty, SymbolicProperty,
                              ListProperty, SDFGReferenceProperty, DictProperty, LibraryImplementationProperty,
@@ -385,6 +385,24 @@ class Tasklet(CodeNode):
     @property
     def free_symbols(self) -> Set[str]:
         return self.code.get_free_symbols(self.in_connectors.keys() | self.out_connectors.keys())
+
+    def has_side_effects(self, sdfg) -> bool:
+        """
+        Returns True if this tasklet may have other side effects (e.g., calling stateful libraries, communicating).
+        """
+        # If side effects property is set, takes precedence over node analysis
+        if self.side_effects is not None:
+            return self.side_effects
+
+        # If side effect property is not defined, find calls within tasklet
+        if self.code.language == dace.dtypes.Language.Python and self.code.code:
+            for stmt in self.code.code:
+                for n in ast.walk(stmt):
+                    if isinstance(n, ast.Call):
+                        cname = rname(n.func)
+                        if cname in sdfg.symbols or cname in sdfg.arrays:
+                            return True
+        return False
 
     def infer_connector_types(self, sdfg, state):
         # If a MLIR tasklet, simply read out the types (it's explicit)

@@ -164,11 +164,8 @@ class DeadDataflowElimination(ppl.Pass):
                 return False
             return not node.has_side_effects
         elif isinstance(node, nodes.Tasklet):
-            if node.side_effects is True:
-                return False
-            elif node.side_effects is None:
-                # TODO(later): If a tasklet has any callbacks, mark as "live" due to potential side effects
-                pass
+            # If a tasklet has any callbacks, mark as "live" due to potential side effects
+            return not node.has_side_effects(sdfg)
 
         elif isinstance(node, nodes.AccessNode):
             desc = sdfg.arrays[node.data]
