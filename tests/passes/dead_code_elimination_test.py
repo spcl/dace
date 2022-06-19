@@ -195,6 +195,22 @@ def test_dce_callback():
     assert num_tasklets_after > 0 and num_tasklets_after == num_tasklets_before
 
 
+def test_dce_callback_manual():
+    sdfg = dace.SDFG('dce_cbman')
+    sdfg.add_array('a', [20], dace.float64)
+    sdfg.add_symbol('cb', dace.callback(None, dace.float64))
+    state = sdfg.add_state()
+
+    r = state.add_read('a')
+    t = state.add_tasklet('callback', {'inp'}, {}, 'cb(inp)')
+    state.add_edge(r, None, t, 'inp', dace.Memlet('a[0:20]'))
+
+    sdfg.validate()
+    Pipeline([DeadDataflowElimination()]).apply_pass(sdfg, {})
+    assert set(state.nodes()) == {r, t}
+    sdfg.validate()
+
+
 if __name__ == '__main__':
     test_dse_simple()
     test_dse_unconditional()
@@ -206,3 +222,4 @@ if __name__ == '__main__':
     test_dde_scope_reconnect()
     test_dce()
     test_dce_callback()
+    test_dce_callback_manual()
