@@ -175,6 +175,26 @@ def test_dce():
                for rstate in result['DeadDataflowElimination'].values())
 
 
+def test_dce_callback():
+    def dace_inhibitor(f):
+        return f
+
+    @dace_inhibitor
+    def callback(arr):
+        # Do something with the array
+        print(arr)
+
+    @dace.program
+    def dce_cb(a: dace.float64[20]):
+        callback(a)
+
+    sdfg = dce_cb.to_sdfg()
+    num_tasklets_before = len([n for n, p in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet)])
+    Pipeline([DeadDataflowElimination()]).apply_pass(sdfg, {})
+    num_tasklets_after = len([n for n, p in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.Tasklet)])
+    assert num_tasklets_after > 0 and num_tasklets_after == num_tasklets_before
+
+
 if __name__ == '__main__':
     test_dse_simple()
     test_dse_unconditional()
@@ -185,3 +205,4 @@ if __name__ == '__main__':
     test_dde_connectors()
     test_dde_scope_reconnect()
     test_dce()
+    test_dce_callback()
