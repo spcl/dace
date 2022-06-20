@@ -726,6 +726,11 @@ def _abs(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, input: Union[str, N
     return _simple_call(sdfg, state, input, 'abs')
 
 
+@oprepo.replaces('round')
+def _round(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, input: Union[str, Number, symbolic.symbol]):
+    return _simple_call(sdfg, state, input, 'round', dtypes.typeclass(int))
+
+
 @oprepo.replaces('transpose')
 @oprepo.replaces('dace.transpose')
 @oprepo.replaces('numpy.transpose')
