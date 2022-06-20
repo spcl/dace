@@ -400,6 +400,8 @@ class Tasklet(CodeNode):
                 for n in ast.walk(stmt):
                     if isinstance(n, ast.Call):
                         cname = rname(n.func)
+                        # If the function name is a symbol or a Scalar data descriptor, it may be a dace.callback,
+                        # which means side effects are possible unless otherwise mentioned
                         if cname in sdfg.symbols or cname in sdfg.arrays:
                             return True
         return False
