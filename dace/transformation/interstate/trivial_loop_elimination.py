@@ -7,7 +7,7 @@ from dace.transformation import helpers, transformation
 from dace.transformation.interstate.loop_detection import (DetectLoop, find_for_loop)
 
 
-class TrivialLoopElimination(DetectLoop, transformation.MultiStateTransformation, transformation.SimplifyPass):
+class TrivialLoopElimination(DetectLoop, transformation.MultiStateTransformation):
     """
     Eliminates loops with a single loop iteration.
     """

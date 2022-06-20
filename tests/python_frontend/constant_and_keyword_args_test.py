@@ -9,6 +9,7 @@ from dace.frontend.python.common import DaceSyntaxError, SDFGConvertible
 
 
 def test_kwargs():
+
     @dace.program
     def kwarg(A: dace.float64[20], kw: dace.float64[20]):
         A[:] = kw + 1
@@ -20,6 +21,7 @@ def test_kwargs():
 
 
 def test_kwargs_jit():
+
     @dace.program
     def kwarg(A, kw):
         A[:] = kw + 1
@@ -31,6 +33,7 @@ def test_kwargs_jit():
 
 
 def test_kwargs_with_default():
+
     @dace.program
     def kwarg(A: dace.float64[20], kw: dace.float64[20] = np.ones([20])):
         A[:] = kw + 1
@@ -47,6 +50,7 @@ def test_kwargs_with_default():
 
 
 def test_var_args_jit():
+
     @dace.program
     def arg_jit(*args):
         return args[0] + args[1]
@@ -69,6 +73,7 @@ def test_var_args_aot():
 
 
 def test_var_args_empty():
+
     @dace.program
     def arg_aot(*args):
         return np.zeros([20])
@@ -77,6 +82,7 @@ def test_var_args_empty():
 
 
 def test_var_kwargs_jit():
+
     @dace.program
     def kwarg_jit(**kwargs):
         return kwargs['A'] + kwargs['B']
@@ -99,6 +105,7 @@ def test_var_kwargs_aot():
 
 
 def test_none_arrays():
+
     @dace.program
     def myprog(A: dace.float64[20], B: dace.float64[20]):
         result = np.zeros([20], dtype=dace.float64)
@@ -184,7 +191,9 @@ def test_none_convertibles_2():
     myfunc = None
 
     class AConvertible(SDFGConvertible):
+
         def __sdfg__(self):
+
             @dace.program
             def func():
                 arr = np.empty([20], np.float64)
@@ -214,6 +223,7 @@ def test_none_convertibles_2():
 
 
 def test_none_arrays_jit():
+
     @dace.program
     def myprog_jit(A, B):
         if B is None:
@@ -233,6 +243,7 @@ def test_none_arrays_jit():
 
 
 def test_optional_argument_jit():
+
     @dace.program
     def linear(x, w, bias):
         """ Linear layer with weights w applied to x, and optional bias. """
@@ -253,6 +264,7 @@ def test_optional_argument_jit():
 
 
 def test_optional_argument_jit_kwarg():
+
     @dace.program
     def linear(x, w, bias=None):
         """ Linear layer with weights w applied to x, and optional bias. """
@@ -273,6 +285,7 @@ def test_optional_argument_jit_kwarg():
 
 
 def test_optional_argument():
+
     @dace.program
     def linear(x: dace.float64[13, 14], w: dace.float64[10, 14], bias: dace.float64[10] = None):
         """ Linear layer with weights w applied to x, and optional bias. """
@@ -293,6 +306,7 @@ def test_optional_argument():
 
 
 def test_constant_argument_simple():
+
     @dace.program
     def const_prog(cst: dace.constant, B: dace.float64[20]):
         B[:] = cst
@@ -309,6 +323,7 @@ def test_constant_argument_simple():
 
 
 def test_constant_argument_default():
+
     @dace.program
     def const_prog(B: dace.float64[20], cst: dace.constant = 7):
         B[:] = cst
@@ -337,7 +352,9 @@ def test_constant_argument_object():
     """
     Tests nested functions with constant parameters passed in as arguments.
     """
+
     class MyConfiguration:
+
         def __init__(self, parameter):
             self.p = parameter * 2
             self.q = parameter * 4
@@ -367,7 +384,9 @@ def test_constant_argument_object():
 
 
 def test_none_field():
+
     class ClassA:
+
         def __init__(self, field_or_none):
             self.field_or_none = field_or_none
 
@@ -389,7 +408,9 @@ def test_none_field():
 
 
 def test_array_by_str_key():
+
     class AClass:
+
         def __init__(self):
             self.adict = dict(akey=7.0 * np.ones((10, )))
 
@@ -404,6 +425,7 @@ def test_array_by_str_key():
 
 
 def test_constant_folding():
+
     @dace.program
     def tofold(A: dace.float64[20], add: dace.constant):
         if add:
@@ -451,6 +473,7 @@ def test_intglobal():
 
 
 def test_numpynumber_condition():
+
     @dace.program
     def conditional_val(A: dace.float64[20], val: dace.constant):
         if (val % 4) == 0:
@@ -483,6 +506,7 @@ def test_constant_list_number():
 
 
 def test_constant_list_function():
+
     def a(A):
         A += 1
 
@@ -505,6 +529,7 @@ def test_constant_list_function():
 
 
 def test_constant_propagation():
+
     @dace.program
     def conditional_val(A: dace.float64[20], val: dace.constant):
         cval = val % 4
@@ -527,7 +552,40 @@ def test_constant_propagation():
     assert np.allclose(a, 0)
 
 
+def test_constant_propagation_pass():
+    from dace.transformation.passes import constant_propagation as cprop, dead_state_elimination as dse
+
+    @dace.program
+    def conditional_val(A: dace.float64[20], val: dace.constant):
+        cval = val % 4
+        if cval == 0:
+            A[:] = 0
+        else:
+            A[:] = 1
+
+    # Ensure condition was folded
+    sdfg_3 = conditional_val.to_sdfg(val=3, simplify=True)
+    cprop.ConstantPropagation().apply_pass(sdfg_3, {})
+    dse.DeadStateElimination().apply_pass(sdfg_3, {})
+    sdfg_3.simplify()
+    assert sdfg_3.number_of_nodes() == 1
+
+    # Ensure condition was folded
+    sdfg_4 = conditional_val.to_sdfg(val=4, simplify=True)
+    cprop.ConstantPropagation().apply_pass(sdfg_4, {})
+    dse.DeadStateElimination().apply_pass(sdfg_4, {})
+    sdfg_4.simplify()
+    assert sdfg_4.number_of_nodes() == 1
+
+    a = np.random.rand(20)
+    sdfg_3(a)
+    assert np.allclose(a, 1)
+    sdfg_4(a)
+    assert np.allclose(a, 0)
+
+
 def test_constant_propagation_2():
+
     @dace.program
     def conditional_val(A: dace.float64[20], val: dace.int64):
         if val:
@@ -544,6 +602,7 @@ def test_constant_propagation_2():
 
 
 def test_constant_proper_use():
+
     @dace.program
     def good_function(scal: dace.constant, scal2: dace.constant, arr):
         a_bool = scal == 1
@@ -564,6 +623,7 @@ def test_constant_proper_use():
 
 def test_constant_proper_use_2():
     """ Stress test constants with strings. """
+
     @dace.program
     def good_function(cfg: dace.constant, cfg2: dace.constant, arr):
         print(cfg)
@@ -582,6 +642,7 @@ def test_constant_proper_use_2():
 
 
 def test_constant_misuse():
+
     @dace.program
     def bad_function(scal: dace.constant, arr):
         a_bool = scal == 1
@@ -601,6 +662,7 @@ def test_constant_misuse():
 
 
 def test_constant_field():
+
     def function(ctx: dace.constant, arr, somebool):
         a_bool = ctx.scal == 1
         if a_bool and somebool:
@@ -646,6 +708,7 @@ if __name__ == '__main__':
     test_constant_list_number()
     test_constant_list_function()
     test_constant_propagation()
+    test_constant_propagation_pass()
     test_constant_propagation_2()
     test_constant_proper_use()
     test_constant_proper_use_2()

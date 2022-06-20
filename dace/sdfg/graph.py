@@ -664,10 +664,13 @@ class OrderedDiGraph(Graph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
         return self._nx.add_edge(src, dst, data=data)
 
     def remove_node(self, node: NodeT):
-        for edge in itertools.chain(self.in_edges(node), self.out_edges(node)):
-            self.remove_edge(edge)
-        del self._nodes[node]
-        self._nx.remove_node(node)
+        try:
+            for edge in itertools.chain(self.in_edges(node), self.out_edges(node)):
+                self.remove_edge(edge)
+            del self._nodes[node]
+            self._nx.remove_node(node)
+        except KeyError:
+            pass
 
     def remove_edge(self, edge: Edge[EdgeT]):
         src = edge.src

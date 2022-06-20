@@ -5,6 +5,7 @@ import dace.sdfg.nodes
 from dace.transformation.transformation import ExpandTransformation
 from .. import environments
 from dace import dtypes
+from dace.libraries.mpi.nodes.node import MPINode
 
 
 @dace.library.expansion
@@ -33,7 +34,7 @@ class ExpandWaitMPI(ExpandTransformation):
 
 
 @dace.library.node
-class Wait(dace.sdfg.nodes.LibraryNode):
+class Wait(MPINode):
 
     # Global properties
     implementations = {
@@ -100,7 +101,7 @@ class ExpandWaitallMPI(ExpandTransformation):
 
 
 @dace.library.node
-class Waitall(dace.sdfg.nodes.LibraryNode):
+class Waitall(MPINode):
 
     # Global properties
     implementations = {

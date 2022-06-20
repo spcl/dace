@@ -1421,6 +1421,12 @@ def _result_type(arguments: Sequence[Union[str, Number, symbolic.symbol, sp.Basi
                     result_type = eval('dace.uint{}'.format(8 * max_bytes))
                 else:
                     result_type = eval('dace.int{}'.format(8 * max_bytes))
+            # Multiplication between integers
+            elif operator == 'Mult' and max(type1, type2) < 2:
+                if type1 == 0 or type2 == 0:  # Unsigned integers
+                    result_type = eval('dace.uint{}'.format(8 * max_bytes))
+                else:
+                    result_type = eval('dace.int{}'.format(8 * max_bytes))
             # Power with base integer and exponent signed integer
             elif (operator == 'Pow' and max(type1, type2) < 2 and dtype2 in signed_types):
                 result_type = dace.float64
