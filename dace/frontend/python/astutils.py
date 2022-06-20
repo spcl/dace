@@ -88,7 +88,7 @@ def evalnode(node: ast.AST, gvars: Dict[str, Any]) -> Any:
             return node.value
 
     # Replace internal constants with their values
-    node = copy.deepcopy(node)
+    node = copy_tree(node)
     cext = ConstantExtractor(gvars)
     cext.visit(node)
     gvars = copy.copy(gvars)
