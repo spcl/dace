@@ -190,6 +190,12 @@ class InstrumentationReport(object):
                 counter_list = self.counters.keys()
 
             for counter in counter_list:
+                # Counter entries that contain an element ID are given as a
+                # 6-tuple, separated by spaces. We check if the provided entry
+                # contains an element ID (by checking if it's a 6-tuple), and
+                # then read out the element ID. The ID is given in a 'combined'
+                # form, where the first 16 bits represent the state ID and the
+                # last 16 bits represent the node ID.
                 parts = counter.split(' ')
                 element = ''
                 if len(parts) == 6:
@@ -199,6 +205,7 @@ class InstrumentationReport(object):
                         if state_id > 16383:
                             state_id = -1
                         node_id = unified & 0xFFFF
+                        # If no state ID is given, the element is a state.
                         if state_id < 0:
                             element = '{nid}'.format(nid=node_id)
                         else:
