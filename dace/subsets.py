@@ -148,9 +148,9 @@ class Range(Subset):
 
         def a2s(obj):
             if isinstance(obj, symbolic.SymExpr):
-                return {'main': str(obj.expr), 'approx': str(obj.approx)}
+                return {'main': symbolic._spickle(obj.expr), 'approx': symbolic._spickle(obj.approx)}
             else:
-                return str(obj)
+                return symbolic._spickle(obj)
 
         # TODO: Check if approximations should also be saved
         for (start, end, step), tile in zip(self.ranges, self.tile_sizes):
