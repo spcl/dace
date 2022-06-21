@@ -1046,7 +1046,7 @@ def safe_replace(mapping: Dict[Union[SymbolicType, str], Union[SymbolicType, str
 
 @lru_cache(16384)
 def _spickle(obj):
-    return sympy.printing.str.sstr(obj, order='none')
+    return sympy.printing.str.sstr(_sunpickle(sympy.printing.str.sstr(obj, order='none')), order='none')
 
 
 def _sunpickle(obj):
