@@ -887,9 +887,9 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         that sympy.printing.cxxcode does not provide. """
 
     def __init__(self, arrays, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+        # Faster print with order='none'
+        super().__init__(*args, settings=dict(order='none'), **kwargs)
         self.arrays = arrays or set()
-        self.order = 'none'  # Faster print
 
     def _print_Float(self, expr):
         nf = sympy_numeric_fix(expr)
