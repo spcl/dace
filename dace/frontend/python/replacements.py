@@ -726,6 +726,11 @@ def _abs(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, input: Union[str, N
     return _simple_call(sdfg, state, input, 'abs')
 
 
+@oprepo.replaces('round')
+def _round(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, input: Union[str, Number, symbolic.symbol]):
+    return _simple_call(sdfg, state, input, 'round', dtypes.typeclass(int))
+
+
 @oprepo.replaces('transpose')
 @oprepo.replaces('dace.transpose')
 @oprepo.replaces('numpy.transpose')
@@ -1418,6 +1423,12 @@ def _result_type(arguments: Sequence[Union[str, Number, symbolic.symbol, sp.Basi
             # Floor division between integers
             elif operator == 'FloorDiv' and max(type1, type2) < 2:
                 if type1 == type2 and type1 == 0:  # Unsigned integers
+                    result_type = eval('dace.uint{}'.format(8 * max_bytes))
+                else:
+                    result_type = eval('dace.int{}'.format(8 * max_bytes))
+            # Multiplication between integers
+            elif operator == 'Mult' and max(type1, type2) < 2:
+                if type1 == 0 or type2 == 0:  # Unsigned integers
                     result_type = eval('dace.uint{}'.format(8 * max_bytes))
                 else:
                     result_type = eval('dace.int{}'.format(8 * max_bytes))

@@ -4,6 +4,7 @@ import dace.properties
 import dace.sdfg.nodes
 from dace.transformation.transformation import ExpandTransformation
 from .. import environments
+from dace.libraries.mpi.nodes.node import MPINode
 
 
 @dace.library.expansion
@@ -39,7 +40,7 @@ class ExpandAllreduceMPI(ExpandTransformation):
 
 
 @dace.library.node
-class Allreduce(dace.sdfg.nodes.LibraryNode):
+class Allreduce(MPINode):
 
     # Global properties
     implementations = {
@@ -71,7 +72,7 @@ class Allreduce(dace.sdfg.nodes.LibraryNode):
             if e.dst_conn == "_inbuffer":
                 inpname = e.data.data
                 inbuffer = sdfg.arrays[e.data.data]
-        
+
         in_place = False
         if inpname == outname:
             in_place = True
