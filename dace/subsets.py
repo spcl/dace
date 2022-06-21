@@ -97,11 +97,14 @@ class Subset(object):
 
 
 def _simplified_str(val):
-    val = _expr(val)
+    try:  # Try as SymExpr
+        val = val.expr
+    except AttributeError:
+        pass
     try:
         return str(int(val))
     except TypeError:
-        return str(val)
+        return symbolic._spickle(val)
 
 
 def _expr(val):
