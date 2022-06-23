@@ -498,10 +498,14 @@ class ASTFindReplace(ast.NodeTransformer):
         self.repldict.update({k.id: v for k, v in self.repldict.items() if isinstance(k, ast.Name)})
 
     def visit_Name(self, node: ast.Name):
+        from dace.properties import CodeBlock  # Avoid import loop
+
         if node.id in self.repldict:
             val = self.repldict[node.id]
             if isinstance(val, ast.AST):
                 new_node = ast.copy_location(val, node)
+            elif isinstance(val, CodeBlock):
+                new_node = ast.copy_location(val.code[0], node)
             else:
                 new_node = ast.copy_location(ast.parse(str(self.repldict[node.id])).body[0].value, node)
             self.replace_count += 1
