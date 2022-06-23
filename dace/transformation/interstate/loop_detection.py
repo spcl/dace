@@ -133,7 +133,7 @@ def find_for_loop(
     itersym = symbolic.symbol(itervar)
     for iedge in guard_inedges:
         assignment = iedge.data.assignments[itervar]
-        if itersym in symbolic.pystr_to_symbolic(assignment).free_symbols:
+        if itervar in assignment.get_free_symbols():
             if step_edge is None:
                 step_edge = iedge
             else:
@@ -155,8 +155,8 @@ def find_for_loop(
         return None
 
     # Get the init expression and the stride.
-    start = symbolic.pystr_to_symbolic(init_assignment)
-    stride = (symbolic.pystr_to_symbolic(step_edge.data.assignments[itervar]) - itersym)
+    start = symbolic.pystr_to_symbolic(init_assignment.as_string)
+    stride = (symbolic.pystr_to_symbolic(step_edge.data.assignments[itervar].as_string) - itersym)
 
     # Get a list of the last states before the loop and a reference to the last
     # loop state.

@@ -533,9 +533,9 @@ def remove_scalar_reads(sdfg: sd.SDFG, array_names: Dict[str, str]):
                             ise.data.replace(e.dst_conn, tmp_symname)
                             # Remove subscript occurrences as well
                             for aname, aval in ise.data.assignments.items():
-                                vast = ast.parse(aval)
+                                vast = aval.code[0]
                                 vast = astutils.RemoveSubscripts({tmp_symname}).visit(vast)
-                                ise.data.assignments[aname] = astutils.unparse(vast)
+                                ise.data.assignments[aname] = props.CodeBlock(vast)
                             ise.data.replace(tmp_symname + '[0]', tmp_symname)
 
                         # Set symbol mapping
@@ -646,13 +646,14 @@ class ScalarToSymbolPromotion(passes.Pass):
                             memlet_str += '[%s]' % e.data.subset
                         newcode = re.sub(r'\b%s\b' % re.escape(e.dst_conn), memlet_str, newcode)
                     # Add interstate edge assignment
-                    new_isedge.data.assignments[node.data] = newcode
+                    new_isedge.data.assignments[node.data] = props.CodeBlock(newcode)
                 elif isinstance(input, nodes.AccessNode):
                     memlet: mm.Memlet = in_edge.data
                     if (memlet.src_subset and not isinstance(sdfg.arrays[memlet.data], dt.Scalar)):
-                        new_isedge.data.assignments[node.data] = '%s[%s]' % (input.data, memlet.src_subset)
+                        new_isedge.data.assignments[node.data] = props.CodeBlock('%s[%s]' %
+                                                                                 (input.data, memlet.src_subset))
                     else:
-                        new_isedge.data.assignments[node.data] = input.data
+                        new_isedge.data.assignments[node.data] = props.CodeBlock(input.data)
 
                 # Clean up all nodes after assignment was transferred
                 new_state.remove_nodes_from(new_state.nodes())
@@ -684,15 +685,24 @@ class ScalarToSymbolPromotion(passes.Pass):
                 if ise.condition.language is dtypes.Language.Python:
                     for stmt in ise.condition.code:
                         promo.visit(stmt)
-                elif ise.condition.language is dtypes.Language.CPP:
+                else:  # if ise.condition.language is dtypes.Language.CPP:
+                    cond = ise.condition.as_string
                     for scalar in to_promote:
-                        ise.condition = cleanup_re[scalar].sub(scalar, ise.condition.as_string)
+                        if scalar in cond:
+                            cond = cleanup_re[scalar].sub(scalar, cond)
+                    ise.condition = cond
 
             # Assignments
             for aname, assignment in ise.assignments.items():
-                for scalar in to_promote:
-                    if scalar in assignment:
-                        ise.assignments[aname] = cleanup_re[scalar].sub(scalar, assignment.strip())
+                if assignment.language is dtypes.Language.Python:
+                    for stmt in assignment.code:
+                        promo.visit(stmt)
+                else:
+                    strassign = assignment.as_string.strip()
+                    for scalar in to_promote:
+                        if scalar in strassign:
+                            strassign = cleanup_re[scalar].sub(scalar, strassign)
+                    ise.assignments[aname] = props.CodeBlock(strassign, language=assignment.language)
 
         # Step 7: Indirection
         remove_symbol_indirection(sdfg)

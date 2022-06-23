@@ -40,7 +40,7 @@ class ConstantPropagation(ppl.Pass):
             if len(edge.data.assignments) == 0:
                 continue
             # If no assignment assigns a constant to a symbol, no constants can be propagated
-            if any(not symbolic.issymbolic(aval) for aval in edge.data.assignments.values()):
+            if any(not aval.get_free_symbols() for aval in edge.data.assignments.values()):
                 return True
 
         return False
@@ -266,7 +266,7 @@ class ConstantPropagation(ppl.Pass):
         """
         Return symbol assignments that only depend on other symbols and constants, rather than data descriptors.
         """
-        return {k: v if (not (symbolic.free_symbols_and_functions(v) & arrays)) else _UnknownValue for k, v in edge.assignments.items()}
+        return {k: v if (not (v.get_free_symbols() & arrays)) else _UnknownValue for k, v in edge.assignments.items()}
 
     def _constants_from_unvisited_state(self, sdfg: SDFG, state: SDFGState, arrays: Set[str],
                                         existing_constants: Dict[SDFGState, Dict[str, Any]]) -> Dict[str, Any]:

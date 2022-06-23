@@ -97,7 +97,7 @@ class StartStateElimination(transformation.MultiStateTransformation):
             return False
         # Assignments that make descriptors into symbols cannot be eliminated
         for assign in edge.data.assignments.values():
-            if graph.arrays.keys() & symbolic.free_symbols_and_functions(assign):
+            if graph.arrays.keys() & assign.get_free_symbols():
                 return False
 
         return True
@@ -108,14 +108,14 @@ class StartStateElimination(transformation.MultiStateTransformation):
         node = sdfg.parent_nsdfg_node
         edge = sdfg.out_edges(state)[0]
         for k, v in edge.data.assignments.items():
-            node.symbol_mapping[k] = v
+            node.symbol_mapping[k] = v.as_string
         sdfg.remove_node(state)
 
 
 def _assignments_to_consider(sdfg, edge, is_constant=False):
     assignments_to_consider = {}
     for var, assign in edge.data.assignments.items():
-        as_symbolic = symbolic.pystr_to_symbolic(assign)
+        as_symbolic = symbolic.pystr_to_symbolic(assign.as_string)
         if isinstance(as_symbolic, bool):
             as_symbolic = symbolic.pystr_to_symbolic(as_symbolic)
         if is_constant and as_symbolic.free_symbols:
@@ -305,9 +305,10 @@ class ConstantPropagation(transformation.MultiStateTransformation):
             symbolic.safe_replace(repl_dict, lambda m: _str_repl(sdfg, m))
 
 
-def _alias_assignments(sdfg, edge):
-    assignments_to_consider = {}
+def _alias_assignments(sdfg, edge: InterstateEdge):
+    assignments_to_consider: Dict[str, str] = {}
     for var, assign in edge.assignments.items():
+        assign = assign.as_string
         if assign in sdfg.symbols or (assign in sdfg.arrays and isinstance(sdfg.arrays[assign], dt.Scalar)):
             assignments_to_consider[var] = assign
     return assignments_to_consider
@@ -359,7 +360,7 @@ class SymbolAliasPromotion(transformation.MultiStateTransformation, transformati
                 to_not_consider.add(k)
             # Remove symbols that are set in the in_edge
             # with a different assignment
-            if k in in_edge.assignments and in_edge.assignments[k] != v:
+            if k in in_edge.assignments and in_edge.assignments[k].as_string != v:
                 to_not_consider.add(k)
             # Remove symbols whose assignment (RHS) is a symbol
             # and is set in the in_edge.
@@ -397,7 +398,7 @@ class SymbolAliasPromotion(transformation.MultiStateTransformation, transformati
                 to_not_consider.add(k)
             # Remove symbols that are set in the in_edge
             # with a different assignment
-            if k in in_edge.assignments and in_edge.assignments[k] != v:
+            if k in in_edge.assignments and in_edge.assignments[k].as_string != v:
                 to_not_consider.add(k)
             # Remove symbols whose assignment (RHS) is a symbol
             # and is set in the in_edge.
@@ -414,7 +415,7 @@ class SymbolAliasPromotion(transformation.MultiStateTransformation, transformati
 
         for k, v in to_consider.items():
             del edge.assignments[k]
-            in_edge.assignments[k] = v
+            in_edge.assignments[k] = CodeBlock(v)
 
 
 class HoistState(transformation.SingleStateTransformation):

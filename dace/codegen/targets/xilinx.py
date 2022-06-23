@@ -209,7 +209,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                             replace_dict = dict()
 
                             for variable, value in e.data.assignments.items():
-                                expr = ast.parse(value)
+                                expr = value.code[0]
                                 # walk in the expression, get all array names and check whether we need to qualify them
                                 for node in ast.walk(expr):
                                     if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name):
@@ -231,8 +231,8 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
 
                             # Perform replacement and update graph.arrays to allow type inference
                             # on interstate edges
+                            e.data.replace_dict(replace_dict)
                             for k, v in replace_dict.items():
-                                e.data.replace(k, v)
                                 if v not in graph.arrays:
                                     # Note: this redundancy occurs only during codegen
                                     graph.arrays[v] = graph.arrays[k]

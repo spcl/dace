@@ -20,7 +20,7 @@ from dace.sdfg.graph import MultiConnectorEdge, SubgraphView
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg import utils as sdutil, infer_types, propagation
 from dace.transformation import transformation, helpers
-from dace.properties import make_properties, Property
+from dace.properties import CodeBlock, make_properties, Property
 from dace import data
 
 
@@ -1036,9 +1036,11 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
                 refiner = ASTRefiner(aname, refine.subset, nsdfg, indices)
                 for isedge in nsdfg.edges():
                     for k, v in isedge.data.assignments.items():
-                        vast = ast.parse(v)
-                        refiner.visit(vast)
-                        isedge.data.assignments[k] = astutils.unparse(vast)
+                        if v.language is dtypes.Language.Python:
+                            for i, stmt in enumerate(v.code):
+                                v.code[i] = refiner.visit(stmt)
+                        else:
+                            raise NotImplementedError
                     if isedge.data.condition.language is dtypes.Language.Python:
                         for i, stmt in enumerate(isedge.data.condition.code):
                             isedge.data.condition.code[i] = refiner.visit(stmt)

@@ -124,10 +124,11 @@ class InterstateEdge(object):
         loop iterates).
     """
 
-    assignments = Property(dtype=dict,
-                           desc="Assignments to perform upon transition (e.g., 'x=x+1; y = 0')",
-                           from_string=_assignments_from_string,
-                           to_string=_assignments_to_string)
+    assignments = DictProperty(key_type=str,
+                               value_type=CodeBlock,
+                               desc="Assignments to perform upon transition (e.g., 'x=x+1; y = 0')",
+                               from_string=_assignments_from_string,
+                               to_string=_assignments_to_string)
     condition = CodeProperty(desc="Transition condition", default=CodeBlock("1"))
 
     def __init__(self, condition: CodeBlock = None, assignments=None):
@@ -156,10 +157,12 @@ class InterstateEdge(object):
         return super().__setattr__(name, value)
 
     @staticmethod
-    def _convert_assignment(assignment) -> str:
-        if isinstance(assignment, ast.AST):
-            return CodeBlock(assignment).as_string
-        return str(assignment)
+    def _convert_assignment(assignment: Union[CodeBlock, ast.AST, str]) -> CodeBlock:
+        if isinstance(assignment, CodeBlock):
+            return assignment
+        elif isinstance(assignment, ast.AST):
+            return CodeBlock([assignment])
+        return CodeBlock(assignment)
 
     def is_unconditional(self):
         """ Returns True if the state transition is unconditional. """
@@ -181,33 +184,34 @@ class InterstateEdge(object):
         # Symbols in conditions and assignments
         result = set(map(str, dace.symbolic.symbols_in_ast(self.condition.code[0])))
         for assign in self.assignments.values():
-            result |= symbolic.free_symbols_and_functions(assign)
-
+            result |= set(map(str, dace.symbolic.symbols_in_ast(assign.code[0])))
         return result - set(self.assignments.keys())
 
-    def replace_dict(self, repl: Dict[str, str], replace_keys=True) -> None:
+    def replace_dict(self, repl: Dict[str, str], replace_keys=True, replace_condition=True) -> None:
         """
         Replaces all given keys with their corresponding values.
         :param repl: Replacement dictionary.
         :param replace_keys: If False, skips replacing assignment keys.
+        :param replace_condition: If False, replaces the value only in the assignment.
         """
         if replace_keys:
             for name, new_name in repl.items():
                 _replace_dict_keys(self.assignments, name, new_name)
+        replacer = astutils.ASTFindReplace(repl)
 
         for k, v in self.assignments.items():
-            vast = ast.parse(v)
-            vast = astutils.ASTFindReplace(repl).visit(vast)
-            newv = astutils.unparse(vast)
-            if newv != v:
-                self.assignments[k] = newv
-        condition = ast.parse(self.condition.as_string)
-        condition = astutils.ASTFindReplace(repl).visit(condition)
-        newc = astutils.unparse(condition)
-        if newc != condition:
-            self.condition.as_string = newc
-            self._uncond = None
-            self._cond_sympy = None
+            replacer.replace_count = 0
+            vast = replacer.visit(v.code[0])
+            if replacer.replace_count > 0:
+                self.assignments[k] = CodeBlock(vast)
+
+        if replace_condition:
+            replacer.replace_count = 0
+            condition = replacer.visit(self.condition.code[0])
+            if replacer.replace_count > 0:
+                self.condition = CodeBlock(condition)
+                self._uncond = None
+                self._cond_sympy = None
 
     def replace(self, name: str, new_name: str, replace_keys=True) -> None:
         """
@@ -250,7 +254,7 @@ class InterstateEdge(object):
 
     @property
     def label(self):
-        assignments = ','.join(['%s=%s' % (k, v) for k, v in self.assignments.items()])
+        assignments = ','.join(['%s=%s' % (k, v.as_string) for k, v in self.assignments.items()])
 
         # Edge with assigment only (no condition)
         if self.condition.as_string == '1':
@@ -461,7 +465,6 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         :param jsondict: If not None, uses given JSON dictionary as input.
         :return: The hash (in SHA-256 format).
         '''
-
         def keyword_remover(json_obj: Any, last_keyword=""):
             # Makes non-unique in SDFG hierarchy v2
             # Recursively remove attributes from the SDFG which are not used in
@@ -1823,8 +1826,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             if find_new_name:
                 name = self._find_new_name(name)
             else:
-                raise NameError('Array or Stream with name "%s" already exists '
-                                "in SDFG" % name)
+                raise NameError('Array or Stream with name "%s" already exists ' "in SDFG" % name)
         self._arrays[name] = datadesc
 
         # Add free symbols to the SDFG global symbol storage
@@ -1975,8 +1977,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
         # Argument checks
         if loop_var is None and (initialize_expr or increment_expr):
-            raise ValueError("Cannot initalize or increment an empty loop"
-                             " variable")
+            raise ValueError("Cannot initalize or increment an empty loop" " variable")
 
         # Handling empty states
         if loop_end_state is None:
@@ -2187,8 +2188,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                 unnecessary_args.extend(kwargs.keys())
             else:
                 unnecessary_args = [k for k in kwargs.keys() if k not in expected_args]
-            raise RuntimeError("Too many arguments to SDFG. Unnecessary "
-                               "arguments: %s" % ', '.join(unnecessary_args))
+            raise RuntimeError("Too many arguments to SDFG. Unnecessary " "arguments: %s" % ', '.join(unnecessary_args))
         positional_args = list(args)
         for i, arg in enumerate(expected_args):
             expected = expected_args[arg]
@@ -2201,8 +2201,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             if types_only:
                 desc = dt.create_datadescriptor(passed)
                 if not expected.is_equivalent(desc):
-                    raise TypeError("Type mismatch for argument: "
-                                    "expected %s, got %s" % (expected, desc))
+                    raise TypeError("Type mismatch for argument: " "expected %s, got %s" % (expected, desc))
                 else:
                     continue
             if isinstance(expected, dace.data.Array):

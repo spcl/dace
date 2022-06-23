@@ -954,7 +954,7 @@ class CodeBlock(object):
     """
 
     def __init__(self,
-                 code: Union[str, List[ast.AST], 'CodeBlock'],
+                 code: Union[str, ast.AST, List[ast.AST], 'CodeBlock'],
                  language: dace.dtypes.Language = dace.dtypes.Language.Python):
         if isinstance(code, CodeBlock):
             self.code = code.code
@@ -964,8 +964,13 @@ class CodeBlock(object):
         self.language = language
 
         # Convert to the right type
-        if language == dace.dtypes.Language.Python and isinstance(code, str):
-            self.code = ast.parse(code).body
+        if language == dace.dtypes.Language.Python:
+            if isinstance(code, str):
+                self.code = ast.parse(code).body
+            elif isinstance(code, ast.AST):
+                self.code = [code]
+            else:
+                self.code = code
         elif (not isinstance(code, str) and language != dace.dtypes.Language.Python):
             raise TypeError('Only strings are supported for languages other '
                             'than Python')
@@ -1017,6 +1022,8 @@ class CodeBlock(object):
     def from_json(tmp, sdfg=None):
         if tmp is None:
             return None
+        if isinstance(tmp, str):  # Backwards compatibility: can load a string
+            return CodeBlock(tmp)
         if isinstance(tmp, CodeBlock):
             return tmp
 
