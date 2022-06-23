@@ -133,7 +133,7 @@ class RewriteSympyEquality(ast.NodeTransformer):
         if isinstance(node.value, numpy.bool_):
             node.value = bool(node.value)
         elif isinstance(node.value, numpy.number):
-            node.value = numpy.asscalar(node.value)
+            node.value = node.value.item()
         return self.generic_visit(node)
 
     # Compatibility for Python 3.7
@@ -141,7 +141,7 @@ class RewriteSympyEquality(ast.NodeTransformer):
         if isinstance(node.n, numpy.bool_):
             node.n = bool(node.n)
         elif isinstance(node.n, numpy.number):
-            node.n = numpy.asscalar(node.n)
+            node.n = node.n.item()
         return self.generic_visit(node)
 
 
