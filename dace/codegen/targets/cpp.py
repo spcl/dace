@@ -982,39 +982,6 @@ class InterstateEdgeUnparser(cppunparse.CPPUnparser):
         desc = self.sdfg.arrays[t.id]
         self.write(ptr(t.id, desc, self.sdfg, self.codegen))
 
-    # Replace remainder of boolean ops from SymPy
-    callcmps = {
-        "Eq": ast.Eq,
-        "NotEq": ast.NotEq,
-        "Ne": ast.NotEq,
-        "Lt": ast.Lt,
-        "Le": ast.LtE,
-        "LtE": ast.LtE,
-        "Gt": ast.Gt,
-        "Ge": ast.GtE,
-        "GtE": ast.GtE,
-    }
-    callbools = {
-        "And": ast.And,
-        "Or": ast.Or,
-    }
-
-    def _Call(self, t: ast.Call):
-        # Special cases for sympy functions
-        if isinstance(t.func, ast.Name):
-            if t.func.id in InterstateEdgeUnparser.callcmps:
-                op = InterstateEdgeUnparser.callcmps[t.func.id]()
-                self.dispatch(
-                    ast.Compare(left=t.args[0],
-                                ops=[op for _ in range(1, len(t.args))],
-                                comparators=[t.args[i] for i in range(1, len(t.args))]))
-                return
-            elif t.func.id in InterstateEdgeUnparser.callbools:
-                op = InterstateEdgeUnparser.callbools[t.func.id]()
-                self.dispatch(ast.BoolOp(op=op, values=t.args))
-                return
-        return super()._Call(t)
-
     def _Subscript(self, t: ast.Subscript):
         from dace.frontend.python.astutils import subscript_to_slice
         target, rng = subscript_to_slice(t, self.sdfg.arrays)
