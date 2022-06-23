@@ -32,6 +32,13 @@ def view(sdfg: dace.SDFG, filename: Optional[Union[str, int]] = None):
                         served using a basic web server on that port,
                         blocking the current thread.
     """
+    # If vscode is open, try to open it inside vscode
+    if 'VSCODE_IPC_HOOK_CLI' in os.environ and filename is None:
+        filename = tempfile.mktemp(suffix='.sdfg')
+        sdfg.save(filename)
+        os.system(f'code {filename}')
+        return
+
     if type(sdfg) is dace.SDFG:
         sdfg = dace.serialize.dumps(sdfg.to_json())
 
