@@ -419,8 +419,8 @@ def _cpp_indirection_promoter(
                 first_nonscalar_dim = 0
 
             # Make subset out of range and new sub-expression
-            other_subset = subsets.Range([(0, 0, 1)] * first_nonscalar_dim + [(subexpr, subexpr, 1)] + [(0, 0, 1)] *
-                                         (len(orig_subset) - first_nonscalar_dim - 1))
+            other_subset = subsets.Range(orig_subset.ndrange()[:first_nonscalar_dim] + [(subexpr, subexpr, 1)] +
+                                         orig_subset.ndrange()[first_nonscalar_dim + 1:])
             subset = orig_subset.compose(other_subset)
 
             # Check if range can be collapsed

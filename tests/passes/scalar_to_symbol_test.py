@@ -15,7 +15,6 @@ import pytest
 
 def test_find_promotable():
     """ Find promotable and non-promotable symbols. """
-
     @dace.program
     def testprog1(A: dace.float32[20, 20], scal: dace.float32):
         tmp = dace.ndarray([20, 20], dtype=dace.float32)
@@ -42,7 +41,6 @@ def test_find_promotable():
 
 def test_promote_simple():
     """ Simple promotion with Python tasklets. """
-
     @dace.program
     def testprog2(A: dace.float64[20, 20]):
         j = 5
@@ -70,7 +68,6 @@ def test_promote_simple():
 
 def test_promote_simple_c():
     """ Simple promotion with C++ tasklets. """
-
     @dace.program
     def testprog3(A: dace.float32[20, 20]):
         i = 0
@@ -113,7 +110,6 @@ def test_promote_simple_c():
 
 def test_promote_disconnect():
     """ Promotion that disconnects tasklet from map. """
-
     @dace.program
     def testprog4(A: dace.float64[20, 20]):
         j = 5
@@ -180,7 +176,6 @@ def test_promote_copy():
 
 def test_promote_array_assignment():
     """ Simple promotion with array assignment. """
-
     @dace.program
     def testprog6(A: dace.float64[20, 20]):
         j = A[1, 1]
@@ -209,7 +204,6 @@ def test_promote_array_assignment():
 
 def test_promote_array_assignment_tasklet():
     """ Simple promotion with array assignment. """
-
     @dace.program
     def testprog7(A: dace.float64[20, 20]):
         j = dace.define_local_scalar(dace.int64)
@@ -239,7 +233,6 @@ def test_promote_array_assignment_tasklet():
 
 class LoopTester(ld.DetectLoop, xf.MultiStateTransformation):
     """ Tester method that sets loop index on a guard state. """
-
     def can_be_applied(self, graph, expr_index, sdfg, permissive):
         if super().can_be_applied(graph, expr_index, sdfg, permissive):
             return False
@@ -304,7 +297,6 @@ def test_promote_loops():
 
 def test_promote_indirection():
     """ Indirect access in promotion. """
-
     @dace.program
     def testprog10(A: dace.float64[2, 3, 4, 5], B: dace.float64[4]):
         i = 2
@@ -355,7 +347,6 @@ def test_promote_indirection():
 
 def test_promote_output_indirection():
     """ Indirect output access in promotion. """
-
     @dace.program
     def testprog11(A: dace.float64[10]):
         i = 2
@@ -384,7 +375,6 @@ def test_promote_output_indirection():
 
 def test_promote_indirection_c():
     """ Indirect access in promotion with C++ tasklets. """
-
     @dace.program
     def testprog12(A: dace.float64[10]):
         i = 2
@@ -417,7 +407,6 @@ def test_promote_indirection_c():
 
 def test_promote_indirection_impossible():
     """ Indirect access that cannot be promoted. """
-
     @dace.program
     def testprog13(A: dace.float64[20, 20], scal: dace.int32):
         i = 2
@@ -587,7 +576,6 @@ def test_indirection_with_reindex(language):
 
 
 def test_multiple_boolop():
-
     @dace.program
     def tester():
         a = 1
@@ -603,6 +591,41 @@ def test_multiple_boolop():
     sdfg.validate()
 
     assert tester() == 0
+
+
+def test_multidim_cpp():
+    sdfg = dace.SDFG('tester')
+    sdfg.add_array('A', [20, 10], dace.float64)
+    sdfg.add_scalar('sz1', dace.int32, transient=True)
+    sdfg.add_scalar('sz2', dace.int32, transient=True)
+    sdfg.add_scalar('ind1', dace.int32, transient=True)
+    sdfg.add_scalar('ind2', dace.int32, transient=True)
+
+    state = sdfg.add_state()
+    state.add_edge(state.add_tasklet('s1', {}, {'o'}, 'o = 20;', language=dace.Language.CPP), 'o',
+                   state.add_write('sz1'), None, dace.Memlet('sz1'))
+    state.add_edge(state.add_tasklet('s2', {}, {'o'}, 'o = 10;', language=dace.Language.CPP), 'o',
+                   state.add_write('sz2'), None, dace.Memlet('sz2'))
+
+    state = sdfg.add_state_after(state)
+    t1 = state.add_tasklet('w1', {'i'}, {'o'}, 'o = i - 5;', language=dace.Language.CPP)
+    t2 = state.add_tasklet('w2', {'i'}, {'o'}, 'o = i - 3;', language=dace.Language.CPP)
+    state.add_edge(state.add_read('sz1'), None, t1, 'i', dace.Memlet('sz1'))
+    state.add_edge(state.add_read('sz2'), None, t2, 'i', dace.Memlet('sz2'))
+    state.add_edge(t1, 'o', state.add_write('ind1'), None, dace.Memlet('ind1'))
+    state.add_edge(t2, 'o', state.add_write('ind2'), None, dace.Memlet('ind2'))
+
+    state = sdfg.add_state_after(state)
+    t3 = state.add_tasklet('warr', {'i1', 'i2'}, {'arr'}, 'arr[i1][i2] = 1.0;', language=dace.Language.CPP)
+    state.add_edge(state.add_read('ind1'), None, t3, 'i1', dace.Memlet('ind1'))
+    state.add_edge(state.add_read('ind2'), None, t3, 'i2', dace.Memlet('ind2'))
+    state.add_edge(t3, 'arr', state.add_write('A'), None, dace.Memlet('A'))
+
+    scalar_to_symbol.ScalarToSymbolPromotion().apply_pass(sdfg, {})
+    new_edge = sdfg.sink_nodes()[0].edges()[0]
+
+    assert new_edge.data.data == 'A'
+    assert str(new_edge.data.subset) == 'ind1, ind2'
 
 
 if __name__ == '__main__':
@@ -624,3 +647,4 @@ if __name__ == '__main__':
     test_indirection_with_reindex(dace.Language.CPP)
     test_indirection_with_reindex(dace.Language.Python)
     test_multiple_boolop()
+    test_multidim_cpp()
