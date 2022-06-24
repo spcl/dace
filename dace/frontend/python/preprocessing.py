@@ -618,6 +618,9 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> Any:
         return self.visit_FunctionDef(node)
 
+    def visit_Lambda(self, node: ast.Lambda) -> Any:
+        return self.visit_FunctionDef(node)
+
     def visit_AugAssign(self, node: ast.AugAssign):
         # Node target in augassign is ast.Store, even though it is updating an existing value
         oldvalue = self.ignore_node_ctx
