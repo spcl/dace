@@ -652,7 +652,7 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
         try:
             global_val = astutils.evalnode(node, self.globals)
         except SyntaxError:
-            return self.generic_visit(node)
+            return node  # Do NOT use generic_visit here as it may modify the attribute value too soon
 
         if not isinstance(global_val, dtypes.typeclass):
             newnode = self.global_value_to_node(global_val,
@@ -661,7 +661,7 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
                                                 recurse=True)
             if newnode is not None:
                 return newnode
-        return self.generic_visit(node)
+        return node  # Do NOT use generic_visit here as it may modify the attribute value too soon
 
     def visit_Subscript(self, node: ast.Subscript) -> Any:
         # First visit the subscripted value alone, then the whole subscript
@@ -1407,8 +1407,7 @@ def preprocess_dace_program(f: Callable[..., Any],
         ctr.visit(src_ast)
     except DaceRecursionError as ex:
         if id(f) == ex.fid:
-            raise TypeError('Parsing failed due to recursion in a data-centric '
-                            'context called from this function')
+            raise TypeError('Parsing failed due to recursion in a data-centric ' 'context called from this function')
         else:
             raise ex
     used_arrays = ArrayClosureResolver(closure_resolver.closure)
