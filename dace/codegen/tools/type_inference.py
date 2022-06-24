@@ -436,7 +436,9 @@ def _Call(t, symbols, inferred_symbols):
     if name in ('abs', 'log'):
         return arg_types[0]
     if name in ('min', 'max'): # binary math operations that do not exist in the math module
-        return dtypes.result_type_of(arg_types[0], *arg_types)     
+        return dtypes.result_type_of(arg_types[0], *arg_types)
+    if name in ('round', ):
+        return dtypes.typeclass(int)   
 
     # dtypes (dace.int32, np.float64) can be used as functions
     inf_type = _infer_dtype(t)

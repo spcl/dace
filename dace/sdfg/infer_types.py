@@ -202,7 +202,7 @@ def _set_default_storage_types(sdfg: SDFG, toplevel_schedule: dtypes.ScheduleTyp
                 else:
                     parent_schedule = parent_node.map.schedule
                     # Skip sequential maps to determine storage
-                    while parent_schedule is dtypes.ScheduleType.Sequential:
+                    while parent_schedule == dtypes.ScheduleType.Sequential:
                         parent_node = scope_dict[parent_node]
                         if parent_node is None:
                             parent_schedule = toplevel_schedule
@@ -210,7 +210,7 @@ def _set_default_storage_types(sdfg: SDFG, toplevel_schedule: dtypes.ScheduleTyp
                         parent_schedule = parent_node.map.schedule
                 # Determine default GPU schedule based on existence of
                 # thread-block maps
-                if parent_schedule is dtypes.ScheduleType.GPU_Device:
+                if parent_schedule == dtypes.ScheduleType.GPU_Device:
                     if parent_node not in scopes_with_tbmaps:
                         parent_schedule = dtypes.ScheduleType.GPU_ThreadBlock
                 # End of special cases

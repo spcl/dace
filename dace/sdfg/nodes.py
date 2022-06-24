@@ -11,7 +11,7 @@ import dace.serialize
 from typing import Any, Dict, Set, Union
 from dace.config import Config
 from dace.sdfg import graph
-from dace.frontend.python.astutils import unparse
+from dace.frontend.python.astutils import unparse, rname
 from dace.properties import (EnumProperty, Property, CodeProperty, LambdaProperty, RangeProperty, DebugInfoProperty,
                              SetProperty, make_properties, indirect_properties, DataProperty, SymbolicProperty,
                              ListProperty, SDFGReferenceProperty, DictProperty, LibraryImplementationProperty,
@@ -21,7 +21,6 @@ from dace.symbolic import pystr_to_symbolic
 from dace import data, subsets as sbs, dtypes
 import pydoc
 import warnings
-
 
 # -----------------------------------------------------------------------------
 
@@ -327,6 +326,13 @@ class Tasklet(CodeNode):
     instrument = EnumProperty(dtype=dtypes.InstrumentationType,
                               desc="Measure execution statistics with given method",
                               default=dtypes.InstrumentationType.No_Instrumentation)
+    side_effects = Property(dtype=bool,
+                            allow_none=True,
+                            default=None,
+                            desc='If True, this tasklet calls a function that may have '
+                            'additional side effects on the system state (e.g., callback). '
+                            'Defaults to None, which lets the framework make assumptions based on '
+                            'the tasklet contents')
 
     def __init__(self,
                  label,
@@ -339,6 +345,7 @@ class Tasklet(CodeNode):
                  code_init="",
                  code_exit="",
                  location=None,
+                 side_effects=None,
                  debuginfo=None):
         super(Tasklet, self).__init__(label, location, inputs, outputs)
 
@@ -348,6 +355,7 @@ class Tasklet(CodeNode):
         self.code_global = CodeBlock(code_global, dtypes.Language.CPP)
         self.code_init = CodeBlock(code_init, dtypes.Language.CPP)
         self.code_exit = CodeBlock(code_exit, dtypes.Language.CPP)
+        self.side_effects = side_effects
         self.debuginfo = debuginfo
 
     @property
@@ -377,6 +385,26 @@ class Tasklet(CodeNode):
     @property
     def free_symbols(self) -> Set[str]:
         return self.code.get_free_symbols(self.in_connectors.keys() | self.out_connectors.keys())
+
+    def has_side_effects(self, sdfg) -> bool:
+        """
+        Returns True if this tasklet may have other side effects (e.g., calling stateful libraries, communicating).
+        """
+        # If side effects property is set, takes precedence over node analysis
+        if self.side_effects is not None:
+            return self.side_effects
+
+        # If side effect property is not defined, find calls within tasklet
+        if self.code.language == dace.dtypes.Language.Python and self.code.code:
+            for stmt in self.code.code:
+                for n in ast.walk(stmt):
+                    if isinstance(n, ast.Call):
+                        cname = rname(n.func)
+                        # If the function name is a symbol or a Scalar data descriptor, it may be a dace.callback,
+                        # which means side effects are possible unless otherwise mentioned
+                        if cname in sdfg.symbols or cname in sdfg.arrays:
+                            return True
+        return False
 
     def infer_connector_types(self, sdfg, state):
         # If a MLIR tasklet, simply read out the types (it's explicit)
@@ -761,13 +789,29 @@ class Map(object):
     range = RangeProperty(desc="Ranges of map parameters", default=sbs.Range([]))
     schedule = EnumProperty(dtype=dtypes.ScheduleType, desc="Map schedule", default=dtypes.ScheduleType.Default)
     unroll = Property(dtype=bool, desc="Map unrolling")
-    collapse = Property(dtype=int, default=1, desc="How many dimensions to" " collapse into the parallel range")
+    collapse = Property(dtype=int, default=1, desc="How many dimensions to collapse into the parallel range")
     debuginfo = DebugInfoProperty()
     is_collapsed = Property(dtype=bool, desc="Show this node/scope/state as collapsed", default=False)
 
     instrument = EnumProperty(dtype=dtypes.InstrumentationType,
                               desc="Measure execution statistics with given method",
                               default=dtypes.InstrumentationType.No_Instrumentation)
+
+    omp_num_threads = Property(dtype=int,
+                               default=0,
+                               desc="Number of OpenMP threads executing the Map",
+                               optional=True,
+                               optional_condition=lambda m: m.schedule == dtypes.ScheduleType.CPU_Multicore)
+    omp_schedule = EnumProperty(dtype=dtypes.OMPScheduleType,
+                                default=dtypes.OMPScheduleType.Default,
+                                desc="OpenMP schedule {static, dynamic, guided}",
+                                optional=True,
+                                optional_condition=lambda m: m.schedule == dtypes.ScheduleType.CPU_Multicore)
+    omp_chunk_size = Property(dtype=int,
+                              default=0,
+                              desc="OpenMP schedule chunk size",
+                              optional=True,
+                              optional_condition=lambda m: m.schedule == dtypes.ScheduleType.CPU_Multicore)
 
     def __init__(self,
                  label,
@@ -1151,6 +1195,15 @@ class LibraryNode(CodeNode):
     def __jsontype__(self):
         return 'LibraryNode'
 
+    @property
+    def has_side_effects(self) -> bool:
+        """
+        Returns True if this library node has other side effects (e.g., calling stateful libraries, communicating)
+        when expanded.
+        This method is meant to be extended by subclasses.
+        """
+        return False
+
     def to_json(self, parent):
         jsonobj = super().to_json(parent)
         jsonobj['classpath'] = full_class_path(self)
@@ -1211,7 +1264,7 @@ class LibraryNode(CodeNode):
                     implementation = config_implementation
                     # Otherwise we don't know how to expand
                     if implementation is None:
-                        raise ValueError("No implementation or default " "implementation specified.")
+                        raise ValueError("No implementation or default implementation specified.")
         if implementation not in self.implementations.keys():
             raise KeyError("Unknown implementation for node {}: {}".format(type(self).__name__, implementation))
         transformation_type = type(self).implementations[implementation]
@@ -1221,7 +1274,7 @@ class LibraryNode(CodeNode):
         transformation: ExpandTransformation = transformation_type()
         transformation.setup_match(sdfg, sdfg_id, state_id, subgraph, 0)
         if not transformation.can_be_applied(state, 0, sdfg):
-            raise RuntimeError("Library node " "expansion applicability check failed.")
+            raise RuntimeError("Library node expansion applicability check failed.")
         sdfg.append_transformation(transformation)
         transformation.apply(state, sdfg, *args, **kwargs)
         return implementation

@@ -1,6 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
-from dace.codegen.targets.fpga import is_fpga_kernel
+from dace.sdfg.utils import is_fpga_kernel
 from dace.fpga_testing import fpga_test
 from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
 import numpy as np

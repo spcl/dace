@@ -6,6 +6,7 @@ from dace.sdfg import nodes
 from dace.symbolic import symstr
 from dace.transformation.transformation import ExpandTransformation
 from .. import environments
+from dace.libraries.mpi.nodes.node import MPINode
 
 
 @library.expansion
@@ -36,7 +37,7 @@ class ExpandGatherMPI(ExpandTransformation):
 
 
 @library.node
-class Gather(nodes.LibraryNode):
+class Gather(MPINode):
 
     # Global properties
     implementations = {
@@ -114,7 +115,7 @@ class ExpandBlockGatherMPI(ExpandTransformation):
 
 
 @library.node
-class BlockGather(nodes.LibraryNode):
+class BlockGather(MPINode):
 
     # Global properties
     implementations = {

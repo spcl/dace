@@ -429,11 +429,15 @@ def _edge_matcher(digraph, nxpattern, node_pred, edge_pred):
     if edge_pred is None:
         for u, v in digraph.edges:
             if (node_pred(digraph.nodes[u], pu) and node_pred(digraph.nodes[v], pv)):
+                if u is v:  # Skip self-edges
+                    continue
                 yield {u: pedge[0], v: pedge[1]}
     else:
         for u, v in digraph.edges:
             if (node_pred(digraph.nodes[u], pu) and node_pred(digraph.nodes[v], pv)
                     and edge_pred(digraph.edges[u, v], nxpattern.edges[pedge])):
+                if u is v:  # Skip self-edges
+                    continue
                 yield {u: pedge[0], v: pedge[1]}
 
 
