@@ -620,6 +620,10 @@ class DaceProgram(pycommon.SDFGConvertible):
         else:
             sdfg = None
 
+        # Move "self" from an argument into the closure
+        if self.methodobj is not None:
+            self.global_vars[self.objname] = self.methodobj
+
         # Perform preprocessing to obtain closure
         argtypes, _, constant_args, given_args = self._get_type_annotations(args, kwargs)
 
