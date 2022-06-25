@@ -655,7 +655,7 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
         try:
             global_val = astutils.evalnode(node, self.globals)
         except SyntaxError:
-            return node  # Do NOT use generic_visit here as it may modify the attribute value too soon
+            return self.generic_visit(node)
 
         if not isinstance(global_val, dtypes.typeclass):
             newnode = self.global_value_to_node(global_val,
