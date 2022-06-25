@@ -628,6 +628,28 @@ def test_multidim_cpp():
     assert str(new_edge.data.subset) == 'ind1, ind2'
 
 
+def test_dynamic_mapind():
+    @dace.program
+    def prog(inp: dace.int32[4, 2], out: dace.float64[5, 5]):
+        A = np.zeros((5, 5))
+        E = inp.shape[1]
+
+        for e in dace.map[0:E]:
+            with dace.tasklet:
+                # Multiple edges are allowed.
+                a << inp[0, e]
+                b << inp[1, e]
+                o[a, b] = 1
+                o >> A(-1, lambda a, b: a + b)
+
+        out[:] = A
+
+    sdfg = prog.to_sdfg(simplify=False)
+    promoted = scalar_to_symbol.ScalarToSymbolPromotion().apply_pass(sdfg, {})
+    assert 'E' in promoted
+    sdfg.compile()
+
+
 if __name__ == '__main__':
     test_find_promotable()
     test_promote_simple()
@@ -648,3 +670,4 @@ if __name__ == '__main__':
     test_indirection_with_reindex(dace.Language.Python)
     test_multiple_boolop()
     test_multidim_cpp()
+    test_dynamic_mapind()
