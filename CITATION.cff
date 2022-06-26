@@ -1,0 +1,79 @@
+cff-version: 1.2.0
+title: "DaCe - Data Centric Parallel Programming"
+message: "Please cite as" 
+# this can be parsed from the AUTHORS file using citation_format_authors.py
+authors:
+  - family-names: Ben-Nun
+    given-names: Tal
+  - family-names: de Fine Licht
+    given-names: Johannes
+  - family-names: Nikolaos Ziogas
+    given-names: Alexandros
+  - family-names: Schneider
+    given-names: Timo
+  - family-names: Hoefler
+    given-names: Torsten
+  - family-names: De Matteis
+    given-names: Tiziano
+  - family-names: Hofer
+    given-names: Dominic
+  - family-names: Haag
+    given-names: Roman
+  - family-names: Niederer
+    given-names: Silvan
+  - family-names: Raje
+    given-names: Saurabh
+  - family-names: Schaad
+    given-names: Philipp
+  - family-names: Rausch
+    given-names: Oliver
+  - family-names: Gavrilas
+    given-names: Gabriel
+  - family-names: Ivanov
+    given-names: Andrei
+  - family-names: Lavarini
+    given-names: Luca
+  - family-names: Burger
+    given-names: Manuel
+  - family-names: Kleine
+    given-names: Jan
+  - family-names: Groner
+    given-names: Linus
+  - family-names: Backes
+    given-names: Thierry
+  - family-names: Anklin
+    given-names: Valentin
+  - family-names: Kuster
+    given-names: Andreas
+  - family-names: Baumann
+    given-names: Thomas
+  - family-names: Ates
+    given-names: Berke
+  - family-names: Scholbe
+    given-names: Stefan
+  - family-names: Johnsen
+    given-names: Carl-Johannes
+  - family-names: Widmer
+    given-names: Jannis
+  - family-names: Walo
+    given-names: Neville
+  - family-names: Trümper
+    given-names: Lukas
+preferred-citation:
+  title: "Stateful Dataflow Multigraphs: A Data-Centric Model for Performance Portability on Heterogeneous Architectures"
+  year: "2019"
+  type: conference-paper
+  collection-title: "Proceedings of the International Conference for High Performance Computing, Networking, Storage and Analysis"
+  conference: 
+    name: "SC '19"
+  authors:
+    - family-names: Ben-Nun
+      given-names: Tal
+    - family-names: de Fine Licht
+      given-names: Johannes
+    - family-names: Ziogas
+      given-names: Alexandros Nikolaos
+    - family-names: Schneider
+      given-names: Timo
+    - family-names: Hoefler
+      given-names: Torsten
