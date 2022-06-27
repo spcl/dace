@@ -1,6 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
-from dace.transformation.interstate import InlineSDFG
+from dace.transformation.interstate import InlineSDFG, StateFusion
 import numpy as np
 import pytest
 
@@ -281,6 +281,30 @@ def test_inline_unsqueeze4():
             assert(np.array_equal(B[:, i], np.zeros((5,), np.int32)))
 
 
+def test_regression_inline_subset():
+    nsdfg = dace.SDFG("nested_sdfg")
+    nstate = nsdfg.add_state()
+    nsdfg.add_array("input", [96, 32], dace.float64)
+    nsdfg.add_array("output", [32, 32], dace.float64)
+    nstate.add_edge(nstate.add_read("input"), None, nstate.add_write("output"), None,
+                    dace.Memlet("input[32:64, 0:32] -> 0:32, 0:32"))
+
+    @dace.program
+    def test(A: dace.float64[96, 32]):
+        B = dace.define_local([32, 32], dace.float64)
+        nsdfg(input=A, output=B)
+        return B + 1
+
+    sdfg = test.to_sdfg(simplify=False)
+    sdfg.apply_transformations_repeated(StateFusion)
+    sdfg.validate()
+    sdfg.simplify()
+    sdfg.validate()
+    data = np.random.rand(96, 32)
+    out = test(data)
+    assert np.allclose(out, data[32:64, :] + 1)
+
+
 if __name__ == "__main__":
     test()
     # Skipped to to bug that cannot be reproduced
@@ -293,3 +317,4 @@ if __name__ == "__main__":
     test_inline_unsqueeze2()
     test_inline_unsqueeze3()
     test_inline_unsqueeze4()
+    test_regression_inline_subset()
