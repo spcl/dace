@@ -650,7 +650,7 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
             node.arg = self.globals[node.arg].name
         return self.generic_visit(node)
 
-    def visit_Attribute(self, node: ast.Attribute) -> Any:
+    def _visit_potential_constant(self, node: ast.AST, recurse_on_fail: bool) -> Optional[ast.AST]:
         # Try to evaluate the expression with only the globals
         try:
             global_val = astutils.evalnode(node, self.globals)
@@ -664,7 +664,15 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
                                                 recurse=True)
             if newnode is not None:
                 return newnode
-        return node  # Do NOT use generic_visit here as it may modify the attribute value too soon
+
+        # Failure
+        if recurse_on_fail:
+            return self.generic_visit(node)
+        return node
+
+    def visit_Attribute(self, node: ast.Attribute) -> Any:
+        # Do not visit node recursilve on fail, it may modify the attribute value too soon
+        return self._visit_potential_constant(node, False)
 
     def visit_Subscript(self, node: ast.Subscript) -> Any:
         # First visit the subscripted value alone, then the whole subscript
@@ -686,11 +694,11 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
                     except SyntaxError:
                         continue
                     if gkey == gslice:
-                        return self.visit_Attribute(v)
+                        return self._visit_potential_constant(v, True)
             else:  # List or Tuple
-                return self.visit_Attribute(node.value.elts[gslice])
+                return self._visit_potential_constant(node.value.elts[gslice], True)
 
-        return self.visit_Attribute(node)
+        return self._visit_potential_constant(node, True)
 
     def visit_Call(self, node: ast.Call) -> Any:
         from dace.frontend.python.interface import in_program  # Avoid import loop
