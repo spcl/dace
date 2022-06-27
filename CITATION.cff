@@ -1,7 +1,7 @@
 cff-version: 1.2.0
 title: "DaCe - Data Centric Parallel Programming"
 message: "Please cite as" 
-# this can be parsed from the AUTHORS file using citation_format_authors.py
+# this can be parsed from the AUTHORS file using .github/citation_format_authors.py
 authors:
   - family-names: Ben-Nun
     given-names: Tal
