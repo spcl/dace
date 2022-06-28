@@ -430,7 +430,7 @@ def make_transients_persistent(sdfg: SDFG, device: dtypes.DeviceType, toplevel_o
             for dnode in state.data_nodes():
                 if dnode.data in not_persistent:
                     continue
-                desc = dnode.desc(sdfg)
+                desc = dnode.desc(nsdfg)
                 # Only convert arrays and scalars that are not registers
                 if not desc.transient or type(desc) not in {dt.Array, dt.Scalar}:
                     not_persistent.add(dnode.data)
@@ -439,9 +439,12 @@ def make_transients_persistent(sdfg: SDFG, device: dtypes.DeviceType, toplevel_o
                     not_persistent.add(dnode.data)
                     continue
                 # Only convert arrays where the size depends on SDFG parameters
-                if desc.total_size.free_symbols - fsyms:
-                    not_persistent.add(dnode.data)
-                    continue
+                try:
+                    if desc.total_size.free_symbols - fsyms:
+                        not_persistent.add(dnode.data)
+                        continue
+                except AttributeError:  # total_size is an integer / has no free symbols
+                    pass
                 
                 # Only convert arrays with top-level access nodes
                 if sdict[dnode] is not None:
