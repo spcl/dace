@@ -633,9 +633,6 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
             fsymbols = fsyms[sdfg.sdfg_id]
             if (not isinstance(curscope, nodes.EntryNode)
                     and utils.is_nonfree_sym_dependent(first_node_instance, desc, first_state_instance, fsymbols)):
-                # Declare in current (SDFG) scope
-                self.to_allocate[curscope].append((sdfg, None, first_node_instance, True, False, False))
-                
                 # Allocate in first State, deallocate in last State
                 if first_state_instance != last_state_instance:
                     # If any state is not reachable from first state, find common denominators in the form of
@@ -645,6 +642,11 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                         first_state_instance, last_state_instance = _get_dominator_and_postdominator(sdfg, instances)
                         first_node_instance = nodes.AccessNode(name)
                         last_node_instance = nodes.AccessNode(name)
+                        # Declare in SDFG scope
+                        self.to_allocate[curscope].append((sdfg, None, first_node_instance, True, False, False))
+                    else:
+                        self.to_allocate[curscope].append(
+                            (sdfg, first_state_instance, first_node_instance, True, False, False))
 
                     curscope = first_state_instance
                     self.to_allocate[curscope].append(
@@ -655,7 +657,7 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                 else:
                     curscope = first_state_instance
                     self.to_allocate[curscope].append(
-                        (sdfg, first_state_instance, first_node_instance, False, True, True))
+                        (sdfg, first_state_instance, first_node_instance, True, True, True))
             else:
                 self.to_allocate[curscope].append((sdfg, first_state_instance, first_node_instance, True, True, True))
             if isinstance(curscope, SDFG):
@@ -864,12 +866,11 @@ def _get_dominator_and_postdominator(sdfg: SDFG, accesses: List[Tuple[SDFGState,
         sink = sink_nodes[0]
     ipostdom = nx.immediate_dominators(sdfg._nx.reverse(), sink)
     allpostdoms = cfg.all_dominators(sdfg, ipostdom)
-    
+
     # All dominators and postdominators include the states themselves
     for state in states:
         alldoms[state].add(state)
         allpostdoms[state].add(state)
-
 
     # If a new sink was added for post-dominator computation, remove it
     if len(sink_nodes) > 1:
