@@ -1164,7 +1164,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
         # Add free inter-state symbols
         for e in self.edges():
-            defined_syms |= set(e.data.new_symbols(self, {}).keys())
+            defined_syms |= set(e.data.assignments.keys())
             free_syms |= e.data.free_symbols
 
         defined_syms |= set(self.constants.keys())
