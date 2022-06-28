@@ -126,7 +126,7 @@ class SingleState(ControlFlow):
         else:
             # Dispatch empty state in any case in order to register that the
             # state was dispatched
-            self.dispatch_state(self.state)
+            expr += self.dispatch_state(self.state)
 
         # If any state has no children, it should jump to the end of the SDFG
         if not self.last_state and sdfg.out_degree(self.state) == 0:
