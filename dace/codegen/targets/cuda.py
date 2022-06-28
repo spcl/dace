@@ -1283,7 +1283,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                         pass
                     ptrname = cpp.ptr(aname, data_desc, sdfg, self._frame)
                     if not defined_type:
-                        defined_type, ctype = self._dispatcher.defined_vars.get(ptrname)
+                        defined_type, ctype = self._dispatcher.defined_vars.get(ptrname, is_global=is_global)
 
                     CUDACodeGen._in_device_code = True
                     inner_ptrname = cpp.ptr(aname, data_desc, sdfg, self._frame)
@@ -1297,7 +1297,9 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                 if aname in sdfg.arrays:
                     data_desc = sdfg.arrays[aname]
                     ptrname = cpp.ptr(aname, data_desc, sdfg, self._frame)
-                    defined_type, ctype = self._dispatcher.defined_vars.get(ptrname)
+                    is_global = data_desc.lifetime in (dtypes.AllocationLifetime.Global,
+                                                       dtypes.AllocationLifetime.Persistent)
+                    defined_type, ctype = self._dispatcher.defined_vars.get(ptrname, is_global=is_global)
                     CUDACodeGen._in_device_code = True
                     inner_ptrname = cpp.ptr(aname, data_desc, sdfg, self._frame)
                     CUDACodeGen._in_device_code = False
