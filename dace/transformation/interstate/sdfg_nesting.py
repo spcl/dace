@@ -607,7 +607,7 @@ class InlineSDFG(transformation.SingleStateTransformation, transformation.Simpli
                                                                   matching_edge.data,
                                                                   use_dst_subset=True)
                             new_memlet = in_memlet
-                            new_memlet.other_subset = out_memlet.subset
+                            new_memlet.other_subset = out_memlet.dst_subset
 
                             inner_edge.data = new_memlet
                             if len(nstate.out_edges(inner_edge.dst)) > 0:
