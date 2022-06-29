@@ -3519,6 +3519,7 @@ def _validate_axis_kword(visitor: 'ProgramVisitor', ast_node: ast.Call, sdfg: SD
             intermediate_shape = None
             expected_out_shape = [d for i, d in enumerate(inp_shape) if i not in axis]
         expected_out_shape = expected_out_shape or [1]
+        intermediate_shape = intermediate_shape or [1]
     else:
         if keepdims:
             intermediate_shape = [1]
