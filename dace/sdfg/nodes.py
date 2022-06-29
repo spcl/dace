@@ -739,7 +739,7 @@ class MapExit(ExitNode):
             entry_node = context['sdfg_state'].node(int(json_obj['scope_entry']))
 
             ret = cls(map=entry_node.map)
-        except (IndexError, TypeError):
+        except (IndexError, TypeError, graph.NodeNotFoundError):
             # Entry node has a higher ID than exit node
             # Connection of the scope nodes handled in MapEntry
             ret = cls(cls.map_type()('_', [], []))
@@ -948,7 +948,7 @@ class ConsumeExit(ExitNode):
             # Set consume reference to entry node
             entry_node = context['sdfg_state'].node(int(json_obj['scope_entry']))
             ret = ConsumeExit(consume=entry_node.consume)
-        except (IndexError, TypeError):
+        except (IndexError, TypeError, graph.NodeNotFoundError):
             # Entry node has a higher ID than exit node
             # Connection of the scope nodes handled in ConsumeEntry
             ret = ConsumeExit(Consume("", ['i', 1], None))
