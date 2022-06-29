@@ -52,6 +52,7 @@ from .bank_split import BankSplit
 
 # Algorithmic
 from .matrix_product_transpose import MatrixProductTranspose
+from .lift_einsum import LiftEinsum
 
 # Distributions
 from .map_distribution import (ElementWiseArrayOperation, ElementWiseArrayOperation2D, RedundantComm2D)
