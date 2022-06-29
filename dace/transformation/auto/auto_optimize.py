@@ -426,7 +426,6 @@ def make_transients_persistent(sdfg: SDFG, device: dtypes.DeviceType, toplevel_o
         not_persistent: Set[str] = set()
 
         for state in nsdfg.nodes():
-            sdict = state.scope_dict()
             for dnode in state.data_nodes():
                 if dnode.data in not_persistent:
                     continue
@@ -447,7 +446,7 @@ def make_transients_persistent(sdfg: SDFG, device: dtypes.DeviceType, toplevel_o
                     pass
                 
                 # Only convert arrays with top-level access nodes
-                if sdict[dnode] is not None:
+                if xfh.get_parent_map(state, dnode) is not None:
                     if toplevel_only:
                         not_persistent.add(dnode.data)
                         continue
