@@ -440,7 +440,7 @@ def make_transients_persistent(sdfg: SDFG, device: dtypes.DeviceType, toplevel_o
                     continue
                 # Only convert arrays where the size depends on SDFG parameters
                 try:
-                    if desc.total_size.free_symbols - fsyms:
+                    if set(map(str, desc.total_size.free_symbols)) - fsyms:
                         not_persistent.add(dnode.data)
                         continue
                 except AttributeError:  # total_size is an integer / has no free symbols
