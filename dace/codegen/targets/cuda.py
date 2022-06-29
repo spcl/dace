@@ -1294,6 +1294,9 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                                                       defined_type,
                                                       'const %s' % ctype,
                                                       allow_shadowing=True)
+
+                    # Rename argument in kernel prototype as necessary
+                    aname = inner_ptrname
             else:
                 if aname in sdfg.arrays:
                     data_desc = sdfg.arrays[aname]
