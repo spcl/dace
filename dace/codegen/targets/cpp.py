@@ -240,8 +240,8 @@ def ptr(name: str, desc: data.Data, sdfg: SDFG = None, framecode=None) -> str:
             from dace.codegen.targets.cuda import CUDACodeGen  # Avoid import loop
             if not CUDACodeGen._in_device_code:  # GPU kernels cannot access state
                 return f'__state->__{sdfg.sdfg_id}_{name}'
-            # elif (sdfg, name) in framecode.where_allocated and framecode.where_allocated[(sdfg, name)] is not sdfg:
-            #     return f'__{sdfg.sdfg_id}_{name}'
+            elif (sdfg, name) in framecode.where_allocated and framecode.where_allocated[(sdfg, name)] is not sdfg:
+                return f'__{sdfg.sdfg_id}_{name}'
         elif (desc.transient and sdfg is not None and framecode is not None
               and (sdfg, name) in framecode.where_allocated and framecode.where_allocated[(sdfg, name)] is not sdfg):
             # Array allocated for another SDFG, use unambiguous name
