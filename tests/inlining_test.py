@@ -187,15 +187,14 @@ def test_inline_symexpr():
 
 
 def test_inline_unsqueeze():
-
     @dace.program
     def nested_squeezed(c: dace.int32[5], d: dace.int32[5]):
         d[:] = c
-    
+
     @dace.program
     def inline_unsqueeze(A: dace.int32[2, 5], B: dace.int32[5, 3]):
         nested_squeezed(A[1, :], B[:, 1])
-    
+
     sdfg = inline_unsqueeze.to_sdfg()
     sdfg.apply_transformations(InlineSDFG)
 
@@ -204,22 +203,21 @@ def test_inline_unsqueeze():
     sdfg(A, B)
     for i in range(3):
         if i == 1:
-            assert(np.array_equal(B[:, i], A[1, :]))
+            assert (np.array_equal(B[:, i], A[1, :]))
         else:
-            assert(np.array_equal(B[:, i], np.zeros((5,), np.int32)))
+            assert (np.array_equal(B[:, i], np.zeros((5, ), np.int32)))
 
 
 def test_inline_unsqueeze2():
-
     @dace.program
     def nested_squeezed(c, d):
         d[:] = c
-    
+
     @dace.program
     def inline_unsqueeze(A: dace.int32[2, 5], B: dace.int32[5, 3]):
         for i in range(2):
-            nested_squeezed(A[i, :], B[:, 1-i])
-    
+            nested_squeezed(A[i, :], B[:, 1 - i])
+
     sdfg = inline_unsqueeze.to_sdfg()
     sdfg.apply_transformations(InlineSDFG)
 
@@ -228,22 +226,21 @@ def test_inline_unsqueeze2():
     sdfg(A, B)
     for i in range(3):
         if i < 2:
-            assert(np.array_equal(B[:, 1-i], A[i, :]))
+            assert (np.array_equal(B[:, 1 - i], A[i, :]))
         else:
-            assert(np.array_equal(B[:, i], np.zeros((5,), np.int32)))
+            assert (np.array_equal(B[:, i], np.zeros((5, ), np.int32)))
 
 
 def test_inline_unsqueeze3():
-
     @dace.program
     def nested_squeezed(c, d):
         d[:] = c
-    
+
     @dace.program
     def inline_unsqueeze(A: dace.int32[2, 5], B: dace.int32[5, 3]):
         for i in range(2):
-            nested_squeezed(A[i, i:i+2], B[i+1:i+3, 1-i])
-    
+            nested_squeezed(A[i, i:i + 2], B[i + 1:i + 3, 1 - i])
+
     sdfg = inline_unsqueeze.to_sdfg()
     sdfg.apply_transformations(InlineSDFG)
 
@@ -252,22 +249,21 @@ def test_inline_unsqueeze3():
     sdfg(A, B)
     for i in range(3):
         if i < 2:
-            assert(np.array_equal(B[i+1:i+3, 1-i], A[i, i:i+2]))
+            assert (np.array_equal(B[i + 1:i + 3, 1 - i], A[i, i:i + 2]))
         else:
-            assert(np.array_equal(B[:, i], np.zeros((5,), np.int32)))
+            assert (np.array_equal(B[:, i], np.zeros((5, ), np.int32)))
 
 
 def test_inline_unsqueeze4():
-
     @dace.program
     def nested_squeezed(c, d):
         d[:] = c
-    
+
     @dace.program
     def inline_unsqueeze(A: dace.int32[2, 5], B: dace.int32[5, 3]):
         for i in range(2):
-            nested_squeezed(A[i, i:2*i+2], B[i+1:2*i+3, 1-i])
-    
+            nested_squeezed(A[i, i:2 * i + 2], B[i + 1:2 * i + 3, 1 - i])
+
     sdfg = inline_unsqueeze.to_sdfg()
     sdfg.apply_transformations(InlineSDFG)
 
@@ -276,9 +272,28 @@ def test_inline_unsqueeze4():
     sdfg(A, B)
     for i in range(3):
         if i < 2:
-            assert(np.array_equal(B[i+1:2*i+3, 1-i], A[i, i:2*i+2]))
+            assert (np.array_equal(B[i + 1:2 * i + 3, 1 - i], A[i, i:2 * i + 2]))
         else:
-            assert(np.array_equal(B[:, i], np.zeros((5,), np.int32)))
+            assert (np.array_equal(B[:, i], np.zeros((5, ), np.int32)))
+
+
+def test_inline_symbol_assignment():
+    def nested(a, num):
+        cat = num - 1
+        last_step = (cat == 0)
+        if last_step is True:
+            return a + 1
+
+        return a
+
+    @dace.program
+    def tester(a: dace.float64[20], b: dace.float64[10, 20]):
+        for i in range(10):
+            cat = nested(a, i)
+            b[i] = cat
+
+    sdfg = tester.to_sdfg()
+    sdfg.compile()
 
 
 if __name__ == "__main__":
@@ -293,3 +308,4 @@ if __name__ == "__main__":
     test_inline_unsqueeze2()
     test_inline_unsqueeze3()
     test_inline_unsqueeze4()
+    test_inline_symbol_assignment()

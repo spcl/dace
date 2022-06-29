@@ -180,6 +180,30 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation, transformat
         # Two-step replacement (N -> __dacesym_N --> map[N]) to avoid clashes
         symbolic.safe_replace(nsdfg_node.symbol_mapping, nsdfg.replace_dict)
 
+        #######################################################
+        # Collect and modify interstate edges as necessary
+
+        outer_assignments = set()
+        for e in sdfg.edges():
+            outer_assignments |= e.data.assignments.keys()
+
+        inner_assignments = set()
+        for e in nsdfg.edges():
+            inner_assignments |= e.data.assignments.keys()
+
+        allnames = set(outer_symbols.keys()) | set(sdfg.arrays.keys())
+        assignments_to_replace = inner_assignments & (outer_assignments | allnames)
+        sym_replacements: Dict[str, str] = {}
+        for assign in assignments_to_replace:
+            newname = data.find_new_name(assign, allnames)
+            allnames.add(newname)
+            outer_symbols[newname] = nsdfg.symbols.get(assign, None)
+            sym_replacements[assign] = newname
+        nsdfg.replace_dict(sym_replacements)
+
+        #######################################################
+        # Collect and modify access nodes as necessary
+
         # Access nodes that need to be reshaped
         # reshapes: Set(str) = set()
         # for aname, array in nsdfg.arrays.items():
@@ -306,26 +330,6 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation, transformat
                 newname = data.find_new_name(nstate.label, statenames)
                 statenames.add(newname)
                 nstate.set_label(newname)
-
-        #######################################################
-        # Collect and modify interstate edges as necessary
-
-        outer_assignments = set()
-        for e in sdfg.edges():
-            outer_assignments |= e.data.assignments.keys()
-
-        inner_assignments = set()
-        for e in nsdfg.edges():
-            inner_assignments |= e.data.assignments.keys()
-
-        assignments_to_replace = inner_assignments & outer_assignments
-        sym_replacements: Dict[str, str] = {}
-        allnames = set(outer_symbols.keys()) | set(sdfg.arrays.keys())
-        for assign in assignments_to_replace:
-            newname = data.find_new_name(assign, allnames)
-            allnames.add(newname)
-            sym_replacements[assign] = newname
-        nsdfg.replace_dict(sym_replacements)
 
         #######################################################
         # Add nested SDFG states into top-level SDFG
