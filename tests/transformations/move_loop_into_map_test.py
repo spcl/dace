@@ -31,8 +31,20 @@ def multiple_edges(data: dace.float64[I, J]):
             data[i, j] = data[i - 1, j] + data[i - 2, j]
 
 
-class MoveLoopIntoMapTest(unittest.TestCase):
+@dace.program
+def should_not_apply_1():
+    for i in range(20):
+        a = np.zeros([i])
 
+
+@dace.program
+def should_not_apply_2():
+    for i in range(2, 20):
+        a = np.ndarray([i], np.float64)
+        a[0:2] = 0
+
+
+class MoveLoopIntoMapTest(unittest.TestCase):
     def semantic_eq(self, program):
         A1 = np.random.rand(16, 16)
         A2 = np.copy(A1)
@@ -54,6 +66,16 @@ class MoveLoopIntoMapTest(unittest.TestCase):
 
     def test_multiple_edges(self):
         self.semantic_eq(multiple_edges)
+
+    def test_itervar_in_map_range(self):
+        sdfg = should_not_apply_1.to_sdfg(simplify=True)
+        count = sdfg.apply_transformations(MoveLoopIntoMap)
+        self.assertEquals(count, 0)
+
+    def test_itervar_in_data(self):
+        sdfg = should_not_apply_2.to_sdfg(simplify=True)
+        count = sdfg.apply_transformations(MoveLoopIntoMap)
+        self.assertEquals(count, 0)
 
 
 if __name__ == '__main__':
