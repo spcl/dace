@@ -426,10 +426,12 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
         :param top_sdfg: The top-level SDFG to determine for.
         """
         # Gather shared transients, free symbols, and first/last appearance
+        shared_transients = {}
         fsyms = {}
         reachability = {}
         access_instances: Dict[int, Dict[str, List[Tuple[SDFGState, nodes.AccessNode]]]] = {}
         for sdfg in top_sdfg.all_sdfgs_recursive():
+            shared_transients[sdfg.sdfg_id] = sdfg.shared_transients(check_toplevel=False)
             fsyms[sdfg.sdfg_id] = self.symbols_and_constants(sdfg)
             reachability[sdfg.sdfg_id] = StateReachability().apply_pass(sdfg, {})
 
@@ -516,7 +518,7 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
             # a kernel).
             alloc_scope: Union[nodes.EntryNode, SDFGState, SDFG] = None
             alloc_state: SDFGState = None
-            if desc.lifetime == dtypes.AllocationLifetime.SDFG:
+            if (name in shared_transients[sdfg.sdfg_id] or desc.lifetime is dtypes.AllocationLifetime.SDFG):
                 # SDFG descriptors are allocated in the beginning of their SDFG
                 alloc_scope = sdfg
                 if first_state_instance is not None:
