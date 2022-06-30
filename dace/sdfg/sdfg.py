@@ -1976,7 +1976,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
         # Argument checks
         if loop_var is None and (initialize_expr or increment_expr):
-            raise ValueError("Cannot initalize or increment an empty loop" " variable")
+            raise ValueError("Cannot initalize or increment an empty loop variable")
 
         # Handling empty states
         if loop_end_state is None:
@@ -2187,7 +2187,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                 unnecessary_args.extend(kwargs.keys())
             else:
                 unnecessary_args = [k for k in kwargs.keys() if k not in expected_args]
-            raise RuntimeError("Too many arguments to SDFG. Unnecessary " "arguments: %s" % ', '.join(unnecessary_args))
+            raise RuntimeError("Too many arguments to SDFG. Unnecessary arguments: %s" % ', '.join(unnecessary_args))
         positional_args = list(args)
         for i, arg in enumerate(expected_args):
             expected = expected_args[arg]
@@ -2200,7 +2200,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             if types_only:
                 desc = dt.create_datadescriptor(passed)
                 if not expected.is_equivalent(desc):
-                    raise TypeError("Type mismatch for argument: " "expected %s, got %s" % (expected, desc))
+                    raise TypeError("Type mismatch for argument: expected %s, got %s" % (expected, desc))
                 else:
                     continue
             if isinstance(expected, dace.data.Array):
