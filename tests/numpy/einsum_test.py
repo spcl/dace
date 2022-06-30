@@ -65,9 +65,94 @@ def test_opteinsum():
     assert np.allclose(einsumtest(A, B, C, D, E), np.einsum('bdik,acaj,ikab,ajac,ikbd->', A, B, C, D, E))
 
 
+def test_einsum_libnode():
+    from dace.libraries.blas.nodes.einsum import Einsum
+
+    sdfg = dace.SDFG('tester')
+    sdfg.arg_names = ['A', 'B']
+    sdfg.add_array('A', (20, 21), dace.float64)
+    sdfg.add_array('B', (21, 22), dace.float64)
+    sdfg.add_array('__return', (20, 22), dace.float64)
+
+    state = sdfg.add_state()
+    r1 = state.add_read('A')
+    r2 = state.add_read('B')
+    w = state.add_write('__return')
+    enode = Einsum('einsum')
+    enode.einsum_str = 'ik,kj->ij'
+    enode.in_connectors = {'a': None, 'b': None}
+    enode.out_connectors = {'out': None}
+    state.add_node(enode)
+
+    state.add_edge(r1, None, enode, 'a', dace.Memlet('A'))
+    state.add_edge(r2, None, enode, 'b', dace.Memlet('B'))
+    state.add_edge(enode, 'out', w, None, dace.Memlet('__return'))
+
+    A = np.random.rand(20, 21)
+    B = np.random.rand(21, 22)
+    assert np.allclose(sdfg(A, B), A @ B)
+
+
+def test_lift_einsum():
+    from dace.transformation.dataflow import LiftEinsum
+    N = dace.symbol('N')
+    M = dace.symbol('M')
+    K = dace.symbol('K')
+
+    @dace.program
+    def tester(A: dace.float64[M, K], B: dace.float64[K, N]):
+        C = np.zeros([M, N], A.dtype)
+        for i, j, k in dace.map[0:M, 0:N, 0:K]:
+            with dace.tasklet:
+                a << A[i, k]
+                b << B[k, j]
+                c >> C(1, lambda a, b: a + b)[i, j]
+                c = a * b
+        return C
+
+    sdfg = tester.to_sdfg(simplify=True)
+    assert sdfg.apply_transformations(LiftEinsum) == 1
+
+    A = np.random.rand(20, 21)
+    B = np.random.rand(21, 22)
+    assert np.allclose(sdfg(A, B, M=20, K=21, N=22), A @ B)
+
+
+def test_lift_einsum_mttkrp():
+    from dace.libraries.blas.nodes.einsum import Einsum
+    from dace.transformation.dataflow import LiftEinsum
+
+    @dace.program
+    def tester(A, B, C, D):
+        for i, j, k, a in dace.map[0:A.shape[0], 0:A.shape[1], 0:A.shape[2], 0:B.shape[1]]:
+            with dace.tasklet:
+                x << A[i, j, k]
+                y << B[j, a]
+                z << C[k, a]
+                w >> D(1, lambda a, b: a + b)[i, a]
+                w = x * y * z
+
+    A = np.random.rand(10, 11, 9)
+    B = np.random.rand(11, 8)
+    C = np.random.rand(9, 8)
+    D = np.zeros((10, 8))
+
+    sdfg = tester.to_sdfg(A, B, C, D, simplify=True)
+    assert sdfg.apply_transformations(LiftEinsum) == 1
+    for node, _ in sdfg.all_nodes_recursive():
+        if isinstance(node, Einsum):
+            assert node.einsum_str == 'ijk,jl,kl->il'
+
+    sdfg(A, B, C, D)
+    assert np.allclose(D, np.einsum('ijk,jl,kl->il', A, B, C))
+
+
 if __name__ == '__main__':
     test_general_einsum()
     test_matmul()
     test_batch_matmul()
     test_opteinsum_sym()
     test_opteinsum()
+    test_einsum_libnode()
+    test_lift_einsum()
+    test_lift_einsum_mttkrp()
