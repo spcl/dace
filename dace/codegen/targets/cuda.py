@@ -612,6 +612,8 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                 if isinstance(node, nodes.NestedSDFG):
                     if node.schedule == dtypes.ScheduleType.GPU_Device:
                         continue
+                    if node.schedule not in dtypes.GPU_SCHEDULES:
+                        max_streams, max_events = self._compute_cudastreams(node.sdfg, max_streams, max_events + 1)
                 node._cuda_stream = max_streams
                 node._cs_childpath = False
                 max_streams = increment(max_streams)
@@ -1243,8 +1245,6 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         # TODO move this into _get_const_params(dfg_scope)
         const_params |= set((str(e.src)) for e in dace.sdfg.dynamic_map_inputs(state, scope_entry))
 
-        kernel_args_typed = [('const ' if k in const_params else '') + v.as_arg(name=k) for k, v in kernel_args.items()]
-
         # Store init/exit code streams
         old_entry_stream = self.scope_entry_stream
         old_exit_stream = self.scope_exit_stream
@@ -1258,11 +1258,12 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
             outer_stream = CodeIOStream()
             instr.on_scope_exit(sdfg, state, scope_exit, outer_stream, self.scope_exit_stream, self._globalcode)
 
-        # Redefine constant arguments
+        # Redefine constant arguments and rename arguments to device counterparts
         # TODO: This (const behavior and code below) is all a hack.
         #       Refactor and fix when nested SDFGs are separate functions.
         self._dispatcher.defined_vars.enter_scope(scope_entry)
-        for aname, arg in kernel_args.items():
+        prototype_kernel_args = {}
+        for aname, arg in kernel_args.items():  # `list` wrapper is used to modify kernel_args within the loop
             if aname in const_params:
                 defined_type, ctype = None, None
                 if aname in sdfg.arrays:
@@ -1283,7 +1284,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                         pass
                     ptrname = cpp.ptr(aname, data_desc, sdfg, self._frame)
                     if not defined_type:
-                        defined_type, ctype = self._dispatcher.defined_vars.get(ptrname)
+                        defined_type, ctype = self._dispatcher.defined_vars.get(ptrname, is_global=is_global)
 
                     CUDACodeGen._in_device_code = True
                     inner_ptrname = cpp.ptr(aname, data_desc, sdfg, self._frame)
@@ -1293,15 +1294,28 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                                                       defined_type,
                                                       'const %s' % ctype,
                                                       allow_shadowing=True)
+
+                    # Rename argument in kernel prototype as necessary
+                    aname = inner_ptrname
             else:
                 if aname in sdfg.arrays:
                     data_desc = sdfg.arrays[aname]
                     ptrname = cpp.ptr(aname, data_desc, sdfg, self._frame)
-                    defined_type, ctype = self._dispatcher.defined_vars.get(ptrname)
+                    is_global = data_desc.lifetime in (dtypes.AllocationLifetime.Global,
+                                                       dtypes.AllocationLifetime.Persistent)
+                    defined_type, ctype = self._dispatcher.defined_vars.get(ptrname, is_global=is_global)
                     CUDACodeGen._in_device_code = True
                     inner_ptrname = cpp.ptr(aname, data_desc, sdfg, self._frame)
                     CUDACodeGen._in_device_code = False
                     self._dispatcher.defined_vars.add(inner_ptrname, defined_type, ctype, allow_shadowing=True)
+
+                    # Rename argument in kernel prototype as necessary
+                    aname = inner_ptrname
+
+            prototype_kernel_args[aname] = arg
+
+        kernel_args_typed = [('const ' if k in const_params else '') + v.as_arg(name=k)
+                             for k, v in prototype_kernel_args.items()]
 
         kernel_stream = CodeIOStream()
         self.generate_kernel_scope(sdfg, dfg_scope, state_id, scope_entry.map, kernel_name, grid_dims, block_dims,
@@ -1398,7 +1412,7 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
 void  *{kname}_args[] = {{ {kargs} }};
 {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dynsmem}, {stream});'''.format(
                 kname=kernel_name,
-                kargs=', '.join(['(void *)&' + arg for arg in kernel_args] + extra_kernel_args),
+                kargs=', '.join(['(void *)&' + arg for arg in prototype_kernel_args] + extra_kernel_args),
                 gdims='dace_number_blocks, 1, 1' if is_persistent else ', '.join(_topy(grid_dims)),
                 bdims=', '.join(_topy(block_dims)),
                 dynsmem=_topy(dynsmem_size),
@@ -2144,7 +2158,6 @@ void  *{kname}_args[] = {{ {kargs} }};
                 # Rewrite grid conditions
                 for cond in self._kernel_grid_conditions:
                     callsite_stream.write(cond, sdfg, state_id, scope_entry)
-                
 
     def generate_node(self, sdfg, dfg, state_id, node, function_stream, callsite_stream):
         if self.node_dispatch_predicate(sdfg, dfg, node):

@@ -1,5 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from math import exp
+
+import pytest
 import dace
 import numpy as np
 
@@ -69,8 +71,41 @@ def test_edge_split_loop_detection():
     A_ref = np.array([0, 0, 2, 0, 4, 0, 6, 0, 8, 0], dtype=np.int32)
     assert (np.array_equal(A[::2], A_ref[::2]))
 
+@pytest.mark.parametrize('mode', ('FalseTrue', 'TrueFalse', 'SwitchCase'))
+def test_edge_sympy_function(mode):
+    sdfg = dace.SDFG("test")
+    sdfg.add_symbol('N', stype=dace.int32)
+    sdfg.add_symbol('cnd', stype=dace.int32)
+    
+    state_start = sdfg.add_state()
+    state_condition = sdfg.add_state()
+    state_br1 = sdfg.add_state()
+    state_br1_1 = sdfg.add_state_after(state_br1)
+    state_br2 = sdfg.add_state()
+    state_br2_1 = sdfg.add_state_after(state_br2)
+    state_merge = sdfg.add_state()
+
+    sdfg.add_edge(state_start, state_condition, dace.InterstateEdge())  #assignments=dict(cnd=1)))
+    if mode == 'FalseTrue':
+        sdfg.add_edge(state_condition, state_br1, dace.InterstateEdge('Ne(cnd, 0)', dict(N=2)))
+        sdfg.add_edge(state_condition, state_br2, dace.InterstateEdge('Eq(cnd, 0)', dict(N=3)))
+    elif mode == 'TrueFalse':
+        sdfg.add_edge(state_condition, state_br1, dace.InterstateEdge('Eq(cnd, 0)', dict(N=2)))
+        sdfg.add_edge(state_condition, state_br2, dace.InterstateEdge('Ne(cnd, 0)', dict(N=3)))
+    elif mode == 'SwitchCase':
+        sdfg.add_edge(state_condition, state_br1, dace.InterstateEdge('Eq(cnd, 1)', dict(N=2)))
+        sdfg.add_edge(state_condition, state_br2, dace.InterstateEdge('Eq(cnd, 0)', dict(N=3)))
+
+    sdfg.add_edge(state_br1_1, state_merge, dace.InterstateEdge())
+    sdfg.add_edge(state_br2_1, state_merge, dace.InterstateEdge())
+
+    sdfg.compile()
+
 
 if __name__ == '__main__':
     test_for_loop_detection()
     test_invalid_for_loop_detection()
     test_edge_split_loop_detection()
+    test_edge_sympy_function('FalseTrue')
+    test_edge_sympy_function('TrueFalse')
+    test_edge_sympy_function('SwitchCase')
