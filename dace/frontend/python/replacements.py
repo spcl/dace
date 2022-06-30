@@ -3496,7 +3496,10 @@ def _validate_axis_kword(visitor: 'ProgramVisitor', ast_node: ast.Call, sdfg: SD
         inp_shape = [1]
     if 'axis' in kwargs.keys():
         # Set to (0, 1, 2, ...) if the keyword arg value is None
-        axis = kwargs['axis'] or tuple(range(len(inp_shape)))
+        if kwargs['axis'] is None:
+            axis = tuple(range(len(inp_shape)))
+        else:
+            axis = kwargs['axis']
         if axis is not None and not isinstance(axis, (tuple, list)):
             axis = (axis, )
     if axis is not None:
@@ -3516,6 +3519,7 @@ def _validate_axis_kword(visitor: 'ProgramVisitor', ast_node: ast.Call, sdfg: SD
             intermediate_shape = None
             expected_out_shape = [d for i, d in enumerate(inp_shape) if i not in axis]
         expected_out_shape = expected_out_shape or [1]
+        intermediate_shape = intermediate_shape or [1]
     else:
         if keepdims:
             intermediate_shape = [1]
