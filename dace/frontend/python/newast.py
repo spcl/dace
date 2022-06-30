@@ -3394,7 +3394,7 @@ class ProgramVisitor(ExtNodeVisitor):
             return
 
         raise DaceSyntaxError(self, node,
-                              f'Argument "{aname}" was defined as dace.constant but was not given a constant')
+                              f'Argument "{aname}" was defined as dace.compiletime but was not given a constant')
 
     def _parse_sdfg_call(self, funcname: str, func: Union[SDFG, SDFGConvertible], node: ast.Call):
         # Avoid import loops

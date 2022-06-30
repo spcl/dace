@@ -602,12 +602,12 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
                 if arg.arg in self.default_args:
                     continue
 
-                # Skip ``dace.constant``-annotated arguments
+                # Skip ``dace.compiletime``-annotated arguments
                 is_constant = False
                 if arg.annotation is not None:
                     try:
                         ann = astutils.evalnode(arg.annotation, self.globals)
-                        if ann is dace.constant:
+                        if ann is dace.compiletime:
                             is_constant = True
                     except SyntaxError:
                         pass
