@@ -3,14 +3,18 @@ import numpy as np
 import dace
 from dace import dtypes
 from dace.transformation import simplification_transformations
-from dace.transformation.dataflow import SimpleTaskletFusion
+from dace.transformation.dataflow import TaskletFusion
 import pytest
 
+datatype = dace.float32
+np_datatype = np.float32
+M = 10
+N = 2 * M
 
 @dace.program
-def map_with_tasklets(A: dace.float32[20], B: dace.float32[10]):
+def map_with_tasklets(A: datatype[N], B: datatype[M]):
     C = np.zeros_like(B)
-    for i in dace.map[0:10]:
+    for i in dace.map[0:M]:
         a = A[i] + B[i]
         b = a * A[2 * i]
         c = a + B[i]
@@ -19,25 +23,36 @@ def map_with_tasklets(A: dace.float32[20], B: dace.float32[10]):
     return C
 
 
-def _make_sdfg(l: str = 'Python'):
+def _make_sdfg(l: str = 'Python', with_data: bool = False):
 
     language = dtypes.Language.Python if l == 'Python' else dtypes.Language.CPP
     endl = '\n' if l == 'Python' else ';\n'
 
     sdfg = dace.SDFG(f'map_with_{l}_tasklets')
-    _, arrA = sdfg.add_array('A', (20, ), dace.float32)
-    _, arrB = sdfg.add_array('B', (10, ), dace.float32)
-    _, arrC = sdfg.add_array('C', (10, ), dace.float32)
-
+    sdfg.add_array('A', (N, ), datatype)
+    sdfg.add_array('B', (M, ), datatype)
+    sdfg.add_array('C', (M, ), datatype)
     state = sdfg.add_state(is_start_state=True)
     A = state.add_read('A')
     B = state.add_read('B')
     C = state.add_write('C')
-    me, mx = state.add_map('Map', {'i': '0:10'})
-    inputs = {'__inp1', '__inp2'}
-    outputs = {'__out'}
-    ta = state.add_tasklet('a', inputs, {'__out1', '__out2', '__out3'},
-                           f'__out1 = __inp1 + __inp2{endl}__out2 = __out1{endl}__out3 = __out1{endl}', language)
+    me, mx = state.add_map('Map', {'i': '0:' + str(M)})
+    inputs = {
+        '__inp1': datatype,
+        '__inp2': datatype,
+    }
+    outputs = {
+        '__out': datatype,
+    }
+    ta = state.add_tasklet(
+        'a', inputs, {
+            '__out1': datatype,
+            '__out2': datatype,
+            '__out3': datatype,
+        },
+        f'__out1 = __inp1 + __inp2{endl}__out2 = __out1{endl}__out3 = __out1{endl}',
+        language
+    )
     tb = state.add_tasklet('b', inputs, outputs, f'__out = __inp1 * __inp2{endl}', language)
     tc = state.add_tasklet('c', inputs, outputs, f'__out = __inp1 + __inp2{endl}', language)
     td = state.add_tasklet('d', inputs, outputs, f'__out = __inp1 / __inp2{endl}', language)
@@ -46,33 +61,72 @@ def _make_sdfg(l: str = 'Python'):
     state.add_memlet_path(B, me, ta, memlet=dace.Memlet('B[i]'), dst_conn='__inp2')
     state.add_memlet_path(A, me, tb, memlet=dace.Memlet('A[2*i]'), dst_conn='__inp2')
     state.add_memlet_path(B, me, tc, memlet=dace.Memlet('B[i]'), dst_conn='__inp2')
-    state.add_edge(ta, '__out1', tb, '__inp1', dace.Memlet())
-    state.add_edge(ta, '__out2', tc, '__inp1', dace.Memlet())
-    state.add_edge(tb, '__out', td, '__inp2', dace.Memlet())
-    state.add_edge(tc, '__out', td, '__inp1', dace.Memlet())
-    state.add_edge(ta, '__out3', te, '__inp1', dace.Memlet())
-    state.add_edge(td, '__out', te, '__inp2', dace.Memlet())
+    if with_data:
+        sdfg.add_array('tmp1', (1,), datatype)
+        sdfg.add_array('tmp2', (1,), datatype)
+        sdfg.add_array('tmp3', (1,), datatype)
+        sdfg.add_array('tmp4', (1,), datatype)
+        sdfg.add_array('tmp5', (1,), datatype)
+        sdfg.add_array('tmp6', (1,), datatype)
+        atemp1 = state.add_access('tmp1')
+        atemp2 = state.add_access('tmp2')
+        atemp3 = state.add_access('tmp3')
+        atemp4 = state.add_access('tmp4')
+        atemp5 = state.add_access('tmp5')
+        atemp6 = state.add_access('tmp6')
+        #state.add_memlet_path(ta, atemp1, tb, memlet=dace.Memlet('tmp1[0]'), src_conn='__out1', dst_conn='__inp1')
+        #state.add_memlet_path(ta, atemp2, tc, memlet=dace.Memlet('tmp2[0]'), src_conn='__out2', dst_conn='__inp1')
+        #state.add_memlet_path(tb, atemp3, td, memlet=dace.Memlet('tmp3[0]'), src_conn='__out', dst_conn='__inp2')
+        #state.add_memlet_path(tc, atemp4, td, memlet=dace.Memlet('tmp4[0]'), src_conn='__out', dst_conn='__inp1')
+        #state.add_memlet_path(ta, atemp5, te, memlet=dace.Memlet('tmp5[0]'), src_conn='__out3', dst_conn='__inp1')
+        #state.add_memlet_path(td, atemp6, te, memlet=dace.Memlet('tmp6[0]'), src_conn='__out', dst_conn='__inp2')
+        state.add_edge(ta, '__out1', atemp1, None, dace.Memlet('tmp1[0]'))
+        state.add_edge(atemp1, None, tb, '__inp1', dace.Memlet('tmp1[0]'))
+        state.add_edge(ta, '__out2', atemp2, None, dace.Memlet('tmp2[0]'))
+        state.add_edge(atemp2, None, tc, '__inp1', dace.Memlet('tmp2[0]'))
+        state.add_edge(tb, '__out', atemp3, None, dace.Memlet('tmp3[0]'))
+        state.add_edge(atemp3, None, td, '__inp2', dace.Memlet('tmp3[0]'))
+        state.add_edge(tc, '__out', atemp4, None, dace.Memlet('tmp4[0]'))
+        state.add_edge(atemp4, None, td, '__inp1', dace.Memlet('tmp4[0]'))
+        state.add_edge(ta, '__out3', atemp5, None, dace.Memlet('tmp5[0]'))
+        state.add_edge(atemp5, None, te, '__inp1', dace.Memlet('tmp5[0]'))
+        state.add_edge(td, '__out', atemp6, None, dace.Memlet('tmp6[0]'))
+        state.add_edge(atemp6, None, te, '__inp2', dace.Memlet('tmp6[0]'))
+    else:
+        state.add_edge(ta, '__out1', tb, '__inp1', dace.Memlet())
+        state.add_edge(ta, '__out2', tc, '__inp1', dace.Memlet())
+        state.add_edge(tb, '__out', td, '__inp2', dace.Memlet())
+        state.add_edge(tc, '__out', td, '__inp1', dace.Memlet())
+        state.add_edge(ta, '__out3', te, '__inp1', dace.Memlet())
+        state.add_edge(td, '__out', te, '__inp2', dace.Memlet())
     state.add_memlet_path(te, mx, C, memlet=dace.Memlet('C[i]'), src_conn='__out')
 
     return sdfg
 
 
 @pytest.mark.parametrize("l", [pytest.param('Python'), pytest.param('CPP')])
-def test_map_with_tasklets(l: str):
-    sdfg = _make_sdfg(l)
-    simplify_reduced = [xf for xf in simplification_transformations() if xf.__name__ != 'SimpleTaskletFusion']
+@pytest.mark.parametrize("with_data", [pytest.param(True), pytest.param(False)])
+def test_map_with_tasklets(l: str, with_data: bool):
+    sdfg = _make_sdfg(l, with_data)
+    sdfg.save('_dacegraphs/orig_' + l + '_' + ('d' if with_data else 'nd') + '.sdfg')
+    sdfg.compile()
+    simplify_reduced = [xf for xf in simplification_transformations() if xf.__name__ != 'TaskletFusion']
     sdfg.apply_transformations_repeated(simplify_reduced)
-    num = sdfg.apply_transformations_repeated(SimpleTaskletFusion)
-    assert (num == 4)
+    num = sdfg.apply_transformations_repeated(TaskletFusion)
+    sdfg.save('_dacegraphs/xformed_' + l + '_' + ('d' if with_data else 'nd') + '.sdfg')
+    #assert (num == 4)
     func = sdfg.compile()
-    A = np.arange(1, 21, dtype=np.float32)
-    B = np.arange(1, 11, dtype=np.float32)
-    C = np.zeros((10, ), dtype=np.float32)
+    A = np.arange(1, N + 1, dtype=np_datatype)
+    B = np.arange(1, M + 1, dtype=np_datatype)
+    C = np.zeros((M, ), dtype=np_datatype)
     func(A=A, B=B, C=C)
+    map_with_tasklets.to_sdfg().save('_dacegraphs/tmp.sdfg')
     ref = map_with_tasklets.f(A, B)
-    assert (np.allclose(C, ref))
+    #assert (np.allclose(C, ref))
 
 
 if __name__ == '__main__':
-    test_map_with_tasklets(l='Python')
-    test_map_with_tasklets(l='CPP')
+    test_map_with_tasklets(l='Python', with_data=False)
+    test_map_with_tasklets(l='CPP', with_data=False)
+    test_map_with_tasklets(l='Python', with_data=True)
+    test_map_with_tasklets(l='CPP', with_data=True)
