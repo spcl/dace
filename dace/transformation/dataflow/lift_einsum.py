@@ -33,29 +33,43 @@ class LiftEinsum(xf.SingleStateTransformation):
         if len(contents.nodes()) != 1:
             return False
 
-        # Check for WCR
-        oe = state.out_edges(self.tasklet)
-        if len(oe) != 1:
-            return False
-        oe = oe[0]
-        if oe.data.wcr is None or detect_reduction_type(oe.data.wcr) != dtypes.ReductionType.Sum:
-            return False
-
         # Check that indices match map indices
         unique_chars = set()
+        input_chars = set()
+        output_chars = set()
         for e in state.all_edges(self.tasklet):
             memlet = e.data
+            if memlet.is_empty():
+                continue
             if memlet.dynamic:
                 return False
             if memlet.volume != 1 or memlet.subset.num_elements() != 1:
                 return False
-            ind = [str(rb) for rb, _, _ in memlet.subset.ndrange()]
-            unique_chars |= set(ind)
+            ind = set(str(rb) for rb, _, _ in memlet.subset.ndrange())
+            unique_chars |= ind
             if any(i != '0' and i not in self.map_entry.map.params for i in ind):
                 return False
 
+            # Keep track of input/output indices for WCR check
+            if e.dst is self.tasklet:
+                input_chars |= ind
+            else:
+                output_chars |= ind
+
         # If there are too many characters for an einsum expression, fail
-        if len(unique_chars) > len(self.EINSUM_CHARS):
+        if len(unique_chars) == 0 or len(unique_chars) > len(self.EINSUM_CHARS):
+            return False
+
+        # Test outputs
+        oe = state.out_edges(self.tasklet)
+        if len(oe) != 1:
+            return False
+        oe = oe[0]
+        # Check for WCR if relevant
+        if input_chars - output_chars:
+            if oe.data.wcr is None or detect_reduction_type(oe.data.wcr) != dtypes.ReductionType.Sum:
+                return False
+        elif oe.data.wcr is not None:  # if, e.g., outer product, no WCR
             return False
 
         # Check tasklet contents

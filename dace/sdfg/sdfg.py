@@ -1558,6 +1558,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             except:
                 newshape.append(dace.symbolic.pystr_to_symbolic(s))
         shape = newshape
+        strides = strides or None
 
         if isinstance(dtype, type) and dtype in dtypes._CONSTANT_TYPES[:-1]:
             dtype = dtypes.typeclass(dtype)

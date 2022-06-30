@@ -147,6 +147,56 @@ def test_lift_einsum_mttkrp():
     assert np.allclose(D, np.einsum('ijk,jl,kl->il', A, B, C))
 
 
+def test_lift_einsum_reduce():
+    from dace.libraries.blas.nodes.einsum import Einsum
+    from dace.transformation.dataflow import LiftEinsum
+
+    @dace.program
+    def tester(A, B):
+        B[:] = np.sum(A)
+
+    A = np.random.rand(10, 11, 9)
+    B = np.random.rand(1)
+
+    sdfg = tester.to_sdfg(A, B, simplify=True)
+    sdfg.expand_library_nodes()
+    assert sdfg.apply_transformations(LiftEinsum) == 1
+    for node, _ in sdfg.all_nodes_recursive():
+        if isinstance(node, Einsum):
+            assert node.einsum_str == 'ijk->'
+
+    sdfg(A, B)
+    assert np.allclose(B, np.einsum('ijk->', A))
+
+
+def test_lift_einsum_outerproduct():
+    from dace.libraries.blas.nodes.einsum import Einsum
+    from dace.transformation.dataflow import LiftEinsum
+
+    @dace.program
+    def tester(A, B):
+        C = np.ndarray([B.shape[0], A.shape[0]], A.dtype)
+        for i, j in dace.map[0:A.shape[0], 0:B.shape[0]]:
+            with dace.tasklet:
+                a << A[i]
+                b << B[j]
+                c >> C[j, i]
+                c = a * b
+        return C
+
+    A = np.random.rand(10)
+    B = np.random.rand(11)
+
+    sdfg = tester.to_sdfg(A, B, simplify=True)
+    sdfg.expand_library_nodes()
+    assert sdfg.apply_transformations(LiftEinsum) == 1
+    for node, _ in sdfg.all_nodes_recursive():
+        if isinstance(node, Einsum):
+            assert node.einsum_str == 'i,j->ji'
+
+    assert np.allclose(sdfg(A, B), np.einsum('i,j->ji', A, B))
+
+
 if __name__ == '__main__':
     test_general_einsum()
     test_matmul()
@@ -156,3 +206,5 @@ if __name__ == '__main__':
     test_einsum_libnode()
     test_lift_einsum()
     test_lift_einsum_mttkrp()
+    test_lift_einsum_reduce()
+    test_lift_einsum_outerproduct()
