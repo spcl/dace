@@ -167,9 +167,9 @@ class DaceProgram(pycommon.SDFGConvertible):
             for arg, pval in zip(self.dec_args, self.signature.parameters.values()):
                 pval._annotation = arg
 
-        # Keep a set of constant arguments to ignore
+        # Keep a set of compile-time arguments to ignore
         self.constant_args = set(pname for pname, pval in self.signature.parameters.items()
-                                 if pval.annotation is dtypes.constant)
+                                 if pval.annotation is dtypes.compiletime)
 
         if self.argnames is None:
             self.argnames = []
@@ -546,7 +546,7 @@ class DaceProgram(pycommon.SDFGConvertible):
                 is_constant = False
                 if not _is_empty(ann):
                     # If constant, use given argument
-                    if ann is dtypes.constant:
+                    if ann is dtypes.compiletime:
                         curarg = None
                         is_constant = True
                     else:

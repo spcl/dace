@@ -117,7 +117,7 @@ def test_kwarg_none():
 
 def test_conditional_print():
     @dace.program
-    def inner(do_print: dace.constant = False):
+    def inner(do_print: dace.compiletime = False):
         if do_print:
             print("PRINT!")
 

@@ -812,7 +812,7 @@ class struct(typeclass):
         )
 
 
-class constant:
+class compiletime:
     """
     Data descriptor type hint signalling that argument evaluation is
     deferred to call time.
@@ -820,7 +820,7 @@ class constant:
     Example usage::
 
         @dace.program
-        def example(A: dace.float64[20], constant: dace.constant):
+        def example(A: dace.float64[20], constant: dace.compiletime):
             if constant == 0:
                 return A + 1
             else:
@@ -833,7 +833,7 @@ class constant:
 
     @staticmethod
     def __descriptor__():
-        raise ValueError('All constant arguments must be provided in order to compile the SDFG ahead-of-time.')
+        raise ValueError('All compile-time arguments must be provided in order to compile the SDFG ahead-of-time.')
 
 
 ####### Utility function ##############
