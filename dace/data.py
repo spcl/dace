@@ -348,6 +348,10 @@ class Scalar(Data):
     def start_offset(self):
         return 0
 
+    @property
+    def optional(self) -> bool:
+        return False
+
     def is_equivalent(self, other):
         if not isinstance(other, Scalar):
             return False
@@ -496,6 +500,8 @@ class Array(Data):
         if start_offset is not None:
             self.start_offset = start_offset
         self.optional = optional
+        if optional is None and self.transient:
+            self.optional = False
 
         if strides is not None:
             self.strides = cp.copy(strides)
@@ -705,6 +711,10 @@ class Stream(Data):
     @property
     def start_offset(self):
         return 0
+
+    @property
+    def optional(self) -> bool:
+        return False
 
     def clone(self):
         return type(self)(self.dtype, self.buffer_size, self.shape, self.transient, self.storage, self.location,
