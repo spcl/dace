@@ -40,7 +40,41 @@ def test_optional_argcheck():
         tester(None)
 
 
+@pytest.mark.parametrize('isnone', (False, True))
+def test_optional_dead_state(isnone):
+    desc = dace.float64[20, 20]
+    desc.optional = False  # Explicitly set to non-optional
+
+    if isnone:
+
+        @dace.program
+        def tester(a: Optional[dace.float64[20]], b: desc):
+            if a is None:
+                return 1
+            elif b is None:
+                return 2
+            else:
+                return 3
+    else:
+
+        @dace.program
+        def tester(a: Optional[dace.float64[20]], b: desc):
+            if a is None:
+                return 1
+            elif b is not None:
+                return 2
+            else:
+                return 3
+
+    sdfg = tester.to_sdfg(simplify=False)
+    inline_sdfgs(sdfg)
+    DeadStateElimination().apply_pass(sdfg, {})
+    assert all('b' not in str(e.data.condition.as_string) for e in sdfg.edges())
+
+
 if __name__ == '__main__':
     test_type_hint()
     test_optional_arg_hint()
     test_optional_argcheck()
+    test_optional_dead_state(False)
+    test_optional_dead_state(True)
