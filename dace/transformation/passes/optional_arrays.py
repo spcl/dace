@@ -19,11 +19,11 @@ class OptionalArrayInference(ppl.Pass):
     * it is definitely (unconditionally) read or written in the SDFG.
     """
     def modifies(self) -> ppl.Modifies:
-        return ppl.Modifies.States
+        return ppl.Modifies.Descriptors
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
-        # If connectivity or any edges were changed, some more states might be dead
-        return modified & (ppl.Modifies.InterstateEdges | ppl.Modifies.States)
+        # If connectivity or any edges were changed, some new descriptors may be marked as optional
+        return modified & (ppl.Modifies.States)
 
     def apply_pass(self,
                    sdfg: SDFG,
