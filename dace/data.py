@@ -145,7 +145,7 @@ def find_new_name(name: str, existing_names: Sequence[str]) -> str:
 
 
 @make_properties
-class Data(object):
+class Data:
     """ Data type descriptors that can be used as references to memory.
         Examples: Arrays, Streams, custom arrays (e.g., sparse matrices).
     """
@@ -169,6 +169,10 @@ class Data(object):
         self.lifetime = lifetime
         self.debuginfo = debuginfo
         self._validate()
+
+    def __call__(self):
+        # This method is implemented to support type hints
+        return self
 
     def validate(self):
         """ Validate the correctness of this object.
@@ -194,12 +198,17 @@ class Data(object):
     def toplevel(self):
         return self.lifetime is not dtypes.AllocationLifetime.Scope
 
-    def copy(self):
-        raise RuntimeError('Data descriptors are unique and should not be copied')
-
     def is_equivalent(self, other):
         """ Check for equivalence (shape and type) of two data descriptors. """
         raise NotImplementedError
+
+    def __eq__(self, other):
+        # Evaluate equivalence using serialized value
+        return serialize.dumps(self) == serialize.dumps(other)
+
+    def __hash__(self):
+        # Compute hash using serialized value (i.e., with all properties included)
+        return hash(serialize.dumps(self))
 
     def as_arg(self, with_types=True, for_call=False, name=None):
         """Returns a string for a C++ function signature (e.g., `int *A`). """
