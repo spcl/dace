@@ -813,6 +813,13 @@ class Map(object):
                               optional=True,
                               optional_condition=lambda m: m.schedule == dtypes.ScheduleType.CPU_Multicore)
 
+    gpu_block_size = ListProperty(element_type=int,
+                                  default=None,
+                                  allow_none=True,
+                                  desc="GPU kernel block size",
+                                  optional=True,
+                                  optional_condition=lambda m: m.schedule in dtypes.GPU_SCHEDULES)
+
     def __init__(self,
                  label,
                  params,
