@@ -6,6 +6,7 @@ from dace.sdfg import nodes
 from dace.symbolic import symstr
 from dace.transformation.transformation import ExpandTransformation
 from .. import environments
+from dace.libraries.mpi.nodes.node import MPINode
 
 
 @library.expansion
@@ -36,7 +37,7 @@ class ExpandScatterMPI(ExpandTransformation):
 
 
 @library.node
-class Scatter(nodes.LibraryNode):
+class Scatter(MPINode):
 
     # Global properties
     implementations = {
@@ -110,7 +111,7 @@ class ExpandBlockScatterMPI(ExpandTransformation):
 
 
 @library.node
-class BlockScatter(nodes.LibraryNode):
+class BlockScatter(MPINode):
 
     # Global properties
     implementations = {

@@ -147,7 +147,7 @@ class InstrumentationReport(object):
         element_list.sort()
 
         row_format = ('{:<{width}}' * 5) + '\n'
-        counter_format = ('{:<{width}}' * 2) + '\n'
+        counter_format = ('{:<{width}}' * 3) + '\n'
 
         string = 'Instrumentation report\n'
         string += 'SDFG Hash: ' + self.sdfg_hash + '\n'
@@ -178,9 +178,9 @@ class InstrumentationReport(object):
             string += ('-' * (COLW * 5)) + '\n'
 
         if len(self.counters) > 0:
-            string += ('-' * (COUNTER_COLW * 2)) + '\n'
-            string += ('{:<{width}}' * 2).format('Counter', 'Value', width=COUNTER_COLW) + '\n'
-            string += ('-' * (COUNTER_COLW * 2)) + '\n'
+            string += ('-' * (COUNTER_COLW * 3)) + '\n'
+            string += ('{:<{width}}' * 3).format('Counter', 'Element ID', 'Value', width=COUNTER_COLW) + '\n'
+            string += ('-' * (COUNTER_COLW * 3)) + '\n'
 
             if self._sortcat == 'value':
                 counter_list = sorted(self.counters, key=lambda k: self.counters[k], reverse=self._sortdesc)
@@ -190,7 +190,30 @@ class InstrumentationReport(object):
                 counter_list = self.counters.keys()
 
             for counter in counter_list:
-                string += counter_format.format(counter, self.counters[counter], width=COUNTER_COLW)
-            string += ('-' * (COUNTER_COLW * 2)) + '\n'
+                # Counter entries that contain an element ID are given as a
+                # 6-tuple, separated by spaces. We check if the provided entry
+                # contains an element ID (by checking if it's a 6-tuple), and
+                # then read out the element ID. The ID is given in a 'combined'
+                # form, where the first 16 bits represent the state ID and the
+                # last 16 bits represent the node ID.
+                parts = counter.split(' ')
+                element = ''
+                if len(parts) == 6:
+                    try :
+                        unified = int(parts[5])
+                        state_id = (unified >> 16) & 0xFFFF
+                        if state_id > 16383:
+                            state_id = -1
+                        node_id = unified & 0xFFFF
+                        # If no state ID is given, the element is a state.
+                        if state_id < 0:
+                            element = '{nid}'.format(nid=node_id)
+                        else:
+                            element = '{sid}/{nid}'.format(sid=state_id, nid=node_id)
+                    except ValueError:
+                        # Ignored.
+                        pass
+                string += counter_format.format(counter, element, self.counters[counter], width=COUNTER_COLW)
+            string += ('-' * (COUNTER_COLW * 3)) + '\n'
 
         return string

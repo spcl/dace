@@ -11,7 +11,7 @@ import dace.serialize
 from typing import Any, Dict, Set, Union
 from dace.config import Config
 from dace.sdfg import graph
-from dace.frontend.python.astutils import unparse
+from dace.frontend.python.astutils import unparse, rname
 from dace.properties import (EnumProperty, Property, CodeProperty, LambdaProperty, RangeProperty, DebugInfoProperty,
                              SetProperty, make_properties, indirect_properties, DataProperty, SymbolicProperty,
                              ListProperty, SDFGReferenceProperty, DictProperty, LibraryImplementationProperty,
@@ -326,6 +326,13 @@ class Tasklet(CodeNode):
     instrument = EnumProperty(dtype=dtypes.InstrumentationType,
                               desc="Measure execution statistics with given method",
                               default=dtypes.InstrumentationType.No_Instrumentation)
+    side_effects = Property(dtype=bool,
+                            allow_none=True,
+                            default=None,
+                            desc='If True, this tasklet calls a function that may have '
+                            'additional side effects on the system state (e.g., callback). '
+                            'Defaults to None, which lets the framework make assumptions based on '
+                            'the tasklet contents')
 
     def __init__(self,
                  label,
@@ -338,6 +345,7 @@ class Tasklet(CodeNode):
                  code_init="",
                  code_exit="",
                  location=None,
+                 side_effects=None,
                  debuginfo=None):
         super(Tasklet, self).__init__(label, location, inputs, outputs)
 
@@ -347,6 +355,7 @@ class Tasklet(CodeNode):
         self.code_global = CodeBlock(code_global, dtypes.Language.CPP)
         self.code_init = CodeBlock(code_init, dtypes.Language.CPP)
         self.code_exit = CodeBlock(code_exit, dtypes.Language.CPP)
+        self.side_effects = side_effects
         self.debuginfo = debuginfo
 
     @property
@@ -376,6 +385,26 @@ class Tasklet(CodeNode):
     @property
     def free_symbols(self) -> Set[str]:
         return self.code.get_free_symbols(self.in_connectors.keys() | self.out_connectors.keys())
+
+    def has_side_effects(self, sdfg) -> bool:
+        """
+        Returns True if this tasklet may have other side effects (e.g., calling stateful libraries, communicating).
+        """
+        # If side effects property is set, takes precedence over node analysis
+        if self.side_effects is not None:
+            return self.side_effects
+
+        # If side effect property is not defined, find calls within tasklet
+        if self.code.language == dace.dtypes.Language.Python and self.code.code:
+            for stmt in self.code.code:
+                for n in ast.walk(stmt):
+                    if isinstance(n, ast.Call):
+                        cname = rname(n.func)
+                        # If the function name is a symbol or a Scalar data descriptor, it may be a dace.callback,
+                        # which means side effects are possible unless otherwise mentioned
+                        if cname in sdfg.symbols or cname in sdfg.arrays:
+                            return True
+        return False
 
     def infer_connector_types(self, sdfg, state):
         # If a MLIR tasklet, simply read out the types (it's explicit)
@@ -596,7 +625,6 @@ class NestedSDFG(CodeNode):
 # Scope entry class
 class EntryNode(Node):
     """ A type of node that opens a scope (e.g., Map or Consume). """
-
     def validate(self, sdfg, state):
         self.map.validate(sdfg, state, self)
 
@@ -607,7 +635,6 @@ class EntryNode(Node):
 # Scope exit class
 class ExitNode(Node):
     """ A type of node that closes a scope (e.g., Map or Consume). """
-
     def validate(self, sdfg, state):
         self.map.validate(sdfg, state, self)
 
@@ -620,7 +647,6 @@ class MapEntry(EntryNode):
     """ Node that opens a Map scope.
         @see: Map
     """
-
     def __init__(self, map: 'Map', dynamic_inputs=None):
         super(MapEntry, self).__init__(dynamic_inputs or set())
         if map is None:
@@ -649,7 +675,7 @@ class MapEntry(EntryNode):
             if nid is not None:
                 exit_node = context['sdfg_state'].node(nid)
                 exit_node.map = m
-        except IndexError:  # Exit node has a higher node ID
+        except graph.NodeNotFoundError:  # Exit node has a higher node ID
             # Connection of the scope nodes handled in MapExit
             pass
 
@@ -696,7 +722,6 @@ class MapExit(ExitNode):
     """ Node that closes a Map scope.
         @see: Map
     """
-
     def __init__(self, map: 'Map'):
         super(MapExit, self).__init__()
         if map is None:
@@ -714,7 +739,7 @@ class MapExit(ExitNode):
             entry_node = context['sdfg_state'].node(int(json_obj['scope_entry']))
 
             ret = cls(map=entry_node.map)
-        except (IndexError, TypeError):
+        except (IndexError, TypeError, graph.NodeNotFoundError):
             # Entry node has a higher ID than exit node
             # Connection of the scope nodes handled in MapEntry
             ret = cls(cls.map_type()('_', [], []))
@@ -788,6 +813,13 @@ class Map(object):
                               optional=True,
                               optional_condition=lambda m: m.schedule == dtypes.ScheduleType.CPU_Multicore)
 
+    gpu_block_size = ListProperty(element_type=int,
+                                  default=None,
+                                  allow_none=True,
+                                  desc="GPU kernel block size",
+                                  optional=True,
+                                  optional_condition=lambda m: m.schedule in dtypes.GPU_SCHEDULES)
+
     def __init__(self,
                  label,
                  params,
@@ -834,7 +866,6 @@ class ConsumeEntry(EntryNode):
     """ Node that opens a Consume scope.
         @see: Consume
     """
-
     def __init__(self, consume, dynamic_inputs=None):
         super(ConsumeEntry, self).__init__(dynamic_inputs or set())
         if consume is None:
@@ -861,7 +892,7 @@ class ConsumeEntry(EntryNode):
             if nid is not None:
                 exit_node = context['sdfg_state'].node(nid)
                 exit_node.consume = c
-        except IndexError:  # Exit node has a higher node ID
+        except graph.NodeNotFoundError:  # Exit node has a higher node ID
             # Connection of the scope nodes handled in ConsumeExit
             pass
 
@@ -912,7 +943,6 @@ class ConsumeExit(ExitNode):
     """ Node that closes a Consume scope.
         @see: Consume
     """
-
     def __init__(self, consume):
         super(ConsumeExit, self).__init__()
         if consume is None:
@@ -925,7 +955,7 @@ class ConsumeExit(ExitNode):
             # Set consume reference to entry node
             entry_node = context['sdfg_state'].node(int(json_obj['scope_entry']))
             ret = ConsumeExit(consume=entry_node.consume)
-        except (IndexError, TypeError):
+        except (IndexError, TypeError, graph.NodeNotFoundError):
             # Entry node has a higher ID than exit node
             # Connection of the scope nodes handled in ConsumeEntry
             ret = ConsumeExit(Consume("", ['i', 1], None))
@@ -1024,7 +1054,6 @@ ConsumeEntry = indirect_properties(Consume, lambda obj: obj.consume)(ConsumeEntr
 
 @dace.serialize.serializable
 class PipelineEntry(MapEntry):
-
     @staticmethod
     def map_type():
         return Pipeline
@@ -1057,7 +1086,6 @@ class PipelineEntry(MapEntry):
 
 @dace.serialize.serializable
 class PipelineExit(MapExit):
-
     @staticmethod
     def map_type():
         return Pipeline
@@ -1173,6 +1201,15 @@ class LibraryNode(CodeNode):
     @property
     def __jsontype__(self):
         return 'LibraryNode'
+
+    @property
+    def has_side_effects(self) -> bool:
+        """
+        Returns True if this library node has other side effects (e.g., calling stateful libraries, communicating)
+        when expanded.
+        This method is meant to be extended by subclasses.
+        """
+        return False
 
     def to_json(self, parent):
         jsonobj = super().to_json(parent)

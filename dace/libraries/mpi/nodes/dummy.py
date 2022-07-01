@@ -1,4 +1,5 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
+from dace.libraries.mpi.nodes.node import MPINode
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
@@ -25,7 +26,7 @@ class ExpandDummyMPI(ExpandTransformation):
 
 
 @dace.library.node
-class Dummy(dace.sdfg.nodes.LibraryNode):
+class Dummy(MPINode):
     """
     The Dummy library node is used to add fields to the DaCe program's state (see code generation) that are strictly
     related to MPI communication (see distributed descriptors `dace/distr_types`: ProcessGrid, Subarray, RedistrArray).

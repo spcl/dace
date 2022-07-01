@@ -19,6 +19,7 @@ class DeviceType(aenum.AutoNumberEnum):
     CPU = ()  #: Multi-core CPU
     GPU = ()  #: GPU (AMD or NVIDIA)
     FPGA = ()  #: FPGA (Intel or Xilinx)
+    Snitch = ()  #: Compute Cluster (RISC-V)
 
 
 @undefined_safe_enum
@@ -38,6 +39,9 @@ class StorageType(aenum.AutoNumberEnum):
     FPGA_Registers = ()  #: On-chip memory (fully partitioned registers)
     FPGA_ShiftRegister = ()  #: Only accessible at constant indices
     SVE_Register = ()  #: SVE register
+    Snitch_TCDM = () #: Cluster-private memory
+    Snitch_L2 = () #: External memory
+    Snitch_SSR = () #: Memory accessed by SSR streamer
 
 
 @undefined_safe_enum
@@ -68,6 +72,8 @@ class ScheduleType(aenum.AutoNumberEnum):
     GPU_ThreadBlock_Dynamic = ()  #: Allows rescheduling work within a block
     GPU_Persistent = ()
     FPGA_Device = ()
+    Snitch = ()
+    Snitch_Multicore = ()
 
 
 # A subset of GPU schedule types
@@ -184,7 +190,8 @@ SCOPEDEFAULT_STORAGE = {
     ScheduleType.GPU_ThreadBlock: StorageType.Register,
     ScheduleType.GPU_ThreadBlock_Dynamic: StorageType.Register,
     ScheduleType.FPGA_Device: StorageType.FPGA_Global,
-    ScheduleType.SVE_Map: StorageType.CPU_Heap
+    ScheduleType.SVE_Map: StorageType.CPU_Heap,
+    ScheduleType.Snitch: StorageType.Snitch_TCDM
 }
 
 # Maps from ScheduleType to default ScheduleType for sub-scopes
@@ -201,7 +208,9 @@ SCOPEDEFAULT_SCHEDULE = {
     ScheduleType.GPU_ThreadBlock: ScheduleType.Sequential,
     ScheduleType.GPU_ThreadBlock_Dynamic: ScheduleType.Sequential,
     ScheduleType.FPGA_Device: ScheduleType.FPGA_Device,
-    ScheduleType.SVE_Map: ScheduleType.Sequential
+    ScheduleType.SVE_Map: ScheduleType.Sequential,
+    ScheduleType.Snitch: ScheduleType.Snitch,
+    ScheduleType.Snitch_Multicore: ScheduleType.Snitch_Multicore
 }
 
 # Translation of types to C types
@@ -803,7 +812,7 @@ class struct(typeclass):
         )
 
 
-class constant:
+class compiletime:
     """
     Data descriptor type hint signalling that argument evaluation is
     deferred to call time.
@@ -811,7 +820,7 @@ class constant:
     Example usage::
 
         @dace.program
-        def example(A: dace.float64[20], constant: dace.constant):
+        def example(A: dace.float64[20], constant: dace.compiletime):
             if constant == 0:
                 return A + 1
             else:
@@ -824,7 +833,7 @@ class constant:
 
     @staticmethod
     def __descriptor__():
-        raise ValueError('All constant arguments must be provided in order to compile the SDFG ahead-of-time.')
+        raise ValueError('All compile-time arguments must be provided in order to compile the SDFG ahead-of-time.')
 
 
 ####### Utility function ##############

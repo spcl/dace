@@ -5,6 +5,7 @@ import dace.sdfg.nodes
 from dace.transformation.transformation import ExpandTransformation
 from .. import environments
 from dace import dtypes
+from dace.libraries.mpi.nodes.node import MPINode
 
 
 @dace.library.expansion
@@ -49,7 +50,7 @@ class ExpandIrecvMPI(ExpandTransformation):
 
 
 @dace.library.node
-class Irecv(dace.sdfg.nodes.LibraryNode):
+class Irecv(MPINode):
 
     # Global properties
     implementations = {

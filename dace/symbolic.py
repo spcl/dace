@@ -521,7 +521,7 @@ def swalk(expr, enter_functions=False):
 
 _builtin_userfunctions = {
     'int_floor', 'int_ceil', 'abs', 'Abs', 'min', 'Min', 'max', 'Max', 'not', 'Not', 'Eq', 'NotEq', 'Ne', 'AND', 'OR',
-    'pow'
+    'pow', 'round'
 }
 
 
@@ -618,6 +618,17 @@ class AND(sympy.Function):
             return x and y
 
     def _eval_is_boolean(self):
+        return True
+
+
+class ROUND(sympy.Function):
+
+    @classmethod
+    def eval(cls, x):
+        if x.is_Number:
+            return round(x)
+
+    def _eval_is_integer(self):
         return True
 
 
@@ -848,6 +859,7 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None) -> sympy.Basic:
         'NotEq': sympy.Ne,
         'floor': sympy.floor,
         'ceil': sympy.ceiling,
+        'round': ROUND,
         # Convert and/or to special sympy functions to avoid boolean evaluation
         'And': AND,
         'Or': OR,

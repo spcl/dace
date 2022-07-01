@@ -580,7 +580,6 @@ class TaskletTransformer(ExtNodeTransformer):
     """ A visitor that traverses a data-centric tasklet, removes memlet
         annotations and returns input and output memlets.
     """
-
     def __init__(self,
                  visitor,
                  defined,
@@ -3395,7 +3394,7 @@ class ProgramVisitor(ExtNodeVisitor):
             return
 
         raise DaceSyntaxError(self, node,
-                              f'Argument "{aname}" was defined as dace.constant but was not given a constant')
+                              f'Argument "{aname}" was defined as dace.compiletime but was not given a constant')
 
     def _parse_sdfg_call(self, funcname: str, func: Union[SDFG, SDFGConvertible], node: ast.Call):
         # Avoid import loops
@@ -3998,13 +3997,16 @@ class ProgramVisitor(ExtNodeVisitor):
                                                                               for name in args} | {'__istate'},
                                                   {f'__out_{name}'
                                                    for name in outargs} | {'__ostate'},
-                                                  f'__out_{outargs[0]} = {funcname}({call_args})')
+                                                  f'__out_{outargs[0]} = {funcname}({call_args})',
+                                                  side_effects=True)
         else:
             call_args = ', '.join(str(s) for s in allargs)
             tasklet = self.last_state.add_tasklet(f'callback_{node.lineno}', {f'__in_{name}'
                                                                               for name in args} | {'__istate'},
                                                   {f'__out_{name}'
-                                                   for name in outargs} | {'__ostate'}, f'{funcname}({call_args})')
+                                                   for name in outargs} | {'__ostate'},
+                                                  f'{funcname}({call_args})',
+                                                  side_effects=True)
 
         # Avoid cast of output pointers to scalars in code generation
         for cname in outargs:
@@ -4606,7 +4608,6 @@ class ProgramVisitor(ExtNodeVisitor):
         """ Parses the slice attribute of an ast.Subscript node.
             Scalar data are promoted to symbols.
         """
-
         def _promote(node: ast.AST) -> Union[Any, str, symbolic.symbol]:
             node_str = astutils.unparse(node)
             sym = None
