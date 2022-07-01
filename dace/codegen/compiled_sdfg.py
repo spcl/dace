@@ -354,8 +354,9 @@ class CompiledSDFG(object):
                 if isinstance(arg, list):
                     print('WARNING: Casting list argument "%s" to ndarray' % a)
                 elif arg is None:
-                    # None values are passed as null pointers
-                    pass
+                    if atype.optional is False:  # If array cannot be None
+                        raise TypeError(f'Passing a None value to a non-optional array in argument "{a}"')
+                    # Otherwise, None values are passed as null pointers below
                 else:
                     raise TypeError('Passing an object (type %s) to an array in argument "%s"' %
                                     (type(arg).__name__, a))
