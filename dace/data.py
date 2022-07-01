@@ -452,7 +452,12 @@ class Array(Data):
     alignment = Property(dtype=int, default=0, desc='Allocation alignment in bytes (0 uses compiler-default)')
 
     start_offset = Property(dtype=int, default=0, desc='Allocation offset elements for manual alignment (pre-padding)')
-    optional = Property(dtype=bool, default=True, desc='If True, the array may have a value of None')
+    optional = Property(dtype=bool,
+                        default=None,
+                        allow_none=True,
+                        desc='Specifies whether this array may have a value of None. '
+                        'If False, the array must not be None. If option is not set, '
+                        'it is inferred by other properties and the OptionalArrayInference pass.')
 
     def __init__(self,
                  dtype,
@@ -481,11 +486,7 @@ class Array(Data):
         self.alignment = alignment
         if start_offset is not None:
             self.start_offset = start_offset
-        if optional is not None:
-            self.optional = optional
-        else:
-            # By default, transient arrays are not optional
-            self.optional = not self.transient
+        self.optional = optional
 
         if strides is not None:
             self.strides = cp.copy(strides)
