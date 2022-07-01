@@ -79,8 +79,9 @@ def test_optional_dead_state(isnone):
 def test_optional_array_inference():
     @dace.program
     def nested(b):
-        tmp = np.zeros_like(b)
-        b[:] += 1 + tmp
+        if b is not None:
+            tmp = np.zeros_like(b)
+            b[:] += 1 + tmp
 
     NotOptional = dace.float64[20]
     NotOptional.optional = False
