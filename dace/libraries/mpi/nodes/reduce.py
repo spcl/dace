@@ -42,7 +42,7 @@ class ExpandReduceMPI(ExpandTransformation):
                 }} else {{            
             """
         code += f"MPI_Reduce(_inbuffer, _outbuffer, {count_str}, {mpi_dtype_str}, {node.op}, _root, {comm});"
-        if inbuffer == outbuffer:
+        if in_place:
             code += "}"
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,
