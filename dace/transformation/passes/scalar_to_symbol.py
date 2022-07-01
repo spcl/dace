@@ -19,6 +19,7 @@ from dace.frontend.python import astutils
 from dace.sdfg import SDFG
 from dace.sdfg import graph as gr
 from dace.sdfg import utils as sdutils
+from dace.sdfg.replace import replace_properties_dict
 from dace.sdfg.sdfg import InterstateEdge
 from dace.transformation import helpers as xfh
 from dace.transformation import pass_pipeline as passes
@@ -419,8 +420,8 @@ def _cpp_indirection_promoter(
                 first_nonscalar_dim = 0
 
             # Make subset out of range and new sub-expression
-            other_subset = subsets.Range([(0, 0, 1)] * first_nonscalar_dim + [(subexpr, subexpr, 1)] + [(0, 0, 1)] *
-                                         (len(orig_subset) - first_nonscalar_dim - 1))
+            other_subset = subsets.Range(orig_subset.ndrange()[:first_nonscalar_dim] + [(subexpr, subexpr, 1)] +
+                                         orig_subset.ndrange()[first_nonscalar_dim + 1:])
             subset = orig_subset.compose(other_subset)
 
             # Check if range can be collapsed
@@ -543,6 +544,9 @@ def remove_scalar_reads(sdfg: sd.SDFG, array_names: Dict[str, str]):
                         dst.remove_in_connector(e.dst_conn)
                         dst.sdfg.symbols[tmp_symname] = sdfg.arrays[node.data].dtype
                         dst.symbol_mapping[tmp_symname] = symname
+                    elif isinstance(dst, nodes.EntryNode) and e.dst_conn and not e.dst_conn.startswith('IN_'):
+                        # Dynamic scope input, replace in node
+                        replace_properties_dict(dst, {e.dst_conn: symname})
                     elif isinstance(dst, (nodes.EntryNode, nodes.ExitNode)):
                         # Skip
                         continue

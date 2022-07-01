@@ -621,6 +621,17 @@ class AND(sympy.Function):
         return True
 
 
+class ROUND(sympy.Function):
+
+    @classmethod
+    def eval(cls, x):
+        if x.is_Number:
+            return round(x)
+
+    def _eval_is_integer(self):
+        return True
+
+
 def sympy_intdiv_fix(expr):
     """ Fix for SymPy printing out reciprocal values when they should be
         integral in "ceiling/floor" sympy functions.
@@ -848,6 +859,7 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None) -> sympy.Basic:
         'NotEq': sympy.Ne,
         'floor': sympy.floor,
         'ceil': sympy.ceiling,
+        'round': ROUND,
         # Convert and/or to special sympy functions to avoid boolean evaluation
         'And': AND,
         'Or': OR,
