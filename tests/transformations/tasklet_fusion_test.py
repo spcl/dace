@@ -104,7 +104,7 @@ def test_map_with_tasklets(with_data: bool):
     sdfg.apply_transformations_repeated(simplify_reduced)
     num = sdfg.apply_transformations_repeated(TaskletFusion)
     sdfg.save('_dacegraphs/xformed_' + ('d' if with_data else 'nd') + '.sdfg')
-    assert (num == 3) # TODO: Ensure we are applying 4 times and fully merging.
+    assert (num == 3)
     func = sdfg.compile()
     A = np.arange(1, N + 1, dtype=np_datatype)
     B = np.arange(1, M + 1, dtype=np_datatype)
