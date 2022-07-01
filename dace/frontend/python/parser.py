@@ -766,9 +766,10 @@ class DaceProgram(pycommon.SDFGConvertible):
             if isinstance(v, data.View):  # Arguments to (nested) SDFG cannot be Views
                 argtypes[k] = v.as_array()
                 argtypes[k].transient = False
-            elif v.transient:  # Arguments to (nested) SDFGs cannot be transient
+            else:
                 v_cpy = copy.deepcopy(v)
-                v_cpy.transient = False
+                if v_cpy.transient:  # Arguments to (nested) SDFGs cannot be transient
+                    v_cpy.transient = False
                 argtypes[k] = v_cpy
 
         #############################################
