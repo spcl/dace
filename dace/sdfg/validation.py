@@ -245,7 +245,10 @@ def validate_state(state: 'dace.sdfg.SDFGState',
 
         # Node validation
         try:
-            node.validate(sdfg, state)
+            if isinstance(node, nd.NestedSDFG):
+                node.validate(sdfg, state, references)
+            else:
+                node.validate(sdfg, state)
         except InvalidSDFGError:
             raise
         except Exception as ex:

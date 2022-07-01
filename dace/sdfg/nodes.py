@@ -8,7 +8,7 @@ from collections.abc import KeysView
 import dace
 import itertools
 import dace.serialize
-from typing import Any, Dict, Set, Union
+from typing import Any, Dict, Optional, Set, Union
 from dace.config import Config
 from dace.sdfg import graph
 from dace.frontend.python.astutils import unparse, rname
@@ -580,7 +580,7 @@ class NestedSDFG(CodeNode):
         else:
             return self.label
 
-    def validate(self, sdfg, state):
+    def validate(self, sdfg, state, references: Optional[Set[int]] = None):
         if not dtypes.validate_name(self.label):
             raise NameError('Invalid nested SDFG name "%s"' % self.label)
         for in_conn in self.in_connectors:
@@ -616,7 +616,7 @@ class NestedSDFG(CodeNode):
             warnings.warn(f"{self.label} maps to unused symbol(s): {extra_symbols}")
 
         # Recursively validate nested SDFG
-        self.sdfg.validate()
+        self.sdfg.validate(references)
 
 
 # ------------------------------------------------------------------------------
