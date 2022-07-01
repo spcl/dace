@@ -6,6 +6,7 @@ from typing import Any, Dict
 
 import astunparse
 import dace
+from dace.dtypes import Language
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation as pm
@@ -129,8 +130,8 @@ class TaskletFusion(pm.SingleStateTransformation):
         data = self.data if self.expr_index == 0 else None
         t2 = self.t2
 
-        # Tasklets must be of the same language
-        if t1.language != t2.language:
+        # Both Tasklets must be in Python
+        if t1.language is not Language.Python or t2.language is not Language.Python:
             return False
 
         # If there is an AccessNode between the Tasklets, ensure it is a scalar.
@@ -181,8 +182,8 @@ class TaskletFusion(pm.SingleStateTransformation):
                             break
                 else:
                     t2edge = conflict_edges[0]
-                #t2edge = list(graph.in_edges_by_connector(t2, in_edge.dst_conn))[0]
-                if t2edge is not None and (in_edge.data != t2edge.data or in_edge.data.data != t2edge.data.data):
+                if t2edge is not None and (in_edge.data != t2edge.data or in_edge.data.data != t2edge.data.data or
+                    in_edge.data is None or in_edge.data.data is None):
                     in_edge.dst_conn = thelpers.find_name_not_in_set(set(inputs), in_edge.dst_conn)
                     repldict[old_value] = in_edge.dst_conn
                 else:
@@ -220,6 +221,7 @@ class TaskletFusion(pm.SingleStateTransformation):
         graph.remove_node(t1)
         if data is not None:
             graph.remove_node(data)
+            sdfg.remove_data(data.data, True)
         graph.remove_node(t2)
 
     
