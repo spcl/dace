@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, Set, Tuple, Type, Union
+import re
 
 from dace import SDFG, SDFGState, dtypes, symbolic
 from dace.frontend.python import astutils
@@ -16,7 +17,9 @@ class _UnknownValue:
     """ A helper class that indicates a symbol value is ambiguous. """
     pass
 
+
 ConstantType = symbolic.SymbolicType
+
 
 @dataclass
 class ConstantPropagation(ppl.Pass):
@@ -105,7 +108,7 @@ class ConstantPropagation(ppl.Pass):
                     sdfg.remove_symbol(sym)
 
             # Remove single-valued symbols from data descriptors (e.g., symbolic array size)
-            sdfg.replace_dict({k: v.as_string
+            sdfg.replace_dict({k: v
                                for k, v in result.items() if k in desc_symbols},
                               replace_in_graph=False,
                               replace_keys=False)
@@ -195,7 +198,7 @@ class ConstantPropagation(ppl.Pass):
 
                 for aname, aval in constants.items():
                     # If something was assigned more than once (to a different value), it's not a constant
-                    if aname in assignments and aval != assignments[aname]:
+                    if aname in assignments and str(aval) != str(assignments[aname]):
                         assignments[aname] = _UnknownValue
                     else:
                         assignments[aname] = aval
@@ -223,7 +226,7 @@ class ConstantPropagation(ppl.Pass):
                 if k not in symbols_in_data:
                     continue
                 if k in values:
-                    if v is _UnknownValue or v != values[k]:
+                    if v is _UnknownValue or values[k] is _UnknownValue or str(v) != str(values[k]):
                         symbols_in_data_with_multiple_values.add(k)
                 else:
                     if v is _UnknownValue:
@@ -250,10 +253,18 @@ class ConstantPropagation(ppl.Pass):
             return
 
         # Replace interstate edge assignment (which is Python code)
-        def _replace_assignment(v: CodeBlock, repl):
-            vast = v.code[0]
-            replacer = astutils.ASTFindReplace(repl)
-            return CodeBlock(replacer.visit(vast))
+        def _replace_assignment(v: Union[str, CodeBlock], repl):
+            try:
+                vast = v.code[0]
+                replacer = astutils.ASTFindReplace(repl)
+                return CodeBlock(replacer.visit(vast))
+            except AttributeError:
+                if not isinstance(v, str):
+                    return v
+                newv = v
+                for f, rep in repl.items():
+                    newv = re.sub(r'\b%s\b' % re.escape(f), rep, newv)
+                return newv
 
         # Update results with values of other propagated symbols
         repl = {k: v for k, v in symbols.items() if v is not _UnknownValue}
