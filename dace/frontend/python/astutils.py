@@ -505,7 +505,10 @@ class ASTFindReplace(ast.NodeTransformer):
             if isinstance(val, ast.AST):
                 new_node = ast.copy_location(val, node)
             elif isinstance(val, CodeBlock):
-                new_node = ast.copy_location(val.code[0], node)
+                rval = val.code[0]
+                if isinstance(rval, ast.Expr):
+                    rval = rval.value
+                new_node = ast.copy_location(rval, node)
             else:
                 new_node = ast.copy_location(ast.parse(str(self.repldict[node.id])).body[0].value, node)
             self.replace_count += 1
