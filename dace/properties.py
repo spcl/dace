@@ -965,7 +965,9 @@ class CodeBlock(object):
 
         # Convert to the right type
         if language == dace.dtypes.Language.Python:
-            if isinstance(code, (list, tuple)):
+            if code is None:
+                self.code = None
+            elif isinstance(code, (list, tuple)):
                 self.code = list(code)
             elif isinstance(code, ast.AST):
                 self.code = [code]
