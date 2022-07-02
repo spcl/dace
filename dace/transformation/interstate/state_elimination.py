@@ -190,7 +190,7 @@ class StateAssignElimination(transformation.MultiStateTransformation, transforma
         keys_to_remove = set()
         assignments_to_consider = _assignments_to_consider(sdfg, edge)
         for varname, assignment in assignments_to_consider.items():
-            state.replace(varname, assignment)
+            state.replace(varname, assignment.as_string)
             keys_to_remove.add(varname)
 
         repl_dict = {}

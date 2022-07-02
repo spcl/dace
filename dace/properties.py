@@ -12,7 +12,7 @@ import numpy as np
 import dace.subsets as sbs
 import dace
 import dace.serialize
-from dace.symbolic import pystr_to_symbolic
+from dace.symbolic import pystr_to_symbolic, symstr
 from dace.dtypes import DebugInfo, typeclass
 from numbers import Integral, Number
 from typing import List, Set, Type, Union, TypeVar, Generic
@@ -965,12 +965,14 @@ class CodeBlock(object):
 
         # Convert to the right type
         if language == dace.dtypes.Language.Python:
-            if isinstance(code, str):
-                self.code = ast.parse(code).body
+            if isinstance(code, (list, tuple)):
+                self.code = list(code)
             elif isinstance(code, ast.AST):
                 self.code = [code]
+            elif isinstance(code, sp.Basic):
+                self.code = ast.parse(symstr(code)).body
             else:
-                self.code = code
+                self.code = ast.parse(str(code)).body
         elif (not isinstance(code, str) and language != dace.dtypes.Language.Python):
             raise TypeError('Only strings are supported for languages other '
                             'than Python')

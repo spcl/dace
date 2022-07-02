@@ -126,7 +126,7 @@ def replace_properties_dict(node: Any,
                     warnings.warn('Replacement of %s with %s was not made '
                                     'for string tasklet code of language %s' % (name, new_name, lang))
 
-            elif propval.code is not None:
+            elif propval.code is not None and code:
                 afr = ASTFindReplace(reduced_repl)
                 for stmt in propval.code:
                     afr.visit(stmt)
