@@ -623,7 +623,7 @@ class OrderedDiGraph(Graph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
         try:
             return next(n for i, n in enumerate(self._nodes.keys()) if i == id)
         except StopIteration:
-            raise IndexError
+            raise NodeNotFoundError
 
     def node_id(self, node: NodeT) -> int:
         try:

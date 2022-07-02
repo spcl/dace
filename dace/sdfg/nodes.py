@@ -675,7 +675,7 @@ class MapEntry(EntryNode):
             if nid is not None:
                 exit_node = context['sdfg_state'].node(nid)
                 exit_node.map = m
-        except IndexError:  # Exit node has a higher node ID
+        except graph.NodeNotFoundError:  # Exit node has a higher node ID
             # Connection of the scope nodes handled in MapExit
             pass
 
@@ -739,7 +739,7 @@ class MapExit(ExitNode):
             entry_node = context['sdfg_state'].node(int(json_obj['scope_entry']))
 
             ret = cls(map=entry_node.map)
-        except (IndexError, TypeError):
+        except (IndexError, TypeError, graph.NodeNotFoundError):
             # Entry node has a higher ID than exit node
             # Connection of the scope nodes handled in MapEntry
             ret = cls(cls.map_type()('_', [], []))
@@ -813,6 +813,13 @@ class Map(object):
                               optional=True,
                               optional_condition=lambda m: m.schedule == dtypes.ScheduleType.CPU_Multicore)
 
+    gpu_block_size = ListProperty(element_type=int,
+                                  default=None,
+                                  allow_none=True,
+                                  desc="GPU kernel block size",
+                                  optional=True,
+                                  optional_condition=lambda m: m.schedule in dtypes.GPU_SCHEDULES)
+
     def __init__(self,
                  label,
                  params,
@@ -885,7 +892,7 @@ class ConsumeEntry(EntryNode):
             if nid is not None:
                 exit_node = context['sdfg_state'].node(nid)
                 exit_node.consume = c
-        except IndexError:  # Exit node has a higher node ID
+        except graph.NodeNotFoundError:  # Exit node has a higher node ID
             # Connection of the scope nodes handled in ConsumeExit
             pass
 
@@ -948,7 +955,7 @@ class ConsumeExit(ExitNode):
             # Set consume reference to entry node
             entry_node = context['sdfg_state'].node(int(json_obj['scope_entry']))
             ret = ConsumeExit(consume=entry_node.consume)
-        except (IndexError, TypeError):
+        except (IndexError, TypeError, graph.NodeNotFoundError):
             # Entry node has a higher ID than exit node
             # Connection of the scope nodes handled in ConsumeEntry
             ret = ConsumeExit(Consume("", ['i', 1], None))

@@ -1,6 +1,4 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-from __future__ import print_function
-
 import dace
 from dace.transformation.dataflow import GPUTransformMap
 from dace.transformation.interstate import GPUTransformSDFG
@@ -105,7 +103,58 @@ def test_different_block_sizes_nesting():
     assert np.allclose(v2, expected_v2)
 
 
+@pytest.mark.gpu
+def test_custom_block_size_onemap():
+    @dace.program
+    def tester():
+        for i, j in dace.map[0:400, 0:300]:
+            with dace.tasklet:
+                pass
+
+    sdfg = tester.to_sdfg()
+    sdfg.apply_gpu_transformations()
+    mapentry: dace.nodes.MapEntry = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry))
+
+    # Test 1: too many dimensions
+    mapentry.map.gpu_block_size = (257, 5, 3, 4)
+    code = sdfg.generate_code()[1].clean_code  # Get GPU code (second file)
+    assert 'dim3(257, 5, 12)' in code
+
+    # Test 2: too few dimensions
+    mapentry.map.gpu_block_size = (257, 5)
+    code = sdfg.generate_code()[1].clean_code  # Get GPU code (second file)
+    assert 'dim3(257, 5, 1)' in code
+
+    # Test 3: compilation
+    sdfg.compile()
+
+
+@pytest.mark.gpu
+def test_custom_block_size_twomaps():
+    @dace.program
+    def tester():
+        for i, j in dace.map[0:400, 0:300]:
+            for bi, bj in dace.map[0:2, 0:32]:
+                with dace.tasklet:
+                    pass
+
+    sdfg = tester.to_sdfg()
+    sdfg.apply_gpu_transformations(sequential_innermaps=False)
+    mapentry: dace.nodes.MapEntry = next(
+        n for n, _ in sdfg.all_nodes_recursive()
+        if isinstance(n, dace.nodes.MapEntry) and n.map.schedule == dace.ScheduleType.GPU_Device)
+
+    mapentry.map.gpu_block_size = (257, 5)
+    code = sdfg.generate_code()[1].clean_code  # Get GPU code (second file)
+    assert 'dim3(257, 5, 1)' in code
+
+    # Test 3: compilation
+    sdfg.compile()
+
+
 if __name__ == "__main__":
     test_cpu()
     test_gpu()
     test_different_block_sizes_nesting()
+    test_custom_block_size_onemap()
+    test_custom_block_size_twomaps()
