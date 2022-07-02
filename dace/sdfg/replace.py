@@ -14,13 +14,13 @@ tokenize_cpp = re.compile(r'\b\w+\b')
 def _internal_replace(sym, symrepl):
     if not isinstance(sym, sp.Basic):
         return sym
-    
+
     # Filter out only relevant replacements
     fsyms = set(map(str, sym.free_symbols))
     newrepl = {k: v for k, v in symrepl.items() if str(k) in fsyms}
     if not newrepl:
         return sym
-    
+
     return sym.subs(newrepl)
 
 def _replsym(symlist, symrepl):
@@ -48,7 +48,7 @@ def replace_dict(subgraph: 'dace.sdfg.state.StateGraphView',
     """
     symrepl = symrepl or {
         symbolic.pystr_to_symbolic(symname):
-        symbolic.pystr_to_symbolic(new_name) if isinstance(new_name, str) else new_name
+        symbolic.pystr_to_symbolic(new_name) if isinstance(new_name, (str, properties.CodeBlock)) else new_name
         for symname, new_name in repl.items()
     }
 
@@ -85,7 +85,7 @@ def replace_properties_dict(node: Any,
                             symrepl: Dict[symbolic.SymbolicType, symbolic.SymbolicType] = None):
     symrepl = symrepl or {
         symbolic.pystr_to_symbolic(symname):
-        symbolic.pystr_to_symbolic(new_name) if isinstance(new_name, str) else new_name
+        symbolic.pystr_to_symbolic(new_name) if isinstance(new_name, (str, properties.CodeBlock)) else new_name
         for symname, new_name in repl.items()
     }
 

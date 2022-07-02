@@ -560,7 +560,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         :param replace_keys: If True, replaces in SDFG property names (e.g., array, symbol, and constant names).
         """
         symrepl = symrepl or {
-            symbolic.symbol(k): symbolic.pystr_to_symbolic(v) if isinstance(k, str) else v
+            symbolic.symbol(k): symbolic.pystr_to_symbolic(v) if isinstance(v, (str, properties.CodeBlock)) else v
             for k, v in repldict.items()
         }
 
