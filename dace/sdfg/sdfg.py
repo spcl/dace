@@ -2299,7 +2299,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         sdutil.fuse_states(self)
 
         self.apply_transformations_repeated([RedundantReadSlice, RedundantWriteSlice],
-                                            validate=validate,
+                                            validate=False,
                                             permissive=False,
                                             validate_all=validate_all)
         self.apply_transformations_repeated(simplification_transformations(),
