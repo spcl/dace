@@ -100,7 +100,7 @@ class EinsumParser(object):
         return str(self)
 
 
-def create_batch_gemm_sdfg(dtype, strides):
+def create_batch_gemm_sdfg(dtype, strides, alpha, beta):
     #########################
     sdfg = SDFG('einsum')
     state = sdfg.add_state()
@@ -130,6 +130,8 @@ def create_batch_gemm_sdfg(dtype, strides):
     import dace.libraries.blas as blas  # Avoid import loop
 
     libnode = blas.MatMul('einsum_gemm')
+    libnode.alpha = alpha
+    libnode.beta = beta
     state.add_node(libnode)
     state.add_edge(gX, None, libnode, '_a', Memlet.from_array(gX.data, xarr))
     state.add_edge(gY, None, libnode, '_b', Memlet.from_array(gY.data, yarr))
@@ -150,9 +152,18 @@ def create_einsum_sdfg(pv: 'dace.frontend.python.newast.ProgramVisitor',
                        *arrays: str,
                        dtype: Optional[dtypes.typeclass] = None,
                        optimize: bool = False,
-                       output: Optional[str] = None):
-    return _create_einsum_internal(sdfg, state, einsum_string, *arrays, dtype=dtype, optimize=optimize,
-                                   output=output)[0]
+                       output: Optional[str] = None,
+                       alpha: Optional[symbolic.SymbolicType] = 1.0,
+                       beta: Optional[symbolic.SymbolicType] = 0.0):
+    return _create_einsum_internal(sdfg,
+                                   state,
+                                   einsum_string,
+                                   *arrays,
+                                   dtype=dtype,
+                                   optimize=optimize,
+                                   output=output,
+                                   alpha=alpha,
+                                   beta=beta)[0]
 
 
 def _create_einsum_internal(sdfg: SDFG,
@@ -163,12 +174,17 @@ def _create_einsum_internal(sdfg: SDFG,
                             optimize: bool = False,
                             output: Optional[str] = None,
                             nodes: Optional[Dict[str, AccessNode]] = None,
-                            init_output: bool = None):
+                            init_output: bool = None,
+                            alpha: Optional[symbolic.SymbolicType] = None,
+                            beta: Optional[symbolic.SymbolicType] = None):
     # Infer shapes and strides of input/output arrays
     einsum = EinsumParser(einsum_string)
 
     if len(einsum.inputs) != len(arrays):
         raise ValueError('Invalid number of arrays for einsum expression')
+
+    if init_output is None:
+        init_output = (beta != 1.0)
 
     # Get shapes from arrays and verify dimensionality
     chardict = {}
@@ -211,7 +227,10 @@ def _create_einsum_internal(sdfg: SDFG,
                                                           dtype=dtype,
                                                           optimize=False,
                                                           output=None,
-                                                          nodes=input_nodes)
+                                                          nodes=input_nodes,
+                                                          init_output=init_output,
+                                                          alpha=alpha,
+                                                          beta=beta)
             arrays = ([a for i, a in enumerate(arrays) if i not in pair] + [result])
             input_nodes[result] = result_node
 
@@ -244,25 +263,39 @@ def _create_einsum_internal(sdfg: SDFG,
         # Add state before this one to initialize the output value
         if to_init:
             init_state = sdfg.add_state_before(state)
+            if beta == 0.0:
+                inputs = {}
+                inputs_scalar = set()
+                code = f'out_{output} = 0'
+            else:
+                inputs_scalar = {f'inp_{output}'}
+                inputs = {f'inp_{output}': Memlet.simple(output, output_index)}
+                code = f'out_{output} = {beta} * inp_{output}'
+
             if len(einsum.output) > 0:
                 init_state.add_mapped_tasklet('einsum_reset', {k: '0:%s' % chardict[k]
-                                                               for k in einsum.output}, {},
-                                              'out_%s = 0' % output,
-                                              {'out_%s' % output: Memlet.simple(output, output_index)},
+                                                               for k in einsum.output},
+                                              inputs,
+                                              code, {'out_%s' % output: Memlet.simple(output, output_index)},
                                               external_edges=True)
             else:  # Scalar output
-                t = init_state.add_tasklet('einsum_reset', set(), {'out_%s' % output}, 'out_%s = 0' % output)
+                t = init_state.add_tasklet('einsum_reset', inputs_scalar, {'out_%s' % output}, code)
                 onode = init_state.add_write(output)
                 init_state.add_edge(t, 'out_%s' % output, onode, None, Memlet.simple(output, '0'))
 
+                if beta != 0.0:
+                    inode = init_state.add_read(output)
+                    init_state.add_edge(inode, None, t, 'inp_%s' % output, Memlet.simple(output, '0'))
+
         wcr = 'lambda a,b: a+b' if is_conflicted else None
+        alphacode = '' if alpha == 1.0 else f'{alpha} * '
         # Pure einsum map
         state.add_mapped_tasklet(
             'einsum', {k: '0:%s' % v
                        for k, v in chardict.items()},
             {'inp_%s' % arr: Memlet.simple(arr, ','.join(inp))
              for inp, arr in zip(einsum.inputs, arrays)},
-            'out_%s = %s' % (output, ' * '.join('inp_%s' % arr for arr in arrays)),
+            'out_%s = %s%s' % (output, alphacode, ' * '.join('inp_%s' % arr for arr in arrays)),
             {'out_%s' % output: Memlet.simple(output, output_index, wcr_str=wcr)},
             input_nodes=input_nodes,
             output_nodes={output: c},
@@ -305,7 +338,7 @@ def _create_einsum_internal(sdfg: SDFG,
             strides['sCB'] = strides['sCM'] = strides['N']
 
         # Create nested SDFG for GEMM
-        nsdfg = create_batch_gemm_sdfg(dtype, strides)
+        nsdfg = create_batch_gemm_sdfg(dtype, strides, alpha, beta)
 
         nsdfg_node = state.add_nested_sdfg(nsdfg, None, {'X', 'Y'}, {'Z'}, strides)
         state.add_edge(a, None, nsdfg_node, 'X', Memlet.from_array(a.data, a.desc(sdfg)))

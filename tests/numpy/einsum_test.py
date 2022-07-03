@@ -1,4 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+import pytest
 import dace
 import numpy as np
 
@@ -197,6 +198,72 @@ def test_lift_einsum_outerproduct():
     assert np.allclose(sdfg(A, B), np.einsum('i,j->ji', A, B))
 
 
+def test_lift_einsum_beta():
+    from dace.libraries.blas.nodes.einsum import Einsum
+    from dace.transformation.dataflow import LiftEinsum
+
+    @dace.program
+    def tester(A, B):
+        C = np.ones_like(A)
+        for i, j, k in dace.map[0:A.shape[0], 0:A.shape[0], 0:A.shape[0]]:
+            with dace.tasklet:
+                a << A[i, k]
+                b << B[k, j]
+                c >> C(1, lambda a, b: a + b)[i, j]
+                c = a * b
+        return C
+
+    A = np.random.rand(10, 10)
+    B = np.random.rand(10, 10)
+    C = 1 + A @ B
+
+    sdfg = tester.to_sdfg(A, B, simplify=True)
+    sdfg.expand_library_nodes()
+    assert sdfg.apply_transformations(LiftEinsum) == 1
+    for node, _ in sdfg.all_nodes_recursive():
+        if isinstance(node, Einsum):
+            assert node.einsum_str == 'ij,jk->ik'
+            assert node.alpha == 1.0
+            assert node.beta == 1.0
+
+    assert np.allclose(sdfg(A, B), C)
+
+
+@pytest.mark.parametrize('symbolic', (False, True))
+def test_lift_einsum_alpha_beta(symbolic):
+    from dace.libraries.blas.nodes.einsum import Einsum
+    from dace.transformation.dataflow import LiftEinsum
+
+    alph = dace.symbol('alph') if symbolic else 2
+
+    @dace.program
+    def tester(A, B):
+        C = np.ones_like(A)
+        for i, j, k in dace.map[0:A.shape[0], 0:A.shape[0], 0:A.shape[0]]:
+            with dace.tasklet:
+                a << A[i, k]
+                b << B[k, j]
+                c >> C(1, lambda a, b: a + b)[i, j]
+                c = alph * a * b
+        return C
+
+    A = np.random.rand(10, 10)
+    B = np.random.rand(10, 10)
+
+    sdfg = tester.to_sdfg(A, B, simplify=True)
+    sdfg.expand_library_nodes()
+    assert sdfg.apply_transformations(LiftEinsum) == 1
+    for node, _ in sdfg.all_nodes_recursive():
+        if isinstance(node, Einsum):
+            assert node.einsum_str == 'ij,jk->ik'
+            assert node.alpha == alph
+            assert node.beta == 1.0
+
+    if not symbolic:
+        C = 1 + 2 * A @ B
+        assert np.allclose(sdfg(A, B), C)
+
+
 if __name__ == '__main__':
     test_general_einsum()
     test_matmul()
@@ -208,3 +275,6 @@ if __name__ == '__main__':
     test_lift_einsum_mttkrp()
     test_lift_einsum_reduce()
     test_lift_einsum_outerproduct()
+    test_lift_einsum_beta()
+    test_lift_einsum_alpha_beta(False)
+    test_lift_einsum_alpha_beta(True)

@@ -24,6 +24,10 @@ class Einsum(nodes.LibraryNode):
                                      default='',
                                      desc='The Einstein notation string that describes this einsum')
 
+    alpha = properties.SymbolicProperty(desc='The coefficient to multiply the inputs with', default=1.0)
+    beta = properties.SymbolicProperty(desc='The coefficient to multiply the output with when added to the product',
+                                       default=0.0)
+
 
 # Define the expansion, which specializes the einsum by lowering it to either a BLAS operation or a direct contraction
 @library.register_expansion(Einsum, 'specialize')
@@ -66,5 +70,12 @@ class SpecializeEinsum(xf.ExpandTransformation):
         #######################################
 
         # Fill SDFG with einsum contents
-        einsum.create_einsum_sdfg(None, sdfg, state, node.einsum_str, *sorted(inputs), output=output)
+        einsum.create_einsum_sdfg(None,
+                                  sdfg,
+                                  state,
+                                  node.einsum_str,
+                                  *sorted(inputs),
+                                  output=output,
+                                  alpha=node.alpha,
+                                  beta=node.beta)
         return sdfg

@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
+from dace import properties
 from copy import deepcopy as dc
 from typing import Any, Dict, Optional
 import warnings
@@ -139,7 +140,7 @@ class SpecializeMatMul(dace.transformation.transformation.ExpandTransformation):
         if len(size_a) == 2 and len(size_b) == 2:
             # Matrix and matrix -> GEMM
             from dace.libraries.blas.nodes.gemm import Gemm
-            beta = 0.0
+            beta = node.beta
             cin = True
             if c[0].data.wcr:
                 from dace.frontend import operations
@@ -149,13 +150,12 @@ class SpecializeMatMul(dace.transformation.transformation.ExpandTransformation):
                     cin = False
                 else:
                     warnings.warn("Unsupported WCR in output of MatMul " "library node: {}".format(c[0].data.wcr))
-            gemm = Gemm(node.name + 'gemm', location=node.location, alpha=1.0, beta=beta, cin=cin)
+            gemm = Gemm(node.name + 'gemm', location=node.location, alpha=node.alpha, beta=beta, cin=cin)
             return gemm
         elif len(size_b) == 3 and (len(size_a) in [2, 3]):
             # Batched matrix and matrix -> batched matrix multiplication
             from dace.libraries.blas.nodes.batched_matmul import BatchedMatMul
-            batched = BatchedMatMul(node.name + 'bmm', location=node.location)
-            return batched
+            result = BatchedMatMul(node.name + 'bmm', location=node.location)
         elif len(size_a) == 2 and len(size_b) == 1:
             # Matrix and vector -> GEMV
             from dace.libraries.blas.nodes.gemv import Gemv
@@ -163,8 +163,7 @@ class SpecializeMatMul(dace.transformation.transformation.ExpandTransformation):
             a[0].dst_conn = "_A"
             b[0].dst_conn = "_x"
             c[0].src_conn = "_y"
-            gemv = Gemv(node.name + 'gemv', location=node.location)
-            return gemv
+            result = Gemv(node.name + 'gemv', location=node.location)
         elif len(size_a) == 1 and len(size_b) == 2:
             # Vector and matrix -> GEMV with transposed matrix
             from dace.libraries.blas.nodes.gemv import Gemv
@@ -172,8 +171,7 @@ class SpecializeMatMul(dace.transformation.transformation.ExpandTransformation):
             a[0].dst_conn = "_x"
             b[0].dst_conn = "_A"
             c[0].src_conn = "_y"
-            gemv = Gemv(node.name + 'gemvt', location=node.location, transA=True)
-            return gemv
+            result = Gemv(node.name + 'gemvt', location=node.location, transA=True)
         elif len(size_a) == 1 and len(size_b) == 1:
             # Vector and vector -> dot product
             from dace.libraries.blas.nodes.dot import Dot
@@ -181,11 +179,14 @@ class SpecializeMatMul(dace.transformation.transformation.ExpandTransformation):
             a[0].dst_conn = "_x"
             b[0].dst_conn = "_y"
             c[0].src_conn = "_result"
-            dot = Dot(node.name + 'dot', location=node.location)
-            return dot
+            result = Dot(node.name + 'dot', location=node.location)
         else:
             raise NotImplementedError("Matrix multiplication not implemented "
                                       "for shapes: {} and {}".format(size_a, size_b))
+
+        result.alpha = node.alpha
+        result.beta = node.beta
+        return result
 
 
 @dace.library.node
@@ -200,6 +201,13 @@ class MatMul(dace.sdfg.nodes.LibraryNode):
         "specialize": SpecializeMatMul,
     }
     default_implementation = "specialize"
+
+    alpha = properties.Property(allow_none=False,
+                                default=1,
+                                desc="A scalar which will be multiplied with A @ B before adding C")
+    beta = properties.Property(allow_none=False,
+                               default=0,
+                               desc="A scalar which will be multiplied with C before adding C")
 
     def __init__(self, name, location=None):
         super().__init__(name, location=location, inputs={"_a", "_b"}, outputs={"_c"})

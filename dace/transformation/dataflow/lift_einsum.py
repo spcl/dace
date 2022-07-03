@@ -5,7 +5,7 @@ from typing import Dict
 
 import sympy
 
-from dace import SDFG, SDFGState, dtypes, nodes, subsets
+from dace import SDFG, SDFGState, dtypes, nodes, symbolic
 from dace.frontend.operations import detect_reduction_type
 from dace.frontend.python import astutils
 from dace.sdfg import utils as sdutil
@@ -56,6 +56,9 @@ class LiftEinsum(xf.SingleStateTransformation):
             else:
                 output_chars |= ind
 
+        if len(input_chars) == 0:
+            return False
+
         # If there are too many characters for an einsum expression, fail
         if len(unique_chars) == 0 or len(unique_chars) > len(self.EINSUM_CHARS):
             return False
@@ -92,7 +95,10 @@ class LiftEinsum(xf.SingleStateTransformation):
         for iconn in self.tasklet.in_connectors:
             expected *= pystr_to_symbolic(iconn)
         if symexpr != expected:
-            return False
+            # alpha != 1
+            ratio = symexpr / expected
+            if not ratio.is_Number and not isinstance(ratio, symbolic.symbol):
+                return False
         # End of tasklet content check
 
         return True
@@ -105,20 +111,32 @@ class LiftEinsum(xf.SingleStateTransformation):
         scope = state.scope_subgraph(self.map_entry)
         einsum = blas.Einsum('einsum')
 
+        connector_product = 1  # Needed to compute alpha (input) coefficient
+
         # Map connectors from tasklet to library node
         connectors: Dict[str, str] = {}
+        in_edges = []
+        out_edge = None
         for e in state.in_edges(self.tasklet):
-            connectors[state.memlet_path(e)[-2].dst_conn] = e.dst_conn
-            einsum.add_in_connector(e.dst_conn, self.tasklet.in_connectors[e.dst_conn])
+            if not e.data.is_empty():
+                connectors[state.memlet_path(e)[-2].dst_conn] = e.dst_conn
+                connector_product *= symbolic.symbol(e.dst_conn)
+                einsum.add_in_connector(e.dst_conn, self.tasklet.in_connectors[e.dst_conn])
+                in_edges.append(e)
         for e in state.out_edges(self.tasklet):
-            connectors[state.memlet_path(e)[1].src_conn] = e.src_conn
-            einsum.add_out_connector(e.src_conn, self.tasklet.out_connectors[e.src_conn])
+            if not e.data.is_empty():
+                connectors[state.memlet_path(e)[1].src_conn] = e.src_conn
+                einsum.add_out_connector(e.src_conn, self.tasklet.out_connectors[e.src_conn])
+                out_edge = e
+
+        # Compute alpha coefficient from tasklet code
+        expr = self.tasklet.code.code[0]
+        symexpr = pystr_to_symbolic(astutils.unparse(expr.value))
+        einsum.alpha = symexpr / connector_product
 
         # Collect einsum string from sorted memlets
         param_mapping: Dict[str, str] = {}
         # letter_to_range: Dict[str, subsets.Range] = {}
-        in_edges = list(sorted(state.in_edges(self.tasklet), key=lambda k: k.dst_conn))
-        out_edge = state.out_edges(self.tasklet)[0]
         einsum_inputs = []
         einsum_output = ''
         for e in (in_edges + [out_edge]):
@@ -138,6 +156,10 @@ class LiftEinsum(xf.SingleStateTransformation):
 
         # Make einsum string
         einsum.einsum_str = f"{','.join(einsum_inputs)}->{einsum_output}"
+
+        # Set beta (output) coefficient based on WCR
+        if out_edge.data.wcr is not None:
+            einsum.beta = 1.0
 
         # Add new subgraph
         state.add_node(einsum)
