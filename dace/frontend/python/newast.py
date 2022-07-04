@@ -1845,7 +1845,7 @@ class ProgramVisitor(ExtNodeVisitor):
                         state.add_edge(entry_node, None, tasklet, None, dace.Memlet())
                     continue
 
-                memlet: Memlet = memlet_or_node
+                memlet: Memlet = copy.deepcopy(memlet_or_node)
 
                 arr = self._get_array_or_closure(memlet.data)
 

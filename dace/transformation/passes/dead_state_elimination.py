@@ -3,7 +3,7 @@
 import collections
 from dace.properties import CodeBlock
 from dace.transformation import pass_pipeline as ppl
-from dace import SDFG, SDFGState, InterstateEdge
+from dace import SDFG, SDFGState, InterstateEdge, symbolic
 from dace.sdfg.validation import InvalidSDFGInterstateEdgeError
 from typing import Set, Optional
 
@@ -12,7 +12,6 @@ class DeadStateElimination(ppl.Pass):
     """
     Removes all unreachable states (e.g., due to a branch that will never be taken) from an SDFG.
     """
-
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.States
 
@@ -62,7 +61,7 @@ class DeadStateElimination(ppl.Pass):
             unconditional = None
             for e in sdfg.out_edges(node):
                 # If an unconditional edge is found, ignore all other outgoing edges
-                if self.is_definitely_taken(e.data):
+                if self.is_definitely_taken(e.data, sdfg):
                     # If more than one unconditional outgoing edge exist, fail with Invalid SDFG
                     if unconditional is not None:
                         raise InvalidSDFGInterstateEdgeError('Multiple unconditional edges leave the same state', sdfg,
@@ -85,7 +84,7 @@ class DeadStateElimination(ppl.Pass):
                 next_node = e.dst
 
                 # Test for edges that definitely evaluate to False
-                if self.is_definitely_not_taken(e.data):
+                if self.is_definitely_not_taken(e.data, sdfg):
                     continue
 
                 # Continue traversal through edge
@@ -95,7 +94,7 @@ class DeadStateElimination(ppl.Pass):
         # Dead states are states that are not live (i.e., visited)
         return set(sdfg.nodes()) - visited
 
-    def is_definitely_taken(self, edge: InterstateEdge) -> bool:
+    def is_definitely_taken(self, edge: InterstateEdge, sdfg: SDFG) -> bool:
         """ Returns True iff edge condition definitely evaluates to True. """
         if edge.is_unconditional():
             return True
@@ -105,16 +104,26 @@ class DeadStateElimination(ppl.Pass):
         if scond == True:
             return True
 
+        # Evaluate non-optional arrays
+        scond = symbolic.evaluate_optional_arrays(scond, sdfg)
+        if scond == True:
+            return True
+
         # Indeterminate or False condition
         return False
 
-    def is_definitely_not_taken(self, edge: InterstateEdge) -> bool:
+    def is_definitely_not_taken(self, edge: InterstateEdge, sdfg: SDFG) -> bool:
         """ Returns True iff edge condition definitely evaluates to False. """
         if edge.is_unconditional():
             return False
 
         # Evaluate condition
         scond = edge.condition_sympy()
+        if scond == False:
+            return True
+
+        # Evaluate non-optional arrays
+        scond = symbolic.evaluate_optional_arrays(scond, sdfg)
         if scond == False:
             return True
 

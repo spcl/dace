@@ -147,7 +147,6 @@ class symbol(sympy.Symbol):
 class SymExpr(object):
     """ Symbolic expressions with support for an overapproximation expression.
     """
-
     def __init__(self, main_expr: Union[str, 'SymExpr'], approx_expr: Optional[Union[str, 'SymExpr']] = None):
         self._main_expr = pystr_to_symbolic(main_expr)
         if approx_expr is None:
@@ -578,7 +577,6 @@ def sympy_numeric_fix(expr):
 
 
 class int_floor(sympy.Function):
-
     @classmethod
     def eval(cls, x, y):
         if x.is_Number and y.is_Number:
@@ -589,7 +587,6 @@ class int_floor(sympy.Function):
 
 
 class int_ceil(sympy.Function):
-
     @classmethod
     def eval(cls, x, y):
         if x.is_Number and y.is_Number:
@@ -600,7 +597,6 @@ class int_ceil(sympy.Function):
 
 
 class OR(sympy.Function):
-
     @classmethod
     def eval(cls, x, y):
         if x.is_Boolean and y.is_Boolean:
@@ -611,7 +607,6 @@ class OR(sympy.Function):
 
 
 class AND(sympy.Function):
-
     @classmethod
     def eval(cls, x, y):
         if x.is_Boolean and y.is_Boolean:
@@ -622,7 +617,6 @@ class AND(sympy.Function):
 
 
 class ROUND(sympy.Function):
-
     @classmethod
     def eval(cls, x):
         if x.is_Number:
@@ -630,6 +624,14 @@ class ROUND(sympy.Function):
 
     def _eval_is_integer(self):
         return True
+
+
+class Is(sympy.Function):
+    pass
+
+
+class IsNot(sympy.Function):
+    pass
 
 
 def sympy_intdiv_fix(expr):
@@ -770,6 +772,70 @@ def simplify_ext(expr):
     return expr
 
 
+def evaluate_optional_arrays(expr, sdfg):
+    """
+    Evaluate Is(...) and IsNot(...) expressions for arrays.
+
+    :param expr: The symbolic expression to evaluate.
+    :param sdfg: SDFG that contains arrays.
+    :return: A simplified version of the expression.
+    """
+    if not isinstance(expr, sympy.Basic):
+        return expr
+
+    none = symbol('NoneSymbol')
+
+    def _process_is(elem: Union[Is, IsNot]):
+        if elem.args[0] == none:
+            if elem.args[1] == none:  # Both arguments are None
+                return True
+            cand = str(elem.args[1])
+            if cand in sdfg.arrays and sdfg.arrays[cand].optional is False:
+                # Equivalent to `None is x` for a non-optional x
+                return False
+
+        else:  # elem.args[0] is not None
+            if elem.args[1] == none:
+                cand = str(elem.args[0])
+                if cand in sdfg.arrays and sdfg.arrays[cand].optional is False:
+                    # Equivalent to `x is None` for a non-optional x
+                    return False
+
+        # Neither argument is None
+        return None
+
+    # Check internal expressions
+    reevaluate = False
+    for elem in sympy.postorder_traversal(expr):
+        if any(a.func is Is or a.func is IsNot for a in elem.args):
+            args = list(elem.args)
+            for i, a in enumerate(args):
+                changed = False
+                if a.func is Is:
+                    res = _process_is(a)
+                    if res is not None:
+                        args[i] = sympy.sympify(res)
+                        changed = True
+                elif a.func is IsNot:
+                    res = _process_is(a)
+                    if res is not None:
+                        args[i] = sympy.sympify(not res)
+                        changed = True
+                if changed:
+                    elem._args = tuple(args)
+                    reevaluate = True
+    if reevaluate:  # If an internal expression changed, re-simplify expression as a whole
+        expr = expr.simplify()
+
+    # Check top-level expression
+    if expr.func is Is or expr.func is IsNot:
+        res = _process_is(expr)
+        if res is not None:
+            return sympy.sympify(res if expr.func is Is else not res)
+
+    return expr
+
+
 class SympyBooleanConverter(ast.NodeTransformer):
     """ 
     Replaces boolean operations with the appropriate SymPy functions to avoid
@@ -866,6 +932,8 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None) -> sympy.Basic:
         'var': sympy.Symbol('var'),
         'root': sympy.Symbol('root'),
         'arg': sympy.Symbol('arg'),
+        'Is': Is,
+        'IsNot': IsNot,
     }
     # _clash1 enables all one-letter variables like N as symbols
     # _clash also allows pi, beta, zeta and other common greek letters
@@ -894,7 +962,6 @@ def simplify(expr: SymbolicType) -> SymbolicType:
 class DaceSympyPrinter(sympy.printing.str.StrPrinter):
     """ Several notational corrections for integer math and C++ translation
         that sympy.printing.cxxcode does not provide. """
-
     def __init__(self, arrays, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.arrays = arrays or set()
@@ -1066,7 +1133,6 @@ class SympyAwarePickler(pickle.Pickler):
     Custom Pickler class that safely saves SymPy expressions
     with function definitions in expressions (e.g., int_ceil).
     """
-
     def persistent_id(self, obj):
         if isinstance(obj, sympy.Basic):
             # Save sympy expression as srepr
@@ -1081,7 +1147,6 @@ class SympyAwareUnpickler(pickle.Unpickler):
     Custom Unpickler class that safely restores SymPy expressions
     with function definitions in expressions (e.g., int_ceil).
     """
-
     def persistent_load(self, pid):
         type_tag, value = pid
         if type_tag == "DaCeSympyExpression":
