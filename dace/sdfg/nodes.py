@@ -8,7 +8,7 @@ from collections.abc import KeysView
 import dace
 import itertools
 import dace.serialize
-from typing import Any, Dict, Set, Union
+from typing import Any, Dict, Optional, Set, Union
 from dace.config import Config
 from dace.sdfg import graph
 from dace.frontend.python.astutils import unparse, rname
@@ -580,7 +580,7 @@ class NestedSDFG(CodeNode):
         else:
             return self.label
 
-    def validate(self, sdfg, state):
+    def validate(self, sdfg, state, references: Optional[Set[int]] = None):
         if not dtypes.validate_name(self.label):
             raise NameError('Invalid nested SDFG name "%s"' % self.label)
         for in_conn in self.in_connectors:
@@ -616,7 +616,7 @@ class NestedSDFG(CodeNode):
             warnings.warn(f"{self.label} maps to unused symbol(s): {extra_symbols}")
 
         # Recursively validate nested SDFG
-        self.sdfg.validate()
+        self.sdfg.validate(references)
 
 
 # ------------------------------------------------------------------------------
@@ -812,6 +812,13 @@ class Map(object):
                               desc="OpenMP schedule chunk size",
                               optional=True,
                               optional_condition=lambda m: m.schedule == dtypes.ScheduleType.CPU_Multicore)
+
+    gpu_block_size = ListProperty(element_type=int,
+                                  default=None,
+                                  allow_none=True,
+                                  desc="GPU kernel block size",
+                                  optional=True,
+                                  optional_condition=lambda m: m.schedule in dtypes.GPU_SCHEDULES)
 
     def __init__(self,
                  label,

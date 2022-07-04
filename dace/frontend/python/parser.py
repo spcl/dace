@@ -16,9 +16,9 @@ from dace.sdfg import SDFG
 from dace.data import create_datadescriptor, Data
 
 try:
-    from typing import get_origin
+    from typing import get_origin, get_args
 except ImportError:
-    from typing_compat import get_origin
+    from typing_compat import get_origin, get_args
 
 ArgTypes = Dict[str, Data]
 
@@ -167,9 +167,9 @@ class DaceProgram(pycommon.SDFGConvertible):
             for arg, pval in zip(self.dec_args, self.signature.parameters.values()):
                 pval._annotation = arg
 
-        # Keep a set of constant arguments to ignore
+        # Keep a set of compile-time arguments to ignore
         self.constant_args = set(pname for pname, pval in self.signature.parameters.items()
-                                 if pval.annotation is dtypes.constant)
+                                 if pval.annotation is dtypes.compiletime)
 
         if self.argnames is None:
             self.argnames = []
@@ -544,17 +544,37 @@ class DaceProgram(pycommon.SDFGConvertible):
                 # Regular arguments (annotations take precedence)
                 curarg = None
                 is_constant = False
+                is_optional = None
                 if not _is_empty(ann):
                     # If constant, use given argument
-                    if ann is dtypes.constant:
+                    if ann is dtypes.compiletime:
                         curarg = None
                         is_constant = True
                     else:
                         curarg = ann
 
-                    # If annotation specifies to skip its data descriptor and favor JIT types
                     try:
-                        if get_origin(ann) is Union or create_datadescriptor(ann) is None:
+                        # If annotation specifies a union, ensure it consists of only one type and NoneType
+                        if get_origin(ann) is Union:
+                            hint_args = get_args(ann)
+                            if len(hint_args) == 1:
+                                ann = hint_args[0]
+                            else:
+                                # Check for invalid Union type hints
+                                if (len(hint_args) > 2 or len(hint_args) == 0
+                                        or (hint_args[0] is not type(None) and hint_args[1] is not type(None))):
+                                    raise SyntaxError(
+                                        f'Argument "{aname}" can only have a type hint that can create a '
+                                        'data descriptor or use the Optional[T] or Union[T, None] type hints.')
+                                # Set the annotation to be the not-None value, and the data descriptor to be optional
+                                ann = hint_args[1] if hint_args[0] is type(None) else hint_args[0]
+                                is_optional = True
+                            
+                            if not is_constant:  # Reset curarg
+                                curarg = ann
+
+                        # If annotation specifies to skip its data descriptor and favor JIT types
+                        if create_datadescriptor(ann) is None:
                             curarg = None
                     except (TypeError, ValueError):
                         # Skip for now
@@ -623,6 +643,8 @@ class DaceProgram(pycommon.SDFGConvertible):
 
                 # Set type
                 types[aname] = create_datadescriptor(curarg)
+                if is_optional is True and isinstance(types[aname], data.Array):
+                    types[aname].optional = True
 
         # Set __return* arrays from return type annotations
         rettype = self.signature.return_annotation
@@ -744,9 +766,10 @@ class DaceProgram(pycommon.SDFGConvertible):
             if isinstance(v, data.View):  # Arguments to (nested) SDFG cannot be Views
                 argtypes[k] = v.as_array()
                 argtypes[k].transient = False
-            elif v.transient:  # Arguments to (nested) SDFGs cannot be transient
+            else:
                 v_cpy = copy.deepcopy(v)
-                v_cpy.transient = False
+                if v_cpy.transient:  # Arguments to (nested) SDFGs cannot be transient
+                    v_cpy.transient = False
                 argtypes[k] = v_cpy
 
         #############################################

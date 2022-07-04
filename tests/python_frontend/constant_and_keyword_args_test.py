@@ -308,7 +308,7 @@ def test_optional_argument():
 def test_constant_argument_simple():
 
     @dace.program
-    def const_prog(cst: dace.constant, B: dace.float64[20]):
+    def const_prog(cst: dace.compiletime, B: dace.float64[20]):
         B[:] = cst
 
     # Test program
@@ -325,7 +325,7 @@ def test_constant_argument_simple():
 def test_constant_argument_default():
 
     @dace.program
-    def const_prog(B: dace.float64[20], cst: dace.constant = 7):
+    def const_prog(B: dace.float64[20], cst: dace.compiletime = 7):
         B[:] = cst
 
     # Test program
@@ -350,7 +350,7 @@ def test_constant_argument_default():
 
 def test_constant_argument_object():
     """
-    Tests nested functions with constant parameters passed in as arguments.
+    Tests nested functions with compile-time parameters passed in as arguments.
     """
 
     class MyConfiguration:
@@ -364,11 +364,11 @@ def test_constant_argument_object():
             return 4
 
     @dace.program
-    def nested_func(cfg: dace.constant, A: dace.float64[20]):
+    def nested_func(cfg: dace.compiletime, A: dace.float64[20]):
         return A[cfg.p]
 
     @dace.program
-    def constant_parameter(cfg: dace.constant, cfg2: dace.constant, A: dace.float64[20]):
+    def constant_parameter(cfg: dace.compiletime, cfg2: dace.compiletime, A: dace.float64[20]):
         A[cfg.q] = nested_func(cfg, A)
         A[cfg.get_random_number] = nested_func(cfg2, A)
 
@@ -427,7 +427,7 @@ def test_array_by_str_key():
 def test_constant_folding():
 
     @dace.program
-    def tofold(A: dace.float64[20], add: dace.constant):
+    def tofold(A: dace.float64[20], add: dace.compiletime):
         if add:
             A += 1
         else:
@@ -475,7 +475,7 @@ def test_intglobal():
 def test_numpynumber_condition():
 
     @dace.program
-    def conditional_val(A: dace.float64[20], val: dace.constant):
+    def conditional_val(A: dace.float64[20], val: dace.compiletime):
         if (val % 4) == 0:
             A[:] = 0
         else:
@@ -531,7 +531,7 @@ def test_constant_list_function():
 def test_constant_propagation():
 
     @dace.program
-    def conditional_val(A: dace.float64[20], val: dace.constant):
+    def conditional_val(A: dace.float64[20], val: dace.compiletime):
         cval = val % 4
         if cval == 0:
             A[:] = 0
@@ -556,7 +556,7 @@ def test_constant_propagation_pass():
     from dace.transformation.passes import constant_propagation as cprop, dead_state_elimination as dse
 
     @dace.program
-    def conditional_val(A: dace.float64[20], val: dace.constant):
+    def conditional_val(A: dace.float64[20], val: dace.compiletime):
         cval = val % 4
         if cval == 0:
             A[:] = 0
@@ -604,13 +604,13 @@ def test_constant_propagation_2():
 def test_constant_proper_use():
 
     @dace.program
-    def good_function(scal: dace.constant, scal2: dace.constant, arr):
+    def good_function(scal: dace.compiletime, scal2: dace.compiletime, arr):
         a_bool = scal == 1
         if a_bool:
             arr[:] = arr[:] + scal2
 
     @dace.program
-    def program(arr, scal: dace.constant):
+    def program(arr, scal: dace.compiletime):
         arr[:] = arr[:] * scal
         good_function(scal, 3.0, arr)
 
@@ -625,12 +625,12 @@ def test_constant_proper_use_2():
     """ Stress test constants with strings. """
 
     @dace.program
-    def good_function(cfg: dace.constant, cfg2: dace.constant, arr):
+    def good_function(cfg: dace.compiletime, cfg2: dace.compiletime, arr):
         print(cfg)
         print(cfg2)
 
     @dace.program
-    def program(arr, cfg: dace.constant):
+    def program(arr, cfg: dace.compiletime):
         arr[:] = arr[:] * scal
         good_function(cfg, 'cfg2', arr)
 
@@ -644,7 +644,7 @@ def test_constant_proper_use_2():
 def test_constant_misuse():
 
     @dace.program
-    def bad_function(scal: dace.constant, arr):
+    def bad_function(scal: dace.compiletime, arr):
         a_bool = scal == 1
         if a_bool:
             arr[:] = arr[:] + 1
@@ -663,13 +663,13 @@ def test_constant_misuse():
 
 def test_constant_field():
 
-    def function(ctx: dace.constant, arr, somebool):
+    def function(ctx: dace.compiletime, arr, somebool):
         a_bool = ctx.scal == 1
         if a_bool and somebool:
             arr[:] = arr[:] + 1
 
     @dace.program
-    def program(arr, ctx: dace.constant):
+    def program(arr, ctx: dace.compiletime):
         function(ctx, arr, ctx.scal == 1)
 
     ns = SimpleNamespace(scal=2)

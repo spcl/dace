@@ -29,7 +29,7 @@ def test():
 
 def test_slice_constant():
     @dace.program
-    def sliceprog(A: dace.float64[20], slc: dace.constant):
+    def sliceprog(A: dace.float64[20], slc: dace.compiletime):
         A[slc] += 5
 
     myslice = slice(1, 10, 2)
@@ -43,7 +43,7 @@ def test_slice_constant():
 
 def test_slice_with_nones():
     @dace.program
-    def sliceprog(A: dace.float64[20], slc: dace.constant):
+    def sliceprog(A: dace.float64[20], slc: dace.compiletime):
         A[slc] += 5
 
     myslice = slice(None, None, None)
@@ -70,7 +70,7 @@ def test_literal_slice():
 
 def test_slice_member():
     @dace.program
-    def inner(q, kslice: dace.constant):
+    def inner(q, kslice: dace.compiletime):
         q[kslice] = 2 * q[kslice]
 
     class AClass:

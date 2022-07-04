@@ -2249,8 +2249,8 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             before computing the given state. """
         return (e.src for e in self.bfs_edges(state, reverse=True))
 
-    def validate(self) -> None:
-        validate_sdfg(self)
+    def validate(self, references: Optional[Set[int]] = None) -> None:
+        validate_sdfg(self, references)
 
     def is_valid(self) -> bool:
         """ Returns True if the SDFG is verified correctly (using `validate`).

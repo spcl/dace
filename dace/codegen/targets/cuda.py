@@ -1497,7 +1497,7 @@ void  *{kname}_args[] = {{ {kargs} }};
                    rest into the third dimension.
         """
 
-        kernelmap_entry = dfg_scope.source_nodes()[0]
+        kernelmap_entry: nodes.MapEntry = dfg_scope.source_nodes()[0]
         grid_size = kernelmap_entry.map.range.size(True)[::-1]
         block_size = None
         is_persistent = (kernelmap_entry.map.schedule == dtypes.ScheduleType.GPU_Persistent)
@@ -1548,31 +1548,43 @@ void  *{kname}_args[] = {{ {kargs} }};
         tb_maps_sym_map = [(tbmap, sym_map) for tbmap, sym_map in sub_maps
                            if tbmap.schedule == dtypes.ScheduleType.GPU_ThreadBlock]
 
+        # Map thread-block size override
+        block_size = kernelmap_entry.map.gpu_block_size
+        if block_size is not None:
+            # Complement to three dimensions
+            block_size += [1] * (3 - len(block_size))
+            # Linearize (flatten) rest of dimensions to third
+            if len(block_size) > 3:
+                block_size[2] = functools.reduce(sympy.Mul, block_size[2:], 1)
+                del block_size[3:]
+
         # No thread-block maps
         if len(tb_maps_sym_map) == 0:
-
-            if has_dtbmap:
-                if (Config.get('compiler', 'cuda', 'dynamic_map_block_size') == 'max'):
-                    block_size = ['max', 1, 1]
+            if block_size is None:
+                if has_dtbmap:
+                    if (Config.get('compiler', 'cuda', 'dynamic_map_block_size') == 'max'):
+                        block_size = ['max', 1, 1]
+                    else:
+                        block_size = [int(b) for b in Config.get('compiler', 'cuda', 'dynamic_map_block_size').split(',')]
                 else:
-                    block_size = [int(b) for b in Config.get('compiler', 'cuda', 'dynamic_map_block_size').split(',')]
-            else:
-                if Config.get_bool('debugprint'):
-                    warnings.warn('Thread-block maps not found in kernel, assuming ' +
-                                  'block size of (%s)' % Config.get('compiler', 'cuda', 'default_block_size'))
+                    if Config.get_bool('debugprint'):
+                        warnings.warn('Thread-block maps not found in kernel, assuming ' +
+                                    'block size of (%s)' % Config.get('compiler', 'cuda', 'default_block_size'))
 
-                if (Config.get('compiler', 'cuda', 'default_block_size') == 'max'):
-                    block_size = ['max', 1, 1]
-                else:
-                    block_size = [int(b) for b in Config.get('compiler', 'cuda', 'default_block_size').split(',')]
+                    if (Config.get('compiler', 'cuda', 'default_block_size') == 'max'):
+                        block_size = ['max', 1, 1]
+                    else:
+                        block_size = [int(b) for b in Config.get('compiler', 'cuda', 'default_block_size').split(',')]
+
             assert (len(block_size) >= 1 and len(block_size) <= 3)
+            
 
             # Grid size = ceil(|S|/32) for first dimension, rest = |S|
             grid_size = [int_ceil(gs, bs) for gs, bs in zip(grid_size, block_size)]
 
         else:
             # Find all thread-block maps to determine overall block size
-            block_size = [1, 1, 1]
+            block_size = block_size if block_size is not None else [1, 1, 1]
             detected_block_sizes = [block_size]
             for tbmap, sym_map in tb_maps_sym_map:
                 tbsize = [s.subs(list(sym_map.items())) for s in tbmap.range.size()[::-1]]

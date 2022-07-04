@@ -859,24 +859,12 @@ def _get_dominator_and_postdominator(sdfg: SDFG, accesses: List[Tuple[SDFGState,
     data_name = accesses[0][1].data
 
     # Get immediate post-dominators
-    sink_nodes = sdfg.sink_nodes()
-    if len(sink_nodes) > 1:
-        sink = sdfg.add_state()
-        for snode in sink_nodes:
-            sdfg.add_edge(snode, sink, dace.InterstateEdge())
-    else:
-        sink = sink_nodes[0]
-    ipostdom = nx.immediate_dominators(sdfg._nx.reverse(), sink)
-    allpostdoms = cfg.all_dominators(sdfg, ipostdom)
+    ipostdom, allpostdoms = utils.postdominators(sdfg, return_alldoms=True)
 
     # All dominators and postdominators include the states themselves
     for state in states:
         alldoms[state].add(state)
         allpostdoms[state].add(state)
-
-    # If a new sink was added for post-dominator computation, remove it
-    if len(sink_nodes) > 1:
-        sdfg.remove_node(sink)
 
     start_state = states[0]
     while any(start_state not in alldoms[n] for n in states):
