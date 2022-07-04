@@ -42,12 +42,16 @@ class DeadDataflowElimination(ppl.Pass):
         # Depends on the following analysis passes:
         #  * State reachability
         #  * Read/write access sets per state
-        reachable: Dict[SDFGState, Set[SDFGState]] = pipeline_results['StateReachability']
-        access_sets: Dict[SDFGState, Tuple[Set[str], Set[str]]] = pipeline_results['AccessSets']
+        reachable: Dict[SDFGState, Set[SDFGState]] = pipeline_results['StateReachability'][sdfg.sdfg_id]
+        access_sets: Dict[SDFGState, Tuple[Set[str], Set[str]]] = pipeline_results['AccessSets'][sdfg.sdfg_id]
         result: Dict[SDFGState, Set[str]] = defaultdict(set)
 
         # Traverse SDFG backwards
-        for state in reversed(list(cfg.stateorder_topological_sort(sdfg))):
+        try:
+            state_order = list(cfg.stateorder_topological_sort(sdfg))
+        except KeyError:
+            return None
+        for state in reversed(state_order):
             #############################################
             # Analysis
             #############################################
@@ -114,7 +118,8 @@ class DeadDataflowElimination(ppl.Pass):
                     for leaf in mtree.leaves():
                         # Keep track of predecessors of removed nodes for connector pruning
                         if isinstance(leaf.src, nodes.NestedSDFG):
-                            predecessor_nsdfgs[leaf.src].add(leaf.src_conn)
+                            if not leaf.data.is_empty():
+                                predecessor_nsdfgs[leaf.src].add(leaf.src_conn)
                         state.remove_memlet_path(leaf)
 
                 # Remove the node itself as necessary

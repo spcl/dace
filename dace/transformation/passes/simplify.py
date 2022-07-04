@@ -26,6 +26,8 @@ SIMPLIFY_PASSES = [
     ArrayElimination,
 ]
 
+_nonrecursive_passes = [ScalarToSymbolPromotion, DeadDataflowElimination, DeadStateElimination, ArrayElimination]
+
 
 @dataclass(unsafe_hash=True)
 class SimplifyPass(ppl.FixedPointPipeline):
@@ -48,16 +50,38 @@ class SimplifyPass(ppl.FixedPointPipeline):
         self.validate = validate
         self.validate_all = validate_all
         self.skip = skip or set()
+        self.verbose = verbose
 
     def apply_subpass(self, sdfg: SDFG, p: ppl.Pass, state: Dict[str, Any]):
         """
         Apply a pass from the pipeline. This method is meant to be overridden by subclasses.
         """
-        ret = p.apply_pass(sdfg, state)
-        if self.verbose and ret is not None:
-            rep = p.report(ret)
-            if rep:
-                print(rep)
+        if type(p) in _nonrecursive_passes:  # If pass needs to run recursively, do so and modify return value
+            ret: Dict[int, Any] = {}
+            for sd in sdfg.sdfg_list:
+                subret = p.apply_pass(sd, state)
+                if subret is not None:
+                    ret[sd.sdfg_id] = subret
+            ret = ret or None
+        else:
+            ret = p.apply_pass(sdfg, state)
+
+        if self.verbose:
+            if ret is not None:
+                if type(p) not in _nonrecursive_passes:
+                    rep = p.report(ret)
+                else:
+                    # Create report from recursive application
+                    rep = []
+                    for sdid, subret in ret.items():
+                        if subret is not None:
+                            rep.append(f'SDFG {sdid}: ' + p.report(subret))
+                    rep = '\n'.join(rep)
+
+                if rep:
+                    print(rep)
+            else:
+                print(type(p).__name__, 'did nothing')
 
         # If validate all is enabled, check after every pass
         if ret is not None and self.validate_all:

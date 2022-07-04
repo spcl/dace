@@ -37,12 +37,16 @@ class ArrayElimination(ppl.Pass):
         :return: A set of removed data descriptor names, or None if nothing changed.
         """
         result: Set[str] = set()
-        reachable: Dict[SDFGState, Set[SDFGState]] = pipeline_results['StateReachability']
+        reachable: Dict[SDFGState, Set[SDFGState]] = pipeline_results['StateReachability'][sdfg.sdfg_id]
         # Get access nodes and modify set as pass continues
-        access_sets: Dict[str, Set[SDFGState]] = pipeline_results['FindAccessNodes']
+        access_sets: Dict[str, Set[SDFGState]] = pipeline_results['FindAccessNodes'][sdfg.sdfg_id]
 
         # Traverse SDFG backwards
-        for state in reversed(list(cfg.stateorder_topological_sort(sdfg))):
+        try:
+            state_order = list(cfg.stateorder_topological_sort(sdfg))
+        except KeyError:
+            return None
+        for state in reversed(state_order):
             # Find all data descriptors that will no longer be used after this state
             removable_data: Set[str] = set(s for s in access_sets
                                            if state in access_sets[s] and not (access_sets[s] & reachable[state]))
@@ -70,6 +74,12 @@ class ArrayElimination(ppl.Pass):
 
             if removed_nodes:
                 result.update({n.data for n in removed_nodes})
+
+        # If node is completely removed from graph, erase data descriptor
+        # for aname in list(sdfg.arrays.keys()):
+            # if aname in access_sets and not access_sets[aname]:
+                # sdfg.remove_data(aname, validate=False)
+                # result.add(aname)
 
         return result or None
 

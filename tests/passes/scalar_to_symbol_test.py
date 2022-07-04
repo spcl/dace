@@ -15,6 +15,7 @@ import pytest
 
 def test_find_promotable():
     """ Find promotable and non-promotable symbols. """
+
     @dace.program
     def testprog1(A: dace.float32[20, 20], scal: dace.float32):
         tmp = dace.ndarray([20, 20], dtype=dace.float32)
@@ -41,6 +42,7 @@ def test_find_promotable():
 
 def test_promote_simple():
     """ Simple promotion with Python tasklets. """
+
     @dace.program
     def testprog2(A: dace.float64[20, 20]):
         j = 5
@@ -68,6 +70,7 @@ def test_promote_simple():
 
 def test_promote_simple_c():
     """ Simple promotion with C++ tasklets. """
+
     @dace.program
     def testprog3(A: dace.float32[20, 20]):
         i = 0
@@ -110,6 +113,7 @@ def test_promote_simple_c():
 
 def test_promote_disconnect():
     """ Promotion that disconnects tasklet from map. """
+
     @dace.program
     def testprog4(A: dace.float64[20, 20]):
         j = 5
@@ -176,6 +180,7 @@ def test_promote_copy():
 
 def test_promote_array_assignment():
     """ Simple promotion with array assignment. """
+
     @dace.program
     def testprog6(A: dace.float64[20, 20]):
         j = A[1, 1]
@@ -204,6 +209,7 @@ def test_promote_array_assignment():
 
 def test_promote_array_assignment_tasklet():
     """ Simple promotion with array assignment. """
+
     @dace.program
     def testprog7(A: dace.float64[20, 20]):
         j = dace.define_local_scalar(dace.int64)
@@ -233,8 +239,9 @@ def test_promote_array_assignment_tasklet():
 
 class LoopTester(ld.DetectLoop, xf.MultiStateTransformation):
     """ Tester method that sets loop index on a guard state. """
+
     def can_be_applied(self, graph, expr_index, sdfg, permissive):
-        if super().can_be_applied(graph, expr_index, sdfg, permissive):
+        if not super().can_be_applied(graph, expr_index, sdfg, permissive):
             return False
         guard = self.loop_guard
         if hasattr(guard, '_LOOPINDEX'):
@@ -264,8 +271,7 @@ def test_promote_loop():
     assert 'i' in scalar_to_symbol.find_promotable_scalars(sdfg)
     scalar_to_symbol.promote_scalars_to_symbols(sdfg)
     sdfg.simplify()
-    # TODO: LoopDetection does not apply to loops with a multi-state guard
-    # assert sdfg.apply_transformations_repeated(LoopTester) == 1
+    assert sdfg.apply_transformations_repeated(LoopTester) == 1
 
 
 def test_promote_loops():
@@ -290,13 +296,12 @@ def test_promote_loops():
     assert 'k' in scalars
     scalar_to_symbol.promote_scalars_to_symbols(sdfg)
     sdfg.simplify()
-    # TODO: LoopDetection does not apply to loops with a multi-state guard
-    # xfh.split_interstate_edges(sdfg)
-    # assert sdfg.apply_transformations_repeated(LoopTester) == 3
+    assert sdfg.apply_transformations_repeated(LoopTester) == 3
 
 
 def test_promote_indirection():
     """ Indirect access in promotion. """
+
     @dace.program
     def testprog10(A: dace.float64[2, 3, 4, 5], B: dace.float64[4]):
         i = 2
@@ -347,6 +352,7 @@ def test_promote_indirection():
 
 def test_promote_output_indirection():
     """ Indirect output access in promotion. """
+
     @dace.program
     def testprog11(A: dace.float64[10]):
         i = 2
@@ -375,6 +381,7 @@ def test_promote_output_indirection():
 
 def test_promote_indirection_c():
     """ Indirect access in promotion with C++ tasklets. """
+
     @dace.program
     def testprog12(A: dace.float64[10]):
         i = 2
@@ -407,6 +414,7 @@ def test_promote_indirection_c():
 
 def test_promote_indirection_impossible():
     """ Indirect access that cannot be promoted. """
+
     @dace.program
     def testprog13(A: dace.float64[20, 20], scal: dace.int32):
         i = 2
@@ -576,6 +584,7 @@ def test_indirection_with_reindex(language):
 
 
 def test_multiple_boolop():
+
     @dace.program
     def tester():
         a = 1
@@ -629,6 +638,7 @@ def test_multidim_cpp():
 
 
 def test_dynamic_mapind():
+
     @dace.program
     def prog(inp: dace.int32[4, 2], out: dace.float64[5, 5]):
         A = np.zeros((5, 5))

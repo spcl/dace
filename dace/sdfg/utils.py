@@ -1129,8 +1129,6 @@ def fuse_states(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> 
                 break
     if progress:
         pbar.close()
-    if config.Config.get_bool('debugprint') and counter > 0:
-        print(f'Applied {counter} State Fusions')
     return counter
 
 
@@ -1202,8 +1200,6 @@ def inline_sdfgs(sdfg: SDFG, permissive: bool = False, progress: bool = None, mu
 
     if progress:
         pbar.close()
-    if config.Config.get_bool('debugprint') and counter > 0:
-        print(f'Inlined {counter} SDFGs')
     return counter
 
 
