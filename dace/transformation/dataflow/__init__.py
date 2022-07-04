@@ -39,7 +39,7 @@ from .redundant_array_copying import (RedundantArrayCopyingIn, RedundantArrayCop
 from .merge_arrays import InMergeArrays, OutMergeArrays, MergeSourceSinkArrays
 from .prune_connectors import PruneConnectors, PruneSymbols
 from .wcr_conversion import AugAssignToWCR
-from .tasklet_fusion import SimpleTaskletFusion
+from .tasklet_fusion import TaskletFusion
 from .trivial_tasklet_elimination import TrivialTaskletElimination
 
 # Device-related
