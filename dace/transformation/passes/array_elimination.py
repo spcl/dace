@@ -48,8 +48,8 @@ class ArrayElimination(ppl.Pass):
             return None
         for state in reversed(state_order):
             # Find all data descriptors that will no longer be used after this state
-            removable_data: Set[str] = set(s for s in access_sets
-                                           if state in access_sets[s] and not (access_sets[s] & reachable[state]))
+            removable_data: Set[str] = set(
+                s for s in access_sets if state in access_sets[s] and not (access_sets[s] & reachable[state]) - {state})
 
             # Find duplicate access nodes as an ordered list
             access_nodes: Dict[str, List[nodes.AccessNode]] = defaultdict(list)
@@ -77,9 +77,9 @@ class ArrayElimination(ppl.Pass):
 
         # If node is completely removed from graph, erase data descriptor
         # for aname in list(sdfg.arrays.keys()):
-            # if aname in access_sets and not access_sets[aname]:
-                # sdfg.remove_data(aname, validate=False)
-                # result.add(aname)
+        # if aname in access_sets and not access_sets[aname]:
+        # sdfg.remove_data(aname, validate=False)
+        # result.add(aname)
 
         return result or None
 
@@ -122,14 +122,15 @@ class ArrayElimination(ppl.Pass):
         state_id = sdfg.node_id(state)
 
         # Transformations that remove the first access node
-        xforms_first: List[SingleStateTransformation] = [RedundantArray(), RedundantWriteSlice(), UnsqueezeViewRemove()]
+        xforms_first: List[SingleStateTransformation] = [RedundantWriteSlice(), UnsqueezeViewRemove(), RedundantArray()]
         # Transformations that remove the second access node
         xforms_second: List[SingleStateTransformation] = [
-            RedundantSecondArray(), RedundantReadSlice(),
-            SqueezeViewRemove()
+            RedundantReadSlice(), SqueezeViewRemove(),
+            RedundantSecondArray()
         ]
 
         # Try the different redundant copy/view transformations on the node
+        # TODO: Should be ordered by dataflow rather than by arbitrary data desc
         for aname in removable_data:
             if aname not in access_nodes:  # May be in inter-state edges
                 continue

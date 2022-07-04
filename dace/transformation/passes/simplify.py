@@ -58,7 +58,7 @@ class SimplifyPass(ppl.FixedPointPipeline):
         """
         if type(p) in _nonrecursive_passes:  # If pass needs to run recursively, do so and modify return value
             ret: Dict[int, Any] = {}
-            for sd in sdfg.sdfg_list:
+            for sd in sdfg.all_sdfgs_recursive():
                 subret = p.apply_pass(sd, state)
                 if subret is not None:
                     ret[sd.sdfg_id] = subret

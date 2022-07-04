@@ -24,7 +24,7 @@ class StateReachability(ppl.Pass):
         :return: A dictionary mapping each state to its other reachable states.
         """
         reachable: Dict[int, Dict[SDFGState, Set[SDFGState]]] = {}
-        for sdfg_id, sdfg in enumerate(top_sdfg.sdfg_list):
+        for sdfg_id, sdfg in enumerate(top_sdfg.all_sdfgs_recursive()):
             reachable[sdfg_id] = {}
             tc: nx.DiGraph = nx.transitive_closure(sdfg.nx)
             for state in sdfg.nodes():
@@ -49,7 +49,7 @@ class AccessSets(ppl.Pass):
         :return: A dictionary mapping each state to a tuple of its (read, written) data descriptors.
         """
         top_result: Dict[int, Dict[SDFGState, Tuple[Set[str], Set[str]]]] = {}
-        for sdfg_id, sdfg in enumerate(top_sdfg.sdfg_list):
+        for sdfg_id, sdfg in enumerate(top_sdfg.all_sdfgs_recursive()):
             result: Dict[SDFGState, Tuple[Set[str], Set[str]]] = {}
             for state in sdfg.nodes():
                 readset, writeset = set(), set()
@@ -91,7 +91,7 @@ class FindAccessNodes(ppl.Pass):
         """
         top_result: Dict[int, Dict[str, Set[SDFGState]]] = {}
 
-        for sdfg_id, sdfg in enumerate(top_sdfg.sdfg_list):
+        for sdfg_id, sdfg in enumerate(top_sdfg.all_sdfgs_recursive()):
             result: Dict[str, Set[SDFGState]] = defaultdict(set)
             for state in sdfg.nodes():
                 for anode in state.data_nodes():
