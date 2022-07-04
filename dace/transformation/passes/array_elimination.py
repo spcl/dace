@@ -84,11 +84,9 @@ class ArrayElimination(ppl.Pass):
         for nodeset in access_nodes.values():
             if len(nodeset) > 1:
                 # Merge all other access nodes to the first one
-                to_merge: List[nodes.AccessNode] = []
                 first_node = nodeset[0]
                 if not condition(first_node):
                     continue
-                to_merge.append(node)
                 for node in nodeset[1:]:
                     if not condition(node):
                         continue
@@ -125,31 +123,33 @@ class ArrayElimination(ppl.Pass):
             for anode in access_nodes[aname]:
                 if state.out_degree(anode) == 1:
                     succ = state.successors(anode)[0]
-                    for xform in xforms_first:
-                        # Quick path to setup match
-                        candidate = {xform.in_array: anode, xform.out_array: succ}
-                        xform.setup_match(sdfg, sdfg.sdfg_id, state_id, candidate, 0, override=True)
+                    if isinstance(succ, nodes.AccessNode):
+                        for xform in xforms_first:
+                            # Quick path to setup match
+                            candidate = {type(xform).in_array: anode, type(xform).out_array: succ}
+                            xform.setup_match(sdfg, sdfg.sdfg_id, state_id, candidate, 0, override=True)
 
-                        # Try to apply
-                        if xform.can_be_applied(state, 0, sdfg):
-                            xform.apply(state, sdfg)
-                            removed_nodes.add(anode)
-                            break
+                            # Try to apply
+                            if xform.can_be_applied(state, 0, sdfg):
+                                xform.apply(state, sdfg)
+                                removed_nodes.add(anode)
+                                break
 
                 if anode in removed_nodes:  # Node was removed, skip second check
                     continue
 
                 if state.in_degree(anode) == 1:
                     pred = state.predecessors(anode)[0]
-                    for xform in xforms_second:
-                        # Quick path to setup match
-                        candidate = {xform.in_array: pred, xform.out_array: anode}
-                        xform.setup_match(sdfg, sdfg.sdfg_id, state_id, candidate, 0, override=True)
+                    if isinstance(pred, nodes.AccessNode):
+                        for xform in xforms_second:
+                            # Quick path to setup match
+                            candidate = {type(xform).in_array: pred, type(xform).out_array: anode}
+                            xform.setup_match(sdfg, sdfg.sdfg_id, state_id, candidate, 0, override=True)
 
-                        # Try to apply
-                        if xform.can_be_applied(state, 0, sdfg):
-                            xform.apply(state, sdfg)
-                            removed_nodes.add(anode)
-                            break
+                            # Try to apply
+                            if xform.can_be_applied(state, 0, sdfg):
+                                xform.apply(state, sdfg)
+                                removed_nodes.add(anode)
+                                break
 
         return removed_nodes
