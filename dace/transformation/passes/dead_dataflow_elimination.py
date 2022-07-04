@@ -144,6 +144,10 @@ class DeadDataflowElimination(ppl.Pass):
 
         return result or None
 
+    def report(self, pass_retval: Dict[SDFGState, Set[str]]) -> str:
+        n = sum(len(v) for v in pass_retval.values())
+        return f'Eliminated {n} nodes in {len(pass_retval)} states.'
+
     def _is_node_dead(self, node: nodes.Node, sdfg: SDFG, state: SDFGState, dead_nodes: Set[nodes.Node],
                       no_longer_used: Set[str]) -> bool:
         # Conditions for dead node:

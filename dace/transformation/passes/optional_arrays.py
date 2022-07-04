@@ -18,6 +18,7 @@ class OptionalArrayInference(ppl.Pass):
     * it is in a nested SDFG and its parent array was transient; or
     * it is definitely (unconditionally) read or written in the SDFG.
     """
+
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Descriptors
 
@@ -45,6 +46,8 @@ class OptionalArrayInference(ppl.Pass):
 
         # Set information of arrays based on their transient and parent status
         for aname, arr in sdfg.arrays.items():
+            if not isinstance(arr, data.Array):
+                continue
             if arr.transient:
                 if arr.optional is not False:
                     result.add((sdfg_id, aname))
@@ -80,7 +83,7 @@ class OptionalArrayInference(ppl.Pass):
                         opt = sdfg.arrays[e.data.data].optional
                         if opt is not None:
                             pinfo[e.src_conn] = opt
-                    
+
                     # Apply pass recursively
                     rec_result = self.apply_pass(node.sdfg, _, pinfo)
                     if rec_result:
@@ -106,3 +109,6 @@ class OptionalArrayInference(ppl.Pass):
             out_degree = sdfg.out_degree(curstate)
         # Yield final state
         yield curstate
+
+    def report(self, pass_retval: Set[Tuple[int, str]]) -> str:
+        return f'Inferred {len(pass_retval)} optional arrays.'

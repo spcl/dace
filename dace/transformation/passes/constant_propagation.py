@@ -15,7 +15,7 @@ class _UnknownValue:
     pass
 
 
-@dataclass
+@dataclass(unsafe_hash=True)
 class ConstantPropagation(ppl.Pass):
     """
     Propagates constants and symbols that were assigned to one value forward through the SDFG, reducing
@@ -134,6 +134,9 @@ class ConstantPropagation(ppl.Pass):
         if not result:
             return None
         return result
+    
+    def report(self, pass_retval: Set[str]) -> str:
+        return f'Propagated {len(pass_retval)} constants.'
 
     def collect_constants(self,
                           sdfg: SDFG,

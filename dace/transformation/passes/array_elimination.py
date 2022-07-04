@@ -2,8 +2,6 @@
 from collections import defaultdict
 from typing import Any, Callable, Dict, List, Optional, Set
 
-import networkx as nx
-
 from dace import SDFG, SDFGState
 from dace.sdfg import nodes
 from dace.sdfg.analysis import cfg
@@ -74,6 +72,9 @@ class ArrayElimination(ppl.Pass):
                 result.update({n.data for n in removed_nodes})
 
         return result or None
+
+    def report(self, pass_retval: Set[str]) -> str:
+        return f'Eliminated {len(pass_retval)} arrays.'
 
     def merge_access_nodes(self, state: SDFGState, access_nodes: Dict[str, List[nodes.AccessNode]],
                            condition: Callable[[nodes.AccessNode], bool]):
