@@ -1228,6 +1228,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
         for i, node in enumerate(source_nodes):
             if isinstance(node, nodes.AccessNode):
                 continue
+            print("Source ", node, " has kernel id: ", max_kernels)
 
             self._node_to_kernel[utils.unique_node_repr(state, node)] = max_kernels
             max_kernels = increment(max_kernels)
@@ -1249,6 +1250,8 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
 
                 if (isinstance(e.dst, nodes.AccessNode) and isinstance(sdfg.arrays[e.dst.data], dt.View)):
                     # Skip views
+                    print("Node ", e.dst, " has kernel id: ", kernel)
+
                     self._node_to_kernel[utils.unique_node_repr(state, e.dst)] = kernel
                     continue
 
@@ -1274,6 +1277,9 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                 # From this edge we don't have any kernel id.
                 # Look up for the other predecessor nodes, if any of them has a kernel
                 # ID, use that.
+
+                # Matmul start from here: we arrive here from access node m which is not in node kernel
+                # The other predecessor of matmul (__tmp0) must still be visited (so no kernel id for it)
                 for pred_edge in state.in_edges(e.dst):
                     if pred_edge != e:
                         kernel = self._trace_back_edge(pred_edge, state, look_for_kernel_id=True)
@@ -1299,8 +1305,11 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                     else:
                         # Trace this edge forward: if it finds something that has a kernel id and
                         # there is at least one local buffer along the way, then reuse that kernel id
+
+                        # QUI quando leggiamo l'altra mappa (write_C) troviamo che effettivamente
+                        # c'e' un altro kernel ma questo e' only global
                         only_global, kern = self._trace_forward_edge(e, state)
-                        if not only_global and kern is not None:
+                        if kern is not None:
                             kernel = kern
                         else:
                             kernel = max_kernels
@@ -1310,6 +1319,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                             else:
                                 max_kernels = increment(max_kernels)
 
+            print("Node ", e.dst, " has kernel id: ", kernel)
             self._node_to_kernel[utils.unique_node_repr(state, e.dst)] = kernel
 
         # do another pass and track dependencies among Kernels
@@ -1325,7 +1335,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                             dependencies[this_kernel] = set()
                         dependencies[this_kernel].add(self._node_to_kernel[pred_repr])
 
-        max_kernels = max_kernels if concurrent_kernels == 0 else concurrent_kernels
+        max_kernels = max_kernels - default_kernel if concurrent_kernels == 0 else concurrent_kernels
         return max_kernels, dependencies
 
     def _trace_back_edge(self,
