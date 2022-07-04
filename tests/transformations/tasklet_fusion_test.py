@@ -23,8 +23,10 @@ def map_with_tasklets(A: datatype[N], B: datatype[M]):
     return C
 
 
-def _make_sdfg(with_data: bool = False):
-    endl = '\n'
+def _make_sdfg(language: str, with_data: bool = False):
+    lang = dtypes.Language.Python if language == 'Python' else dtypes.Language.CPP
+    endl = '\n' if language == 'Python' else ';\n'
+
     sdfg = dace.SDFG(f'map_with_tasklets')
     sdfg.add_array('A', (N, ), datatype)
     sdfg.add_array('B', (M, ), datatype)
@@ -48,12 +50,12 @@ def _make_sdfg(with_data: bool = False):
             '__out3': datatype,
         },
         f'__out1 = __inp1 + __inp2{endl}__out2 = __out1{endl}__out3 = __out1{endl}',
-        dtypes.Language.Python
+        lang
     )
-    tb = state.add_tasklet('b', inputs, outputs, f'__out = __inp1 * __inp2{endl}', dtypes.Language.Python)
-    tc = state.add_tasklet('c', inputs, outputs, f'__out = __inp1 + __inp2{endl}', dtypes.Language.Python)
-    td = state.add_tasklet('d', inputs, outputs, f'__out = __inp1 / __inp2{endl}', dtypes.Language.Python)
-    te = state.add_tasklet('e', inputs, outputs, f'__out = __inp1 * __inp2{endl}', dtypes.Language.Python)
+    tb = state.add_tasklet('b', inputs, outputs, f'__out = __inp1 * __inp2{endl}', lang)
+    tc = state.add_tasklet('c', inputs, outputs, f'__out = __inp1 + __inp2{endl}', lang)
+    td = state.add_tasklet('d', inputs, outputs, f'__out = __inp1 / __inp2{endl}', lang)
+    te = state.add_tasklet('e', inputs, outputs, f'__out = __inp1 * __inp2{endl}', lang)
     state.add_memlet_path(A, me, ta, memlet=dace.Memlet('A[i]'), dst_conn='__inp1')
     state.add_memlet_path(B, me, ta, memlet=dace.Memlet('B[i]'), dst_conn='__inp2')
     state.add_memlet_path(A, me, tb, memlet=dace.Memlet('A[2*i]'), dst_conn='__inp2')
@@ -96,25 +98,25 @@ def _make_sdfg(with_data: bool = False):
 
 
 @pytest.mark.parametrize('with_data', [pytest.param(True), pytest.param(False)])
-def test_map_with_tasklets(with_data: bool):
-    sdfg = _make_sdfg(with_data)
-    sdfg.save('_dacegraphs/orig_' + ('d' if with_data else 'nd') + '.sdfg')
+@pytest.mark.parametrize('language', [pytest.param('CPP'), pytest.param('Python')])
+def test_map_with_tasklets(language: str, with_data: bool):
+    sdfg = _make_sdfg(language, with_data)
     sdfg.compile()
     simplify_reduced = [xf for xf in simplification_transformations() if xf.__name__ != 'TaskletFusion']
     sdfg.apply_transformations_repeated(simplify_reduced)
     num = sdfg.apply_transformations_repeated(TaskletFusion)
-    sdfg.save('_dacegraphs/xformed_' + ('d' if with_data else 'nd') + '.sdfg')
     assert (num == 3)
     func = sdfg.compile()
     A = np.arange(1, N + 1, dtype=np_datatype)
     B = np.arange(1, M + 1, dtype=np_datatype)
     C = np.zeros((M, ), dtype=np_datatype)
     func(A=A, B=B, C=C)
-    map_with_tasklets.to_sdfg().save('_dacegraphs/tmp.sdfg')
     ref = map_with_tasklets.f(A, B)
     assert (np.allclose(C, ref))
 
 
 if __name__ == '__main__':
-    test_map_with_tasklets(with_data=False)
-    test_map_with_tasklets(with_data=True)
+    test_map_with_tasklets(language='Python', with_data=False)
+    test_map_with_tasklets(language='Python', with_data=True)
+    test_map_with_tasklets(language='CPP', with_data=False)
+    test_map_with_tasklets(language='CPP', with_data=True)

@@ -2,6 +2,7 @@
 """ Contains classes that fuse Tasklets """
 
 import ast
+import re
 from typing import Any, Dict
 
 import astunparse
@@ -13,7 +14,7 @@ from dace.transformation import transformation as pm
 from dace.transformation import helpers as thelpers
 
 
-class ConnectorRenamer(ast.NodeTransformer):
+class PythonConnectorRenamer(ast.NodeTransformer):
     """ Renames connector names in Tasklet code.
     """
     def __init__(self, repl_dict: Dict[str, str]) -> None:
@@ -29,7 +30,19 @@ class ConnectorRenamer(ast.NodeTransformer):
         return self.generic_visit(node)
 
 
-class Inliner(ast.NodeTransformer):
+class CPPConnectorRenamer():
+
+    def __init__(self, repl_dict: Dict[str, str]) -> None:
+        self.repl_dict = repl_dict
+
+    def rename(self, code: str) -> str:
+        new_code = code
+        for old_val, new_val in self.repl_dict.items():
+            new_code = re.sub(r'\b%s\b' % re.escape(old_val), new_val, new_code)
+        return new_code
+
+
+class PythonInliner(ast.NodeTransformer):
 
     def __init__(self, target_id, target_ast):
         self.target_id = target_id
@@ -40,6 +53,16 @@ class Inliner(ast.NodeTransformer):
             return ast.copy_location(self.target_ast, node)
         else:
             return self.generic_visit(node)
+
+
+class CPPInliner():
+
+    def __init__(self, inline_target, inline_val):
+        self.inline_target = inline_target
+        self.inline_val = inline_val
+
+    def inline(self, code: str):
+        return re.sub(r'\b%s\b' % re.escape(self.inline_target), '(' + self.inline_val + ')', code)
 
 
 class TaskletFusion(pm.SingleStateTransformation):
@@ -130,8 +153,8 @@ class TaskletFusion(pm.SingleStateTransformation):
         data = self.data if self.expr_index == 0 else None
         t2 = self.t2
 
-        # Both Tasklets must be in Python
-        if t1.language is not Language.Python or t2.language is not Language.Python:
+        # Both Tasklets must have the same language.
+        if t1.language != t2.language:
             return False
 
         # If there is an AccessNode between the Tasklets, ensure it is a scalar.
@@ -143,11 +166,16 @@ class TaskletFusion(pm.SingleStateTransformation):
         if graph.out_degree(t1) != 1 or (data is not None and graph.out_degree(data) != 1):
             return False
 
+        # Try to parse the code to check that there is not more than one assignment.
         try:
-            if len(t1.code.code) != 1:
-                return False
-            if len(t1.code.code[0].targets) != 1:
-                return False
+            if t1.language == Language.Python:
+                if len(t1.code.code) != 1:
+                    return False
+                if len(t1.code.code[0].targets) != 1:
+                    return False
+            elif t1.language == Language.CPP:
+                if not re.match(r'^[_A-Za-z0-9]+\s*=[^;]*;?$', t1.code.as_string):
+                    return False
         except:
             return False
 
@@ -184,7 +212,7 @@ class TaskletFusion(pm.SingleStateTransformation):
                     t2edge = conflict_edges[0]
                 if t2edge is not None and (in_edge.data != t2edge.data or in_edge.data.data != t2edge.data.data or
                     in_edge.data is None or in_edge.data.data is None):
-                    in_edge.dst_conn = thelpers.find_name_not_in_set(set(inputs), in_edge.dst_conn)
+                    in_edge.dst_conn = dace.data.find_new_name(in_edge.dst_conn, set(inputs))
                     repldict[old_value] = in_edge.dst_conn
                 else:
                     # If the Memlets are the same, rename the connector on the first Tasklet, such that we only have
@@ -192,17 +220,39 @@ class TaskletFusion(pm.SingleStateTransformation):
                     pass
             inputs[in_edge.dst_conn] = t1.in_connectors[old_value]
 
-        assigned_value = t1.code.code[0].value
-        if repldict:
-            assigned_value = ConnectorRenamer(repldict).visit(assigned_value)
+        new_code_str = None
 
-        new_code = [
-            Inliner(t2_in_edge.dst_conn, assigned_value).visit(line) for line in t2.code.code
-        ]
-        new_code_str = '\n'.join(astunparse.unparse(line) for line in new_code)
+        if t1.language == Language.Python:
+            assigned_value = t1.code.code[0].value
+            if repldict:
+                assigned_value = PythonConnectorRenamer(repldict).visit(assigned_value)
+
+            new_code = [
+                PythonInliner(t2_in_edge.dst_conn, assigned_value).visit(line) for line in t2.code.code
+            ]
+            new_code_str = '\n'.join(astunparse.unparse(line) for line in new_code)
+        elif t1.language == Language.CPP:
+            assigned_value = t1.code.as_string
+            if repldict:
+                assigned_value = CPPConnectorRenamer(repldict).rename(assigned_value)
+
+            # Extract the assignment's left and right hand sides to properly inline into the next Tasklet.
+            lhs = None
+            rhs = None
+            lhs_matches = re.findall(r'[\s\t\n\r]*([\w]*)[\s\t]*=', assigned_value)
+            if lhs_matches:
+                lhs = lhs_matches[0]
+                rhs_matches = re.findall(r'%s[\s\t]*=[\s\t]*([^=]*);' % lhs, assigned_value)
+                if rhs_matches:
+                    rhs = rhs_matches[0]
+
+            if rhs:
+                new_code_str = CPPInliner(t2_in_edge.dst_conn, rhs).inline(t2.code.as_string)
+        else:
+            return
 
         new_tasklet = graph.add_tasklet(
-            t1.label + '_fused_' + t2.label, inputs, t2.out_connectors, new_code_str
+            t1.label + '_fused_' + t2.label, inputs, t2.out_connectors, new_code_str, t1.language
         )
 
         for in_edge in graph.in_edges(t1):

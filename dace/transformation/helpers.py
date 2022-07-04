@@ -928,24 +928,3 @@ def redirect_edge(state: SDFGState,
     new_edge = state.add_edge(new_src or edge.src, new_src_conn or edge.src_conn, new_dst or edge.dst, new_dst_conn
                               or edge.dst_conn, memlet)
     return new_edge
-
-
-def find_name_not_in_set(name_set: Set[str], target: Optional[str]) -> str:
-    """
-    Try to generate a new name that is not in a given name set.
-    The name can be generated based on a target name. If no target is given, "temp" is used as a target.
-
-    :param name_set: The set of existing names.
-    :param taret: (optional) The target based on which the name should be generated (default = "temp").
-    :return: A new name that is not conflicting with any existing name in `name_set`.
-    """
-    base_name = target or 'temp'
-
-    if base_name not in name_set:
-        return base_name
-
-    i = 0
-    while (base_name + '_' + str(i)) in name_set:
-        i += 1
-    return base_name + '_' + str(i)
-
