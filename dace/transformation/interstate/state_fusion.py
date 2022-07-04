@@ -32,7 +32,7 @@ def top_level_nodes(state: SDFGState):
     return state.scope_children()[None]
 
 
-class StateFusion(transformation.MultiStateTransformation, transformation.SimplifyPass):
+class StateFusion(transformation.MultiStateTransformation):
     """ Implements the state-fusion transformation.
 
         State-fusion takes two states that are connected through a single edge,

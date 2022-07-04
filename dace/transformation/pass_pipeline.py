@@ -276,6 +276,7 @@ class Pipeline(Pass):
 
     def __init__(self, passes: List[Pass]):
         self.passes = []
+        self.pass_names = set(type(p).__name__ for p in passes)
         self.passes.extend(passes)
 
         # Add missing Pass dependencies
@@ -462,7 +463,11 @@ class FixedPointPipeline(Pipeline):
         retval = {}
         while True:
             newret = super().apply_pass(sdfg, state)
-            if newret is None:
+            
+            # Remove dependencies from pipeline
+            newret = {k: v for k, v in newret.items() if k in self.pass_names}
+
+            if not newret:
                 if retval:
                     return retval
                 return None

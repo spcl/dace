@@ -25,7 +25,7 @@ from dace import data
 
 
 @make_properties
-class InlineSDFG(transformation.SingleStateTransformation, transformation.SimplifyPass):
+class InlineSDFG(transformation.SingleStateTransformation):
     """ Inlines a single-state nested SDFG into a top-level SDFG.
 
         In particular, the steps taken are:

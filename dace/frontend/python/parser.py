@@ -117,7 +117,8 @@ def infer_symbols_from_datadescriptor(sdfg: SDFG, args: Dict[str, Any],
     # Solve for all at once
     results = sympy.solve(equations, *symbols, dict=True, exclude=exclude)
     if len(results) > 1:
-        raise ValueError('Ambiguous values for symbols in inference. ' 'Options: %s' % str(results))
+        raise ValueError('Ambiguous values for symbols in inference. '
+                         'Options: %s' % str(results))
     if len(results) == 0:
         raise ValueError('Cannot infer values for symbols in inference.')
 
@@ -132,6 +133,7 @@ def infer_symbols_from_datadescriptor(sdfg: SDFG, args: Dict[str, Any],
 class DaceProgram(pycommon.SDFGConvertible):
     """ A data-centric program object, obtained by decorating a function with
         ``@dace.program``. """
+
     def __init__(self, f, args, kwargs, auto_optimize, device, constant_functions=False, method=False):
         from dace.codegen import compiled_sdfg  # Avoid import loops
 
@@ -454,17 +456,7 @@ class DaceProgram(pycommon.SDFGConvertible):
         # Apply simplification pass automatically
         if not cached and (simplify == True or
                            (simplify is None and Config.get_bool('optimizer', 'automatic_simplification'))):
-
-            # Promote scalars to symbols as necessary
-            promoted = scal2sym.promote_scalars_to_symbols(sdfg)
-            if Config.get_bool('debugprint') and len(promoted) > 0:
-                print('Promoted scalars {%s} to symbols.' % ', '.join(p for p in sorted(promoted)))
-
             sdfg.simplify(validate=False)
-
-            # Split back edges with assignments and conditions to allow richer
-            # control flow detection in code generation
-            xfh.split_interstate_edges(sdfg)
 
         # Save the SDFG. Skip this step if running from a cached SDFG, as
         # it might overwrite the cached SDFG.
@@ -569,7 +561,7 @@ class DaceProgram(pycommon.SDFGConvertible):
                                 # Set the annotation to be the not-None value, and the data descriptor to be optional
                                 ann = hint_args[1] if hint_args[0] is type(None) else hint_args[0]
                                 is_optional = True
-                            
+
                             if not is_constant:  # Reset curarg
                                 curarg = ann
 

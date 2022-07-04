@@ -618,7 +618,7 @@ class ScalarToSymbolPromotion(passes.Pass):
         if ignore:
             to_promote -= ignore
         if len(to_promote) == 0:
-            return to_promote
+            return None
 
         for state in sdfg.nodes():
             scalar_nodes = [n for n in state.nodes() if isinstance(n, nodes.AccessNode) and n.data in to_promote]
@@ -706,7 +706,7 @@ class ScalarToSymbolPromotion(passes.Pass):
         # Step 7: Indirection
         remove_symbol_indirection(sdfg)
 
-        return to_promote
+        return to_promote or None
 
     def report(self, pass_retval: Set[str]) -> str:
         return f'Promoted {len(pass_retval)} scalars to symbols.'

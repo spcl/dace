@@ -121,6 +121,8 @@ class ArrayElimination(ppl.Pass):
 
         # Try the different redundant copy/view transformations on the node
         for aname in removable_data:
+            if aname not in access_nodes:  # May be in inter-state edges
+                continue
             for anode in access_nodes[aname]:
                 if state.out_degree(anode) == 1:
                     succ = state.successors(anode)[0]

@@ -2,7 +2,6 @@
 import numpy as np
 import dace
 from dace import dtypes
-from dace.transformation import simplification_transformations
 from dace.transformation.dataflow import TaskletFusion, MapFusion
 import pytest
 
@@ -184,10 +183,9 @@ def test_tasklet_fusion_multiline():
 def test_map_with_tasklets(language: str, with_data: bool):
     sdfg = _make_sdfg(language, with_data)
     sdfg.compile()
-    simplify_reduced = [xf for xf in simplification_transformations() if xf.__name__ != 'TaskletFusion']
-    sdfg.apply_transformations_repeated(simplify_reduced)
+    sdfg.simplify()
     num = sdfg.apply_transformations_repeated(TaskletFusion)
-    assert (num == 3)
+    assert num == 3
     func = sdfg.compile()
     A = np.arange(1, N + 1, dtype=np_datatype)
     B = np.arange(1, M + 1, dtype=np_datatype)
