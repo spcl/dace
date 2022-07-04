@@ -39,9 +39,9 @@ class StorageType(aenum.AutoNumberEnum):
     FPGA_Registers = ()  #: On-chip memory (fully partitioned registers)
     FPGA_ShiftRegister = ()  #: Only accessible at constant indices
     SVE_Register = ()  #: SVE register
-    Snitch_TCDM = () #: Cluster-private memory
-    Snitch_L2 = () #: External memory
-    Snitch_SSR = () #: Memory accessed by SSR streamer
+    Snitch_TCDM = ()  #: Cluster-private memory
+    Snitch_L2 = ()  #: External memory
+    Snitch_SSR = ()  #: Memory accessed by SSR streamer
 
 
 @undefined_safe_enum
@@ -339,7 +339,6 @@ class typeclass(object):
             2. Enabling declaration syntax: `dace.float32[M,N]`
             3. Enabling extensions such as `dace.struct` and `dace.vector`
     """
-
     def __init__(self, wrapped_type):
         # Convert python basic types
         if isinstance(wrapped_type, str):
@@ -568,7 +567,6 @@ def result_type_of(lhs, *rhs):
 
 class opaque(typeclass):
     """ A data type for an opaque object, useful for C bindings/libnodes, i.e., MPI_Request. """
-
     def __init__(self, typename):
         self.type = typename
         self.ctype = typename
@@ -603,7 +601,6 @@ class pointer(typeclass):
 
         Example use:
             `dace.pointer(dace.struct(x=dace.float32, y=dace.float32))`. """
-
     def __init__(self, wrapped_typeclass):
         self._typeclass = wrapped_typeclass
         self.type = wrapped_typeclass.type
@@ -647,7 +644,6 @@ class vector(typeclass):
 
     Example use: `dace.vector(dace.float32, 4)` becomes float4.
     """
-
     def __init__(self, dtype: typeclass, vector_length: int):
         self.vtype = dtype
         self.type = dtype.type
@@ -705,7 +701,6 @@ class string(pointer):
     Python/generated code marshalling.
     Used internally when `str` types are given
     """
-
     def __init__(self):
         super().__init__(int8)
 
@@ -725,7 +720,6 @@ class struct(typeclass):
 
         Example use: `dace.struct(a=dace.int32, b=dace.float64)`.
     """
-
     def __init__(self, name, **fields_and_types):
         # self._data = fields_and_types
         self.type = ctypes.Structure
@@ -812,7 +806,7 @@ class struct(typeclass):
         )
 
 
-class constant:
+class compiletime:
     """
     Data descriptor type hint signalling that argument evaluation is
     deferred to call time.
@@ -820,7 +814,7 @@ class constant:
     Example usage::
 
         @dace.program
-        def example(A: dace.float64[20], constant: dace.constant):
+        def example(A: dace.float64[20], constant: dace.compiletime):
             if constant == 0:
                 return A + 1
             else:
@@ -830,10 +824,9 @@ class constant:
     In the above code, ``constant`` will be replaced with its value at call time
     during parsing.
     """
-
     @staticmethod
     def __descriptor__():
-        raise ValueError('All constant arguments must be provided in order to compile the SDFG ahead-of-time.')
+        raise ValueError('All compile-time arguments must be provided in order to compile the SDFG ahead-of-time.')
 
 
 ####### Utility function ##############
@@ -851,7 +844,6 @@ def ptrtocupy(ptr, inner_ctype, shape):
 
 class callback(typeclass):
     """ Looks like dace.callback([None, <some_native_type>], *types)"""
-
     def __init__(self, return_types, *variadic_args):
         from dace import data
         if return_types is None:
@@ -1256,7 +1248,6 @@ def isallowed(var, allow_recursive=False):
 class DebugInfo:
     """ Source code location identifier of a node/edge in an SDFG. Used for
         IDE and debugging purposes. """
-
     def __init__(self, start_line, start_column=0, end_line=-1, end_column=0, filename=None):
         self.start_line = start_line
         self.end_line = end_line if end_line >= 0 else start_line
@@ -1300,12 +1291,12 @@ def json_to_typeclass(obj, context=None):
 def paramdec(dec):
     """ Parameterized decorator meta-decorator. Enables using `@decorator`,
         `@decorator()`, and `@decorator(...)` with the same function. """
-
     @wraps(dec)
     def layer(*args, **kwargs):
-
+        from dace import data
         # Allows the use of @decorator, @decorator(), and @decorator(...)
-        if len(kwargs) == 0 and len(args) == 1 and callable(args[0]) and not isinstance(args[0], typeclass):
+        if (len(kwargs) == 0 and len(args) == 1 and callable(args[0])
+                and not isinstance(args[0], (typeclass, data.Data))):
             return dec(*args, **kwargs)
 
         @wraps(dec)

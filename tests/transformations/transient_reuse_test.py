@@ -4,7 +4,7 @@ from __future__ import print_function
 import argparse
 import dace
 import numpy as np
-from dace.transformation.interstate.transient_reuse import TransientReuse
+from dace.transformation.passes.transient_reuse import TransientReuse
 
 M = dace.symbol('M')
 N = dace.symbol('N')
@@ -40,8 +40,9 @@ def test_reuse():
     C = np.zeros([m, n], dtype=np.float64)
     C_regression = np.zeros_like(C)
 
-    sdfg = operation.to_sdfg()
-    assert sdfg.apply_transformations(TransientReuse) == 1
+    sdfg = operation.to_sdfg(simplify=True)
+    result = TransientReuse().apply_pass(sdfg, {})
+    assert result == {'__tmp4', 'E'}
     sdfg(A=A, B=B, C=C, D=D, M=m, N=n)
 
     C_regression = np.dot(np.dot(A, np.dot(np.dot(A, B), np.dot(A, B))), np.dot(B, D))

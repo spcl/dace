@@ -191,6 +191,9 @@ class InterstateEdge(object):
         :param repl: Replacement dictionary.
         :param replace_keys: If False, skips replacing assignment keys.
         """
+        if not repl:
+            return
+
         if replace_keys:
             for name, new_name in repl.items():
                 _replace_dict_keys(self.assignments, name, new_name)
@@ -461,7 +464,6 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         :param jsondict: If not None, uses given JSON dictionary as input.
         :return: The hash (in SHA-256 format).
         '''
-
         def keyword_remover(json_obj: Any, last_keyword=""):
             # Makes non-unique in SDFG hierarchy v2
             # Recursively remove attributes from the SDFG which are not used in
@@ -1162,7 +1164,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
         # Add free inter-state symbols
         for e in self.edges():
-            defined_syms |= set(e.data.new_symbols(self, {}).keys())
+            defined_syms |= set(e.data.assignments.keys())
             free_syms |= e.data.free_symbols
 
         defined_syms |= set(self.constants.keys())
@@ -1824,8 +1826,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             if find_new_name:
                 name = self._find_new_name(name)
             else:
-                raise NameError('Array or Stream with name "%s" already exists '
-                                "in SDFG" % name)
+                raise NameError('Array or Stream with name "%s" already exists ' "in SDFG" % name)
         self._arrays[name] = datadesc
 
         # Add free symbols to the SDFG global symbol storage
@@ -1976,8 +1977,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
         # Argument checks
         if loop_var is None and (initialize_expr or increment_expr):
-            raise ValueError("Cannot initalize or increment an empty loop"
-                             " variable")
+            raise ValueError("Cannot initalize or increment an empty loop variable")
 
         # Handling empty states
         if loop_end_state is None:
@@ -2188,8 +2188,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                 unnecessary_args.extend(kwargs.keys())
             else:
                 unnecessary_args = [k for k in kwargs.keys() if k not in expected_args]
-            raise RuntimeError("Too many arguments to SDFG. Unnecessary "
-                               "arguments: %s" % ', '.join(unnecessary_args))
+            raise RuntimeError("Too many arguments to SDFG. Unnecessary arguments: %s" % ', '.join(unnecessary_args))
         positional_args = list(args)
         for i, arg in enumerate(expected_args):
             expected = expected_args[arg]
@@ -2202,8 +2201,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             if types_only:
                 desc = dt.create_datadescriptor(passed)
                 if not expected.is_equivalent(desc):
-                    raise TypeError("Type mismatch for argument: "
-                                    "expected %s, got %s" % (expected, desc))
+                    raise TypeError("Type mismatch for argument: expected %s, got %s" % (expected, desc))
                 else:
                     continue
             if isinstance(expected, dace.data.Array):
@@ -2252,8 +2250,8 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             before computing the given state. """
         return (e.src for e in self.bfs_edges(state, reverse=True))
 
-    def validate(self) -> None:
-        validate_sdfg(self)
+    def validate(self, references: Optional[Set[int]] = None) -> None:
+        validate_sdfg(self, references)
 
     def is_valid(self) -> bool:
         """ Returns True if the SDFG is verified correctly (using `validate`).

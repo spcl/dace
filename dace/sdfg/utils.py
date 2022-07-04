@@ -1411,3 +1411,40 @@ def is_fpga_kernel(sdfg, state):
                                         dtypes.StorageType.FPGA_Registers, dtypes.StorageType.FPGA_ShiftRegister):
             return False
     return True
+
+
+def postdominators(
+    sdfg: SDFG,
+    return_alldoms: bool = False
+) -> Union[Dict[SDFGState, SDFGState], Tuple[Dict[SDFGState, SDFGState], Dict[SDFGState, Set[SDFGState]]]]:
+    """
+    Return the immediate postdominators of an SDFG. This may require creating new nodes and removing them, which
+    happens in-place on the SDFG.
+
+    :param sdfg: The SDFG to generate the postdominators from.
+    :param return_alldoms: If True, returns the "all postdominators" dictionary as well.
+    :return: Immediate postdominators, or a 2-tuple of (ipostdom, allpostdoms) if ``return_alldoms`` is True.
+    """
+    from dace.sdfg.analysis import cfg
+
+    # Get immediate post-dominators
+    sink_nodes = sdfg.sink_nodes()
+    if len(sink_nodes) > 1:
+        sink = sdfg.add_state()
+        for snode in sink_nodes:
+            sdfg.add_edge(snode, sink, dace.InterstateEdge())
+    else:
+        sink = sink_nodes[0]
+    ipostdom: Dict[SDFGState, SDFGState] = nx.immediate_dominators(sdfg._nx.reverse(), sink)
+
+    if return_alldoms:
+        allpostdoms = cfg.all_dominators(sdfg, ipostdom)
+        retval = (ipostdom, allpostdoms)
+    else:
+        retval = ipostdom
+
+    # If a new sink was added for post-dominator computation, remove it
+    if len(sink_nodes) > 1:
+        sdfg.remove_node(sink)
+
+    return retval

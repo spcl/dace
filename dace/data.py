@@ -145,7 +145,7 @@ def find_new_name(name: str, existing_names: Sequence[str]) -> str:
 
 
 @make_properties
-class Data(object):
+class Data:
     """ Data type descriptors that can be used as references to memory.
         Examples: Arrays, Streams, custom arrays (e.g., sparse matrices).
     """
@@ -169,6 +169,10 @@ class Data(object):
         self.lifetime = lifetime
         self.debuginfo = debuginfo
         self._validate()
+
+    def __call__(self):
+        # This method is implemented to support type hints
+        return self
 
     def validate(self):
         """ Validate the correctness of this object.
@@ -194,12 +198,17 @@ class Data(object):
     def toplevel(self):
         return self.lifetime is not dtypes.AllocationLifetime.Scope
 
-    def copy(self):
-        raise RuntimeError('Data descriptors are unique and should not be copied')
-
     def is_equivalent(self, other):
         """ Check for equivalence (shape and type) of two data descriptors. """
         raise NotImplementedError
+
+    def __eq__(self, other):
+        # Evaluate equivalence using serialized value
+        return serialize.dumps(self) == serialize.dumps(other)
+
+    def __hash__(self):
+        # Compute hash using serialized value (i.e., with all properties included)
+        return hash(serialize.dumps(self))
 
     def as_arg(self, with_types=True, for_call=False, name=None):
         """Returns a string for a C++ function signature (e.g., `int *A`). """
@@ -339,6 +348,10 @@ class Scalar(Data):
     def start_offset(self):
         return 0
 
+    @property
+    def optional(self) -> bool:
+        return False
+
     def is_equivalent(self, other):
         if not isinstance(other, Scalar):
             return False
@@ -452,6 +465,12 @@ class Array(Data):
     alignment = Property(dtype=int, default=0, desc='Allocation alignment in bytes (0 uses compiler-default)')
 
     start_offset = Property(dtype=int, default=0, desc='Allocation offset elements for manual alignment (pre-padding)')
+    optional = Property(dtype=bool,
+                        default=None,
+                        allow_none=True,
+                        desc='Specifies whether this array may have a value of None. '
+                        'If False, the array must not be None. If option is not set, '
+                        'it is inferred by other properties and the OptionalArrayInference pass.')
 
     def __init__(self,
                  dtype,
@@ -467,7 +486,8 @@ class Array(Data):
                  alignment=0,
                  debuginfo=None,
                  total_size=None,
-                 start_offset=None):
+                 start_offset=None,
+                 optional=None):
 
         super(Array, self).__init__(dtype, shape, transient, storage, location, lifetime, debuginfo)
 
@@ -479,6 +499,9 @@ class Array(Data):
         self.alignment = alignment
         if start_offset is not None:
             self.start_offset = start_offset
+        self.optional = optional
+        if optional is None and self.transient:
+            self.optional = False
 
         if strides is not None:
             self.strides = cp.copy(strides)
@@ -504,7 +527,7 @@ class Array(Data):
     def clone(self):
         return type(self)(self.dtype, self.shape, self.transient, self.allow_conflicts, self.storage, self.location,
                           self.strides, self.offset, self.may_alias, self.lifetime, self.alignment, self.debuginfo,
-                          self.total_size, self.start_offset)
+                          self.total_size, self.start_offset, self.optional)
 
     def to_json(self):
         attrs = serialize.all_properties_to_json(self)
@@ -688,6 +711,10 @@ class Stream(Data):
     @property
     def start_offset(self):
         return 0
+
+    @property
+    def optional(self) -> bool:
+        return False
 
     def clone(self):
         return type(self)(self.dtype, self.buffer_size, self.shape, self.transient, self.storage, self.location,
@@ -873,7 +900,6 @@ def make_array_from_descriptor(descriptor: Array, original_array: Optional[Array
 
         def copy_array(dst, src):
             dst[:] = src
-
 
     # Make numpy array from data descriptor
     npdtype = descriptor.dtype.as_numpy_dtype()
