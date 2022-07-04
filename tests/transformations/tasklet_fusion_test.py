@@ -3,7 +3,7 @@ import numpy as np
 import dace
 from dace import dtypes
 from dace.transformation import simplification_transformations
-from dace.transformation.dataflow import TaskletFusion
+from dace.transformation.dataflow import TaskletFusion, MapFusion
 import pytest
 
 datatype = dace.float32
@@ -97,6 +97,81 @@ def _make_sdfg(language: str, with_data: bool = False):
     return sdfg
 
 
+def test_basic():
+    @dace.program
+    def test_basic_tf(A: datatype[5, 5]):
+        B = A + 1
+        return B * 2
+    
+    sdfg = test_basic_tf.to_sdfg()
+
+    assert (sdfg.apply_transformations(MapFusion) == 1)
+    assert (sdfg.apply_transformations(TaskletFusion) == 1)
+
+    A = np.ones((5, 5), dtype=np_datatype)
+    result = sdfg(A=A)
+    assert np.allclose(result, 2 * (A + 1))
+
+
+def test_same_name():
+    @dace.program
+    def test_same_name(A: datatype[5, 5]):
+        B = A + 1
+        C = A * 3
+        return B + C
+
+    sdfg = test_same_name.to_sdfg()
+
+    assert (sdfg.apply_transformations_repeated(MapFusion) == 2)
+    assert (sdfg.apply_transformations_repeated(TaskletFusion) == 2)
+
+    A = np.ones((5, 5), dtype=np_datatype)
+    result = sdfg(A=A)
+    assert np.allclose(result, (A + 1) + (A * 3))
+
+
+def test_same_name_different_memlet():
+    @dace.program
+    def test_same_name_different_memlet(A: datatype[5, 5], B: datatype[5, 5]):
+        C = B * 3
+        D = A + 1
+        return D + C
+
+    sdfg = test_same_name_different_memlet.to_sdfg()
+
+    assert (sdfg.apply_transformations_repeated(MapFusion) == 2)
+    assert (sdfg.apply_transformations_repeated(TaskletFusion) == 2)
+
+    A = np.ones((5, 5), dtype=np_datatype)
+    B = np.ones((5, 5), dtype=np_datatype) * 2
+    result = sdfg(A=A, B=B)
+    assert np.allclose(result, (A + 1) + (B * 3))
+
+
+def test_tasklet_fusion_multiline():
+    @dace.program
+    def test_tasklet_fusion_multiline(A: datatype):
+        B = A + 1
+        C = dace.define_local([1], datatype)
+        D = dace.define_local([1], datatype)
+
+        with dace.tasklet:
+            b << B[0]
+            c >> C[0]
+            d >> D[0]
+            d = b * 3
+            c = b + 3
+
+        return C + D
+
+    sdfg = test_tasklet_fusion_multiline.to_sdfg()
+
+    assert (sdfg.apply_transformations(TaskletFusion) == 1)
+
+    result = sdfg(A=1)
+    assert (result[0] == 11)
+
+
 @pytest.mark.parametrize('with_data', [pytest.param(True), pytest.param(False)])
 @pytest.mark.parametrize('language', [pytest.param('CPP'), pytest.param('Python')])
 def test_map_with_tasklets(language: str, with_data: bool):
@@ -116,6 +191,10 @@ def test_map_with_tasklets(language: str, with_data: bool):
 
 
 if __name__ == '__main__':
+    test_basic()
+    test_same_name()
+    test_same_name_different_memlet()
+    test_tasklet_fusion_multiline()
     test_map_with_tasklets(language='Python', with_data=False)
     test_map_with_tasklets(language='Python', with_data=True)
     test_map_with_tasklets(language='CPP', with_data=False)
