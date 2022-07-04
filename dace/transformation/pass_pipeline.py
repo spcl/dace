@@ -82,6 +82,13 @@ class Pass:
         """
         raise NotImplementedError
 
+    def report(self, pass_retval: Any) -> Optional[str]:
+        """
+        Returns a user-readable string report based on the results of this pass.
+        :param pass_retval: The return value from applying this pass.
+        :return: A string with the user-readable report, or None if nothing to report.
+        """
+        return None
 
 class VisitorPass(Pass):
     """

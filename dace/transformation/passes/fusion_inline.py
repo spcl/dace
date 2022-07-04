@@ -35,6 +35,8 @@ class FuseStates(ppl.Pass):
         fused = fuse_states(sdfg, self.permissive, self.progress)
         return fused or None
 
+    def report(self, pass_retval: int) -> str:
+        return f'Fused {pass_retval} states.'
 
 
 @dataclass(unsafe_hash=True)
@@ -61,3 +63,6 @@ class InlineSDFGs(ppl.Pass):
         """
         inlined = inline_sdfgs(sdfg, self.permissive, self.progress, self.multistate)
         return inlined or None
+
+    def report(self, pass_retval: int) -> str:
+        return f'Inlined {pass_retval} SDFGs.'
