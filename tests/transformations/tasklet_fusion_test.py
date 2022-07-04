@@ -105,8 +105,10 @@ def test_basic():
     
     sdfg = test_basic_tf.to_sdfg()
 
-    assert (sdfg.apply_transformations(MapFusion) == 1)
-    assert (sdfg.apply_transformations(TaskletFusion) == 1)
+    num_map_fusions = sdfg.apply_transformations(MapFusion)
+    assert (num_map_fusions == 1)
+    num_tasklet_fusions = sdfg.apply_transformations(TaskletFusion)
+    assert (num_tasklet_fusions == 1)
 
     A = np.ones((5, 5), dtype=np_datatype)
     result = sdfg(A=A)
@@ -122,8 +124,10 @@ def test_same_name():
 
     sdfg = test_same_name.to_sdfg()
 
-    assert (sdfg.apply_transformations_repeated(MapFusion) == 2)
-    assert (sdfg.apply_transformations_repeated(TaskletFusion) == 2)
+    num_map_fusions = sdfg.apply_transformations(MapFusion)
+    assert (num_map_fusions == 2)
+    num_tasklet_fusions = sdfg.apply_transformations(TaskletFusion)
+    assert (num_tasklet_fusions == 2)
 
     A = np.ones((5, 5), dtype=np_datatype)
     result = sdfg(A=A)
@@ -139,8 +143,10 @@ def test_same_name_different_memlet():
 
     sdfg = test_same_name_different_memlet.to_sdfg()
 
-    assert (sdfg.apply_transformations_repeated(MapFusion) == 2)
-    assert (sdfg.apply_transformations_repeated(TaskletFusion) == 2)
+    num_map_fusions = sdfg.apply_transformations(MapFusion)
+    assert (num_map_fusions == 2)
+    num_tasklet_fusions = sdfg.apply_transformations(TaskletFusion)
+    assert (num_tasklet_fusions == 2)
 
     A = np.ones((5, 5), dtype=np_datatype)
     B = np.ones((5, 5), dtype=np_datatype) * 2
@@ -166,7 +172,8 @@ def test_tasklet_fusion_multiline():
 
     sdfg = test_tasklet_fusion_multiline.to_sdfg()
 
-    assert (sdfg.apply_transformations(TaskletFusion) == 1)
+    num_tasklet_fusions = sdfg.apply_transformations(TaskletFusion)
+    assert (num_tasklet_fusions == 1)
 
     result = sdfg(A=1)
     assert (result[0] == 11)
