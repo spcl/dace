@@ -265,10 +265,7 @@ class StateFusion(transformation.MultiStateTransformation, transformation.Simpli
                 for node in first_state.scope_children()[None]
                 if isinstance(node, nodes.AccessNode) and node not in first_input
             }
-            second_input = {
-                node
-                for node in second_state.source_nodes() if isinstance(node, nodes.AccessNode)
-            }
+            second_input = {node for node in second_state.source_nodes() if isinstance(node, nodes.AccessNode)}
             second_output = {
                 node
                 for node in second_state.scope_children()[None]
@@ -449,8 +446,9 @@ class StateFusion(transformation.MultiStateTransformation, transformation.Simpli
                                         return False
                                 found = outnode
 
-        # Do not fuse FPGA and NON-FPGA states
-        if sdutil.is_fpga_kernel(sdfg, first_state) != sdutil.is_fpga_kernel(sdfg, second_state):
+        # Do not fuse FPGA and NON-FPGA states (unless one of them is empty)
+        if first_state.number_of_nodes() > 0 and second_state.number_of_nodes() > 0 and sdutil.is_fpga_kernel(
+                sdfg, first_state) != sdutil.is_fpga_kernel(sdfg, second_state):
             return False
 
         return True
