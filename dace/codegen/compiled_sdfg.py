@@ -349,7 +349,7 @@ class CompiledSDFG(object):
             argnames = []
             sig = []
         # Type checking
-        for a, arg, atype in zip(argnames, arglist, argtypes):
+        for i, (a, arg, atype) in enumerate(zip(argnames, arglist, argtypes)):
             if not dtypes.is_array(arg) and isinstance(atype, dt.Array):
                 if isinstance(arg, list):
                     print('WARNING: Casting list argument "%s" to ndarray' % a)
@@ -375,8 +375,8 @@ class CompiledSDFG(object):
                 elif (isinstance(arg, int) and atype.dtype.type == np.uint32 and arg >= 0 and arg <= (1 << 32) - 1):
                     pass
                 else:
-                    print('WARNING: Casting scalar argument "%s" from %s to %s' %
-                          (a, type(arg).__name__, atype.dtype.type))
+                    warnings.warn(f'Casting scalar argument "{a}" from {type(arg).__name__} to {atype.dtype.type}')
+                    arglist[i] = atype.dtype.type(arg)
             elif (isinstance(atype, dt.Array) and isinstance(arg, np.ndarray)
                   and atype.dtype.as_numpy_dtype() != arg.dtype):
                 # Make exception for vector types
@@ -387,7 +387,7 @@ class CompiledSDFG(object):
                           (arg.dtype, a, atype.dtype.type.__name__))
             elif (isinstance(atype, dt.Array) and isinstance(arg, np.ndarray) and arg.base is not None
                   and not '__return' in a and not Config.get_bool('compiler', 'allow_view_arguments')):
-                raise TypeError('Passing a numpy view (e.g., sub-array or "A.T") to DaCe '
+                raise TypeError(f'Passing a numpy view (e.g., sub-array or "A.T") "{a}" to DaCe '
                                 'programs is not allowed in order to retain analyzability. '
                                 'Please make a copy with "numpy.copy(...)". If you know what '
                                 'you are doing, you can override this error in the '
@@ -434,8 +434,17 @@ class CompiledSDFG(object):
                          atype) if dtypes.is_array(arg) else (arg, actype, atype)
                         for arg, actype, atype, _ in callparams)
 
-        newargs = tuple(
-            actype(arg) if (not isinstance(arg, ctypes._SimpleCData)) else arg for arg, actype, atype in newargs)
+        try:
+            newargs = tuple(
+                actype(arg) if (not isinstance(arg, ctypes._SimpleCData)) else arg for arg, actype, atype in newargs)
+        except TypeError:
+            # Pinpoint bad argument
+            for i, (arg, actype, _) in enumerate(newargs):
+                try:
+                    if not isinstance(arg, ctypes._SimpleCData):
+                        actype(arg)
+                except TypeError as ex:
+                    raise TypeError(f'Invalid type for scalar argument "{callparams[i][3]}": {ex}')
 
         self._lastargs = newargs, initargs
         return self._lastargs

@@ -169,6 +169,24 @@ def test_dead_code_elimination_unreachable():
     assert '3' in parsed_code and '2' in parsed_code  # Reachable code
 
 
+def test_lambda_args():
+    y = 5
+
+    @dace.program
+    def tester(a: dace.float64[1], b: dace.float64[1]):
+        x = a
+        with dace.tasklet:
+            inp << x[0]
+            s = inp
+            s >> b(1, lambda x, y: x + y)
+
+    a = np.random.rand(1, 1)
+    b = np.random.rand(1, 1)
+    expected = b + a
+    tester(a, b)
+    assert np.allclose(b, expected)
+
+
 if __name__ == '__main__':
     test_instantiated_global()
     test_instantiated_global_resolve_functions()
@@ -177,3 +195,4 @@ if __name__ == '__main__':
     test_dead_code_elimination_ifexp()
     test_dead_code_elimination_noelse()
     test_dead_code_elimination_unreachable()
+    test_lambda_args()

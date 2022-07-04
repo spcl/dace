@@ -929,7 +929,10 @@ class CPUCodeGen(TargetCodeGenerator):
                         ptrname = cpp.ptr(memlet.data, desc, sdfg, self._frame)
                         is_global = desc.lifetime in (dtypes.AllocationLifetime.Global,
                                                       dtypes.AllocationLifetime.Persistent)
-                        defined_type, _ = self._dispatcher.defined_vars.get(ptrname, is_global=is_global)
+                        try:
+                            defined_type, _ = self._dispatcher.declared_arrays.get(ptrname, is_global=is_global)
+                        except KeyError:
+                            defined_type, _ = self._dispatcher.defined_vars.get(ptrname, is_global=is_global)
 
                         if defined_type == DefinedType.Scalar:
                             mname = cpp.ptr(memlet.data, desc, sdfg, self._frame)

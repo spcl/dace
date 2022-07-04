@@ -53,6 +53,7 @@ GeneralBlock({
 })
 """
 
+import ast
 from dataclasses import dataclass
 from typing import (Callable, Dict, Iterator, List, Optional, Sequence, Set, Tuple, Union)
 import sympy as sp
@@ -125,7 +126,7 @@ class SingleState(ControlFlow):
         else:
             # Dispatch empty state in any case in order to register that the
             # state was dispatched
-            self.dispatch_state(self.state)
+            expr += self.dispatch_state(self.state)
 
         # If any state has no children, it should jump to the end of the SDFG
         if not self.last_state and sdfg.out_degree(self.state) == 0:
@@ -550,12 +551,20 @@ def _cases_from_branches(
     m = cond.match(sp.Eq(a, b))
     if m:
         # Obtain original code for variable
-        astvar = edges[0].data.condition.code[0].value.left
+        call_or_compare = edges[0].data.condition.code[0].value
+        if isinstance(call_or_compare, ast.Call):
+            astvar = call_or_compare.args[0]
+        else:  # Binary comparison
+            astvar = call_or_compare.left
     else:
         # Try integer == symbol
         m = cond.match(sp.Eq(b, a))
         if m:
-            astvar = edges[0].data.condition.code[0].value.right
+            call_or_compare = edges[0].data.condition.code[0].value
+            if isinstance(call_or_compare, ast.Call):
+                astvar = call_or_compare.args[1]
+            else:  # Binary comparison
+                astvar = call_or_compare.right
         else:
             return None
 
