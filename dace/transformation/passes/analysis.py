@@ -1,5 +1,6 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 
+from collections import defaultdict
 from dace.transformation import pass_pipeline as ppl
 from dace import SDFG, SDFGState
 from typing import Any, Dict, Set, Tuple, Optional
@@ -10,6 +11,7 @@ class StateReachability(ppl.Pass):
     """
     Evaluates state reachability (which other states can be executed after each state).
     """
+
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Nothing
 
@@ -32,6 +34,7 @@ class AccessSets(ppl.Pass):
     """
     Evaluates memory access sets (which arrays/data descriptors are read/written in each state).
     """
+
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Nothing
 
@@ -41,7 +44,7 @@ class AccessSets(ppl.Pass):
 
     def apply_pass(self, sdfg: SDFG, _) -> Dict[SDFGState, Tuple[Set[str], Set[str]]]:
         """
-        :return: A dictionary mapping each state to its other reachable states.
+        :return: A dictionary mapping each state to a tuple of its (read, written) data descriptors.
         """
         result: Dict[SDFGState, Tuple[Set[str], Set[str]]] = {}
         for state in sdfg.nodes():
@@ -61,4 +64,34 @@ class AccessSets(ppl.Pass):
             if fsyms:
                 result[e.src][0].update(fsyms)
                 result[e.dst][0].update(fsyms)
+        return result
+
+
+class FindAccessNodes(ppl.Pass):
+    """
+    For each data descriptor, creates a set of states in which access nodes of that data are used.
+    """
+
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.Nothing
+
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        # If anything was modified, reapply
+        return modified & ppl.Modifies.AccessNodes
+
+    def apply_pass(self, sdfg: SDFG, _) -> Dict[str, Set[SDFGState]]:
+        """
+        :return: A dictionary mapping each data descriptor name to states where it can be found in.
+        """
+        result: Dict[str, Set[SDFGState]] = defaultdict(set)
+        for state in sdfg.nodes():
+            for anode in state.data_nodes():
+                result[anode.data].add(state)
+
+        # Edges that read from arrays add to both ends' access sets
+        anames = sdfg.arrays.keys()
+        for e in sdfg.edges():
+            fsyms = e.data.free_symbols & anames
+            for access in fsyms:
+                result[access].update({e.src, e.dst})
         return result
