@@ -552,7 +552,35 @@ def test_kernels_inside_components_multiple_states():
     return sdfg
 
 
+def multiple_reads():
+
+    @dace.program
+    def program(A: dace.float32[32, 32], B: dace.float32[32, 32], C: dace.float32[32, 32], D: dace.float32[32, 32],
+                m: dace.int32):
+        C = A @ B
+        D = C * m
+
+    A = np.random.rand(32, 32).astype(np.float32)
+    B = np.random.rand(32, 32).astype(np.float32)
+    C = np.random.rand(32, 32).astype(np.float32)
+    D = np.random.rand(32, 32).astype(np.float32)
+    E = np.random.rand(32, 32).astype(np.float32)
+
+    sdfg = program.to_sdfg(simplify=True)
+    sdfg.apply_transformations([FPGATransformSDFG])
+    from dace.libraries.blas import Gemm
+    Gemm.default_implementation = "FPGA1DSystolic"
+    sdfg.expand_library_nodes()
+    sdfg.apply_transformations_repeated([InlineSDFG])
+    sdfg.simplify()
+    sdfg(A=A, B=B, C=C, D=D, m=2)
+
+    assert np.allclose(A @ B, C)
+    assert np.allclose(D, C * 2)
+
+
 if __name__ == "__main__":
+    multiple_reads()
     test_kernels_inside_component_0(None)
     test_kernels_inside_component_1(None)
     test_kernels_inside_component_2(None)
