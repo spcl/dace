@@ -149,6 +149,7 @@ def test_lift_einsum_mttkrp():
 
 
 def test_lift_einsum_reduce():
+    from dace.libraries.standard.nodes.reduce import Reduce
     from dace.libraries.blas.nodes.einsum import Einsum
     from dace.transformation.dataflow import LiftEinsum
 
@@ -166,8 +167,40 @@ def test_lift_einsum_reduce():
         if isinstance(node, Einsum):
             assert node.einsum_str == 'ijk->'
 
+    # Specialize to ensure Reduce node is there
+    sdfg.expand_library_nodes(recursive=False)
+    rnode = next(node for node, _ in sdfg.all_nodes_recursive() if isinstance(node, Reduce))
+    assert tuple(rnode.axes) == (0, 1, 2)
+
     sdfg(A, B)
     assert np.allclose(B, np.einsum('ijk->', A))
+
+def test_lift_einsum_reduce_partial():
+    from dace.libraries.standard.nodes.reduce import Reduce
+    from dace.libraries.blas.nodes.einsum import Einsum
+    from dace.transformation.dataflow import LiftEinsum
+
+    @dace.program
+    def tester(A, B):
+        B[:] = np.sum(A, axis=1)
+
+    A = np.random.rand(10, 11, 9)
+    B = np.random.rand(10, 9)
+
+    sdfg = tester.to_sdfg(A, B, simplify=True)
+    sdfg.expand_library_nodes()
+    assert sdfg.apply_transformations(LiftEinsum) == 1
+    for node, _ in sdfg.all_nodes_recursive():
+        if isinstance(node, Einsum):
+            assert node.einsum_str == 'ijk->ik'
+
+    # Specialize to ensure Reduce node is there
+    sdfg.expand_library_nodes(recursive=False)
+    rnode = next(node for node, _ in sdfg.all_nodes_recursive() if isinstance(node, Reduce))
+    assert tuple(rnode.axes) == (1,)
+
+    sdfg(A, B)
+    assert np.allclose(B, np.einsum('ijk->ik', A))
 
 
 def test_lift_einsum_outerproduct():
@@ -274,6 +307,7 @@ if __name__ == '__main__':
     test_lift_einsum()
     test_lift_einsum_mttkrp()
     test_lift_einsum_reduce()
+    test_lift_einsum_reduce_partial()
     test_lift_einsum_outerproduct()
     test_lift_einsum_beta()
     test_lift_einsum_alpha_beta(False)

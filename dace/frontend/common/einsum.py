@@ -6,7 +6,7 @@ from string import ascii_letters
 from typing import Dict, Optional
 
 import dace
-from dace import dtypes, symbolic
+from dace import dtypes, subsets, symbolic
 from dace.sdfg.nodes import AccessNode
 from dace.sdfg import SDFG, SDFGState, InterstateEdge
 from dace.memlet import Memlet
@@ -89,6 +89,19 @@ class EinsumParser(object):
             if not _is_sequential(val):
                 return False
         return True
+
+    def is_reduce(self):
+        # Reduction has one input
+        if len(self.inputs) != 1:
+            return False
+        # Reduction is defined with unique indices only (e.g., 'ijk' and not 'ijj')
+        input = self.inputs[0]
+        if len(set(input)) != len(input) or len(set(self.output)) != len(self.output):
+            return False
+        # Reduction must contract dimensions
+        if set(self.output) - set(input):
+            return False
+        return len(self.output) < len(input)
 
     def fields(self):
         return {fname: fval for fname, fval in self.__dict__.items() if fname not in ('inputs', 'output')}
@@ -185,6 +198,11 @@ def _create_einsum_internal(sdfg: SDFG,
 
     if init_output is None:
         init_output = (beta != 1.0)
+    
+    if alpha is None:
+        alpha = 1.0
+    if beta is None:
+        beta = 0.0
 
     # Get shapes from arrays and verify dimensionality
     chardict = {}
@@ -256,7 +274,24 @@ def _create_einsum_internal(sdfg: SDFG,
     if not is_conflicted and init_output is None:
         to_init = False
 
-    if not einsum.is_bmm():
+    if einsum.is_reduce() and alpha == 1 and (beta == 0 or beta == 1):
+        from dace.libraries.standard.nodes.reduce import Reduce
+        # Get reduce axes
+        axes = tuple(i for i, s in enumerate(einsum.inputs[0]) if s not in einsum.output)
+        rnode = Reduce('einsum_reduce')
+        rnode.axes = axes
+        rnode.wcr = 'lambda a, b: a + b'
+        if beta == 0:
+            rnode.identity = 0
+
+        c = state.add_write(output)
+        inode = next(iter(input_nodes.values()))
+        state.add_nedge(
+            inode, rnode,
+            dace.Memlet(data=inode.data, subset=subsets.Range([(0, chardict[k] - 1, 1) for k in einsum.inputs[0]])))
+        state.add_nedge(rnode, c, dace.Memlet(data=output, subset=subsets.Range([(0, s - 1, 1) for s in output_shape])))
+
+    elif not einsum.is_bmm():
         # Fall back to "pure" SDFG einsum with conflict resolution
         c = state.add_write(output)
 
