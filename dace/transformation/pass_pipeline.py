@@ -360,11 +360,13 @@ class Pipeline(Pass):
 
         return result
 
-    def iterate_over_passes(self) -> Iterator[Pass]:
+    def iterate_over_passes(self, sdfg: SDFG) -> Iterator[Pass]:
         """
         Iterates over passes in the pipeline, potentially multiple times based on which elements were modified
         in the pass.
         Note that this method may be overridden by subclasses to modify pass order.
+
+        :param sdfg: The SDFG on which the pipeline is currently being applied
         """
         # Lazily create dependency graph
         if self._depgraph is None:
@@ -405,12 +407,23 @@ class Pipeline(Pass):
                     applied_passes[old_pass] |= self._modified
                 applied_passes[pass_to_apply] = Modifies.Nothing
 
+    def apply_subpass(self, sdfg: SDFG, p: Pass, state: Dict[str, Any]) -> Optional[Any]:
+        """
+        Apply a pass from the pipeline. This method is meant to be overridden by subclasses.
+
+        :param sdfg: The SDFG to apply the pass to.
+        :param p: The pass to apply.
+        :param state: The pipeline results state.
+        :return: The pass return value.
+        """
+        return p.apply_pass(sdfg, state)
+
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         state = pipeline_results
         retval = {}
         self._modified = Modifies.Nothing
-        for p in self.iterate_over_passes():
-            r = p.apply_pass(sdfg, state)
+        for p in self.iterate_over_passes(sdfg):
+            r = self.apply_subpass(sdfg, p, state)
             if r is not None:
                 state[type(p).__name__] = r
                 retval[type(p).__name__] = r
