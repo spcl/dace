@@ -265,10 +265,7 @@ class StateFusion(transformation.MultiStateTransformation):
                 for node in first_state.scope_children()[None]
                 if isinstance(node, nodes.AccessNode) and node not in first_input
             }
-            second_input = {
-                node
-                for node in second_state.source_nodes() if isinstance(node, nodes.AccessNode)
-            }
+            second_input = {node for node in second_state.source_nodes() if isinstance(node, nodes.AccessNode)}
             second_output = {
                 node
                 for node in second_state.scope_children()[None]
@@ -498,6 +495,11 @@ class StateFusion(transformation.MultiStateTransformation):
             node for node in first_input if next((x for x in first_output if x.data == node.data), None) is None
         ]
 
+        second_mid = [
+            x for x in list(nx.topological_sort(second_state._nx))
+            if isinstance(x, nodes.AccessNode) and second_state.out_degree(x) > 0
+        ]
+
         # Merge second state to first state
         # First keep a backup of the topological sorted order of the nodes
         sdict = first_state.scope_dict()
@@ -516,30 +518,41 @@ class StateFusion(transformation.MultiStateTransformation):
         top = top_level_nodes(first_state)
 
         # Merge common (data) nodes
-        for node in second_input:
+        for node in second_mid:
 
             # merge only top level nodes, skip everything else
             if node not in top2:
                 continue
 
-            if first_state.in_degree(node) == 0:
-                candidates = [x for x in order if x.data == node.data and x in top]
-                if len(candidates) == 0:
-                    continue
-                elif len(candidates) == 1:
-                    n = candidates[0]
-                else:
-                    # Choose first candidate that intersects memlets
-                    for cand in candidates:
-                        if StateFusion.memlets_intersect(first_state, [cand], False, second_state, [node], True):
-                            n = cand
-                            break
-                    else:
-                        # No node intersects, use topologically-last node
-                        n = candidates[0]
+            candidates = [x for x in order if x.data == node.data and x in top]
+            source_node = first_state.in_degree(node) == 0
 
-                sdutil.change_edge_src(first_state, node, n)
-                first_state.remove_node(node)
+            # If not source node, try to connect every memlet-intersecting candidate
+            if not source_node:
+                for cand in candidates:
+                    if StateFusion.memlets_intersect(first_state, [cand], False, second_state, [node], True):
+                        sdutil.change_edge_src(first_state, cand, node)
+                        sdutil.change_edge_dest(first_state, cand, node)
+                        first_state.remove_node(cand)            
+                continue
+
+            if len(candidates) == 0:
+                continue
+            elif len(candidates) == 1:
+                n = candidates[0]
+            else:
+                # Choose first candidate that intersects memlets
+                for cand in candidates:
+                    if StateFusion.memlets_intersect(first_state, [cand], False, second_state, [node], True):
+                        n = cand
+                        break
+                else:
+                    # No node intersects, use topologically-last node
+                    n = candidates[0]
+
+            sdutil.change_edge_src(first_state, node, n)
+            sdutil.change_edge_dest(first_state, node, n)
+            first_state.remove_node(node)
 
         # Redirect edges and remove second state
         sdutil.change_edge_src(sdfg, second_state, first_state)
