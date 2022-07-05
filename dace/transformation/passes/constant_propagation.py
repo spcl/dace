@@ -81,6 +81,8 @@ class ConstantPropagation(ppl.Pass):
                     k: v
                     for k, v in mapping.items() if v is not _UnknownValue and k not in multivalue_desc_symbols
                 }
+                if not mapping:
+                    continue
 
                 # Update replaced symbols for later replacements
                 symbols_replaced.update(mapping)
@@ -236,6 +238,8 @@ class ConstantPropagation(ppl.Pass):
         :param new_symbols: The new symbols to include (and propagate ``symbols`` into).
         :param backward: If True, assumes symbol back-propagation (i.e., only update keys in symbols if newer).
         """
+        if not new_symbols:
+            return
         # If propagating backwards, ensure symbols are only added if they are not overridden
         if backward:
             for k, v in new_symbols.items():
@@ -243,8 +247,11 @@ class ConstantPropagation(ppl.Pass):
                     symbols[k] = v
             return
 
+        repl = {k: v for k, v in symbols.items() if v is not _UnknownValue}
+        unknowns = {k for k, v in symbols.items() if v is _UnknownValue}
+
         # Replace interstate edge assignment (which is Python code)
-        def _replace_assignment(v, repl):
+        def _replace_assignment(v, assignment):
             # Special cases to speed up replacement
             v = str(v)
             if not v:
@@ -253,14 +260,17 @@ class ConstantPropagation(ppl.Pass):
                 return repl[v]
 
             vast = ast.parse(v)
-            replacer = astutils.ASTFindReplace(repl)
-            vast = replacer.visit(vast)
+            replacer = astutils.ASTFindReplace(repl, assignment)
+            try:
+                vast = replacer.visit(vast)
+            except astutils.NameFound:
+                # If any of the unknowns were found in the expression, mark assignment as unknown
+                return _UnknownValue
             return astutils.unparse(vast)
 
         # Update results with values of other propagated symbols
-        repl = {k: v for k, v in symbols.items() if v is not _UnknownValue}
         propagated_symbols = {
-            k: _replace_assignment(v, repl) if v is not _UnknownValue else _UnknownValue
+            k: _replace_assignment(v, {k} & unknowns) if v is not _UnknownValue else _UnknownValue
             for k, v in new_symbols.items()
         }
         symbols.update(propagated_symbols)

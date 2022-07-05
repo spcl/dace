@@ -128,9 +128,29 @@ def test_p1():
     sf.apply(sdfg)
 
     csdfg = sdfg.compile()
-    csdfg(A=A, B=B, C=C, D=D, E=E, F=F, G=G, H=H, I=I, J=J, X=X, Y=Y, Z=Z,\
-          N=N, M=M, O=O, P=P, R=R,Q=Q)
-    print("PASS")
+    csdfg(A=A,
+          B=B,
+          C=C,
+          D=D,
+          E=E,
+          F=F,
+          G=G,
+          H=H,
+          I=I,
+          J=J,
+          X=X,
+          Y=Y,
+          Z=Z,
+          N=N,
+          M=M,
+          O=O,
+          P=P,
+          R=R,
+          Q=Q,
+          o1=o1,
+          o2=o2,
+          o3=o3,
+          o4=o4)
 
 
 if __name__ == "__main__":

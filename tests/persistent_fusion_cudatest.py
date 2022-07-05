@@ -4,6 +4,7 @@ import numpy as np
 import networkx as nx
 import dace
 from dace.sdfg.graph import SubgraphView
+from dace.sdfg.utils import fuse_states
 from dace.transformation.subgraph import GPUPersistentKernel
 import pytest
 
@@ -272,7 +273,10 @@ def test_persistent_fusion():
 
     sdfg.apply_gpu_transformations()
 
-    subgraph = SubgraphView(sdfg, [s_reset1, s_update1, s_reset2, s_update2])
+    # All nodes but copy-in, copy-out, and init
+    content_nodes = set(sdfg.nodes()) - {sdfg.start_state, sdfg.sink_nodes()[0], s_init}
+
+    subgraph = SubgraphView(sdfg, content_nodes)
     transform = GPUPersistentKernel()
     transform.setup_match(subgraph)
     transform.kernel_prefix = 'bfs'
