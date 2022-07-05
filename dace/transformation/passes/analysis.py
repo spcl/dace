@@ -24,11 +24,11 @@ class StateReachability(ppl.Pass):
         :return: A dictionary mapping each state to its other reachable states.
         """
         reachable: Dict[int, Dict[SDFGState, Set[SDFGState]]] = {}
-        for sdfg_id, sdfg in enumerate(top_sdfg.all_sdfgs_recursive()):
-            reachable[sdfg_id] = {}
+        for sdfg in top_sdfg.all_sdfgs_recursive():
+            reachable[sdfg.sdfg_id] = {}
             tc: nx.DiGraph = nx.transitive_closure(sdfg.nx)
             for state in sdfg.nodes():
-                reachable[sdfg_id][state] = set(tc.successors(state))
+                reachable[sdfg.sdfg_id][state] = set(tc.successors(state))
         return reachable
 
 
@@ -49,7 +49,7 @@ class AccessSets(ppl.Pass):
         :return: A dictionary mapping each state to a tuple of its (read, written) data descriptors.
         """
         top_result: Dict[int, Dict[SDFGState, Tuple[Set[str], Set[str]]]] = {}
-        for sdfg_id, sdfg in enumerate(top_sdfg.all_sdfgs_recursive()):
+        for sdfg in top_sdfg.all_sdfgs_recursive():
             result: Dict[SDFGState, Tuple[Set[str], Set[str]]] = {}
             for state in sdfg.nodes():
                 readset, writeset = set(), set()
@@ -69,7 +69,7 @@ class AccessSets(ppl.Pass):
                     result[e.src][0].update(fsyms)
                     result[e.dst][0].update(fsyms)
 
-            top_result[sdfg_id] = result
+            top_result[sdfg.sdfg_id] = result
         return top_result
 
 
@@ -91,7 +91,7 @@ class FindAccessNodes(ppl.Pass):
         """
         top_result: Dict[int, Dict[str, Set[SDFGState]]] = {}
 
-        for sdfg_id, sdfg in enumerate(top_sdfg.all_sdfgs_recursive()):
+        for sdfg in top_sdfg.all_sdfgs_recursive():
             result: Dict[str, Set[SDFGState]] = defaultdict(set)
             for state in sdfg.nodes():
                 for anode in state.data_nodes():
@@ -104,5 +104,5 @@ class FindAccessNodes(ppl.Pass):
                 for access in fsyms:
                     result[access].update({e.src, e.dst})
 
-            top_result[sdfg_id] = result
+            top_result[sdfg.sdfg_id] = result
         return top_result
