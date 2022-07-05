@@ -50,7 +50,10 @@ class SimplifyPass(ppl.FixedPointPipeline):
         self.validate = validate
         self.validate_all = validate_all
         self.skip = skip or set()
-        self.verbose = verbose
+        if config.Config.get('debugprint') == 'verbose':
+            self.verbose = True
+        else:
+            self.verbose = verbose
 
     def apply_subpass(self, sdfg: SDFG, p: ppl.Pass, state: Dict[str, Any]):
         """
