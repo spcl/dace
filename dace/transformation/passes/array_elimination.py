@@ -76,10 +76,12 @@ class ArrayElimination(ppl.Pass):
                 result.update({n.data for n in removed_nodes})
 
         # If node is completely removed from graph, erase data descriptor
-        # for aname in list(sdfg.arrays.keys()):
-        # if aname in access_sets and not access_sets[aname]:
-        # sdfg.remove_data(aname, validate=False)
-        # result.add(aname)
+        for aname, desc in list(sdfg.arrays.items()):
+            if not desc.transient:
+                continue
+            if aname not in access_sets or not access_sets[aname]:
+                sdfg.remove_data(aname, validate=False)
+                result.add(aname)
 
         return result or None
 
