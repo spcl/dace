@@ -446,8 +446,9 @@ class StateFusion(transformation.MultiStateTransformation):
                                         return False
                                 found = outnode
 
-        # Do not fuse FPGA and NON-FPGA states
-        if sdutil.is_fpga_kernel(sdfg, first_state) != sdutil.is_fpga_kernel(sdfg, second_state):
+        # Do not fuse FPGA and NON-FPGA states (unless one of them is empty)
+        if first_state.number_of_nodes() > 0 and second_state.number_of_nodes() > 0 and sdutil.is_fpga_kernel(
+                sdfg, first_state) != sdutil.is_fpga_kernel(sdfg, second_state):
             return False
 
         return True
