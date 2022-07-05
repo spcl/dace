@@ -465,7 +465,8 @@ class FixedPointPipeline(Pipeline):
             newret = super().apply_pass(sdfg, state)
             
             # Remove dependencies from pipeline
-            newret = {k: v for k, v in newret.items() if k in self.pass_names}
+            if newret:
+                newret = {k: v for k, v in newret.items() if k in self.pass_names}
 
             if not newret:
                 if retval:

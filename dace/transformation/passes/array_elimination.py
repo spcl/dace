@@ -2,7 +2,7 @@
 from collections import defaultdict
 from typing import Any, Callable, Dict, List, Optional, Set
 
-from dace import SDFG, SDFGState
+from dace import SDFG, SDFGState, data
 from dace.sdfg import nodes
 from dace.sdfg.analysis import cfg
 from dace.transformation import pass_pipeline as ppl
@@ -77,7 +77,7 @@ class ArrayElimination(ppl.Pass):
 
         # If node is completely removed from graph, erase data descriptor
         for aname, desc in list(sdfg.arrays.items()):
-            if not desc.transient:
+            if not desc.transient or isinstance(desc, data.Scalar):
                 continue
             if aname not in access_sets or not access_sets[aname]:
                 sdfg.remove_data(aname, validate=False)

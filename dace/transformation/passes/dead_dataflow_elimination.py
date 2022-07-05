@@ -192,5 +192,16 @@ class DeadDataflowElimination(ppl.Pass):
             if node.data not in no_longer_used:
                 return False
 
+            # If data is connected to a side-effect tasklet/library node, cannot remove
+            for e in state.in_edges(node):
+                if any(_has_side_effects(l.src, sdfg) for l in state.memlet_tree(e).leaves()):
+                    return False
+
         # Any other case can be marked as dead
         return True
+
+def _has_side_effects(node, sdfg):
+    try:
+        return node.has_side_effects(sdfg)
+    except (AttributeError, TypeError):
+        return node.has_side_effects
