@@ -499,7 +499,7 @@ class RedundantArray(pm.SingleStateTransformation):
         if reduction or len(a_dims_to_pop) == len(in_desc.shape) or any(
                 m != a for m, a in zip(a1_subset.size(), in_desc.shape)):
             self._make_view(sdfg, graph, in_array, out_array, e1, b_subset, b_dims_to_pop)
-            return
+            return in_array
 
         # Validate that subsets are composable. If not, make a view
         try:
@@ -523,7 +523,7 @@ class RedundantArray(pm.SingleStateTransformation):
                     compose_and_push_back(bset, aset, b_dims_to_pop, popped)
         except (ValueError, NotImplementedError):
             self._make_view(sdfg, graph, in_array, out_array, e1, b_subset, b_dims_to_pop)
-            return
+            return in_array
 
         # 2. Iterate over the e2 edges and traverse the memlet tree
         for e2 in graph.in_edges(in_array):
@@ -870,7 +870,7 @@ class RedundantSecondArray(pm.SingleStateTransformation):
                                                     out_desc.alignment, out_desc.debuginfo, out_desc.total_size)
             out_array.add_in_connector('views', force=True)
             e1._dst_conn = 'views'
-            return
+            return out_array
 
         # 2. Iterate over the e2 edges and traverse the memlet tree
         for e2 in graph.out_edges(out_array):

@@ -130,40 +130,51 @@ class ArrayElimination(ppl.Pass):
         ]
 
         # Try the different redundant copy/view transformations on the node
-        # TODO: Should be ordered by dataflow rather than by arbitrary data desc
-        for aname in removable_data:
-            if aname not in access_nodes:  # May be in inter-state edges
-                continue
-            for anode in access_nodes[aname]:
-                if state.out_degree(anode) == 1:
-                    succ = state.successors(anode)[0]
-                    if isinstance(succ, nodes.AccessNode):
-                        for xform in xforms_first:
-                            # Quick path to setup match
-                            candidate = {type(xform).in_array: anode, type(xform).out_array: succ}
-                            xform.setup_match(sdfg, sdfg.sdfg_id, state_id, candidate, 0, override=True)
-
-                            # Try to apply
-                            if xform.can_be_applied(state, 0, sdfg):
-                                xform.apply(state, sdfg)
-                                removed_nodes.add(anode)
-                                break
-
-                if anode in removed_nodes:  # Node was removed, skip second check
+        removed = {1}
+        while removed:
+            removed = set()
+            for aname in removable_data:
+                if aname not in access_nodes:  # May be in inter-state edges
                     continue
+                for anode in access_nodes[aname]:
+                    if anode in removed_nodes:
+                        continue
 
-                if state.in_degree(anode) == 1:
-                    pred = state.predecessors(anode)[0]
-                    if isinstance(pred, nodes.AccessNode):
-                        for xform in xforms_second:
-                            # Quick path to setup match
-                            candidate = {type(xform).in_array: pred, type(xform).out_array: anode}
-                            xform.setup_match(sdfg, sdfg.sdfg_id, state_id, candidate, 0, override=True)
+                    if state.out_degree(anode) == 1:
+                        succ = state.successors(anode)[0]
+                        if isinstance(succ, nodes.AccessNode):
+                            for xform in xforms_first:
+                                # Quick path to setup match
+                                candidate = {type(xform).in_array: anode, type(xform).out_array: succ}
+                                xform.setup_match(sdfg, sdfg.sdfg_id, state_id, candidate, 0, override=True)
 
-                            # Try to apply
-                            if xform.can_be_applied(state, 0, sdfg):
-                                xform.apply(state, sdfg)
-                                removed_nodes.add(anode)
-                                break
+                                # Try to apply
+                                if xform.can_be_applied(state, 0, sdfg):
+                                    ret = xform.apply(state, sdfg)
+                                    if ret is not None:  # A view was created
+                                        continue
+                                    removed_nodes.add(anode)
+                                    removed.add(anode)
+                                    break
+
+                    if anode in removed_nodes:  # Node was removed, skip second check
+                        continue
+
+                    if state.in_degree(anode) == 1:
+                        pred = state.predecessors(anode)[0]
+                        if isinstance(pred, nodes.AccessNode):
+                            for xform in xforms_second:
+                                # Quick path to setup match
+                                candidate = {type(xform).in_array: pred, type(xform).out_array: anode}
+                                xform.setup_match(sdfg, sdfg.sdfg_id, state_id, candidate, 0, override=True)
+
+                                # Try to apply
+                                if xform.can_be_applied(state, 0, sdfg):
+                                    ret = xform.apply(state, sdfg)
+                                    if ret is not None:  # A view was created
+                                        continue
+                                    removed_nodes.add(anode)
+                                    removed.add(anode)
+                                    break
 
         return removed_nodes
