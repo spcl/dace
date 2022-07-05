@@ -346,6 +346,7 @@ class RedundantArray(pm.SingleStateTransformation):
                 e = sdutil.get_view_edge(graph, out_array)
                 if e and e.src is in_array and in_desc.shape != out_desc.shape:
                     return False
+
                 # Check that the View's immediate successors are Accesses.
                 # Otherwise, the application of the transformation will result
                 # in an ambiguous View.
@@ -361,6 +362,9 @@ class RedundantArray(pm.SingleStateTransformation):
         else:
             # Two views connected to each other
             if isinstance(in_desc, data.View):
+                # Merge will be ambiguous
+                if 'views' in in_array.in_connectors and 'views' in out_array.out_connectors:
+                    return False
                 return True
 
         # Find occurrences in this and other states
