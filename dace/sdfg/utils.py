@@ -477,12 +477,14 @@ def consolidate_edges_scope(state: SDFGState, scope_node: Union[nd.EntryNode, nd
     if isinstance(scope_node, nd.EntryNode):
         outer_edges = state.in_edges
         inner_edges = state.out_edges
+        inner_conn = lambda e: e.src_conn
         remove_outer_connector = scope_node.remove_in_connector
         remove_inner_connector = scope_node.remove_out_connector
         prefix, oprefix = 'IN_', 'OUT_'
     else:
         outer_edges = state.out_edges
         inner_edges = state.in_edges
+        inner_conn = lambda e: e.dst_conn
         remove_outer_connector = scope_node.remove_out_connector
         remove_inner_connector = scope_node.remove_in_connector
         prefix, oprefix = 'OUT_', 'IN_'
@@ -490,11 +492,14 @@ def consolidate_edges_scope(state: SDFGState, scope_node: Union[nd.EntryNode, nd
     edges_by_connector = collections.defaultdict(list)
     connectors_to_remove = set()
     for e in inner_edges(scope_node):
-        edges_by_connector[e.src_conn].append(e)
+        if e.data.is_empty():
+            continue
+        conn = inner_conn(e)
+        edges_by_connector[conn].append(e)
         if e.data.data not in data_to_conn:
-            data_to_conn[e.data.data] = e.src_conn
-        elif data_to_conn[e.data.data] != e.src_conn:  # Need to consolidate
-            connectors_to_remove.add(e.src_conn)
+            data_to_conn[e.data.data] = conn
+        elif data_to_conn[e.data.data] != conn:  # Need to consolidate
+            connectors_to_remove.add(conn)
 
     for conn in connectors_to_remove:
         e = edges_by_connector[conn][0]
