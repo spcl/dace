@@ -519,13 +519,14 @@ class StateFusion(transformation.MultiStateTransformation):
         top = top_level_nodes(first_state)
 
         # Merge common (data) nodes
+        merged_nodes = set()
         for node in second_mid:
 
             # merge only top level nodes, skip everything else
             if node not in top2:
                 continue
 
-            candidates = [x for x in order if x.data == node.data and x in top]
+            candidates = [x for x in order if x.data == node.data and x in top and x not in merged_nodes]
             source_node = first_state.in_degree(node) == 0
 
             # If not source node, try to connect every memlet-intersecting candidate
@@ -554,6 +555,7 @@ class StateFusion(transformation.MultiStateTransformation):
             sdutil.change_edge_src(first_state, node, n)
             sdutil.change_edge_dest(first_state, node, n)
             first_state.remove_node(node)
+            merged_nodes.add(n)
 
         # Redirect edges and remove second state
         sdutil.change_edge_src(sdfg, second_state, first_state)
