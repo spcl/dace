@@ -2,7 +2,7 @@
 """ Functionality relating to Memlet propagation (deducing external memlets
     from internal memory accesses and scope ranges). """
 
-from collections import deque
+from collections import defaultdict, deque
 import copy
 from dace.symbolic import issymbolic, pystr_to_symbolic, simplify
 import itertools
@@ -16,7 +16,7 @@ import networkx as nx
 from dace import registry, subsets, symbolic, dtypes, data
 from dace.memlet import Memlet
 from dace.sdfg import nodes, graph as gr
-from typing import List, Set
+from typing import Dict, List, Set
 
 
 @registry.make_registry
@@ -559,76 +559,117 @@ def _annotate_loop_ranges(sdfg, unannotated_cycle_states):
 
     # We import here to avoid cyclic imports.
     from dace.transformation.interstate.loop_detection import find_for_loop
-    from dace.sdfg import utils as sdutils
+    from dace.sdfg import utils as sdutils,SDFGState
+    from dace.sdfg.analysis import cfg
 
-    for cycle in sdfg.find_cycles():
-        # In each cycle, try to identify a valid loop guard state.
-        guard = None
-        begin = None
-        itvar = None
-        for v in cycle:
-            # Try to identify a valid for-loop guard.
-            in_edges = sdfg.in_edges(v)
-            out_edges = sdfg.out_edges(v)
+    idom = nx.immediate_dominators(sdfg.nx, sdfg.start_state)
+    alldoms = cfg.all_dominators(sdfg, idom)
+    loopexits: Dict[SDFGState, SDFGState] = defaultdict(lambda: None)
 
-            # A for-loop guard has two or more incoming edges (1 increment and
-            # n init, all identical), and exactly two outgoing edges (loop and
-            # exit loop).
-            if len(in_edges) < 2 or len(out_edges) != 2:
-                continue
+    # Annotate loops
+    for be in cfg.back_edges(sdfg, idom, alldoms):
+        guard = be.dst
+        laststate = be.src
+        # Already annotated
+        if loopexits[guard] is not None:
+            continue        
+        # Natural loops = one edge leads back to loop, another leads out
+        in_edges = sdfg.in_edges(guard)
+        out_edges = sdfg.out_edges(guard)
 
-            # All incoming guard edges must set exactly one variable and it must
-            # be the same for all of them.
-            itvars = set()
-            for iedge in in_edges:
-                if len(iedge.data.assignments) > 0:
-                    if not itvars:
-                        itvars = set(iedge.data.assignments.keys())
-                    else:
-                        itvars &= set(iedge.data.assignments.keys())
+        # A loop guard has two or more incoming edges (1 increment and
+        # n init, all identical), and exactly two outgoing edges (loop and
+        # exit loop).
+        if len(in_edges) < 2 or len(out_edges) != 2:
+            continue
+
+        # The outgoing edges must be negations of one another.
+        if out_edges[0].data.condition_sympy() != (sympy.Not(out_edges[1].data.condition_sympy())):
+            continue
+        # Find all nodes that are between each branch and the guard.
+        # Condition makes sure the entire cycle is dominated by this node.
+        # If not, we're looking at a guard for a nested cycle, which we ignore for
+        # this cycle.
+        oa, ob = out_edges[0].dst, out_edges[1].dst
+
+        reachable_a = False
+        a_reached_guard = False
+        def cond_a(parent, child):
+            nonlocal reachable_a
+            nonlocal a_reached_guard
+            if reachable_a:  # If last state has been reached, stop traversal
+                return False
+            if parent is laststate or child is laststate:  # Reached back edge
+                reachable_a = True
+                a_reached_guard = True
+                return False
+            if oa not in alldoms[child]:  # Traversed outside of the loop
+                return False
+            if child is guard: # Traversed back to guard
+                a_reached_guard = True
+                return False
+            return True  # Keep traversing
+
+        reachable_b = False
+        b_reached_guard = False
+        def cond_b(parent, child):
+            nonlocal reachable_b
+            nonlocal b_reached_guard
+            if reachable_b:  # If last state has been reached, stop traversal
+                return False
+            if parent is laststate or child is laststate:  # Reached back edge
+                reachable_b = True
+                b_reached_guard = True
+                return False
+            if ob not in alldoms[child]:  # Traversed outside of the loop
+                return False
+            if child is guard:  # Traversed back to guard
+                b_reached_guard = True
+                return False
+            return True  # Keep traversing
+
+        cycle_a = list(sdutils.dfs_conditional(sdfg, (oa,), cond_a))
+        cycle_b = list(sdutils.dfs_conditional(sdfg, (ob,), cond_b))
+
+        # Check which candidate states led back to guard
+        is_a_begin = a_reached_guard and reachable_a
+        is_b_begin = b_reached_guard and reachable_b
+
+        loop_state = None
+        exit_state = None
+        if is_a_begin and not is_b_begin:
+            loop_state = oa
+            exit_state = ob
+            cycle = cycle_a
+        elif is_b_begin and not is_a_begin:
+            loop_state = ob
+            exit_state = oa
+            cycle = cycle_b
+        if loop_state is None or exit_state is None:
+            continue
+
+        loopexits[guard] = exit_state
+        begin = loop_state
+        # All incoming guard edges must set exactly one variable and it must
+        # be the same for all of them.
+        itvars = set()
+        for iedge in in_edges:
+            if len(iedge.data.assignments) > 0:
+                if not itvars:
+                    itvars = set(iedge.data.assignments.keys())
                 else:
-                    itvars = None
-                    break
-            if not itvars or len(itvars) > 1:
-                continue
+                    itvars &= set(iedge.data.assignments.keys())
+            else:
+                itvars = None
+                break
+        if itvars and len(itvars) == 1:
             itvar = next(iter(itvars))
-            itvarsym = pystr_to_symbolic(itvar)
+        else:
+            itvar = None
 
-            # The outgoing edges must be negations of one another.
-            if out_edges[0].data.condition_sympy() != (sympy.Not(out_edges[1].data.condition_sympy())):
-                continue
 
-            # Make sure the last state of the loop (i.e. the state leading back
-            # to the guard via 'increment' edge) is part of this cycle. If not,
-            # we're looking at the guard for a nested cycle, which we ignore for
-            # this cycle.
-            increment_edge = None
-            for iedge in in_edges:
-                if itvarsym in pystr_to_symbolic(iedge.data.assignments[itvar]).free_symbols:
-                    increment_edge = iedge
-                    break
-            if increment_edge.src not in cycle:
-                continue
 
-            # One of the child states must be in the loop (loop begin), and the
-            # other one must be outside the cycle (loop exit).
-            loop_state = None
-            exit_state = None
-            if out_edges[0].dst in cycle and out_edges[1].dst not in cycle:
-                loop_state = out_edges[0].dst
-                exit_state = out_edges[1].dst
-            elif out_edges[1].dst in cycle and out_edges[0].dst not in cycle:
-                loop_state = out_edges[1].dst
-                exit_state = out_edges[0].dst
-            if loop_state is None or exit_state is None:
-                continue
-
-            # This is a valid guard state candidate.
-            guard = v
-            begin = loop_state
-            break
-
-        if guard is not None and begin is not None and itvar is not None:
+        if itvar is not None:
             # A guard state was identified, see if it has valid for-loop ranges
             # and annotate the loop as such.
 
@@ -1038,7 +1079,8 @@ def propagate_memlets_nested_sdfg(parent_sdfg, parent_state, nsdfg_node):
             if internal_memlet is None:
                 continue
             try:
-                iedge.data = unsqueeze_memlet(internal_memlet, iedge.data, True)
+                #iedge.data = unsqueeze_memlet(internal_memlet, iedge.data, True, desc=sdfg.arrays[iedge.data.data])
+                iedge.data = unsqueeze_memlet(internal_memlet, iedge.data, True, desc=parent_state.parent.arrays[iedge.data.data])
                 # If no appropriate memlet found, use array dimension
                 for i, (rng, s) in enumerate(zip(internal_memlet.subset, parent_sdfg.arrays[iedge.data.data].shape)):
                     if rng[1] + 1 == s:
@@ -1058,7 +1100,8 @@ def propagate_memlets_nested_sdfg(parent_sdfg, parent_state, nsdfg_node):
             if internal_memlet is None:
                 continue
             try:
-                oedge.data = unsqueeze_memlet(internal_memlet, oedge.data, True)
+                # oedge.data = unsqueeze_memlet(internal_memlet, oedge.data, True, desc=sdfg.arrays[oedge.data.data])
+                oedge.data = unsqueeze_memlet(internal_memlet, oedge.data, True, desc=parent_state.parent.arrays[oedge.data.data])
                 # If no appropriate memlet found, use array dimension
                 for i, (rng, s) in enumerate(zip(internal_memlet.subset, parent_sdfg.arrays[oedge.data.data].shape)):
                     if rng[1] + 1 == s:

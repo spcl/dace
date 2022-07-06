@@ -363,7 +363,8 @@ def unsqueeze_memlet(internal_memlet: Memlet,
                      external_memlet: Memlet,
                      preserve_minima: bool = False,
                      use_src_subset: bool = False,
-                     use_dst_subset: bool = False) -> Memlet:
+                     use_dst_subset: bool = False,
+                     desc: data.Data = None) -> Memlet:
     """ Unsqueezes and offsets a memlet, as per the semantics of nested
         SDFGs.
         :param internal_memlet: The internal memlet (inside nested SDFG)
@@ -376,6 +377,7 @@ def unsqueeze_memlet(internal_memlet: Memlet,
                                prefer destination subset.
         :return: Offset Memlet to set on the resulting graph.
     """
+    offset = desc.offset if desc is not None else ([0] * len(internal_subset))
     internal_subset = _get_internal_subset(internal_memlet, external_memlet, use_src_subset, use_dst_subset)
     result = Memlet.from_memlet(internal_memlet)
     result.subset = internal_subset
@@ -388,7 +390,7 @@ def unsqueeze_memlet(internal_memlet: Memlet,
         # memlet uses all its dimensions, ignore the internal element
         # TODO: There must be a better solution
         if (len(internal_subset) == 1 and ones == list(range(len(shape)))
-                and (internal_subset[0] == (0, 0, 1) or internal_subset[0] == 0)):
+                and (internal_subset[0] == (offset[0], offset[0], 1) or internal_subset[0] == offset[0])):
             to_unsqueeze = ones[1:]
         else:
             to_unsqueeze = ones
@@ -402,7 +404,7 @@ def unsqueeze_memlet(internal_memlet: Memlet,
                              'while un-squeezing memlet.\nExternal memlet: %s\n'
                              'Internal memlet: %s' % (external_memlet, internal_memlet))
 
-    result.subset.offset(external_memlet.subset, False)
+    result.subset.offset(offset, False)
 
     if preserve_minima:
         if len(result.subset) != len(external_memlet.subset):

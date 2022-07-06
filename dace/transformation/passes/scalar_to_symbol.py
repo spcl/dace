@@ -7,6 +7,7 @@ from dace import symbolic
 from dace.sdfg.sdfg import InterstateEdge
 from dace import (dtypes, nodes, sdfg as sd, data as dt, properties as props, memlet as mm, subsets)
 from dace.sdfg import graph as gr, SDFG
+from dace.sdfg.replace import replace_properties_dict
 from dace.frontend.python import astutils
 from dace.sdfg import utils as sdutils
 from dace.transformation import helpers as xfh, pass_pipeline as passes
@@ -383,18 +384,26 @@ def _cpp_indirection_promoter(
             # Find non-scalar dimension to replace in memlet
             if node_name in in_edges:
                 orig_subset = in_edges[node_name].subset
+                desc=sdfg.arrays[in_edges[node_name].data]
             else:
                 orig_subset = out_edges[node_name].subset
-
+                desc=sdfg.arrays[out_edges[node_name].data]
+            
             try:
                 first_nonscalar_dim = next(i for i, s in enumerate(orig_subset.size()) if s != 1)
             except StopIteration:
                 first_nonscalar_dim = 0
+            import copy
+            offset_tuple=copy.deepcopy(desc.offset)
+            offset=list(offset_tuple)
+            for i in range(first_nonscalar_dim):
+                    offset[i] = 0
+            offset_tuple=tuple(offset)        
 
             # Make subset out of range and new sub-expression
-            other_subset = subsets.Range([(0, 0, 1)] * first_nonscalar_dim + [(subexpr, subexpr, 1)] +
-                                         [(0, 0, 1)] * (len(orig_subset) - first_nonscalar_dim - 1))
-            subset = orig_subset.compose(other_subset)
+            other_subset = subsets.Range(orig_subset.ndrange()[:first_nonscalar_dim] + [(subexpr, subexpr, 1)] +
+                                         orig_subset.ndrange()[first_nonscalar_dim + 1:])
+            subset = orig_subset.compose(other_subset).offset_new(offset_tuple,negative=False)
 
             # Check if range can be collapsed
             if _range_is_promotable(subset, defined_syms):
@@ -515,6 +524,9 @@ def remove_scalar_reads(sdfg: sd.SDFG, array_names: Dict[str, str]):
                         dst.remove_in_connector(e.dst_conn)
                         dst.sdfg.symbols[tmp_symname] = sdfg.arrays[node.data].dtype
                         dst.symbol_mapping[tmp_symname] = symname
+                    elif isinstance(dst, nodes.EntryNode) and e.dst_conn and not e.dst_conn.startswith('IN_'):
+                        # Dynamic scope input, replace in node
+                        replace_properties_dict(dst, {e.dst_conn: symname})    
                     elif isinstance(dst, (nodes.EntryNode, nodes.ExitNode)):
                         # Skip
                         continue
