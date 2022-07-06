@@ -206,6 +206,10 @@ class InlineSDFG(transformation.SingleStateTransformation):
                     if len([e for e in edge_func(pedge) if edge_pred(pedge, e)]) == 1:
                         # Remove connectors as well
                         state.remove_edge_and_connectors(pedge)
+                        # If both are scope nodes and no more edges connect them, add empty memlet
+                        if (isinstance(pedge.src, (nodes.EntryNode, nodes.ExitNode))
+                                and isinstance(pedge.dst, (nodes.EntryNode, nodes.ExitNode))):
+                            state.add_nedge(pedge.src, pedge.dst, Memlet())
                     else:
                         break
                 else:  # Reached terminus without breaking, remove external node
@@ -840,6 +844,7 @@ class ASTRefiner(ast.NodeTransformer):
     Python AST transformer used in ``RefineNestedAccess`` to reduce (refine) the
     subscript ranges based on the specification given in the transformation.
     """
+
     def __init__(self, to_refine: str, refine_subset: subsets.Subset, sdfg: SDFG, indices: Set[int] = None) -> None:
         self.to_refine = to_refine
         self.subset = refine_subset
