@@ -65,9 +65,12 @@ class Node(object):
             scope_entry_node = None
 
         if scope_entry_node is not None:
-            ens = parent.exit_node(parent.entry_node(self))
-            scope_exit_node = str(parent.node_id(ens))
-            scope_entry_node = str(parent.node_id(scope_entry_node))
+            try:
+                ens = parent.exit_node(parent.entry_node(self))
+                scope_exit_node = str(parent.node_id(ens))
+                scope_entry_node = str(parent.node_id(scope_entry_node))
+            except (RuntimeError, ValueError, StopIteration):
+                scope_entry_node = scope_exit_node = None
         else:
             scope_entry_node = None
             scope_exit_node = None
