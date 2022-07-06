@@ -182,7 +182,7 @@ def test_alloc_persistent():
     @dace.program
     def persistentmem(output: dace.int32[1]):
         tmp = dace.ndarray([1], output.dtype, lifetime=dace.AllocationLifetime.Persistent)
-        if output[0] == 1.0:
+        if output[0] == 1:
             tmp[0] = 0
         else:
             tmp[0] += 3
@@ -210,7 +210,7 @@ def test_alloc_persistent_threadlocal():
                            output.dtype,
                            storage=dace.StorageType.CPU_ThreadLocal,
                            lifetime=dace.AllocationLifetime.Persistent)
-        if output[0] == 1.0:
+        if output[0] == 1:
             for i in dace.map[0:2]:
                 tmp[i] = i
         else:
