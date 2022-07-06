@@ -18,7 +18,7 @@ class DeadDataflowElimination(ppl.Pass):
     that are not used again. Removal propagates through scopes (maps), tasklets, and optionally library nodes.
     """
     skip_library_nodes: bool = False  #: If True, does not remove library nodes if their results are unused. Otherwise removes library nodes without side effects.
-    remove_persistent_memory: bool = True  #: If True, marks code with Persistent allocation lifetime as dead
+    remove_persistent_memory: bool = False  #: If True, marks code with Persistent allocation lifetime as dead
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Nodes | ppl.Modifies.Edges | ppl.Modifies.Descriptors
