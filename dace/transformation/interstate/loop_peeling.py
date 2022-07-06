@@ -102,7 +102,7 @@ class LoopPeeling(LoopUnroll):
             before_states = loop_struct[0]
             for before_state in before_states:
                 init_edge = sdfg.edges_between(before_state, guard)[0]
-                init_edge.data.assignments[itervar] = str(rng[0] + self.count * rng[2])
+                init_edge.data.assignments[itervar] = CodeBlock(str(rng[0] + self.count * rng[2]))
                 init_edges.append(init_edge)
             append_states = before_states
 

@@ -1,18 +1,24 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 
-import ast
 from dataclasses import dataclass
-from dace.frontend.python import astutils
-from dace.sdfg.sdfg import InterstateEdge
-from dace.sdfg import nodes, utils as sdutil
-from dace.transformation import pass_pipeline as ppl
+from typing import Any, Dict, Optional, Set, Tuple, Type, Union
+import re
+
 from dace import SDFG, SDFGState, dtypes, symbolic
-from typing import Any, Dict, Set, Optional, Tuple
+from dace.frontend.python import astutils
+from dace.properties import CodeBlock
+from dace.sdfg import nodes
+from dace.sdfg import utils as sdutil
+from dace.sdfg.sdfg import InterstateEdge
+from dace.transformation import pass_pipeline as ppl
 
 
 class _UnknownValue:
     """ A helper class that indicates a symbol value is ambiguous. """
     pass
+
+
+ConstantType = symbolic.SymbolicType
 
 
 @dataclass
@@ -40,12 +46,15 @@ class ConstantPropagation(ppl.Pass):
             if len(edge.data.assignments) == 0:
                 continue
             # If no assignment assigns a constant to a symbol, no constants can be propagated
-            if any(not symbolic.issymbolic(aval) for aval in edge.data.assignments.values()):
+            if any(not aval.get_free_symbols() for aval in edge.data.assignments.values()):
                 return True
 
         return False
 
-    def apply_pass(self, sdfg: SDFG, _, initial_symbols: Optional[Dict[str, Any]] = None) -> Optional[Set[str]]:
+    def apply_pass(self,
+                   sdfg: SDFG,
+                   _,
+                   initial_symbols: Optional[Dict[str, ConstantType]] = None) -> Optional[Set[str]]:
         """
         Propagates constants throughout the SDFG.
         :param sdfg: The SDFG to modify.
@@ -189,7 +198,7 @@ class ConstantPropagation(ppl.Pass):
 
                 for aname, aval in constants.items():
                     # If something was assigned more than once (to a different value), it's not a constant
-                    if aname in assignments and aval != assignments[aname]:
+                    if aname in assignments and str(aval) != str(assignments[aname]):
                         assignments[aname] = _UnknownValue
                     else:
                         assignments[aname] = aval
@@ -217,7 +226,7 @@ class ConstantPropagation(ppl.Pass):
                 if k not in symbols_in_data:
                     continue
                 if k in values:
-                    if v is _UnknownValue or v != values[k]:
+                    if v is _UnknownValue or values[k] is _UnknownValue or str(v) != str(values[k]):
                         symbols_in_data_with_multiple_values.add(k)
                 else:
                     if v is _UnknownValue:
@@ -226,7 +235,10 @@ class ConstantPropagation(ppl.Pass):
 
         return symbols_in_data, symbols_in_data_with_multiple_values
 
-    def _propagate(self, symbols: Dict[str, Any], new_symbols: Dict[str, Any], backward: bool = False):
+    def _propagate(self,
+                   symbols: Dict[str, Any],
+                   new_symbols: Dict[str, Union[CodeBlock, Type[_UnknownValue]]],
+                   backward: bool = False):
         """
         Updates symbols dictionary in-place with new symbols, propagating existing ones within.
         :param symbols: The symbols dictionary to update.
@@ -241,18 +253,18 @@ class ConstantPropagation(ppl.Pass):
             return
 
         # Replace interstate edge assignment (which is Python code)
-        def _replace_assignment(v, repl):
-            # Special cases to speed up replacement
-            v = str(v)
-            if not v:
-                return v
-            if dtypes.validate_name(v) and v in repl:
-                return repl[v]
-
-            vast = ast.parse(v)
-            replacer = astutils.ASTFindReplace(repl)
-            vast = replacer.visit(vast)
-            return astutils.unparse(vast)
+        def _replace_assignment(v: Union[str, CodeBlock], repl):
+            try:
+                vast = v.code[0]
+                replacer = astutils.ASTFindReplace(repl)
+                return CodeBlock(replacer.visit(vast))
+            except AttributeError:
+                if not isinstance(v, str):
+                    return v
+                newv = v
+                for f, rep in repl.items():
+                    newv = re.sub(r'\b%s\b' % re.escape(f), rep, newv)
+                return newv
 
         # Update results with values of other propagated symbols
         repl = {k: v for k, v in symbols.items() if v is not _UnknownValue}
@@ -262,11 +274,11 @@ class ConstantPropagation(ppl.Pass):
         }
         symbols.update(propagated_symbols)
 
-    def _data_independent_assignments(self, edge: InterstateEdge, arrays: Set[str]) -> Dict[str, Any]:
+    def _data_independent_assignments(self, edge: InterstateEdge, arrays: Set[str]) -> Dict[str, CodeBlock]:
         """
         Return symbol assignments that only depend on other symbols and constants, rather than data descriptors.
         """
-        return {k: v if (not (symbolic.free_symbols_and_functions(v) & arrays)) else _UnknownValue for k, v in edge.assignments.items()}
+        return {k: v if (not (v.get_free_symbols() & arrays)) else _UnknownValue for k, v in edge.assignments.items()}
 
     def _constants_from_unvisited_state(self, sdfg: SDFG, state: SDFGState, arrays: Set[str],
                                         existing_constants: Dict[SDFGState, Dict[str, Any]]) -> Dict[str, Any]:

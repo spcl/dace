@@ -1004,10 +1004,6 @@ class InterstateEdgeUnparser(cppunparse.CPPUnparser):
 
 
 def unparse_interstate_edge(code_ast: Union[ast.AST, str], sdfg: SDFG, symbols=None, codegen=None) -> str:
-    # Convert from code to AST as necessary
-    if isinstance(code_ast, str):
-        code_ast = ast.parse(code_ast).body[0]
-
     strio = StringIO()
     InterstateEdgeUnparser(sdfg, code_ast, strio, symbols, codegen)
     return strio.getvalue().strip()

@@ -83,7 +83,7 @@ import sympy
 import dace
 from numbers import Number
 from six import StringIO
-from dace import dtypes
+from dace import dtypes, properties
 from dace.codegen.tools import type_inference
 
 # Large float and imaginary literals get turned into infinities in the AST.
@@ -1124,6 +1124,11 @@ def py2cpp(code, expr_semicolon=True, defined_symbols=None):
             return code
     elif isinstance(code, ast.AST):
         return cppunparse(code, expr_semicolon, defined_symbols=defined_symbols)
+    elif isinstance(code, properties.CodeBlock):
+        if code.language == dace.Language.Python:
+            return cppunparse(code.code[0], expr_semicolon, defined_symbols=defined_symbols)
+        else:
+            return code.as_string
     elif isinstance(code, list):
         return '\n'.join(py2cpp(stmt) for stmt in code)
     elif isinstance(code, sympy.Basic):

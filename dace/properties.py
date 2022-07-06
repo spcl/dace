@@ -12,7 +12,7 @@ import numpy as np
 import dace.subsets as sbs
 import dace
 import dace.serialize
-from dace.symbolic import pystr_to_symbolic
+from dace.symbolic import pystr_to_symbolic, symstr
 from dace.dtypes import DebugInfo, typeclass
 from numbers import Integral, Number
 from typing import List, Set, Type, Union, TypeVar, Generic
@@ -67,7 +67,6 @@ class PropertyError(Exception):
 class Property(Generic[T]):
     """ Class implementing properties of DaCe objects that conform to strong
     typing, and allow conversion to and from strings to be edited. """
-
     def __init__(
             self,
             getter=None,
@@ -454,7 +453,6 @@ def indirect_properties(indirect_class, indirect_function, override=False):
     """ A decorator for objects that provides indirect properties defined
         in another class.
     """
-
     def indirection(cls):
         # For every property in the class we are indirecting to, create an
         # indirection property in this class
@@ -475,7 +473,6 @@ def indirect_properties(indirect_class, indirect_function, override=False):
 class OrderedDictProperty(Property):
     """ Property type for ordered dicts
     """
-
     def to_json(self, d):
 
         # The ordered dict is more of a list than a dict.
@@ -498,7 +495,6 @@ class OrderedDictProperty(Property):
 class ListProperty(Property[List[T]]):
     """ Property type for lists.
     """
-
     def __init__(self, element_type: T, *args, **kwargs):
         """
         Create a List property with a uniform element type.
@@ -558,7 +554,6 @@ class ListProperty(Property[List[T]]):
 class TransformationHistProperty(Property):
     """ Property type for transformation histories.
     """
-
     def __init__(self, *args, **kwargs):
         """
         Create a List property with element type TransformationBase.
@@ -587,7 +582,6 @@ class TransformationHistProperty(Property):
 
 class DictProperty(Property):
     """ Property type for dictionaries. """
-
     def __init__(self, key_type, value_type, *args, **kwargs):
         """
         Create a dictionary property with uniform key/value types.
@@ -665,8 +659,7 @@ class DictProperty(Property):
         if data is None:
             return data
         if not isinstance(data, dict):
-            raise TypeError('DictProperty expects a dictionary input, got '
-                            '%s' % data)
+            raise TypeError('DictProperty expects a dictionary input, got ' '%s' % data)
         # If element knows how to convert itself, let it
         key_json = hasattr(self.key_type, "from_json")
         value_json = hasattr(self.value_type, "from_json")
@@ -684,7 +677,6 @@ class DictProperty(Property):
 
 
 class EnumProperty(Property):
-
     def __init__(self, dtype, *args, **kwargs):
         kwargs['dtype'] = dtype
         super().__init__(*args, **kwargs)
@@ -718,7 +710,6 @@ class EnumProperty(Property):
 
 
 class SDFGReferenceProperty(Property):
-
     def to_json(self, obj):
         if obj is None:
             return None
@@ -740,7 +731,6 @@ class OptionalSDFGReferenceProperty(SDFGReferenceProperty):
     """
     An SDFG reference property that defaults to None if cannot be deserialized.
     """
-
     def from_json(self, obj, context=None):
         try:
             return super().from_json(obj, context)
@@ -751,7 +741,6 @@ class OptionalSDFGReferenceProperty(SDFGReferenceProperty):
 
 class RangeProperty(Property):
     """ Custom Property type for `dace.subsets.Range` members. """
-
     def __set__(self, obj, value):
         if isinstance(value, list):
             value = dace.subsets.Range(value)
@@ -772,7 +761,6 @@ class RangeProperty(Property):
 
 class DebugInfoProperty(Property):
     """ Custom Property type for DebugInfo members. """
-
     def __init__(self, **kwargs):
         if 'default' not in kwargs:
             kwargs['default'] = DebugInfo(0, 0, 0, 0)
@@ -839,7 +827,6 @@ class DebugInfoProperty(Property):
 
 class SetProperty(Property):
     """Property for a set of elements of one type, e.g., connectors. """
-
     def __init__(
             self,
             element_type,
@@ -911,7 +898,6 @@ class SetProperty(Property):
 class LambdaProperty(Property):
     """ Custom Property type that accepts a lambda function, with conversions
         to and from strings. """
-
     @property
     def dtype(self):
         return None
@@ -952,9 +938,8 @@ class CodeBlock(object):
         Used in `CodeProperty`, implemented as a list of AST statements if
         language is Python, or a string otherwise.
     """
-
     def __init__(self,
-                 code: Union[str, List[ast.AST], 'CodeBlock'],
+                 code: Union[str, ast.AST, List[ast.AST], 'CodeBlock'],
                  language: dace.dtypes.Language = dace.dtypes.Language.Python):
         if isinstance(code, CodeBlock):
             self.code = code.code
@@ -964,13 +949,24 @@ class CodeBlock(object):
         self.language = language
 
         # Convert to the right type
-        if language == dace.dtypes.Language.Python and isinstance(code, str):
-            self.code = ast.parse(code).body
+        if language == dace.dtypes.Language.Python:
+            if code is None:
+                self.code = None
+            elif isinstance(code, (list, tuple)):
+                self.code = list(code)
+            elif isinstance(code, ast.AST):
+                self.code = [code]
+            elif isinstance(code, sp.Basic):
+                self.code = ast.parse(symstr(code)).body
+            else:
+                self.code = ast.parse(str(code)).body
         elif (not isinstance(code, str) and language != dace.dtypes.Language.Python):
-            raise TypeError('Only strings are supported for languages other '
-                            'than Python')
+            raise TypeError('Only strings are supported for languages other ' 'than Python')
         else:
             self.code = code
+
+    def __str__(self) -> str:
+        return self.as_string
 
     def get_free_symbols(self, defined_syms: Set[str] = None) -> Set[str]:
         """
@@ -1017,6 +1013,8 @@ class CodeBlock(object):
     def from_json(tmp, sdfg=None):
         if tmp is None:
             return None
+        if isinstance(tmp, str):  # Backwards compatibility: can load a string
+            return CodeBlock(tmp)
         if isinstance(tmp, CodeBlock):
             return tmp
 
@@ -1050,7 +1048,6 @@ class CodeBlock(object):
 
 class CodeProperty(Property):
     """ Custom Property type that accepts code in various languages. """
-
     @property
     def dtype(self):
         return CodeBlock
@@ -1106,8 +1103,7 @@ class CodeProperty(Property):
     @staticmethod
     def from_string(string, language=None):
         if language is None:
-            raise TypeError("Must pass language as second argument to "
-                            "from_string method of CodeProperty")
+            raise TypeError("Must pass language as second argument to " "from_string method of CodeProperty")
         return CodeBlock(string, language)
 
     @staticmethod
@@ -1120,7 +1116,6 @@ class CodeProperty(Property):
 class SubsetProperty(Property):
     """ Custom Property type that accepts any form of subset, and enables
     parsing strings into multiple types of subsets. """
-
     @property
     def dtype(self):
         return None
@@ -1170,15 +1165,13 @@ class SubsetProperty(Property):
 
 class SymbolicProperty(Property):
     """ Custom Property type that accepts integers or Sympy expressions. """
-
     @property
     def dtype(self):
         return None
 
     def __set__(self, obj, val):
         if (val is not None and not isinstance(val, (sp.Expr, Number, np.bool_, str))):
-            raise TypeError(f"Property {self.attr_name} must be a literal "
-                            f"or symbolic expression, got: {type(val)}")
+            raise TypeError(f"Property {self.attr_name} must be a literal " f"or symbolic expression, got: {type(val)}")
         if isinstance(val, (Number, str)):
             val = SymbolicProperty.from_string(str(val))
 
@@ -1198,7 +1191,6 @@ class DataProperty(Property):
     """ Custom Property type that represents a link to a data descriptor.
         Needs the SDFG to be passed as an argument to `from_string` and
         `choices`. """
-
     def __init__(self, desc='', default=None, **kwargs):
         # Data can be None when no data is flowing, e.g., on a memlet with a
         # map that has no external inputs
@@ -1210,15 +1202,13 @@ class DataProperty(Property):
     @staticmethod
     def choices(sdfg=None):
         if sdfg is None:
-            raise TypeError("Must pass SDFG as second argument to "
-                            "choices method of ArrayProperty")
+            raise TypeError("Must pass SDFG as second argument to " "choices method of ArrayProperty")
         return list(sdfg.arrays.keys())
 
     @staticmethod
     def from_string(s, sdfg=None):
         if sdfg is None:
-            raise TypeError("Must pass SDFG as second argument to "
-                            "from_string method of ArrayProperty")
+            raise TypeError("Must pass SDFG as second argument to " "from_string method of ArrayProperty")
         if s not in sdfg.arrays:
             raise ValueError("No data found in SDFG with name: {}".format(s))
         return s
@@ -1251,12 +1241,10 @@ class DataProperty(Property):
 class ReferenceProperty(Property):
     """ Custom Property type that represents a link to another SDFG object.
         Needs the SDFG to be passed as an argument to `from_string`."""
-
     @staticmethod
     def from_string(s, sdfg=None):
         if sdfg is None:
-            raise TypeError("Must pass SDFG as second argument to "
-                            "from_string method of ReferenceProperty")
+            raise TypeError("Must pass SDFG as second argument to " "from_string method of ReferenceProperty")
         for node in sdfg.states():
             if node.label == s:
                 return node
@@ -1272,7 +1260,6 @@ class ReferenceProperty(Property):
 
 class ShapeProperty(Property):
     """ Custom Property type that defines a shape. """
-
     @property
     def dtype(self):
         return tuple
@@ -1306,7 +1293,6 @@ class ShapeProperty(Property):
 class TypeProperty(Property):
     """ Custom Property type that finds a type according to the input string.
     """
-
     @property
     def dtype(self):
         return type
@@ -1333,7 +1319,6 @@ class TypeProperty(Property):
 class TypeClassProperty(Property):
     """ Custom property type for memory as defined in dace.types,
         e.g. `dace.float32`. """
-
     def __get__(self, obj, objtype=None) -> typeclass:
         return super().__get__(obj, objtype)
 
@@ -1375,7 +1360,6 @@ class LibraryImplementationProperty(Property):
     Property for choosing an implementation type for a library node. On the
     Python side it is a standard property, but can expand into a combo-box in the editor.
     """
-
     def typestring(self):
         return "LibraryImplementationProperty"
 
@@ -1384,7 +1368,6 @@ class DataclassProperty(Property):
     """
     Property that stores pydantic models or dataclasses.
     """
-
     @staticmethod
     def to_string(obj):
         return str(obj)

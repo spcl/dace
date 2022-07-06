@@ -189,14 +189,14 @@ def test_complex_case():
 
     propagated = ConstantPropagation().collect_constants(sdfg)  #, reachability
     assert len(propagated[init]) == 0
-    assert propagated[branch2]['i'] == '7'
+    assert propagated[branch2]['i'].as_string == '7'
     assert propagated[guard]['i'] is _UnknownValue
     assert propagated[inside_loop1]['i'] is _UnknownValue
-    assert propagated[inside_loop2]['i'] == '6'
-    assert propagated[usei]['i'] == '7'
+    assert propagated[inside_loop2]['i'].as_string == '6'
+    assert propagated[usei]['i'].as_string == '7'
     assert propagated[afterloop]['i'] is _UnknownValue
-    assert propagated[merge]['i'] == '7'
-    assert propagated[last]['i'] == '7'
+    assert propagated[merge]['i'].as_string == '7'
+    assert propagated[last]['i'].as_string == '7'
     for pstate in propagated.values():
         if 'j' in pstate:
             assert pstate['j'] is _UnknownValue

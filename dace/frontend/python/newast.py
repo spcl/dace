@@ -3638,9 +3638,9 @@ class ProgramVisitor(ExtNodeVisitor):
                 desc = self.sdfg.arrays[local]
                 self.sdfg.add_symbol(newsym, desc.dtype)
                 if isinstance(desc, data.Array):
-                    isedge.data.assignments[newsym] = f'{local}[0]'
+                    isedge.data.assignments[newsym] = CodeBlock(f'{local}[0]')
                 else:
-                    isedge.data.assignments[newsym] = local
+                    isedge.data.assignments[newsym] = CodeBlock(local)
 
                 # Replace mapping with symbol
                 mapping[sym] = newsym
@@ -4625,7 +4625,7 @@ class ProgramVisitor(ExtNodeVisitor):
                         self.indirections[node_str] = sym
                     state = self._add_state(f'promote_{scalar}_to_{str(sym)}')
                     edge = self.sdfg.in_edges(state)[0]
-                    edge.data.assignments = {str(sym): scalar}
+                    edge.data.assignments = {str(sym): CodeBlock(scalar)}
                     return sym
             return scalar
 

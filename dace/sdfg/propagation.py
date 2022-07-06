@@ -559,7 +559,8 @@ def _annotate_loop_ranges(sdfg, unannotated_cycle_states):
 
     # We import here to avoid cyclic imports.
     from dace.transformation.interstate.loop_detection import find_for_loop
-    from dace.sdfg import utils as sdutils
+    from dace.sdfg import utils as sdutils, SDFG
+    sdfg: SDFG = sdfg
 
     for cycle in sdfg.find_cycles():
         # In each cycle, try to identify a valid loop guard state.
@@ -592,7 +593,6 @@ def _annotate_loop_ranges(sdfg, unannotated_cycle_states):
             if not itvars or len(itvars) > 1:
                 continue
             itvar = next(iter(itvars))
-            itvarsym = pystr_to_symbolic(itvar)
 
             # The outgoing edges must be negations of one another.
             if out_edges[0].data.condition_sympy() != (sympy.Not(out_edges[1].data.condition_sympy())):
@@ -604,7 +604,7 @@ def _annotate_loop_ranges(sdfg, unannotated_cycle_states):
             # this cycle.
             increment_edge = None
             for iedge in in_edges:
-                if itvarsym in pystr_to_symbolic(iedge.data.assignments[itvar]).free_symbols:
+                if itvar in iedge.data.assignments[itvar].get_free_symbols():
                     increment_edge = iedge
                     break
             if increment_edge.src not in cycle:

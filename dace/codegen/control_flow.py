@@ -160,7 +160,7 @@ class SingleState(ControlFlow):
 
         if len(edge.data.assignments) > 0:
             expr += ';\n'.join([
-                "{} = {}".format(variable, cpp.unparse_interstate_edge(value, sdfg, codegen=framecode))
+                "{} = {}".format(variable, cpp.unparse_interstate_edge(value.code[0], sdfg, codegen=framecode))
                 for variable, value in edge.data.assignments.items()
             ] + [''])
 
@@ -332,15 +332,16 @@ class ForScope(ControlFlow):
     """ For loop block (without break or continue statements). """
     itervar: str  #: Name of iteration variable
     guard: SDFGState  #: Loop guard state
-    init: str  #: C++ code for initializing iteration variable
+    init: CodeBlock  #: C++ code for initializing iteration variable
     condition: CodeBlock  #: For-loop condition
-    update: str  #: C++ code for updating iteration variable
+    update: CodeBlock  #: C++ code for updating iteration variable
     body: GeneralBlock  #: Loop body as a control flow block
     init_edges: List[InterstateEdge]  #: All initialization edges
 
     def as_cpp(self, codegen, symbols) -> str:
         # Initialize to either "int i = 0" or "i = 0" depending on whether
         # the type has been defined
+        sdfg = self.guard.parent
         defined_vars = codegen.dispatcher.defined_vars
         init = ''
         if self.init is not None:
@@ -348,16 +349,15 @@ class ForScope(ControlFlow):
                 init = self.itervar
             else:
                 init = f'{symbols[self.itervar]} {self.itervar}'
-            init += ' = ' + self.init
-
-        sdfg = self.guard.parent
+            initcode = cpp.unparse_interstate_edge(self.init.code[0], sdfg, codegen=codegen)
+            init += ' = ' + initcode
 
         preinit = ''
         if self.init_edges:
             for edge in self.init_edges:
                 for k, v in edge.data.assignments.items():
                     if k != self.itervar:
-                        cppinit = cpp.unparse_interstate_edge(v, sdfg, codegen=codegen)
+                        cppinit = cpp.unparse_interstate_edge(v.code[0], sdfg, codegen=codegen)
                         preinit += f'{k} = {cppinit};\n'
 
         if self.condition is not None:
@@ -367,7 +367,8 @@ class ForScope(ControlFlow):
 
         update = ''
         if self.update is not None:
-            update = f'{self.itervar} = {self.update}'
+            updatecode = cpp.unparse_interstate_edge(self.update.code[0], sdfg, codegen=codegen)
+            update = f'{self.itervar} = {updatecode}'
 
         expr = f'{preinit}\nfor ({init}; {cond}; {update}) {{\n'
         expr += _clean_loop_body(self.body.as_cpp(codegen, symbols))
@@ -518,7 +519,7 @@ def _loop_from_structure(sdfg: SDFG, guard: SDFGState, enter_edge: Edge[Intersta
 
         # Check that all init edges are the same and that increment edge only
         # increments
-        if (all(e.data.assignments[itvar] == init for e in init_edges) and len(increment_edge.data.assignments) == 1):
+        if (all(e.data.assignments[itvar].as_string == init.as_string for e in init_edges) and len(increment_edge.data.assignments) == 1):
             update = increment_edge.data.assignments[itvar]
 
             # Also ignore assignments in increment edge (handled in for stmt)

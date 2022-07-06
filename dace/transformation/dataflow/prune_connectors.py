@@ -161,7 +161,7 @@ class PruneSymbols(pm.SingleStateTransformation):
                 candidates -= (set(map(str, symbolic.symbols_in_ast(e.data.condition.code[0]))) - ignore)
 
                 for assign in e.data.assignments.values():
-                    candidates -= (symbolic.free_symbols_and_functions(assign) - ignore)
+                    candidates -= (assign.get_free_symbols() - ignore)
 
                 if local_ignore is None:
                     local_ignore = set(e.data.assignments.keys())
@@ -260,7 +260,7 @@ class PruneUnusedOutputs(pm.SingleStateTransformation, pm.SimplifyPass):
         for e in nsdfg.sdfg.edges():
             candidates -= (set(map(str, symbolic.symbols_in_ast(e.data.condition.code[0]))))
             for assign in e.data.assignments.values():
-                candidates -= (symbolic.free_symbols_and_functions(assign))
+                candidates -= (assign.get_free_symbols())
 
         candidate_nodes = {n for n in candidate_nodes if n[1].data in candidates}
 

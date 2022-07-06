@@ -12,6 +12,7 @@ import ast
 from dace import dtypes
 from dace import symbolic
 from dace.codegen import cppunparse
+from dace.properties import CodeBlock
 from dace.symbolic import symbol, SymExpr, symstr
 import sympy
 import sys
@@ -55,7 +56,9 @@ def infer_expr_type(code, symbols=None):
     """
     symbols = symbols or {}
     inferred_symbols = {}
-    if isinstance(code, (str, float, int, complex)):
+    if isinstance(code, CodeBlock):
+        parsed_ast = ast.Module(body=code.code)
+    elif isinstance(code, (str, float, int, complex)):
         parsed_ast = ast.parse(str(code))
     elif isinstance(code, sympy.Basic):
         parsed_ast = ast.parse(sympy.printing.pycode(code))

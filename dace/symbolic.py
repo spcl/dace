@@ -898,6 +898,8 @@ class SympyBooleanConverter(ast.NodeTransformer):
 def pystr_to_symbolic(expr, symbol_map=None, simplify=None) -> sympy.Basic:
     """ Takes a Python string and converts it into a symbolic expression. """
     from dace.frontend.python.astutils import unparse  # Avoid import loops
+    # Convert as necessary
+    expr = getattr(expr, 'as_string', expr)
 
     if isinstance(expr, (SymExpr, sympy.Basic)):
         return expr
