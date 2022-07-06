@@ -533,6 +533,8 @@ class StateFusion(transformation.MultiStateTransformation):
             if not source_node:
                 for cand in candidates:
                     if StateFusion.memlets_intersect(first_state, [cand], False, second_state, [node], True):
+                        if nx.has_path(first_state._nx, cand, node):  # Do not create cycles
+                            continue
                         sdutil.change_edge_src(first_state, cand, node)
                         sdutil.change_edge_dest(first_state, cand, node)
                         first_state.remove_node(cand)            
