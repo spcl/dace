@@ -24,6 +24,7 @@ SIMPLIFY_PASSES = [
     DeadDataflowElimination,
     DeadStateElimination,
     ArrayElimination,
+    ConsolidateEdges,
 ]
 
 _nonrecursive_passes = [ScalarToSymbolPromotion, DeadDataflowElimination, DeadStateElimination, ArrayElimination]

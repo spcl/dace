@@ -577,12 +577,15 @@ def consolidate_edges(sdfg: SDFG, starting_scope=None) -> int:
     This effectively reduces the number of connectors and allows more
     transformations to be performed, at the cost of losing the individual
     per-tasklet memlets.
+
     :param sdfg: The SDFG to consolidate.
+    :param starting_scope: If not None, starts with a certain scope
+    :param propagate: If True, applies memlet propagation after consolidation
     :return: Number of edges removed.
     """
-    from dace.sdfg.propagation import propagate_memlets_sdfg, propagate_memlets_scope
+    from dace.sdfg.propagation import propagate_memlets_scope
 
-    consolidated = 0
+    total_consolidated = 0
     for state in sdfg.nodes():
         # Start bottom-up
         if starting_scope and starting_scope.entry not in state.nodes():
@@ -592,25 +595,31 @@ def consolidate_edges(sdfg: SDFG, starting_scope=None) -> int:
         next_queue = []
         while len(queue) > 0:
             for scope in queue:
-                consolidated += consolidate_edges_scope(state, scope.entry)
-                consolidated += consolidate_edges_scope(state, scope.exit)
+                propagate_entry, propagate_exit = False, False
+
+                consolidated = consolidate_edges_scope(state, scope.entry)
+                total_consolidated += consolidated
+                if consolidated > 0:
+                    propagate_entry = True
+
+                consolidated = consolidate_edges_scope(state, scope.exit)
+                total_consolidated += consolidated
+                if consolidated > 0:
+                    propagate_exit = True
+
+                # Repropagate memlets
+                propagate_memlets_scope(sdfg, state, scope, propagate_entry, propagate_exit)
+
                 if scope.parent is not None:
                     next_queue.append(scope.parent)
             queue = next_queue
             next_queue = []
 
         if starting_scope is not None:
-            # Repropagate memlets from this scope outwards
-            propagate_memlets_scope(sdfg, state, starting_scope)
-
             # No need to traverse other states
             break
 
-    # Repropagate memlets
-    if starting_scope is None:
-        propagate_memlets_sdfg(sdfg)
-
-    return consolidated
+    return total_consolidated
 
 
 def is_array_stream_view(sdfg: SDFG, dfg: SDFGState, node: nd.AccessNode):
