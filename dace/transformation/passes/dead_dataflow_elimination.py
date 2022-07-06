@@ -204,4 +204,7 @@ def _has_side_effects(node, sdfg):
     try:
         return node.has_side_effects(sdfg)
     except (AttributeError, TypeError):
-        return node.has_side_effects
+        try:
+            return node.has_side_effects
+        except AttributeError:
+            return False
