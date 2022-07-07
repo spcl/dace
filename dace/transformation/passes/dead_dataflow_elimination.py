@@ -2,12 +2,14 @@
 
 from collections import defaultdict
 from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Set, Tuple, Type
+
+from dace import SDFG, Memlet, SDFGState, data, dtypes
+from dace.sdfg import nodes
+from dace.sdfg import utils as sdutil
+from dace.sdfg.analysis import cfg
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes import analysis as ap
-from dace.sdfg.analysis import cfg
-from dace import SDFG, SDFGState, dtypes, Memlet
-from dace.sdfg import nodes, utils as sdutil
-from typing import Any, Dict, List, Set, Optional, Tuple, Type
 
 
 @dataclass(unsafe_hash=True)
@@ -67,7 +69,7 @@ class DeadDataflowElimination(ppl.Pass):
 
             # Propagate deadness backwards within a state
             for node in sdutil.dfs_topological_sort(state, reverse=True):
-                if self._is_node_dead(node, sdfg, state, dead_nodes, no_longer_used):
+                if self._is_node_dead(node, sdfg, state, dead_nodes, no_longer_used, access_sets[state]):
                     dead_nodes.append(node)
 
             # Scope exit nodes are only dead if their corresponding entry nodes are
@@ -154,7 +156,7 @@ class DeadDataflowElimination(ppl.Pass):
         return f'Eliminated {n} nodes in {len(pass_retval)} states.'
 
     def _is_node_dead(self, node: nodes.Node, sdfg: SDFG, state: SDFGState, dead_nodes: Set[nodes.Node],
-                      no_longer_used: Set[str]) -> bool:
+                      no_longer_used: Set[str], access_set: Tuple[Set[str], Set[str]]) -> bool:
         # Conditions for dead node:
         # * All successors are dead
         # * Access node that can no longer be read
@@ -196,6 +198,10 @@ class DeadDataflowElimination(ppl.Pass):
             for e in state.in_edges(node):
                 if any(_has_side_effects(l.src, sdfg) for l in state.memlet_tree(e).leaves()):
                     return False
+
+            # If it is a stream and is read somewhere in the state, it may be popped after pushing
+            if isinstance(desc, data.Stream) and node.data in access_set[0]:
+                return False
 
         # Any other case can be marked as dead
         return True
