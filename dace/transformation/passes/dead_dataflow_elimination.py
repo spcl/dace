@@ -8,6 +8,7 @@ from dace import SDFG, Memlet, SDFGState, data, dtypes
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.analysis import cfg
+from dace.sdfg import infer_types
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes import analysis as ap
 
@@ -122,11 +123,24 @@ class DeadDataflowElimination(ppl.Pass):
                         if isinstance(leaf.src, nodes.NestedSDFG):
                             if not leaf.data.is_empty():
                                 predecessor_nsdfgs[leaf.src].add(leaf.src_conn)
+
+                        # Pruning connectors on tasklets sometimes needs to change their code
+                        elif (isinstance(leaf.src, nodes.Tasklet) and leaf.src.code.language != dtypes.Language.Python):
+                            if leaf.src.code.language == dtypes.Language.CPP:
+                                ctype = infer_types.infer_out_connector_type(sdfg, state, leaf.src, leaf.src_conn)
+                                if ctype is None:
+                                    raise NotImplementedError(f'Cannot eliminate dead connector "{leaf.src_conn}" on '
+                                                              'tasklet due to connector type inference failure.')
+                                # Add definition
+                                leaf.src.code.code = f'{ctype.as_arg(leaf.src_conn)};\n' + leaf.src.code.code
+                            else:
+                                raise NotImplementedError(f'Cannot eliminate dead connector "{leaf.src_conn}" on '
+                                                          'tasklet due to its code language.')
                         state.remove_memlet_path(leaf)
 
                 # Remove the node itself as necessary
                 state.remove_node(node)
-            
+
             result[state].update(dead_nodes)
 
             # Remove isolated access nodes after elimination
@@ -205,6 +219,7 @@ class DeadDataflowElimination(ppl.Pass):
 
         # Any other case can be marked as dead
         return True
+
 
 def _has_side_effects(node, sdfg):
     try:
