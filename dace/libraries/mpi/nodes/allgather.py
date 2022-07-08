@@ -4,7 +4,7 @@ import dace.properties
 import dace.sdfg.nodes
 from dace.transformation.transformation import ExpandTransformation
 from .. import environments
-
+from dace.libraries.mpi.nodes.node import MPINode
 
 @dace.library.expansion
 class ExpandAllgatherMPI(ExpandTransformation):
@@ -36,7 +36,7 @@ class ExpandAllgatherMPI(ExpandTransformation):
 
 
 @dace.library.node
-class Allgather(dace.sdfg.nodes.LibraryNode):
+class Allgather(MPINode):
 
     # Global properties
     implementations = {

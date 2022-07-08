@@ -1,7 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains classes that distribute Map computations """
 
-from dace.sdfg.utils import consolidate_edges
 from copy import deepcopy
 from numbers import Number
 from typing import Dict, List

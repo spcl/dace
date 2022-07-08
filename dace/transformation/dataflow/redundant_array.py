@@ -272,7 +272,7 @@ class RedundantArray(pm.SingleStateTransformation, pm.SimplifyPass):
             # write access. Therefore, there might be a RW, WR, or WW dependency.
             accesses = [
                 n for n in graph.nodes()
-                if isinstance(n, nodes.AccessNode) and n.desc(sdfg) == true_out_desc and n is not true_out_array
+                if isinstance(n, nodes.AccessNode) and n.data == true_out_array.data and n is not true_out_array
             ]
             if len(accesses) > 0:
                 # We need to ensure that a data race will not happen if we
@@ -367,7 +367,7 @@ class RedundantArray(pm.SingleStateTransformation, pm.SimplifyPass):
         occurrences = []
         for state in sdfg.nodes():
             occurrences.extend(
-                [n for n in state.nodes() if isinstance(n, nodes.AccessNode) and n.desc(sdfg) == in_desc])
+                [n for n in state.nodes() if isinstance(n, nodes.AccessNode) and n.data == in_array.data])
         for isedge in sdfg.edges():
             if in_array.data in isedge.data.free_symbols:
                 occurrences.append(isedge)
@@ -686,7 +686,7 @@ class RedundantSecondArray(pm.SingleStateTransformation, pm.SimplifyPass):
             # might be a RW, WR, or WW dependency.
             accesses = [
                 n for n in graph.nodes()
-                if isinstance(n, nodes.AccessNode) and n.desc(sdfg) == true_in_desc and n is not true_in_array
+                if isinstance(n, nodes.AccessNode) and n.data == true_in_array.data and n is not true_in_array
             ]
             if len(accesses) > 0:
                 if (graph.in_degree(true_in_array) > 0 or any(graph.in_degree(a) > 0 for a in accesses)):
@@ -773,7 +773,7 @@ class RedundantSecondArray(pm.SingleStateTransformation, pm.SimplifyPass):
         occurrences = []
         for state in sdfg.nodes():
             occurrences.extend(
-                [n for n in state.nodes() if isinstance(n, nodes.AccessNode) and n.desc(sdfg) == out_desc])
+                [n for n in state.nodes() if isinstance(n, nodes.AccessNode) and n.data == out_array.data])
         for isedge in sdfg.edges():
             if out_array.data in isedge.data.free_symbols:
                 occurrences.append(isedge)

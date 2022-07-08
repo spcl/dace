@@ -5,6 +5,7 @@ import dace.sdfg.nodes
 from dace.transformation.transformation import ExpandTransformation
 from .. import environments
 from dace import dtypes
+from dace.libraries.mpi.nodes.node import MPINode
 
 
 @dace.library.expansion
@@ -59,7 +60,7 @@ class ExpandIsendMPI(ExpandTransformation):
 
 
 @dace.library.node
-class Isend(dace.sdfg.nodes.LibraryNode):
+class Isend(MPINode):
 
     # Global properties
     implementations = {

@@ -28,7 +28,7 @@ def test():
 
 @dace.program
 def pb(a, i):
-    a[i] = a[20 - i]
+    a[i] = a[20 - i - 1]
 
 
 @dace.program
@@ -42,7 +42,7 @@ def test_inout_connector():
     ref = a.copy()
     pa(a)
     pa.f(ref)
-    assert (np.allclose(a, ref))
+    assert np.allclose(a, ref)
 
 
 if __name__ == '__main__':

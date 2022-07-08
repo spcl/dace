@@ -66,6 +66,24 @@ class symbol(sympy.Symbol):
     def __getstate__(self):
         return dict(self.assumptions0, **{'value': self.value, 'dtype': self.dtype, '_constraints': self._constraints})
 
+    def _eval_subs(self, old, new):
+        """
+        From sympy: Override this stub if you want to do anything more than
+        attempt a replacement of old with new in the arguments of self.
+
+        See also
+        ========
+
+        _subs
+        """
+        try:
+            # Compare DaCe symbols by name rather than type/assumptions
+            if self.name == old.name:
+                return new
+            return None
+        except AttributeError:
+            return None
+
     def is_initialized(self):
         return self.value is not None
 
@@ -307,7 +325,7 @@ def symlist(values):
             true_expr = expr
         else:
             continue
-        for atom in true_expr.atoms():
+        for atom in sympy.preorder_traversal(true_expr):
             if isinstance(atom, symbol):
                 result[atom.name] = atom
     return result
@@ -501,7 +519,8 @@ def swalk(expr, enter_functions=False):
 
 
 _builtin_userfunctions = {
-    'int_floor', 'int_ceil', 'abs', 'Abs', 'min', 'Min', 'max', 'Max', 'not', 'Not', 'Eq', 'NotEq', 'Ne', 'AND', 'OR'
+    'int_floor', 'int_ceil', 'abs', 'Abs', 'min', 'Min', 'max', 'Max', 'not', 'Not', 'Eq', 'NotEq', 'Ne', 'AND', 'OR',
+    'pow', 'round'
 }
 
 
@@ -595,6 +614,24 @@ class AND(sympy.Function):
 
     def _eval_is_boolean(self):
         return True
+
+
+class ROUND(sympy.Function):
+    @classmethod
+    def eval(cls, x):
+        if x.is_Number:
+            return round(x)
+
+    def _eval_is_integer(self):
+        return True
+
+
+class Is(sympy.Function):
+    pass
+
+
+class IsNot(sympy.Function):
+    pass
 
 
 def sympy_intdiv_fix(expr):
@@ -735,6 +772,70 @@ def simplify_ext(expr):
     return expr
 
 
+def evaluate_optional_arrays(expr, sdfg):
+    """
+    Evaluate Is(...) and IsNot(...) expressions for arrays.
+
+    :param expr: The symbolic expression to evaluate.
+    :param sdfg: SDFG that contains arrays.
+    :return: A simplified version of the expression.
+    """
+    if not isinstance(expr, sympy.Basic):
+        return expr
+
+    none = symbol('NoneSymbol')
+
+    def _process_is(elem: Union[Is, IsNot]):
+        if elem.args[0] == none:
+            if elem.args[1] == none:  # Both arguments are None
+                return True
+            cand = str(elem.args[1])
+            if cand in sdfg.arrays and sdfg.arrays[cand].optional is False:
+                # Equivalent to `None is x` for a non-optional x
+                return False
+
+        else:  # elem.args[0] is not None
+            if elem.args[1] == none:
+                cand = str(elem.args[0])
+                if cand in sdfg.arrays and sdfg.arrays[cand].optional is False:
+                    # Equivalent to `x is None` for a non-optional x
+                    return False
+
+        # Neither argument is None
+        return None
+
+    # Check internal expressions
+    reevaluate = False
+    for elem in sympy.postorder_traversal(expr):
+        if any(a.func is Is or a.func is IsNot for a in elem.args):
+            args = list(elem.args)
+            for i, a in enumerate(args):
+                changed = False
+                if a.func is Is:
+                    res = _process_is(a)
+                    if res is not None:
+                        args[i] = sympy.sympify(res)
+                        changed = True
+                elif a.func is IsNot:
+                    res = _process_is(a)
+                    if res is not None:
+                        args[i] = sympy.sympify(not res)
+                        changed = True
+                if changed:
+                    elem._args = tuple(args)
+                    reevaluate = True
+    if reevaluate:  # If an internal expression changed, re-simplify expression as a whole
+        expr = expr.simplify()
+
+    # Check top-level expression
+    if expr.func is Is or expr.func is IsNot:
+        res = _process_is(expr)
+        if res is not None:
+            return sympy.sympify(res if expr.func is Is else not res)
+
+    return expr
+
+
 class SympyBooleanConverter(ast.NodeTransformer):
     """ 
     Replaces boolean operations with the appropriate SymPy functions to avoid
@@ -763,7 +864,15 @@ class SympyBooleanConverter(ast.NodeTransformer):
 
     def visit_BoolOp(self, node):
         func_node = ast.copy_location(ast.Name(id=type(node.op).__name__, ctx=ast.Load()), node)
-        new_node = ast.Call(func=func_node, args=[self.visit(value) for value in node.values], keywords=[])
+
+        # First two arguments are given as one call
+        new_node = ast.Call(func=func_node, args=[self.visit(value) for value in node.values[:2]], keywords=[])
+        new_node = ast.copy_location(new_node, node)
+        # If more than two arguments, chain bool op calls (``and(and(x,y), z)``)
+        for i in range(2, len(node.values)):
+            new_node = ast.Call(func=func_node, args=[new_node, self.visit(node.values[i])], keywords=[])
+            new_node = ast.copy_location(new_node, node)
+
         return ast.copy_location(new_node, node)
 
     def visit_Compare(self, node: ast.Compare):
@@ -785,7 +894,8 @@ class SympyBooleanConverter(ast.NodeTransformer):
         return self.visit_Constant(node)
 
 
-def pystr_to_symbolic(expr, symbol_map=None, simplify=None):
+@lru_cache(maxsize=16384)
+def pystr_to_symbolic(expr, symbol_map=None, simplify=None) -> sympy.Basic:
     """ Takes a Python string and converts it into a symbolic expression. """
     from dace.frontend.python.astutils import unparse  # Avoid import loops
 
@@ -815,12 +925,15 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None):
         'NotEq': sympy.Ne,
         'floor': sympy.floor,
         'ceil': sympy.ceiling,
+        'round': ROUND,
         # Convert and/or to special sympy functions to avoid boolean evaluation
         'And': AND,
         'Or': OR,
         'var': sympy.Symbol('var'),
         'root': sympy.Symbol('root'),
         'arg': sympy.Symbol('arg'),
+        'Is': Is,
+        'IsNot': IsNot,
     }
     # _clash1 enables all one-letter variables like N as symbols
     # _clash also allows pi, beta, zeta and other common greek letters

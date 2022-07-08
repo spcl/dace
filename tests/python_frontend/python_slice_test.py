@@ -11,12 +11,12 @@ def test_slice_constant():
     direction = "x"
 
     @dace.program
-    def slicem(A, i, j, kslice: dace.constant):
+    def slicem(A, i, j, kslice: dace.compiletime):
         if direction == "x":
             A[i, j, kslice] = A[9 - i, 9 - j, kslice]
 
     @dace.program
-    def forloops(A, kslice: dace.constant):
+    def forloops(A, kslice: dace.compiletime):
         for i in range(3):
             for j in range(3):
                 slicem(A, i, j, kslice)

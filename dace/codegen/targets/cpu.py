@@ -301,13 +301,13 @@ class CPUCodeGen(TargetCodeGenerator):
 
             if is_array_stream_view(sdfg, dfg, node):
                 if state_id is None:
-                    raise SyntaxError("Stream-view of array may not be defined " "in more than one state")
+                    raise SyntaxError("Stream-view of array may not be defined in more than one state")
 
                 arrnode = sdfg.arrays[nodedesc.sink]
                 state = sdfg.nodes()[state_id]
                 edges = state.out_edges(node)
                 if len(edges) > 1:
-                    raise NotImplementedError("Cannot handle streams writing " "to multiple arrays.")
+                    raise NotImplementedError("Cannot handle streams writing to multiple arrays.")
 
                 memlet_path = state.memlet_path(edges[0])
                 # Allocate the array before its stream view, if necessary
@@ -831,11 +831,11 @@ class CPUCodeGen(TargetCodeGenerator):
         # Special call for detected reduction types
         if redtype != dtypes.ReductionType.Custom:
             credtype = "dace::ReductionType::" + str(redtype)[str(redtype).find(".") + 1:]
-            return (f'dace::wcr_fixed<{credtype}, {dtype.ctype}>::{func}(' f'{ptr}, {inname})')
+            return (f'dace::wcr_fixed<{credtype}, {dtype.ctype}>::{func}({ptr}, {inname})')
 
         # General reduction
         custom_reduction = cpp.unparse_cr(sdfg, memlet.wcr, dtype)
-        return (f'dace::wcr_custom<{dtype.ctype}>:: template {func}(' f'{custom_reduction}, {ptr}, {inname})')
+        return (f'dace::wcr_custom<{dtype.ctype}>:: template {func}({custom_reduction}, {ptr}, {inname})')
 
     def process_out_memlets(self,
                             sdfg,
@@ -929,7 +929,10 @@ class CPUCodeGen(TargetCodeGenerator):
                         ptrname = cpp.ptr(memlet.data, desc, sdfg, self._frame)
                         is_global = desc.lifetime in (dtypes.AllocationLifetime.Global,
                                                       dtypes.AllocationLifetime.Persistent)
-                        defined_type, _ = self._dispatcher.defined_vars.get(ptrname, is_global=is_global)
+                        try:
+                            defined_type, _ = self._dispatcher.declared_arrays.get(ptrname, is_global=is_global)
+                        except KeyError:
+                            defined_type, _ = self._dispatcher.defined_vars.get(ptrname, is_global=is_global)
 
                         if defined_type == DefinedType.Scalar:
                             mname = cpp.ptr(memlet.data, desc, sdfg, self._frame)
@@ -945,7 +948,7 @@ class CPUCodeGen(TargetCodeGenerator):
                                 continue
                             array_expr = cpp.cpp_array_expr(sdfg, memlet, with_brackets=False, codegen=self._frame)
                             decouple_array_interfaces = Config.get_bool("compiler", "xilinx",
-                                                                         "decouple_array_interfaces")
+                                                                        "decouple_array_interfaces")
                             ptr_str = fpga.fpga_ptr(  # we are on fpga, since this is array interface
                                 memlet.data,
                                 desc,
@@ -1095,7 +1098,7 @@ class CPUCodeGen(TargetCodeGenerator):
                           codegen=None):
         # TODO: Robust rule set
         if conntype is None:
-            raise ValueError('Cannot define memlet for "%s" without ' 'connector type' % local_name)
+            raise ValueError('Cannot define memlet for "%s" without connector type' % local_name)
         codegen = codegen or self
         # Convert from Data to typeclass
         if isinstance(conntype, data.Data):
@@ -1275,9 +1278,9 @@ class CPUCodeGen(TargetCodeGenerator):
                     # Read variable from shared storage
                     defined_type, _ = self._dispatcher.defined_vars.get(shared_data_name)
                     if defined_type in (DefinedType.Scalar, DefinedType.Pointer):
-                        assign_str = (f"const {ctype} {edge.dst_conn} " f"= {shared_data_name};")
+                        assign_str = (f"const {ctype} {edge.dst_conn} = {shared_data_name};")
                     else:
-                        assign_str = (f"const {ctype} &{edge.dst_conn} " f"= {shared_data_name};")
+                        assign_str = (f"const {ctype} &{edge.dst_conn} = {shared_data_name};")
                     inner_stream.write(assign_str, sdfg, state_id, [edge.src, edge.dst])
                     self._dispatcher.defined_vars.add(edge.dst_conn, defined_type, f"const {ctype}")
 
@@ -1684,6 +1687,22 @@ class CPUCodeGen(TargetCodeGenerator):
         #  generator (that CPU inherits from) is implemented
         if node.map.schedule == dtypes.ScheduleType.CPU_Multicore:
             map_header += "#pragma omp parallel for"
+            if node.map.omp_schedule != dtypes.OMPScheduleType.Default:
+                schedule = " schedule("
+                if node.map.omp_schedule == dtypes.OMPScheduleType.Static:
+                    schedule += "static"
+                elif node.map.omp_schedule == dtypes.OMPScheduleType.Dynamic:
+                    schedule += "dynamic"
+                elif node.map.omp_schedule == dtypes.OMPScheduleType.Guided:
+                    schedule += "guided"
+                else:
+                    raise ValueError("Unknown OpenMP schedule type")
+                if node.map.omp_chunk_size > 0:
+                    schedule += f", {node.map.omp_chunk_size}"
+                schedule += ")"
+                map_header += schedule
+            if node.map.omp_num_threads > 0:
+                map_header += f" num_threads({node.map.omp_num_threads})"
             if node.map.collapse > 1:
                 map_header += ' collapse(%d)' % node.map.collapse
             # Loop over outputs, add OpenMP reduction clauses to detected cases

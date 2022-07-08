@@ -57,6 +57,18 @@ def function_to_ast(f):
     return src_ast, src_file, src_line, src
 
 
+def is_constant(node: ast.AST) -> bool:
+    """
+    Returns True iff the AST node is a constant value
+    """
+    if sys.version_info >= (3, 8):
+        if isinstance(node, ast.Constant):
+            return True
+    if isinstance(node, (ast.Num, ast.Str, ast.NameConstant)):  # For compatibility
+        return True
+    return False
+
+
 def evalnode(node: ast.AST, gvars: Dict[str, Any]) -> Any:
     """
     Tries to evaluate an AST node given only global variables.
@@ -76,7 +88,7 @@ def evalnode(node: ast.AST, gvars: Dict[str, Any]) -> Any:
             return node.value
 
     # Replace internal constants with their values
-    node = copy.deepcopy(node)
+    node = copy_tree(node)
     cext = ConstantExtractor(gvars)
     cext.visit(node)
     gvars = copy.copy(gvars)

@@ -89,7 +89,7 @@ def test_same_function_different_closure():
     arry = np.full([20], 2)
 
     @dace.program
-    def nested(A: dace.float64[20], dir: dace.constant):
+    def nested(A: dace.float64[20], dir: dace.compiletime):
         if dir == 'x':
             return A + arrx
         elif dir == 'y':
