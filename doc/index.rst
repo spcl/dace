@@ -9,13 +9,15 @@ Main Page
 =========
 
 DaCe: Data-Centric Parallel Programming framework.
-   
+
 
 .. toctree::
    :maxdepth: 2
 
+   source/sdfg/transforming
    source/modules
-	  
+
+   
 
 
 Reference
