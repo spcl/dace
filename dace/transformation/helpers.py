@@ -404,7 +404,7 @@ def unsqueeze_memlet(internal_memlet: Memlet,
                              'while un-squeezing memlet.\nExternal memlet: %s\n'
                              'Internal memlet: %s' % (external_memlet, internal_memlet))
 
-    result.subset.offset(offset, False)
+    # result.subset.offset(offset, False)
 
     if preserve_minima:
         if len(result.subset) != len(external_memlet.subset):
