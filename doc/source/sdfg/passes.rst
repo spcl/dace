@@ -2,10 +2,10 @@ Passes and Pipelines
 ====================
 
 Passes are an important part of compiler infrastructures, enabling efficient modification of a whole program.
-All modifications to an SDFG, including pattern-matching transformations, are performed as ``Pass``es on the graph.
+All modifications to an SDFG, including pattern-matching transformations, are performed as passes on the graph.
 
-``Pass``es can be grouped together in ``Pipeline``s and depend on each other. The ``Pipeline`` object, upon applying,
-will ensure dependencies are met and that passes do not run redundantly.
+Passes can be grouped together in Pipelines and depend on each other. The :class:`~dace.transformation.pass_pipeline.Pipeline` 
+object, upon applying, will ensure dependencies are met and that passes do not run redundantly.
 
 See more information and examples in :ref:`available_passes`.
 
@@ -13,11 +13,11 @@ Passes
 ------
 
 A :class:`~dace.transformation.pass_pipeline.Pass` is an SDFG analysis or manipulation that registers as part of the
-SDFG history. Classes that extend ``Pass`` can be used for optimization purposes, to collect data on an entire SDFG,
+SDFG history. Classes that extend Pass can be used for optimization purposes, to collect data on an entire SDFG,
 for cleanup, or other uses. 
 
-A Pass is defined by one main method: :func:`~dace.transformation.pass_pipeline.Pass.apply_pass``. This method receives
-the SDFG to manipulate/analyze, as well as the previous ``Pipeline`` results (if run in the context of a pipeline). 
+A Pass is defined by one main method: :func:`~dace.transformation.pass_pipeline.Pass.apply_pass`. This method receives
+the SDFG to manipulate/analyze, as well as the previous Pipeline results (if run in the context of a pipeline). 
 
 **Important**: The return value of a pass serves as a report of the work performed by the pass. A pass returns ``None``
 only if it did not perform any change on the graph. **Always return some object if you made changes to the graph**, even
@@ -26,6 +26,7 @@ if it is an empty dictionary or zero.
 An example of a simple pass that only traverses the graph and finds the number of total states is:
 
 .. code-block:: python
+
     from dace import SDFG
     from dace.transformation import pass_pipeline as ppl
     from dataclasses import dataclass
@@ -100,7 +101,7 @@ Pipelines
 ---------
 
 Passes may depend on each other through a :class:`~dace.transformation.pass_pipeline.Pipeline` object.
-A pass pipeline contains multiple, potentially dependent ``Pass`` objects, and applies them in the correct order.
+A pass pipeline contains multiple, potentially dependent Pass objects, and applies them in the correct order.
 Each contained pass may depend on other (e.g., analysis) passes, which the pipeline avoids rerunning depending on which
 elements were modified by applied passes. An example of a built-in pipeline is the :class:`~dace.transformation.passes.simplify.SimplifyPass`,
 which runs multiple complexity reduction passes and may reuse data across them. Prior results of applied passes are contained in
@@ -109,26 +110,27 @@ the ``pipeline_results`` argument to ``apply_pass``, which can be used to access
 The return value of applying a pipeline is a dictionary whose keys are the Pass subclass names and values are the return
 values of each pass.
 
-A ``Pipeline`` in itself is a type of a ``Pass``, so it can be arbitrarily nested in another ``Pipeline``s. Its
-dependencies and modified elements are unions of the contained ``Pass`` objects.
+A Pipeline in itself is a type of Pass, so it can be arbitrarily nested in other Pipelines. Its
+dependencies and modified elements are unions of the contained Pass objects.
 
-In every ``Pass``, there are three optional pipeline-related methods that can be implemented:
-* ``depends_on``: Which other passes this pass requires
-* ``modifies``: Which elements of the SDFG does this Pass modify (used to avoid re-applying when unnecessary)
-* ``should_reapply``: Given the modified elements of the SDFG, should this pass be rerun?
+In every Pass, there are three optional pipeline-related methods that can be implemented:
+
+  * ``depends_on``: Which other passes this pass requires
+  * ``modifies``: Which elements of the SDFG does this Pass modify (used to avoid re-applying when unnecessary)
+  * ``should_reapply``: Given the modified elements of the SDFG, should this pass be rerun?
 
 So what kind of elements can be modified? We provide a flag object called :class:`~dace.transformation.pass_pipeline.Modifies`
 that specifies what type of elements in the graph to include. For example, ``Modifies.Memlets | Modifies.AccessNodes``
 tells the system that both were modified.
 
 To use an existing pipeline, all that is necessary is to instantiate it and call it. For example: ``MyPipeline().apply_pass(sdfg, {})``.
-To create a new pipeline from existing passes, instantiate the object with a list of ``Pass`` objects, or extend the
-``Pipeline`` class (e.g., if pipeline order should be modified). For example:
+To create a new pipeline from existing passes, instantiate the object with a list of Pass objects, or extend the
+Pipeline class (e.g., if pipeline order should be modified). For example:
 
-    .. code-block:: python
+.. code-block:: python
 
-        my_simplify = Pipeline([ScalarToSymbolPromotion(integers_only=False), ConstantPropagation()])
-        results = my_simplify.apply_pass(sdfg, {})
-        print('Promoted scalars:', results['ScalarToSymbolPromotion'])
+    my_simplify = Pipeline([ScalarToSymbolPromotion(integers_only=False), ConstantPropagation()])
+    results = my_simplify.apply_pass(sdfg, {})
+    print('Promoted scalars:', results['ScalarToSymbolPromotion'])
 
 

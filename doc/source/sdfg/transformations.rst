@@ -5,6 +5,7 @@ In DaCe, the easiest way to locally modify an SDFG is by data-centric transforma
 tool to optimize applications in DaCe. You can go from naive code to state-of-the-art performance using only transformations.
 
 All transformations extend the :class:`~dace.transformation.transformation.TransformationBase` class. There are three built-in types of transformations in DaCe:
+
   * **Pattern-matching Transformations** (extending :class:`~dace.transformation.transformation.PatternTransformation`): Transformations that require a certain 
     subgraph structure to match. Within this abstract class, there are two sub-classes:
       * :class:`~dace.transformation.transformation.SingleStateTransformation`: Patterns are limited to a single SDFG state.
@@ -30,10 +31,10 @@ instances of that pattern and apply it anywhere.
 Authoring such a transformation requires extending one of the two subclasses mentioned above 
 (:class:`~dace.transformation.transformation.SingleStateTransformation` or :class:`~dace.transformation.transformation.MultiStateTransformation`), add static :class:`~dace.transformation.transformation.PatternNode` fields to the class to 
 represent the pattern, and implement at least three methods:
-    * ``expressions``: A method that returns a list of graph patterns that match this transformation.
-    * ``can_be_applied``: A method that, given a subgraph candidate, checks for additional conditions whether it can be 
-                          transformed.
-    * ``apply``: A method that applies the transformation on the given SDFG.
+
+  * ``expressions``: A method that returns a list of graph patterns that match this transformation.
+  * ``can_be_applied``: A method that, given a subgraph candidate, checks for additional conditions whether it can be transformed.
+  * ``apply``: A method that applies the transformation on the given SDFG.
 
 An instance of the transformation class is associated with a specific match, so using the fields in the class relate
 to a specific subgraph.
