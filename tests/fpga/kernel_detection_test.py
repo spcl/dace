@@ -29,7 +29,7 @@ def count_kernels(sdfg: dace.SDFG):
     return kernels
 
 
-# @fpga_test()
+@fpga_test()
 def test_kernels_inside_component_0():
     '''
     Tests for kernels detection inside a single connected component.
@@ -79,7 +79,7 @@ def test_kernels_inside_component_0():
     return sdfg
 
 
-# @fpga_test()
+@fpga_test()
 def test_kernels_inside_component_1():
     '''
     Tests for kernels detection inside a single connected component.
@@ -133,7 +133,7 @@ def test_kernels_inside_component_1():
     return sdfg
 
 
-# @fpga_test()
+@fpga_test()
 def test_kernels_inside_component_2():
     '''
     Tests for PEs detection inside a single Component.
@@ -178,7 +178,7 @@ def test_kernels_inside_component_2():
     return sdfg
 
 
-# @fpga_test()
+@fpga_test()
 def test_kernels_lns_inside_component():
     '''
     Tests for kernels detection inside a single connected component where we
@@ -224,7 +224,7 @@ def test_kernels_lns_inside_component():
     return sdfg
 
 
-# @fpga_test()
+@fpga_test()
 def test_kernels_inside_components_0():
     '''
     Tests for kernels detection in two distinct connected components.
@@ -271,7 +271,7 @@ def test_kernels_inside_components_0():
     return sdfg
 
 
-# @fpga_test()
+@fpga_test()
 def test_kernels_inside_components_multiple_states():
     '''
     Tests for kernels detection in two distinct states.
@@ -547,6 +547,7 @@ def test_kernels_inside_components_multiple_states():
     return sdfg
 
 
+@fpga_test()
 def test_kernels_inside_component_3():
     @dace.program
     def program(A: dace.float32[32, 32], B: dace.float32[32, 32], C: dace.float32[32, 32], D: dace.float32[32, 32],
@@ -575,10 +576,10 @@ def test_kernels_inside_component_3():
 
 
 if __name__ == "__main__":
-    # test_kernels_inside_component_0()
-    # test_kernels_inside_component_1()
-    # test_kernels_inside_component_2()
-    # test_kernels_inside_component_3()
+    test_kernels_inside_component_0()
+    test_kernels_inside_component_1()
+    test_kernels_inside_component_2()
+    test_kernels_inside_component_3()
     test_kernels_lns_inside_component()
     test_kernels_inside_components_0()
     test_kernels_inside_components_multiple_states()
