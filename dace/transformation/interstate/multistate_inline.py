@@ -81,6 +81,8 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
         nested_sdfg = self.nested_sdfg
         if nested_sdfg.no_inline:
             return False
+        if nested_sdfg.schedule == dtypes.ScheduleType.FPGA_Device:
+            return False
 
         # Ensure the state only contains a nested SDFG and input/output access
         # nodes

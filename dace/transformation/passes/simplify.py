@@ -27,7 +27,9 @@ SIMPLIFY_PASSES = [
     ConsolidateEdges,
 ]
 
-_nonrecursive_passes = [ScalarToSymbolPromotion, DeadDataflowElimination, DeadStateElimination, ArrayElimination]
+_nonrecursive_passes = [
+    ScalarToSymbolPromotion, DeadDataflowElimination, DeadStateElimination, ArrayElimination, ConsolidateEdges
+]
 
 
 @dataclass(unsafe_hash=True)
