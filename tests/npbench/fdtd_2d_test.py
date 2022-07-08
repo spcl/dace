@@ -55,8 +55,8 @@ def run_fdtd_2d(device_type: dace.dtypes.DeviceType):
     :return: the SDFG
     '''
 
-    # Initialize data (polybench medium size)
-    TMAX, NX, NY = (100, 200, 240)
+    # Initialize data (polybench mini size)
+    TMAX, NX, NY = (20, 20, 30)
 
     ex, ey, hz, _fict_ = init_data(TMAX, NX, NY)
     gt_ex, gt_ey, gt_hz = np.copy(ex), np.copy(ey), np.copy(hz)

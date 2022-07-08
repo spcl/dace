@@ -37,8 +37,8 @@ def run_jacobi_2d(device_type: dace.dtypes.DeviceType):
     :return: the SDFG
     '''
 
-    # Initialize data (polybench medium size)
-    TSTEPS, N = (100, 250)
+    # Initialize data (polybench mini size)
+    TSTEPS, N = (20, 30)
     A, B = init_data(N)
     np_A, np_B = np.copy(A), np.copy(B)
 
