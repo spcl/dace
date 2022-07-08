@@ -60,14 +60,15 @@ def run_jacobi_2d(device_type: dace.dtypes.DeviceType):
                                                              'storage': dace.StorageType.FPGA_Local
                                                          }],
                                                          print_report=True)
-        assert sm_applied == 2
+
+        assert sm_applied > 0
 
         # In this case, we want to generate the top-level state as an host-based state,
         # not an FPGA kernel. We need to explicitly indicate that
         sdfg.states()[0].location["is_FPGA_kernel"] = False
         # we need to specialize both the top-level SDFG and the nested SDFG
-        sdfg.specialize(dict(N=N))
-        sdfg.states()[0].nodes()[0].sdfg.specialize(dict(N=N))
+        for sd in sdfg.all_sdfgs_recursive():
+            sd.specialize(dict(N=N))
         # run program
         sdfg(A=A, B=B, TSTEPS=TSTEPS)
 

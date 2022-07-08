@@ -79,7 +79,8 @@ def run_fdtd_2d(device_type: dace.dtypes.DeviceType):
                                                          }],
                                                          print_report=True)
 
-        assert sm_applied == 2
+        assert sm_applied > 0
+
 
         sdfg.apply_transformations_repeated([InlineSDFG])
         # In this case, we want to generate the top-level state as an host-based state,
