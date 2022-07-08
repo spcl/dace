@@ -1,5 +1,6 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 
+import itertools
 import re
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, Set, Tuple
@@ -66,6 +67,10 @@ class RemoveUnusedSymbols(ppl.Pass):
     def used_symbols(self, sdfg: SDFG) -> Set[str]:
         result = set()
 
+        # Add symbols in global/init/exit code
+        for code in itertools.chain(sdfg.global_code.values(), sdfg.init_code.values(), sdfg.exit_code.values()):
+            result |= _symbols_in_code(code.as_string)
+
         for desc in sdfg.arrays.values():
             result |= set(map(str, desc.free_symbols))
 
@@ -75,10 +80,23 @@ class RemoveUnusedSymbols(ppl.Pass):
             # tokenizing their code. Since this is intersected with `sdfg.symbols`, keywords such as "if" are
             # ok to include
             for node in state.nodes():
-                if isinstance(node, nodes.Tasklet) and node.code.language != dtypes.Language.Python:
-                    result |= set(re.findall(_NAME_TOKENS, node.code.as_string))
+                if isinstance(node, nodes.Tasklet):
+                    if node.code.language != dtypes.Language.Python:
+                        result |= _symbols_in_code(node.code.as_string)
+                    if node.code_global.language != dtypes.Language.Python:
+                        result |= _symbols_in_code(node.code_global.as_string)
+                    if node.code_init.language != dtypes.Language.Python:
+                        result |= _symbols_in_code(node.code_init.as_string)
+                    if node.code_exit.language != dtypes.Language.Python:
+                        result |= _symbols_in_code(node.code_exit.as_string)
+
 
         for e in sdfg.edges():
             result |= e.data.free_symbols
 
         return result
+
+def _symbols_in_code(code: str) -> Set[str]:
+    if not code:
+        return set()
+    return set(re.findall(_NAME_TOKENS, code))
