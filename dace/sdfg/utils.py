@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 """ Various utility functions to create, traverse, and modify SDFGs. """
 
 import collections
@@ -17,6 +17,7 @@ from dace.sdfg.state import SDFGState, StateSubgraphView
 from dace.sdfg.scope import ScopeSubgraphView
 from dace.sdfg import nodes as nd, graph as gr
 from dace import config, data as dt, dtypes, memlet as mm, subsets as sbs, symbolic
+from dace.cli.progress import optional_progressbar
 from string import ascii_uppercase
 from typing import Any, Callable, Dict, Generator, List, Optional, Set, Tuple, Union
 
@@ -1163,28 +1164,12 @@ def inline_sdfgs(sdfg: SDFG, permissive: bool = False, progress: bool = None, mu
     # Avoid import loops
     from dace.transformation.interstate import InlineSDFG, InlineMultistateSDFG
 
-    if progress is None and not config.Config.get_bool('progress'):
-        progress = False
-
-    if progress is True or progress is None:
-        try:
-            from tqdm import tqdm
-        except ImportError:
-            tqdm = None
-
     counter = 0
     nsdfgs = [(n, p) for n, p in sdfg.all_nodes_recursive() if isinstance(n, NestedSDFG)]
-    if progress is True:
-        pbar = tqdm(total=len(nsdfgs), desc='Inlining SDFGs')
 
-    start = time.time()
-
-    for ctr, (node, state) in enumerate(reversed(nsdfgs)):
+    for node, state in optional_progressbar(reversed(nsdfgs), title='Inlining SDFGs', n=len(nsdfgs), progress=progress):
         id = node.sdfg.sdfg_id
         sd = state.parent
-        if (progress is None and tqdm is not None and (time.time() - start) > 5):
-            progress = True
-            pbar = tqdm(total=len(nsdfgs), desc='Inlining SDFG', initial=ctr)
 
         # We have to reevaluate every time due to changing IDs
         state_id = sd.node_id(state)
@@ -1197,8 +1182,6 @@ def inline_sdfgs(sdfg: SDFG, permissive: bool = False, progress: bool = None, mu
             if inliner.can_be_applied(state, 0, sd, permissive=permissive):
                 inliner.apply(state, sd)
                 counter += 1
-                if progress:
-                    pbar.update(1)
                 continue
 
         candidate = {
@@ -1209,11 +1192,7 @@ def inline_sdfgs(sdfg: SDFG, permissive: bool = False, progress: bool = None, mu
         if inliner.can_be_applied(state, 0, sd, permissive=permissive):
             inliner.apply(state, sd)
             counter += 1
-        if progress:
-            pbar.update(1)
 
-    if progress:
-        pbar.close()
     return counter
 
 

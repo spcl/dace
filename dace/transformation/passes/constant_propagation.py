@@ -6,6 +6,7 @@ from dace.frontend.python import astutils
 from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg import nodes, utils as sdutil
 from dace.transformation import pass_pipeline as ppl
+from dace.cli.progress import optional_progressbar
 from dace import SDFG, SDFGState, dtypes, symbolic
 from typing import Any, Dict, Set, Optional, Tuple
 
@@ -23,6 +24,7 @@ class ConstantPropagation(ppl.Pass):
     """
 
     recursive: bool = True
+    progress: Optional[bool] = None
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Symbols | ppl.Modifies.Edges | ppl.Modifies.Nodes
@@ -73,7 +75,10 @@ class ConstantPropagation(ppl.Pass):
             desc_symbols, multivalue_desc_symbols = self._find_desc_symbols(sdfg, per_state_constants)
 
             # Replace constants per state
-            for state, mapping in per_state_constants.items():
+            for state, mapping in optional_progressbar(per_state_constants.items(),
+                                                       'Propagating constants',
+                                                       n=len(per_state_constants),
+                                                       progress=self.progress):
                 remaining_unknowns.update(
                     {k
                      for k, v in mapping.items() if v is _UnknownValue or k in multivalue_desc_symbols})
@@ -136,7 +141,7 @@ class ConstantPropagation(ppl.Pass):
         if not result:
             return None
         return result
-    
+
     def report(self, pass_retval: Set[str]) -> str:
         return f'Propagated {len(pass_retval)} constants.'
 
@@ -164,7 +169,8 @@ class ConstantPropagation(ppl.Pass):
             result[start_state].update(initial_symbols)
 
         # Traverse SDFG topologically
-        for state in sdfg.topological_sort(start_state):
+        for state in optional_progressbar(sdfg.topological_sort(start_state), 'Collecting constants',
+                                          sdfg.number_of_nodes(), self.progress):
             if state in result:
                 continue
             result[state] = {}
@@ -279,7 +285,10 @@ class ConstantPropagation(ppl.Pass):
         """
         Return symbol assignments that only depend on other symbols and constants, rather than data descriptors.
         """
-        return {k: v if (not (symbolic.free_symbols_and_functions(v) & arrays)) else _UnknownValue for k, v in edge.assignments.items()}
+        return {
+            k: v if (not (symbolic.free_symbols_and_functions(v) & arrays)) else _UnknownValue
+            for k, v in edge.assignments.items()
+        }
 
     def _constants_from_unvisited_state(self, sdfg: SDFG, state: SDFGState, arrays: Set[str],
                                         existing_constants: Dict[SDFGState, Dict[str, Any]]) -> Dict[str, Any]:
