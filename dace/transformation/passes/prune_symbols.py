@@ -1,0 +1,84 @@
+# Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
+
+import re
+from dataclasses import dataclass
+from typing import Any, Dict, Optional, Set, Tuple
+
+from dace import SDFG, dtypes
+from dace.sdfg import nodes
+from dace.transformation import pass_pipeline as ppl
+
+_NAME_TOKENS = re.compile(r'[a-zA-Z_][a-zA-Z_0-9]*')
+
+
+@dataclass(unsafe_hash=True)
+class RemoveUnusedSymbols(ppl.Pass):
+    """
+    Prunes unused symbols from the SDFG symbol repository (``sdfg.symbols``).
+    Also includes uses in Tasklets of all languages.
+    """
+    recursive: bool = True
+
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.Symbols
+
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        return modified & (ppl.Modifies.States | ppl.Modifies.Edges | ppl.Modifies.Descriptors | ppl.Modifies.Tasklets)
+
+    def apply_pass(self, sdfg: SDFG, _) -> Optional[Set[Tuple[int, str]]]:
+        """
+        Propagates constants throughout the SDFG.
+        :param sdfg: The SDFG to modify.
+        :param pipeline_results: If in the context of a ``Pipeline``, a dictionary that is populated with prior Pass
+                                 results as ``{Pass subclass name: returned object from pass}``. If not run in a
+                                 pipeline, an empty dictionary is expected.
+        :param initial_symbols: If not None, sets values of initial symbols.
+        :return: A set of propagated constants, or None if nothing was changed.
+        """
+        result: Set[str] = set()
+
+        # Compute used symbols
+        used_symbols = self.used_symbols(sdfg)
+
+        # Remove unused symbols
+        for sym in set(sdfg.symbols.keys()) - used_symbols:
+            sdfg.remove_symbol(sym)
+            result.add(sym)
+
+        if self.recursive:
+            # Prune nested SDFGs recursively
+            sid = sdfg.sdfg_id
+            result = set((sid, sym) for sym in result)
+
+            for state in sdfg.nodes():
+                for node in state.nodes():
+                    if isinstance(node, nodes.NestedSDFG):
+                        nres = self.apply_pass(node.sdfg, _)
+                        if nres:
+                            result.update(nres)
+
+        # Return result
+        return result or None
+
+    def report(self, pass_retval: Set[str]) -> str:
+        return f'Removed {len(pass_retval)} unused symbols: {pass_retval}.'
+
+    def used_symbols(self, sdfg: SDFG) -> Set[str]:
+        result = set()
+
+        for desc in sdfg.arrays.values():
+            result |= set(map(str, desc.free_symbols))
+
+        for state in sdfg.nodes():
+            result |= state.free_symbols
+            # In addition to the standard free symbols, we are conservative with other tasklet languages by
+            # tokenizing their code. Since this is intersected with `sdfg.symbols`, keywords such as "if" are
+            # ok to include
+            for node in state.nodes():
+                if isinstance(node, nodes.Tasklet) and node.code.language != dtypes.Language.Python:
+                    result |= set(re.findall(_NAME_TOKENS, node.code.as_string))
+
+        for e in sdfg.edges():
+            result |= e.data.free_symbols
+
+        return result

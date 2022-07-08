@@ -14,6 +14,7 @@ from dace.transformation.passes.dead_state_elimination import DeadStateEliminati
 from dace.transformation.passes.fusion_inline import FuseStates, InlineSDFGs
 from dace.transformation.passes.optional_arrays import OptionalArrayInference
 from dace.transformation.passes.scalar_to_symbol import ScalarToSymbolPromotion
+from dace.transformation.passes.prune_symbols import RemoveUnusedSymbols
 
 SIMPLIFY_PASSES = [
     InlineSDFGs,
@@ -23,6 +24,7 @@ SIMPLIFY_PASSES = [
     ConstantPropagation,
     DeadDataflowElimination,
     DeadStateElimination,
+    RemoveUnusedSymbols,
     ArrayElimination,
     ConsolidateEdges,
 ]
