@@ -32,7 +32,8 @@ def infer_connector_types(sdfg: SDFG):
                 if node.in_connectors[cname].type is None:
                     # If nested SDFG, try to use internal array type
                     if isinstance(node, nodes.NestedSDFG):
-                        scalar = (isinstance(node.sdfg.arrays[cname], data.Scalar) and allocated_as_scalar)
+                        # scalar = (isinstance(node.sdfg.arrays[cname], data.Scalar) and allocated_as_scalar)
+                        scalar = isinstance(node.sdfg.arrays[cname], data.Scalar)
                         dtype = node.sdfg.arrays[cname].dtype
                         ctype = (dtype if scalar else dtypes.pointer(dtype))
                     elif e.data.data is not None:  # Obtain type from memlet
