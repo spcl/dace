@@ -169,6 +169,11 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
 
                         write_memlets[dn.data].append(e.data)
 
+        # TODO: also check interstate edges with reads
+        # anames = sdfg.arrays.keys()
+        # for e in gr.SubgraphView(sdfg, states).edges():
+        #     read_set |= e.data.free_symbols & anames
+
         # After looping over relevant writes, consider reads that may overlap
         for state in states:
             for dn in state.data_nodes():
