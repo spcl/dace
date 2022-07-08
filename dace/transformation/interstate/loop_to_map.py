@@ -352,6 +352,8 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
                 sdfg.add_edge(src, new_body, data)
             # Move body_end -> guard edge to body_end -> exit_state
             for src, dst, data in sdfg.edges_between(body_end, guard):
+                if itervar in data.assignments:
+                    del data.assignments[itervar]
                 nsdfg.add_edge(body_end, exit_state, data)
             sdfg.add_edge(new_body, guard, InterstateEdge())
             # # Move body_end -> guard edge to new_body -> guard
