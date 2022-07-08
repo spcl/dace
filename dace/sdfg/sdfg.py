@@ -1560,6 +1560,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             except:
                 newshape.append(dace.symbolic.pystr_to_symbolic(s))
         shape = newshape
+        strides = strides or None
 
         if isinstance(dtype, type) and dtype in dtypes._CONSTANT_TYPES[:-1]:
             dtype = dtypes.typeclass(dtype)
@@ -2554,7 +2555,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             expanded_something = False
             for node in list(state.nodes()):  # Make sure we have a copy
                 if isinstance(node, nd.NestedSDFG):
-                    node.sdfg.expand_library_nodes()  # Call recursively
+                    node.sdfg.expand_library_nodes(recursive=recursive)  # Call recursively
                 elif isinstance(node, nd.LibraryNode):
                     impl_name = node.expand(self, state)
                     if Config.get_bool('debugprint'):
