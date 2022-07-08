@@ -29,7 +29,7 @@ def count_kernels(sdfg: dace.SDFG):
     return kernels
 
 
-@fpga_test()
+# @fpga_test()
 def test_kernels_inside_component_0():
     '''
     Tests for kernels detection inside a single connected component.
@@ -49,7 +49,6 @@ def test_kernels_inside_component_0():
     The 4 maps, should belong to three distinct kernels
     :return:
     '''
-
     @dace.program
     def kernels_inside_component_0(x: dace.float32[8], y: dace.float32[8], v: dace.float32[8], w: dace.float32[8],
                                    z: dace.float32[8]):
@@ -80,7 +79,7 @@ def test_kernels_inside_component_0():
     return sdfg
 
 
-@fpga_test()
+# @fpga_test()
 def test_kernels_inside_component_1():
     '''
     Tests for kernels detection inside a single connected component.
@@ -103,7 +102,6 @@ def test_kernels_inside_component_1():
     The five Maps should belong to 5 distinct kernels
 
     '''
-
     @dace.program
     def kernels_inside_component_1(x: dace.float32[8], y: dace.float32[8], v: dace.float32[8], w: dace.float32[8],
                                    z: dace.float32[8], t: dace.float32[8], alpha: dace.float32, beta: dace.float32):
@@ -135,7 +133,7 @@ def test_kernels_inside_component_1():
     return sdfg
 
 
-@fpga_test()
+# @fpga_test()
 def test_kernels_inside_component_2():
     '''
     Tests for PEs detection inside a single Component.
@@ -154,7 +152,6 @@ def test_kernels_inside_component_2():
 
     :return:
     '''
-
     @dace.program
     def kernels_inside_component_2(x: dace.float32[8], y: dace.float32[8], v: dace.float32[8], z: dace.float32[8],
                                    t: dace.float32[8]):
@@ -181,7 +178,7 @@ def test_kernels_inside_component_2():
     return sdfg
 
 
-@fpga_test()
+# @fpga_test()
 def test_kernels_lns_inside_component():
     '''
     Tests for kernels detection inside a single connected component where we
@@ -227,7 +224,7 @@ def test_kernels_lns_inside_component():
     return sdfg
 
 
-@fpga_test()
+# @fpga_test()
 def test_kernels_inside_components_0():
     '''
     Tests for kernels detection in two distinct connected components.
@@ -243,10 +240,9 @@ def test_kernels_inside_components_0():
             │   ┌───────────┐    │
             └─► │ Add_Map_2 │◄───┘
                 └───────────┘
-    The three maps, should belong to three distinct kernels
+    The three maps, should belong to three distinct kernels, for a total of 6 kernels across two states
 
     '''
-
     @dace.program
     def kernels_inside_components_0(x: dace.float32[8], y: dace.float32[8], v: dace.float32[8], w: dace.float32[8],
                                     xx: dace.float32[8], yy: dace.float32[8], vv: dace.float32[8], ww: dace.float32[8]):
@@ -275,7 +271,7 @@ def test_kernels_inside_components_0():
     return sdfg
 
 
-@fpga_test()
+# @fpga_test()
 def test_kernels_inside_components_multiple_states():
     '''
     Tests for kernels detection in two distinct states.
@@ -294,7 +290,6 @@ def test_kernels_inside_components_multiple_states():
     The three maps, should belong to three distinct kernels
     :return:
     '''
-
     def make_sdfg(dtype=dace.float32):
         sdfg = dace.SDFG("multiple_kernels_multiple_states")
         n = dace.symbol("size")
@@ -552,38 +547,38 @@ def test_kernels_inside_components_multiple_states():
     return sdfg
 
 
-def multiple_reads():
-
+def test_kernels_inside_component_3():
     @dace.program
     def program(A: dace.float32[32, 32], B: dace.float32[32, 32], C: dace.float32[32, 32], D: dace.float32[32, 32],
                 m: dace.int32):
-        C = A @ B
-        D = C * m
+        C[:] = A @ B
+        D[:] = C * m
 
     A = np.random.rand(32, 32).astype(np.float32)
     B = np.random.rand(32, 32).astype(np.float32)
     C = np.random.rand(32, 32).astype(np.float32)
     D = np.random.rand(32, 32).astype(np.float32)
-    E = np.random.rand(32, 32).astype(np.float32)
 
-    sdfg = program.to_sdfg(simplify=True)
+    sdfg = program.to_sdfg()
     sdfg.apply_transformations([FPGATransformSDFG])
     from dace.libraries.blas import Gemm
     Gemm.default_implementation = "FPGA1DSystolic"
     sdfg.expand_library_nodes()
     sdfg.apply_transformations_repeated([InlineSDFG])
-    sdfg.simplify()
-    sdfg(A=A, B=B, C=C, D=D, m=2)
+    program = sdfg.compile()
+    # this must be detected as single kernel with multiple PEs
+    assert count_kernels(sdfg) == 1
+    program(A=A, B=B, C=C, D=D, m=2)
 
     assert np.allclose(A @ B, C)
     assert np.allclose(D, C * 2)
 
 
 if __name__ == "__main__":
-    multiple_reads()
-    test_kernels_inside_component_0(None)
-    test_kernels_inside_component_1(None)
-    test_kernels_inside_component_2(None)
-    test_kernels_lns_inside_component(None)
-    test_kernels_inside_components_0(None)
-    test_kernels_inside_components_multiple_states(None)
+    # test_kernels_inside_component_0()
+    # test_kernels_inside_component_1()
+    # test_kernels_inside_component_2()
+    # test_kernels_inside_component_3()
+    test_kernels_lns_inside_component()
+    test_kernels_inside_components_0()
+    test_kernels_inside_components_multiple_states()
