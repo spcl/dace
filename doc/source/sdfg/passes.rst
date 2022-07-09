@@ -51,7 +51,7 @@ An example of a simple pass that only traverses the graph and finds the number o
         def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> int:
             """
             Counts the states and returns the result.
-            """"
+            """
             result = 0
 
             if self.recursive:
