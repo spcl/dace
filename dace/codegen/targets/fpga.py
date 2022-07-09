@@ -501,6 +501,8 @@ class FPGACodeGen(TargetCodeGenerator):
 
             # There is no need to generate additional kernels if the number of found kernels
             # is equal to the number of connected components: use PEs instead (only one kernel)
+            # import pdb
+            # pdb.set_trace()
             if len(subgraphs) == len(kernels):
                 kernels = [(state, 0)]
 
@@ -1259,7 +1261,6 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                 if pred_repr in splitting_nodes:
                     # print("Node ", node, " is after a splitting node!")
                     after_split_node = True
-                    break
                 pred_id = self._node_to_kernel[pred_repr]
                 if pred_kernel_id == None:
                     pred_kernel_id = pred_id
@@ -1281,10 +1282,10 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                     if pred_kernel_id is not None:
                         self._node_to_kernel[utils.unique_node_repr(state, node)] = pred_kernel_id
                     continue
-
-                # Is this a splitting node:
-                if after_split_node:
+                # Is this after a splitting node and is not a sink node
+                if after_split_node and node not in sink_nodes:
                     kernel = max_kernels
+                    # if this is
                     max_kernels = increment(max_kernels)
 
                 # has the predecessor a kernel id?
