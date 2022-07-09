@@ -501,8 +501,6 @@ class FPGACodeGen(TargetCodeGenerator):
 
             # There is no need to generate additional kernels if the number of found kernels
             # is equal to the number of connected components: use PEs instead (only one kernel)
-            # import pdb
-            # pdb.set_trace()
             if len(subgraphs) == len(kernels):
                 kernels = [(state, 0)]
 
@@ -1237,7 +1235,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                 # to each source node which is not an AccessNode
                 if isinstance(node, nodes.AccessNode):
                     continue
-                # print("Source ", node, " has kernel id: ", max_kernels)
+                print("Source ", node, " has kernel id: ", max_kernels)
 
                 self._node_to_kernel[utils.unique_node_repr(state, node)] = max_kernels
                 max_kernels = increment(max_kernels)
@@ -1259,7 +1257,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                 pred_repr = utils.unique_node_repr(state, pred)
 
                 if pred_repr in splitting_nodes:
-                    # print("Node ", node, " is after a splitting node!")
+                    print("Node ", node, " is after a splitting node!")
                     after_split_node = True
                 pred_id = self._node_to_kernel[pred_repr]
                 if pred_kernel_id == None:
@@ -1268,7 +1266,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                     # This can be reached from (at least) two different predecessors that are in
                     # two different kernels
                     crossroad_node = True
-                    # print("found a cross road node")
+                    print("found a cross road node: ", node)
                     break
 
             if crossroad_node:
@@ -1298,11 +1296,13 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                     kernel = max_kernels
                     max_kernels = increment(max_kernels)
 
-            if len(state.successors(node)) > 1 and scopes[node] == None:
-                # print("After this node we should split!!!!!!! ", node)
+            # If this is noode is not a map entry or is already contained in a scope
+            # and has more thant two successors, is a splitting node candidate
+            if len(state.successors(node)) > 1 and scopes[node] == None and not isinstance(node, nodes.EntryNode):
+                print("After this node we should split!!!!!!! ", node)
                 splitting_nodes.add(utils.unique_node_repr(state, node))
 
-            # print("Node: ", node, " assigned to kernel: ", kernel)
+            print("Node: ", node, " assigned to kernel: ", kernel)
 
             self._node_to_kernel[utils.unique_node_repr(state, node)] = kernel
 
