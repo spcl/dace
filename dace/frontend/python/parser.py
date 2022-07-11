@@ -6,7 +6,7 @@ import itertools
 import copy
 import os
 import sympy
-from typing import Any, Callable, Dict, List, Optional, Set, Sequence, Tuple, Union, ForwardRef
+from typing import Any, Callable, Dict, List, Optional, Set, Sequence, Tuple, Union
 import warnings
 
 from dace import symbolic, data, dtypes
