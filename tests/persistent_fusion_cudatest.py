@@ -4,7 +4,6 @@ import numpy as np
 import networkx as nx
 import dace
 from dace.sdfg.graph import SubgraphView
-from dace.sdfg.utils import fuse_states
 from dace.transformation.subgraph import GPUPersistentKernel
 import pytest
 

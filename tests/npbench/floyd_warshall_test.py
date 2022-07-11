@@ -71,7 +71,6 @@ def run_floyd_warshall(device_type: dace.dtypes.DeviceType):
                                                              'storage': dace.StorageType.FPGA_Local
                                                          }],
                                                          print_report=True)
-        # assert sm_applied == 1
         sc_applied = sdfg.apply_transformations_repeated([InlineSDFG, StreamingComposition],
                                                          [{}, {
                                                              'storage': dace.StorageType.FPGA_Local

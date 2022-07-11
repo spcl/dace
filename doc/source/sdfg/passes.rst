@@ -19,9 +19,11 @@ for cleanup, or other uses.
 A Pass is defined by one main method: :func:`~dace.transformation.pass_pipeline.Pass.apply_pass`. This method receives
 the SDFG to manipulate/analyze, as well as the previous Pipeline results (if run in the context of a pipeline). 
 
-**Important**: The return value of a pass serves as a report of the work performed by the pass. A pass returns ``None``
+.. note::
+The return value of a pass serves as a report of the work performed by the pass. A pass returns ``None``
 only if it did not perform any change on the graph. **Always return some object if you made changes to the graph**, even
 if it is an empty dictionary or zero.
+
 
 An example of a simple pass that only traverses the graph and finds the number of total states is:
 
