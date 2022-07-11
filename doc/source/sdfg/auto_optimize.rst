@@ -7,8 +7,9 @@ performance pitfalls (such as excessive allocation/deallocation), finding fast l
 routines for linear algebra operations), and more.
 
 .. warning::
-Auto-optimization depends on the graph and the target platform. As it is still an experimental feature, it is **not** applied
-automatically on every graph and *may break correctness of certain programs*, so use it with caution.
+    Auto-optimization depends on the graph and the target platform. As it is still an experimental feature, it is **not** applied
+    automatically on every graph and *may break correctness of certain programs*, so use it with caution.
+
 
 How to trigger auto-optimization
 --------------------------------
