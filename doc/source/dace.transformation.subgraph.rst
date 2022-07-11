@@ -5,7 +5,7 @@ Submodules
 ----------
 
 dace.transformation.subgraph.expansion module
-----------------------------------------------------
+---------------------------------------------
 
 .. automodule:: dace.transformation.subgraph.expansion
    :members:
@@ -13,7 +13,7 @@ dace.transformation.subgraph.expansion module
    :show-inheritance:
 
 dace.transformation.subgraph.gpu_persistent_fusion module
-----------------------------------------------------
+---------------------------------------------------------
 
 .. automodule:: dace.transformation.subgraph.gpu_persistent_fusion
    :members:
@@ -21,7 +21,7 @@ dace.transformation.subgraph.gpu_persistent_fusion module
    :show-inheritance:
 
 dace.transformation.subgraph.helpers module
-----------------------------------------------------
+-------------------------------------------
 
 .. automodule:: dace.transformation.subgraph.helpers
    :members:
