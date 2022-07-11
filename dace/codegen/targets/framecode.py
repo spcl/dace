@@ -428,12 +428,11 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
         # Gather shared transients, free symbols, and first/last appearance
         shared_transients = {}
         fsyms = {}
-        reachability = {}
+        reachability = StateReachability().apply_pass(top_sdfg, {})
         access_instances: Dict[int, Dict[str, List[Tuple[SDFGState, nodes.AccessNode]]]] = {}
         for sdfg in top_sdfg.all_sdfgs_recursive():
             shared_transients[sdfg.sdfg_id] = sdfg.shared_transients(check_toplevel=False)
             fsyms[sdfg.sdfg_id] = self.symbols_and_constants(sdfg)
-            reachability[sdfg.sdfg_id] = StateReachability().apply_pass(sdfg, {})
 
             #############################################
             # Look for all states in which a scope-allocated array is used in

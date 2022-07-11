@@ -21,7 +21,8 @@ class ExpandDummyMPI(ExpandTransformation):
             inputs={},
             outputs={'__out'},
             code='',
-            state_fields=node.fields)
+            state_fields=node.fields,
+            side_effects=True)
         return tasklet
 
 

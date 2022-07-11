@@ -2,9 +2,7 @@
 from collections import defaultdict
 from typing import Any, Callable, Dict, List, Optional, Set
 
-import networkx as nx
-
-from dace import SDFG, SDFGState
+from dace import SDFG, SDFGState, data
 from dace.sdfg import nodes
 from dace.sdfg.analysis import cfg
 from dace.transformation import pass_pipeline as ppl
@@ -39,15 +37,19 @@ class ArrayElimination(ppl.Pass):
         :return: A set of removed data descriptor names, or None if nothing changed.
         """
         result: Set[str] = set()
-        reachable: Dict[SDFGState, Set[SDFGState]] = pipeline_results['StateReachability']
+        reachable: Dict[SDFGState, Set[SDFGState]] = pipeline_results['StateReachability'][sdfg.sdfg_id]
         # Get access nodes and modify set as pass continues
-        access_sets: Dict[str, Set[SDFGState]] = pipeline_results['FindAccessNodes']
+        access_sets: Dict[str, Set[SDFGState]] = pipeline_results['FindAccessNodes'][sdfg.sdfg_id]
 
         # Traverse SDFG backwards
-        for state in reversed(list(cfg.stateorder_topological_sort(sdfg))):
+        try:
+            state_order = list(cfg.stateorder_topological_sort(sdfg))
+        except KeyError:
+            return None
+        for state in reversed(state_order):
             # Find all data descriptors that will no longer be used after this state
-            removable_data: Set[str] = set(s for s in access_sets
-                                           if state in access_sets[s] and not (access_sets[s] & reachable[state]))
+            removable_data: Set[str] = set(
+                s for s in access_sets if state in access_sets[s] and not (access_sets[s] & reachable[state]) - {state})
 
             # Find duplicate access nodes as an ordered list
             access_nodes: Dict[str, List[nodes.AccessNode]] = defaultdict(list)
@@ -73,7 +75,18 @@ class ArrayElimination(ppl.Pass):
             if removed_nodes:
                 result.update({n.data for n in removed_nodes})
 
+        # If node is completely removed from graph, erase data descriptor
+        for aname, desc in list(sdfg.arrays.items()):
+            if not desc.transient or isinstance(desc, data.Scalar):
+                continue
+            if aname not in access_sets or not access_sets[aname]:
+                sdfg.remove_data(aname, validate=False)
+                result.add(aname)
+
         return result or None
+
+    def report(self, pass_retval: Set[str]) -> str:
+        return f'Eliminated {len(pass_retval)} arrays.'
 
     def merge_access_nodes(self, state: SDFGState, access_nodes: Dict[str, List[nodes.AccessNode]],
                            condition: Callable[[nodes.AccessNode], bool]):
@@ -111,45 +124,59 @@ class ArrayElimination(ppl.Pass):
         state_id = sdfg.node_id(state)
 
         # Transformations that remove the first access node
-        xforms_first: List[SingleStateTransformation] = [RedundantArray(), RedundantWriteSlice(), UnsqueezeViewRemove()]
+        xforms_first: List[SingleStateTransformation] = [RedundantWriteSlice(), UnsqueezeViewRemove(), RedundantArray()]
         # Transformations that remove the second access node
         xforms_second: List[SingleStateTransformation] = [
-            RedundantSecondArray(), RedundantReadSlice(),
-            SqueezeViewRemove()
+            RedundantReadSlice(), SqueezeViewRemove(),
+            RedundantSecondArray()
         ]
 
         # Try the different redundant copy/view transformations on the node
-        for aname in removable_data:
-            for anode in access_nodes[aname]:
-                if state.out_degree(anode) == 1:
-                    succ = state.successors(anode)[0]
-                    if isinstance(succ, nodes.AccessNode):
-                        for xform in xforms_first:
-                            # Quick path to setup match
-                            candidate = {type(xform).in_array: anode, type(xform).out_array: succ}
-                            xform.setup_match(sdfg, sdfg.sdfg_id, state_id, candidate, 0, override=True)
-
-                            # Try to apply
-                            if xform.can_be_applied(state, 0, sdfg):
-                                xform.apply(state, sdfg)
-                                removed_nodes.add(anode)
-                                break
-
-                if anode in removed_nodes:  # Node was removed, skip second check
+        removed = {1}
+        while removed:
+            removed = set()
+            for aname in removable_data:
+                if aname not in access_nodes:  # May be in inter-state edges
                     continue
+                for anode in access_nodes[aname]:
+                    if anode in removed_nodes:
+                        continue
 
-                if state.in_degree(anode) == 1:
-                    pred = state.predecessors(anode)[0]
-                    if isinstance(pred, nodes.AccessNode):
-                        for xform in xforms_second:
-                            # Quick path to setup match
-                            candidate = {type(xform).in_array: pred, type(xform).out_array: anode}
-                            xform.setup_match(sdfg, sdfg.sdfg_id, state_id, candidate, 0, override=True)
+                    if state.out_degree(anode) == 1:
+                        succ = state.successors(anode)[0]
+                        if isinstance(succ, nodes.AccessNode):
+                            for xform in xforms_first:
+                                # Quick path to setup match
+                                candidate = {type(xform).in_array: anode, type(xform).out_array: succ}
+                                xform.setup_match(sdfg, sdfg.sdfg_id, state_id, candidate, 0, override=True)
 
-                            # Try to apply
-                            if xform.can_be_applied(state, 0, sdfg):
-                                xform.apply(state, sdfg)
-                                removed_nodes.add(anode)
-                                break
+                                # Try to apply
+                                if xform.can_be_applied(state, 0, sdfg):
+                                    ret = xform.apply(state, sdfg)
+                                    if ret is not None:  # A view was created
+                                        continue
+                                    removed_nodes.add(anode)
+                                    removed.add(anode)
+                                    break
+
+                    if anode in removed_nodes:  # Node was removed, skip second check
+                        continue
+
+                    if state.in_degree(anode) == 1:
+                        pred = state.predecessors(anode)[0]
+                        if isinstance(pred, nodes.AccessNode):
+                            for xform in xforms_second:
+                                # Quick path to setup match
+                                candidate = {type(xform).in_array: pred, type(xform).out_array: anode}
+                                xform.setup_match(sdfg, sdfg.sdfg_id, state_id, candidate, 0, override=True)
+
+                                # Try to apply
+                                if xform.can_be_applied(state, 0, sdfg):
+                                    ret = xform.apply(state, sdfg)
+                                    if ret is not None:  # A view was created
+                                        continue
+                                    removed_nodes.add(anode)
+                                    removed.add(anode)
+                                    break
 
         return removed_nodes

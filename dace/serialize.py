@@ -28,6 +28,7 @@ class SerializableObject(object):
 
 class NumpySerializer:
     """ Helper class to load/store numpy arrays from JSON. """
+
     @staticmethod
     def from_json(json_obj, context=None):
         if json_obj is None:
@@ -214,8 +215,8 @@ def set_properties_from_json(object_with_properties, json_obj, context=None, ign
                 # dictionary has been fully deserialized, and on raw json
                 # objects. In the interest of time, we're not failing here, but
                 # should untangle this eventually
-                print("WARNING: failed to parse object {}"
-                      " for property {} of type {}. Error was: {}".format(val, prop_name, prop, err))
+                warnings.warn("Failed to parse object {}"
+                              " for property {} of type {}. Error was: {}".format(val, prop_name, prop, err))
                 raise
 
         setattr(object_with_properties, prop_name, val)
@@ -225,4 +226,4 @@ def set_properties_from_json(object_with_properties, json_obj, context=None, ign
     remaining_properties = set(prop for prop in remaining_properties if not prop.startswith('_meta'))
     if len(remaining_properties) > 0:
         # TODO: elevate to error once #28 is fixed.
-        print("WARNING: unused properties: {}".format(", ".join(sorted(remaining_properties))))
+        warnings.warn("Unused properties: {}".format(", ".join(sorted(remaining_properties))))

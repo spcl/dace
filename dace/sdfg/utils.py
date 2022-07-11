@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 """ Various utility functions to create, traverse, and modify SDFGs. """
 
 import collections
@@ -17,6 +17,7 @@ from dace.sdfg.state import SDFGState, StateSubgraphView
 from dace.sdfg.scope import ScopeSubgraphView
 from dace.sdfg import nodes as nd, graph as gr
 from dace import config, data as dt, dtypes, memlet as mm, subsets as sbs, symbolic
+from dace.cli.progress import optional_progressbar
 from string import ascii_uppercase
 from typing import Any, Callable, Dict, Generator, List, Optional, Set, Tuple, Union
 
@@ -477,12 +478,14 @@ def consolidate_edges_scope(state: SDFGState, scope_node: Union[nd.EntryNode, nd
     if isinstance(scope_node, nd.EntryNode):
         outer_edges = state.in_edges
         inner_edges = state.out_edges
+        inner_conn = lambda e: e.src_conn
         remove_outer_connector = scope_node.remove_in_connector
         remove_inner_connector = scope_node.remove_out_connector
         prefix, oprefix = 'IN_', 'OUT_'
     else:
         outer_edges = state.out_edges
         inner_edges = state.in_edges
+        inner_conn = lambda e: e.dst_conn
         remove_outer_connector = scope_node.remove_out_connector
         remove_inner_connector = scope_node.remove_in_connector
         prefix, oprefix = 'OUT_', 'IN_'
@@ -490,11 +493,14 @@ def consolidate_edges_scope(state: SDFGState, scope_node: Union[nd.EntryNode, nd
     edges_by_connector = collections.defaultdict(list)
     connectors_to_remove = set()
     for e in inner_edges(scope_node):
-        edges_by_connector[e.src_conn].append(e)
+        if e.data.is_empty():
+            continue
+        conn = inner_conn(e)
+        edges_by_connector[conn].append(e)
         if e.data.data not in data_to_conn:
-            data_to_conn[e.data.data] = e.src_conn
-        elif data_to_conn[e.data.data] != e.src_conn:  # Need to consolidate
-            connectors_to_remove.add(e.src_conn)
+            data_to_conn[e.data.data] = conn
+        elif data_to_conn[e.data.data] != conn:  # Need to consolidate
+            connectors_to_remove.add(conn)
 
     for conn in connectors_to_remove:
         e = edges_by_connector[conn][0]
@@ -577,12 +583,15 @@ def consolidate_edges(sdfg: SDFG, starting_scope=None) -> int:
     This effectively reduces the number of connectors and allows more
     transformations to be performed, at the cost of losing the individual
     per-tasklet memlets.
+
     :param sdfg: The SDFG to consolidate.
+    :param starting_scope: If not None, starts with a certain scope
+    :param propagate: If True, applies memlet propagation after consolidation
     :return: Number of edges removed.
     """
-    from dace.sdfg.propagation import propagate_memlets_sdfg, propagate_memlets_scope
+    from dace.sdfg.propagation import propagate_memlets_scope
 
-    consolidated = 0
+    total_consolidated = 0
     for state in sdfg.nodes():
         # Start bottom-up
         if starting_scope and starting_scope.entry not in state.nodes():
@@ -592,25 +601,31 @@ def consolidate_edges(sdfg: SDFG, starting_scope=None) -> int:
         next_queue = []
         while len(queue) > 0:
             for scope in queue:
-                consolidated += consolidate_edges_scope(state, scope.entry)
-                consolidated += consolidate_edges_scope(state, scope.exit)
+                propagate_entry, propagate_exit = False, False
+
+                consolidated = consolidate_edges_scope(state, scope.entry)
+                total_consolidated += consolidated
+                if consolidated > 0:
+                    propagate_entry = True
+
+                consolidated = consolidate_edges_scope(state, scope.exit)
+                total_consolidated += consolidated
+                if consolidated > 0:
+                    propagate_exit = True
+
+                # Repropagate memlets
+                propagate_memlets_scope(sdfg, state, scope, propagate_entry, propagate_exit)
+
                 if scope.parent is not None:
                     next_queue.append(scope.parent)
             queue = next_queue
             next_queue = []
 
         if starting_scope is not None:
-            # Repropagate memlets from this scope outwards
-            propagate_memlets_scope(sdfg, state, starting_scope)
-
             # No need to traverse other states
             break
 
-    # Repropagate memlets
-    if starting_scope is None:
-        propagate_memlets_sdfg(sdfg)
-
-    return consolidated
+    return total_consolidated
 
 
 def is_array_stream_view(sdfg: SDFG, dfg: SDFGState, node: nd.AccessNode):
@@ -1129,8 +1144,6 @@ def fuse_states(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> 
                 break
     if progress:
         pbar.close()
-    if config.Config.get_bool('debugprint') and counter > 0:
-        print(f'Applied {counter} State Fusions')
     return counter
 
 
@@ -1151,28 +1164,12 @@ def inline_sdfgs(sdfg: SDFG, permissive: bool = False, progress: bool = None, mu
     # Avoid import loops
     from dace.transformation.interstate import InlineSDFG, InlineMultistateSDFG
 
-    if progress is None and not config.Config.get_bool('progress'):
-        progress = False
-
-    if progress is True or progress is None:
-        try:
-            from tqdm import tqdm
-        except ImportError:
-            tqdm = None
-
     counter = 0
     nsdfgs = [(n, p) for n, p in sdfg.all_nodes_recursive() if isinstance(n, NestedSDFG)]
-    if progress is True:
-        pbar = tqdm(total=len(nsdfgs), desc='Inlining SDFGs')
 
-    start = time.time()
-
-    for ctr, (node, state) in enumerate(reversed(nsdfgs)):
+    for node, state in optional_progressbar(reversed(nsdfgs), title='Inlining SDFGs', n=len(nsdfgs), progress=progress):
         id = node.sdfg.sdfg_id
         sd = state.parent
-        if (progress is None and tqdm is not None and (time.time() - start) > 5):
-            progress = True
-            pbar = tqdm(total=len(nsdfgs), desc='Inlining SDFG', initial=ctr)
 
         # We have to reevaluate every time due to changing IDs
         state_id = sd.node_id(state)
@@ -1185,8 +1182,6 @@ def inline_sdfgs(sdfg: SDFG, permissive: bool = False, progress: bool = None, mu
             if inliner.can_be_applied(state, 0, sd, permissive=permissive):
                 inliner.apply(state, sd)
                 counter += 1
-                if progress:
-                    pbar.update(1)
                 continue
 
         candidate = {
@@ -1197,13 +1192,7 @@ def inline_sdfgs(sdfg: SDFG, permissive: bool = False, progress: bool = None, mu
         if inliner.can_be_applied(state, 0, sd, permissive=permissive):
             inliner.apply(state, sd)
             counter += 1
-        if progress:
-            pbar.update(1)
 
-    if progress:
-        pbar.close()
-    if config.Config.get_bool('debugprint') and counter > 0:
-        print(f'Inlined {counter} SDFGs')
     return counter
 
 

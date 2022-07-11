@@ -563,6 +563,13 @@ class DiGraph(Graph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
 
     def find_cycles(self):
         return nx.simple_cycles(self._nx)
+    
+    def has_cycles(self) -> bool:
+        try:
+            nx.find_cycle(self._nx, self.source_nodes())
+            return True
+        except nx.NetworkXNoCycle:
+            return False
 
 
 class MultiDiGraph(DiGraph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
@@ -701,6 +708,13 @@ class OrderedDiGraph(Graph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
 
     def find_cycles(self):
         return nx.simple_cycles(self._nx)
+    
+    def has_cycles(self) -> bool:
+        try:
+            nx.find_cycle(self._nx, self.source_nodes())
+            return True
+        except nx.NetworkXNoCycle:
+            return False
 
     def edges_between(self, source: NodeT, destination: NodeT) -> List[Edge[EdgeT]]:
         if (source, destination) in self._edges:

@@ -23,7 +23,7 @@ from dace import data
 
 
 @make_properties
-class InlineMultistateSDFG(transformation.SingleStateTransformation, transformation.SimplifyPass):
+class InlineMultistateSDFG(transformation.SingleStateTransformation):
     """
     Inlines a multi-state nested SDFG into a top-level SDFG. This only happens
     if the state has the nested SDFG node isolated (i.e., only containing it
@@ -80,6 +80,8 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation, transformat
     def can_be_applied(self, state: SDFGState, expr_index, sdfg, permissive=False):
         nested_sdfg = self.nested_sdfg
         if nested_sdfg.no_inline:
+            return False
+        if nested_sdfg.schedule == dtypes.ScheduleType.FPGA_Device:
             return False
 
         # Ensure the state only contains a nested SDFG and input/output access

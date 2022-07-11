@@ -92,10 +92,11 @@ def test_mimo():
             elif not C2:
                 C2 = node
                 break
-    print(C1, C2)
-    dace.sdfg.utils.change_edge_dest(sdfg.nodes()[0], C2, C1)
-    dace.sdfg.utils.change_edge_src(sdfg.nodes()[0], C2, C1)
-    sdfg.nodes()[0].remove_node(C2)
+    if C1 is not None and C2 is not None:
+        dace.sdfg.utils.change_edge_dest(sdfg.nodes()[0], C2, C1)
+        dace.sdfg.utils.change_edge_src(sdfg.nodes()[0], C2, C1)
+        sdfg.nodes()[0].remove_node(C2)
+
     sdfg.validate()
     _test_quantitatively(sdfg)
 

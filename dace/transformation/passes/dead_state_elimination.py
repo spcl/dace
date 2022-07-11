@@ -12,6 +12,7 @@ class DeadStateElimination(ppl.Pass):
     """
     Removes all unreachable states (e.g., due to a branch that will never be taken) from an SDFG.
     """
+
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.States
 
@@ -93,6 +94,9 @@ class DeadStateElimination(ppl.Pass):
 
         # Dead states are states that are not live (i.e., visited)
         return set(sdfg.nodes()) - visited
+
+    def report(self, pass_retval: Set[SDFGState]) -> str:
+        return f'Eliminated {len(pass_retval)} states.'
 
     def is_definitely_taken(self, edge: InterstateEdge, sdfg: SDFG) -> bool:
         """ Returns True iff edge condition definitely evaluates to True. """

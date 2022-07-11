@@ -5,42 +5,40 @@ import dace as dp
 from dace.sdfg import SDFG
 from dace.memlet import Memlet
 
-N = dp.symbol('N')
-
-
-@dp.program
-def sdfg_internal(input: dp.float32, output: dp.float32[1]):
-    @dp.tasklet
-    def init():
-        out >> output
-        out = input
-
-    for k in range(4):
-
-        @dp.tasklet
-        def do():
-            oin << output
-            out >> output
-            out = oin * input
-
-
-# Construct SDFG
-mysdfg = SDFG('outer_sdfg')
-state = mysdfg.add_state()
-A = state.add_array('A', [N, N], dp.float32)
-B = state.add_array('B', [N, N], dp.float32)
-
-map_entry, map_exit = state.add_map('elements', [('i', '0:N'), ('j', '0:N')])
-nsdfg = state.add_nested_sdfg(sdfg_internal.to_sdfg(), mysdfg, {'input'}, {'output'})
-
-# Add edges
-state.add_memlet_path(A, map_entry, nsdfg, dst_conn='input', memlet=Memlet.simple(A, 'i,j'))
-state.add_memlet_path(nsdfg, map_exit, B, src_conn='output', memlet=Memlet.simple(B, 'i,j'))
-
 
 def test():
-    print('Nested SDFG test')
     # Externals (parameters, symbols)
+    N = dp.symbol('N')
+
+    @dp.program
+    def sdfg_internal(input: dp.float32, output: dp.float32[1]):
+        @dp.tasklet
+        def init():
+            out >> output
+            out = input
+
+        for k in range(4):
+
+            @dp.tasklet
+            def do():
+                oin << output
+                out >> output
+                out = oin * input
+
+
+    # Construct SDFG
+    mysdfg = SDFG('outer_sdfg')
+    state = mysdfg.add_state()
+    A = state.add_array('A', [N, N], dp.float32)
+    B = state.add_array('B', [N, N], dp.float32)
+
+    map_entry, map_exit = state.add_map('elements', [('i', '0:N'), ('j', '0:N')])
+    nsdfg = state.add_nested_sdfg(sdfg_internal.to_sdfg(), mysdfg, {'input'}, {'output'})
+
+    # Add edges
+    state.add_memlet_path(A, map_entry, nsdfg, dst_conn='input', memlet=Memlet.simple(A, 'i,j'))
+    state.add_memlet_path(nsdfg, map_exit, B, src_conn='output', memlet=Memlet.simple(B, 'i,j'))
+
 
     N.set(64)
 
