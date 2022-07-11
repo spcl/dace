@@ -1,10 +1,11 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 
 import pytest
+
 import dace
 from dace.sdfg import utils as sdutil
-from dace.transformation.passes.array_elimination import ArrayElimination
 from dace.transformation.pass_pipeline import Pipeline
+from dace.transformation.passes.array_elimination import ArrayElimination
 
 
 def test_redundant_simple():

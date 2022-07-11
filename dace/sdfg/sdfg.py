@@ -464,6 +464,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         :param jsondict: If not None, uses given JSON dictionary as input.
         :return: The hash (in SHA-256 format).
         '''
+
         def keyword_remover(json_obj: Any, last_keyword=""):
             # Makes non-unique in SDFG hierarchy v2
             # Recursively remove attributes from the SDFG which are not used in
@@ -1826,7 +1827,8 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             if find_new_name:
                 name = self._find_new_name(name)
             else:
-                raise NameError('Array or Stream with name "%s" already exists ' "in SDFG" % name)
+                raise NameError('Array or Stream with name "%s" already exists '
+                                "in SDFG" % name)
         self._arrays[name] = datadesc
 
         # Add free symbols to the SDFG global symbol storage
@@ -2274,35 +2276,15 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         warnings.warn('SDFG.apply_strict_transformations is deprecated, use SDFG.simplify instead.', DeprecationWarning)
         return self.simplify(validate, validate_all)
 
-    def simplify(self, validate=True, validate_all=False):
+    def simplify(self, validate=True, validate_all=False, verbose=False):
         """ Applies safe transformations (that will surely increase the
             performance) on the SDFG. For example, this fuses redundant states
             (safely) and removes redundant arrays.
 
-            B{Note:} This is an in-place operation on the SDFG.
+            :note: This is an in-place operation on the SDFG.
         """
-        # These are imported in order to update the transformation registry
-        from dace.transformation import dataflow, interstate
-        from dace.transformation.dataflow import RedundantReadSlice, RedundantWriteSlice
-        from dace.sdfg import utils as sdutil
-        # This is imported here to avoid an import loop
-        from dace.transformation.transformation import simplification_transformations
-
-        # First step is to apply multi-state inline, before any state fusion can
-        # occur
-        sdutil.inline_sdfgs(self, multistate=True)
-        if validate_all:
-            self.validate()
-        sdutil.fuse_states(self)
-
-        self.apply_transformations_repeated([RedundantReadSlice, RedundantWriteSlice],
-                                            validate=validate,
-                                            permissive=False,
-                                            validate_all=validate_all)
-        self.apply_transformations_repeated(simplification_transformations(),
-                                            validate=validate,
-                                            permissive=False,
-                                            validate_all=validate_all)
+        from dace.transformation.passes.simplify import SimplifyPass
+        return SimplifyPass(validate=validate, validate_all=validate_all, verbose=verbose).apply_pass(self, {})
 
     def _initialize_transformations_from_type(
         self,
