@@ -59,12 +59,12 @@ If you use DaCe, cite us:
    optimization/optimization
    setup/integration
    ide/cli
-   setup/debugging
 
 .. toctree::
    :caption: Developer Guide
    :maxdepth: 2
 
+   setup/debugging
    sdfg/transforming
    frontend/python
    codegen/codegen
