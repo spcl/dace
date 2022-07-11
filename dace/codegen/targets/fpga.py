@@ -13,7 +13,7 @@ import copy
 
 import dace
 from dace.codegen.targets import cpp
-from dace import subsets, data as dt, dtypes, memlet, symbolic
+from dace import subsets, data as dt, dtypes, memlet, sdfg as sd, symbolic
 from dace.config import Config
 from dace.frontend import operations
 from dace.sdfg import SDFG, nodes, utils, dynamic_map_inputs
@@ -1050,6 +1050,15 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
 
     def allocate_array(self, sdfg, dfg, state_id, node, nodedesc, function_stream, declaration_stream,
                        allocation_stream):
+
+        if nodedesc.lifetime == dtypes.AllocationLifetime.Persistent:
+            if sdfg.parent and any(str(s) in sdfg.parent_nsdfg_node.symbol_mapping for s in nodedesc.free_symbols):
+                nodedesc = copy.deepcopy(nodedesc)
+                csdfg = sdfg
+                while csdfg.parent_sdfg:
+                    symbolic.safe_replace(csdfg.parent_nsdfg_node.symbol_mapping,
+                                          lambda m: sd.replace_properties_dict(nodedesc, m))
+                    csdfg = csdfg.parent_sdfg
 
         result_decl = StringIO()
         result_alloc = StringIO()
