@@ -444,6 +444,10 @@ def make_transients_persistent(sdfg: SDFG, device: dtypes.DeviceType, toplevel_o
             for dnode in state.data_nodes():
                 if dnode.data in not_persistent:
                     continue
+                # Only convert arrays and scalars that are not compile-time constants
+                if dnode.data in nsdfg.constants_prop:
+                    not_persistent.add(dnode.data)
+                    continue
                 desc = dnode.desc(nsdfg)
                 # Only convert arrays and scalars that are not registers
                 if not desc.transient or type(desc) not in {dt.Array, dt.Scalar}:
