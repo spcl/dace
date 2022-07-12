@@ -469,6 +469,15 @@ class DaceProgram(pycommon.SDFGConvertible):
 
         return sdfg
 
+    def _evaluate_annotation(self, ann):
+        try:
+            return eval(ann.__forward_arg__, self.global_vars)
+        except AttributeError:
+            return ann
+        except:
+            # Evaluating arbitrary code - anything can happen. Good luck.
+            return dtypes.compiletime
+
     def _get_type_annotations(
             self, given_args: Tuple[Any],
             given_kwargs: Dict[str, Any]) -> Tuple[ArgTypes, Dict[str, Any], Dict[str, Any], Set[str]]:
@@ -564,6 +573,7 @@ class DaceProgram(pycommon.SDFGConvertible):
 
                             if not is_constant:  # Reset curarg
                                 curarg = ann
+                        ann = self._evaluate_annotation(ann)
 
                         # If annotation specifies to skip its data descriptor and favor JIT types
                         if create_datadescriptor(ann) is None:
