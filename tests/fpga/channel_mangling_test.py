@@ -76,9 +76,9 @@ def make_increment_sdfg(sdfg_name: str, dtype=dace.float32):
 
 
 def make_nested_sdfg_fpga(dtype=dace.float32):
-    '''
+    """
     Build an SDFG with two nested SDFGs, each one a different state
-    '''
+    """
 
     sdfg = dace.SDFG("channels_mangling")
 

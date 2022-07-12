@@ -268,18 +268,14 @@ def nodes_in_all_simple_paths(G, source, target, condition: Callable[[Any], bool
     :param source: Source node.
     :param targets: 
 
-    Notes
-    -----
-    This algorithm uses a modified depth-first search, adapted from 
-    networkx.all_simple_paths.
+    :note: This algorithm uses a modified depth-first search, adapted from 
+           ``networkx.all_simple_paths``.
     
-    The algorithm is written for directed _graphs_. For multigraphs, use
-    networkx.all_simple_paths!
+    :note: The algorithm is written for directed *graphs*. For multigraphs, use
+           ``networkx.all_simple_paths``!
 
-    References
-    ----------
-    .. [1] R. Sedgewick, "Algorithms in C, Part 5: Graph Algorithms",
-       Addison Wesley Professional, 3rd ed., 2001.
+    References:
+    [1] R. Sedgewick, "Algorithms in C, Part 5: Graph Algorithms", Addison Wesley Professional, 3rd ed., 2001.
     """
 
     cutoff = len(G) - 1
@@ -467,6 +463,7 @@ def consolidate_edges_scope(state: SDFGState, scope_node: Union[nd.EntryNode, nd
         This effectively reduces the number of connectors and allows more
         transformations to be performed, at the cost of losing the individual
         per-tasklet memlets.
+
         :param state: The SDFG state in which the scope to consolidate resides.
         :param scope_node: The scope node whose edges will be consolidated.
         :return: Number of edges removed.
@@ -539,6 +536,7 @@ def remove_edge_and_dangling_path(state: SDFGState, edge: MultiConnectorEdge):
     """
     Removes an edge and all of its parent edges in a memlet path, cleaning
     dangling connectors and isolated nodes resulting from the removal.
+
     :param state: The state in which the edge exists.
     :param edge: The edge to remove.
     """
@@ -778,6 +776,7 @@ def get_view_edge(state: SDFGState, view: nd.AccessNode) -> gr.MultiConnectorEdg
 def dynamic_map_inputs(state: SDFGState, map_entry: nd.MapEntry) -> List[gr.MultiConnectorEdge]:
     """
     For a given map entry node, returns a list of dynamic-range input edges.
+
     :param state: The state in which the map entry node resides.
     :param map_entry: The given node.
     :return: A list of edges in state whose destination is map entry and denote
@@ -789,6 +788,7 @@ def dynamic_map_inputs(state: SDFGState, map_entry: nd.MapEntry) -> List[gr.Mult
 def has_dynamic_map_inputs(state: SDFGState, map_entry: nd.MapEntry) -> bool:
     """
     Returns True if a map entry node has dynamic-range inputs.
+
     :param state: The state in which the map entry node resides.
     :param map_entry: The given node.
     :return: True if there are dynamic-range input memlets, False otherwise.
@@ -800,6 +800,7 @@ def is_parallel(state: SDFGState, node: Optional[nd.Node] = None) -> bool:
     """
     Returns True if a node or state are contained within a parallel
     section.
+
     :param state: The state to test.
     :param node: An optional node in the state to test. If None, only checks
                  state.
@@ -985,6 +986,7 @@ def local_transients(sdfg, dfg, entry_node, include_nested=False):
     """
     Returns transients local to the scope defined by the specified entry node in
     the dataflow graph.
+
     :param entry_node: The entry node that opens the scope. If `None`, the
                        top-level scope is used.
     :param include_nested: Include transients defined in nested scopes.
@@ -1084,6 +1086,7 @@ def fuse_states(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> 
     """
     Fuses all possible states of an SDFG (and all sub-SDFGs) using an optimized
     routine that uses the structure of the StateFusion transformation.
+
     :param sdfg: The SDFG to transform.
     :param permissive: If True, operates in permissive mode, which ignores some
                        race condition checks.
@@ -1151,6 +1154,7 @@ def inline_sdfgs(sdfg: SDFG, permissive: bool = False, progress: bool = None, mu
     """
     Inlines all possible nested SDFGs (or sub-SDFGs) using an optimized
     routine that uses the structure of the SDFG hierarchy.
+
     :param sdfg: The SDFG to transform.
     :param permissive: If True, operates in permissive mode, which ignores some
                        checks.
@@ -1213,11 +1217,12 @@ def load_precompiled_sdfg(folder: str):
 
 def distributed_compile(sdfg: SDFG, comm: "Intracomm") -> csdfg.CompiledSDFG:
     """
-    Compiles an SDFG in rank 0 of MPI communicator `comm`. Then, the compiled SDFG is loaded in all other ranks.
-    NOTE: This method can be used only if the module mpi4py is installed.
+    Compiles an SDFG in rank 0 of MPI communicator ``comm``. Then, the compiled SDFG is loaded in all other ranks.
+
     :param sdfg: SDFG to be compiled.
-    :param comm: MPI communicator. "Intracomm" is the base mpi4py communicator class.
+    :param comm: MPI communicator. ``Intracomm`` is the base mpi4py communicator class.
     :return: Compiled SDFG.
+    :note: This method can be used only if the module mpi4py is installed.
     """
 
     rank = comm.Get_rank()
@@ -1246,8 +1251,10 @@ def get_next_nonempty_states(sdfg: SDFG, state: SDFGState) -> Set[SDFGState]:
     From the given state, return the next set of states that are reachable
     in the SDFG, skipping empty states. Traversal stops at the non-empty
     state.
+
     This function is used to determine whether synchronization should happen
     at the end of a GPU state.
+
     :param sdfg: The SDFG that contains the state.
     :param state: The state to start from.
     :return: A set of reachable non-empty states.
@@ -1269,6 +1276,7 @@ def unique_node_repr(graph: Union[SDFGState, ScopeSubgraphView], node: Node) -> 
     Returns unique string representation of the given node,
     considering its placement into the SDFG graph.
     Useful for hashing, or building node-based dictionaries.
+
     :param graph: the state/subgraph that contains the node
     :param node: node to represent
     :return: the unique representation
@@ -1286,6 +1294,7 @@ def is_nonfree_sym_dependent(node: nd.AccessNode, desc: dt.Data, state: SDFGStat
     An Array is non-free symbol dependent when its attributes (e.g., shape)
     depend on non-free symbols. A View is non-free symbol dependent when either
     its adjacent edges or its viewed node depend on non-free symbols.
+
     :param node: the access node to check
     :param desc: the data descriptor to check
     :param state: the state that contains the node
@@ -1324,6 +1333,7 @@ def _tswds_state(
 ) -> Generator[Tuple[SDFGState, Node, Dict[str, dtypes.typeclass]], None, None]:
     """
     Helper function for ``traverse_sdfg_with_defined_symbols``.
+
     :see: traverse_sdfg_with_defined_symbols.
     """
     # Traverse state by scopes
@@ -1350,6 +1360,7 @@ def traverse_sdfg_with_defined_symbols(
         recursive: bool = False) -> Generator[Tuple[SDFGState, Node, Dict[str, dtypes.typeclass]], None, None]:
     """
     Traverses the SDFG, its states and nodes, yielding the defined symbols and their types at each node.
+
     :return: A generator that yields tuples of (state, node in state, currently-defined symbols)
     """
     # Start with global symbols
@@ -1388,6 +1399,7 @@ def is_fpga_kernel(sdfg, state):
     """
     Returns whether the given state is an FPGA kernel and should be dispatched
     to the FPGA code generator.
+
     :return: True if this is an FPGA kernel, False otherwise.
     """
     if ("is_FPGA_kernel" in state.location and state.location["is_FPGA_kernel"] == False):

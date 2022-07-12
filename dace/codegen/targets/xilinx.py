@@ -191,9 +191,9 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         return [host_code_obj] + kernel_code_objs + other_objs
 
     def _internal_preprocess(self, sdfg: dace.SDFG):
-        '''
+        """
         Vendor-specific SDFG Preprocessing
-        '''
+        """
 
         if self._decouple_array_interfaces:
             # If array accesses are decoupled, preprocess inter state edge assignments:
@@ -240,6 +240,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
     def define_stream(self, dtype, buffer_size, var_name, array_size, function_stream, kernel_stream, sdfg):
         """
            Defines a stream
+
            :return: a tuple containing the type of the created variable, and boolean indicating
                whether this is a global variable or not
            """
@@ -452,9 +453,9 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                                     node: nodes.Node,
                                     var_name: str,
                                     accessed_subset: Union[int, subsets.Subset] = None):
-        '''
+        """
         Adds post loop pragma for ignoring loop carried dependencies on a given variable
-        '''
+        """
         defined_type, _ = self._dispatcher.defined_vars.get(var_name)
 
         if var_name in sdfg.arrays:
@@ -580,8 +581,9 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
     def generate_host_function_body(self, sdfg: dace.SDFG, state: dace.SDFGState, kernel_name: str, predecessors: list,
                                     parameters: list, rtl_tasklet_names: list, kernel_stream: CodeIOStream,
                                     instrumentation_stream: CodeIOStream):
-        '''
+        """
         Generate the host-specific code for spawning and synchronizing the given kernel.
+
         :param sdfg:
         :param state:
         :param predecessors: list containing all the name of kernels that must be finished before starting this one
@@ -589,7 +591,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         :param rtl_tasklet_names
         :param kernel_stream: Device-specific code stream
         :param instrumentation_stream: Code for profiling kernel execution time.
-        '''
+        """
 
         # Keep track of kernel arguments as (arg, interface_id) pair
         kernel_args: List[Tuple[str, int]] = []
@@ -902,8 +904,9 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                                  subgraphs: list, kernel_stream: CodeIOStream, state_host_header_stream: CodeIOStream,
                                  state_host_body_stream: CodeIOStream, instrumentation_stream: CodeIOStream,
                                  function_stream: CodeIOStream, callsite_stream: CodeIOStream, state_parameters: list):
-        '''
+        """
         Generates Kernel code, both device and host side.
+
         :param sdfg:
         :param state:
         :param kernel_name:
@@ -918,7 +921,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         :param function_stream: CPU code stream.
         :param callsite_stream: CPU code stream.
         :param state_parameters: list of state parameters. The kernel-specific parameters will be appended to it.
-        '''
+        """
 
         (global_data_parameters, top_level_local_data, subgraph_parameters, nested_global_transients, bank_assignments,
          external_streams) = self.make_parameters(sdfg, state, subgraphs)
@@ -1177,6 +1180,7 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(kernel_f
         """
         Write source to destination, where the source is a scalar, and the
         destination is a pointer.
+        
         :return: String of C++ performing the write.
         """
         return self.make_write(DefinedType.Pointer, dst_dtype, None, "&" + dst_expr, None, src_expr, None,

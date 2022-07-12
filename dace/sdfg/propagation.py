@@ -549,13 +549,13 @@ class ConstantRangeMemlet(MemletPattern):
 
 
 def _annotate_loop_ranges(sdfg, unannotated_cycle_states):
-    '''
+    """
     Annotate each valid for loop construct with its loop variable ranges.
 
     :param sdfg: The SDFG in which to look.
     :param unannotated_cycle_states: List of states in cycles without valid
                                      for loop ranges.
-    '''
+    """
 
     # We import here to avoid cyclic imports.
     from dace.transformation.interstate.loop_detection import find_for_loop
@@ -900,14 +900,14 @@ def propagate_states(sdfg) -> None:
 
 
 def propagate_memlets_nested_sdfg(parent_sdfg, parent_state, nsdfg_node):
-    '''
+    """
     Propagate memlets out of a nested sdfg.
 
     :param parent_sdfg: The parent SDFG this nested SDFG is in.
     :param parent_state: The state containing this nested SDFG.
     :param nsdfg_node: The NSDFG node containing this nested SDFG.
     :note: This operates in-place on the parent SDFG.
-    '''
+    """
     # We import late to avoid cyclic imports here.
     from dace.transformation.helpers import unsqueeze_memlet
 
@@ -1078,6 +1078,7 @@ def propagate_memlets_nested_sdfg(parent_sdfg, parent_state, nsdfg_node):
 
 def reset_state_annotations(sdfg):
     """ Resets the state (loop-related) annotations of an SDFG.
+
         :note: This operation is shallow (does not go into nested SDFGs).
     """
     for state in sdfg.nodes():
@@ -1091,6 +1092,7 @@ def reset_state_annotations(sdfg):
 
 def propagate_memlets_sdfg(sdfg):
     """ Propagates memlets throughout an entire given SDFG. 
+    
         :note: This is an in-place operation on the SDFG.
     """
     # Reset previous annotations first
@@ -1104,6 +1106,7 @@ def propagate_memlets_sdfg(sdfg):
 
 def propagate_memlets_state(sdfg, state):
     """ Propagates memlets throughout one SDFG state.
+
         :param sdfg: The SDFG in which the state is situated.
         :param state: The state to propagate in.
         :note: This is an in-place operation on the SDFG state.
@@ -1217,6 +1220,7 @@ def propagate_memlet(dfg_state,
     """ Tries to propagate a memlet through a scope (computes the image of 
         the memlet function applied on an integer set of, e.g., a map range) 
         and returns a new memlet object.
+
         :param dfg_state: An SDFGState object representing the graph.
         :param memlet: The memlet adjacent to the scope node from the inside.
         :param scope_node: A scope entry or exit node.
@@ -1290,6 +1294,7 @@ def propagate_subset(memlets: List[Memlet],
     """ Tries to propagate a list of memlets through a range (computes the 
         image of the memlet function applied on an integer set of, e.g., a 
         map range) and returns a new memlet object.
+
         :param memlets: The memlets to propagate.
         :param arr: Array descriptor for memlet (used for obtaining extents).
         :param params: A list of variable names.

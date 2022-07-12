@@ -522,6 +522,7 @@ def _wait(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, request: str):
 @oprepo.replaces('dace.comm.Cart_create')
 def _cart_create(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, dims: ShapeType):
     """ Creates a process-grid and adds it to the DaCe program. The process-grid is implemented with [MPI_Cart_create](https://www.mpich.org/static/docs/latest/www3/MPI_Cart_create.html).
+
         :param dims: Shape of the process-grid (see `dims` parameter of `MPI_Cart_create`), e.g., [2, 3, 3].
         :return: Name of the new process-grid descriptor.
     """
@@ -558,6 +559,7 @@ def _cart_sub(pv: 'ProgramVisitor',
               exact_grid: RankType = None):
     """ Partitions the `parent_grid` to lower-dimensional sub-grids and adds them to the DaCe program.
         The sub-grids are implemented with [MPI_Cart_sub](https://www.mpich.org/static/docs/latest/www3/MPI_Cart_sub.html).
+
         :param parent_grid: Parent process-grid (similar to the `comm` parameter of `MPI_Cart_sub`).
         :param color: The i-th entry specifies whether the i-th dimension is kept in the sub-grid or is dropped (see `remain_dims` input of `MPI_Cart_sub`).
         :param exact_grid: [DEVELOPER] If set then, out of all the sub-grids created, only the one that contains the rank with id `exact_grid` will be utilized for collective communication.
@@ -601,6 +603,7 @@ def _subarray(pv: 'ProgramVisitor',
               correspondence: Sequence[Integral] = None):
     """ Adds a sub-array descriptor to the DaCe Program.
         Sub-arrays are implemented (when `process_grid` is set) with [MPI_Type_create_subarray](https://www.mpich.org/static/docs/v3.2/www3/MPI_Type_create_subarray.html).
+
         :param array: Either the name of an Array descriptor or the shape of the array (similar to the `array_of_sizes` parameter of `MPI_Type_create_subarray`).
         :param subarray: Either the name of an Array descriptor or the sub-shape of the (sub-)array (similar to the `array_of_subsizes` parameter of `MPI_Type_create_subarray`).
         :param dtype: Datatype of the array/sub-array (similar to the `oldtype` parameter of `MPI_Type_create_subarray`).
@@ -654,6 +657,7 @@ def _block_scatter(pv: 'ProgramVisitor',
                    correspondence: Sequence[Integral] = None):
     """ Block-scatters an Array using process-grids, sub-arrays, and the BlockScatter library node.
         This method currently does not support Array slices and imperfect tiling.
+
         :param in_buffer: Name of the (global) Array descriptor.
         :param out_buffer: Name of the (local) Array descriptor.
         :param scatter_grid: Name of the sub-grid used for scattering the Array (replication group leaders).
@@ -705,6 +709,7 @@ def _block_gather(pv: 'ProgramVisitor',
                   correspondence: Sequence[Integral] = None):
     """ Block-gathers an Array using process-grids, sub-arrays, and the BlockGather library node.
         This method currently does not support Array slices and imperfect tiling.
+
         :param in_buffer: Name of the (local) Array descriptor.
         :param out_buffer: Name of the (global) Array descriptor.
         :param gather_grid: Name of the sub-grid used for gathering the Array (reduction group leaders).
@@ -749,6 +754,7 @@ def _block_gather(pv: 'ProgramVisitor',
 def _redistribute(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, in_buffer: str, in_subarray: str, out_buffer: str,
                   out_subarray: str):
     """ Redistributes an Array using process-grids, sub-arrays, and the Redistribute library node.
+    
         :param in_buffer: Name of the (local) input Array descriptor.
         :param in_subarray: Input sub-array descriptor.
         :param out_buffer: Name of the (local) output Array descriptor.

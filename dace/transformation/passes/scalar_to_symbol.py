@@ -242,6 +242,7 @@ class TaskletPromoter(ast.NodeTransformer):
     def __init__(self, connector: str, symbol: str) -> None:
         """
         Initializes AST transformer.
+
         :param connector: Connector name (replacement source).
         :param symbol: Symbol name (replacement target).
         """
@@ -272,6 +273,7 @@ class TaskletPromoterDict(ast.NodeTransformer):
     def __init__(self, conn_to_sym: Dict[str, str]) -> None:
         """
         Initializes AST transformer.
+
         :param conn_to_sym: Connector name (replacement source) to symbol name (replacement target)
                             replacement dictionary.
         """
@@ -495,6 +497,7 @@ def remove_scalar_reads(sdfg: sd.SDFG, array_names: Dict[str, str]):
     This removes each read-only access node as well as all of its descendant
     edges (in memlet trees) and connectors. Descends recursively to nested
     SDFGs and modifies tasklets (Python and C++).
+    
     :param sdfg: The SDFG to operate on.
     :param array_names: Mapping between scalar names to replace and their
                         replacement symbol name.
@@ -591,6 +594,7 @@ class ScalarToSymbolPromotion(passes.Pass):
         to be used within states as part of memlets, and allows further
         transformations (such as loop detection) to use the information for
         optimization.
+        
         :param sdfg: The SDFG to run the pass on.
         :param ignore: An optional set of strings of scalars to ignore.
         :param transients_only: If False, also considers global data descriptors (e.g., arguments).

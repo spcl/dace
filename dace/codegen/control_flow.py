@@ -97,6 +97,7 @@ class ControlFlow:
     def as_cpp(self, codegen: 'DaCeCodeGenerator', symbols: Dict[str, dtypes.typeclass]) -> str:
         """ 
         Returns C++ code for this control flow block.
+
         :param codegen: A code generator object, used for allocation information and defined variables in scope.
         :param symbols: A dictionary of symbol names and their types.
         :return: C++ string with the generated code of the control flow block.
@@ -142,6 +143,7 @@ class SingleState(ControlFlow):
         """ 
         Helper function that generates a state transition (conditional goto) 
         from a state and an SDFG edge.
+
         :param sdfg: The parent SDFG.
         :param edge: The state transition edge to generate.
         :param successor: If not None, the state that will be generated right
@@ -538,6 +540,7 @@ def _cases_from_branches(
     If the input list of edges correspond to a switch/case scope (with all
     conditions being "x == y" for a unique symbolic x and integers y),
     returns the switch/case scope parameters.
+
     :param edges: List of inter-state edges.
     :return: Tuple of (case variable C++ expression, mapping from case to 
              control flow block). If not a valid switch/case scope, 
@@ -616,6 +619,7 @@ def _structured_control_flow_traversal(sdfg: SDFG,
                                        generate_children_of: SDFGState = None) -> Set[SDFGState]:
     """ 
     Helper function for ``structured_control_flow_tree``. 
+
     :param sdfg: SDFG.
     :param start: Starting state for traversal.
     :param ptree: State parent tree (computed from ``state_parent_tree``).
@@ -768,6 +772,7 @@ def structured_control_flow_tree(sdfg: SDFG, dispatch_state: Callable[[SDFGState
     Returns a structured control-flow tree (i.e., with constructs such as 
     branches and loops) from an SDFG, which can be used to generate its code
     in a compiler- and human-friendly way.
+    
     :param sdfg: The SDFG to iterate over.
     :return: Control-flow block representing the entire SDFG.
     """

@@ -42,6 +42,7 @@ def replace_dict(subgraph: 'dace.sdfg.state.StateGraphView',
                  symrepl: Optional[Dict[symbolic.SymbolicType, symbolic.SymbolicType]] = None):
     """ 
     Finds and replaces all occurrences of a set of symbols/arrays in the given subgraph.
+
     :param subgraph: The given graph or subgraph to replace in.
     :param repl: Dictionary of replacements (key -> value).
     :param symrepl: Optional cached dictionary of ``repl`` as symbolic expressions.
@@ -71,6 +72,7 @@ def replace_dict(subgraph: 'dace.sdfg.state.StateGraphView',
 def replace(subgraph: 'dace.sdfg.state.StateGraphView', name: str, new_name: str):
     """
     Finds and replaces all occurrences of a symbol or array in the given subgraph.
+    
     :param subgraph: The given graph or subgraph to replace in.
     :param name: Name to find.
     :param new_name: Name to replace.

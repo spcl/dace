@@ -579,6 +579,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         """ Annotates an SDFG (and all nested ones) to include a `_cuda_stream`
             field. This field is applied to all GPU maps, tasklets, and copies
             that can be executed in parallel.
+            
             :param sdfg: The sdfg to modify.
             :param default_stream: The stream ID to start counting from (used
                                    in recursion to nested SDFGs).

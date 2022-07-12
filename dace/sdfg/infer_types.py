@@ -54,6 +54,7 @@ def infer_out_connector_type(sdfg: SDFG, state: SDFGState, node: nodes.CodeNode,
 def infer_connector_types(sdfg: SDFG):
     """ 
     Infers connector types throughout an SDFG and its nested SDFGs in-place.
+    
     :param sdfg: The SDFG to infer.
     """
     # Loop over states, and in a topological sort over each state's nodes

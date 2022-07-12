@@ -50,10 +50,11 @@ def ground_truth(TMAX, NX, NY, ex, ey, hz, _fict_):
 
 
 def run_fdtd_2d(device_type: dace.dtypes.DeviceType):
-    '''
+    """
     Runs FDTD-2D for the given device
+
     :return: the SDFG
-    '''
+    """
 
     # Initialize data (polybench mini size)
     TMAX, NX, NY = (20, 20, 30)

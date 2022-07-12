@@ -502,6 +502,7 @@ class ListProperty(Property[List[T]]):
     def __init__(self, element_type: T, *args, **kwargs):
         """
         Create a List property with a uniform element type.
+
         :param element_type: The type of each element in the list, or a function
                              that converts an element to the wanted type (e.g.,
                              `dace.symbolic.pystr_to_symbolic` for symbolic
@@ -562,6 +563,7 @@ class TransformationHistProperty(Property):
     def __init__(self, *args, **kwargs):
         """
         Create a List property with element type TransformationBase.
+
         :param args: Other arguments (inherited from Property).
         :param kwargs: Other keyword arguments (inherited from Property).
         """
@@ -595,6 +597,7 @@ class DictProperty(Property):
         The type of each element in the dictionary can be given as a type class,
         or as a function that converts an element to the wanted type (e.g.,
         `dace.symbolic.pystr_to_symbolic` for symbolic expressions).
+        
         :param key_type: The type of the keys in the dictionary.
         :param value_type: The type of the values in the dictionary.
         :param args: Other arguments (inherited from Property).

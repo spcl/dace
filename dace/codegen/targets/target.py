@@ -23,7 +23,8 @@ class TargetCodeGenerator(object):
         """ Returns a list of generated `CodeObject` classes corresponding
             to files with generated code. If an empty list is returned
             (default) then this code generator does not create new files.
-            @see: CodeObject
+            
+            :see: CodeObject
         """
         return []
 
@@ -31,6 +32,7 @@ class TargetCodeGenerator(object):
         """
         Called before code generation on any target that will be dispatched.
         Used for making modifications on the SDFG prior to code generation.
+
         :note: Post-conditions assume that the SDFG will NOT be changed after
                this point.
         :param sdfg: The SDFG to modify in-place.
@@ -53,6 +55,7 @@ class TargetCodeGenerator(object):
                        callsite_stream: CodeIOStream) -> None:
         """ Generates code for an SDFG state, outputting it to the given
             code streams.
+
             :param sdfg: The SDFG to generate code from.
             :param state: The SDFGState to generate code from.
             :param function_stream: A `CodeIOStream` object that will be
@@ -69,6 +72,7 @@ class TargetCodeGenerator(object):
         """ Generates code for an SDFG state scope (from a scope-entry node
             to its corresponding scope-exit node), outputting it to the given
             code streams.
+
             :param sdfg: The SDFG to generate code from.
             :param dfg_scope: The `ScopeSubgraphView` to generate code from.
             :param state_id: The node ID of the state in the given SDFG.
@@ -85,6 +89,7 @@ class TargetCodeGenerator(object):
                       callsite_stream: CodeIOStream) -> None:
         """ Generates code for a single node, outputting it to the given
             code streams.
+
             :param sdfg: The SDFG to generate code from.
             :param dfg: The SDFG state to generate code from.
             :param state_id: The node ID of the state in the given SDFG.
@@ -102,6 +107,7 @@ class TargetCodeGenerator(object):
                       global_stream: CodeIOStream, declaration_stream: CodeIOStream) -> None:
         """ Generates code for declaring an array without allocating it,
             outputting to the given code streams.
+
             :param sdfg: The SDFG to generate code from.
             :param dfg: The SDFG state to generate code from.
             :param state_id: The node ID of the state in the given SDFG.
@@ -120,6 +126,7 @@ class TargetCodeGenerator(object):
                        allocation_stream: CodeIOStream) -> None:
         """ Generates code for allocating an array, outputting to the given
             code streams.
+
             :param sdfg: The SDFG to generate code from.
             :param dfg: The SDFG state to generate code from.
             :param state_id: The node ID of the state in the given SDFG.
@@ -139,6 +146,7 @@ class TargetCodeGenerator(object):
                          function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
         """ Generates code for deallocating an array, outputting to the given
             code streams.
+
             :param sdfg: The SDFG to generate code from.
             :param dfg: The SDFG state to generate code from.
             :param state_id: The node ID of the state in the given SDFG.
@@ -159,6 +167,7 @@ class TargetCodeGenerator(object):
         """ Generates code for copying memory, either from a data access
             node (array/stream) to another, a code node (tasklet/nested
             SDFG) to another, or a combination of the two.
+
             :param sdfg: The SDFG to generate code from.
             :param dfg: The SDFG state to generate code from.
             :param state_id: The node ID of the state in the given SDFG.
@@ -188,6 +197,7 @@ def make_absolute(path: str) -> str:
     """ 
     Finds an executable and returns an absolute path out of it. Used when
     finding compiler executables.
+
     :param path: Executable name, relative path, or absolute path.
     :return: Absolute path pointing to the same file as ``path``.
     """

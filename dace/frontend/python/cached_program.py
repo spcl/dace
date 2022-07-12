@@ -82,6 +82,7 @@ class DaceProgramCache:
     def __init__(self, evaluate: EvalCallback, size: Optional[int] = None) -> None:
         """ 
         Initializes a DaCe program cache.
+        
         :param evaluate: A callback that can evaluate constants at call time.
         :param size: The cache size (if not given, uses the default value from
                      the configuration).

@@ -23,6 +23,7 @@ class DeadStateElimination(ppl.Pass):
     def apply_pass(self, sdfg: SDFG, _) -> Optional[Set[SDFGState]]:
         """
         Removes unreachable states throughout an SDFG.
+        
         :param sdfg: The SDFG to modify.
         :param pipeline_results: If in the context of a ``Pipeline``, a dictionary that is populated with prior Pass
                                  results as ``{Pass subclass name: returned object from pass}``. If not run in a
@@ -37,7 +38,7 @@ class DeadStateElimination(ppl.Pass):
         return result or None
 
     def find_dead_states(self, sdfg: SDFG, set_unconditional_edges: bool = True) -> Set[SDFGState]:
-        '''
+        """
         Finds "dead" (unreachable) states in an SDFG. A state is deemed unreachable if it is:
             * Unreachable from the starting state
             * Conditions leading to it will always evaluate to False
@@ -46,7 +47,7 @@ class DeadStateElimination(ppl.Pass):
         :param sdfg: The SDFG to traverse.
         :param set_unconditional_edges: If True, conditions of edges evaluated as unconditional are removed.
         :return: A set of unreachable states.
-        '''
+        """
         visited: Set[SDFGState] = set()
 
         # Run a modified BFS where definitely False edges are not traversed, or if there is an

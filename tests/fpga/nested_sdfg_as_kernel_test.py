@@ -97,9 +97,9 @@ def make_vec_mul_sdfg(dtype=dace.float32):
 
 
 def make_fpga_sdfg():
-    '''
+    """
     Build an SDFG with two nested SDFGs in a single FPGA state
-    '''
+    """
 
     n = dace.symbol("n")
     vecWidth = 4
@@ -237,9 +237,9 @@ def make_fpga_sdfg():
 
 
 def make_fpga_sdfg_independent():
-    '''
+    """
     Build an SDFG with two nested SDFGs in a single FPGA state
-    '''
+    """
 
     n = dace.symbol("n")
     vecWidth = 4

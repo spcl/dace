@@ -593,6 +593,7 @@ class PAPIUtils(object):
     def get_memlet_byte_size(sdfg: dace.SDFG, memlet: Memlet):
         """
         Returns the memlet size in bytes, depending on its data type.
+        
         :param sdfg: The SDFG in which the memlet resides.
         :param memlet: Memlet to return size in bytes.
         :return: The size as a symbolic expression.

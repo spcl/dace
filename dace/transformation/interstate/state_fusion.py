@@ -87,6 +87,7 @@ class StateFusion(transformation.MultiStateTransformation):
         Performs an all-pairs check for subset intersection on two
         groups of nodes. If group intersects or result is indeterminate,
         returns True as a precaution.
+        
         :param graph_a: The graph in which the first set of nodes reside.
         :param group_a: The first set of nodes to check.
         :param inputs_a: If True, checks inputs of the first group.

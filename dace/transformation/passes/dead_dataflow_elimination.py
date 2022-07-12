@@ -38,6 +38,7 @@ class DeadDataflowElimination(ppl.Pass):
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[SDFGState, Set[str]]]:
         """
         Removes unreachable dataflow throughout SDFG states.
+        
         :param sdfg: The SDFG to modify.
         :param pipeline_results: If in the context of a ``Pipeline``, a dictionary that is populated with prior Pass
                                  results as ``{Pass subclass name: returned object from pass}``. If not run in a

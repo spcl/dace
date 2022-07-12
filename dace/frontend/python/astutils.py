@@ -17,6 +17,7 @@ from dace import dtypes, symbolic
 
 def _remove_outer_indentation(src: str):
     """ Removes extra indentation from a source Python function.
+
         :param src: Source code (possibly indented).
         :return: Code after de-indentation.
     """
@@ -27,6 +28,7 @@ def _remove_outer_indentation(src: str):
 
 def function_to_ast(f):
     """ Obtain the source code of a Python function and create an AST.
+
         :param f: Python function.
         :return: A 4-tuple of (AST, function filename, function line-number,
                                source code as string).
@@ -72,6 +74,7 @@ def is_constant(node: ast.AST) -> bool:
 def evalnode(node: ast.AST, gvars: Dict[str, Any]) -> Any:
     """
     Tries to evaluate an AST node given only global variables.
+
     :param node: The AST node/subtree to evaluate.
     :param gvars: A dictionary mapping names to variables.
     :return: The result of evaluation, or raises ``SyntaxError`` on any
@@ -153,6 +156,7 @@ def subscript_to_ast_slice(node, without_array=False):
     """ Converts an AST subscript to slice on the form
         (<name>, [<3-tuples of AST nodes>]). If an ast.Name is passed, returns
         (name, None), implying the full range. 
+
         :param node: The AST node to convert.
         :param without_array: If True, returns only the slice. Otherwise,
                               returns a 2-tuple of (array, range).
@@ -206,7 +210,8 @@ def subscript_to_ast_slice(node, without_array=False):
 def subscript_to_ast_slice_recursive(node):
     """ Converts an AST subscript to a slice in a recursive manner into nested
         subscripts.
-        @see: subscript_to_ast_slice
+        
+        :see: subscript_to_ast_slice
     """
     result = []
     while isinstance(node, ast.Subscript):
@@ -375,6 +380,7 @@ def copy_tree(node: ast.AST) -> ast.AST:
     """
     Copies an entire AST without copying the non-AST parts (e.g., constant values).
     A form of reduced deepcopy.
+
     :param node: The tree to copy.
     :return: The copied tree.
     """
@@ -605,6 +611,7 @@ class ASTHelperMixin:
         """
         Modification of ast.NodeTransformer.generic_visit that visits all fields without the
         set of filtered fields.
+
         :param node: AST to visit.
         :param filter: Set of strings of fields to skip.
         """
@@ -636,6 +643,7 @@ class ASTHelperMixin:
         """
         Modification of ast.NodeTransformer.generic_visit that only visits one
         field.
+
         :param node: AST to visit.
         :param field: Field to visit.
         """
@@ -664,6 +672,7 @@ class ASTHelperMixin:
 def create_constant(value: Any, node: Optional[ast.AST] = None) -> ast.AST:
     """
     Cross-Python-AST-version helper function that creates an AST constant node from a given value.
+
     :param value: The value to create a constant from.
     :param node: An optional node to copy the source location information from.
     :return: An AST node (``ast.Constant`` after Python 3.8) that represents this value.

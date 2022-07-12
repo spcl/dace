@@ -23,6 +23,7 @@ def validate(graph: 'dace.sdfg.graph.SubgraphView'):
 
 def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None):
     """ Verifies the correctness of an SDFG by applying multiple tests.
+    
         :param sdfg: The SDFG to verify.
         :param references: An optional set keeping seen IDs for object
                            miscopy validation.

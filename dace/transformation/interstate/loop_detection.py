@@ -109,6 +109,7 @@ def find_for_loop(
         List[sd.SDFGState], sd.SDFGState]]]:
     """
     Finds loop range from state machine.
+    
     :param guard: State from which the outgoing edges detect whether to exit
                   the loop or not.
     :param entry: First state in the loop "body".

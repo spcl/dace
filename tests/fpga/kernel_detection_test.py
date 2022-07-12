@@ -13,11 +13,12 @@ from dace.fpga_testing import fpga_test
 
 
 def count_kernels(sdfg: dace.SDFG):
-    '''
+    """
     Test utility functions: Counts the number of generated device kernels
+
     :param sdfg: Already compiled SDFG to count kernels for.
     :return: number of kernels
-    '''
+    """
 
     import csv
     kernels = 0
@@ -31,7 +32,7 @@ def count_kernels(sdfg: dace.SDFG):
 
 @fpga_test()
 def test_kernels_inside_component_0():
-    '''
+    """
     Tests for kernels detection inside a single connected component.
     It computes z =(x+y) + (v+w)
 
@@ -47,8 +48,7 @@ def test_kernels_inside_component_0():
             └─► │ Add_Map_3 │◄───┘
                 └───────────┘
     The 4 maps, should belong to three distinct kernels
-    :return:
-    '''
+    """
 
     @dace.program
     def kernels_inside_component_0(x: dace.float32[8], y: dace.float32[8], v: dace.float32[8], w: dace.float32[8],
@@ -82,7 +82,7 @@ def test_kernels_inside_component_0():
 
 @fpga_test()
 def test_kernels_inside_component_1():
-    '''
+    """
     Tests for kernels detection inside a single connected component.
     The program computes:
     - z = alpha*((x+y) + (v+w))
@@ -102,7 +102,7 @@ def test_kernels_inside_component_1():
 
     The five Maps should belong to 5 distinct kernels
 
-    '''
+    """
 
     @dace.program
     def kernels_inside_component_1(x: dace.float32[8], y: dace.float32[8], v: dace.float32[8], w: dace.float32[8],
@@ -137,7 +137,7 @@ def test_kernels_inside_component_1():
 
 @fpga_test()
 def test_kernels_inside_component_2():
-    '''
+    """
     Tests for PEs detection inside a single Component.
     It computes z =(x+y) and t = (y+v)
 
@@ -151,9 +151,7 @@ def test_kernels_inside_component_2():
      └───────────┘        └───────────┘
 
     Map_0 and Map_1 should belong to two distinct kernels
-
-    :return:
-    '''
+    """
 
     @dace.program
     def kernels_inside_component_2(x: dace.float32[8], y: dace.float32[8], v: dace.float32[8], z: dace.float32[8],
@@ -183,7 +181,7 @@ def test_kernels_inside_component_2():
 
 @fpga_test()
 def test_kernels_lns_inside_component():
-    '''
+    """
     Tests for kernels detection inside a single connected component where we
     have multiple library nodes.
 
@@ -196,7 +194,7 @@ def test_kernels_lns_inside_component():
             │   ┌───────────┐    │
             └─► │   Dot_2   │◄───┘
                 └───────────┘
-    '''
+    """
 
     # (Provisional) Disable unique function
     unique_functions_conf = dace.config.Config.get('compiler', 'unique_functions')
@@ -229,7 +227,7 @@ def test_kernels_lns_inside_component():
 
 @fpga_test()
 def test_kernels_inside_components_0():
-    '''
+    """
     Tests for kernels detection in two distinct connected components.
     The program computes:
     z = (x+y) + (v+w)
@@ -245,7 +243,7 @@ def test_kernels_inside_components_0():
                 └───────────┘
     The three maps, should belong to three distinct kernels
 
-    '''
+    """
 
     @dace.program
     def kernels_inside_components_0(x: dace.float32[8], y: dace.float32[8], v: dace.float32[8], w: dace.float32[8],
@@ -277,7 +275,7 @@ def test_kernels_inside_components_0():
 
 @fpga_test()
 def test_kernels_inside_components_multiple_states():
-    '''
+    """
     Tests for kernels detection in two distinct states.
     It computes
     z = (x+y) + (v+w)
@@ -292,8 +290,7 @@ def test_kernels_inside_components_multiple_states():
             └─► │ Add_Map_2 │◄───┘
                 └───────────┘
     The three maps, should belong to three distinct kernels
-    :return:
-    '''
+    """
 
     def make_sdfg(dtype=dace.float32):
         sdfg = dace.SDFG("multiple_kernels_multiple_states")

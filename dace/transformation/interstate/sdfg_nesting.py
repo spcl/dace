@@ -62,6 +62,7 @@ class InlineSDFG(transformation.SingleStateTransformation):
         Returns True if the strides of the inner array can be matched
         to the strides of the outer array upon inlining. Takes into
         consideration memlet (un)squeeze and nested SDFG symbol mapping.
+
         :param inner_strides: The strides of the array inside the nested SDFG.
         :param outer_strides: The strides of the array in the external SDFG.
         :param nested_sdfg: Nested SDFG node with symbol mapping.
@@ -179,6 +180,7 @@ class InlineSDFG(transformation.SingleStateTransformation):
         """ Remove all edges along a path, until memlet tree contains siblings
             that should not be removed. Removes resulting isolated nodes as
             well. Operates in place.
+            
             :param state: The state in which to remove edges.
             :param edge_map: Mapping from identifier to edge, used as a
                              predicate for removal.

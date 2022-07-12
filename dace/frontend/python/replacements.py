@@ -1533,7 +1533,9 @@ def _result_type(arguments: Sequence[Union[str, Number, symbolic.symbol, sp.Basi
 
 def _array_array_binop(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, left_operand: str, right_operand: str,
                        operator: str, opcode: str):
-    '''Both operands are Arrays (or Data in general)'''
+    """
+    Both operands are Arrays (or Data in general)
+    """
 
     left_arr = sdfg.arrays[left_operand]
     right_arr = sdfg.arrays[right_operand]
@@ -1590,7 +1592,9 @@ def _array_array_binop(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, 
 
 def _array_const_binop(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, left_operand: str, right_operand: str,
                        operator: str, opcode: str):
-    '''Operands are an Array and a Constant'''
+    """
+    Operands are an Array and a Constant
+    """
 
     if left_operand in sdfg.arrays:
         left_arr = sdfg.arrays[left_operand]
@@ -1658,7 +1662,9 @@ def _array_const_binop(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, 
 
 def _array_sym_binop(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, left_operand: str, right_operand: str,
                      operator: str, opcode: str):
-    '''Operands are an Array and a Symbol'''
+    """
+    Operands are an Array and a Symbol
+    """
 
     if left_operand in sdfg.arrays:
         left_arr = sdfg.arrays[left_operand]
@@ -1726,7 +1732,9 @@ def _array_sym_binop(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, le
 
 def _scalar_scalar_binop(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, left_operand: str, right_operand: str,
                          operator: str, opcode: str):
-    '''Both operands are Scalars'''
+    """
+    Both operands are Scalars
+    """
 
     left_scal = sdfg.arrays[left_operand]
     right_scal = sdfg.arrays[right_operand]
@@ -1763,7 +1771,9 @@ def _scalar_scalar_binop(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState
 
 def _scalar_const_binop(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, left_operand: str, right_operand: str,
                         operator: str, opcode: str):
-    '''Operands are a Scalar and a Constant'''
+    """
+    Operands are a Scalar and a Constant
+    """
 
     if left_operand in sdfg.arrays:
         left_scal = sdfg.arrays[left_operand]
@@ -1810,7 +1820,9 @@ def _scalar_const_binop(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
 
 def _scalar_sym_binop(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, left_operand: str, right_operand: str,
                       operator: str, opcode: str):
-    '''Operands are a Scalar and a Symbol'''
+    """
+    Operands are a Scalar and a Symbol
+    """
 
     if left_operand in sdfg.arrays:
         left_scal = sdfg.arrays[left_operand]
@@ -1876,7 +1888,9 @@ _pyop2symtype = {
 
 def _const_const_binop(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, left_operand: str, right_operand: str,
                        operator: str, opcode: str):
-    '''Both operands are Constants or Symbols'''
+    """
+    Both operands are Constants or Symbols
+    """
 
     _, casting = _result_type([left_operand, right_operand], operator)
     left_cast = casting[0]
@@ -2827,7 +2841,7 @@ def _validate_ufunc_inputs(visitor: 'ProgramVisitor', ast_node: ast.Call, sdfg: 
 
         :raises DaCeSyntaxError: When validation fails
 
-        :returns: List of input datanames and constants
+        :return: List of input datanames and constants
     """
 
     # Validate number of inputs
@@ -2875,7 +2889,7 @@ def _validate_ufunc_outputs(visitor: 'ProgramVisitor', ast_node: ast.Call, sdfg:
 
         :raises DaCeSyntaxError: When validation fails
 
-        :returns: List of output datanames and None
+        :return: List of output datanames and None
     """
 
     # Validate number of outputs
@@ -2935,8 +2949,8 @@ def _validate_where_kword(visitor: 'ProgramVisitor', ast_node: ast.Call, sdfg: S
 
         :raises DaceSyntaxError: When validation fails
 
-        :returns: Tuple of a boolean value indicating whether the 'where'
-        keyword is defined, and the validated 'where' value
+        :return: Tuple of a boolean value indicating whether the 'where'
+                 keyword is defined, and the validated 'where' value
     """
 
     has_where = False
@@ -2973,7 +2987,7 @@ def _validate_shapes(visitor: 'ProgramVisitor', ast_node: ast.Call, sdfg: SDFG, 
 
         :raises DaCeSyntaxError: When validation fails
 
-        :returns: Tuple with the output shape, the map, output and input indices
+        :return: Tuple with the output shape, the map, output and input indices
     """
 
     shapes = []
@@ -3000,7 +3014,7 @@ def _broadcast(shapes: Sequence[Shape]) -> Tuple[Shape, Tuple[Tuple[str, str], .
 
         :raises SyntaxError: When broadcasting fails
 
-        :returns: Tuple with the output shape, the map, output and input indices
+        :return: Tuple with the output shape, the map, output and input indices
     """
 
     map_lengths = dict()
@@ -3089,9 +3103,8 @@ def _create_output(sdfg: SDFG,
         :param output_dtype: Datatype of the output data
         :param storage: Storage type of the output data
         :param force_scalar: If True and output shape is (1,) then output
-        becomes a dace.data.Scalar, regardless of the data-type of the inputs
-
-        :returns: New outputs of the ufunc call
+                             becomes a ``dace.data.Scalar``, regardless of the data-type of the inputs
+        :return: New outputs of the ufunc call
     """
 
     # Check if the result is scalar
@@ -3143,8 +3156,8 @@ def _set_tasklet_params(ufunc_impl: Dict[str, Any],
         :param ufunc_impl: Information on how the ufunc must be implemented
         :param inputs: Inputs of the ufunc call
 
-        :returns: Dictionary with the (1) tasklet name, (2) input connectors,
-                  (3) output connectors, and (4) tasklet code
+        :return: Dictionary with the (1) tasklet name, (2) input connectors,
+                 (3) output connectors, and (4) tasklet code
     """
 
     # (Deep) copy default tasklet parameters from the ufunc_impl dictionary
@@ -3384,7 +3397,7 @@ def implement_ufunc(visitor: 'ProgramVisitor', ast_node: ast.Call, sdfg: SDFG, s
 
         :raises DaCeSyntaxError: When validation fails
 
-        :returns: List of output datanames
+        :return: List of output datanames
     """
 
     # Flatten arguments
@@ -3455,7 +3468,7 @@ def _validate_keepdims_kword(visitor: 'ProgramVisitor', ast_node: ast.Call, ufun
 
         :raises DaCeSyntaxError: When validation fails
 
-        :returns: Boolean value of the 'keepdims' keyword argument
+        :return: Boolean value of the 'keepdims' keyword argument
     """
 
     keepdims = False
@@ -3484,8 +3497,8 @@ def _validate_axis_kword(visitor: 'ProgramVisitor', ast_node: ast.Call, sdfg: SD
 
         :raises DaCeSyntaxError: When validation fails
 
-        :returns: The value of the 'axis' keyword argument, the intermediate
-        data shape (if needed), and the expected output shape
+        :return: The value of the 'axis' keyword argument, the intermediate
+                 data shape (if needed), and the expected output shape
     """
 
     # Validate 'axis' keyword
@@ -3546,7 +3559,7 @@ def implement_ufunc_reduce(visitor: 'ProgramVisitor', ast_node: ast.Call, sdfg: 
 
         :raises DaCeSyntaxError: When validation fails
 
-        :returns: List of output datanames
+        :return: List of output datanames
     """
 
     # Flatten arguments
@@ -3718,7 +3731,7 @@ def implement_ufunc_accumulate(visitor: 'ProgramVisitor', ast_node: ast.Call, sd
 
         :raises DaCeSyntaxError: When validation fails
 
-        :returns: List of output datanames
+        :return: List of output datanames
     """
 
     # Flatten arguments
@@ -3843,7 +3856,7 @@ def implement_ufunc_outer(visitor: 'ProgramVisitor', ast_node: ast.Call, sdfg: S
 
         :raises DaCeSyntaxError: When validation fails
 
-        :returns: List of output datanames
+        :return: List of output datanames
     """
 
     # Flatten arguments
@@ -4292,7 +4305,7 @@ def _datatype_converter(sdfg: SDFG, state: SDFGState, arg: UfuncInput, dtype: dt
         :param arg: Input argument
         :param dtype: Datatype to convert input argument into
 
-        :returns: dace.data.Array of same size as input or dace.data.Scalar
+        :return: ``dace.data.Array`` of same size as input or ``dace.data.Scalar``
     """
 
     # Get shape and indices

@@ -69,10 +69,11 @@ def init_data(M, N):
 
 
 def run_covariance(device_type: dace.dtypes.DeviceType):
-    '''
+    """
     Runs Covariance for the given device
+
     :return: the SDFG
-    '''
+    """
 
     # Initialize data (polybench small size)
     M, N = (80, 100)
