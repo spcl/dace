@@ -6,6 +6,7 @@ from dace.frontend.python import astutils
 from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg import nodes, utils as sdutil
 from dace.transformation import pass_pipeline as ppl
+from dace.cli.progress import optional_progressbar
 from dace import SDFG, SDFGState, dtypes, symbolic
 from typing import Any, Dict, Set, Optional, Tuple
 
@@ -15,7 +16,7 @@ class _UnknownValue:
     pass
 
 
-@dataclass
+@dataclass(unsafe_hash=True)
 class ConstantPropagation(ppl.Pass):
     """
     Propagates constants and symbols that were assigned to one value forward through the SDFG, reducing
@@ -23,6 +24,7 @@ class ConstantPropagation(ppl.Pass):
     """
 
     recursive: bool = True
+    progress: Optional[bool] = None
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Symbols | ppl.Modifies.Edges | ppl.Modifies.Nodes
@@ -73,7 +75,10 @@ class ConstantPropagation(ppl.Pass):
             desc_symbols, multivalue_desc_symbols = self._find_desc_symbols(sdfg, per_state_constants)
 
             # Replace constants per state
-            for state, mapping in per_state_constants.items():
+            for state, mapping in optional_progressbar(per_state_constants.items(),
+                                                       'Propagating constants',
+                                                       n=len(per_state_constants),
+                                                       progress=self.progress):
                 remaining_unknowns.update(
                     {k
                      for k, v in mapping.items() if v is _UnknownValue or k in multivalue_desc_symbols})
@@ -81,6 +86,8 @@ class ConstantPropagation(ppl.Pass):
                     k: v
                     for k, v in mapping.items() if v is not _UnknownValue and k not in multivalue_desc_symbols
                 }
+                if not mapping:
+                    continue
 
                 # Update replaced symbols for later replacements
                 symbols_replaced.update(mapping)
@@ -135,6 +142,9 @@ class ConstantPropagation(ppl.Pass):
             return None
         return result
 
+    def report(self, pass_retval: Set[str]) -> str:
+        return f'Propagated {len(pass_retval)} constants.'
+
     def collect_constants(self,
                           sdfg: SDFG,
                           initial_symbols: Optional[Dict[str, Any]] = None) -> Dict[SDFGState, Dict[str, Any]]:
@@ -159,7 +169,8 @@ class ConstantPropagation(ppl.Pass):
             result[start_state].update(initial_symbols)
 
         # Traverse SDFG topologically
-        for state in sdfg.topological_sort(start_state):
+        for state in optional_progressbar(sdfg.topological_sort(start_state), 'Collecting constants',
+                                          sdfg.number_of_nodes(), self.progress):
             if state in result:
                 continue
             result[state] = {}
@@ -233,6 +244,8 @@ class ConstantPropagation(ppl.Pass):
         :param new_symbols: The new symbols to include (and propagate ``symbols`` into).
         :param backward: If True, assumes symbol back-propagation (i.e., only update keys in symbols if newer).
         """
+        if not new_symbols:
+            return
         # If propagating backwards, ensure symbols are only added if they are not overridden
         if backward:
             for k, v in new_symbols.items():
@@ -240,8 +253,11 @@ class ConstantPropagation(ppl.Pass):
                     symbols[k] = v
             return
 
+        repl = {k: v for k, v in symbols.items() if v is not _UnknownValue}
+        unknowns = {k for k, v in symbols.items() if v is _UnknownValue}
+
         # Replace interstate edge assignment (which is Python code)
-        def _replace_assignment(v, repl):
+        def _replace_assignment(v, assignment):
             # Special cases to speed up replacement
             v = str(v)
             if not v:
@@ -250,14 +266,17 @@ class ConstantPropagation(ppl.Pass):
                 return repl[v]
 
             vast = ast.parse(v)
-            replacer = astutils.ASTFindReplace(repl)
-            vast = replacer.visit(vast)
+            replacer = astutils.ASTFindReplace(repl, assignment)
+            try:
+                vast = replacer.visit(vast)
+            except astutils.NameFound:
+                # If any of the unknowns were found in the expression, mark assignment as unknown
+                return _UnknownValue
             return astutils.unparse(vast)
 
         # Update results with values of other propagated symbols
-        repl = {k: v for k, v in symbols.items() if v is not _UnknownValue}
         propagated_symbols = {
-            k: _replace_assignment(v, repl) if v is not _UnknownValue else _UnknownValue
+            k: _replace_assignment(v, {k} & unknowns) if v is not _UnknownValue else _UnknownValue
             for k, v in new_symbols.items()
         }
         symbols.update(propagated_symbols)
@@ -266,7 +285,10 @@ class ConstantPropagation(ppl.Pass):
         """
         Return symbol assignments that only depend on other symbols and constants, rather than data descriptors.
         """
-        return {k: v if (not (symbolic.free_symbols_and_functions(v) & arrays)) else _UnknownValue for k, v in edge.assignments.items()}
+        return {
+            k: v if (not (symbolic.free_symbols_and_functions(v) & arrays)) else _UnknownValue
+            for k, v in edge.assignments.items()
+        }
 
     def _constants_from_unvisited_state(self, sdfg: SDFG, state: SDFGState, arrays: Set[str],
                                         existing_constants: Dict[SDFGState, Dict[str, Any]]) -> Dict[str, Any]:

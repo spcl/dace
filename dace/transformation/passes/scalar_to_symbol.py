@@ -3,29 +3,59 @@
 
 import ast
 import collections
-from dace import symbolic
-from dace.sdfg.sdfg import InterstateEdge
-from dace import (dtypes, nodes, sdfg as sd, data as dt, properties as props, memlet as mm, subsets)
-from dace.sdfg import graph as gr, SDFG
 from dace.sdfg.replace import replace_properties_dict
-from dace.frontend.python import astutils
-from dace.sdfg import utils as sdutils
-from dace.transformation import helpers as xfh, pass_pipeline as passes
-from dataclasses import dataclass
 import re
+from dataclasses import dataclass
 from typing import Any, DefaultDict, Dict, List, Optional, Set, Tuple, Union
+
+import dace
+from dace import data as dt
+from dace import dtypes
+from dace import memlet as mm
+from dace import nodes
+from dace import properties as props
+from dace import sdfg as sd
+from dace import subsets, symbolic
+from dace.frontend.python import astutils
+from dace.sdfg import SDFG
+from dace.sdfg import graph as gr
+from dace.sdfg import utils as sdutils
+from dace.sdfg.replace import replace_properties_dict
+from dace.sdfg.sdfg import InterstateEdge
+from dace.transformation import helpers as xfh
+from dace.transformation import pass_pipeline as passes
 
 
 class AttributedCallDetector(ast.NodeVisitor):
-    """ Detects attributed calls in Tasklets.
     """
+    Detects calls to functions that are attributes.
+    """
+
     def __init__(self):
         self.detected = False
 
     def visit_Call(self, node: ast.Call) -> Any:
         if isinstance(node.func, ast.Attribute):
+            # Special case: calling attributed functions on constants (e.g., dace.int64(2))
+            if (len(node.args) == 1 and astutils.is_constant(node.args[0])
+                    and astutils.rname(node.func.value) == 'dace'):
+                return self.generic_visit(node)
+
             self.detected = True
             return
+        return self.generic_visit(node)
+
+
+class RemoveConstantAttributes(ast.NodeTransformer):
+    """
+    Removes calls to functions that are attributes, if they point to a constant value for a cast.
+    """
+
+    def visit_Call(self, node: ast.Call) -> Any:
+        # Assuming AttributedCallDetector already filtered relevant cases
+        if isinstance(node.func, ast.Attribute):
+            val = astutils.evalnode(node, {'dace': dace})
+            return astutils.create_constant(val, node)
         return self.generic_visit(node)
 
 
@@ -177,7 +207,7 @@ def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integer
                             continue
                         newcode = translate_cpp_tasklet_to_python(cstr)
                         try:
-                            parsed_ast = ast.parse(str(newcode))
+                            ast.parse(str(newcode))
                         except SyntaxError:
                             #if we cannot parse the expression to pythonize it, we cannot promote the candidate
                             candidates.remove(candidate)
@@ -209,6 +239,7 @@ class TaskletPromoter(ast.NodeTransformer):
     If connector name is used in tasklet as subscript, modifies to symbol name.
     If connector is used as a standard name, modify tasklet code to use symbol.
     """
+
     def __init__(self, connector: str, symbol: str) -> None:
         """
         Initializes AST transformer.
@@ -238,6 +269,7 @@ class TaskletPromoterDict(ast.NodeTransformer):
     If connector name is used in tasklet as subscript, modifies to symbol name.
     If connector is used as a standard name, modify tasklet code to use symbol.
     """
+
     def __init__(self, conn_to_sym: Dict[str, str]) -> None:
         """
         Initializes AST transformer.
@@ -266,6 +298,7 @@ class TaskletIndirectionPromoter(ast.NodeTransformer):
     After visiting an AST, self.{in,out}_mapping will be filled with mappings
     from unique new connector names to sets of individual memlets.
     """
+
     def __init__(self, in_edges: Dict[str, mm.Memlet], out_edges: Dict[str, mm.Memlet], sdfg: sd.SDFG,
                  defined_syms: Set[str]) -> None:
         """
@@ -439,9 +472,10 @@ def remove_symbol_indirection(sdfg: sd.SDFG):
             out_mapping = {}
             do_not_remove = {}
             if node.code.language is dtypes.Language.Python:
-                promo = TaskletIndirectionPromoter({e.dst_conn: e.data for e in state.in_edges(node)},
-                                                   {e.src_conn: e.data for e in state.out_edges(node)},
-                                                   sdfg, defined_syms.keys())
+                promo = TaskletIndirectionPromoter({e.dst_conn: e.data
+                                                    for e in state.in_edges(node)},
+                                                   {e.src_conn: e.data
+                                                    for e in state.out_edges(node)}, sdfg, defined_syms.keys())
                 for stmt in node.code.code:
                     promo.visit(stmt)
                 in_mapping = promo.in_mapping
@@ -550,7 +584,7 @@ def translate_cpp_tasklet_to_python(code: str):
     return newcode
 
 
-@dataclass
+@dataclass(unsafe_hash=True)
 class ScalarToSymbolPromotion(passes.Pass):
     ignore: Optional[Set[str]] = None
     transients_only: bool = True
@@ -593,7 +627,7 @@ class ScalarToSymbolPromotion(passes.Pass):
         if ignore:
             to_promote -= ignore
         if len(to_promote) == 0:
-            return to_promote
+            return None
 
         for state in sdfg.nodes():
             scalar_nodes = [n for n in state.nodes() if isinstance(n, nodes.AccessNode) and n.data in to_promote]
@@ -616,6 +650,9 @@ class ScalarToSymbolPromotion(passes.Pass):
                     # Convert tasklet to interstate edge
                     newcode: str = ''
                     if input.language is dtypes.Language.Python:
+                        # Remove attributed calls of constant values (e.g., dace.int32(2))
+                        RemoveConstantAttributes().visit(input.code.code[0])
+
                         newcode = astutils.unparse(input.code.code[0].value)
                     elif input.language is dtypes.Language.CPP:
                         newcode = translate_cpp_tasklet_to_python(input.code.as_string.strip())
@@ -678,7 +715,10 @@ class ScalarToSymbolPromotion(passes.Pass):
         # Step 7: Indirection
         remove_symbol_indirection(sdfg)
 
-        return to_promote
+        return to_promote or None
+
+    def report(self, pass_retval: Set[str]) -> str:
+        return f'Promoted {len(pass_retval)} scalars to symbols.'
 
 
 def promote_scalars_to_symbols(sdfg: sd.SDFG,

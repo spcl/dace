@@ -46,7 +46,7 @@ class ScopeSubgraphView(StateSubgraphView):
         return result
 
 
-def _scope_subgraph(graph, entry_node, include_entry, include_exit):
+def _scope_subgraph(graph, entry_node, include_entry, include_exit) -> ScopeSubgraphView:
     if not isinstance(entry_node, nd.EntryNode):
         raise TypeError("Received {}: should be dace.nodes.EntryNode".format(type(entry_node).__name__))
     node_to_children = graph.scope_children()

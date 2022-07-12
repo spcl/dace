@@ -12,9 +12,6 @@ All transformations extend the ``TransformationBase`` class. There are three bui
     subgraphs.
   * Library node expansions (extending ExpandTransformation): An internal class used for tracking how library nodes
     are expanded.
-
-Some transformations are included in the SDFG simplification pass. In order to declare a transformation as part
-of the simplification pass, it should also extend the ``SimplifyPass`` mixin.
 """
 
 import abc
@@ -424,9 +421,6 @@ class SingleStateTransformation(PatternTransformation, abc.ABC):
     methods' documentation.
 
     :seealso: PatternNode
-    :note: Some transformations are included in the SDFG simplification pass. In order to declare a 
-           transformation as part of the simplification pass, it should also extend the 
-           ``SimplifyPass`` mixin.
     """
     @classmethod
     @abc.abstractmethod
@@ -483,9 +477,6 @@ class MultiStateTransformation(PatternTransformation, abc.ABC):
     methods' documentation.
 
     :seealso: PatternNode
-    :note: Some transformations are included in the SDFG simplification pass. In order to declare a 
-           transformation as part of the simplification pass, it should also extend the 
-           ``SimplifyPass`` mixin.
     """
     @classmethod
     @abc.abstractmethod
@@ -510,15 +501,6 @@ class MultiStateTransformation(PatternTransformation, abc.ABC):
             :return: True if the transformation can be applied.
         """
         pass
-
-
-class SimplifyPass:
-    """
-    Mixin that includes the given PatternTransformation in the SDFG simplification pass. This transformation
-    will be automatically applied throughout the SDFG in non-permissive mode as the graph is constructed, or when
-    ``sdfg.simplify()`` is called.
-    """
-    pass
 
 
 T = TypeVar("T")
@@ -864,8 +846,3 @@ class SubgraphTransformation(TransformationBase):
         serialize.set_properties_from_json(ret, json_obj, context=context, ignore_properties={'transformation', 'type'})
         return ret
 
-
-def simplification_transformations() -> List[Type[PatternTransformation]]:
-    """ :return: List of all registered simplification transformations.
-    """
-    return list(SimplifyPass.__subclasses__())

@@ -25,7 +25,7 @@ from dace import data
 
 
 @make_properties
-class InlineSDFG(transformation.SingleStateTransformation, transformation.SimplifyPass):
+class InlineSDFG(transformation.SingleStateTransformation):
     """ Inlines a single-state nested SDFG into a top-level SDFG.
 
         In particular, the steps taken are:
@@ -206,6 +206,10 @@ class InlineSDFG(transformation.SingleStateTransformation, transformation.Simpli
                     if len([e for e in edge_func(pedge) if edge_pred(pedge, e)]) == 1:
                         # Remove connectors as well
                         state.remove_edge_and_connectors(pedge)
+                        # If both are scope nodes and no more edges connect them, add empty memlet
+                        if (isinstance(pedge.src, (nodes.EntryNode, nodes.ExitNode))
+                                and isinstance(pedge.dst, (nodes.EntryNode, nodes.ExitNode))):
+                            state.add_nedge(pedge.src, pedge.dst, Memlet())
                     else:
                         break
                 else:  # Reached terminus without breaking, remove external node
@@ -607,7 +611,7 @@ class InlineSDFG(transformation.SingleStateTransformation, transformation.Simpli
                                                                   matching_edge.data,
                                                                   use_dst_subset=True, desc=nsdfg.arrays[inner_edge.data.data])
                             new_memlet = in_memlet
-                            new_memlet.other_subset = out_memlet.subset
+                            new_memlet.other_subset = out_memlet.dst_subset
 
                             inner_edge.data = new_memlet
                             if len(nstate.out_edges(inner_edge.dst)) > 0:
@@ -840,6 +844,7 @@ class ASTRefiner(ast.NodeTransformer):
     Python AST transformer used in ``RefineNestedAccess`` to reduce (refine) the
     subscript ranges based on the specification given in the transformation.
     """
+
     def __init__(self, to_refine: str, refine_subset: subsets.Subset, sdfg: SDFG, indices: Set[int] = None) -> None:
         self.to_refine = to_refine
         self.subset = refine_subset

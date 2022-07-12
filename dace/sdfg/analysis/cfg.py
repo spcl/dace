@@ -112,6 +112,7 @@ def state_parent_tree(sdfg: SDFG) -> Dict[SDFGState, SDFGState]:
 
         reachable_a = False
         a_reached_guard = False
+
         def cond_a(parent, child):
             nonlocal reachable_a
             nonlocal a_reached_guard
@@ -123,13 +124,14 @@ def state_parent_tree(sdfg: SDFG) -> Dict[SDFGState, SDFGState]:
                 return False
             if oa not in alldoms[child]:  # Traversed outside of the loop
                 return False
-            if child is guard: # Traversed back to guard
+            if child is guard:  # Traversed back to guard
                 a_reached_guard = True
                 return False
             return True  # Keep traversing
 
         reachable_b = False
         b_reached_guard = False
+
         def cond_b(parent, child):
             nonlocal reachable_b
             nonlocal b_reached_guard
@@ -146,8 +148,8 @@ def state_parent_tree(sdfg: SDFG) -> Dict[SDFGState, SDFGState]:
                 return False
             return True  # Keep traversing
 
-        list(sdutil.dfs_conditional(sdfg, (oa,), cond_a))
-        list(sdutil.dfs_conditional(sdfg, (ob,), cond_b))
+        list(sdutil.dfs_conditional(sdfg, (oa, ), cond_a))
+        list(sdutil.dfs_conditional(sdfg, (ob, ), cond_b))
 
         # Check which candidate states led back to guard
         is_a_begin = a_reached_guard and reachable_a
@@ -201,7 +203,8 @@ def _stateorder_topological_sort(sdfg: SDFG,
                                  start: SDFGState,
                                  ptree: Dict[SDFGState, SDFGState],
                                  branch_merges: Dict[SDFGState, SDFGState],
-                                 stop: SDFGState = None) -> Iterator[SDFGState]:
+                                 stop: SDFGState = None,
+                                 visited: Set[SDFGState] = None) -> Iterator[SDFGState]:
     """ 
     Helper function for ``stateorder_topological_sort``. 
     :param sdfg: SDFG.
@@ -215,7 +218,7 @@ def _stateorder_topological_sort(sdfg: SDFG,
              ``stop``.
     """
     # Traverse states in custom order
-    visited = set()
+    visited = visited or set()
     if stop is not None:
         visited.add(stop)
     stack = [start]
@@ -234,22 +237,40 @@ def _stateorder_topological_sort(sdfg: SDFG,
         elif len(oe) == 2:  # Loop or branch
             # If loop, traverse body, then exit
             if ptree[oe[0].dst] == node and ptree[oe[1].dst] != node:
-                for s in _stateorder_topological_sort(sdfg, oe[0].dst, ptree, branch_merges, stop=node):
+                for s in _stateorder_topological_sort(sdfg, oe[0].dst, ptree, branch_merges, stop=node,
+                                                      visited=visited):
                     yield s
                     visited.add(s)
                 stack.append(oe[1].dst)
                 continue
             elif ptree[oe[1].dst] == node and ptree[oe[0].dst] != node:
-                for s in _stateorder_topological_sort(sdfg, oe[1].dst, ptree, branch_merges, stop=node):
+                for s in _stateorder_topological_sort(sdfg, oe[1].dst, ptree, branch_merges, stop=node,
+                                                      visited=visited):
                     yield s
                     visited.add(s)
                 stack.append(oe[0].dst)
                 continue
             # Otherwise, passthrough to branch
         # Branch
-        mergestate = branch_merges[node]
+        if node in branch_merges:
+            # Try to find merge state and traverse until reaching that
+            mergestate = branch_merges[node]
+        else:
+            try:
+                # Otherwise (e.g., with return/break statements), traverse through each branch,
+                # stopping at the end of the current tree level.
+                mergestate = next(e.dst for e in sdfg.out_edges(stop) if ptree[e.dst] != stop)
+            except StopIteration:
+                # If that fails, simply traverse branches in arbitrary order
+                mergestate = stop
+
         for branch in oe:
-            for s in _stateorder_topological_sort(sdfg, branch.dst, ptree, branch_merges, stop=mergestate):
+            for s in _stateorder_topological_sort(sdfg,
+                                                  branch.dst,
+                                                  ptree,
+                                                  branch_merges,
+                                                  stop=mergestate,
+                                                  visited=visited):
                 yield s
                 visited.add(s)
         if mergestate != stop:

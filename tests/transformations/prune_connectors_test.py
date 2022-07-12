@@ -244,6 +244,7 @@ if __name__ == "__main__":
 
     n = np.int32(args.N)
 
-    test_prune_connectors(n=n)
+    test_prune_connectors(False, n=n)
+    test_prune_connectors(True, n=n)
     test_unused_retval()
     test_unused_retval_2()

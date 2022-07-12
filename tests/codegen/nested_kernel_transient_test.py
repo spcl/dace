@@ -1,8 +1,37 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
-from re import L
+import copy
 import dace
 import numpy as np
 import pytest
+
+
+def _test_kernel_transient(persistent: bool):
+    @dace.program
+    def nested(A: dace.float64[128, 64]):
+        for i in dace.map[0:128]:
+            A[i, :] = 1
+
+    sdfg = nested.to_sdfg()
+    sdfg.apply_gpu_transformations()
+
+    top_sdfg = dace.SDFG('transient')
+    top_sdfg.arg_names = ['A']
+    top_sdfg.add_datadesc('A', copy.deepcopy(sdfg.arrays['A']))
+    state = top_sdfg.add_state()
+    n = state.add_nested_sdfg(sdfg, None, {}, {'A'})
+    w = state.add_write('A')
+    state.add_edge(n, 'A', w, None, dace.Memlet('A'))
+
+    if persistent:
+        sdfg.arrays['gpu_A'].lifetime = dace.AllocationLifetime.Persistent
+
+    a = np.random.rand(128, 64)
+    expected = np.copy(a)
+    expected[:] = 1
+    with dace.config.set_temporary('compiler', 'cuda', 'default_block_size', value='64,8,1'):
+        top_sdfg(a)
+
+    assert np.allclose(a, expected)
 
 
 def _test_transient(persistent: bool):
@@ -67,6 +96,16 @@ def _test_double_transient(persistent: bool):
 
 
 @pytest.mark.gpu
+def test_kernel_transient():
+    _test_kernel_transient(False)
+
+
+@pytest.mark.gpu
+def test_kernel_transient_persistent():
+    _test_kernel_transient(True)
+
+
+@pytest.mark.gpu
 def test_nested_kernel_transient():
     _test_transient(False)
 
@@ -87,6 +126,8 @@ def test_double_nested_kernel_transient_persistent():
 
 
 if __name__ == '__main__':
+    test_kernel_transient()
+    test_kernel_transient_persistent()
     test_nested_kernel_transient()
     test_nested_kernel_transient_persistent()
     test_double_nested_kernel_transient()

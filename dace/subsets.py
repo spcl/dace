@@ -185,6 +185,9 @@ class Range(Subset):
     def from_array(array: 'dace.data.Data'):
         """ Constructs a range that covers the full array given as input. """
         return Range([(-o, s - 1 -o , 1) for s, o in zip(array.shape, array.offset)])
+        if any(o != 0 for o in array.offset):
+            result.offset(array.offset, True)
+        return result
 
     def __hash__(self):
         return hash(tuple(r for r in self.ranges))
