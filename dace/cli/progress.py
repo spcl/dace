@@ -61,5 +61,5 @@ def optional_progressbar(iter: Generator[T, None, None],
         if pbar is not None:
             pbar.update(1)
 
-    if progress:
+    if pbar is not None:
         pbar.close()
