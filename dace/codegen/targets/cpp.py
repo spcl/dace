@@ -21,6 +21,7 @@ from dace.codegen.targets.common import (sym2cpp, find_incoming_edges, codeblock
 from dace.codegen.dispatcher import DefinedType
 from dace.config import Config
 from dace.frontend import operations
+from dace.frontend.python import astutils
 from dace.frontend.python.astutils import ExtNodeTransformer, rname, unparse
 from dace.sdfg import nodes, graph as gr, utils
 from dace.properties import LambdaProperty
@@ -705,8 +706,9 @@ def is_write_conflicted_with_reason(dfg, edge, datanode=None, sdfg_schedule=None
         in_edges = find_incoming_edges(datanode, dfg)
         if len(in_edges) != 1:
             return dfg
-        if (isinstance(in_edges[0].src, nodes.ExitNode)
-                and in_edges[0].src.map.schedule == dtypes.ScheduleType.Sequential):
+        if (isinstance(in_edges[0].src, nodes.ExitNode) and
+                (in_edges[0].src.map.schedule == dtypes.ScheduleType.Sequential or
+                 in_edges[0].src.map.schedule == dtypes.ScheduleType.Snitch)):
             return None
         return dfg
     elif isinstance(dfg, gr.SubgraphView):
@@ -718,7 +720,9 @@ def is_write_conflicted_with_reason(dfg, edge, datanode=None, sdfg_schedule=None
     while edge is not None:
         path = dfg.memlet_path(edge)
         for e in path:
-            if (isinstance(e.dst, nodes.ExitNode) and e.dst.map.schedule != dtypes.ScheduleType.Sequential):
+            if (isinstance(e.dst, nodes.ExitNode)
+                    and (e.dst.map.schedule != dtypes.ScheduleType.Sequential and
+                 e.dst.map.schedule != dtypes.ScheduleType.Snitch)):
                 if _check_map_conflicts(e.dst.map, e):
                     # This map is parallel w.r.t. WCR
                     # print('PAR: Continuing from map')
@@ -1100,7 +1104,7 @@ class DaCeKeywordRemover(ExtNodeTransformer):
             return self.generic_visit(node)
 
         memlet, nc, wcr, dtype = self.memlets[target]
-        value = self.visit(node.value)
+        value = self.visit(astutils.copy_tree(node.value))
 
         if not isinstance(node.targets[-1], ast.Subscript):
             # Dynamic accesses or streams -> every access counts

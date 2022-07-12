@@ -4,10 +4,51 @@ from dace.codegen.tools import type_inference
 from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg import nodes
 from dace.sdfg.utils import dfs_topological_sort
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 #############################################################################
 # Connector type inference
+
+
+def infer_out_connector_type(sdfg: SDFG, state: SDFGState, node: nodes.CodeNode,
+                             cname: str) -> Optional[dtypes.typeclass]:
+    """
+    Tries to infer a single output connector type on a Tasklet or Nested SDFG node.
+
+    :param sdfg: The SDFG to infer in.
+    :param state: The state in which the code node resides.
+    :param node: The tasklet to infer.
+    :param cname: An input/output connector name to infer.
+    :return: The connector type, or None if a type could not be inferred.
+    """
+    e = next(state.out_edges_by_connector(node, cname))
+    if cname is None:
+        return None
+    scalar = (e.data.subset and e.data.subset.num_elements() == 1
+              and (not e.data.dynamic or (e.data.dynamic and e.data.wcr is not None)))
+    if e.data.data is not None:
+        allocated_as_scalar = (sdfg.arrays[e.data.data].storage is not dtypes.StorageType.GPU_Global)
+    else:
+        allocated_as_scalar = True
+
+    if node.out_connectors[cname].type is not None:
+        return node.out_connectors[cname].type
+
+    # If nested SDFG, try to use internal array type
+    if isinstance(node, nodes.NestedSDFG):
+        scalar = (isinstance(node.sdfg.arrays[cname], data.Scalar) and allocated_as_scalar)
+        dtype = node.sdfg.arrays[cname].dtype
+        ctype = (dtype if scalar else dtypes.pointer(dtype))
+    elif e.data.data is not None:  # Obtain type from memlet
+        scalar |= isinstance(sdfg.arrays[e.data.data], data.Scalar)
+        if isinstance(node, nodes.LibraryNode):
+            scalar &= allocated_as_scalar
+        dtype = sdfg.arrays[e.data.data].dtype
+        ctype = (dtype if scalar else dtypes.pointer(dtype))
+    else:
+        return None
+
+    return ctype
 
 
 def infer_connector_types(sdfg: SDFG):
@@ -55,28 +96,11 @@ def infer_connector_types(sdfg: SDFG):
                 cname = e.src_conn
                 if cname is None:
                     continue
-                scalar = (e.data.subset and e.data.subset.num_elements() == 1
-                          and (not e.data.dynamic or (e.data.dynamic and e.data.wcr is not None)))
-                if e.data.data is not None:
-                    allocated_as_scalar = (sdfg.arrays[e.data.data].storage is not dtypes.StorageType.GPU_Global)
-                else:
-                    allocated_as_scalar = True
 
                 if node.out_connectors[cname].type is None:
-                    # If nested SDFG, try to use internal array type
-                    if isinstance(node, nodes.NestedSDFG):
-                        scalar = (isinstance(node.sdfg.arrays[cname], data.Scalar) and allocated_as_scalar)
-                        dtype = node.sdfg.arrays[cname].dtype
-                        ctype = (dtype if scalar else dtypes.pointer(dtype))
-                    elif e.data.data is not None:  # Obtain type from memlet
-                        scalar |= isinstance(sdfg.arrays[e.data.data], data.Scalar)
-                        if isinstance(node, nodes.LibraryNode):
-                            scalar &= allocated_as_scalar
-                        dtype = sdfg.arrays[e.data.data].dtype
-                        ctype = (dtype if scalar else dtypes.pointer(dtype))
-                    else:
-                        continue
-                    node.out_connectors[cname] = ctype
+                    ctype = infer_out_connector_type(sdfg, state, node, cname)
+                    if ctype is not None:
+                        node.out_connectors[cname] = ctype
 
             # Let the node infer other output types on its own
             node.infer_connector_types(sdfg, state)
@@ -85,7 +109,8 @@ def infer_connector_types(sdfg: SDFG):
             for e in state.out_edges(node):
                 cname = e.src_conn
                 if cname and node.out_connectors[cname] is None:
-                    raise TypeError('Ambiguous or uninferable type in' ' connector "%s" of node "%s"' % (cname, node))
+                    raise TypeError('Ambiguous or uninferable type in'
+                                    ' connector "%s" of node "%s"' % (cname, node))
 
 
 #############################################################################
@@ -202,7 +227,7 @@ def _set_default_storage_types(sdfg: SDFG, toplevel_schedule: dtypes.ScheduleTyp
                 else:
                     parent_schedule = parent_node.map.schedule
                     # Skip sequential maps to determine storage
-                    while parent_schedule is dtypes.ScheduleType.Sequential:
+                    while parent_schedule == dtypes.ScheduleType.Sequential:
                         parent_node = scope_dict[parent_node]
                         if parent_node is None:
                             parent_schedule = toplevel_schedule
@@ -210,7 +235,7 @@ def _set_default_storage_types(sdfg: SDFG, toplevel_schedule: dtypes.ScheduleTyp
                         parent_schedule = parent_node.map.schedule
                 # Determine default GPU schedule based on existence of
                 # thread-block maps
-                if parent_schedule is dtypes.ScheduleType.GPU_Device:
+                if parent_schedule == dtypes.ScheduleType.GPU_Device:
                     if parent_node not in scopes_with_tbmaps:
                         parent_schedule = dtypes.ScheduleType.GPU_ThreadBlock
                 # End of special cases

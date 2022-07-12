@@ -53,7 +53,7 @@ class ExpandReducePure(pm.ExpandTransformation):
             osqdim = [0]
 
         # Standardize and squeeze axes
-        axes = node.axes if node.axes else [i for i in range(len(inedge.data.subset))]
+        axes = node.axes if node.axes is not None else [i for i in range(len(inedge.data.subset))]
         axes = [axis for axis in axes if axis in isqdim]
 
         # Create nested SDFG
@@ -770,14 +770,16 @@ class ExpandReduceCUDABlockAll(pm.ExpandTransformation):
             LocalStorage.node_b: graph.nodes().index(new_exit)
         }
 
-        local_storage = InLocalStorage(sdfg, sdfg.sdfg_id, sdfg.nodes().index(state), in_local_storage_subgraph, 0)
+        local_storage = InLocalStorage()
+        local_storage.setup_match(sdfg, sdfg.sdfg_id, sdfg.nodes().index(state), in_local_storage_subgraph, 0)
 
         local_storage.array = in_edge.data.data
         local_storage.apply(graph, sdfg)
         in_transient = local_storage._data_node
         sdfg.data(in_transient.data).storage = dtypes.StorageType.Register
 
-        local_storage = OutLocalStorage(sdfg, sdfg.sdfg_id, sdfg.nodes().index(state), out_local_storage_subgraph, 0)
+        local_storage = OutLocalStorage()
+        local_storage.setup_match(sdfg, sdfg.sdfg_id, sdfg.nodes().index(state), out_local_storage_subgraph, 0)
         local_storage.array = out_edge.data.data
         local_storage.apply(graph, sdfg)
         out_transient = local_storage._data_node
@@ -823,7 +825,8 @@ class ExpandReduceCUDABlockAll(pm.ExpandTransformation):
         # finally, change the implementation to cuda (block)
         # itself and expand again.
         reduce_node.implementation = 'CUDA (block)'
-        sub_expansion = ExpandReduceCUDABlock(sdfg, sdfg.sdfg_id, sdfg.node_id(state), {}, 0)
+        sub_expansion = ExpandReduceCUDABlock()
+        sub_expansion.setup_match(sdfg, sdfg.sdfg_id, sdfg.node_id(state), {}, 0)
         return sub_expansion.expansion(node=node, state=state, sdfg=sdfg)
         #return reduce_node.expand(sdfg, state)
 

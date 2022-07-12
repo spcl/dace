@@ -57,6 +57,18 @@ def function_to_ast(f):
     return src_ast, src_file, src_line, src
 
 
+def is_constant(node: ast.AST) -> bool:
+    """
+    Returns True iff the AST node is a constant value
+    """
+    if sys.version_info >= (3, 8):
+        if isinstance(node, ast.Constant):
+            return True
+    if isinstance(node, (ast.Num, ast.Str, ast.NameConstant)):  # For compatibility
+        return True
+    return False
+
+
 def evalnode(node: ast.AST, gvars: Dict[str, Any]) -> Any:
     """
     Tries to evaluate an AST node given only global variables.
@@ -76,7 +88,7 @@ def evalnode(node: ast.AST, gvars: Dict[str, Any]) -> Any:
             return node.value
 
     # Replace internal constants with their values
-    node = copy.deepcopy(node)
+    node = copy_tree(node)
     cext = ConstantExtractor(gvars)
     cext.visit(node)
     gvars = copy.copy(gvars)
@@ -477,15 +489,20 @@ class ExtNodeVisitor(ast.NodeVisitor):
                 self.visit(old_value)
         return node
 
+class NameFound(Exception):
+    pass
 
 class ASTFindReplace(ast.NodeTransformer):
-    def __init__(self, repldict: Dict[str, str]):
+    def __init__(self, repldict: Dict[str, str], trigger_names: Set[str] = None):
         self.replace_count = 0
         self.repldict = repldict
+        self.trigger_names = trigger_names or set()
         # If ast.Names were given, use them as keys as well
         self.repldict.update({k.id: v for k, v in self.repldict.items() if isinstance(k, ast.Name)})
 
     def visit_Name(self, node: ast.Name):
+        if node.id in self.trigger_names:
+            raise NameFound(node.id)
         if node.id in self.repldict:
             val = self.repldict[node.id]
             if isinstance(val, ast.AST):
@@ -498,6 +515,8 @@ class ASTFindReplace(ast.NodeTransformer):
         return self.generic_visit(node)
 
     def visit_keyword(self, node: ast.keyword):
+        if node.arg in self.trigger_names:
+            raise NameFound(node.arg)
         if node.arg in self.repldict:
             val = self.repldict[node.arg]
             if isinstance(val, ast.AST):
@@ -663,3 +682,11 @@ def create_constant(value: Any, node: Optional[ast.AST] = None) -> ast.AST:
         newnode = ast.copy_location(newnode, node)
 
     return newnode
+
+
+def escape_string(value: str):
+    """ Converts special Python characters in strings back to their parsable version (e.g., newline to ``\n``) """
+    if sys.version_info >= (3, 0):
+        return value.encode("unicode_escape").decode("utf-8")
+    # Python 2.x
+    return value.encode('string_escape')

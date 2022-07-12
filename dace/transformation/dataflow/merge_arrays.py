@@ -8,7 +8,7 @@ from dace.sdfg import SDFGState
 from dace.sdfg.propagation import propagate_memlet
 
 
-class InMergeArrays(transformation.SingleStateTransformation, transformation.SimplifyPass):
+class InMergeArrays(transformation.SingleStateTransformation):
     """ Merge duplicate arrays connected to the same scope entry. """
 
     array1 = transformation.PatternNode(nodes.AccessNode)
@@ -111,7 +111,7 @@ class InMergeArrays(transformation.SingleStateTransformation, transformation.Sim
                                           union_inner_edges=True)
 
 
-class OutMergeArrays(transformation.SingleStateTransformation, transformation.SimplifyPass):
+class OutMergeArrays(transformation.SingleStateTransformation):
     """ Merge duplicate arrays connected to the same scope entry. """
 
     array1 = transformation.PatternNode(nodes.AccessNode)
@@ -210,7 +210,7 @@ class OutMergeArrays(transformation.SingleStateTransformation, transformation.Si
                                           union_inner_edges=True)
 
 
-class MergeSourceSinkArrays(transformation.SingleStateTransformation, transformation.SimplifyPass):
+class MergeSourceSinkArrays(transformation.SingleStateTransformation):
     """ Merge duplicate arrays that are source/sink nodes. """
 
     array1 = transformation.PatternNode(nodes.AccessNode)

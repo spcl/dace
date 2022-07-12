@@ -928,6 +928,14 @@ required:
                     Before generating code, verify that a serialization/deserialization loop
                     generates the same SDFG.
 
+            deserialize_exception:
+                type: bool
+                default: false
+                title: Treat exceptions in deserialization as errors
+                description: >
+                    When an exception is raised in a deserialization process (e.g., due to missing library node),
+                    by default a warning is issued. If this setting is True, the exception will be raised as-is.
+
     #############################################
     # DaCe library settings
 

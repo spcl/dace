@@ -9,13 +9,13 @@ import pytest
 
 def test_daceprogram_constants_in_signature():
     @dace.program
-    def convertible(grid: dace.constant, arr: dace.float64[10]):
+    def convertible(grid: dace.compiletime, arr: dace.float64[10]):
         arr[grid.start:grid.end] = 7.0
 
     grid = SimpleNamespace(start=2, end=-2)
 
     @dace.program
-    def program(grid: dace.constant, arr: dace.float64[10]):
+    def program(grid: dace.compiletime, arr: dace.float64[10]):
         convertible(grid, arr)
 
     A = np.ones((10, ))
@@ -42,7 +42,7 @@ def test_constants_in_signature():
     convertible = AConvertible()
 
     @dace.program
-    def program(grid: dace.constant, arr: dace.float64[10]):
+    def program(grid: dace.compiletime, arr: dace.float64[10]):
         convertible(grid, arr)
 
     A = np.ones((10, ))

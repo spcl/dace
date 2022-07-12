@@ -235,6 +235,9 @@ def validate_state(state: 'dace.sdfg.SDFGState',
     if (sdfg.number_of_nodes() > 1 and sdfg.in_degree(state) == 0 and sdfg.out_degree(state) == 0):
         raise InvalidSDFGError("Unreachable state", sdfg, state_id)
 
+    if state.has_cycles():
+        raise InvalidSDFGError('State should be acyclic but contains cycles', sdfg, state_id)
+
     for nid, node in enumerate(state.nodes()):
         # Reference check
         if id(node) in references:
@@ -245,7 +248,10 @@ def validate_state(state: 'dace.sdfg.SDFGState',
 
         # Node validation
         try:
-            node.validate(sdfg, state)
+            if isinstance(node, nd.NestedSDFG):
+                node.validate(sdfg, state, references)
+            else:
+                node.validate(sdfg, state)
         except InvalidSDFGError:
             raise
         except Exception as ex:

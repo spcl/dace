@@ -70,6 +70,7 @@
 ### END OF astunparse LICENSES
 
 from __future__ import print_function, unicode_literals
+from functools import lru_cache
 import inspect
 import six
 import sys
@@ -77,6 +78,8 @@ import ast
 import numpy as np
 import os
 import tokenize
+
+import sympy
 import dace
 from numbers import Number
 from six import StringIO
@@ -951,7 +954,38 @@ class CPPUnparser:
             self.write(".")
         self.write(t.attr)
 
-    def _Call(self, t):
+    # Replace boolean ops from SymPy
+    callcmps = {
+        "Eq": ast.Eq,
+        "NotEq": ast.NotEq,
+        "Ne": ast.NotEq,
+        "Lt": ast.Lt,
+        "Le": ast.LtE,
+        "LtE": ast.LtE,
+        "Gt": ast.Gt,
+        "Ge": ast.GtE,
+        "GtE": ast.GtE,
+    }
+    callbools = {
+        "And": ast.And,
+        "Or": ast.Or,
+    }
+
+    def _Call(self, t: ast.Call):
+        # Special cases for sympy functions
+        if isinstance(t.func, ast.Name):
+            if t.func.id in self.callcmps:
+                op = self.callcmps[t.func.id]()
+                self.dispatch(
+                    ast.Compare(left=t.args[0],
+                                ops=[op for _ in range(1, len(t.args))],
+                                comparators=[t.args[i] for i in range(1, len(t.args))]))
+                return
+            elif t.func.id in self.callbools:
+                op = self.callbools[t.func.id]()
+                self.dispatch(ast.BoolOp(op=op, values=t.args))
+                return
+
         self.dispatch(t.func)
         self.write("(")
         comma = False
@@ -1092,6 +1126,9 @@ def py2cpp(code, expr_semicolon=True, defined_symbols=None):
         return cppunparse(code, expr_semicolon, defined_symbols=defined_symbols)
     elif isinstance(code, list):
         return '\n'.join(py2cpp(stmt) for stmt in code)
+    elif isinstance(code, sympy.Basic):
+        from dace import symbolic
+        return cppunparse(ast.parse(symbolic.symstr(code)), expr_semicolon, defined_symbols=defined_symbols)
     elif code.__class__.__name__ == 'function':
         try:
             code_str = inspect.getsource(code)
@@ -1110,6 +1147,6 @@ def py2cpp(code, expr_semicolon=True, defined_symbols=None):
     else:
         raise NotImplementedError('Unsupported type for py2cpp')
 
-
+@lru_cache(maxsize=16384)
 def pyexpr2cpp(expr):
     return py2cpp(expr, expr_semicolon=False)

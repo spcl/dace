@@ -515,11 +515,28 @@ class Dot(dace.sdfg.nodes.LibraryNode):
         in_edges = state.in_edges(self)
         if len(in_edges) != 2:
             raise ValueError("Expected exactly two inputs to dot product")
-        in_memlets = [in_edges[0].data, in_edges[1].data]
         out_edges = state.out_edges(self)
         if len(out_edges) != 1:
             raise ValueError("Expected exactly one output from dot product")
         out_memlet = out_edges[0].data
+
+        desc_x, desc_y, desc_res = None, None, None
+        in_memlets = [None, None]
+        for e in state.in_edges(self):
+            if e.dst_conn == "_x":
+                desc_x = sdfg.arrays[e.data.data]
+                in_memlets[0] = e.data
+            elif e.dst_conn == "_y":
+                desc_y = sdfg.arrays[e.data.data]
+                in_memlets[1] = e.data
+        for e in state.out_edges(self):
+            if e.src_conn == "_result":
+                desc_res = sdfg.arrays[e.data.data]
+
+        if desc_x.dtype != desc_y.dtype:
+            raise TypeError("Data types of input operands must be equal: " f"{desc_x.dtype}, {desc_y.dtype}")
+        if desc_x.dtype.base_type != desc_res.dtype.base_type:
+            raise TypeError("Data types of input and output must be equal: " f"{desc_x.dtype}, {desc_res.dtype}")
 
         # Squeeze input memlets
         squeezed1 = copy.deepcopy(in_memlets[0].subset)
@@ -531,21 +548,6 @@ class Dot(dace.sdfg.nodes.LibraryNode):
             raise ValueError("dot product only supported on 1-dimensional arrays")
         if out_memlet.subset.num_elements() != 1:
             raise ValueError("Output of dot product must be a single element")
-
-        desc_x, desc_y, desc_res = None, None, None
-        for e in state.in_edges(self):
-            if e.dst_conn == "_x":
-                desc_x = sdfg.arrays[e.data.data]
-            elif e.dst_conn == "_y":
-                desc_y = sdfg.arrays[e.data.data]
-        for e in state.out_edges(self):
-            if e.src_conn == "_result":
-                desc_res = sdfg.arrays[e.data.data]
-
-        if desc_x.dtype != desc_y.dtype:
-            raise TypeError("Data types of input operands must be equal: " f"{desc_x.dtype}, {desc_y.dtype}")
-        if desc_x.dtype.base_type != desc_res.dtype.base_type:
-            raise TypeError("Data types of input and output must be equal: " f"{desc_x.dtype}, {desc_res.dtype}")
 
         # We are guaranteed that there is only one non-squeezed dimension
         stride_x = desc_x.strides[sqdims1[0]]

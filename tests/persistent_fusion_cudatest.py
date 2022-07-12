@@ -272,13 +272,18 @@ def test_persistent_fusion():
 
     sdfg.apply_gpu_transformations()
 
-    subgraph = SubgraphView(sdfg, [s_reset1, s_update1, s_reset2, s_update2])
-    transform = GPUPersistentKernel(subgraph)
+    # All nodes but copy-in, copy-out, and init
+    content_nodes = set(sdfg.nodes()) - {sdfg.start_state, sdfg.sink_nodes()[0], s_init}
+
+    subgraph = SubgraphView(sdfg, content_nodes)
+    transform = GPUPersistentKernel()
+    transform.setup_match(subgraph)
     transform.kernel_prefix = 'bfs'
     transform.apply(sdfg)
 
     subgraph = SubgraphView(sdfg, [s_init])
-    transform = GPUPersistentKernel(subgraph)
+    transform = GPUPersistentKernel()
+    transform.setup_match(subgraph)
     transform.kernel_prefix = 'init'
     transform.apply(sdfg)
 

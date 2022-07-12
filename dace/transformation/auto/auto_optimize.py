@@ -13,10 +13,9 @@ from typing import Set, Tuple, Union, List, Iterable, Dict
 import warnings
 
 # Transformations
-from dace.transformation.dataflow import MapCollapse, TrivialMapElimination, MapFusion
+from dace.transformation.dataflow import MapCollapse, TrivialMapElimination, MapFusion, ReduceExpansion
 from dace.transformation.interstate import LoopToMap, RefineNestedAccess
 from dace.transformation.subgraph.composite import CompositeFusion
-from dace.transformation.subgraph import ReduceExpansion
 from dace.transformation.subgraph import helpers as xfsh
 from dace.transformation import helpers as xfh
 
@@ -82,7 +81,8 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
             subgraph = graph_or_subgraph
 
         # create condition function object
-        fusion_condition = CompositeFusion(SubgraphView(graph, graph.nodes()))
+        fusion_condition = CompositeFusion()
+        fusion_condition.setup_match(SubgraphView(graph, graph.nodes()))
 
         # within SDFGState: greedily enumerate fusible components
         # and apply transformation
@@ -120,7 +120,8 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
         for map_entries in enumerator:
             if len(map_entries) > 1:
                 current_subgraph = xfsh.subgraph_from_maps(sdfg, graph, map_entries)
-                cf = CompositeFusion(current_subgraph)
+                cf = CompositeFusion()
+                cf.setup_match(current_subgraph)
                 # transfer settings
                 cf.allow_tiling = fusion_condition.allow_tiling
                 cf.schedule_innermaps = fusion_condition.schedule_innermaps
@@ -260,7 +261,7 @@ def tile_wcrs(graph_or_subgraph: GraphViewType, validate_all: bool, prefer_parti
             # If smaller than tile size, don't transform and instead
             # make map sequential
             if debugprint:
-                print(f'Making map "{mapentry}" sequential due to being ' 'smaller than tile size')
+                print(f'Making map "{mapentry}" sequential due to being smaller than tile size')
             mapentry.map.schedule = dtypes.ScheduleType.Sequential
             continue
 
@@ -405,27 +406,60 @@ def set_fast_implementations(sdfg: SDFG, device: dtypes.DeviceType, blocklist: L
                     node.implementation = 'CUDA (device)'
 
 
-def make_transients_persistent(sdfg: SDFG, device: dtypes.DeviceType) -> None:
+def make_transients_persistent(sdfg: SDFG, device: dtypes.DeviceType, toplevel_only: bool = True) -> None:
     ''' 
     Helper function to change several storage and scheduling properties
     - Makes non-view array lifetimes persistent, with some 
       restrictions depending on the device 
     - Reset nonatomic WCR edges on GPU 
+    The only arrays that are made persistent by default are ones that do not exist inside a scope (and thus may be
+    allocated multiple times), and whose symbols are always given as parameters to the SDFG (so that they can be
+    allocated in a persistent manner).
+
     :param sdfg: SDFG
     :param device: Device type
+    :param toplevel_only: If True, only converts access nodes that do not appear in any scope.
     '''
-    for nsdfg in sdfg.all_sdfgs_recursive():
-        for aname, arr in nsdfg.arrays.items():
-            if arr.transient and not isinstance(arr, dt.View) and not symbolic.issymbolic(arr.total_size):
-                if arr.storage != dtypes.StorageType.Register:
-                    arr.lifetime = dtypes.AllocationLifetime.Persistent
+    for nsdfg in sdfg.all_sdfgs_recursive():       
+        fsyms: Set[str] = nsdfg.free_symbols
+        persistent: Set[str] = set()
+        not_persistent: Set[str] = set()
+
+        for state in nsdfg.nodes():
+            for dnode in state.data_nodes():
+                if dnode.data in not_persistent:
+                    continue
+                desc = dnode.desc(nsdfg)
+                # Only convert arrays and scalars that are not registers
+                if not desc.transient or type(desc) not in {dt.Array, dt.Scalar}:
+                    not_persistent.add(dnode.data)
+                    continue
+                if desc.storage == dtypes.StorageType.Register:
+                    not_persistent.add(dnode.data)
+                    continue
+                # Only convert arrays where the size depends on SDFG parameters
+                try:
+                    if set(map(str, desc.total_size.free_symbols)) - fsyms:
+                        not_persistent.add(dnode.data)
+                        continue
+                except AttributeError:  # total_size is an integer / has no free symbols
+                    pass
+                
+                # Only convert arrays with top-level access nodes
+                if xfh.get_parent_map(state, dnode) is not None:
+                    if toplevel_only:
+                        not_persistent.add(dnode.data)
+                        continue
+                    elif desc.lifetime == dtypes.AllocationLifetime.Scope:
+                        not_persistent.add(dnode.data)
+                        continue
+                
+                persistent.add(dnode.data)                               
+
+        for aname in (persistent - not_persistent):
+            nsdfg.arrays[aname].lifetime = dtypes.AllocationLifetime.Persistent
 
     if device == dtypes.DeviceType.GPU:
-        for aname, arr in sdfg.arrays.items():
-            if arr.transient and not isinstance(arr, dt.View):  #and size only depends on SDFG params
-                if arr.storage == dtypes.StorageType.GPU_Global:
-                    arr.lifetime = dtypes.AllocationLifetime.Persistent
-
         # Reset nonatomic WCR edges
         for n, _ in sdfg.all_nodes_recursive():
             if isinstance(n, SDFGState):
@@ -492,6 +526,10 @@ def auto_optimize(sdfg: SDFG,
     # fuse stencils greedily
     greedy_fuse(sdfg, device=device, validate_all=validate_all, recursive=False, stencil=True)
 
+    # Move Loops inside Maps when possible
+    from dace.transformation.interstate import MoveLoopIntoMap
+    sdfg.apply_transformations_repeated([MoveLoopIntoMap])
+
     if device == dtypes.DeviceType.FPGA:
         # apply FPGA Transformations
         sdfg.apply_fpga_transformations()
@@ -546,11 +584,9 @@ def auto_optimize(sdfg: SDFG,
 
     # Set all Default storage types that are constant sized to registers
     move_small_arrays_to_stack(sdfg)
-    '''
-    # Fix storage and allocation properties, e.g., for benchmarking purposes
-    # FORNOW: Leave out
+
+    # Make all independent arrays persistent
     make_transients_persistent(sdfg, device)
-    '''
 
     # Validate at the end
     if validate or validate_all:

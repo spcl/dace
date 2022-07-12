@@ -182,7 +182,7 @@ def test_alloc_persistent():
     @dace.program
     def persistentmem(output: dace.int32[1]):
         tmp = dace.ndarray([1], output.dtype, lifetime=dace.AllocationLifetime.Persistent)
-        if output[0] == 1.0:
+        if output[0] == 1:
             tmp[0] = 0
         else:
             tmp[0] += 3
@@ -210,7 +210,7 @@ def test_alloc_persistent_threadlocal():
                            output.dtype,
                            storage=dace.StorageType.CPU_ThreadLocal,
                            lifetime=dace.AllocationLifetime.Persistent)
-        if output[0] == 1.0:
+        if output[0] == 1:
             for i in dace.map[0:2]:
                 tmp[i] = i
         else:
@@ -353,6 +353,166 @@ def test_persistent_array_access():
     assert np.allclose(a[3], 5)
 
 
+def test_double_nested_persistent_write():
+    sdfg = dace.SDFG('npw_inner')
+    sdfg.add_array('pers', [20], dace.float64)
+    state = sdfg.add_state()
+    t = state.add_tasklet('doit', {}, {'o'}, 'o = 1')
+    state.add_edge(t, 'o', state.add_write('pers'), None, dace.Memlet('pers[0]'))
+
+    osdfg = dace.SDFG('npw')
+    osdfg.add_transient('pers', [20], dace.float64, lifetime=dace.AllocationLifetime.Persistent)
+    state = osdfg.add_state()
+    me, mx = state.add_map('mapit', dict(i='0:20'))
+    nsdfg = state.add_nested_sdfg(sdfg, None, {}, {'pers'})
+    state.add_nedge(me, nsdfg, dace.Memlet())
+    state.add_memlet_path(nsdfg, mx, state.add_write('pers'), src_conn='pers', memlet=dace.Memlet('pers[0:20]'))
+
+    oosdfg = dace.SDFG('npw_outer')
+    state = oosdfg.add_state()
+    nsdfg = state.add_nested_sdfg(osdfg, None, {}, {})
+
+    oosdfg.compile()
+
+
+@pytest.mark.parametrize('mode', ('global', 'singlevalue'))  # , 'multivalue'
+def test_branched_allocation(mode):
+    sdfg = dace.SDFG("test")
+    sdfg.add_symbol('N', stype=dace.int32)
+    sdfg.add_symbol('cnd', stype=dace.int32)
+    sdfg.add_array('A', shape="N", dtype=dace.float32, transient=True)
+
+    state_start = sdfg.add_state()
+    state_condition = sdfg.add_state()
+    state_br1 = sdfg.add_state()
+    state_br1_1 = sdfg.add_state_after(state_br1)
+    state_br2 = sdfg.add_state()
+    state_br2_1 = sdfg.add_state_after(state_br2)
+    state_merge = sdfg.add_state()
+
+    if mode == 'global':
+        sdfg.add_edge(state_start, state_condition, dace.InterstateEdge())
+        sdfg.add_edge(state_condition, state_br1, dace.InterstateEdge('cnd != 0'))
+        sdfg.add_edge(state_condition, state_br2, dace.InterstateEdge('cnd == 0'))
+    elif mode == 'singlevalue':
+        sdfg.add_edge(state_start, state_condition, dace.InterstateEdge(assignments=dict(N=2)))
+        sdfg.add_edge(state_condition, state_br1, dace.InterstateEdge('cnd != 0'))
+        sdfg.add_edge(state_condition, state_br2, dace.InterstateEdge('cnd == 0'))
+    elif mode == 'multivalue':
+        sdfg.add_edge(state_start, state_condition, dace.InterstateEdge())
+        sdfg.add_edge(state_condition, state_br1, dace.InterstateEdge('cnd != 0', dict(N=2)))
+        sdfg.add_edge(state_condition, state_br2, dace.InterstateEdge('cnd == 0', dict(N=3)))
+
+    sdfg.add_edge(state_br1_1, state_merge, dace.InterstateEdge())
+    sdfg.add_edge(state_br2_1, state_merge, dace.InterstateEdge())
+
+    tasklet1 = state_br1.add_tasklet(name="br1", inputs=[], outputs=["out"], \
+            code="out = 1;", language=dace.Language.CPP)
+    tasklet2 = state_br2.add_tasklet(name="br2", inputs=[], outputs=["out"], \
+            code="out = 1;", language=dace.Language.CPP)
+
+    arr_A = state_br1.add_write("A")
+    memlet = dace.Memlet(expr="A[1]")
+    state_br1.add_memlet_path(tasklet1, arr_A, src_conn="out", memlet=memlet)
+
+    arr_A = state_br2.add_write("A")
+    memlet = dace.Memlet(expr="A[1]")
+    state_br2.add_memlet_path(tasklet2, arr_A, src_conn="out", memlet=memlet)
+
+    state_br1_1.add_edge(state_br1_1.add_read('A'), None,
+                         state_br1_1.add_tasklet('nothing', {'inp'}, {}, '', side_effects=True), 'inp',
+                         dace.Memlet('A[1]'))
+    state_br2_1.add_edge(state_br2_1.add_read('A'), None,
+                         state_br2_1.add_tasklet('nothing', {'inp'}, {}, '', side_effects=True), 'inp',
+                         dace.Memlet('A[1]'))
+
+    # Make sure array is allocated once or twice, depending on the test
+    code = sdfg.generate_code()[0].clean_code
+    num_allocs = 2 if mode == 'multivalue' else 1
+    assert code.count('new float') == num_allocs
+    assert code.count('delete[]') == num_allocs
+
+    sdfg.compile()
+
+@pytest.mark.skip
+def test_scope_multisize():
+    """ An array that needs to be allocated multiple times with different sizes. """
+    sdfg = dace.SDFG('test')
+    N = dace.symbol('N')
+    sdfg.add_transient('A', [N], dace.float64)
+
+    init = sdfg.add_state()
+    state1 = sdfg.add_state()
+    state2 = sdfg.add_state()
+    sdfg.add_edge(init, state1, dace.InterstateEdge(assignments=dict(N=1)))
+    sdfg.add_edge(state1, state2, dace.InterstateEdge(assignments=dict(N=2)))
+
+    t = state1.add_tasklet('firstset', {}, {'o'}, 'o = 5')
+    w = state1.add_write('A')
+    state1.add_edge(t, 'o', w, None, dace.Memlet('A[0]'))
+
+    t = state2.add_tasklet('secondset', {}, {'o'}, 'o = 6')
+    w = state2.add_access('A')
+    state2.add_edge(t, 'o', w, None, dace.Memlet('A[1]'))
+
+    # Make sure array is allocated twice
+    code = sdfg.generate_code()[0].clean_code
+    assert code.count('new double') == 2
+    assert code.count('delete[]') == 2
+
+    sdfg()
+
+
+def test_multisize():
+    """ An array that needs to be allocated once, with runtime-dependent sizes. """
+    sdfg = dace.SDFG('test')
+    N = dace.symbol('N')
+    sdfg.add_transient('A', [N], dace.float64)
+    sdfg.add_array('__return', [1], dace.float64)
+    sdfg.add_symbol('cond', dace.uint64)
+
+    init = sdfg.add_state()
+    state1 = sdfg.add_state()
+    state2 = sdfg.add_state()
+    cnvrg = sdfg.add_state()
+    state21 = sdfg.add_state()
+    state22 = sdfg.add_state()
+    final = sdfg.add_state()
+    sdfg.add_edge(init, state1, dace.InterstateEdge('cond == 1', assignments=dict(N=1)))
+    sdfg.add_edge(init, state2, dace.InterstateEdge('cond != 1', assignments=dict(N=2)))
+    sdfg.add_edge(state1, cnvrg, dace.InterstateEdge())
+    sdfg.add_edge(state2, cnvrg, dace.InterstateEdge())
+    sdfg.add_edge(cnvrg, state21, dace.InterstateEdge('cond == 0'))
+    sdfg.add_edge(cnvrg, state22, dace.InterstateEdge('cond != 0'))
+    sdfg.add_edge(state21, final, dace.InterstateEdge())
+    sdfg.add_edge(state22, final, dace.InterstateEdge())
+
+    t = state21.add_tasklet('firstset', {}, {'o'}, 'o = 5')
+    w = state21.add_write('A')
+    state21.add_edge(t, 'o', w, None, dace.Memlet('A[0]'))
+
+    t = state22.add_tasklet('secondset', {}, {'o'}, 'o = 6')
+    w = state22.add_access('A')
+    state22.add_edge(t, 'o', w, None, dace.Memlet('A[0]'))
+
+    r = final.add_read('A')
+    t = final.add_tasklet('writeout', {'a'}, {'b'}, 'b = a')
+    w = final.add_write('__return')
+    final.add_edge(r, None, t, 'a', dace.Memlet('A[0]'))
+    final.add_edge(t, 'b', w, None, dace.Memlet('__return[0]'))
+
+    # Make sure array is allocated once
+    code = sdfg.generate_code()[0].clean_code
+    assert code.count('new double') == 1
+    assert code.count('delete[]') == 1
+
+    res1 = sdfg(cond=0)
+    res2 = sdfg(cond=1)
+
+    assert np.allclose(res1, 5)
+    assert np.allclose(res2, 6)
+
+
 if __name__ == '__main__':
     test_determine_alloc_scope()
     test_determine_alloc_state()
@@ -369,3 +529,9 @@ if __name__ == '__main__':
     test_persistent_scalar()
     test_persistent_scalar_in_map()
     test_persistent_array_access()
+    test_double_nested_persistent_write()
+    test_branched_allocation('global')
+    test_branched_allocation('singlevalue')
+    # test_branched_allocation('multivalue')
+    # test_scope_multisize()
+    test_multisize()

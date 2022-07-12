@@ -8,7 +8,7 @@ import pytest
 from dace.transformation.estimator import GreedyEnumerator
 from dace.transformation.subgraph.composite import CompositeFusion
 from dace.sdfg.graph import SubgraphView
-from dace.transformation.subgraph.reduce_expansion import ReduceExpansion
+from dace.transformation.dataflow.reduce_expansion import ReduceExpansion
 
 W = dace.symbol('W')
 H = dace.symbol('H')
@@ -63,7 +63,8 @@ def test_greedy(map_splits):
     sdfg.apply_transformations_repeated(ReduceExpansion)
 
     subgraph = SubgraphView(graph, graph.nodes())
-    composite = CompositeFusion(subgraph)
+    composite = CompositeFusion()
+    composite.setup_match(subgraph)
     composite.expansion_split = map_splits
     cf = lambda sdfg, subgraph: composite.can_be_applied(sdfg, subgraph)
     enum = GreedyEnumerator(sdfg, graph, subgraph, cf)
@@ -91,7 +92,8 @@ def test_connected(map_splits):
     sdfg.apply_transformations_repeated(ReduceExpansion)
 
     subgraph = SubgraphView(graph, graph.nodes())
-    composite = CompositeFusion(subgraph)
+    composite = CompositeFusion()
+    composite.setup_match(subgraph)
     composite.expansion_split = map_splits
     cf = lambda sdfg, subgraph: composite.can_be_applied(sdfg, subgraph)
     enum = ConnectedEnumerator(sdfg, graph, subgraph, cf)
@@ -120,7 +122,8 @@ def test_brute_force(map_splits):
     sdfg.apply_transformations_repeated(ReduceExpansion)
 
     subgraph = SubgraphView(graph, graph.nodes())
-    composite = CompositeFusion(subgraph)
+    composite = CompositeFusion()
+    composite.setup_match(subgraph)
     composite.expansion_split = map_splits
     cf = lambda sdfg, subgraph: composite.can_be_applied(sdfg, subgraph)
     enum = BruteForceEnumerator(sdfg, graph, subgraph, cf)

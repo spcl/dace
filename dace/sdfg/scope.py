@@ -46,7 +46,7 @@ class ScopeSubgraphView(StateSubgraphView):
         return result
 
 
-def _scope_subgraph(graph, entry_node, include_entry, include_exit):
+def _scope_subgraph(graph, entry_node, include_entry, include_exit) -> ScopeSubgraphView:
     if not isinstance(entry_node, nd.EntryNode):
         raise TypeError("Received {}: should be dace.nodes.EntryNode".format(type(entry_node).__name__))
     node_to_children = graph.scope_children()
@@ -238,7 +238,7 @@ def is_devicelevel_fpga(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState', no
         :param node: The node in question
         :return: True if node is in device-level code, False otherwise.
     """
-    from dace.codegen.targets.fpga import is_fpga_kernel
+    from dace.sdfg.utils import is_fpga_kernel
     return (is_in_scope(sdfg, state, node, [dtypes.ScheduleType.FPGA_Device])
             or (state and is_fpga_kernel(sdfg, state)))
 

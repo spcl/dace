@@ -4,7 +4,7 @@ import dace
 from dace.sdfg import utils as sdutil
 from dace.transformation.dataflow import MapFusion
 from dace.transformation.subgraph import SubgraphFusion
-from dace.transformation.pattern_matching import enumerate_matches
+from dace.transformation.passes.pattern_matching import enumerate_matches
 
 
 @dace.function

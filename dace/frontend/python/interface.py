@@ -1,12 +1,13 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Python interface for DaCe functions. """
 
-from functools import wraps
 import inspect
+from functools import wraps
+from typing import Any, Callable, Deque, Dict, Generator, Optional, Tuple, TypeVar, Union, overload
+
 from dace import dtypes
 from dace.dtypes import paramdec
-from dace.frontend.python import parser, ndloop, tasklet_runner
-from typing import (Any, Callable, Deque, Dict, Generator, Optional, Tuple, TypeVar, overload, Union)
+from dace.frontend.python import ndloop, parser, tasklet_runner
 
 #############################################
 
@@ -226,9 +227,19 @@ def unroll(generator):
     """
     yield from generator
 
+
 def nounroll(generator):
     """
     Explicitly annotates that a loop should not be unrolled during parsing.
     :param generator: The original generator to loop over.
     """
     yield from generator
+
+
+def in_program() -> bool:
+    """
+    Returns True if in a DaCe program parsing context. This function can be used to test whether the current
+    code runs inside the ``@dace.program`` parser.
+    :return: True if in a DaCe program parsing context, or False otherwise.
+    """
+    return False
