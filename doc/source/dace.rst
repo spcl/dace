@@ -1,5 +1,5 @@
-dace package
-============
+``dace`` package
+================
 
 Subpackages
 -----------

@@ -75,6 +75,7 @@ If you use DaCe, cite us:
    :maxdepth: 2
 
    source/dace
+   source/config_schema
 
 
 Reference
