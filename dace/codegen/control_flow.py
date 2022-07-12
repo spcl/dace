@@ -164,7 +164,8 @@ class SingleState(ControlFlow):
                 for variable, value in edge.data.assignments.items()
             ] + [''])
 
-        if ((successor is None or edge.dst is not successor) and not assignments_only):
+        if (not edge.data.is_unconditional()
+                or ((successor is None or edge.dst is not successor) and not assignments_only)):
             expr += 'goto __state_{}_{};\n'.format(sdfg.sdfg_id, edge.dst.label)
 
         if not edge.data.is_unconditional() and not assignments_only:
@@ -318,6 +319,7 @@ class IfElseChain(ControlFlow):
     @property
     def children(self) -> List[ControlFlow]:
         return [block for _, block in self.body]
+
 
 def _clean_loop_body(body: str) -> str:
     """ Cleans loop body from extraneous statements. """
