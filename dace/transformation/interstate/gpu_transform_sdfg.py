@@ -1,7 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains inter-state transformations of an SDFG to run on the GPU. """
 
-from dace import data, memlet, dtypes, registry, sdfg as sd
+from dace import data, memlet, dtypes, registry, sdfg as sd, symbolic
 from dace.sdfg import nodes, scope
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation, helpers as xfh
@@ -479,6 +479,8 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                     co_state.add_node(dst_array)
                     co_state.add_nedge(src_array, dst_array,
                                        memlet.Memlet.from_array(dst_array.data, dst_array.desc(sdfg)))
+                    for e in sdfg.out_edges(co_state):
+                        e.data.replace(devicename, hostname, False)
 
                     # src_array = nodes.AccessNode(cloned_arrays[nname], debuginfo=desc.debuginfo)
                     # dst_array = nodes.AccessNode(nname, debuginfo=desc.debuginfo)
@@ -488,6 +490,35 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                     #                    memlet.Memlet.from_array(dst_array.data, dst_array.desc(sdfg)))
 
         #######################################################
+
+        # # Step 3.7: Find symbols assigned to values dependent on GPU data other than cloned arrays and gpu scalars
+        # edges_to_fix = set()
+        # for e in sdfg.edges():
+        #     if e.data.free_symbols and any(d in sdfg.arrays and (
+        #             d in gpu_scalars or sdfg.arrays[d].storage in gpu_storage) for d in e.data.free_symbols):
+        #         for lhs, rhs in e.data.assignments.items():
+        #             if lhs not in gpu_scalars and e.data.free_symbols & symbolic.free_symbols_and_functions(rhs):
+        #                 print(f"{lhs}: {rhs}")
+        #                 edges_to_fix.add(e)
+
+        # for e in edges_to_fix:
+        #     new_state = sdfg.add_state(e.src.label + '_gpu_to_symbol')
+        #     for lhs, rhs in e.data.assignments.items():
+        #         candidates = e.data.free_symbols & symbolic.free_symbols_and_functions(rhs)
+        #         candidates = [d for d in candidates
+        #                       if d in sdfg.arrays and (d in gpu_scalars or sdfg.arrays[d].storage in gpu_storage)]
+        #         if lhs not in gpu_scalars and candidates:
+        #             if len(candidates) > 1:
+        #                 raise NotImplementedError
+        #             hostname, _ = sdfg.add_scalar(f"host_{lhs}", sdfg.symbols[lhs], storage=dtypes.StorageType.CPU_Heap, transient=True, find_new_name=True)
+        #             r = new_state.add_access(str(candidates[0]))
+        #             w = new_state.add_access(hostname)
+        #             new_edge = new_state.add_nedge(r, w, memlet.Memlet(f"{rhs} -> {hostname}"))
+        #             e.data.assignments[lhs] = hostname
+        #     sdfg.add_edge(e.src, new_state, sd.InterstateEdge())
+        #     sdfg.add_edge(new_state, e.dst, e.data)
+        #     sdfg.remove_edge(e)
+
         # Step 8: Simplify
         if not self.simplify:
             return
