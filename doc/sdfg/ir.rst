@@ -26,6 +26,8 @@ Data Containers and Access Nodes
 
 Data container types: array/scalar/stream.
 
+See :class:`~dace.data.Array` for how it is allocated and how to customize this behavior.
+
 Transient property, aliasing assumptions.
 
 Views and references, see below.

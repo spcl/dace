@@ -62,6 +62,7 @@ class StateGraphView(object):
     ``SDFGState`` and ``StateSubgraphView`` inherit from this class to share
     methods.
     """
+
     def __init__(self, *args, **kwargs):
         self._clear_scopedict_cache()
 
@@ -709,7 +710,8 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
     executions = SymbolicProperty(default=0,
                                   desc="The number of times this state gets "
                                   "executed (0 stands for unbounded)")
-    dynamic_executions = Property(dtype=bool, default=True, desc="The number of executions of this state " "is dynamic")
+    dynamic_executions = Property(dtype=bool, default=True, desc="The number of executions of this state "
+                                  "is dynamic")
 
     ranges = DictProperty(key_type=symbolic.symbol,
                           value_type=Range,
@@ -1166,7 +1168,8 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
             :return: (consume_entry, consume_exit) node 2-tuple
         """
         if len(elements) != 2:
-            raise TypeError("Elements must be a 2-tuple of " "(PE_index, num_PEs)")
+            raise TypeError("Elements must be a 2-tuple of "
+                            "(PE_index, num_PEs)")
         pe_tuple = (elements[0], SymbolicProperty.from_string(elements[1]))
 
         debuginfo = _getdebuginfo(debuginfo or self._default_lineinfo)
@@ -1706,7 +1709,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
                   total_size=None,
                   find_new_name=False,
                   alignment=0):
-        """ @attention: This function is deprecated. """
+        """ :note: This function is deprecated. """
         warnings.warn(
             'The "SDFGState.add_array" API is deprecated, please '
             'use "SDFG.add_array" and "SDFGState.add_access"', DeprecationWarning)
@@ -1739,7 +1742,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
         lifetime=dtypes.AllocationLifetime.Scope,
         debuginfo=None,
     ):
-        """ @attention: This function is deprecated. """
+        """ :note: This function is deprecated. """
         warnings.warn(
             'The "SDFGState.add_stream" API is deprecated, please '
             'use "SDFG.add_stream" and "SDFGState.add_access"', DeprecationWarning)
@@ -1768,7 +1771,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
         lifetime=dtypes.AllocationLifetime.Scope,
         debuginfo=None,
     ):
-        """ @attention: This function is deprecated. """
+        """ :note: This function is deprecated. """
         warnings.warn(
             'The "SDFGState.add_scalar" API is deprecated, please '
             'use "SDFG.add_scalar" and "SDFGState.add_access"', DeprecationWarning)
@@ -1789,7 +1792,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
                       debuginfo=None,
                       total_size=None,
                       alignment=0):
-        """ @attention: This function is deprecated. """
+        """ :note: This function is deprecated. """
         return self.add_array(name,
                               shape,
                               dtype,
@@ -1872,5 +1875,6 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
 
 class StateSubgraphView(SubgraphView, StateGraphView):
     """ A read-only subgraph view of an SDFG state. """
+
     def __init__(self, graph, subgraph_nodes):
         super().__init__(graph, subgraph_nodes)

@@ -14,6 +14,8 @@ Runtime dependencies:
 Installing with ``pip``
 -----------------------
 
+Optional dependencies (e.g., for testing)
+
 Installing from source
 ----------------------
 

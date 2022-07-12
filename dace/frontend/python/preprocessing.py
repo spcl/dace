@@ -1326,12 +1326,13 @@ def preprocess_dace_program(f: Callable[..., Any],
     """
     Preprocesses a ``@dace.program`` and all its nested functions, returning
     a preprocessed AST object and the closure of the resulting SDFG.
+
     :param f: A Python function to parse.
     :param argtypes: An dictionary of (name, type) for the given
                         function's arguments, which may pertain to data
                         nodes or symbols (scalars).
     :param global_vars: A dictionary of global variables in the closure
-                        of `f`.
+                        of ``f``.
     :param modules: A dictionary from an imported module name to the
                     module itself.
     :param constants: A dictionary from a name to a constant value.
