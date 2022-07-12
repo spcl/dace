@@ -1,20 +1,6 @@
 dace.cli package
 ================
 
-Subpackages
------------
-
-.. toctree::
-
-   dace.cli.sdfgcc
-   dace.cli.sdfv
-   dace.cli.sdprof
-   dace.cli.progress
-   dace.cli.dacelab
-
-Submodules
-----------
-
 dace.cli.sdfgcc module
 ----------------------
 
