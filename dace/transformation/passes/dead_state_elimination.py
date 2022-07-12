@@ -1,6 +1,7 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 
 import collections
+import sympy as sp
 from typing import Optional, Set, Tuple, Union
 
 from dace import SDFG, InterstateEdge, SDFGState, symbolic
@@ -131,7 +132,7 @@ class DeadStateElimination(ppl.Pass):
 
         # Evaluate condition
         scond = edge.condition_sympy()
-        if scond == True:
+        if scond == True or scond == sp.Not(sp.logic.boolalg.BooleanFalse(), evaluate=False):
             return True
 
         # Evaluate non-optional arrays
@@ -149,7 +150,7 @@ class DeadStateElimination(ppl.Pass):
 
         # Evaluate condition
         scond = edge.condition_sympy()
-        if scond == False:
+        if scond == False or scond == sp.Not(sp.logic.boolalg.BooleanTrue(), evaluate=False):
             return True
 
         # Evaluate non-optional arrays
