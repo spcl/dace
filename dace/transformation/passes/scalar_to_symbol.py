@@ -147,6 +147,10 @@ def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integer
 
             # Check inputs
             if isinstance(edge.src, nodes.AccessNode):
+                # Ensure that the storage is the same
+                if sdfg.arrays[edge.src.data].storage != sdfg.arrays[candidate].storage:
+                    candidates.remove(candidate)
+                    continue
                 # If input is array, ensure it is not a stream
                 if isinstance(sdfg.arrays[edge.src.data], dt.Stream):
                     candidates.remove(candidate)
