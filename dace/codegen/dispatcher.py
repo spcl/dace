@@ -74,7 +74,7 @@ class DefinedMemlets:
             if isinstance(last_parent, SDFGState):
                 last_parent = last_parent.parent
         for i, (parent, scope, _) in enumerate(self._scopes):
-            if i <= 1 or not last_parent or parent == last_parent:
+            if i == 0 or not last_parent or parent == last_parent:
                 if name in scope:
                     return scope[name]
 
@@ -83,6 +83,8 @@ class DefinedMemlets:
     def add(self, name: str, dtype: DefinedType, ctype: str, ancestor: int = 0, allow_shadowing: bool = False):
         if not isinstance(name, str):
             raise TypeError('Variable name type cannot be %s' % type(name).__name__)
+        if name.startswith('__state->'):
+            return self.add_global(name, dtype, ctype)
 
         for _, scope, can_access_parent in reversed(self._scopes):
             if name in scope:
