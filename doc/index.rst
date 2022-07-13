@@ -59,6 +59,7 @@ If you use DaCe, cite us:
    optimization/optimization
    setup/integration
    ide/cli
+   setup/faq
 
 .. toctree::
    :caption: Developer Guide
