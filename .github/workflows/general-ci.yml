@@ -8,7 +8,7 @@ on:
 
 jobs:
   test:
-    if: ${{ github.event.label.name != 'no-ci' }}
+    if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
     runs-on: ubuntu-latest
     strategy:
       matrix:
