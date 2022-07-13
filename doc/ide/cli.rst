@@ -33,7 +33,7 @@ The SDFG Command-Line Compiler :code:`sdfgcc` enables compilation of SDFG files 
 The SDFG Viewer :code:`sdfv` displays SDFGs in the system's HTML viewer.
 
 | Usage:
-| :code:`sdfgv <filepath>`
+| :code:`sdfv <filepath>`
 
 +-----------------------+--------------+----------------------------------------------------------+
 | Argument              | Required     | Description                                              |
@@ -52,7 +52,7 @@ The SDFG Profile Viewer :code:`sdprof` shows summarizations of SDFG profiling an
 reports in the command-line.
 
 | Usage:
-| :code:`sdfprof [-s CRITERION] [-a] <filepath>`
+| :code:`sdprof [-s CRITERION] [-a] <filepath>`
 
 +-----------------------+--------------+-----------------------------------------------------------+
 | Argument              | Required     | Description                                               |

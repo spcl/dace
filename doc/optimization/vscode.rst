@@ -13,7 +13,8 @@ before a program can be conveniently optimized using
 Performance Analysis
 --------------------
 
-**Static Analysis**
+Static Analysis
+~~~~~~~~~~~~~~~
 
 SDFGs can be analyzed statically without the need for costly profiling with a set of overlays.
 Overlays are shown as heat- or color-maps directly on top of the graph to indicate specific metrics
@@ -33,22 +34,45 @@ symbols can be parameterized, causing the heatmap overlays to be updated on-the-
 
 |
 
-**Runtime Analysis and Instrumentation**
+Runtime Analysis and Instrumentation
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 The SDFG Analysis section further enables loading of instrumentation reports, which loads and visualizes
 data gathered through instrumentation on the SDFG, such as individual timing measurements, or hardware /
 performance counter values.
 
-**Fine-Grained Data Access and Reuse Analysis**
+Fine-Grained Data Access and Reuse Analysis
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-TODO: LocalView
+.. note:: This feature is still in development and is only available in certain pre-release versions of the VS Code extension at this time. This feature may consequently be subject to changes.
+
+To analyze the fine-grained data access and reuse behavior of an application, an SDFG can be
+parameterized with small toy parameters using the *'Specialize SDFG'* button in the SDFG Analysis pane.
+After setting all free parameters to small toy values, one or more elements in the SDFG can be selected,
+such as a state, and can be transitioned into the **local view**.
+
+In this local view, the parameterized subgraph is used to simulate its concrete data access pattern.
+This pattern is used to:
+
+- Visualize which data elements are dependent on which other data elements.
+- Visualize the physical memory layout of data containers by showing cache lines on data containers.
+- Calculate the reuse distance between individual data accesses, which subsequently is used to
+  calculate the expected number of cache misses and consequently the amount of physical data movement.
+  All three metrics are visualized on the graph using heatmaps.
+- Show the access pattern of individual map scopes by allowing the user to play back said pattern with an
+  animation, or step through individual accesses interactively.
+
+.. figure:: ../ide/images/localview_demo.gif
+    :width: 800
+    :alt: Demonstrating the fine-grained data access and reuse analysis.
 
 .. _vscode_transformations:
 
-SDFG Optimization / Transformations
------------------------------------
+SDFG Optimization and Transformations
+-------------------------------------
 
-**Applying Transformations**
+Applying Transformations
+~~~~~~~~~~~~~~~~~~~~~~~~
 
 SDFGs can be optimized using transformations from within the editor.
 The SDFG Optimization sidepanel lists applicable transformations for the currently
@@ -69,7 +93,8 @@ properties with a single click by selecting `Quick Apply` in the transformation 
 
 |
 
-**Transformation History**
+Transformation History
+~~~~~~~~~~~~~~~~~~~~~~
 
 A separate section in the SDFG Optimization sidepanel lists a chronological history of applied
 transformations for a given graph.
@@ -86,7 +111,8 @@ Clicking *'Revert To'* reverts the SDFG to that point.
 
 .. _vscode_custom_transformations:
 
-**Custom Transformations**
+Custom Transformations
+~~~~~~~~~~~~~~~~~~~~~~
 
 .. |add-xform-by-file-btn| image:: ../ide/images/add_xform_from_file_btn.png
     :height: 15

@@ -34,7 +34,8 @@ which is shared between all open SDFG editors.
 
 |
 
-**SDFG Optimization Panel**
+SDFG Optimization Panel
+~~~~~~~~~~~~~~~~~~~~~~~
 
 - This panel offers an *SDFG Outline* (bottom left), which provides a
   hierarchical overview of the viewed SDFG. This outline can be used for quick navigation through
@@ -42,7 +43,8 @@ which is shared between all open SDFG editors.
 - For a more detailed overview of this panel, and its capabilities,
   please see :ref:`optimization_vscode`.
 
-**Main SDFG View**
+Main SDFG View
+~~~~~~~~~~~~~~
 
 .. |zoom-to-fit-button| image:: ./images/show_all_sdfg.png
     :height: 15
@@ -61,7 +63,8 @@ which is shared between all open SDFG editors.
 - Tooltips provide contextual information for elements such as Memlets, showing their accessed
   subset and logical data movement volume.
 
-**Details Panel**
+Details Panel
+~~~~~~~~~~~~~
 
 .. |box-select-button| image:: ./images/box_select_button.png
     :height: 15
@@ -139,7 +142,8 @@ Compiling / Running SDFGs
 .. |compile-sdfg-button| image:: ./images/compile_sdfg.png
     :height: 15
 
-**Compiling**
+Compiling
+~~~~~~~~~
 
 SDFGs can be compiled through the user interface, using the *'Compile SDFG'* button |compile-sdfg-button|
 in the top right of the SDFG editor. This generates the code and corresponding library for the current
@@ -156,7 +160,8 @@ visible.
 
 |
 
-**Running**
+Running
+~~~~~~~
 
 The native VS Code launch configurations and interface can be used to run, debug, or profile SDFGs.
 
