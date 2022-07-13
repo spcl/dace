@@ -73,7 +73,7 @@ Publication
 -----------
 
 The paper for the SDFG IR can be found [here](http://www.arxiv.org/abs/1902.10345).
-Other DaCe-related publications are available on our [website]().
+Other DaCe-related publications are available on our [website](http://spcl.inf.ethz.ch/dace).
 
 If you use DaCe, cite us:
 ```bibtex
