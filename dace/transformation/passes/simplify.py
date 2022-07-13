@@ -88,8 +88,6 @@ class SimplifyPass(ppl.FixedPointPipeline):
 
                 if rep:
                     print(rep)
-            else:
-                print(type(p).__name__, 'did nothing')
 
         # If validate all is enabled, check after every pass
         if ret is not None and self.validate_all:
