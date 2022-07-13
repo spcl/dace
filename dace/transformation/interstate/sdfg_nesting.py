@@ -164,7 +164,12 @@ class InlineSDFG(transformation.SingleStateTransformation):
                 if node.data in rem_outconns:
                     rem_outconns.remove(node.data)
         if len(rem_outconns) > 0:
-            return False
+            # Check if remaining outputs would disconnect anything or can be pruned
+            for conn in rem_outconns:
+                for e in graph.out_edges_by_connector(nested_sdfg, conn):
+                    if graph.out_degree(e.dst) > 0:
+                        return False
+
         if len(rem_inpconns) > 0:
             for inpconn in list(rem_inpconns):
                 for access in inp_data[inpconn]:
@@ -172,7 +177,11 @@ class InlineSDFG(transformation.SingleStateTransformation):
                         rem_inpconns.remove(inpconn)
                         break
         if len(rem_inpconns) > 0:
-            return False
+            # Check if remaining inputs would disconnect anything or can be pruned
+            for conn in rem_inpconns:
+                for e in graph.in_edges_by_connector(nested_sdfg, conn):
+                    if graph.in_degree(e.src) > 0:
+                        return False
 
         return True
 

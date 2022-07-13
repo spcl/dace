@@ -87,7 +87,7 @@ class ArrayElimination(ppl.Pass):
         return result or None
 
     def report(self, pass_retval: Set[str]) -> str:
-        return f'Eliminated {len(pass_retval)} arrays.'
+        return f'Eliminated {len(pass_retval)} arrays: {pass_retval}.'
 
     def merge_access_nodes(self, state: SDFGState, access_nodes: Dict[str, List[nodes.AccessNode]],
                            condition: Callable[[nodes.AccessNode], bool]):
