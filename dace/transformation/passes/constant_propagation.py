@@ -50,6 +50,7 @@ class ConstantPropagation(ppl.Pass):
     def apply_pass(self, sdfg: SDFG, _, initial_symbols: Optional[Dict[str, Any]] = None) -> Optional[Set[str]]:
         """
         Propagates constants throughout the SDFG.
+
         :param sdfg: The SDFG to modify.
         :param pipeline_results: If in the context of a ``Pipeline``, a dictionary that is populated with prior Pass
                                  results as ``{Pass subclass name: returned object from pass}``. If not run in a
@@ -150,6 +151,7 @@ class ConstantPropagation(ppl.Pass):
                           initial_symbols: Optional[Dict[str, Any]] = None) -> Dict[SDFGState, Dict[str, Any]]:
         """
         Finds all constants and constant-assigned symbols in the SDFG for each state.
+
         :param sdfg: The SDFG to traverse.
         :param initial_symbols: If not None, sets values of initial symbols.
         :return: A dictionary mapping an SDFG state to a mapping of constants and their corresponding values.
@@ -212,6 +214,7 @@ class ConstantPropagation(ppl.Pass):
     def _find_desc_symbols(self, sdfg: SDFG, constants: Dict[SDFGState, Dict[str, Any]]) -> Tuple[Set[str], Set[str]]:
         """
         Finds constant symbols that data descriptors (e.g., arrays) depend on.
+
         :param sdfg: The SDFG to scan.
         :param constants: Constant symbols found in ``collect_constants``.
         :return: A tuple of two sets: (all descriptor-related symbols, symbols that take multiple values).
@@ -240,6 +243,7 @@ class ConstantPropagation(ppl.Pass):
     def _propagate(self, symbols: Dict[str, Any], new_symbols: Dict[str, Any], backward: bool = False):
         """
         Updates symbols dictionary in-place with new symbols, propagating existing ones within.
+        
         :param symbols: The symbols dictionary to update.
         :param new_symbols: The new symbols to include (and propagate ``symbols`` into).
         :param backward: If True, assumes symbol back-propagation (i.e., only update keys in symbols if newer).

@@ -8,8 +8,10 @@ All transformations extend the :class:`~dace.transformation.transformation.Trans
 
   * **Pattern-matching Transformations** (extending :class:`~dace.transformation.transformation.PatternTransformation`): Transformations that require a certain 
     subgraph structure to match. Within this abstract class, there are two sub-classes:
+
       * :class:`~dace.transformation.transformation.SingleStateTransformation`: Patterns are limited to a single SDFG state.
       * :class:`~dace.transformation.transformation.MultiStateTransformation`: Patterns are given on a subgraph of an SDFG state machine.
+
     A pattern-matching must extend at least one of those two classes.
   * **Subgraph Transformations** (extending :class:`~dace.transformation.transformation.SubgraphTransformation`): Transformations that can operate on arbitrary
     subgraphs. 

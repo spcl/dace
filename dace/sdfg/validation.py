@@ -1,12 +1,14 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Exception classes and methods for validation of SDFGs. """
 import copy
-from dace.dtypes import StorageType
 import os
-from typing import Dict, Set, Tuple, Union
 import warnings
-from dace import dtypes, data as dt, subsets
-from dace import symbolic
+from typing import Dict, Set, Tuple, Union
+
+import dace
+from dace import data as dt
+from dace import dtypes, subsets, symbolic
+from dace.dtypes import StorageType
 
 ###########################################
 # Validation
@@ -23,6 +25,7 @@ def validate(graph: 'dace.sdfg.graph.SubgraphView'):
 
 def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None):
     """ Verifies the correctness of an SDFG by applying multiple tests.
+    
         :param sdfg: The SDFG to verify.
         :param references: An optional set keeping seen IDs for object
                            miscopy validation.
@@ -200,14 +203,14 @@ def validate_state(state: 'dace.sdfg.SDFGState',
         failure.
     """
     # Avoid import loops
-    from dace.sdfg import SDFG
-    from dace.config import Config
-    from dace.sdfg import nodes as nd
-    from dace.sdfg.scope import scope_contains_scope
     from dace import data as dt
     from dace import subsets as sbs
-    from dace.sdfg import utils as sdutil
     from dace.codegen.targets import fpga
+    from dace.config import Config
+    from dace.sdfg import SDFG
+    from dace.sdfg import nodes as nd
+    from dace.sdfg import utils as sdutil
+    from dace.sdfg.scope import scope_contains_scope
 
     sdfg = sdfg or state.parent
     state_id = state_id or sdfg.node_id(state)

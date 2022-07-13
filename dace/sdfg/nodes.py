@@ -133,6 +133,7 @@ class Node(object):
 
     def remove_in_connector(self, connector_name: str):
         """ Removes an input connector from the node.
+
             :param connector_name: The name of the connector to remove.
             :return: True if the operation was successful.
         """
@@ -145,6 +146,7 @@ class Node(object):
 
     def remove_out_connector(self, connector_name: str):
         """ Removes an output connector from the node.
+
             :param connector_name: The name of the connector to remove.
             :return: True if the operation was successful.
         """
@@ -178,6 +180,7 @@ class Node(object):
         """
         Returns the next unused connector ID (as a string). Used for
         filling connectors when adding edges to scopes.
+
         :param try_name: First try the connector with this name. If already
                          exists, use the next integer connector.
         """
@@ -650,7 +653,8 @@ class ExitNode(Node):
 @dace.serialize.serializable
 class MapEntry(EntryNode):
     """ Node that opens a Map scope.
-        @see: Map
+        
+        :see: Map
     """
 
     def __init__(self, map: 'Map', dynamic_inputs=None):
@@ -726,7 +730,8 @@ class MapEntry(EntryNode):
 @dace.serialize.serializable
 class MapExit(ExitNode):
     """ Node that closes a Map scope.
-        @see: Map
+        
+        :see: Map
     """
 
     def __init__(self, map: 'Map'):
@@ -871,7 +876,8 @@ MapEntry = indirect_properties(Map, lambda obj: obj.map)(MapEntry)
 @dace.serialize.serializable
 class ConsumeEntry(EntryNode):
     """ Node that opens a Consume scope.
-        @see: Consume
+        
+        :see: Consume
     """
 
     def __init__(self, consume, dynamic_inputs=None):
@@ -949,7 +955,8 @@ class ConsumeEntry(EntryNode):
 @dace.serialize.serializable
 class ConsumeExit(ExitNode):
     """ Node that closes a Consume scope.
-        @see: Consume
+        
+        :see: Consume
     """
 
     def __init__(self, consume):
@@ -1245,6 +1252,7 @@ class LibraryNode(CodeNode):
     def expand(self, sdfg, state, *args, **kwargs) -> str:
         """ Create and perform the expansion transformation for this library
             node.
+
             :return: the name of the expanded implementation
         """
         from dace.transformation.transformation import ExpandTransformation  # Avoid import loop

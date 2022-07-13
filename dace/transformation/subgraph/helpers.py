@@ -1,5 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-''' Subgraph Transformation Helper API '''
+""" Subgraph Transformation Helper API """
 from dace import dtypes, registry, symbolic, subsets
 from dace.sdfg import nodes, utils
 from dace.memlet import Memlet
@@ -57,12 +57,11 @@ def find_reassignment(maps: List[nodes.Map], common_ranges, offset=False) -> Dic
                                 common_map_base_ranges()
         :param offset: If true, offsets each range to 0  
                        before checking 
-
-        :returns: Dict that maps each map to a vector with
-                  the same length as number of map loops.
-                  The vector contains, in order, an index
-                  for each map loop that maps it to a
-                  common base range or '-1' if it does not.
+        :return: Dict that maps each map to a vector with
+                 the same length as number of map loops.
+                 The vector contains, in order, an index
+                 for each map loop that maps it to a
+                 common base range or '-1' if it does not.
     """
     result = {m: None for m in maps}
     outer_ranges_dict = dict(enumerate(common_ranges))

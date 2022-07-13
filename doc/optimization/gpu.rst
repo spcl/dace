@@ -1,9 +1,11 @@
 GPU Optimization Best Practices
 ===============================
 
-block size
+fusion and auto-optimize
 
-memory allocation (shared, registers, global)
+memory allocation (shared, registers, global). lifetime (persistent)
+
+block size
 
 disabling streams
 

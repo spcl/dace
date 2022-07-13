@@ -34,10 +34,11 @@ def init_data(M, N):
 
 
 def run_atax(device_type: dace.dtypes.DeviceType):
-    '''
+    """
     Runs ATAX for the given device
+
     :return: the SDFG
-    '''
+    """
 
     # Initialize data (polybench medium size)
     M, N = (390, 410)

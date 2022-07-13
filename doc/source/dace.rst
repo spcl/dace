@@ -1,5 +1,5 @@
-dace package
-============
+``dace`` package
+================
 
 Subpackages
 -----------
@@ -9,10 +9,8 @@ Subpackages
    dace.codegen
    dace.cli
    dace.frontend
-   dace.graph
    dace.sdfg
    dace.transformation
-   dace.libraries
 
 
 Submodules

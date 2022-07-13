@@ -17,6 +17,7 @@ def cutout_state(state: SDFGState, *nodes: nd.Node, make_copy: bool = True) -> S
     The subgraph defined by the list of nodes will be extended to include access nodes of data containers necessary
     to run the graph separately. In addition, all transient data containers created outside the cut out graph will
     become global.
+    
     :param state: The SDFG state in which the subgraph resides.
     :param nodes: The nodes in the subgraph to cut out.
     :param make_copy: If True, deep-copies every SDFG element in the copy. Otherwise, original references are kept.
@@ -88,7 +89,7 @@ def _extend_subgraph_with_access_nodes(state: SDFGState, subgraph: StateSubgraph
             continue
         for e in state.in_edges(node):
             # Special case: IN_* connectors are not traversed further
-            if isinstance(e.dst, (nd.EntryNode, nd.ExitNode)) and e.dst_conn.startswith('IN_'):
+            if isinstance(e.dst, (nd.EntryNode, nd.ExitNode)) and (e.dst_conn is None or e.dst_conn.startswith('IN_')):
                 continue
             mpath = state.memlet_path(e)
             new_nodes = [mpe.src for mpe in mpath if mpe.src not in result]
@@ -98,7 +99,7 @@ def _extend_subgraph_with_access_nodes(state: SDFGState, subgraph: StateSubgraph
 
         for e in state.out_edges(node):
             # Special case: OUT_* connectors are not traversed further
-            if isinstance(e.src, (nd.EntryNode, nd.ExitNode)) and e.src_conn.startswith('OUT_'):
+            if isinstance(e.src, (nd.EntryNode, nd.ExitNode)) and (e.src_conn is None or e.src_conn.startswith('OUT_')):
                 continue
             mpath = state.memlet_path(e)
             new_nodes = [mpe.dst for mpe in mpath if mpe.dst not in result]

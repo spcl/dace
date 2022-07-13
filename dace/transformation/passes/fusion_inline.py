@@ -28,6 +28,7 @@ class FuseStates(ppl.Pass):
     def apply_pass(self, sdfg: SDFG, _: Dict[str, Any]) -> Optional[int]:
         """
         Fuses all possible states of an SDFG (and all sub-SDFGs).
+
         :param sdfg: The SDFG to transform.
     
         :return: The total number of states fused, or None if did not apply.
@@ -56,7 +57,8 @@ class InlineSDFGs(ppl.Pass):
 
     def apply_pass(self, sdfg: SDFG, _: Dict[str, Any]) -> Optional[int]:
         """
-        Fuses all possible states of an SDFG (and all sub-SDFGs).
+        Inlines all possible nested SDFGs (and all sub-SDFGs).
+        
         :param sdfg: The SDFG to transform.
     
         :return: The total number of states fused, or None if did not apply.

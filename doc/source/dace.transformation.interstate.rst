@@ -92,14 +92,6 @@ dace.transformation.interstate.state\_fusion module
    :undoc-members:
    :show-inheritance:
 
-dace.transformation.interstate.transient\_reuse module
-------------------------------------------------------
-
-.. automodule:: dace.transformation.interstate.transient_reuse
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
 Module contents
 ---------------
 

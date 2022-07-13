@@ -1,3 +1,5 @@
+.. _opt_auto:
+
 Auto-Optimization Pass (Experimental)
 =====================================
 

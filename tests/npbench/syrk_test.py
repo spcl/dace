@@ -48,10 +48,11 @@ def ground_truth(N, M, alpha, beta, C, A):
 
 
 def run_syrk(device_type: dace.dtypes.DeviceType):
-    '''
+    """
     Runs Syrk for the given device
+
     :return: the SDFG
-    '''
+    """
 
     # Initialize data (polybench medium size)
     M, N = (200, 240)

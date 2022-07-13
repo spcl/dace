@@ -39,8 +39,9 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
                 stencil_tile=None,
                 permutations_only: bool = True,
                 expand_reductions: bool = False) -> None:
-    '''
+    """
     Greedily fuses maps of an SDFG or graph, operating in-place.
+
     :param graph_or_subgraph: SDFG, SDFGState or Subgraph
     :param validate_all: Validate SDFG or graph at each fusion step 
     :param device: Device type to specialize for 
@@ -49,7 +50,7 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
     :param stencil_tile: StencilTiling Tile size, default if None
     :param permutations_only: Disallow splitting of maps during MultiExpansion stage
     :param expand_reductions: Expand all reduce nodes before fusion
-    '''
+    """
     debugprint = config.Config.get_bool('debugprint')
     if isinstance(graph_or_subgraph, SDFG):
         # If we have an SDFG, recurse into graphs
@@ -170,6 +171,7 @@ def tile_wcrs(graph_or_subgraph: GraphViewType, validate_all: bool, prefer_parti
     Tiles parallel write-conflict resolution maps in an SDFG, state,
     or subgraphs thereof. Reduces the number of atomic operations by tiling
     and introducing transient arrays to accumulate atomics on.
+
     :param graph_or_subgraph: The SDFG/state/subgraph to optimize within.
     :param validate_all: If True, runs SDFG validation after every tiling.
     :param prefer_partial_parallelism: If set, prefers extracting non-conflicted
@@ -340,6 +342,7 @@ def move_small_arrays_to_stack(sdfg: SDFG) -> None:
     """
     Set all Default storage types that are constant sized and less than 
     the auto-tile size to the stack (as StorageType.Register).
+
     :param sdfg: The SDFG to operate on.
     :note: Operates in-place on the SDFG.
     """
@@ -407,11 +410,12 @@ def set_fast_implementations(sdfg: SDFG, device: dtypes.DeviceType, blocklist: L
 
 
 def make_transients_persistent(sdfg: SDFG, device: dtypes.DeviceType, toplevel_only: bool = True) -> None:
-    ''' 
+    """ 
     Helper function to change several storage and scheduling properties
-    - Makes non-view array lifetimes persistent, with some 
-      restrictions depending on the device 
-    - Reset nonatomic WCR edges on GPU 
+
+        * Makes non-view array lifetimes persistent, with some restrictions depending on the device 
+        * Reset nonatomic WCR edges on GPU 
+        
     The only arrays that are made persistent by default are ones that do not exist inside a scope (and thus may be
     allocated multiple times), and whose symbols are always given as parameters to the SDFG (so that they can be
     allocated in a persistent manner).
@@ -419,8 +423,8 @@ def make_transients_persistent(sdfg: SDFG, device: dtypes.DeviceType, toplevel_o
     :param sdfg: SDFG
     :param device: Device type
     :param toplevel_only: If True, only converts access nodes that do not appear in any scope.
-    '''
-    for nsdfg in sdfg.all_sdfgs_recursive():       
+    """
+    for nsdfg in sdfg.all_sdfgs_recursive():
         fsyms: Set[str] = nsdfg.free_symbols
         persistent: Set[str] = set()
         not_persistent: Set[str] = set()
@@ -444,7 +448,7 @@ def make_transients_persistent(sdfg: SDFG, device: dtypes.DeviceType, toplevel_o
                         continue
                 except AttributeError:  # total_size is an integer / has no free symbols
                     pass
-                
+
                 # Only convert arrays with top-level access nodes
                 if xfh.get_parent_map(state, dnode) is not None:
                     if toplevel_only:
@@ -453,8 +457,8 @@ def make_transients_persistent(sdfg: SDFG, device: dtypes.DeviceType, toplevel_o
                     elif desc.lifetime == dtypes.AllocationLifetime.Scope:
                         not_persistent.add(dnode.data)
                         continue
-                
-                persistent.add(dnode.data)                               
+
+                persistent.add(dnode.data)
 
         for aname in (persistent - not_persistent):
             nsdfg.arrays[aname].lifetime = dtypes.AllocationLifetime.Persistent
@@ -475,6 +479,7 @@ def auto_optimize(sdfg: SDFG,
     """
     Runs a basic sequence of transformations to optimize a given SDFG to decent
     performance. In particular, performs the following:
+        
         * Simplify
         * Auto-parallelization (loop-to-map)
         * Greedy application of SubgraphFusion
@@ -483,6 +488,7 @@ def auto_optimize(sdfg: SDFG,
         * Collapse all maps to parallelize across all dimensions
         * Set all library nodes to expand to ``fast`` expansion, which calls
           the fastest library on the target device
+
     :param sdfg: The SDFG to optimize.
     :param device: the device to optimize for.
     :param validate: If True, validates the SDFG after all transformations

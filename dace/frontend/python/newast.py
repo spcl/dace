@@ -152,17 +152,19 @@ def parse_dace_program(name: str,
                        simplify: Optional[bool] = None,
                        save: bool = True,
                        progress: Optional[bool] = None) -> SDFG:
-    """ Parses a `@dace.program` function into an SDFG.
-        :param src_ast: The AST of the Python program to parse.
-        :param visitor: A ProgramVisitor object returned from 
-                        ``preprocess_dace_program``.
-        :param closure: An object that contains the @dace.program closure.
-        :param simplify: If True, simplification pass will be performed.
-        :param save: If True, saves source mapping data for this SDFG.
-        :param progress: If True, prints a progress bar of the parsing process. 
-                         If None (default), prints after 5 seconds of parsing. 
-                         If False, never prints progress.
-        :return: A 2-tuple of SDFG and its reduced (used) closure.
+    """
+    Parses a `@dace.program` function into an SDFG.
+
+    :param src_ast: The AST of the Python program to parse.
+    :param visitor: A ProgramVisitor object returned from 
+                    ``preprocess_dace_program``.
+    :param closure: An object that contains the @dace.program closure.
+    :param simplify: If True, simplification pass will be performed.
+    :param save: If True, saves source mapping data for this SDFG.
+    :param progress: If True, prints a progress bar of the parsing process. 
+                        If None (default), prints after 5 seconds of parsing. 
+                        If False, never prints progress.
+    :return: A 2-tuple of SDFG and its reduced (used) closure.
     """
     # Progress bar handling (pre-parse)
     teardown_progress = False
@@ -595,6 +597,7 @@ class TaskletTransformer(ExtNodeTransformer):
                  accesses: Dict[Tuple[str, dace.subsets.Subset, str], str] = dict(),
                  symbols: Dict[str, "dace.symbol"] = dict()):
         """ Creates an AST parser for tasklets.
+
             :param sdfg: The SDFG to add the tasklet in (used for defined arrays and symbols).
             :param state: The SDFG state to add the tasklet to.
         """
@@ -634,11 +637,12 @@ class TaskletTransformer(ExtNodeTransformer):
             setattr(self, 'visit_' + stmt, lambda n: _disallow_stmt(self, n))
 
     def parse_tasklet(self, tasklet_ast: TaskletType, name: Optional[str] = None):
-        """ Parses the AST of a tasklet and returns the tasklet node, as well as input and output memlets.
-            :param tasklet_ast: The Tasklet's Python AST to parse.
-            :param name: Optional name to use as prefix for tasklet.
-            :return: 3-tuple of (Tasklet node, input memlets, output memlets).
-            @rtype: Tuple[Tasklet, Dict[str, Memlet], Dict[str, Memlet]]
+        """
+        Parses the AST of a tasklet and returns the tasklet node, as well as input and output memlets.
+
+        :param tasklet_ast: The Tasklet's Python AST to parse.
+        :param name: Optional name to use as prefix for tasklet.
+        :return: 3-tuple of (Tasklet node, input memlets, output memlets).
         """
         # Should return a tasklet object (with connectors)
         self.visit(tasklet_ast)
@@ -1299,6 +1303,7 @@ class ProgramVisitor(ExtNodeVisitor):
         """ Returns a list of parameters, either from the function parameters
             and decorator arguments or parameters and their annotations (type
             hints).
+
             :param node: The given function definition node.
             :return: A list of 2-tuples (name, value).
         """
@@ -1595,6 +1600,7 @@ class ProgramVisitor(ExtNodeVisitor):
     def _parse_index_as_range(self, node: Union[ast.Index, ast.Tuple]):
         """
         Parses an index as range
+
         :param node: Index node
         :return: Range in (from, to, step) format
         """
@@ -1678,6 +1684,7 @@ class ProgramVisitor(ExtNodeVisitor):
                           node: ast.AST) -> Tuple[Dict[str, str], Dict[str, Memlet]]:
         """ Parse map parameters for data-dependent inputs, modifying the
             parameter dictionary and returning relevant memlets.
+
             :return: A 2-tuple of (parameter dictionary, mapping from connector
                      name to memlet).
         """
@@ -1742,6 +1749,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
     def _parse_consume_inputs(self, node: ast.FunctionDef) -> Tuple[str, str, Tuple[str, str], str, str]:
         """ Parse consume parameters from AST.
+        
             :return: A 5-tuple of Stream name, internal stream name,
                      (PE index, number of PEs), condition, chunk size.
         """
@@ -3376,6 +3384,7 @@ class ProgramVisitor(ExtNodeVisitor):
     def _assert_arg_constant(self, node: ast.Call, aname: str, aval: Union[ast.AST, Any], parsed: Tuple[str, Any]):
         """
         Checks if given argument is constant. If not, raises a DaceSyntaxError exception.
+
         :param node: AST node of the call (used for exception).
         :param aname: Argument name.
         :param aval: AST (or visited) value of the argument.
@@ -4040,10 +4049,10 @@ class ProgramVisitor(ExtNodeVisitor):
                          inp_conn: str = '__pystate',
                          out_conn: str = '__pystate',
                          arr_name: str = '__pystate'):
-        '''
+        """
         Create and connect a __pystate variable that blocks reordering
         optimizations to a given tasklet.
-        '''
+        """
         if arr_name not in self.sdfg.arrays:
             self.sdfg.add_scalar(arr_name, dace.int32, transient=True)
         rs = state.add_read(arr_name)

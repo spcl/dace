@@ -4,8 +4,16 @@ dace.codegen.instrumentation package
 Submodules
 ----------
 
+dace.codegen.instrumentation.fpga module
+----------------------------------------
+
+.. automodule:: dace.codegen.instrumentation.fpga
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 dace.codegen.instrumentation.gpu\_events module
-------------------------------------------------
+-----------------------------------------------
 
 .. automodule:: dace.codegen.instrumentation.gpu_events
    :members:
@@ -20,14 +28,6 @@ dace.codegen.instrumentation.papi module
    :undoc-members:
    :show-inheritance:
 
-dace.codegen.instrumentation.perfdb module
-------------------------------------------
-
-.. automodule:: dace.codegen.instrumentation.perfdb
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
 dace.codegen.instrumentation.provider module
 --------------------------------------------
 
@@ -35,6 +35,15 @@ dace.codegen.instrumentation.provider module
    :members:
    :undoc-members:
    :show-inheritance:
+
+dace.codegen.instrumentation.report module
+------------------------------------------
+
+.. automodule:: dace.codegen.instrumentation.report
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 
 dace.codegen.instrumentation.timer module
 -----------------------------------------

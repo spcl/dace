@@ -570,9 +570,9 @@ def test_multi_tasklet():
 
 @pytest.mark.verilator
 def test_tasklet_map():
-    '''
+    """
         Test the unrolled map support for M tasklets on N vectors of size W.
-    '''
+    """
     # add symbols
     n = 512
     m = 8

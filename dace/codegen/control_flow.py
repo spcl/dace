@@ -6,7 +6,7 @@ flow elements (e.g., ``for``, ``if``, ``while``) from state machines in SDFGs.
 SDFGs are state machines of dataflow graphs, where each node is a state and each
 edge may contain a state transition condition and assignments. As such, when 
 generating code from an SDFG, the straightforward way would be to generate code
-for each state and conditional ``goto``s for the state transitions.
+for each state and conditional ``goto`` statements for the state transitions.
 However, this inhibits compiler optimizations on the generated code, which rely
 on loops and branches. 
 
@@ -28,35 +28,38 @@ is wrapped in a ``GeneralBlock``, which generates the aforementioned conditional
 For example, the following SDFG::
 
 
-      x < 5
-     /------>[s2]--------\
-[s1] \                    ->[s5]
-      ------>[s3]->[s4]--/   
-      x >= 5
+          x < 5
+         /------>[s2]--------\\
+    [s1] \                    ->[s5]
+          ------>[s3]->[s4]--/   
+          x >= 5
 
 
 would create the control flow tree below::
 
 
-GeneralBlock({
-    IfScope(condition=x<5, body={  
-        GeneralBlock({
-            SingleState(s2)
-        })
-    }, orelse={
-        GeneralBlock({
-            SingleState(s3),
-            SingleState(s4),
-        })
-    }),
-    SingleState(s5)
-})
+    GeneralBlock({
+        IfScope(condition=x<5, body={  
+            GeneralBlock({
+                SingleState(s2)
+            })
+        }, orelse={
+            GeneralBlock({
+                SingleState(s3),
+                SingleState(s4),
+            })
+        }),
+        SingleState(s5)
+    })
+
+
 """
 
 import ast
 from dataclasses import dataclass
 from typing import (Callable, Dict, Iterator, List, Optional, Sequence, Set, Tuple, Union)
 import sympy as sp
+import dace
 from dace import dtypes
 from dace.sdfg.state import SDFGState
 from dace.sdfg.sdfg import SDFG, InterstateEdge
@@ -65,6 +68,7 @@ from dace.properties import CodeBlock
 from dace.codegen import cppunparse
 from dace.codegen.targets import cpp
 
+DaCeCodeGenerator = 'dace.codegen.targets.framecode.DaCeCodeGenerator'
 ###############################################################################
 
 
@@ -83,7 +87,7 @@ class ControlFlow:
         """ 
         Returns the first or initializing state in this control flow block. 
         Used to determine which will be the next state in a control flow block
-        to avoid generating extraneous ``goto``s.
+        to avoid generating extraneous ``goto`` calls.
         """
         return None
 
@@ -94,9 +98,10 @@ class ControlFlow:
         """
         return []
 
-    def as_cpp(self, codegen: 'DaCeCodeGenerator', symbols: Dict[str, dtypes.typeclass]) -> str:
+    def as_cpp(self, codegen: DaCeCodeGenerator, symbols: Dict[str, dtypes.typeclass]) -> str:
         """ 
         Returns C++ code for this control flow block.
+
         :param codegen: A code generator object, used for allocation information and defined variables in scope.
         :param symbols: A dictionary of symbol names and their types.
         :return: C++ string with the generated code of the control flow block.
@@ -138,10 +143,11 @@ class SingleState(ControlFlow):
                             edge: Edge[InterstateEdge],
                             successor: SDFGState = None,
                             assignments_only: bool = False,
-                            framecode: 'DaCeCodeGenerator' = None) -> str:
+                            framecode: DaCeCodeGenerator = None) -> str:
         """ 
         Helper function that generates a state transition (conditional goto) 
         from a state and an SDFG edge.
+
         :param sdfg: The parent SDFG.
         :param edge: The state transition edge to generate.
         :param successor: If not None, the state that will be generated right
@@ -538,6 +544,7 @@ def _cases_from_branches(
     If the input list of edges correspond to a switch/case scope (with all
     conditions being "x == y" for a unique symbolic x and integers y),
     returns the switch/case scope parameters.
+
     :param edges: List of inter-state edges.
     :return: Tuple of (case variable C++ expression, mapping from case to 
              control flow block). If not a valid switch/case scope, 
@@ -616,6 +623,7 @@ def _structured_control_flow_traversal(sdfg: SDFG,
                                        generate_children_of: SDFGState = None) -> Set[SDFGState]:
     """ 
     Helper function for ``structured_control_flow_tree``. 
+
     :param sdfg: SDFG.
     :param start: Starting state for traversal.
     :param ptree: State parent tree (computed from ``state_parent_tree``).
@@ -768,6 +776,7 @@ def structured_control_flow_tree(sdfg: SDFG, dispatch_state: Callable[[SDFGState
     Returns a structured control-flow tree (i.e., with constructs such as 
     branches and loops) from an SDFG, which can be used to generate its code
     in a compiler- and human-friendly way.
+    
     :param sdfg: The SDFG to iterate over.
     :return: Control-flow block representing the entire SDFG.
     """

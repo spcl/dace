@@ -7,15 +7,15 @@ from dace.fpga_testing import fpga_test
 
 
 def create_reduce_sdfg(wcr_str, reduction_axis, sdfg_name, input_data, output_data, dtype):
-    '''
+    """
     Build an SDFG that perform the given reduction along the given axis
+
     :param wcr_str: reduction operation to perform
     :param reduction_axis: the axis on which operate
     :param sdfg_name:
     :param input_data:
     :param output_data:
-    :return:
-    '''
+    """
     sdfg = dace.SDFG(sdfg_name)
 
     ###########################################################################

@@ -2,10 +2,13 @@
 """ Precompiled DaCe program/method cache. """
 
 from collections import OrderedDict
-from dace import config, data as dt
-from dace.sdfg.sdfg import SDFG
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Optional, Set, Tuple
+
+import dace
+from dace import config
+from dace import data as dt
+from dace.sdfg.sdfg import SDFG
 
 # Type hints
 ArgTypes = Dict[str, dt.Data]
@@ -82,6 +85,7 @@ class DaceProgramCache:
     def __init__(self, evaluate: EvalCallback, size: Optional[int] = None) -> None:
         """ 
         Initializes a DaCe program cache.
+        
         :param evaluate: A callback that can evaluate constants at call time.
         :param size: The cache size (if not given, uses the default value from
                      the configuration).

@@ -250,6 +250,7 @@ def get_environment_flags(environments) -> Tuple[List[str], Set[str]]:
     """
     Returns the CMake environment and linkage flags associated with the
     given input environments/libraries.
+    
     :param environments: A list of ``@dace.library.environment``-decorated
                          classes.
     :return: A 2-tuple of (environment CMake flags, linkage CMake flags)

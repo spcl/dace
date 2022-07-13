@@ -207,11 +207,11 @@ def _stateorder_topological_sort(sdfg: SDFG,
                                  visited: Set[SDFGState] = None) -> Iterator[SDFGState]:
     """ 
     Helper function for ``stateorder_topological_sort``. 
+
     :param sdfg: SDFG.
     :param start: Starting state for traversal.
     :param ptree: State parent tree (computed from ``state_parent_tree``).
-    :param branch_merges: Dictionary mapping from branch state to its merge
-                          state.
+    :param branch_merges: Dictionary mapping from branch state to its merge state.
     :param stop: Stopping state to not traverse through (merge state of a 
                  branch or guard state of a loop).
     :return: Generator that yields states in state-order from ``start`` to 
@@ -282,6 +282,7 @@ def stateorder_topological_sort(sdfg: SDFG) -> Iterator[SDFGState]:
     Returns a generator that produces states in the order that they will be
     executed, disregarding multiple loop iterations and employing topological
     sort for branches.
+
     :param sdfg: The SDFG to iterate over.
     :return: Generator that yields states in state-order.
     """

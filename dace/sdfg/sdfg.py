@@ -188,6 +188,7 @@ class InterstateEdge(object):
     def replace_dict(self, repl: Dict[str, str], replace_keys=True) -> None:
         """
         Replaces all given keys with their corresponding values.
+
         :param repl: Replacement dictionary.
         :param replace_keys: If False, skips replacing assignment keys.
         """
@@ -215,6 +216,7 @@ class InterstateEdge(object):
     def replace(self, name: str, new_name: str, replace_keys=True) -> None:
         """
         Replaces all occurrences of ``name`` with ``new_name``.
+
         :param name: The source name.
         :param new_name: The replacement name.
         :param replace_keys: If False, skips replacing assignment keys.
@@ -340,6 +342,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                  propagate: bool = True,
                  parent=None):
         """ Constructs a new SDFG.
+
             :param name: Name for the SDFG (also used as the filename for
                          the compiled shared library).
             :param symbols: Additional dictionary of symbol names -> types that the SDFG
@@ -398,6 +401,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
     def to_json(self, hash=False):
         """ Serializes this object to JSON format.
+
             :return: A string representing the JSON-serialized SDFG.
         """
         # Location in the SDFG list (only for root SDFG)
@@ -459,11 +463,12 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         return ret
 
     def hash_sdfg(self, jsondict: Optional[Dict[str, Any]] = None) -> str:
-        '''
+        """
         Returns a hash of the current SDFG, without considering IDs and attribute names.
+
         :param jsondict: If not None, uses given JSON dictionary as input.
         :return: The hash (in SHA-256 format).
-        '''
+        """
 
         def keyword_remover(json_obj: Any, last_keyword=""):
             # Makes non-unique in SDFG hierarchy v2
@@ -534,6 +539,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
     def replace(self, name: str, new_name: str):
         """ Finds and replaces all occurrences of a symbol or array name in SDFG.
+
             :param name: Name to find.
             :param new_name: Name to replace.
             :raise FileExistsError: If name and new_name already exist as data descriptors or symbols.
@@ -550,6 +556,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         """
         Replaces all occurrences of keys in the given dictionary with the mapped
         values.
+
         :param repldict: The replacement dictionary.
         :param replace_keys: If False, skips replacing assignment keys.
         :param symrepl: A symbolic expression replacement dictionary (for performance reasons).
@@ -586,6 +593,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
     def add_symbol(self, name, stype):
         """ Adds a symbol to the SDFG.
+
             :param name: Symbol name.
             :param stype: Symbol type.
         """
@@ -597,6 +605,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
     def remove_symbol(self, name):
         """ Removes a symbol from the SDFG.
+
             :param name: Symbol name.
         """
         del self.symbols[name]
@@ -627,6 +636,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
     @start_state.setter
     def start_state(self, state_id):
         """ Manually sets the starting state of this SDFG.
+
             :param state_id: The node ID (use `node_id(state)`) of the
                              state to set.
         """
@@ -639,6 +649,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         """
         Sets C++ code that will be generated in a global scope on
         one of the generated code files.
+
         :param cpp_code: The code to set.
         :param location: The file/backend in which to generate the code.
                          Options are None (all files), "frame", "openmp",
@@ -651,6 +662,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         """
         Sets C++ code that will be generated in the __dace_init_* functions on
         one of the generated code files.
+
         :param cpp_code: The code to set.
         :param location: The file/backend in which to generate the code.
                          Options are None (all files), "frame", "openmp",
@@ -663,6 +675,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         """
         Sets C++ code that will be generated in the __dace_exit_* functions on
         one of the generated code files.
+
         :param cpp_code: The code to set.
         :param location: The file/backend in which to generate the code.
                          Options are None (all files), "frame", "openmp",
@@ -675,6 +688,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         """
         Appends C++ code that will be generated in a global scope on
         one of the generated code files.
+
         :param cpp_code: The code to set.
         :param location: The file/backend in which to generate the code.
                          Options are None (all files), "frame", "openmp",
@@ -689,6 +703,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         """
         Appends C++ code that will be generated in the __dace_init_* functions on
         one of the generated code files.
+
         :param cpp_code: The code to append.
         :param location: The file/backend in which to generate the code.
                          Options are None (all files), "frame", "openmp",
@@ -703,6 +718,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         """
         Appends C++ code that will be generated in the __dace_exit_* functions on
         one of the generated code files.
+
         :param cpp_code: The code to append.
         :param location: The file/backend in which to generate the code.
                          Options are None (all files), "frame", "openmp",
@@ -717,6 +733,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         """
         Prepends C++ code that will be generated in the __dace_exit_* functions on
         one of the generated code files.
+
         :param cpp_code: The code to prepend.
         :param location: The file/backend in which to generate the code.
                          Options are None (all files), "frame", "openmp",
@@ -732,6 +749,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         Appends a transformation to the treansformation history of this SDFG.
         If this is the first transformation being applied, it also saves the
         initial state of the SDFG to return to and play back the history.
+
         :param transformation: The transformation to append.
         """
         if Config.get_bool('store_history') is False:
@@ -763,11 +781,11 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         except StopIteration:
             return False
 
-    def get_instrumentation_reports(self) -> \
-            List['dace.codegen.instrumentation.InstrumentationReport']:
+    def get_instrumentation_reports(self) -> List['dace.codegen.instrumentation.InstrumentationReport']:
         """
         Returns a list of instrumentation reports from previous runs of
         this SDFG.
+
         :return: A List of timestamped InstrumentationReport objects.
         """
         # Avoid import loops
@@ -793,6 +811,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         """
         Returns an instrumentation report from the latest run of this SDFG, or
         None if the file does not exist.
+
         :return: A timestamped InstrumentationReport object, or None if does
                  not exist.
         """
@@ -813,6 +832,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         """
         Returns an instrumented data report from the latest run of this SDFG, with a given timestamp, or
         None if no reports exist.
+
         :param timestamp: An optional timestamp to use for the report.
         :return: An InstrumentedDataReport object, or None if one does not exist.
         """
@@ -856,6 +876,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         """
         Invokes an SDFG with an instrumented data report, generating and compiling code if necessary. 
         Arguments given as ``args`` and ``kwargs`` will be overriden by the data containers defined in the report.
+
         :param dreport: The instrumented data report to use upon calling.
         :param args: Arguments to call SDFG with.
         :param kwargs: Keyword arguments to call SDFG with.
@@ -915,6 +936,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
     def remove_data(self, name, validate=True):
         """ Removes a data descriptor from the SDFG.
+
             :param name: The name of the data descriptor to remove.
             :param validate: If True, verifies that there are no access
                              nodes that are using this data descriptor
@@ -966,6 +988,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
     def set_sourcecode(self, code: str, lang=None):
         """ Set the source code of this SDFG (for IDE purposes).
+
             :param code: A string of source code.
             :param lang: A string representing the language of the source code,
                          for syntax highlighting and completion.
@@ -1020,6 +1043,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
     def add_constant(self, name: str, value: Any, dtype: dt.Data = None):
         """ Adds/updates a new compile-time constant to this SDFG. A constant
             may either be a scalar or a numpy ndarray thereof.
+
             :param name: The name of the constant.
             :param value: The constant value.
             :param dtype: Optional data type of the symbol, or None to deduce
@@ -1065,6 +1089,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
     def add_node(self, node, is_start_state=False):
         """ Adds a new node to the SDFG. Must be an SDFGState or a subclass
             thereof.
+
             :param node: The node to add.
             :param is_start_state: If True, sets this node as the starting
                                    state.
@@ -1085,6 +1110,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
     def add_edge(self, u, v, edge):
         """ Adds a new edge to the SDFG. Must be an InterstateEdge or a
             subclass thereof.
+
             :param u: Source node.
             :param v: Destination node.
             :param edge: The edge to add.
@@ -1146,6 +1172,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         Returns a set of symbol names that are used by the SDFG, but not
         defined within it. This property is used to determine the symbolic
         parameters of the SDFG and verify that ``SDFG.symbols`` is complete.
+
         :note: Assumes that the graph is valid (i.e., without undefined or
                overlapping symbols).
         """
@@ -1178,6 +1205,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         Determines what data containers are read and written in this SDFG. Does
         not include reads to subsets of containers that have previously been
         written within the same state.
+
         :return: A two-tuple of sets of things denoting
                  ({data read}, {data written}).
         """
@@ -1246,6 +1274,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
     def signature_arglist(self, with_types=True, for_call=False, with_arrays=True, arglist=None) -> List[str]:
         """ Returns a list of arguments necessary to call this SDFG,
             formatted as a list of C definitions.
+
             :param with_types: If True, includes argument types in the result.
             :param for_call: If True, returns arguments that can be used when
                              calling the SDFG.
@@ -1259,6 +1288,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
     def signature(self, with_types=True, for_call=False, with_arrays=True, arglist=None) -> str:
         """ Returns a C/C++ signature of this SDFG, used when generating code.
+
             :param with_types: If True, includes argument types (can be used
                                for a function prototype). If False, only
                                include argument names (can be used for function
@@ -1368,6 +1398,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
     def save(self, filename: str, use_pickle=False, hash=None, exception=None, compress=False) -> Optional[str]:
         """ Save this SDFG to a file.
+
             :param filename: File name to save to.
             :param use_pickle: Use Python pickle as the SDFG format (default:
                                JSON).
@@ -1406,8 +1437,10 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         return None
 
     def view(self, filename=None):
-        """View this sdfg in the system's HTML viewer
-           :param filename: the filename to write the HTML to. If `None`, a temporary file will be created.
+        """
+        View this sdfg in the system's HTML viewer
+
+        :param filename: the filename to write the HTML to. If `None`, a temporary file will be created.
         """
         from dace.cli.sdfv import view
         view(self, filename=filename)
@@ -1429,6 +1462,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
     @staticmethod
     def from_file(filename: str) -> 'SDFG':
         """ Constructs an SDFG from a file.
+
             :param filename: File name to load SDFG from.
             :return: An SDFG.
         """
@@ -1445,6 +1479,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
     ##############################
     def add_state(self, label=None, is_start_state=False) -> 'SDFGState':
         """ Adds a new SDFG state to this graph and returns it.
+
             :param label: State label.
             :param is_start_state: If True, resets SDFG starting state to this
                                    state.
@@ -1464,6 +1499,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
     def add_state_before(self, state: 'SDFGState', label=None, is_start_state=False) -> 'SDFGState':
         """ Adds a new SDFG state before an existing state, reconnecting
             predecessors to it instead.
+
             :param state: The state to prepend the new state before.
             :param label: State label.
             :param is_start_state: If True, resets SDFG starting state to this
@@ -1482,6 +1518,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
     def add_state_after(self, state: 'SDFGState', label=None, is_start_state=False) -> 'SDFGState':
         """ Adds a new SDFG state after an existing state, reconnecting
             it to the successors instead.
+
             :param state: The state to append the new state after.
             :param label: State label.
             :param is_start_state: If True, resets SDFG starting state to this
@@ -1814,6 +1851,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
     def add_datadesc(self, name: str, datadesc: dt.Data, find_new_name=False) -> str:
         """ Adds an existing data descriptor to the SDFG array store.
+
             :param name: Name to use.
             :param datadesc: Data descriptor to add.
             :param find_new_name: If True and data descriptor with this name
@@ -1846,6 +1884,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                   root: RankType = 0):
         """ Adds a process-grid to the process-grid descriptor store.
             For more details on process-grids, please read the documentation of the ProcessGrid class.
+
             :param shape: Shape of the process-grid (see `dims` parameter of [MPI_Cart_create](https://www.mpich.org/static/docs/latest/www3/MPI_Cart_create.html)), e.g., [2, 3, 3].
             :param parent_grid: Parent process-grid (similar to the `comm` parameter of [MPI_Cart_sub](https://www.mpich.org/static/docs/v3.2/www3/MPI_Cart_sub.html)).
             :param color: The i-th entry specifies whether the i-th dimension is kept in the sub-grid or is dropped (see `remain_dims` input of [MPI_Cart_sub](https://www.mpich.org/static/docs/v3.2/www3/MPI_Cart_sub.html)).
@@ -1887,6 +1926,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                      correspondence: Sequence[Integral] = None):
         """ Adds a sub-array to the sub-array descriptor store.
             For more details on sub-arrays, please read the documentation of the SubArray class.
+
             :param dtype: Datatype of the array (see `oldtype` parameter of [MPI_Type_create_subarray](https://www.mpich.org/static/docs/v3.2/www3/MPI_Type_create_subarray.html)).
             :param shape: Shape of the sub-array (see `array_of_sizes` parameter of [MPI_Type_create_subarray](https://www.mpich.org/static/docs/v3.2/www3/MPI_Type_create_subarray.html)).
             :param subshape: Sub-shape of the sub-array (see `array_of_subsizes` parameter of [MPI_Type_create_subarray](https://www.mpich.org/static/docs/v3.2/www3/MPI_Type_create_subarray.html)).
@@ -1924,6 +1964,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
     def add_rdistrarray(self, array_a: str, array_b: str):
         """ Adds a sub-array redistribution to the sub-array redistribution descriptor store.
             For more details on redistributions, please read the documentation of the RedistrArray class.
+
             :param array_a: Input sub-array descriptor.
             :param array_b: Output sub-array descriptor.
             :return: Name of the new redistribution descriptor.
@@ -1946,34 +1987,36 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         increment_expr: str,
         loop_end_state=None,
     ):
-        """ Helper function that adds a looping state machine around a
-            given state (or sequence of states).
-            :param before_state: The state after which the loop should
-                                 begin, or None if the loop is the first
-                                 state (creates an empty state).
-            :param loop_state: The state that begins the loop. See also
-                               `loop_end_state` if the loop is multi-state.
-            :param after_state: The state that should be invoked after
-                                the loop ends, or None if the program
-                                should terminate (creates an empty state).
-            :param loop_var: A name of an inter-state variable to use
-                             for the loop. If None, `initialize_expr`
-                             and `increment_expr` must be None.
-            :param initialize_expr: A string expression that is assigned
-                                    to `loop_var` before the loop begins.
-                                    If None, does not define an expression.
-            :param condition_expr: A string condition that occurs every
-                                   loop iteration. If None, loops forever
-                                   (undefined behavior).
-            :param increment_expr: A string expression that is assigned to
-                                   `loop_var` after every loop iteration.
-                                    If None, does not define an expression.
-            :param loop_end_state: If the loop wraps multiple states, the
-                                   state where the loop iteration ends.
-                                   If None, sets the end state to
-                                   `loop_state` as well.
-            :return: A 3-tuple of (`before_state`, generated loop guard state,
-                                   `after_state`).
+        """
+        Helper function that adds a looping state machine around a
+        given state (or sequence of states).
+
+        :param before_state: The state after which the loop should
+                             begin, or None if the loop is the first
+                             state (creates an empty state).
+        :param loop_state: The state that begins the loop. See also
+                           ``loop_end_state`` if the loop is multi-state.
+        :param after_state: The state that should be invoked after
+                            the loop ends, or None if the program
+                            should terminate (creates an empty state).
+        :param loop_var: A name of an inter-state variable to use
+                         for the loop. If None, ``initialize_expr``
+                         and ``increment_expr`` must be None.
+        :param initialize_expr: A string expression that is assigned
+                                to ``loop_var`` before the loop begins.
+                                If None, does not define an expression.
+        :param condition_expr: A string condition that occurs every
+                               loop iteration. If None, loops forever
+                               (undefined behavior).
+        :param increment_expr: A string expression that is assigned to
+                               ``loop_var`` after every loop iteration.
+                               If None, does not define an expression.
+        :param loop_end_state: If the loop wraps multiple states, the
+                               state where the loop iteration ends.
+                               If None, sets the end state to
+                               ``loop_state`` as well.
+        :return: A 3-tuple of (``before_state``, generated loop guard state,
+                 ``after_state``).
         """
         from dace.frontend.python.astutils import negate_expr  # Avoid import loops
 
@@ -2033,6 +2076,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
     def specialize(self, symbols: Dict[str, Any]):
         """ Sets symbolic values in this SDFG to constants.
+
             :param symbols: Values to specialize.
         """
         # Set symbol values to add
@@ -2050,6 +2094,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
     def optimize(self, optimizer=None) -> 'SDFG':
         """
         Optimize an SDFG using the CLI or external hooks.
+
         :param optimizer: If defines a valid class name, it will be called
                           during compilation to transform the SDFG as
                           necessary. If None, uses configuration setting.
@@ -2087,6 +2132,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
     def compile(self, output_file=None, validate=True) -> \
             'dace.codegen.compiler.CompiledSDFG':
         """ Compiles a runnable binary from this SDFG.
+
             :param output_file: If not None, copies the output library file to
                                 the specified path.
             :param validate: If True, validates the SDFG prior to generating
@@ -2444,29 +2490,29 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         This function applies a transformation or a set of (unique) transformations
         until throughout the entire SDFG once. Operates in-place.
 
-            :param xforms: A PatternTransformation class or a set thereof.
-            :param options: An optional dictionary (or sequence of dictionaries)
-                            to modify transformation parameters.
-            :param validate: If True, validates after all transformations.
-            :param validate_all: If True, validates after every transformation.
-            :param permissive: If True, operates in permissive mode.
-            :param states: If not None, specifies a subset of states to
-                           apply transformations on.
-            :param print_report: Whether to show debug prints or not (None if
-                                 the DaCe config option 'debugprint' should
-                                 apply).
-            :param order_by_transformation: Try to apply transformations ordered
-                                            by class rather than SDFG.
-            :param progress: If True, prints every intermediate transformation
-                             applied. If False, never prints anything. If None
-                             (default), prints only after 5 seconds of
-                             transformations.
-            :return: Number of transformations applied.
+        :param xforms: A PatternTransformation class or a set thereof.
+        :param options: An optional dictionary (or sequence of dictionaries)
+                        to modify transformation parameters.
+        :param validate: If True, validates after all transformations.
+        :param validate_all: If True, validates after every transformation.
+        :param permissive: If True, operates in permissive mode.
+        :param states: If not None, specifies a subset of states to
+                        apply transformations on.
+        :param print_report: Whether to show debug prints or not (None if
+                                the DaCe config option 'debugprint' should
+                                apply).
+        :param order_by_transformation: Try to apply transformations ordered
+                                        by class rather than SDFG.
+        :param progress: If True, prints every intermediate transformation
+                            applied. If False, never prints anything. If None
+                            (default), prints only after 5 seconds of
+                            transformations.
+        :return: Number of transformations applied.
 
-            Examples::
+        Examples::
 
-                    # Tiles all maps once
-                    sdfg.apply_transformations_once_everywhere(MapTiling, options=dict(tile_size=16))
+                # Tiles all maps once
+                sdfg.apply_transformations_once_everywhere(MapTiling, options=dict(tile_size=16))
         """
         from dace.transformation.passes.pattern_matching import PatternApplyOnceEverywhere
 
@@ -2490,11 +2536,12 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                                   register_transients=True):
         """ Applies a series of transformations on the SDFG for it to
             generate GPU code.
+
             :param sequential_innermaps: Make all internal maps Sequential.
             :param register_transients: Make all transients inside GPU maps registers.
             :note: It is recommended to apply redundant array removal
-            transformation after this transformation. Alternatively,
-            you can simplify() after this transformation.
+                   transformation after this transformation. Alternatively,
+                   you can ``simplify()`` after this transformation.
             :note: This is an in-place operation on the SDFG.
         """
         # Avoiding import loops
@@ -2527,6 +2574,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         """
         Recursively expand all unexpanded library nodes in the SDFG,
         resulting in a "pure" SDFG that the code generator can handle.
+
         :param recursive: If True, expands all library nodes recursively,
                           including library nodes that expand to library nodes.
         """
@@ -2552,6 +2600,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
     def generate_code(self):
         """ Generates code from this SDFG and returns it.
+        
             :return: A list of `CodeObject` objects containing the generated
                       code of different files and languages.
         """

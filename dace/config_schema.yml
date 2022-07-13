@@ -536,6 +536,7 @@ required:
                         type: str
                         default: a10gx
                         title: Target FPGA board
+                        description: FPGA board to compile for, obtain list by running ``aoc --list-boards``.
 
                     enable_debugging:
                         type: bool
@@ -848,17 +849,22 @@ required:
     cache:
         type: str
         default: name
-        title: Naming of cache entry
+        title: Compiled cache entry naming policy
         description: >
-            Determine the name of the generated dacecache folder.
-            "name" uses the name of the SDFG directly, causing it to be
+            Determine the name of the generated ``.dacecache`` folder:
+            
+            
+            * ``name`` uses the name of the SDFG directly, causing it to be
             overridden by other programs using the same SDFG name.
-            "hash" uses a mangled name based on the hash of the SDFG, such that
+            
+            * ``hash`` uses a mangled name based on the hash of the SDFG, such that
             any change to the SDFG will generate a different cache folder.
-            "unique" uses a name based on the currently running Python process
+            
+            * ``unique`` uses a name based on the currently running Python process
             at code generation time, such that no caching or clashes can happen
             between different processes or subsequent invocations of Python.
-            "single" uses a single cache folder for all SDFGs, saving space and
+            
+            * ``single`` uses a single cache folder for all SDFGs, saving space and
             potentially build time, but disallows executing SDFGs in parallel
             and caching of more than one simultaneous SDFG.
 
@@ -952,13 +958,17 @@ required:
                     default_implementation:
                         type: str
                         default: pure
-                        description: Default implementation BLAS library nodes.
+                        title: Default implementation
+                        description: Default implementation for BLAS library nodes.
+
                     override:
                         type: bool
                         default: false
+                        title: Force configured implementation
                         description: >
                             Force the default implementation, even if an
                             implementation has been explicitly set on a node.
+
                     fpga:
                         type: dict
                         title: FPGA
@@ -980,10 +990,13 @@ required:
                     default_implementation:
                         type: str
                         default: OpenBLAS
-                        description: Default implementation of LAPACK library nodes.
+                        title: Default implementation
+                        description: Default implementation for LAPACK library nodes.
+
                     override:
                         type: bool
                         default: false
+                        title: Force configured implementation
                         description: >
                             Force the default implementation, even if an
                             implementation has been explicitly set on a node.
@@ -995,10 +1008,13 @@ required:
                     default_implementation:
                         type: str
                         default: OpenBLAS
-                        description: Default implementation of linalg library nodes.
+                        title: Default implementation
+                        description: Default implementation for linalg library nodes.
+
                     override:
                         type: bool
                         default: false
+                        title: Force configured implementation
                         description: >
                             Force the default implementation, even if an
                             implementation has been explicitly set on a node.

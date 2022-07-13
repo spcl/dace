@@ -339,6 +339,7 @@ class typeclass(object):
             2. Enabling declaration syntax: `dace.float32[M,N]`
             3. Enabling extensions such as `dace.struct` and `dace.vector`
     """
+
     def __init__(self, wrapped_type):
         # Convert python basic types
         if isinstance(wrapped_type, str):
@@ -418,8 +419,9 @@ class typeclass(object):
 
     def __getitem__(self, s):
         """ This is syntactic sugar that allows us to define an array type
-            with the following syntax: dace.uint32[N,M]
-            :return: A data.Array data descriptor.
+            with the following syntax: ``dace.uint32[N,M]``
+
+            :return: A ``data.Array`` data descriptor.
         """
         from dace import data
 
@@ -476,6 +478,7 @@ def reduction_identity(dtype: typeclass, red: ReductionType) -> Any:
     """
     Returns known identity values (which we can safely reset transients to)
     for built-in reduction types.
+
     :param dtype: Input type.
     :param red: Reduction type.
     :return: Identity value in input type, or None if not found.
@@ -567,6 +570,7 @@ def result_type_of(lhs, *rhs):
 
 class opaque(typeclass):
     """ A data type for an opaque object, useful for C bindings/libnodes, i.e., MPI_Request. """
+
     def __init__(self, typename):
         self.type = typename
         self.ctype = typename
@@ -601,6 +605,7 @@ class pointer(typeclass):
 
         Example use:
             `dace.pointer(dace.struct(x=dace.float32, y=dace.float32))`. """
+
     def __init__(self, wrapped_typeclass):
         self._typeclass = wrapped_typeclass
         self.type = wrapped_typeclass.type
@@ -644,6 +649,7 @@ class vector(typeclass):
 
     Example use: `dace.vector(dace.float32, 4)` becomes float4.
     """
+
     def __init__(self, dtype: typeclass, vector_length: int):
         self.vtype = dtype
         self.type = dtype.type
@@ -701,6 +707,7 @@ class string(pointer):
     Python/generated code marshalling.
     Used internally when `str` types are given
     """
+
     def __init__(self):
         super().__init__(int8)
 
@@ -720,6 +727,7 @@ class struct(typeclass):
 
         Example use: `dace.struct(a=dace.int32, b=dace.float64)`.
     """
+
     def __init__(self, name, **fields_and_types):
         # self._data = fields_and_types
         self.type = ctypes.Structure
@@ -824,6 +832,7 @@ class compiletime:
     In the above code, ``constant`` will be replaced with its value at call time
     during parsing.
     """
+
     @staticmethod
     def __descriptor__():
         raise ValueError('All compile-time arguments must be provided in order to compile the SDFG ahead-of-time.')
@@ -843,7 +852,10 @@ def ptrtocupy(ptr, inner_ctype, shape):
 
 
 class callback(typeclass):
-    """ Looks like dace.callback([None, <some_native_type>], *types)"""
+    """
+    Looks like ``dace.callback([None, <some_native_type>], *types)``
+    """
+
     def __init__(self, return_types, *variadic_args):
         from dace import data
         if return_types is None:
@@ -890,18 +902,20 @@ class callback(typeclass):
         return cf_object
 
     def is_scalar_function(self) -> bool:
-        '''
+        """
         Returns True if the callback is a function that returns a scalar
         value (or nothing). Scalar functions are the only ones that can be 
         used within a `dace.tasklet` explicitly.
-        '''
+        """
         from dace import data
         if len(self.return_types) == 0 or self.return_types == [None]:
             return True
         return (len(self.return_types) == 1 and isinstance(self.return_types[0], (typeclass, data.Scalar)))
 
     def cfunc_return_type(self) -> typeclass:
-        ''' Returns the typeclass of the return value of the function call. '''
+        """
+        Returns the typeclass of the return value of the function call.
+        """
         if len(self.return_types) == 0 or self.return_types == [None]:
             return typeclass(None)
         if not self.is_scalar_function():
@@ -1248,6 +1262,7 @@ def isallowed(var, allow_recursive=False):
 class DebugInfo:
     """ Source code location identifier of a node/edge in an SDFG. Used for
         IDE and debugging purposes. """
+
     def __init__(self, start_line, start_column=0, end_line=-1, end_column=0, filename=None):
         self.start_line = start_line
         self.end_line = end_line if end_line >= 0 else start_line
@@ -1291,6 +1306,7 @@ def json_to_typeclass(obj, context=None):
 def paramdec(dec):
     """ Parameterized decorator meta-decorator. Enables using `@decorator`,
         `@decorator()`, and `@decorator(...)` with the same function. """
+
     @wraps(dec)
     def layer(*args, **kwargs):
         from dace import data
