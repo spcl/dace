@@ -3,7 +3,7 @@
 Integrating SDFGs in Existing Programs
 ======================================
 
-Compiling SDFGs yields a subfolder in .dacecache (or configured by ``default_build_folder``)
+Compiling SDFGs yields a subfolder in ``.dacecache`` (or configured by ``default_build_folder``)
 
 Python
 ------
