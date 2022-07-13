@@ -8,6 +8,7 @@ on:
 
 jobs:
   test-heterogeneous:
+    if: ${{ github.event.label.name != 'no-ci' }}
     runs-on: [self-hosted, linux]
     steps:
     - uses: actions/checkout@v2

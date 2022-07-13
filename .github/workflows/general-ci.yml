@@ -8,6 +8,7 @@ on:
 
 jobs:
   test:
+    if: ${{ github.event.label.name != 'no-ci' }}
     runs-on: ubuntu-latest
     strategy:
       matrix:
