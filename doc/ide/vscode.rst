@@ -10,9 +10,11 @@ for free through the built-in
 The extension is maintained `separately from DaCe on GitHub <https://github.com/spcl/dace-vscode>`_,
 where issues and feature requests can be reported.
 
-.. image:: ./images/vscode_demo.gif
+.. figure:: ./images/vscode_demo.gif
     :width: 800
     :alt: A demonstration of the VS Code UI.
+
+|
 
 Naviagtion
 ----------
@@ -30,6 +32,7 @@ which is shared between all open SDFG editors.
     :width: 800
     :alt: Overview of the DaCe Visual Studio Code UI.
 
+|
 
 **SDFG Optimization Panel**
 
@@ -91,6 +94,8 @@ up the top-level SDFG's properties for editing.
     :width: 800
     :alt: Demonstration of editing SDFG properties.
 
+|
+
 The main SDFG view further allows for editing of the SDFG structure itself.
 Elements can be selected from the top bar and can be added to the graph by clicking on any valid
 position. Invalid positions are shown when the element preview under the cursor turns red, such as
@@ -114,6 +119,8 @@ moving a node to a different position.
     :width: 800
     :alt: Demonstration of adding and editing SDFG elements.
 
+|
+
 Optimization
 ------------
 
@@ -123,6 +130,8 @@ from witin the editor. For details, please see :ref:`optimization_vscode`.
 .. figure:: ./images/sdfg_optimization.gif
     :width: 800
     :alt: Demonstration of optimizing SDFGs through graph transformations.
+
+|
 
 Compiling / Running SDFGs
 -------------------------
@@ -144,6 +153,8 @@ visible.
 .. figure:: ./images/generate_code.gif
     :width: 800
     :alt: Demonstration of generating code from an SDFG and navigating to it.
+
+|
 
 **Running**
 

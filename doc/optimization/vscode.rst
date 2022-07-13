@@ -31,6 +31,8 @@ symbols can be parameterized, causing the heatmap overlays to be updated on-the-
     :width: 800
     :alt: Demonstration of static analysis overlays on an SDFG.
 
+|
+
 **Runtime Analysis and Instrumentation**
 
 The SDFG Analysis section further enables loading of instrumentation reports, which loads and visualizes
@@ -65,6 +67,8 @@ properties with a single click by selecting `Quick Apply` in the transformation 
     :width: 800
     :alt: Demonstration of optimizing SDFGs through graph transformations.
 
+|
+
 **Transformation History**
 
 A separate section in the SDFG Optimization sidepanel lists a chronological history of applied
@@ -77,6 +81,8 @@ Clicking *'Revert To'* reverts the SDFG to that point.
 .. figure:: ../ide/images/transformation_history.gif
     :width: 800
     :alt: Demonstration of the transformation history on SDFGs.
+
+|
 
 .. _vscode_custom_transformations:
 
