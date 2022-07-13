@@ -1,3 +1,5 @@
+.. _integration:
+
 Integrating SDFGs in Existing Programs
 ======================================
 

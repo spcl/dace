@@ -1,3 +1,5 @@
+.. _vscode:
+
 DaCe Visual Studio Code Extension
 =================================
 

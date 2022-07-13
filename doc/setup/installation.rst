@@ -14,10 +14,14 @@ Runtime dependencies:
 Installing with ``pip``
 -----------------------
 
+
 Optional dependencies (e.g., for testing)
+
 
 Installing from source
 ----------------------
+
+Sometimes CMake may not install properly (or scikit-build). Remove both entries and install separately.
 
 
 
