@@ -124,6 +124,14 @@ dace.transformation.dataflow.mpi module
    :undoc-members:
    :show-inheritance:
 
+dace.transformation.dataflow.reduce\_expansion module
+-----------------------------------------------------
+
+.. automodule:: dace.transformation.dataflow.reduce_expansion
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 dace.transformation.dataflow.redundant\_array module
 ----------------------------------------------------
 

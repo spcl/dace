@@ -94,7 +94,7 @@ class StateFusion(transformation.MultiStateTransformation):
         :param graph_b: The graph in which the second set of nodes reside.
         :param group_b: The second set of nodes to check.
         :param inputs_b: If True, checks inputs of the second group.
-        :returns True if subsets intersect or result is indeterminate.
+        :return: True if subsets intersect or result is indeterminate.
         """
         # Set traversal functions
         src_subset = lambda e: (e.data.src_subset if e.data.src_subset is not None else e.data.dst_subset)

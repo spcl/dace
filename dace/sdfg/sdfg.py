@@ -1987,35 +1987,36 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         increment_expr: str,
         loop_end_state=None,
     ):
-        """ Helper function that adds a looping state machine around a
-            given state (or sequence of states).
+        """
+        Helper function that adds a looping state machine around a
+        given state (or sequence of states).
 
-            :param before_state: The state after which the loop should
-                                 begin, or None if the loop is the first
-                                 state (creates an empty state).
-            :param loop_state: The state that begins the loop. See also
-                               `loop_end_state` if the loop is multi-state.
-            :param after_state: The state that should be invoked after
-                                the loop ends, or None if the program
-                                should terminate (creates an empty state).
-            :param loop_var: A name of an inter-state variable to use
-                             for the loop. If None, `initialize_expr`
-                             and `increment_expr` must be None.
-            :param initialize_expr: A string expression that is assigned
-                                    to `loop_var` before the loop begins.
-                                    If None, does not define an expression.
-            :param condition_expr: A string condition that occurs every
-                                   loop iteration. If None, loops forever
-                                   (undefined behavior).
-            :param increment_expr: A string expression that is assigned to
-                                   `loop_var` after every loop iteration.
-                                    If None, does not define an expression.
-            :param loop_end_state: If the loop wraps multiple states, the
-                                   state where the loop iteration ends.
-                                   If None, sets the end state to
-                                   `loop_state` as well.
-            :return: A 3-tuple of (`before_state`, generated loop guard state,
-                                   `after_state`).
+        :param before_state: The state after which the loop should
+                             begin, or None if the loop is the first
+                             state (creates an empty state).
+        :param loop_state: The state that begins the loop. See also
+                           ``loop_end_state`` if the loop is multi-state.
+        :param after_state: The state that should be invoked after
+                            the loop ends, or None if the program
+                            should terminate (creates an empty state).
+        :param loop_var: A name of an inter-state variable to use
+                         for the loop. If None, ``initialize_expr``
+                         and ``increment_expr`` must be None.
+        :param initialize_expr: A string expression that is assigned
+                                to ``loop_var`` before the loop begins.
+                                If None, does not define an expression.
+        :param condition_expr: A string condition that occurs every
+                               loop iteration. If None, loops forever
+                               (undefined behavior).
+        :param increment_expr: A string expression that is assigned to
+                               ``loop_var`` after every loop iteration.
+                               If None, does not define an expression.
+        :param loop_end_state: If the loop wraps multiple states, the
+                               state where the loop iteration ends.
+                               If None, sets the end state to
+                               ``loop_state`` as well.
+        :return: A 3-tuple of (``before_state``, generated loop guard state,
+                 ``after_state``).
         """
         from dace.frontend.python.astutils import negate_expr  # Avoid import loops
 

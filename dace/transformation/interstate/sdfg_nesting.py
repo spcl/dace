@@ -26,23 +26,27 @@ from dace import data
 
 @make_properties
 class InlineSDFG(transformation.SingleStateTransformation):
-    """ Inlines a single-state nested SDFG into a top-level SDFG.
+    """
+    Inlines a single-state nested SDFG into a top-level SDFG.
 
-        In particular, the steps taken are:
+    In particular, the steps taken are:
 
         1. All transient arrays become transients of the parent
         2. If a source/sink node is one of the inputs/outputs:
-          a. Remove it
-          b. Reconnect through external edges (map/accessnode)
-          c. Replace and reoffset memlets with external data descriptor
+
+            a. Remove it
+            b. Reconnect through external edges (map/accessnode)
+            c. Replace and reoffset memlets with external data descriptor
+
         3. If other nodes carry the names of inputs/outputs:
-          a. Replace data with external data descriptor
-          b. Replace and reoffset memlets with external data descriptor
+
+            a. Replace data with external data descriptor
+            b. Replace and reoffset memlets with external data descriptor
+
         4. If source/sink node is not connected to a source/destination, and
            the nested SDFG is in a scope, connect to scope with empty memlets
         5. Remove all unused external inputs/output memlet paths
         6. Remove isolated nodes resulting from previous step
-
     """
 
     nested_sdfg = transformation.PatternNode(nodes.NestedSDFG)

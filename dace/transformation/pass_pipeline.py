@@ -457,8 +457,8 @@ class Pipeline(Pass):
 
 class FixedPointPipeline(Pipeline):
     """
-    A special type of Pipeline that applies its ``Pass``es in repeated succession until they all stop modifying the
-    SDFG (i.e., by returning None).
+    A special type of Pipeline that applies its ``Pass`` objects in repeated succession until they all stop modifying
+    the SDFG (i.e., by returning None).
     
     :see: Pipeline
     """

@@ -1,8 +1,8 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import copy
 import collections
 from typing import Any, Dict, List, Tuple
 
+import dace
 from dace import dtypes, symbolic
 from dace.config import Config
 from dace.sdfg import nodes as nd
@@ -257,8 +257,8 @@ def devicelevel_block_size(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState',
         :return: A tuple of sizes or None if the node is not in device-level 
                  code.
     """
-    from dace.sdfg.sdfg import SDFGState
     from dace.sdfg import nodes as nd
+    from dace.sdfg.sdfg import SDFGState
 
     while sdfg is not None:
         sdict = state.scope_dict()

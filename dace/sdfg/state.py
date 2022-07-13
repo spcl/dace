@@ -4,18 +4,25 @@
 import ast
 import collections
 import copy
-from dace.subsets import Range, Subset
-from dace import (data as dt, dtypes, memlet as mm, serialize, subsets as sbs, symbolic)
-from dace.sdfg import nodes as nd
-from dace.sdfg.graph import (OrderedMultiDiConnectorGraph, MultiConnectorEdge, SubgraphView)
-from dace.sdfg.propagation import propagate_memlet
-from dace.sdfg.validation import validate_state
-from dace.properties import (EnumProperty, Property, DictProperty, SubsetProperty, SymbolicProperty, CodeBlock,
-                             make_properties)
 import inspect
 import itertools
-from typing import (Any, AnyStr, Dict, Iterable, Iterator, List, Optional, Set, Tuple, Union, overload)
 import warnings
+from typing import Any, AnyStr, Dict, Iterable, Iterator, List, Optional, Set, Tuple, Union, overload
+
+import dace
+from dace import data as dt
+from dace import dtypes
+from dace import memlet as mm
+from dace import serialize
+from dace import subsets as sbs
+from dace import symbolic
+from dace.properties import (CodeBlock, DictProperty, EnumProperty, Property, SubsetProperty, SymbolicProperty,
+                             make_properties)
+from dace.sdfg import nodes as nd
+from dace.sdfg.graph import MultiConnectorEdge, OrderedMultiDiConnectorGraph, SubgraphView
+from dace.sdfg.propagation import propagate_memlet
+from dace.sdfg.validation import validate_state
+from dace.subsets import Range, Subset
 
 
 def _getdebuginfo(old_dinfo=None) -> dtypes.DebugInfo:
@@ -1538,17 +1545,17 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
         return (iedge, eedge)
 
     def add_memlet_path(self, *path_nodes, memlet=None, src_conn=None, dst_conn=None, propagate=True):
-        """ Adds a path of memlet edges between the given nodes, propagating
-            from the given innermost memlet.
+        """
+        Adds a path of memlet edges between the given nodes, propagating
+        from the given innermost memlet.
 
-            :param *path_nodes: Nodes participating in the path (in the given
-                                order).
-            :keyword memlet: (mandatory) The memlet at the innermost scope
-                             (e.g., the incoming memlet to a tasklet (last
-                             node), or an outgoing memlet from an array
-                             (first node), followed by scope exits).
-            :keyword src_conn: Connector at the beginning of the path.
-            :keyword dst_conn: Connector at the end of the path.
+        :param path_nodes: Nodes participating in the path (in the given order).
+        :param memlet: (mandatory) The memlet at the innermost scope
+                       (e.g., the incoming memlet to a tasklet (last
+                       node), or an outgoing memlet from an array
+                       (first node), followed by scope exits).
+        :param src_conn: Connector at the beginning of the path.
+        :param dst_conn: Connector at the end of the path.
         """
         if memlet is None:
             raise TypeError("Innermost memlet cannot be None")

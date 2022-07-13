@@ -2,10 +2,13 @@
 """ Precompiled DaCe program/method cache. """
 
 from collections import OrderedDict
-from dace import config, data as dt
-from dace.sdfg.sdfg import SDFG
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Optional, Set, Tuple
+
+import dace
+from dace import config
+from dace import data as dt
+from dace.sdfg.sdfg import SDFG
 
 # Type hints
 ArgTypes = Dict[str, dt.Data]

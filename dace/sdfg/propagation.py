@@ -1,6 +1,8 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Functionality relating to Memlet propagation (deducing external memlets
-    from internal memory accesses and scope ranges). """
+"""
+Functionality relating to Memlet propagation (deducing external memlets
+from internal memory accesses and scope ranges).
+"""
 
 from collections import deque
 import copy
@@ -671,45 +673,50 @@ def propagate_states(sdfg) -> None:
     Annotate the states of an SDFG with the number of executions.
 
     Algorithm:
-    1. Clean up the state machine by splitting condition and assignment edges
-       into separate edes with a dummy state in between.
-    2. Detect and annotate any for-loop constructs with their corresponding loop
-       variable ranges.
-    3. Start traversing the state machine from the start state (start state
-       gets executed once by default). At every state, check the following:
-        a) The state was already visited -> in this case it can either be the
-           guard of a loop we're returning to - in which case the number of
-           executions is additively combined - or it is a state that can be
-           reached through multiple paths (e.g. if/else branches), in which case
-           the number of executions is equal to the maximum number of executions
-           for each incoming path (in case this fully merges a previously
-           branched out tree again, the number of executions isn't dynamic
-           anymore). In both cases we override the calculated number of
-           executions if we're propagating dynamic unbounded. This DFS traversal
-           is complete and we continue with the next unvisited state.
-        b) We're propagating dynamic unbounded -> this overrides every
-           calculated number of executions, so this gets unconditionally
-           propagated to all child states.
-        c) None of the above, the next regular traversal step is executed:
-            3.1: If there is no further outgoing edge, this DFS traversal is
-                 done and we continue with the next unvisited state.
-            3.2: If there is one outgoing edge, we continue propagating the
-                 same number of executions to the child state. If the transition
-                 to the child state is conditional, the current state might be
-                 an implicit exit state, in which case we mark the next state as
-                 dynamic to signal that it's an upper bound.
-            3.3: If there is more than one outgoing edge we:
-                3.3.1: Check if it's an annotated loop guard with a range. If
+    
+        1. Clean up the state machine by splitting condition and assignment edges
+           into separate edes with a dummy state in between.
+        2. Detect and annotate any for-loop constructs with their corresponding loop
+           variable ranges.
+        3. Start traversing the state machine from the start state (start state
+           gets executed once by default). At every state, check the following:
+
+            a. The state was already visited -> in this case it can either be the
+               guard of a loop we're returning to - in which case the number of
+               executions is additively combined - or it is a state that can be
+               reached through multiple paths (e.g. if/else branches), in which case
+               the number of executions is equal to the maximum number of executions
+               for each incoming path (in case this fully merges a previously
+               branched out tree again, the number of executions isn't dynamic
+               anymore). In both cases we override the calculated number of
+               executions if we're propagating dynamic unbounded. This DFS traversal
+               is complete and we continue with the next unvisited state.
+            b. We're propagating dynamic unbounded -> this overrides every
+               calculated number of executions, so this gets unconditionally
+               propagated to all child states.
+            c. None of the above, the next regular traversal step is executed:
+
+                1. If there is no further outgoing edge, this DFS traversal is done and we continue with the next
+                   unvisited state.
+                2. If there is one outgoing edge, we continue propagating the
+                   same number of executions to the child state. If the transition
+                   to the child state is conditional, the current state might be
+                   an implicit exit state, in which case we mark the next state as
+                   dynamic to signal that it's an upper bound.
+                3. If there is more than one outgoing edge we:
+
+                    a. Check if it's an annotated loop guard with a range. If
                        so, we calculate the number of executions for the loop
                        and propagate this down the loop.
-                3.3.2: Check if it's a loop that hasn't been unannotated, which
+                    b. Check if it's a loop that hasn't been unannotated, which
                        means it's unbounded. In this case we propagate dynamic
                        unbounded down the loop.
-                3.3.3: Otherwise this must be a conditional branch, so this
+                    c. Otherwise this must be a conditional branch, so this
                        state's number of executions is given to all child states
                        as an upper bound.
-    4. The traversal ends when all reachable states have been visited at least
-       once.
+
+        4. The traversal ends when all reachable states have been visited at least
+           once.
 
     :param sdfg: The SDFG to annotate.
     :note: This operates on the SDFG in-place.

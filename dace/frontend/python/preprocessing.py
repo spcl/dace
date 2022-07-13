@@ -47,8 +47,10 @@ class PreprocessedAST:
 
 
 class StructTransformer(ast.NodeTransformer):
-    """ A Python AST transformer that replaces `Call`s to create structs with
-        the custom StructInitializer AST node. """
+    """
+    A Python AST transformer that replaces ``Call`` nodes to create structs with
+    the custom ``StructInitializer`` AST node.
+    """
     def __init__(self, gvars):
         super().__init__()
         self._structs = {k: v for k, v in gvars.items() if isinstance(v, dtypes.struct)}
@@ -957,6 +959,7 @@ class LoopUnroller(ast.NodeTransformer):
     """ 
     Replaces loops by their unrolled bodies if generator can be evaluated at
     compile time and one of the following conditions apply:
+
         1. `dace.unroll` was explicitly called
         2. looping over compile-time constant tuples/lists/dictionaries
         3. generator is one of the predetermined "stateless generators"

@@ -6,7 +6,7 @@ flow elements (e.g., ``for``, ``if``, ``while``) from state machines in SDFGs.
 SDFGs are state machines of dataflow graphs, where each node is a state and each
 edge may contain a state transition condition and assignments. As such, when 
 generating code from an SDFG, the straightforward way would be to generate code
-for each state and conditional ``goto``s for the state transitions.
+for each state and conditional ``goto`` statements for the state transitions.
 However, this inhibits compiler optimizations on the generated code, which rely
 on loops and branches. 
 
@@ -28,35 +28,38 @@ is wrapped in a ``GeneralBlock``, which generates the aforementioned conditional
 For example, the following SDFG::
 
 
-      x < 5
-     /------>[s2]--------\
-[s1] \                    ->[s5]
-      ------>[s3]->[s4]--/   
-      x >= 5
+          x < 5
+         /------>[s2]--------\\
+    [s1] \                    ->[s5]
+          ------>[s3]->[s4]--/   
+          x >= 5
 
 
 would create the control flow tree below::
 
 
-GeneralBlock({
-    IfScope(condition=x<5, body={  
-        GeneralBlock({
-            SingleState(s2)
-        })
-    }, orelse={
-        GeneralBlock({
-            SingleState(s3),
-            SingleState(s4),
-        })
-    }),
-    SingleState(s5)
-})
+    GeneralBlock({
+        IfScope(condition=x<5, body={  
+            GeneralBlock({
+                SingleState(s2)
+            })
+        }, orelse={
+            GeneralBlock({
+                SingleState(s3),
+                SingleState(s4),
+            })
+        }),
+        SingleState(s5)
+    })
+
+
 """
 
 import ast
 from dataclasses import dataclass
 from typing import (Callable, Dict, Iterator, List, Optional, Sequence, Set, Tuple, Union)
 import sympy as sp
+import dace
 from dace import dtypes
 from dace.sdfg.state import SDFGState
 from dace.sdfg.sdfg import SDFG, InterstateEdge
@@ -65,6 +68,7 @@ from dace.properties import CodeBlock
 from dace.codegen import cppunparse
 from dace.codegen.targets import cpp
 
+DaCeCodeGenerator = 'dace.codegen.targets.framecode.DaCeCodeGenerator'
 ###############################################################################
 
 
@@ -83,7 +87,7 @@ class ControlFlow:
         """ 
         Returns the first or initializing state in this control flow block. 
         Used to determine which will be the next state in a control flow block
-        to avoid generating extraneous ``goto``s.
+        to avoid generating extraneous ``goto`` calls.
         """
         return None
 
@@ -94,7 +98,7 @@ class ControlFlow:
         """
         return []
 
-    def as_cpp(self, codegen: 'DaCeCodeGenerator', symbols: Dict[str, dtypes.typeclass]) -> str:
+    def as_cpp(self, codegen: DaCeCodeGenerator, symbols: Dict[str, dtypes.typeclass]) -> str:
         """ 
         Returns C++ code for this control flow block.
 
@@ -139,7 +143,7 @@ class SingleState(ControlFlow):
                             edge: Edge[InterstateEdge],
                             successor: SDFGState = None,
                             assignments_only: bool = False,
-                            framecode: 'DaCeCodeGenerator' = None) -> str:
+                            framecode: DaCeCodeGenerator = None) -> str:
         """ 
         Helper function that generates a state transition (conditional goto) 
         from a state and an SDFG edge.

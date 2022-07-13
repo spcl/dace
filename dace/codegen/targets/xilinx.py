@@ -584,12 +584,12 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         """
         Generate the host-specific code for spawning and synchronizing the given kernel.
 
-        :param sdfg:
-        :param state:
+        :param sdfg: The SDFG.
+        :param state: The state to generate in.
         :param predecessors: list containing all the name of kernels that must be finished before starting this one
         :param parameters: list containing the kernel parameters (of all kernels in this state)
-        :param rtl_tasklet_names
-        :param kernel_stream: Device-specific code stream
+        :param rtl_tasklet_names: A list of RTL tasklet names.
+        :param kernel_stream: Device-specific code stream.
         :param instrumentation_stream: Code for profiling kernel execution time.
         """
 

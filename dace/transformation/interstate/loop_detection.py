@@ -114,7 +114,7 @@ def find_for_loop(
                   the loop or not.
     :param entry: First state in the loop "body".
     :return: (iteration variable, (start, end, stride),
-              (start_states[], last_loop_state)), or None if proper
+             (start_states, last_loop_state)), or None if proper
              for-loop was not detected. ``end`` is inclusive.
     """
 

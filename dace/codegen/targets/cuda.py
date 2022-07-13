@@ -1475,27 +1475,28 @@ void  *{kname}_args[] = {{ {kargs} }};
         return res
 
     def get_kernel_dimensions(self, dfg_scope):
-        """ Determines a GPU kernel's grid/block dimensions from map
-            scopes.
+        """
+        Determines a GPU kernel's grid/block dimensions from map scopes.
 
-            Ruleset for kernel dimensions:
-                1. If only one map (device-level) exists, of an integer set S,
-                   the block size is 32x1x1 and grid size is ceil(|S|/32) in
-                   1st dimension.
-                2. If nested thread-block maps exist (T_1,...,T_n), grid
-                   size is |S| and block size is max(|T_1|,...,|T_n|) with
-                   block specialization.
-                3. If block size can be overapproximated, it is (for
-                   dynamically-sized blocks that are bounded by a
-                   predefined size).
-                4. If nested device maps exist, they generate extra grid dimensions (block size 1)
-                   as the sum of all their sizes (|T_1| + ... + |T_n|)
+        Ruleset for kernel dimensions:
 
-            :note: Kernel dimensions are separate from the map
-                   variables, and they should be treated as such.
-            :note: To make use of the grid/block 3D registers, we use multi-
-                   dimensional kernels up to 3 dimensions, and flatten the
-                   rest into the third dimension.
+            1. If only one map (device-level) exists, of an integer set ``S``,
+                the block size is ``32x1x1`` and grid size is ``ceil(|S|/32)`` in
+                1st dimension.
+            2. If nested thread-block maps exist ``(T_1,...,T_n)``, grid
+                size is ``|S|`` and block size is ``max(|T_1|,...,|T_n|)`` with
+                block specialization.
+            3. If block size can be overapproximated, it is (for
+                dynamically-sized blocks that are bounded by a
+                predefined size).
+            4. If nested device maps exist, they generate extra grid dimensions (block size 1)
+                as the sum of all their sizes ``(|T_1| + ... + |T_n|)``
+
+        :note: Kernel dimensions are separate from the map
+                variables, and they should be treated as such.
+        :note: To make use of the grid/block 3D registers, we use multi-
+                dimensional kernels up to 3 dimensions, and flatten the
+                rest into the third dimension.
         """
 
         kernelmap_entry: nodes.MapEntry = dfg_scope.source_nodes()[0]

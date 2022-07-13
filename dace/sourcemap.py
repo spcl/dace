@@ -250,12 +250,12 @@ class MapCpp:
             self.codegen_map[line_num] = {'file': codegen_debuginfo[1], 'line': codegen_debuginfo[2]}
 
     def get_identifiers(self, line: str, findall: bool = True):
-        """ Returns a list of identifiers found in the code line
+        """
+        Returns a list of identifiers found in the code line
 
-            :param line: line of C++ code with identifiers
-            :param findall: if it should return all finds or just the first one
-            :return: if findall is true return list of identifers 
-            otherwise a single identifier
+        :param line: line of C++ code with identifiers
+        :param findall: if it should return all finds or just the first one
+        :return: if ``findall`` is True, returns list of identifiers, otherwise a single identifier.
         """
         if findall:
             line_identifiers = re.findall(self.cpp_pattern, line)

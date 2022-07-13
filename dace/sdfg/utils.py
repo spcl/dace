@@ -22,16 +22,16 @@ from string import ascii_uppercase
 from typing import Any, Callable, Dict, Generator, List, Optional, Set, Tuple, Union
 
 
-def node_path_graph(*args):
-    """ Generates a path graph passing through the input nodes.
+def node_path_graph(*args) -> gr.OrderedDiGraph:
+    """
+    Generates a path graph passing through the input nodes.
 
-        The function generates a graph using as nodes the input arguments.
-        Subsequently, it creates a path passing through all the nodes, in
-        the same order as they were given in the function input.
+    The function generates a graph using as nodes the input arguments.
+    Subsequently, it creates a path passing through all the nodes, in
+    the same order as they were given in the function input.
 
-        :param *args: Variable number of nodes or a list of nodes.
-        :return: A directed graph based on the input arguments.
-        @rtype: gr.OrderedDiGraph
+    :param args: Variable number of nodes or a list of nodes.
+    :return: A directed graph based on the input arguments.
     """
 
     # 1. Create new networkx directed graph.
@@ -53,8 +53,7 @@ def node_path_graph(*args):
 
 
 def depth_limited_search(source, depth):
-    """ Return best node and its value using a limited-depth Search (depth-
-        limited DFS). """
+    """ Return best node and its value using a limited-depth Search (depth-limited DFS). """
     value = source.evaluate()
     if depth == 0:
         return source, value
@@ -104,7 +103,8 @@ def depth_limited_dfs_iter(source, depth):
 
 
 def dfs_topological_sort(G, sources=None, condition=None, reverse=False):
-    """ Produce nodes in a depth-first topological ordering.
+    """
+    Produce nodes in a depth-first topological ordering.
 
     The function produces nodes in a depth-first topological ordering
     (DFS to make sure maps are visited properly), with the condition
@@ -118,12 +118,10 @@ def dfs_topological_sort(G, sources=None, condition=None, reverse=False):
     :param reverse: If True, traverses the graph backwards from the sources.
     :return: A generator of nodes in the lastvisit depth-first-search.
 
-    :note: Based on http://www.ics.uci.edu/~eppstein/PADS/DFS.py
-    by D. Eppstein, July 2004.
+    :note: Based on http://www.ics.uci.edu/~eppstein/PADS/DFS.py by D. Eppstein, July 2004.
 
     :note: If a source is not specified then a source is chosen arbitrarily and
-    repeatedly until all components in the graph are searched.
-
+           repeatedly until all components in the graph are searched.
     """
     if reverse:
         source_nodes = 'sink_nodes'
@@ -191,7 +189,6 @@ def dfs_conditional(G, sources=None, condition=None, reverse=False, yield_parent
     If ``StopTraversal`` is raised during iteration, the outgoing edges of the current node
     will not be traversed.
     
-
     :param G: An input DiGraph (assumed acyclic).
     :param sources: (optional) node or list of nodes that
                     specify starting point(s) for depth-first search and return
@@ -205,12 +202,10 @@ def dfs_conditional(G, sources=None, condition=None, reverse=False, yield_parent
     :param yield_parent: If True, yields a 2-tuple of (parent, child)
     :return: A generator of edges in the lastvisit depth-first-search.
 
-    :note: Based on http://www.ics.uci.edu/~eppstein/PADS/DFS.py
-    by D. Eppstein, July 2004.
+    :note: Based on http://www.ics.uci.edu/~eppstein/PADS/DFS.py by D. Eppstein, July 2004.
 
     :note: If a source is not specified then a source is chosen arbitrarily and
-    repeatedly until all components in the graph are searched.
-
+           repeatedly until all components in the graph are searched.
     """
     if reverse:
         successors = G.predecessors
@@ -1215,7 +1210,7 @@ def load_precompiled_sdfg(folder: str):
                               csdfg.ReloadableDLL(os.path.join(folder, 'build', f'lib{sdfg.name}.{suffix}'), sdfg.name))
 
 
-def distributed_compile(sdfg: SDFG, comm: "Intracomm") -> csdfg.CompiledSDFG:
+def distributed_compile(sdfg: SDFG, comm) -> csdfg.CompiledSDFG:
     """
     Compiles an SDFG in rank 0 of MPI communicator ``comm``. Then, the compiled SDFG is loaded in all other ranks.
 

@@ -62,6 +62,7 @@ def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integer
     """
     Finds scalars that can be promoted to symbols in the given SDFG.
     Conditions for matching a scalar for symbol-promotion are as follows:
+    
         * Size of data must be 1, it must not be a stream and must be transient.
         * Only inputs to candidate scalars must be either arrays or tasklets.
         * All tasklets that lead to it must have one statement, one output, 

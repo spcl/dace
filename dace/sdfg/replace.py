@@ -1,13 +1,16 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains functionality to perform find-and-replace of symbols in SDFGs. """
 
+import re
+import warnings
+from typing import Any, Dict, Optional, Union
+
+import sympy as sp
+
+import dace
 from dace import dtypes, properties, symbolic
 from dace.codegen import cppunparse
 from dace.frontend.python.astutils import ASTFindReplace
-import re
-import sympy as sp
-from typing import Any, Dict, Optional, Union
-import warnings
 
 tokenize_cpp = re.compile(r'\b\w+\b')
 

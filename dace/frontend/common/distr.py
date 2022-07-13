@@ -14,10 +14,10 @@ from dace.frontend.python.replacements import _define_local_scalar
 
 ShapeType = Sequence[Union[Integral, str, symbolic.symbol, symbolic.SymExpr, symbolic.sympy.Basic]]
 RankType = Union[Integral, str, symbolic.symbol, symbolic.SymExpr, symbolic.sympy.Basic]
-
+ProgramVisitor = 'dace.frontend.python.newast.ProgramVisitor'
 
 @oprepo.replaces('dace.comm.Bcast')
-def _bcast(pv: 'ProgramVisitor',
+def _bcast(pv: ProgramVisitor,
            sdfg: SDFG,
            state: SDFGState,
            buffer: str,
@@ -46,7 +46,7 @@ def _bcast(pv: 'ProgramVisitor',
 
 
 @oprepo.replaces('dace.comm.Reduce')
-def _Reduce(pv: 'ProgramVisitor',
+def _Reduce(pv: ProgramVisitor,
             sdfg: SDFG,
             state: SDFGState,
             buffer: str,
@@ -76,7 +76,7 @@ def _Reduce(pv: 'ProgramVisitor',
 
 
 @oprepo.replaces('dace.comm.Allreduce')
-def _Allreduce(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, buffer: str, op: str, grid: str = None):
+def _Allreduce(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, buffer: str, op: str, grid: str = None):
 
     from dace.libraries.mpi.nodes.allreduce import Allreduce
 
@@ -91,7 +91,7 @@ def _Allreduce(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, buffer: str, 
 
 
 @oprepo.replaces('dace.comm.Scatter')
-def _scatter(pv: 'ProgramVisitor',
+def _scatter(pv: ProgramVisitor,
              sdfg: SDFG,
              state: SDFGState,
              in_buffer: str,
@@ -121,7 +121,7 @@ def _scatter(pv: 'ProgramVisitor',
 
 
 @oprepo.replaces('dace.comm.Gather')
-def _gather(pv: 'ProgramVisitor',
+def _gather(pv: ProgramVisitor,
             sdfg: SDFG,
             state: SDFGState,
             in_buffer: str,
@@ -151,7 +151,7 @@ def _gather(pv: 'ProgramVisitor',
 
 
 @oprepo.replaces('dace.comm.Send')
-def _send(pv: 'ProgramVisitor',
+def _send(pv: ProgramVisitor,
           sdfg: SDFG,
           state: SDFGState,
           buffer: str,
@@ -223,7 +223,7 @@ def _send(pv: 'ProgramVisitor',
 
 
 @oprepo.replaces('dace.comm.Isend')
-def _isend(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, buffer: str, dst: Union[str, sp.Expr, Number],
+def _isend(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, buffer: str, dst: Union[str, sp.Expr, Number],
            tag: Union[str, sp.Expr, Number], request: str):
 
     from dace.libraries.mpi.nodes.isend import Isend
@@ -307,7 +307,7 @@ def _isend(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, buffer: str, dst:
 
 
 @oprepo.replaces('dace.comm.Recv')
-def _recv(pv: 'ProgramVisitor',
+def _recv(pv: ProgramVisitor,
           sdfg: SDFG,
           state: SDFGState,
           buffer: str,
@@ -379,7 +379,7 @@ def _recv(pv: 'ProgramVisitor',
 
 
 @oprepo.replaces('dace.comm.Irecv')
-def _irecv(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, buffer: str, src: Union[str, sp.Expr, Number],
+def _irecv(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, buffer: str, src: Union[str, sp.Expr, Number],
            tag: Union[str, sp.Expr, Number], request: str):
 
     from dace.libraries.mpi.nodes.irecv import Irecv
@@ -461,7 +461,7 @@ def _irecv(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, buffer: str, src:
 
 
 @oprepo.replaces('dace.comm.Wait')
-def _wait(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, request: str):
+def _wait(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, request: str):
 
     from dace.libraries.mpi.nodes.wait import Wait
 
@@ -494,7 +494,7 @@ def _wait(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, request: str):
 
 
 @oprepo.replaces('dace.comm.Waitall')
-def _wait(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, request: str):
+def _wait(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, request: str):
 
     from dace.libraries.mpi.nodes.wait import Waitall
 
@@ -520,7 +520,7 @@ def _wait(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, request: str):
 
 
 @oprepo.replaces('dace.comm.Cart_create')
-def _cart_create(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, dims: ShapeType):
+def _cart_create(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, dims: ShapeType):
     """ Creates a process-grid and adds it to the DaCe program. The process-grid is implemented with [MPI_Cart_create](https://www.mpich.org/static/docs/latest/www3/MPI_Cart_create.html).
 
         :param dims: Shape of the process-grid (see `dims` parameter of `MPI_Cart_create`), e.g., [2, 3, 3].
@@ -551,7 +551,7 @@ def _cart_create(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, dims: Shape
 
 
 @oprepo.replaces('dace.comm.Cart_sub')
-def _cart_sub(pv: 'ProgramVisitor',
+def _cart_sub(pv: ProgramVisitor,
               sdfg: SDFG,
               state: SDFGState,
               parent_grid: str,
@@ -593,7 +593,7 @@ def _cart_sub(pv: 'ProgramVisitor',
 
 
 @oprepo.replaces('dace.comm.Subarray')
-def _subarray(pv: 'ProgramVisitor',
+def _subarray(pv: ProgramVisitor,
               sdfg: SDFG,
               state: SDFGState,
               array: Union[str, ShapeType],
@@ -647,7 +647,7 @@ def _subarray(pv: 'ProgramVisitor',
 
 
 @oprepo.replaces('dace.comm.BlockScatter')
-def _block_scatter(pv: 'ProgramVisitor',
+def _block_scatter(pv: ProgramVisitor,
                    sdfg: SDFG,
                    state: SDFGState,
                    in_buffer: str,
@@ -699,7 +699,7 @@ def _block_scatter(pv: 'ProgramVisitor',
 
 
 @oprepo.replaces('dace.comm.BlockGather')
-def _block_gather(pv: 'ProgramVisitor',
+def _block_gather(pv: ProgramVisitor,
                   sdfg: SDFG,
                   state: SDFGState,
                   in_buffer: str,
@@ -751,7 +751,7 @@ def _block_gather(pv: 'ProgramVisitor',
 
 
 @oprepo.replaces('dace.comm.Redistribute')
-def _redistribute(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, in_buffer: str, in_subarray: str, out_buffer: str,
+def _redistribute(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, in_buffer: str, in_subarray: str, out_buffer: str,
                   out_subarray: str):
     """ Redistributes an Array using process-grids, sub-arrays, and the Redistribute library node.
     
@@ -814,7 +814,7 @@ def _redistribute(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, in_buffer:
 
 
 @oprepo.replaces('dace.comm.BCScatter')
-def _bcscatter(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, in_buffer: str, out_buffer: str,
+def _bcscatter(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, in_buffer: str, out_buffer: str,
                block_sizes: Union[str, Sequence[Union[sp.Expr, Number]]]):
 
     from dace.libraries.pblas.nodes.pgeadd import BlockCyclicScatter
@@ -886,7 +886,7 @@ def _bcscatter(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, in_buffer: st
 
 
 @oprepo.replaces('dace.comm.BCGather')
-def _bcgather(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, in_buffer: str, out_buffer: str,
+def _bcgather(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, in_buffer: str, out_buffer: str,
               block_sizes: Union[str, Sequence[Union[sp.Expr, Number]]]):
 
     from dace.libraries.pblas.nodes.pgeadd import BlockCyclicGather
@@ -948,7 +948,7 @@ def _bcgather(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, in_buffer: str
 
 
 @oprepo.replaces('distr.MatMult')
-def _distr_matmult(pv: 'ProgramVisitor',
+def _distr_matmult(pv: ProgramVisitor,
                    sdfg: SDFG,
                    state: SDFGState,
                    opa: str,

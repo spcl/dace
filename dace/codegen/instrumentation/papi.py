@@ -448,7 +448,8 @@ class PAPIUtils(object):
     def available_counters() -> Dict[str, int]:
         """
         Returns the available PAPI counters on this machine. Only works on
-        *nix based systems with ``grep`` and ``papi-tools`` installed.
+        \*nix based systems with ``grep`` and ``papi-tools`` installed.
+        
         :return: A set of available PAPI counters in the form of a dictionary
                  mapping from counter name to the number of native hardware
                  events.
