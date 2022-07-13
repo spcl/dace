@@ -34,15 +34,8 @@ symbols can be parameterized, causing the heatmap overlays to be updated on-the-
 
 |
 
-Runtime Analysis and Instrumentation
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-The SDFG Analysis section further enables loading of instrumentation reports, which loads and visualizes
-data gathered through instrumentation on the SDFG, such as individual timing measurements, or hardware /
-performance counter values.
-
-Fine-Grained Data Access and Reuse Analysis
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Fine-Grained Data Access and Reuse Analysis (Experimental)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. note:: This feature is still in development and is only available in certain pre-release versions of the VS Code extension at this time. This feature may consequently be subject to changes.
 
@@ -65,6 +58,25 @@ This pattern is used to:
 .. figure:: ../ide/images/localview_demo.gif
     :width: 800
     :alt: Demonstrating the fine-grained data access and reuse analysis.
+
+|
+
+Runtime Analysis and Instrumentation
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The SDFG Analysis section further enables loading of instrumentation reports, which loads and visualizes
+data gathered through instrumentation on the SDFG, such as individual timing measurements, or hardware /
+performance counter values.
+
+Instrumentation reports can be loaded through the SDFG Analysis section's *'Browse'* button. Such
+reports should be presented in JSON format. Once loaded, the overlay visualizes aggregated measurements
+and provides details through tooltips.
+
+.. figure:: ../ide/images/runtime_overlay.png
+    :width: 800
+    :alt: Showing the use of runtime data in the SDFG analysis overlays.
+
+|
 
 .. _vscode_transformations:
 
