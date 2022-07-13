@@ -68,6 +68,7 @@ If you use DaCe, cite us:
    sdfg/transforming
    frontend/python
    codegen/codegen
+   extensions/properties
    extensions/extensions
 
 .. toctree::

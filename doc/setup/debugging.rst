@@ -18,3 +18,4 @@ DaCe Framework Behavior
 other important configuration entries (for frontend, ``frontend.verbose_errors``; for transformations, ``optimizer.match_exception``;
 for serialization issues, ``testing.serialization``)
 
+For debugging code generation, see :ref:`debug_codegen`
