@@ -29,6 +29,7 @@ class AttributedCallDetector(ast.NodeVisitor):
     """
     Detects calls to functions that are attributes.
     """
+
     def __init__(self):
         self.detected = False
 
@@ -48,6 +49,7 @@ class RemoveConstantAttributes(ast.NodeTransformer):
     """
     Removes calls to functions that are attributes, if they point to a constant value for a cast.
     """
+
     def visit_Call(self, node: ast.Call) -> Any:
         # Assuming AttributedCallDetector already filtered relevant cases
         if isinstance(node.func, ast.Attribute):
@@ -236,6 +238,7 @@ class TaskletPromoter(ast.NodeTransformer):
     If connector name is used in tasklet as subscript, modifies to symbol name.
     If connector is used as a standard name, modify tasklet code to use symbol.
     """
+
     def __init__(self, connector: str, symbol: str) -> None:
         """
         Initializes AST transformer.
@@ -265,6 +268,7 @@ class TaskletPromoterDict(ast.NodeTransformer):
     If connector name is used in tasklet as subscript, modifies to symbol name.
     If connector is used as a standard name, modify tasklet code to use symbol.
     """
+
     def __init__(self, conn_to_sym: Dict[str, str]) -> None:
         """
         Initializes AST transformer.
@@ -293,6 +297,7 @@ class TaskletIndirectionPromoter(ast.NodeTransformer):
     After visiting an AST, self.{in,out}_mapping will be filled with mappings
     from unique new connector names to sets of individual memlets.
     """
+
     def __init__(self, in_edges: Dict[str, mm.Memlet], out_edges: Dict[str, mm.Memlet], sdfg: sd.SDFG,
                  defined_syms: Set[str]) -> None:
         """
@@ -570,7 +575,7 @@ def translate_cpp_tasklet_to_python(code: str):
     return newcode
 
 
-@dataclass
+@dataclass(unsafe_hash=True)
 class ScalarToSymbolPromotion(passes.Pass):
     ignore: Optional[Set[str]] = None
     transients_only: bool = True
@@ -613,7 +618,7 @@ class ScalarToSymbolPromotion(passes.Pass):
         if ignore:
             to_promote -= ignore
         if len(to_promote) == 0:
-            return to_promote
+            return None
 
         for state in sdfg.nodes():
             scalar_nodes = [n for n in state.nodes() if isinstance(n, nodes.AccessNode) and n.data in to_promote]
@@ -701,7 +706,10 @@ class ScalarToSymbolPromotion(passes.Pass):
         # Step 7: Indirection
         remove_symbol_indirection(sdfg)
 
-        return to_promote
+        return to_promote or None
+
+    def report(self, pass_retval: Set[str]) -> str:
+        return f'Promoted {len(pass_retval)} scalars to symbols.'
 
 
 def promote_scalars_to_symbols(sdfg: sd.SDFG,

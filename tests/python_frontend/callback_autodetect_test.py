@@ -705,6 +705,32 @@ def test_callback_literal_dict(as_kwarg):
     assert success is True
 
 
+def test_unused_callback():
+
+    def deg_to_rad(a):
+        res = np.zeros((2, ))
+
+        res[0] = a[0] * np.pi / 180.0
+        res[1] = a[1] * np.pi / 180.0
+        return res
+
+    @dace.program
+    def mid_rad(a: dace.float64[2], b: dace.float64[2]) -> dace.float64[2]:
+        mid_deg = (a + b) / 2.0
+        mid_rad = deg_to_rad(mid_deg)
+        return mid_rad
+
+    @dace.program
+    def test(point1: dace.float64[2], point2: dace.float64[2]):
+        return mid_rad(point1, point2)
+
+    a = np.array([30.0, 60.0])
+    b = np.array([40.0, 50.0])
+    expected = np.deg2rad((a + b) / 2.0)
+    result = test(a, b)
+    assert np.allclose(result, expected)
+
+
 if __name__ == '__main__':
     test_automatic_callback()
     test_automatic_callback_2()
@@ -738,3 +764,4 @@ if __name__ == '__main__':
     test_callback_literal_dict()
     test_callback_literal_dict(False)
     test_callback_literal_dict(True)
+    test_unused_callback()

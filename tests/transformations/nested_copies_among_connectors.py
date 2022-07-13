@@ -4,10 +4,6 @@ import numpy as np
 
 from dace.transformation import dataflow, interstate, subgraph
 from dace.transformation.interstate import InlineSDFG
-from dace.transformation.transformation import simplification_transformations
-
-xforms = simplification_transformations()
-xforms.remove(InlineSDFG)
 
 
 def test_inconn_self_copy():
@@ -23,7 +19,6 @@ def test_inconn_self_copy():
         return B
 
     sdfg = inconn_self_copy.to_sdfg(simplify=False)
-    sdfg.apply_transformations_repeated(xforms)
     sdfg.save('test_pre_is.sdfg')
     sdfg.apply_transformations(InlineSDFG)
     sdfg.save('test_post_is.sdfg')

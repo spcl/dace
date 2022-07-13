@@ -23,7 +23,7 @@ from dace import data
 
 
 @make_properties
-class InlineMultistateSDFG(transformation.SingleStateTransformation, transformation.SimplifyPass):
+class InlineMultistateSDFG(transformation.SingleStateTransformation):
     """
     Inlines a multi-state nested SDFG into a top-level SDFG. This only happens
     if the state has the nested SDFG node isolated (i.e., only containing it
@@ -81,6 +81,8 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation, transformat
         nested_sdfg = self.nested_sdfg
         if nested_sdfg.no_inline:
             return False
+        if nested_sdfg.schedule == dtypes.ScheduleType.FPGA_Device:
+            return False
 
         # Ensure the state only contains a nested SDFG and input/output access
         # nodes
@@ -102,11 +104,12 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation, transformat
                     # Only accept full ranges for now. TODO(later): Improve
                     if e.data.subset != subsets.Range.from_array(sdfg.arrays[node.data]):
                         return False
-                    # Do not accept views. TODO(later): Improve
-                    outer_desc = sdfg.arrays[node.data]
-                    inner_desc = nested_sdfg.sdfg.arrays[e.dst_conn]
-                    if (outer_desc.shape != inner_desc.shape or outer_desc.strides != inner_desc.strides):
-                        return False
+                    if e.dst_conn in nested_sdfg.sdfg.arrays:
+                        # Do not accept views. TODO(later): Improve
+                        outer_desc = sdfg.arrays[node.data]
+                        inner_desc = nested_sdfg.sdfg.arrays[e.dst_conn]
+                        if (outer_desc.shape != inner_desc.shape or outer_desc.strides != inner_desc.strides):
+                            return False
                     found = True
 
                 for e in state.in_edges(node):
@@ -117,11 +120,12 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation, transformat
                     # Only accept full ranges for now. TODO(later): Improve
                     if e.data.subset != subsets.Range.from_array(sdfg.arrays[node.data]):
                         return False
-                    # Do not accept views. TODO(later): Improve
-                    outer_desc = sdfg.arrays[node.data]
-                    inner_desc = nested_sdfg.sdfg.arrays[e.src_conn]
-                    if (outer_desc.shape != inner_desc.shape or outer_desc.strides != inner_desc.strides):
-                        return False
+                    if e.src_conn in nested_sdfg.sdfg.arrays:
+                        # Do not accept views. TODO(later): Improve
+                        outer_desc = sdfg.arrays[node.data]
+                        inner_desc = nested_sdfg.sdfg.arrays[e.src_conn]
+                        if (outer_desc.shape != inner_desc.shape or outer_desc.strides != inner_desc.strides):
+                            return False
                     found = True
 
                 # elif nested_sdfg in state.successors(nested_sdfg):

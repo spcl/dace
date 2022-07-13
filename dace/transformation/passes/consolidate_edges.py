@@ -5,6 +5,7 @@ from dace.sdfg import utils as sdutil
 from dace import SDFG
 from typing import Optional
 
+
 class ConsolidateEdges(ppl.Pass):
     """
     Removes extraneous edges with memlets that refer to the same data containers within the same scope.
@@ -13,6 +14,7 @@ class ConsolidateEdges(ppl.Pass):
     transformations to be performed, at the cost of losing the individual
     per-tasklet memlets.
     """
+
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Memlets
 
@@ -32,3 +34,6 @@ class ConsolidateEdges(ppl.Pass):
         if edges_removed == 0:
             return None
         return edges_removed
+
+    def report(self, pass_retval: int) -> str:
+        return f'Consolidated {pass_retval} edges.'

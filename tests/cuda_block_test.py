@@ -106,10 +106,11 @@ def test_different_block_sizes_nesting():
 @pytest.mark.gpu
 def test_custom_block_size_onemap():
     @dace.program
-    def tester():
+    def tester(A: dace.float64[400, 300]):
         for i, j in dace.map[0:400, 0:300]:
             with dace.tasklet:
-                pass
+                a >> A[i, j]
+                a = 1
 
     sdfg = tester.to_sdfg()
     sdfg.apply_gpu_transformations()
@@ -132,11 +133,12 @@ def test_custom_block_size_onemap():
 @pytest.mark.gpu
 def test_custom_block_size_twomaps():
     @dace.program
-    def tester():
+    def tester(A: dace.float64[400, 300, 2, 32]):
         for i, j in dace.map[0:400, 0:300]:
             for bi, bj in dace.map[0:2, 0:32]:
                 with dace.tasklet:
-                    pass
+                    a >> A[i, j, bi, bj]
+                    a = 1
 
     sdfg = tester.to_sdfg()
     sdfg.apply_gpu_transformations(sequential_innermaps=False)

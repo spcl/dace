@@ -3490,6 +3490,10 @@ class ProgramVisitor(ExtNodeVisitor):
                     continue
 
                 desc = data.create_datadescriptor(arr)
+                if isinstance(desc, data.Scalar) and isinstance(desc.dtype, dtypes.callback):
+                    # If the symbol is a callback, but is not used in the nested SDFG, skip it
+                    continue
+
                 outer_name = self.sdfg.add_datadesc(aname, desc, find_new_name=True)
                 if not desc.transient:
                     self.nested_closure_arrays[outer_name] = (arr, desc)

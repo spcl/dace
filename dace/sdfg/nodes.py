@@ -65,9 +65,12 @@ class Node(object):
             scope_entry_node = None
 
         if scope_entry_node is not None:
-            ens = parent.exit_node(parent.entry_node(self))
-            scope_exit_node = str(parent.node_id(ens))
-            scope_entry_node = str(parent.node_id(scope_entry_node))
+            try:
+                ens = parent.exit_node(parent.entry_node(self))
+                scope_exit_node = str(parent.node_id(ens))
+                scope_entry_node = str(parent.node_id(scope_entry_node))
+            except (RuntimeError, ValueError, StopIteration):
+                scope_entry_node = scope_exit_node = None
         else:
             scope_entry_node = None
             scope_exit_node = None
@@ -625,6 +628,7 @@ class NestedSDFG(CodeNode):
 # Scope entry class
 class EntryNode(Node):
     """ A type of node that opens a scope (e.g., Map or Consume). """
+
     def validate(self, sdfg, state):
         self.map.validate(sdfg, state, self)
 
@@ -635,6 +639,7 @@ class EntryNode(Node):
 # Scope exit class
 class ExitNode(Node):
     """ A type of node that closes a scope (e.g., Map or Consume). """
+
     def validate(self, sdfg, state):
         self.map.validate(sdfg, state, self)
 
@@ -647,6 +652,7 @@ class MapEntry(EntryNode):
     """ Node that opens a Map scope.
         @see: Map
     """
+
     def __init__(self, map: 'Map', dynamic_inputs=None):
         super(MapEntry, self).__init__(dynamic_inputs or set())
         if map is None:
@@ -722,6 +728,7 @@ class MapExit(ExitNode):
     """ Node that closes a Map scope.
         @see: Map
     """
+
     def __init__(self, map: 'Map'):
         super(MapExit, self).__init__()
         if map is None:
@@ -866,6 +873,7 @@ class ConsumeEntry(EntryNode):
     """ Node that opens a Consume scope.
         @see: Consume
     """
+
     def __init__(self, consume, dynamic_inputs=None):
         super(ConsumeEntry, self).__init__(dynamic_inputs or set())
         if consume is None:
@@ -943,6 +951,7 @@ class ConsumeExit(ExitNode):
     """ Node that closes a Consume scope.
         @see: Consume
     """
+
     def __init__(self, consume):
         super(ConsumeExit, self).__init__()
         if consume is None:
@@ -1054,6 +1063,7 @@ ConsumeEntry = indirect_properties(Consume, lambda obj: obj.consume)(ConsumeEntr
 
 @dace.serialize.serializable
 class PipelineEntry(MapEntry):
+
     @staticmethod
     def map_type():
         return Pipeline
@@ -1086,6 +1096,7 @@ class PipelineEntry(MapEntry):
 
 @dace.serialize.serializable
 class PipelineExit(MapExit):
+
     @staticmethod
     def map_type():
         return Pipeline
@@ -1221,6 +1232,8 @@ class LibraryNode(CodeNode):
         if cls == LibraryNode:
             clazz = pydoc.locate(json_obj['classpath'])
             if clazz is None:
+                warnings.warn(f'Could not find class "{json_obj["classpath"]}" while deserializing. Falling back '
+                              'to UnregisteredLibraryNode.')
                 return UnregisteredLibraryNode.from_json(json_obj, context)
             return clazz.from_json(json_obj, context)
         else:  # Subclasses are actual library nodes
@@ -1302,8 +1315,23 @@ class UnregisteredLibraryNode(LibraryNode):
         super().__init__(label)
 
     def to_json(self, parent):
-        return self.original_json
+        jsonobj = dcpy(self.original_json)
+        curjson = super().to_json(parent)
 
-    @staticmethod
-    def from_json(json_obj, context=None):
-        return UnregisteredLibraryNode(json_obj=json_obj, label=json_obj['attributes']['name'])
+        # Start with original json, then update the modified parts
+        for pname, prop in curjson.items():
+            if isinstance(prop, dict):  # Dictionary property update (e.g., attributes)
+                jsonobj[pname].update(curjson[pname])
+            else:  # Direct property update
+                jsonobj[pname] = curjson[pname]
+
+        return jsonobj
+
+    @classmethod
+    def from_json(cls, json_obj, context=None):
+        ret = cls(json_obj=json_obj, label=json_obj['attributes']['name'])
+        dace.serialize.set_properties_from_json(ret, json_obj, context=context)
+        return ret
+
+    def expand(self, sdfg, state, *args, **kwargs):
+        raise TypeError(f'Cannot expand unregistered library node "{self.name}"')
