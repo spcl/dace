@@ -10,6 +10,7 @@ import numpy as np
 
 import dace
 from dace import config, data, dtypes
+from dace.cli import progress
 from dace.codegen import control_flow as cflow
 from dace.codegen import dispatcher as disp
 from dace.codegen.prettycode import CodeIOStream
@@ -34,6 +35,7 @@ class DaCeCodeGenerator(object):
     """ DaCe code generator class that writes the generated code for SDFG
         state machines, and uses a dispatcher to generate code for
         individual states based on the target. """
+
     def __init__(self, sdfg: SDFG):
         self._dispatcher = disp.TargetDispatcher(self)
         self._dispatcher.register_state_dispatcher(self)
@@ -353,10 +355,13 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
     def generate_states(self, sdfg, global_stream, callsite_stream):
         states_generated = set()
 
+        opbar = progress.OptionalProgressBar(sdfg.number_of_nodes(), title=f'Generating code (SDFG {sdfg.sdfg_id})')
+
         # Create closure + function for state dispatcher
         def dispatch_state(state: SDFGState) -> str:
             stream = CodeIOStream()
             self._dispatcher.dispatch_state(sdfg, state, global_stream, stream)
+            opbar.next()
             states_generated.add(state)  # For sanity check
             return stream.getvalue()
 
@@ -379,6 +384,8 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                                      [], [], [])
 
         callsite_stream.write(cft.as_cpp(self, sdfg.symbols), sdfg)
+
+        opbar.done()
 
         # Write exit label
         callsite_stream.write(f'__state_exit_{sdfg.sdfg_id}:;', sdfg)
