@@ -22,7 +22,7 @@ Use the Visual Studio Code plugin with the DaCe debugger. Alternatively, use the
 
 
 Verbose Framework Printouts
------------------------
+---------------------------
 
 ``debugprint`` config (``DACE_debugprint=1`` or ``DACE_debugprint=verbose`` for more)
 

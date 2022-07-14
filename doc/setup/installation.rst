@@ -93,7 +93,7 @@ Troubleshooting
 ---------------
 
 .. note::
-  Can't find your issue? Look for similar issues or start a discussion on `GitHub Discussions <https://github.com/spcl/dace/discussions>`_.
+  Can't find your issue? Look for similar `issues <https://github.com/spcl/dace/issues>`_ or start a discussion on `GitHub Discussions <https://github.com/spcl/dace/discussions>`_.
 
 
 Common issues with the DaCe Python module
@@ -165,7 +165,7 @@ Common issues with the extension include:
 
   * **Error 500**: If a notification pops up with a "server error", the optimizer daemon has run into an unexpected
     exception. In this case, the SDFG optimizer log (see above) may offer more insights to the origin of the issue.
-    If the issue has to do with a built-in feature, please `report an issue on GitHub <https://github.com/spcl/dace-vscode/issues>`_.
+    If the issue has to do with a built-in feature, please `report an issue on the extension GitHub repository <https://github.com/spcl/dace-vscode/issues>`_.
 
   * **Reverting changes**: If you edited something and regret your decision (transformation, library node expansion, 
     properties etc.), try using the Undo/Redo buttons. The SDFG editor functions just like a text editor in Visual Studio Code. 
