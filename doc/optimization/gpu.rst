@@ -13,5 +13,7 @@ WCR and atomics
 
 coalescing
 
+warp tiling
+
 wide loads/stores (verify with ``cuobjdump``)
 

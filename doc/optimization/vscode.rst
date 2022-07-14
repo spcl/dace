@@ -61,6 +61,8 @@ This pattern is used to:
 
 |
 
+.. _vscode_trace:
+
 Runtime Analysis and Instrumentation
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
