@@ -121,9 +121,10 @@ def test_none_arrays():
     # Tests
     A = np.random.rand(20)
     B = np.random.rand(20)
-    assert np.allclose(myprog_na(A, B), B)
-    assert np.allclose(myprog_na(A, None), A)
-    assert np.allclose(myprog_na(None, None), 1)
+    exec = myprog_na.compile()
+    assert np.allclose(exec(A=A, B=B), B)
+    assert np.allclose(exec(A=A, B=None), A)
+    assert np.allclose(exec(A=None, B=None), 1)
 
 
 def test_none_callables():
