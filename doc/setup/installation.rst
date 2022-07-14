@@ -45,6 +45,10 @@ scientific operations (such as convolution). Install with ``pip install scipy``.
 Installing with ``pip``
 -----------------------
 
+.. note::
+  If ``pip`` does not work, use ``python3 -m pip`` instead.
+
+
 The easiest way to get started with DaCe is to install the latest release version:
 
 .. code-block:: sh
