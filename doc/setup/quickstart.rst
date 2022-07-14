@@ -1,4 +1,4 @@
-Quick-Start
+Quick Start
 ===========
 
 Follow the :ref:`installation` guide, or simply install the latest version of DaCe with pip via ``pip install dace``

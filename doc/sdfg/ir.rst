@@ -97,6 +97,8 @@ References with different sizes (dynamic pointers etc.)
 DaCe Frontends try to encapsulate those away
 
 
+.. _format:
+
 ``.sdfg`` File Format
 ---------------------
 
