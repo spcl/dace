@@ -114,7 +114,7 @@ Common issues with the DaCe Python module
 
       * Run ``brew install gcc``
       * Set your ``~/.dace.conf`` compiler configuration to use the installed GCC. For example, if you installed 
-        version 9 (``brew install gcc@9``), run ``which g++-9`` and set the configuration entry called ``compiler.cpu.executable`` 
+        version 9 (``brew install gcc@9``), run ``which g++-9`` and set the configuration entry called :envvar:`compiler.cpu.executable`
         (empty string by default) to the resulting path
       * Remove any ``.dacecache`` folders to clear the cache
 

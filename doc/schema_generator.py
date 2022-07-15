@@ -56,6 +56,12 @@ def _sortkey(item):
     else:
         return 'aaaaa' + k
 
+def _format_default(value: Any):
+    # Returns a string format for a default value of a configuration entry
+    if value == '':
+        return '(Empty)'
+    
+    return f'``{value}``'
 
 def _write_entry_doc(fp: TextIO, name: str, element: Dict[str, Any]) -> None:
     TITLE_CHARACTERS = '-^~'
@@ -75,17 +81,19 @@ def _write_entry_doc(fp: TextIO, name: str, element: Dict[str, Any]) -> None:
 
     # Configuration entry
     fp.write(f'''
-``{name}``: {element['title']}
+.. envvar:: {name}
+
+{element['title']}
 
     * **Type**: ``{element['type']}``
     * **Description**: {desc}
-    * **Default value**: {element['default']}
+    * **Default value**: {_format_default(element['default'])}
 ''')
     # Write platform-specific defaults
     for k, v in element.items():
         if k.startswith('default_'):
             platform_name = k[len('default_'):]
-            fp.write(f'    * **Default value (on {platform_name})**: {v}\n')
+            fp.write(f'    * **Default value (on {platform_name})**: {_format_default(v)}\n')
 
     # Footer
     fp.write('\n\n')

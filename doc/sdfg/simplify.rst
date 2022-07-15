@@ -22,11 +22,11 @@ Configuring Simplify
 --------------------
 
 For debugging purposes, it might be useful to completely disable the automatic simplification process. This can be
-configured in the ``.dace.conf`` file by turning ``optimizer.automatic_simplification`` off. Alternatively, you could
-set the environment variable ``DACE_optimizer_automatic_simplification=0``, which achieves the same effect (see :class:`~dace.config.Config`).
+configured in the ``.dace.conf`` file by turning :envvar:`optimizer.automatic_simplification` off. Alternatively, you could
+set the environment variable ``DACE_optimizer_automatic_simplification=0``, which achieves the same effect (see :ref:`config`).
 
 As simplify runs multiple passes, you may want to inspect what it actually performed on a given graph. To do so through
-the API, call ``sdfg.simplify(verbose=True)`` (or set the environment variable ``DACE_debugprint=verbose``)
+the API, call ``sdfg.simplify(verbose=True)`` (or set :envvar:`debugprint` to ``verbose``)
 
 For validation, there are two options: ``validate`` controls whether to validate the SDFG (for soundness rather than correct
 results) after ``SimplifyPass`` is complete. This is enabled by default. If you wish to validate the SDFG after every
