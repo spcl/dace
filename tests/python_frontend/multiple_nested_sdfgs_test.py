@@ -78,6 +78,7 @@ def test_call_multiple_sdfgs():
 
 
 def test_nested_sdfg_with_return_value():
+
     @dace.program
     def nested(A: dace.float64[20]):
         return A + 20
@@ -95,6 +96,7 @@ def test_nested_sdfg_with_return_value():
 
 
 def test_nested_sdfg_with_return_value_assignment():
+
     @dace.program
     def nested(A: dace.float64[20]):
         return A + 20
@@ -112,7 +114,38 @@ def test_nested_sdfg_with_return_value_assignment():
     assert np.allclose(B, expected)
 
 
+def test_multiple_calls():
+
+    @dace.program
+    def nested(a: dace.float64[20], b: dace.float64[20]):
+        return a + b + b
+
+    @dace.program
+    def tester(a: dace.float64[20], b: dace.float64[20]):
+        if a[0] < 0.5:
+            a += 0.5
+            c = nested(a, b)
+        else:
+            c = nested(a, b)
+
+        return c
+
+    a = np.random.rand(20)
+    b = np.random.rand(20)
+    a[0] = 1.0
+
+    # Regression: calling ``nested`` before ``tester`` affects validation
+    nested(a, b)
+
+    sdfg = tester.to_sdfg(simplify=False)
+    sdfg.validate()
+
+    c = tester(a, b)
+    assert np.allclose(c, a + b + b)
+
+
 if __name__ == "__main__":
     test_call_multiple_sdfgs()
     test_nested_sdfg_with_return_value()
     test_nested_sdfg_with_return_value_assignment()
+    test_multiple_calls()
