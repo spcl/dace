@@ -181,6 +181,8 @@ def configure_and_compile(program_folder, program_name=None, output_stream=None)
 
     cmake_command.append("-DDACE_LIBS=\"{}\"".format(" ".join(sorted(libraries))))
 
+    cmake_command.append(f"-DCMAKE_BUILD_TYPE={Config.get('compiler', 'build_type')}")
+
     # Set linker and linker arguments, iff they have been specified
     cmake_linker = Config.get('compiler', 'linker', 'executable') or ''
     cmake_linker = cmake_linker.strip()
@@ -192,6 +194,9 @@ def configure_and_compile(program_folder, program_name=None, output_stream=None)
     if cmake_link_flags:
         cmake_command.append(f'-DCMAKE_SHARED_LINKER_FLAGS="{cmake_link_flags}"')
     cmake_command = ' '.join(cmake_command)
+
+    if Config.get('debugprint') == 'verbose':
+        print(f'Running CMake: {cmake_command}')
 
     cmake_filename = os.path.join(build_folder, 'cmake_configure.sh')
     ##############################################
