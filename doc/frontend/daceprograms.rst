@@ -25,11 +25,11 @@ You can use :func:`~dace.frontend.python.interface.program` either as a wrapper 
     # Calling ``dfunc`` or ``other_function`` will trigger DaCe compilation
 
 
-The Python frontend will then try to parse the entire function, including internal function calls. What it can parse
-becomes part of the :ref:`data-centric intermediate representation <sdfg>`, and what it cannot parse will be encapsulated
-(best-effort) as callbacks to the Python interpreter. Callbacks are useful because they allow programs to use the full
-power of the Python ecosystem. For example, if you wish to read a file, compute something expensive and plot the result
-during computation, you can!
+The Python frontend will then try to parse the entire function, including internal function calls, so you only need to
+annotate the top-level function. What it can parse is converted to our :ref:`data-centric intermediate representation <sdfg>`, 
+and what it cannot parse will be encapsulated (best-effort) as callbacks to the Python interpreter. Callbacks are useful
+because they allow programs to use the full power of the Python ecosystem. For example, if you wish to read a file, 
+compute something expensive and plot the result during computation, you can!
 
 .. code-block:: python
 

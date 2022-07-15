@@ -153,7 +153,7 @@ def parse_dace_program(name: str,
                        save: bool = True,
                        progress: Optional[bool] = None) -> SDFG:
     """
-    Parses a `@dace.program` function into an SDFG.
+    Parses a ``@dace.program`` function into an SDFG.
 
     :param src_ast: The AST of the Python program to parse.
     :param visitor: A ProgramVisitor object returned from 
