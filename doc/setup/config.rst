@@ -24,24 +24,31 @@ current working directory. If no configuration file can be created in any of the
 
 
 Environment variables that begin with ``DACE_`` and specify the entry, where categories are separated by underscores.
-For example, 
+For example, TODO
 
 
 .. rubric::
-    Changing configuration entries via the API
+    Getting/setting configuration entries via the API
+
+
+:class:`dace.config.Config` is a singleton class.
+
+the hierarchy is used as separate arguments:
+
+:func:`~dace.config.Config.get` for values, :func:`~dace.config.Config.get_bool` for boolean values
+
+.. code-block:: python
+
+    from dace.config import Config
+
+    print('Synchronous debugging enabled:', Config.get_bool('compiler', 'cuda', 'syncdebug'))
+
+    Config.set('frontend', 'unroll_threshold', value=11)
 
 
 TODO
 
-
-
-.. rubric::
-    Deciding the value of a configuration entry
-
-The priority order for configuration files is as follows:
-
-1. If a ``DACE_*`` environment variable is found, its value will always be used
-2. If ``with dace.config.set_temporary(...)`` is used, for example:
+, we also provide an API to temporarily change the value of a configuration
 
 .. code-block:: python
 
@@ -50,9 +57,19 @@ The priority order for configuration files is as follows:
         dace_laplace(A, args.iterations)
 
 
-3. A ``.dace.conf`` located in the current working directory
-4. The ``.dace.conf`` located in the user's home directory or the path pointed to by the ``DACE_CONFIG`` environment variable
 
+
+.. rubric::
+    Deciding the value of a configuration entry
+
+
+If an entry is defined in multiple places, the priority order for determining the value is as follows:
+
+1. If a ``DACE_*`` environment variable is found, its value will always be used
+2. Otherwise, the API (:func:`~dace.config.Config.set`, :func:`~dace.config.set_temporary`) is used
+3. Value located in a ``.dace.conf`` file in the current working directory
+4. Lastly, the value will be searched in ``.dace.conf`` located in the user's home directory or the path pointed to by 
+   the ``DACE_CONFIG`` environment variable
 
 
 .. rubric::
@@ -63,27 +80,27 @@ The priority order for configuration files is as follows:
 
 General configuration:
 
- * ``DACE_debugprint`` (default: False): Print debugging information.
- * ``DACE_compiler_use_cache`` (default: False): Uses DaCe program cache instead of re-optimizing and compiling programs.
- * ``DACE_compiler_default_data_types`` (default: ``Python``): Chooses default types for integer and floating-point values. If ``Python`` is chosen, ``int`` and ``float`` are both 64-bit wide. If ``C`` is chosen, ``int`` and ``float`` are 32-bit wide.
+ * ``debugprint`` (default: False): Print debugging information. If set to ``"verbose"``, prints more debugging information.
+ * ``compiler.use_cache`` (default: False): Uses DaCe program cache instead of recompiling programs. Also useful for debugging
+   code generation (see :ref:`debug_codegen`).
+ * ``compiler.default_data_types`` (default: ``Python``): Chooses default types for integer and floating-point values. If 
+   ``Python`` is chosen, ``int`` and ``float`` are both 64-bit wide. If ``C`` is chosen, ``int`` and ``float`` are 32-bit wide.
+ * ``optimizer.automatic_simplification`` (default: True): If False, skips automatic simplification in the Python frontend 
+   (see :ref:`simplify` for more information).
  
 Profiling:
 
- * ``DACE_profiling`` (default: False): Enables profiling measurement of the DaCe program runtime in milliseconds. Produces a log file and prints out median runtime.
- * ``DACE_treps`` (default: 100): Number of repetitions to run a DaCe program when profiling is enabled.
+ * ``profiling`` (default: False): Enables profiling measurement of the DaCe program runtime in milliseconds. 
+   Produces a log file and prints out median runtime. See :ref:`profiling` for more information.
+ * ``treps`` (default: 100): Number of repetitions to run when profiling is enabled.
  
 GPU programming and debugging:
 
- * ``DACE_compiler_cuda_backend`` (default: ``cuda``): Chooses the GPU backend to use (can be ``cuda`` for NVIDIA GPUs or ``hip`` for AMD GPUs).
- * ``DACE_compiler_cuda_syncdebug`` (default: False): If True, calls device-synchronization after every GPU kernel and checks for errors. Good for checking crashes or invalid memory accesses.
+ * ``compiler.cuda.backend`` (default: ``cuda``): Chooses the GPU backend to use (can be ``cuda`` for NVIDIA GPUs or 
+   ``hip`` for AMD GPUs).
+ * ``compiler.cuda.syncdebug`` (default: False): If True, calls device-synchronization after every GPU kernel and checks
+   for errors. Good for checking crashes or invalid memory accesses.
  
 FPGA programming:
 
- * ``DACE_compiler_fpga_vendor``: (default: ``xilinx``): Can be ``xilinx`` for Xilinx FPGAs, or ``intel_fpga`` for Intel FPGAs.
- 
-SDFG interactive transformation:
-
- * ``DACE_optimizer_transform_on_call`` (default: False): Uses the transformation command line interface every time a ``@dace`` function is called.
- * ``DACE_optimizer_interface`` (default: ``dace.transformation.optimizer.SDFGOptimizer``): Controls the SDFG optimization process if ``transform_on_call`` is enabled. By default, uses the transformation command line interface.
- * ``DACE_optimizer_automatic_simplification`` (default: True): If False, skips automatic simplification in the Python frontend (see transformations tutorial for more information).
- 
+ * ``compiler.fpga.vendor``: (default: ``xilinx``): Can be ``xilinx`` for Xilinx FPGAs, or ``intel_fpga`` for Intel FPGAs.

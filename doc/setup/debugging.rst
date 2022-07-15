@@ -18,7 +18,13 @@ To debug compiled programs, set build type to Debug, clear cache and rerun
 
 Use the Visual Studio Code plugin with the DaCe debugger. Alternatively, use the Python C++ Debugger extension
 
+GPU SDFGs
+~~~~~~~~~
 
+``compiler.cuda.syncdebug``: If True, calls device-synchronization after every GPU kernel and checks for errors. 
+Good for checking crashes or invalid memory accesses.
+
+``cuda-gdb`` also useful
 
 
 Verbose Framework Printouts
