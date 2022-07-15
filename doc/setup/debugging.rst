@@ -32,8 +32,8 @@ under ``_dacegraphs/invalid.sdfg``, which includes the source of the error. Open
 extension even zooms in on the issue automatically!
 
 
-Compiled Programs
------------------
+Crashes and Compiled Programs
+-----------------------------
 
 .. note::
     For debugging the code generation process itself, see :ref:`debug_codegen`.
@@ -133,3 +133,34 @@ Another approach is to run the debugger on the Visual Studio Code extension's op
 script, so it can be debugged as such. Simply create a new debug configuration that starts the script 
 (see :ref:`qa_vscode` on how to find the command) with the right port, kill the existing SDFG Optimizer, and debug the
 script. Breakpoints should now work inside DaCe or your custom transformations.
+
+
+Debugging Frontend Issues
+-------------------------
+
+When debugging frontend issues, it is important to make the distinction between the frontend itself and transformations
+applied on the initial SDFG. Thus, if there is a suspected issue in the frontend, first try disabling automatic simplification
+(through the :envvar:`optimizer.automatic_simplification` config entry or the API, see below) and validating the initial 
+SDFG for soundness:
+
+.. code-block:: python
+
+    sdfg = bad_program.to_sdfg(simplify=False)
+    sdfg.validate()
+
+If this works but some programs fail, it might be a serialization issue. Try a save/load roundtrip:
+
+.. code-block:: python
+
+    sdfg.save('test.sdfg')
+    sdfg = dace.SDFG.from_file('test.sdfg')
+    sdfg.validate()
+    # ...other validation methods...
+
+Otherwise, the issue could be in the :ref:`simplify`. Try to simplify while validating every step:
+
+.. code-block:: python
+
+    sdfg.simplify(verbose=True, validate_all=True)
+
+This helps understanding which component causes the issue.
