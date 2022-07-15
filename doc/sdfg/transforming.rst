@@ -1,3 +1,5 @@
+.. _transforming:
+
 SDFG Transformation Internals
 =============================
 

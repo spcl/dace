@@ -21,8 +21,8 @@ Overlays are shown as heat- or color-maps directly on top of the graph to indica
 selected by the user. A selection of these heatmaps, as well as fine-grained control over their
 behavior is provided in a separate **SDFG Analysis** section in the SDFG Optimization sidepanel.
 
-Overlays can be activated for both graph edges, and graph nodes, showing things such as the
-operational intensity or arithmetic operations count, the amount of logical data movement volume,
+Overlays can be activated for both graph edges, and graph nodes, showing metrics such as the
+operational intensity, arithmetic operations count, the amount of logical data movement volume,
 or the storage location of individual data containers.
 
 To predict how program behavior changes with respect to input parameters or data sizes, undefined
@@ -37,7 +37,9 @@ symbols can be parameterized, causing the heatmap overlays to be updated on-the-
 Fine-Grained Data Access and Reuse Analysis (Experimental)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-.. note:: This feature is still in development and is only available in certain pre-release versions of the VS Code extension at this time. This feature may consequently be subject to changes.
+.. note:: 
+    This feature is still in development and is only available in certain pre-release versions of the VS Code
+    extension at this time. This feature may consequently be subject to changes.
 
 To analyze the fine-grained data access and reuse behavior of an application, an SDFG can be
 parameterized with small toy parameters using the *'Specialize SDFG'* button in the SDFG Analysis pane.
@@ -90,7 +92,7 @@ Applying Transformations
 
 SDFGs can be optimized using transformations from within the editor.
 The SDFG Optimization sidepanel lists applicable transformations for the currently
-opened graph in the top right. This list of transformations is categorized and sorted by relevance
+opened graph. This list of transformations is categorized and sorted by relevance
 to what SDFG elements are currently in view and/or selected.
 
 Hovering over trainsformations highlights the graph elements that are affected by them.
@@ -99,7 +101,10 @@ By clicking a transformation, the transformation description and properties appe
 panel, and the properties can be adjusted arbitrarily. From here, a button zooms to the
 affected graph nodes, the transformation can be previewed on the graph, or the transformation can
 be applied using the provided properties. A transformation can be applied using the default
-properties with a single click by selecting `Quick Apply` in the transformation list.
+properties with a single click by selecting *Quick Apply* in the transformation list.
+
+Note that not every transformation that appears will necessarily improve the performance of the SDFG. Use the
+analysis and instrumentation tools to determine whether a transformation would be useful.
 
 .. figure:: ../ide/images/sdfg_optimization.gif
     :width: 800
@@ -140,5 +145,5 @@ transformations |add-xform-by-folder-btn|. The latter recursively traverses the 
 for any Python source code files and attempts to load each one as a transformation.
 
 For more information on how to use and author data-centric transformations,
-see the `Using and Creating Transformations <https://nbviewer.jupyter.org/github/spcl/dace/blob/master/tutorials/transformations.ipynb>`_
-tutorial
+see :ref:`transforming` and the `Using and Creating Transformations <https://nbviewer.jupyter.org/github/spcl/dace/blob/master/tutorials/transformations.ipynb>`_
+tutorial.

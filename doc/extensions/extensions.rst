@@ -10,7 +10,6 @@ adding new types of nodes, frontend languages, transformations, and hardware arc
    libraries
    frontend
    sdfgconvertible
-   transformations
    backend
 
 

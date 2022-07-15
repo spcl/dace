@@ -6,10 +6,10 @@ or workflows within the DaCe framework.
 
 .. _sdfgcc:
 
-:code:`sdfgcc` - SDFG Command-Line Compiler
+:code:`sdfgcc` - SDFG Command-line Compiler
 -------------------------------------------
 
-The SDFG Command-Line Compiler :code:`sdfgcc` enables compilation of SDFG files from the command-line.
+The SDFG Command-line Compiler :code:`sdfgcc` enables compilation of SDFG files from the command-line.
 
 | Usage:
 | :code:`sdfgcc [-o OUT] [-O] <filepath>`
@@ -30,7 +30,8 @@ The SDFG Command-Line Compiler :code:`sdfgcc` enables compilation of SDFG files 
 :code:`sdfv` - SDFG Viewer
 --------------------------
 
-The SDFG Viewer :code:`sdfv` displays SDFGs in the system's HTML viewer.
+The SDFG Viewer :code:`sdfv` displays SDFGs in the system's HTML viewer. It reads an SDFG and creates a temporary
+HTML file that contains a standalone viewer, which is then opened.
 
 | Usage:
 | :code:`sdfv <filepath>`
@@ -69,5 +70,5 @@ reports in the command-line.
 | :code:`-a,--ascending`|              | If given, sort in ascending order.                        |
 +-----------------------+--------------+-----------------------------------------------------------+
 
-For a more detailed guide on how to profile SDFGs and work with the resulting data, see
+For a more detailed guide on how to profile SDFGs and work with the resulting data, see :ref:`profiling` and
 `this tutorial <https://nbviewer.org/github/spcl/dace/blob/master/tutorials/benchmarking.ipynb#Benchmarking-and-Instrumentation-API>`_.

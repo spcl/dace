@@ -3,9 +3,40 @@
 Configuring DaCe
 ================
 
-DaCe creates a file called ``.dace.conf`` in the user's home directory. It provides useful settings that
-can be modified either directly in the file (YAML) or overridden on a case-by-case basis using environment
-variables that begin with ``DACE_`` and specify the setting (where categories are separated by underscores).
+Various aspects of DaCe can be configured. When first run, the framework creates a file called ``.dace.conf``. The
+file is written in YAML format and provides useful settings that can be modified either directly or overridden on a
+case-by-case basis using the configuration API or environment variables.
+
+.. note::
+    Documentation for all configuration entries is available at the :ref:`config_schema`.
+
+
+
+DaCe will first try to search for the configuration file in the ``DACE_CONFIG`` environment variable, if exists.
+Otherwise, it will then look for a ``.dace.conf`` file in the current working directory. If not found,
+it will look for it in the user's home directory. By default, if no file can be found a new one will be created in 
+the home directory. If the home directory does not exist (e.g., in Docker containers), the file will be created in the
+current working directory. If no configuration file can be created in any of the above paths, the default settings are used.
+
+
+.. rubric::
+    Changing configuration entries via environment variables
+
+
+Environment variables that begin with ``DACE_`` and specify the entry, where categories are separated by underscores.
+For example, 
+
+
+.. rubric::
+    Changing configuration entries via the API
+
+
+TODO
+
+
+
+.. rubric::
+    Deciding the value of a configuration entry
 
 The priority order for configuration files is as follows:
 
@@ -22,23 +53,13 @@ The priority order for configuration files is as follows:
 3. A ``.dace.conf`` located in the current working directory
 4. The ``.dace.conf`` located in the user's home directory or the path pointed to by the ``DACE_CONFIG`` environment variable
 
-If no configuration file can be created in any of the above paths, default settings will be used.
-
-.. note::
-    Documentation for all configuration entries is available at the :ref:`config_schema`.
-
-.. rubric::
-    Changing configuration entries via the API
-
-
-TODO
 
 
 .. rubric::
     Useful configuration entries
 
 
-The environment variable ``DACE_CONFIG`` (default: ``~/.dace.conf``): Override DaCe configuration file choice.
+
 
 General configuration:
 

@@ -4,6 +4,9 @@ Frontend Design Guidelines
 Trust the transformations: put statements in different states, :ref:`simplify` will take care of it.
 don't try to perform premature optimization.
 
+Use ``debuginfo`` when creating elements, it's faster and allows the user to correspond the SDFG elements with the
+original code.
+
 make things more data-centric
 -----------------------------
 
