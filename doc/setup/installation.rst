@@ -132,6 +132,8 @@ Common issues with the DaCe Python module
     variables.
 
 
+.. _qa_vscode:
+
 Common issues with the Visual Studio Code extension
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

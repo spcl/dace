@@ -1,3 +1,5 @@
+.. _dsl:
+
 Python DSL Support via SDFG-Convertible Objects
 ===============================================
 
