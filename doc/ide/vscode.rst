@@ -16,7 +16,7 @@ where issues and feature requests can be reported.
 
 |
 
-Naviagtion
+Navigation
 ----------
 
 SDFGs can be opened and edited by openining the corresponding :code:`.sdfg` file through the native
