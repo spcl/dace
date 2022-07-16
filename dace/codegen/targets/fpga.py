@@ -51,25 +51,6 @@ def vector_element_type_of(dtype):
     return dtype
 
 
-def is_external_stream(node: dace.sdfg.nodes.Node, subgraph: Union[dace.sdfg.SDFGState, ScopeSubgraphView]):
-    '''
-    Given a node and a subgraph, returns whether this is an external stream (the other endpoint is in
-    another FPGA Kernel) or not.
-    :return: True if node represent an external stream, False otherwise
-    '''
-
-    external = False
-    # print("Ckecking if node: ", node, " is an external stream")
-    # If this is a stream, check if the other side of it is in the same kernel/subgraph
-    if isinstance(node, dace.nodes.AccessNode) and isinstance(node.desc(subgraph), dt.Stream):
-        for nn in subgraph.nodes():
-            if nn != node and isinstance(nn, dace.nodes.AccessNode) and node.desc(subgraph) == nn.desc(subgraph):
-                break
-        else:
-            external = True
-    return external
-
-
 def is_multibank_array(array: dt.Data):
     """
     :return: True if this array is placed on HBM/DDR on FPGA Global memory
@@ -318,6 +299,8 @@ class FPGACodeGen(TargetCodeGenerator):
         # Keep track of dependencies among kernels (if any)
         self._kernels_dependencies = dict()
         self._kernels_names_to_id = dict()
+        # Keep track of streams and to which kernel they belong
+        self._streams = collections.defaultdict(set)
 
         # Register dispatchers
         self._cpu_codegen = self._dispatcher.get_generic_node_dispatcher()
@@ -421,10 +404,19 @@ class FPGACodeGen(TargetCodeGenerator):
                 # check all out edges
 
                 start_nodes = [e.dst for e in graph.out_edges(node)]
+                assigned_to = {self._node_to_kernel[node_repr]} if node_repr in self._node_to_kernel else set()
                 for n in start_nodes:
                     n_repr = utils.unique_node_repr(graph, n)
                     if n_repr in self._node_to_kernel:
                         subgraphs[self._node_to_kernel[n_repr]].append(node)
+                        assigned_to.add(self._node_to_kernel[n_repr])
+                nodedesc = node.desc(graph)
+                if isinstance(nodedesc, dt.Stream):
+                    # keep track of the found streams
+                    # import pdb
+                    # pdb.set_trace()
+                    self._streams[nodedesc] |= assigned_to
+                    print("This node is a stream --------------------- ", node, assigned_to)
 
         # Now stick each of the found components together in a ScopeSubgraphView and return
         # them. Sort according kernel dependencies order.
@@ -483,6 +475,7 @@ class FPGACodeGen(TargetCodeGenerator):
             # Start a new state code generation: reset previous dependencies if any
             self._kernels_dependencies.clear()
             self._kernels_names_to_id.clear()
+            self._streams.clear()
 
             # Determine independent components: these are our starting kernels.
             # Then, try to split these components further
@@ -492,16 +485,15 @@ class FPGACodeGen(TargetCodeGenerator):
             for sg in subgraphs:
                 # Determine kernels in state: each of the subgraphs is independentp
                 num_kernels, dependencies = self.partition_kernels(sg, default_kernel=start_kernel)
+                kernels_subgraphs = self._kernels_subgraphs(sg, dependencies)
                 if num_kernels > 1:
                     # For each kernel, derive the corresponding subgraphs
                     # and keep track of dependencies
-                    kernels.extend(self._kernels_subgraphs(sg, dependencies))
+
+                    kernels.extend(kernels_subgraphs)
                     self._kernels_dependencies.update(dependencies)
 
                 else:
-
-                    # import pdb
-                    # pdb.set_trace()
                     kernels.append((sg, 0))
                 start_kernel = start_kernel + num_kernels
 
@@ -522,10 +514,13 @@ class FPGACodeGen(TargetCodeGenerator):
             state_host_body_stream = CodeIOStream()
             instrumentation_stream = CodeIOStream()
 
+            # TODO: detect here external streams
+
             # Kernels are now sorted considering their dependencies
             for kern, kern_id in kernels:
                 # Generate all kernels in this state
                 subgraphs = dace.sdfg.concurrent_subgraphs(kern)
+                print("Generating: ", len(subgraphs))
                 shared_transients = set(sdfg.shared_transients())
 
                 # Allocate global memory transients, unless they are shared with
@@ -683,6 +678,29 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                             seen[node.data] = sg
         return shared
 
+    def is_external_stream(self, node: dace.sdfg.nodes.Node, subgraph: Union[dace.sdfg.SDFGState, ScopeSubgraphView]):
+        '''
+        Given a node and a subgraph, returns whether this is an external stream (the other endpoint is in
+        another FPGA Kernel) or not.
+        :return: True if node represent an external stream, False otherwise
+        '''
+        external = False
+        print("Ckecking if node: ", node, " is an external stream-----")
+        if isinstance(node, dace.nodes.AccessNode) and isinstance(node.desc(subgraph), dt.Stream):
+            print(len(self._streams[node.desc(subgraph)]) > 1)
+            return len(self._streams[node.desc(subgraph)]) > 1
+
+        # # If this is a stream, check if the other side of it is in the same kernel/subgraph
+        # if isinstance(node, dace.nodes.AccessNode) and isinstance(node.desc(subgraph), dt.Stream):
+        #     for nn in subgraph.nodes():
+        #         if nn != node and isinstance(nn, dace.nodes.AccessNode) and node.desc(subgraph) == nn.desc(subgraph):
+        #             break
+        #     else:
+        #         external = True
+        # import pdb
+        # pdb.set_trace()
+        return external
+
     def make_parameters(self, sdfg: SDFG, state: SDFGState, subgraphs):
         """
         Determines the parameters that must be passed to the passed list of
@@ -769,44 +787,90 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
             # [(is an output, dataname string, data object)]
             array_to_banks_used_out: Dict[str, Set[int]] = {}
             array_to_banks_used_in: Dict[str, Set[int]] = {}
-            ext_stream_candidates = collections.deque(subgraph.source_nodes())
 
-            while ext_stream_candidates:
-                n = ext_stream_candidates.pop()
+            scope_children = subgraph.scope_children()
+
+            source_nodes = subgraph.source_nodes()
+            sink_nodes = subgraph.sink_nodes()
+
+            for n in subgraph.nodes():
+
                 # Check if the node is connected to an RTL tasklet, in which
                 # case it should be an external stream
-                is_external = is_rtl_subgraph
-                is_output = True
-                if not is_external and self._num_kernels > 1:
-                    if is_external_stream(n, subgraph):
-                        is_external = True
-                        is_output = False
+                is_external = False
+                if n in source_nodes:
+                    is_external = is_rtl_subgraph
+                    is_output = True
+                elif n in sink_nodes:
+                    is_external = is_rtl_subgraph
+                    is_output = False
 
-                # HERE CHECK IF THIS A TOP SCOPE MAP, IF YES ADD ALL THE NEXT NODE TO THIS
+                if not is_external and self._num_kernels > 1 and isinstance(n, nodes.AccessNode):
+                    print(n)
+
+                    if self.is_external_stream(n, subgraph):
+                        is_external = True
+
+                        # understand directionality
+                        if subgraph.in_degree(n) == 0:
+                            is_output = True
+                        elif subgraph.out_degree(n) == 0:
+                            is_output = False
+                        else:
+                            # look at the edges: if the output one is none, then is not output
+                            # otherwise yes
+                            for e in state.out_edges(n):
+                                if e.data.data != None:
+                                    is_output = True
+                                    break
+                            else:
+                                is_output = False
+
+                        print("Stream ", n, " is output: ", is_output)
+
+                    else:
+                        print("------------------Node ", n, " is not an external stream")
 
                 if is_external:
-                    external_streams |= {(is_output, e.data.data, subsdfg.arrays[e.data.data], None)
-                                         for e in state.out_edges(n)
-                                         if isinstance(subsdfg.arrays[e.data.data], dt.Stream)}
-                else:
-                    ### TODO: IS THIS DOING ANYTHING???
-                    candidates += [(False, e.data.data, subsdfg.arrays[e.data.data]) for e in state.in_edges(n)]
-            for n in subgraph.sink_nodes():
-                # Check if the node is connected to an RTL tasklet, in which
-                # case it should be an external stream
-                is_external = is_rtl_subgraph
-                is_output = False
-                if not is_external and self._num_kernels > 1:
-                    if is_external_stream(n, subgraph):
-                        is_external = True
-                        is_output = True
-
-                if is_external:
-                    external_streams |= {(is_output, e.data.data, subsdfg.arrays[e.data.data], None)
-                                         for e in state.in_edges(n)
-                                         if isinstance(subsdfg.arrays[e.data.data], dt.Stream)}
-                else:
+                    if is_output:
+                        external_streams |= {
+                            (is_output, e.data.data, subsdfg.arrays[e.data.data], None)
+                            for e in state.out_edges(n)
+                            if e.data.data is not None and isinstance(subsdfg.arrays[e.data.data], dt.Stream)
+                        }
+                    else:
+                        external_streams |= {
+                            (is_output, e.data.data, subsdfg.arrays[e.data.data], None)
+                            for e in state.in_edges(n)
+                            if e.data.data is not None and isinstance(subsdfg.arrays[e.data.data], dt.Stream)
+                        }
+                elif n in source_nodes:
+                    candidates += [(False, e.data.data, subsdfg.arrays[e.data.data]) for e in state.in_edges(n)
+                                   if e.data.data]
+                elif n in sink_nodes:
                     candidates += [(True, e.data.data, subsdfg.arrays[e.data.data]) for e in state.out_edges(n)]
+
+            print("Found external stream: ", external_streams)
+
+            # for n in subgraph.sink_nodes():
+            #     # Check if the node is connected to an RTL tasklet, in which
+            #     # case it should be an external stream
+            #     is_external = is_rtl_subgraph
+            #     is_output = False
+            #     if not is_external and self._num_kernels > 1:
+            #         if self.is_external_stream(n, subgraph):
+            #             is_external = True
+            #             is_output = True
+
+            #     if is_external:
+            #         external_streams |= {(is_output, e.data.data, subsdfg.arrays[e.data.data], None)
+            #                              for e in state.in_edges(n)
+            #                              if isinstance(subsdfg.arrays[e.data.data], dt.Stream)}
+            #     else:
+            #         candidates += [(True, e.data.data, subsdfg.arrays[e.data.data]) for e in state.out_edges(n)]
+
+            # TODO: merge with above
+
             # Find other data nodes that are used internally
             for n, scope in subgraph.all_nodes_recursive():
                 if isinstance(n, dace.sdfg.nodes.AccessNode):
