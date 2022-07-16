@@ -78,6 +78,10 @@ view/reference
 
 Use reference sparingly.
 
+.. _libnodes:
+
+Library Nodes
+~~~~~~~~~~~~~
 
 SDFG Builder API
 ----------------

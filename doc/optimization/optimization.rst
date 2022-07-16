@@ -15,6 +15,7 @@ useful to provide a better-performing (but likely not optimal) SDFG.
     :maxdepth: 1
     
     profiling
+    blas
     interactive
     vscode
     guidelines
