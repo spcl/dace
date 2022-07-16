@@ -151,17 +151,6 @@ class TransientReuse(ppl.Pass):
                                 if edge.data.data == old:
                                     edge.data.data = new
 
-        # clean up the arrays
-        for a in list(sdfg.arrays):
-            used = False
-            for s in sdfg.states():
-                for n in s.nodes():
-                    if isinstance(n, nodes.AccessNode) and n.data == a:
-                        used = True
-                        break
-            if not used:
-                sdfg.remove_data(a, validate=False)
-
         # Analyze memory savings and output them
         memory_after = 0
         for a in sdfg.arrays:
