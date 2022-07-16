@@ -51,26 +51,6 @@ def vector_element_type_of(dtype):
     return dtype
 
 
-def is_external_stream(node: dace.sdfg.nodes.Node, subgraph: Union[dace.sdfg.SDFGState, ScopeSubgraphView]):
-    '''
-    Given a node and a subgraph, returns whether this is an external stream (the other endpoint is in
-    another FPGA Kernel) or not.
-    :return: True if node represent an external stream, False otherwise
-    '''
-
-    external = False
-
-    # If this is a stream, check if the other side of it is in the same kernel/subgraph
-    if isinstance(node, dace.nodes.AccessNode) and isinstance(node.desc(subgraph), dt.Stream):
-        for nn in subgraph.nodes():
-            if nn != node and isinstance(nn, dace.nodes.AccessNode) and node.desc(subgraph) == nn.desc(subgraph):
-                break
-        else:
-            external = True
-
-    return external
-
-
 def is_multibank_array(array: dt.Data):
     """
     :return: True if this array is placed on HBM/DDR on FPGA Global memory
@@ -319,6 +299,8 @@ class FPGACodeGen(TargetCodeGenerator):
         # Keep track of dependencies among kernels (if any)
         self._kernels_dependencies = dict()
         self._kernels_names_to_id = dict()
+        # Keep track of streams and to which kernel they belong
+        self._streams = collections.defaultdict(set)
 
         # Register dispatchers
         self._cpu_codegen = self._dispatcher.get_generic_node_dispatcher()
@@ -412,6 +394,9 @@ class FPGACodeGen(TargetCodeGenerator):
             node_repr = utils.unique_node_repr(graph, node)
             if node_repr in self._node_to_kernel:
                 subgraphs[self._node_to_kernel[node_repr]].append(node)
+                print("Node: ", node, " belongs to: ", self._node_to_kernel[node_repr])
+            else:
+                print("--Node: ", node, " does not belong to any kernel")
 
             # add this node to the corresponding subgraph
             if isinstance(node, dace.nodes.AccessNode):
@@ -419,10 +404,19 @@ class FPGACodeGen(TargetCodeGenerator):
                 # check all out edges
 
                 start_nodes = [e.dst for e in graph.out_edges(node)]
+                assigned_to = {self._node_to_kernel[node_repr]} if node_repr in self._node_to_kernel else set()
                 for n in start_nodes:
                     n_repr = utils.unique_node_repr(graph, n)
                     if n_repr in self._node_to_kernel:
                         subgraphs[self._node_to_kernel[n_repr]].append(node)
+                        assigned_to.add(self._node_to_kernel[n_repr])
+                nodedesc = node.desc(graph)
+                if isinstance(nodedesc, dt.Stream):
+                    # keep track of the found streams
+                    # import pdb
+                    # pdb.set_trace()
+                    self._streams[nodedesc] |= assigned_to
+                    print("This node is a stream --------------------- ", node, assigned_to)
 
         # Now stick each of the found components together in a ScopeSubgraphView and return
         # them. Sort according kernel dependencies order.
@@ -481,6 +475,7 @@ class FPGACodeGen(TargetCodeGenerator):
             # Start a new state code generation: reset previous dependencies if any
             self._kernels_dependencies.clear()
             self._kernels_names_to_id.clear()
+            self._streams.clear()
 
             # Determine independent components: these are our starting kernels.
             # Then, try to split these components further
@@ -488,19 +483,24 @@ class FPGACodeGen(TargetCodeGenerator):
 
             start_kernel = 0
             for sg in subgraphs:
-                # Determine kernels in state
+                # Determine kernels in state: each of the subgraphs is independentp
                 num_kernels, dependencies = self.partition_kernels(sg, default_kernel=start_kernel)
+                kernels_subgraphs = self._kernels_subgraphs(sg, dependencies)
                 if num_kernels > 1:
                     # For each kernel, derive the corresponding subgraphs
                     # and keep track of dependencies
-                    kernels.extend(self._kernels_subgraphs(sg, dependencies))
+
+                    kernels.extend(kernels_subgraphs)
                     self._kernels_dependencies.update(dependencies)
+
                 else:
-                    kernels.append((sg, start_kernel))
+                    kernels.append((sg, 0))
                 start_kernel = start_kernel + num_kernels
 
             # There is no need to generate additional kernels if the number of found kernels
             # is equal to the number of connected components: use PEs instead (only one kernel)
+            # import pdb
+            # pdb.set_trace()
             if len(subgraphs) == len(kernels):
                 kernels = [(state, 0)]
 
@@ -514,10 +514,13 @@ class FPGACodeGen(TargetCodeGenerator):
             state_host_body_stream = CodeIOStream()
             instrumentation_stream = CodeIOStream()
 
+            # TODO: detect here external streams
+
             # Kernels are now sorted considering their dependencies
             for kern, kern_id in kernels:
                 # Generate all kernels in this state
                 subgraphs = dace.sdfg.concurrent_subgraphs(kern)
+                print("Generating: ", len(subgraphs))
                 shared_transients = set(sdfg.shared_transients())
 
                 # Allocate global memory transients, unless they are shared with
@@ -675,6 +678,29 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                             seen[node.data] = sg
         return shared
 
+    def is_external_stream(self, node: dace.sdfg.nodes.Node, subgraph: Union[dace.sdfg.SDFGState, ScopeSubgraphView]):
+        '''
+        Given a node and a subgraph, returns whether this is an external stream (the other endpoint is in
+        another FPGA Kernel) or not.
+        :return: True if node represent an external stream, False otherwise
+        '''
+        external = False
+        print("Ckecking if node: ", node, " is an external stream-----")
+        if isinstance(node, dace.nodes.AccessNode) and isinstance(node.desc(subgraph), dt.Stream):
+            print(len(self._streams[node.desc(subgraph)]) > 1)
+            return len(self._streams[node.desc(subgraph)]) > 1
+
+        # # If this is a stream, check if the other side of it is in the same kernel/subgraph
+        # if isinstance(node, dace.nodes.AccessNode) and isinstance(node.desc(subgraph), dt.Stream):
+        #     for nn in subgraph.nodes():
+        #         if nn != node and isinstance(nn, dace.nodes.AccessNode) and node.desc(subgraph) == nn.desc(subgraph):
+        #             break
+        #     else:
+        #         external = True
+        # import pdb
+        # pdb.set_trace()
+        return external
+
     def make_parameters(self, sdfg: SDFG, state: SDFGState, subgraphs):
         """
         Determines the parameters that must be passed to the passed list of
@@ -761,38 +787,90 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
             # [(is an output, dataname string, data object)]
             array_to_banks_used_out: Dict[str, Set[int]] = {}
             array_to_banks_used_in: Dict[str, Set[int]] = {}
-            for n in subgraph.source_nodes():
+
+            scope_children = subgraph.scope_children()
+
+            source_nodes = subgraph.source_nodes()
+            sink_nodes = subgraph.sink_nodes()
+
+            for n in subgraph.nodes():
+
                 # Check if the node is connected to an RTL tasklet, in which
                 # case it should be an external stream
-                is_external = is_rtl_subgraph
-                is_output = True
-                if not is_external and self._num_kernels > 1:
-                    if is_external_stream(n, subgraph):
+                is_external = False
+                if n in source_nodes:
+                    is_external = is_rtl_subgraph
+                    is_output = True
+                elif n in sink_nodes:
+                    is_external = is_rtl_subgraph
+                    is_output = False
+
+                if not is_external and self._num_kernels > 1 and isinstance(n, nodes.AccessNode):
+                    print(n)
+
+                    if self.is_external_stream(n, subgraph):
                         is_external = True
-                        is_output = False
+
+                        # understand directionality
+                        if subgraph.in_degree(n) == 0:
+                            is_output = True
+                        elif subgraph.out_degree(n) == 0:
+                            is_output = False
+                        else:
+                            # look at the edges: if the output one is none, then is not output
+                            # otherwise yes
+                            for e in state.out_edges(n):
+                                if e.data.data != None:
+                                    is_output = True
+                                    break
+                            else:
+                                is_output = False
+
+                        print("Stream ", n, " is output: ", is_output)
+
+                    else:
+                        print("------------------Node ", n, " is not an external stream")
 
                 if is_external:
-                    external_streams |= {(is_output, e.data.data, subsdfg.arrays[e.data.data], None)
-                                         for e in state.out_edges(n)
-                                         if isinstance(subsdfg.arrays[e.data.data], dt.Stream)}
-                else:
-                    candidates += [(False, e.data.data, subsdfg.arrays[e.data.data]) for e in state.in_edges(n)]
-            for n in subgraph.sink_nodes():
-                # Check if the node is connected to an RTL tasklet, in which
-                # case it should be an external stream
-                is_external = is_rtl_subgraph
-                is_output = False
-                if not is_external and self._num_kernels > 1:
-                    if is_external_stream(n, subgraph):
-                        is_external = True
-                        is_output = True
-
-                if is_external:
-                    external_streams |= {(is_output, e.data.data, subsdfg.arrays[e.data.data], None)
-                                         for e in state.in_edges(n)
-                                         if isinstance(subsdfg.arrays[e.data.data], dt.Stream)}
-                else:
+                    if is_output:
+                        external_streams |= {
+                            (is_output, e.data.data, subsdfg.arrays[e.data.data], None)
+                            for e in state.out_edges(n)
+                            if e.data.data is not None and isinstance(subsdfg.arrays[e.data.data], dt.Stream)
+                        }
+                    else:
+                        external_streams |= {
+                            (is_output, e.data.data, subsdfg.arrays[e.data.data], None)
+                            for e in state.in_edges(n)
+                            if e.data.data is not None and isinstance(subsdfg.arrays[e.data.data], dt.Stream)
+                        }
+                elif n in source_nodes:
+                    candidates += [(False, e.data.data, subsdfg.arrays[e.data.data]) for e in state.in_edges(n)
+                                   if e.data.data]
+                elif n in sink_nodes:
                     candidates += [(True, e.data.data, subsdfg.arrays[e.data.data]) for e in state.out_edges(n)]
+
+            print("Found external stream: ", external_streams)
+
+            # for n in subgraph.sink_nodes():
+            #     # Check if the node is connected to an RTL tasklet, in which
+            #     # case it should be an external stream
+            #     is_external = is_rtl_subgraph
+            #     is_output = False
+            #     if not is_external and self._num_kernels > 1:
+            #         if self.is_external_stream(n, subgraph):
+            #             is_external = True
+            #             is_output = True
+
+            #     if is_external:
+            #         external_streams |= {(is_output, e.data.data, subsdfg.arrays[e.data.data], None)
+            #                              for e in state.in_edges(n)
+            #                              if isinstance(subsdfg.arrays[e.data.data], dt.Stream)}
+            #     else:
+            #         candidates += [(True, e.data.data, subsdfg.arrays[e.data.data]) for e in state.out_edges(n)]
+
+            # TODO: merge with above
+
             # Find other data nodes that are used internally
             for n, scope in subgraph.all_nodes_recursive():
                 if isinstance(n, dace.sdfg.nodes.AccessNode):
@@ -920,8 +998,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                             trace_type, trace_bank = parse_location_bank(trace_desc)
                             if (bank is not None and bank_type is not None
                                     and (bank != trace_bank or bank_type != trace_type)):
-                                raise cgx.CodegenError("Found inconsistent memory bank "
-                                                       f"specifier for {trace_name}.")
+                                raise cgx.CodegenError("Found inconsistent memory bank " f"specifier for {trace_name}.")
                             bank = trace_bank
                             bank_type = trace_type
 
@@ -1197,7 +1274,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
     def deallocate_array(self, sdfg, dfg, state_id, node, nodedesc, function_stream, callsite_stream):
         pass  # Handled by destructor
 
-    def partition_kernels(self, state: dace.SDFGState, default_kernel: int = 0):
+    def partition_kernels2(self, state: dace.SDFGState, default_kernel: int = 0):
         """ Associate node to different kernels.
             This field is applied to all FPGA maps, tasklets, and library nodes
             that can be executed in parallel in separate kernels.
@@ -1223,11 +1300,313 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
         sink_nodes = state.sink_nodes()
 
         max_kernels = default_kernel
+
+        # Traverse the state graph in topo order
+        from dace.sdfg.utils import dfs_topological_sort
+
+        splitting_nodes = dict()
+        scopes = state.scope_dict()
+        debug = False
+        # import pdb
+        # pdb.set_trace()
+        for node in dfs_topological_sort(state, sources=source_nodes):
+
+            if node in source_nodes:
+                # First step: assign a different Kernel ID
+                # to each source node which is not an AccessNode
+                if isinstance(node, nodes.AccessNode):
+                    continue
+                print(f"Source Node: {node} ({type(node)})  assigned to kernel: {max_kernels}")
+
+                self._node_to_kernel[utils.unique_node_repr(state, node)] = max_kernels
+                max_kernels = increment(max_kernels)
+                continue
+
+            # Node has been already visited?  it should not be the case
+            assert utils.unique_node_repr(state, node) not in self._node_to_kernel
+
+            # The predecessor of this node have been already visited
+            # Is this a crossroad node?
+
+            pred_kernel_id = None
+            crossroad_node = False
+            after_split_node = False
+            predecessors_ids = set()
+            split_nodes_predecessor_ids = set()
+            for pred in state.predecessors(node):
+                if utils.unique_node_repr(state, pred) not in self._node_to_kernel:
+                    # E.g., a source access node
+                    continue
+
+                pred_repr = utils.unique_node_repr(state, pred)
+
+                if pred_repr in splitting_nodes:
+
+                    after_split_node = True
+                    split_nodes_predecessor_ids.add(self._node_to_kernel[pred_repr])
+                else:
+                    predecessors_ids.add(self._node_to_kernel[pred_repr])
+                # if pred_kernel_id == None:
+                #     pred_kernel_id = pred_id
+                # elif pred_kernel_id != pred_id:
+                #     # This can be reached from (at least) two different predecessors that are in
+                #     # two different kernels
+                #     crossroad_node = True
+                #     print("found a cross road node: ", node)
+                #     break
+
+            # Look at the predecessors:
+            # - is there more than one distinct predecessor? if yes, this is potentially a crossroad
+
+            if len(predecessors_ids) == 0 and len(split_nodes_predecessor_ids) == 0:
+                # this is a new kernel:
+                kernel = max_kernels
+                max_kernels = increment(max_kernels)
+
+            elif len(predecessors_ids) == 1 and len(split_nodes_predecessor_ids) == 0:
+                # This has a single predecessor
+                if (isinstance(node, nodes.AccessNode) and isinstance(sdfg.arrays[node.data], dt.View)):
+                    # Skip views
+                    self._node_to_kernel[utils.unique_node_repr(state, node)] = list(predecessors_ids)[0]
+                    print("View ", node, " assigned to: ", list(predecessors_ids)[0])
+                    continue
+                kernel = list(predecessors_ids)[0]
+            elif len(predecessors_ids) == 0 and len(split_nodes_predecessor_ids) == 1:
+                # This after a splitting node and is not a sink node
+                if node not in sink_nodes:
+                    kernel = max_kernels
+                    # if this is
+                    max_kernels = increment(max_kernels)
+                else:
+                    # attach to the previous node:
+                    kernel = list(split_nodes_predecessor_ids)[0]
+            elif len(predecessors_ids) == 1 and len(split_nodes_predecessor_ids) == 1 and list(
+                    predecessors_ids)[0] > list(split_nodes_predecessor_ids)[0]:
+                # skip connection pattern, continue with the predecessor ID
+                print("Node ", node, " is part of a skip connection")
+                kernel = list(predecessors_ids)[0]
+            else:  #if len(predecessors_ids) > 1 or len(split_nodes_predecessor_ids) > 1:
+                # new kernel: this is a crossroad node or is after more than one split nodes
+                print("Node ", node, " is a crossrode")
+                kernel = max_kernels
+                max_kernels = increment(max_kernels)
+
+            # else:
+            #     raise RuntimeError("What is happening here? ", predecessors_ids, split_nodes_predecessor_ids)
+
+            # if crossroad_node:
+            #     # This must be in a different kernel
+            #     kernel = max_kernels
+            #     max_kernels = increment(max_kernels)
+            # else:
+            #     # This has a single predecessor
+            #     if (isinstance(node, nodes.AccessNode) and isinstance(sdfg.arrays[node.data], dt.View)):
+            #         # Skip views
+            #         if pred_kernel_id is not None:
+            #             self._node_to_kernel[utils.unique_node_repr(state, node)] = pred_kernel_id
+            #         continue
+            #     # Is this after a splitting node and is not a sink node
+            #     if after_split_node and node not in sink_nodes:
+            #         kernel = max_kernels
+            #         # if this is
+            #         max_kernels = increment(max_kernels)
+
+            #     # has the predecessor a kernel id?
+            #     elif pred_kernel_id is not None:
+            #         kernel = pred_kernel_id
+            #     else:
+            #         # print("None of the predecessor has a kernel id")
+            #         # import pdb
+            #         # pdb.set_trace()
+            #         kernel = max_kernels
+            #         max_kernels = increment(max_kernels)
+
+            # If this is noode is not a map entry or is already contained in a scope
+            # and has more thant two successors, is a splitting node candidate
+            if len(state.successors(node)) > 1 and scopes[node] == None and not isinstance(node, nodes.EntryNode):
+                print("After this node we should split!!!!!!! ", node)
+                splitting_nodes[utils.unique_node_repr(state, node)] = kernel
+
+            # if isinstance(node, nodes.AccessNode) and node.data == 'ONNX_72':
+            if kernel >= 30:
+                debug = True
+
+            print(f"Node: {node} ({type(node)})  assigned to kernel: {kernel}")
+            # if kernel == 28:
+            # if debug:
+            #     import pdb
+            #     pdb.set_trace()
+
+            self._node_to_kernel[utils.unique_node_repr(state, node)] = kernel
+
+        # # Consecutive nodes that are not crossroads can be in the same Kernel
+        # # A node is said to be a crossroad, if it belongs in more that two
+        # # disjoint paths that connect graph sinks and sources
+
+        # scopes = state.scope_dict()
+
+        # kernels_to_be_recombined = set()
+        # from dace.sdfg.utils import dfs_topological_sort
+        # for node in source_nodes:
+        #     print("Source", node, " topo sort: ", list(dfs_topological_sort(state, sources=source_nodes)))
+        # for e in state.dfs_edges(source_nodes):
+        #     if utils.unique_node_repr(state, e.dst) in self._node_to_kernel:
+        #         # Node has been already visited
+        #         continue
+
+        #     e_src_repr = utils.unique_node_repr(state, e.src)
+        #     if e_src_repr in self._node_to_kernel:
+        #         kernel = self._node_to_kernel[e_src_repr]
+
+        #         if (isinstance(e.dst, nodes.AccessNode) and isinstance(sdfg.arrays[e.dst.data], dt.View)):
+        #             # Skip views
+        #             print("Acc Node ", e.dst, " has kernel id: ", kernel)
+
+        #             self._node_to_kernel[utils.unique_node_repr(state, e.dst)] = kernel
+        #             continue
+
+        #         # Does this node (e.dst) need to be in another kernel?
+        #         # If it is a crossroad node (has more than one predecessor, its predecessors contain some compute,
+        #         # no local buffers, the destination is not a sink) then it should be on a separate kernel.
+
+        #         # print("Check over ", e.dst, " for crossroad??",
+        #         #       len(list(state.predecessors(e.dst))) > 1, isinstance(e.dst, nodes.ExitNode), e.dst
+        #         #       not in sink_nodes, scopes[e.dst] == None)
+
+        #         if len(list(state.predecessors(e.dst))) > 1 and not isinstance(
+        #                 e.dst, nodes.ExitNode) and e.dst not in sink_nodes and scopes[e.dst] == None:
+        #             # Loop over all predecessors (except this edge)
+        #             print("Check over ", e.dst, " for crossroad")
+        #             crossroad_node = False
+        #             for pred_edge in state.in_edges(e.dst):
+        #                 if pred_edge != e and self._trace_back_edge(pred_edge, state):
+        #                     crossroad_node = True
+        #                     break
+
+        #             if crossroad_node:
+        #                 kernel = max_kernels
+        #                 max_kernels = increment(max_kernels)
+
+        #     else:
+
+        #         # From this edge we don't have any kernel id.
+        #         # Look up for the other predecessor nodes, if any of them has a kernel
+        #         # ID, use that.
+
+        #         # Matmul start from here: we arrive here from access node m which is not in node kernel
+        #         # The other predecessor of matmul (__tmp0) must still be visited (so no kernel id for it)
+
+        #         # MAGARI QUI CI TENIAMO TRACCIA O PROVIAMO AD ASSEGNARE A QUEI NODI?
+
+        #         unvisited_predecessors_with_compute = 0
+        #         for pred_edge in state.in_edges(e.dst):
+        #             print("looking for a predecessor of ", e.dst)
+        #             if pred_edge != e:
+        #                 kernel, contains_compute = self._trace_back_edge(pred_edge, state, look_for_kernel_id=True)
+        #                 if kernel is not None:
+        #                     break
+        #                 elif contains_compute:
+        #                     unvisited_predecessors_with_compute += 1
+        #             # Opzione 1: si vede che qui c'e' un solo predecessore con compute e ce ne teniamo traccia
+        #             print(" .... no there is no predecessor")
+        #         else:
+
+        #             # Look at the successor nodes: because of the DFS visit, it may occur
+        #             # that one of them has already an associated kernel ID. If this is the case, and
+        #             # if the edge that connects this node with it is a tasklet-to-tasklet
+        #             # edge, then we use that kernel ID. In all the other cases, we use a new one.
+
+        #             # TODO: support more robust detection
+        #             # It could be the case that we need to look also at the predecessors:
+        #             # if they are associated with a different kernel, and there is a tasklet-to-tasklet,
+        #             # maybe we don't want to generate a different kernel.
+
+        #             # Opzione due vedo che quello dopo ha gia' associato un kernel id e posso sfruttarlo
+        #             # Forse ci va il mix delle due
+
+        #             for succ_edge in state.out_edges(e.dst):
+        #                 succ_edge_dst_repr = utils.unique_node_repr(state, succ_edge.dst)
+        #                 if succ_edge_dst_repr in self._node_to_kernel and isinstance(
+        #                         succ_edge.src, nodes.Tasklet) and isinstance(succ_edge.dst, nodes.Tasklet):
+        #                     kernel = self._node_to_kernel[succ_edge_dst_repr]
+        #                     break
+        #             else:
+        #                 # Trace this edge forward: if it finds something that has a kernel id and
+        #                 # there is at least one local buffer along the way, then reuse that kernel id
+
+        #                 # QUI quando leggiamo l'altra mappa (write_C) troviamo che effettivamente
+        #                 # c'e' un altro kernel ma questo e' only global
+
+        #                 # dovremmmo controllare che questo non sia parte di un altro kernel (significativo)
+        #                 only_global, kern = self._trace_forward_edge(e, state)
+        #                 if (not only_global and kern is not None):  #or (kern in kernels_to_be_recombined):
+        #                     import pdb
+        #                     pdb.set_trace()
+        #                     kernel = kern
+        #                 else:
+        #                     kernel = max_kernels
+        #                     if (isinstance(e.dst, nodes.AccessNode) and (isinstance(sdfg.arrays[e.dst.data], dt.View))):
+        #                         # Skip views and local buffers
+        #                         pass
+        #                     else:
+        #                         max_kernels = increment(max_kernels)
+        #                 if unvisited_predecessors_with_compute == 1:
+        #                     print("Kernel ", kernel, " will be later recombined")
+        #                     kernels_to_be_recombined.add(kernel)
+        #                     import pdb
+        #                     pdb.set_trace()
+
+        #     print("Node ", e.dst, " has kernel id: ", kernel)
+        #     self._node_to_kernel[utils.unique_node_repr(state, e.dst)] = kernel
+
+        # do another pass and track dependencies among Kernels
+        for node in state.nodes():
+            node_repr = utils.unique_node_repr(state, node)
+            if node_repr in self._node_to_kernel:
+                this_kernel = self._node_to_kernel[node_repr]
+                # get all predecessors and see their associated kernel ID
+                for pred in state.predecessors(node):
+                    pred_repr = utils.unique_node_repr(state, pred)
+                    if pred_repr in self._node_to_kernel and self._node_to_kernel[pred_repr] != this_kernel:
+                        if this_kernel not in dependencies:
+                            dependencies[this_kernel] = set()
+                        dependencies[this_kernel].add(self._node_to_kernel[pred_repr])
+
+        max_kernels = max_kernels - default_kernel if concurrent_kernels == 0 else concurrent_kernels
+        return max_kernels, dependencies
+
+    def partition_kernels(self, state: dace.SDFGState, default_kernel: int = 0):
+        """ Associate node to different kernels.
+            This field is applied to all FPGA maps, tasklets, and library nodes
+            that can be executed in parallel in separate kernels.
+
+            :param state: the state to analyze.
+            :param default_kernel: The Kernel ID to start counting from.
+            :return: a tuple containing the number of kernels and the dependencies among them
+        """
+        return self.partition_kernels2(state, default_kernel=default_kernel)
+        concurrent_kernels = 0  # Max number of kernels
+        sdfg = state.parent
+
+        def increment(kernel_id):
+            if concurrent_kernels > 0:
+                return (kernel_id + 1) % concurrent_kernels
+            return kernel_id + 1
+
+        # Dictionary containing dependencies among kernels:
+        # dependencies[K] = [list of kernel IDs on which K depends]
+        dependencies = dict()
+
+        source_nodes = state.source_nodes()
+        sink_nodes = state.sink_nodes()
+
+        max_kernels = default_kernel
         # First step: assign a different Kernel ID
         # to each source node which is not an AccessNode
         for i, node in enumerate(source_nodes):
             if isinstance(node, nodes.AccessNode):
                 continue
+            print("Source ", node, " has kernel id: ", max_kernels)
 
             self._node_to_kernel[utils.unique_node_repr(state, node)] = max_kernels
             max_kernels = increment(max_kernels)
@@ -1238,9 +1617,13 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
 
         scopes = state.scope_dict()
 
+        kernels_to_be_recombined = set()
+        from dace.sdfg.utils import dfs_topological_sort
+        for node in source_nodes:
+            print("Source", node, " topo sort: ", list(dfs_topological_sort(state, sources=source_nodes)))
         for e in state.dfs_edges(source_nodes):
             if utils.unique_node_repr(state, e.dst) in self._node_to_kernel:
-                # Node has been already visited)
+                # Node has been already visited
                 continue
 
             e_src_repr = utils.unique_node_repr(state, e.src)
@@ -1249,6 +1632,8 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
 
                 if (isinstance(e.dst, nodes.AccessNode) and isinstance(sdfg.arrays[e.dst.data], dt.View)):
                     # Skip views
+                    print("Acc Node ", e.dst, " has kernel id: ", kernel)
+
                     self._node_to_kernel[utils.unique_node_repr(state, e.dst)] = kernel
                     continue
 
@@ -1256,9 +1641,14 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                 # If it is a crossroad node (has more than one predecessor, its predecessors contain some compute,
                 # no local buffers, the destination is not a sink) then it should be on a separate kernel.
 
+                # print("Check over ", e.dst, " for crossroad??",
+                #       len(list(state.predecessors(e.dst))) > 1, isinstance(e.dst, nodes.ExitNode), e.dst
+                #       not in sink_nodes, scopes[e.dst] == None)
+
                 if len(list(state.predecessors(e.dst))) > 1 and not isinstance(
                         e.dst, nodes.ExitNode) and e.dst not in sink_nodes and scopes[e.dst] == None:
                     # Loop over all predecessors (except this edge)
+                    print("Check over ", e.dst, " for crossroad")
                     crossroad_node = False
                     for pred_edge in state.in_edges(e.dst):
                         if pred_edge != e and self._trace_back_edge(pred_edge, state):
@@ -1274,12 +1664,22 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                 # From this edge we don't have any kernel id.
                 # Look up for the other predecessor nodes, if any of them has a kernel
                 # ID, use that.
+
+                # Matmul start from here: we arrive htmp0) must still be visited (so no kernel id for it)
+
+                unvisited_predecessors_with_compute = 0
                 for pred_edge in state.in_edges(e.dst):
+                    print("looking for a predecessor of ", e.dst)
                     if pred_edge != e:
-                        kernel = self._trace_back_edge(pred_edge, state, look_for_kernel_id=True)
+                        kernel, contains_compute = self._trace_back_edge(pred_edge, state, look_for_kernel_id=True)
                         if kernel is not None:
                             break
+                        elif contains_compute:
+                            unvisited_predecessors_with_compute += 1
+                    # Opzione 1: si vede che qui c'e' un solo predecessore con compute e ce ne teniamo traccia
+                    print(" .... no there is no predecessor")
                 else:
+
                     # Look at the successor nodes: because of the DFS visit, it may occur
                     # that one of them has already an associated kernel ID. If this is the case, and
                     # if the edge that connects this node with it is a tasklet-to-tasklet
@@ -1299,8 +1699,11 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                     else:
                         # Trace this edge forward: if it finds something that has a kernel id and
                         # there is at least one local buffer along the way, then reuse that kernel id
+
                         only_global, kern = self._trace_forward_edge(e, state)
-                        if not only_global and kern is not None:
+                        if (not only_global and kern is not None):  #or (kern in kernels_to_be_recombined):
+                            import pdb
+                            pdb.set_trace()
                             kernel = kern
                         else:
                             kernel = max_kernels
@@ -1309,7 +1712,13 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                                 pass
                             else:
                                 max_kernels = increment(max_kernels)
+                        if unvisited_predecessors_with_compute == 1:
+                            print("Kernel ", kernel, " will be later recombined")
+                            kernels_to_be_recombined.add(kernel)
+                            import pdb
+                            pdb.set_trace()
 
+            print("Node ", e.dst, " has kernel id: ", kernel)
             self._node_to_kernel[utils.unique_node_repr(state, e.dst)] = kernel
 
         # do another pass and track dependencies among Kernels
@@ -1325,7 +1734,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                             dependencies[this_kernel] = set()
                         dependencies[this_kernel].add(self._node_to_kernel[pred_repr])
 
-        max_kernels = max_kernels if concurrent_kernels == 0 else concurrent_kernels
+        max_kernels = max_kernels - default_kernel if concurrent_kernels == 0 else concurrent_kernels
         return max_kernels, dependencies
 
     def _trace_back_edge(self,
@@ -1339,7 +1748,8 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
         - looking for the kernel_id of a predecessor (look_for_kernel_id must be set to True)
         :return if look_for_kernel_id is false it returns a boolean indicating if there is a
             compute node on the backward path and no access nodes to local buffers. Otherwise, it returns
-            the kernel_id of a predecessor node.
+            the kernel_id of a predecessor node, and the boolean indicating if there is a compute node and 
+            no access nodes to local buffers
         '''
 
         curedge = edge
@@ -1348,19 +1758,19 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
         contains_only_global_buffers = True
         while not curedge.src in source_nodes:
 
-            if not look_for_kernel_id:
-                if isinstance(curedge.src, (nodes.EntryNode, nodes.ExitNode, nodes.CodeNode)):
-                    # We can stop here: this is a scope which will contain some compute, or a tasklet/libnode
-                    contains_compute = True
-                elif isinstance(curedge.src, nodes.AccessNode):
-                    if curedge.src.desc(state).storage in _FPGA_LOCAL_STORAGE_TYPES:
-                        contains_only_global_buffers = False
+            # if not look_for_kernel_id:
+            if isinstance(curedge.src, (nodes.EntryNode, nodes.ExitNode, nodes.CodeNode)):
+                # This is a scope which will contain some compute, or a tasklet/libnode
+                contains_compute = True
+            elif isinstance(curedge.src, nodes.AccessNode):
+                if curedge.src.desc(state).storage in _FPGA_LOCAL_STORAGE_TYPES:
+                    contains_only_global_buffers = False
 
-            else:
-                src_repr = utils.unique_node_repr(state, curedge.src)
-                if src_repr in self._node_to_kernel:
-                    # Found a node with a kernel id. Use that
-                    return self._node_to_kernel[src_repr]
+            # else:
+            src_repr = utils.unique_node_repr(state, curedge.src)
+            if src_repr in self._node_to_kernel:
+                # Found a node with a kernel id. Use that (the path contains some compure)
+                return self._node_to_kernel[src_repr], True
             next_edge = next(e for e in state.in_edges(curedge.src))
             curedge = next_edge
 
@@ -1369,7 +1779,8 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
             return contains_compute and contains_only_global_buffers
         else:
             src_repr = utils.unique_node_repr(state, curedge.src)
-            return self._node_to_kernel[src_repr] if src_repr in self._node_to_kernel else None
+            return self._node_to_kernel[
+                src_repr] if src_repr in self._node_to_kernel else None, contains_compute and contains_only_global_buffers
 
     def _trace_forward_edge(self, edge: dace.sdfg.sdfg.Edge, state: dace.SDFGState) -> Tuple[bool, int]:
         '''
@@ -1460,8 +1871,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
 
             if (not sum(copy_shape) == 1 and
                 (not isinstance(memlet.subset, subsets.Range) or any([step != 1 for _, _, step in memlet.subset]))):
-                raise NotImplementedError("Only contiguous copies currently "
-                                          "supported for FPGA codegen.")
+                raise NotImplementedError("Only contiguous copies currently " "supported for FPGA codegen.")
 
             if host_to_device or device_to_device:
                 host_dtype = sdfg.data(src_node.data).dtype
@@ -1709,8 +2119,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
     @staticmethod
     def make_opencl_parameter(name, desc):
         if isinstance(desc, dt.Array):
-            return (f"hlslib::ocl::Buffer<{desc.dtype.ctype}, "
-                    f"hlslib::ocl::Access::readWrite> &{name}")
+            return (f"hlslib::ocl::Buffer<{desc.dtype.ctype}, " f"hlslib::ocl::Access::readWrite> &{name}")
         else:
             return (desc.as_arg(with_types=True, name=name))
 
@@ -1970,8 +2379,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                                 elif np.issubdtype(np.dtype(end_type.dtype.type), np.unsignedinteger):
                                     loop_var_type = "size_t"
                     except (UnboundLocalError):
-                        raise UnboundLocalError('Pipeline scopes require '
-                                                'specialized bound values')
+                        raise UnboundLocalError('Pipeline scopes require ' 'specialized bound values')
                     except (TypeError):
                         # Raised when the evaluation of begin or skip fails.
                         # This could occur, for example, if they are defined in terms of other symbols, which
