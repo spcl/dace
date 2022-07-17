@@ -304,6 +304,22 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                             csdfg.parent_nsdfg_node.schedule == dtypes.ScheduleType.GPU_Default)):
                         global_code_nodes[state].append(node)
                         gpu_scalars.update({k: None for k in scalars})
+        for node, state in sdfg.all_nodes_recursive():
+            if isinstance(node, nodes.Tasklet):
+                if node in global_code_nodes[state]:
+                    continue
+                if state.entry_node(node) is None and not _is_devicelevel_gpu(state.parent, state, node):
+                    scalars, scalar_output = _recursive_out_check(node, state, gpu_scalars)
+                    sset, ssout = _recursive_in_check(node, state, gpu_scalars)
+                    scalars = scalars.union(sset)
+                    scalar_output = scalar_output and ssout
+                    csdfg = state.parent
+                    # If the tasklet is not adjacent only to scalars or it is in a GPU scope.
+                    # The latter includes NestedSDFGs that have a GPU-Device schedule but are not in a GPU kernel.
+                    if (not scalar_output or (csdfg.parent is not None and
+                            csdfg.parent_nsdfg_node.schedule == dtypes.ScheduleType.GPU_Default)):
+                        global_code_nodes[state].append(node)
+                        gpu_scalars.update({k: None for k in scalars})
 
         #######################################################
         # Step 4: Modify transient data storage
