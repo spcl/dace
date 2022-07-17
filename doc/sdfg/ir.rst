@@ -19,11 +19,15 @@ The Language
 with pictures
 
 
+.. _sdfg-lang:
+
 Elements
 ~~~~~~~~
 
 all the IR elements
 
+
+.. _descriptors:
 
 Data Containers and Access Nodes
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -36,6 +40,7 @@ Transient property, aliasing assumptions.
 
 Views and references, see below.
 
+.. _sdfg-memlet:
 
 Memlets
 ~~~~~~~
@@ -58,6 +63,7 @@ and two input edges, and three output edges. Three of them marked in orange and 
 
 Mention *memlet paths* and the general *memlet tree* that can go through arbitrary scopes
 
+.. _sdfg-map:
 
 Parametric Parallelism
 ~~~~~~~~~~~~~~~~~~~~~~
