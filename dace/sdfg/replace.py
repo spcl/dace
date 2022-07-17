@@ -94,7 +94,10 @@ def replace_properties_dict(node: Any,
             continue
         pname = propclass.attr_name
         if isinstance(propclass, properties.SymbolicProperty):
-            setattr(node, pname, propval.subs(symrepl))
+            if not symbolic.issymbolic(propval):
+                setattr(node, pname, symbolic.pystr_to_symbolic(str(propval)).subs(symrepl))
+            else:
+                setattr(node, pname, propval.subs(symrepl))
         elif isinstance(propclass, properties.DataProperty):
             if propval in repl:
                 setattr(node, pname, repl[propval])
