@@ -1642,7 +1642,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
 
             self.remove_edge(edge)
 
-            edges_remain = len(self.edges_between(edge.src, edge.dst)) > 0
+            # edges_remain = len(self.edges_between(edge.src, edge.dst)) > 0
 
             # Check if there are any other edges exiting the source node that
             # use the same connector
@@ -1667,7 +1667,8 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
             if isinstance(edge.src, nd.EntryNode):
                 # If removing this edge orphans the entry node, replace the
                 # edge with an empty edge
-                if not edges_remain:
+                # if not edges_remain:
+                if not self.out_edges(edge.src):
                     self.add_nedge(edge.src, edge.dst, mm.Memlet())
                 if other_outgoing:
                     # If other inner memlets use the outer memlet, we have to
@@ -1677,7 +1678,8 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
             if isinstance(edge.dst, nd.ExitNode):
                 # If removing this edge orphans the exit node, replace the
                 # edge with an empty edge
-                if not edges_remain:
+                # if not edges_remain:
+                if not self.in_edges(edge.dst):
                     self.add_nedge(edge.src, edge.dst, mm.Memlet())
                 if other_incoming:
                     # If other inner memlets use the outer memlet, we have to
