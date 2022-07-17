@@ -1139,20 +1139,29 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                     # if mem.data == node.data:
                     #     mem.data = name
                     mem = Memlet(f"{name}[{ie.data.dst_subset.offset_new(in_subset, True)}] -> {ie.data.src_subset}")
-                    graph.add_edge(ie.src, ie.src_conn, new_node, None, mem)
+                    new_edge = graph.add_edge(ie.src, ie.src_conn, new_node, None, mem)
                     to_remove.add(ie)
+                    for e in graph.memlet_path(new_edge):
+                        if e.data.data == node.data:
+                            e.data.data = name
+                            e.data.dst_subset.offset(in_subset, True)
                 for oe in graph.out_edges(node):
                     if in_subset.covers(oe.data.src_subset):
                         # mem = dcpy(oe.data)
                         # mem.src_subset.offset(in_subset, True)
                         mem = Memlet(f"{name}[{oe.data.src_subset.offset_new(in_subset, True)}] -> {oe.data.dst_subset}")
-                        graph.add_edge(new_node, None, oe.dst, oe.dst_conn, mem)
+                        new_edge = graph.add_edge(new_node, None, oe.dst, oe.dst_conn, mem)
+                        for e in graph.memlet_path(new_edge):
+                            if e.data.data == node.data:
+                                e.data.data = name
+                                e.data.src_subset.offset(in_subset, True)
                     else:
                         if not inode:
                             inode = graph.add_access(node.data)
                         graph.add_memlet_path(inode, global_map_entry, oe.dst, memlet=oe.data, dst_conn=oe.dst_conn)
                     to_remove.add(oe)
-                onode = graph.add_access(node.data)
+                if not onode:
+                    onode = graph.add_access(node.data)
                 graph.add_memlet_path(new_node, global_map_exit, onode, memlet=Memlet(f"{node.data}[{in_subset}]"), src_conn=None)
                 # for ie in graph.in_edges(node):
                 #     # Used to flag cases where we cannot remove the ie (inner) edge.
