@@ -5,7 +5,7 @@ from typing import Dict, List, Set
 
 import networkx as nx
 
-from dace import dtypes, registry, sdfg, subsets
+from dace import data as dt, dtypes, registry, sdfg, subsets
 from dace.config import Config
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
@@ -499,6 +499,7 @@ class StateFusion(transformation.MultiStateTransformation):
         second_mid = [
             x for x in list(nx.topological_sort(second_state._nx))
             if isinstance(x, nodes.AccessNode) and second_state.out_degree(x) > 0
+            and not isinstance(sdfg.arrays[x.data], dt.View)
         ]
 
         # Merge second state to first state
