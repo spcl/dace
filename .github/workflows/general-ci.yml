@@ -53,10 +53,6 @@ jobs:
         fi
         pytest -n auto --cov-report=xml --cov=dace --tb=short -m "not gpu and not verilator and not tensorflow and not mkl and not sve and not papi and not mlir and not lapack and not fpga and not mpi and not rtl_hardware"
         codecov
-      
-    - name: Setup tmate session
-      if: ${{ failure() }}
-      uses: mxschmitt/action-tmate@v3
 
     - name: Test OpenBLAS LAPACK
       run: |
