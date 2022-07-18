@@ -107,24 +107,23 @@ def test_var_kwargs_aot():
 def test_none_arrays():
 
     @dace.program
-    def myprog_na(A: dace.float64[20], B: dace.float64[20]):
+    def myprog_na(maybe_A: dace.float64[20], maybe_B: dace.float64[20]):
         result = np.zeros([20], dtype=dace.float64)
-        if B is None:
-            if A is not None:
-                result[:] = A
+        if maybe_B is None:
+            if maybe_A is not None:
+                result[:] = maybe_A
             else:
                 result[:] = 1
         else:
-            result[:] = B
+            result[:] = maybe_B
         return result
 
     # Tests
-    A = np.random.rand(20)
-    B = np.random.rand(20)
-    exec = myprog_na.compile()
-    assert np.allclose(exec(A=A, B=B), B)
-    assert np.allclose(exec(A=A, B=None), A)
-    assert np.allclose(exec(A=None, B=None), 1)
+    a = np.random.rand(20)
+    b = np.random.rand(20)
+    assert np.allclose(myprog_na(a, b), b)
+    assert np.allclose(myprog_na(a, None), a)
+    assert np.allclose(myprog_na(None, None), 1)
 
 
 def test_none_callables():
