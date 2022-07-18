@@ -33,22 +33,17 @@ def compute_bin(x: dace.float64, bin_edges: dace.float64[bins + 1]):
     # assuming uniform bins for now
     a_min = bin_edges[0]
     a_max = bin_edges[bins]
-
-    # special case to mirror NumPy behavior for last bin
-    if x == a_max:
-        return bins  # a_max always in last bin
-
     return dace.int64(bins * (x - a_min) / (a_max - a_min))
 
 
 @dace.program
 def histogram(a: dace.float64[N], bin_edges: dace.float64[bins + 1]):
-    hist = np.ndarray((bins, ), dtype=np.float64)
+    hist = np.ndarray((bins, ), dtype=np.int64)
     hist[:] = 0
     get_bin_edges(a, bin_edges)
 
     for i in dace.map[0:N]:
-        bin = compute_bin(a[i], bin_edges)
+        bin = min(compute_bin(a[i], bin_edges), bins - 1)
         hist[bin] += 1
 
     return hist
@@ -57,12 +52,12 @@ def histogram(a: dace.float64[N], bin_edges: dace.float64[bins + 1]):
 @dace.program
 def histogram_weights(a: dace.float64[N], bin_edges: dace.float64[bins + 1],
                       weights: dace.float64[N]):
-    hist = np.ndarray((bins, ), dtype=np.float64)
+    hist = np.ndarray((bins, ), dtype=weights.dtype)
     hist[:] = 0
     get_bin_edges(a, bin_edges)
 
     for i in dace.map[0:N]:
-        bin = compute_bin(a[i], bin_edges)
+        bin = min(compute_bin(a[i], bin_edges), bins - 1)
         hist[bin] += weights[i]
 
     return hist
@@ -108,8 +103,7 @@ def run_azimint_hist(device_type: dace.dtypes.DeviceType):
 
     # Compute ground truth and Validate result
     ref = numpy_azimint_hist(data, radius, npt)
-    # NOTE: High relative error in the particular npbench S size
-    assert (np.allclose(val, ref) or relerror(val, ref) < 1e-3)
+    assert (np.allclose(val, ref) or relerror(val, ref) < 1e-10)
     return sdfg
 
 
