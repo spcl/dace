@@ -62,6 +62,7 @@ class StateGraphView(object):
     ``SDFGState`` and ``StateSubgraphView`` inherit from this class to share
     methods.
     """
+
     def __init__(self, *args, **kwargs):
         self._clear_scopedict_cache()
 
@@ -709,7 +710,8 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
     executions = SymbolicProperty(default=0,
                                   desc="The number of times this state gets "
                                   "executed (0 stands for unbounded)")
-    dynamic_executions = Property(dtype=bool, default=True, desc="The number of executions of this state " "is dynamic")
+    dynamic_executions = Property(dtype=bool, default=True, desc="The number of executions of this state "
+                                  "is dynamic")
 
     ranges = DictProperty(key_type=symbolic.symbol,
                           value_type=Range,
@@ -1166,7 +1168,8 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
             :return: (consume_entry, consume_exit) node 2-tuple
         """
         if len(elements) != 2:
-            raise TypeError("Elements must be a 2-tuple of " "(PE_index, num_PEs)")
+            raise TypeError("Elements must be a 2-tuple of "
+                            "(PE_index, num_PEs)")
         pe_tuple = (elements[0], SymbolicProperty.from_string(elements[1]))
 
         debuginfo = _getdebuginfo(debuginfo or self._default_lineinfo)
@@ -1642,8 +1645,6 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
 
             self.remove_edge(edge)
 
-            # edges_remain = len(self.edges_between(edge.src, edge.dst)) > 0
-
             # Check if there are any other edges exiting the source node that
             # use the same connector
             for e in self.out_edges(edge.src):
@@ -1667,7 +1668,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
             if isinstance(edge.src, nd.EntryNode):
                 # If removing this edge orphans the entry node, replace the
                 # edge with an empty edge
-                # if not edges_remain:
+                # NOTE: The entry node is an orphan iff it has no other outgoing edges.
                 if not self.out_edges(edge.src):
                     self.add_nedge(edge.src, edge.dst, mm.Memlet())
                 if other_outgoing:
@@ -1678,7 +1679,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
             if isinstance(edge.dst, nd.ExitNode):
                 # If removing this edge orphans the exit node, replace the
                 # edge with an empty edge
-                # if not edges_remain:
+                # NOTE: The exit node is an orphan iff it has no other incoming edges.
                 if not self.in_edges(edge.dst):
                     self.add_nedge(edge.src, edge.dst, mm.Memlet())
                 if other_incoming:
@@ -1874,5 +1875,6 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
 
 class StateSubgraphView(SubgraphView, StateGraphView):
     """ A read-only subgraph view of an SDFG state. """
+
     def __init__(self, graph, subgraph_nodes):
         super().__init__(graph, subgraph_nodes)

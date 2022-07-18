@@ -648,9 +648,10 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                     instances = access_instances[sdfg.sdfg_id][name]
                     if any(inst not in reachability[sdfg.sdfg_id][first_state_instance] for inst in instances):
                         first_state_instance, last_state_instance = _get_dominator_and_postdominator(sdfg, instances)
-                        # first_node_instance = nodes.AccessNode(name)
-                        # last_node_instance = nodes.AccessNode(name)
                         # Declare in SDFG scope
+                        # NOTE: Even if we declare the data at a common dominator, we keep the first and last node
+                        # instances. This is especially needed for Views which require both the SDFGState and the
+                        # AccessNode.
                         self.to_allocate[curscope].append((sdfg, None, nodes.AccessNode(name), True, False, False))
                     else:
                         self.to_allocate[curscope].append(

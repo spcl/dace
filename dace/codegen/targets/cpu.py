@@ -217,6 +217,10 @@ class CPUCodeGen(TargetCodeGenerator):
     def declare_array(self, sdfg, dfg, state_id, node, nodedesc, function_stream, declaration_stream):
 
         fsymbols = self._frame.symbols_and_constants(sdfg)
+        # NOTE: `dfg` (state) will be None iff `nodedesc` is non-free symbol dependent
+        # (see `DaCeCodeGenerator.determine_allocation_lifetime` in `dace.codegen.targets.framecode`).
+        # We add the `dfg is not None` check because the `sdutils.is_nonfree_sym_dependent` check will fail if
+        # `nodedesc` is a View and `dfg` is None.
         if dfg and not sdutils.is_nonfree_sym_dependent(node, nodedesc, dfg, fsymbols):
             raise NotImplementedError("The declare_array method should only be used for variables "
                                       "that must have their declaration and allocation separate.")
@@ -231,6 +235,8 @@ class CPUCodeGen(TargetCodeGenerator):
         if self._dispatcher.declared_arrays.has(ptrname):
             return
 
+        # NOTE: We actually want to declare Views here, but we may not want to declare References (to be clarified).
+        # Keeping the original code as a comment to ease debugging.
         # # If this is a view/reference, do not declare it here
         # if isinstance(nodedesc, (data.View, data.Reference)):
         #     return
@@ -278,6 +284,9 @@ class CPUCodeGen(TargetCodeGenerator):
         declared = self._dispatcher.declared_arrays.has(alloc_name)
 
         define_var = self._dispatcher.defined_vars.add
+        # NOTE: The code below fixes symbol-related issues with transient data originally defined in a NestedSDFG scope
+        # but promoted to be persistent. These data must have their free symbols replaced with the corresponding
+        # top-level SDFG symbols.
         if nodedesc.lifetime == dtypes.AllocationLifetime.Persistent:
             define_var = self._dispatcher.defined_vars.add_global
             if sdfg.parent and any(str(s) in sdfg.parent_nsdfg_node.symbol_mapping for s in nodedesc.free_symbols):

@@ -362,11 +362,12 @@ def move_small_arrays_to_stack(sdfg: SDFG) -> None:
 
 
 def _is_devicelevel_gpu(sdfg, state, node):
+    """ Recursive version of `dace.sdfg.scope.is_devicelevel_gpu`. """
     is_parent_nested = (sdfg.parent is not None)
     if is_parent_nested:
         return is_devicelevel_gpu(sdfg.parent.parent, sdfg.parent, sdfg.parent_nsdfg_node, with_gpu_default=True)
     else:
-        return is_devicelevel_gpu(state.parent, state, node, with_gpu_default=True) 
+        return is_devicelevel_gpu(state.parent, state, node, with_gpu_default=True)
 
 
 def set_fast_implementations(sdfg: SDFG, device: dtypes.DeviceType, blocklist: List[str] = None):
@@ -396,6 +397,8 @@ def set_fast_implementations(sdfg: SDFG, device: dtypes.DeviceType, blocklist: L
     # general nodes
     for node, _ in sdfg.all_nodes_recursive():
         if isinstance(node, nodes.LibraryNode):
+            # NOTE: LibraryNodes with sequential schedule on GPU must be expanded to CUDA kernel-compatible code.
+            # NOTE: Pure implementations are a safe choice for now but this should be revisited in the future.
             if device == dtypes.DeviceType.GPU and node.schedule == dtypes.ScheduleType.Sequential:
                 node.implementation = "pure"
                 continue
@@ -435,7 +438,7 @@ def make_transients_persistent(sdfg: SDFG, device: dtypes.DeviceType, toplevel_o
     :param device: Device type
     :param toplevel_only: If True, only converts access nodes that do not appear in any scope.
     '''
-    for nsdfg in sdfg.all_sdfgs_recursive():       
+    for nsdfg in sdfg.all_sdfgs_recursive():
         fsyms: Set[str] = nsdfg.free_symbols
         persistent: Set[str] = set()
         not_persistent: Set[str] = set()
@@ -463,7 +466,7 @@ def make_transients_persistent(sdfg: SDFG, device: dtypes.DeviceType, toplevel_o
                         continue
                 except AttributeError:  # total_size is an integer / has no free symbols
                     pass
-                
+
                 # Only convert arrays with top-level access nodes
                 if xfh.get_parent_map(state, dnode) is not None:
                     if toplevel_only:
@@ -472,8 +475,8 @@ def make_transients_persistent(sdfg: SDFG, device: dtypes.DeviceType, toplevel_o
                     elif desc.lifetime == dtypes.AllocationLifetime.Scope:
                         not_persistent.add(dnode.data)
                         continue
-                
-                persistent.add(dnode.data)                               
+
+                persistent.add(dnode.data)
 
         for aname in (persistent - not_persistent):
             nsdfg.arrays[aname].lifetime = dtypes.AllocationLifetime.Persistent
@@ -575,6 +578,7 @@ def auto_optimize(sdfg: SDFG,
     # Set all library nodes to expand to fast library calls
     set_fast_implementations(sdfg, device)
 
+    # NOTE: We need to `infer_types` in case a LibraryNode expands to other LibraryNodes (e.g., np.linalg.solve)
     infer_types.infer_connector_types(sdfg)
     infer_types.set_default_schedule_and_storage_types(sdfg, None)
     sdfg.expand_library_nodes()

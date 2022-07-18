@@ -7,14 +7,13 @@ import pytest
 import argparse
 from dace.transformation.auto.auto_optimize import auto_optimize
 
-
 N, npt = (dace.symbol(s, dtype=dace.int64) for s in ('N', 'npt'))
 
 
 def relerror(val, ref):
     if np.linalg.norm(ref) == 0:
-        return np.linalg.norm(val-ref)
-    return np.linalg.norm(val-ref) / np.linalg.norm(ref)
+        return np.linalg.norm(val - ref)
+    return np.linalg.norm(val - ref) / np.linalg.norm(ref)
 
 
 @dace.program

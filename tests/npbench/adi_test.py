@@ -7,14 +7,13 @@ import pytest
 import argparse
 from dace.transformation.auto.auto_optimize import auto_optimize
 
-
 N = dace.symbol('N', dtype=dace.int64)
 
 
 def relerror(val, ref):
     if np.linalg.norm(ref) == 0:
-        return np.linalg.norm(val-ref)
-    return np.linalg.norm(val-ref) / np.linalg.norm(ref)
+        return np.linalg.norm(val - ref)
+    return np.linalg.norm(val - ref) / np.linalg.norm(ref)
 
 
 def numpy_kernel(TSTEPS, N, u):
@@ -44,10 +43,8 @@ def numpy_kernel(TSTEPS, N, u):
         q[1:N - 1, 0] = v[0, 1:N - 1]
         for j in range(1, N - 1):
             p[1:N - 1, j] = -c / (a * p[1:N - 1, j - 1] + b)
-            q[1:N - 1,
-              j] = (-d * u[j, 0:N - 2] +
-                    (1.0 + 2.0 * d) * u[j, 1:N - 1] - f * u[j, 2:N] -
-                    a * q[1:N - 1, j - 1]) / (a * p[1:N - 1, j - 1] + b)
+            q[1:N - 1, j] = (-d * u[j, 0:N - 2] + (1.0 + 2.0 * d) * u[j, 1:N - 1] - f * u[j, 2:N] -
+                             a * q[1:N - 1, j - 1]) / (a * p[1:N - 1, j - 1] + b)
         v[N - 1, 1:N - 1] = 1.0
         for j in range(N - 2, 0, -1):
             v[j, 1:N - 1] = p[1:N - 1, j] * v[j + 1, 1:N - 1] + q[1:N - 1, j]
@@ -57,10 +54,8 @@ def numpy_kernel(TSTEPS, N, u):
         q[1:N - 1, 0] = u[1:N - 1, 0]
         for j in range(1, N - 1):
             p[1:N - 1, j] = -f / (d * p[1:N - 1, j - 1] + e)
-            q[1:N - 1,
-              j] = (-a * v[0:N - 2, j] +
-                    (1.0 + 2.0 * a) * v[1:N - 1, j] - c * v[2:N, j] -
-                    d * q[1:N - 1, j - 1]) / (d * p[1:N - 1, j - 1] + e)
+            q[1:N - 1, j] = (-a * v[0:N - 2, j] + (1.0 + 2.0 * a) * v[1:N - 1, j] - c * v[2:N, j] -
+                             d * q[1:N - 1, j - 1]) / (d * p[1:N - 1, j - 1] + e)
         u[1:N - 1, N - 1] = 1.0
         for j in range(N - 2, 0, -1):
             u[1:N - 1, j] = p[1:N - 1, j] * u[1:N - 1, j + 1] + q[1:N - 1, j]
@@ -94,10 +89,8 @@ def dace_kernel(TSTEPS: dace.int64, u: dace.float64[N, N]):
         q[1:N - 1, 0] = v[0, 1:N - 1]
         for j in range(1, N - 1):
             p[1:N - 1, j] = -c / (a * p[1:N - 1, j - 1] + b)
-            q[1:N - 1,
-              j] = (-d * u[j, 0:N - 2] +
-                    (1.0 + 2.0 * d) * u[j, 1:N - 1] - f * u[j, 2:N] -
-                    a * q[1:N - 1, j - 1]) / (a * p[1:N - 1, j - 1] + b)
+            q[1:N - 1, j] = (-d * u[j, 0:N - 2] + (1.0 + 2.0 * d) * u[j, 1:N - 1] - f * u[j, 2:N] -
+                             a * q[1:N - 1, j - 1]) / (a * p[1:N - 1, j - 1] + b)
         v[N - 1, 1:N - 1] = 1.0
         for j in range(N - 2, 0, -1):
             v[j, 1:N - 1] = p[1:N - 1, j] * v[j + 1, 1:N - 1] + q[1:N - 1, j]
@@ -107,10 +100,8 @@ def dace_kernel(TSTEPS: dace.int64, u: dace.float64[N, N]):
         q[1:N - 1, 0] = u[1:N - 1, 0]
         for j in range(1, N - 1):
             p[1:N - 1, j] = -f / (d * p[1:N - 1, j - 1] + e)
-            q[1:N - 1,
-              j] = (-a * v[0:N - 2, j] +
-                    (1.0 + 2.0 * a) * v[1:N - 1, j] - c * v[2:N, j] -
-                    d * q[1:N - 1, j - 1]) / (d * p[1:N - 1, j - 1] + e)
+            q[1:N - 1, j] = (-a * v[0:N - 2, j] + (1.0 + 2.0 * a) * v[1:N - 1, j] - c * v[2:N, j] -
+                             d * q[1:N - 1, j - 1]) / (d * p[1:N - 1, j - 1] + e)
         u[1:N - 1, N - 1] = 1.0
         for j in range(N - 2, 0, -1):
             u[1:N - 1, j] = p[1:N - 1, j] * u[1:N - 1, j + 1] + q[1:N - 1, j]

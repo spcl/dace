@@ -7,14 +7,13 @@ import pytest
 import argparse
 from dace.transformation.auto.auto_optimize import auto_optimize
 
-
 N = dace.symbol('N', dtype=dace.int64)
 
 
 def relerror(val, ref):
     if np.linalg.norm(ref) == 0:
-        return np.linalg.norm(val-ref)
-    return np.linalg.norm(val-ref) / np.linalg.norm(ref)
+        return np.linalg.norm(val - ref)
+    return np.linalg.norm(val - ref) / np.linalg.norm(ref)
 
 
 @dace.program
@@ -30,8 +29,7 @@ def arc_distance(theta_1: dace.float64[N], phi_1: dace.float64[N], theta_2: dace
 def initialize(N):
     from numpy.random import default_rng
     rng = default_rng(42)
-    t0, p0, t1, p1 = rng.random((N, )), rng.random((N, )), rng.random(
-        (N, )), rng.random((N, ))
+    t0, p0, t1, p1 = rng.random((N, )), rng.random((N, )), rng.random((N, )), rng.random((N, ))
     return t0, p0, t1, p1
 
 

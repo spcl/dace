@@ -442,8 +442,7 @@ class MapFusion(transformation.SingleStateTransformation):
             edge.data.data = local_name
             edge.data.subset = "0"
 
-            # If source of edge leads to multiple destinations,
-            # redirect all through an access node
+            # If source of edge leads to multiple destinations, redirect all through an access node.
             out_edges = list(graph.out_edges_by_connector(edge.src, edge.src_conn))
             if len(out_edges) > 1:
                 local_node = graph.add_access(local_name)
@@ -460,16 +459,18 @@ class MapFusion(transformation.SingleStateTransformation):
             else:
                 local_node = edge.src
                 src_connector = edge.src_conn
-            
+
             # If destination of edge leads to multiple destinations, redirect all through an access node.
             if other_edges:
+                # NOTE: If a new local node was already created, reuse it.
                 if local_node == edge.src:
                     local_node_out = graph.add_access(local_name)
                     connector_out = None
                 else:
                     local_node_out = local_node
                     connector_out = src_connector
-                graph.add_edge(local_node, src_connector, local_node_out, connector_out, Memlet.from_array(local_name, sdfg.arrays[local_name]))
+                graph.add_edge(local_node, src_connector, local_node_out, connector_out,
+                               Memlet.from_array(local_name, sdfg.arrays[local_name]))
                 graph.add_edge(local_node_out, connector_out, new_dst, new_dst_conn, dcpy(edge.data))
                 for e in other_edges:
                     graph.add_edge(local_node_out, connector_out, e.dst, e.dst_conn, dcpy(edge.data))
@@ -477,8 +478,6 @@ class MapFusion(transformation.SingleStateTransformation):
                 # Add edge that leads to the second node
                 graph.add_edge(local_node, src_connector, new_dst, new_dst_conn, dcpy(edge.data))
 
-            # for e in other_edges:
-            #     graph.add_edge(local_node, src_connector, e.dst, e.dst_conn, dcpy(edge.data))
         else:
             local_name, _ = sdfg.add_transient(local_name,
                                                symbolic.overapproximate(edge.data.subset.size()),

@@ -10,8 +10,8 @@ from dace.transformation.auto.auto_optimize import auto_optimize
 
 def relerror(val, ref):
     if np.linalg.norm(ref) == 0:
-        return np.linalg.norm(val-ref)
-    return np.linalg.norm(val-ref) / np.linalg.norm(ref)
+        return np.linalg.norm(val - ref)
+    return np.linalg.norm(val - ref) / np.linalg.norm(ref)
 
 
 NR, NM, slab_per_bc = (dace.symbol(s, dtype=dace.int64) for s in ('NR', 'NM', 'slab_per_bc'))

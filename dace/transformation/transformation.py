@@ -38,6 +38,7 @@ class TransformationBase(ppl.Pass):
     :see: SubgraphTransformation
     :see: ExpandTransformation
     """
+
     def modifies(self):
         # Unless otherwise mentioned, a transformation modifies everything
         return ppl.Modifies.Everything
@@ -181,7 +182,10 @@ class PatternTransformation(TransformationBase):
             expr = self.expressions()[expr_index]
             for value in subgraph.values():
                 if not isinstance(value, int):
-                    raise TypeError('All values of ' 'subgraph' ' dictionary must be ' 'instances of int.')
+                    raise TypeError('All values of '
+                                    'subgraph'
+                                    ' dictionary must be '
+                                    'instances of int.')
             self._subgraph = {expr.node_id(k): v for k, v in subgraph.items()}
         else:
             self._subgraph = {-1: -1}
@@ -347,7 +351,8 @@ class PatternTransformation(TransformationBase):
 
         if verify:
             if not instance.can_be_applied(graph, expr_index, sdfg, permissive=permissive):
-                raise ValueError('Transformation cannot be applied on the ' 'given subgraph ("can_be_applied" failed)')
+                raise ValueError('Transformation cannot be applied on the '
+                                 'given subgraph ("can_be_applied" failed)')
 
         # Apply to SDFG
         return instance.apply_pattern(annotate=annotate, append=save)
@@ -422,6 +427,7 @@ class SingleStateTransformation(PatternTransformation, abc.ABC):
 
     :seealso: PatternNode
     """
+
     @classmethod
     @abc.abstractmethod
     def expressions(cls) -> List[st.StateSubgraphView]:
@@ -478,6 +484,7 @@ class MultiStateTransformation(PatternTransformation, abc.ABC):
 
     :seealso: PatternNode
     """
+
     @classmethod
     @abc.abstractmethod
     def expressions(cls) -> List[gr.SubgraphView]:
@@ -523,6 +530,7 @@ class PatternNode(Generic[T]):
     ``expressions``, ``can_be_applied``) to represent the nodes, and in the instance
     methods to point to the nodes in the parent SDFG.
     """
+
     def __init__(self, nodeclass: Type[T]) -> None:
         """
         Initializes a pattern-matching node.
@@ -561,6 +569,7 @@ class ExpandTransformation(PatternTransformation):
 
     This is an internal interface used to track the expansion of library nodes.
     """
+
     @classmethod
     def expressions(clc):
         return [sdutil.node_path_graph(clc._match_node)]
@@ -662,7 +671,8 @@ class SubgraphTransformation(TransformationBase):
     """
 
     sdfg_id = Property(dtype=int, desc='ID of SDFG to transform')
-    state_id = Property(dtype=int, desc='ID of state to transform subgraph within, or -1 to transform the ' 'SDFG')
+    state_id = Property(dtype=int, desc='ID of state to transform subgraph within, or -1 to transform the '
+                        'SDFG')
     subgraph = SetProperty(element_type=int, desc='Subgraph in transformation instance')
 
     def setup_match(self, subgraph: Union[Set[int], gr.SubgraphView], sdfg_id: int = None, state_id: int = None):
@@ -825,7 +835,8 @@ class SubgraphTransformation(TransformationBase):
 
         if verify:
             if not instance.can_be_applied(sdfg, subgraph):
-                raise ValueError('Transformation cannot be applied on the ' 'given subgraph ("can_be_applied" failed)')
+                raise ValueError('Transformation cannot be applied on the '
+                                 'given subgraph ("can_be_applied" failed)')
 
         # Apply to SDFG
         return instance.apply(sdfg)
@@ -846,4 +857,3 @@ class SubgraphTransformation(TransformationBase):
         context['transformation'] = ret
         serialize.set_properties_from_json(ret, json_obj, context=context, ignore_properties={'transformation', 'type'})
         return ret
-

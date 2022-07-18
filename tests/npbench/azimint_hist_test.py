@@ -7,14 +7,13 @@ import pytest
 import argparse
 from dace.transformation.auto.auto_optimize import auto_optimize
 
-
 N, bins, npt = (dace.symbol(s, dtype=dace.int64) for s in ('N', 'bins', 'npt'))
 
 
 def relerror(val, ref):
     if np.linalg.norm(ref) == 0:
-        return np.linalg.norm(val-ref)
-    return np.linalg.norm(val-ref) / np.linalg.norm(ref)
+        return np.linalg.norm(val - ref)
+    return np.linalg.norm(val - ref) / np.linalg.norm(ref)
 
 
 @dace.program
@@ -50,8 +49,7 @@ def histogram(a: dace.float64[N], bin_edges: dace.float64[bins + 1]):
 
 
 @dace.program
-def histogram_weights(a: dace.float64[N], bin_edges: dace.float64[bins + 1],
-                      weights: dace.float64[N]):
+def histogram_weights(a: dace.float64[N], bin_edges: dace.float64[bins + 1], weights: dace.float64[N]):
     hist = np.ndarray((bins, ), dtype=weights.dtype)
     hist[:] = 0
     get_bin_edges(a, bin_edges)

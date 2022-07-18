@@ -147,6 +147,7 @@ class symbol(sympy.Symbol):
 class SymExpr(object):
     """ Symbolic expressions with support for an overapproximation expression.
     """
+
     def __init__(self, main_expr: Union[str, 'SymExpr'], approx_expr: Optional[Union[str, 'SymExpr']] = None):
         self._main_expr = pystr_to_symbolic(main_expr)
         if approx_expr is None:
@@ -577,6 +578,7 @@ def sympy_numeric_fix(expr):
 
 
 class int_floor(sympy.Function):
+
     @classmethod
     def eval(cls, x, y):
         if x.is_Number and y.is_Number:
@@ -587,6 +589,7 @@ class int_floor(sympy.Function):
 
 
 class int_ceil(sympy.Function):
+
     @classmethod
     def eval(cls, x, y):
         if x.is_Number and y.is_Number:
@@ -597,6 +600,7 @@ class int_ceil(sympy.Function):
 
 
 class OR(sympy.Function):
+
     @classmethod
     def eval(cls, x, y):
         if x.is_Boolean and y.is_Boolean:
@@ -607,6 +611,7 @@ class OR(sympy.Function):
 
 
 class AND(sympy.Function):
+
     @classmethod
     def eval(cls, x, y):
         if x.is_Boolean and y.is_Boolean:
@@ -641,6 +646,7 @@ class RightShift(sympy.Function):
 
 
 class ROUND(sympy.Function):
+
     @classmethod
     def eval(cls, x):
         if x.is_Number:
@@ -943,7 +949,9 @@ class BitwiseOpConverter(ast.NodeTransformer):
         if type(node.op) in BitwiseOpConverter._ast_to_sympy_functions:
             func_node = ast.copy_location(
                 ast.Name(id=BitwiseOpConverter._ast_to_sympy_functions[type(node.op)], ctx=ast.Load()), node)
-            new_node = ast.Call(func=func_node, args=[self.visit(value) for value in (node.left, node.right)], keywords=[])
+            new_node = ast.Call(func=func_node,
+                                args=[self.visit(value) for value in (node.left, node.right)],
+                                keywords=[])
             return ast.copy_location(new_node, node)
         return node
 
@@ -1003,7 +1011,9 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None) -> sympy.Basic:
     # And/Or(x, y), Not(x)
     if isinstance(expr, str) and re.search(r'\bnot\b|\band\b|\bor\b|\bNone\b|==|!=|\bis\b', expr):
         expr = unparse(SympyBooleanConverter().visit(ast.parse(expr).body[0]))
-    
+
+    # NOTE: If the expression contains bitwise operations, replace them with user-functions.
+    # NOTE: Sympy does not support bitwise operations and converts them to boolean operations.
     if isinstance(expr, str) and re.search('[&]|[|]|[\^]|[~]|[<<]|[>>]', expr):
         expr = unparse(BitwiseOpConverter().visit(ast.parse(expr).body[0]))
 
@@ -1025,6 +1035,7 @@ def simplify(expr: SymbolicType) -> SymbolicType:
 class DaceSympyPrinter(sympy.printing.str.StrPrinter):
     """ Several notational corrections for integer math and C++ translation
         that sympy.printing.cxxcode does not provide. """
+
     def __init__(self, arrays, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.arrays = arrays or set()
@@ -1196,6 +1207,7 @@ class SympyAwarePickler(pickle.Pickler):
     Custom Pickler class that safely saves SymPy expressions
     with function definitions in expressions (e.g., int_ceil).
     """
+
     def persistent_id(self, obj):
         if isinstance(obj, sympy.Basic):
             # Save sympy expression as srepr
@@ -1210,6 +1222,7 @@ class SympyAwareUnpickler(pickle.Unpickler):
     Custom Unpickler class that safely restores SymPy expressions
     with function definitions in expressions (e.g., int_ceil).
     """
+
     def persistent_load(self, pid):
         type_tag, value = pid
         if type_tag == "DaCeSympyExpression":

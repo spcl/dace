@@ -705,6 +705,9 @@ class ScalarToSymbolPromotion(passes.Pass):
             for aname, assignment in ise.assignments.items():
                 for scalar in to_promote:
                     if scalar in assignment:
+                        # NOTE: At least in Python 3.7, the string `assignment` is a copy of `ise.assignments[aname]`.
+                        # Performing all substitutions in `assignment` and finally setting `ise.assignments[aname]`
+                        # should work for all Python versions.
                         assignment = cleanup_re[scalar].sub(scalar, assignment.strip())
                 ise.assignments[aname] = assignment
 

@@ -1051,6 +1051,9 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
     def allocate_array(self, sdfg, dfg, state_id, node, nodedesc, function_stream, declaration_stream,
                        allocation_stream):
 
+        # NOTE: The code below fixes symbol-related issues with transient data originally defined in a NestedSDFG scope
+        # but promoted to be persistent. These data must have their free symbols replaced with the corresponding
+        # top-level SDFG symbols.
         if nodedesc.lifetime == dtypes.AllocationLifetime.Persistent:
             if sdfg.parent and any(str(s) in sdfg.parent_nsdfg_node.symbol_mapping for s in nodedesc.free_symbols):
                 nodedesc = copy.deepcopy(nodedesc)

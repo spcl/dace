@@ -11,17 +11,19 @@ import warnings
 
 tokenize_cpp = re.compile(r'\b\w+\b')
 
+
 def _internal_replace(sym, symrepl):
     if not isinstance(sym, sp.Basic):
         return sym
-    
+
     # Filter out only relevant replacements
     fsyms = set(map(str, sym.free_symbols))
     newrepl = {k: v for k, v in symrepl.items() if str(k) in fsyms}
     if not newrepl:
         return sym
-    
+
     return sym.subs(newrepl)
+
 
 def _replsym(symlist, symrepl):
     """ Helper function to replace symbols in various symbolic expressions. """
@@ -94,6 +96,7 @@ def replace_properties_dict(node: Any,
             continue
         pname = propclass.attr_name
         if isinstance(propclass, properties.SymbolicProperty):
+            # NOTE: `propval` can be a numeric constant instead of a symbolic expression.
             if not symbolic.issymbolic(propval):
                 setattr(node, pname, symbolic.pystr_to_symbolic(str(propval)).subs(symrepl))
             else:
@@ -127,7 +130,7 @@ def replace_properties_dict(node: Any,
                         propval.code = prefix + code
                 else:
                     warnings.warn('Replacement of %s with %s was not made '
-                                    'for string tasklet code of language %s' % (name, new_name, lang))
+                                  'for string tasklet code of language %s' % (name, new_name, lang))
 
             elif propval.code is not None:
                 afr = ASTFindReplace(reduced_repl)

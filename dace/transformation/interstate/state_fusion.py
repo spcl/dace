@@ -496,10 +496,10 @@ class StateFusion(transformation.MultiStateTransformation):
             node for node in first_input if next((x for x in first_output if x.data == node.data), None) is None
         ]
 
+        # NOTE: We exclude Views from the process of merging common data nodes because it may lead to double edges.
         second_mid = [
-            x for x in list(nx.topological_sort(second_state._nx))
-            if isinstance(x, nodes.AccessNode) and second_state.out_degree(x) > 0
-            and not isinstance(sdfg.arrays[x.data], dt.View)
+            x for x in list(nx.topological_sort(second_state._nx)) if isinstance(x, nodes.AccessNode)
+            and second_state.out_degree(x) > 0 and not isinstance(sdfg.arrays[x.data], dt.View)
         ]
 
         # Merge second state to first state
@@ -538,7 +538,7 @@ class StateFusion(transformation.MultiStateTransformation):
                             continue
                         sdutil.change_edge_src(first_state, cand, node)
                         sdutil.change_edge_dest(first_state, cand, node)
-                        first_state.remove_node(cand)            
+                        first_state.remove_node(cand)
                 continue
 
             if len(candidates) == 0:
