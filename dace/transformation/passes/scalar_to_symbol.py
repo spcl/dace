@@ -705,7 +705,8 @@ class ScalarToSymbolPromotion(passes.Pass):
             for aname, assignment in ise.assignments.items():
                 for scalar in to_promote:
                     if scalar in assignment:
-                        ise.assignments[aname] = cleanup_re[scalar].sub(scalar, assignment.strip())
+                        assignment = cleanup_re[scalar].sub(scalar, assignment.strip())
+                ise.assignments[aname] = assignment
 
         # Step 7: Indirection
         remove_symbol_indirection(sdfg)
