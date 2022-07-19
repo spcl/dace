@@ -9,11 +9,11 @@ import sympy
 from dace import data, registry, subsets, symbolic
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
-from dace.transformation import helpers, transformation as pm
+from dace.transformation import helpers
+from dace.transformation import transformation as pm
 
 
-@registry.autoregister_params(singlestate=True)
-class StencilDetection(pm.Transformation):
+class StencilDetection(pm.SingleStateTransformation):
     """ Detects Maps that perform stencil operations and substitutes them with
         a StencilNode.
     """
