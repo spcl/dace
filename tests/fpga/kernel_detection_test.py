@@ -10,6 +10,7 @@ import re
 from dace.sdfg.utils import is_fpga_kernel
 from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
 from dace.fpga_testing import fpga_test
+from dace.config import set_temporary
 
 
 def count_kernels(sdfg: dace.SDFG):
@@ -49,7 +50,6 @@ def test_kernels_inside_component_0():
     The 4 maps, should belong to three distinct kernels
     :return:
     '''
-
     @dace.program
     def kernels_inside_component_0(x: dace.float32[8], y: dace.float32[8], v: dace.float32[8], w: dace.float32[8],
                                    z: dace.float32[8]):
@@ -69,7 +69,8 @@ def test_kernels_inside_component_0():
         if is_fpga_kernel(sdfg, state):
             state.instrument = dace.InstrumentationType.FPGA
 
-    res = sdfg(x=x, y=y, v=v, w=w, z=z)
+    with set_temporary("compiler", "fpga", "concurrent_kernels_detection", value=True):
+        res = sdfg(x=x, y=y, v=v, w=w, z=z)
     assert count_kernels(sdfg) == 3
     assert np.allclose(res, x + y + v + w + z)
 
@@ -103,7 +104,6 @@ def test_kernels_inside_component_1():
     The five Maps should belong to 5 distinct kernels
 
     '''
-
     @dace.program
     def kernels_inside_component_1(x: dace.float32[8], y: dace.float32[8], v: dace.float32[8], w: dace.float32[8],
                                    z: dace.float32[8], t: dace.float32[8], alpha: dace.float32, beta: dace.float32):
@@ -124,7 +124,9 @@ def test_kernels_inside_component_1():
 
     sdfg = kernels_inside_component_1.to_sdfg()
     sdfg.apply_transformations([FPGATransformSDFG, InlineSDFG])
-    program = sdfg.compile()
+
+    with set_temporary("compiler", "fpga", "concurrent_kernels_detection", value=True):
+        program = sdfg.compile()
     assert count_kernels(sdfg) == 5
     program(x=x, y=y, v=v, w=w, z=z, t=t, alpha=alpha, beta=beta)
     ref_z = alpha * (x + y + v + w)
@@ -154,7 +156,6 @@ def test_kernels_inside_component_2():
 
     :return:
     '''
-
     @dace.program
     def kernels_inside_component_2(x: dace.float32[8], y: dace.float32[8], v: dace.float32[8], z: dace.float32[8],
                                    t: dace.float32[8]):
@@ -169,7 +170,8 @@ def test_kernels_inside_component_2():
 
     sdfg = kernels_inside_component_2.to_sdfg()
     sdfg.apply_transformations([FPGATransformSDFG, InlineSDFG])
-    program = sdfg.compile()
+    with set_temporary("compiler", "fpga", "concurrent_kernels_detection", value=True):
+        program = sdfg.compile()
 
     # NOTE: here we have only one kernel since subgraph detection already
     # detects two PEs
@@ -216,7 +218,9 @@ def test_kernels_lns_inside_component():
 
     sdfg = kernels_lns_inside_component.to_sdfg()
     sdfg.apply_transformations([FPGATransformSDFG, InlineSDFG])
-    program = sdfg.compile()
+
+    with set_temporary("compiler", "fpga", "concurrent_kernels_detection", value=True):
+        program = sdfg.compile()
 
     assert count_kernels(sdfg) == 3
     z = program(A=A, x=x, B=B, y=y)
@@ -246,7 +250,6 @@ def test_kernels_inside_components_0():
     The three maps, should belong to three distinct kernels
 
     '''
-
     @dace.program
     def kernels_inside_components_0(x: dace.float32[8], y: dace.float32[8], v: dace.float32[8], w: dace.float32[8],
                                     xx: dace.float32[8], yy: dace.float32[8], vv: dace.float32[8], ww: dace.float32[8]):
@@ -265,7 +268,9 @@ def test_kernels_inside_components_0():
 
     sdfg = kernels_inside_components_0.to_sdfg()
     sdfg.apply_transformations([FPGATransformSDFG, InlineSDFG])
-    program = sdfg.compile()
+
+    with set_temporary("compiler", "fpga", "concurrent_kernels_detection", value=True):
+        program = sdfg.compile()
 
     assert count_kernels(sdfg) == 6
     z, zz = program(x=x, y=y, v=v, w=w, xx=xx, yy=yy, vv=vv, ww=ww)
@@ -294,7 +299,6 @@ def test_kernels_inside_components_multiple_states():
     The three maps, should belong to three distinct kernels
     :return:
     '''
-
     def make_sdfg(dtype=dace.float32):
         sdfg = dace.SDFG("multiple_kernels_multiple_states")
         n = dace.symbol("size")
@@ -543,7 +547,8 @@ def test_kernels_inside_components_multiple_states():
     zz = np.random.rand(8).astype(np.float32)
 
     sdfg = make_sdfg()
-    program = sdfg.compile()
+    with set_temporary("compiler", "fpga", "concurrent_kernels_detection", value=True):
+        program = sdfg.compile()
     assert count_kernels(sdfg) == 6
     program(z=z, zz=zz, x=x, y=y, v=v, w=w, xx=xx, yy=yy, vv=vv, ww=ww, size=8)
     assert np.allclose(z, x + y + v + w)
