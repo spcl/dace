@@ -6,6 +6,14 @@ Stateful Dataflow multiGraphs (SDFG)
 Philosophy
 ----------
 
+The central tenet of our approach is that understanding and optimizing data movement is the key to portable, 
+high-performance code. In a data-centric programming paradigm, three governing principles guide execution:
+
+    1. Data containers must be separate from computations.
+    2. Data movement must be explicit, both from data containers to computations and to other data containers.
+    3. Control flow dependencies must be minimized, and only define execution order if no implicit dataflow is given.
+
+As opposed to
 data-centric vs. control-centric
 
 
@@ -40,6 +48,10 @@ Transient property, aliasing assumptions.
 
 Views and references, see below.
 
+Symbols
+~~~~~~~~
+Scalars vs. symbols
+
 .. _sdfg-memlet:
 
 Memlets
@@ -47,10 +59,13 @@ Memlets
 
 anatomy of a memlet
 
+.. _sdfg-map:
 
-Symbols
-~~~~~~~~
-Scalars vs. symbols
+Parametric Parallelism
+~~~~~~~~~~~~~~~~~~~~~~
+
+Map consume
+schedule types
 
 
 Connectors
@@ -62,14 +77,6 @@ Image with tasklet connectors (which are used in the tasklet), side by side with
 and two input edges, and three output edges. Three of them marked in orange and the connector names are shown. 
 
 Mention *memlet paths* and the general *memlet tree* that can go through arbitrary scopes
-
-.. _sdfg-map:
-
-Parametric Parallelism
-~~~~~~~~~~~~~~~~~~~~~~
-
-Map consume
-schedule types
 
 
 Dynamic Map Ranges
@@ -88,6 +95,19 @@ Use reference sparingly.
 
 Library Nodes
 ~~~~~~~~~~~~~
+
+
+
+Memlet Propagation
+------------------
+
+
+
+
+The process is triggered automatically by the Python frontend. If you want to trigger it manually on an entire SDFG, call
+:func:`~dace.sdfg.propagation.propagate_memlets_sdfg`. For a local scope, use :func:`~dace.sdfg.propagation.propagate_memlets_scope`,
+and for a single memlet use :func:`~dace.sdfg.propagation.propagate_memlet`. If you only want to trigger the part that propagates
+symbol values across the SDFG state machine, call :func:`~dace.sdfg.propagation.propagate_states`.
 
 SDFG Builder API
 ----------------
