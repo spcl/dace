@@ -6,7 +6,6 @@
 from dace.frontend.python.wrappers import stream
 import dace
 import ast
-import astunparse
 from dace.codegen import cppunparse
 from dace.sdfg import nodes, SDFG, SDFGState, ScopeSubgraphView, graph as gr
 from typing import IO, Tuple, Union
@@ -122,9 +121,7 @@ class SVEUnparser(cppunparse.CPPUnparser):
 
         # Sanity check
         if not inf:
-            raise util.NotSupportedError(
-                f'Could not infer the expression type of `{astunparse.unparse(tree)}`'
-            )
+            raise util.NotSupportedError(f'Could not infer the expression type of `{astutils.unparse(tree)}`')
 
         if isinstance(inf, dtypes.vector):
             # Unparsing a vector
@@ -135,12 +132,10 @@ class SVEUnparser(cppunparse.CPPUnparser):
                     self.dispatch(tree)
                 else:
                     # TODO: Cast vectors (but only if same bitwidth)
-                    raise NotImplementedError(
-                        'Vector-vector casting not implemented')
+                    raise NotImplementedError('Vector-vector casting not implemented')
             else:
                 # A pointer or scalar is expected (incompatible)
-                raise util.NotSupportedError(
-                    'Given a vector, expected a scalar or pointer')
+                raise util.NotSupportedError('Given a vector, expected a scalar or pointer')
         elif isinstance(inf, dtypes.pointer):
             # Unparsing a pointer
             if isinstance(expect, dtypes.pointer):
@@ -156,8 +151,7 @@ class SVEUnparser(cppunparse.CPPUnparser):
                     raise util.NotSupportedError('Inconsistent pointer types')
             else:
                 # Expecting anything else
-                raise util.NotSupportedError(
-                    'Given a pointer, expected a scalar or vector')
+                raise util.NotSupportedError('Given a pointer, expected a scalar or vector')
         else:
             # Unparsing a scalar
             if isinstance(expect, dtypes.vector):
@@ -175,8 +169,7 @@ class SVEUnparser(cppunparse.CPPUnparser):
 
             elif isinstance(expect, dtypes.pointer):
                 # Expecting a pointer
-                raise util.NotSupportedError(
-                    'Given a scalar, expected a pointer')
+                raise util.NotSupportedError('Given a scalar, expected a pointer')
             else:
                 # Expecting a scalar: cast if needed
                 cast_ctype = None
@@ -213,7 +206,7 @@ class SVEUnparser(cppunparse.CPPUnparser):
         # It is very important to remember that elif's rely on the previous elif's (they are sequential)
         # i.e. the first subcase that hits wins and all following ones lose
 
-        self.fill('// Case ' + astunparse.unparse(t.test))
+        self.fill('// Case ' + astutils.unparse(t.test))
         self.enter()
 
         # Generate the case body, which will use the test predicate in the ops
@@ -244,16 +237,12 @@ class SVEUnparser(cppunparse.CPPUnparser):
 
         # Find all branches (except for the last else, because it is treated differently)
         branches = [t]
-        while (t.orelse and len(t.orelse) == 1
-               and isinstance(t.orelse[0], ast.If)):
+        while (t.orelse and len(t.orelse) == 1 and isinstance(t.orelse[0], ast.If)):
             t = t.orelse[0]
             branches.append(t)
 
         # Precompute all case predicates
-        predicates = [
-            self.generate_case_predicate(b, acc_pred, i + 1)
-            for i, b in enumerate(branches)
-        ]
+        predicates = [self.generate_case_predicate(b, acc_pred, i + 1) for i, b in enumerate(branches)]
 
         # Generate the cases
         for b, p in zip(branches, predicates):
@@ -289,18 +278,13 @@ class SVEUnparser(cppunparse.CPPUnparser):
             stream_type.ctype = 'uint64_t'
 
         # Create a temporary array on the heap, where we will copy the SVE register contents to
-        self.fill('{} __tmp[{} / {}];'.format(stream_type,
-                                              util.REGISTER_BYTE_SIZE,
-                                              stream_type.bytes))
+        self.fill('{} __tmp[{} / {}];'.format(stream_type, util.REGISTER_BYTE_SIZE, stream_type.bytes))
 
         # Count the number of "to push" elements based on the current predicate
-        self.fill('size_t __cnt = svcntp_b{}({}, {});'.format(
-            self.pred_bits, self.pred_name, self.pred_name))
+        self.fill('size_t __cnt = svcntp_b{}({}, {});'.format(self.pred_bits, self.pred_name, self.pred_name))
 
         # Store the contents of the SVE register in the temporary array
-        self.fill(
-            f'svst1(svwhilelt_b{self.pred_bits}(0, ({self.counter_type}) __cnt), __tmp, '
-        )
+        self.fill(f'svst1(svwhilelt_b{self.pred_bits}(0, ({self.counter_type}) __cnt), __tmp, ')
 
         # The contents should be compacted (i.e. all elements where the predicate is true are aligned)
         self.write(f'svcompact({self.pred_name}, ')
@@ -325,22 +309,16 @@ class SVEUnparser(cppunparse.CPPUnparser):
             raise util.NotSupportedError('Unsupported reduction in SVE')
 
         nc = not is_write_conflicted(self.dfg, edge)
-        if not nc or not isinstance(edge.src.out_connectors[edge.src_conn],
-                                    (dtypes.pointer, dtypes.vector)):
+        if not nc or not isinstance(edge.src.out_connectors[edge.src_conn], (dtypes.pointer, dtypes.vector)):
             # WCR on vectors works in two steps:
             # 1. Reduce the SVE register using SVE instructions into a scalar
             # 2. WCR the scalar to memory using DaCe functionality
             dst_node = self.dfg.memlet_path(edge)[-1].dst
-            if (isinstance(dst_node, nodes.AccessNode) and 
-                dst_node.desc(self.sdfg).storage == dtypes.StorageType.SVE_Register):
+            if (isinstance(dst_node, nodes.AccessNode)
+                    and dst_node.desc(self.sdfg).storage == dtypes.StorageType.SVE_Register):
                 return
 
-            wcr = self.cpu_codegen.write_and_resolve_expr(self.sdfg,
-                                                          edge.data,
-                                                          not nc,
-                                                          None,
-                                                          '@',
-                                                          dtype=dtype)
+            wcr = self.cpu_codegen.write_and_resolve_expr(self.sdfg, edge.data, not nc, None, '@', dtype=dtype)
             self.fill(wcr[:wcr.find('@')])
             self.write(util.REDUCTION_TYPE_TO_SVE[reduction_type])
             self.write('(')
@@ -367,15 +345,12 @@ class SVEUnparser(cppunparse.CPPUnparser):
 
             store_args = '{}, {}'.format(
                 self.pred_name,
-                ptr_cast +
-                cpp_ptr_expr(self.sdfg, edge.data, DefinedType.Pointer),
+                ptr_cast + cpp_ptr_expr(self.sdfg, edge.data, DefinedType.Pointer, codegen=self.cpu_codegen._frame),
             )
 
             red_type = util.REDUCTION_TYPE_TO_SVE[reduction_type][:-1] + '_x'
             if stride == 1:
-                self.write(
-                    f'svst1({store_args}, {red_type}({self.pred_name}, svld1({store_args}), '
-                )
+                self.write(f'svst1({store_args}, {red_type}({self.pred_name}, svld1({store_args}), ')
                 self.dispatch_expect(rhs, dtypes.vector(dtype, -1))
                 self.write('));')
             else:
@@ -395,13 +370,11 @@ class SVEUnparser(cppunparse.CPPUnparser):
             raise util.NotSupportedError('Tuple output not supported')
 
         target = t.targets[0]
-        if isinstance(target,
-                      ast.Name) and target.id in self.stream_associations:
+        if isinstance(target, ast.Name) and target.id in self.stream_associations:
             # Assigning to a stream variable is equivalent to a push
             self.push_to_stream(t, target)
             return
-        elif isinstance(target,
-                        ast.Name) and target.id in self.wcr_associations:
+        elif isinstance(target, ast.Name) and target.id in self.wcr_associations:
             # Assigning to a WCR output
             self.resolve_conflict(t, target)
             return
@@ -409,17 +382,13 @@ class SVEUnparser(cppunparse.CPPUnparser):
         lhs_type, rhs_type = self.infer(target, t.value)
 
         if rhs_type is None:
-            raise NotImplementedError(
-                f'Can not infer RHS of assignment ({astunparse.unparse(t.value)})'
-            )
+            raise NotImplementedError(f'Can not infer RHS of assignment ({astutils.unparse(t.value)})')
 
         is_new_variable = False
 
         if lhs_type is None:
             # The LHS could involve a variable name that was not declared (which is why inference fails)
-            if not isinstance(
-                    target,
-                    ast.Name) or target.id in self.get_defined_symbols():
+            if not isinstance(target, ast.Name) or target.id in self.get_defined_symbols():
                 # Either we don't assign to a name, or the variable name has
                 # already been declared (but infer still fails, i.e. something went wrong!)
                 raise NotImplementedError('Can not infer LHS of assignment')
@@ -433,8 +402,7 @@ class SVEUnparser(cppunparse.CPPUnparser):
                 # Define the new symbol as vector
                 self.defined_symbols.update({target.id: rhs_type})
             elif isinstance(rhs_type, dtypes.pointer):
-                raise util.NotSupportedError(
-                    'Defining pointers in Tasklet code not supported')
+                raise util.NotSupportedError('Defining pointers in Tasklet code not supported')
 
             # Otherwise, the fallback will grab the case of a scalar,
             # because the RHS is scalar, and the LHS is the same
@@ -497,8 +465,7 @@ class SVEUnparser(cppunparse.CPPUnparser):
             module_name = attr_name[:attr_name.rfind(".")]
             func_name = attr_name[attr_name.rfind(".") + 1:]
             if module_name not in dtypes._ALLOWED_MODULES:
-                raise NotImplementedError(
-                    f'Module {module_name} is not implemented')
+                raise NotImplementedError(f'Module {module_name} is not implemented')
             cpp_mod_name = dtypes._ALLOWED_MODULES[module_name]
             name = cpp_mod_name + func_name
 
@@ -519,15 +486,13 @@ class SVEUnparser(cppunparse.CPPUnparser):
         if isinstance(t.func, ast.Name):
             # Could be an internal operation (provided by the preprocessor)
             if not util.is_sve_internal(t.func.id):
-                raise NotImplementedError(
-                    f'Function {t.func.id} is not implemented')
+                raise NotImplementedError(f'Function {t.func.id} is not implemented')
             name = util.internal_to_external(t.func.id)[0]
         elif isinstance(t.func, ast.Attribute):
             # Some module function (xxx.xxx), make sure it is available
             name = util.MATH_FUNCTION_TO_SVE.get(astutils.rname(t.func))
             if name is None:
-                raise NotImplementedError(
-                    f'Function {astutils.rname(t.func)} is not implemented')
+                raise NotImplementedError(f'Function {astutils.rname(t.func)} is not implemented')
 
         # Vectorized function
         self.write('{}_x({}, '.format(name, self.pred_name))
@@ -552,11 +517,9 @@ class SVEUnparser(cppunparse.CPPUnparser):
             return
 
         if t.op.__class__ not in util.UN_OP_TO_SVE:
-            raise NotImplementedError(
-                f'Unary operation {t.op.__class__.__name__} not implemented')
+            raise NotImplementedError(f'Unary operation {t.op.__class__.__name__} not implemented')
 
-        self.write('{}_x({}, '.format(util.UN_OP_TO_SVE[t.op.__class__],
-                                      self.pred_name))
+        self.write('{}_x({}, '.format(util.UN_OP_TO_SVE[t.op.__class__], self.pred_name))
         self.dispatch(t.operand)
         self.write(')')
 
@@ -572,8 +535,7 @@ class SVEUnparser(cppunparse.CPPUnparser):
             return super()._BinOp(t)
 
         if t.op.__class__ not in util.BIN_OP_TO_SVE:
-            raise NotImplementedError(
-                f'Binary operation {t.op.__class__.__name__} not implemented')
+            raise NotImplementedError(f'Binary operation {t.op.__class__.__name__} not implemented')
 
         op_name = util.BIN_OP_TO_SVE[t.op.__class__]
 
@@ -588,8 +550,7 @@ class SVEUnparser(cppunparse.CPPUnparser):
     #
 
     def _IfExp(self, t):
-        if util.only_scalars_involed(self.get_defined_symbols(), t.test, t.body,
-                                     t.orelse):
+        if util.only_scalars_involed(self.get_defined_symbols(), t.test, t.body, t.orelse):
             return super()._IfExp(t)
 
         if_type, else_type = self.infer(t.body, t.orelse)
@@ -614,8 +575,7 @@ class SVEUnparser(cppunparse.CPPUnparser):
         # Bool ops are nested SVE instructions, so we must make sure they all act on vectors
         for type in types:
             if not isinstance(type, dtypes.vector):
-                raise util.NotSupportedError(
-                    'Non-vectorizable boolean operation')
+                raise util.NotSupportedError('Non-vectorizable boolean operation')
 
         # There can be many t.values, e.g. if
         # x or y or z
@@ -626,8 +586,7 @@ class SVEUnparser(cppunparse.CPPUnparser):
                 break
 
             # Binary nesting
-            self.write('{}_z({}, '.format(util.BOOL_OP_TO_SVE[t.op.__class__],
-                                          self.pred_name))
+            self.write('{}_z({}, '.format(util.BOOL_OP_TO_SVE[t.op.__class__], self.pred_name))
             self.dispatch(val)
             self.write(', ')
 
@@ -637,8 +596,7 @@ class SVEUnparser(cppunparse.CPPUnparser):
     def _Compare(self, t):
         if len(t.ops) != 1:
             # This includes things like  a < b <= c
-            raise NotImplementedError(
-                'Multiple comparisons at once not implemented')
+            raise NotImplementedError('Multiple comparisons at once not implemented')
 
         lhs = t.left
         op = t.ops[0]
@@ -652,8 +610,7 @@ class SVEUnparser(cppunparse.CPPUnparser):
         if op.__class__ not in util.COMPARE_TO_SVE:
             raise NotImplementedError('Comparator not supported')
 
-        self.write('{}({}, '.format(util.COMPARE_TO_SVE[op.__class__],
-                                    self.pred_name))
+        self.write('{}({}, '.format(util.COMPARE_TO_SVE[op.__class__], self.pred_name))
 
         lhs_type, rhs_type = self.infer(lhs, rhs)
         res_type = dtypes.result_type_of(lhs_type, rhs_type)
@@ -668,8 +625,7 @@ class SVEUnparser(cppunparse.CPPUnparser):
         self.assert_type_compatibility(type)
         self.assert_type_compatibility(slice)
 
-        if isinstance(type, dtypes.pointer) and isinstance(
-                slice, dtypes.vector):
+        if isinstance(type, dtypes.pointer) and isinstance(slice, dtypes.vector):
             # Indirect load
             self.write(f'svld1_gather_index({self.pred_name}, ')
             self.dispatch_expect(t.value, type)
@@ -678,5 +634,4 @@ class SVEUnparser(cppunparse.CPPUnparser):
             self.write(')')
             return
 
-        raise NotImplementedError(
-            'You should define memlets for array accesses')
+        raise NotImplementedError('You should define memlets for array accesses')

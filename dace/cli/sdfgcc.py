@@ -10,20 +10,17 @@ import shutil
 
 def main():
     # Command line options parser
-    parser = argparse.ArgumentParser(
-        description='Simple SDFG command-line compiler.')
+    parser = argparse.ArgumentParser(description='Simple SDFG command-line compiler.')
 
     # Required argument for SDFG file path
     parser.add_argument('filepath', help='<PATH TO SDFG FILE>', type=str)
 
     # Optional argument for output location
-    parser.add_argument(
-        '-o',
-        '--out',
-        type=str,
-        help=
-        'If provided, saves library as the given file or in the specified path, '
-        'together with a header file.')
+    parser.add_argument('-o',
+                        '--out',
+                        type=str,
+                        help='If provided, saves library as the given file or in the specified path, '
+                        'together with a header file.')
 
     parser.add_argument('-O',
                         '--optimize',

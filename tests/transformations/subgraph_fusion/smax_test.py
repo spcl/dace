@@ -1,17 +1,18 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
-import numpy as np
 import sys
+from typing import List, Union
 
-from dace.transformation.subgraph import ReduceExpansion, SubgraphFusion, MultiExpansion
-import dace.transformation.subgraph.helpers as helpers
+import numpy as np
+from util import expand_maps, expand_reduce, fusion
 
+import dace
 import dace.dtypes as dtypes
-from dace.sdfg.graph import SubgraphView
 import dace.libraries.standard as stdlib
 import dace.sdfg.nodes as nodes
-from typing import Union, List
-from util import expand_maps, expand_reduce, fusion
+import dace.transformation.subgraph.helpers as helpers
+from dace.sdfg.graph import SubgraphView
+from dace.transformation.dataflow import ReduceExpansion
+from dace.transformation.subgraph import MultiExpansion, SubgraphFusion
 
 dace_dtype = dace.float32
 H, B, SN, SM = (dace.symbol(s) for s in ('H', 'B', 'SN', 'SM'))
@@ -76,9 +77,8 @@ def get_partition(sdfg, graph):
 def test_2fuse():
     sdfg = softmax.to_sdfg()
     sdfg.name = 'softmax_2part'
-    sdfg.apply_strict_transformations()
-    X_in = np.random.rand(H.get(), B.get(), SN.get(),
-                          SM.get()).astype(np.float32)
+    sdfg.simplify()
+    X_in = np.random.rand(H.get(), B.get(), SN.get(), SM.get()).astype(np.float32)
 
     csdfg = sdfg.compile()
     res1 = csdfg(X_in=X_in, H=H, B=B, SN=SN, SM=SM)
@@ -101,9 +101,8 @@ def test_2fuse():
 def test_1fuse():
     sdfg = softmax.to_sdfg()
     sdfg.name = 'softmax_fused'
-    sdfg.apply_strict_transformations()
-    X_in = np.random.rand(H.get(), B.get(), SN.get(),
-                          SM.get()).astype(np.float32)
+    sdfg.simplify()
+    X_in = np.random.rand(H.get(), B.get(), SN.get(), SM.get()).astype(np.float32)
 
     csdfg = sdfg.compile()
     res1 = csdfg(X_in=X_in, H=H, B=B, SN=SN, SM=SM)
@@ -127,9 +126,8 @@ def test_1fuse():
 def test_1fuse():
     sdfg = softmax.to_sdfg()
     sdfg.name = 'softmax_fused'
-    sdfg.apply_strict_transformations()
-    X_in = np.random.rand(H.get(), B.get(), SN.get(),
-                          SM.get()).astype(np.float32)
+    sdfg.simplify()
+    X_in = np.random.rand(H.get(), B.get(), SN.get(), SM.get()).astype(np.float32)
 
     csdfg = sdfg.compile()
     res1 = csdfg(X_in=X_in, H=H, B=B, SN=SN, SM=SM)

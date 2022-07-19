@@ -1,1 +1,3 @@
-from .transformation import strict_transformations, Transformation, ExpandTransformation
+from .transformation import (PatternTransformation, SingleStateTransformation, MultiStateTransformation,
+                             SubgraphTransformation, ExpandTransformation)
+from .pass_pipeline import Pass, Pipeline, FixedPointPipeline

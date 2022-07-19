@@ -191,7 +191,7 @@ def test_error_handling():
     with pytest.raises(NotADirectoryError):
 
         @dace.program
-        def testprogram(A, nc: dace.constant):
+        def testprogram(A, nc: dace.compiletime):
             nc(A)
 
         testprogram(A, NotConvertible())
@@ -220,10 +220,28 @@ def test_nested_class_error_handling():
     with pytest.raises(NotADirectoryError):
 
         @dace.program
-        def testprogram(A, nc: dace.constant):
+        def testprogram(A, nc: dace.compiletime):
             nc(A)
 
         testprogram(A, MaybeConvertible())
+
+
+def test_loop_unrolling():
+    @dace.program
+    def called(A):
+        A += 1
+
+    n = 5
+
+    @dace.program
+    def program(A):
+        for i in dace.unroll(range(n)):
+            called(A)
+
+    A = np.random.rand(20)
+    expected = A + n
+    program(A)
+    assert np.allclose(A, expected)
 
 
 if __name__ == '__main__':
@@ -239,3 +257,4 @@ if __name__ == '__main__':
     test_autodetect_function_in_for()
     test_error_handling()
     test_nested_class_error_handling()
+    test_loop_unrolling()

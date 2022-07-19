@@ -5,9 +5,7 @@ import numpy as np
 
 @dace.program
 def tlarray(A: dace.int32[128]):
-    tmp = dace.ndarray([128],
-                       dace.int32,
-                       storage=dace.StorageType.CPU_ThreadLocal)
+    tmp = dace.ndarray([128], dace.int32, storage=dace.StorageType.CPU_ThreadLocal)
 
     for i in dace.map[0:128]:
         with dace.tasklet:

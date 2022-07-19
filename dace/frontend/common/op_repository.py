@@ -104,8 +104,7 @@ def replaces_ufunc(func: Callable[..., Tuple[str]], name: str):
 
 
 @paramdec
-def replaces_method(func: Callable[..., Tuple[str]], classname: str,
-                    method_name: str):
+def replaces_method(func: Callable[..., Tuple[str]], classname: str, method_name: str):
     """ 
     Registers a replacement sub-SDFG generator for methods on objects.
     :param func: A function that receives an SDFG, SDFGState, and the original
@@ -120,8 +119,7 @@ def replaces_method(func: Callable[..., Tuple[str]], classname: str,
 
 
 @paramdec
-def replaces_attribute(func: Callable[..., Tuple[str]], classname: str,
-                       attr_name: str):
+def replaces_attribute(func: Callable[..., Tuple[str]], classname: str, attr_name: str):
     """ 
     Registers a replacement sub-SDFG generator for object attributes.
     :param func: A function that receives an SDFG, SDFGState, and the original

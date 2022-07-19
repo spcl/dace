@@ -7,6 +7,7 @@ import numpy as np
 I = dace.symbol("I")
 J = dace.symbol("J")
 
+
 @dace.program
 def copy(inp: dace.float32[I, J], out: dace.float32[I, J]):
     @dace.map
@@ -32,10 +33,10 @@ class MapDimShuffleTest(unittest.TestCase):
         self.assertLess(np.linalg.norm(B1 - B2), 1e-8)
 
     def test_semantic_eq(self):
-        self.semantic_eq(['x','y'])
+        self.semantic_eq(['x', 'y'])
 
     def test_semantic_eq_trivial_trafo(self):
-        self.semantic_eq(['y','x'])
+        self.semantic_eq(['y', 'x'])
 
 
 if __name__ == '__main__':

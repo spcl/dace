@@ -65,7 +65,7 @@ def invoke_stencil(tile_size, offset=False, unroll=False):
         sdfg = stencil_offset.to_sdfg()
     else:
         sdfg = stencil.to_sdfg()
-    sdfg.apply_strict_transformations()
+    sdfg.simplify()
     graph = sdfg.nodes()[0]
 
     # baseline
@@ -75,7 +75,8 @@ def invoke_stencil(tile_size, offset=False, unroll=False):
     del csdfg
 
     subgraph = SubgraphView(graph, [n for n in graph.nodes()])
-    st = StencilTiling(subgraph)
+    st = StencilTiling()
+    st.setup_match(subgraph)
     st.tile_size = (tile_size, )
     st.unroll_loops = unroll
     assert st.can_be_applied(sdfg, subgraph)
@@ -88,9 +89,10 @@ def invoke_stencil(tile_size, offset=False, unroll=False):
     csdfg(A=A, B=B2, N=N)
     del csdfg
 
-    sdfg.apply_strict_transformations()
+    sdfg.simplify()
     subgraph = SubgraphView(graph, [n for n in graph.nodes()])
-    sf = SubgraphFusion(subgraph)
+    sf = SubgraphFusion()
+    sf.setup_match(subgraph)
     assert sf.can_be_applied(sdfg, subgraph)
     sf.apply(sdfg)
 

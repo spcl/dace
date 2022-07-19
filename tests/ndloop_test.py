@@ -34,8 +34,7 @@ def test_ndloop():
     ndloop.NDLoop(slice(0, 3, None), f1dparam, p2=8, p1=7)
     assert f1dparamres == expected_result
 
-    expected_result = [(0, 4), (0, 6), (0, 8), (1, 4), (1, 6), (1, 8), (2, 4),
-                       (2, 6), (2, 8)]
+    expected_result = [(0, 4), (0, 6), (0, 8), (1, 4), (1, 6), (1, 8), (2, 4), (2, 6), (2, 8)]
     ndloop.NDLoop((slice(0, 3, None), slice(4, 9, 2)), f2d)
     assert f2dres == expected_result
 

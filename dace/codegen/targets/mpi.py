@@ -30,7 +30,7 @@ class MPICodeGen(TargetCodeGenerator):
         sdfg = self._global_sdfg
         self._frame.generate_fileheader(sdfg, fileheader, 'mpi')
 
-        params_comma = sdfg.signature(with_arrays=False)
+        params_comma = self._global_sdfg.init_signature(free_symbols=self._frame.free_symbols(self._global_sdfg))
         if params_comma:
             params_comma = ', ' + params_comma
 
@@ -73,8 +73,7 @@ void __dace_exit_mpi({sdfg.name}_t *__state) {{
     printf(\"MPI was finalized on proc %i of %i\\n\", __dace_comm_rank,
            __dace_comm_size);
 }}
-""".format(params=params_comma, sdfg=sdfg, file_header=fileheader.getvalue()),
-            'cpp', MPICodeGen, 'MPI')
+""".format(params=params_comma, sdfg=sdfg, file_header=fileheader.getvalue()), 'cpp', MPICodeGen, 'MPI')
         return [codeobj]
 
     @staticmethod
@@ -82,8 +81,7 @@ void __dace_exit_mpi({sdfg.name}_t *__state) {{
         options = ['-DDACE_ENABLE_MPI=ON']
 
         if Config.get("compiler", "mpi", "executable"):
-            compiler = make_absolute(Config.get("compiler", "mpi",
-                                                "executable"))
+            compiler = make_absolute(Config.get("compiler", "mpi", "executable"))
             options.append("-DMPI_CXX_COMPILER=\"{}\"".format(compiler))
 
         return options
@@ -96,26 +94,22 @@ void __dace_exit_mpi({sdfg.name}_t *__state) {{
     def has_finalizer(self):
         return True
 
-    def generate_scope(self, sdfg, dfg_scope, state_id, function_stream,
-                       callsite_stream):
+    def generate_scope(self, sdfg, dfg_scope, state_id, function_stream, callsite_stream):
         # Take care of map header
         assert len(dfg_scope.source_nodes()) == 1
         map_header = dfg_scope.source_nodes()[0]
 
-        function_stream.write('extern int __dace_comm_size, __dace_comm_rank;',
-                              sdfg, state_id, map_header)
+        function_stream.write('extern int __dace_comm_size, __dace_comm_rank;', sdfg, state_id, map_header)
 
         # Add extra opening brace (dynamic map ranges, closed in MapExit
         # generator)
         callsite_stream.write('{', sdfg, state_id, map_header)
 
         if len(map_header.map.params) > 1:
-            raise NotImplementedError(
-                'Multi-dimensional MPI maps are not supported')
+            raise NotImplementedError('Multi-dimensional MPI maps are not supported')
 
         state = sdfg.node(state_id)
-        symtypes = map_header.new_symbols(sdfg, state,
-                                          state.symbols_defined_at(map_header))
+        symtypes = map_header.new_symbols(sdfg, state, state.symbols_defined_at(map_header))
 
         for var, r in zip(map_header.map.params, map_header.map.range):
             begin, end, skip = r
@@ -123,13 +117,10 @@ void __dace_exit_mpi({sdfg.name}_t *__state) {{
             callsite_stream.write('{\n', sdfg, state_id, map_header)
             callsite_stream.write(
                 '%s %s = %s + __dace_comm_rank * (%s);\n' %
-                (symtypes[var], var,
-                 cppunparse.pyexpr2cpp(symbolic.symstr(begin)),
-                 cppunparse.pyexpr2cpp(symbolic.symstr(skip))), sdfg, state_id,
-                map_header)
+                (symtypes[var], var, cppunparse.pyexpr2cpp(
+                    symbolic.symstr(begin)), cppunparse.pyexpr2cpp(symbolic.symstr(skip))), sdfg, state_id, map_header)
 
-        self._frame.allocate_arrays_in_scope(sdfg, map_header, function_stream,
-                                             callsite_stream)
+        self._frame.allocate_arrays_in_scope(sdfg, map_header, function_stream, callsite_stream)
 
         self._dispatcher.dispatch_subgraph(sdfg,
                                            dfg_scope,

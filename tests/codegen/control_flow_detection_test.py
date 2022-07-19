@@ -1,5 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from math import exp
+
+import pytest
 import dace
 import numpy as np
 
@@ -32,9 +34,7 @@ def test_invalid_for_loop_detection():
     sdfg.add_edge(init, guard, dace.InterstateEdge(assignments=dict(i='0')))
     # Invalid: Edge between guard and loop state must not have assignments
     # This edge will be split in code generation
-    sdfg.add_edge(
-        guard, loop,
-        dace.InterstateEdge(condition='i < 20', assignments=dict(j='i')))
+    sdfg.add_edge(guard, loop, dace.InterstateEdge(condition='i < 20', assignments=dict(j='i')))
     sdfg.add_edge(guard, end, dace.InterstateEdge(condition='i >= 20'))
     sdfg.add_edge(loop, guard, dace.InterstateEdge(assignments=dict(i='i + 1')))
 
@@ -54,6 +54,7 @@ def test_invalid_for_loop_detection():
 
 
 def test_edge_split_loop_detection():
+
     @dace.program
     def looptest():
         A = dace.ndarray([10], dtype=dace.int32)
@@ -63,7 +64,7 @@ def test_edge_split_loop_detection():
             i += 2
         return A
 
-    sdfg: dace.SDFG = looptest.to_sdfg(strict=True)
+    sdfg: dace.SDFG = looptest.to_sdfg(simplify=True)
     if dace.Config.get_bool('optimizer', 'detect_control_flow'):
         assert 'for (' in sdfg.generate_code()[0].code
 
@@ -72,7 +73,58 @@ def test_edge_split_loop_detection():
     assert (np.array_equal(A[::2], A_ref[::2]))
 
 
+@pytest.mark.parametrize('mode', ('FalseTrue', 'TrueFalse', 'SwitchCase'))
+def test_edge_sympy_function(mode):
+    sdfg = dace.SDFG("test")
+    sdfg.add_symbol('N', stype=dace.int32)
+    sdfg.add_symbol('cnd', stype=dace.int32)
+
+    state_start = sdfg.add_state()
+    state_condition = sdfg.add_state()
+    state_br1 = sdfg.add_state()
+    state_br1_1 = sdfg.add_state_after(state_br1)
+    state_br2 = sdfg.add_state()
+    state_br2_1 = sdfg.add_state_after(state_br2)
+    state_merge = sdfg.add_state()
+
+    sdfg.add_edge(state_start, state_condition, dace.InterstateEdge())  #assignments=dict(cnd=1)))
+    if mode == 'FalseTrue':
+        sdfg.add_edge(state_condition, state_br1, dace.InterstateEdge('Ne(cnd, 0)', dict(N=2)))
+        sdfg.add_edge(state_condition, state_br2, dace.InterstateEdge('Eq(cnd, 0)', dict(N=3)))
+    elif mode == 'TrueFalse':
+        sdfg.add_edge(state_condition, state_br1, dace.InterstateEdge('Eq(cnd, 0)', dict(N=2)))
+        sdfg.add_edge(state_condition, state_br2, dace.InterstateEdge('Ne(cnd, 0)', dict(N=3)))
+    elif mode == 'SwitchCase':
+        sdfg.add_edge(state_condition, state_br1, dace.InterstateEdge('Eq(cnd, 1)', dict(N=2)))
+        sdfg.add_edge(state_condition, state_br2, dace.InterstateEdge('Eq(cnd, 0)', dict(N=3)))
+
+    sdfg.add_edge(state_br1_1, state_merge, dace.InterstateEdge())
+    sdfg.add_edge(state_br2_1, state_merge, dace.InterstateEdge())
+
+    sdfg.compile()
+
+
+def test_single_outedge_branch():
+    sdfg = dace.SDFG('tester')
+    sdfg.add_array('result', [1], dace.float64)
+    state1 = sdfg.add_state()
+    state2 = sdfg.add_state()
+    state2.add_edge(state2.add_tasklet('save', {}, {'out'}, 'out = 2'), 'out', state2.add_write('result'), None,
+                    dace.Memlet('result'))
+
+    sdfg.add_edge(state1, state2, dace.InterstateEdge('1 > 0'))
+
+    sdfg.compile()
+    res = np.random.rand(1)
+    sdfg(result=res)
+    assert np.allclose(res, 2)
+
+
 if __name__ == '__main__':
     test_for_loop_detection()
     test_invalid_for_loop_detection()
     test_edge_split_loop_detection()
+    test_edge_sympy_function('FalseTrue')
+    test_edge_sympy_function('TrueFalse')
+    test_edge_sympy_function('SwitchCase')
+    test_single_outedge_branch()

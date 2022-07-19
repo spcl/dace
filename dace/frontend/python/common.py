@@ -2,8 +2,7 @@
 import ast
 import collections
 from dataclasses import dataclass
-from typing import (Any, Callable, Dict, List, Optional, OrderedDict, Sequence,
-                    Tuple, Union)
+from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple, Union
 from dace import data
 from dace.sdfg.sdfg import SDFG
 
@@ -24,8 +23,8 @@ class DaceSyntaxError(Exception):
             col = 0
 
         if self.visitor is not None:
-            return (self.message + "\n  File \"" + str(self.visitor.filename) +
-                    "\", line " + str(line) + ", column " + str(col))
+            return (self.message + "\n  File \"" + str(self.visitor.filename) + "\", line " + str(line) + ", column " +
+                    str(col))
         else:
             return (self.message + "\n  in line " + str(line) + ":" + str(col))
 
@@ -53,9 +52,7 @@ class SDFGConvertible(object):
         """
         raise NotImplementedError
 
-    def __sdfg_closure__(
-            self,
-            reevaluate: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+    def __sdfg_closure__(self, reevaluate: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
         """ 
         Returns the closure arrays of the SDFG represented by this object
         as a mapping between array name and the corresponding value.
@@ -79,15 +76,17 @@ class SDFGConvertible(object):
         """
         raise NotImplementedError
 
-    def closure_resolver(
-            self,
-            constant_args: Dict[str, Any],
-            parent_closure: Optional['SDFGClosure'] = None) -> 'SDFGClosure':
+    def closure_resolver(self,
+                         constant_args: Dict[str, Any],
+                         given_args: Set[str],
+                         parent_closure: Optional['SDFGClosure'] = None) -> 'SDFGClosure':
         """ 
         Returns an SDFGClosure object representing the closure of the
         object to be converted to an SDFG.
         :param constant_args: Arguments whose values are already resolved to
                               compile-time values.
+        :param given_args: Arguments that were given at call-time (used for
+                           determining which arguments with defaults were provided).
         :param parent_closure: The parent SDFGClosure object (used for, e.g.,
                                recursion detection).
         :return: New SDFG closure object representing the convertible object.
@@ -112,8 +111,13 @@ class SDFGClosure:
     closure_arrays: Dict[str, Tuple[str, data.Data, Callable[[], Any], bool]]
 
     # Nested SDFGs and SDFG-convertible objects that are used in the program
-    # (mapping from name to object)
-    closure_sdfgs: OrderedDict[str, Union[SDFG, SDFGConvertible]]
+    # (mapping from object id to (name, object))
+    closure_sdfgs: Dict[int, Tuple[str, Union[SDFG, SDFGConvertible]]]
+
+    # Callbacks to Python callables that are used in the program
+    # Mapping from unique names to a 3-tuple of (python name, callable,
+    # does the callback belong to a nested SDFG).
+    callbacks: Dict[str, Tuple[str, Callable[..., Any], bool]]
 
     # List of nested SDFG-convertible closure objects and their names
     nested_closures: List[Tuple[str, 'SDFGClosure']]
@@ -128,6 +132,7 @@ class SDFGClosure:
         self.closure_constants = {}
         self.closure_arrays = {}
         self.closure_sdfgs = collections.OrderedDict()
+        self.callbacks = collections.OrderedDict()
         self.nested_closures = []
         self.array_mapping = {}
         self.callstack = []
@@ -151,8 +156,7 @@ class SDFGClosure:
         # }
 
         for _, child in self.nested_closures:
-            for arrname, (_, desc, evaluator,
-                          _) in sorted(child.closure_arrays.items()):
+            for arrname, (_, desc, evaluator, _) in sorted(child.closure_arrays.items()):
 
                 # Check if the same array is already passed as part of a
                 # nested closure
@@ -160,9 +164,12 @@ class SDFGClosure:
                 if id(arr) in self.array_mapping:
                     continue
 
-                new_name = data.find_new_name(arrname,
-                                              self.closure_arrays.keys())
+                new_name = data.find_new_name(arrname, self.closure_arrays.keys())
                 if not desc.transient:
-                    self.closure_arrays[new_name] = (arrname, desc, evaluator,
-                                                     True)
+                    self.closure_arrays[new_name] = (arrname, desc, evaluator, True)
                     self.array_mapping[id(arr)] = new_name
+
+            for cbname, (_, cb, _) in sorted(child.callbacks.items()):
+                new_name = data.find_new_name(cbname, self.callbacks.keys())
+                self.callbacks[new_name] = (cbname, cb, True)
+                self.array_mapping[id(cb)] = new_name

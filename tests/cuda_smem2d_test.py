@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
+from dace import nodes
 from dace.transformation.dataflow import GPUTransformMap, InLocalStorage
 import pytest
 
@@ -54,18 +55,14 @@ def test_gpu():
 def test_gpu_localstorage():
     sdfg = cudahello.to_sdfg()
     sdfg.name = "cuda_smem2d_gpu_localstorage"
-    assert sdfg.apply_transformations([GPUTransformMap, InLocalStorage],
-                                      options=[{}, {
-                                          'array': 'gpu_V'
-                                      }]) == 2
+    assert sdfg.apply_transformations([GPUTransformMap, InLocalStorage], options=[{}, {'array': 'gpu_V'}]) == 2
     _test(sdfg)
 
 
 @pytest.mark.gpu
 def test_gpu_2localstorage():
     @dace.program
-    def addtwoandmult(A: dace.float64[H, W], B: dace.float64[H, W],
-                      Vout: dace.float64[H, W]):
+    def addtwoandmult(A: dace.float64[H, W], B: dace.float64[H, W], Vout: dace.float64[H, W]):
         for i, j in dace.map[0:H:8, 0:W:32]:
             for bi, bj in dace.map[0:8, 0:32]:
                 with dace.tasklet:
@@ -76,13 +73,12 @@ def test_gpu_2localstorage():
 
     sdfg = addtwoandmult.to_sdfg()
     sdfg.name = "cuda_2_smem2d_gpu_localstorage"
-    assert sdfg.apply_transformations(
-        [GPUTransformMap, InLocalStorage, InLocalStorage],
-        options=[{}, {
-            'array': 'gpu_A'
-        }, {
-            'array': 'gpu_B'
-        }]) == 3
+    assert sdfg.apply_transformations([GPUTransformMap, InLocalStorage, InLocalStorage],
+                                      options=[{}, {
+                                          'array': 'gpu_A'
+                                      }, {
+                                          'array': 'gpu_B'
+                                      }]) == 3
 
     A = np.random.rand(128, 64)
     B = np.random.rand(128, 64)
@@ -95,16 +91,11 @@ def test_gpu_2localstorage():
 @pytest.mark.gpu
 def test_gpu_2shared_for():
     @dace.program
-    def addtwoandmult(A: dace.float64[H, W], B: dace.float64[H, W],
-                      Vout: dace.float64[H, W]):
+    def addtwoandmult(A: dace.float64[H, W], B: dace.float64[H, W], Vout: dace.float64[H, W]):
         for i, j in dace.map[0:H:8, 0:W:32]:
             for _ in range(1):
-                local_a = dace.ndarray([8, 32],
-                                       dtype=dace.float64,
-                                       storage=dace.StorageType.GPU_Shared)
-                local_b = dace.ndarray([8, 32],
-                                       dtype=dace.float64,
-                                       storage=dace.StorageType.GPU_Shared)
+                local_a = dace.ndarray([8, 32], dtype=dace.float64, storage=dace.StorageType.GPU_Shared)
+                local_b = dace.ndarray([8, 32], dtype=dace.float64, storage=dace.StorageType.GPU_Shared)
                 local_a << A[i:i + 8, j:j + 32]
                 local_b << B[i:i + 8, j:j + 32]
                 for bi, bj in dace.map[0:8, 0:32]:
@@ -116,7 +107,15 @@ def test_gpu_2shared_for():
 
     sdfg = addtwoandmult.to_sdfg()
     sdfg.name = "cuda_2_shared_for"
-    assert sdfg.apply_transformations([GPUTransformMap]) == 1
+    state = sdfg.nodes()[0]
+    map_entry = -1
+    for node in state.nodes():
+        if isinstance(node, nodes.MapEntry) and 'i' in node.map.params:
+            map_entry = state.node_id(node)
+            break
+    transformation = GPUTransformMap()
+    transformation.setup_match(sdfg, 0, 0, {GPUTransformMap.map_entry: map_entry}, 0)
+    transformation.apply(state, sdfg)
 
     A = np.random.rand(128, 64)
     B = np.random.rand(128, 64)
@@ -128,8 +127,7 @@ def test_gpu_2shared_for():
 
 def _find_map_by_param(sdfg: dace.SDFG, pname: str) -> dace.nodes.MapEntry:
     """ Finds the first map entry node by the given parameter name. """
-    return next(n for n, _ in sdfg.all_nodes_recursive()
-                if isinstance(n, dace.nodes.MapEntry) and pname in n.params)
+    return next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry) and pname in n.params)
 
 
 @pytest.mark.gpu
@@ -137,16 +135,11 @@ def test_gpu_2shared_map():
     K = dace.symbol('K')
 
     @dace.program
-    def addtwoandmult(A: dace.float64[H, W], B: dace.float64[H, W],
-                      Vout: dace.float64[H, W]):
+    def addtwoandmult(A: dace.float64[H, W], B: dace.float64[H, W], Vout: dace.float64[H, W]):
         for i, j in dace.map[0:H:8, 0:W:32]:
             for _ in dace.map[0:K]:
-                local_a = dace.ndarray([8, 32],
-                                       dtype=dace.float64,
-                                       storage=dace.StorageType.GPU_Shared)
-                local_b = dace.ndarray([8, 32],
-                                       dtype=dace.float64,
-                                       storage=dace.StorageType.GPU_Shared)
+                local_a = dace.ndarray([8, 32], dtype=dace.float64, storage=dace.StorageType.GPU_Shared)
+                local_b = dace.ndarray([8, 32], dtype=dace.float64, storage=dace.StorageType.GPU_Shared)
                 local_a << A[i:i + 8, j:j + 32]
                 local_b << B[i:i + 8, j:j + 32]
                 for bi, bj in dace.map[0:8, 0:32]:

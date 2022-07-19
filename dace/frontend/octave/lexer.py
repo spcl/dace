@@ -4,14 +4,11 @@ import ply.lex as lex
 from ply.lex import TOKEN
 
 tokens = [
-    "AND", "ANDAND", "ANDEQ", "BACKSLASH", "COLON", "COMMA", "DIV", "DIVEQ",
-    "DOT", "DOTDIV", "DOTDIVEQ", "DOTEXP", "DOTMUL", "DOTMULEQ", "END_EXPR",
-    "END_STMT", "EQ", "EQEQ", "EXP", "EXPEQ", "FIELD", "GE", "GT", "HANDLE",
-    "IDENT", "LBRACE", "LBRACKET", "LE", "LPAREN", "LT", "MINUS", "MINUSMINUS",
-    "MINUSEQ", "MUL", "MULEQ", "NE", "NEG", "NUMBER", "OR", "OREQ", "OROR",
-    "PLUS", "PLUSEQ", "PLUSPLUS", "RBRACE", "RBRACKET", "RPAREN", "SEMI",
-    "STRING", "TRANSPOSE", "ERROR_STMT", "COMMENT", "END_FUNCTION",
-    "END_UNEXPECTED", "POW", "CLASSDEF"
+    "AND", "ANDAND", "ANDEQ", "BACKSLASH", "COLON", "COMMA", "DIV", "DIVEQ", "DOT", "DOTDIV", "DOTDIVEQ", "DOTEXP",
+    "DOTMUL", "DOTMULEQ", "END_EXPR", "END_STMT", "EQ", "EQEQ", "EXP", "EXPEQ", "FIELD", "GE", "GT", "HANDLE", "IDENT",
+    "LBRACE", "LBRACKET", "LE", "LPAREN", "LT", "MINUS", "MINUSMINUS", "MINUSEQ", "MUL", "MULEQ", "NE", "NEG", "NUMBER",
+    "OR", "OREQ", "OROR", "PLUS", "PLUSEQ", "PLUSPLUS", "RBRACE", "RBRACKET", "RPAREN", "SEMI", "STRING", "TRANSPOSE",
+    "ERROR_STMT", "COMMENT", "END_FUNCTION", "END_UNEXPECTED", "POW", "CLASSDEF"
 ]
 
 reserved = {
@@ -132,8 +129,7 @@ def new():
         if t.value == "parfor":
             t.value = "for"
         if t.value == "classdef":
-            raise_exception(SyntaxError, "Not implemented: %s" % t.value,
-                            t.lexer)
+            raise_exception(SyntaxError, "Not implemented: %s" % t.value, t.lexer)
         t.lexer.lineno += t.value.count("\n")
         if t.value[0] == ".":
             # Reserved words are not reserved
@@ -141,12 +137,10 @@ def new():
             # is illegal, but foo.return=1 is fine.
             t.type = "FIELD"
             return t
-        if (t.value == "end" and (t.lexer.parens > 0 or t.lexer.brackets > 0
-                                  or t.lexer.braces > 0)):
+        if (t.value == "end" and (t.lexer.parens > 0 or t.lexer.brackets > 0 or t.lexer.braces > 0)):
             t.type = "END_EXPR"
             return t
-        if t.value in ("end", "endif", "endfunction", "endwhile", "endfor",
-                       "endswitch", "end_try_catch"):
+        if t.value in ("end", "endif", "endfunction", "endwhile", "endfor", "endswitch", "end_try_catch"):
             keyword = t.lexer.stack.pop()  # if,while,etc.
             if keyword == "function":
                 t.type = "END_FUNCTION"
@@ -210,8 +204,7 @@ def new():
     @TOKEN(r"," + ws0)
     def t_COMMA(t):  # eating spaces is important inside brackets
         t.lexer.lineno += t.value.count("\n")
-        if (t.lexer.brackets == 0 and t.lexer.parens == 0
-                and t.lexer.braces == 0):
+        if (t.lexer.brackets == 0 and t.lexer.parens == 0 and t.lexer.braces == 0):
             t.type = "SEMI"
             return t
         return t
@@ -312,8 +305,7 @@ def new():
         pass
 
     def t_error(t):
-        raise_exception(SyntaxError, ('Unexpected "%s" (lexer)' % t.value),
-                        t.lexer)
+        raise_exception(SyntaxError, ('Unexpected "%s" (lexer)' % t.value), t.lexer)
 
     lexer = lex.lex(reflags=re.MULTILINE)
     lexer.brackets = 0  # count open square brackets
@@ -327,8 +319,7 @@ def raise_exception(error_type, message, my_lexer):
     startpos = 1 + my_lexer.lexdata.rfind("\n", 0, my_lexer.lexpos)
     endpos = my_lexer.lexdata.find("\n", startpos)
     raise error_type(message,
-                     ("inputfile", my_lexer.lineno, 1 + my_lexer.lexpos -
-                      startpos, my_lexer.lexdata[startpos:endpos]))
+                     ("inputfile", my_lexer.lineno, 1 + my_lexer.lexpos - startpos, my_lexer.lexdata[startpos:endpos]))
 
 
 def main():

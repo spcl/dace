@@ -3,10 +3,12 @@ from dace.dtypes import vector
 import dace
 from dace.transformation.dataflow.sve.vectorization import SVEVectorization
 
+
 def vectorize(program):
-    sdfg = program.to_sdfg(strict=True)
+    sdfg = program.to_sdfg(simplify=True)
     sdfg.apply_transformations(SVEVectorization)
     return sdfg
+
 
 def get_code(program):
     return vectorize(program).generate_code()[0].clean_code

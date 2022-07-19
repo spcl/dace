@@ -4,6 +4,7 @@ import dace.properties
 import dace.sdfg.nodes
 from dace.transformation.transformation import ExpandTransformation
 from .. import environments
+from dace.libraries.mpi.nodes.node import MPINode
 
 
 @dace.library.expansion
@@ -13,16 +14,22 @@ class ExpandAllreduceMPI(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
-        (inbuffer,
-         count_str), outbuffer = node.validate(parent_sdfg, parent_state)
-        mpi_dtype_str = dace.libraries.mpi.utils.MPI_DDT(
-            inbuffer.dtype.base_type)
+        (inbuffer, count_str), outbuffer, in_place = node.validate(parent_sdfg, parent_state)
+        mpi_dtype_str = dace.libraries.mpi.utils.MPI_DDT(inbuffer.dtype.base_type)
         if inbuffer.dtype.veclen > 1:
             raise (NotImplementedError)
 
+        comm = "MPI_COMM_WORLD"
+        if node.grid:
+            comm = f"__state->{node.grid}_comm"
+
+        buffer = '_inbuffer'
+        if in_place:
+            buffer = 'MPI_IN_PLACE'
+
         code = f"""
-            MPI_Allreduce(_inbuffer, _outbuffer, {count_str}, {mpi_dtype_str},
-                          {node._op}, MPI_COMM_WORLD);
+            MPI_Allreduce({buffer}, _outbuffer, {count_str}, {mpi_dtype_str},
+                          {node.op}, {comm});
             """
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,
@@ -33,7 +40,7 @@ class ExpandAllreduceMPI(ExpandTransformation):
 
 
 @dace.library.node
-class Allreduce(dace.sdfg.nodes.LibraryNode):
+class Allreduce(MPINode):
 
     # Global properties
     implementations = {
@@ -41,13 +48,13 @@ class Allreduce(dace.sdfg.nodes.LibraryNode):
     }
     default_implementation = "MPI"
 
-    def __init__(self, name, *args, **kwargs):
-        super().__init__(name,
-                         *args,
-                         inputs={"_inbuffer"},
-                         outputs={"_outbuffer"},
-                         **kwargs)
-        self._op = kwargs.get('op', "MPI_SUM")
+    op = dace.properties.Property(dtype=str, default='MPI_SUM')
+    grid = dace.properties.Property(dtype=str, allow_none=True, default=None)
+
+    def __init__(self, name, op='MPI_SUM', grid=None, *args, **kwargs):
+        super().__init__(name, *args, inputs={"_inbuffer"}, outputs={"_outbuffer"}, **kwargs)
+        self.op = op
+        self.grid = grid
 
     def validate(self, sdfg, state):
         """
@@ -56,12 +63,19 @@ class Allreduce(dace.sdfg.nodes.LibraryNode):
         """
 
         inbuffer, outbuffer = None, None
+        inpname, outname = None, None
         for e in state.out_edges(self):
             if e.src_conn == "_outbuffer":
+                outname = e.data.data
                 outbuffer = sdfg.arrays[e.data.data]
         for e in state.in_edges(self):
             if e.dst_conn == "_inbuffer":
+                inpname = e.data.data
                 inbuffer = sdfg.arrays[e.data.data]
+
+        in_place = False
+        if inpname == outname:
+            in_place = True
 
         count_str = "XXX"
         for _, src_conn, _, _, data in state.out_edges(self):
@@ -69,4 +83,4 @@ class Allreduce(dace.sdfg.nodes.LibraryNode):
                 dims = [str(e) for e in data.subset.size_exact()]
                 count_str = "*".join(dims)
 
-        return (inbuffer, count_str), outbuffer
+        return (inbuffer, count_str), outbuffer, in_place

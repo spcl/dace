@@ -15,8 +15,7 @@ class ScopeValidationTests(unittest.TestCase):
 
             me.add_in_connector('IN_a')
             me.add_out_connector('OUT_b')
-            state.add_edge(A, None, me, 'IN_a',
-                           dace.Memlet.from_array(A.data, A.desc(sdfg)))
+            state.add_edge(A, None, me, 'IN_a', dace.Memlet.from_array(A.data, A.desc(sdfg)))
             state.add_edge(me, 'OUT_b', T, 'a', dace.Memlet.simple(A, '0'))
             state.add_edge(T, None, mx, None, dace.Memlet())
 

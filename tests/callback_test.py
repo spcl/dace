@@ -1,6 +1,9 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy
+import pytest
+
+from dace.frontend.python.common import DaceSyntaxError
 
 
 def failed_test():
@@ -27,8 +30,7 @@ def arraysquarer(outp_array, inp_array):
 M = dace.symbolic.symbol('M')
 N = dace.symbolic.symbol('N')
 O = dace.symbolic.symbol('O')
-giveandtake = dace.symbol('giveandtake', dace.callback(dace.uint32,
-                                                       dace.uint32))
+giveandtake = dace.symbol('giveandtake', dace.callback(dace.uint32, dace.uint32))
 take = dace.symbol('take', dace.callback(None, dace.uint32))
 give = dace.symbol('give', dace.callback(dace.uint32))
 donothing = dace.symbol('donothing', dace.callback(None))
@@ -46,9 +48,7 @@ def callback_test(A: dace.uint32[2], B: dace.uint32[2]):
             donothing()
 
 
-arrfunc = dace.symbol('arrfunc',
-                      dtype=dace.callback(None, dace.float64[M, N, O],
-                                          dace.float64[M, N, O]))
+arrfunc = dace.symbol('arrfunc', dtype=dace.callback(None, dace.float64[M, N, O], dace.float64[M, N, O]))
 
 
 @dace.program(
@@ -81,17 +81,29 @@ def test_callback():
 
 
 def test_callback_with_arrays():
-    M.set(2)
-    N.set(3)
-    O.set(4)
-
-    arr_in = numpy.random.randn(M.get(), N.get(), O.get())
-    arr_out = dace.ndarray((M, N, O), dtype=dace.float64)
+    arr_in = numpy.random.randn(2, 3, 4)
+    arr_out = dace.ndarray((2, 3, 4), dtype=dace.float64)
 
     callback_with_arrays(arr_out, arr_in, arrfunc=arraysquarer)
     assert numpy.linalg.norm(arr_out - numpy.square(arr_in)) < 1e-10
 
 
+def test_invalid_callback():
+    cb = dace.symbol('cb', dace.callback(dace.uint32[5]))
+
+    @dace.program
+    def shouldfail(out):
+        with dace.tasklet:
+            arr = cb()
+            o = arr[1]
+            o >> out
+
+    with pytest.raises(DaceSyntaxError):
+        oo = numpy.random.rand(10)
+        shouldfail(oo)
+
+
 if __name__ == "__main__":
     test_callback()
     test_callback_with_arrays()
+    test_invalid_callback()

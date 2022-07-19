@@ -1,6 +1,4 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-from __future__ import print_function
-
 import dace
 from dace.transformation.dataflow import GPUTransformMap
 from dace.transformation.interstate import GPUTransformSDFG
@@ -80,8 +78,7 @@ def test_different_block_sizes_nesting():
         nested(V, v1)
 
     @dace.program
-    def diffblocks(V: dace.float64[130], v1: dace.float64[4],
-                   v2: dace.float64[128]):
+    def diffblocks(V: dace.float64[130], v1: dace.float64[4], v2: dace.float64[128]):
         for bi in dace.map[1:129:32]:
             for i in dace.map[0:32]:
                 with dace.tasklet:
@@ -92,8 +89,7 @@ def test_different_block_sizes_nesting():
             nested2(V[bi - 1:bi + 33], v1[bi // 32:bi // 32 + 1])
 
     sdfg = diffblocks.to_sdfg()
-    assert sdfg.apply_transformations(GPUTransformSDFG,
-                                      dict(sequential_innermaps=False)) == 1
+    assert sdfg.apply_transformations(GPUTransformSDFG, dict(sequential_innermaps=False)) == 1
     V = np.random.rand(130)
     v1 = np.zeros([4], np.float64)
     v2 = np.random.rand(128)
@@ -107,7 +103,60 @@ def test_different_block_sizes_nesting():
     assert np.allclose(v2, expected_v2)
 
 
+@pytest.mark.gpu
+def test_custom_block_size_onemap():
+    @dace.program
+    def tester(A: dace.float64[400, 300]):
+        for i, j in dace.map[0:400, 0:300]:
+            with dace.tasklet:
+                a >> A[i, j]
+                a = 1
+
+    sdfg = tester.to_sdfg()
+    sdfg.apply_gpu_transformations()
+    mapentry: dace.nodes.MapEntry = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry))
+
+    # Test 1: too many dimensions
+    mapentry.map.gpu_block_size = (257, 5, 3, 4)
+    code = sdfg.generate_code()[1].clean_code  # Get GPU code (second file)
+    assert 'dim3(257, 5, 12)' in code
+
+    # Test 2: too few dimensions
+    mapentry.map.gpu_block_size = (257, 5)
+    code = sdfg.generate_code()[1].clean_code  # Get GPU code (second file)
+    assert 'dim3(257, 5, 1)' in code
+
+    # Test 3: compilation
+    sdfg.compile()
+
+
+@pytest.mark.gpu
+def test_custom_block_size_twomaps():
+    @dace.program
+    def tester(A: dace.float64[400, 300, 2, 32]):
+        for i, j in dace.map[0:400, 0:300]:
+            for bi, bj in dace.map[0:2, 0:32]:
+                with dace.tasklet:
+                    a >> A[i, j, bi, bj]
+                    a = 1
+
+    sdfg = tester.to_sdfg()
+    sdfg.apply_gpu_transformations(sequential_innermaps=False)
+    mapentry: dace.nodes.MapEntry = next(
+        n for n, _ in sdfg.all_nodes_recursive()
+        if isinstance(n, dace.nodes.MapEntry) and n.map.schedule == dace.ScheduleType.GPU_Device)
+
+    mapentry.map.gpu_block_size = (257, 5)
+    code = sdfg.generate_code()[1].clean_code  # Get GPU code (second file)
+    assert 'dim3(257, 5, 1)' in code
+
+    # Test 3: compilation
+    sdfg.compile()
+
+
 if __name__ == "__main__":
     test_cpu()
     test_gpu()
     test_different_block_sizes_nesting()
+    test_custom_block_size_onemap()
+    test_custom_block_size_twomaps()

@@ -4,6 +4,7 @@ import dace.properties
 import dace.sdfg.nodes
 from dace.transformation.transformation import ExpandTransformation
 from .. import environments
+from dace.libraries.mpi.nodes.node import MPINode
 
 
 @dace.library.expansion
@@ -13,8 +14,7 @@ class ExpandRecvMPI(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
-        (buffer, count_str, buffer_offset,
-         ddt), src, tag = node.validate(parent_sdfg, parent_state)
+        (buffer, count_str, buffer_offset, ddt), src, tag = node.validate(parent_sdfg, parent_state)
         mpi_dtype_str = dace.libraries.mpi.utils.MPI_DDT(buffer.dtype.base_type)
 
         if buffer.dtype.veclen > 1:
@@ -45,7 +45,7 @@ class ExpandRecvMPI(ExpandTransformation):
 
 
 @dace.library.node
-class Recv(dace.sdfg.nodes.LibraryNode):
+class Recv(MPINode):
 
     # Global properties
     implementations = {
@@ -54,11 +54,7 @@ class Recv(dace.sdfg.nodes.LibraryNode):
     default_implementation = "MPI"
 
     def __init__(self, name, *args, **kwargs):
-        super().__init__(name,
-                         *args,
-                         inputs={"_src", "_tag"},
-                         outputs={"_buffer"},
-                         **kwargs)
+        super().__init__(name, *args, inputs={"_src", "_tag"}, outputs={"_buffer"}, **kwargs)
 
     def validate(self, sdfg, state):
         """
@@ -91,10 +87,8 @@ class Recv(dace.sdfg.nodes.LibraryNode):
 
                 # create a ddt which describes the buffer layout IFF the sent data is not contiguous
                 ddt = None
-                if dace.libraries.mpi.utils.is_access_contiguous(
-                        data, sdfg.arrays[data.data]):
+                if dace.libraries.mpi.utils.is_access_contiguous(data, sdfg.arrays[data.data]):
                     pass
                 else:
-                    ddt = dace.libraries.mpi.utils.create_vector_ddt(
-                        data, sdfg.arrays[data.data])
+                    ddt = dace.libraries.mpi.utils.create_vector_ddt(data, sdfg.arrays[data.data])
         return (buffer, count_str, buffer_offset, ddt), src, tag

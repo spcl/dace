@@ -2,22 +2,18 @@
 """ Loop unroll transformation """
 
 import copy
-import sympy as sp
-import networkx as nx
-from typing import List, Optional, Tuple
+from typing import List
 
-from dace import dtypes, registry, sdfg as sd, symbolic
+from dace import sdfg as sd, symbolic
 from dace.properties import Property, make_properties
-from dace.sdfg import graph as gr, nodes
+from dace.sdfg import graph as gr
 from dace.sdfg import utils as sdutil
 from dace.frontend.python.astutils import ASTFindReplace
-from dace.transformation.interstate.loop_detection import (DetectLoop,
-                                                           find_for_loop)
+from dace.transformation.interstate.loop_detection import (DetectLoop, find_for_loop)
+from dace.transformation import transformation as xf
 
-
-@registry.autoregister
 @make_properties
-class LoopUnroll(DetectLoop):
+class LoopUnroll(DetectLoop, xf.MultiStateTransformation):
     """ Unrolls a state machine for-loop into multiple states """
 
     count = Property(
@@ -27,15 +23,13 @@ class LoopUnroll(DetectLoop):
         'iterations (loop must be constant-sized for 0)',
     )
 
-    @staticmethod
-    def can_be_applied(graph, candidate, expr_index, sdfg, strict=False):
+    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
         # Is this even a loop
-        if not DetectLoop.can_be_applied(graph, candidate, expr_index, sdfg,
-                                         strict):
+        if not super().can_be_applied(graph, expr_index, sdfg, permissive):
             return False
 
-        guard = graph.node(candidate[DetectLoop._loop_guard])
-        begin = graph.node(candidate[DetectLoop._loop_begin])
+        guard = self.loop_guard
+        begin = self.loop_begin
         found = find_for_loop(graph, guard, begin)
 
         # If loop cannot be detected, fail
@@ -51,12 +45,11 @@ class LoopUnroll(DetectLoop):
             return False
         return True
 
-    def apply(self, sdfg):
+    def apply(self, _, sdfg):
         # Obtain loop information
-        guard: sd.SDFGState = sdfg.node(self.subgraph[DetectLoop._loop_guard])
-        begin: sd.SDFGState = sdfg.node(self.subgraph[DetectLoop._loop_begin])
-        after_state: sd.SDFGState = sdfg.node(
-            self.subgraph[DetectLoop._exit_state])
+        guard: sd.SDFGState = self.loop_guard
+        begin: sd.SDFGState = self.loop_begin
+        after_state: sd.SDFGState = self.exit_state
 
         # Obtain iteration variable, range, and stride, together with the last
         # state(s) before the loop and the last loop state.
@@ -67,20 +60,16 @@ class LoopUnroll(DetectLoop):
             raise NotImplementedError  # TODO(later)
 
         # Get loop states
-        loop_states = list(
-            sdutil.dfs_conditional(sdfg,
-                                   sources=[begin],
-                                   condition=lambda _, child: child != guard))
+        loop_states = list(sdutil.dfs_conditional(sdfg, sources=[begin], condition=lambda _, child: child != guard))
         first_id = loop_states.index(begin)
         last_state = loop_struct[1]
         last_id = loop_states.index(last_state)
         loop_subgraph = gr.SubgraphView(sdfg, loop_states)
 
-
         try:
             start, end, stride = (r for r in rng)
             stride = symbolic.evaluate(stride, sdfg.constants)
-            loop_diff = int(symbolic.evaluate(end-start+1, sdfg.constants))
+            loop_diff = int(symbolic.evaluate(end - start + 1, sdfg.constants))
             is_symbolic = any([symbolic.issymbolic(r) for r in rng[:2]])
         except TypeError:
             raise TypeError('Loop difference and strides cannot be symbolic.')
@@ -90,32 +79,24 @@ class LoopUnroll(DetectLoop):
         for i in range(0, loop_diff, stride):
             current_index = start + i
             # Instantiate loop states with iterate value
-            new_states = self.instantiate_loop(sdfg,
-                                               loop_states,
-                                               loop_subgraph,
-                                               itervar,
-                                               current_index,
+            new_states = self.instantiate_loop(sdfg, loop_states, loop_subgraph, itervar, current_index,
                                                str(i) if is_symbolic else None)
 
             # Connect iterations with unconditional edges
             if len(unrolled_states) > 0:
-                sdfg.add_edge(unrolled_states[-1][1], new_states[first_id],
-                              sd.InterstateEdge())
+                sdfg.add_edge(unrolled_states[-1][1], new_states[first_id], sd.InterstateEdge())
 
             unrolled_states.append((new_states[first_id], new_states[last_id]))
 
         # Get any assignments that might be on the edge to the after state
-        after_assignments = (sdfg.edges_between(
-            guard, after_state)[0].data.assignments)
+        after_assignments = (sdfg.edges_between(guard, after_state)[0].data.assignments)
 
         # Connect new states to before and after states without conditions
         if unrolled_states:
             before_states = loop_struct[0]
             for before_state in before_states:
-                sdfg.add_edge(before_state, unrolled_states[0][0],
-                              sd.InterstateEdge())
-            sdfg.add_edge(unrolled_states[-1][1], after_state,
-                          sd.InterstateEdge(assignments=after_assignments))
+                sdfg.add_edge(before_state, unrolled_states[0][0], sd.InterstateEdge())
+            sdfg.add_edge(unrolled_states[-1][1], after_state, sd.InterstateEdge(assignments=after_assignments))
 
         # Remove old states from SDFG
         sdfg.remove_nodes_from([guard] + loop_states)
@@ -131,15 +112,12 @@ class LoopUnroll(DetectLoop):
     ):
         # Using to/from JSON copies faster than deepcopy (which will also
         # copy the parent SDFG)
-        new_states = [
-            sd.SDFGState.from_json(s.to_json(), context={'sdfg': sdfg})
-            for s in loop_states
-        ]
+        new_states = [sd.SDFGState.from_json(s.to_json(), context={'sdfg': sdfg}) for s in loop_states]
 
         # Replace iterate with value in each state
         for state in new_states:
-            state.set_label(state.label + '_' + itervar + '_' + (
-                state_suffix if state_suffix is not None else str(value)))
+            state.set_label(state.label + '_' + itervar + '_' +
+                            (state_suffix if state_suffix is not None else str(value)))
             state.replace(itervar, value)
 
         # Add subgraph to original SDFG

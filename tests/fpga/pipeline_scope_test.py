@@ -41,30 +41,20 @@ def make_sdfg(dtype,
     # Host to device
     pre_read = pre_state.add_read("a")
     pre_write = pre_state.add_write("a_device")
-    pre_state.add_memlet_path(pre_read,
-                              pre_write,
-                              memlet=dace.Memlet("a_device[0:N, 0:K, 0:M]"))
+    pre_state.add_memlet_path(pre_read, pre_write, memlet=dace.Memlet("a_device[0:N, 0:K, 0:M]"))
 
     # Device to host
     post_read = post_state.add_read("b_device")
     post_write = post_state.add_write("b")
-    post_state.add_memlet_path(post_read,
-                               post_write,
-                               memlet=dace.Memlet("b[0:N, 0:K, 0:M]"))
+    post_state.add_memlet_path(post_read, post_write, memlet=dace.Memlet("b[0:N, 0:K, 0:M]"))
 
     # Compute state
     read_memory = state.add_read("a_device")
     write_memory = state.add_write("b_device")
 
     # Memory streams
-    sdfg.add_stream("a_stream",
-                    dtype,
-                    storage=dace.StorageType.FPGA_Local,
-                    transient=True)
-    sdfg.add_stream("b_stream",
-                    dtype,
-                    storage=dace.StorageType.FPGA_Local,
-                    transient=True)
+    sdfg.add_stream("a_stream", dtype, storage=dace.StorageType.FPGA_Local, transient=True)
+    sdfg.add_stream("b_stream", dtype, storage=dace.StorageType.FPGA_Local, transient=True)
     produce_input_stream = state.add_write("a_stream")
     consume_input_stream = state.add_read("a_stream")
     produce_output_stream = state.add_write("b_stream")
@@ -94,14 +84,10 @@ else:
     # Container-to-container copies between arrays and streams
     state.add_memlet_path(read_memory,
                           produce_input_stream,
-                          memlet=dace.Memlet("a_device[0:N, 0:K, 0:M]",
-                                             other_subset="0",
-                                             volume=n * k * m))
+                          memlet=dace.Memlet("a_device[0:N, 0:K, 0:M]", other_subset="0", volume=n * k * m))
     state.add_memlet_path(consume_output_stream,
                           write_memory,
-                          memlet=dace.Memlet("b_device[0:N, 0:K, 0:M]",
-                                             other_subset="0",
-                                             volume=n * k * m))
+                          memlet=dace.Memlet("b_device[0:N, 0:K, 0:M]", other_subset="0", volume=n * k * m))
 
     # Input stream to buffer
     state.add_memlet_path(consume_input_stream,

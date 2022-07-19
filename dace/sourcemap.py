@@ -1,9 +1,10 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+import collections
 import re
 import json
 import os
 import socket
-from dace import Config
+from dace import Config, dtypes
 from dace.sdfg import state
 from dace.sdfg import nodes
 
@@ -15,8 +16,7 @@ class SdfgLocation:
         self.node_ids = node_ids
 
     def printer(self):
-        print("SDFG {}:{}:{}".format(self.sdfg_id, self.state_id,
-                                     self.node_ids))
+        print("SDFG {}:{}:{}".format(self.sdfg_id, self.state_id, self.node_ids))
 
 
 def create_folder(path_str: str):
@@ -43,65 +43,6 @@ def create_cache(name: str, folder: str) -> str:
         cache_folder = os.path.join(build_folder, name)
         create_folder(os.path.join(cache_folder, "map"))
         return cache_folder
-
-
-def tmp_location(name: str) -> str:
-    """ Returns the absolute path to the temporary folder
-        :param name: name of the SDFG
-        :return: path to the tmp folder
-    """
-    build_folder = Config.get('default_build_folder')
-    return os.path.abspath(os.path.join(build_folder, name, "map", "tmp.json"))
-
-
-def temporaryInfo(name: str, data):
-    """ Creates a temporary file that stores the json object
-        in the map folder (<build folder>/<SDFG name>/map)
-        :param name: name of the SDFG
-        :param data: data to save
-    """
-    create_cache(name, None)
-    path = tmp_location(name)
-
-    with open(path, "w") as writer:
-        json.dump(data, writer)
-
-
-def get_tmp(name: str):
-    """ Returns the data saved in the temporary file
-        from the corresponding function
-        :param name: name of the SDFG
-        :return: the parsed data in the tmp file of the SDFG. 
-        If the tmp file doesn't exist returns None
-    """
-    path = tmp_location(name)
-    if os.path.exists(path):
-        with open(path, "r") as tmp_json:
-            data = json.load(tmp_json)
-        return data
-    else:
-        return None
-
-
-def remove_tmp(name: str, remove_cache: bool = False):
-    """ Remove the tmp created by "temporaryInfo"
-        :param name: name of the sdfg for which the tmp will be removed
-        :param remove_cache: If true, checks if the directory only contains 
-        the tmp file, if this is the case, remove the SDFG cache directory.
-    """
-    build_folder = Config.get('default_build_folder')
-    path = os.path.join(build_folder, name)
-
-    if not os.path.exists(path):
-        return
-
-    os.remove(os.path.join(path, 'map', 'tmp.json'))
-
-    if (remove_cache and len(os.listdir(path)) == 1
-            and len(os.listdir(os.path.join(path, 'map'))) == 0):
-        if os.path.exists(path):
-            os.rmdir(os.path.join(path, 'map'))
-            os.rmdir(path)
 
 
 def send(data: json):
@@ -132,8 +73,7 @@ def save(language: str, name: str, map: dict, build_folder: str) -> str:
         :return: absolute path to the cache folder of the SDFG
     """
     folder = create_cache(name, build_folder)
-    path = os.path.abspath(
-        os.path.join(folder, 'map', 'map_' + language + '.json'))
+    path = os.path.abspath(os.path.join(folder, 'map', 'map_' + language + '.json'))
 
     with open(path, "w") as json_file:
         json.dump(map, json_file, indent=4)
@@ -148,16 +88,14 @@ def get_src_files(sdfg):
     """
     sourcefiles = []
     for node, _ in sdfg.all_nodes_recursive():
-        if (isinstance(node, (nodes.AccessNode, nodes.Tasklet,
-                              nodes.LibraryNode, nodes.Map, nodes.NestedSDFG))
+        if (isinstance(node, (nodes.AccessNode, nodes.Tasklet, nodes.LibraryNode, nodes.Map, nodes.NestedSDFG))
                 and node.debuginfo is not None):
 
             filename = node.debuginfo.filename
             if not filename in sourcefiles:
                 sourcefiles.append(filename)
 
-        elif (isinstance(node, (nodes.MapEntry, nodes.MapExit))
-              and node.map.debuginfo is not None):
+        elif (isinstance(node, (nodes.MapEntry, nodes.MapExit)) and node.map.debuginfo is not None):
 
             filename = node.map.debuginfo.filename
             if not filename in sourcefiles:
@@ -180,8 +118,7 @@ def create_py_map(sdfg):
     return (folder, sourceFiles, made_with_api)
 
 
-def create_cpp_map(code: str, name: str, target_name: str, build_folder: str,
-                   sourceFiles: [str], made_with_api: bool):
+def create_cpp_map(code: str, name: str, target_name: str, build_folder: str, sourceFiles: [str], made_with_api: bool):
     """ Creates the mapping from the SDFG nodes to the C++ code lines.
         The mapping gets saved at: <SDFG build folder>/map/map_cpp.json
         :param code: C++ code containing the identifiers '////__DACE:0:0:0'
@@ -219,8 +156,7 @@ def create_maps(sdfg, code: str, target_name: str):
         :param target_name: The target name
     """
     build_folder, sourceFiles, made_with_api = create_py_map(sdfg)
-    create_cpp_map(code, sdfg.name, target_name, build_folder, sourceFiles,
-                   made_with_api)
+    create_cpp_map(code, sdfg.name, target_name, build_folder, sourceFiles, made_with_api)
 
 
 class MapCpp:
@@ -232,11 +168,9 @@ class MapCpp:
         self.code = code
         self.map = {'target': target_name}
         self.codegen_map = {}
-        self.cpp_pattern = re.compile(
-            r'(\/\/\/\/__DACE:[0-9]+:[0-9]+:[0-9]+(,[0-9])*)')
+        self.cpp_pattern = re.compile(r'(\/\/\/\/__DACE:[0-9]+:[0-9]+:[0-9]+(,[0-9])*)')
         self.codegen_pattern = re.compile(
-            r'(\/\/\/\/__CODEGEN;([A-z]:)?(\/|\\)([A-z0-9-_+]+(\/|\\))*([A-z0-9]+\.[A-z0-9]+);[0-9]+)'
-        )
+            r'(\/\/\/\/__CODEGEN;([A-z]:)?(\/|\\)([A-z0-9-_+]+(\/|\\))*([A-z0-9]+\.[A-z0-9]+);[0-9]+)')
 
     def mapper(self, codegen_debug: bool = False):
         """ For each line of code retrieve the corresponding identifiers
@@ -281,12 +215,11 @@ class MapCpp:
         nodes = []
         for identifier in line_identifiers:
             ids_split = identifier.split(":")
-            nodes.append(
-                SdfgLocation(
-                    ids_split[1],
-                    ids_split[2],
-                    # node might be an edge
-                    ids_split[3].split(",")))
+            nodes.append(SdfgLocation(
+                ids_split[1],
+                ids_split[2],
+                # node might be an edge
+                ids_split[3].split(",")))
         return nodes
 
     def codegen_mapping(self, line: str, line_num: int):
@@ -298,10 +231,7 @@ class MapCpp:
         codegen_identifier = self.get_identifiers(line, findall=False)
         if codegen_identifier:
             codegen_debuginfo = codegen_identifier.split(';')
-            self.codegen_map[line_num] = {
-                'file': codegen_debuginfo[1],
-                'line': codegen_debuginfo[2]
-            }
+            self.codegen_map[line_num] = {'file': codegen_debuginfo[1], 'line': codegen_debuginfo[2]}
 
     def get_identifiers(self, line: str, findall: bool = True):
         """ Retruns a list of identifiers found in the code line
@@ -330,7 +260,7 @@ class MapPython:
         self.map = {}
         self.debuginfo = {}
 
-    def mapper(self, sdfg) -> dict:
+    def mapper(self, sdfg) -> bool:
         """ Creates the source to SDFG node mapping
             :param sdfg: SDFG to create the mapping for
             :return: if the sdfg was created only by the API
@@ -339,30 +269,15 @@ class MapPython:
         self.debuginfo = self.divide()
         self.sorter()
 
-        func_names = []
-        for nested_sdfg in sdfg.all_sdfgs_recursive():
-            func_names.append(nested_sdfg.name)
-
         # Store the start and end line as a tuple
         # for each function/sub-function in the SDFG
-        range_dict = {}
+        range_dict = collections.defaultdict(list)
 
-        for func_name in func_names:
-            tmp = get_tmp(func_name)
-            # SDFGs created with the API don't have tmp files
-            if (tmp and "src_file" in tmp and "start_line" in tmp
-                    and "end_line" in tmp and "other_sdfgs" in tmp):
-                remove_tmp(func_name, True)
-
-                for other_name in tmp['other_sdfgs']:
-                    if other_name not in func_names:
-                        func_names.append(other_name)
-
-                ranges = range_dict.get(tmp["src_file"])
-                if ranges is None:
-                    ranges = []
-                ranges.append((tmp["start_line"], tmp["end_line"]))
-                range_dict[tmp["src_file"]] = ranges
+        for nested_sdfg in sdfg.all_sdfgs_recursive():
+            # NOTE: SDFGs created with the API may not have debuginfo
+            debuginfo: dtypes.DebugInfo = nested_sdfg.debuginfo
+            if debuginfo.filename:
+                range_dict[debuginfo.filename].append((debuginfo.start_line, debuginfo.end_line))
 
         self.create_mapping(range_dict)
         return len(range_dict.items()) == 0
@@ -376,8 +291,7 @@ class MapPython:
             source = dbinfo['debuginfo']['filename']
             exists = False
             for src_infos in divided:
-                if len(src_infos) > 0 and src_infos[0]['debuginfo'][
-                        'filename'] == source:
+                if len(src_infos) > 0 and src_infos[0]['debuginfo']['filename'] == source:
                     src_infos.append(dbinfo)
                     exists = True
                     break
@@ -392,13 +306,11 @@ class MapPython:
         for dbinfo_source in self.debuginfo:
             db_sorted.append(
                 sorted(dbinfo_source,
-                       key=lambda n: (n['debuginfo']['start_line'], n[
-                           'debuginfo']['start_column'], n['debuginfo'][
-                               'end_line'], n['debuginfo']['end_column'])))
+                       key=lambda n: (n['debuginfo']['start_line'], n['debuginfo']['start_column'], n['debuginfo'][
+                           'end_line'], n['debuginfo']['end_column'])))
         return db_sorted
 
-    def make_info(self, debuginfo, node_id: int, state_id: int,
-                  sdfg_id: int) -> dict:
+    def make_info(self, debuginfo, node_id: int, state_id: int, sdfg_id: int) -> dict:
         """ Creates an object for the current node with
             the most important information
             :param debuginfo: JSON object of the debuginfo of the node
@@ -407,12 +319,7 @@ class MapPython:
             :param sdfg_id: ID of the sdfg
             :return: Dictionary with a debuginfo JSON object and the identifiers
         """
-        return {
-            "debuginfo": debuginfo,
-            "sdfg_id": sdfg_id,
-            "state_id": state_id,
-            "node_id": node_id
-        }
+        return {"debuginfo": debuginfo, "sdfg_id": sdfg_id, "state_id": state_id, "node_id": node_id}
 
     def sdfg_debuginfo(self, graph, sdfg_id: int = 0, state_id: int = 0):
         """ Recursively retracts all debuginfo from the nodes
@@ -427,28 +334,24 @@ class MapPython:
         mapping = []
         for id, node in enumerate(graph.nodes()):
             # Node has Debuginfo, no recursive call
-            if isinstance(node,
-                          (nodes.AccessNode, nodes.Tasklet, nodes.LibraryNode,
-                           nodes.Map)) and node.debuginfo is not None:
+            if isinstance(
+                    node,
+                (nodes.AccessNode, nodes.Tasklet, nodes.LibraryNode, nodes.Map)) and node.debuginfo is not None:
 
                 dbinfo = node.debuginfo.to_json()
                 mapping.append(self.make_info(dbinfo, id, state_id, sdfg_id))
 
-            elif isinstance(node,
-                            (nodes.MapEntry,
-                             nodes.MapExit)) and node.map.debuginfo is not None:
+            elif isinstance(node, (nodes.MapEntry, nodes.MapExit)) and node.map.debuginfo is not None:
                 dbinfo = node.map.debuginfo.to_json()
                 mapping.append(self.make_info(dbinfo, id, state_id, sdfg_id))
 
             # State no debuginfo, recursive call
             elif isinstance(node, state.SDFGState):
-                mapping += self.sdfg_debuginfo(node, sdfg_id,
-                                               graph.node_id(node))
+                mapping += self.sdfg_debuginfo(node, sdfg_id, graph.node_id(node))
 
             # Sdfg not using debuginfo, recursive call
             elif isinstance(node, nodes.NestedSDFG):
-                mapping += self.sdfg_debuginfo(node.sdfg, node.sdfg.sdfg_id,
-                                               state_id)
+                mapping += self.sdfg_debuginfo(node.sdfg, node.sdfg.sdfg_id, state_id)
 
         return mapping
 
@@ -462,20 +365,16 @@ class MapPython:
                 src_file = node["debuginfo"]["filename"]
                 if not src_file in self.map:
                     self.map[src_file] = {}
-                for line in range(node["debuginfo"]["start_line"],
-                                  node["debuginfo"]["end_line"] + 1):
+                for line in range(node["debuginfo"]["start_line"], node["debuginfo"]["end_line"] + 1):
                     # Maps a python line to a list of nodes
                     # The nodes have been sorted by priority
                     if not str(line) in self.map[src_file]:
                         self.map[src_file][str(line)] = []
 
                     self.map[src_file][str(line)].append({
-                        "sdfg_id":
-                        node["sdfg_id"],
-                        "state_id":
-                        node["state_id"],
-                        "node_id":
-                        node["node_id"]
+                        "sdfg_id": node["sdfg_id"],
+                        "state_id": node["state_id"],
+                        "node_id": node["node_id"]
                     })
 
         if range_dict:
@@ -500,6 +399,5 @@ class MapPython:
                             else:
                                 for line_after in range(line + 1, end + 1):
                                     if str(line_after) in src_map:
-                                        src_map[str(line)] = src_map[str(
-                                            line_after)]
+                                        src_map[str(line)] = src_map[str(line_after)]
                 self.map[src_file] = src_map

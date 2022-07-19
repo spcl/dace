@@ -22,8 +22,8 @@ from typing import Dict, List, Optional, Set
 import warnings
 
 # Default sets of PAPI counters
-VECTOR_COUNTER_SET = ('0x40000025', '0x40000026', '0x40000027', '0x40000028',
-                      '0x40000021', '0x40000022', '0x40000023', '0x40000024')
+VECTOR_COUNTER_SET = ('0x40000025', '0x40000026', '0x40000027', '0x40000028', '0x40000021', '0x40000022', '0x40000023',
+                      '0x40000024')
 MEM_COUNTER_SET = ('PAPI_MEM_WCY', 'PAPI_LD_INS', 'PAPI_SR_INS')
 CACHE_COUNTER_SET = ('PAPI_CA_SNP', 'PAPI_CA_SHR', 'PAPI_CA_CLN', 'PAPI_CA_ITV')
 
@@ -43,17 +43,14 @@ class PAPIInstrumentation(InstrumentationProvider):
 
     _counters: Optional[Set[str]] = None
 
-    perf_whitelist_schedules = [
-        dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.Sequential
-    ]
+    perf_whitelist_schedules = [dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.Sequential]
 
     def __init__(self):
         self._papi_used = False
         self._unique_counter = 0
         self.perf_should_instrument = False
         PAPIInstrumentation._counters = PAPIInstrumentation._counters or set(
-            ast.literal_eval(
-                Config.get('instrumentation', 'papi', 'default_counters')))
+            ast.literal_eval(Config.get('instrumentation', 'papi', 'default_counters')))
 
     def get_unique_number(self):
         ret = self._unique_counter
@@ -65,17 +62,12 @@ class PAPIInstrumentation(InstrumentationProvider):
         counters = PAPIUtils.available_counters()
         missing_counters = self._counters - set(counters.keys())
         if len(missing_counters) > 0:
-            warnings.warn('Skipping missing PAPI performance counters: %s' %
-                          missing_counters)
+            warnings.warn('Skipping missing PAPI performance counters: %s' % missing_counters)
         PAPIInstrumentation._counters &= set(counters.keys())
 
         # Compiler arguments for vectorization output
         if Config.get_bool('instrumentation', 'papi', 'vectorization_analysis'):
-            Config.append(
-                'compiler',
-                'cpu',
-                'args',
-                value=' -fopt-info-vec-optimized-missed=../perf/vecreport.txt ')
+            Config.append('compiler', 'cpu', 'args', value=' -fopt-info-vec-optimized-missed=../perf/vecreport.txt ')
 
         # If no PAPI counters are available, disable PAPI
         if len(self._counters) == 0:
@@ -88,7 +80,7 @@ class PAPIInstrumentation(InstrumentationProvider):
 
         self._papi_used = True
 
-    def on_sdfg_begin(self, sdfg, local_stream, global_stream):
+    def on_sdfg_begin(self, sdfg, local_stream, global_stream, codegen):
         if sdfg.parent is None and PAPIUtils.is_papi_used(sdfg):
             # Configure CMake project and counters
             self.configure_papi()
@@ -100,11 +92,9 @@ class PAPIInstrumentation(InstrumentationProvider):
             global_stream.write('#include <dace/perf/papi.h>', sdfg)
             local_stream.write(
                 '''dace::perf::PAPI::init();
-dace::perf::PAPIValueStore<%s> __perf_store (__state->report);''' %
-                (', '.join(self._counters)), sdfg)
+dace::perf::PAPIValueStore<%s> __perf_store (__state->report);''' % (', '.join(self._counters)), sdfg)
             # Get the measured overhead and take the minimum to compensate
-            if Config.get_bool('instrumentation', 'papi',
-                               'overhead_compensation'):
+            if Config.get_bool('instrumentation', 'papi', 'overhead_compensation'):
                 local_stream.write("__perf_store.getMeasuredOverhead();", sdfg)
 
     def on_sdfg_end(self, sdfg, local_stream, global_stream):
@@ -120,8 +110,8 @@ dace::perf::PAPIValueStore<%s> __perf_store (__state->report);''' %
             uid = _unified_id(-1, sdfg.node_id(state))
             local_stream.write("__perf_store.markSuperSectionStart(%d);" % uid)
 
-    def on_copy_begin(self, sdfg, state, src_node, dst_node, edge, local_stream,
-                      global_stream, copy_shape, src_strides, dst_strides):
+    def on_copy_begin(self, sdfg, state, src_node, dst_node, edge, local_stream, global_stream, copy_shape, src_strides,
+                      dst_strides):
         if not self._papi_used:
             return
 
@@ -131,10 +121,8 @@ dace::perf::PAPIValueStore<%s> __perf_store (__state->report);''' %
         # For perfcounters, we have to make sure that:
         # 1) No other measurements are done for the containing scope (no map
         # operation containing this copy is instrumented)
-        src_instrumented = PAPIInstrumentation.has_surrounding_perfcounters(
-            src_node, state)
-        dst_instrumented = PAPIInstrumentation.has_surrounding_perfcounters(
-            dst_node, state)
+        src_instrumented = PAPIInstrumentation.has_surrounding_perfcounters(src_node, state)
+        dst_instrumented = PAPIInstrumentation.has_surrounding_perfcounters(dst_node, state)
         src_storage = src_node.desc(sdfg).storage
         dst_storage = dst_node.desc(sdfg).storage
 
@@ -145,13 +133,10 @@ dace::perf::PAPIValueStore<%s> __perf_store (__state->report);''' %
             dtypes.StorageType.Register,
         ]
 
-        perf_cpu_only = (src_storage
-                         in cpu_storage_types) and (dst_storage
-                                                    in cpu_storage_types)
+        perf_cpu_only = (src_storage in cpu_storage_types) and (dst_storage in cpu_storage_types)
 
-        self.perf_should_instrument = (
-            not src_instrumented and not dst_instrumented and perf_cpu_only
-            and state.instrument == dace.InstrumentationType.PAPI_Counters)
+        self.perf_should_instrument = (not src_instrumented and not dst_instrumented and perf_cpu_only
+                                       and state.instrument == dace.InstrumentationType.PAPI_Counters)
 
         if self.perf_should_instrument is False:
             return
@@ -161,8 +146,7 @@ dace::perf::PAPIValueStore<%s> __perf_store (__state->report);''' %
         dst_nodedesc = dst_node.desc(sdfg)
         ctype = dst_nodedesc.dtype.ctype
 
-        fac3 = (" * ".join(sym2cpp(copy_shape)) + " / " +
-                "/".join(sym2cpp(dst_strides)))
+        fac3 = (" * ".join(sym2cpp(copy_shape)) + " / " + "/".join(sym2cpp(dst_strides)))
         copy_size = "sizeof(%s) * (%s)" % (ctype, fac3)
         node_id = _unified_id(state.node_id(dst_node), state_id)
         # Mark a section start (this is not really a section in itself (it
@@ -190,8 +174,7 @@ __perf_cpy_{nodeid}_{unique_id}.enterCritical();'''.format(
             [src_node, dst_node],
         )
 
-    def on_copy_end(self, sdfg, state, src_node, dst_node, edge, local_stream,
-                    global_stream):
+    def on_copy_end(self, sdfg, state, src_node, dst_node, edge, local_stream, global_stream):
         if not self._papi_used:
             return
 
@@ -201,8 +184,7 @@ __perf_cpy_{nodeid}_{unique_id}.enterCritical();'''.format(
             unique_cpy_id = self._unique_counter
 
             local_stream.write(
-                "__perf_cpy_%d_%d.leaveCritical(__vs_cpy_%d_%d);" %
-                (node_id, unique_cpy_id, node_id, unique_cpy_id),
+                "__perf_cpy_%d_%d.leaveCritical(__vs_cpy_%d_%d);" % (node_id, unique_cpy_id, node_id, unique_cpy_id),
                 sdfg,
                 state_id,
                 [src_node, dst_node],
@@ -210,42 +192,36 @@ __perf_cpy_{nodeid}_{unique_id}.enterCritical();'''.format(
 
             self.perf_should_instrument = False
 
-    def on_node_begin(self, sdfg, state, node, outer_stream, inner_stream,
-                      global_stream):
+    def on_node_begin(self, sdfg, state, node, outer_stream, inner_stream, global_stream):
         if not self._papi_used:
             return
 
         state_id = sdfg.node_id(state)
         unified_id = _unified_id(state.node_id(node), state_id)
 
-        perf_should_instrument = (
-            node.instrument == dace.InstrumentationType.PAPI_Counters and
-            not PAPIInstrumentation.has_surrounding_perfcounters(node, state))
+        perf_should_instrument = (node.instrument == dace.InstrumentationType.PAPI_Counters
+                                  and not PAPIInstrumentation.has_surrounding_perfcounters(node, state))
         if not perf_should_instrument:
             return
 
         if isinstance(node, nodes.Tasklet):
             inner_stream.write(
-                "dace::perf::%s __perf_%s;\n" %
-                (self.perf_counter_string(), node.label),
+                "dace::perf::%s __perf_%s;\n" % (self.perf_counter_string(), node.label),
                 sdfg,
                 state_id,
                 node,
             )
             inner_stream.write(
                 'auto& __perf_vs_%s = __perf_store.getNewValueSet(__perf_%s, '
-                '    %d, PAPI_thread_id(), 0);\n' %
-                (node.label, node.label, unified_id),
+                '    %d, PAPI_thread_id(), 0);\n' % (node.label, node.label, unified_id),
                 sdfg,
                 state_id,
                 node,
             )
 
-            inner_stream.write("__perf_%s.enterCritical();\n" % node.label,
-                               sdfg, state_id, node)
+            inner_stream.write("__perf_%s.enterCritical();\n" % node.label, sdfg, state_id, node)
 
-    def on_node_end(self, sdfg, state, node, outer_stream, inner_stream,
-                    global_stream):
+    def on_node_end(self, sdfg, state, node, outer_stream, inner_stream, global_stream):
         if not self._papi_used:
             return
 
@@ -255,11 +231,9 @@ __perf_cpy_{nodeid}_{unique_id}.enterCritical();'''.format(
 
         if isinstance(node, nodes.CodeNode):
             if node.instrument == dace.InstrumentationType.PAPI_Counters:
-                if not PAPIInstrumentation.has_surrounding_perfcounters(
-                        node, state):
+                if not PAPIInstrumentation.has_surrounding_perfcounters(node, state):
                     inner_stream.write(
-                        "__perf_%s.leaveCritical(__perf_vs_%s);" %
-                        (node.label, node.label),
+                        "__perf_%s.leaveCritical(__perf_vs_%s);" % (node.label, node.label),
                         sdfg,
                         state_id,
                         node,
@@ -268,23 +242,18 @@ __perf_cpy_{nodeid}_{unique_id}.enterCritical();'''.format(
                 # Add bytes moved
                 inner_stream.write(
                     "__perf_store.addBytesMoved(%s);" %
-                    PAPIUtils.get_tasklet_byte_accesses(
-                        node, state, sdfg, state_id), sdfg, state_id, node)
+                    PAPIUtils.get_tasklet_byte_accesses(node, state, sdfg, state_id), sdfg, state_id, node)
 
-    def on_scope_entry(self, sdfg, state, node, outer_stream, inner_stream,
-                       global_stream):
+    def on_scope_entry(self, sdfg, state, node, outer_stream, inner_stream, global_stream):
         if not self._papi_used:
             return
         if isinstance(node, nodes.MapEntry):
-            return self.on_map_entry(sdfg, state, node, outer_stream,
-                                     inner_stream)
+            return self.on_map_entry(sdfg, state, node, outer_stream, inner_stream)
         elif isinstance(node, nodes.ConsumeEntry):
-            return self.on_consume_entry(sdfg, state, node, outer_stream,
-                                         inner_stream)
+            return self.on_consume_entry(sdfg, state, node, outer_stream, inner_stream)
         raise TypeError
 
-    def on_scope_exit(self, sdfg, state, node, outer_stream, inner_stream,
-                      global_stream):
+    def on_scope_exit(self, sdfg, state, node, outer_stream, inner_stream, global_stream):
         if not self._papi_used:
             return
         state_id = sdfg.node_id(state)
@@ -314,18 +283,15 @@ __perf_cpy_{nodeid}_{unique_id}.enterCritical();'''.format(
         input_size: str = PAPIUtils.get_memory_input_size(node, sdfg, state_id)
 
         # Emit supersection if possible
-        result.write(
-            self.perf_get_supersection_start_string(node, dfg, unified_id))
+        result.write(self.perf_get_supersection_start_string(node, dfg, unified_id))
 
         if not self.should_instrument_entry(node):
             return
 
-        size = PAPIUtils.accumulate_byte_movement(node, node, dfg, sdfg,
-                                                  state_id)
+        size = PAPIUtils.accumulate_byte_movement(node, node, dfg, sdfg, state_id)
         size = sym2cpp(sp.simplify(size))
 
-        result.write(
-            self.perf_section_start_string(unified_id, size, input_size))
+        result.write(self.perf_section_start_string(unified_id, size, input_size))
 
         #########################################################
         # Inner part
@@ -333,9 +299,7 @@ __perf_cpy_{nodeid}_{unique_id}.enterCritical();'''.format(
 
         map_name = node.map.params[-1]
 
-        result.write(
-            self.perf_counter_start_measurement_string(unified_id, map_name),
-            sdfg, state_id, node)
+        result.write(self.perf_counter_start_measurement_string(unified_id, map_name), sdfg, state_id, node)
 
     def on_consume_entry(self, sdfg, state, node, outer_stream, inner_stream):
         state_id = sdfg.node_id(state)
@@ -347,16 +311,14 @@ __perf_cpy_{nodeid}_{unique_id}.enterCritical();'''.format(
         if self.should_instrument_entry(node):
             # Mark the SuperSection start (if possible)
             result.write(
-                self.perf_get_supersection_start_string(node, state,
-                                                        unified_id),
+                self.perf_get_supersection_start_string(node, state, unified_id),
                 sdfg,
                 state_id,
                 node,
             )
 
             # Mark the section start with zeros (due to dynamic accesses)
-            result.write(self.perf_section_start_string(unified_id, "0", "0"),
-                         sdfg, state_id, node)
+            result.write(self.perf_section_start_string(unified_id, "0", "0"), sdfg, state_id, node)
 
             # Generate a thread affinity locker
             result.write(
@@ -375,12 +337,10 @@ __perf_cpy_{nodeid}_{unique_id}.enterCritical();'''.format(
         # (instead of per-thread). This incurs additional overhead.
         if self.should_instrument_entry(node):
             result.write(
-                ("auto __perf_tlp_{id}_releaser = __perf_tlp_{id}.enqueue();\n".
-                 format(id=unified_id)) +
+                ("auto __perf_tlp_{id}_releaser = __perf_tlp_{id}.enqueue();\n".format(id=unified_id)) +
                 self.perf_counter_start_measurement_string(
                     unified_id,
-                    "__perf_tlp_{id}.getAndIncreaseCounter()".format(
-                        id=unified_id),
+                    "__perf_tlp_{id}.getAndIncreaseCounter()".format(id=unified_id),
                     core_str="dace::perf::getThreadID()",
                 ),
                 sdfg,
@@ -409,12 +369,10 @@ __perf_cpy_{nodeid}_{unique_id}.enterCritical();'''.format(
                     # Any other type (FPGA, GPU) - not supported by PAPI.
                     x.map._can_be_supersection_start = False
 
-            if (node.map._can_be_supersection_start
-                    and not dace.sdfg.is_parallel(dfg)):
+            if (node.map._can_be_supersection_start and not dace.sdfg.is_parallel(dfg)):
                 return "__perf_store.markSuperSectionStart(%d);\n" % unified_id
 
-        elif (getattr(node.map, '_can_be_supersection_start', False)
-              and not dace.sdfg.is_parallel(dfg)):
+        elif (getattr(node.map, '_can_be_supersection_start', False) and not dace.sdfg.is_parallel(dfg)):
             return "__perf_store.markSuperSectionStart(%d);\n" % unified_id
 
         # Otherwise, do nothing (empty string)
@@ -425,8 +383,7 @@ __perf_cpy_{nodeid}_{unique_id}.enterCritical();'''.format(
         """ Returns True if this entry node should be instrumented. """
         if map_entry.map.instrument != dace.InstrumentationType.PAPI_Counters:
             return False
-        if (map_entry.map.schedule
-                not in PAPIInstrumentation.perf_whitelist_schedules):
+        if (map_entry.map.schedule not in PAPIInstrumentation.perf_whitelist_schedules):
             return False
         try:
             cond = not map_entry.fence_instrumentation
@@ -441,8 +398,7 @@ __perf_cpy_{nodeid}_{unique_id}.enterCritical();'''.format(
         parent = dfg.entry_node(node)
 
         if isinstance(parent, MapEntry):
-            if (parent.map.schedule
-                    not in PAPIInstrumentation.perf_whitelist_schedules):
+            if (parent.map.schedule not in PAPIInstrumentation.perf_whitelist_schedules):
                 return False
             return True
 
@@ -460,14 +416,12 @@ __perf_cpy_{nodeid}_{unique_id}.enterCritical();'''.format(
         """
         Creates a performance counter template string.
         """
-        return PAPIInstrumentation.perf_counter_string_from_string_list(
-            self._counters)
+        return PAPIInstrumentation.perf_counter_string_from_string_list(self._counters)
 
-    def perf_counter_start_measurement_string(
-            self,
-            unified_id: int,
-            iteration: str,
-            core_str: str = "PAPI_thread_id()"):
+    def perf_counter_start_measurement_string(self,
+                                              unified_id: int,
+                                              iteration: str,
+                                              core_str: str = "PAPI_thread_id()"):
         pcs = self.perf_counter_string()
         return '''dace::perf::{counter_str} __perf_{id};
 auto& __vs_{id} = __perf_store.getNewValueSet(__perf_{id}, {id}, {core}, {it});
@@ -479,13 +433,9 @@ __perf_{id}.enterCritical();
         return '__perf_{id}.leaveCritical(__vs_{id});\n'.format(id=unified_id)
 
     @staticmethod
-    def perf_section_start_string(unified_id: int,
-                                  size: str,
-                                  in_size: str,
-                                  core_str: str = "PAPI_thread_id()"):
+    def perf_section_start_string(unified_id: int, size: str, in_size: str, core_str: str = "PAPI_thread_id()"):
         return '''
-__perf_store.markSectionStart(%d, (long long)%s, (long long)%s, %s);''' % (
-            unified_id, size, in_size, core_str)
+__perf_store.markSectionStart(%d, (long long)%s, (long long)%s, %s);''' % (unified_id, size, in_size, core_str)
 
     @staticmethod
     def perf_supersection_start_string(unified_id):
@@ -530,13 +480,9 @@ class PAPIUtils(object):
         """ Returns True if any of the SDFG elements includes PAPI counter
             instrumentation. """
         for node, _ in sdfg.all_nodes_recursive():
-            if isinstance(
-                    node, nodes.EntryNode
-            ) and node.map.instrument == dace.InstrumentationType.PAPI_Counters:
+            if isinstance(node, nodes.EntryNode) and node.map.instrument == dace.InstrumentationType.PAPI_Counters:
                 return True
-            if hasattr(
-                    node, 'instrument'
-            ) and node.instrument == dace.InstrumentationType.PAPI_Counters:
+            if hasattr(node, 'instrument') and node.instrument == dace.InstrumentationType.PAPI_Counters:
                 return True
         return False
 
@@ -571,19 +517,17 @@ class PAPIUtils(object):
             # Resolve all symbols using the retparams-dict
 
             for x in dyn_syms:
-                target = sp.functions.Min(retparams[x] * (retparams[x] - 1) / 2,
-                                          0)
+                target = sp.functions.Min(retparams[x] * (retparams[x] - 1) / 2, 0)
                 bstr = str(element)
                 element = symbolic.pystr_to_symbolic(bstr)
-                element = element.subs(
-                    x, target)  # Add the classic sum formula; going upwards
+                element = element.subs(x, target)  # Add the classic sum formula; going upwards
 
                 # To not have hidden elements that get added again later, we
                 # also replace the values in the other itvars...
                 for k, v in retparams.items():
                     newv = symbolic.pystr_to_symbolic(str(v))
 
-                    tarsyms = symbolic.symbols_in_sympy_expr(target).keys()
+                    tarsyms = symbolic.symlist(target).keys()
                     if x in tarsyms:
                         continue
 
@@ -632,8 +576,7 @@ class PAPIUtils(object):
             if isinstance(step, symbolic.SymExpr):
                 step = step.expr
 
-            begin, end, step = PAPIUtils.reduce_iteration_count(
-                begin, end, step, retparams)
+            begin, end, step = PAPIUtils.reduce_iteration_count(begin, end, step, retparams)
             num = (end - begin) / step  # The count of iterations
             retparams[_it[i]] = num
 
@@ -660,8 +603,7 @@ class PAPIUtils(object):
         return memlet.volume * memdata.dtype.bytes
 
     @staticmethod
-    def get_out_memlet_costs(sdfg: dace.SDFG, state_id: int, node: nodes.Node,
-                             dfg: StateGraphView):
+    def get_out_memlet_costs(sdfg: dace.SDFG, state_id: int, node: nodes.Node, dfg: StateGraphView):
         scope_dict = sdfg.node(state_id).scope_dict()
 
         out_costs = 0
@@ -669,13 +611,11 @@ class PAPIUtils(object):
             _, uconn, v, _, memlet = edge
             dst_node = dfg.memlet_path(edge)[-1].dst
 
-            if (isinstance(node, nodes.CodeNode)
-                    and isinstance(dst_node, nodes.AccessNode)):
+            if (isinstance(node, nodes.CodeNode) and isinstance(dst_node, nodes.AccessNode)):
 
                 # If the memlet is pointing into an array in an inner scope,
                 # it will be handled by the inner scope.
-                if (scope_dict[node] != scope_dict[dst_node]
-                        and scope_contains_scope(scope_dict, node, dst_node)):
+                if (scope_dict[node] != scope_dict[dst_node] and scope_contains_scope(scope_dict, node, dst_node)):
                     continue
 
                 if not uconn:
@@ -687,17 +627,14 @@ class PAPIUtils(object):
                         # write_and_resolve
                         # We have to assume that every reduction costs 3
                         # accesses of the same size (read old, read new, write)
-                        out_costs += 3 * PAPIUtils.get_memlet_byte_size(
-                            sdfg, memlet)
+                        out_costs += 3 * PAPIUtils.get_memlet_byte_size(sdfg, memlet)
                     else:
                         # This standard operation is already counted
-                        out_costs += PAPIUtils.get_memlet_byte_size(
-                            sdfg, memlet)
+                        out_costs += PAPIUtils.get_memlet_byte_size(sdfg, memlet)
         return out_costs
 
     @staticmethod
-    def get_tasklet_byte_accesses(tasklet: nodes.CodeNode, dfg: StateGraphView,
-                                  sdfg: dace.SDFG, state_id: int) -> str:
+    def get_tasklet_byte_accesses(tasklet: nodes.CodeNode, dfg: StateGraphView, sdfg: dace.SDFG, state_id: int) -> str:
         """ Get the amount of bytes processed by `tasklet`. The formula is
             sum(inedges * size) + sum(outedges * size) """
         in_accum = []
@@ -707,8 +644,7 @@ class PAPIUtils(object):
         for ie in in_edges:
             in_accum.append(PAPIUtils.get_memlet_byte_size(sdfg, ie.data))
 
-        out_accum.append(
-            PAPIUtils.get_out_memlet_costs(sdfg, state_id, tasklet, dfg))
+        out_accum.append(PAPIUtils.get_out_memlet_costs(sdfg, state_id, tasklet, dfg))
 
         # Merge
         full = in_accum
@@ -717,8 +653,7 @@ class PAPIUtils(object):
         return "(" + sym2cpp(sum(full)) + ")"
 
     @staticmethod
-    def get_parents(outermost_node: nodes.Node, node: nodes.Node,
-                    sdfg: dace.SDFG, state_id: int) -> List[nodes.Node]:
+    def get_parents(outermost_node: nodes.Node, node: nodes.Node, sdfg: dace.SDFG, state_id: int) -> List[nodes.Node]:
 
         parent = None
         # Because dfg is only a subgraph view, it does not contain the entry
@@ -738,8 +673,7 @@ class PAPIUtils(object):
         if parent == outermost_node:
             return [parent]
 
-        return PAPIUtils.get_parents(outermost_node, parent, sdfg,
-                                     state_id) + [parent]
+        return PAPIUtils.get_parents(outermost_node, parent, sdfg, state_id) + [parent]
 
     @staticmethod
     def get_memory_input_size(node, sdfg, state_id) -> str:
@@ -757,8 +691,7 @@ class PAPIUtils(object):
         return sym2cpp(input_size)
 
     @staticmethod
-    def accumulate_byte_movement(outermost_node, node, dfg: StateGraphView,
-                                 sdfg, state_id):
+    def accumulate_byte_movement(outermost_node, node, dfg: StateGraphView, sdfg, state_id):
 
         itvars = dict()  # initialize an empty dict
 
@@ -773,8 +706,7 @@ class PAPIUtils(object):
         if len(children) > 0:
             size = 0
             for x in children:
-                size = size + PAPIUtils.accumulate_byte_movement(
-                    outermost_node, x, dfg, sdfg, state_id)
+                size = size + PAPIUtils.accumulate_byte_movement(outermost_node, x, dfg, sdfg, state_id)
 
             return size
         else:
@@ -782,8 +714,7 @@ class PAPIUtils(object):
                 return 0  # We can ignore this.
 
             # If we reached the deepest node, get all parents
-            parent_list = PAPIUtils.get_parents(outermost_node, node, sdfg,
-                                                state_id)
+            parent_list = PAPIUtils.get_parents(outermost_node, node, sdfg, state_id)
             if isinstance(node, MapEntry):
                 map_list = parent_list + [node]
             else:
@@ -799,14 +730,13 @@ class PAPIUtils(object):
                 itcount = itcount * x
 
             if isinstance(node, MapEntry):
-                raise ValueError(
-                    "Unexpected node"
-                )  # A map entry should never be the innermost node
+                raise ValueError("Unexpected node")  # A map entry should never be the innermost node
             elif isinstance(node, MapExit):
                 return 0  # We can ignore this.
             elif isinstance(node, Tasklet):
                 return itcount * symbolic.pystr_to_symbolic(
-                    PAPIUtils.get_tasklet_byte_accesses(node, dfg, sdfg,
-                                                        state_id))
+                    PAPIUtils.get_tasklet_byte_accesses(node, dfg, sdfg, state_id))
+            elif isinstance(node, nodes.AccessNode):
+                return 0
             else:
                 raise NotImplementedError

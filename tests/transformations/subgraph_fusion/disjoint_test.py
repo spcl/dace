@@ -1,14 +1,16 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
-import dace.transformation.subgraph.helpers as helpers
-from dace.transformation.subgraph import ReduceExpansion, SubgraphFusion
-from dace.sdfg.graph import SubgraphView
-import dace.sdfg.nodes as nodes
-import numpy as np
-import dace.libraries.standard as stdlib
+from typing import List, Union
 
-from typing import Union, List
-from util import expand_reduce, expand_maps, fusion
+import numpy as np
+from util import expand_maps, expand_reduce, fusion
+
+import dace
+import dace.libraries.standard as stdlib
+import dace.sdfg.nodes as nodes
+import dace.transformation.subgraph.helpers as helpers
+from dace.sdfg.graph import SubgraphView
+from dace.transformation.dataflow import ReduceExpansion
+from dace.transformation.subgraph import SubgraphFusion
 
 M = dace.symbol('M')
 N = dace.symbol('N')
@@ -81,7 +83,7 @@ def disjoint_test_3(A: dace.float64[M]):
 
 def test_p1():
     sdfg = disjoint_test_1.to_sdfg()
-    sdfg.apply_strict_transformations()
+    sdfg.simplify()
     state = sdfg.nodes()[0]
     assert len(sdfg.nodes()) == 1
     A = np.random.rand(M.get(), 2).astype(np.float64)
@@ -93,7 +95,8 @@ def test_p1():
     del csdfg
 
     subgraph = SubgraphView(state, state.nodes())
-    sf = SubgraphFusion(subgraph)
+    sf = SubgraphFusion()
+    sf.setup_match(subgraph)
     assert sf.can_be_applied(sdfg, subgraph)
     sf.apply(sdfg)
 
@@ -106,23 +109,25 @@ def test_p1():
 
 def test_p2():
     sdfg = disjoint_test_2.to_sdfg()
-    sdfg.apply_strict_transformations()
+    sdfg.simplify()
     state = sdfg.nodes()[0]
     assert len(sdfg.nodes()) == 1
 
     subgraph = SubgraphView(state, state.nodes())
-    sf = SubgraphFusion(subgraph)
+    sf = SubgraphFusion()
+    sf.setup_match(subgraph)
     assert not sf.can_be_applied(sdfg, subgraph)
 
 
 def test_p3():
     sdfg = disjoint_test_3.to_sdfg()
-    sdfg.apply_strict_transformations()
+    sdfg.simplify()
     state = sdfg.nodes()[0]
     assert len(sdfg.nodes()) == 1
 
     subgraph = SubgraphView(state, state.nodes())
-    sf = SubgraphFusion(subgraph)
+    sf = SubgraphFusion()
+    sf.setup_match(subgraph)
     assert not sf.can_be_applied(sdfg, subgraph)
 
 

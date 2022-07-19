@@ -1,9 +1,12 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
+""" SDFG API sample that showcases nested SDFG creation. """
 import dace
 import numpy as np
 
+# Create outer SDFG
 sdfg = dace.SDFG('nested_main')
 
+# Add global array
 sdfg.add_array('A', [2], dace.float32)
 
 
@@ -14,15 +17,9 @@ def mystate(state, src, dst):
     tasklet = state.add_tasklet('aaa2', {'a'}, {'b'}, 'b = a + 1')
 
     # input path (src->tasklet[a])
-    state.add_memlet_path(src_node,
-                          tasklet,
-                          dst_conn='a',
-                          memlet=dace.Memlet.simple(src, '0'))
+    state.add_memlet_path(src_node, tasklet, dst_conn='a', memlet=dace.Memlet(data=src, subset='0'))
     # output path (tasklet[b]->dst)
-    state.add_memlet_path(tasklet,
-                          dst_node,
-                          src_conn='b',
-                          memlet=dace.Memlet.simple(dst, '0'))
+    state.add_memlet_path(tasklet, dst_node, src_conn='b', memlet=dace.Memlet(data=dst, subset='0'))
 
 
 # Create nested SDFG
@@ -48,22 +45,14 @@ sub_sdfg.add_edge(state0, state1, dace.InterstateEdge())
 state = sdfg.add_state('s0')
 me, mx = state.add_map('mymap', dict(k='0:2'))
 # NOTE: The names of the inputs/outputs of the nested SDFG must match array
-#       names above (lines 29, 31)!
+#       names above (lines 30, 32)!
 nsdfg = state.add_nested_sdfg(sub_sdfg, sdfg, {'sA'}, {'sC'})
 Ain = state.add_read('A')
 Aout = state.add_write('A')
 
 # Connect dataflow nodes
-state.add_memlet_path(Ain,
-                      me,
-                      nsdfg,
-                      memlet=dace.Memlet.simple('A', 'k'),
-                      dst_conn='sA')
-state.add_memlet_path(nsdfg,
-                      mx,
-                      Aout,
-                      memlet=dace.Memlet.simple('A', 'k'),
-                      src_conn='sC')
+state.add_memlet_path(Ain, me, nsdfg, memlet=dace.Memlet(data='A', subset='k'), dst_conn='sA')
+state.add_memlet_path(nsdfg, mx, Aout, memlet=dace.Memlet(data='A', subset='k'), src_conn='sC')
 ###
 
 # Validate correctness of SDFG
@@ -71,8 +60,6 @@ sdfg.validate()
 
 ######################################
 if __name__ == '__main__':
-    print('Program start')
-
     a = np.random.rand(2).astype(np.float32)
     b = np.zeros([2])
     b[:] = a

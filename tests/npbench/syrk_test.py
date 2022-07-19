@@ -9,14 +9,13 @@ import argparse
 from dace.fpga_testing import fpga_test
 from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
 from dace.transformation.dataflow import StreamingMemory, MapFusion, StreamingComposition, PruneConnectors
-from dace.transformation.auto.auto_optimize import auto_optimize, fpga_aopt
+from dace.transformation.auto.auto_optimize import auto_optimize, fpga_auto_opt
 
 M, N = (dc.symbol(s, dtype=dc.int32) for s in ('M', 'N'))
 
 
 @dc.program
-def kernel(alpha: dc.float32, beta: dc.float32, C: dc.float32[N, N],
-           A: dc.float32[N, M]):
+def kernel(alpha: dc.float32, beta: dc.float32, C: dc.float32[N, N], A: dc.float32[N, M]):
 
     for i in range(N):
         C[i, :i + 1] *= beta
@@ -67,12 +66,12 @@ def run_syrk(device_type: dace.dtypes.DeviceType):
 
     elif device_type == dace.dtypes.DeviceType.FPGA:
         # Parse SDFG and apply FPGA friendly optimization
-        sdfg = kernel.to_sdfg(strict=True)
+        sdfg = kernel.to_sdfg(simplify=True)
         applied = sdfg.apply_transformations([FPGATransformSDFG])
         assert applied == 1
 
-        fpga_aopt.fpga_global_to_local(sdfg)
-        fpga_aopt.fpga_rr_interleave_containers_to_banks(sdfg)
+        fpga_auto_opt.fpga_global_to_local(sdfg)
+        fpga_auto_opt.fpga_rr_interleave_containers_to_banks(sdfg)
         sdfg.specialize(dict(N=N, M=M))
         # run program
         sdfg(alpha=alpha, beta=beta, C=C, A=A)
@@ -100,11 +99,7 @@ def test_fpga():
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("-t",
-                        "--target",
-                        default='cpu',
-                        choices=['cpu', 'gpu', 'fpga'],
-                        help='Target platform')
+    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu', 'fpga'], help='Target platform')
 
     args = vars(parser.parse_args())
     target = args["target"]

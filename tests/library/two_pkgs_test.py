@@ -35,8 +35,7 @@ def make_sdfg(implementation,
               overwrite=False,
               getri=True):
 
-    sdfg = dace.SDFG("linalg_inv_{}_{}_{}".format(implementation,
-                                                  dtype.__name__, id))
+    sdfg = dace.SDFG("linalg_inv_{}_{}_{}".format(implementation, dtype.__name__, id))
     sdfg.add_symbol("n", dace.int64)
     state = sdfg.add_state("dataflow")
 
@@ -53,18 +52,8 @@ def make_sdfg(implementation,
     inv_node = Inv("inv", overwrite_a=overwrite, use_getri=getri)
     inv_node.implementation = implementation
 
-    state.add_memlet_path(xin,
-                          inv_node,
-                          dst_conn="_ain",
-                          memlet=Memlet.simple(xin,
-                                               in_subset,
-                                               num_accesses=n * n))
-    state.add_memlet_path(inv_node,
-                          xout,
-                          src_conn="_aout",
-                          memlet=Memlet.simple(xout,
-                                               out_subset,
-                                               num_accesses=n * n))
+    state.add_memlet_path(xin, inv_node, dst_conn="_ain", memlet=Memlet.simple(xin, in_subset, num_accesses=n * n))
+    state.add_memlet_path(inv_node, xout, src_conn="_aout", memlet=Memlet.simple(xout, out_subset, num_accesses=n * n))
 
     return sdfg
 
@@ -86,37 +75,24 @@ def _test_inv(implementation,
     assert np.all(np.array(out_shape)[out_dims] >= size)
     assert np.all(np.array(in_offset) < size)
     assert np.all(np.array(out_offset) < size)
-    assert np.all(
-        np.array(in_offset)[in_dims] + size <= np.array(in_shape)[in_dims])
-    assert np.all(
-        np.array(out_offset)[out_dims] + size <= np.array(out_shape)[out_dims])
+    assert np.all(np.array(in_offset)[in_dims] + size <= np.array(in_shape)[in_dims])
+    assert np.all(np.array(out_offset)[out_dims] + size <= np.array(out_shape)[out_dims])
 
-    in_subset = tuple([
-        slice(o, o + size) if i in in_dims else o
-        for i, o in enumerate(in_offset)
-    ])
+    in_subset = tuple([slice(o, o + size) if i in in_dims else o for i, o in enumerate(in_offset)])
     if overwrite:
         out_subset = in_subset
     else:
-        out_subset = tuple([
-            slice(o, o + size) if i in out_dims else o
-            for i, o in enumerate(out_offset)
-        ])
+        out_subset = tuple([slice(o, o + size) if i in out_dims else o for i, o in enumerate(out_offset)])
 
-    in_subset_str = ','.join([
-        "{b}:{e}".format(b=o, e=o + size) if i in in_dims else str(o)
-        for i, o in enumerate(in_offset)
-    ])
+    in_subset_str = ','.join(
+        ["{b}:{e}".format(b=o, e=o + size) if i in in_dims else str(o) for i, o in enumerate(in_offset)])
     if overwrite:
         out_subset_str = in_subset_str
     else:
-        out_subset_str = ','.join([
-            "{b}:{e}".format(b=o, e=o + size) if i in out_dims else str(o)
-            for i, o in enumerate(out_offset)
-        ])
+        out_subset_str = ','.join(
+            ["{b}:{e}".format(b=o, e=o + size) if i in out_dims else str(o) for i, o in enumerate(out_offset)])
 
-    sdfg = make_sdfg(implementation, dtype, id, in_shape, out_shape,
-                     in_subset_str, out_subset_str, overwrite, getri)
+    sdfg = make_sdfg(implementation, dtype, id, in_shape, out_shape, in_subset_str, out_subset_str, overwrite, getri)
     inv_sdfg = sdfg.compile()
     A0 = np.zeros(in_shape, dtype=dtype)
     A0[in_subset] = generate_matrix(size, dtype)

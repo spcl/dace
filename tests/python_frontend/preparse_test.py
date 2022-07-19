@@ -28,7 +28,7 @@ def test_nested_objects_same_name():
     unusedA = np.random.rand(20)
 
     # Get closure first
-    closure = obj.outer.closure_resolver(None)
+    closure = obj.outer.closure_resolver(None, None)
 
     # Save SDFG
     with tempfile.NamedTemporaryFile(delete=False) as temp_file:
@@ -80,7 +80,7 @@ def test_calltree():
             return A + self.q + self.obja(A)
 
     obj = ObjB(5)
-    res = obj.outer.closure_resolver(None)
+    res = obj.outer.closure_resolver(None, None)
     assert res.call_tree_length() == 2
 
 
@@ -89,7 +89,7 @@ def test_same_function_different_closure():
     arry = np.full([20], 2)
 
     @dace.program
-    def nested(A: dace.float64[20], dir: dace.constant):
+    def nested(A: dace.float64[20], dir: dace.compiletime):
         if dir == 'x':
             return A + arrx
         elif dir == 'y':
@@ -101,7 +101,7 @@ def test_same_function_different_closure():
         B = nested(A, 'x')
         return nested(B, 'y')
 
-    closure = mainprog.closure_resolver(None)
+    closure = mainprog.closure_resolver(None, None)
     assert closure.call_tree_length() == 3
     assert len(closure.closure_arrays) == 2  # arrx and arry should appear once
 

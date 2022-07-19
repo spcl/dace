@@ -24,10 +24,7 @@ from dace.codegen.targets.target import make_absolute
 T = TypeVar('T')
 
 
-def generate_program_folder(sdfg,
-                            code_objects: List[CodeObject],
-                            out_path: str,
-                            config=None):
+def generate_program_folder(sdfg, code_objects: List[CodeObject], out_path: str, config=None):
     """ Writes all files required to configure and compile the DaCe program
         into the specified folder.
 
@@ -66,8 +63,7 @@ def generate_program_folder(sdfg,
                 code_file.write(clean_code)
 
         if code_object.linkable == True:
-            filelist.append("{},{},{}".format(target_name, target_type,
-                                              basename))
+            filelist.append("{},{},{}".format(target_name, target_type, basename))
 
     # Write list of files
     with open(os.path.join(out_path, "dace_files.csv"), "w") as filelist_file:
@@ -100,9 +96,7 @@ def generate_program_folder(sdfg,
     return out_path
 
 
-def configure_and_compile(program_folder,
-                          program_name=None,
-                          output_stream=None):
+def configure_and_compile(program_folder, program_name=None, output_stream=None):
     """ Configures and compiles a DaCe program in the specified folder into a
         shared library file.
 
@@ -110,7 +104,7 @@ def configure_and_compile(program_folder,
                                equivalent to what was passed to
                                `generate_program_folder`.
         :param output_stream: Additional output stream to write to (used for
-                              DIODE client).
+                              other clients such as the vscode extension).
         :return: Path to the compiled shared library file.
     """
 
@@ -130,10 +124,7 @@ def configure_and_compile(program_folder,
     # We do this instead of iterating over source files in the directory to
     # avoid globbing files from previous compilations, such that we don't need
     # to wipe the directory for every compilation.
-    file_list = [
-        line.strip().split(",")
-        for line in open(os.path.join(program_folder, "dace_files.csv"), "r")
-    ]
+    file_list = [line.strip().split(",") for line in open(os.path.join(program_folder, "dace_files.csv"), "r")]
 
     # Get absolute paths and targets for all source files
     files = []
@@ -144,9 +135,7 @@ def configure_and_compile(program_folder,
         else:
             path = os.path.join(target_name, file_name)
         files.append(path)
-        targets[target_name] = next(
-            k for k, v in TargetCodeGenerator.extensions().items()
-            if v['name'] == target_name)
+        targets[target_name] = next(k for k, v in TargetCodeGenerator.extensions().items() if v['name'] == target_name)
 
     # Windows-only workaround: Override Visual C++'s linker to use
     # Multi-Threaded (MT) mode. This fixes linkage in CUDA applications where
@@ -169,8 +158,7 @@ def configure_and_compile(program_folder,
     ]
 
     # Get required environments are retrieve the CMake information
-    environments = set(l.strip() for l in open(
-        os.path.join(program_folder, "dace_environments.csv"), "r"))
+    environments = set(l.strip() for l in open(os.path.join(program_folder, "dace_environments.csv"), "r"))
 
     environments = dace.library.get_environments_and_dependencies(environments)
 
@@ -185,15 +173,13 @@ def configure_and_compile(program_folder,
     for target_name, target in sorted(targets.items()):
         try:
             cmake_command += target.cmake_options()
-            libraries |= unique_flags(
-                Config.get("compiler", target_name, "libs"))
+            libraries |= unique_flags(Config.get("compiler", target_name, "libs"))
         except KeyError:
             pass
         except ValueError as ex:  # Cannot find compiler executable
             raise cgx.CompilerConfigurationError(str(ex))
 
-    cmake_command.append("-DDACE_LIBS=\"{}\"".format(" ".join(
-        sorted(libraries))))
+    cmake_command.append("-DDACE_LIBS=\"{}\"".format(" ".join(sorted(libraries))))
 
     # Set linker and linker arguments, iff they have been specified
     cmake_linker = Config.get('compiler', 'linker', 'executable') or ''
@@ -201,12 +187,10 @@ def configure_and_compile(program_folder,
     if cmake_linker:
         cmake_linker = make_absolute(cmake_linker)
         cmake_command.append(f'-DCMAKE_LINKER="{cmake_linker}"')
-    cmake_link_flags = (
-        ' '.join(sorted(cmake_link_flags)) + ' ' +
-        (Config.get('compiler', 'linker', 'args') or '')).strip()
+    cmake_link_flags = (' '.join(sorted(cmake_link_flags)) + ' ' +
+                        (Config.get('compiler', 'linker', 'args') or '')).strip()
     if cmake_link_flags:
-        cmake_command.append(
-            f'-DCMAKE_SHARED_LINKER_FLAGS="{cmake_link_flags}"')
+        cmake_command.append(f'-DCMAKE_SHARED_LINKER_FLAGS="{cmake_link_flags}"')
     cmake_command = ' '.join(cmake_command)
 
     cmake_filename = os.path.join(build_folder, 'cmake_configure.sh')
@@ -214,10 +198,7 @@ def configure_and_compile(program_folder,
     # Configure
     try:
         if not identical_file_exists(cmake_filename, cmake_command):
-            _run_liveoutput(cmake_command,
-                            shell=True,
-                            cwd=build_folder,
-                            output_stream=output_stream)
+            _run_liveoutput(cmake_command, shell=True, cwd=build_folder, output_stream=output_stream)
     except subprocess.CalledProcessError as ex:
         # Clean CMake directory and try once more
         if Config.get_bool('debugprint'):
@@ -225,25 +206,20 @@ def configure_and_compile(program_folder,
         shutil.rmtree(build_folder)
         os.makedirs(build_folder)
         try:
-            _run_liveoutput(cmake_command,
-                            shell=True,
-                            cwd=build_folder,
-                            output_stream=output_stream)
+            _run_liveoutput(cmake_command, shell=True, cwd=build_folder, output_stream=output_stream)
         except subprocess.CalledProcessError as ex:
             # If still unsuccessful, print results
             if Config.get_bool('debugprint'):
                 raise cgx.CompilerConfigurationError('Configuration failure')
             else:
-                raise cgx.CompilerConfigurationError(
-                    'Configuration failure:\n' + ex.output)
+                raise cgx.CompilerConfigurationError('Configuration failure:\n' + ex.output)
 
     with open(cmake_filename, "w") as fp:
         fp.write(cmake_command)
 
     # Compile and link
     try:
-        _run_liveoutput("cmake --build . --config %s" %
-                        (Config.get('compiler', 'build_type')),
+        _run_liveoutput("cmake --build . --config %s" % (Config.get('compiler', 'build_type')),
                         shell=True,
                         cwd=build_folder,
                         output_stream=output_stream)
@@ -254,10 +230,8 @@ def configure_and_compile(program_folder,
         else:
             raise cgx.CompilationError('Compiler failure:\n' + ex.output)
 
-    shared_library_path = os.path.join(
-        build_folder,
-        "lib{}.{}".format(program_name,
-                          Config.get('compiler', 'library_extension')))
+    shared_library_path = os.path.join(build_folder, "lib{}.{}".format(program_name,
+                                                                       Config.get('compiler', 'library_extension')))
 
     return shared_library_path
 
@@ -290,8 +264,7 @@ def get_environment_flags(environments) -> Tuple[List[str], Set[str]]:
     cmake_files = set()
     cmake_module_paths = set()
     for env in environments:
-        if (env.cmake_minimum_version is not None
-                and len(env.cmake_minimum_version) > 0):
+        if (env.cmake_minimum_version is not None and len(env.cmake_minimum_version) > 0):
             version_list = list(map(int, env.cmake_minimum_version.split(".")))
             for i in range(max(len(version_list), len(cmake_minimum_version))):
                 if i >= len(version_list):
@@ -305,11 +278,9 @@ def get_environment_flags(environments) -> Tuple[List[str], Set[str]]:
                 # Otherwise keep iterating
         env_variables = _get_or_eval(env.cmake_variables)
         for var in env_variables:
-            if (var in cmake_variables
-                    and cmake_variables[var] != env_variables[var]):
-                raise KeyError(
-                    "CMake variable {} was redefined from {} to {}.".format(
-                        var, cmake_variables[var], env_variables[var]))
+            if (var in cmake_variables and cmake_variables[var] != env_variables[var]):
+                raise KeyError("CMake variable {} was redefined from {} to {}.".format(
+                    var, cmake_variables[var], env_variables[var]))
             cmake_variables[var] = env_variables[var]
         cmake_packages |= set(_get_or_eval(env.cmake_packages))
         cmake_includes |= set(_get_or_eval(env.cmake_includes))
@@ -319,28 +290,29 @@ def get_environment_flags(environments) -> Tuple[List[str], Set[str]]:
         # Make path absolute
         env_dir = os.path.dirname(env._dace_file_path)
         cmake_files |= set(
-            (f if os.path.isabs(f) else os.path.join(env_dir, f)) +
-            (".cmake" if not f.endswith(".cmake") else "")
+            (f if os.path.isabs(f) else os.path.join(env_dir, f)) + (".cmake" if not f.endswith(".cmake") else "")
             for f in _get_or_eval(env.cmake_files))
-        for header in _get_or_eval(env.headers):
-            if os.path.isabs(header):
-                # Giving an absolute path is not good practice, but allow it
-                # for emergency overriding
-                cmake_includes.add(os.path.dirname(header))
-            abs_path = os.path.join(env_dir, header)
-            if os.path.isfile(abs_path):
-                # Allow includes stored with the library, specified with a
-                # relative path
-                cmake_includes.add(env_dir)
-                break
+        headers = _get_or_eval(env.headers)
+        if not isinstance(headers, dict):
+            headers = {'frame': headers}
+        for header_group in headers.values():
+            for header in header_group:
+                if os.path.isabs(header):
+                    # Giving an absolute path is not good practice, but allow it
+                    # for emergency overriding
+                    cmake_includes.add(os.path.dirname(header))
+                abs_path = os.path.join(env_dir, header)
+                if os.path.isfile(abs_path):
+                    # Allow includes stored with the library, specified with a
+                    # relative path
+                    cmake_includes.add(env_dir)
+                    break
 
     environment_flags = [
-        "-DDACE_ENV_MINIMUM_VERSION={}".format(".".join(
-            map(str, cmake_minimum_version))),
+        "-DDACE_ENV_MINIMUM_VERSION={}".format(".".join(map(str, cmake_minimum_version))),
         # Make CMake list of key-value pairs
         "-DDACE_ENV_VAR_KEYS=\"{}\"".format(";".join(cmake_variables.keys())),
-        "-DDACE_ENV_VAR_VALUES=\"{}\"".format(";".join(
-            cmake_variables.values())),
+        "-DDACE_ENV_VAR_VALUES=\"{}\"".format(";".join(cmake_variables.values())),
         "-DDACE_ENV_PACKAGES=\"{}\"".format(" ".join(sorted(cmake_packages))),
         "-DDACE_ENV_INCLUDES=\"{}\"".format(" ".join(sorted(cmake_includes))),
         "-DDACE_ENV_LIBRARIES=\"{}\"".format(" ".join(sorted(cmake_libraries))),
@@ -349,10 +321,7 @@ def get_environment_flags(environments) -> Tuple[List[str], Set[str]]:
         "-DDACE_ENV_CMAKE_FILES=\"{}\"".format(";".join(sorted(cmake_files))),
     ]
     # Escape variable expansions to defer their evaluation
-    environment_flags = [
-        cmd.replace("$", "_DACE_CMAKE_EXPAND")
-        for cmd in sorted(environment_flags)
-    ]
+    environment_flags = [cmd.replace("$", "_DACE_CMAKE_EXPAND") for cmd in sorted(environment_flags)]
 
     return environment_flags, cmake_link_flags
 
@@ -404,20 +373,14 @@ def load_from_file(sdfg, binary_filename):
     return csd.CompiledSDFG(sdfg, lib)
 
 
-def get_binary_name(object_folder,
-                    object_name,
-                    lib_extension=Config.get('compiler', 'library_extension')):
+def get_binary_name(object_folder, object_name, lib_extension=Config.get('compiler', 'library_extension')):
     name = None
-    name = os.path.join(object_folder, "build",
-                        'lib%s.%s' % (object_name, lib_extension))
+    name = os.path.join(object_folder, "build", 'lib%s.%s' % (object_name, lib_extension))
     return name
 
 
 def _run_liveoutput(command, output_stream=None, **kwargs):
-    process = subprocess.Popen(command,
-                               stderr=subprocess.STDOUT,
-                               stdout=subprocess.PIPE,
-                               **kwargs)
+    process = subprocess.Popen(command, stderr=subprocess.STDOUT, stdout=subprocess.PIPE, **kwargs)
     output = six.StringIO()
     while True:
         line = process.stdout.readline().rstrip()
@@ -439,8 +402,7 @@ def _run_liveoutput(command, output_stream=None, **kwargs):
 
     # An error occurred, raise exception
     if process.returncode != 0:
-        raise subprocess.CalledProcessError(process.returncode, command,
-                                            output.getvalue())
+        raise subprocess.CalledProcessError(process.returncode, command, output.getvalue())
 
 
 # Allow configuring and compiling a prepared build folder from the commandline.

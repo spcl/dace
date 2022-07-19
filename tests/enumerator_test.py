@@ -8,7 +8,7 @@ import pytest
 from dace.transformation.estimator import GreedyEnumerator
 from dace.transformation.subgraph.composite import CompositeFusion
 from dace.sdfg.graph import SubgraphView
-from dace.transformation.subgraph.reduce_expansion import ReduceExpansion
+from dace.transformation.dataflow.reduce_expansion import ReduceExpansion
 
 W = dace.symbol('W')
 H = dace.symbol('H')
@@ -16,8 +16,7 @@ B = dace.symbol('B')
 
 
 @dace.program
-def p1(in1: dace.float32[W, H, B], in2: dace.float32[W, H],
-       out: dace.float32[W, H]):
+def p1(in1: dace.float32[W, H, B], in2: dace.float32[W, H], out: dace.float32[W, H]):
     tmp1 = np.ndarray([W, H, B], dtype=dace.float32)
     for i, j, k in dace.map[0:W, 0:H, 0:B]:
         with dace.tasklet:
@@ -58,13 +57,14 @@ def test_greedy(map_splits):
     ret = np.zeros([w, h], dtype=np.float32)
 
     sdfg = p1.to_sdfg()
-    sdfg.apply_strict_transformations()
+    sdfg.simplify()
     graph = sdfg.nodes()[0]
 
     sdfg.apply_transformations_repeated(ReduceExpansion)
 
     subgraph = SubgraphView(graph, graph.nodes())
-    composite = CompositeFusion(subgraph)
+    composite = CompositeFusion()
+    composite.setup_match(subgraph)
     composite.expansion_split = map_splits
     cf = lambda sdfg, subgraph: composite.can_be_applied(sdfg, subgraph)
     enum = GreedyEnumerator(sdfg, graph, subgraph, cf)
@@ -73,7 +73,6 @@ def test_greedy(map_splits):
         assert len(result) == 1
     else:
         assert len(result) == 2
-
 
 
 @pytest.mark.parametrize(["map_splits"], [[True], [False]])
@@ -87,13 +86,14 @@ def test_connected(map_splits):
     ret = np.zeros([w, h], dtype=np.float32)
 
     sdfg = p1.to_sdfg()
-    sdfg.apply_strict_transformations()
+    sdfg.simplify()
     graph = sdfg.nodes()[0]
 
     sdfg.apply_transformations_repeated(ReduceExpansion)
 
     subgraph = SubgraphView(graph, graph.nodes())
-    composite = CompositeFusion(subgraph)
+    composite = CompositeFusion()
+    composite.setup_match(subgraph)
     composite.expansion_split = map_splits
     cf = lambda sdfg, subgraph: composite.can_be_applied(sdfg, subgraph)
     enum = ConnectedEnumerator(sdfg, graph, subgraph, cf)
@@ -103,7 +103,6 @@ def test_connected(map_splits):
         assert len(result) == 14
     else:
         assert len(result) == 4
-
 
 
 @pytest.mark.parametrize(["map_splits"], [[True], [False]])
@@ -117,13 +116,14 @@ def test_brute_force(map_splits):
     ret = np.zeros([w, h], dtype=np.float32)
 
     sdfg = p1.to_sdfg()
-    sdfg.apply_strict_transformations()
+    sdfg.simplify()
     graph = sdfg.nodes()[0]
 
     sdfg.apply_transformations_repeated(ReduceExpansion)
 
     subgraph = SubgraphView(graph, graph.nodes())
-    composite = CompositeFusion(subgraph)
+    composite = CompositeFusion()
+    composite.setup_match(subgraph)
     composite.expansion_split = map_splits
     cf = lambda sdfg, subgraph: composite.can_be_applied(sdfg, subgraph)
     enum = BruteForceEnumerator(sdfg, graph, subgraph, cf)
@@ -133,11 +133,12 @@ def test_brute_force(map_splits):
     else:
         assert len(result) == 5
 
+
 if __name__ == "__main__":
     test_greedy(True)
     test_greedy(False)
 
-    test_connected(True) 
+    test_connected(True)
     test_connected(False)
 
     test_brute_force(True)

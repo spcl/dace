@@ -46,19 +46,15 @@ class ScopeSubgraphView(StateSubgraphView):
         return result
 
 
-def _scope_subgraph(graph, entry_node, include_entry, include_exit):
+def _scope_subgraph(graph, entry_node, include_entry, include_exit) -> ScopeSubgraphView:
     if not isinstance(entry_node, nd.EntryNode):
-        raise TypeError("Received {}: should be dace.nodes.EntryNode".format(
-            type(entry_node).__name__))
+        raise TypeError("Received {}: should be dace.nodes.EntryNode".format(type(entry_node).__name__))
     node_to_children = graph.scope_children()
     if include_exit:
         children_nodes = set(node_to_children[entry_node])
     else:
-        children_nodes = set(n for n in node_to_children[entry_node]
-                             if not isinstance(n, nd.ExitNode))
-    map_nodes = [
-        node for node in children_nodes if isinstance(node, nd.EntryNode)
-    ]
+        children_nodes = set(n for n in node_to_children[entry_node] if not isinstance(n, nd.ExitNode))
+    map_nodes = [node for node in children_nodes if isinstance(node, nd.EntryNode)]
     while len(map_nodes) > 0:
         next_map_nodes = []
         # Traverse children map nodes
@@ -68,21 +64,17 @@ def _scope_subgraph(graph, entry_node, include_entry, include_exit):
             # Unionize children_nodes with new nodes
             children_nodes |= more_nodes
             # Add nodes of the next level to next_map_nodes
-            next_map_nodes.extend(
-                [node for node in more_nodes if isinstance(node, nd.EntryNode)])
+            next_map_nodes.extend([node for node in more_nodes if isinstance(node, nd.EntryNode)])
         map_nodes = next_map_nodes
 
     if include_entry:
         children_nodes.add(entry_node)
 
     # Preserve order of nodes
-    return ScopeSubgraphView(graph,
-                             [n for n in graph.nodes() if n in children_nodes],
-                             entry_node)
+    return ScopeSubgraphView(graph, [n for n in graph.nodes() if n in children_nodes], entry_node)
 
 
-def _scope_dict_inner(graph, node_queue, current_scope, node_to_children,
-                      result):
+def _scope_dict_inner(graph, node_queue, current_scope, node_to_children, result):
     """ Returns a queue of nodes that are external to the current scope. """
     # Initialize an empty list, if necessary
     if node_to_children and current_scope not in result:
@@ -109,9 +101,7 @@ def _scope_dict_inner(graph, node_queue, current_scope, node_to_children,
 
         # If this is an Entry Node, we need to recurse further
         if isinstance(node, nd.EntryNode):
-            node_queue.extend(
-                _scope_dict_inner(graph, collections.deque(successors), node,
-                                  node_to_children, result))
+            node_queue.extend(_scope_dict_inner(graph, collections.deque(successors), node, node_to_children, result))
         # If this is an Exit Node, we push the successors to the external
         # queue
         elif isinstance(node, nd.ExitNode):
@@ -131,14 +121,10 @@ def _scope_dict_to_ids(state: 'dace.sdfg.SDFGState', scope_dict: ScopeDictType):
         if node is None: return -1
         return state.node_id(node)
 
-    return {
-        node_id_or_none(k): [node_id_or_none(vi) for vi in v]
-        for k, v in scope_dict.items()
-    }
+    return {node_id_or_none(k): [node_id_or_none(vi) for vi in v] for k, v in scope_dict.items()}
 
 
-def scope_contains_scope(sdict: ScopeDictType, node: NodeType,
-                         other_node: NodeType) -> bool:
+def scope_contains_scope(sdict: ScopeDictType, node: NodeType, other_node: NodeType) -> bool:
     """ 
     Returns true iff scope of `node` contains the scope of  `other_node`.
     """
@@ -160,8 +146,7 @@ def _scope_path(sdict: ScopeDictType, scope: NodeType) -> List[NodeType]:
     return result
 
 
-def common_parent_scope(sdict: ScopeDictType, scope_a: NodeType,
-                        scope_b: NodeType) -> NodeType:
+def common_parent_scope(sdict: ScopeDictType, scope_a: NodeType, scope_b: NodeType) -> NodeType:
     """
     Finds a common parent scope for both input scopes, or None if the scopes
     are in different connected components.
@@ -192,8 +177,8 @@ def common_parent_scope(sdict: ScopeDictType, scope_a: NodeType,
     return common
 
 
-def is_in_scope(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState',
-                node: NodeType, schedules: List[dtypes.ScheduleType]) -> bool:
+def is_in_scope(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState', node: NodeType,
+                schedules: List[dtypes.ScheduleType]) -> bool:
     """ Tests whether a node in an SDFG is contained within a certain set of 
         scope schedules.
         :param sdfg: The SDFG in which the node resides.
@@ -245,8 +230,7 @@ def is_devicelevel_gpu(sdfg: 'dace.sdfg.SDFG',
     )
 
 
-def is_devicelevel_fpga(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState',
-                        node: NodeType) -> bool:
+def is_devicelevel_fpga(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState', node: NodeType) -> bool:
     """ Tests whether a node in an SDFG is contained within FPGA device-level
         code.
         :param sdfg: The SDFG in which the node resides.
@@ -254,7 +238,7 @@ def is_devicelevel_fpga(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState',
         :param node: The node in question
         :return: True if node is in device-level code, False otherwise.
     """
-    from dace.codegen.targets.fpga import is_fpga_kernel
+    from dace.sdfg.utils import is_fpga_kernel
     return (is_in_scope(sdfg, state, node, [dtypes.ScheduleType.FPGA_Device])
             or (state and is_fpga_kernel(sdfg, state)))
 
@@ -280,15 +264,10 @@ def devicelevel_block_size(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState',
                 return tuple(scope.map.range.size())
             elif scope.schedule == dtypes.ScheduleType.GPU_Device:
                 # No thread-block map, use config default
-                return tuple(
-                    int(s) for s in Config.get('compiler', 'cuda',
-                                               'default_block_size').split(','))
+                return tuple(int(s) for s in Config.get('compiler', 'cuda', 'default_block_size').split(','))
             elif scope.schedule == dtypes.ScheduleType.GPU_ThreadBlock_Dynamic:
                 # Dynamic thread-block map, use configured value
-                return tuple(
-                    int(s)
-                    for s in Config.get('compiler', 'cuda',
-                                        'dynamic_map_block_size').split(','))
+                return tuple(int(s) for s in Config.get('compiler', 'cuda', 'dynamic_map_block_size').split(','))
 
             scope = sdict[scope]
         # Traverse up nested SDFGs
@@ -297,9 +276,8 @@ def devicelevel_block_size(sdfg: 'dace.sdfg.SDFG', state: 'dace.sdfg.SDFGState',
                 parent = sdfg.parent.parent
             else:
                 parent = sdfg.parent
-            state, node = next(
-                (s, n) for s in parent.nodes() for n in s.nodes()
-                if isinstance(n, nd.NestedSDFG) and n.sdfg.name == sdfg.name)
+            state, node = next((s, n) for s in parent.nodes() for n in s.nodes()
+                               if isinstance(n, nd.NestedSDFG) and n.sdfg.name == sdfg.name)
         else:
             parent = sdfg.parent
         sdfg = parent

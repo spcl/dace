@@ -105,7 +105,7 @@ def invoke_stencil(tile_size, offset=False, unroll=False, view=False):
         sdfg = stencil_offset.to_sdfg()
     else:
         sdfg = stencil.to_sdfg()
-    sdfg.apply_strict_transformations()
+    sdfg.simplify()
     graph = sdfg.nodes()[0]
 
     if view:
@@ -117,7 +117,8 @@ def invoke_stencil(tile_size, offset=False, unroll=False, view=False):
     del csdfg
 
     subgraph = SubgraphView(graph, [n for n in graph.nodes()])
-    st = StencilTiling(subgraph)
+    st = StencilTiling()
+    st.setup_match(subgraph)
     st.tile_size = (tile_size, )
     st.schedule = dace.dtypes.ScheduleType.Sequential
     assert st.can_be_applied(sdfg, subgraph)
@@ -133,9 +134,10 @@ def invoke_stencil(tile_size, offset=False, unroll=False, view=False):
     del csdfg
     assert np.allclose(B1, B2)
 
-    sdfg.apply_strict_transformations()
+    sdfg.simplify()
     subgraph = SubgraphView(graph, [n for n in graph.nodes()])
-    sf = SubgraphFusion(subgraph)
+    sf = SubgraphFusion()
+    sf.setup_match(subgraph)
     assert sf.can_be_applied(sdfg, subgraph)
     # also test consolidation
     sf.consolidate = True

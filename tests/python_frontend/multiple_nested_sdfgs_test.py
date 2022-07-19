@@ -21,28 +21,15 @@ def test_call_multiple_sdfgs():
     exp_minus_max.add_array("output", out_tmp_shape, out_tmp_dtype)
     exp_minus_max.add_state().add_mapped_tasklet(
         "_softmax_exp_",
-        map_ranges={
-            "__i" + str(i): "0:" + str(shape)
-            for i, shape in enumerate(inparr.shape)
-        },
+        map_ranges={"__i" + str(i): "0:" + str(shape)
+                    for i, shape in enumerate(inparr.shape)},
         inputs={
-            '__max':
-            dace.Memlet.simple(
-                "tmp_max", ','.join("__i" + str(i)
-                                    for i in range(len(inparr.shape))
-                                    if i != axis)),
-            '__x':
-            dace.Memlet.simple(
-                "original_input",
-                ','.join("__i" + str(i) for i in range(len(inparr.shape))))
+            '__max': dace.Memlet.simple("tmp_max",
+                                        ','.join("__i" + str(i) for i in range(len(inparr.shape)) if i != axis)),
+            '__x': dace.Memlet.simple("original_input", ','.join("__i" + str(i) for i in range(len(inparr.shape))))
         },
         code='__out = exp(__x - __max)',
-        outputs={
-            '__out':
-            dace.Memlet.simple(
-                "output",
-                ','.join("__i" + str(i) for i in range(len(inparr.shape))))
-        },
+        outputs={'__out': dace.Memlet.simple("output", ','.join("__i" + str(i) for i in range(len(inparr.shape))))},
         external_edges=True)
 
     ##################
@@ -54,35 +41,21 @@ def test_call_multiple_sdfgs():
 
     out_tmp_div_sum.add_state().add_mapped_tasklet(
         "_softmax_div_",
-        map_ranges={
-            "__i" + str(i): "0:" + str(shape)
-            for i, shape in enumerate(inparr.shape)
-        },
+        map_ranges={"__i" + str(i): "0:" + str(shape)
+                    for i, shape in enumerate(inparr.shape)},
         inputs={
-            '__sum':
-            dace.Memlet.simple(
-                "tmp_sum", ','.join("__i" + str(i)
-                                    for i in range(len(inparr.shape))
-                                    if i != axis)),
-            '__exp':
-            dace.Memlet.simple(
-                "out_tmp",
-                ','.join("__i" + str(i) for i in range(len(inparr.shape))))
+            '__sum': dace.Memlet.simple("tmp_sum",
+                                        ','.join("__i" + str(i) for i in range(len(inparr.shape)) if i != axis)),
+            '__exp': dace.Memlet.simple("out_tmp", ','.join("__i" + str(i) for i in range(len(inparr.shape))))
         },
         code='__out = __exp / __sum',
-        outputs={
-            '__out':
-            dace.Memlet.simple(
-                "output",
-                ','.join("__i" + str(i) for i in range(len(inparr.shape))))
-        },
+        outputs={'__out': dace.Memlet.simple("output", ','.join("__i" + str(i) for i in range(len(inparr.shape))))},
         external_edges=True)
 
     ##################
     # put everything together as a program
     @dace.program
-    def multiple_nested_sdfgs(input: dace.float32[2, 2],
-                              output: dace.float32[2, 2]):
+    def multiple_nested_sdfgs(input: dace.float32[2, 2], output: dace.float32[2, 2]):
         tmp_max = np.max(input, axis=axis)
 
         out_tmp = dace.define_local(out_tmp_shape, out_tmp_dtype)
@@ -92,7 +65,7 @@ def test_call_multiple_sdfgs():
 
         out_tmp_div_sum(out_tmp=out_tmp, tmp_sum=tmp_sum, output=output)
 
-    sdfg = multiple_nested_sdfgs.to_sdfg(strict=False)
+    sdfg = multiple_nested_sdfgs.to_sdfg(simplify=False)
     state = sdfg.nodes()[-1]
     for n in state.nodes():
         if isinstance(n, dace.sdfg.nodes.AccessNode):
@@ -105,6 +78,7 @@ def test_call_multiple_sdfgs():
 
 
 def test_nested_sdfg_with_return_value():
+
     @dace.program
     def nested(A: dace.float64[20]):
         return A + 20
@@ -122,6 +96,7 @@ def test_nested_sdfg_with_return_value():
 
 
 def test_nested_sdfg_with_return_value_assignment():
+
     @dace.program
     def nested(A: dace.float64[20]):
         return A + 20
@@ -139,7 +114,38 @@ def test_nested_sdfg_with_return_value_assignment():
     assert np.allclose(B, expected)
 
 
+def test_multiple_calls():
+
+    @dace.program
+    def nested(a: dace.float64[20], b: dace.float64[20]):
+        return a + b + b
+
+    @dace.program
+    def tester(a: dace.float64[20], b: dace.float64[20]):
+        if a[0] < 0.5:
+            a += 0.5
+            c = nested(a, b)
+        else:
+            c = nested(a, b)
+
+        return c
+
+    a = np.random.rand(20)
+    b = np.random.rand(20)
+    a[0] = 1.0
+
+    # Regression: calling ``nested`` before ``tester`` affects validation
+    nested(a, b)
+
+    sdfg = tester.to_sdfg(simplify=False)
+    sdfg.validate()
+
+    c = tester(a, b)
+    assert np.allclose(c, a + b + b)
+
+
 if __name__ == "__main__":
     test_call_multiple_sdfgs()
     test_nested_sdfg_with_return_value()
     test_nested_sdfg_with_return_value_assignment()
+    test_multiple_calls()

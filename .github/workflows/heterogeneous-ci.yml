@@ -45,6 +45,16 @@ jobs:
         . /opt/setupenv
         ./tests/mpi_test.sh
 
+        
+    - name: Test MPI with pytest
+      run: |
+        export NOSTATUSBAR=1
+        export DACE_testing_serialization=1
+        export DACE_testing_deserialize_exception=1
+        export DACE_cache=unique
+        export DACE_optimizer_interface=" "
+        mpirun -n 2 coverage run --source=dace --parallel-mode -m pytest -x --with-mpi --tb=short -m "mpi"
+
     - name: Report overall coverage
       run: |
         export COVERAGE_RCFILE=`pwd`/.coveragerc

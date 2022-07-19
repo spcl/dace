@@ -56,34 +56,28 @@ class SVECodeGen(TargetCodeGenerator):
         self.dispatcher = frame_codegen._dispatcher
         self.dispatcher.register_map_dispatcher(dace.ScheduleType.SVE_Map, self)
         self.dispatcher.register_node_dispatcher(
-            self, lambda state, sdfg, node: is_in_scope(
-                state, sdfg, node, [dace.ScheduleType.SVE_Map]))
+            self, lambda state, sdfg, node: is_in_scope(state, sdfg, node, [dace.ScheduleType.SVE_Map]))
 
         cpu_storage = [
-            dtypes.StorageType.CPU_Heap, dtypes.StorageType.CPU_ThreadLocal,
-            dtypes.StorageType.Register, dtypes.StorageType.SVE_Register
+            dtypes.StorageType.CPU_Heap, dtypes.StorageType.CPU_ThreadLocal, dtypes.StorageType.Register,
+            dtypes.StorageType.SVE_Register
         ]
 
         # This dispatcher is required to catch the allocation of Code->Code registers
         # because we want SVE registers instead of dace::vec<>'s.
         # In any other case it will call the default codegen.
-        self.dispatcher.register_array_dispatcher(cpu_storage, self)
-        self.dispatcher.register_copy_dispatcher(
-            dtypes.StorageType.SVE_Register, dtypes.StorageType.CPU_Heap, None,
-            self)
+        self.dispatcher.register_array_dispatcher(dtypes.StorageType.SVE_Register, self)
+        self.dispatcher.register_copy_dispatcher(dtypes.StorageType.SVE_Register, dtypes.StorageType.CPU_Heap, None,
+                                                 self)
 
-        self.cpu_codegen: dace.codegen.targets.CPUCodeGen = self.dispatcher.get_generic_node_dispatcher(
-        )
+        self.cpu_codegen: dace.codegen.targets.CPUCodeGen = self.dispatcher.get_generic_node_dispatcher()
 
     def get_generated_codeobjects(self):
         res = super().get_generated_codeobjects()
-        print(res)
         return res
 
-    def copy_memory(self, sdfg: SDFG, dfg: SDFGState, state_id: int,
-                    src_node: nodes.Node, dst_node: nodes.Node,
-                    edge: gr.MultiConnectorEdge[mm.Memlet],
-                    function_stream: CodeIOStream,
+    def copy_memory(self, sdfg: SDFG, dfg: SDFGState, state_id: int, src_node: nodes.Node, dst_node: nodes.Node,
+                    edge: gr.MultiConnectorEdge[mm.Memlet], function_stream: CodeIOStream,
                     callsite_stream: CodeIOStream) -> None:
 
         # Check whether it is a known reduction that is possible in SVE
@@ -93,34 +87,24 @@ class SVECodeGen(TargetCodeGenerator):
 
         nc = not is_write_conflicted(dfg, edge)
         desc = edge.src.desc(sdfg)
-        if not nc or not isinstance(desc.dtype,
-                                    (dtypes.pointer, dtypes.vector)):
+        if not nc or not isinstance(desc.dtype, (dtypes.pointer, dtypes.vector)):
             # WCR on vectors works in two steps:
             # 1. Reduce the SVE register using SVE instructions into a scalar
             # 2. WCR the scalar to memory using DaCe functionality
-            wcr = self.cpu_codegen.write_and_resolve_expr(sdfg,
-                                                          edge.data,
-                                                          not nc,
-                                                          None,
-                                                          '@',
-                                                          dtype=desc.dtype)
-            callsite_stream.write(
-                wcr[:wcr.find('@')] +
-                util.REDUCTION_TYPE_TO_SVE[reduction_type] +
-                f'(svptrue_{util.TYPE_TO_SVE_SUFFIX[desc.dtype]}(), ' +
-                src_node.label + wcr[wcr.find('@') + 1:] + ');')
+            wcr = self.cpu_codegen.write_and_resolve_expr(sdfg, edge.data, not nc, None, '@', dtype=desc.dtype)
+            callsite_stream.write(wcr[:wcr.find('@')] + util.REDUCTION_TYPE_TO_SVE[reduction_type] +
+                                  f'(svptrue_{util.TYPE_TO_SVE_SUFFIX[desc.dtype]}(), ' + src_node.label +
+                                  wcr[wcr.find('@') + 1:] + ');')
             return
         else:
             ######################
             # Horizontal non-atomic reduction
             raise NotImplementedError()
 
-        return super().copy_memory(sdfg, dfg, state_id, src_node, dst_node,
-                                   edge, function_stream, callsite_stream)
+        return super().copy_memory(sdfg, dfg, state_id, src_node, dst_node, edge, function_stream, callsite_stream)
 
-    def generate_node(self, sdfg: SDFG, state: SDFGState, state_id: int,
-                      node: nodes.Node, function_stream: CodeIOStream,
-                      callsite_stream: CodeIOStream):
+    def generate_node(self, sdfg: SDFG, state: SDFGState, state_id: int, node: nodes.Node,
+                      function_stream: CodeIOStream, callsite_stream: CodeIOStream):
         self.add_header(function_stream)
 
         if not isinstance(node, nodes.Tasklet):
@@ -150,8 +134,7 @@ class SVECodeGen(TargetCodeGenerator):
                 requires_wb.append(edge)
 
         # Tasklet code
-        self.unparse_tasklet(sdfg, state, state_id, node, function_stream,
-                             callsite_stream)
+        self.unparse_tasklet(sdfg, state, state_id, node, function_stream, callsite_stream)
 
         # Writeback from temporary registers to memory
         for edge in requires_wb:
@@ -160,8 +143,7 @@ class SVECodeGen(TargetCodeGenerator):
         self.dispatcher.defined_vars.exit_scope(node)
         callsite_stream.write('}')
 
-    def generate_read(self, sdfg: SDFG, state: SDFGState, map: nodes.Map,
-                      edge: graph.MultiConnectorEdge[mm.Memlet],
+    def generate_read(self, sdfg: SDFG, state: SDFGState, map: nodes.Map, edge: graph.MultiConnectorEdge[mm.Memlet],
                       code: CodeIOStream):
         """
             Responsible for generating code for reads into a Tasklet, given the ingoing edge.
@@ -177,9 +159,7 @@ class SVECodeGen(TargetCodeGenerator):
             src_type = edge.src.out_connectors[edge.src_conn]
             if util.is_vector(src_type) and util.is_vector(dst_type):
                 # Directly read from shared vector register
-                code.write(
-                    f'{util.TYPE_TO_SVE[dst_type.type]} {dst_name} = {edge.data.data};'
-                )
+                code.write(f'{util.TYPE_TO_SVE[dst_type.type]} {dst_name} = {edge.data.data};')
             elif util.is_scalar(src_type) and util.is_scalar(dst_type):
                 # Directly read from shared scalar register
                 code.write(f'{dst_type} {dst_name} = {edge.data.data};')
@@ -200,8 +180,7 @@ class SVECodeGen(TargetCodeGenerator):
                     ##################
                     # Pointer reference
                     code.write(
-                        f'{dst_type} {dst_name} = {cpp.cpp_ptr_expr(sdfg, edge.data, None)};'
-                    )
+                        f'{dst_type} {dst_name} = {cpp.cpp_ptr_expr(sdfg, edge.data, None, codegen=self.frame)};')
                 elif util.is_vector(dst_type):
                     ##################
                     # Vector load
@@ -209,8 +188,7 @@ class SVECodeGen(TargetCodeGenerator):
                     stride = edge.data.get_stride(sdfg, map)
 
                     # First part of the declaration is `type name`
-                    load_lhs = '{} {}'.format(util.TYPE_TO_SVE[dst_type.type],
-                                              dst_name)
+                    load_lhs = '{} {}'.format(util.TYPE_TO_SVE[dst_type.type], dst_name)
 
                     # long long issue casting
                     ptr_cast = ''
@@ -221,33 +199,25 @@ class SVECodeGen(TargetCodeGenerator):
 
                     # Regular load and gather share the first arguments
                     load_args = '{}, {}'.format(
-                        util.get_loop_predicate(sdfg, state,
-                                                edge.dst), ptr_cast +
-                        cpp.cpp_ptr_expr(sdfg, edge.data, DefinedType.Pointer))
+                        util.get_loop_predicate(sdfg, state, edge.dst),
+                        ptr_cast + cpp.cpp_ptr_expr(sdfg, edge.data, DefinedType.Pointer, codegen=self.frame))
 
                     if stride == 1:
-                        code.write('{} = svld1({});'.format(
-                            load_lhs, load_args))
+                        code.write('{} = svld1({});'.format(load_lhs, load_args))
                     else:
-                        code.write(
-                            '{} = svld1_gather_index({}, svindex_s{}(0, {}));'.
-                            format(load_lhs, load_args,
-                                   util.get_base_type(dst_type).bytes * 8,
-                                   sym2cpp(stride)))
+                        code.write('{} = svld1_gather_index({}, svindex_s{}(0, {}));'.format(
+                            load_lhs, load_args,
+                            util.get_base_type(dst_type).bytes * 8, sym2cpp(stride)))
                 else:
                     ##################
                     # Scalar read from array
-                    code.write(
-                        f'{dst_type} {dst_name} = {cpp.cpp_array_expr(sdfg, edge.data)};'
-                    )
+                    code.write(f'{dst_type} {dst_name} = {cpp.cpp_array_expr(sdfg, edge.data, codegen=self.frame)};')
             elif isinstance(desc, data.Scalar):
                 # Refer to shared variable
                 src_type = desc.dtype
                 if util.is_vector(src_type) and util.is_vector(dst_type):
                     # Directly read from shared vector register
-                    code.write(
-                        f'{util.TYPE_TO_SVE[dst_type.type]} {dst_name} = {edge.data.data};'
-                    )
+                    code.write(f'{util.TYPE_TO_SVE[dst_type.type]} {dst_name} = {edge.data.data};')
                 elif util.is_scalar(src_type) and util.is_scalar(dst_type):
                     # Directly read from shared scalar register
                     code.write(f'{dst_type} {dst_name} = {edge.data.data};')
@@ -257,11 +227,9 @@ class SVECodeGen(TargetCodeGenerator):
                         f'{util.TYPE_TO_SVE[dst_type.type]} {dst_name} = svdup_{util.TYPE_TO_SVE_SUFFIX[dst_type.type]}({edge.data.data});'
                     )
                 else:
-                    raise util.NotSupportedError(
-                        'Unsupported Scalar->Code edge')
+                    raise util.NotSupportedError('Unsupported Scalar->Code edge')
         else:
-            raise util.NotSupportedError(
-                'Only copy from Tasklets and AccessNodes is supported')
+            raise util.NotSupportedError('Only copy from Tasklets and AccessNodes is supported')
 
     def generate_out_register(self,
                               sdfg: SDFG,
@@ -284,16 +252,13 @@ class SVECodeGen(TargetCodeGenerator):
         if use_data_name:
             src_name = edge.data.data
 
-        if isinstance(dst_node, nodes.AccessNode) and isinstance(
-                dst_node.desc(sdfg), data.Stream):
+        if isinstance(dst_node, nodes.AccessNode) and isinstance(dst_node.desc(sdfg), data.Stream):
             # Streams don't need writeback and are treated differently
-            self.stream_associations[edge.src_conn] = (edge.data.data,
-                                                       src_type.base_type)
+            self.stream_associations[edge.src_conn] = (edge.data.data, src_type.base_type)
             return False
         elif edge.data.wcr is not None:
             # WCR is addressed within the unparser to capture conditionals
-            self.wcr_associations[edge.src_conn] = (dst_node, edge,
-                                                    src_type.base_type)
+            self.wcr_associations[edge.src_conn] = (dst_node, edge, src_type.base_type)
             return False
 
         # Create temporary registers
@@ -303,8 +268,7 @@ class SVECodeGen(TargetCodeGenerator):
         elif util.is_scalar(src_type):
             ctype = src_type.ctype
         else:
-            raise util.NotSupportedError(
-                'Unsupported Code->Code edge (pointer)')
+            raise util.NotSupportedError('Unsupported Code->Code edge (pointer)')
 
         self.dispatcher.defined_vars.add(src_name, DefinedType.Scalar, ctype)
         code.write(f'{ctype} {src_name};')
@@ -312,8 +276,7 @@ class SVECodeGen(TargetCodeGenerator):
         return True
 
     def generate_writeback(self, sdfg: SDFG, state: SDFGState, map: nodes.Map,
-                           edge: graph.MultiConnectorEdge[mm.Memlet],
-                           code: CodeIOStream):
+                           edge: graph.MultiConnectorEdge[mm.Memlet], code: CodeIOStream):
         """
             Responsible for generating code for a writeback in a Tasklet, given the outgoing edge.
             This is mainly taking the temporary register and writing it back.
@@ -331,15 +294,13 @@ class SVECodeGen(TargetCodeGenerator):
             # Code->Code edges
             dst_type = edge.dst.in_connectors[edge.dst_conn]
 
-            if (util.is_vector(src_type) and util.is_vector(dst_type)) or (
-                    util.is_scalar(src_type) and util.is_scalar(dst_type)):
+            if (util.is_vector(src_type) and util.is_vector(dst_type)) or (util.is_scalar(src_type)
+                                                                           and util.is_scalar(dst_type)):
                 # Simply write back to shared register
                 code.write(f'{edge.data.data} = {src_name};')
             elif util.is_scalar(src_type) and util.is_vector(dst_type):
                 # Scalar broadcast to shared vector register
-                code.write(
-                    f'{edge.data.data} = svdup_{util.TYPE_TO_SVE_SUFFIX[dst_type.type]}({src_name});'
-                )
+                code.write(f'{edge.data.data} = svdup_{util.TYPE_TO_SVE_SUFFIX[dst_type.type]}({src_name});')
             else:
                 raise util.NotSupportedError('Unsupported Code->Code edge')
         elif isinstance(dst_node, nodes.AccessNode):
@@ -366,8 +327,7 @@ class SVECodeGen(TargetCodeGenerator):
 
                     store_args = '{}, {}'.format(
                         util.get_loop_predicate(sdfg, state, edge.src),
-                        ptr_cast +
-                        cpp.cpp_ptr_expr(sdfg, edge.data, DefinedType.Pointer),
+                        ptr_cast + cpp.cpp_ptr_expr(sdfg, edge.data, DefinedType.Pointer, codegen=self.frame),
                     )
 
                     if stride == 1:
@@ -379,8 +339,7 @@ class SVECodeGen(TargetCodeGenerator):
                 else:
                     ##################
                     # Scalar write into array
-                    code.write(
-                        f'{cpp.cpp_array_expr(sdfg, edge.data)} = {src_name};')
+                    code.write(f'{cpp.cpp_array_expr(sdfg, edge.data, codegen=self.frame)} = {src_name};')
             elif isinstance(desc, data.Scalar):
                 ##################
                 # Write into Scalar
@@ -397,62 +356,46 @@ class SVECodeGen(TargetCodeGenerator):
                     if util.is_vector(desc.dtype):
                         ##################
                         # Broadcast into scalar AccessNode
-                        code.write(
-                            f'{edge.data.data} = svdup_{util.TYPE_TO_SVE_SUFFIX[src_type]}({src_name});'
-                        )
+                        code.write(f'{edge.data.data} = svdup_{util.TYPE_TO_SVE_SUFFIX[src_type]}({src_name});')
                     else:
                         ##################
                         # Scalar write into scalar AccessNode
                         code.write(f'{edge.data.data} = {src_name};')
 
         else:
-            raise util.NotSupportedError(
-                'Only writeback to Tasklets and AccessNodes is supported')
+            raise util.NotSupportedError('Only writeback to Tasklets and AccessNodes is supported')
 
-    def declare_array(self, sdfg: SDFG, dfg: SDFGState, state_id: int,
-                      node: nodes.Node, nodedesc: data.Data,
-                      global_stream: CodeIOStream,
-                      declaration_stream: CodeIOStream) -> None:
-        self.cpu_codegen.declare_array(sdfg, dfg, state_id, node, nodedesc,
-                                       global_stream, declaration_stream)
+    def declare_array(self, sdfg: SDFG, dfg: SDFGState, state_id: int, node: nodes.Node, nodedesc: data.Data,
+                      global_stream: CodeIOStream, declaration_stream: CodeIOStream) -> None:
+        self.cpu_codegen.declare_array(sdfg, dfg, state_id, node, nodedesc, global_stream, declaration_stream)
 
-    def allocate_array(self, sdfg: SDFG, dfg: SDFGState, state_id: int,
-                       node: nodes.Node, nodedesc: data.Data,
-                       global_stream: CodeIOStream,
-                       declaration_stream: CodeIOStream,
+    def allocate_array(self, sdfg: SDFG, dfg: SDFGState, state_id: int, node: nodes.Node, nodedesc: data.Data,
+                       global_stream: CodeIOStream, declaration_stream: CodeIOStream,
                        allocation_stream: CodeIOStream) -> None:
         if nodedesc.storage == dtypes.StorageType.SVE_Register:
             sve_type = util.TYPE_TO_SVE[nodedesc.dtype]
-            self.dispatcher.defined_vars.add(node.data, DefinedType.Scalar,
-                                             sve_type)
+            self.dispatcher.defined_vars.add(node.data, DefinedType.Scalar, sve_type)
             return
 
-        if util.get_sve_scope(sdfg, dfg, node) is not None and isinstance(
-                nodedesc, data.Scalar) and isinstance(nodedesc.dtype,
-                                                      dtypes.vector):
+        if util.get_sve_scope(sdfg, dfg, node) is not None and isinstance(nodedesc, data.Scalar) and isinstance(
+                nodedesc.dtype, dtypes.vector):
             # Special allocation if vector Code->Code register in SVE scope
             # We prevent dace::vec<>'s and allocate SVE registers instead
-            if self.dispatcher.defined_vars.has(node.data):
+            ptrname = cpp.ptr(node.data, nodedesc, sdfg, self.frame)
+            if self.dispatcher.defined_vars.has(ptrname):
                 sve_type = util.TYPE_TO_SVE[nodedesc.dtype.vtype]
-                self.dispatcher.defined_vars.add(node.data, DefinedType.Scalar,
-                                                 sve_type)
-                declaration_stream.write(f'{sve_type} {node.data};')
+                self.dispatcher.defined_vars.add(ptrname, DefinedType.Scalar, sve_type)
+                declaration_stream.write(f'{sve_type} {ptrname};')
             return
 
-        self.cpu_codegen.allocate_array(sdfg, dfg, state_id, node, nodedesc,
-                                        global_stream, declaration_stream,
+        self.cpu_codegen.allocate_array(sdfg, dfg, state_id, node, nodedesc, global_stream, declaration_stream,
                                         allocation_stream)
 
-    def deallocate_array(self, sdfg: SDFG, dfg: SDFGState, state_id: int,
-                         node: nodes.Node, nodedesc: data.Data,
-                         function_stream: CodeIOStream,
-                         callsite_stream: CodeIOStream) -> None:
-        return self.cpu_codegen.deallocate_array(sdfg, dfg, state_id, node,
-                                                 nodedesc, function_stream,
-                                                 callsite_stream)
+    def deallocate_array(self, sdfg: SDFG, dfg: SDFGState, state_id: int, node: nodes.Node, nodedesc: data.Data,
+                         function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
+        return self.cpu_codegen.deallocate_array(sdfg, dfg, state_id, node, nodedesc, function_stream, callsite_stream)
 
-    def generate_scope(self, sdfg: dace.SDFG, scope: ScopeSubgraphView,
-                       state_id: int, function_stream: CodeIOStream,
+    def generate_scope(self, sdfg: dace.SDFG, scope: ScopeSubgraphView, state_id: int, function_stream: CodeIOStream,
                        callsite_stream: CodeIOStream):
         entry_node = scope.source_nodes()[0]
         current_map = entry_node.map
@@ -461,9 +404,7 @@ class SVECodeGen(TargetCodeGenerator):
         if len(current_map.params) > 1:
             raise util.NotSupportedError('SVE map must be one dimensional')
 
-        loop_types = list(
-            set([util.get_base_type(sdfg.arrays[a].dtype)
-                 for a in sdfg.arrays]))
+        loop_types = list(set([util.get_base_type(sdfg.arrays[a].dtype) for a in sdfg.arrays]))
 
         # Edge case if no arrays are used
         loop_type = loop_types[0] if len(loop_types) > 0 else dace.int64
@@ -473,12 +414,7 @@ class SVECodeGen(TargetCodeGenerator):
         long_type = copy.copy(dace.int64)
         long_type.ctype = 'int64_t'
 
-        self.counter_type = {
-            1: dace.int8,
-            2: dace.int16,
-            4: dace.int32,
-            8: long_type
-        }[ltype_size]
+        self.counter_type = {1: dace.int8, 2: dace.int16, 4: dace.int32, 8: long_type}[ltype_size]
 
         callsite_stream.write('{')
         self.dispatcher.defined_vars.enter_scope(scope)
@@ -488,10 +424,8 @@ class SVECodeGen(TargetCodeGenerator):
         for e in dace.sdfg.dynamic_map_inputs(state_dfg, entry_node):
             if e.data.data != e.dst_conn:
                 callsite_stream.write(
-                    self.cpu_codegen.memlet_definition(
-                        sdfg, e.data, False, e.dst_conn,
-                        e.dst.in_connectors[e.dst_conn]), sdfg, state_id,
-                    entry_node)
+                    self.cpu_codegen.memlet_definition(sdfg, e.data, False, e.dst_conn,
+                                                       e.dst.in_connectors[e.dst_conn]), sdfg, state_id, entry_node)
 
         param = current_map.params[0]
         rng = current_map.range[0]
@@ -499,8 +433,7 @@ class SVECodeGen(TargetCodeGenerator):
 
         # Generate the SVE loop header
         # The name of our loop predicate is always __pg_{param}
-        self.dispatcher.defined_vars.add('__pg_' + param, DefinedType.Scalar,
-                                         'svbool_t')
+        self.dispatcher.defined_vars.add('__pg_' + param, DefinedType.Scalar, 'svbool_t')
 
         # Declare our counting variable (e.g. i) and precompute the loop predicate for our range
         callsite_stream.write(f'{self.counter_type} {param} = {begin};')
@@ -508,13 +441,10 @@ class SVECodeGen(TargetCodeGenerator):
         end_param = f'__{param}_to'
         callsite_stream.write(f'{self.counter_type} {end_param} = {end};')
 
-        callsite_stream.write(
-            f'svbool_t __pg_{param} = svwhilele_b{ltype_size * 8}({param}, {end_param});'
-        )
+        callsite_stream.write(f'svbool_t __pg_{param} = svwhilele_b{ltype_size * 8}({param}, {end_param});')
 
         # Test for the predicate
-        callsite_stream.write(
-            f'while(svptest_any(svptrue_b{ltype_size * 8}(), __pg_{param})) {{')
+        callsite_stream.write(f'while(svptest_any(svptrue_b{ltype_size * 8}(), __pg_{param})) {{')
 
         # Allocate scope related memory
         for node, _ in scope.all_nodes_recursive():
@@ -522,8 +452,7 @@ class SVECodeGen(TargetCodeGenerator):
                 # Create empty shared registers for outputs into other tasklets
                 for edge in state_dfg.out_edges(node):
                     if isinstance(edge.dst, dace.nodes.Tasklet):
-                        self.generate_out_register(sdfg, state_dfg, edge,
-                                                   callsite_stream, True)
+                        self.generate_out_register(sdfg, state_dfg, edge, callsite_stream, True)
 
         # Dispatch the subgraph generation
         self.dispatcher.dispatch_subgraph(sdfg,
@@ -539,19 +468,15 @@ class SVECodeGen(TargetCodeGenerator):
         callsite_stream.write(f'{param} += svcnt{size_letter}() * {stride};')
 
         # Then recompute the loop predicate
-        callsite_stream.write(
-            f'__pg_{param} = svwhilele_b{ltype_size * 8}({param}, {end_param});'
-        )
+        callsite_stream.write(f'__pg_{param} = svwhilele_b{ltype_size * 8}({param}, {end_param});')
 
         callsite_stream.write('}')
 
         self.dispatcher.defined_vars.exit_scope(scope)
         callsite_stream.write('}')
 
-    def unparse_tasklet(self, sdfg: SDFG, dfg: state.StateSubgraphView,
-                        state_id: int, node: nodes.Node,
-                        function_stream: CodeIOStream,
-                        callsite_stream: CodeIOStream):
+    def unparse_tasklet(self, sdfg: SDFG, dfg: state.StateSubgraphView, state_id: int, node: nodes.Node,
+                        function_stream: CodeIOStream, callsite_stream: CodeIOStream):
         state_dfg: SDFGState = sdfg.nodes()[state_id]
 
         callsite_stream.write('\n///////////////////')
@@ -561,10 +486,9 @@ class SVECodeGen(TargetCodeGenerator):
 
         # Constants and other defined symbols
         defined_symbols = state_dfg.symbols_defined_at(node)
-        defined_symbols.update({
-            k: v.dtype if hasattr(v, 'dtype') else dtypes.typeclass(type(v))
-            for k, v in sdfg.constants.items()
-        })
+        defined_symbols.update(
+            {k: v.dtype if hasattr(v, 'dtype') else dtypes.typeclass(type(v))
+             for k, v in sdfg.constants.items()})
 
         # All memlets of that node
         memlets = {}
@@ -579,12 +503,11 @@ class SVECodeGen(TargetCodeGenerator):
         for stmt in body:
             stmt = copy.deepcopy(stmt)
             result = StringIO()
-            dace.codegen.targets.sve.unparse.SVEUnparser(
-                sdfg, dfg, self.current_map, self.cpu_codegen,
-                stmt, result, body, memlets,
-                util.get_loop_predicate(sdfg, dfg, node), self.counter_type,
-                defined_symbols, self.stream_associations,
-                self.wcr_associations)
+            dace.codegen.targets.sve.unparse.SVEUnparser(sdfg, dfg, self.current_map, self.cpu_codegen,
+                                                         stmt, result, body, memlets,
+                                                         util.get_loop_predicate(sdfg, dfg, node), self.counter_type,
+                                                         defined_symbols, self.stream_associations,
+                                                         self.wcr_associations)
             callsite_stream.write(result.getvalue(), sdfg, state_id, node)
 
         callsite_stream.write('///////////////////\n\n')

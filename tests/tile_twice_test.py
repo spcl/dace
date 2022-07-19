@@ -1,6 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
-from dace.transformation.pattern_matching import match_patterns
+from dace.transformation.passes.pattern_matching import match_patterns
 from dace.transformation.dataflow import MapTiling
 import numpy as np
 
@@ -12,10 +12,9 @@ def tile_twice_test(a: dace.float64[200]):
 
 def test():
     sdfg = tile_twice_test.to_sdfg()
-    sdfg.apply_strict_transformations()
+    sdfg.simplify()
     sdfg.apply_transformations(MapTiling, options={'tile_sizes': (5, )})
-    for i, match in enumerate(
-            match_patterns(sdfg, MapTiling, states=[sdfg.node(0)])):
+    for i, match in enumerate(match_patterns(sdfg, MapTiling, states=[sdfg.node(0)])):
         if i == 0:  # Match the first map again
             match.tile_sizes = (4, )
             match.apply_pattern(sdfg)

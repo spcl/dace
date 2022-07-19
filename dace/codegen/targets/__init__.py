@@ -8,3 +8,4 @@ from .rtl import RTLCodeGen
 from .unroller import UnrollCodeGen
 from .mlir.mlir import MLIRCodeGen
 from .sve.codegen import SVECodeGen
+from .snitch import SnitchCodeGen

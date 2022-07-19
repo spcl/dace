@@ -2,7 +2,6 @@
 
 # DaCe program with two state that will be generated as two kernels
 
-
 import dace
 import numpy as np
 import argparse
@@ -26,29 +25,17 @@ def make_sdfg(dtype=dace.float32):
     in_host_b = copy_in_state.add_read("b")
     in_host_c = copy_in_state.add_read("c")
 
-    sdfg.add_array("device_a", shape=[1], dtype=dtype, storage=dace.dtypes.StorageType.FPGA_Global,
-                   transient=True)
-    sdfg.add_array("device_b", shape=[1], dtype=dtype, storage=dace.dtypes.StorageType.FPGA_Global,
-                   transient=True)
-    sdfg.add_array("device_c", shape=[1], dtype=dtype, storage=dace.dtypes.StorageType.FPGA_Global,
-                   transient=True)
+    sdfg.add_array("device_a", shape=[1], dtype=dtype, storage=dace.dtypes.StorageType.FPGA_Global, transient=True)
+    sdfg.add_array("device_b", shape=[1], dtype=dtype, storage=dace.dtypes.StorageType.FPGA_Global, transient=True)
+    sdfg.add_array("device_c", shape=[1], dtype=dtype, storage=dace.dtypes.StorageType.FPGA_Global, transient=True)
 
     in_device_a = copy_in_state.add_write("device_a")
     in_device_b = copy_in_state.add_write("device_b")
     in_device_c = copy_in_state.add_write("device_c")
 
-    copy_in_state.add_memlet_path(
-        in_host_a, in_device_a,
-        memlet=Memlet.simple(in_host_a, "0")
-    )
-    copy_in_state.add_memlet_path(
-        in_host_b, in_device_b,
-        memlet=Memlet.simple(in_host_b, "0")
-    )
-    copy_in_state.add_memlet_path(
-        in_host_c, in_device_c,
-        memlet=Memlet.simple(in_host_c, "0")
-    )
+    copy_in_state.add_memlet_path(in_host_a, in_device_a, memlet=Memlet.simple(in_host_a, "0"))
+    copy_in_state.add_memlet_path(in_host_b, in_device_b, memlet=Memlet.simple(in_host_b, "0"))
+    copy_in_state.add_memlet_path(in_host_c, in_device_c, memlet=Memlet.simple(in_host_c, "0"))
 
     ###########################################################################
     # Copy data from FPGA
@@ -60,15 +47,9 @@ def make_sdfg(dtype=dace.float32):
     device_b = copy_out_state.add_read("device_b")
     host_b = copy_out_state.add_write("b")
 
-    copy_out_state.add_memlet_path(
-        device_c, host_c,
-        memlet=Memlet.simple(host_c, "0")
-    )
+    copy_out_state.add_memlet_path(device_c, host_c, memlet=Memlet.simple(host_c, "0"))
 
-    copy_out_state.add_memlet_path(
-        device_b, host_b,
-        memlet=Memlet.simple(host_b, "0")
-    )
+    copy_out_state.add_memlet_path(device_b, host_b, memlet=Memlet.simple(host_b, "0"))
 
     ########################################################################
     # FPGA, First State
@@ -78,24 +59,11 @@ def make_sdfg(dtype=dace.float32):
     a_in = fpga_state_0.add_read("device_a")
     b_out = fpga_state_0.add_write("device_b")
 
-    state_0_tasklet = fpga_state_0.add_tasklet(
-        'state_0_tasklet',
-        ['inCon'],
-        ['outCon'],
-        'outCon = inCon + 1'
-    )
+    state_0_tasklet = fpga_state_0.add_tasklet('state_0_tasklet', ['inCon'], ['outCon'], 'outCon = inCon + 1')
 
-    fpga_state_0.add_memlet_path(
-        a_in, state_0_tasklet,
-        dst_conn='inCon',
-        memlet=dace.Memlet.simple(a_in.data, '0')
-    )
+    fpga_state_0.add_memlet_path(a_in, state_0_tasklet, dst_conn='inCon', memlet=dace.Memlet.simple(a_in.data, '0'))
 
-    fpga_state_0.add_memlet_path(
-        state_0_tasklet, b_out,
-        src_conn='outCon',
-        memlet=dace.Memlet.simple(b_out.data, '0')
-    )
+    fpga_state_0.add_memlet_path(state_0_tasklet, b_out, src_conn='outCon', memlet=dace.Memlet.simple(b_out.data, '0'))
 
     ########################################################################
     # FPGA, Second State
@@ -105,33 +73,17 @@ def make_sdfg(dtype=dace.float32):
     b_in = fpga_state_1.add_read("device_b")
     c_out = fpga_state_1.add_write("device_c")
 
-    state_1_tasklet = fpga_state_1.add_tasklet(
-        'state_1_tasklet',
-        ['inCon'],
-        ['outCon'],
-        'outCon = inCon + 1'
-    )
+    state_1_tasklet = fpga_state_1.add_tasklet('state_1_tasklet', ['inCon'], ['outCon'], 'outCon = inCon + 1')
 
-    fpga_state_1.add_memlet_path(
-        b_in, state_1_tasklet,
-        dst_conn='inCon',
-        memlet=dace.Memlet.simple(b_in.data, '0')
-    )
+    fpga_state_1.add_memlet_path(b_in, state_1_tasklet, dst_conn='inCon', memlet=dace.Memlet.simple(b_in.data, '0'))
 
-    fpga_state_1.add_memlet_path(
-        state_1_tasklet, c_out,
-        src_conn='outCon',
-        memlet=dace.Memlet.simple(c_out.data, '0')
-    )
+    fpga_state_1.add_memlet_path(state_1_tasklet, c_out, src_conn='outCon', memlet=dace.Memlet.simple(c_out.data, '0'))
 
     ######################################
     # Interstate edges
-    sdfg.add_edge(copy_in_state, fpga_state_0,
-                  dace.sdfg.sdfg.InterstateEdge())
-    sdfg.add_edge(fpga_state_0, fpga_state_1,
-                  dace.sdfg.sdfg.InterstateEdge())
-    sdfg.add_edge(fpga_state_1, copy_out_state,
-                  dace.sdfg.sdfg.InterstateEdge())
+    sdfg.add_edge(copy_in_state, fpga_state_0, dace.sdfg.sdfg.InterstateEdge())
+    sdfg.add_edge(fpga_state_0, fpga_state_1, dace.sdfg.sdfg.InterstateEdge())
+    sdfg.add_edge(fpga_state_1, copy_out_state, dace.sdfg.sdfg.InterstateEdge())
 
     #########
     # Validate
@@ -160,4 +112,3 @@ if __name__ == "__main__":
         print("==== Program end ====")
     else:
         raise Exception("==== Program Error! ====")
-

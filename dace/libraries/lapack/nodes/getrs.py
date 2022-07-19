@@ -22,8 +22,9 @@ class ExpandGetrsPure(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
-        raise(NotImplementedError)
-  
+        raise (NotImplementedError)
+
+
 @dace.library.expansion
 class ExpandGetrsOpenBLAS(ExpandTransformation):
 
@@ -31,8 +32,8 @@ class ExpandGetrsOpenBLAS(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
-        (desc_a, stride_a, rows_a, cols_a), (desc_rhs, stride_rhs, rows_rhs, cols_rhs), desc_ipiv, desc_res = node.validate(
-            parent_sdfg, parent_state)
+        (desc_a, stride_a, rows_a, cols_a), (desc_rhs, stride_rhs, rows_rhs,
+                                             cols_rhs), desc_ipiv, desc_res = node.validate(parent_sdfg, parent_state)
         dtype = desc_a.dtype.base_type
         lapack_dtype = blas_helpers.to_blastype(dtype.type).lower()
         cast = ""
@@ -41,8 +42,7 @@ class ExpandGetrsOpenBLAS(ExpandTransformation):
         elif lapack_dtype == 'z':
             cast = "(lapack_complex_double*)"
         if desc_a.dtype.veclen > 1:
-            raise(NotImplementedError)
-
+            raise (NotImplementedError)
 
         n = n or node.n
         code = f"_res = LAPACKE_{lapack_dtype}getrs(LAPACK_ROW_MAJOR, 'N', {rows_a}, {cols_rhs}, {cast}_a, {stride_a}, _ipiv, {cast}_rhs_in, {stride_rhs});"
@@ -61,8 +61,8 @@ class ExpandGetrsMKL(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
-        (desc_a, stride_a, rows_a, cols_a), (desc_rhs, stride_rhs, rows_rhs, cols_rhs), desc_ipiv, desc_res = node.validate(
-            parent_sdfg, parent_state)
+        (desc_a, stride_a, rows_a, cols_a), (desc_rhs, stride_rhs, rows_rhs,
+                                             cols_rhs), desc_ipiv, desc_res = node.validate(parent_sdfg, parent_state)
         dtype = desc_a.dtype.base_type
         lapack_dtype = blas_helpers.to_blastype(dtype.type).lower()
         cast = ""
@@ -71,8 +71,7 @@ class ExpandGetrsMKL(ExpandTransformation):
         elif lapack_dtype == 'z':
             cast = "(MKL_Complex16*)"
         if desc_a.dtype.veclen > 1:
-            raise(NotImplementedError)
-
+            raise (NotImplementedError)
 
         n = n or node.n
         code = f"_res = LAPACKE_{lapack_dtype}getrs(LAPACK_ROW_MAJOR, 'N', {rows_a}, {cols_rhs}, {cast}_a, {stride_a}, _ipiv, {cast}_rhs_in, {stride_rhs});"
@@ -83,6 +82,7 @@ class ExpandGetrsMKL(ExpandTransformation):
                                           language=dace.dtypes.Language.CPP)
         return tasklet
 
+
 @dace.library.expansion
 class ExpandGetrsCuSolverDn(ExpandTransformation):
 
@@ -90,8 +90,8 @@ class ExpandGetrsCuSolverDn(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
-        (desc_a, stride_a, rows_a, cols_a), (desc_rhs, stride_rhs, rows_rhs, cols_rhs), desc_ipiv, desc_res = node.validate(
-            parent_sdfg, parent_state)
+        (desc_a, stride_a, rows_a, cols_a), (desc_rhs, stride_rhs, rows_rhs,
+                                             cols_rhs), desc_ipiv, desc_res = node.validate(parent_sdfg, parent_state)
         dtype = desc_a.dtype.base_type
         veclen = desc_a.dtype.veclen
 
@@ -107,8 +107,7 @@ class ExpandGetrsCuSolverDn(ExpandTransformation):
         if len(desc_rhs.shape) == 1:
             stride_rhs = rows_rhs
 
-        code = (environments.cusolverdn.cuSolverDn.handle_setup_code(node) +
-                f"""
+        code = (environments.cusolverdn.cuSolverDn.handle_setup_code(node) + f"""
                 cusolverDn{func}(
                     __dace_cusolverDn_handle, CUBLAS_OP_N, {rows_a}, {cols_rhs},
                     ({cuda_type}*)_a, {stride_a}, _ipiv, ({cuda_type}*)_rhs_in, {stride_rhs}, _res); 
@@ -120,8 +119,7 @@ class ExpandGetrsCuSolverDn(ExpandTransformation):
                                           code,
                                           language=dace.dtypes.Language.CPP)
         conn = tasklet.out_connectors
-        conn = {c: (dtypes.pointer(dace.int32) if c == '_res' else t)
-                for c, t in conn.items()}
+        conn = {c: (dtypes.pointer(dace.int32) if c == '_res' else t) for c, t in conn.items()}
         tasklet.out_connectors = conn
 
         return tasklet
@@ -131,22 +129,14 @@ class ExpandGetrsCuSolverDn(ExpandTransformation):
 class Getrs(dace.sdfg.nodes.LibraryNode):
 
     # Global properties
-    implementations = {
-        "OpenBLAS": ExpandGetrsOpenBLAS,
-        "MKL": ExpandGetrsMKL,
-        "cuSolverDn": ExpandGetrsCuSolverDn
-    }
+    implementations = {"OpenBLAS": ExpandGetrsOpenBLAS, "MKL": ExpandGetrsMKL, "cuSolverDn": ExpandGetrsCuSolverDn}
     default_implementation = None
 
     # Object fields
     n = dace.properties.SymbolicProperty(allow_none=True, default=None)
 
     def __init__(self, name, n=None, *args, **kwargs):
-        super().__init__(name,
-                         *args,
-                         inputs={"_a", "_rhs_in", "_ipiv"},
-                         outputs={"_rhs_out", "_res"},
-                         **kwargs)
+        super().__init__(name, *args, inputs={"_a", "_rhs_in", "_ipiv"}, outputs={"_rhs_out", "_res"}, **kwargs)
 
     def validate(self, sdfg, state):
         """
@@ -172,7 +162,7 @@ class Getrs(dace.sdfg.nodes.LibraryNode):
         sqdims1 = squeezed1.squeeze()
         squeezed2 = copy.deepcopy(in_memlets[1].subset)
         sqdims2 = squeezed2.squeeze()
-        
+
         desc_a, desc_rhs_in, desc_rhs_out, desc_ipiv, desc_res = None, None, None, None, None
         for e in state.in_edges(self):
             if e.dst_conn == "_a":
@@ -186,7 +176,7 @@ class Getrs(dace.sdfg.nodes.LibraryNode):
                 desc_res = sdfg.arrays[e.data.data]
             if e.src_conn == "_rhs_out":
                 desc_rhs_out = sdfg.arrays[e.data.data]
-        
+
         if desc_rhs_in != desc_rhs_out:
             raise ValueError("Input and output must be equal!")
         desc_rhs = desc_rhs_in
@@ -209,4 +199,4 @@ class Getrs(dace.sdfg.nodes.LibraryNode):
         if rows_a != cols_a:
             raise ValueError("Matrix A must be square")
 
-        return (desc_a, stride_a, rows_a, cols_a), (desc_rhs,  stride_rhs, rows_rhs, cols_rhs), desc_ipiv, desc_res
+        return (desc_a, stride_a, rows_a, cols_a), (desc_rhs, stride_rhs, rows_rhs, cols_rhs), desc_ipiv, desc_res

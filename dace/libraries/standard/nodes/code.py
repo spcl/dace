@@ -2,6 +2,7 @@
 from copy import deepcopy
 from dace import dtypes
 from dace.data import Data
+from dace.properties import Property
 from dace.sdfg.nodes import Node, Tasklet, LibraryNode
 import dace.library
 from dace.memlet import Memlet
@@ -17,22 +18,18 @@ def _dataview(data: Data, memlet: Memlet) -> Data:
     return result
 
 
-def _get_inputs_and_outputs(
-        sdfg: SDFG, state: SDFGState,
-        node: Node) -> Tuple[Dict[str, Data], Dict[str, Data]]:
+def _get_inputs_and_outputs(sdfg: SDFG, state: SDFGState, node: Node) -> Tuple[Dict[str, Data], Dict[str, Data]]:
     """ Returns two dictionaries that map from input/output connectors to data 
         descriptors. 
         :return: Tuple of (input memlet mapping, output memlet mapping).
     """
     inputs: Dict[str, Data] = {}
     for edge in state.in_edges(node):
-        inputs[edge.dst_conn] = _dataview(sdfg.arrays[edge.data.data],
-                                          edge.data)
+        inputs[edge.dst_conn] = _dataview(sdfg.arrays[edge.data.data], edge.data)
 
     outputs: Dict[str, Data] = {}
     for edge in state.out_edges(node):
-        outputs[edge.src_conn] = _dataview(sdfg.arrays[edge.data.data],
-                                           edge.data)
+        outputs[edge.src_conn] = _dataview(sdfg.arrays[edge.data.data], edge.data)
 
     return inputs, outputs
 
@@ -46,8 +43,15 @@ class CodeLibraryNode(LibraryNode):
     implementations = {}
     default_implementation = None
 
-    def generate_code(self, inputs: Dict[str, Data],
-                      outputs: Dict[str, Data]) -> str:
+    inputdict = Property(dtype=dict, default={})
+    outputdict = Property(dtype=dict, default={})
+
+    @property
+    def has_side_effects(self) -> bool:
+        # By default, assume code library nodes have side effects unless said otherwise
+        return True
+
+    def generate_code(self, inputs: Dict[str, Data], outputs: Dict[str, Data]) -> str:
         """ Method that is responsible for generating the code related to
             this node.
             :param inputs: A dictionary mapping input names (on node connectors)
@@ -60,27 +64,18 @@ class CodeLibraryNode(LibraryNode):
         """
         raise NotImplementedError('Must be overridden by subclasses')
 
-    def __init__(self,
-                 input_names,
-                 output_names,
-                 *args,
-                 name='Custom Code',
-                 **kwargs):
+    def __init__(self, input_names, output_names, *args, name='Custom Code', **kwargs):
         # Store connector types, if given
         if isinstance(input_names, dict):
-            self._inputdict = input_names
+            self.inputdict = input_names
         else:
-            self._inputdict = {k: None for k in set(input_names)}
+            self.inputdict = {k: None for k in set(input_names)}
         if isinstance(output_names, dict):
-            self._outputdict = output_names
+            self.outputdict = output_names
         else:
-            self._outputdict = {k: None for k in set(output_names)}
+            self.outputdict = {k: None for k in set(output_names)}
 
-        super().__init__(name,
-                         *args,
-                         inputs=set(input_names),
-                         outputs=set(output_names),
-                         **kwargs)
+        super().__init__(name, *args, inputs=set(input_names), outputs=set(output_names), **kwargs)
 
 
 @dace.library.expansion
@@ -94,11 +89,7 @@ class Expansion(ExpandTransformation):
         # Generate the appropriate code
         code = node.generate_code(inputs, outputs)
         # Replace this node with a C++ tasklet
-        return Tasklet('custom_code',
-                       node._inputdict,
-                       node._outputdict,
-                       code,
-                       language=dtypes.Language.CPP)
+        return Tasklet('custom_code', node.inputdict, node.outputdict, code, language=dtypes.Language.CPP)
 
 
 CodeLibraryNode.register_implementation('default', Expansion)

@@ -6,8 +6,7 @@ N = dace.symbol('N')
 
 
 @dace.program
-def slicetest(A: dace.float64[N, N - 1], B: dace.float64[N - 1, N],
-              C: dace.float64[N - 1, N - 1]):
+def slicetest(A: dace.float64[N, N - 1], B: dace.float64[N - 1, N], C: dace.float64[N - 1, N - 1]):
     tmp = A[1:N] * B[:, 0:N - 1]
     for i, j in dace.map[0:4, 0:4]:
         with dace.tasklet:
@@ -30,7 +29,7 @@ def test():
 
 def test_slice_constant():
     @dace.program
-    def sliceprog(A: dace.float64[20], slc: dace.constant):
+    def sliceprog(A: dace.float64[20], slc: dace.compiletime):
         A[slc] += 5
 
     myslice = slice(1, 10, 2)
@@ -44,7 +43,7 @@ def test_slice_constant():
 
 def test_slice_with_nones():
     @dace.program
-    def sliceprog(A: dace.float64[20], slc: dace.constant):
+    def sliceprog(A: dace.float64[20], slc: dace.compiletime):
         A[slc] += 5
 
     myslice = slice(None, None, None)
@@ -71,7 +70,7 @@ def test_literal_slice():
 
 def test_slice_member():
     @dace.program
-    def inner(q, kslice: dace.constant):
+    def inner(q, kslice: dace.compiletime):
         q[kslice] = 2 * q[kslice]
 
     class AClass:
@@ -88,7 +87,6 @@ def test_slice_member():
     expected[obj.kslice] *= 2
     obj.forward(A)
     assert np.allclose(A, expected)
-
 
 
 if __name__ == '__main__':

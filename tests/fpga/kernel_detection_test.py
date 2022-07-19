@@ -7,7 +7,7 @@ import numpy as np
 from pathlib import Path
 import pytest
 import re
-from dace.codegen.targets.fpga import is_fpga_kernel
+from dace.sdfg.utils import is_fpga_kernel
 from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
 from dace.fpga_testing import fpga_test
 
@@ -24,8 +24,7 @@ def count_kernels(sdfg: dace.SDFG):
     with open(Path(sdfg.build_folder) / "dace_files.csv", "r") as csv_file:
         csv_reader = csv.reader(csv_file, delimiter=',')
         for row in csv_reader:
-            if row[1] == "device" and (row[-1].endswith("cpp")
-                                       or row[-1].endswith("cl")):
+            if row[1] == "device" and (row[-1].endswith("cpp") or row[-1].endswith("cl")):
                 kernels = kernels + 1
     return kernels
 
@@ -50,9 +49,9 @@ def test_kernels_inside_component_0():
     The 4 maps, should belong to three distinct kernels
     :return:
     '''
+
     @dace.program
-    def kernels_inside_component_0(x: dace.float32[8], y: dace.float32[8],
-                                   v: dace.float32[8], w: dace.float32[8],
+    def kernels_inside_component_0(x: dace.float32[8], y: dace.float32[8], v: dace.float32[8], w: dace.float32[8],
                                    z: dace.float32[8]):
         tmp = (x + y) + v
         return tmp + (w + z)
@@ -75,10 +74,8 @@ def test_kernels_inside_component_0():
     assert np.allclose(res, x + y + v + w + z)
 
     report = sdfg.get_latest_report()
-    assert len(re.findall(r"[0-9\.]+\s+[0-9\.]+\s+[0-9\.]+\s+[0-9\.]+",
-                          str(report))) == 5
-    assert len(re.findall(r"Full FPGA .+ runtime",
-                          str(report))) == 2
+    assert len(re.findall(r"[0-9\.]+\s+[0-9\.]+\s+[0-9\.]+\s+[0-9\.]+", str(report))) == 5
+    assert len(re.findall(r"Full FPGA .+ runtime", str(report))) == 2
 
     return sdfg
 
@@ -106,11 +103,10 @@ def test_kernels_inside_component_1():
     The five Maps should belong to 5 distinct kernels
 
     '''
+
     @dace.program
-    def kernels_inside_component_1(x: dace.float32[8], y: dace.float32[8],
-                                   v: dace.float32[8], w: dace.float32[8],
-                                   z: dace.float32[8], t: dace.float32[8],
-                                   alpha: dace.float32, beta: dace.float32):
+    def kernels_inside_component_1(x: dace.float32[8], y: dace.float32[8], v: dace.float32[8], w: dace.float32[8],
+                                   z: dace.float32[8], t: dace.float32[8], alpha: dace.float32, beta: dace.float32):
         tmp1 = x + y
         tmp2 = v + w
         tmp3 = tmp1 + tmp2
@@ -158,9 +154,9 @@ def test_kernels_inside_component_2():
 
     :return:
     '''
+
     @dace.program
-    def kernels_inside_component_2(x: dace.float32[8], y: dace.float32[8],
-                                   v: dace.float32[8], z: dace.float32[8],
+    def kernels_inside_component_2(x: dace.float32[8], y: dace.float32[8], v: dace.float32[8], z: dace.float32[8],
                                    t: dace.float32[8]):
         z[:] = x + y
         t[:] = y + v
@@ -203,13 +199,12 @@ def test_kernels_lns_inside_component():
     '''
 
     # (Provisional) Disable unique function
-    unique_functions_conf = dace.config.Config.get('compiler',
-                                                   'unique_functions')
+    unique_functions_conf = dace.config.Config.get('compiler', 'unique_functions')
     dace.config.Config.set('compiler', 'unique_functions', value="none")
 
     @dace.program
-    def kernels_lns_inside_component(A: dace.float32[8, 8], x: dace.float32[8],
-                                     B: dace.float32[8, 8], y: dace.float32[8]):
+    def kernels_lns_inside_component(A: dace.float32[8, 8], x: dace.float32[8], B: dace.float32[8, 8],
+                                     y: dace.float32[8]):
         tmp1 = A @ x
         tmp2 = B @ y
         return np.dot(tmp1, tmp2)
@@ -227,9 +222,7 @@ def test_kernels_lns_inside_component():
     z = program(A=A, x=x, B=B, y=y)
     ref = np.dot(A @ x, B @ y)
     assert np.allclose(z, ref)
-    dace.config.Config.set('compiler',
-                           'unique_functions',
-                           value=unique_functions_conf)
+    dace.config.Config.set('compiler', 'unique_functions', value=unique_functions_conf)
 
     return sdfg
 
@@ -253,11 +246,10 @@ def test_kernels_inside_components_0():
     The three maps, should belong to three distinct kernels
 
     '''
+
     @dace.program
-    def kernels_inside_components_0(x: dace.float32[8], y: dace.float32[8],
-                                    v: dace.float32[8], w: dace.float32[8],
-                                    xx: dace.float32[8], yy: dace.float32[8],
-                                    vv: dace.float32[8], ww: dace.float32[8]):
+    def kernels_inside_components_0(x: dace.float32[8], y: dace.float32[8], v: dace.float32[8], w: dace.float32[8],
+                                    xx: dace.float32[8], yy: dace.float32[8], vv: dace.float32[8], ww: dace.float32[8]):
         z = (x + y) + (v + w)
         zz = (xx + yy) + (vv + ww)
         return z, zz
@@ -302,15 +294,14 @@ def test_kernels_inside_components_multiple_states():
     The three maps, should belong to three distinct kernels
     :return:
     '''
+
     def make_sdfg(dtype=dace.float32):
         sdfg = dace.SDFG("multiple_kernels_multiple_states")
         n = dace.symbol("size")
 
         input_data = ["x", "y", "v", "w", "xx", "yy", "vv", "ww"]
         output_data = ["z", "zz"]
-        device_transient_data = [
-            "device_tmp0", "device_tmp1", "device_tmp2", "device_tmp3"
-        ]
+        device_transient_data = ["device_tmp0", "device_tmp1", "device_tmp2", "device_tmp3"]
 
         for d in input_data + output_data:
             sdfg.add_array(d, shape=[n], dtype=dtype)
@@ -321,11 +312,7 @@ def test_kernels_inside_components_multiple_states():
                            transient=True)
 
         for d in device_transient_data:
-            sdfg.add_array(d,
-                           shape=[n],
-                           dtype=dtype,
-                           storage=dace.dtypes.StorageType.FPGA_Global,
-                           transient=True)
+            sdfg.add_array(d, shape=[n], dtype=dtype, storage=dace.dtypes.StorageType.FPGA_Global, transient=True)
 
         ###########################################################################
         # Copy data to FPGA
@@ -336,9 +323,7 @@ def test_kernels_inside_components_multiple_states():
             in_host = copy_in_state.add_read(d)
             in_device = copy_in_state.add_read(f"device_{d}")
 
-            copy_in_state.add_memlet_path(in_host,
-                                          in_device,
-                                          memlet=dace.Memlet(f"{d}[0:{n}]"))
+            copy_in_state.add_memlet_path(in_host, in_device, memlet=dace.Memlet(f"{d}[0:{n}]"))
 
         ###########################################################################
         # Copy data from FPGA
@@ -348,9 +333,7 @@ def test_kernels_inside_components_multiple_states():
             out_host = copy_out_state.add_write(d)
             out_device = copy_out_state.add_read(f"device_{d}")
 
-            copy_out_state.add_memlet_path(out_device,
-                                           out_host,
-                                           memlet=dace.Memlet(f"{d}[0:{n}]"))
+            copy_out_state.add_memlet_path(out_device, out_host, memlet=dace.Memlet(f"{d}[0:{n}]"))
 
         ########################################################################
         # FPGA, First State
@@ -366,14 +349,11 @@ def test_kernels_inside_components_multiple_states():
         z_out = fpga_state_0.add_write("device_z")
 
         # x + y
-        vecMap_entry00, vecMap_exit00 = fpga_state_0.add_map(
-            'vecAdd_map00',
-            dict(i=f'0:{n}'),
-            schedule=dace.dtypes.ScheduleType.FPGA_Device)
+        vecMap_entry00, vecMap_exit00 = fpga_state_0.add_map('vecAdd_map00',
+                                                             dict(i=f'0:{n}'),
+                                                             schedule=dace.dtypes.ScheduleType.FPGA_Device)
 
-        vecAdd_tasklet00 = fpga_state_0.add_tasklet('vec_add_task00',
-                                                    ['x_con', 'y_con'],
-                                                    ['z_con'],
+        vecAdd_tasklet00 = fpga_state_0.add_tasklet('vec_add_task00', ['x_con', 'y_con'], ['z_con'],
                                                     'z_con = x_con + y_con')
 
         fpga_state_0.add_memlet_path(x_in,
@@ -396,14 +376,11 @@ def test_kernels_inside_components_multiple_states():
 
         # v + w
 
-        vecMap_entry01, vecMap_exit01 = fpga_state_0.add_map(
-            'vecAdd_map01',
-            dict(i=f'0:{n}'),
-            schedule=dace.dtypes.ScheduleType.FPGA_Device)
+        vecMap_entry01, vecMap_exit01 = fpga_state_0.add_map('vecAdd_map01',
+                                                             dict(i=f'0:{n}'),
+                                                             schedule=dace.dtypes.ScheduleType.FPGA_Device)
 
-        vecAdd_tasklet01 = fpga_state_0.add_tasklet('vec_add_task01',
-                                                    ['x_con', 'y_con'],
-                                                    ['z_con'],
+        vecAdd_tasklet01 = fpga_state_0.add_tasklet('vec_add_task01', ['x_con', 'y_con'], ['z_con'],
                                                     'z_con = x_con + y_con')
 
         fpga_state_0.add_memlet_path(v_in,
@@ -426,14 +403,11 @@ def test_kernels_inside_components_multiple_states():
 
         # tmp0 + tmp 1
 
-        vecMap_entry02, vecMap_exit02 = fpga_state_0.add_map(
-            'vecAdd_map02',
-            dict(i=f'0:{n}'),
-            schedule=dace.dtypes.ScheduleType.FPGA_Device)
+        vecMap_entry02, vecMap_exit02 = fpga_state_0.add_map('vecAdd_map02',
+                                                             dict(i=f'0:{n}'),
+                                                             schedule=dace.dtypes.ScheduleType.FPGA_Device)
 
-        vecAdd_tasklet02 = fpga_state_0.add_tasklet('vec_add_task02',
-                                                    ['x_con', 'y_con'],
-                                                    ['z_con'],
+        vecAdd_tasklet02 = fpga_state_0.add_tasklet('vec_add_task02', ['x_con', 'y_con'], ['z_con'],
                                                     'z_con = x_con + y_con')
 
         fpga_state_0.add_memlet_path(device_tmp0,
@@ -467,14 +441,11 @@ def test_kernels_inside_components_multiple_states():
         zz_out = fpga_state_1.add_write("device_zz")
 
         # xx + yy
-        vecMap_entry10, vecMap_exit10 = fpga_state_1.add_map(
-            'vecAdd_map10',
-            dict(i=f'0:{n}'),
-            schedule=dace.dtypes.ScheduleType.FPGA_Device)
+        vecMap_entry10, vecMap_exit10 = fpga_state_1.add_map('vecAdd_map10',
+                                                             dict(i=f'0:{n}'),
+                                                             schedule=dace.dtypes.ScheduleType.FPGA_Device)
 
-        vecAdd_tasklet10 = fpga_state_1.add_tasklet('vec_add_task10',
-                                                    ['x_con', 'y_con'],
-                                                    ['z_con'],
+        vecAdd_tasklet10 = fpga_state_1.add_tasklet('vec_add_task10', ['x_con', 'y_con'], ['z_con'],
                                                     'z_con = x_con + y_con')
 
         fpga_state_1.add_memlet_path(xx_in,
@@ -496,14 +467,11 @@ def test_kernels_inside_components_multiple_states():
                                      memlet=dace.Memlet("device_tmp2[i]"))
 
         # vv + ww
-        vecMap_entry11, vecMap_exit11 = fpga_state_1.add_map(
-            'vecAdd_map11',
-            dict(i=f'0:{n}'),
-            schedule=dace.dtypes.ScheduleType.FPGA_Device)
+        vecMap_entry11, vecMap_exit11 = fpga_state_1.add_map('vecAdd_map11',
+                                                             dict(i=f'0:{n}'),
+                                                             schedule=dace.dtypes.ScheduleType.FPGA_Device)
 
-        vecAdd_tasklet11 = fpga_state_1.add_tasklet('vec_add_task11',
-                                                    ['x_con', 'y_con'],
-                                                    ['z_con'],
+        vecAdd_tasklet11 = fpga_state_1.add_tasklet('vec_add_task11', ['x_con', 'y_con'], ['z_con'],
                                                     'z_con = x_con + y_con')
 
         fpga_state_1.add_memlet_path(vv_in,
@@ -526,14 +494,11 @@ def test_kernels_inside_components_multiple_states():
 
         # tmp2 + tmp 3
 
-        vecMap_entry12, vecMap_exit12 = fpga_state_1.add_map(
-            'vecAdd_map12',
-            dict(i=f'0:{n}'),
-            schedule=dace.dtypes.ScheduleType.FPGA_Device)
+        vecMap_entry12, vecMap_exit12 = fpga_state_1.add_map('vecAdd_map12',
+                                                             dict(i=f'0:{n}'),
+                                                             schedule=dace.dtypes.ScheduleType.FPGA_Device)
 
-        vecAdd_tasklet12 = fpga_state_1.add_tasklet('vec_add_task12',
-                                                    ['x_con', 'y_con'],
-                                                    ['z_con'],
+        vecAdd_tasklet12 = fpga_state_1.add_tasklet('vec_add_task12', ['x_con', 'y_con'], ['z_con'],
                                                     'z_con = x_con + y_con')
 
         fpga_state_1.add_memlet_path(device_tmp2,
@@ -556,12 +521,9 @@ def test_kernels_inside_components_multiple_states():
 
         ######################################
         # Interstate edges
-        sdfg.add_edge(copy_in_state, fpga_state_0,
-                      dace.sdfg.sdfg.InterstateEdge())
-        sdfg.add_edge(fpga_state_0, fpga_state_1,
-                      dace.sdfg.sdfg.InterstateEdge())
-        sdfg.add_edge(fpga_state_1, copy_out_state,
-                      dace.sdfg.sdfg.InterstateEdge())
+        sdfg.add_edge(copy_in_state, fpga_state_0, dace.sdfg.sdfg.InterstateEdge())
+        sdfg.add_edge(fpga_state_0, fpga_state_1, dace.sdfg.sdfg.InterstateEdge())
+        sdfg.add_edge(fpga_state_1, copy_out_state, dace.sdfg.sdfg.InterstateEdge())
 
         #########
         # Validate

@@ -18,7 +18,7 @@ def transpose_test(C: dace.float32[20, 20], D: dace.float32[20, 20]):
 
 
 def test():
-    c = np.random.rand(20, 20).astype(np.float32)
+    c = np.arange(400, dtype=np.float32).reshape((20, 20)).copy()
     d = np.zeros((20, 20), dtype=np.float32)
 
     transpose_test(c, d, K=20, M=20)
@@ -28,7 +28,7 @@ def test():
 
 @dace.program
 def pb(a, i):
-    a[i] = a[20 - i]
+    a[i] = a[20 - i - 1]
 
 
 @dace.program
@@ -38,12 +38,11 @@ def pa(a):
 
 
 def test_inout_connector():
-    a = np.random.rand(20)
+    a = np.arange(20, dtype=np.float64)
     ref = a.copy()
     pa(a)
     pa.f(ref)
-    assert (np.allclose(a, ref))
-
+    assert np.allclose(a, ref)
 
 
 if __name__ == '__main__':

@@ -1,6 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
-import astunparse
 from collections import defaultdict
 from typing import Tuple
 
@@ -82,8 +81,6 @@ class SubscriptConverter(ast.NodeTransformer):
 
     def visit_Constant(self, node: ast.Constant):
         if self.dtype is not None:
-            return ast.copy_location(
-                ast.Name(id=f"dace.{self.dtype.type.__name__}({node.value})"),
-                node)
+            return ast.copy_location(ast.Name(id=f"dace.{self.dtype.type.__name__}({node.value})"), node)
         else:
             return self.generic_visit(node)

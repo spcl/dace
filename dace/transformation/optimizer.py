@@ -12,8 +12,8 @@ import dace
 from dace.config import Config
 from dace.sdfg import propagation
 from dace.sdfg.graph import SubgraphView
-from dace.transformation import pattern_matching
-from dace.transformation.transformation import Transformation
+from dace.transformation.passes import pattern_matching
+from dace.transformation.transformation import PatternTransformation
 
 # This import is necessary since it registers all the patterns
 from dace.transformation import dataflow, interstate, subgraph
@@ -24,7 +24,7 @@ class Optimizer(object):
         graph representation, by matching patterns and applying 
         transformations on it.
     """
-    def __init__(self, sdfg, inplace=False):
+    def __init__(self, sdfg, inplace=True):
         """ Constructs an SDFG optimizer.
             :param sdfg: The SDFG to transform.
             :param inplace: If True, performs transformations on the given SDFG
@@ -37,7 +37,7 @@ class Optimizer(object):
             self.sdfg = copy.deepcopy(sdfg)
 
         # Initialize patterns to search for
-        self.patterns = set(k for k, v in Transformation.extensions().items())
+        self.patterns = PatternTransformation.subclasses_recursive()
         self.applied_patterns = set()
         self.transformation_metadata = None
 
@@ -46,45 +46,40 @@ class Optimizer(object):
         raise NotImplementedError
 
     def set_transformation_metadata(self,
-                                    patterns: List[Type[Transformation]],
-                                    options: Optional[List[Dict[str,
-                                                                Any]]] = None):
+                                    patterns: List[Type[PatternTransformation]],
+                                    options: Optional[List[Dict[str, Any]]] = None):
         """ 
         Caches transformation metadata for a certain set of patterns to match.
         """
-        self.transformation_metadata = (
-            pattern_matching.get_transformation_metadata(patterns, options))
+        self.transformation_metadata = (pattern_matching.get_transformation_metadata(patterns, options))
 
     def get_pattern_matches(self,
-                            strict=False,
+                            permissive=False,
                             states=None,
                             patterns=None,
                             sdfg=None,
-                            options=None) -> Iterator[Transformation]:
+                            options=None) -> Iterator[PatternTransformation]:
         """ Returns all possible transformations for the current SDFG.
-            :param strict: Only consider strict transformations (i.e., ones
-                           that surely increase performance or enhance
-                           readability)
+            :param permissive: Consider transformations in permissive mode.
             :param states: An iterable of SDFG states to consider when pattern
                            matching. If None, considers all.
             :param patterns: An iterable of transformation classes to consider
                              when matching. If None, considers all registered
-                             transformations in ``Transformation``.
+                             transformations in ``PatternTransformation``.
             :param sdfg: If not None, searches for patterns on given SDFG.
             :param options: An optional iterable of transformation parameters.
-            :return: List of matching ``Transformation`` objects.
-            :see: Transformation.
+            :return: List of matching ``PatternTransformation`` objects.
+            :see: PatternTransformation.
         """
         sdfg = sdfg or self.sdfg
         patterns = patterns or self.patterns
 
-        yield from pattern_matching.match_patterns(
-            sdfg,
-            patterns,
-            metadata=self.transformation_metadata,
-            strict=strict,
-            states=states,
-            options=options)
+        yield from pattern_matching.match_patterns(sdfg,
+                                                   patterns,
+                                                   metadata=self.transformation_metadata,
+                                                   permissive=permissive,
+                                                   states=states,
+                                                   options=options)
 
     def optimization_space(self):
         """ Returns the optimization space of the current SDFG """
@@ -93,19 +88,15 @@ class Optimizer(object):
             subgraph_nodes = [graph.nodes()[nid] for nid in subgraph_node_ids]
             for node in subgraph_nodes:
                 version = 0
-                while (node, type(match).__name__, match.expr_index,
-                       version) in actions.keys():
+                while (node, type(match).__name__, match.expr_index, version) in actions.keys():
                     version += 1
-                actions[(node, type(match).__name__, match.expr_index,
-                         version)] = match
+                actions[(node, type(match).__name__, match.expr_index, version)] = match
             subgraph = SubgraphView(graph, subgraph_nodes)
             for edge in subgraph.edges():
                 version = 0
-                while (edge, type(match).__name__, match.expr_index,
-                       version) in actions.keys():
+                while (edge, type(match).__name__, match.expr_index, version) in actions.keys():
                     version += 1
-                actions[(edge, type(match).__name__, match.expr_index,
-                         version)] = match
+                actions[(edge, type(match).__name__, match.expr_index, version)] = match
             return actions
 
         def get_dataflow_actions(actions, sdfg, match):
@@ -190,8 +181,7 @@ class SDFGOptimizer(Optimizer):
         sdfg_file = self.sdfg.name + '.sdfg'
         if os.path.isfile(sdfg_file):
             ui_input = input('An SDFG with the filename "%s" was found. '
-                             'Would you like to use it instead? [Y/n] ' %
-                             sdfg_file)
+                             'Would you like to use it instead? [Y/n] ' % sdfg_file)
             if len(ui_input) == 0 or ui_input[0] not in ['n', 'N']:
                 return dace.SDFG.from_file(sdfg_file)
 
@@ -213,8 +203,8 @@ class SDFGOptimizer(Optimizer):
             ui_options_idx = 0
             for pattern_match in ui_options:
                 sdfg = self.sdfg.sdfg_list[pattern_match.sdfg_id]
-                print('%d. Transformation %s' %
-                      (ui_options_idx, pattern_match.print_match(sdfg)))
+                pattern_match._sdfg = sdfg
+                print('%d. Transformation %s' % (ui_options_idx, pattern_match.print_match(sdfg)))
                 ui_options_idx += 1
 
             # If no pattern matchings were found, quit.
@@ -222,15 +212,12 @@ class SDFGOptimizer(Optimizer):
                 print('No viable transformations found')
                 break
 
-            ui_input = input(
-                'Select the pattern to apply (0 - %d or name$id): ' %
-                (ui_options_idx - 1))
+            ui_input = input('Select the pattern to apply (0 - %d or name$id): ' % (ui_options_idx - 1))
 
             pattern_name, occurrence, param_dict = _parse_cli_input(ui_input)
 
             pattern_match = None
-            if (pattern_name is None and occurrence >= 0
-                    and occurrence < ui_options_idx):
+            if (pattern_name is None and occurrence >= 0 and occurrence < ui_options_idx):
                 pattern_match = ui_options[occurrence]
             elif pattern_name is not None:
                 counter = 0
@@ -242,14 +229,13 @@ class SDFGOptimizer(Optimizer):
                         counter = counter + 1
 
             if pattern_match is None:
-                print(
-                    'You did not select a valid option. Quitting optimization ...'
-                )
+                print('You did not select a valid option. Quitting optimization ...')
                 break
 
-            match_id = (str(occurrence) if pattern_name is None else '%s$%d' %
-                        (pattern_name, occurrence))
+            match_id = (str(occurrence) if pattern_name is None else '%s$%d' % (pattern_name, occurrence))
             sdfg = self.sdfg.sdfg_list[pattern_match.sdfg_id]
+            graph = sdfg.node(pattern_match.state_id) if pattern_match.state_id >= 0 else sdfg
+            pattern_match._sdfg = sdfg
             print('You selected (%s) pattern %s with parameters %s' %
                   (match_id, pattern_match.print_match(sdfg), str(param_dict)))
 
@@ -257,12 +243,11 @@ class SDFGOptimizer(Optimizer):
             for k, v in param_dict.items():
                 setattr(pattern_match, k, v)
 
-            pattern_match.apply(sdfg)
+            pattern_match.apply(graph, sdfg)
             self.applied_patterns.add(type(pattern_match))
 
             if SAVE_INTERMEDIATE:
-                filename = 'after_%d_%s_b4lprop' % (
-                    pattern_counter + 1, type(pattern_match).__name__)
+                filename = 'after_%d_%s_b4lprop' % (pattern_counter + 1, type(pattern_match).__name__)
                 self.sdfg.save(os.path.join('_dacegraphs', filename + '.sdfg'))
 
             if not pattern_match.annotates_memlets():
@@ -271,14 +256,11 @@ class SDFGOptimizer(Optimizer):
             if True:
                 pattern_counter += 1
                 if SAVE_INTERMEDIATE:
-                    filename = 'after_%d_%s' % (pattern_counter,
-                                                type(pattern_match).__name__)
-                    self.sdfg.save(
-                        os.path.join('_dacegraphs', filename + '.sdfg'))
+                    filename = 'after_%d_%s' % (pattern_counter, type(pattern_match).__name__)
+                    self.sdfg.save(os.path.join('_dacegraphs', filename + '.sdfg'))
 
                     if VISUALIZE_SDFV:
                         from dace.cli import sdfv
-                        sdfv.view(
-                            os.path.join('_dacegraphs', filename + '.sdfg'))
+                        sdfv.view(os.path.join('_dacegraphs', filename + '.sdfg'))
 
         return self.sdfg

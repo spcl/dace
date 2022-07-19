@@ -4,7 +4,7 @@ import dace.properties
 import dace.sdfg.nodes
 from dace.transformation.transformation import ExpandTransformation
 from .. import environments
-
+from dace.libraries.mpi.nodes.node import MPINode
 
 @dace.library.expansion
 class ExpandAllgatherMPI(ExpandTransformation):
@@ -13,12 +13,9 @@ class ExpandAllgatherMPI(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
-        (inbuffer, in_count_str), (outbuffer, out_count_str) = node.validate(
-            parent_sdfg, parent_state)
-        in_mpi_dtype_str = dace.libraries.mpi.utils.MPI_DDT(
-            inbuffer.dtype.base_type)
-        out_mpi_dtype_str = dace.libraries.mpi.utils.MPI_DDT(
-            outbuffer.dtype.base_type)
+        (inbuffer, in_count_str), (outbuffer, out_count_str) = node.validate(parent_sdfg, parent_state)
+        in_mpi_dtype_str = dace.libraries.mpi.utils.MPI_DDT(inbuffer.dtype.base_type)
+        out_mpi_dtype_str = dace.libraries.mpi.utils.MPI_DDT(outbuffer.dtype.base_type)
 
         if inbuffer.dtype.veclen > 1:
             raise (NotImplementedError)
@@ -39,7 +36,7 @@ class ExpandAllgatherMPI(ExpandTransformation):
 
 
 @dace.library.node
-class Allgather(dace.sdfg.nodes.LibraryNode):
+class Allgather(MPINode):
 
     # Global properties
     implementations = {
@@ -48,11 +45,7 @@ class Allgather(dace.sdfg.nodes.LibraryNode):
     default_implementation = "MPI"
 
     def __init__(self, name, *args, **kwargs):
-        super().__init__(name,
-                         *args,
-                         inputs={"_inbuffer"},
-                         outputs={"_outbuffer"},
-                         **kwargs)
+        super().__init__(name, *args, inputs={"_inbuffer"}, outputs={"_outbuffer"}, **kwargs)
 
     def validate(self, sdfg, state):
         """

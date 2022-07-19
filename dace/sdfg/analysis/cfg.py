@@ -1,14 +1,14 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Various analyses related to control flow in SDFG states. """
-from dace.sdfg import SDFG, SDFGState, InterstateEdge, graph as gr
+from collections import defaultdict
+from dace.sdfg import SDFG, SDFGState, InterstateEdge, graph as gr, utils as sdutil
 from dace.symbolic import pystr_to_symbolic
 import networkx as nx
 import sympy as sp
 from typing import Dict, Iterator, List, Set
 
 
-def acyclic_dominance_frontier(sdfg: SDFG,
-                               idom=None) -> Dict[SDFGState, Set[SDFGState]]:
+def acyclic_dominance_frontier(sdfg: SDFG, idom=None) -> Dict[SDFGState, Set[SDFGState]]:
     """
     Finds the dominance frontier for an SDFG while ignoring any back edges.
 
@@ -41,10 +41,7 @@ def acyclic_dominance_frontier(sdfg: SDFG,
     return dom_frontiers
 
 
-def all_dominators(
-    sdfg: SDFG,
-    idom: Dict[SDFGState, SDFGState] = None
-) -> Dict[SDFGState, Set[SDFGState]]:
+def all_dominators(sdfg: SDFG, idom: Dict[SDFGState, SDFGState] = None) -> Dict[SDFGState, Set[SDFGState]]:
     """ Returns a mapping between each state and all its dominators. """
     idom = idom or nx.immediate_dominators(sdfg.nx, sdfg.start_state)
     # Create a dictionary of all dominators of each node by using the
@@ -62,12 +59,11 @@ def all_dominators(
     return alldoms
 
 
-def back_edges(
-    sdfg: SDFG,
-    idom: Dict[SDFGState, SDFGState] = None
-) -> List[gr.Edge[InterstateEdge]]:
+def back_edges(sdfg: SDFG,
+               idom: Dict[SDFGState, SDFGState] = None,
+               alldoms: Dict[SDFGState, SDFGState] = None) -> List[gr.Edge[InterstateEdge]]:
     """ Returns a list of back-edges in an SDFG. """
-    alldoms = all_dominators(sdfg, idom)
+    alldoms = alldoms or all_dominators(sdfg, idom)
     return [e for e in sdfg.edges() if e.dst in alldoms[e.src]]
 
 
@@ -85,48 +81,91 @@ def state_parent_tree(sdfg: SDFG) -> Dict[SDFGState, SDFGState]:
     """
     idom = nx.immediate_dominators(sdfg.nx, sdfg.start_state)
     alldoms = all_dominators(sdfg, idom)
-    loopexits: Dict[SDFGState, SDFGState] = {}
+    loopexits: Dict[SDFGState, SDFGState] = defaultdict(lambda: None)
 
     # First, annotate loops
-    for state in sdfg:
-        loopexits[state] = None
-    for cycle in sdfg.find_cycles():
-        for v in cycle:
-            if loopexits[v] is not None:
-                continue
+    for be in back_edges(sdfg, idom, alldoms):
+        guard = be.dst
+        laststate = be.src
+        if loopexits[guard] is not None:
+            continue
 
-            # Natural loops = one edge leads back to loop, another leads out
-            in_edges = sdfg.in_edges(v)
-            out_edges = sdfg.out_edges(v)
+        # Natural loops = one edge leads back to loop, another leads out
+        in_edges = sdfg.in_edges(guard)
+        out_edges = sdfg.out_edges(guard)
 
-            # A loop guard has two or more incoming edges (1 increment and
-            # n init, all identical), and exactly two outgoing edges (loop and
-            # exit loop).
-            if len(in_edges) < 2 or len(out_edges) != 2:
-                continue
+        # A loop guard has two or more incoming edges (1 increment and
+        # n init, all identical), and exactly two outgoing edges (loop and
+        # exit loop).
+        if len(in_edges) < 2 or len(out_edges) != 2:
+            continue
 
-            # The outgoing edges must be negations of one another.
-            if out_edges[0].data.condition_sympy() != (sp.Not(
-                    out_edges[1].data.condition_sympy())):
-                continue
+        # The outgoing edges must be negations of one another.
+        if out_edges[0].data.condition_sympy() != (sp.Not(out_edges[1].data.condition_sympy())):
+            continue
 
-            # Make sure the entire cycle is dominated by this node. If not,
-            # we're looking at a guard for a nested cycle, which we ignore for
-            # this cycle.
-            if any(v not in alldoms[u] for u in cycle if u is not v):
-                continue
+        # Find all nodes that are between each branch and the guard.
+        # Condition makes sure the entire cycle is dominated by this node.
+        # If not, we're looking at a guard for a nested cycle, which we ignore for
+        # this cycle.
+        oa, ob = out_edges[0].dst, out_edges[1].dst
 
-            loop_state = None
-            exit_state = None
-            if out_edges[0].dst in cycle and out_edges[1].dst not in cycle:
-                loop_state = out_edges[0].dst
-                exit_state = out_edges[1].dst
-            elif out_edges[1].dst in cycle and out_edges[0].dst not in cycle:
-                loop_state = out_edges[1].dst
-                exit_state = out_edges[0].dst
-            if loop_state is None or exit_state is None:
-                continue
-            loopexits[v] = exit_state
+        reachable_a = False
+        a_reached_guard = False
+
+        def cond_a(parent, child):
+            nonlocal reachable_a
+            nonlocal a_reached_guard
+            if reachable_a:  # If last state has been reached, stop traversal
+                return False
+            if parent is laststate or child is laststate:  # Reached back edge
+                reachable_a = True
+                a_reached_guard = True
+                return False
+            if oa not in alldoms[child]:  # Traversed outside of the loop
+                return False
+            if child is guard:  # Traversed back to guard
+                a_reached_guard = True
+                return False
+            return True  # Keep traversing
+
+        reachable_b = False
+        b_reached_guard = False
+
+        def cond_b(parent, child):
+            nonlocal reachable_b
+            nonlocal b_reached_guard
+            if reachable_b:  # If last state has been reached, stop traversal
+                return False
+            if parent is laststate or child is laststate:  # Reached back edge
+                reachable_b = True
+                b_reached_guard = True
+                return False
+            if ob not in alldoms[child]:  # Traversed outside of the loop
+                return False
+            if child is guard:  # Traversed back to guard
+                b_reached_guard = True
+                return False
+            return True  # Keep traversing
+
+        list(sdutil.dfs_conditional(sdfg, (oa, ), cond_a))
+        list(sdutil.dfs_conditional(sdfg, (ob, ), cond_b))
+
+        # Check which candidate states led back to guard
+        is_a_begin = a_reached_guard and reachable_a
+        is_b_begin = b_reached_guard and reachable_b
+
+        loop_state = None
+        exit_state = None
+        if is_a_begin and not is_b_begin:
+            loop_state = oa
+            exit_state = ob
+        elif is_b_begin and not is_a_begin:
+            loop_state = ob
+            exit_state = oa
+        if loop_state is None or exit_state is None:
+            continue
+        loopexits[guard] = exit_state
 
     # Get dominators
     parents: Dict[SDFGState, SDFGState] = {}
@@ -164,7 +203,8 @@ def _stateorder_topological_sort(sdfg: SDFG,
                                  start: SDFGState,
                                  ptree: Dict[SDFGState, SDFGState],
                                  branch_merges: Dict[SDFGState, SDFGState],
-                                 stop: SDFGState = None) -> Iterator[SDFGState]:
+                                 stop: SDFGState = None,
+                                 visited: Set[SDFGState] = None) -> Iterator[SDFGState]:
     """ 
     Helper function for ``stateorder_topological_sort``. 
     :param sdfg: SDFG.
@@ -178,7 +218,7 @@ def _stateorder_topological_sort(sdfg: SDFG,
              ``stop``.
     """
     # Traverse states in custom order
-    visited = set()
+    visited = visited or set()
     if stop is not None:
         visited.add(stop)
     stack = [start]
@@ -197,34 +237,40 @@ def _stateorder_topological_sort(sdfg: SDFG,
         elif len(oe) == 2:  # Loop or branch
             # If loop, traverse body, then exit
             if ptree[oe[0].dst] == node and ptree[oe[1].dst] != node:
-                for s in _stateorder_topological_sort(sdfg,
-                                                      oe[0].dst,
-                                                      ptree,
-                                                      branch_merges,
-                                                      stop=node):
+                for s in _stateorder_topological_sort(sdfg, oe[0].dst, ptree, branch_merges, stop=node,
+                                                      visited=visited):
                     yield s
                     visited.add(s)
                 stack.append(oe[1].dst)
                 continue
             elif ptree[oe[1].dst] == node and ptree[oe[0].dst] != node:
-                for s in _stateorder_topological_sort(sdfg,
-                                                      oe[1].dst,
-                                                      ptree,
-                                                      branch_merges,
-                                                      stop=node):
+                for s in _stateorder_topological_sort(sdfg, oe[1].dst, ptree, branch_merges, stop=node,
+                                                      visited=visited):
                     yield s
                     visited.add(s)
                 stack.append(oe[0].dst)
                 continue
             # Otherwise, passthrough to branch
         # Branch
-        mergestate = branch_merges[node]
+        if node in branch_merges:
+            # Try to find merge state and traverse until reaching that
+            mergestate = branch_merges[node]
+        else:
+            try:
+                # Otherwise (e.g., with return/break statements), traverse through each branch,
+                # stopping at the end of the current tree level.
+                mergestate = next(e.dst for e in sdfg.out_edges(stop) if ptree[e.dst] != stop)
+            except StopIteration:
+                # If that fails, simply traverse branches in arbitrary order
+                mergestate = stop
+
         for branch in oe:
             for s in _stateorder_topological_sort(sdfg,
                                                   branch.dst,
                                                   ptree,
                                                   branch_merges,
-                                                  stop=mergestate):
+                                                  stop=mergestate,
+                                                  visited=visited):
                 yield s
                 visited.add(s)
         if mergestate != stop:
@@ -251,9 +297,8 @@ def stateorder_topological_sort(sdfg: SDFG) -> Iterator[SDFGState]:
         if len(oedges) <= 1:
             continue
         # Skip if natural loop
-        if len(oedges) == 2 and (
-            (ptree[oedges[0].dst] == state and ptree[oedges[1].dst] != state) or
-            (ptree[oedges[1].dst] == state and ptree[oedges[0].dst] != state)):
+        if len(oedges) == 2 and ((ptree[oedges[0].dst] == state and ptree[oedges[1].dst] != state) or
+                                 (ptree[oedges[1].dst] == state and ptree[oedges[0].dst] != state)):
             continue
 
         common_frontier = set()
@@ -265,5 +310,4 @@ def stateorder_topological_sort(sdfg: SDFG) -> Iterator[SDFGState]:
         if len(common_frontier) == 1:
             branch_merges[state] = next(iter(common_frontier))
 
-    yield from _stateorder_topological_sort(sdfg, sdfg.start_state, ptree,
-                                            branch_merges)
+    yield from _stateorder_topological_sort(sdfg, sdfg.start_state, ptree, branch_merges)

@@ -5,7 +5,7 @@ import dace.sdfg.nodes
 from dace.transformation.transformation import ExpandTransformation
 from .. import environments
 from dace import dtypes
-
+from dace.libraries.mpi.nodes.node import MPINode
 
 
 @dace.library.expansion
@@ -28,17 +28,13 @@ class ExpandWaitMPI(ExpandTransformation):
                                           code,
                                           language=dace.dtypes.Language.CPP)
         conn = tasklet.in_connectors
-        conn = {
-            c: (dtypes.pointer(dtypes.opaque("MPI_Request"))
-                if c == '_request' else t)
-            for c, t in conn.items()
-        }
+        conn = {c: (dtypes.pointer(dtypes.opaque("MPI_Request")) if c == '_request' else t) for c, t in conn.items()}
         tasklet.in_connectors = conn
         return tasklet
 
 
 @dace.library.node
-class Wait(dace.sdfg.nodes.LibraryNode):
+class Wait(MPINode):
 
     # Global properties
     implementations = {
@@ -50,11 +46,7 @@ class Wait(dace.sdfg.nodes.LibraryNode):
     n = dace.properties.SymbolicProperty(allow_none=True, default=None)
 
     def __init__(self, name, *args, **kwargs):
-        super().__init__(name,
-                         *args,
-                         inputs={"_request"},
-                         outputs={"_stat_tag", "_stat_source"},
-                         **kwargs)
+        super().__init__(name, *args, inputs={"_request"}, outputs={"_stat_tag", "_stat_source"}, **kwargs)
 
     def validate(self, sdfg, state):
         """
@@ -103,17 +95,13 @@ class ExpandWaitallMPI(ExpandTransformation):
                                           code,
                                           language=dace.dtypes.Language.CPP)
         conn = tasklet.in_connectors
-        conn = {
-            c: (dtypes.pointer(dtypes.opaque("MPI_Request"))
-                if c == '_request' else t)
-            for c, t in conn.items()
-        }
+        conn = {c: (dtypes.pointer(dtypes.opaque("MPI_Request")) if c == '_request' else t) for c, t in conn.items()}
         tasklet.in_connectors = conn
         return tasklet
 
 
 @dace.library.node
-class Waitall(dace.sdfg.nodes.LibraryNode):
+class Waitall(MPINode):
 
     # Global properties
     implementations = {
@@ -138,7 +126,6 @@ class Waitall(dace.sdfg.nodes.LibraryNode):
                 count = e.data.subset.num_elements()
 
         if not count:
-            raise ValueError(
-                "At least 1 request object must be passed to Waitall")
+            raise ValueError("At least 1 request object must be passed to Waitall")
 
         return count

@@ -4,6 +4,7 @@ import os
 import platform
 import tempfile
 import yaml
+import warnings
 
 
 @contextlib.contextmanager
@@ -46,7 +47,7 @@ def _env2bool(envval):
         :return: True if the input value matches a valid TRUE
                   value, or False otherwise.
     """
-    return str(envval).lower() in ['true', '1', 'y', 'yes', 'on']
+    return str(envval).lower() in ['true', '1', 'y', 'yes', 'on', 'verbose']
 
 
 def _add_defaults(config, metadata):
@@ -96,10 +97,10 @@ class Config(object):
 
     @staticmethod
     def initialize():
-        """ Initializes configuration.
+        """
+        Initializes configuration.
 
-            B{Note:} This function runs automatically when the module
-                     is loaded.
+        :note: This function runs automatically when the module is loaded.
         """
 
         # If already initialized, skip
@@ -107,13 +108,12 @@ class Config(object):
             return
 
         # Override default configuration file path
+        default_filename = '.dace.conf'
         if 'DACE_CONFIG' in os.environ:
-            cfg_filename = os.environ['DACE_CONFIG']
+            default_cfg_filename = os.environ['DACE_CONFIG']
         else:
             home = os.path.expanduser("~")
-            cfg_filename = os.path.join(home, ".dace.conf")
-
-        Config._cfg_filename = cfg_filename
+            default_cfg_filename = os.path.join(home, default_filename)
 
         dace_path = os.path.dirname(os.path.abspath(__file__))
         Config._metadata_filename = os.path.join(dace_path, 'config_schema.yml')
@@ -121,13 +121,34 @@ class Config(object):
         # Load configuration schema (for validation and defaults)
         Config.load_schema()
 
-        if os.path.isfile(cfg_filename):
-            Config.load()
+        # Priority order: current working directory, default configuration file (DACE_CONFIG), then ~/.dace.conf
+        for filename in [default_filename, default_cfg_filename]:
+            Config._cfg_filename = filename
+            try:
+                if os.path.isfile(filename):
+                    Config.load()
+                    break
+            except (FileNotFoundError, PermissionError, OSError):
+                # If any filesystem-related error happened during file load, move on to next candidate
+                continue
         else:
-            # Load the defaults from metadata and save new conf file
+            # None of the files were found
+
+            # Load the defaults from metadata
             Config._config = {}
             _add_defaults(Config._config, Config._config_metadata['required'])
-            Config.save()
+
+            # Try to create a new config file in reversed priority order, and if all else fails keep config in memory
+            for filename in [default_cfg_filename, default_filename, None]:
+                Config._cfg_filename = filename
+                try:
+                    Config.save()
+                    break
+                except (FileNotFoundError, PermissionError, OSError):
+                    # If any filesystem-related error happened during file save, move on to next candidate
+                    continue
+            else:
+                warnings.warn('No DaCe configuration file was able to be saved')
 
     @staticmethod
     def load(filename=None):
@@ -146,8 +167,7 @@ class Config(object):
             Config._config = {}
 
         # Add defaults from metadata
-        modified = _add_defaults(Config._config,
-                                 Config._config_metadata['required'])
+        modified = _add_defaults(Config._config, Config._config_metadata['required'])
         if modified:  # Update file if changed
             Config.save()
 
@@ -160,8 +180,7 @@ class Config(object):
         if filename is None:
             filename = Config._metadata_filename
         with open(filename, 'r') as f:
-            Config._config_metadata = yaml.load(f.read(),
-                                                Loader=yaml.SafeLoader)
+            Config._config_metadata = yaml.load(f.read(), Loader=yaml.SafeLoader)
 
     @staticmethod
     def save(path=None):
@@ -171,9 +190,10 @@ class Config(object):
         """
         if path is None:
             path = Config._cfg_filename
-        # Write configuration file
-        with open(path, 'w') as f:
-            yaml.dump(Config._config, f, default_flow_style=False)
+        if path is not None:
+            # Write configuration file
+            with open(path, 'w') as f:
+                yaml.dump(Config._config, f, default_flow_style=False)
 
     @staticmethod
     def get_metadata(*key_hierarchy):

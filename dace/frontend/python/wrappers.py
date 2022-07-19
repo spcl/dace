@@ -7,6 +7,7 @@ from collections import deque
 from typing import Deque, Generic, Type, TypeVar
 
 from dace import dtypes, symbolic
+
 T = TypeVar('T')
 
 
@@ -14,13 +15,13 @@ def ndarray(shape, dtype=numpy.float64, *args, **kwargs):
     """ Returns a numpy ndarray where all symbols have been evaluated to
         numbers and types are converted to numpy types. """
     repldict = {sym: sym.get() for sym in symbolic.symlist(shape).values()}
-    new_shape = [
-        int(s.subs(repldict) if symbolic.issymbolic(s) else s) for s in shape
-    ]
+    new_shape = [int(s.subs(repldict) if symbolic.issymbolic(s) else s) for s in shape]
     new_dtype = dtype.type if isinstance(dtype, dtypes.typeclass) else dtype
     return numpy.ndarray(shape=new_shape, dtype=new_dtype, *args, **kwargs)
 
+
 stream: Type[Deque[T]] = deque
+
 
 class stream_array(Generic[T]):
     """ Stream array object in Python. """
@@ -43,7 +44,6 @@ class stream_array(Generic[T]):
 
     def __getslice__(self, *args) -> Deque[T]:
         return self.queue_array.__getslice__(*args)
-
 
 
 def scalar(dtype=dtypes.float32):

@@ -39,8 +39,8 @@ class ExpandStencilCPU(dace.library.ExpandTransformation):
         # Boundary condition generation
         #######################################################################
 
-        boundary_code, oob_cond = generate_boundary_conditions(
-            node, shape, field_accesses, field_to_desc, iterator_mapping)
+        boundary_code, oob_cond = generate_boundary_conditions(node, shape, field_accesses, field_to_desc,
+                                                               iterator_mapping)
 
         #######################################################################
         # Write all output memlets
@@ -49,10 +49,8 @@ class ExpandStencilCPU(dace.library.ExpandTransformation):
         write_code = ""
         if len(oob_cond) > 1:
             write_code += "if not (" + " or ".join(sorted(oob_cond)) + "):\n"
-        write_code += "\n".join("{}_{} = {}".format(
-            "\t" if len(oob_cond) > 0 else "", field_accesses[output][tuple(
-                0 for _ in range(len(shape)))], field_accesses[output][tuple(
-                    0 for _ in range(len(shape)))], output)
+        write_code += "\n".join("{}_{} = {}".format("\t" if len(oob_cond) > 0 else "", field_accesses[output][tuple(
+            0 for _ in range(len(shape)))], field_accesses[output][tuple(0 for _ in range(len(shape)))], output)
                                 for output in outputs)
 
         code = boundary_code + "\n" + code + "\n" + write_code
@@ -64,8 +62,7 @@ class ExpandStencilCPU(dace.library.ExpandTransformation):
                 if sum(iterator_mapping[k], 0) > 0 or k in scalar_data
             ],
             [])
-        output_connectors = sum([[f"_{c}" for c in field_accesses[k].values()]
-                                 for k in outputs], [])
+        output_connectors = sum([[f"_{c}" for c in field_accesses[k].values()] for k in outputs], [])
 
         #######################################################################
         # Create tasklet
@@ -84,9 +81,8 @@ class ExpandStencilCPU(dace.library.ExpandTransformation):
         parameters = [f"_i{i}" for i in range(len(shape))]
 
         entry, exit = state.add_map(
-            node.name + "_map",
-            collections.OrderedDict((parameters[i], "0:" + str(shape[i]))
-                                    for i in range(len(shape))))
+            node.name + "_map", collections.OrderedDict(
+                (parameters[i], "0:" + str(shape[i])) for i in range(len(shape))))
 
         for field in inputs:
 
@@ -96,19 +92,12 @@ class ExpandStencilCPU(dace.library.ExpandTransformation):
             input_dims = iterator_mapping[field]
             input_shape = tuple(s for s, v in zip(shape, input_dims) if v)
             data = sdfg.add_array(field, input_shape, dtype)
-            field_parameters = tuple(p for p, v in zip(parameters, input_dims)
-                                     if v)
+            field_parameters = tuple(p for p, v in zip(parameters, input_dims) if v)
             for indices, connector in field_accesses[field].items():
-                access_str = ", ".join(
-                    f"{p} + ({i})" for p, i in zip(field_parameters, indices))
-                access_str = access_str or '0'
+                access_str = ", ".join(f"{p} + ({i})" for p, i in zip(field_parameters, indices))
                 memlet = dace.Memlet(f"{field}[{access_str}]", dynamic=True)
                 memlet.allow_oob = True
-                state.add_memlet_path(read_node,
-                                      entry,
-                                      tasklet,
-                                      dst_conn=f"_{connector}",
-                                      memlet=memlet)
+                state.add_memlet_path(read_node, entry, tasklet, dst_conn=f"_{connector}", memlet=memlet)
 
         index_tuple = ", ".join(parameters)
         for field in outputs:
@@ -122,9 +111,7 @@ class ExpandStencilCPU(dace.library.ExpandTransformation):
                                       exit,
                                       write_node,
                                       src_conn=f"_{connector}",
-                                      memlet=dace.Memlet(
-                                          f"{field}[{index_tuple}]",
-                                          dynamic=len(oob_cond) > 0))
+                                      memlet=dace.Memlet(f"{field}[{index_tuple}]", dynamic=len(oob_cond) > 0))
 
         # Add scalars as symbols
         for field_name, mapping in iterator_mapping.items():

@@ -29,9 +29,25 @@ dace.transformation.interstate.gpu\_transform\_sdfg module
    :show-inheritance:
 
 dace.transformation.interstate.loop\_detection module
----------------------------------------------------
+-----------------------------------------------------
 
 .. automodule:: dace.transformation.interstate.loop_detection
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+dace.transformation.interstate.loop\_to\_map module
+---------------------------------------------------
+
+.. automodule:: dace.transformation.interstate.loop_to_map
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+dace.transformation.interstate.move\_loop\_into\_map module
+-----------------------------------------------------------
+
+.. automodule:: dace.transformation.interstate.move_loop_into_map
    :members:
    :undoc-members:
    :show-inheritance:

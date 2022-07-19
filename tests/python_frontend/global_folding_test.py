@@ -4,9 +4,7 @@ import dace
 import numpy as np
 
 from dace.frontend.python import astutils
-from dace.frontend.python.preprocessing import (GlobalResolver,
-                                                ConditionalCodeResolver,
-                                                DeadCodeEliminator)
+from dace.frontend.python.preprocessing import (GlobalResolver, ConditionalCodeResolver, DeadCodeEliminator)
 from dace.frontend.python.parser import DaceProgram
 
 
@@ -58,8 +56,7 @@ def test_instantiated_global():
 
 @dace.program(constant_functions=True)
 def instantiated_global_with_funcs(A):
-    A[cfg.q] = (A[cfg.get_parameter()] * MyConfiguration.get_random_number() +
-                cfg.p) + val
+    A[cfg.q] = (A[cfg.get_parameter()] * MyConfiguration.get_random_number() + cfg.p) + val
 
 
 def test_instantiated_global_resolve_functions():
@@ -94,10 +91,7 @@ def test_nested_globals():
 
 def _analyze_and_unparse_code(func: DaceProgram) -> str:
     src_ast, _, _, _ = astutils.function_to_ast(func.f)
-    resolved = {
-        k: v
-        for k, v in func.global_vars.items() if k not in func.argnames
-    }
+    resolved = {k: v for k, v in func.global_vars.items() if k not in func.argnames}
     src_ast = GlobalResolver(resolved).visit(src_ast)
     src_ast = ConditionalCodeResolver(resolved).visit(src_ast)
     src_ast = DeadCodeEliminator().visit(src_ast)
@@ -175,6 +169,24 @@ def test_dead_code_elimination_unreachable():
     assert '3' in parsed_code and '2' in parsed_code  # Reachable code
 
 
+def test_lambda_args():
+    y = 5
+
+    @dace.program
+    def tester(a: dace.float64[1], b: dace.float64[1]):
+        x = a
+        with dace.tasklet:
+            inp << x[0]
+            s = inp
+            s >> b(1, lambda x, y: x + y)
+
+    a = np.random.rand(1, 1)
+    b = np.random.rand(1, 1)
+    expected = b + a
+    tester(a, b)
+    assert np.allclose(b, expected)
+
+
 if __name__ == '__main__':
     test_instantiated_global()
     test_instantiated_global_resolve_functions()
@@ -183,3 +195,4 @@ if __name__ == '__main__':
     test_dead_code_elimination_ifexp()
     test_dead_code_elimination_noelse()
     test_dead_code_elimination_unreachable()
+    test_lambda_args()

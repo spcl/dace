@@ -70,6 +70,7 @@
 ### END OF astunparse LICENSES
 
 from __future__ import print_function, unicode_literals
+from functools import lru_cache
 import inspect
 import six
 import sys
@@ -77,6 +78,8 @@ import ast
 import numpy as np
 import os
 import tokenize
+
+import sympy
 import dace
 from numbers import Number
 from six import StringIO
@@ -89,13 +92,7 @@ INFSTR = "1e" + repr(sys.float_info.max_10_exp + 1)
 
 _py2c_nameconst = {True: "true", False: "false", None: "nullptr"}
 
-_py2c_reserved = {
-    "True": "true",
-    "False": "false",
-    "None": "nullptr",
-    "inf": "INFINITY",
-    "nan": "NAN"
-}
+_py2c_reserved = {"True": "true", "False": "false", "None": "nullptr", "inf": "INFINITY", "nan": "NAN"}
 
 _py2c_typeconversion = {
     "uint": dace.dtypes.typeclass(np.uint32),
@@ -200,15 +197,13 @@ class CPPUnparser:
 
         if self.firstfill:
             if self.indent_output:
-                self.f.write("    " * (self._indent + self.indent_offset) +
-                             text)
+                self.f.write("    " * (self._indent + self.indent_offset) + text)
             else:
                 self.f.write(text)
             self.firstfill = False
         else:
             if self.indent_output:
-                self.f.write("\n" + "    " *
-                             (self._indent + self.indent_offset) + text)
+                self.f.write("\n" + "    " * (self._indent + self.indent_offset) + text)
             else:
                 self.f.write("\n" + text)
 
@@ -272,15 +267,10 @@ class CPPUnparser:
 
     def dispatch_lhs_tuple(self, targets):
         # Decide whether to use the C++17 syntax for undefined variables or std::tie for defined variables
-        if all(
-                self.locals.is_defined(target.id, self._indent)
-                for target in targets):
+        if all(self.locals.is_defined(target.id, self._indent) for target in targets):
             defined = True
-        elif any(
-                self.locals.is_defined(target.id, self._indent)
-                for target in targets):
-            raise NotImplementedError(
-                'Invalid C++ (some variables in tuple were already defined)')
+        elif any(self.locals.is_defined(target.id, self._indent) for target in targets):
+            raise NotImplementedError('Invalid C++ (some variables in tuple were already defined)')
         else:
             defined = False
 
@@ -317,9 +307,7 @@ class CPPUnparser:
                 else:
                     target = target.elts[0]
 
-            if target and not isinstance(
-                    target,
-                (ast.Subscript, ast.Attribute)) and not self.locals.is_defined(
+            if target and not isinstance(target, (ast.Subscript, ast.Attribute)) and not self.locals.is_defined(
                     target.id, self._indent):
 
                 # if the target is already defined, do not redefine it
@@ -329,28 +317,21 @@ class CPPUnparser:
                         # Perform type inference
                         # Build dictionary with symbols
                         def_symbols = {}
-                        def_symbols.update(
-                            self.locals.get_name_type_associations())
+                        def_symbols.update(self.locals.get_name_type_associations())
                         def_symbols.update(self.defined_symbols)
-                        inferred_symbols = type_inference.infer_types(
-                            t, def_symbols)
+                        inferred_symbols = type_inference.infer_types(t, def_symbols)
                         inferred_type = inferred_symbols[target.id]
                         if inferred_type is None:
-                            raise RuntimeError(
-                                f"Failed to infer type of \"{target.id}\".")
+                            raise RuntimeError(f"Failed to infer type of \"{target.id}\".")
 
-                        self.locals.define(target.id, t.lineno, self._indent,
-                                           inferred_type)
-                        if self.language == dace.dtypes.Language.OpenCL and (
-                                inferred_type is not None
-                                and inferred_type.veclen > 1):
+                        self.locals.define(target.id, t.lineno, self._indent, inferred_type)
+                        if self.language == dace.dtypes.Language.OpenCL and (inferred_type is not None
+                                                                             and inferred_type.veclen > 1):
                             # if the veclen is greater than one, this should be defined with a vector data type
-                            self.write("{}{} ".format(
-                                dace.dtypes._OCL_VECTOR_TYPES[
-                                    inferred_type.type], inferred_type.veclen))
+                            self.write("{}{} ".format(dace.dtypes._OCL_VECTOR_TYPES[inferred_type.type],
+                                                      inferred_type.veclen))
                         else:
-                            self.write(dace.dtypes._CTYPES[inferred_type.type] +
-                                       " ")
+                            self.write(dace.dtypes._CTYPES[inferred_type.type] + " ")
                     else:
                         self.locals.define(target.id, t.lineno, self._indent)
                         self.write("auto ")
@@ -400,8 +381,7 @@ class CPPUnparser:
                 inferred_symbols = type_inference.infer_types(t, def_symbols)
                 inferred_type = inferred_symbols[target.id]
 
-                self.locals.define(target.id, t.lineno, self._indent,
-                                   inferred_type)
+                self.locals.define(target.id, t.lineno, self._indent, inferred_type)
             else:
                 self.locals.define(target.id, t.lineno, self._indent)
 
@@ -567,8 +547,7 @@ class CPPUnparser:
                     self._write_constant(value[0])
                     self.write(",")
                 else:
-                    interleave(lambda: self.write(", "), self._write_constant,
-                               value)
+                    interleave(lambda: self.write(", "), self._write_constant, value)
                 self.write(")")
             elif value is Ellipsis:  # instead of `...` for Py2 compatibility
                 self.write("...")
@@ -625,8 +604,7 @@ class CPPUnparser:
                 self.dispatch(elt)
             else:
                 self.write("[")
-                interleave(lambda: self.write(", "), self.dispatch,
-                           t.target.elts)
+                interleave(lambda: self.write(", "), self.dispatch, t.target.elts)
                 for elt in t.target.elts:
                     self.locals.define(elt.id, t.lineno, self._indent + 1)
                 self.write("]")
@@ -660,8 +638,7 @@ class CPPUnparser:
         self.dispatch(t.body)
         self.leave()
         # collapse nested ifs into equivalent elifs.
-        while (t.orelse and len(t.orelse) == 1
-               and isinstance(t.orelse[0], ast.If)):
+        while (t.orelse and len(t.orelse) == 1 and isinstance(t.orelse[0], ast.If)):
             t = t.orelse[0]
             self.fill("else if (")
             self.dispatch(t.test)
@@ -750,8 +727,7 @@ class CPPUnparser:
             dtype = dtypes.DTYPE_TO_TYPECLASS[complex]
 
         if repr_n.endswith("j"):
-            self.write("%s(0, %s)" %
-                       (dtype, repr_n.replace("inf", INFSTR)[:-1]))
+            self.write("%s(0, %s)" % (dtype, repr_n.replace("inf", INFSTR)[:-1]))
         else:
             self.write(repr_n.replace("inf", INFSTR))
 
@@ -868,10 +844,7 @@ class CPPUnparser:
         "BitXor": "^",
         "BitAnd": "&"
     }
-    funcops = {
-        "FloorDiv": (" /", "dace::math::ifloor"),
-        "MatMult": (",", "dace::gemm")
-    }
+    funcops = {"FloorDiv": (" /", "dace::math::ifloor"), "MatMult": (",", "dace::gemm")}
 
     def _BinOp(self, t):
         # Operations that require a function call
@@ -885,25 +858,48 @@ class CPPUnparser:
             self.dispatch(t.right)
 
             self.write(")")
-        # Special case for integer power
+        # Special cases for powers
         elif t.op.__class__.__name__ == 'Pow':
-            if (isinstance(t.right, (ast.Num, ast.Constant))
-                    and int(t.right.n) == t.right.n and t.right.n >= 0):
-                self.write("(")
-                if t.right.n == 0:
-                    self.write("1")
-                else:
-                    self.dispatch(t.left)
-                    for i in range(int(t.right.n) - 1):
-                        self.write(" * ")
+            if isinstance(t.right, (ast.Num, ast.Constant, ast.UnaryOp)):
+                power = None
+                if isinstance(t.right, (ast.Num, ast.Constant)):
+                    power = t.right.n
+                elif isinstance(t.right, ast.UnaryOp) and isinstance(t.right.op, ast.USub):
+                    if isinstance(t.right.operand, (ast.Num, ast.Constant)):
+                        power = -t.right.operand.n
+
+                if power is not None and int(power) == power:
+                    negative = power < 0
+                    power = int(-power if negative else power)
+                    if negative:
+                        self.write("reciprocal(")
+                    else:
+                        self.write("(")
+                    if power == 0:
+                        self.write("1")
+                    else:
+                        self.write("dace::math::ipow(")
                         self.dispatch(t.left)
-                self.write(")")
-            else:
-                self.write("dace::math::pow(")
-                self.dispatch(t.left)
-                self.write(", ")
-                self.dispatch(t.right)
-                self.write(")")
+                        self.write(f", {power})")
+                    self.write(")")
+                    return
+                elif power is not None and float(power) == 0.5 or float(power) == -0.5:  # Square root
+                    if float(power) == -0.5:
+                        # rsqrt
+                        self.write("reciprocal(")
+                    self.write("dace::math::sqrt(")
+                    self.dispatch(t.left)
+                    self.write(")")
+                    if float(power) == -0.5:
+                        self.write(")")
+                    return
+
+            # General pow operator
+            self.write("dace::math::pow(")
+            self.dispatch(t.left)
+            self.write(", ")
+            self.dispatch(t.right)
+            self.write(")")
         else:
             self.write("(")
 
@@ -950,17 +946,46 @@ class CPPUnparser:
         # Special case: 3.__abs__() is a syntax error, so if t.value
         # is an integer literal then we need to either parenthesize
         # it or add an extra space to get 3 .__abs__().
-        if (isinstance(t.value, (ast.Num, ast.Constant))
-                and isinstance(t.value.n, int)):
+        if (isinstance(t.value, (ast.Num, ast.Constant)) and isinstance(t.value.n, int)):
             self.write(" ")
-        if (isinstance(t.value, ast.Name)
-                and t.value.id in ('dace', 'dace::math', 'dace::cmath')):
+        if (isinstance(t.value, ast.Name) and t.value.id in ('dace', 'dace::math', 'dace::cmath')):
             self.write("::")
         else:
             self.write(".")
         self.write(t.attr)
 
-    def _Call(self, t):
+    # Replace boolean ops from SymPy
+    callcmps = {
+        "Eq": ast.Eq,
+        "NotEq": ast.NotEq,
+        "Ne": ast.NotEq,
+        "Lt": ast.Lt,
+        "Le": ast.LtE,
+        "LtE": ast.LtE,
+        "Gt": ast.Gt,
+        "Ge": ast.GtE,
+        "GtE": ast.GtE,
+    }
+    callbools = {
+        "And": ast.And,
+        "Or": ast.Or,
+    }
+
+    def _Call(self, t: ast.Call):
+        # Special cases for sympy functions
+        if isinstance(t.func, ast.Name):
+            if t.func.id in self.callcmps:
+                op = self.callcmps[t.func.id]()
+                self.dispatch(
+                    ast.Compare(left=t.args[0],
+                                ops=[op for _ in range(1, len(t.args))],
+                                comparators=[t.args[i] for i in range(1, len(t.args))]))
+                return
+            elif t.func.id in self.callbools:
+                op = self.callbools[t.func.id]()
+                self.dispatch(ast.BoolOp(op=op, values=t.args))
+                return
+
         self.dispatch(t.func)
         self.write("(")
         comma = False
@@ -1086,12 +1111,7 @@ class CPPUnparser:
 
 def cppunparse(node, expr_semicolon=True, locals=None, defined_symbols=None):
     strio = StringIO()
-    CPPUnparser(node,
-                0,
-                locals or CPPLocals(),
-                strio,
-                expr_semicolon=expr_semicolon,
-                defined_symbols=defined_symbols)
+    CPPUnparser(node, 0, locals or CPPLocals(), strio, expr_semicolon=expr_semicolon, defined_symbols=defined_symbols)
     return strio.getvalue().strip()
 
 
@@ -1099,15 +1119,16 @@ def cppunparse(node, expr_semicolon=True, locals=None, defined_symbols=None):
 def py2cpp(code, expr_semicolon=True, defined_symbols=None):
     if isinstance(code, str):
         try:
-            return cppunparse(ast.parse(code),
-                              expr_semicolon,
-                              defined_symbols=defined_symbols)
+            return cppunparse(ast.parse(code), expr_semicolon, defined_symbols=defined_symbols)
         except SyntaxError:
             return code
     elif isinstance(code, ast.AST):
         return cppunparse(code, expr_semicolon, defined_symbols=defined_symbols)
     elif isinstance(code, list):
         return '\n'.join(py2cpp(stmt) for stmt in code)
+    elif isinstance(code, sympy.Basic):
+        from dace import symbolic
+        return cppunparse(ast.parse(symbolic.symstr(code)), expr_semicolon, defined_symbols=defined_symbols)
     elif code.__class__.__name__ == 'function':
         try:
             code_str = inspect.getsource(code)
@@ -1121,13 +1142,11 @@ def py2cpp(code, expr_semicolon=True, defined_symbols=None):
 
         except:  # Can be different exceptions coming from Python's AST module
             raise NotImplementedError('Invalid function given')
-        return cppunparse(ast.parse(code_str),
-                          expr_semicolon,
-                          defined_symbols=defined_symbols)
+        return cppunparse(ast.parse(code_str), expr_semicolon, defined_symbols=defined_symbols)
 
     else:
         raise NotImplementedError('Unsupported type for py2cpp')
 
-
+@lru_cache(maxsize=16384)
 def pyexpr2cpp(expr):
     return py2cpp(expr, expr_semicolon=False)
