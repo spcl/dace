@@ -5,7 +5,7 @@ import pytest
 
 from dace.transformation.dataflow import MapFusion
 from dace.transformation.dataflow import StencilDetection
-from dace.transformation.dataflow import SimpleTaskletFusion
+from dace.transformation.dataflow import TaskletFusion
 
 
 @dace.program
@@ -19,9 +19,9 @@ def test_stencil1d():
     ref = np.zeros((12, ), dtype=np.float32)
     stencil1d.f(A, ref)
 
-    sdfg = stencil1d.to_sdfg(strict=True)
+    sdfg = stencil1d.to_sdfg(simplify=True)
     sdfg.apply_transformations_repeated(MapFusion)
-    sdfg.apply_transformations_repeated(SimpleTaskletFusion)
+    sdfg.apply_transformations_repeated(TaskletFusion)
     num = sdfg.apply_transformations(StencilDetection)
     assert (num == 1)
     B1 = np.zeros((12, ), dtype=np.float32)
@@ -51,9 +51,9 @@ def test_jacobi1d():
 
     jacobi1d.f(100, refA, refB)
 
-    sdfg = jacobi1d.to_sdfg(strict=True)
+    sdfg = jacobi1d.to_sdfg(simplify=True)
     sdfg.apply_transformations_repeated(MapFusion)
-    sdfg.apply_transformations_repeated(SimpleTaskletFusion)
+    sdfg.apply_transformations_repeated(TaskletFusion)
     num = sdfg.apply_transformations_repeated(StencilDetection)
     assert (num == 2)
     sdfg(TMAX=100, A=A, B=B)
@@ -81,19 +81,19 @@ def test_jacobi2d():
 
     jacobi2d.f(100, refA, refB)
 
-    sdfg = jacobi2d.to_sdfg(strict=True)
+    sdfg = jacobi2d.to_sdfg(simplify=True)
     sdfg.apply_transformations_repeated(MapFusion)
-    sdfg.apply_transformations_repeated(SimpleTaskletFusion)
+    sdfg.apply_transformations_repeated(TaskletFusion)
     num = sdfg.apply_transformations_repeated(StencilDetection)
     assert (num == 2)
-    for node, _ in sdfg.all_nodes_recursive():
-        if isinstance(node, dace.nodes.LibraryNode):
-            node.implementation = 'intel_fpga'
-    sdfg.apply_fpga_transformations()
-    # from dace.transformation.auto import auto_optimize as opt
-    # opt.set_fast_implementations(sdfg, dace.dtypes.DeviceType.FPGA)
-    sdfg.expand_library_nodes()
-    sdfg.save('test.sdfg')
+    # for node, _ in sdfg.all_nodes_recursive():
+    #     if isinstance(node, dace.nodes.LibraryNode):
+    #         node.implementation = 'intel_fpga'
+    # sdfg.apply_fpga_transformations()
+    # # from dace.transformation.auto import auto_optimize as opt
+    # # opt.set_fast_implementations(sdfg, dace.dtypes.DeviceType.FPGA)
+    # sdfg.expand_library_nodes()
+    # sdfg.save('test.sdfg')
     sdfg(TMAX=100, A=A, B=B)
 
     assert (np.allclose(A, refA))
@@ -118,9 +118,9 @@ def test_jacobi1d_with_scalar():
 
     jacobi1d_with_scalar.f(100, one_third, refA, refB)
 
-    sdfg = jacobi1d_with_scalar.to_sdfg(strict=True)
+    sdfg = jacobi1d_with_scalar.to_sdfg(simplify=True)
     sdfg.apply_transformations_repeated(MapFusion)
-    sdfg.apply_transformations_repeated(SimpleTaskletFusion)
+    sdfg.apply_transformations_repeated(TaskletFusion)
     num = sdfg.apply_transformations_repeated(StencilDetection)
     assert (num == 2)
     sdfg(TMAX=100, one_third=one_third, A=A, B=B)
@@ -164,9 +164,9 @@ def test_CFD_build_up_b():
 
     build_up_b.f(ref, rho, dt, u, v, dx, dy)
 
-    sdfg = build_up_b.to_sdfg(strict=True)
+    sdfg = build_up_b.to_sdfg(simplify=True)
     sdfg.apply_transformations_repeated(MapFusion)
-    sdfg.apply_transformations_repeated(SimpleTaskletFusion)
+    sdfg.apply_transformations_repeated(TaskletFusion)
     num = sdfg.apply_transformations_repeated(StencilDetection)
     assert (num == 1)
     sdfg(b=b, rho=rho, dt=dt, u=u, v=v, dx=dx, dy=dy, nx=nx, ny=ny)
@@ -208,9 +208,14 @@ def test_CFD_pressure_poisson():
 
     pressure_poisson.f(nit, ref, dx, dy, b)
 
-    sdfg = pressure_poisson.to_sdfg(strict=True)
-    sdfg.apply_transformations_repeated(MapFusion)
-    sdfg.apply_transformations_repeated(SimpleTaskletFusion)
+    sdfg = pressure_poisson.to_sdfg(simplify=True)
+    sdfg.save('test.sdfg')
+    # sdfg.apply_transformations_repeated(MapFusion)
+    from dace.transformation.auto.auto_optimize import auto_optimize
+    auto_optimize(sdfg, dace.DeviceType.CPU)
+    sdfg.save('test2.sdfg')
+    sdfg.apply_transformations_repeated(TaskletFusion)
+    sdfg.save('test3.sdfg')
     num = sdfg.apply_transformations_repeated(StencilDetection)
     assert (num == 1)
     sdfg(nit=nit, p=p, dx=dx, dy=dy, b=b, nx=nx, ny=ny)
@@ -260,12 +265,12 @@ def test_hdiff():
 
     hdiff.f(in_field, coeff, ref)
 
-    sdfg = hdiff.to_sdfg(strict=True)
+    sdfg = hdiff.to_sdfg(simplify=True)
     # from dace.transformation.auto import auto_optimize as autoopt
     # sdfg = autoopt.auto_optimize(sdfg, dace.DeviceType.CPU)
     # autoopt.greedy_fuse(sdfg, True)
     sdfg.apply_transformations_repeated(MapFusion)
-    sdfg.apply_transformations_repeated(SimpleTaskletFusion)
+    sdfg.apply_transformations_repeated(TaskletFusion)
     sdfg.save('hdiff_before.sdfg')
     num = sdfg.apply_transformations_repeated(StencilDetection)
     sdfg.save('hdiff_after.sdfg')
@@ -362,12 +367,12 @@ def test_vadv():
 
     # hdiff.f(in_field, coeff, ref)
 
-    sdfg = vadv.to_sdfg(strict=True)
+    sdfg = vadv.to_sdfg(simplify=True)
     from dace.transformation.auto import auto_optimize as autoopt
     sdfg = autoopt.auto_optimize(sdfg, dace.DeviceType.CPU)
     # autoopt.greedy_fuse(sdfg, True)
     # sdfg.apply_transformations_repeated(MapFusion)
-    sdfg.apply_transformations_repeated(SimpleTaskletFusion)
+    sdfg.apply_transformations_repeated(TaskletFusion)
     sdfg.save('vadv_before.sdfg')
     num = sdfg.apply_transformations_repeated(StencilDetection)
     sdfg.save('vadv_after.sdfg')
@@ -409,12 +414,12 @@ def test_conv2d():
 
     # hdiff.f(in_field, coeff, ref)
 
-    sdfg = conv2d.to_sdfg(strict=True)
+    sdfg = conv2d.to_sdfg(simplify=True)
     from dace.transformation.auto import auto_optimize as autoopt
     sdfg = autoopt.auto_optimize(sdfg, dace.DeviceType.CPU)
     # autoopt.greedy_fuse(sdfg, True)
     # sdfg.apply_transformations_repeated(MapFusion)
-    sdfg.apply_transformations_repeated(SimpleTaskletFusion)
+    sdfg.apply_transformations_repeated(TaskletFusion)
     sdfg.save('conv2d_before.sdfg')
     num = sdfg.apply_transformations_repeated(StencilDetection)
     sdfg.save('conv2d_after.sdfg')
@@ -425,10 +430,10 @@ def test_conv2d():
 if __name__ == '__main__':
     # test_stencil1d()
     # test_jacobi1d()
-    test_jacobi2d()
+    # test_jacobi2d()
     # test_jacobi1d_with_scalar()
     # test_CFD_build_up_b()
-    # test_CFD_pressure_poisson()
-    # test_hdiff()
-    # test_vadv()
-    # test_conv2d()
+    test_CFD_pressure_poisson()
+    test_hdiff()
+    test_vadv()
+    test_conv2d()
