@@ -46,7 +46,9 @@ class LIKWIDInstrumentation(InstrumentationProvider):
 #include <omp.h>
 #include <likwid.h>
 #include <likwid-marker.h>
+
 #include <unistd.h>
+#include <string>
 
 #define MAX_NUM_EVENTS 20
 '''
@@ -69,7 +71,13 @@ int num_threads = 1;
     num_threads = omp_get_num_threads();
 }}
 
-setenv("LIKWID_THREADS", "0,1", 1);
+std::string thread_pinning = "0";
+for (int i = 1; i < num_threads; i++)
+{{
+    thread_pinning += "," + std::to_string(i);
+}}
+const char* thread_pinning_c = thread_pinning.c_str();
+setenv("LIKWID_THREADS", thread_pinning_c, 1);
 
 LIKWID_MARKER_INIT;
 
