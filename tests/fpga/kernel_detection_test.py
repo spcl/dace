@@ -125,7 +125,7 @@ def test_kernels_inside_component_1():
     sdfg = kernels_inside_component_1.to_sdfg()
     sdfg.apply_transformations([FPGATransformSDFG, InlineSDFG])
 
-    with config.set_temporary("compiler", "fpga", "concurrent_kernels_detection", value=True):
+    with config.set_temporary("compiler", "fpga", "concurrent_kernel_detection", value=True):
         program = sdfg.compile()
     assert count_kernels(sdfg) == 5
     program(x=x, y=y, v=v, w=w, z=z, t=t, alpha=alpha, beta=beta)
