@@ -5,6 +5,8 @@ Code Generation
 
 File structure (framecode etc.)
 
+.. _codegen_how_it_works:
+
 How it Works
 ------------
 
@@ -55,6 +57,26 @@ If it is hard to understand from which line in the code generator the issue has 
 FPGA Code Generation
 --------------------
 
-Modules / kernels + illustration
+The FPGA Code Generation emits High-Level Synthesis device code and all the host code required to target either Xilinx or Intel FPGAs.
+
+The FPGA codegeneration is implemented by different modules, organized in a hierarchical way:
+
+    * a generic backend (`dace/codegen/target/fpga.py`) is in charge of traversing the SDFG as shown in :ref:`codegen_how_it_works`;
+    * two lower level components that are in charge of generating device specifc code for Vivado HLS, (`dace/codegen/target/xilinx.py`) or for Intel FPGA OpenCL (`dace/codegen/target/intel_fpga.py`).
+
+All vendor specific semantic and syntax are handled by the two lower level components, which are triggered by the generic backend.
+
+The FPGA code generation relies on the `HLSLIB https://github.com/definelicht/hlslib`_ external library to faciliate host/device interaction and HLS code generation.
+
+
+FPGA Kernel Detection
+^^^^^^^^^^^^^^^^^^^^^
+When the DaCe code generator backend detects a state that only access containers situated on the FPGA, then designate it as an FPGA kernel and triggers FPGA code generation.
+
+
+
+
+
 
 Memory interfaces (in/out)
+^^^^^^^^^^^^^^^^^^^^^^^^^
