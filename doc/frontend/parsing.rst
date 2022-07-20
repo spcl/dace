@@ -1,4 +1,7 @@
-Supported Features
-==================
+Parsing Python Programs to SDFGs
+================================
 
-AST nodes etc.
+Prerequisites
+-------------
+
+Reference `daceprograms`_.
