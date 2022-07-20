@@ -44,3 +44,9 @@ for _ in range(1):
 
 report = sdfg.get_latest_report()
 print(report)
+
+measured_flops = sum(report.durations[(0,0,-1)]["RETIRED_SSE_AVX_FLOPS_SINGLE_ALL"])
+flops = m * k * (n * 2)
+
+print(f"Expected {flops} FLOPS, measured {measured_flops} FLOPS, diff: {measured_flops - flops}")
+
