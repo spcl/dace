@@ -43,15 +43,20 @@ for nsdfg in sdfg.all_sdfgs_recursive():
             if isinstance(node, dace.nodes.MapEntry):
                 node.instrument = dace.InstrumentationType.LIKWID_Counters
 
-csdfg = sdfg.compile()
-for _ in range(1):
-    csdfg(A=A, B=B, C=C)
+with dace.config.set_temporary("instrumentation", "report_each_invocation", value=False):
+    csdfg = sdfg.compile()
+    for _ in range(1):
+        csdfg(A=A, B=B, C=C)
+
+    csdfg.finalize()
 
 report = sdfg.get_latest_report()
 print(report)
 
-measured_flops = sum(report.durations[(0,0,-1)]["RETIRED_SSE_AVX_FLOPS_SINGLE_ALL"])
+measured_flops = 0
+flops_report = report.counters[(0, 0, -1)]["RETIRED_SSE_AVX_FLOPS_SINGLE_ALL"]
+for tid in flops_report:
+    measured_flops += flops_report[tid][0]
+
 flops = m * k * (n * 2)
-
 print(f"Expected {flops} FLOPS, measured {measured_flops} FLOPS, diff: {measured_flops - flops}")
-

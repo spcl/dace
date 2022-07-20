@@ -93,7 +93,7 @@ LIKWID_MARKER_INIT;
     def on_sdfg_end(self, sdfg, local_stream, global_stream):
         if not self._likwid_used:
             return
-        
+
         outer_code = f'''
 double events[num_threads][MAX_NUM_EVENTS];
 double time[num_threads];
@@ -120,7 +120,7 @@ double time[num_threads];
 
         for (int t = 0; t < num_threads; t++)
         {{
-            __state->report.add_completion("Time", "likwid", 0, time[t] * 1000 * 1000, {sdfg_id}, {state_id}, {node_id});
+            __state->report.add_completion("Timer", "likwid", 0, time[t] * 1000 * 1000, t, {sdfg_id}, {state_id}, {node_id});
         }}
 
         for (int i = 0; i < nevents; i++)
@@ -129,14 +129,14 @@ double time[num_threads];
             
             for (int t = 0; t < num_threads; t++)
             {{
-                __state->report.add_completion(event_name, "likwid", 0, events[t][i] * 1000,{sdfg_id}, {state_id}, {node_id});
+                __state->report.add_counter("{region}", "likwid", event_name, events[t][i], t, {sdfg_id}, {state_id}, {node_id});
             }}
         }}
     }}
 }}
 '''
             local_stream.write(report_code)
-        
+
         local_stream.write("LIKWID_MARKER_CLOSE;", sdfg)
 
     def on_state_begin(self, sdfg, state, local_stream, global_stream):
@@ -149,7 +149,7 @@ double time[num_threads];
             node_id = -1
             region = f"state_{sdfg_id}_{state_id}_{node_id}"
             self._regions.append((region, sdfg_id, state_id, node_id))
-            
+
             marker_code = f'''
 #pragma omp parallel
 {{
