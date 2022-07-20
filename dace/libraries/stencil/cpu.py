@@ -91,11 +91,14 @@ class ExpandStencilCPU(dace.library.ExpandTransformation):
             read_node = state.add_read(field)
             input_dims = iterator_mapping[field]
             input_shape = tuple(s for s, v in zip(shape, input_dims) if v)
-            data = sdfg.add_array(field, input_shape, dtype)
+            field, data = sdfg.add_array(field, input_shape, dtype)
             field_parameters = tuple(p for p, v in zip(parameters, input_dims) if v)
             for indices, connector in field_accesses[field].items():
                 access_str = ", ".join(f"{p} + ({i})" for p, i in zip(field_parameters, indices))
-                memlet = dace.Memlet(f"{field}[{access_str}]", dynamic=True)
+                if access_str:
+                    memlet = dace.Memlet(f"{field}[{access_str}]", dynamic=True)
+                else:
+                    memlet = dace.Memlet.from_array(field, data)
                 memlet.allow_oob = True
                 state.add_memlet_path(read_node, entry, tasklet, dst_conn=f"_{connector}", memlet=memlet)
 
