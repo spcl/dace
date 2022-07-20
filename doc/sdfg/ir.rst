@@ -48,6 +48,8 @@ Transient property, aliasing assumptions.
 
 Views and references, see below.
 
+.. _sdfg-symbol:
+
 Symbols
 ~~~~~~~~
 Scalars vs. symbols
@@ -84,6 +86,7 @@ Dynamic Map Ranges
 
 Explain + example (image / embedded viewer)
 
+.. _viewref-lang:
 
 Views and References
 ~~~~~~~~~~~~~~~~~~~~
@@ -97,6 +100,7 @@ Library Nodes
 ~~~~~~~~~~~~~
 
 
+.. _memprop:
 
 Memlet Propagation
 ------------------
@@ -108,6 +112,8 @@ The process is triggered automatically by the Python frontend. If you want to tr
 :func:`~dace.sdfg.propagation.propagate_memlets_sdfg`. For a local scope, use :func:`~dace.sdfg.propagation.propagate_memlets_scope`,
 and for a single memlet use :func:`~dace.sdfg.propagation.propagate_memlet`. If you only want to trigger the part that propagates
 symbol values across the SDFG state machine, call :func:`~dace.sdfg.propagation.propagate_states`.
+
+.. _sdfg-api:
 
 SDFG Builder API
 ----------------

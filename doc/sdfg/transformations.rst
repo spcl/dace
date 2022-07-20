@@ -1,3 +1,5 @@
+.. _transformations:
+
 Pattern-Matching and Subgraph Transformations
 =============================================
 

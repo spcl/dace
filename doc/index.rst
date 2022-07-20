@@ -60,6 +60,7 @@ If you use DaCe, cite us:
    setup/integration
    ide/cli
    setup/faq
+   sdfg/glossary
 
 .. toctree::
    :caption: Developer Guide

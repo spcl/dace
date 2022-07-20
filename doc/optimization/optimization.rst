@@ -1,6 +1,7 @@
 Optimizing Programs in DaCe
 ===========================
 
+TODO: Intro to what transformations are
 
 Transforming a program is often a sequence of operations.
 Some transformations do not necessarily improve the performance of an SDFG, but are a "stepping stone" for other

@@ -1,6 +1,8 @@
 Extending Library Nodes and Libraries
 =====================================
 
+.. _libnodes-impl:
+
 Library Nodes
 -------------
 Library nodes, implementations, example

@@ -9,6 +9,8 @@ object, upon applying, will ensure dependencies are met and that passes do not r
 
 See more information and examples in :ref:`available_passes`.
 
+.. _pass:
+
 Passes
 ------
 
