@@ -70,7 +70,7 @@ class Memlet(object):
                      1. ``ARRAY``,
                      2. ``ARRAY[SUBSET]``,
                      3. ``ARRAY[SUBSET] -> OTHER_SUBSET``.
-        :param data: (DEPRECATED) Data descriptor name attached to this memlet.
+        :param data: Data descriptor name attached to this memlet.
         :param subset: The subset to take from the data attached to the edge,
                        represented either as a string or a Subset object.
         :param other_subset: The subset to offset into the other side of the
