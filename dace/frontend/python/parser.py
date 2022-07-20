@@ -746,7 +746,7 @@ class DaceProgram(pycommon.SDFGConvertible):
         _, key = self._load_sdfg(None, *args, **kwargs)
         return key
 
-    def _generate_pdp(self, args, kwargs, simplify=None) -> SDFG:
+    def _generate_pdp(self, args: Tuple[Any], kwargs: Dict[str, Any], simplify: Optional[bool] = None) -> SDFG:
         """ Generates the parsed AST representation of a DaCe program.
             :param args: The given arguments to the program.
             :param kwargs: The given keyword arguments to the program.
@@ -825,6 +825,10 @@ class DaceProgram(pycommon.SDFGConvertible):
         cachekey = self._cache.make_key(argtypes, specified, self.closure_array_keys, self.closure_constant_keys, gvars)
         if self._cache.has(cachekey):
             sdfg = self._cache.get(cachekey).sdfg
+
+            # We might be in a parsing context (parsing a nested SDFG), do not reuse existing reference
+            sdfg = copy.deepcopy(sdfg)
+
             cached = True
         else:
             cached = False
