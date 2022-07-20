@@ -426,14 +426,14 @@ required:
                             Target Xilinx ("xilinx") or Intel ("intel_fpga") FPGAs when
                             generating code.
 
-                    concurrent_kernels_detection:
+                    concurrent_kernel_detection:
                         type: bool
                         default: false
                         title: Detect parts of an SDFG that can run in parallel
                         description: >
-                            If set to false, DaCe will place each independent connected
-                            component found in an SDFG state in a different Kernel/Processing Elements. 
-                            If true, an heuristic will further inspect each independent component
+                            If set to false, DaCe will place each weakly connected
+                            component found in an SDFG state in a different Kernel/Processing Element. 
+                            If true, a heuristic will further inspect each independent component
                             for other parallelism opportunities (e.g., branches of the SDFG
                             that can be executed in parallel), creating the corresponding kernels.
 

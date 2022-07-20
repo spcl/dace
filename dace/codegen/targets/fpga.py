@@ -486,7 +486,7 @@ class FPGACodeGen(TargetCodeGenerator):
             # Then, try to split these components further
             subgraphs = dace.sdfg.concurrent_subgraphs(state)
 
-            if Config.get_bool("compiler", "fpga", "concurrent_kernels_detection"):
+            if Config.get_bool("compiler", "fpga", "concurrent_kernel_detection"):
                 start_kernel = 0
                 for sg in subgraphs:
                     # Determine kernels in state

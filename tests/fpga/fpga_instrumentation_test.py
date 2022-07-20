@@ -3,10 +3,9 @@ import dace
 from dace.sdfg.utils import is_fpga_kernel
 from dace.fpga_testing import fpga_test
 from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
+from dace import config
 import numpy as np
 import re
-from dace.config import set_temporary
-
 
 def make_sdfg(make_tmp_local: bool):
     """
@@ -115,7 +114,7 @@ def test_instrumentation_single():
 @fpga_test()
 def test_instrumentation_multiple():
     sdfg = make_sdfg(False)
-    with set_temporary("compiler", "fpga", "concurrent_kernels_detection", value=True):
+    with config.set_temporary("compiler", "fpga", "concurrent_kernel_detection", value=True):
         run_program(sdfg)
     report = sdfg.get_latest_report()
     # There should be five runtimes: One for each kernel, and two for the state
