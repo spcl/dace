@@ -182,10 +182,7 @@ class PatternTransformation(TransformationBase):
             expr = self.expressions()[expr_index]
             for value in subgraph.values():
                 if not isinstance(value, int):
-                    raise TypeError('All values of '
-                                    'subgraph'
-                                    ' dictionary must be '
-                                    'instances of int.')
+                    raise TypeError('All values of subgraph dictionary must be instances of int.')
             self._subgraph = {expr.node_id(k): v for k, v in subgraph.items()}
         else:
             self._subgraph = {-1: -1}
