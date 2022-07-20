@@ -15,6 +15,9 @@ Discuss ``CompiledSDFG`` objects and calling them directly for performance.
     if compiled, return values are cached
 
 
+Mention :func:`~dace.data.make_array_from_descriptor` and :func:`~dace.data.make_reference_from_descriptor`
+
+
 Using GPU Arrays
 ----------------
 
