@@ -9,18 +9,19 @@ from dace.config import Config
 
 from typing import Optional, Set
 
+from dace.transformation import helpers as xfh
+
 
 @registry.autoregister_params(type=dtypes.InstrumentationType.LIKWID_Counters)
 class LIKWIDInstrumentation(InstrumentationProvider):
     """ Instrumentation provider that reports CPU performance counters using
         the Likwid tool. """
 
-    _counters: Optional[Set[str]] = None
-
     perf_whitelist_schedules = [dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.Sequential]
 
     def __init__(self):
         self._likwid_used = False
+        self._regions = []
 
     def configure_likwid(self):
         Config.append('compiler', 'cpu', 'args', value=' -DLIKWID_PERFMON -fopenmp ')
@@ -40,7 +41,7 @@ class LIKWIDInstrumentation(InstrumentationProvider):
         if not self._likwid_used:
             return
 
-        # Add instrumentation includes and initialize PAPI
+        # Add instrumentation includes and initialize LIKWID
         header_code = '''
 #include <omp.h>
 #include <likwid.h>
@@ -51,12 +52,12 @@ class LIKWIDInstrumentation(InstrumentationProvider):
 '''
         global_stream.write(header_code, sdfg)
 
-        init_code = '''
+        init_code = f'''
 if(getenv("LIKWID_PIN"))
-{
+{{
     printf("ERROR: it appears you are running this SDFG with likwid-perfctr. This instrumentation is supposed to be used standalone.");
     exit(1);
-}
+}}
 
 setenv("LIKWID_FILEPATH", "/tmp/likwid_marker.out", 0);
 setenv("LIKWID_MODE", "1", 0);
@@ -64,80 +65,70 @@ setenv("LIKWID_FORCE", "1", 1);
 
 int num_threads = 1;
 #pragma omp parallel
-{
+{{
     num_threads = omp_get_num_threads();
-}
+}}
 
 setenv("LIKWID_THREADS", "0,1", 1);
 
 LIKWID_MARKER_INIT;
 
 #pragma omp parallel
-{
+{{
     int thread_id = omp_get_thread_num();
     likwid_pinThread(thread_id);
     LIKWID_MARKER_THREADINIT;
-}
+}}
 '''
         local_stream.write(init_code)
 
     def on_sdfg_end(self, sdfg, local_stream, global_stream):
         if not self._likwid_used:
             return
-
-        report_code = '''
+        
+        outer_code = f'''
 double events[num_threads][MAX_NUM_EVENTS];
 double time[num_threads];
+'''
+        local_stream.write(outer_code, sdfg)
 
+        for region, sdfg_id, state_id, node_id in self._regions:
+            report_code = f'''
 #pragma omp parallel
-{
+{{
     num_threads = omp_get_num_threads();
     int thread_id = omp_get_thread_num();
     int nevents = MAX_NUM_EVENTS;
     int count = 0;
 
-    LIKWID_MARKER_GET("state_0", &nevents, events[thread_id], time + thread_id, &count);
+    LIKWID_MARKER_GET("{region}", &nevents, events[thread_id], time + thread_id, &count);
 
     #pragma omp barrier
 
     #pragma omp single
-    {
+    {{
         int gid = perfmon_getIdOfActiveGroup();
         char* group_name = perfmon_getGroupName(gid);
 
         for (int t = 0; t < num_threads; t++)
-        {
-            __state->report.add_completion("Time", "likwid", 0, time[t] * 1000 * 1000, 0, 0, -1);
-        }
+        {{
+            __state->report.add_completion("Time", "likwid", 0, time[t] * 1000 * 1000, {sdfg_id}, {state_id}, {node_id});
+        }}
 
         for (int i = 0; i < nevents; i++)
-        {
+        {{
             char* event_name = perfmon_getEventName(gid, i); 
             
             for (int t = 0; t < num_threads; t++)
-            {
-                __state->report.add_completion(event_name, "likwid", 0, events[t][i] * 1000, 0, 0, -1);
-            }
-        }
-
-        /*
-        // TODO: Figure out region id by tag
-        int region_id = 0;
-        for (int k = 0; k < perfmon_getNumberOfMetrics(gid); k++) 
-        {
-            char* metric_name = perfmon_getMetricName(gid, k);
-
-            for (int t = 0; t < num_threads; t++)
-            {
-                double metric_value = perfmon_getMetricOfRegionThread(region_id, k, t);
-                __state->report.add_completion(metric_name, "likwid", 0, metric_value, 0, 0, -1);
-            }
-        }
-        */
-    }
-}
+            {{
+                __state->report.add_completion(event_name, "likwid", 0, events[t][i] * 1000,{sdfg_id}, {state_id}, {node_id});
+            }}
+        }}
+    }}
+}}
 '''
-        local_stream.write(report_code)
+            local_stream.write(report_code)
+        
         local_stream.write("LIKWID_MARKER_CLOSE;", sdfg)
 
     def on_state_begin(self, sdfg, state, local_stream, global_stream):
@@ -145,14 +136,20 @@ double time[num_threads];
             return
 
         if state.instrument == dace.InstrumentationType.LIKWID_Counters:
-            marker_code = '''
+            sdfg_id = sdfg.sdfg_id
+            state_id = sdfg.node_id(state)
+            node_id = -1
+            region = f"state_{sdfg_id}_{state_id}_{node_id}"
+            self._regions.append((region, sdfg_id, state_id, node_id))
+            
+            marker_code = f'''
 #pragma omp parallel
-{
-    LIKWID_MARKER_REGISTER("state_0");
+{{
+    LIKWID_MARKER_REGISTER("{region}");
 
     #pragma omp barrier
-    LIKWID_MARKER_START("state_0");
-}
+    LIKWID_MARKER_START("{region}");
+}}
 '''
             local_stream.write(marker_code)
 
@@ -161,11 +158,59 @@ double time[num_threads];
             return
 
         if state.instrument == dace.InstrumentationType.LIKWID_Counters:
-            marker_code = '''
+            sdfg_id = sdfg.sdfg_id
+            state_id = sdfg.node_id(state)
+            node_id = -1
+            region = f"state_{sdfg_id}_{state_id}_{node_id}"
+
+            marker_code = f'''
 #pragma omp parallel
-{
-    LIKWID_MARKER_STOP("state_0");
-}
+{{
+    LIKWID_MARKER_STOP("{region}");
+}}
 '''
             local_stream.write(marker_code)
 
+    def on_scope_entry(self, sdfg, state, node, outer_stream, inner_stream, global_stream):
+        if not self._likwid_used or node.instrument != dace.InstrumentationType.LIKWID_Counters:
+            return
+
+        if not isinstance(node, dace.nodes.MapEntry) or xfh.get_parent_map(state, node) is not None:
+            raise TypeError("Only top-level map scopes supported")
+        elif node.schedule not in LIKWIDInstrumentation.perf_whitelist_schedules:
+            raise TypeError("Unsupported schedule on scope")
+
+        sdfg_id = sdfg.sdfg_id
+        state_id = sdfg.node_id(state)
+        node_id = state.node_id(node)
+        region = f"scope_{sdfg_id}_{state_id}_{node_id}"
+
+        self._regions.append((region, sdfg_id, state_id, node_id))
+        marker_code = f'''
+#pragma omp parallel
+{{
+    LIKWID_MARKER_REGISTER("{region}");
+
+    #pragma omp barrier
+    LIKWID_MARKER_START("{region}");
+}}
+'''
+        outer_stream.write(marker_code)
+
+    def on_scope_exit(self, sdfg, state, node, outer_stream, inner_stream, global_stream):
+        entry_node = state.entry_node(node)
+        if not self._likwid_used or entry_node.instrument != dace.InstrumentationType.LIKWID_Counters:
+            return
+
+        sdfg_id = sdfg.sdfg_id
+        state_id = sdfg.node_id(state)
+        node_id = state.node_id(entry_node)
+        region = f"scope_{sdfg_id}_{state_id}_{node_id}"
+
+        marker_code = f'''
+#pragma omp parallel
+{{
+    LIKWID_MARKER_STOP("{region}");
+}}
+'''
+        outer_stream.write(marker_code)

@@ -33,10 +33,15 @@ C = np.zeros((m, n), dtype=np.float32)
 
 sdfg = matmul.to_sdfg()
 sdfg.simplify()
+sdfg.expand_library_nodes()
 sdfg.specialize({M: m, N: n, K: k})
 
-for state in sdfg.nodes():
-    state.instrument = dace.InstrumentationType.LIKWID_Counters  
+for nsdfg in sdfg.all_sdfgs_recursive():
+    for state in nsdfg.nodes():
+        state.instrument = dace.InstrumentationType.LIKWID_Counters
+        for node in state.nodes():
+            if isinstance(node, dace.nodes.MapEntry):
+                node.instrument = dace.InstrumentationType.LIKWID_Counters
 
 csdfg = sdfg.compile()
 for _ in range(1):
