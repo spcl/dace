@@ -871,11 +871,15 @@ class Reference(Array):
         return copy
 
 
-def make_array_from_descriptor(descriptor: Array, original_array: Optional[ArrayLike] = None) -> ArrayLike:
+def make_array_from_descriptor(descriptor: Array, original_array: Optional[ArrayLike] = None,
+                               symbols: Optional[Dict[str, Any]] = None) -> ArrayLike:
     """
     Creates an array that matches the given data descriptor, and optionally copies another array to it.
+
     :param descriptor: The data descriptor to create the array from.
     :param original_array: An optional array to fill the content of the return value with.
+    :param symbols: An optional symbol mapping between symbol names and their values. Used for creating arrays
+                    with symbolic sizes.
     :return: A NumPy-compatible array (CuPy for GPU storage) with the specified size and strides.
     """
     import numpy as np
@@ -936,8 +940,10 @@ def make_reference_from_descriptor(descriptor: Array,
 
     :param descriptor: The data descriptor to create the array from.
     :param original_array: The array whose memory the return value would be used in.
-    :param symbols: An optional symbol mapping between symbol names and their values.
-    :return: A NumPy-compatible array (CuPy for GPU storage) with the specified size and strides.
+    :param symbols: An optional symbol mapping between symbol names and their values. Used for referencing arrays
+                    with symbolic sizes.
+    :return: A NumPy-compatible array (CuPy for GPU storage) with the specified size and strides, sharing memory
+             with the pointer specified in ``original_array``.
     """
     import numpy as np
     symbols = symbols or {}
