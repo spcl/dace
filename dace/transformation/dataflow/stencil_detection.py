@@ -22,23 +22,18 @@ class StencilDetection(pm.SingleStateTransformation):
     tasklet = pm.PatternNode(nodes.Tasklet)
     map_exit = pm.PatternNode(nodes.MapExit)
 
-    @staticmethod
-    def expressions():
+    @classmethod
+    def expressions(cls):
         return [
             sdutil.node_path_graph(StencilDetection.map_entry,
                                    StencilDetection.tasklet,
                                    StencilDetection.map_exit)
         ]
 
-    @staticmethod
-    def can_be_applied(graph: dace.SDFGState,
-                       candidate: Dict[pm.PatternNode, int],
-                       expr_index: int,
-                       sdfg: dace.SDFG,
-                       strict: bool = False):
+    def can_be_applied(self, graph: dace.SDFGState, expr_index: int, sdfg: dace.SDFG, permissive: bool = False):
 
-        map_entry = graph.node(candidate[StencilDetection.map_entry])
-        map_exit = graph.node(candidate[StencilDetection.map_exit])
+        map_entry = self.map_entry
+        map_exit = self.map_exit
 
         # Match Map scopes with only one Tasklet
         map_scope = graph.scope_subgraph(map_entry)
@@ -129,15 +124,9 @@ class StencilDetection(pm.SingleStateTransformation):
 
         return stencil_found
 
-    @staticmethod
-    def match_to_str(graph: dace.SDFGState, candidate: Dict[pm.PatternNode,
-                                                            int]) -> str:
-        map_entry = graph.node(candidate[StencilDetection.map_entry])
-        return map_entry.map.label + ': ' + str(map_entry.map.params)
-
-    def apply(self, sdfg: dace.SDFG):
-        state = sdfg.nodes()[self.state_id]
-        map_entry = state.nodes()[self.subgraph[StencilDetection.map_entry]]
+    def apply(self, graph: dace.SDFGState, sdfg: dace.SDFG):
+        state = graph
+        map_entry = self.map_entry
         map_exit = state.exit_node(map_entry)
         map_scope = state.scope_subgraph(map_entry)
         tasklet = next(n for n in map_scope.nodes()
@@ -204,7 +193,7 @@ class StencilDetection(pm.SingleStateTransformation):
 
         for e in state.in_edges(tasklet):
             e.data.subset.replace(rdict)
-            conn = f'__{e.data.data}'
+            conn = f'__inp_{e.data.data}'
             in_conns.add(conn)
             in_data[e.data.data] = conn
             desc = sdfg.arrays[e.data.data]
@@ -217,7 +206,7 @@ class StencilDetection(pm.SingleStateTransformation):
 
         for e in state.out_edges(tasklet):
             e.data.subset.replace(rdict)
-            conn = f'__{e.data.data}'
+            conn = f'__out_{e.data.data}'
             out_conns.add(conn)
             out_data[e.data.data] = conn
             desc = sdfg.arrays[e.data.data]
