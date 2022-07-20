@@ -21,6 +21,7 @@ from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets.target import (TargetCodeGenerator, IllegalCopy, make_absolute)
 from dace.codegen.dispatcher import DefinedType
 from dace.codegen.targets import cpp
+from dace.codegen.targets.common import update_persistent_desc
 from dace.codegen.targets.cpp import (sym2cpp, unparse_cr, unparse_cr_split, cpp_array_expr, synchronize_streams,
                                       memlet_copy_to_absolute_strides, codeblock_to_cpp)
 
@@ -427,17 +428,8 @@ void __dace_exit_cuda({sdfg.name}_t *__state) {{
             return self._cpu_codegen.allocate_reference(sdfg, dfg, state_id, node, function_stream, declaration_stream,
                                                         allocation_stream)
 
-        # NOTE: The code below fixes symbol-related issues with transient data originally defined in a NestedSDFG scope
-        # but promoted to be persistent. These data must have their free symbols replaced with the corresponding
-        # top-level SDFG symbols.
         if nodedesc.lifetime == dtypes.AllocationLifetime.Persistent:
-            if sdfg.parent and any(str(s) in sdfg.parent_nsdfg_node.symbol_mapping for s in nodedesc.free_symbols):
-                nodedesc = copy.deepcopy(nodedesc)
-                csdfg = sdfg
-                while csdfg.parent_sdfg:
-                    symbolic.safe_replace(csdfg.parent_nsdfg_node.symbol_mapping,
-                                          lambda m: sd.replace_properties_dict(nodedesc, m))
-                    csdfg = csdfg.parent_sdfg
+            nodedesc = update_persistent_desc(nodedesc, sdfg)
 
         result_decl = StringIO()
         result_alloc = StringIO()

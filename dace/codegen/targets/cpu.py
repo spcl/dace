@@ -11,7 +11,7 @@ from dace import data, dtypes, registry, memlet as mmlt, sdfg as sd, subsets, sy
 from dace.codegen import cppunparse, exceptions as cgx
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets import cpp
-from dace.codegen.targets.common import codeblock_to_cpp, sym2cpp
+from dace.codegen.targets.common import codeblock_to_cpp, sym2cpp, update_persistent_desc
 from dace.codegen.targets.target import TargetCodeGenerator, make_absolute
 from dace.codegen.dispatcher import DefinedType, TargetDispatcher
 from dace.frontend import operations
@@ -235,12 +235,6 @@ class CPUCodeGen(TargetCodeGenerator):
         if self._dispatcher.declared_arrays.has(ptrname):
             return
 
-        # NOTE: We actually want to declare Views here, but we may not want to declare References (to be clarified).
-        # Keeping the original code as a comment to ease debugging.
-        # # If this is a view/reference, do not declare it here
-        # if isinstance(nodedesc, (data.View, data.Reference)):
-        #     return
-
         # Compute array size
         arrsize = nodedesc.total_size
         if not isinstance(nodedesc.dtype, dtypes.opaque):
@@ -284,18 +278,9 @@ class CPUCodeGen(TargetCodeGenerator):
         declared = self._dispatcher.declared_arrays.has(alloc_name)
 
         define_var = self._dispatcher.defined_vars.add
-        # NOTE: The code below fixes symbol-related issues with transient data originally defined in a NestedSDFG scope
-        # but promoted to be persistent. These data must have their free symbols replaced with the corresponding
-        # top-level SDFG symbols.
         if nodedesc.lifetime == dtypes.AllocationLifetime.Persistent:
             define_var = self._dispatcher.defined_vars.add_global
-            if sdfg.parent and any(str(s) in sdfg.parent_nsdfg_node.symbol_mapping for s in nodedesc.free_symbols):
-                nodedesc = deepcopy(nodedesc)
-                csdfg = sdfg
-                while csdfg.parent_sdfg:
-                    symbolic.safe_replace(csdfg.parent_nsdfg_node.symbol_mapping,
-                                          lambda m: sd.replace_properties_dict(nodedesc, m))
-                    csdfg = csdfg.parent_sdfg
+            nodedesc = update_persistent_desc(nodedesc, sdfg)
 
         # Compute array size
         arrsize = nodedesc.total_size

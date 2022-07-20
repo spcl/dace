@@ -22,6 +22,7 @@ from dace.codegen import exceptions as cgx
 from dace.codegen.codeobject import CodeObject
 from dace.codegen.dispatcher import DefinedType
 from dace.codegen.prettycode import CodeIOStream
+from dace.codegen.targets.common import update_persistent_desc
 from dace.codegen.targets.target import (TargetCodeGenerator, IllegalCopy, make_absolute)
 from dace.codegen import cppunparse
 from dace.properties import Property, make_properties, indirect_properties
@@ -1055,13 +1056,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
         # but promoted to be persistent. These data must have their free symbols replaced with the corresponding
         # top-level SDFG symbols.
         if nodedesc.lifetime == dtypes.AllocationLifetime.Persistent:
-            if sdfg.parent and any(str(s) in sdfg.parent_nsdfg_node.symbol_mapping for s in nodedesc.free_symbols):
-                nodedesc = copy.deepcopy(nodedesc)
-                csdfg = sdfg
-                while csdfg.parent_sdfg:
-                    symbolic.safe_replace(csdfg.parent_nsdfg_node.symbol_mapping,
-                                          lambda m: sd.replace_properties_dict(nodedesc, m))
-                    csdfg = csdfg.parent_sdfg
+            nodedesc = update_persistent_desc(nodedesc, sdfg)
 
         result_decl = StringIO()
         result_alloc = StringIO()
