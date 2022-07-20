@@ -371,85 +371,85 @@ if __name__ == "__main__":
     func3 = utils.distributed_compile(sdfg3, commworld)
 
     # TTMc order 3
-    grid_dims = grid_ijkb[size]
-    lcm = np.lcm.reduce(list(grid_dims))
+#     grid_dims = grid_ijkb[size]
+#     lcm = np.lcm.reduce(list(grid_dims))
 
-    S, R = np.int32(2 * lcm), np.int32(2 * lcm)
+#     S, R = np.int32(2 * lcm), np.int32(2 * lcm)
 
-    SG1 = [S // np.int32(p) for p in grid_ijkb[size][:-1]]
-    RG1 = [R, R] + [R // np.int32(p) for p in grid_ijkb[size][-1:]]
-    SG2 = [S // np.int32(p) for p in grid_ikbc[size][:-2]] + [S]
-    RG2 = [R] + [R // np.int32(p) for p in grid_ikbc[size][-2:]]
+#     SG1 = [S // np.int32(p) for p in grid_ijkb[size][:-1]]
+#     RG1 = [R, R] + [R // np.int32(p) for p in grid_ijkb[size][-1:]]
+#     SG2 = [S // np.int32(p) for p in grid_ikbc[size][:-2]] + [S]
+#     RG2 = [R] + [R // np.int32(p) for p in grid_ikbc[size][-2:]]
 
-    PG1 = grid_ijkb[size]
-    PG2 = grid_ikbc[size]
+#     PG1 = grid_ijkb[size]
+#     PG2 = grid_ikbc[size]
 
-    X = np.arange(S**3, dtype=np.float64).reshape(S, S, S).copy()
-    JM = np.arange(S*R, dtype=np.float64).reshape(S, R).copy()
-    KM = np.arange(S*R, dtype=np.float64).reshape(S, R).copy()
+#     X = np.arange(S**3, dtype=np.float64).reshape(S, S, S).copy()
+#     JM = np.arange(S*R, dtype=np.float64).reshape(S, R).copy()
+#     KM = np.arange(S*R, dtype=np.float64).reshape(S, R).copy()
 
-    ###### Reference ######
+#     ###### Reference ######
 
-    if rank == 0:
-        ref = oe.contract(order_3_mode_0_str, X, JM, KM)
+#     if rank == 0:
+#         ref = oe.contract(order_3_mode_0_str, X, JM, KM)
 
-    commworld.Barrier()
+#     commworld.Barrier()
 
-    ##### One Grid per TensorDot #####
+#     ##### One Grid per TensorDot #####
 
-    if rank == 0:
-        print(
-            f"""
-##### One Grid per TensorDot #####
-jb, ijk -> bik: local sizes {SG1}, {RG1}, grid {grid_ijkb[size]}
-bik, kc -> ibc: local sizes {SG2}, {RG2}, grid {grid_ikbc[size]}""", flush=True
-        )
+#     if rank == 0:
+#         print(
+#             f"""
+# ##### One Grid per TensorDot #####
+# jb, ijk -> bik: local sizes {SG1}, {RG1}, grid {grid_ijkb[size]}
+# bik, kc -> ibc: local sizes {SG2}, {RG2}, grid {grid_ikbc[size]}""", flush=True
+#         )
     
-    cart_comm = commworld.Create_cart(grid_ijklme[size])
-    coords = cart_comm.Get_coords(rank)
-    lX = X[
-        coords[0] * SG1[0]: (coords[0] + 1) * SG1[0],
-        coords[1] * SG1[1]: (coords[1] + 1) * SG1[1],
-        coords[2] * SG1[2]: (coords[2] + 1) * SG1[2]
-    ].copy()
-    lJM = JM[coords[1] * SG1[1]: (coords[1] + 1) * SG1[1], coords[3] * RG1[1]: (coords[3] + 1) * RG1[1]].copy()
-    cart_comm = commworld.Create_cart(grid_ijbcde[size])
-    coords = cart_comm.Get_coords(rank)
-    lKM = KM[coords[1] * SG2[2]: (coords[1] + 1) * SG2[2], coords[3] * RG2[2]: (coords[3] + 1) * RG2[2]].copy()
+#     cart_comm = commworld.Create_cart(grid_ijklme[size])
+#     coords = cart_comm.Get_coords(rank)
+#     lX = X[
+#         coords[0] * SG1[0]: (coords[0] + 1) * SG1[0],
+#         coords[1] * SG1[1]: (coords[1] + 1) * SG1[1],
+#         coords[2] * SG1[2]: (coords[2] + 1) * SG1[2]
+#     ].copy()
+#     lJM = JM[coords[1] * SG1[1]: (coords[1] + 1) * SG1[1], coords[3] * RG1[1]: (coords[3] + 1) * RG1[1]].copy()
+#     cart_comm = commworld.Create_cart(grid_ijbcde[size])
+#     coords = cart_comm.Get_coords(rank)
+#     lKM = KM[coords[1] * SG2[2]: (coords[1] + 1) * SG2[2], coords[3] * RG2[2]: (coords[3] + 1) * RG2[2]].copy()
 
-    val = func3(X=lX, JM=lJM, KM=lKM,
-                S0=S, S1=S, S2=S, S3=S, S4=S, R0=R, R1=R, R2=R, R3=R, R4=R,
-                S0G1=SG1[0], S1G1=SG1[1], S2G1=SG1[2], 
-                S0G2=SG2[0], S1G2=SG2[1], S2G2=SG2[2], 
-                R0G1=RG1[0], R1G1=RG1[1], R2G1=RG1[2], 
-                R0G2=RG2[0], R1G2=RG2[1], R2G2=RG2[2], 
-                P0G1=PG1[0], P1G1=PG1[1], P2G1=PG1[2], PR1G1=PG1[3],
-                P0G2=PG2[0], P1G2=PG2[1], P2G2=PG2[2], PR1G2=PG2[2], PR2G2=PG2[3])
+#     val = func3(X=lX, JM=lJM, KM=lKM,
+#                 S0=S, S1=S, S2=S, S3=S, S4=S, R0=R, R1=R, R2=R, R3=R, R4=R,
+#                 S0G1=SG1[0], S1G1=SG1[1], S2G1=SG1[2], 
+#                 S0G2=SG2[0], S1G2=SG2[1], S2G2=SG2[2], 
+#                 R0G1=RG1[0], R1G1=RG1[1], R2G1=RG1[2], 
+#                 R0G2=RG2[0], R1G2=RG2[1], R2G2=RG2[2], 
+#                 P0G1=PG1[0], P1G1=PG1[1], P2G1=PG1[2], PR1G1=PG1[3],
+#                 P0G2=PG2[0], P1G2=PG2[1], P2G2=PG2[2], PR1G2=PG2[2], PR2G2=PG2[3])
 
-    if rank > 0:
-        commworld.Send(val, 0)
-    else:
-        out = np.ndarray((S, R, R), dtype=nptype)
-        out[
-            coords[0] * SG2[0]: (coords[0] + 1) * SG2[0],
-            coords[2] * RG2[1]: (coords[2] + 1) * RG2[1],
-            coords[3] * RG2[2]: (coords[3] + 1) * RG2[2]
-        ] = val
+#     if rank > 0:
+#         commworld.Send(val, 0)
+#     else:
+#         out = np.ndarray((S, R, R), dtype=nptype)
+#         out[
+#             coords[0] * SG2[0]: (coords[0] + 1) * SG2[0],
+#             coords[2] * RG2[1]: (coords[2] + 1) * RG2[1],
+#             coords[3] * RG2[2]: (coords[3] + 1) * RG2[2]
+#         ] = val
 
-        buf = np.ndarray((SG2[0], RG2[1], RG2[2]), dtype=nptype)
-        for r in range(1, size):
-            commworld.Recv(buf, r)
-            coords = cart_comm.Get_coords(r)
-            out[
-                coords[0] * SG2[0]: (coords[0] + 1) * SG2[0],
-                coords[2] * RG2[1]: (coords[2] + 1) * RG2[1],
-                coords[3] * RG2[2]: (coords[3] + 1) * RG2[2]
-            ] = buf
+#         buf = np.ndarray((SG2[0], RG2[1], RG2[2]), dtype=nptype)
+#         for r in range(1, size):
+#             commworld.Recv(buf, r)
+#             coords = cart_comm.Get_coords(r)
+#             out[
+#                 coords[0] * SG2[0]: (coords[0] + 1) * SG2[0],
+#                 coords[2] * RG2[1]: (coords[2] + 1) * RG2[1],
+#                 coords[3] * RG2[2]: (coords[3] + 1) * RG2[2]
+#             ] = buf
 
-        print(f"\nRelative error: {np.linalg.norm(out-ref) / np.linalg.norm(out)}", flush=True)
-        assert(np.allclose(out, ref))
+#         print(f"\nRelative error: {np.linalg.norm(out-ref) / np.linalg.norm(out)}", flush=True)
+#         assert(np.allclose(out, ref))
     
-    commworld.Barrier()
+#     commworld.Barrier()
 
 
     # TTMc order 5
