@@ -486,22 +486,26 @@ class FPGACodeGen(TargetCodeGenerator):
             # Then, try to split these components further
             subgraphs = dace.sdfg.concurrent_subgraphs(state)
 
-            start_kernel = 0
-            for sg in subgraphs:
-                # Determine kernels in state
-                num_kernels, dependencies = self.partition_kernels(sg, default_kernel=start_kernel)
-                if num_kernels > 1:
-                    # For each kernel, derive the corresponding subgraphs
-                    # and keep track of dependencies
-                    kernels.extend(self._kernels_subgraphs(sg, dependencies))
-                    self._kernels_dependencies.update(dependencies)
-                else:
-                    kernels.append((sg, start_kernel))
-                start_kernel = start_kernel + num_kernels
+            if Config.get_bool("compiler", "fpga", "concurrent_kernel_detection"):
+                start_kernel = 0
+                for sg in subgraphs:
+                    # Determine kernels in state
+                    num_kernels, dependencies = self.partition_kernels(sg, default_kernel=start_kernel)
+                    if num_kernels > 1:
+                        # For each kernel, derive the corresponding subgraphs
+                        # and keep track of dependencies
+                        kernels.extend(self._kernels_subgraphs(sg, dependencies))
+                        self._kernels_dependencies.update(dependencies)
+                    else:
+                        kernels.append((sg, start_kernel))
+                    start_kernel = start_kernel + num_kernels
 
-            # There is no need to generate additional kernels if the number of found kernels
-            # is equal to the number of connected components: use PEs instead (only one kernel)
-            if len(subgraphs) == len(kernels):
+                # There is no need to generate additional kernels if the number of found kernels
+                # is equal to the number of connected components: use PEs instead (only one kernel)
+                if len(subgraphs) == len(kernels):
+                    kernels = [(state, 0)]
+            else:
+                # Only one FPGA kernel (possibly with multiple PEs)
                 kernels = [(state, 0)]
 
             self._num_kernels = len(kernels)
@@ -920,8 +924,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                             trace_type, trace_bank = parse_location_bank(trace_desc)
                             if (bank is not None and bank_type is not None
                                     and (bank != trace_bank or bank_type != trace_type)):
-                                raise cgx.CodegenError("Found inconsistent memory bank "
-                                                       f"specifier for {trace_name}.")
+                                raise cgx.CodegenError("Found inconsistent memory bank " f"specifier for {trace_name}.")
                             bank = trace_bank
                             bank_type = trace_type
 
@@ -1460,8 +1463,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
 
             if (not sum(copy_shape) == 1 and
                 (not isinstance(memlet.subset, subsets.Range) or any([step != 1 for _, _, step in memlet.subset]))):
-                raise NotImplementedError("Only contiguous copies currently "
-                                          "supported for FPGA codegen.")
+                raise NotImplementedError("Only contiguous copies currently " "supported for FPGA codegen.")
 
             if host_to_device or device_to_device:
                 host_dtype = sdfg.data(src_node.data).dtype
@@ -1709,8 +1711,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
     @staticmethod
     def make_opencl_parameter(name, desc):
         if isinstance(desc, dt.Array):
-            return (f"hlslib::ocl::Buffer<{desc.dtype.ctype}, "
-                    f"hlslib::ocl::Access::readWrite> &{name}")
+            return (f"hlslib::ocl::Buffer<{desc.dtype.ctype}, " f"hlslib::ocl::Access::readWrite> &{name}")
         else:
             return (desc.as_arg(with_types=True, name=name))
 
@@ -1970,8 +1971,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                                 elif np.issubdtype(np.dtype(end_type.dtype.type), np.unsignedinteger):
                                     loop_var_type = "size_t"
                     except (UnboundLocalError):
-                        raise UnboundLocalError('Pipeline scopes require '
-                                                'specialized bound values')
+                        raise UnboundLocalError('Pipeline scopes require ' 'specialized bound values')
                     except (TypeError):
                         # Raised when the evaluation of begin or skip fails.
                         # This could occur, for example, if they are defined in terms of other symbols, which
