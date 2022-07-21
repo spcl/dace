@@ -39,7 +39,7 @@ class LIKWIDInstrumentation(InstrumentationProvider):
         self._likwid_used = True
 
     def on_sdfg_begin(self, sdfg, local_stream, global_stream, codegen):
-        if not sdfg.parent is None:
+        if sdfg.parent is not None:
             return
 
         # Configure CMake project and counters
@@ -112,9 +112,7 @@ LIKWID_MARKER_INIT;
         local_stream.write(init_code)
 
     def on_sdfg_end(self, sdfg, local_stream, global_stream):
-        if not sdfg.parent is None:
-            return
-        if not self._likwid_used:
+        if not self._likwid_used or sdfg.parent is not None:
             return
 
         outer_code = f'''

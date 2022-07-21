@@ -23,7 +23,7 @@ def matmul(A: dace.float32[M, K], B: dace.float32[K, N], C: dace.float32[M, N]):
 
 
 ##### DaCe + Likwid: Matmul Instrumentation #####
-# This samples demonstrates the likwid instrumentation  in Dace.
+# This sample demonstrates the likwid instrumentation in DaCe.
 #
 # In order to run the sample, specific environment variables must be set
 # - OMP_NUM_THREADS: number of threads [1, num procs]
@@ -44,7 +44,6 @@ sdfg.simplify()
 m = 512
 k = 512
 n = 512
-sdfg.specialize({M: m, N: n, K: k})
 
 # Create arrays
 A = np.random.rand(m, k).astype(np.float32)
@@ -67,7 +66,7 @@ for nsdfg in sdfg.all_sdfgs_recursive():
 # threads are measured by likwid and written into a performance report
 # in form of events. This report is saved at .dacecache/matmul/perf.
 csdfg = sdfg.compile()
-csdfg(A=A, B=B, C=C)
+csdfg(A=A, B=B, C=C, K=k, M=m, N=n)
 
 ## 4. Report
 # We can now parse the performance report into a python-object
