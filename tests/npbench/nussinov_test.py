@@ -131,6 +131,7 @@ def test_gpu():
 def test_fpga():
     return run_nussinov(dace.dtypes.DeviceType.FPGA)
 
+
 @xilinx_test(assert_ii_1=False)
 def test_xilinx_decoupled_array_interfaces():
     with set_temporary("compiler", "xilinx", "decouple_array_interfaces", value=True):

@@ -2,6 +2,7 @@
 from typing import Any, Dict, List, Union
 from six import StringIO
 import ast
+import copy
 import ctypes
 import functools
 import os
@@ -10,7 +11,7 @@ import warnings
 
 import dace
 from dace.frontend import operations
-from dace import registry, subsets, symbolic, dtypes, data as dt
+from dace import registry, subsets, symbolic, dtypes, data as dt, sdfg as sd
 from dace.config import Config
 from dace.sdfg import nodes, utils as sdutil
 from dace.sdfg import (ScopeSubgraphView, SDFG, SDFGState, scope_contains_scope, is_devicelevel_gpu,
@@ -20,6 +21,7 @@ from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets.target import (TargetCodeGenerator, IllegalCopy, make_absolute)
 from dace.codegen.dispatcher import DefinedType
 from dace.codegen.targets import cpp
+from dace.codegen.targets.common import update_persistent_desc
 from dace.codegen.targets.cpp import (sym2cpp, unparse_cr, unparse_cr_split, cpp_array_expr, synchronize_streams,
                                       memlet_copy_to_absolute_strides, codeblock_to_cpp)
 
@@ -367,7 +369,11 @@ void __dace_exit_cuda({sdfg.name}_t *__state) {{
     def declare_array(self, sdfg, dfg, state_id, node, nodedesc, function_stream, declaration_stream):
 
         fsymbols = self._frame.symbols_and_constants(sdfg)
-        if not sdutil.is_nonfree_sym_dependent(node, nodedesc, dfg, fsymbols):
+        # NOTE: `dfg` (state) will be None iff `nodedesc` is non-free symbol dependent
+        # (see `DaCeCodeGenerator.determine_allocation_lifetime` in `dace.codegen.targets.framecode`).
+        # We add the `dfg is not None` check because the `sdutils.is_nonfree_sym_dependent` check will fail if
+        # `nodedesc` is a View and `dfg` is None.
+        if dfg and not sdutil.is_nonfree_sym_dependent(node, nodedesc, dfg, fsymbols):
             raise NotImplementedError("The declare_array method should only be used for variables "
                                       "that must have their declaration and allocation separate.")
 
@@ -421,6 +427,9 @@ void __dace_exit_cuda({sdfg.name}_t *__state) {{
         elif isinstance(nodedesc, dace.data.Reference):
             return self._cpu_codegen.allocate_reference(sdfg, dfg, state_id, node, function_stream, declaration_stream,
                                                         allocation_stream)
+
+        if nodedesc.lifetime == dtypes.AllocationLifetime.Persistent:
+            nodedesc = update_persistent_desc(nodedesc, sdfg)
 
         result_decl = StringIO()
         result_alloc = StringIO()
@@ -498,7 +507,7 @@ void __dace_exit_cuda({sdfg.name}_t *__state) {{
             if is_array_stream_view(sdfg, dfg, node):
                 edges = dfg.out_edges(node)
                 if len(edges) > 1:
-                    raise NotImplementedError("Cannot handle streams writing " "to multiple arrays.")
+                    raise NotImplementedError("Cannot handle streams writing to multiple arrays.")
 
                 fmtargs['ptr'] = nodedesc.sink + ' + ' + cpp_array_expr(
                     sdfg, edges[0].data, with_brackets=False, codegen=self._frame)
@@ -1565,11 +1574,13 @@ void  *{kname}_args[] = {{ {kargs} }};
                     if (Config.get('compiler', 'cuda', 'dynamic_map_block_size') == 'max'):
                         block_size = ['max', 1, 1]
                     else:
-                        block_size = [int(b) for b in Config.get('compiler', 'cuda', 'dynamic_map_block_size').split(',')]
+                        block_size = [
+                            int(b) for b in Config.get('compiler', 'cuda', 'dynamic_map_block_size').split(',')
+                        ]
                 else:
                     if Config.get_bool('debugprint'):
-                        warnings.warn('Thread-block maps not found in kernel, assuming ' +
-                                    'block size of (%s)' % Config.get('compiler', 'cuda', 'default_block_size'))
+                        warnings.warn('Thread-block maps not found in kernel, assuming block size of (%s)' %
+                                      Config.get('compiler', 'cuda', 'default_block_size'))
 
                     if (Config.get('compiler', 'cuda', 'default_block_size') == 'max'):
                         block_size = ['max', 1, 1]
@@ -1577,7 +1588,6 @@ void  *{kname}_args[] = {{ {kargs} }};
                         block_size = [int(b) for b in Config.get('compiler', 'cuda', 'default_block_size').split(',')]
 
             assert (len(block_size) >= 1 and len(block_size) <= 3)
-            
 
             # Grid size = ceil(|S|/32) for first dimension, rest = |S|
             grid_size = [int_ceil(gs, bs) for gs, bs in zip(grid_size, block_size)]
@@ -1784,15 +1794,15 @@ void  *{kname}_args[] = {{ {kargs} }};
 
         if scope_map.schedule == dtypes.ScheduleType.GPU_ThreadBlock_Dynamic:
             if self.backend == 'hip':
-                raise NotImplementedError('Dynamic thread-block maps on HIP ' 'are currently unsupported')
+                raise NotImplementedError('Dynamic thread-block maps on HIP are currently unsupported')
             if len(scope_map.params) > 1:
-                raise ValueError('Only one-dimensional maps are supported for '
-                                 'dynamic block map schedule (got %d)' % len(scope_map.params))
+                raise ValueError('Only one-dimensional maps are supported for dynamic block map schedule (got %d)' %
+                                 len(scope_map.params))
             total_block_size = 1
             for bdim in self._block_dims:
                 if symbolic.issymbolic(bdim, sdfg.constants):
-                    raise ValueError('Block size has to be constant for block-wide '
-                                     'dynamic map schedule (got %s)' % str(bdim))
+                    raise ValueError('Block size has to be constant for block-wide dynamic map schedule (got %s)' %
+                                     str(bdim))
                 total_block_size *= bdim
             if _expr(scope_map.range[0][2]) != 1:
                 raise NotImplementedError('Skip not implemented for dynamic thread-block map schedule')
@@ -1800,7 +1810,7 @@ void  *{kname}_args[] = {{ {kargs} }};
             ##### TODO (later): Generalize
             # Find thread-block param map and its name
             if self._block_dims[1] != 1 or self._block_dims[2] != 1:
-                raise NotImplementedError('Dynamic block map schedule only ' 'implemented for 1D blocks currently')
+                raise NotImplementedError('Dynamic block map schedule only implemented for 1D blocks currently')
 
             # Define all input connectors of this map entry
             # Note: no need for a C scope around these, as there will not be

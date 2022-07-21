@@ -81,7 +81,6 @@ def run_fdtd_2d(device_type: dace.dtypes.DeviceType):
 
         assert sm_applied > 0
 
-
         sdfg.apply_transformations_repeated([InlineSDFG])
         # In this case, we want to generate the top-level state as an host-based state,
         # not an FPGA kernel. We need to explicitly indicate that
