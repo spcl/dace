@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 """ Implements the LIKWID counter performance instrumentation provider.
     Used for collecting CPU performance counters. """
 
@@ -6,8 +6,6 @@ import dace
 from dace import dtypes, registry
 from dace.codegen.instrumentation.provider import InstrumentationProvider
 from dace.config import Config
-
-from typing import Optional, Set
 
 from dace.transformation import helpers as xfh
 
