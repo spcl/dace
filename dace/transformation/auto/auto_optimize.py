@@ -3,10 +3,11 @@
 
 import dace
 import sympy
+from dace.sdfg import infer_types
 from dace.sdfg.state import SDFGState
 from dace.sdfg.graph import SubgraphView
 from dace.sdfg.propagation import propagate_states
-from dace.sdfg.scope import is_devicelevel_gpu
+from dace.sdfg.scope import is_devicelevel_gpu_kernel
 from dace import config, data as dt, dtypes, Memlet, symbolic
 from dace.sdfg import SDFG, nodes, graph as gr
 from typing import Set, Tuple, Union, List, Iterable, Dict
@@ -319,7 +320,7 @@ def find_fast_library(device: dtypes.DeviceType) -> List[str]:
     # Returns the optimized library node implementations for the given target
     # device
     if device is dtypes.DeviceType.GPU:
-        return ['cuBLAS', 'CUB', 'pure']
+        return ['cuBLAS', 'cuSolverDn', 'CUB', 'pure']
     elif device is dtypes.DeviceType.FPGA:
         return ['FPGA_PartialSums', 'FPGAPartialReduction', 'FPGA_Accumulate', 'FPGA1DSystolic', 'pure']
     elif device is dtypes.DeviceType.CPU:
@@ -387,6 +388,11 @@ def set_fast_implementations(sdfg: SDFG, device: dtypes.DeviceType, blocklist: L
     # general nodes
     for node, _ in sdfg.all_nodes_recursive():
         if isinstance(node, nodes.LibraryNode):
+            # NOTE: LibraryNodes with sequential schedule on GPU must be expanded to CUDA kernel-compatible code.
+            # NOTE: Pure implementations are a safe choice for now but this should be revisited in the future.
+            if device == dtypes.DeviceType.GPU and node.schedule == dtypes.ScheduleType.Sequential:
+                node.implementation = "pure"
+                continue
             for impl in implementation_prio:
                 if impl in node.implementations:
                     if isinstance(
@@ -400,8 +406,12 @@ def set_fast_implementations(sdfg: SDFG, device: dtypes.DeviceType, blocklist: L
     if device == dtypes.DeviceType.GPU:
         for node, state in sdfg.all_nodes_recursive():
             if isinstance(node, dace.nodes.LibraryNode):
+                if device == dtypes.DeviceType.GPU and node.schedule == dtypes.ScheduleType.Sequential:
+                    node.implementation = "pure"
+                    continue
                 # Use CUB for device-level reductions
-                if ('CUDA (device)' in node.implementations and not is_devicelevel_gpu(state.parent, state, node)
+                if ('CUDA (device)' in node.implementations
+                        and not is_devicelevel_gpu_kernel(state.parent, state, node)
                         and state.scope_dict()[node] is None):
                     node.implementation = 'CUDA (device)'
 
@@ -420,7 +430,7 @@ def make_transients_persistent(sdfg: SDFG, device: dtypes.DeviceType, toplevel_o
     :param device: Device type
     :param toplevel_only: If True, only converts access nodes that do not appear in any scope.
     '''
-    for nsdfg in sdfg.all_sdfgs_recursive():       
+    for nsdfg in sdfg.all_sdfgs_recursive():
         fsyms: Set[str] = nsdfg.free_symbols
         persistent: Set[str] = set()
         not_persistent: Set[str] = set()
@@ -428,6 +438,10 @@ def make_transients_persistent(sdfg: SDFG, device: dtypes.DeviceType, toplevel_o
         for state in nsdfg.nodes():
             for dnode in state.data_nodes():
                 if dnode.data in not_persistent:
+                    continue
+                # Only convert arrays and scalars that are not compile-time constants
+                if dnode.data in nsdfg.constants_prop:
+                    not_persistent.add(dnode.data)
                     continue
                 desc = dnode.desc(nsdfg)
                 # Only convert arrays and scalars that are not registers
@@ -444,7 +458,7 @@ def make_transients_persistent(sdfg: SDFG, device: dtypes.DeviceType, toplevel_o
                         continue
                 except AttributeError:  # total_size is an integer / has no free symbols
                     pass
-                
+
                 # Only convert arrays with top-level access nodes
                 if xfh.get_parent_map(state, dnode) is not None:
                     if toplevel_only:
@@ -453,8 +467,8 @@ def make_transients_persistent(sdfg: SDFG, device: dtypes.DeviceType, toplevel_o
                     elif desc.lifetime == dtypes.AllocationLifetime.Scope:
                         not_persistent.add(dnode.data)
                         continue
-                
-                persistent.add(dnode.data)                               
+
+                persistent.add(dnode.data)
 
         for aname in (persistent - not_persistent):
             nsdfg.arrays[aname].lifetime = dtypes.AllocationLifetime.Persistent
@@ -556,6 +570,9 @@ def auto_optimize(sdfg: SDFG,
     # Set all library nodes to expand to fast library calls
     set_fast_implementations(sdfg, device)
 
+    # NOTE: We need to `infer_types` in case a LibraryNode expands to other LibraryNodes (e.g., np.linalg.solve)
+    infer_types.infer_connector_types(sdfg)
+    infer_types.set_default_schedule_and_storage_types(sdfg, None)
     sdfg.expand_library_nodes()
 
     # TODO(later): Safe vectorization
