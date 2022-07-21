@@ -9,6 +9,8 @@ from dace.config import Config
 
 from dace.transformation import helpers as xfh
 
+from pathlib import Path
+
 
 @registry.autoregister_params(type=dtypes.InstrumentationType.LIKWID_Counters)
 class LIKWIDInstrumentation(InstrumentationProvider):
@@ -44,6 +46,8 @@ class LIKWIDInstrumentation(InstrumentationProvider):
         if not self._likwid_used:
             return
 
+        likwid_marker_file = Path(sdfg.build_folder) / "perf" / "likwid_marker.out"
+
         # Add instrumentation includes and initialize LIKWID
         header_code = '''
 #include <omp.h>
@@ -64,7 +68,7 @@ if(getenv("LIKWID_PIN"))
     exit(1);
 }}
 
-setenv("LIKWID_FILEPATH", "/tmp/likwid_marker.out", 0);
+setenv("LIKWID_FILEPATH", "{likwid_marker_file.absolute()}", 0);
 setenv("LIKWID_MODE", "1", 0);
 setenv("LIKWID_FORCE", "1", 1);
 setenv("LIKWID_EVENTS", "{self._default_events}", 0);
