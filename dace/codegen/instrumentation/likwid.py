@@ -55,7 +55,7 @@ class LIKWIDInstrumentation(InstrumentationProvider):
         init_code = f'''
 if(getenv("LIKWID_PIN"))
 {{
-    printf("ERROR: it appears you are running this SDFG with likwid-perfctr. This instrumentation is supposed to be used standalone.");
+    printf("ERROR: Instrumentation must not be wrapped by likwid-perfctr.\\n");
     exit(1);
 }}
 
@@ -64,9 +64,20 @@ setenv("LIKWID_MODE", "1", 0);
 setenv("LIKWID_FORCE", "1", 1);
 
 int num_threads = 1;
+int num_procs = 1;
 #pragma omp parallel
 {{
-    num_threads = omp_get_num_threads();
+    #pragma omp single
+    {{
+        num_threads = omp_get_num_threads();
+        num_procs = omp_get_num_procs();
+    }}
+}}
+
+if (num_threads > num_procs)
+{{
+    printf("ERROR: Number of threads larger than number of processors.\\n");
+    exit(1);
 }}
 
 std::string thread_pinning = "0";
