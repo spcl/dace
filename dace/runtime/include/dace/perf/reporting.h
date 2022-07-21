@@ -69,7 +69,7 @@ namespace perf {
             const char *counter_name,
             unsigned long int counter_val
         ) {
-            add_counter(name, cat, counter_name, counter_val, -1, 0, 0, 0);
+            add_counter(name, cat, counter_name, counter_val, -1, -1, -1, -1);
         }
 
         void add_counter(

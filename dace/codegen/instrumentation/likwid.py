@@ -27,6 +27,11 @@ class LIKWIDInstrumentation(InstrumentationProvider):
         # Link with liblikwid
         Config.append('compiler', 'cpu', 'libs', value=' likwid ')
 
+        try:
+            self._default_events = Config.get('instrumentation', 'likwid', 'default_events')
+        except KeyError:
+            self._default_events = "CLOCK"
+
         self._likwid_used = True
 
     def on_sdfg_begin(self, sdfg, local_stream, global_stream, codegen):
@@ -62,6 +67,7 @@ if(getenv("LIKWID_PIN"))
 setenv("LIKWID_FILEPATH", "/tmp/likwid_marker.out", 0);
 setenv("LIKWID_MODE", "1", 0);
 setenv("LIKWID_FORCE", "1", 1);
+setenv("LIKWID_EVENTS", "{self._default_events}", 0);
 
 int num_threads = 1;
 int num_procs = 1;
