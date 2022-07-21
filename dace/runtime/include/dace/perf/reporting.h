@@ -32,7 +32,7 @@ namespace perf {
         char cat[DACE_REPORT_EVENT_CAT_LEN];
         unsigned long int tstart;
         unsigned long int tend;
-        int tid;
+        size_t tid;
         struct _element_id {
             int sdfg_id;
             int state_id;
@@ -69,7 +69,9 @@ namespace perf {
             const char *counter_name,
             unsigned long int counter_val
         ) {
-            add_counter(name, cat, counter_name, counter_val, -1, -1, -1, -1);
+            std::thread::id thread_id = std::this_thread::get_id();
+            size_t tid = std::hash<std::thread::id>{}(thread_id);
+            add_counter(name, cat, counter_name, counter_val, tid, -1, -1, -1);
         }
 
         void add_counter(
@@ -77,7 +79,7 @@ namespace perf {
             const char *cat,
             const char *counter_name,
             unsigned long int counter_val,
-            int tid,
+            size_t tid,
             int sdfg_id,
             int state_id,
             int el_id
@@ -124,7 +126,9 @@ namespace perf {
             int state_id,
             int el_id
         ) {
-            add_completion(name, cat, tstart, tend, -1, sdfg_id, state_id, el_id);
+            std::thread::id thread_id = std::this_thread::get_id();
+            size_t tid = std::hash<std::thread::id>{}(thread_id);
+            add_completion(name, cat, tstart, tend, tid, sdfg_id, state_id, el_id);
         }
 
         void add_completion(
@@ -132,7 +136,7 @@ namespace perf {
             const char *cat,
             unsigned long int tstart,
             unsigned long int tend,
-            int tid,
+            size_t tid,
             int sdfg_id,
             int state_id,
             int el_id
