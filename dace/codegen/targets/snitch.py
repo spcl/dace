@@ -13,6 +13,7 @@ from dace.sdfg import nodes, utils as sdutils
 from dace.sdfg.scope import ScopeSubgraphView
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets import cpp
+from dace.codegen.targets.common import update_persistent_desc
 from dace.codegen.targets.target import TargetCodeGenerator
 from dace.codegen.targets.framecode import DaCeCodeGenerator
 from dace.codegen.targets.cpp import sym2cpp
@@ -366,13 +367,7 @@ class SnitchCodeGen(TargetCodeGenerator):
         # but promoted to be persistent. These data must have their free symbols replaced with the corresponding
         # top-level SDFG symbols.
         if nodedesc.lifetime == dtypes.AllocationLifetime.Persistent:
-            if sdfg.parent and any(str(s) in sdfg.parent_nsdfg_node.symbol_mapping for s in nodedesc.free_symbols):
-                nodedesc = copy.deepcopy(nodedesc)
-                csdfg = sdfg
-                while csdfg.parent_sdfg:
-                    symbolic.safe_replace(csdfg.parent_nsdfg_node.symbol_mapping,
-                                          lambda m: sd.replace_properties_dict(nodedesc, m))
-                    csdfg = csdfg.parent_sdfg
+            nodedesc = update_persistent_desc(nodedesc, sdfg)
 
         # Compute array size
         arrsize = nodedesc.total_size

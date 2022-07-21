@@ -547,12 +547,14 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                 strides = [1]
                 total_size = 1
 
-            nsdfg.data(nname)._strides = tuple(strides)
-            nsdfg.data(nname)._total_size = total_size
+            if isinstance(nsdfg.data(nname), data.Array):
+                nsdfg.data(nname).strides = tuple(strides)
+                nsdfg.data(nname).total_size = total_size
 
         else:
-            nsdfg.data(nname)._strides = sdfg.data(name).strides
-            nsdfg.data(nname)._total_size = sdfg.data(name).total_size
+            if isinstance(nsdfg.data(nname), data.Array):
+                nsdfg.data(nname).strides = sdfg.data(name).strides
+                nsdfg.data(nname).total_size = sdfg.data(name).total_size
 
         # traverse the whole graph and search for arrays
         for ngraph in nsdfg.nodes():
@@ -1142,7 +1144,9 @@ class SubgraphFusion(transformation.SubgraphTransformation):
 
                 # Reconnect incoming edges through the transient data.
                 for ie in graph.in_edges(node):
-                    mem = Memlet(f"{name}[{ie.data.dst_subset.offset_new(in_subset, True)}] -> {ie.data.src_subset}")
+                    mem = Memlet(data=name,
+                                 subset=ie.data.dst_subset.offset_new(in_subset, True),
+                                 other_subset=ie.data.src_subset)
                     new_edge = graph.add_edge(ie.src, ie.src_conn, new_node, None, mem)
                     to_remove.add(ie)
                     # Update memlet paths.
@@ -1154,8 +1158,9 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                 # Reconnect outgoing edges through the transient data.
                 for oe in graph.out_edges(node):
                     if in_subset.covers(oe.data.src_subset):
-                        mem = Memlet(
-                            f"{name}[{oe.data.src_subset.offset_new(in_subset, True)}] -> {oe.data.dst_subset}")
+                        mem = Memlet(data=name,
+                                     subset=oe.data.src_subset.offset_new(in_subset, True),
+                                     other_subset=oe.data.dst_subset)
                         new_edge = graph.add_edge(new_node, None, oe.dst, oe.dst_conn, mem)
                         # Update memlet paths.
                         for e in graph.memlet_path(new_edge):
@@ -1175,7 +1180,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                 graph.add_memlet_path(new_node,
                                       global_map_exit,
                                       onode,
-                                      memlet=Memlet(f"{node.data}[{in_subset}]"),
+                                      memlet=Memlet(data=node.data, subset=in_subset),
                                       src_conn=None)
 
                 for e in to_remove:

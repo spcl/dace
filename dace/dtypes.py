@@ -339,6 +339,7 @@ class typeclass(object):
             2. Enabling declaration syntax: `dace.float32[M,N]`
             3. Enabling extensions such as `dace.struct` and `dace.vector`
     """
+
     def __init__(self, wrapped_type):
         # Convert python basic types
         if isinstance(wrapped_type, str):
@@ -567,6 +568,7 @@ def result_type_of(lhs, *rhs):
 
 class opaque(typeclass):
     """ A data type for an opaque object, useful for C bindings/libnodes, i.e., MPI_Request. """
+
     def __init__(self, typename):
         self.type = typename
         self.ctype = typename
@@ -601,6 +603,7 @@ class pointer(typeclass):
 
         Example use:
             `dace.pointer(dace.struct(x=dace.float32, y=dace.float32))`. """
+
     def __init__(self, wrapped_typeclass):
         self._typeclass = wrapped_typeclass
         self.type = wrapped_typeclass.type
@@ -644,6 +647,7 @@ class vector(typeclass):
 
     Example use: `dace.vector(dace.float32, 4)` becomes float4.
     """
+
     def __init__(self, dtype: typeclass, vector_length: int):
         self.vtype = dtype
         self.type = dtype.type
@@ -701,6 +705,7 @@ class string(pointer):
     Python/generated code marshalling.
     Used internally when `str` types are given
     """
+
     def __init__(self):
         super().__init__(int8)
 
@@ -720,6 +725,7 @@ class struct(typeclass):
 
         Example use: `dace.struct(a=dace.int32, b=dace.float64)`.
     """
+
     def __init__(self, name, **fields_and_types):
         # self._data = fields_and_types
         self.type = ctypes.Structure
@@ -824,6 +830,7 @@ class compiletime:
     In the above code, ``constant`` will be replaced with its value at call time
     during parsing.
     """
+
     @staticmethod
     def __descriptor__():
         raise ValueError('All compile-time arguments must be provided in order to compile the SDFG ahead-of-time.')
@@ -844,6 +851,7 @@ def ptrtocupy(ptr, inner_ctype, shape):
 
 class callback(typeclass):
     """ Looks like dace.callback([None, <some_native_type>], *types)"""
+
     def __init__(self, return_types, *variadic_args):
         from dace import data
         if return_types is None:
@@ -948,10 +956,7 @@ class callback(typeclass):
             if isinstance(arg, data.Array):
                 inp_arraypos.append(index)
                 inp_types_and_sizes.append((arg.dtype.as_ctypes(), arg.shape))
-                if arg.storage == StorageType.GPU_Global:
-                    inp_converters.append(ptrtocupy)
-                else:
-                    inp_converters.append(ptrtonumpy)
+                inp_converters.append(partial(data.make_reference_from_descriptor, arg))
             elif isinstance(arg, data.Scalar) and isinstance(arg.dtype, string):
                 inp_arraypos.append(index)
                 inp_types_and_sizes.append((ctypes.c_char_p, []))
@@ -967,10 +972,7 @@ class callback(typeclass):
             if isinstance(arg, data.Array):
                 ret_arraypos.append(index + offset)
                 ret_types_and_sizes.append((arg.dtype.as_ctypes(), arg.shape))
-                if arg.storage == StorageType.GPU_Global:
-                    ret_converters.append(ptrtocupy)
-                else:
-                    ret_converters.append(ptrtonumpy)
+                ret_converters.append(partial(data.make_reference_from_descriptor, arg))
             elif isinstance(arg, data.Scalar) and isinstance(arg.dtype, string):
                 ret_arraypos.append(index + offset)
                 ret_types_and_sizes.append((ctypes.c_char_p, []))
@@ -1001,7 +1003,7 @@ class callback(typeclass):
                         non_symbolic_sizes.append(other_arguments[str(s)])
                     else:
                         non_symbolic_sizes.append(s)
-                list_of_other_inputs[i] = inp_converters[i](other_inputs[i], data_type, non_symbolic_sizes)
+                list_of_other_inputs[i] = inp_converters[i](other_inputs[i], other_arguments)
             for j, i in enumerate(ret_indices):
                 data_type, size = ret_data_types_and_sizes[j]
                 non_symbolic_sizes = []
@@ -1010,8 +1012,8 @@ class callback(typeclass):
                         non_symbolic_sizes.append(other_arguments[str(s)])
                     else:
                         non_symbolic_sizes.append(s)
-                list_of_outputs[i - ret_indices[0]] = ret_converters[i - ret_indices[0]](other_inputs[i], data_type,
-                                                                                         non_symbolic_sizes)
+                list_of_outputs[i - ret_indices[0]] = ret_converters[i - ret_indices[0]](other_inputs[i],
+                                                                                         other_arguments)
             if ret_indices:
                 ret = orig_function(*list_of_other_inputs)
                 if len(list_of_outputs) == 1:
@@ -1248,6 +1250,7 @@ def isallowed(var, allow_recursive=False):
 class DebugInfo:
     """ Source code location identifier of a node/edge in an SDFG. Used for
         IDE and debugging purposes. """
+
     def __init__(self, start_line, start_column=0, end_line=-1, end_column=0, filename=None):
         self.start_line = start_line
         self.end_line = end_line if end_line >= 0 else start_line
@@ -1291,6 +1294,7 @@ def json_to_typeclass(obj, context=None):
 def paramdec(dec):
     """ Parameterized decorator meta-decorator. Enables using `@decorator`,
         `@decorator()`, and `@decorator(...)` with the same function. """
+
     @wraps(dec)
     def layer(*args, **kwargs):
         from dace import data

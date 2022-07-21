@@ -454,7 +454,7 @@ class MapFusion(transformation.SingleStateTransformation):
                 for other_edge in out_edges:
                     if other_edge is not edge:
                         graph.remove_edge(other_edge)
-                        mem = Memlet(f"{local_name} -> {other_edge.data.dst_subset}")
+                        mem = Memlet(data=local_name, other_subset=other_edge.data.dst_subset)
                         graph.add_edge(local_node, src_connector, other_edge.dst, other_edge.dst_conn, mem)
             else:
                 local_node = edge.src
