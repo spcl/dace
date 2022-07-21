@@ -15,7 +15,8 @@ from pathlib import Path
 @registry.autoregister_params(type=dtypes.InstrumentationType.LIKWID_Counters)
 class LIKWIDInstrumentation(InstrumentationProvider):
     """ Instrumentation provider that reports CPU performance counters using
-        the Likwid tool. """
+        the Likwid tool.
+    """
 
     perf_whitelist_schedules = [dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.Sequential]
 

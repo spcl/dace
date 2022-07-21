@@ -48,10 +48,6 @@ class InstrumentationReport(object):
                     continue
 
                 phase = event["ph"]
-
-                # WARNING: Removed
-                event_name = event["name"]
-
                 tid = event["tid"]
                 if phase == 'X':
                     # Time
