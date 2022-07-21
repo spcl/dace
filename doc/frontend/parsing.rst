@@ -35,8 +35,21 @@ Parsing Flow
 The entry point for parsing a Python program with the :class:`~dace.frontend.python.newast.ProgramVisitor` is the :func:`~dace.frontend.python.newast.parse_dace_program` method.
 The Python call tree when calling or compiling a Data-Centric Python program is as follows:
 
-- :class:`~dace.frontend.python.parser.DaceProgram`
-    - :func:`~dace.frontend.python.parser.DaceProgram.__call__`, or :func:`~dace.frontend.python.parser.DaceProgram.compile`, or :func:`~dace.frontend.python.parser.DaceProgram.to_sdfg`
-        - :func:`~dace.frontend.python.parser.DaceProgram._parse`
-            - :func:`~dace.frontend.python.parser.DaceProgram._generated_pdp`
-                - :func:`~dace.frontend.python.newast.parse_dace_program`
+1. :class:`~dace.frontend.python.parser.DaceProgram`
+2. :func:`~dace.frontend.python.parser.DaceProgram.__call__`, or :func:`~dace.frontend.python.parser.DaceProgram.compile`, or :func:`~dace.frontend.python.parser.DaceProgram.to_sdfg`
+3. :func:`~dace.frontend.python.parser.DaceProgram._parse`
+4. :func:`~dace.frontend.python.parser.DaceProgram._generated_pdp`
+5. :func:`~dace.frontend.python.newast.parse_dace_program`
+6. :func:`~dace.frontend.python.newast.ProgramVisitor.parse_program`
+
+The ProgramVisitor Class
+--------------------------------------------------------------
+
+The :class:`~dace.frontend.python.newast.ProgramVisitor` traverses a Data-Centric Python program's AST and constructs
+the corresponding :class:`~dace.sdfg.sdfg.SDFG`. The :class:`~dace.frontend.python.newast.ProgramVisitor` inherits from Python's `ast.NodeVisitor <https://docs.python.org/3/library/ast.html#ast.NodeVisitor>`_
+class and, therefore, follows the visitor design pattern. The developers are encouraged to accustom themselves with this
+programming pattern (see <add-some-resources>), however, the basic functionality is described in <insert-section>.
+An object of the :class:`~dace.frontend.python.newast.ProgramVisitor` class is responsible for a single :class:`~dace.sdfg.sdfg.SDFG`
+object. While traversing the Python program's AST, if the need for a :class:`~dace.sdfg.nodes.NestedSDFG` arises (see <add-section>), a new
+(nested) :class:`~dace.frontend.python.newast.ProgramVisitor` object will be created to handle the corresponsding Python
+Abstract Syntax sub-Tree.
