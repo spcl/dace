@@ -111,6 +111,8 @@ LIKWID_MARKER_INIT;
         local_stream.write(init_code)
 
     def on_sdfg_end(self, sdfg, local_stream, global_stream):
+        if not sdfg.parent is None:
+            return
         if not self._likwid_used:
             return
 
