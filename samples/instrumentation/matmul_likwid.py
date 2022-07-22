@@ -88,7 +88,7 @@ print(report)
 # (sdfg_id, state_id, node_id).
 
 measured_flops = 0
-flops_report = report.counters[(0, 0, -1)]["RETIRED_SSE_AVX_FLOPS_SINGLE_ALL"]
+flops_report = report.counters[(0, 0, -1)]["state_0_0_-1"]["RETIRED_SSE_AVX_FLOPS_SINGLE_ALL"]
 for tid in flops_report:
     measured_flops += flops_report[tid][0]
 

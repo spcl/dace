@@ -49,27 +49,33 @@ class InstrumentationReport(object):
 
                 phase = event["ph"]
                 tid = event["tid"]
+                name = event['name']
                 if phase == 'X':
                     # Time
                     uuid = self.get_event_uuid(event)
                     if uuid not in self.durations:
-                        self.durations[uuid] = defaultdict(list)
+                        self.durations[uuid] = {}
+                    if name not in self.durations[uuid]:
+                        self.durations[uuid][name] = defaultdict(list)
 
-                    self.durations[uuid][tid].append(event['dur'] / 1000)
+                    self.durations[uuid][name][tid].append(event['dur'] / 1000)
                 elif phase == "C":
                     # Counter
                     uuid = self.get_event_uuid(event)
                     if uuid not in self.counters:
                         self.counters[uuid] = {}
+                    if name not in self.counters[uuid]:
+                        self.counters[uuid][name] = defaultdict(list)
+
 
                     for counter, value in event["args"].items():
                         if counter == "sdfg_id" or counter == "state_id" or counter == "id":
                             continue
 
-                        if counter not in self.counters[uuid]:
-                            self.counters[uuid][counter] = defaultdict(list)
+                        if counter not in self.counters[uuid][name]:
+                            self.counters[uuid][name][counter] = defaultdict(list)
 
-                        self.counters[uuid][counter][tid].append(value)
+                        self.counters[uuid][name][counter][tid].append(value)
 
     def __repr__(self):
         return 'InstrumentationReport(name=%s)' % self.name
@@ -188,8 +194,8 @@ class InstrumentationReport(object):
             string += row_format.format(indent + "|" + label + ':', '', '', '', '', width=colw)
             string += row_format.format(indent,
                                         np.min(values),
-                                        np.mean(values),
-                                        np.median(values),
+                                        '%.2f' % np.mean(values),
+                                        '%.2f' % np.median(values),
                                         np.max(values),
                                         width=colw)
 
@@ -234,19 +240,21 @@ class InstrumentationReport(object):
                 element_list = sorted(element_list, key=self.getkey, reverse=self._sortdesc)
 
             for element in element_list:
-                times = self.durations[element]
-                with_element_heading = True
-                for tid in times:
-                    runtimes = times[tid]
-                    if tid >= 0:
-                        label = f"Thread {tid}"
-                    else:
-                        label = "Timer"
+                events = self.durations[element]
+                for event in events:
+                    times = events[event]
+                    with_element_heading = True
+                    for tid in times:
+                        runtimes = times[tid]
+                        if tid >= 0:
+                            label = f"Thread {tid}"
+                        else:
+                            label = ""
 
-                    string, sdfg, state = self._get_runtimes_string(label, runtimes, element, sdfg, state, string,
-                                                                    row_format, COLW, with_element_heading)
+                        string, sdfg, state = self._get_runtimes_string(label, runtimes, element, sdfg, state, string,
+                                                                        row_format, COLW, with_element_heading)
 
-                    with_element_heading = False
+                        with_element_heading = False
 
                 string += ('-' * (COLW * 5)) + '\n'
 
@@ -259,21 +267,22 @@ class InstrumentationReport(object):
             sdfg = -1
             state = -1
 
-            for element, counters in self.counters.items():
-                for counter, values in counters.items():
-                    with_element_heading = True
-                    for tid in values:
-                        thread_values = values[tid]
-                        if tid >= 0:
-                            label = f"Thread {tid}"
-                        else:
-                            label = ""
+            for element, events in self.counters.items():
+                for event, counters in events.items():
+                    for counter, values in counters.items():
+                        with_element_heading = True
+                        for tid in values:
+                            thread_values = values[tid]
+                            if tid >= 0:
+                                label = f"Thread {tid}"
+                            else:
+                                label = ""
 
-                        string, sdfg, state = self._get_counters_string(counter, label, thread_values, element, sdfg,
-                                                                        state, string, row_format, COLW,
-                                                                        with_element_heading)
+                            string, sdfg, state = self._get_counters_string(counter, label, thread_values, element, sdfg,
+                                                                            state, string, row_format, COLW,
+                                                                            with_element_heading)
 
-                        with_element_heading = False
+                            with_element_heading = False
 
                 string += ('-' * (COLW * 5)) + '\n'
 
