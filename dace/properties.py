@@ -641,7 +641,7 @@ class DictProperty(Property):
 
         # If key knows how to convert itself, let it
         if hasattr(self.key_type, "to_json"):
-            saved_dictionary = {k.to_json(): v for k, v in saved_dictionary.items()}
+            saved_dictionary = {k if isinstance(k, str) else k.to_json(): v for k, v in saved_dictionary.items()}
         # Otherwise, if the keys are not a native JSON type, convert to strings
         elif self.key_type not in (int, float, list, tuple, dict, str):
             saved_dictionary = {str(k): v for k, v in saved_dictionary.items()}

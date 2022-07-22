@@ -66,6 +66,9 @@ class symbol(sympy.Symbol):
     def __getstate__(self):
         return dict(self.assumptions0, **{'value': self.value, 'dtype': self.dtype, '_constraints': self._constraints})
 
+    def to_json(self):
+        return self.name
+
     def _eval_subs(self, old, new):
         """
         From sympy: Override this stub if you want to do anything more than
@@ -1037,7 +1040,8 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         that sympy.printing.cxxcode does not provide. """
 
     def __init__(self, arrays, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+        # Faster print with order='none'
+        super().__init__(*args, settings=dict(order='none'), **kwargs)
         self.arrays = arrays or set()
 
     def _print_Float(self, expr):
@@ -1195,7 +1199,7 @@ def safe_replace(mapping: Dict[Union[SymbolicType, str], Union[SymbolicType, str
 
 @lru_cache(16384)
 def _spickle(obj):
-    return str(obj)
+    return sympy.printing.str.sstr(_sunpickle(sympy.printing.str.sstr(obj, order='none')), order='none')
 
 
 def _sunpickle(obj):

@@ -2,9 +2,10 @@
 import aenum
 import json
 import numpy as np
+import sympy
 import warnings
 import dace.dtypes
-from dace import config
+from dace import config, symbolic
 
 
 class SerializableObject(object):
@@ -93,6 +94,9 @@ def to_json(obj):
     elif isinstance(obj, aenum.Enum):
         # Store just the name of this key
         return obj._name_
+    elif isinstance(obj, sympy.Basic):
+        # Faster string printout
+        return symbolic._spickle(obj)
     else:
         # If not available, go for the default str() representation
         return str(obj)
