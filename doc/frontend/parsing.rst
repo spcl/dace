@@ -120,7 +120,7 @@ Nested ProgramVisitors and NestedSDFGs
 The :class:`~dace.frontend.python.newast.ProgramVisitor` will trigger the generation of a :class:`~dace.sdfg.nodes.NestedSDFG` (through a nested :class:`~dace.frontend.python.newast.ProgramVisitor`) in the following cases:
 
 - When parsing the body of a :func:`~dace.frontend.interface.map`. This will occur even when a :class:`~dace.sdfg.nodes.NestedSDFG` is not necessary. Simplification of the resulting subgraph is left to :class:`~dace.transformation.interstate.sdfg_nesting.InlineSDFG`.
-- When parsing a call (see `ast.Call <https://docs.python.org/3/library/ast.html#ast.Call>`_) to another Data-Centric Python program or an :class:`~dace.sdfg.sdfg.SDFG` object. It should be noted that calls to, e.g., supported NumPy methods, may also (eventually) trigger the generation of a :class:`~dace.sdfg.nodes.NestedSDFG`. However, this is mostly occuring through :ref:`Library Nodes <libnodes>`.
+- When parsing a call (see `ast.Call <https://docs.python.org/3/library/ast.html#ast.Call>`_) to another Data-Centric Python program or an :class:`~dace.sdfg.sdfg.SDFG` object. It should be noted that calls to, e.g., supported NumPy methods (see :mod:`~dace.frontend.python.replacements`), may also (eventually) trigger the generation of a :class:`~dace.sdfg.nodes.NestedSDFG`. However, this is mostly occuring through :ref:`Library Nodes <libnodes>`.
 - When parsing :ref:`explcit dataflow mode <explicit-dataflow-mode>` syntax. The whole Abstract Syntax sub-Tree of such statements is passed to a :class:`~dace.frontend.python.newast.TaskletTransformer`.
 
 Visitor Methods
@@ -307,7 +307,7 @@ of the following:
 
 - Another Data-Centric Python program: Execution is transferred to a nested :class:`~dace.frontend.python.newast.ProgramVisitor`.
 - An (already parsed) :class:`~dace.sdfg.sdfg.SDFG` object: Generates directly a :class:`~dace.sdfg.nodes.NestedSDFG`.
-- A supported Python builtin or module (e.g., NumPy) method: Execution is transferred to the corresponding *replacement* method.
+- A supported Python builtin or module (e.g., NumPy) method: Execution is transferred to the corresponding *replacement* method (see :mod:`~dace.frontend.python.replacements`).
 - An unsupported method: Generates a *callback* to the CPython interpreter.
 
 :func:`~dace.frontend.python.newast.ProgramVisitor.visit_Return`
