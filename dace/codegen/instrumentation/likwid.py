@@ -3,6 +3,7 @@
     Used for collecting CPU performance counters.
 """
 
+from numpy import single
 import dace
 from dace import dtypes, registry
 from dace.codegen.instrumentation.provider import InstrumentationProvider
@@ -47,6 +48,8 @@ class LIKWIDInstrumentation(InstrumentationProvider):
 
         if not self._likwid_used:
             return
+
+        self.codegen = codegen
 
         likwid_marker_file = Path(sdfg.build_folder) / "perf" / "likwid_marker.out"
 
@@ -109,13 +112,20 @@ LIKWID_MARKER_INIT;
     LIKWID_MARKER_THREADINIT;
 }}
 '''
-        local_stream.write(init_code)
+        codegen._initcode.write(init_code)
 
     def on_sdfg_end(self, sdfg, local_stream, global_stream):
         if not self._likwid_used or sdfg.parent is not None:
             return
 
         outer_code = f'''
+int num_threads;
+#pragma omp parallel
+{{
+    #pragma omp single
+    num_threads = omp_get_num_threads();
+}}
+
 double events[num_threads][MAX_NUM_EVENTS];
 double time[num_threads];
 '''
@@ -125,7 +135,6 @@ double time[num_threads];
             report_code = f'''
 #pragma omp parallel
 {{
-    num_threads = omp_get_num_threads();
     int thread_id = omp_get_thread_num();
     int nevents = MAX_NUM_EVENTS;
     int count = 0;
@@ -154,11 +163,16 @@ double time[num_threads];
             }}
         }}
     }}
+
+    LIKWID_MARKER_RESET("{region}");
 }}
 '''
             local_stream.write(report_code)
 
-        local_stream.write("LIKWID_MARKER_CLOSE;", sdfg)
+        exit_code = '''
+LIKWID_MARKER_CLOSE;
+'''
+        self.codegen._exitcode.write(exit_code, sdfg)
 
     def on_state_begin(self, sdfg, state, local_stream, global_stream):
         if not self._likwid_used:
