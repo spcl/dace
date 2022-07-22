@@ -3,7 +3,6 @@
     Used for collecting CPU performance counters.
 """
 
-from numpy import single
 import dace
 from dace import dtypes, registry
 from dace.codegen.instrumentation.provider import InstrumentationProvider
@@ -142,7 +141,6 @@ double time[num_threads];
     LIKWID_MARKER_GET("{region}", &nevents, events[thread_id], time + thread_id, &count);
 
     #pragma omp barrier
-
     #pragma omp single
     {{
         int gid = perfmon_getIdOfActiveGroup();
@@ -163,8 +161,6 @@ double time[num_threads];
             }}
         }}
     }}
-
-    LIKWID_MARKER_RESET("{region}");
 }}
 '''
             local_stream.write(report_code)
@@ -189,6 +185,20 @@ LIKWID_MARKER_CLOSE;
 #pragma omp parallel
 {{
     LIKWID_MARKER_REGISTER("{region}");
+
+    /* Temporary fix:
+     *  Case: multiple exeuctions
+     *  Problem: Markers need to be reset before new execution.
+     *  Bug: If we do this immediately after LIKEID_MARKER_GET
+     *  and before LIKWID_MARKER_CLOSE, likwid prints an false
+     *  warning complaining it can't evaluate those regions.
+     *  To avoid this ugly warning, we reset them before measuring
+     *  again.
+     */
+    #pragma omp barrier
+    LIKWID_MARKER_START("{region}");
+    LIKWID_MARKER_STOP("{region}");
+    LIKWID_MARKER_RESET("{region}");
 
     #pragma omp barrier
     LIKWID_MARKER_START("{region}");
