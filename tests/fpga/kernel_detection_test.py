@@ -49,7 +49,6 @@ def test_kernels_inside_component_0():
     The 4 maps, should belong to three distinct kernels
     :return:
     '''
-
     @dace.program
     def kernels_inside_component_0(x: dace.float32[8], y: dace.float32[8], v: dace.float32[8], w: dace.float32[8],
                                    z: dace.float32[8]):
@@ -74,8 +73,14 @@ def test_kernels_inside_component_0():
     assert np.allclose(res, x + y + v + w + z)
 
     report = sdfg.get_latest_report()
-    assert len(re.findall(r"[0-9\.]+\s+[0-9\.]+\s+[0-9\.]+\s+[0-9\.]+", str(report))) == 5
-    assert len(re.findall(r"Full FPGA .+ runtime", str(report))) == 2
+    assert len(report.durations[(0, 0, -1)]) == 5
+
+    full_fpga_events = 0
+    for event_name in report.durations[(0, 0, -1)]:
+        if "Full FPGA" in event_name:
+            full_fpga_events += 1
+
+    assert full_fpga_events == 2
 
     return sdfg
 
@@ -103,7 +108,6 @@ def test_kernels_inside_component_1():
     The five Maps should belong to 5 distinct kernels
 
     '''
-
     @dace.program
     def kernels_inside_component_1(x: dace.float32[8], y: dace.float32[8], v: dace.float32[8], w: dace.float32[8],
                                    z: dace.float32[8], t: dace.float32[8], alpha: dace.float32, beta: dace.float32):
@@ -154,7 +158,6 @@ def test_kernels_inside_component_2():
 
     :return:
     '''
-
     @dace.program
     def kernels_inside_component_2(x: dace.float32[8], y: dace.float32[8], v: dace.float32[8], z: dace.float32[8],
                                    t: dace.float32[8]):
@@ -246,7 +249,6 @@ def test_kernels_inside_components_0():
     The three maps, should belong to three distinct kernels
 
     '''
-
     @dace.program
     def kernels_inside_components_0(x: dace.float32[8], y: dace.float32[8], v: dace.float32[8], w: dace.float32[8],
                                     xx: dace.float32[8], yy: dace.float32[8], vv: dace.float32[8], ww: dace.float32[8]):
@@ -294,7 +296,6 @@ def test_kernels_inside_components_multiple_states():
     The three maps, should belong to three distinct kernels
     :return:
     '''
-
     def make_sdfg(dtype=dace.float32):
         sdfg = dace.SDFG("multiple_kernels_multiple_states")
         n = dace.symbol("size")
