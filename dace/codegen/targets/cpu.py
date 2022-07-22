@@ -1110,7 +1110,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
         desc = sdfg.arrays[memlet.data]
 
-        is_scalar = conntype == desc.dtype
+        is_scalar = not isinstance(conntype, dtypes.pointer) or desc.dtype == conntype
         is_pointer = isinstance(conntype, dtypes.pointer)
 
         # Allocate variable type
