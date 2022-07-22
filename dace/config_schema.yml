@@ -392,6 +392,18 @@ required:
                         description: Additional linked libraries required by target
                         default: ''
 
+                    mempool_release_threshold:
+                        type: int
+                        title: Memory pool memory release threshold
+                        default: -1
+                        description: >
+                            A value that determines how large a memory allocation has to be before it is
+                            automatically released from the memory pool to the system. The default is -1,
+                            which indicates "never release". Other values may be 0 (always release), or
+                            any byte value.
+                            For more information, see ``cudaMemPoolAttrReleaseThreshold`` in the CUDA toolkit
+                            documentation.
+
             #############################################
             # General FPGA flags
             fpga:

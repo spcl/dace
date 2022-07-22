@@ -32,8 +32,8 @@ class StorageType(aenum.AutoNumberEnum):
     CPU_Pinned = ()  #: Host memory that can be DMA-accessed from accelerators
     CPU_Heap = ()  #: Host memory allocated on heap
     CPU_ThreadLocal = ()  #: Thread-local host memory
-    GPU_Global = ()  #: Global memory
-    GPU_Shared = ()  #: Shared memory
+    GPU_Global = ()  #: GPU global memory
+    GPU_Shared = ()  #: On-GPU shared memory
     FPGA_Global = ()  #: Off-chip global memory (DRAM)
     FPGA_Local = ()  #: On-chip memory (bulk storage)
     FPGA_Registers = ()  #: On-chip memory (fully partitioned registers)

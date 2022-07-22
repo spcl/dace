@@ -475,6 +475,7 @@ class Array(Data):
                         desc='Specifies whether this array may have a value of None. '
                         'If False, the array must not be None. If option is not set, '
                         'it is inferred by other properties and the OptionalArrayInference pass.')
+    pool = Property(dtype=bool, default=False, desc='Hint to the allocator that using a memory pool is preferred')
 
     def __init__(self,
                  dtype,
@@ -491,7 +492,8 @@ class Array(Data):
                  debuginfo=None,
                  total_size=None,
                  start_offset=None,
-                 optional=None):
+                 optional=None,
+                 pool=False):
 
         super(Array, self).__init__(dtype, shape, transient, storage, location, lifetime, debuginfo)
 
@@ -506,6 +508,7 @@ class Array(Data):
         self.optional = optional
         if optional is None and self.transient:
             self.optional = False
+        self.pool = pool
 
         if strides is not None:
             self.strides = cp.copy(strides)
@@ -531,7 +534,7 @@ class Array(Data):
     def clone(self):
         return type(self)(self.dtype, self.shape, self.transient, self.allow_conflicts, self.storage, self.location,
                           self.strides, self.offset, self.may_alias, self.lifetime, self.alignment, self.debuginfo,
-                          self.total_size, self.start_offset, self.optional)
+                          self.total_size, self.start_offset, self.optional, self.pool)
 
     def to_json(self):
         attrs = serialize.all_properties_to_json(self)
