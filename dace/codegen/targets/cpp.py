@@ -902,10 +902,13 @@ def unparse_tasklet(sdfg, state_id, dfg, node, function_stream, callsite_stream,
         if node.language == dtypes.Language.CPP:
             callsite_stream.write(type(node).__properties__["code"].to_string(node.code), sdfg, state_id, node)
 
-        if hasattr(node, "_cuda_stream") and not is_devicelevel_gpu(sdfg, state_dfg, node):
+        if not is_devicelevel_gpu(sdfg, state_dfg, node):
             # Get GPU codegen
             from dace.codegen.targets import cuda  # Avoid import loop
-            gpu_codegen = next(cg for cg in codegen._dispatcher.used_targets if isinstance(cg, cuda.CUDACodeGen))
+            try:
+                gpu_codegen = next(cg for cg in codegen._dispatcher.used_targets if isinstance(cg, cuda.CUDACodeGen))
+            except StopIteration:
+                return
             synchronize_streams(sdfg, state_dfg, state_id, node, node, callsite_stream, gpu_codegen)
         return
 
@@ -1323,7 +1326,7 @@ def presynchronize_streams(sdfg, dfg, state_id, node, callsite_stream):
         return
     backend = Config.get('compiler', 'cuda', 'backend')
     for e in state_dfg.in_edges(node):
-        if hasattr(e.src, "_cuda_stream"):
+        if hasattr(e.src, "_cuda_stream") and e.src._cuda_stream != 'nullptr':
             cudastream = "__state->gpu_context->streams[%d]" % e.src._cuda_stream
             callsite_stream.write(
                 "%sStreamSynchronize(%s);" % (backend, cudastream),
@@ -1372,7 +1375,7 @@ def synchronize_streams(sdfg, dfg, state_id, node, scope_exit, callsite_stream, 
 
     # Synchronize end of kernel with output data (multiple kernels
     # lead to same data node)
-    if max_streams >= 0:
+    if max_streams >= 0 and hasattr(node, "_cuda_stream"):
         for edge in dfg.out_edges(scope_exit):
 
             if (isinstance(edge.dst, nodes.AccessNode) and hasattr(edge.dst, '_cuda_stream')

@@ -250,6 +250,10 @@ class CUDACodeGen(TargetCodeGenerator):
                             terminator = an1
                             break
 
+                    # Enforce a cuda_stream field so that the state-wide deallocation would work
+                    if not hasattr(an1, '_cuda_stream'):
+                        an1._cuda_stream = 'nullptr'
+
                     # If access node was found, find the point where all its reads are complete
                     terminators = set()
                     if terminator is not None:
@@ -1173,12 +1177,12 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
             if state.nosync == False:
                 streams_to_sync = set()
                 for node in state.sink_nodes():
-                    if hasattr(node, '_cuda_stream'):
+                    if hasattr(node, '_cuda_stream') and node._cuda_stream != 'nullptr':
                         streams_to_sync.add(node._cuda_stream)
                     else:
                         # Synchronize sink-node copies at the end of the state
                         for e in state.in_edges(node):
-                            if hasattr(e.src, '_cuda_stream'):
+                            if hasattr(e.src, '_cuda_stream') and e.src._cuda_stream != 'nullptr':
                                 streams_to_sync.add(e.src._cuda_stream)
 
                 # Relaxed condition for skipping synchronization:
