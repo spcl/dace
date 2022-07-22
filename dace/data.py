@@ -92,11 +92,11 @@ def create_datadescriptor(obj, no_custom_desc=False):
     elif obj is type(None):
         # NoneType is void *
         return Scalar(dtypes.pointer(dtypes.typeclass(None)))
+    elif isinstance(obj, str) or obj is str:
+        return Scalar(dtypes.string)
     elif callable(obj):
         # Cannot determine return value/argument types from function object
         return Scalar(dtypes.callback(None))
-    elif isinstance(obj, str):
-        return Scalar(dtypes.string())
 
     raise TypeError(f'Could not create a DaCe data descriptor from object {obj}. '
                     'If this is a custom object, consider creating a `__descriptor__` '
