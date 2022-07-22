@@ -94,8 +94,8 @@ It then iterates over and *visits* the statements in the program's body. The Pyt
 
 1. :func:`dace.frontend.python.newast.ProgramVisitor.parse_program`
 2. :func:`dace.frontend.python.astutils.ExtNodeVisitor.visit_TopLevel`
-3. :func:`dace.frontend.python.ProgramVisitor.visit`
-4. :func:`dace.frontend.python.ProgramVisitor.visit_Class`
+3. :func:`dace.frontend.python.newast.ProgramVisitor.visit`
+4. :func:`dace.frontend.python.newast.ProgramVisitor.visit_Class`
 
 In the above fourth call, `Class` in `visit_Class` is a placeholder for the name
 of one of the Python AST module class supported by the ProgramVisitor.
@@ -109,7 +109,7 @@ the whole tree has been processed. It should be mentioned that, apart from the
 class-specific visitor methods, the following may also appear in the Python call tree:
 
 - :func:`dace.frontend.python.astutils.ExtNodeVisitor.generic_visit`: A generic visitor method. Usefull to automatically call the required class-specific methods when no special handling is required.
-- :class:`dace.frontend.python.newast.TaskletTransformer`: A ProgramVisitor that is specialized to handle the :ref:`daceprograms#explicit-dataflow-mode` syntax.
+- :class:`dace.frontend.python.newast.TaskletTransformer`: A ProgramVisitor that is specialized to handle the :ref:`explcit dataflow mode <explicit-dataflow-mode>` syntax.
 
 
 To Nest Or Not To Nest?

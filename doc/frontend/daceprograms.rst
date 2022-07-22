@@ -315,6 +315,7 @@ A commonly recurring example of compile-time arguments is in object-oriented pro
 always considered a compile-time argument, which allows the fields of the object to be given and used as part of the
 closure.
 
+.. _explicit-dataflow-mode:
 
 Explicit Dataflow Mode
 ----------------------
