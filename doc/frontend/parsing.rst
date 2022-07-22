@@ -167,92 +167,261 @@ Example:
 :func:`~dace.frontend.python.newast.ProgramVisitor.visit_While`
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+Parses `while <https://docs.python.org/3/library/ast.html#ast.While>`_ statements. Example:
+
+.. code-block:: python
+
+    @dace.program
+    def while_loop():
+        i = 10
+        while i > 0:
+            i -= 3
+
+.. figure:: images/while-loop.png
+    :width: 500
+    :align: center
+    :alt: Generated SDFG while-loop for the above Data-Centric Python program
+
 :func:`~dace.frontend.python.newast.ProgramVisitor.visit_Break`
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Parses `break <https://docs.python.org/3/library/ast.html#ast.Break>`_ statements. In the following example, the for-loop
+behaves as an if-else statement. This is also evident from the generated dataflow:
+
+.. code-block:: python
+
+    @dace.program
+    def for_break_loop(A: dace.int32[10]):
+        for i in range(0, 10, 2):
+            A[i] = i
+            break
+
+.. figure:: images/for-break-loop.png
+    :width: 500
+    :align: center
+    :alt: Generated SDFG for-loop with a break statement for the above Data-Centric Python program
 
 :func:`~dace.frontend.python.newast.ProgramVisitor.visit_Continue`
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+Parses `continue <https://docs.python.org/3/library/ast.html#ast.Continue>`_ statements. In the following example, the use
+of `continue` makes the ``A[i] = i`` statement unreachable. This is also evident from the generated dataflow:
+
+.. code-block:: python
+
+    @dace.program
+    def for_continue_loop(A: dace.int32[10]):
+        for i in range(0, 10, 2):
+            continue
+            A[i] = i
+
+.. figure:: images/for-continue-loop.png
+    :width: 500
+    :align: center
+    :alt: Generated SDFG for-loop with a continue statement for the above Data-Centric Python program
+
 :func:`~dace.frontend.python.newast.ProgramVisitor.visit_If`
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Parses `if <https://docs.python.org/3/library/ast.html#ast.If>`_ statements. Example:
+
+.. code-block:: python
+
+    @dace.program
+    def if_stmt(a: dace.int32):
+        if a < 0:
+            return -1
+        elif a > 0:
+            return 1
+        else:
+            return 0
+
+.. figure:: images/if-stmt.png
+    :width: 500
+    :align: center
+    :alt: Generated SDFG if statement for the above Data-Centric Python program
+
 
 :func:`~dace.frontend.python.newast.ProgramVisitor.visit_NamedExpr`
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+Allows parsing of `PEP 572 <https://peps.python.org/pep-0572>`_ assignment expressions (Warlus operator), e.g., ``n := 5``.
+However, such expressions are currently treated by the :class:`~dace.frontend.python.newast.ProgramVisitor` as simple assignments.
+In Python, assignment expressions allow assignments within comprehesions. Therefore, whether an assignment expression
+will have the Python-equivalent effect in a Data-Centric Python program depends on the :class:`~dace.frontend.python.newast.ProgramVisitor`'s
+support for those complehensions.
+
 :func:`~dace.frontend.python.newast.ProgramVisitor.visit_Assign`
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Parses `assignment <https://docs.python.org/3/library/ast.html#ast.Assign>`_ statements. Example:
+
+.. code-block:: python
+
+    @dace.program
+    def assign_stmt():
+        a = 5
+
+.. figure:: images/assign-stmt.png
+    :width: 500
+    :align: center
+    :alt: Generated SDFG assignment statement for the above Data-Centric Python program
+
 
 :func:`~dace.frontend.python.newast.ProgramVisitor.visit_AnnAssign`
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+Parses `annotated assignment <https://docs.python.org/3/library/ast.html#ast.AnnAssign>`_ statements. The :class:`~dace.frontend.python.newast.ProgramVisitor`
+respects these type annotations and the assigned variables will have the same (DaCe-compatible) datatype as if the code
+was executed through the CPython interpreter.
+
 :func:`~dace.frontend.python.newast.ProgramVisitor.visit_AugAssign`
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Parses `augmented assignments <https://docs.python.org/3/library/ast.html#ast.AugAssign>`_ statements. The :class:`~dace.frontend.python.newast.ProgramVisitor`
+will try to infer whether the assigned memory location is read and written by a single thread. In such cases, the
+assigned memory location will appear as both input and output in generated subgraph. Otherwise, it will appear only as
+output and the corresponding edge will have write-conflict resolution (WCR). Example:
+
+.. code-block:: python
+
+    @dace.program
+    def augassign_stmt():
+        a = 0
+        for i in range(10):
+            a += 1
+        for i in dace.map[0:10]:
+            a += 1
+
+.. figure:: images/augassign-stmt.png
+    :width: 500
+    :align: center
+    :alt: Generated SDFG augmeneted assignment statements for the above Data-Centric Python program
+
 
 :func:`~dace.frontend.python.newast.ProgramVisitor.visit_Call`
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+Parses function `call <https://docs.python.org/3/library/ast.html#ast.Call>`_ statements. These statements may call any
+of the following:
+
+- Another Data-Centric Python program: Execution is transferred to a nested :class:`~dace.frontend.python.newast.ProgramVisitor`.
+- An (already parsed) :class:`~dace.sdfg.sdfg.SDFG` object: Generates directly a :class:`~dace.sdfg.nodes.NestedSDFG`.
+- A supported Python builtin or module (e.g., NumPy) method: Execution is transferred to the corresponding *replacement* method.
+- An unsupported method: Generates a *callback* to the CPython interpreter.
+
 :func:`~dace.frontend.python.newast.ProgramVisitor.visit_Return`
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Parses `return <https://docs.python.org/3/library/ast.html#ast.Return>`_ statements.
 
 :func:`~dace.frontend.python.newast.ProgramVisitor.visit_With`
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+Parses `with <https://docs.python.org/3/library/ast.html#ast.With>`_ statements.  Supports only :ref:`explcit dataflow mode <explicit-dataflow-mode>` syntax.
+
 :func:`~dace.frontend.python.newast.ProgramVisitor.visit_AsyncWith`
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Parses `async with <https://docs.python.org/3/library/ast.html#ast.AsyncWith>`_ statements. However, these statements
+are treates as simple `with <https://docs.python.org/3/library/ast.html#ast.With>`_ statements.
 
 :func:`~dace.frontend.python.newast.ProgramVisitor.visit_Str`
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+Parses string constants. DEPRECATED in Python 3.8 and newer versions.
+
 :func:`~dace.frontend.python.newast.ProgramVisitor.visit_Num`
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Parses numerical constants. DEPRECATED in Python 3.8 and newer versions.
 
 :func:`~dace.frontend.python.newast.ProgramVisitor.visit_Constant`
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+Parses all `constant <https://docs.python.org/3/library/ast.html#ast.Constant>`_ values.
+
 :func:`~dace.frontend.python.newast.ProgramVisitor.visit_Name`
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Parses `names <https://docs.python.org/3/library/ast.html#ast.Name>`_, e.g., variable names.
 
 :func:`~dace.frontend.python.newast.ProgramVisitor.visit_NameConstant`
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+Parses name constants. DEPRECATED in Python 3.8 and newer versions.
+
 :func:`~dace.frontend.python.newast.ProgramVisitor.visit_Attribute`
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Parses `attributes <https://docs.python.org/3/library/ast.html#ast.Attributes>`_. Allows accessing attributes of supported
+objects. Typically, these are :class:`~dace.data.Data` objects. For accessing class attributes in general, see :doc:`preprocessing`.
 
 :func:`~dace.frontend.python.newast.ProgramVisitor.visit_List`
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+Visits each `list <https://docs.python.org/3/library/ast.html#ast.List>`_ element and returns a list with the results.
+Does not support Python lists as :class:`~dace.data.Data`.
+
 :func:`~dace.frontend.python.newast.ProgramVisitor.visit_Tuple`
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Visits each `tuple <https://docs.python.org/3/library/ast.html#ast.Tuple>`_ element and returns a tuple with the results.
+Does not support Python tuples as :class:`~dace.data.Data`.
 
 :func:`~dace.frontend.python.newast.ProgramVisitor.visit_Set`
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+Visits each `set <https://docs.python.org/3/library/ast.html#ast.Set>`_ element and returns a set with the results.
+Does not support Python sets as :class:`~dace.data.Data`.
+
 :func:`~dace.frontend.python.newast.ProgramVisitor.visit_Dict`
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Visits each `dictionary <https://docs.python.org/3/library/ast.html#ast.Dict>`_ key-value pair and returns a dictionary with the results.
+Does not support Python dictionaries as :class:`~dace.data.Data`.
 
 :func:`~dace.frontend.python.newast.ProgramVisitor.visit_Lambda`
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+Generates a string representation of a `lambda <https://docs.python.org/3/library/ast.html#ast.Lambda>`_ function.
+
 :func:`~dace.frontend.python.newast.ProgramVisitor.visit_UnaryOp`
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Parses `unary <https://docs.python.org/3/library/ast.html#ast.UnaryOp>`_ operations. 
 
 :func:`~dace.frontend.python.newast.ProgramVisitor.visit_BinOp`
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+Parses `binary <https://docs.python.org/3/library/ast.html#ast.BinOp>`_ operations. 
+
 :func:`~dace.frontend.python.newast.ProgramVisitor.visit_BoolOp`
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Parses `boolean <https://docs.python.org/3/library/ast.html#ast.BoolOp>`_ operations. 
 
 :func:`~dace.frontend.python.newast.ProgramVisitor.visit_Compare`
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+Parses `comparisons <https://docs.python.org/3/library/ast.html#ast.Compare>`_.
+
 :func:`~dace.frontend.python.newast.ProgramVisitor.visit_Subscript`
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Parses `subscripts <https://docs.python.org/3/library/ast.html#ast.Subscript>`_. This visitor all parses the subscript's
+`slice <https://docs.python.org/3/library/ast.html#ast.Slice>`_ expressions.
 
 :func:`~dace.frontend.python.newast.ProgramVisitor.visit_Index`
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
+Parses index expressions in `subscripts <https://docs.python.org/3/library/ast.html#ast.Subscript>`_. DEPRECATED.
+
 :func:`~dace.frontend.python.newast.ProgramVisitor.visit_ExtSlice`
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Parses slice expressions in `subscripts <https://docs.python.org/3/library/ast.html#ast.Subscript>`_. DEPRECATED.
+
 
 Helper Methods
 --------------
