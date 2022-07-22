@@ -26,7 +26,7 @@ Main Limitations
 
 - Classes and object-oriented programing are only supported in JIT mode (see :doc:`jitoop`).
 - Python native containers (tuples, lists, sets, and dictionaries) are not supported **directly** as :class:`~dace.data.Data`. Specific instances of them may be **indirectly** supported through code preprocessing (see :doc:`preprocessing`). There is also limited support for specific uses, e.g., as arguments to some methods.
-- Only the `range <https://docs.python.org/3/library/stdtypes.html#range>`_, :func:`parrange`, and :func:`~dace.frontend.python.interface.map` iterators are **directly** supported. Other iterators, e.g., `zip` may be **indirectly** supported through code preprocessing (see :doc:`preprocessing`).
+- Only the `range <https://docs.python.org/3/library/stdtypes.html#range>`_, :func:`parrange`, and :func:`~dace.frontend.python.interface.map` iterators are **directly** supported. Other iterators, e.g., `zip <https://docs.python.org/3/library/functions.html#zip>`_ may be **indirectly** supported through code preprocessing (see :doc:`preprocessing`).
 - Recursion is not supported.
 
 Parsing Flow
@@ -35,12 +35,12 @@ Parsing Flow
 The entry point for parsing a Python program with the :class:`~dace.frontend.python.newast.ProgramVisitor` is the :func:`~dace.frontend.python.newast.parse_dace_program` method.
 The Python call tree when calling or compiling a Data-Centric Python program is as follows:
 
-1. :class:`~dace.frontend.python.parser.DaceProgram`
-2. :func:`~dace.frontend.python.parser.DaceProgram.__call__`, or :func:`~dace.frontend.python.parser.DaceProgram.compile`, or :func:`~dace.frontend.python.parser.DaceProgram.to_sdfg`
-3. :func:`~dace.frontend.python.parser.DaceProgram._parse`
-4. :func:`~dace.frontend.python.parser.DaceProgram._generated_pdp`
-5. :func:`~dace.frontend.python.newast.parse_dace_program`
-6. :func:`~dace.frontend.python.newast.ProgramVisitor.parse_program`
+1. :class:`dace.frontend.python.parser.DaceProgram`
+2. :func:`dace.frontend.python.parser.DaceProgram.__call__`, or :func:`dace.frontend.python.parser.DaceProgram.compile`, or :func:`dace.frontend.python.parser.DaceProgram.to_sdfg`
+3. :func:`dace.frontend.python.parser.DaceProgram._parse`
+4. :func:`dace.frontend.python.parser.DaceProgram._generated_pdp`
+5. :func:`dace.frontend.python.newast.parse_dace_program`
+6. :func:`dace.frontend.python.newast.ProgramVisitor.parse_program`
 
 The ProgramVisitor Class
 --------------------------------------------------------------
@@ -48,9 +48,9 @@ The ProgramVisitor Class
 The :class:`~dace.frontend.python.newast.ProgramVisitor` traverses a Data-Centric Python program's AST and constructs
 the corresponding :class:`~dace.sdfg.sdfg.SDFG`. The :class:`~dace.frontend.python.newast.ProgramVisitor` inherits from Python's `ast.NodeVisitor <https://docs.python.org/3/library/ast.html#ast.NodeVisitor>`_
 class and, therefore, follows the visitor design pattern. The developers are encouraged to accustom themselves with this
-programming pattern (see <add-some-resources>), however, the basic functionality is described in <insert-section>.
+programming pattern (for example, see `Wikipedia <https://en.wikipedia.org/wiki/Visitor_pattern>`_ and `Wikibooks <https://en.wikibooks.org/wiki/Computer_Science_Design_Patterns/Visitor>`_), however, the basic functionality is described :ref:`below <visitor-pattern>`.
 An object of the :class:`~dace.frontend.python.newast.ProgramVisitor` class is responsible for a single :class:`~dace.sdfg.sdfg.SDFG`
-object. While traversing the Python program's AST, if the need for a :class:`~dace.sdfg.nodes.NestedSDFG` arises (see <add-section>), a new
+object. While traversing the Python program's AST, if the need for a :class:`~dace.sdfg.nodes.NestedSDFG` arises (see :ref:`Nested ProgramVisitors <nested-visitor>`), a new
 (nested) :class:`~dace.frontend.python.newast.ProgramVisitor` object will be created to handle the corresponsding Python
 Abstract Syntax sub-Tree. The :class:`~dace.frontend.python.newast.ProgramVisitor` has the following attributes:
 
@@ -84,6 +84,7 @@ Abstract Syntax sub-Tree. The :class:`~dace.frontend.python.newast.ProgramVisito
 - `symbols`: The loop symbols defined in the :class:`~dace.sdfg.sdfg.SDFG` object. Useful for memlet/state propagation when multiple loops use the same iteration variable but with different ranges.
 - `indirections`: A dictionary from Python code indirection expressions to Data-Centric symbols.
 
+.. _visitor-pattern:
 
 The ProgramVisitor and the Visitor Design Pattern
 -------------------------------------------------
@@ -100,7 +101,7 @@ It then iterates over and *visits* the statements in the program's body. The Pyt
 In the above fourth call, `Class` in `visit_Class` is a placeholder for the name
 of one of the Python AST module class supported by the ProgramVisitor.
 For example, if the statement is an object of the `ast.Assign <https://docs.python.org/3/library/ast.html#ast.assignment>`_
-class, the :func:`dace.frontend.python.ProgramVisitor.visit_Assign` method will be invoked.
+class, the :func:`~dace.frontend.python.ProgramVisitor.visit_Assign` method will be invoked.
 Each object of a Python AST module class (called henceforth AST node) typically
 has as attributes other AST nodes, generating tree-structures. Accordingly, the
 corresponding ProgramVisitor methods perform some action for the *parent* AST node
@@ -108,15 +109,130 @@ and then recusively call other methods to handle the *children* AST nodes until
 the whole tree has been processed. It should be mentioned that, apart from the
 class-specific visitor methods, the following may also appear in the Python call tree:
 
-- :func:`dace.frontend.python.astutils.ExtNodeVisitor.generic_visit`: A generic visitor method. Usefull to automatically call the required class-specific methods when no special handling is required.
-- :class:`dace.frontend.python.newast.TaskletTransformer`: A ProgramVisitor that is specialized to handle the :ref:`explcit dataflow mode <explicit-dataflow-mode>` syntax.
+- :func:`~dace.frontend.python.astutils.ExtNodeVisitor.generic_visit`: A generic visitor method. Usefull to automatically call the required class-specific methods when no special handling is required.
+- :class:`~dace.frontend.python.newast.TaskletTransformer`: A ProgramVisitor that is specialized to handle the :ref:`explcit dataflow mode <explicit-dataflow-mode>` syntax.
 
+.. _nested-visitor:
 
-To Nest Or Not To Nest?
------------------------
+Nested ProgramVisitors and NestedSDFGs
+--------------------------------------
+
+The :class:`~dace.frontend.python.newast.ProgramVisitor` will trigger the generation of a :class:`~dace.sdfg.nodes.NestedSDFG` (through a nested :class:`~dace.frontend.python.newast.ProgramVisitor`) in the following cases:
+
+- When parsing the body of a :func:`~dace.frontend.interface.map`. This will occur even when a :class:`~dace.sdfg.nodes.NestedSDFG` is not necessary. Simplification of the resulting subgraph is left to :class:`~dace.transformation.interstate.sdfg_nesting.InlineSDFG`.
+- When parsing a call (see `ast.Call <https://docs.python.org/3/library/ast.html#ast.Call>`_) to another Data-Centric Python program or an :class:`~dace.sdfg.sdfg.SDFG` object. It should be noted that calls to, e.g., supported NumPy methods, may also (eventually) trigger the generation of a :class:`~dace.sdfg.nodes.NestedSDFG`. However, this is mostly occuring through :ref:`Library Nodes <libnodes>`.
+- When parsing :ref:`explcit dataflow mode <explicit-dataflow-mode>` syntax. The whole Abstract Syntax sub-Tree of such statements is passed to a :class:`~dace.frontend.python.newast.TaskletTransformer`.
 
 Visitor Methods
 ---------------
+
+Below follows a list of all AST class-specific :class:`~dace.frontend.python.newast.ProgramVisitor`'s methods and a short description of
+of which Python language features they support and how:
+
+:func:`~dace.frontend.python.newast.ProgramVisitor.visit_FunctionDef`
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Uses to parse functions decorated with:
+
+- :func:`~dace.frontend.python.interface.map` and :func:`mapscope`
+- :func:`~dace.frontend.python.interface.consume` and :func:`consumescope`
+- :func:`~dace.frontend.python.interface.tasklet`
+
+The Data-Centric Python frontend does not allow definition of Data-Centric Python programs inside another one.
+This visitor will catch such cases and raise :class:`~dace.frontend.python.common.DaceSyntaxError`. 
+
+:func:`~dace.frontend.python.newast.ProgramVisitor.visit_For`
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+:func:`~dace.frontend.python.newast.ProgramVisitor.visit_While`
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+:func:`~dace.frontend.python.newast.ProgramVisitor.visit_Break`
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+:func:`~dace.frontend.python.newast.ProgramVisitor.visit_Continue`
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+:func:`~dace.frontend.python.newast.ProgramVisitor.visit_If`
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+:func:`~dace.frontend.python.newast.ProgramVisitor.visit_NamedExpr`
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+:func:`~dace.frontend.python.newast.ProgramVisitor.visit_Assign`
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+:func:`~dace.frontend.python.newast.ProgramVisitor.visit_AnnAssign`
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+:func:`~dace.frontend.python.newast.ProgramVisitor.visit_AugAssign`
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+:func:`~dace.frontend.python.newast.ProgramVisitor.visit_Call`
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+:func:`~dace.frontend.python.newast.ProgramVisitor.visit_Return`
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+:func:`~dace.frontend.python.newast.ProgramVisitor.visit_With`
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+:func:`~dace.frontend.python.newast.ProgramVisitor.visit_AsyncWith`
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+:func:`~dace.frontend.python.newast.ProgramVisitor.visit_Str`
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+:func:`~dace.frontend.python.newast.ProgramVisitor.visit_Num`
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+:func:`~dace.frontend.python.newast.ProgramVisitor.visit_Constant`
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+:func:`~dace.frontend.python.newast.ProgramVisitor.visit_Name`
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+:func:`~dace.frontend.python.newast.ProgramVisitor.visit_NameConstant`
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+:func:`~dace.frontend.python.newast.ProgramVisitor.visit_Attribute`
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+:func:`~dace.frontend.python.newast.ProgramVisitor.visit_List`
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+:func:`~dace.frontend.python.newast.ProgramVisitor.visit_Tuple`
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+:func:`~dace.frontend.python.newast.ProgramVisitor.visit_Set`
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+:func:`~dace.frontend.python.newast.ProgramVisitor.visit_Dict`
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+:func:`~dace.frontend.python.newast.ProgramVisitor.visit_Lambda`
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+:func:`~dace.frontend.python.newast.ProgramVisitor.visit_UnaryOp`
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+:func:`~dace.frontend.python.newast.ProgramVisitor.visit_BinOp`
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+:func:`~dace.frontend.python.newast.ProgramVisitor.visit_BoolOp`
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+:func:`~dace.frontend.python.newast.ProgramVisitor.visit_Compare`
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+:func:`~dace.frontend.python.newast.ProgramVisitor.visit_Subscript`
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+:func:`~dace.frontend.python.newast.ProgramVisitor.visit_Index`
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+:func:`~dace.frontend.python.newast.ProgramVisitor.visit_ExtSlice`
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 Helper Methods
 --------------
