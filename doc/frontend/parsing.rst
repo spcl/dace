@@ -85,8 +85,32 @@ Abstract Syntax sub-Tree. The :class:`~dace.frontend.python.newast.ProgramVisito
 - `indirections`: A dictionary from Python code indirection expressions to Data-Centric symbols.
 
 
-The Visitor Design Pattern
---------------------------
+The ProgramVisitor and the Visitor Design Pattern
+-------------------------------------------------
+
+The :class:`~dace.frontend.python.newast.ProgramVisitor`'s :func:`~dace.frontend.python.newast.ProgramVisitor.parse_program` method
+takes as input a Data-Centric Python program's AST (`ast.FunctionDef <https://docs.python.org/3/library/ast.html#ast.FunctionDef>`_ object).
+It then iterates over and *visits* the statements in the program's body. The Python call tree when *visiting* a statement is approximately as follows:
+
+1. :func:`dace.frontend.python.newast.ProgramVisitor.parse_program`
+2. :func:`dace.frontend.python.astutils.ExtNodeVisitor.visit_TopLevel`
+3. :func:`dace.frontend.python.ProgramVisitor.visit`
+4. :func:`dace.frontend.python.ProgramVisitor.visit_Class`
+
+In the above fourth call, `Class` in `visit_Class` is a placeholder for the name
+of one of the Python AST module class supported by the ProgramVisitor.
+For example, if the statement is an object of the `ast.Assign <https://docs.python.org/3/library/ast.html#ast.assignment>`_
+class, the :func:`dace.frontend.python.ProgramVisitor.visit_Assign` method will be invoked.
+Each object of a Python AST module class (called henceforth AST node) typically
+has as attributes other AST nodes, generating tree-structures. Accordingly, the
+corresponding ProgramVisitor methods perform some action for the *parent* AST node
+and then recusively call other methods to handle the *children* AST nodes until
+the whole tree has been processed. It should be mentioned that, apart from the
+class-specific visitor methods, the following may also appear in the Python call tree:
+
+- :func:`dace.frontend.python.astutils.ExtNodeVisitor.generic_visit`: A generic visitor method. Usefull to automatically call the required class-specific methods when no special handling is required.
+- :class:`dace.frontend.python.newast.TaskletTransformer`: A ProgramVisitor that is specialized to handle the :ref:`daceprograms#explicit-dataflow-mode` syntax.
+
 
 To Nest Or Not To Nest?
 -----------------------
