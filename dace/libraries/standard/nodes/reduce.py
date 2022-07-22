@@ -71,6 +71,20 @@ class ExpandReducePure(pm.ExpandTransformation):
                         strides=[s for i, s in enumerate(output_data.strides) if i in osqdim],
                         storage=output_data.storage)
 
+        # Rename outer connectors and add to node
+        inedge._dst_conn = '_in'
+        outedge._src_conn = '_out'
+        node.add_in_connector('_in')
+        node.add_out_connector('_out')
+
+        if len(axes) == 0:
+            # Degenerate reduction, do nothing
+            nstate = nsdfg.add_state()
+            r = nstate.add_read('_in')
+            w = nstate.add_write('_out')
+            nstate.add_edge(r, None, w, None, dace.Memlet('_in'))
+            return nsdfg
+
         # If identity is defined, add an initialization state
         if node.identity is not None:
             init_state = nsdfg.add_state()
@@ -130,12 +144,6 @@ class ExpandReducePure(pm.ExpandTransformation):
         else:
             nstate.add_memlet_path(r, ime, t, dst_conn='__inp', memlet=inmm)
             nstate.add_memlet_path(t, imx, w, src_conn='__out', memlet=outm)
-
-        # Rename outer connectors and add to node
-        inedge._dst_conn = '_in'
-        outedge._src_conn = '_out'
-        node.add_in_connector('_in')
-        node.add_out_connector('_out')
 
         from dace.transformation import dataflow
         nsdfg.apply_transformations_repeated(dataflow.MapCollapse)
