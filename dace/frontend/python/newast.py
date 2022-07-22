@@ -4,6 +4,7 @@ from collections import OrderedDict
 import copy
 import itertools
 import inspect
+import networkx as nx
 import re
 import sys
 import time
@@ -2194,6 +2195,15 @@ class ProgramVisitor(ExtNodeVisitor):
                 # The state that all "break" edges go to
                 loop_end = self._add_state(f'postloop_{node.lineno}')
 
+            body_states = set()
+            to_visit = [first_loop_state]
+            while to_visit:
+                state = to_visit.pop(0)
+                for _, dst, _ in self.sdfg.out_edges(state):
+                    if dst not in body_states and dst is not loop_guard:
+                        to_visit.append(dst)
+                body_states.add(state)
+
             continue_states = self.continue_states.pop()
             while continue_states:
                 next_state = continue_states.pop()
@@ -2209,6 +2219,13 @@ class ProgramVisitor(ExtNodeVisitor):
                     self.sdfg.remove_edge(e)
                 self.sdfg.add_edge(next_state, loop_end, dace.InterstateEdge())
             self.loop_idx -= 1
+
+            for state in body_states:
+                if not nx.has_path(self.sdfg.nx, loop_guard, state):
+                    for e in self.sdfg.all_edges(state):
+                        self.sdfg.remove_edge(e)
+                    self.sdfg.remove_node(state)
+
         else:
             raise DaceSyntaxError(self, node, 'Unsupported for-loop iterator "%s"' % iterator)
 
