@@ -132,7 +132,7 @@ of which Python language features they support and how:
 :func:`~dace.frontend.python.newast.ProgramVisitor.visit_FunctionDef`
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Uses to parse functions decorated with:
+Parses functions decorated with one of the following decorators:
 
 - :func:`~dace.frontend.python.interface.map` and :func:`mapscope`
 - :func:`~dace.frontend.python.interface.consume` and :func:`consumescope`
@@ -143,6 +143,26 @@ This visitor will catch such cases and raise :class:`~dace.frontend.python.commo
 
 :func:`~dace.frontend.python.newast.ProgramVisitor.visit_For`
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Parses `for <https://docs.python.org/3/library/ast.html#ast.For>`_ statements using one of the following iterators:
+
+- `range <https://docs.python.org/3/library/stdtypes.html#range>`_: Results in a (sequential) for-loop.
+- :func:`parrange`: Results in uni-dimensional :class:`~dace.sdfg.nodes.Map`.
+- :func:`~dace.frontend.python.interface.map`: Results in a multi-dimensional :class:`~dace.sdfg.nodes.Map`.
+
+Example:
+
+.. code-block:: python
+
+    @dace.program
+    def for_loop(A: dace.int32[10]):
+        for i in range(0, 10, 2):
+            A[i] = i
+
+.. figure:: images/for-loop.png
+    :width: 500
+    :align: center
+    :alt: Generated SDFG for-loop for the above Data-Centric Python program
 
 :func:`~dace.frontend.python.newast.ProgramVisitor.visit_While`
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
