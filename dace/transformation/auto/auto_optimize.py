@@ -581,6 +581,12 @@ def auto_optimize(sdfg: SDFG,
     for nsdfg in sdfg.all_sdfgs_recursive():
         nsdfg.openmp_sections = False
 
+    # Set all Default storage types that are constant sized to registers
+    move_small_arrays_to_stack(sdfg)
+
+    # Make all independent arrays persistent
+    make_transients_persistent(sdfg, device)
+
     if symbols:
         # Specialize for all known symbols
         known_symbols = {s: v for (s, v) in symbols.items() if s in sdfg.free_symbols}
@@ -598,12 +604,6 @@ def auto_optimize(sdfg: SDFG,
         if debugprint and len(known_symbols) > 0:
             print("Specializing the SDFG for symbols", known_symbols)
         sdfg.specialize(known_symbols)
-
-    # Set all Default storage types that are constant sized to registers
-    move_small_arrays_to_stack(sdfg)
-
-    # Make all independent arrays persistent
-    make_transients_persistent(sdfg, device)
 
     # Validate at the end
     if validate or validate_all:
