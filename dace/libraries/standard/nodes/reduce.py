@@ -404,7 +404,7 @@ class ExpandReduceCUDADevice(pm.ExpandTransformation):
         node.validate(sdfg, state)
         input_edge: graph.MultiConnectorEdge = state.in_edges(node)[0]
         output_edge: graph.MultiConnectorEdge = state.out_edges(node)[0]
-        insubset = dcpy(inedge.data.subset)
+        insubset = dcpy(input_edge.data.subset)
         isqdim = insubset.squeeze()
         input_dims = len(input_edge.data.subset)
         output_dims = len(output_edge.data.subset)
