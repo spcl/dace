@@ -5,8 +5,11 @@ import json
 import numpy as np
 import re
 
+from collections import defaultdict
+
 
 class InstrumentationReport(object):
+
     @staticmethod
     def get_event_uuid(event):
         uuid = (-1, -1, -1)
@@ -40,29 +43,47 @@ class InstrumentationReport(object):
             self.sdfg_hash = report['sdfgHash']
 
             events = report['traceEvents']
-
             for event in events:
-                if 'ph' in event:
-                    phase = event['ph']
-                    name = event['name']
-                    if phase == 'X':
-                        uuid = self.get_event_uuid(event)
-                        if uuid not in self.durations:
-                            self.durations[uuid] = {}
-                        if name not in self.durations[uuid]:
-                            self.durations[uuid][name] = []
-                        self.durations[uuid][name].append(event['dur'] / 1000)
-                    if phase == 'C':
-                        if name not in self.counters:
-                            self.counters[name] = 0
-                        self.counters[name] += event['args'][name]
+                if not "ph" in event:
+                    continue
+
+                phase = event["ph"]
+                tid = event["tid"]
+                name = event['name']
+                if phase == 'X':
+                    # Time
+                    uuid = self.get_event_uuid(event)
+                    if uuid not in self.durations:
+                        self.durations[uuid] = {}
+                    if name not in self.durations[uuid]:
+                        self.durations[uuid][name] = defaultdict(list)
+
+                    self.durations[uuid][name][tid].append(event['dur'] / 1000)
+                elif phase == "C":
+                    # Counter
+                    uuid = self.get_event_uuid(event)
+                    if uuid not in self.counters:
+                        self.counters[uuid] = {}
+                    if name not in self.counters[uuid]:
+                        self.counters[uuid][name] = defaultdict(list)
+
+
+                    for counter, value in event["args"].items():
+                        if counter == "sdfg_id" or counter == "state_id" or counter == "id":
+                            continue
+
+                        if counter not in self.counters[uuid][name]:
+                            self.counters[uuid][name][counter] = defaultdict(list)
+
+                        self.counters[uuid][name][counter][tid].append(value)
 
     def __repr__(self):
         return 'InstrumentationReport(name=%s)' % self.name
 
     def sortby(self, column: str, ascending: bool = False):
         if (column and column.lower() not in ('counter', 'value', 'min', 'max', 'mean', 'median')):
-            raise ValueError('Only Counter, Value, Min, Max, Mean, Median are ' 'supported')
+            raise ValueError('Only Counter, Value, Min, Max, Mean, Median are '
+                             'supported')
         self._sortcat = column if column is None else column.lower()
         self._sortdesc = not ascending
 
@@ -122,6 +143,64 @@ class InstrumentationReport(object):
 
         return string, sdfg, state
 
+    def _get_counters_string(self,
+                             counter,
+                             label,
+                             values,
+                             element,
+                             sdfg,
+                             state,
+                             string,
+                             row_format,
+                             colw,
+                             with_element_heading=True):
+        indent = ''
+        if len(values) > 0:
+            element_label = ''
+            if element[0] > -1 and element[1] > -1 and element[2] > -1:
+                # This element is a node.
+                if sdfg != element[0]:
+                    # No parent SDFG row present yet, print it.
+                    string += row_format.format('SDFG (' + str(element[0]) + ')', '', '', '', '', width=colw)
+                sdfg = element[0]
+                if state != element[1]:
+                    # No parent state row present yet, print it.
+                    string += row_format.format('|-State (' + str(element[1]) + ')', '', '', '', '', width=colw)
+                state = element[1]
+                element_label = '| |-Node (' + str(element[2]) + ')'
+                indent = '| | |'
+            elif element[0] > -1 and element[1] > -1:
+                # This element is a state.
+                if sdfg != element[0]:
+                    # No parent SDFG row present yet, print it.
+                    string += row_format.format('SDFG (' + str(element[0]) + ')', '', '', '', '', width=colw)
+                sdfg = element[0]
+                state = element[1]
+                element_label = '|-State (' + str(element[1]) + ')'
+                indent = '| |'
+            elif element[0] > -1:
+                # This element is an SDFG.
+                sdfg = element[0]
+                state = -1
+                element_label = 'SDFG (' + str(element[0]) + ')'
+                indent = '|'
+            else:
+                element_label = 'N/A'
+
+            if with_element_heading:
+                string += row_format.format(element_label, '', '', '', '', width=colw)
+                string += row_format.format(f"{counter}", '', '', '', '', width=colw)
+
+            string += row_format.format(indent + "|" + label + ':', '', '', '', '', width=colw)
+            string += row_format.format(indent,
+                                        np.min(values),
+                                        '%.2f' % np.mean(values),
+                                        '%.2f' % np.median(values),
+                                        np.max(values),
+                                        width=colw)
+
+        return string, sdfg, state
+
     def getkey(self, element):
         events = self.durations[element]
         result = []
@@ -141,13 +220,7 @@ class InstrumentationReport(object):
 
     def __str__(self):
         COLW = 15
-        COUNTER_COLW = 39
-
-        element_list = list(self.durations.keys())
-        element_list.sort()
-
         row_format = ('{:<{width}}' * 5) + '\n'
-        counter_format = ('{:<{width}}' * 3) + '\n'
 
         string = 'Instrumentation report\n'
         string += 'SDFG Hash: ' + self.sdfg_hash + '\n'
@@ -161,59 +234,56 @@ class InstrumentationReport(object):
             sdfg = -1
             state = -1
 
+            element_list = list(self.durations.keys())
+            element_list.sort()
             if self._sortcat in ('min', 'mean', 'median', 'max'):
                 element_list = sorted(element_list, key=self.getkey, reverse=self._sortdesc)
 
             for element in element_list:
                 events = self.durations[element]
-                if len(events) > 0:
+                for event in events:
+                    times = events[event]
                     with_element_heading = True
-                    for event in events.keys():
-                        runtimes = events[event]
+                    for tid in times:
+                        runtimes = times[tid]
+                        if tid >= 0:
+                            label = f"Thread {tid}"
+                        else:
+                            label = ""
 
-                        string, sdfg, state = self._get_runtimes_string(event, runtimes, element, sdfg, state, string,
+                        string, sdfg, state = self._get_runtimes_string(label, runtimes, element, sdfg, state, string,
                                                                         row_format, COLW, with_element_heading)
+
                         with_element_heading = False
 
-            string += ('-' * (COLW * 5)) + '\n'
+                string += ('-' * (COLW * 5)) + '\n'
 
         if len(self.counters) > 0:
-            string += ('-' * (COUNTER_COLW * 3)) + '\n'
-            string += ('{:<{width}}' * 3).format('Counter', 'Element ID', 'Value', width=COUNTER_COLW) + '\n'
-            string += ('-' * (COUNTER_COLW * 3)) + '\n'
+            string += ('-' * (COLW * 5)) + '\n'
+            string += ('{:<{width}}' * 2).format('Element', 'Counter', width=COLW) + '\n'
+            string += row_format.format('', 'Min', 'Mean', 'Median', 'Max', width=COLW)
+            string += ('-' * (COLW * 5)) + '\n'
 
-            if self._sortcat == 'value':
-                counter_list = sorted(self.counters, key=lambda k: self.counters[k], reverse=self._sortdesc)
-            elif self._sortcat == 'counter':
-                counter_list = sorted(self.counters.keys(), reverse=self._sortdesc)
-            else:
-                counter_list = self.counters.keys()
+            sdfg = -1
+            state = -1
 
-            for counter in counter_list:
-                # Counter entries that contain an element ID are given as a
-                # 6-tuple, separated by spaces. We check if the provided entry
-                # contains an element ID (by checking if it's a 6-tuple), and
-                # then read out the element ID. The ID is given in a 'combined'
-                # form, where the first 16 bits represent the state ID and the
-                # last 16 bits represent the node ID.
-                parts = counter.split(' ')
-                element = ''
-                if len(parts) == 6:
-                    try :
-                        unified = int(parts[5])
-                        state_id = (unified >> 16) & 0xFFFF
-                        if state_id > 16383:
-                            state_id = -1
-                        node_id = unified & 0xFFFF
-                        # If no state ID is given, the element is a state.
-                        if state_id < 0:
-                            element = '{nid}'.format(nid=node_id)
-                        else:
-                            element = '{sid}/{nid}'.format(sid=state_id, nid=node_id)
-                    except ValueError:
-                        # Ignored.
-                        pass
-                string += counter_format.format(counter, element, self.counters[counter], width=COUNTER_COLW)
-            string += ('-' * (COUNTER_COLW * 3)) + '\n'
+            for element, events in self.counters.items():
+                for event, counters in events.items():
+                    for counter, values in counters.items():
+                        with_element_heading = True
+                        for tid in values:
+                            thread_values = values[tid]
+                            if tid >= 0:
+                                label = f"Thread {tid}"
+                            else:
+                                label = ""
+
+                            string, sdfg, state = self._get_counters_string(counter, label, thread_values, element, sdfg,
+                                                                            state, string, row_format, COLW,
+                                                                            with_element_heading)
+
+                            with_element_heading = False
+
+                string += ('-' * (COLW * 5)) + '\n'
 
         return string
