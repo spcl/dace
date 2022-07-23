@@ -355,6 +355,10 @@ class Scalar(Data):
     @property
     def optional(self) -> bool:
         return False
+    
+    @property
+    def pool(self) -> bool:
+        return False
 
     def is_equivalent(self, other):
         if not isinstance(other, Scalar):
