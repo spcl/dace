@@ -32,7 +32,7 @@ namespace perf {
         char cat[DACE_REPORT_EVENT_CAT_LEN];
         unsigned long int tstart;
         unsigned long int tend;
-        std::thread::id tid;
+        size_t tid;
         struct _element_id {
             int sdfg_id;
             int state_id;
@@ -69,10 +69,24 @@ namespace perf {
             const char *counter_name,
             unsigned long int counter_val
         ) {
+            std::thread::id thread_id = std::this_thread::get_id();
+            size_t tid = std::hash<std::thread::id>{}(thread_id);
+            add_counter(name, cat, counter_name, counter_val, tid, -1, -1, -1);
+        }
+
+        void add_counter(
+            const char *name,
+            const char *cat,
+            const char *counter_name,
+            unsigned long int counter_val,
+            size_t tid,
+            int sdfg_id,
+            int state_id,
+            int el_id
+        ) {
             long unsigned int tstart = std::chrono::duration_cast<std::chrono::microseconds>(
                 std::chrono::high_resolution_clock::now().time_since_epoch()
             ).count();
-            std::thread::id tid = std::this_thread::get_id();
             std::lock_guard<std::mutex> guard (this->_mutex);
             struct TraceEvent event = {
                 'C',
@@ -81,7 +95,7 @@ namespace perf {
                 tstart,
                 0,
                 tid,
-                { 0, 0, 0 },
+                { sdfg_id, state_id, el_id },
                 { "", counter_val }
             };
             strncpy(event.name, name, DACE_REPORT_EVENT_NAME_LEN);
@@ -112,7 +126,21 @@ namespace perf {
             int state_id,
             int el_id
         ) {
-            std::thread::id tid = std::this_thread::get_id();
+            std::thread::id thread_id = std::this_thread::get_id();
+            size_t tid = std::hash<std::thread::id>{}(thread_id);
+            add_completion(name, cat, tstart, tend, tid, sdfg_id, state_id, el_id);
+        }
+
+        void add_completion(
+            const char *name,
+            const char *cat,
+            unsigned long int tstart,
+            unsigned long int tend,
+            size_t tid,
+            int sdfg_id,
+            int state_id,
+            int el_id
+        ) {
             std::lock_guard<std::mutex> guard (this->_mutex);
             struct TraceEvent event = {
                 'X',
@@ -177,20 +205,18 @@ namespace perf {
                     ofs << "\"tid\": " << event.tid << ", ";
 
                     ofs << "\"args\": {";
+                    ofs << "\"sdfg_id\": " << event.element_id.sdfg_id;
 
-                    if (event.ph == 'X') {
-                        ofs << "\"sdfg_id\": " << event.element_id.sdfg_id;
+                    if (event.element_id.state_id > -1) {
+                        ofs << ", \"state_id\": ";
+                        ofs << event.element_id.state_id;
+                    }
 
-                        if (event.element_id.state_id > -1) {
-                            ofs << ", \"state_id\": ";
-                            ofs << event.element_id.state_id;
-                        }
-
-                        if (event.element_id.el_id > -1) {
-                            ofs << ", \"id\": " << event.element_id.el_id;
-                        }
-                    } else if (event.ph == 'C') {
-                        ofs << "\"" << event.counter.name << "\": ";
+                    if (event.element_id.el_id > -1) {
+                        ofs << ", \"id\": " << event.element_id.el_id;
+                    }
+                     if (event.ph == 'C') {
+                        ofs << ", \"" << event.counter.name << "\": ";
                         ofs << event.counter.val;
                     }
 
