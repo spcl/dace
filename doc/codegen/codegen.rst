@@ -115,13 +115,24 @@ or in shared header that is then included by the different kernels (Intel OpenCL
 
 
 
-Memory interfaces (in/out)
-^^^^^^^^^^^^^^^^^^^^^^^^^^
+Decoupled Memory interfaces 
+^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-Xilinx only: definition of decoupled memory interface.
+When a container stored in the FPGA Device Memory (off-chip memory) is both read and written, DaCe, by default,
+creates a single memory interface for both type of accesses.
 
-Warning: while this can improve performance, it must be used carefully as it will hide loop carried dependencies to the Vitis compiler,
-resulting in erreneous hardware.
+While this has no particular performance impact on Intel, for Xilinx this could impair place and route step, resulting in 
+a lower synthesis frequency.
+
+For this reason, the programmer can set to true the DaCe configuration option ``DACE_compiler_fpga_xilixn_decouple_array_interfaces``.
+This, has effect on the code generated for Xilinx. Any time that an array is If an array is both read and written, this option decouples 
+its accesses, by creatin a memory interface for reading and one for writing. The array name is qualified and code generated with a ``_in`` or
+``_out`` suffix, indicating the access directionality. 
+
+
+*Warning*: while decoupling memory interfaces can improve performance, it must be used carefully. This may hide potential Read-After-Write or
+Write-After-Read dependencies to the Vitis compiler, resulting in erreneous hardware. In addition to this, enabling the configuration could create up to 2 times the number of interaces,
+possibly reaching the limits supported by the device/Vitis.
 
 
 
