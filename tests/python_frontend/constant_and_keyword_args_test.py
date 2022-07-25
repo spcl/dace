@@ -565,6 +565,7 @@ def test_constant_propagation_pass():
 
     # Ensure condition was folded
     sdfg_3 = conditional_val.to_sdfg(val=3, simplify=True)
+    sdfg_3.name += '_1'
     cprop.ConstantPropagation().apply_pass(sdfg_3, {})
     dse.DeadStateElimination().apply_pass(sdfg_3, {})
     sdfg_3.simplify()
@@ -572,6 +573,7 @@ def test_constant_propagation_pass():
 
     # Ensure condition was folded
     sdfg_4 = conditional_val.to_sdfg(val=4, simplify=True)
+    sdfg_4.name += '_0'
     cprop.ConstantPropagation().apply_pass(sdfg_4, {})
     dse.DeadStateElimination().apply_pass(sdfg_4, {})
     sdfg_4.simplify()
