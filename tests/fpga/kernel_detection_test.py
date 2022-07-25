@@ -75,8 +75,14 @@ def test_kernels_inside_component_0():
     assert np.allclose(res, x + y + v + w + z)
 
     report = sdfg.get_latest_report()
-    assert len(re.findall(r"[0-9\.]+\s+[0-9\.]+\s+[0-9\.]+\s+[0-9\.]+", str(report))) == 5
-    assert len(re.findall(r"Full FPGA .+ runtime", str(report))) == 2
+    assert len(report.durations[(0, 0, -1)]) == 5
+
+    full_fpga_events = 0
+    for event_name in report.durations[(0, 0, -1)]:
+        if "Full FPGA" in event_name:
+            full_fpga_events += 1
+
+    assert full_fpga_events == 2
 
     return sdfg
 

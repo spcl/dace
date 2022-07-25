@@ -153,6 +153,7 @@ class InstrumentationType(aenum.AutoNumberEnum):
     No_Instrumentation = ()
     Timer = ()
     PAPI_Counters = ()
+    LIKWID_Counters = ()
     GPU_Events = ()
     FPGA = ()
 
