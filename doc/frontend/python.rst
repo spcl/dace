@@ -11,3 +11,4 @@ DaCe Python Frontend
     parsing
     jitoop
     pysupport
+    npsupport
