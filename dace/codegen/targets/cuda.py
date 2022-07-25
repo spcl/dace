@@ -239,11 +239,11 @@ class CUDACodeGen(TargetCodeGenerator):
                     s for s in access_sets
                     if s in pooled and state in access_sets[s] and not (access_sets[s] & reachable[state]) - {state})
 
-                access_nodes = list(state.data_nodes())
+                anodes = list(state.data_nodes())
                 for aname in last_state_arrays:
                     # Find out if there is a common descendant access node.
                     # If not, release at end of state
-                    ans = [an for an in access_nodes if an.data == aname]
+                    ans = [an for an in anodes if an.data == aname]
                     terminator = None
                     for an1 in ans:
                         if all(nx.has_path(state.nx, an2, an1) for an2 in ans if an2 is not an1):
@@ -1168,8 +1168,12 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                 if sd is not sdfg or state is not pstate:
                     continue              
 
-                ptrname = cpp.ptr(name, sd.arrays[name], sd, self._frame)
-                callsite_stream.write(f'{backend}Free({ptrname});\n', sdfg)
+                desc = sd.arrays[name]
+                ptrname = cpp.ptr(name, desc, sd, self._frame)
+                if isinstance(desc, dt.Array) and desc.start_offset != 0:
+                    ptrname = f'({ptrname} - {cpp.sym2cpp(desc.start_offset)})'
+
+                callsite_stream.write(f'{backend}Free({ptrname});\n', sd)
                 to_remove.add((sd, name))
             for sd, name in to_remove:
                 del self.pool_release[sd, name]

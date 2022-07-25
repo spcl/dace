@@ -1362,7 +1362,10 @@ def synchronize_streams(sdfg, dfg, state_id, node, scope_exit, callsite_stream, 
         # If we are the ones to remove the last terminator, release memory
         terminators.remove(scope_exit)
         if len(terminators) == 0:
-            ptrname = ptr(name, sd.arrays[name], sd, codegen._frame)
+            desc = sd.arrays[name]
+            ptrname = ptr(name, desc, sd, codegen._frame)
+            if isinstance(desc, data.Array) and desc.start_offset != 0:
+                ptrname = f'({ptrname} - {sym2cpp(desc.start_offset)})'
             callsite_stream.write(f'{backend}FreeAsync({ptrname}, {cudastream});\n', sdfg, state_id, scope_exit)
             to_remove.add((sd, name))
 
