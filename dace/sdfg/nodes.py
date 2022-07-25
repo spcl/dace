@@ -843,7 +843,7 @@ class Map(object):
         self.schedule = schedule
         self.unroll = unroll
         self.collapse = 1
-        self.params = params
+        self.params = [str(param) for param in params]
         self.range = ndrange
         self.debuginfo = debuginfo
         self._fence_instrumentation = fence_instrumentation
