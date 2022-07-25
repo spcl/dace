@@ -86,11 +86,24 @@ class ConstantPropagation(ppl.Pass):
                     k: v
                     for k, v in mapping.items() if v is not _UnknownValue and k not in multivalue_desc_symbols
                 }
-                mapping = {
-                    k: v
-                    for k, v in mapping.items()
-                    if symbolic.pystr_to_symbolic(k) not in symbolic.pystr_to_symbolic(v).free_symbols
-                }
+                # NOTE: The commented-out code works with Python >= 3.8
+                # mapping = {
+                #     k: v
+                #     for k, v in mapping.items()
+                #     if not isinstance(sym_v := symbolic.pystr_to_symbolic(v), bool) and
+                #     symbolic.pystr_to_symbolic(k) not in sym_v.free_symbols
+                # }
+
+                def _sym_check(k, v):
+                    sym_v = symbolic.pystr_to_symbolic(v)
+                    if isinstance(sym_v, bool):
+                        return True
+                    if symbolic.pystr_to_symbolic(k) in sym_v.free_symbols:
+                        return False
+                    return True
+
+                mapping = {k: v for k, v in mapping.items() if _sym_check(k, v)}
+
                 if not mapping:
                     continue
 
