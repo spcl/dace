@@ -16,6 +16,150 @@ ShapeType = Sequence[Union[Integral, str, symbolic.symbol, symbolic.SymExpr, sym
 RankType = Union[Integral, str, symbolic.symbol, symbolic.SymExpr, symbolic.sympy.Basic]
 
 
+##### MPI Cartesian Communicators
+
+
+@oprepo.replaces('mpi4py.MPI.COMM_WORLD.Create_cart')
+@oprepo.replaces('dace.comm.Cart_create')
+def _cart_create(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, dims: ShapeType):
+    """ Creates a process-grid and adds it to the DaCe program. The process-grid is implemented with [MPI_Cart_create](https://www.mpich.org/static/docs/latest/www3/MPI_Cart_create.html).
+        :param dims: Shape of the process-grid (see `dims` parameter of `MPI_Cart_create`), e.g., [2, 3, 3].
+        :return: Name of the new process-grid descriptor.
+    """
+    pgrid_name = sdfg.add_pgrid(dims)
+
+    # Dummy tasklet adds MPI variables to the program's state.
+    from dace.libraries.mpi import Dummy
+    tasklet = Dummy(pgrid_name, [
+        f'MPI_Comm {pgrid_name}_comm;',
+        f'MPI_Group {pgrid_name}_group;',
+        f'int {pgrid_name}_coords[{len(dims)}];',
+        f'int {pgrid_name}_dims[{len(dims)}];',
+        f'int {pgrid_name}_rank;',
+        f'int {pgrid_name}_size;',
+        f'bool {pgrid_name}_valid;',
+    ])
+
+    state.add_node(tasklet)
+
+    # Pseudo-writing to a dummy variable to avoid removal of Dummy node by transformations.
+    _, scal = sdfg.add_scalar(pgrid_name, dace.int32, transient=True)
+    wnode = state.add_write(pgrid_name)
+    state.add_edge(tasklet, '__out', wnode, None, Memlet.from_array(pgrid_name, scal))
+
+    return pgrid_name
+
+
+@oprepo.replaces_method('Intracomm', 'Create_cart')
+def _intracomm_create(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, icomm: 'Intracomm', dims: ShapeType):
+    """ Equivalent to `dace.comm.Cart_create(dims).
+        :param dims: Shape of the process-grid (see `dims` parameter of `MPI_Cart_create`), e.g., [2, 3, 3].
+        :return: Name of the new process-grid descriptor.
+    """
+
+    from mpi4py import MPI
+    if icomm != MPI.COMM_WORLD:
+        raise ValueError('Only the mpi4py.MPI.COMM_WORLD Intracomm is supported in DaCe Python programs.')
+    return _cart_create(pv, sdfg, state, dims)
+
+
+
+@oprepo.replaces('dace.comm.Cart_sub')
+def _cart_sub(pv: 'ProgramVisitor',
+              sdfg: SDFG,
+              state: SDFGState,
+              parent_grid: str,
+              color: Sequence[Union[Integral, bool]],
+              exact_grid: RankType = None):
+    """ Partitions the `parent_grid` to lower-dimensional sub-grids and adds them to the DaCe program.
+        The sub-grids are implemented with [MPI_Cart_sub](https://www.mpich.org/static/docs/latest/www3/MPI_Cart_sub.html).
+        :param parent_grid: Parent process-grid (similar to the `comm` parameter of `MPI_Cart_sub`).
+        :param color: The i-th entry specifies whether the i-th dimension is kept in the sub-grid or is dropped (see `remain_dims` input of `MPI_Cart_sub`).
+        :param exact_grid: [DEVELOPER] If set then, out of all the sub-grids created, only the one that contains the rank with id `exact_grid` will be utilized for collective communication.
+        :return: Name of the new sub-grid descriptor.
+    """
+    pgrid_name = sdfg.add_pgrid(parent_grid=parent_grid, color=color, exact_grid=exact_grid)
+
+    # Count sub-grid dimensions.
+    pgrid_ndims = sum([bool(c) for c in color])
+
+    # Dummy tasklet adds MPI variables to the program's state.
+    from dace.libraries.mpi import Dummy
+    tasklet = Dummy(pgrid_name, [
+        f'MPI_Comm {pgrid_name}_comm;',
+        f'MPI_Group {pgrid_name}_group;',
+        f'int {pgrid_name}_coords[{pgrid_ndims}];',
+        f'int {pgrid_name}_dims[{pgrid_ndims}];',
+        f'int {pgrid_name}_rank;',
+        f'int {pgrid_name}_size;',
+        f'bool {pgrid_name}_valid;',
+    ])
+
+    state.add_node(tasklet)
+
+    # Pseudo-writing to a dummy variable to avoid removal of Dummy node by transformations.
+    _, scal = sdfg.add_scalar(pgrid_name, dace.int32, transient=True)
+    wnode = state.add_write(pgrid_name)
+    state.add_edge(tasklet, '__out', wnode, None, Memlet.from_array(pgrid_name, scal))
+
+    return pgrid_name
+
+
+@oprepo.replaces_method('ProcessGrid', 'Sub')
+def _pgrid_sub(pv: 'ProgramVisitor',
+               sdfg: SDFG,
+               state: SDFGState,
+               parent_grid: str,
+               color: Sequence[Union[Integral, bool]]):
+    """ Equivalent to `dace.comm.Cart_sub(parent_grid, color).
+        :param parent_grid: Parent process-grid (similar to the `comm` parameter of `MPI_Cart_sub`).
+        :param color: The i-th entry specifies whether the i-th dimension is kept in the sub-grid or is dropped (see `remain_dims` input of `MPI_Cart_sub`).
+        :return: Name of the new sub-grid descriptor.
+    """
+
+    return _cart_sub(pv, sdfg, state, parent_grid, color)
+
+
+@oprepo.replaces_operator('ProcessGrid', 'Eq', otherclass='Comm')
+@oprepo.replaces_operator('ProcessGrid', 'Is', otherclass='Comm')
+def _pgrid_eq_comm(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str, op2: 'Comm'):
+    from mpi4py import MPI
+    if op2 is MPI.COMM_WORLD or op2 is MPI.COMM_NULL:
+        return False
+    return True
+
+
+@oprepo.replaces_operator('Comm', 'Eq', otherclass='ProcessGrid')
+@oprepo.replaces_operator('Comm', 'Is', otherclass='ProcessGrid')
+def _comm_eq_pgrid(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: 'Comm', op2: 'str'):
+    from mpi4py import MPI
+    if op1 is MPI.COMM_WORLD or op1 is MPI.COMM_NULL:
+        return False
+    return True
+
+
+@oprepo.replaces_operator('ProcessGrid', 'NotEq', otherclass='Comm')
+@oprepo.replaces_operator('ProcessGrid', 'IsNot', otherclass='Comm')
+def _pgrid_neq_comm(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str, op2: 'Comm'):
+    from mpi4py import MPI
+    if op2 is MPI.COMM_WORLD or op2 is MPI.COMM_NULL:
+        return True
+    return False
+
+
+@oprepo.replaces_operator('Comm', 'NotEq', otherclass='ProcessGrid')
+@oprepo.replaces_operator('Comm', 'IsNot', otherclass='ProcessGrid')
+def _comm_neq_pgrid(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: 'Comm', op2: 'str'):
+    from mpi4py import MPI
+    if op1 is MPI.COMM_WORLD or op1 is MPI.COMM_NULL:
+        return True
+    return False
+
+
+##### MPI Collectives
+
+
+@oprepo.replaces('mpi4py.MPI.COMM_WORLD.Bcast')
 @oprepo.replaces('dace.comm.Bcast')
 def _bcast(pv: 'ProgramVisitor',
            sdfg: SDFG,
@@ -43,6 +187,41 @@ def _bcast(pv: 'ProgramVisitor',
     state.add_edge(libnode, '_outbuffer', out_buffer, None, Memlet.from_array(buffer, desc))
 
     return None
+
+
+@oprepo.replaces_method('Intracomm', 'Bcast')
+def _intracomm_bcast(pv: 'ProgramVisitor',
+                     sdfg: SDFG,
+                     state: SDFGState,
+                     icomm: 'Intracomm',
+                     buffer: str,
+                     root: Union[str, sp.Expr, Number] = 0):
+
+    """ Equivalent to `dace.comm.Bcast(buffer, root)`. """
+
+    from mpi4py import MPI
+    if icomm != MPI.COMM_WORLD:
+        raise ValueError('Only the mpi4py.MPI.COMM_WORLD Intracomm is supported in DaCe Python programs.')
+    return _bcast(pv, sdfg, state, buffer, root)
+
+
+@oprepo.replaces_method('ProcessGrid', 'Bcast')
+def _pgrid_bcast(pv: 'ProgramVisitor',
+                 sdfg: SDFG,
+                 state: SDFGState,
+                 pgrid: str,
+                 buffer: str,
+                 root: Union[str, sp.Expr, Number] = 0):
+
+    """ Equivalent to `dace.comm.Bcast(buffer, root, grid=pgrid)`. """
+
+    return _bcast(pv, sdfg, state, buffer, root, grid=pgrid)
+
+
+def _mpi4py_to_MPI(MPI, op):
+    if op is MPI.SUM:
+        return 'MPI_SUM'
+    raise NotImplementedError
 
 
 @oprepo.replaces('dace.comm.Reduce')
@@ -75,8 +254,9 @@ def _Reduce(pv: 'ProgramVisitor',
     return None
 
 
+@oprepo.replaces('mpi4py.MPI.COMM_WORLD.Allreduce')
 @oprepo.replaces('dace.comm.Allreduce')
-def _Allreduce(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, buffer: str, op: str, grid: str = None):
+def _allreduce(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, buffer: str, op: str, grid: str = None):
 
     from dace.libraries.mpi.nodes.allreduce import Allreduce
 
@@ -88,6 +268,46 @@ def _Allreduce(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, buffer: str, 
     state.add_edge(libnode, '_outbuffer', out_buffer, None, Memlet.from_array(buffer, desc))
 
     return None
+
+
+@oprepo.replaces_method('Intracomm', 'Allreduce')
+def _intracomm_allreduce(pv: 'ProgramVisitor',
+                         sdfg: SDFG,
+                         state: SDFGState,
+                         icomm: 'Intracomm',
+                         inp_buffer: 'InPlace',
+                         out_buffer: str,
+                         op: str):
+
+    """ Equivalent to `dace.comm.Allreduce(out_buffer, op)`. """
+
+    from mpi4py import MPI
+    if icomm != MPI.COMM_WORLD:
+        raise ValueError('Only the mpi4py.MPI.COMM_WORLD Intracomm is supported in DaCe Python programs.')
+    if inp_buffer != MPI.IN_PLACE:
+        raise ValueError('DaCe currently supports in-place Allreduce only.')
+    if isinstance(op, MPI.Op):
+        op = _mpi4py_to_MPI(MPI, op)
+    return _allreduce(pv, sdfg, state, out_buffer, op)
+
+
+@oprepo.replaces_method('ProcessGrid', 'Allreduce')
+def _pgrid_allreduce(pv: 'ProgramVisitor',
+                     sdfg: SDFG,
+                     state: SDFGState,
+                     pgrid: str,
+                     inp_buffer: 'InPlace',
+                     out_buffer: str,
+                     op: str):
+
+    """ Equivalent to `dace.comm.Allreduce(out_buffer, op, grid=pgrid)`. """
+
+    from mpi4py import MPI
+    if inp_buffer != MPI.IN_PLACE:
+        raise ValueError('DaCe currently supports in-place Allreduce only.')
+    if isinstance(op, MPI.Op):
+        op = _mpi4py_to_MPI(MPI, op)
+    return _allreduce(pv, sdfg, state, out_buffer, op, grid=pgrid)
 
 
 @oprepo.replaces('dace.comm.Scatter')
@@ -517,77 +737,6 @@ def _wait(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, request: str):
     state.add_edge(req_node, None, libnode, '_request', req_mem)
 
     return None
-
-
-@oprepo.replaces('dace.comm.Cart_create')
-def _cart_create(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, dims: ShapeType):
-    """ Creates a process-grid and adds it to the DaCe program. The process-grid is implemented with [MPI_Cart_create](https://www.mpich.org/static/docs/latest/www3/MPI_Cart_create.html).
-        :param dims: Shape of the process-grid (see `dims` parameter of `MPI_Cart_create`), e.g., [2, 3, 3].
-        :return: Name of the new process-grid descriptor.
-    """
-    pgrid_name = sdfg.add_pgrid(dims)
-
-    # Dummy tasklet adds MPI variables to the program's state.
-    from dace.libraries.mpi import Dummy
-    tasklet = Dummy(pgrid_name, [
-        f'MPI_Comm {pgrid_name}_comm;',
-        f'MPI_Group {pgrid_name}_group;',
-        f'int {pgrid_name}_coords[{len(dims)}];',
-        f'int {pgrid_name}_dims[{len(dims)}];',
-        f'int {pgrid_name}_rank;',
-        f'int {pgrid_name}_size;',
-        f'bool {pgrid_name}_valid;',
-    ])
-
-    state.add_node(tasklet)
-
-    # Pseudo-writing to a dummy variable to avoid removal of Dummy node by transformations.
-    _, scal = sdfg.add_scalar(pgrid_name, dace.int32, transient=True)
-    wnode = state.add_write(pgrid_name)
-    state.add_edge(tasklet, '__out', wnode, None, Memlet.from_array(pgrid_name, scal))
-
-    return pgrid_name
-
-
-@oprepo.replaces('dace.comm.Cart_sub')
-def _cart_sub(pv: 'ProgramVisitor',
-              sdfg: SDFG,
-              state: SDFGState,
-              parent_grid: str,
-              color: Sequence[Union[Integral, bool]],
-              exact_grid: RankType = None):
-    """ Partitions the `parent_grid` to lower-dimensional sub-grids and adds them to the DaCe program.
-        The sub-grids are implemented with [MPI_Cart_sub](https://www.mpich.org/static/docs/latest/www3/MPI_Cart_sub.html).
-        :param parent_grid: Parent process-grid (similar to the `comm` parameter of `MPI_Cart_sub`).
-        :param color: The i-th entry specifies whether the i-th dimension is kept in the sub-grid or is dropped (see `remain_dims` input of `MPI_Cart_sub`).
-        :param exact_grid: [DEVELOPER] If set then, out of all the sub-grids created, only the one that contains the rank with id `exact_grid` will be utilized for collective communication.
-        :return: Name of the new sub-grid descriptor.
-    """
-    pgrid_name = sdfg.add_pgrid(parent_grid=parent_grid, color=color, exact_grid=exact_grid)
-
-    # Count sub-grid dimensions.
-    pgrid_ndims = sum([bool(c) for c in color])
-
-    # Dummy tasklet adds MPI variables to the program's state.
-    from dace.libraries.mpi import Dummy
-    tasklet = Dummy(pgrid_name, [
-        f'MPI_Comm {pgrid_name}_comm;',
-        f'MPI_Group {pgrid_name}_group;',
-        f'int {pgrid_name}_coords[{pgrid_ndims}];',
-        f'int {pgrid_name}_dims[{pgrid_ndims}];',
-        f'int {pgrid_name}_rank;',
-        f'int {pgrid_name}_size;',
-        f'bool {pgrid_name}_valid;',
-    ])
-
-    state.add_node(tasklet)
-
-    # Pseudo-writing to a dummy variable to avoid removal of Dummy node by transformations.
-    _, scal = sdfg.add_scalar(pgrid_name, dace.int32, transient=True)
-    wnode = state.add_write(pgrid_name)
-    state.add_edge(tasklet, '__out', wnode, None, Memlet.from_array(pgrid_name, scal))
-
-    return pgrid_name
 
 
 @oprepo.replaces('dace.comm.Subarray')
