@@ -1316,6 +1316,28 @@ def find_disallowed_statements(node: ast.AST):
     return None
 
 
+class MPIResolver(ast.NodeTransformer):
+    """ Resolves mpi4py-related constants, e.g., mpi4py.MPI.COMM_WORLD. """
+    def __init__(self, globals: Dict[str, Any]):
+        from mpi4py import MPI
+        self.globals = globals
+        self.MPI = MPI
+    
+    def visit_Name(self, node: ast.Name) -> Union[ast.Name, ast.Attribute]:
+        if node.id in self.globals:
+            obj = self.globals[node.id]
+            if isinstance(obj, self.MPI.Comm):
+                lattr = ast.Attribute(ast.Name(id='mpi4py', ctx=ast.Load), attr='MPI')
+                if obj is self.MPI.COMM_WORLD:
+                    return ast.copy_location(ast.Attribute(value=lattr, attr='COMM_WORLD'), node)
+                elif obj is self.MPI.COMM_NULL:
+                    return ast.copy_location(ast.Attribute(value=lattr, attr='COMM_NULL'), node)
+                else:
+                    raise DaceSyntaxError('Only the COMM_WORLD and COMM_NULL mpi4py.MPI communicators can be used '
+                                          'directly inside a DaCe Python program.')
+        return node
+
+
 def preprocess_dace_program(f: Callable[..., Any],
                             argtypes: Dict[str, data.Data],
                             global_vars: Dict[str, Any],
@@ -1356,6 +1378,11 @@ def preprocess_dace_program(f: Callable[..., Any],
         newmod = global_vars[mod]
         #del global_vars[mod]
         global_vars[modval] = newmod
+    
+    try:
+        src_ast = MPIResolver(global_vars).visit(src_ast)
+    except ModuleNotFoundError:
+        pass
 
     # Resolve constants to their values (if they are not already defined in this scope)
     # and symbols to their names
