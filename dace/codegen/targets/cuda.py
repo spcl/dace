@@ -543,7 +543,7 @@ void __dace_exit_cuda({sdfg.name}_t *__state) {{
                 cudastream = getattr(node, '_cuda_stream', 'nullptr')
                 if cudastream != 'nullptr':
                     cudastream = f'__state->gpu_context->streams[{cudastream}]'
-                result_alloc.write(f'{self.backend}MallocAsync((void**)&{dataname}, {arrsize_malloc}, {cudastream});\n')
+                result_alloc.write(f'DACE_CUDA_CHECK({self.backend}MallocAsync((void**)&{dataname}, {arrsize_malloc}, {cudastream}));\n')
             else:
                 # Strides are left to the user's discretion
                 result_alloc.write('%sMalloc((void**)&%s, %s);\n' % (self.backend, dataname, arrsize_malloc))
@@ -1173,7 +1173,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                 if isinstance(desc, dt.Array) and desc.start_offset != 0:
                     ptrname = f'({ptrname} - {cpp.sym2cpp(desc.start_offset)})'
 
-                callsite_stream.write(f'{backend}Free({ptrname});\n', sd)
+                callsite_stream.write(f'DACE_CUDA_CHECK({backend}Free({ptrname}));\n', sd)
                 to_remove.add((sd, name))
             for sd, name in to_remove:
                 del self.pool_release[sd, name]
