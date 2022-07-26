@@ -1117,6 +1117,13 @@ class ProgramVisitor(ExtNodeVisitor):
         # Indirections
         self.indirections = dict()
 
+        # Add mpi4py.MPI.COMM_WORLD aliases to variables
+        # try:
+        #     from mpi4py import MPI
+        #     self.variables.update({k: "MPI_COMM_WORLD" for k, v in self.globals.items() if v is MPI.COMM_WORLD})
+        # except:
+        #     pass
+
     @classmethod
     def progress_count(cls) -> int:
         """ Returns the number of parsed SDFGs so far within this run. """
@@ -1266,6 +1273,14 @@ class ProgramVisitor(ExtNodeVisitor):
         result.update({v: self.sdfg.arrays[v] for _, v in self.variables.items() if v in self.sdfg.arrays})
         # TODO: Is there a case of a variable-symbol?
         result.update({k: self.sdfg.symbols[v] for k, v in self.variables.items() if v in self.sdfg.symbols})
+
+        # MPI-related stuff
+        result.update({k: self.sdfg.process_grids[v] for k, v in self.variables.items() if v in self.sdfg.process_grids})
+        # try:
+        #     from mpi4py import MPI
+        #     result.update({k: v for k, v in self.globals.items() if v is MPI.COMM_WORLD})
+        # except:
+        #     pass
 
         return result
 
@@ -4453,7 +4468,9 @@ class ProgramVisitor(ExtNodeVisitor):
 
         result = []
         for operand in operands:
-            if isinstance(operand, str) and operand in self.sdfg.arrays:
+            if isinstance(operand, str) and operand in self.sdfg.process_grids:
+                result.append((operand, type(self.sdfg.process_grids[operand]).__name__))
+            elif isinstance(operand, str) and operand in self.sdfg.arrays:
                 result.append((operand, type(self.sdfg.arrays[operand]).__name__))
             elif isinstance(operand, str) and operand in self.scope_arrays:
                 result.append((operand, type(self.scope_arrays[operand]).__name__))
