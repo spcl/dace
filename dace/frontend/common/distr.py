@@ -370,6 +370,8 @@ def _gather(pv: 'ProgramVisitor',
     return None
 
 
+##### Point-To-Point Communication
+
 @oprepo.replaces('dace.comm.Send')
 def _send(pv: 'ProgramVisitor',
           sdfg: SDFG,
@@ -442,13 +444,19 @@ def _send(pv: 'ProgramVisitor',
     return None
 
 
+@oprepo.replaces('mpi4py.MPI.COMM_WORLD.Isend')
 @oprepo.replaces('dace.comm.Isend')
 def _isend(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, buffer: str, dst: Union[str, sp.Expr, Number],
-           tag: Union[str, sp.Expr, Number], request: str):
+           tag: Union[str, sp.Expr, Number], request: str = None, grid: str = None):
 
     from dace.libraries.mpi.nodes.isend import Isend
 
-    libnode = Isend('_Isend_')
+    ret_req = False
+    if not request:
+        ret_req = True
+        request, _ = sdfg.add_array("isend_req", [1], dace.dtypes.opaque("MPI_Request"), transient=True, find_new_name=True)
+
+    libnode = Isend('_Isend_', grid=grid)
 
     buf_range = None
     if isinstance(buffer, tuple):
@@ -523,7 +531,45 @@ def _isend(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, buffer: str, dst:
     state.add_edge(tag_node, None, libnode, '_tag', tag_mem)
     state.add_edge(libnode, '_request', req_node, None, req_mem)
 
+    if ret_req:
+        return request
     return None
+
+
+@oprepo.replaces_method('Intracomm', 'Isend')
+def _intracomm_isend(pv: 'ProgramVisitor',
+                     sdfg: SDFG,
+                     state: SDFGState,
+                     icomm: 'Intracomm',
+                     buffer: str,
+                     dst: Union[str, sp.Expr, Number],
+                     tag: Union[str, sp.Expr, Number]):
+
+    """ Equivalent to `dace.comm.Isend(buffer, dst, tag, req)`. """
+
+    from mpi4py import MPI
+    if icomm != MPI.COMM_WORLD:
+        raise ValueError('Only the mpi4py.MPI.COMM_WORLD Intracomm is supported in DaCe Python programs.')
+    req, _ = sdfg.add_array("isend_req", [1], dace.dtypes.opaque("MPI_Request"), transient=True, find_new_name=True)
+    _isend(pv, sdfg, state, buffer, dst, tag, req)
+    return req
+
+
+@oprepo.replaces_method('ProcessGrid', 'Isend')
+def _pgrid_isend(pv: 'ProgramVisitor',
+                 sdfg: SDFG,
+                 state: SDFGState,
+                 pgrid: str,
+                 buffer: str,
+                 dst: Union[str, sp.Expr, Number],
+                 tag: Union[str, sp.Expr, Number]):
+
+    """ Equivalent to `dace.comm.Isend(buffer, dst, tag, req, grid=pgrid)`. """
+
+    from mpi4py import MPI
+    req, _ = sdfg.add_array("isend_req", [1], dace.dtypes.opaque("MPI_Request"), transient=True, find_new_name=True)
+    _isend(pv, sdfg, state, buffer, dst, tag, req, grid=pgrid)
+    return req
 
 
 @oprepo.replaces('dace.comm.Recv')
@@ -598,13 +644,19 @@ def _recv(pv: 'ProgramVisitor',
     return None
 
 
+@oprepo.replaces('mpi4py.MPI.COMM_WORLD.Irecv')
 @oprepo.replaces('dace.comm.Irecv')
 def _irecv(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, buffer: str, src: Union[str, sp.Expr, Number],
-           tag: Union[str, sp.Expr, Number], request: str):
+           tag: Union[str, sp.Expr, Number], request: str = None, grid: str = None):
 
     from dace.libraries.mpi.nodes.irecv import Irecv
 
-    libnode = Irecv('_Irecv_')
+    ret_req = False
+    if not request:
+        ret_req = True
+        request, _ = sdfg.add_array("irecv_req", [1], dace.dtypes.opaque("MPI_Request"), transient=True, find_new_name=True)
+
+    libnode = Irecv('_Irecv_', grid=grid)
 
     buf_range = None
     if isinstance(buffer, tuple):
@@ -677,7 +729,45 @@ def _irecv(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, buffer: str, src:
     state.add_edge(tag_node, None, libnode, '_tag', tag_mem)
     state.add_edge(libnode, '_request', req_node, None, req_mem)
 
+    if ret_req:
+        return request
     return None
+
+
+@oprepo.replaces_method('Intracomm', 'Irecv')
+def _intracomm_irecv(pv: 'ProgramVisitor',
+                     sdfg: SDFG,
+                     state: SDFGState,
+                     icomm: 'Intracomm',
+                     buffer: str,
+                     src: Union[str, sp.Expr, Number],
+                     tag: Union[str, sp.Expr, Number]):
+
+    """ Equivalent to `dace.comm.Irecv(buffer, src, tag, req)`. """
+
+    from mpi4py import MPI
+    if icomm != MPI.COMM_WORLD:
+        raise ValueError('Only the mpi4py.MPI.COMM_WORLD Intracomm is supported in DaCe Python programs.')
+    req, _ = sdfg.add_array("irecv_req", [1], dace.dtypes.opaque("MPI_Request"), transient=True, find_new_name=True)
+    _irecv(pv, sdfg, state, buffer, src, tag, req)
+    return req
+
+
+@oprepo.replaces_method('ProcessGrid', 'Irecv')
+def _pgrid_irecv(pv: 'ProgramVisitor',
+                 sdfg: SDFG,
+                 state: SDFGState,
+                 pgrid: str,
+                 buffer: str,
+                 src: Union[str, sp.Expr, Number],
+                 tag: Union[str, sp.Expr, Number]):
+
+    """ Equivalent to `dace.comm.Isend(buffer, dst, tag, req, grid=pgrid)`. """
+
+    from mpi4py import MPI
+    req, _ = sdfg.add_array("irecv_req", [1], dace.dtypes.opaque("MPI_Request"), transient=True, find_new_name=True)
+    _irecv(pv, sdfg, state, buffer, src, tag, req, grid=pgrid)
+    return req
 
 
 @oprepo.replaces('dace.comm.Wait')
@@ -713,6 +803,7 @@ def _wait(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, request: str):
     return None
 
 
+@oprepo.replaces('mpi4py.MPI.Request.Waitall')
 @oprepo.replaces('dace.comm.Waitall')
 def _wait(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, request: str):
 
