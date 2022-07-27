@@ -20,6 +20,10 @@ class ExpandIsendMPI(ExpandTransformation):
 
         if buffer.dtype.veclen > 1:
             raise NotImplementedError
+        
+        comm = "MPI_COMM_WORLD"
+        if node.grid:
+            comm = f"__state->{node.grid}_comm"
 
         code = ""
 
@@ -40,7 +44,7 @@ class ExpandIsendMPI(ExpandTransformation):
             mpi_dtype_str = "newtype"
             count_str = "1"
         buffer_offset = 0
-        code += f"MPI_Isend(&(_buffer[{buffer_offset}]), {count_str}, {mpi_dtype_str}, _dest, _tag, MPI_COMM_WORLD, _request);"
+        code += f"MPI_Isend(&(_buffer[{buffer_offset}]), {count_str}, {mpi_dtype_str}, int(_dest), int(_tag), {comm}, _request);"
         if ddt is not None:
             code += f"""// MPI_Type_free(&newtype);
             """
@@ -68,13 +72,12 @@ class Isend(MPINode):
     }
     default_implementation = "MPI"
 
-    # Object fields
-    n = dace.properties.SymbolicProperty(allow_none=True, default=None)
-
+    grid = dace.properties.Property(dtype=str, allow_none=True, default=None)
     nosync = dace.properties.Property(dtype=bool, default=False, desc="Do not sync if memory is on GPU")
 
-    def __init__(self, name, *args, **kwargs):
+    def __init__(self, name, grid=None, *args, **kwargs):
         super().__init__(name, *args, inputs={"_buffer", "_dest", "_tag"}, outputs={"_request"}, **kwargs)
+        self.grid = grid
 
     def validate(self, sdfg, state):
         """
@@ -93,10 +96,10 @@ class Isend(MPINode):
             if e.src_conn == "_request":
                 req = sdfg.arrays[e.data.data]
 
-        if dest.dtype.base_type != dace.dtypes.int32:
-            raise ValueError("Source must be an integer!")
-        if tag.dtype.base_type != dace.dtypes.int32:
-            raise ValueError("Tag must be an integer!")
+        # if dest.dtype.base_type != dace.dtypes.int32:
+        #     raise ValueError("Destination must be an integer!")
+        # if tag.dtype.base_type != dace.dtypes.int32:
+        #     raise ValueError("Tag must be an integer!")
 
         count_str = "XXX"
         for _, _, _, dst_conn, data in state.in_edges(self):
