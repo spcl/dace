@@ -281,26 +281,38 @@ def _numpy_full(pv: 'ProgramVisitor',
                 sdfg: SDFG,
                 state: SDFGState,
                 shape: Shape,
-                fill_value: Union[sp.Expr, Number],
+                fill_value: Union[sp.Expr, Number, data.Scalar],
                 dtype: dace.typeclass = None):
     """ Creates and array of the specified shape and initializes it with
         the fill value.
     """
+    is_data = False
     if isinstance(fill_value, (Number, np.bool_)):
         vtype = dtypes.DTYPE_TO_TYPECLASS[type(fill_value)]
     elif isinstance(fill_value, sp.Expr):
         vtype = _sym_type(fill_value)
     else:
-        raise mem_parser.DaceSyntaxError(pv, None, "Fill value {f} must be a number!".format(f=fill_value))
+        is_data = True
+        vtype = sdfg.arrays[fill_value].dtype
+        # raise mem_parser.DaceSyntaxError(pv, None, "Fill value {f} must be a number!".format(f=fill_value))
     dtype = dtype or vtype
     name, _ = sdfg.add_temp_transient(shape, dtype)
 
-    state.add_mapped_tasklet(
-        '_numpy_full_', {"__i{}".format(i): "0: {}".format(s)
-                         for i, s in enumerate(shape)}, {},
-        "__out = {}".format(fill_value),
-        dict(__out=dace.Memlet.simple(name, ",".join(["__i{}".format(i) for i in range(len(shape))]))),
-        external_edges=True)
+    if is_data:
+        state.add_mapped_tasklet(
+            '_numpy_full_', {"__i{}".format(i): "0: {}".format(s)
+                            for i, s in enumerate(shape)},
+            dict(__inp=dace.Memlet(data=fill_value, subset='0')),
+            "__out = __inp",
+            dict(__out=dace.Memlet.simple(name, ",".join(["__i{}".format(i) for i in range(len(shape))]))),
+            external_edges=True)
+    else:
+        state.add_mapped_tasklet(
+            '_numpy_full_', {"__i{}".format(i): "0: {}".format(s)
+                            for i, s in enumerate(shape)}, {},
+            "__out = {}".format(fill_value),
+            dict(__out=dace.Memlet.simple(name, ",".join(["__i{}".format(i) for i in range(len(shape))]))),
+            external_edges=True)
 
     return name
 
