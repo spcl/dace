@@ -173,9 +173,40 @@ def test_3mm():
         assert(np.array_equal(E, E_ref))
 
 
+@pytest.mark.mpi
+def test_isend_irecv():
+
+    from mpi4py import MPI
+    commworld = MPI.COMM_WORLD
+    rank = commworld.Get_rank()
+    size = commworld.Get_size()
+
+    @dace.program
+    def chain(rank: dace.int32, size: dace.int32):
+        src = (rank - 1) % size
+        dst = (rank + 1) % size
+        req = np.empty((2, ), dtype=MPI.Request)
+        sbuf = np.full((1,), rank, dtype=np.int32)
+        req[0] = commworld.Isend(sbuf, dst, tag=0)
+        rbuf = np.empty((1, ), dtype=np.int32)
+        req[1] = commworld.Irecv(rbuf, src, tag=0)
+        MPI.Request.Waitall(req)
+        return rbuf
+    
+    sdfg = None
+    if rank == 0:
+        sdfg = chain.to_sdfg(simplify=True)
+    func = utils.distributed_compile(sdfg, commworld)
+
+    val = func(rank=rank, size=size)
+    ref = chain.f(rank, size)
+
+    assert(val[0] == ref[0])
+
 
 if __name__ == "__main__":
 
-    test_process_grid_bcast()
-    test_sub_grid_bcast()
-    test_3mm()
+    # test_process_grid_bcast()
+    # test_sub_grid_bcast()
+    # test_3mm()
+    test_isend_irecv()
