@@ -33,9 +33,34 @@ def create_datadescriptor(obj, no_custom_desc=False):
         return obj.__descriptor__()
     elif not no_custom_desc and hasattr(obj, 'descriptor'):
         return obj.descriptor
-    elif isinstance(obj, (list, tuple, numpy.ndarray)):
-        if isinstance(obj, (list, tuple)):  # Lists and tuples are cast to numpy
-            obj = numpy.array(obj)
+    elif dtypes.is_array(obj):
+        if dtypes.is_gpu_array(obj):
+            interface = obj.__cuda_array_interface__
+            storage = dtypes.StorageType.GPU_Global
+        else:
+            interface = obj.__array_interface__
+            storage = dtypes.StorageType.Default
+
+        if hasattr(obj, 'dtype') and obj.dtype.fields is not None:  # Struct
+            dtype = dtypes.struct('unnamed', **{k: dtypes.typeclass(v[0].type) for k, v in obj.dtype.fields.items()})
+        else:   
+            if numpy.dtype(interface['typestr']).type is numpy.void:  # Struct from __array_interface__
+                if 'descr' in interface:
+                    dtype = dtypes.struct('unnamed', **{k: dtypes.typeclass(numpy.dtype(v).type) for k, v in interface['descr']})
+                else:
+                    raise TypeError(f'Cannot infer data type of array interface object "{interface}"')
+            else:
+                dtype = dtypes.typeclass(numpy.dtype(interface['typestr']).type)
+        itemsize = numpy.dtype(interface['typestr']).itemsize
+        if len(interface['shape']) == 0:
+            return Scalar(dtype, storage=storage)
+        return Array(dtype=dtype,
+                     shape=interface['shape'],
+                     strides=(tuple(s // itemsize for s in interface['strides']) if interface['strides'] else None),
+                     storage=storage)
+    elif isinstance(obj, (list, tuple)):
+        # Lists and tuples are cast to numpy
+        obj = numpy.array(obj)
 
         if obj.dtype.fields is not None:  # Struct
             dtype = dtypes.struct('unnamed', **{k: dtypes.typeclass(v[0].type) for k, v in obj.dtype.fields.items()})
@@ -69,16 +94,6 @@ def create_datadescriptor(obj, no_custom_desc=False):
             return Array(dtype=TORCH_DTYPE_TO_TYPECLASS[obj.dtype], strides=obj.stride(), shape=tuple(obj.shape))
         except ImportError:
             raise ValueError("Attempted to convert a torch.Tensor, but torch could not be imported")
-    elif dtypes.is_gpu_array(obj):
-        interface = obj.__cuda_array_interface__
-        dtype = dtypes.typeclass(numpy.dtype(interface['typestr']).type)
-        itemsize = numpy.dtype(interface['typestr']).itemsize
-        if len(interface['shape']) == 0:
-            return Scalar(dtype, storage=dtypes.StorageType.GPU_Global)
-        return Array(dtype=dtype,
-                     shape=interface['shape'],
-                     strides=(tuple(s // itemsize for s in interface['strides']) if interface['strides'] else None),
-                     storage=dtypes.StorageType.GPU_Global)
     elif symbolic.issymbolic(obj):
         return Scalar(symbolic.symtype(obj))
     elif isinstance(obj, dtypes.typeclass):
