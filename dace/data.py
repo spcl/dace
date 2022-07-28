@@ -41,7 +41,16 @@ def create_datadescriptor(obj, no_custom_desc=False):
             interface = obj.__array_interface__
             storage = dtypes.StorageType.CPU_Heap
 
-        dtype = dtypes.typeclass(numpy.dtype(interface['typestr']).type)
+        if hasattr(obj, 'dtype') and obj.dtype.fields is not None:  # Struct
+            dtype = dtypes.struct('unnamed', **{k: dtypes.typeclass(v[0].type) for k, v in obj.dtype.fields.items()})
+        else:   
+            if numpy.dtype(interface['typestr']).type is numpy.void:  # Struct from __array_interface__
+                if 'descr' in interface:
+                    dtype = dtypes.struct('unnamed', **{k: dtypes.typeclass(numpy.dtype(v).type) for k, v in interface['descr']})
+                else:
+                    raise TypeError(f'Cannot infer data type of array interface object "{interface}"')
+            else:
+                dtype = dtypes.typeclass(numpy.dtype(interface['typestr']).type)
         itemsize = numpy.dtype(interface['typestr']).itemsize
         if len(interface['shape']) == 0:
             return Scalar(dtype, storage=storage)
