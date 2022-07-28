@@ -85,9 +85,10 @@ def is_multibank_array(array: dt.Data):
 
 def is_multibank_array_with_distributed_index(array: dt.Data):
     """
+    :param array: access node to be checked
     :return: True if this array is placed on HBM/DDR and has an extra first
-    dimension equal to the number of banks is placed on. For HBM/DDR arrays
-    spanning across multiple banks this is always true.
+        dimension equal to the number of banks is placed on. For HBM/DDR arrays
+        spanning across multiple banks this is always true.
     """
     if is_multibank_array(array):
         res = parse_location_bank(array)
@@ -121,10 +122,10 @@ def iterate_distributed_subset(desc: dt.Array, access_memlet: memlet.Memlet, is_
     """
     :param desc: The array accessed by the memlet
     :param access_memlet: The memlet
-    :param is_write: If we care about the write or read direction. is_write means we write to desc,
+    :param is_write: If we care about the write or read direction. is_write means we write to desc, 
         not is_write means we read from it
     :return: if access_memlet contains a distributed subset the method will count from the lower to the upper
-    end of it. Otherwise returns 0 once.
+        end of it. Otherwise returns 0 once.
     """
     if is_multibank_array_with_distributed_index(desc):
         if is_write:
@@ -688,20 +689,20 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
         subgraphs, as well as to the global kernel.
         
         :return: A tuple with the following six entries:
-                 - Data container parameters that should be passed from the
-                   host to the FPGA kernel.
-                 - Data containers that are local to the kernel, but must be
-                   allocated by the host prior to invoking the kernel.
-                 - A dictionary mapping from each processing element subgraph
-                   to which parameters it needs (from the total list of
-                   parameters).
-                 - Parameters that must be passed to the kernel from the host,
-                   but that do not exist before the CPU calls the kernel
-                   wrapper.
-                 - A dictionary of which memory interfaces should be assigned to
-                   which memory banks.
-                 - External streams that connect different FPGA kernels, and
-                   must be defined during the compilation flow.
+            - Data container parameters that should be passed from the
+            host to the FPGA kernel.
+            - Data containers that are local to the kernel, but must be
+            allocated by the host prior to invoking the kernel.
+            - A dictionary mapping from each processing element subgraph
+            to which parameters it needs (from the total list of
+            parameters).
+            - Parameters that must be passed to the kernel from the host,
+            but that do not exist before the CPU calls the kernel
+            wrapper.
+            - A dictionary of which memory interfaces should be assigned to
+            which memory banks.
+            - External streams that connect different FPGA kernels, and
+            must be defined during the compilation flow.
         """
 
         # Get a set of data nodes that are shared across subgraphs
@@ -928,8 +929,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                             trace_type, trace_bank = parse_location_bank(trace_desc)
                             if (bank is not None and bank_type is not None
                                     and (bank != trace_bank or bank_type != trace_type)):
-                                raise cgx.CodegenError("Found inconsistent memory bank "
-                                                       f"specifier for {trace_name}.")
+                                raise cgx.CodegenError("Found inconsistent memory bank " f"specifier for {trace_name}.")
                             bank = trace_bank
                             bank_type = trace_type
 
@@ -1468,8 +1468,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
 
             if (not sum(copy_shape) == 1 and
                 (not isinstance(memlet.subset, subsets.Range) or any([step != 1 for _, _, step in memlet.subset]))):
-                raise NotImplementedError("Only contiguous copies currently "
-                                          "supported for FPGA codegen.")
+                raise NotImplementedError("Only contiguous copies currently " "supported for FPGA codegen.")
 
             if host_to_device or device_to_device:
                 host_dtype = sdfg.data(src_node.data).dtype
@@ -1717,8 +1716,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
     @staticmethod
     def make_opencl_parameter(name, desc):
         if isinstance(desc, dt.Array):
-            return (f"hlslib::ocl::Buffer<{desc.dtype.ctype}, "
-                    f"hlslib::ocl::Access::readWrite> &{name}")
+            return (f"hlslib::ocl::Buffer<{desc.dtype.ctype}, " f"hlslib::ocl::Access::readWrite> &{name}")
         else:
             return (desc.as_arg(with_types=True, name=name))
 
@@ -1978,8 +1976,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                                 elif np.issubdtype(np.dtype(end_type.dtype.type), np.unsignedinteger):
                                     loop_var_type = "size_t"
                     except (UnboundLocalError):
-                        raise UnboundLocalError('Pipeline scopes require '
-                                                'specialized bound values')
+                        raise UnboundLocalError('Pipeline scopes require ' 'specialized bound values')
                     except (TypeError):
                         # Raised when the evaluation of begin or skip fails.
                         # This could occur, for example, if they are defined in terms of other symbols, which
