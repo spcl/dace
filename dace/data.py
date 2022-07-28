@@ -39,7 +39,7 @@ def create_datadescriptor(obj, no_custom_desc=False):
             storage = dtypes.StorageType.GPU_Global
         else:
             interface = obj.__array_interface__
-            storage = dtypes.StorageType.CPU_Heap
+            storage = dtypes.StorageType.Default
 
         if hasattr(obj, 'dtype') and obj.dtype.fields is not None:  # Struct
             dtype = dtypes.struct('unnamed', **{k: dtypes.typeclass(v[0].type) for k, v in obj.dtype.fields.items()})
