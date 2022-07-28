@@ -18,8 +18,20 @@ it will look for it in the user's home directory. By default, if no file can be 
 the home directory. If the home directory does not exist (e.g., in Docker containers), the file will be created in the
 current working directory. If no configuration file can be created in any of the above paths, the default settings are used.
 
+An example configuration file, which changes two configuration entries, looks as follows:
+
+.. code-block:: yaml
+
+  compiler:
+    cuda:
+      default_block_size: 64,8,1  # Change GPU map block size
+
+  debugprint: true  # Add more verbosity in printouts
+
+
 When compiling programs, the configuration used to build it will also be saved along with the binary in the 
-appropriate ``.dacecache`` folder.
+appropriate ``.dacecache`` folder. The configuration file in that folder contains *all* configuration entries, not
+just the ones changed from default, for reproducibility purposes.
 
 .. rubric::
     Changing configuration entries via environment variables
