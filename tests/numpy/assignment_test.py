@@ -89,6 +89,27 @@ def test_assign_wild(A: dace.float32[3, 5, 10, 13], B: dace.float32[2, 1, 4]):
     return A
 
 
+def test_assign_wild_symbolic():
+
+    N = dace.symbol("N")
+    I = dace.symbol("I")
+
+    @dace.program
+    def test_assign_wile_symbolic(A: dace.float32[3, N, 10, 13], B: dace.float32[N * (I + 1) - N * I, 1, 4]):
+        A[2, :, :, 8:12] = B
+        return A
+
+    N = 5
+
+    A = np.arange(3 * N * 10 * 13).astype(np.float32).reshape(3, N, 10, 13).copy()
+    B = np.arange(N * 4, dtype=np.float32).reshape(N, 1, 4).copy()
+
+    expected = A.copy()
+    expected[2, :, :, 8:12] = B.copy()
+
+    test_assign_wile_symbolic(A, B, I=42, N=5)
+
+
 @compare_numpy_output(positive=True)
 def test_assign_squeezed(A: dace.float32[3, 5, 10, 20, 13], B: dace.float32[2, 1, 4]):
     A[2, 2:4, :, 1, 8:12] = B
@@ -132,3 +153,4 @@ if __name__ == '__main__':
     test_broadcast5()
     test_assign_wild()
     test_annotated_assign_type()
+    test_assign_wild_symbolic()
