@@ -3,9 +3,6 @@ import numpy as np
 
 import dace
 
-import dace
-import numpy as np
-
 
 class ArrayWrapper:
     def __init__(self, array, **kwargs):
