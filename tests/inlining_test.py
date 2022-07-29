@@ -320,6 +320,35 @@ def test_regression_inline_subset():
     assert np.allclose(out, data[32:64, :] + 1)
 
 
+def test_inlining_view_input():
+
+    @dace.program
+    def test(A: dace.float64[96, 32], B: dace.float64[42, 32]):
+        O = np.zeros([96 * 2, 42], dace.float64)
+        for i in dace.map[0:2]:
+            O[i * 96:(i + 1) * 96, :] = np.einsum("ij,kj->ik", A, B)
+        return O
+
+    sdfg = test.to_sdfg()
+    sdfg.expand_library_nodes()
+
+    state = sdfg.nodes()[1]
+    # find nested_sdfg
+    nsdfg = [n for n in state.nodes() if isinstance(n, dace.sdfg.nodes.NestedSDFG)][0]
+    # delete gemm initialization state
+    nsdfg.sdfg.remove_node(nsdfg.sdfg.nodes()[0])
+
+    # check that inlining the sdfg works
+    sdfg.simplify()
+
+    A = np.random.rand(96, 32)
+    B = np.random.rand(42, 32)
+
+    expected = np.concatenate([A @ B.T, A @ B.T], axis=0)
+    actual = sdfg(A=A, B=B)
+    np.testing.assert_allclose(expected, actual)
+
+
 if __name__ == "__main__":
     test()
     # Skipped to to bug that cannot be reproduced
@@ -334,3 +363,4 @@ if __name__ == "__main__":
     test_inline_unsqueeze4()
     test_inline_symbol_assignment()
     test_regression_inline_subset()
+    test_inlining_view_input()
