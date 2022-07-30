@@ -1,6 +1,8 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 from dace.transformation.interstate import InlineSDFG, StateFusion
+from dace.libraries import blas
+from dace.library import change_default
 import numpy as np
 import pytest
 
@@ -10,6 +12,7 @@ H = dace.symbol('H')
 
 @dace.program
 def transpose(input, output):
+
     @dace.map(_[0:H, 0:W])
     def compute(i, j):
         a << input[j, i]
@@ -19,6 +22,7 @@ def transpose(input, output):
 
 @dace.program
 def bla(A, B, alpha):
+
     @dace.tasklet
     def something():
         al << alpha
@@ -111,6 +115,7 @@ def test_empty_memlets():
 
 
 def test_multistate_inline():
+
     @dace.program
     def nested(A: dace.float64[20]):
         for i in range(5):
@@ -134,6 +139,7 @@ def test_multistate_inline():
 
 
 def test_multistate_inline_samename():
+
     @dace.program
     def nested(A: dace.float64[20]):
         for i in range(5):
@@ -187,6 +193,7 @@ def test_inline_symexpr():
 
 
 def test_inline_unsqueeze():
+
     @dace.program
     def nested_squeezed(c: dace.int32[5], d: dace.int32[5]):
         d[:] = c
@@ -209,6 +216,7 @@ def test_inline_unsqueeze():
 
 
 def test_inline_unsqueeze2():
+
     @dace.program
     def nested_squeezed(c, d):
         d[:] = c
@@ -232,6 +240,7 @@ def test_inline_unsqueeze2():
 
 
 def test_inline_unsqueeze3():
+
     @dace.program
     def nested_squeezed(c, d):
         d[:] = c
@@ -255,6 +264,7 @@ def test_inline_unsqueeze3():
 
 
 def test_inline_unsqueeze4():
+
     @dace.program
     def nested_squeezed(c, d):
         d[:] = c
@@ -278,6 +288,7 @@ def test_inline_unsqueeze4():
 
 
 def test_inline_symbol_assignment():
+
     def nested(a, num):
         cat = num - 1
         last_step = (cat == 0)
@@ -330,7 +341,9 @@ def test_inlining_view_input():
         return O
 
     sdfg = test.to_sdfg()
-    sdfg.expand_library_nodes()
+    with change_default(blas, "pure"):
+        sdfg.expand_library_nodes()
+    sdfg.simplify()
 
     state = sdfg.nodes()[1]
     # find nested_sdfg
