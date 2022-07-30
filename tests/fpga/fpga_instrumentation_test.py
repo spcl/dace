@@ -1,11 +1,11 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
-from dace.codegen.targets.fpga import is_fpga_kernel
+from dace.sdfg.utils import is_fpga_kernel
 from dace.fpga_testing import fpga_test
 from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
+from dace import config
 import numpy as np
 import re
-
 
 def make_sdfg(make_tmp_local: bool):
     """
@@ -114,7 +114,8 @@ def test_instrumentation_single():
 @fpga_test()
 def test_instrumentation_multiple():
     sdfg = make_sdfg(False)
-    run_program(sdfg)
+    with config.set_temporary("compiler", "fpga", "concurrent_kernel_detection", value=True):
+        run_program(sdfg)
     report = sdfg.get_latest_report()
     # There should be five runtimes: One for each kernel, and two for the state
     assert len(re.findall(r"[0-9\.]+\s+[0-9\.]+\s+[0-9\.]+\s+[0-9\.]+\s+", str(report))) == 6

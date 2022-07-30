@@ -5,7 +5,7 @@ from dace import dtypes, nodes, registry, Memlet
 from dace.sdfg import SDFG, SDFGState, InterstateEdge
 from dace.dtypes import StorageType, ScheduleType
 from dace.properties import Property, make_properties
-from dace.sdfg.utils import find_sink_nodes, concurrent_subgraphs
+from dace.sdfg.utils import concurrent_subgraphs
 from dace.sdfg.graph import SubgraphView
 from dace.transformation.transformation import SubgraphTransformation
 

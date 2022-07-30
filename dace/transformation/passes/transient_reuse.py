@@ -1,25 +1,31 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-from dace import sdfg as sd
-from dace.sdfg import nodes
-from dace.transformation import transformation
-from dace.properties import make_properties
+# Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
+from typing import Dict, Iterator, Optional, Set, Tuple
+
 import networkx as nx
 
+from dace import SDFG, SDFGState, data
+from dace import sdfg as sd
+from dace.properties import make_properties
+from dace.sdfg import nodes
+from dace.sdfg import utils as sdutil
+from dace.transformation import pass_pipeline as ppl
+from dace.transformation import transformation
 
-@make_properties
-class TransientReuse(transformation.MultiStateTransformation):
-    """ Implements the TransientReuse transformation.
-        Finds all possible reuses of arrays,
-        decides for a valid combination and changes sdfg accordingly.
+
+class TransientReuse(ppl.Pass):
     """
-    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
-        return True
+    Reduces memory consumption by reusing allocated transient array memory. Only modifies arrays that can safely be
+    reused.
+    """
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.Descriptors | ppl.Modifies.AccessNodes
 
-    @classmethod
-    def expressions(cls):
-        return [sd.SDFG('_')]
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        # If states changed
+        return modified & (ppl.Modifies.Nodes | ppl.Modifies.Memlets)
 
-    def apply(self, _, sdfg):
+    def apply_pass(self, sdfg: SDFG, _) -> Optional[Set[str]]:
+        result: Set[str] = set()
 
         memory_before = 0
         arrays = {}
@@ -136,6 +142,7 @@ class TransientReuse(transformation.MultiStateTransformation):
 
             # For each mapping redirect edges and rename memlets in the state
             for (new, old) in sorted(list(mapping)):
+                result.add(old)
                 for n in state.nodes():
                     if isinstance(n, nodes.AccessNode) and n.data == old:
                         n.data = new
@@ -153,7 +160,7 @@ class TransientReuse(transformation.MultiStateTransformation):
                         used = True
                         break
             if not used:
-                sdfg.remove_data(a)
+                sdfg.remove_data(a, validate=False)
 
         # Analyze memory savings and output them
         memory_after = 0
@@ -163,3 +170,4 @@ class TransientReuse(transformation.MultiStateTransformation):
         print('memory before: ', memory_before, 'B')
         print('memory after: ', memory_after, 'B')
         print('memory savings: ', memory_before - memory_after, 'B')
+        return result or None

@@ -25,7 +25,6 @@ class MoveLoopIntoMap(DetectLoop, transformation.MultiStateTransformation):
     """
     Moves a loop around a map into the map
     """
-
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
         # Is this even a loop
         if not super().can_be_applied(graph, expr_index, sdfg, permissive):
@@ -40,9 +39,13 @@ class MoveLoopIntoMap(DetectLoop, transformation.MultiStateTransformation):
         loop_info = find_for_loop(sdfg, guard, body)
         if not loop_info:
             return False
-        itervar, (start, end, step), _ = loop_info
+        itervar, (start, end, step), (_, body_end) = loop_info
 
         if step not in [-1, 1]:
+            return False
+
+        # Body must contain a single state
+        if body != body_end:
             return False
 
         # Check if body contains exactly one map
@@ -53,7 +56,10 @@ class MoveLoopIntoMap(DetectLoop, transformation.MultiStateTransformation):
         # Check that everything else is independent of the loop's itervar
         subgraph = body.scope_subgraph(maps[0])
         map_exit = body.exit_node(maps[0])
+        descs: Set[str] = set()
         for e in body.edges():
+            if not e.data.is_empty():
+                descs.add(e.data.data)
             if e.src in subgraph.nodes() or e.dst in subgraph.nodes():
                 continue
             if e.dst is maps[0] and isinstance(e.src, nodes.AccessNode):
@@ -61,6 +67,18 @@ class MoveLoopIntoMap(DetectLoop, transformation.MultiStateTransformation):
             if e.src is map_exit and isinstance(e.dst, nodes.AccessNode):
                 continue
             if str(itervar) in e.data.free_symbols:
+                return False
+        for n in body.nodes():
+            if n in subgraph.nodes():
+                continue
+            if str(itervar) in n.free_symbols:
+                return False
+
+        # Check for iteration variable in map and data descriptors
+        if str(itervar) in maps[0].free_symbols:
+            return False
+        for arr in descs:
+            if str(itervar) in set(map(str, sdfg.arrays[arr].free_symbols)):
                 return False
 
         def test_subset_dependency(subset: sbs.Subset, mparams: Set[int]) -> Tuple[bool, List[int]]:

@@ -1,5 +1,6 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
+import collections
 import copy
 from dataclasses import dataclass
 import inspect
@@ -7,6 +8,7 @@ import numbers
 import numpy
 import re
 import sympy
+import sys
 import warnings
 
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
@@ -127,7 +129,7 @@ class RewriteSympyEquality(ast.NodeTransformer):
         if isinstance(node.value, numpy.bool_):
             node.value = bool(node.value)
         elif isinstance(node.value, numpy.number):
-            node.value = numpy.asscalar(node.value)
+            node.value = node.value.item()
         return self.generic_visit(node)
 
     # Compatibility for Python 3.7
@@ -135,7 +137,7 @@ class RewriteSympyEquality(ast.NodeTransformer):
         if isinstance(node.n, numpy.bool_):
             node.n = bool(node.n)
         elif isinstance(node.n, numpy.number):
-            node.n = numpy.asscalar(node.n)
+            node.n = node.n.item()
         return self.generic_visit(node)
 
 
@@ -300,31 +302,105 @@ def has_replacement(callobj: Callable, parent_object: Optional[Any] = None, node
     return oprepo.Replacements.get(astutils.rname(node)) is not None
 
 
-def make_kwargless_callback(func: Callable, node: ast.Call):
+def _create_unflatten_instruction(arg: ast.AST) -> Tuple[Callable, int]:
     """
-    Creates a version of the function that has no keyword arguments and matches the number of arguments exactly.
-    Used for creating callbacks from C to Python with keyword arguments.
+    Creates a lambda function for recreating the original Python object and returns the number of 
+    arguments to increment.
     """
-    if not node.keywords:
+    if isinstance(arg, ast.List):
+        return (list, len(arg.elts))
+    elif isinstance(arg, ast.Tuple):
+        return (tuple, len(arg.elts))
+    elif isinstance(arg, ast.Set):
+        return (set, len(arg.elts))
+    elif isinstance(arg, ast.Dict):
+        # Use two levels of functions to preserve keyword names
+        def make_remake(kwnames):
+            def remake_dict(args):
+                return {k: a for k, a in zip(kwnames, args)}
+
+            return remake_dict
+
+        # Remake keyword argument names from AST
+        kwarg_names = []
+        for kw in arg.keys:
+            if isinstance(kw, ast.Num):
+                kwarg_names.append(kw.n)
+            elif isinstance(kw, (ast.Str, ast.Bytes)):
+                kwarg_names.append(kw.s)
+            elif isinstance(kw, ast.NameConstant):
+                kwarg_names.append(kw.value)
+            elif sys.version_info >= (3, 8) and isinstance(kw, ast.Constant):
+                kwarg_names.append(kw.value)
+            else:
+                raise NotImplementedError(f'Key type {type(kw).__name__} is not supported')
+
+        return (make_remake(kwarg_names), len(arg.keys))
+    return (None, 1)
+
+
+def flatten_callback(func: Callable, node: ast.Call):
+    """
+    Creates a version of the function that has only marshallable arguments and no keyword arguments.
+    Arguments in callback matches the number of arguments used exactly.
+    Used for creating callbacks from C to Python with keyword arguments or other Pythonic structures 
+    (such as literal lists).
+    """
+
+    # Find out if any Python arguments should be flattened
+    unflatten_instructions: Dict[int, Tuple[Callable, int]] = collections.OrderedDict()
+    curarg = 0
+    instructions_exist = False
+    for arg in node.args:
+        call, inc = _create_unflatten_instruction(arg)
+        if call is not None:
+            instructions_exist = True
+        else:
+            call = lambda x: x[0]
+        unflatten_instructions[curarg] = call, inc
+        curarg += inc
+    for kw in node.keywords:
+        call, inc = _create_unflatten_instruction(kw.value)
+        if call is not None:
+            instructions_exist = True
+        else:
+            call = lambda x: x[0]
+        unflatten_instructions[curarg] = call, inc
+        curarg += inc
+
+    # Nothing to do, early exit
+    if not node.keywords and not instructions_exist:
         return func
+
     keywords = [kw.arg for kw in node.keywords]
     poscount = len(node.args)
 
     # Using two levels of functions to ensure keywords are stored with the callback
-    if poscount == 0:
-        def make_cb(keywords, _):
+    if instructions_exist:
+        # If unflattening is necessary, have one version of the callback
+        def make_cb(keywords, poscount, instructions):
             def cb_func(*all_args):
-                kwargs = {kw: arg for kw, arg in zip(keywords, all_args)}
-                return func(**kwargs)
+                # Create an unflattened version of the original arguments
+                unflattened = []
+                for i, (unflatten, skip) in instructions.items():
+                    unflattened.append(unflatten(all_args[i:i + skip]))
+
+                args = unflattened[:poscount]
+                kwargs = {kw: arg for kw, arg in zip(keywords, unflattened[poscount:])}
+                return func(*args, **kwargs)
+
             return cb_func
     else:
-        def make_cb(keywords, poscount):
+
+        def make_cb(keywords, poscount, _):
             def cb_func(*all_args):
                 args = all_args[:poscount]
                 kwargs = {kw: arg for kw, arg in zip(keywords, all_args[poscount:])}
                 return func(*args, **kwargs)
+
             return cb_func
-    return make_cb(keywords, poscount)
+
+    return make_cb(keywords, poscount, unflatten_instructions)
 
 
 class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
@@ -463,9 +539,9 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
                     cbqualname = astutils.rname(parent_node)
                 cbname = self._qualname_to_array_name(cbqualname, prefix='')
 
-                # Make a version of the callback without keyword arguments
-                cb_func = make_kwargless_callback(value, parent_node)
-                
+                # Make a version of the callback without keyword arguments or Python literal objects (list, tuple, ...)
+                cb_func = flatten_callback(value, parent_node)
+
                 # If the callback already exists, and the details differ (e.g., different kwarg names), make new
                 if cbname in self.closure.callbacks and cb_func is not self.closure.callbacks[cbname][1]:
                     cbname = data.find_new_name(cbname, self.closure.callbacks)
@@ -526,12 +602,12 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
                 if arg.arg in self.default_args:
                     continue
 
-                # Skip ``dace.constant``-annotated arguments
+                # Skip ``dace.compiletime``-annotated arguments
                 is_constant = False
                 if arg.annotation is not None:
                     try:
                         ann = astutils.evalnode(arg.annotation, self.globals)
-                        if ann is dace.constant:
+                        if ann is dace.compiletime:
                             is_constant = True
                     except SyntaxError:
                         pass
@@ -540,6 +616,9 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
         return self.generic_visit(node)
 
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> Any:
+        return self.visit_FunctionDef(node)
+
+    def visit_Lambda(self, node: ast.Lambda) -> Any:
         return self.visit_FunctionDef(node)
 
     def visit_AugAssign(self, node: ast.AugAssign):
@@ -571,7 +650,7 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
             node.arg = self.globals[node.arg].name
         return self.generic_visit(node)
 
-    def visit_Attribute(self, node: ast.Attribute) -> Any:
+    def _visit_potential_constant(self, node: ast.AST, recurse_on_fail: bool) -> Optional[ast.AST]:
         # Try to evaluate the expression with only the globals
         try:
             global_val = astutils.evalnode(node, self.globals)
@@ -585,7 +664,15 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
                                                 recurse=True)
             if newnode is not None:
                 return newnode
-        return self.generic_visit(node)
+
+        # Failure
+        if recurse_on_fail:
+            return self.generic_visit(node)
+        return node
+
+    def visit_Attribute(self, node: ast.Attribute) -> Any:
+        # Do not visit node recursilve on fail, it may modify the attribute value too soon
+        return self._visit_potential_constant(node, False)
 
     def visit_Subscript(self, node: ast.Subscript) -> Any:
         # First visit the subscripted value alone, then the whole subscript
@@ -607,11 +694,11 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
                     except SyntaxError:
                         continue
                     if gkey == gslice:
-                        return self.visit_Attribute(v)
+                        return self._visit_potential_constant(v, True)
             else:  # List or Tuple
-                return self.visit_Attribute(node.value.elts[gslice])
+                return self._visit_potential_constant(node.value.elts[gslice], True)
 
-        return self.visit_Attribute(node)
+        return self._visit_potential_constant(node, True)
 
     def visit_Call(self, node: ast.Call) -> Any:
         from dace.frontend.python.interface import in_program  # Avoid import loop
@@ -625,10 +712,7 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
 
             # Built-in functions are resolved directly
             if global_func is in_program:
-                return self.global_value_to_node(True,
-                                                 parent_node=node,
-                                                 qualname=astutils.unparse(node),
-                                                 recurse=True)
+                return self.global_value_to_node(True, parent_node=node, qualname=astutils.unparse(node), recurse=True)
 
             if self.resolve_functions:
                 global_val = astutils.evalnode(node, self.globals)

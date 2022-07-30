@@ -47,7 +47,7 @@ def _env2bool(envval):
         :return: True if the input value matches a valid TRUE
                   value, or False otherwise.
     """
-    return str(envval).lower() in ['true', '1', 'y', 'yes', 'on']
+    return str(envval).lower() in ['true', '1', 'y', 'yes', 'on', 'verbose']
 
 
 def _add_defaults(config, metadata):

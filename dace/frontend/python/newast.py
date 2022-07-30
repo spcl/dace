@@ -30,7 +30,7 @@ from dace.memlet import Memlet
 from dace.properties import LambdaProperty, CodeBlock
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg.replace import replace_datadesc_names
-from dace.symbolic import pystr_to_symbolic
+from dace.symbolic import pystr_to_symbolic, inequal_symbols
 
 import numpy
 import sympy
@@ -259,8 +259,8 @@ DISALLOWED_STMTS = [
 ]
 # Extra AST node types that are disallowed after preprocessing
 _DISALLOWED_STMTS = DISALLOWED_STMTS + [
-    'Global', 'Assert', 'Print', 'Nonlocal', 'Raise', 'Starred', 'AsyncFor', 'Bytes', 'Set', 'Dict', 'ListComp',
-    'GeneratorExp', 'SetComp', 'DictComp', 'comprehension'
+    'Global', 'Assert', 'Print', 'Nonlocal', 'Raise', 'Starred', 'AsyncFor', 'Bytes', 'ListComp', 'GeneratorExp',
+    'SetComp', 'DictComp', 'comprehension'
 ]
 
 TaskletType = Union[ast.FunctionDef, ast.With, ast.For]
@@ -580,7 +580,6 @@ class TaskletTransformer(ExtNodeTransformer):
     """ A visitor that traverses a data-centric tasklet, removes memlet
         annotations and returns input and output memlets.
     """
-
     def __init__(self,
                  visitor,
                  defined,
@@ -1846,7 +1845,7 @@ class ProgramVisitor(ExtNodeVisitor):
                         state.add_edge(entry_node, None, tasklet, None, dace.Memlet())
                     continue
 
-                memlet: Memlet = memlet_or_node
+                memlet: Memlet = copy.deepcopy(memlet_or_node)
 
                 arr = self._get_array_or_closure(memlet.data)
 
@@ -2467,7 +2466,11 @@ class ProgramVisitor(ExtNodeVisitor):
                 squeezed.squeeze(offset=False)
                 squeezed_op = copy.deepcopy(op_subset)
                 squeezed_op.squeeze(offset=False)
-                if squeezed.size() != squeezed_op.size() or op:
+
+                ssize = squeezed.size()
+                osize = squeezed_op.size()
+
+                if len(ssize) != len(osize) or any(inequal_symbols(s, o) for s, o in zip(ssize, osize)) or op:
 
                     _, all_idx_tuples, _, _, inp_idx = _broadcast_to(squeezed.size(), op_subset.size())
 
@@ -3082,9 +3085,9 @@ class ProgramVisitor(ExtNodeVisitor):
                 rng = rng or dace.subsets.Range.from_array(new_data)
             else:
                 true_target = copy.copy(target)
+                nslice = None
                 if isinstance(target, ast.Name):
                     true_target.id = true_name
-                    nslice = None
                 elif isinstance(target, ast.Subscript):
                     true_target.value = copy.copy(true_target.value)
                     true_target.value.id = true_name
@@ -3395,7 +3398,7 @@ class ProgramVisitor(ExtNodeVisitor):
             return
 
         raise DaceSyntaxError(self, node,
-                              f'Argument "{aname}" was defined as dace.constant but was not given a constant')
+                              f'Argument "{aname}" was defined as dace.compiletime but was not given a constant')
 
     def _parse_sdfg_call(self, funcname: str, func: Union[SDFG, SDFGConvertible], node: ast.Call):
         # Avoid import loops
@@ -3491,6 +3494,10 @@ class ProgramVisitor(ExtNodeVisitor):
                     continue
 
                 desc = data.create_datadescriptor(arr)
+                if isinstance(desc, data.Scalar) and isinstance(desc.dtype, dtypes.callback):
+                    # If the symbol is a callback, but is not used in the nested SDFG, skip it
+                    continue
+
                 outer_name = self.sdfg.add_datadesc(aname, desc, find_new_name=True)
                 if not desc.transient:
                     self.nested_closure_arrays[outer_name] = (arr, desc)
@@ -3824,29 +3831,41 @@ class ProgramVisitor(ExtNodeVisitor):
         allargs = []
         kwargs = [kw.value for kw in node.keywords]
         for arg in itertools.chain(node.args, kwargs):
-            parsed_arg = self._parse_function_arg(arg)
-            if parsed_arg in self.defined:
-                atype = self.defined[parsed_arg]
-                args.append(parsed_arg)
-                if isinstance(atype, data.Array):
-                    outargs.append(parsed_arg)
-                    allargs.append(f'__out_{parsed_arg}')
-                elif isinstance(atype, data.Scalar):
-                    allargs.append(f'__in_{parsed_arg}')
+            parsed_args = self._parse_function_arg(arg)
+
+            # Flatten literal arguments in call (will be unflattened in callback,
+            # see ``flatten_callback`` in preprocessing)
+            if isinstance(parsed_args, (list, tuple)):
+                pass  # If already list or tuple, keep as-is
+            elif isinstance(parsed_args, dict):
+                # Keep dictionary entries in order of call
+                parsed_args = list(parsed_args.values())
+            else:  # If a standard argument
+                parsed_args = [parsed_args]
+
+            for parsed_arg in parsed_args:
+                if parsed_arg in self.defined:
+                    atype = self.defined[parsed_arg]
+                    args.append(parsed_arg)
+                    if isinstance(atype, data.Array):
+                        outargs.append(parsed_arg)
+                        allargs.append(f'__out_{parsed_arg}')
+                    elif isinstance(atype, data.Scalar):
+                        allargs.append(f'__in_{parsed_arg}')
+                    else:
+                        allargs.append(parsed_arg)
                 else:
+                    if isinstance(parsed_arg, (Number, numpy.number, type(None))):
+                        atype = data.create_datadescriptor(type(parsed_arg))
+                    else:
+                        atype = data.create_datadescriptor(parsed_arg)
+
+                    if isinstance(parsed_arg, str):
+                        # Special case for strings
+                        parsed_arg = f'"{astutils.escape_string(parsed_arg)}"'
                     allargs.append(parsed_arg)
-            else:
-                if isinstance(parsed_arg, (Number, numpy.number, type(None))):
-                    atype = data.create_datadescriptor(type(parsed_arg))
-                else:
-                    atype = data.create_datadescriptor(parsed_arg)
 
-                if isinstance(parsed_arg, str):
-                    # Special case for strings
-                    parsed_arg = f'"{astutils.escape_string(parsed_arg)}"'
-                allargs.append(parsed_arg)
-
-            argtypes.append(atype)
+                argtypes.append(atype)
 
         # Return type inference
         return_type = None
@@ -3986,13 +4005,16 @@ class ProgramVisitor(ExtNodeVisitor):
                                                                               for name in args} | {'__istate'},
                                                   {f'__out_{name}'
                                                    for name in outargs} | {'__ostate'},
-                                                  f'__out_{outargs[0]} = {funcname}({call_args})')
+                                                  f'__out_{outargs[0]} = {funcname}({call_args})',
+                                                  side_effects=True)
         else:
             call_args = ', '.join(str(s) for s in allargs)
             tasklet = self.last_state.add_tasklet(f'callback_{node.lineno}', {f'__in_{name}'
                                                                               for name in args} | {'__istate'},
                                                   {f'__out_{name}'
-                                                   for name in outargs} | {'__ostate'}, f'{funcname}({call_args})')
+                                                   for name in outargs} | {'__ostate'},
+                                                  f'{funcname}({call_args})',
+                                                  side_effects=True)
 
         # Avoid cast of output pointers to scalars in code generation
         for cname in outargs:
@@ -4406,6 +4428,14 @@ class ProgramVisitor(ExtNodeVisitor):
         # Recursively loop over elements
         return tuple(self.visit(a) for a in node.elts)
 
+    def visit_Set(self, node: ast.Set):
+        # Recursively loop over elements
+        return set(self.visit(a) for a in node.elts)
+
+    def visit_Dict(self, node: ast.Dict):
+        # Recursively loop over elements and return an ordered dictionary (for callback consistency)
+        return OrderedDict([(self.visit(k), self.visit(v)) for k, v in zip(node.keys, node.values)])
+
     def visit_Lambda(self, node: ast.Lambda):
         # Return a string representation of the function
         return astutils.unparse(node)
@@ -4586,7 +4616,6 @@ class ProgramVisitor(ExtNodeVisitor):
         """ Parses the slice attribute of an ast.Subscript node.
             Scalar data are promoted to symbols.
         """
-
         def _promote(node: ast.AST) -> Union[Any, str, symbolic.symbol]:
             node_str = astutils.unparse(node)
             sym = None

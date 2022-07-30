@@ -1,38 +1,66 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
+import copy as cp
+import ctypes
 import functools
 import re
-import copy as cp
-import sympy as sp
-import numpy
 from numbers import Number
-from typing import Any, Optional, Set, Sequence, Tuple
+from typing import Any, Dict, Optional, Sequence, Set, Tuple
+
+import numpy
+import sympy as sp
+
 try:
     from numpy.typing import ArrayLike
 except (ModuleNotFoundError, ImportError):
     ArrayLike = Any
 
 import dace.dtypes as dtypes
+from dace import serialize, symbolic
 from dace.codegen import cppunparse
-from dace import symbolic, serialize
-from dace.properties import (EnumProperty, Property, make_properties, DictProperty, ReferenceProperty, ShapeProperty,
-                             SubsetProperty, SymbolicProperty, TypeClassProperty, DebugInfoProperty, CodeProperty,
-                             ListProperty)
+from dace.properties import (CodeProperty, DebugInfoProperty, DictProperty, EnumProperty, ListProperty, Property,
+                             ReferenceProperty, ShapeProperty, SubsetProperty, SymbolicProperty, TypeClassProperty,
+                             make_properties)
 
 
-def create_datadescriptor(obj):
+def create_datadescriptor(obj, no_custom_desc=False):
     """ Creates a data descriptor from various types of objects.
         @see: dace.data.Data
     """
     from dace import dtypes  # Avoiding import loops
     if isinstance(obj, Data):
         return obj
-    elif hasattr(obj, '__descriptor__'):
+    elif not no_custom_desc and hasattr(obj, '__descriptor__'):
         return obj.__descriptor__()
-    elif hasattr(obj, 'descriptor'):
+    elif not no_custom_desc and hasattr(obj, 'descriptor'):
         return obj.descriptor
-    elif isinstance(obj, (list, tuple, numpy.ndarray)):
-        if isinstance(obj, (list, tuple)):  # Lists and tuples are cast to numpy
-            obj = numpy.array(obj)
+    elif dtypes.is_array(obj):
+        if dtypes.is_gpu_array(obj):
+            interface = obj.__cuda_array_interface__
+            storage = dtypes.StorageType.GPU_Global
+        else:
+            interface = obj.__array_interface__
+            storage = dtypes.StorageType.Default
+
+        if hasattr(obj, 'dtype') and obj.dtype.fields is not None:  # Struct
+            dtype = dtypes.struct('unnamed', **{k: dtypes.typeclass(v[0].type) for k, v in obj.dtype.fields.items()})
+        else:   
+            if numpy.dtype(interface['typestr']).type is numpy.void:  # Struct from __array_interface__
+                if 'descr' in interface:
+                    dtype = dtypes.struct('unnamed', **{k: dtypes.typeclass(numpy.dtype(v).type) for k, v in interface['descr']})
+                else:
+                    raise TypeError(f'Cannot infer data type of array interface object "{interface}"')
+            else:
+                dtype = dtypes.typeclass(numpy.dtype(interface['typestr']).type)
+        itemsize = numpy.dtype(interface['typestr']).itemsize
+        if len(interface['shape']) == 0:
+            return Scalar(dtype, storage=storage)
+        return Array(dtype=dtype,
+                     shape=interface['shape'],
+                     strides=(tuple(s // itemsize for s in interface['strides']) if interface['strides'] else None),
+                     storage=storage)
+    elif isinstance(obj, (list, tuple)):
+        # Lists and tuples are cast to numpy
+        obj = numpy.array(obj)
 
         if obj.dtype.fields is not None:  # Struct
             dtype = dtypes.struct('unnamed', **{k: dtypes.typeclass(v[0].type) for k, v in obj.dtype.fields.items()})
@@ -66,16 +94,6 @@ def create_datadescriptor(obj):
             return Array(dtype=TORCH_DTYPE_TO_TYPECLASS[obj.dtype], strides=obj.stride(), shape=tuple(obj.shape))
         except ImportError:
             raise ValueError("Attempted to convert a torch.Tensor, but torch could not be imported")
-    elif dtypes.is_gpu_array(obj):
-        interface = obj.__cuda_array_interface__
-        dtype = dtypes.typeclass(numpy.dtype(interface['typestr']).type)
-        itemsize = numpy.dtype(interface['typestr']).itemsize
-        if len(interface['shape']) == 0:
-            return Scalar(dtype, storage=dtypes.StorageType.GPU_Global)
-        return Array(dtype=dtype,
-                     shape=interface['shape'],
-                     strides=(tuple(s // itemsize for s in interface['strides']) if interface['strides'] else None),
-                     storage=dtypes.StorageType.GPU_Global)
     elif symbolic.issymbolic(obj):
         return Scalar(symbolic.symtype(obj))
     elif isinstance(obj, dtypes.typeclass):
@@ -145,7 +163,7 @@ def find_new_name(name: str, existing_names: Sequence[str]) -> str:
 
 
 @make_properties
-class Data(object):
+class Data:
     """ Data type descriptors that can be used as references to memory.
         Examples: Arrays, Streams, custom arrays (e.g., sparse matrices).
     """
@@ -170,6 +188,10 @@ class Data(object):
         self.debuginfo = debuginfo
         self._validate()
 
+    def __call__(self):
+        # This method is implemented to support type hints
+        return self
+
     def validate(self):
         """ Validate the correctness of this object.
             Raises an exception on error. """
@@ -180,7 +202,8 @@ class Data(object):
     # `validate` function.
     def _validate(self):
         if any(not isinstance(s, (int, symbolic.SymExpr, symbolic.symbol, symbolic.sympy.Basic)) for s in self.shape):
-            raise TypeError('Shape must be a list or tuple of integer values ' 'or symbols')
+            raise TypeError('Shape must be a list or tuple of integer values '
+                            'or symbols')
         return True
 
     def to_json(self):
@@ -194,12 +217,17 @@ class Data(object):
     def toplevel(self):
         return self.lifetime is not dtypes.AllocationLifetime.Scope
 
-    def copy(self):
-        raise RuntimeError('Data descriptors are unique and should not be copied')
-
     def is_equivalent(self, other):
         """ Check for equivalence (shape and type) of two data descriptors. """
         raise NotImplementedError
+
+    def __eq__(self, other):
+        # Evaluate equivalence using serialized value
+        return serialize.dumps(self) == serialize.dumps(other)
+
+    def __hash__(self):
+        # Compute hash using serialized value (i.e., with all properties included)
+        return hash(serialize.dumps(self))
 
     def as_arg(self, with_types=True, for_call=False, name=None):
         """Returns a string for a C++ function signature (e.g., `int *A`). """
@@ -339,6 +367,10 @@ class Scalar(Data):
     def start_offset(self):
         return 0
 
+    @property
+    def optional(self) -> bool:
+        return False
+
     def is_equivalent(self, other):
         if not isinstance(other, Scalar):
             return False
@@ -452,6 +484,12 @@ class Array(Data):
     alignment = Property(dtype=int, default=0, desc='Allocation alignment in bytes (0 uses compiler-default)')
 
     start_offset = Property(dtype=int, default=0, desc='Allocation offset elements for manual alignment (pre-padding)')
+    optional = Property(dtype=bool,
+                        default=None,
+                        allow_none=True,
+                        desc='Specifies whether this array may have a value of None. '
+                        'If False, the array must not be None. If option is not set, '
+                        'it is inferred by other properties and the OptionalArrayInference pass.')
 
     def __init__(self,
                  dtype,
@@ -467,7 +505,8 @@ class Array(Data):
                  alignment=0,
                  debuginfo=None,
                  total_size=None,
-                 start_offset=None):
+                 start_offset=None,
+                 optional=None):
 
         super(Array, self).__init__(dtype, shape, transient, storage, location, lifetime, debuginfo)
 
@@ -479,6 +518,9 @@ class Array(Data):
         self.alignment = alignment
         if start_offset is not None:
             self.start_offset = start_offset
+        self.optional = optional
+        if optional is None and self.transient:
+            self.optional = False
 
         if strides is not None:
             self.strides = cp.copy(strides)
@@ -504,7 +546,7 @@ class Array(Data):
     def clone(self):
         return type(self)(self.dtype, self.shape, self.transient, self.allow_conflicts, self.storage, self.location,
                           self.strides, self.offset, self.may_alias, self.lifetime, self.alignment, self.debuginfo,
-                          self.total_size, self.start_offset)
+                          self.total_size, self.start_offset, self.optional)
 
     def to_json(self):
         attrs = serialize.all_properties_to_json(self)
@@ -538,7 +580,8 @@ class Array(Data):
             raise TypeError('Strides must be the same size as shape')
 
         if any(not isinstance(s, (int, symbolic.SymExpr, symbolic.symbol, symbolic.sympy.Basic)) for s in self.strides):
-            raise TypeError('Strides must be a list or tuple of integer ' 'values or symbols')
+            raise TypeError('Strides must be a list or tuple of integer '
+                            'values or symbols')
 
         if len(self.offset) != len(self.shape):
             raise TypeError('Offset must be the same size as shape')
@@ -689,6 +732,10 @@ class Stream(Data):
     def start_offset(self):
         return 0
 
+    @property
+    def optional(self) -> bool:
+        return False
+
     def clone(self):
         return type(self)(self.dtype, self.buffer_size, self.shape, self.transient, self.storage, self.location,
                           self.offset, self.lifetime, self.debuginfo)
@@ -801,6 +848,7 @@ class View(Array):
     In the Python frontend, ``numpy.reshape`` and ``numpy.ndarray.view`` both
     generate Views.
     """
+
     def validate(self):
         super().validate()
 
@@ -823,6 +871,7 @@ class Reference(Array):
     access node to it and use the "set" connector.
     In order to enable data-centric analysis and optimizations, avoid using References as much as possible.
     """
+
     def validate(self):
         super().validate()
 
@@ -837,14 +886,25 @@ class Reference(Array):
         return copy
 
 
-def make_array_from_descriptor(descriptor: Array, original_array: Optional[ArrayLike] = None) -> ArrayLike:
+def make_array_from_descriptor(descriptor: Array, original_array: Optional[ArrayLike] = None,
+                               symbols: Optional[Dict[str, Any]] = None) -> ArrayLike:
     """
     Creates an array that matches the given data descriptor, and optionally copies another array to it.
+
     :param descriptor: The data descriptor to create the array from.
     :param original_array: An optional array to fill the content of the return value with.
+    :param symbols: An optional symbol mapping between symbol names and their values. Used for creating arrays
+                    with symbolic sizes.
     :return: A NumPy-compatible array (CuPy for GPU storage) with the specified size and strides.
     """
     import numpy as np
+
+    symbols = symbols or {}
+
+    free_syms = set(map(str, descriptor.free_symbols)) - symbols.keys()
+    if free_syms:
+        raise NotImplementedError(f'Cannot make Python references to arrays with undefined symbolic sizes: {free_syms}')
+
     if descriptor.storage == dtypes.StorageType.GPU_Global:
         try:
             import cupy as cp
@@ -858,7 +918,7 @@ def make_array_from_descriptor(descriptor: Array, original_array: Optional[Array
                               memptr=buffer.data,
                               strides=[s * dtype.itemsize for s in strides])
             return view
-        
+
         def copy_array(dst, src):
             dst[:] = cp.asarray(src)
 
@@ -870,15 +930,69 @@ def make_array_from_descriptor(descriptor: Array, original_array: Optional[Array
             buffer = np.ndarray([total_size], dtype=dtype)
             view = np.ndarray(shape, dtype, buffer=buffer, strides=[s * dtype.itemsize for s in strides])
             return view
-        
+
         def copy_array(dst, src):
             dst[:] = src
 
-
     # Make numpy array from data descriptor
     npdtype = descriptor.dtype.as_numpy_dtype()
-    view = create_array(descriptor.shape, npdtype, descriptor.total_size, descriptor.strides)
+    evaluated_shape = tuple(symbolic.evaluate(s, symbols) for s in descriptor.shape)
+    evaluated_size = symbolic.evaluate(descriptor.total_size, symbols)
+    evaluated_strides = tuple(symbolic.evaluate(s, symbols) for s in descriptor.strides)
+    view = create_array(evaluated_shape, npdtype, evaluated_size, evaluated_strides)
     if original_array is not None:
         copy_array(view, original_array)
 
     return view
+
+
+def make_reference_from_descriptor(descriptor: Array,
+                                   original_array: ctypes.c_void_p,
+                                   symbols: Optional[Dict[str, Any]] = None) -> ArrayLike:
+    """
+    Creates an array that matches the given data descriptor from the given pointer. Shares the memory
+    with the argument (does not create a copy).
+
+    :param descriptor: The data descriptor to create the array from.
+    :param original_array: The array whose memory the return value would be used in.
+    :param symbols: An optional symbol mapping between symbol names and their values. Used for referencing arrays
+                    with symbolic sizes.
+    :return: A NumPy-compatible array (CuPy for GPU storage) with the specified size and strides, sharing memory
+             with the pointer specified in ``original_array``.
+    """
+    import numpy as np
+    symbols = symbols or {}
+
+    free_syms = set(map(str, descriptor.free_symbols)) - symbols.keys()
+    if free_syms:
+        raise NotImplementedError(f'Cannot make Python references to arrays with undefined symbolic sizes: {free_syms}')
+
+    if descriptor.storage == dtypes.StorageType.GPU_Global:
+        try:
+            import cupy as cp
+        except (ImportError, ModuleNotFoundError):
+            raise NotImplementedError('GPU memory can only be referenced in Python if cupy is installed')
+
+        def create_array(shape: Tuple[int], dtype: np.dtype, total_size: int, strides: Tuple[int]) -> ArrayLike:
+            buffer = dtypes.ptrtocupy(original_array, descriptor.dtype.as_ctypes(), (total_size, ))
+            view = cp.ndarray(shape=shape,
+                              dtype=dtype,
+                              memptr=buffer.data,
+                              strides=[s * dtype.itemsize for s in strides])
+            return view
+
+    elif descriptor.storage == dtypes.StorageType.FPGA_Global:
+        raise TypeError('Cannot reference FPGA array in Python')
+    else:
+
+        def create_array(shape: Tuple[int], dtype: np.dtype, total_size: int, strides: Tuple[int]) -> ArrayLike:
+            buffer = dtypes.ptrtonumpy(original_array, descriptor.dtype.as_ctypes(), (total_size, ))
+            view = np.ndarray(shape, dtype, buffer=buffer, strides=[s * dtype.itemsize for s in strides])
+            return view
+
+    # Make numpy array from data descriptor
+    npdtype = descriptor.dtype.as_numpy_dtype()
+    evaluated_shape = tuple(symbolic.evaluate(s, symbols) for s in descriptor.shape)
+    evaluated_size = symbolic.evaluate(descriptor.total_size, symbols)
+    evaluated_strides = tuple(symbolic.evaluate(s, symbols) for s in descriptor.strides)
+    return create_array(evaluated_shape, npdtype, evaluated_size, evaluated_strides)

@@ -3,6 +3,7 @@ import dace
 import numpy as np
 
 import dace.frontend.python.replacements as repl
+from common import compare_numpy_output
 
 N = dace.symbol('N', dtype=dace.int32)
 
@@ -474,6 +475,16 @@ def test_ufunc_add_outer_where2():
     assert (np.array_equal(np.add.outer(A, B, where=W)[where], C[where]))
 
 
+@compare_numpy_output()
+def test_ufunc_reduce_axis_0(A: dace.float32[3, 4, 5]):
+    return np.maximum.reduce(A, axis=0)
+
+
+@compare_numpy_output()
+def test_ufunc_reduce_all_keepdims(A: dace.float32[3, 4, 5]):
+    return np.maximum.reduce(A, axis=(0, 1, 2), keepdims=True)
+
+
 if __name__ == "__main__":
     test_broadcast_success()
     test_broadcast_fail()
@@ -510,3 +521,5 @@ if __name__ == "__main__":
     test_ufunc_add_outer_simple5()
     test_ufunc_add_outer_where()
     test_ufunc_add_outer_where2()
+    test_ufunc_reduce_axis_0()
+    test_ufunc_reduce_all_keepdims()

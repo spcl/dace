@@ -1,29 +1,28 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-from dace.sdfg.nodes import EntryNode
-from typing import Optional, Set, Tuple
-
 import collections
 import copy
-import dace
 import functools
 import re
+from typing import Any, DefaultDict, Dict, List, Optional, Set, Tuple, Union
+
+import networkx as nx
+import numpy as np
+
+import dace
+from dace import config, data, dtypes
+from dace.cli import progress
 from dace.codegen import control_flow as cflow
 from dace.codegen import dispatcher as disp
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets.common import codeblock_to_cpp, sym2cpp
 from dace.codegen.targets.cpp import unparse_interstate_edge
 from dace.codegen.targets.target import TargetCodeGenerator
-from dace.sdfg import SDFG, SDFGState, ScopeSubgraphView
-from dace.sdfg import nodes, utils
-from dace.sdfg.infer_types import set_default_schedule_and_storage_types
-from dace.sdfg import scope as sdscope
-from dace import dtypes, data, config
-from typing import Any, DefaultDict, Dict, List, Tuple, Union
-
 from dace.frontend.python import wrappers
-
-import networkx as nx
-import numpy as np
+from dace.sdfg import SDFG, ScopeSubgraphView, SDFGState, nodes
+from dace.sdfg import scope as sdscope
+from dace.sdfg import utils
+from dace.sdfg.infer_types import set_default_schedule_and_storage_types
+from dace.transformation.passes.analysis import StateReachability
 
 
 def _get_or_eval_sdfg_first_arg(func, sdfg):
@@ -36,6 +35,7 @@ class DaCeCodeGenerator(object):
     """ DaCe code generator class that writes the generated code for SDFG
         state machines, and uses a dispatcher to generate code for
         individual states based on the target. """
+
     def __init__(self, sdfg: SDFG):
         self._dispatcher = disp.TargetDispatcher(self)
         self._dispatcher.register_state_dispatcher(self)
@@ -326,7 +326,7 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
 
         components = dace.sdfg.concurrent_subgraphs(state)
 
-        if len(components) == 1:
+        if len(components) <= 1:
             self._dispatcher.dispatch_subgraph(sdfg, state, sid, global_stream, callsite_stream, skip_entry_node=False)
         else:
             if sdfg.openmp_sections:
@@ -355,10 +355,13 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
     def generate_states(self, sdfg, global_stream, callsite_stream):
         states_generated = set()
 
+        opbar = progress.OptionalProgressBar(sdfg.number_of_nodes(), title=f'Generating code (SDFG {sdfg.sdfg_id})')
+
         # Create closure + function for state dispatcher
         def dispatch_state(state: SDFGState) -> str:
             stream = CodeIOStream()
             self._dispatcher.dispatch_state(sdfg, state, global_stream, stream)
+            opbar.next()
             states_generated.add(state)  # For sanity check
             return stream.getvalue()
 
@@ -366,6 +369,7 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
         if config.Config.get_bool('optimizer', 'detect_control_flow'):
             # Avoid import loop
             from dace.transformation import helpers as xfh
+
             # Clean up the state machine by separating combined condition and assignment
             # edges.
             xfh.split_interstate_edges(sdfg)
@@ -380,6 +384,8 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                                      [], [], [])
 
         callsite_stream.write(cft.as_cpp(self, sdfg.symbols), sdfg)
+
+        opbar.done()
 
         # Write exit label
         callsite_stream.write(f'__state_exit_{sdfg.sdfg_id}:;', sdfg)
@@ -429,24 +435,33 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
         # Gather shared transients, free symbols, and first/last appearance
         shared_transients = {}
         fsyms = {}
-        first_instance: Dict[int, Dict[str, Tuple[int, nodes.AccessNode]]] = {}
-        last_instance: Dict[int, Dict[str, Tuple[int, nodes.AccessNode]]] = {}
+        reachability = StateReachability().apply_pass(top_sdfg, {})
+        access_instances: Dict[int, Dict[str, List[Tuple[SDFGState, nodes.AccessNode]]]] = {}
         for sdfg in top_sdfg.all_sdfgs_recursive():
             shared_transients[sdfg.sdfg_id] = sdfg.shared_transients(check_toplevel=False)
             fsyms[sdfg.sdfg_id] = self.symbols_and_constants(sdfg)
 
-            # Possibly confusing control flow below finds the first/last state
-            # and node of the data descriptor
-            finst: Dict[str, Tuple[int, nodes.AccessNode]] = {}
-            linst: Dict[str, Tuple[int, nodes.AccessNode]] = {}
+            #############################################
+            # Look for all states in which a scope-allocated array is used in
+            instances: Dict[str, List[Tuple[SDFGState, nodes.AccessNode]]] = collections.defaultdict(list)
+            array_names = sdfg.arrays.keys(
+            )  #set(k for k, v in sdfg.arrays.items() if v.lifetime == dtypes.AllocationLifetime.Scope)
+            # Iterate topologically to get state-order
             for state in sdfg.topological_sort():
-                id = sdfg.node_id(state)
                 for node in state.data_nodes():
-                    if node.data not in finst:
-                        finst[node.data] = (id, node)
-                    linst[node.data] = (id, node)
-            first_instance[sdfg.sdfg_id] = finst
-            last_instance[sdfg.sdfg_id] = linst
+                    if node.data not in array_names:
+                        continue
+                    instances[node.data].append((state, node))
+
+                # Look in the surrounding edges for usage
+                edge_fsyms: Set[str] = set()
+                for e in sdfg.all_edges(state):
+                    edge_fsyms |= e.data.free_symbols
+                for edge_array in edge_fsyms & array_names:
+                    instances[edge_array].append((state, nodes.AccessNode(edge_array)))
+            #############################################
+
+            access_instances[sdfg.sdfg_id] = instances
 
         for sdfg, name, desc in top_sdfg.arrays_recursive():
             if not desc.transient:
@@ -468,9 +483,9 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
             # 6. True if deallocation should take place, otherwise False.
 
             first_state_instance, first_node_instance = \
-                first_instance[sdfg.sdfg_id].get(name, (None, None))
+                access_instances[sdfg.sdfg_id].get(name, [(None, None)])[0]
             last_state_instance, last_node_instance = \
-                last_instance[sdfg.sdfg_id].get(name, (None, None))
+                access_instances[sdfg.sdfg_id].get(name, [(None, None)])[-1]
 
             # Cases
             if desc.lifetime is dtypes.AllocationLifetime.Persistent:
@@ -499,8 +514,6 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                 definition = desc.as_arg(name=f'__{sdfg.sdfg_id}_{name}') + ';'
                 self.statestruct.append(definition)
 
-                # self.to_allocate[top_sdfg].append(
-                #     (sdfg.sdfg_id, sdfg.node_id(state), node))
                 self.to_allocate[top_sdfg].append((sdfg, first_state_instance, first_node_instance, True, True, True))
                 self.where_allocated[(sdfg, name)] = top_sdfg
                 continue
@@ -511,17 +524,15 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
             # a kernel).
             alloc_scope: Union[nodes.EntryNode, SDFGState, SDFG] = None
             alloc_state: SDFGState = None
-            access_node: nodes.AccessNode = None
             if (name in shared_transients[sdfg.sdfg_id] or desc.lifetime is dtypes.AllocationLifetime.SDFG):
-                # SDFG memory and shared transients are allocated in the
-                # beginning of their SDFG
+                # SDFG descriptors are allocated in the beginning of their SDFG
                 alloc_scope = sdfg
                 if first_state_instance is not None:
-                    alloc_state = sdfg.nodes()[first_state_instance]
+                    alloc_state = first_state_instance
                 # If unused, skip
                 if first_node_instance is None:
                     continue
-            elif desc.lifetime is dtypes.AllocationLifetime.State:
+            elif desc.lifetime == dtypes.AllocationLifetime.State:
                 # State memory is either allocated in the beginning of the
                 # containing state or the SDFG (if used in more than one state)
                 curstate: SDFGState = None
@@ -537,7 +548,7 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                 else:
                     alloc_scope = curstate
                     alloc_state = curstate
-            elif desc.lifetime is dtypes.AllocationLifetime.Scope:
+            elif desc.lifetime == dtypes.AllocationLifetime.Scope:
                 # Scope memory (default) is either allocated in the innermost
                 # scope (e.g., Map, Consume) it is used in (i.e., greatest
                 # common denominator), or in the SDFG if used in multiple states
@@ -629,22 +640,33 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
             # NOTE: Tuple is (SDFG, State, Node, declare, allocate, deallocate)
             fsymbols = fsyms[sdfg.sdfg_id]
             if (not isinstance(curscope, nodes.EntryNode)
-                    and utils.is_nonfree_sym_dependent(first_node_instance, desc, alloc_state, fsymbols)):
-                # Declare in current (SDFG) scope
-                self.to_allocate[curscope].append((sdfg, first_state_instance, first_node_instance, True, False, False))
-                # Allocate in first State
-                # Deallocate in last State
+                    and utils.is_nonfree_sym_dependent(first_node_instance, desc, first_state_instance, fsymbols)):
+                # Allocate in first State, deallocate in last State
                 if first_state_instance != last_state_instance:
-                    curscope = sdfg.nodes()[first_state_instance]
+                    # If any state is not reachable from first state, find common denominators in the form of
+                    # dominator and postdominator.
+                    instances = access_instances[sdfg.sdfg_id][name]
+                    if any(inst not in reachability[sdfg.sdfg_id][first_state_instance] for inst in instances):
+                        first_state_instance, last_state_instance = _get_dominator_and_postdominator(sdfg, instances)
+                        # Declare in SDFG scope
+                        # NOTE: Even if we declare the data at a common dominator, we keep the first and last node
+                        # instances. This is especially needed for Views which require both the SDFGState and the
+                        # AccessNode.
+                        self.to_allocate[curscope].append((sdfg, None, nodes.AccessNode(name), True, False, False))
+                    else:
+                        self.to_allocate[curscope].append(
+                            (sdfg, first_state_instance, first_node_instance, True, False, False))
+
+                    curscope = first_state_instance
                     self.to_allocate[curscope].append(
                         (sdfg, first_state_instance, first_node_instance, False, True, False))
-                    curscope = sdfg.nodes()[last_state_instance]
+                    curscope = last_state_instance
                     self.to_allocate[curscope].append(
                         (sdfg, last_state_instance, last_node_instance, False, False, True))
                 else:
-                    curscope = sdfg.nodes()[first_state_instance]
+                    curscope = first_state_instance
                     self.to_allocate[curscope].append(
-                        (sdfg, first_state_instance, first_node_instance, False, True, True))
+                        (sdfg, first_state_instance, first_node_instance, True, True, True))
             else:
                 self.to_allocate[curscope].append((sdfg, first_state_instance, first_node_instance, True, True, True))
             if isinstance(curscope, SDFG):
@@ -655,11 +677,12 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
     def allocate_arrays_in_scope(self, sdfg: SDFG, scope: Union[nodes.EntryNode, SDFGState, SDFG],
                                  function_stream: CodeIOStream, callsite_stream: CodeIOStream):
         """ Dispatches allocation of all arrays in the given scope. """
-        for tsdfg, state_id, node, declare, allocate, _ in self.to_allocate[scope]:
-            if state_id is not None:
-                state = tsdfg.node(state_id)
+        for tsdfg, state, node, declare, allocate, _ in self.to_allocate[scope]:
+            if state is not None:
+                state_id = tsdfg.node_id(state)
             else:
-                state = None
+                state_id = -1
+
             desc = node.desc(tsdfg)
 
             self._dispatcher.dispatch_allocate(tsdfg, state, state_id, node, desc, function_stream, callsite_stream,
@@ -668,13 +691,14 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
     def deallocate_arrays_in_scope(self, sdfg: SDFG, scope: Union[nodes.EntryNode, SDFGState, SDFG],
                                    function_stream: CodeIOStream, callsite_stream: CodeIOStream):
         """ Dispatches deallocation of all arrays in the given scope. """
-        for tsdfg, state_id, node, _, _, deallocate in self.to_allocate[scope]:
+        for tsdfg, state, node, _, _, deallocate in self.to_allocate[scope]:
             if not deallocate:
                 continue
-            if state_id is not None:
-                state = tsdfg.node(state_id)
+            if state is not None:
+                state_id = tsdfg.node_id(state)
             else:
-                state = None
+                state_id = -1
+
             desc = node.desc(tsdfg)
 
             self._dispatcher.dispatch_deallocate(tsdfg, state, state_id, node, desc, function_stream, callsite_stream)
@@ -825,3 +849,43 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
 
         # Return the generated global and local code strings
         return (generated_header, clean_code, self._dispatcher.used_targets, self._dispatcher.used_environments)
+
+
+def _get_dominator_and_postdominator(sdfg: SDFG, accesses: List[Tuple[SDFGState, nodes.AccessNode]]):
+    """
+    Gets the closest common dominator and post-dominator for a list of states.
+    Used for determining allocation of data used in branched states.
+    """
+    from dace.sdfg.analysis import cfg
+
+    # Get immediate dominators
+    idom = nx.immediate_dominators(sdfg.nx, sdfg.start_state)
+    alldoms = cfg.all_dominators(sdfg, idom)
+
+    states = [a for a, _ in accesses]
+    data_name = accesses[0][1].data
+
+    # Get immediate post-dominators
+    ipostdom, allpostdoms = utils.postdominators(sdfg, return_alldoms=True)
+
+    # All dominators and postdominators include the states themselves
+    for state in states:
+        alldoms[state].add(state)
+        allpostdoms[state].add(state)
+
+    start_state = states[0]
+    while any(start_state not in alldoms[n] for n in states):
+        if idom[start_state] is start_state:
+            raise NotImplementedError(f'Could not find an appropriate dominator for allocation of "{data_name}"')
+        start_state = idom[start_state]
+
+    end_state = states[-1]
+    while any(end_state not in allpostdoms[n] for n in states):
+        if ipostdom[end_state] is end_state:
+            raise NotImplementedError(f'Could not find an appropriate post-dominator for deallocation of "{data_name}"')
+        end_state = ipostdom[end_state]
+
+    # TODO(later): If any of the symbols were not yet defined, or have changed afterwards, fail
+    # raise NotImplementedError
+
+    return start_state, end_state

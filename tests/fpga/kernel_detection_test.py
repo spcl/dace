@@ -7,9 +7,10 @@ import numpy as np
 from pathlib import Path
 import pytest
 import re
-from dace.codegen.targets.fpga import is_fpga_kernel
+from dace.sdfg.utils import is_fpga_kernel
 from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
 from dace.fpga_testing import fpga_test
+from dace import config
 
 
 def count_kernels(sdfg: dace.SDFG):
@@ -68,13 +69,20 @@ def test_kernels_inside_component_0():
         if is_fpga_kernel(sdfg, state):
             state.instrument = dace.InstrumentationType.FPGA
 
-    res = sdfg(x=x, y=y, v=v, w=w, z=z)
+    with config.set_temporary("compiler", "fpga", "concurrent_kernel_detection", value=True):
+        res = sdfg(x=x, y=y, v=v, w=w, z=z)
     assert count_kernels(sdfg) == 3
     assert np.allclose(res, x + y + v + w + z)
 
     report = sdfg.get_latest_report()
-    assert len(re.findall(r"[0-9\.]+\s+[0-9\.]+\s+[0-9\.]+\s+[0-9\.]+", str(report))) == 5
-    assert len(re.findall(r"Full FPGA .+ runtime", str(report))) == 2
+    assert len(report.durations[(0, 0, -1)]) == 5
+
+    full_fpga_events = 0
+    for event_name in report.durations[(0, 0, -1)]:
+        if "Full FPGA" in event_name:
+            full_fpga_events += 1
+
+    assert full_fpga_events == 2
 
     return sdfg
 
@@ -122,7 +130,9 @@ def test_kernels_inside_component_1():
 
     sdfg = kernels_inside_component_1.to_sdfg()
     sdfg.apply_transformations([FPGATransformSDFG, InlineSDFG])
-    program = sdfg.compile()
+
+    with config.set_temporary("compiler", "fpga", "concurrent_kernel_detection", value=True):
+        program = sdfg.compile()
     assert count_kernels(sdfg) == 5
     program(x=x, y=y, v=v, w=w, z=z, t=t, alpha=alpha, beta=beta)
     ref_z = alpha * (x + y + v + w)
@@ -166,7 +176,8 @@ def test_kernels_inside_component_2():
 
     sdfg = kernels_inside_component_2.to_sdfg()
     sdfg.apply_transformations([FPGATransformSDFG, InlineSDFG])
-    program = sdfg.compile()
+    with config.set_temporary("compiler", "fpga", "concurrent_kernel_detection", value=True):
+        program = sdfg.compile()
 
     # NOTE: here we have only one kernel since subgraph detection already
     # detects two PEs
@@ -213,7 +224,9 @@ def test_kernels_lns_inside_component():
 
     sdfg = kernels_lns_inside_component.to_sdfg()
     sdfg.apply_transformations([FPGATransformSDFG, InlineSDFG])
-    program = sdfg.compile()
+
+    with config.set_temporary("compiler", "fpga", "concurrent_kernel_detection", value=True):
+        program = sdfg.compile()
 
     assert count_kernels(sdfg) == 3
     z = program(A=A, x=x, B=B, y=y)
@@ -261,7 +274,9 @@ def test_kernels_inside_components_0():
 
     sdfg = kernels_inside_components_0.to_sdfg()
     sdfg.apply_transformations([FPGATransformSDFG, InlineSDFG])
-    program = sdfg.compile()
+
+    with config.set_temporary("compiler", "fpga", "concurrent_kernel_detection", value=True):
+        program = sdfg.compile()
 
     assert count_kernels(sdfg) == 6
     z, zz = program(x=x, y=y, v=v, w=w, xx=xx, yy=yy, vv=vv, ww=ww)
@@ -538,7 +553,8 @@ def test_kernels_inside_components_multiple_states():
     zz = np.random.rand(8).astype(np.float32)
 
     sdfg = make_sdfg()
-    program = sdfg.compile()
+    with config.set_temporary("compiler", "fpga", "concurrent_kernel_detection", value=True):
+        program = sdfg.compile()
     assert count_kernels(sdfg) == 6
     program(z=z, zz=zz, x=x, y=y, v=v, w=w, xx=xx, yy=yy, vv=vv, ww=ww, size=8)
     assert np.allclose(z, x + y + v + w)

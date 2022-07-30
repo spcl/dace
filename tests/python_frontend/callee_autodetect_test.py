@@ -191,7 +191,7 @@ def test_error_handling():
     with pytest.raises(NotADirectoryError):
 
         @dace.program
-        def testprogram(A, nc: dace.constant):
+        def testprogram(A, nc: dace.compiletime):
             nc(A)
 
         testprogram(A, NotConvertible())
@@ -220,7 +220,7 @@ def test_nested_class_error_handling():
     with pytest.raises(NotADirectoryError):
 
         @dace.program
-        def testprogram(A, nc: dace.constant):
+        def testprogram(A, nc: dace.compiletime):
             nc(A)
 
         testprogram(A, MaybeConvertible())

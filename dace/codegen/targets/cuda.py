@@ -2,6 +2,7 @@
 from typing import Any, Dict, List, Union
 from six import StringIO
 import ast
+import copy
 import ctypes
 import functools
 import os
@@ -10,7 +11,7 @@ import warnings
 
 import dace
 from dace.frontend import operations
-from dace import registry, subsets, symbolic, dtypes, data as dt
+from dace import registry, subsets, symbolic, dtypes, data as dt, sdfg as sd
 from dace.config import Config
 from dace.sdfg import nodes, utils as sdutil
 from dace.sdfg import (ScopeSubgraphView, SDFG, SDFGState, scope_contains_scope, is_devicelevel_gpu,
@@ -20,6 +21,7 @@ from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets.target import (TargetCodeGenerator, IllegalCopy, make_absolute)
 from dace.codegen.dispatcher import DefinedType
 from dace.codegen.targets import cpp
+from dace.codegen.targets.common import update_persistent_desc
 from dace.codegen.targets.cpp import (sym2cpp, unparse_cr, unparse_cr_split, cpp_array_expr, synchronize_streams,
                                       memlet_copy_to_absolute_strides, codeblock_to_cpp)
 
@@ -367,7 +369,11 @@ void __dace_exit_cuda({sdfg.name}_t *__state) {{
     def declare_array(self, sdfg, dfg, state_id, node, nodedesc, function_stream, declaration_stream):
 
         fsymbols = self._frame.symbols_and_constants(sdfg)
-        if not sdutil.is_nonfree_sym_dependent(node, nodedesc, dfg, fsymbols):
+        # NOTE: `dfg` (state) will be None iff `nodedesc` is non-free symbol dependent
+        # (see `DaCeCodeGenerator.determine_allocation_lifetime` in `dace.codegen.targets.framecode`).
+        # We add the `dfg is not None` check because the `sdutils.is_nonfree_sym_dependent` check will fail if
+        # `nodedesc` is a View and `dfg` is None.
+        if dfg and not sdutil.is_nonfree_sym_dependent(node, nodedesc, dfg, fsymbols):
             raise NotImplementedError("The declare_array method should only be used for variables "
                                       "that must have their declaration and allocation separate.")
 
@@ -421,6 +427,9 @@ void __dace_exit_cuda({sdfg.name}_t *__state) {{
         elif isinstance(nodedesc, dace.data.Reference):
             return self._cpu_codegen.allocate_reference(sdfg, dfg, state_id, node, function_stream, declaration_stream,
                                                         allocation_stream)
+
+        if nodedesc.lifetime == dtypes.AllocationLifetime.Persistent:
+            nodedesc = update_persistent_desc(nodedesc, sdfg)
 
         result_decl = StringIO()
         result_alloc = StringIO()
@@ -498,7 +507,7 @@ void __dace_exit_cuda({sdfg.name}_t *__state) {{
             if is_array_stream_view(sdfg, dfg, node):
                 edges = dfg.out_edges(node)
                 if len(edges) > 1:
-                    raise NotImplementedError("Cannot handle streams writing " "to multiple arrays.")
+                    raise NotImplementedError("Cannot handle streams writing to multiple arrays.")
 
                 fmtargs['ptr'] = nodedesc.sink + ' + ' + cpp_array_expr(
                     sdfg, edges[0].data, with_brackets=False, codegen=self._frame)
@@ -612,6 +621,8 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                 if isinstance(node, nodes.NestedSDFG):
                     if node.schedule == dtypes.ScheduleType.GPU_Device:
                         continue
+                    if node.schedule not in dtypes.GPU_SCHEDULES:
+                        max_streams, max_events = self._compute_cudastreams(node.sdfg, max_streams, max_events + 1)
                 node._cuda_stream = max_streams
                 node._cs_childpath = False
                 max_streams = increment(max_streams)
@@ -1243,8 +1254,6 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         # TODO move this into _get_const_params(dfg_scope)
         const_params |= set((str(e.src)) for e in dace.sdfg.dynamic_map_inputs(state, scope_entry))
 
-        kernel_args_typed = [('const ' if k in const_params else '') + v.as_arg(name=k) for k, v in kernel_args.items()]
-
         # Store init/exit code streams
         old_entry_stream = self.scope_entry_stream
         old_exit_stream = self.scope_exit_stream
@@ -1258,11 +1267,12 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
             outer_stream = CodeIOStream()
             instr.on_scope_exit(sdfg, state, scope_exit, outer_stream, self.scope_exit_stream, self._globalcode)
 
-        # Redefine constant arguments
+        # Redefine constant arguments and rename arguments to device counterparts
         # TODO: This (const behavior and code below) is all a hack.
         #       Refactor and fix when nested SDFGs are separate functions.
         self._dispatcher.defined_vars.enter_scope(scope_entry)
-        for aname, arg in kernel_args.items():
+        prototype_kernel_args = {}
+        for aname, arg in kernel_args.items():  # `list` wrapper is used to modify kernel_args within the loop
             if aname in const_params:
                 defined_type, ctype = None, None
                 if aname in sdfg.arrays:
@@ -1283,7 +1293,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                         pass
                     ptrname = cpp.ptr(aname, data_desc, sdfg, self._frame)
                     if not defined_type:
-                        defined_type, ctype = self._dispatcher.defined_vars.get(ptrname)
+                        defined_type, ctype = self._dispatcher.defined_vars.get(ptrname, is_global=is_global)
 
                     CUDACodeGen._in_device_code = True
                     inner_ptrname = cpp.ptr(aname, data_desc, sdfg, self._frame)
@@ -1293,15 +1303,28 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                                                       defined_type,
                                                       'const %s' % ctype,
                                                       allow_shadowing=True)
+
+                    # Rename argument in kernel prototype as necessary
+                    aname = inner_ptrname
             else:
                 if aname in sdfg.arrays:
                     data_desc = sdfg.arrays[aname]
                     ptrname = cpp.ptr(aname, data_desc, sdfg, self._frame)
-                    defined_type, ctype = self._dispatcher.defined_vars.get(ptrname)
+                    is_global = data_desc.lifetime in (dtypes.AllocationLifetime.Global,
+                                                       dtypes.AllocationLifetime.Persistent)
+                    defined_type, ctype = self._dispatcher.defined_vars.get(ptrname, is_global=is_global)
                     CUDACodeGen._in_device_code = True
                     inner_ptrname = cpp.ptr(aname, data_desc, sdfg, self._frame)
                     CUDACodeGen._in_device_code = False
                     self._dispatcher.defined_vars.add(inner_ptrname, defined_type, ctype, allow_shadowing=True)
+
+                    # Rename argument in kernel prototype as necessary
+                    aname = inner_ptrname
+
+            prototype_kernel_args[aname] = arg
+
+        kernel_args_typed = [('const ' if k in const_params else '') + v.as_arg(name=k)
+                             for k, v in prototype_kernel_args.items()]
 
         kernel_stream = CodeIOStream()
         self.generate_kernel_scope(sdfg, dfg_scope, state_id, scope_entry.map, kernel_name, grid_dims, block_dims,
@@ -1398,7 +1421,7 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
 void  *{kname}_args[] = {{ {kargs} }};
 {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bdims}), {kname}_args, {dynsmem}, {stream});'''.format(
                 kname=kernel_name,
-                kargs=', '.join(['(void *)&' + arg for arg in kernel_args] + extra_kernel_args),
+                kargs=', '.join(['(void *)&' + arg for arg in prototype_kernel_args] + extra_kernel_args),
                 gdims='dace_number_blocks, 1, 1' if is_persistent else ', '.join(_topy(grid_dims)),
                 bdims=', '.join(_topy(block_dims)),
                 dynsmem=_topy(dynsmem_size),
@@ -1483,7 +1506,7 @@ void  *{kname}_args[] = {{ {kargs} }};
                    rest into the third dimension.
         """
 
-        kernelmap_entry = dfg_scope.source_nodes()[0]
+        kernelmap_entry: nodes.MapEntry = dfg_scope.source_nodes()[0]
         grid_size = kernelmap_entry.map.range.size(True)[::-1]
         block_size = None
         is_persistent = (kernelmap_entry.map.schedule == dtypes.ScheduleType.GPU_Persistent)
@@ -1534,23 +1557,36 @@ void  *{kname}_args[] = {{ {kargs} }};
         tb_maps_sym_map = [(tbmap, sym_map) for tbmap, sym_map in sub_maps
                            if tbmap.schedule == dtypes.ScheduleType.GPU_ThreadBlock]
 
+        # Map thread-block size override
+        block_size = kernelmap_entry.map.gpu_block_size
+        if block_size is not None:
+            # Complement to three dimensions
+            block_size += [1] * (3 - len(block_size))
+            # Linearize (flatten) rest of dimensions to third
+            if len(block_size) > 3:
+                block_size[2] = functools.reduce(sympy.Mul, block_size[2:], 1)
+                del block_size[3:]
+
         # No thread-block maps
         if len(tb_maps_sym_map) == 0:
-
-            if has_dtbmap:
-                if (Config.get('compiler', 'cuda', 'dynamic_map_block_size') == 'max'):
-                    block_size = ['max', 1, 1]
+            if block_size is None:
+                if has_dtbmap:
+                    if (Config.get('compiler', 'cuda', 'dynamic_map_block_size') == 'max'):
+                        block_size = ['max', 1, 1]
+                    else:
+                        block_size = [
+                            int(b) for b in Config.get('compiler', 'cuda', 'dynamic_map_block_size').split(',')
+                        ]
                 else:
-                    block_size = [int(b) for b in Config.get('compiler', 'cuda', 'dynamic_map_block_size').split(',')]
-            else:
-                if Config.get_bool('debugprint'):
-                    warnings.warn('Thread-block maps not found in kernel, assuming ' +
-                                  'block size of (%s)' % Config.get('compiler', 'cuda', 'default_block_size'))
+                    if Config.get_bool('debugprint'):
+                        warnings.warn('Thread-block maps not found in kernel, assuming block size of (%s)' %
+                                      Config.get('compiler', 'cuda', 'default_block_size'))
 
-                if (Config.get('compiler', 'cuda', 'default_block_size') == 'max'):
-                    block_size = ['max', 1, 1]
-                else:
-                    block_size = [int(b) for b in Config.get('compiler', 'cuda', 'default_block_size').split(',')]
+                    if (Config.get('compiler', 'cuda', 'default_block_size') == 'max'):
+                        block_size = ['max', 1, 1]
+                    else:
+                        block_size = [int(b) for b in Config.get('compiler', 'cuda', 'default_block_size').split(',')]
+
             assert (len(block_size) >= 1 and len(block_size) <= 3)
 
             # Grid size = ceil(|S|/32) for first dimension, rest = |S|
@@ -1558,7 +1594,7 @@ void  *{kname}_args[] = {{ {kargs} }};
 
         else:
             # Find all thread-block maps to determine overall block size
-            block_size = [1, 1, 1]
+            block_size = block_size if block_size is not None else [1, 1, 1]
             detected_block_sizes = [block_size]
             for tbmap, sym_map in tb_maps_sym_map:
                 tbsize = [s.subs(list(sym_map.items())) for s in tbmap.range.size()[::-1]]
@@ -1758,15 +1794,15 @@ void  *{kname}_args[] = {{ {kargs} }};
 
         if scope_map.schedule == dtypes.ScheduleType.GPU_ThreadBlock_Dynamic:
             if self.backend == 'hip':
-                raise NotImplementedError('Dynamic thread-block maps on HIP ' 'are currently unsupported')
+                raise NotImplementedError('Dynamic thread-block maps on HIP are currently unsupported')
             if len(scope_map.params) > 1:
-                raise ValueError('Only one-dimensional maps are supported for '
-                                 'dynamic block map schedule (got %d)' % len(scope_map.params))
+                raise ValueError('Only one-dimensional maps are supported for dynamic block map schedule (got %d)' %
+                                 len(scope_map.params))
             total_block_size = 1
             for bdim in self._block_dims:
                 if symbolic.issymbolic(bdim, sdfg.constants):
-                    raise ValueError('Block size has to be constant for block-wide '
-                                     'dynamic map schedule (got %s)' % str(bdim))
+                    raise ValueError('Block size has to be constant for block-wide dynamic map schedule (got %s)' %
+                                     str(bdim))
                 total_block_size *= bdim
             if _expr(scope_map.range[0][2]) != 1:
                 raise NotImplementedError('Skip not implemented for dynamic thread-block map schedule')
@@ -1774,7 +1810,7 @@ void  *{kname}_args[] = {{ {kargs} }};
             ##### TODO (later): Generalize
             # Find thread-block param map and its name
             if self._block_dims[1] != 1 or self._block_dims[2] != 1:
-                raise NotImplementedError('Dynamic block map schedule only ' 'implemented for 1D blocks currently')
+                raise NotImplementedError('Dynamic block map schedule only implemented for 1D blocks currently')
 
             # Define all input connectors of this map entry
             # Note: no need for a C scope around these, as there will not be
@@ -2144,7 +2180,6 @@ void  *{kname}_args[] = {{ {kargs} }};
                 # Rewrite grid conditions
                 for cond in self._kernel_grid_conditions:
                     callsite_stream.write(cond, sdfg, state_id, scope_entry)
-                
 
     def generate_node(self, sdfg, dfg, state_id, node, function_stream, callsite_stream):
         if self.node_dispatch_predicate(sdfg, dfg, node):

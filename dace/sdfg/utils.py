@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 """ Various utility functions to create, traverse, and modify SDFGs. """
 
 import collections
@@ -17,6 +17,7 @@ from dace.sdfg.state import SDFGState, StateSubgraphView
 from dace.sdfg.scope import ScopeSubgraphView
 from dace.sdfg import nodes as nd, graph as gr
 from dace import config, data as dt, dtypes, memlet as mm, subsets as sbs, symbolic
+from dace.cli.progress import optional_progressbar
 from string import ascii_uppercase
 from typing import Any, Callable, Dict, Generator, List, Optional, Set, Tuple, Union
 
@@ -102,7 +103,7 @@ def depth_limited_dfs_iter(source, depth):
             stack.pop()
 
 
-def dfs_topological_sort(G, sources=None, condition=None):
+def dfs_topological_sort(G, sources=None, condition=None, reverse=False):
     """ Produce nodes in a depth-first topological ordering.
 
     The function produces nodes in a depth-first topological ordering
@@ -114,6 +115,7 @@ def dfs_topological_sort(G, sources=None, condition=None):
     :param sources: (optional) node or list of nodes that
                     specify starting point(s) for depth-first search and return
                     edges in the component reachable from source.
+    :param reverse: If True, traverses the graph backwards from the sources.
     :return: A generator of nodes in the lastvisit depth-first-search.
 
     :note: Based on http://www.ics.uci.edu/~eppstein/PADS/DFS.py
@@ -123,13 +125,20 @@ def dfs_topological_sort(G, sources=None, condition=None):
     repeatedly until all components in the graph are searched.
 
     """
+    if reverse:
+        source_nodes = 'sink_nodes'
+        predecessors = G.successors
+        neighbors = G.predecessors
+    else:
+        source_nodes = 'source_nodes'
+        predecessors = G.predecessors
+        neighbors = G.successors
+
     if sources is None:
         # produce edges for all components
-        if hasattr(G, 'source_nodes'):
-            nodes = list(G.source_nodes())
-            if len(nodes) == 0:
-                nodes = G
-        else:
+        src_nodes = getattr(G, source_nodes, lambda: G)
+        nodes = list(src_nodes())
+        if len(nodes) == 0:
             nodes = G
     else:
         # produce edges for components with source
@@ -144,7 +153,7 @@ def dfs_topological_sort(G, sources=None, condition=None):
             continue
         yield start
         visited.add(start)
-        stack = [(start, iter(G.neighbors(start)))]
+        stack = [(start, iter(neighbors(start)))]
         while stack:
             parent, children = stack[-1]
             try:
@@ -152,7 +161,7 @@ def dfs_topological_sort(G, sources=None, condition=None):
                 if child not in visited:
                     # Make sure that all predecessors have been visited
                     skip = False
-                    for pred in G.predecessors(child):
+                    for pred in predecessors(child):
                         if pred not in visited:
                             skip = True
                             break
@@ -162,18 +171,38 @@ def dfs_topological_sort(G, sources=None, condition=None):
                     visited.add(child)
                     if condition is None or condition(parent, child):
                         yield child
-                        stack.append((child, iter(G.neighbors(child))))
+                        stack.append((child, iter(neighbors(child))))
             except StopIteration:
                 stack.pop()
 
 
-def dfs_conditional(G, sources=None, condition=None):
-    """ Produce nodes in a depth-first ordering.
+class StopTraversal(Exception):
+    """
+    Special exception that stops DFS conditional traversal beyond the current node. 
+    
+    :see: dfs_conditional
+    """
+    pass
+
+
+def dfs_conditional(G, sources=None, condition=None, reverse=False, yield_parent=False):
+    """
+    Produce nodes in a depth-first ordering with an optional condition to stop traversal.
+    If ``StopTraversal`` is raised during iteration, the outgoing edges of the current node
+    will not be traversed.
+    
 
     :param G: An input DiGraph (assumed acyclic).
     :param sources: (optional) node or list of nodes that
                     specify starting point(s) for depth-first search and return
-                    edges in the component reachable from source.
+                    edges in the component reachable from source. If None, traverses from
+                    every node in the graph.
+    :param condition: (optional) a callback that receives the traversed parent and child.
+                      Called before each child node is traversed.
+                      If it returns True, traversal proceeds normally. If False, the child
+                      and reachable nodes are not traversed.
+    :param reverse: If True, traverses the graph backwards from the sources.
+    :param yield_parent: If True, yields a 2-tuple of (parent, child)
     :return: A generator of edges in the lastvisit depth-first-search.
 
     :note: Based on http://www.ics.uci.edu/~eppstein/PADS/DFS.py
@@ -183,6 +212,11 @@ def dfs_conditional(G, sources=None, condition=None):
     repeatedly until all components in the graph are searched.
 
     """
+    if reverse:
+        successors = G.predecessors
+    else:
+        successors = G.successors
+
     if sources is None:
         # produce edges for all components
         nodes = G
@@ -197,9 +231,15 @@ def dfs_conditional(G, sources=None, condition=None):
     for start in nodes:
         if start in visited:
             continue
-        yield start
+        try:
+            if yield_parent:
+                yield None, start
+            else:
+                yield start
+        except StopTraversal:
+            return
         visited.add(start)
-        stack = [(start, iter(G.successors(start)))]
+        stack = [(start, iter(successors(start)))]
         while stack:
             parent, children = stack[-1]
             try:
@@ -207,8 +247,14 @@ def dfs_conditional(G, sources=None, condition=None):
                 if child not in visited:
                     visited.add(child)
                     if condition is None or condition(parent, child):
-                        yield child
-                        stack.append((child, iter(G.successors(child))))
+                        try:
+                            if yield_parent:
+                                yield parent, child
+                            else:
+                                yield child
+                            stack.append((child, iter(successors(child))))
+                        except StopTraversal:
+                            pass
             except StopIteration:
                 stack.pop()
 
@@ -329,29 +375,6 @@ def change_edge_src(graph: gr.OrderedDiGraph, node_a: Union[nd.Node, gr.OrderedM
             graph.add_edge(node_b, e.dst, e.data)
 
 
-def find_source_nodes(graph):
-    """ Finds the source nodes of a graph.
-
-        The function finds the source nodes of a graph, i.e. the nodes with
-        zero in-degree.
-
-        :param graph: The graph whose source nodes are being searched for.
-        :return: A list of the source nodes found.
-    """
-    return [n for n in graph.nodes() if graph.in_degree(n) == 0]
-
-
-def find_sink_nodes(graph):
-    """ Finds the sink nodes of a graph.
-
-        The function finds the sink nodes of a graph, i.e. the nodes with zero out-degree.
-
-        :param graph: The graph whose sink nodes are being searched for.
-        :return: A list of the sink nodes found.
-    """
-    return [n for n in graph.nodes() if graph.out_degree(n) == 0]
-
-
 ParamsType = List['dace.symbolic.symbol']
 RangesType = List[sbs.Subset]
 
@@ -455,12 +478,14 @@ def consolidate_edges_scope(state: SDFGState, scope_node: Union[nd.EntryNode, nd
     if isinstance(scope_node, nd.EntryNode):
         outer_edges = state.in_edges
         inner_edges = state.out_edges
+        inner_conn = lambda e: e.src_conn
         remove_outer_connector = scope_node.remove_in_connector
         remove_inner_connector = scope_node.remove_out_connector
         prefix, oprefix = 'IN_', 'OUT_'
     else:
         outer_edges = state.out_edges
         inner_edges = state.in_edges
+        inner_conn = lambda e: e.dst_conn
         remove_outer_connector = scope_node.remove_out_connector
         remove_inner_connector = scope_node.remove_in_connector
         prefix, oprefix = 'OUT_', 'IN_'
@@ -468,11 +493,14 @@ def consolidate_edges_scope(state: SDFGState, scope_node: Union[nd.EntryNode, nd
     edges_by_connector = collections.defaultdict(list)
     connectors_to_remove = set()
     for e in inner_edges(scope_node):
-        edges_by_connector[e.src_conn].append(e)
+        if e.data.is_empty():
+            continue
+        conn = inner_conn(e)
+        edges_by_connector[conn].append(e)
         if e.data.data not in data_to_conn:
-            data_to_conn[e.data.data] = e.src_conn
-        elif data_to_conn[e.data.data] != e.src_conn:  # Need to consolidate
-            connectors_to_remove.add(e.src_conn)
+            data_to_conn[e.data.data] = conn
+        elif data_to_conn[e.data.data] != conn:  # Need to consolidate
+            connectors_to_remove.add(conn)
 
     for conn in connectors_to_remove:
         e = edges_by_connector[conn][0]
@@ -555,12 +583,15 @@ def consolidate_edges(sdfg: SDFG, starting_scope=None) -> int:
     This effectively reduces the number of connectors and allows more
     transformations to be performed, at the cost of losing the individual
     per-tasklet memlets.
+
     :param sdfg: The SDFG to consolidate.
+    :param starting_scope: If not None, starts with a certain scope
+    :param propagate: If True, applies memlet propagation after consolidation
     :return: Number of edges removed.
     """
-    from dace.sdfg.propagation import propagate_memlets_sdfg, propagate_memlets_scope
+    from dace.sdfg.propagation import propagate_memlets_scope
 
-    consolidated = 0
+    total_consolidated = 0
     for state in sdfg.nodes():
         # Start bottom-up
         if starting_scope and starting_scope.entry not in state.nodes():
@@ -570,25 +601,31 @@ def consolidate_edges(sdfg: SDFG, starting_scope=None) -> int:
         next_queue = []
         while len(queue) > 0:
             for scope in queue:
-                consolidated += consolidate_edges_scope(state, scope.entry)
-                consolidated += consolidate_edges_scope(state, scope.exit)
+                propagate_entry, propagate_exit = False, False
+
+                consolidated = consolidate_edges_scope(state, scope.entry)
+                total_consolidated += consolidated
+                if consolidated > 0:
+                    propagate_entry = True
+
+                consolidated = consolidate_edges_scope(state, scope.exit)
+                total_consolidated += consolidated
+                if consolidated > 0:
+                    propagate_exit = True
+
+                # Repropagate memlets
+                propagate_memlets_scope(sdfg, state, scope, propagate_entry, propagate_exit)
+
                 if scope.parent is not None:
                     next_queue.append(scope.parent)
             queue = next_queue
             next_queue = []
 
         if starting_scope is not None:
-            # Repropagate memlets from this scope outwards
-            propagate_memlets_scope(sdfg, state, starting_scope)
-
             # No need to traverse other states
             break
 
-    # Repropagate memlets
-    if starting_scope is None:
-        propagate_memlets_sdfg(sdfg)
-
-    return consolidated
+    return total_consolidated
 
 
 def is_array_stream_view(sdfg: SDFG, dfg: SDFGState, node: nd.AccessNode):
@@ -1080,6 +1117,7 @@ def fuse_states(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> 
 
     for sd in sdfg.all_sdfgs_recursive():
         id = sd.sdfg_id
+
         while True:
             edges = list(sd.nx.edges)
             applied = 0
@@ -1091,7 +1129,7 @@ def fuse_states(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> 
 
                 if u in skip_nodes or v in skip_nodes:
                     continue
-                candidate = {StateFusion.first_state: sd.node_id(u), StateFusion.second_state: sd.node_id(v)}
+                candidate = {StateFusion.first_state: u, StateFusion.second_state: v}
                 sf = StateFusion()
                 sf.setup_match(sd, id, -1, candidate, 0, override=True)
                 if sf.can_be_applied(sd, 0, sd, permissive=permissive):
@@ -1106,8 +1144,6 @@ def fuse_states(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> 
                 break
     if progress:
         pbar.close()
-    if config.Config.get_bool('debugprint') and counter > 0:
-        print(f'Applied {counter} State Fusions')
     return counter
 
 
@@ -1128,60 +1164,35 @@ def inline_sdfgs(sdfg: SDFG, permissive: bool = False, progress: bool = None, mu
     # Avoid import loops
     from dace.transformation.interstate import InlineSDFG, InlineMultistateSDFG
 
-    if progress is None and not config.Config.get_bool('progress'):
-        progress = False
-
-    if progress is True or progress is None:
-        try:
-            from tqdm import tqdm
-        except ImportError:
-            tqdm = None
-
     counter = 0
     nsdfgs = [(n, p) for n, p in sdfg.all_nodes_recursive() if isinstance(n, NestedSDFG)]
-    if progress is True:
-        pbar = tqdm(total=len(nsdfgs), desc='Inlining SDFGs')
 
-    start = time.time()
-
-    for ctr, (node, state) in enumerate(reversed(nsdfgs)):
+    for node, state in optional_progressbar(reversed(nsdfgs), title='Inlining SDFGs', n=len(nsdfgs), progress=progress):
         id = node.sdfg.sdfg_id
         sd = state.parent
-        if (progress is None and tqdm is not None and (time.time() - start) > 5):
-            progress = True
-            pbar = tqdm(total=len(nsdfgs), desc='Inlining SDFG', initial=ctr)
 
         # We have to reevaluate every time due to changing IDs
-        node_id = state.node_id(node)
         state_id = sd.node_id(state)
         if multistate:
             candidate = {
-                InlineMultistateSDFG.nested_sdfg: node_id,
+                InlineMultistateSDFG.nested_sdfg: node,
             }
             inliner = InlineMultistateSDFG()
             inliner.setup_match(sd, id, state_id, candidate, 0, override=True)
             if inliner.can_be_applied(state, 0, sd, permissive=permissive):
                 inliner.apply(state, sd)
                 counter += 1
-                if progress:
-                    pbar.update(1)
                 continue
 
         candidate = {
-            InlineSDFG.nested_sdfg: node_id,
+            InlineSDFG.nested_sdfg: node,
         }
         inliner = InlineSDFG()
         inliner.setup_match(sd, id, state_id, candidate, 0, override=True)
         if inliner.can_be_applied(state, 0, sd, permissive=permissive):
             inliner.apply(state, sd)
             counter += 1
-        if progress:
-            pbar.update(1)
 
-    if progress:
-        pbar.close()
-    if config.Config.get_bool('debugprint') and counter > 0:
-        print(f'Inlined {counter} SDFGs')
     return counter
 
 
@@ -1371,3 +1382,58 @@ def traverse_sdfg_with_defined_symbols(
     # If there is only one state, the DFS will miss it
     if start_state not in visited:
         yield from _tswds_state(sdfg, start_state, symbols, recursive)
+
+
+def is_fpga_kernel(sdfg, state):
+    """
+    Returns whether the given state is an FPGA kernel and should be dispatched
+    to the FPGA code generator.
+    :return: True if this is an FPGA kernel, False otherwise.
+    """
+    if ("is_FPGA_kernel" in state.location and state.location["is_FPGA_kernel"] == False):
+        return False
+    data_nodes = state.data_nodes()
+    if len(data_nodes) == 0:
+        return False
+    for n in data_nodes:
+        if n.desc(sdfg).storage not in (dtypes.StorageType.FPGA_Global, dtypes.StorageType.FPGA_Local,
+                                        dtypes.StorageType.FPGA_Registers, dtypes.StorageType.FPGA_ShiftRegister):
+            return False
+    return True
+
+
+def postdominators(
+    sdfg: SDFG,
+    return_alldoms: bool = False
+) -> Union[Dict[SDFGState, SDFGState], Tuple[Dict[SDFGState, SDFGState], Dict[SDFGState, Set[SDFGState]]]]:
+    """
+    Return the immediate postdominators of an SDFG. This may require creating new nodes and removing them, which
+    happens in-place on the SDFG.
+
+    :param sdfg: The SDFG to generate the postdominators from.
+    :param return_alldoms: If True, returns the "all postdominators" dictionary as well.
+    :return: Immediate postdominators, or a 2-tuple of (ipostdom, allpostdoms) if ``return_alldoms`` is True.
+    """
+    from dace.sdfg.analysis import cfg
+
+    # Get immediate post-dominators
+    sink_nodes = sdfg.sink_nodes()
+    if len(sink_nodes) > 1:
+        sink = sdfg.add_state()
+        for snode in sink_nodes:
+            sdfg.add_edge(snode, sink, dace.InterstateEdge())
+    else:
+        sink = sink_nodes[0]
+    ipostdom: Dict[SDFGState, SDFGState] = nx.immediate_dominators(sdfg._nx.reverse(), sink)
+
+    if return_alldoms:
+        allpostdoms = cfg.all_dominators(sdfg, ipostdom)
+        retval = (ipostdom, allpostdoms)
+    else:
+        retval = ipostdom
+
+    # If a new sink was added for post-dominator computation, remove it
+    if len(sink_nodes) > 1:
+        sdfg.remove_node(sink)
+
+    return retval

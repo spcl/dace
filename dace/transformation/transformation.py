@@ -12,9 +12,6 @@ All transformations extend the ``TransformationBase`` class. There are three bui
     subgraphs.
   * Library node expansions (extending ExpandTransformation): An internal class used for tracking how library nodes
     are expanded.
-
-Some transformations are included in the SDFG simplification pass. In order to declare a transformation as part
-of the simplification pass, it should also extend the ``SimplifyPass`` mixin.
 """
 
 import abc
@@ -41,6 +38,7 @@ class TransformationBase(ppl.Pass):
     :see: SubgraphTransformation
     :see: ExpandTransformation
     """
+
     def modifies(self):
         # Unless otherwise mentioned, a transformation modifies everything
         return ppl.Modifies.Everything
@@ -184,7 +182,7 @@ class PatternTransformation(TransformationBase):
             expr = self.expressions()[expr_index]
             for value in subgraph.values():
                 if not isinstance(value, int):
-                    raise TypeError('All values of ' 'subgraph' ' dictionary must be ' 'instances of int.')
+                    raise TypeError('All values of subgraph dictionary must be instances of int.')
             self._subgraph = {expr.node_id(k): v for k, v in subgraph.items()}
         else:
             self._subgraph = {-1: -1}
@@ -350,7 +348,8 @@ class PatternTransformation(TransformationBase):
 
         if verify:
             if not instance.can_be_applied(graph, expr_index, sdfg, permissive=permissive):
-                raise ValueError('Transformation cannot be applied on the ' 'given subgraph ("can_be_applied" failed)')
+                raise ValueError('Transformation cannot be applied on the '
+                                 'given subgraph ("can_be_applied" failed)')
 
         # Apply to SDFG
         return instance.apply_pattern(annotate=annotate, append=save)
@@ -424,10 +423,8 @@ class SingleStateTransformation(PatternTransformation, abc.ABC):
     methods' documentation.
 
     :seealso: PatternNode
-    :note: Some transformations are included in the SDFG simplification pass. In order to declare a 
-           transformation as part of the simplification pass, it should also extend the 
-           ``SimplifyPass`` mixin.
     """
+
     @classmethod
     @abc.abstractmethod
     def expressions(cls) -> List[st.StateSubgraphView]:
@@ -483,10 +480,8 @@ class MultiStateTransformation(PatternTransformation, abc.ABC):
     methods' documentation.
 
     :seealso: PatternNode
-    :note: Some transformations are included in the SDFG simplification pass. In order to declare a 
-           transformation as part of the simplification pass, it should also extend the 
-           ``SimplifyPass`` mixin.
     """
+
     @classmethod
     @abc.abstractmethod
     def expressions(cls) -> List[gr.SubgraphView]:
@@ -512,15 +507,6 @@ class MultiStateTransformation(PatternTransformation, abc.ABC):
         pass
 
 
-class SimplifyPass:
-    """
-    Mixin that includes the given PatternTransformation in the SDFG simplification pass. This transformation
-    will be automatically applied throughout the SDFG in non-permissive mode as the graph is constructed, or when
-    ``sdfg.simplify()`` is called.
-    """
-    pass
-
-
 T = TypeVar("T")
 
 
@@ -541,6 +527,7 @@ class PatternNode(Generic[T]):
     ``expressions``, ``can_be_applied``) to represent the nodes, and in the instance
     methods to point to the nodes in the parent SDFG.
     """
+
     def __init__(self, nodeclass: Type[T]) -> None:
         """
         Initializes a pattern-matching node.
@@ -557,6 +544,9 @@ class PatternNode(Generic[T]):
         # If an instance is used, we return the matched node
         node_id: int = instance.subgraph[self]
         state_id: int = instance.state_id
+
+        if not isinstance(node_id, int):  # Node ID is already an object
+            return node_id
 
         # Inter-state transformation
         if state_id == -1:
@@ -576,6 +566,7 @@ class ExpandTransformation(PatternTransformation):
 
     This is an internal interface used to track the expansion of library nodes.
     """
+
     @classmethod
     def expressions(clc):
         return [sdutil.node_path_graph(clc._match_node)]
@@ -628,6 +619,7 @@ class ExpandTransformation(PatternTransformation):
         # Fix nested schedules
         if isinstance(expansion, nd.NestedSDFG):
             infer_types._set_default_schedule_types(expansion.sdfg, expansion.schedule, True)
+            infer_types._set_default_storage_types(expansion.sdfg, expansion.schedule)
 
         expansion.environments = copy.copy(set(map(lambda a: a.full_class_path(), type(self).environments)))
         sdutil.change_edge_dest(state, node, expansion)
@@ -676,7 +668,8 @@ class SubgraphTransformation(TransformationBase):
     """
 
     sdfg_id = Property(dtype=int, desc='ID of SDFG to transform')
-    state_id = Property(dtype=int, desc='ID of state to transform subgraph within, or -1 to transform the ' 'SDFG')
+    state_id = Property(dtype=int, desc='ID of state to transform subgraph within, or -1 to transform the '
+                        'SDFG')
     subgraph = SetProperty(element_type=int, desc='Subgraph in transformation instance')
 
     def setup_match(self, subgraph: Union[Set[int], gr.SubgraphView], sdfg_id: int = None, state_id: int = None):
@@ -839,7 +832,8 @@ class SubgraphTransformation(TransformationBase):
 
         if verify:
             if not instance.can_be_applied(sdfg, subgraph):
-                raise ValueError('Transformation cannot be applied on the ' 'given subgraph ("can_be_applied" failed)')
+                raise ValueError('Transformation cannot be applied on the '
+                                 'given subgraph ("can_be_applied" failed)')
 
         # Apply to SDFG
         return instance.apply(sdfg)
@@ -860,9 +854,3 @@ class SubgraphTransformation(TransformationBase):
         context['transformation'] = ret
         serialize.set_properties_from_json(ret, json_obj, context=context, ignore_properties={'transformation', 'type'})
         return ret
-
-
-def simplification_transformations() -> List[Type[PatternTransformation]]:
-    """ :return: List of all registered simplification transformations.
-    """
-    return list(SimplifyPass.__subclasses__())
