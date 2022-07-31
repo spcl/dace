@@ -43,10 +43,12 @@ def create_datadescriptor(obj, no_custom_desc=False):
 
         if hasattr(obj, 'dtype') and obj.dtype.fields is not None:  # Struct
             dtype = dtypes.struct('unnamed', **{k: dtypes.typeclass(v[0].type) for k, v in obj.dtype.fields.items()})
-        else:   
+        else:
             if numpy.dtype(interface['typestr']).type is numpy.void:  # Struct from __array_interface__
                 if 'descr' in interface:
-                    dtype = dtypes.struct('unnamed', **{k: dtypes.typeclass(numpy.dtype(v).type) for k, v in interface['descr']})
+                    dtype = dtypes.struct('unnamed',
+                                          **{k: dtypes.typeclass(numpy.dtype(v).type)
+                                             for k, v in interface['descr']})
                 else:
                     raise TypeError(f'Cannot infer data type of array interface object "{interface}"')
             else:
@@ -91,7 +93,12 @@ def create_datadescriptor(obj, no_custom_desc=False):
 
             TORCH_DTYPE_TO_TYPECLASS = {v: k for k, v in TYPECLASS_TO_TORCH_DTYPE.items()}
 
-            return Array(dtype=TORCH_DTYPE_TO_TYPECLASS[obj.dtype], strides=obj.stride(), shape=tuple(obj.shape))
+            storage = dtypes.StorageType.GPU_Global if obj.device.type == 'cuda' else dtypes.StorageType.Default
+
+            return Array(dtype=TORCH_DTYPE_TO_TYPECLASS[obj.dtype],
+                         strides=obj.stride(),
+                         shape=tuple(obj.shape),
+                         storage=storage)
         except ImportError:
             raise ValueError("Attempted to convert a torch.Tensor, but torch could not be imported")
     elif symbolic.issymbolic(obj):
@@ -886,7 +893,8 @@ class Reference(Array):
         return copy
 
 
-def make_array_from_descriptor(descriptor: Array, original_array: Optional[ArrayLike] = None,
+def make_array_from_descriptor(descriptor: Array,
+                               original_array: Optional[ArrayLike] = None,
                                symbols: Optional[Dict[str, Any]] = None) -> ArrayLike:
     """
     Creates an array that matches the given data descriptor, and optionally copies another array to it.
