@@ -63,7 +63,12 @@ def create_datadescriptor(obj, no_custom_desc=False):
 
             TORCH_DTYPE_TO_TYPECLASS = {v: k for k, v in TYPECLASS_TO_TORCH_DTYPE.items()}
 
-            return Array(dtype=TORCH_DTYPE_TO_TYPECLASS[obj.dtype], strides=obj.stride(), shape=tuple(obj.shape))
+            storage = dtypes.StorageType.GPU_Global if obj.device.type == 'cuda' else dtypes.StorageType.Default
+
+            return Array(dtype=TORCH_DTYPE_TO_TYPECLASS[obj.dtype],
+                         strides=obj.stride(),
+                         shape=tuple(obj.shape),
+                         storage=storage)
         except ImportError:
             raise ValueError("Attempted to convert a torch.Tensor, but torch could not be imported")
     elif dtypes.is_gpu_array(obj):
@@ -180,7 +185,8 @@ class Data(object):
     # `validate` function.
     def _validate(self):
         if any(not isinstance(s, (int, symbolic.SymExpr, symbolic.symbol, symbolic.sympy.Basic)) for s in self.shape):
-            raise TypeError('Shape must be a list or tuple of integer values ' 'or symbols')
+            raise TypeError('Shape must be a list or tuple of integer values '
+                            'or symbols')
         return True
 
     def to_json(self):
@@ -538,7 +544,8 @@ class Array(Data):
             raise TypeError('Strides must be the same size as shape')
 
         if any(not isinstance(s, (int, symbolic.SymExpr, symbolic.symbol, symbolic.sympy.Basic)) for s in self.strides):
-            raise TypeError('Strides must be a list or tuple of integer ' 'values or symbols')
+            raise TypeError('Strides must be a list or tuple of integer '
+                            'values or symbols')
 
         if len(self.offset) != len(self.shape):
             raise TypeError('Offset must be the same size as shape')
@@ -801,6 +808,7 @@ class View(Array):
     In the Python frontend, ``numpy.reshape`` and ``numpy.ndarray.view`` both
     generate Views.
     """
+
     def validate(self):
         super().validate()
 
@@ -823,6 +831,7 @@ class Reference(Array):
     access node to it and use the "set" connector.
     In order to enable data-centric analysis and optimizations, avoid using References as much as possible.
     """
+
     def validate(self):
         super().validate()
 
@@ -873,7 +882,6 @@ def make_array_from_descriptor(descriptor: Array, original_array: Optional[Array
 
         def copy_array(dst, src):
             dst[:] = src
-
 
     # Make numpy array from data descriptor
     npdtype = descriptor.dtype.as_numpy_dtype()
