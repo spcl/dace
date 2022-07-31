@@ -33,7 +33,7 @@ def create_datadescriptor(obj, no_custom_desc=False):
         return obj.__descriptor__()
     elif not no_custom_desc and hasattr(obj, 'descriptor'):
         return obj.descriptor
-    elif dtypes.is_array(obj):
+    elif dtypes.is_array(obj) and (hasattr(obj, '__array_interface__') or hasattr(obj, '__cuda_array_interface__')):
         if dtypes.is_gpu_array(obj):
             interface = obj.__cuda_array_interface__
             storage = dtypes.StorageType.GPU_Global
