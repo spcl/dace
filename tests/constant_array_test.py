@@ -4,6 +4,8 @@ from __future__ import print_function
 import argparse
 import dace
 import numpy as np
+from dace.transformation.dataflow.redundant_array import RedundantArray, RedundantSecondArray
+from dace.transformation.interstate.state_fusion import StateFusion
 from scipy import ndimage
 
 N = dace.symbol('N')
@@ -65,6 +67,30 @@ def test_constant_transient():
     a = np.random.rand(10)
     expected = a + np.arange(1, 11)
     result = ctrans(a)
+    assert np.allclose(result, expected)
+
+
+def test_constant_transient_double_nested():
+
+    @dace.program
+    def nested2(w, z):
+        return w + z
+
+    @dace.program
+    def nested(x, y):
+        return nested2(x, y)
+
+    @dace.program
+    def ctrans(a: dace.float64[10]):
+        cst = np.array([1., 2., 3., 4., 5, 6, 7, 8, 9, 10])
+        return nested(a, cst)
+
+    sdfg = ctrans.to_sdfg(simplify=False)
+    sdfg.apply_transformations_repeated([StateFusion, RedundantArray, RedundantSecondArray])
+
+    a = np.random.rand(10)
+    expected = a + np.arange(1, 11)
+    result = sdfg(a=a)
     assert np.allclose(result, expected)
 
 
