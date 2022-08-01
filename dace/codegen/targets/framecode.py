@@ -67,7 +67,7 @@ class DaCeCodeGenerator(object):
 
                 # check for constant inputs
                 for edge in state.in_edges(nested):
-                    if edge.src.data in state.parent.constants_prop:
+                    if edge.data.data in state.parent.constants_prop:
                         # this edge is constant => propagate to nested sdfg
                         result.add(edge.dst_conn)
 
