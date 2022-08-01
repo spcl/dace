@@ -50,13 +50,30 @@ class DaCeCodeGenerator(object):
         fsyms = self.free_symbols(sdfg)
         self.arglist = sdfg.arglist(scalars_only=False, free_symbols=fsyms)
 
+        # resolve all symbols and constants
+        # first handle root
+        self._symbols_and_constants[sdfg.sdfg_id] = sdfg.free_symbols.union(sdfg.constants.keys())
+        # then recurse
+        for nested, state in sdfg.all_nodes_recursive():
+            if isinstance(nested, nodes.NestedSDFG):
+                state: SDFGState
+
+                nsdfg = nested.sdfg
+
+                # found a new nested sdfg: resolve symbols and constants
+                result = nsdfg.free_symbols.union(nsdfg.constants.keys())
+
+                # check for constant inputs
+                for edge in state.in_edges(nested):
+                    if edge.data.data in state.parent.constants_prop:
+                        # this edge is constant => propagate to nested sdfg
+                        result.add(edge.dst_conn)
+
+                self._symbols_and_constants[nsdfg.sdfg_id] = result
+
     # Cached fields
     def symbols_and_constants(self, sdfg: SDFG):
-        if sdfg.sdfg_id in self._symbols_and_constants:
-            return self._symbols_and_constants[sdfg.sdfg_id]
-        result = sdfg.free_symbols.union(sdfg.constants.keys())
-        self._symbols_and_constants[sdfg.sdfg_id] = result
-        return result
+        return self._symbols_and_constants[sdfg.sdfg_id]
 
     def free_symbols(self, obj: Any):
         k = id(obj)

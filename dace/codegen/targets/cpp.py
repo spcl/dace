@@ -309,16 +309,23 @@ def emit_memlet_reference(dispatcher,
         if not is_scalar and desc.dtype == conntype.base_type:
             # Cast potential consts
             typedef = defined_ctype
+
+        make_const = False
         if is_scalar:
             defined_type = DefinedType.Scalar
             if is_write is False:
-                typedef = f'const {typedef}'
+                make_const = True
             ref = '&'
         else:
             # constexpr arrays
             if memlet.data in dispatcher.frame.symbols_and_constants(sdfg):
-                typedef = f'const {typedef}'
+                make_const = True
                 ref = '*'
+
+        # check whether const has already been added before
+        if make_const and not typedef.startswith("const "):
+            typedef = f'const {typedef}'
+
     elif defined_type == DefinedType.ArrayInterface:
         base_ctype = conntype.base_type.ctype
         typedef = f"{base_ctype}*" if is_write else f"const {base_ctype}*"
