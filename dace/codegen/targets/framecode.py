@@ -54,7 +54,7 @@ class DaCeCodeGenerator(object):
 
         # resolve all symbols and constants
         # first handle root
-        self._symbols_and_constants[sdfg.sdfg_id] = sdfg.free_symbols.union(sdfg.constants.keys())
+        self._symbols_and_constants[sdfg.sdfg_id] = sdfg.free_symbols.union(sdfg.constants_prop.keys())
         # then recurse
         for nested, state in sdfg.all_nodes_recursive():
             if isinstance(nested, nodes.NestedSDFG):
@@ -63,7 +63,7 @@ class DaCeCodeGenerator(object):
                 nsdfg = nested.sdfg
 
                 # found a new nested sdfg: resolve symbols and constants
-                result = nsdfg.free_symbols.union(nsdfg.constants.keys())
+                result = nsdfg.free_symbols.union(nsdfg.constants_prop.keys())
 
                 # check for constant inputs
                 for edge in state.in_edges(nested):
