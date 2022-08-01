@@ -1045,20 +1045,21 @@ class WarpReductionExpansion(pm.ExpandTransformation):
     environments = [CUDA]
     
     @staticmethod
-    def expansion(node: SDFG.node, parent_state: SDFGState, parent_sdfg: SDFG, local_sum: SDFG.node, local_Result: SDFG.node):
+    def expansion(node: 'Reduce', parent_state: SDFGState, parent_sdfg: SDFG, local_sum: SDFG.node, local_Result: SDFG.node):
         
         # ToDo: fix the data descriptors!
             # The data we recieve:
-                # FROM PARENT
-                # mySum
-                # SRes
                 # FROM PARENT'S PARENT
                 # warpSize      this should be a free symbol for now I am just using a hardcoded 32 to see if warpSize was the thing causing the segfault
-        
+                # N
+                
+                
         # ToDo: implement checks (once this thing works when used appropriately)
         
         ###################
         # Grabbing the Data:
+        
+        print("Entered my expansion")
         
         input_edge = parent_state.in_edges(node)[0]
         output_edge = parent_state.out_edges(node)[0]
@@ -1066,8 +1067,8 @@ class WarpReductionExpansion(pm.ExpandTransformation):
         input_data = parent_sdfg.arrays[input_edge.data]      # this I believe to be the location of sA, sB and mySum (the data) for now, this can probably be fixed by the way the library node is called (since sA and sB aren't needed)
         output_data = parent_sdfg.arrays[output_edge.data]     # and this the location of sRes
         
-        in_ptr = dace.pointer(input_data.dtype)
-        out_ptr = dace.pointer(output_data.dtype)
+        # in_ptr = dace.pointer(input_data.dtype)
+        # out_ptr = dace.pointer(output_data.dtype)
         
         
         ###################
@@ -1075,11 +1076,7 @@ class WarpReductionExpansion(pm.ExpandTransformation):
         ###################
         # Notes to self:
         # 
-        # I do not need an entry state
-        # Writeback writes into sRes
-        # Use pointers in Writeback
         # Can I access an access node of the parent sdfg (gpu_sdfg) in this state?
-        # you need to do some connector renaming and stuff to actually get that data connected properly
         
         ###################
         
@@ -1093,7 +1090,27 @@ class WarpReductionExpansion(pm.ExpandTransformation):
         
         subSDFG = dace.SDFG('WarpReduction_SDFG')
         
-        wwr_state= subSDFG.add_state('WarpWise_Reduction')
+        ###################
+        # Adding the GPU map
+        
+        gpuCallState = subSDFG.add_state()
+
+        me, mx = gpuCallState.add_map('GPU_map', {'i': '0:min(int_ceil(N, BlockDim), GridDim)', 'j': '0:BlockDim'})
+        me.map.schedule = dace.dtypes.ScheduleType.GPU_Device
+        
+        ###################
+        # Creating the SDFG with the actual Reduction Loop
+        
+        gpu_sdfg = dace.SDFG('GPU_SDFG')
+        
+        # How do we pass on Symbols?
+        # For now I have hardcoded the value for N
+        gpu_sdfg.add_array('sA', shape= [10000], dtype=dace.float64, storage=dace.StorageType.GPU_Global)
+        gpu_sdfg.add_array('sRes', shape=[1], dtype=dace.float64, storage=dace.StorageType.GPU_Global)
+        gpu_sdfg.add_scalar('mySum', dtype=dace.float64, storage=dace.StorageType.Register, transient=True)
+
+        
+        wwr_state= gpu_sdfg.add_state('WarpWise_Reduction')
 
         mSum = wwr_state.add_access(local_sum)
         wtasklet = wwr_state.add_tasklet('warpwise_Reduction',
@@ -1102,26 +1119,34 @@ class WarpReductionExpansion(pm.ExpandTransformation):
                                         dace.Language.CPP)
         wwr_state.add_edge(wtasklet, '__out', local_sum, None, dace.Memlet(f"{local_sum.data}", wcr="lambda x, y: x + y"))
 
-        _, _, after_state = subSDFG.add_loop(parent_state, wwr_state, None, 'offset', '32 / 2', 'offset > 0', 'offset / 2')
+        _, _, after_state = gpu_sdfg.add_loop(parent_state, wwr_state, None, 'offset', '32 / 2', 'offset > 0', 'offset / 2')
 
-        write_back_state = subSDFG.add_state('Write_Back')
+        write_back_state = gpu_sdfg.add_state('Write_Back')
         WriteBackState(write_back_state, local_sum, local_Result)
 
-        random_end_state = subSDFG.add_state('RandomEndState')
+        random_end_state = gpu_sdfg.add_state('RandomEndState')
 
-        subSDFG.add_edge(after_state, write_back_state, dace.InterstateEdge('j % 32 == 0'))
-        subSDFG.add_edge(after_state, random_end_state, dace.InterstateEdge('j % 32 != 0'))
-        subSDFG.add_edge(write_back_state, random_end_state, dace.InterstateEdge())
+        gpu_sdfg.add_edge(after_state, write_back_state, dace.InterstateEdge('j % 32 == 0'))
+        gpu_sdfg.add_edge(after_state, random_end_state, dace.InterstateEdge('j % 32 != 0'))
+        gpu_sdfg.add_edge(write_back_state, random_end_state, dace.InterstateEdge())
         
         ###################
-        # Redefining outer connectors and add to node
-        
-        
-        
-        
-        
-        ###################
-        
+        # Make the dataflow between the states happen
+        da_whole_SDFG = gpuCallState.add_nested_sdfg(gpu_sdfg, subSDFG, {'sA'}, {'sRes'})
+
+        Ain = gpuCallState.add_read(input_data)
+        ROut = gpuCallState.add_write(output_data)
+
+        gpuCallState.add_memlet_path(Ain, me, da_whole_SDFG, memlet=dace.Memlet(data=input_data, subset='0: (min(int_ceil(N, BlockDim), GridDim) * BlockDim)'), dst_conn='sA')
+        gpuCallState.add_memlet_path(da_whole_SDFG, mx, ROut, memlet=dace.Memlet(data=output_data, subset='0'), src_conn='sRes')
+
+
+        subSDFG.apply_transformations_repeated(pm.MapExpansion)
+
+        for n in gpuCallState.nodes():
+            if isinstance(n, nodes.MapEntry) and "j" in n.map.params:
+                n.map.schedule = dace.dtypes.ScheduleType.GPU_ThreadBlock
+       
         return subSDFG
 
 
