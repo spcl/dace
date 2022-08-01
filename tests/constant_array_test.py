@@ -3,6 +3,7 @@ from __future__ import print_function
 
 import argparse
 import dace
+from dace import nodes
 import numpy as np
 from dace.transformation.dataflow.redundant_array import RedundantArray, RedundantSecondArray
 from dace.transformation.interstate.state_fusion import StateFusion
@@ -94,6 +95,40 @@ def test_constant_transient_double_nested():
     assert np.allclose(result, expected)
 
 
+def test_constant_transient_double_nested_scalar():
+
+    @dace.program
+    def nested2(w, z):
+        return w + z
+
+    @dace.program
+    def nested(x, y):
+        return nested2(x, y)
+
+    @dace.program
+    def test(a: dace.float64[10]):
+        cst = 1.0
+        return nested(a, cst)
+
+    sdfg = test.to_sdfg(simplify=False)
+    sdfg.apply_transformations_repeated([StateFusion, RedundantArray, RedundantSecondArray])
+    state = sdfg.node(0)
+
+    # modify cst to be a dace constant: the python frontend adds an assignment tasklet
+    n = [n for n in state.nodes() if isinstance(n, nodes.AccessNode) and n.data == 'cst'][0]
+    for pred in state.predecessors(n):
+        state.remove_node(pred)
+
+    sdfg.add_constant('cst', 1.0, sdfg.arrays['cst'])
+
+    a = np.random.rand(10).astype(np.float64)
+    expected = a + 1.0
+    result = sdfg(a=a.copy())
+    np.testing.assert_allclose(result, expected)
+
+
 if __name__ == "__main__":
     test()
     test_constant_transient()
+    test_constant_transient_double_nested()
+    test_constant_transient_double_nested_scalar()

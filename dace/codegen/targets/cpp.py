@@ -304,27 +304,29 @@ def emit_memlet_reference(dispatcher,
     else:
         datadef = ptr(memlet.data, desc, sdfg, dispatcher.frame)
 
+    def make_const(expr):
+        # check whether const has already been added before
+        if not expr.startswith("const "):
+            return "const " + expr
+        else:
+            return expr
+
     if (defined_type == DefinedType.Pointer
             or (defined_type == DefinedType.ArrayInterface and isinstance(desc, data.View))):
         if not is_scalar and desc.dtype == conntype.base_type:
             # Cast potential consts
             typedef = defined_ctype
 
-        make_const = False
         if is_scalar:
             defined_type = DefinedType.Scalar
             if is_write is False:
-                make_const = True
+                typedef = make_const(typedef)
             ref = '&'
         else:
             # constexpr arrays
             if memlet.data in dispatcher.frame.symbols_and_constants(sdfg):
-                make_const = True
                 ref = '*'
-
-        # check whether const has already been added before
-        if make_const and not typedef.startswith("const "):
-            typedef = f'const {typedef}'
+                typedef = make_const(typedef)
 
     elif defined_type == DefinedType.ArrayInterface:
         base_ctype = conntype.base_type.ctype
@@ -332,6 +334,8 @@ def emit_memlet_reference(dispatcher,
         is_scalar = False
     elif defined_type == DefinedType.Scalar:
         typedef = defined_ctype if is_scalar else (defined_ctype + '*')
+        if is_write is False:
+            typedef = make_const(typedef)
         ref = '&' if is_scalar else ''
         defined_type = DefinedType.Scalar if is_scalar else DefinedType.Pointer
         offset_expr = ''
