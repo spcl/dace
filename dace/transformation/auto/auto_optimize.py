@@ -446,7 +446,15 @@ def make_transients_persistent(sdfg: SDFG, device: dtypes.DeviceType, toplevel_o
                     pass
                 
                 # Only convert arrays with top-level access nodes
-                if xfh.get_parent_map(state, dnode) is not None:
+                parent_map, pmapstate = xfh.get_parent_map(state, dnode)
+                if parent_map is not None:
+                    if device == dtypes.DeviceType.CPU:
+                        if xfh.get_parent_map(pmapstate, parent_map) is None and parent_map.map.schedule == dtypes.ScheduleType.CPU_Multicore:
+                            print('HEELLO', dnode.data)
+                            nsdfg.arrays[dnode.data].storage = dtypes.StorageType.CPU_ThreadLocal
+                            persistent.add(dnode.data)                               
+                            continue
+
                     if toplevel_only:
                         not_persistent.add(dnode.data)
                         continue
@@ -508,6 +516,8 @@ def auto_optimize(sdfg: SDFG,
                                                    validate_all=validate_all)
         transformed = l2ms > 0
 
+    #sdfg.save('continue-from-here.sdfg')
+
     # Collapse maps and eliminate trivial dimensions
     sdfg.simplify()
     sdfg.apply_transformations_repeated(MapCollapse, validate=False, validate_all=validate_all)
@@ -519,12 +529,12 @@ def auto_optimize(sdfg: SDFG,
         sdfg.simplify()
 
     # fuse subgraphs greedily
-    sdfg.simplify()
+    #sdfg.simplify()
 
-    greedy_fuse(sdfg, device=device, validate_all=validate_all)
+    #greedy_fuse(sdfg, device=device, validate_all=validate_all)
 
     # fuse stencils greedily
-    greedy_fuse(sdfg, device=device, validate_all=validate_all, recursive=False, stencil=True)
+    #greedy_fuse(sdfg, device=device, validate_all=validate_all, recursive=False, stencil=True)
 
     # Move Loops inside Maps when possible
     from dace.transformation.interstate import MoveLoopIntoMap

@@ -1240,7 +1240,8 @@ def propagate_memlets_scope(sdfg, state, scopes, propagate_entry=True, propagate
                 _propagate_node(state, scope.exit)
 
             # Add parent to next frontier
-            next_scopes.add(scope.parent)
+            if scope.parent is not None:
+                next_scopes.add(scope.parent)
         scopes_to_process = next_scopes
         next_scopes = set()
 

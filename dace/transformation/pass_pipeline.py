@@ -411,8 +411,9 @@ class Pipeline(Pass):
 
                 yield pass_to_apply
 
-                for old_pass in applied_passes.keys():
-                    applied_passes[old_pass] |= self._modified
+                if self._modified != Modifies.Nothing:
+                    for old_pass in applied_passes.keys():
+                        applied_passes[old_pass] |= self._modified
                 applied_passes[pass_to_apply] = Modifies.Nothing
 
     def apply_subpass(self, sdfg: SDFG, p: Pass, state: Dict[str, Any]) -> Optional[Any]:

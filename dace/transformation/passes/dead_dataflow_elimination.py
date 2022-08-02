@@ -123,22 +123,24 @@ class DeadDataflowElimination(ppl.Pass):
                         mtree = state.memlet_tree(e)
                         for leaf in mtree.leaves():
                             # Keep track of predecessors of removed nodes for connector pruning
+
                             if isinstance(leaf.src, nodes.NestedSDFG):
                                 if not leaf.data.is_empty():
                                     predecessor_nsdfgs[leaf.src].add(leaf.src_conn)
 
                             # Pruning connectors on tasklets sometimes needs to change their code
                             elif (isinstance(leaf.src, nodes.Tasklet) and leaf.src.code.language != dtypes.Language.Python):
-                                if leaf.src.code.language == dtypes.Language.CPP:
-                                    ctype = infer_types.infer_out_connector_type(sdfg, state, leaf.src, leaf.src_conn)
-                                    if ctype is None:
+                                if not leaf.data.is_empty():
+                                    if leaf.src.code.language == dtypes.Language.CPP:
+                                        ctype = infer_types.infer_out_connector_type(sdfg, state, leaf.src, leaf.src_conn)
+                                        if ctype is None:
+                                            raise NotImplementedError(f'Cannot eliminate dead connector "{leaf.src_conn}" on '
+                                                                    'tasklet due to connector type inference failure.')
+                                        # Add definition
+                                        leaf.src.code.code = f'{ctype.as_arg(leaf.src_conn)};\n' + leaf.src.code.code
+                                    else:
                                         raise NotImplementedError(f'Cannot eliminate dead connector "{leaf.src_conn}" on '
-                                                                'tasklet due to connector type inference failure.')
-                                    # Add definition
-                                    leaf.src.code.code = f'{ctype.as_arg(leaf.src_conn)};\n' + leaf.src.code.code
-                                else:
-                                    raise NotImplementedError(f'Cannot eliminate dead connector "{leaf.src_conn}" on '
-                                                            'tasklet due to its code language.')
+                                                                'tasklet due to its code language.')
                             state.remove_memlet_path(leaf)
 
                     # Remove the node itself as necessary

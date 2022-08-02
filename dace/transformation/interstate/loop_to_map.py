@@ -130,6 +130,10 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
 
         assert (body_end in states)
 
+        # Do not turn an empty loop into a map
+        if all(lstate.number_of_nodes() == 0 for lstate in states):
+            return False
+
         write_set = set()
         for state in states:
             _, wset = state.read_and_write_sets()
@@ -550,3 +554,6 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
         for sym in symbols_to_remove:
             if sym in sdfg.symbols and helpers.is_symbol_unused(sdfg, sym):
                 sdfg.remove_symbol(sym)
+
+        #from dace.sdfg import propagation, scope
+        #propagation.propagate_memlets_scope(sdfg, body, scope.ScopeTree(entry, exit))
