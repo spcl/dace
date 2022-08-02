@@ -944,8 +944,10 @@ def propagate_memlets_nested_sdfg(parent_sdfg, parent_state, nsdfg_node):
                 edges = []
                 if direction == 'in':
                     edges = state.out_edges(node)
+                    is_data_src = True
                 elif direction == 'out':
                     edges = state.in_edges(node)
+                    is_data_src = False
 
                 # Collect all memlets belonging to this access node, and
                 # accumulate the total volume between them.
@@ -958,7 +960,7 @@ def propagate_memlets_nested_sdfg(parent_sdfg, parent_state, nsdfg_node):
                         # Use the first encountered memlet as a 'border' memlet
                         # and accumulate the sum on it.
                         memlet = Memlet(data=inside_memlet.data, volume=0)
-                        memlet._is_data_src = True
+                        memlet._is_data_src = is_data_src
                         border_memlets[direction][node.label] = memlet
 
                     if inside_memlet.wcr is not None:
