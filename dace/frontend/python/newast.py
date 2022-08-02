@@ -31,7 +31,7 @@ from dace.memlet import Memlet
 from dace.properties import LambdaProperty, CodeBlock
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg.replace import replace_datadesc_names
-from dace.symbolic import pystr_to_symbolic
+from dace.symbolic import pystr_to_symbolic, inequal_symbols
 
 import numpy
 import sympy
@@ -2483,7 +2483,11 @@ class ProgramVisitor(ExtNodeVisitor):
                 squeezed.squeeze(offset=False)
                 squeezed_op = copy.deepcopy(op_subset)
                 squeezed_op.squeeze(offset=False)
-                if squeezed.size() != squeezed_op.size() or op:
+
+                ssize = squeezed.size()
+                osize = squeezed_op.size()
+
+                if len(ssize) != len(osize) or any(inequal_symbols(s, o) for s, o in zip(ssize, osize)) or op:
 
                     _, all_idx_tuples, _, _, inp_idx = _broadcast_to(squeezed.size(), op_subset.size())
 

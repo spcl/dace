@@ -1,4 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+import numpy as np
+
 import dace
 from common import compare_numpy_output
 
@@ -232,6 +234,23 @@ def test_both_match(A: dace.float64[5, 1], B: dace.float64[1, 3]):
     return A + B
 
 
+def test_symbolic_bcast_same():
+
+    N = dace.symbol("N")
+    I = dace.symbol("I")
+
+    @dace.program
+    def symbolic_bcast(A: dace.float64[N, 4], B: dace.float64[N * (I + 1) - N * I, 1]):
+        return A + B
+
+    A = np.arange(40).astype(np.float64).reshape(10, 4)
+    B = np.arange(10).astype(np.float64).reshape(10, 1)
+
+    result = symbolic_bcast(A.copy(), B.copy(), I=42, N=10)
+    expected = A + B
+    np.testing.assert_allclose(result, expected)
+
+
 if __name__ == '__main__':
     # generate this with
     # cat binop_broadcasting_test.py | grep -oP '(?<=f ).*(?=\()' | awk '{print $0 "()"}'
@@ -271,3 +290,4 @@ if __name__ == '__main__':
     test_multr4()
     test_bitorr4()
     test_regression_result_none()
+    test_symbolic_bcast_same()

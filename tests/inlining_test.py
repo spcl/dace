@@ -1,6 +1,8 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 from dace.transformation.interstate import InlineSDFG, StateFusion
+from dace.libraries import blas
+from dace.library import change_default
 import numpy as np
 import pytest
 
@@ -10,6 +12,7 @@ H = dace.symbol('H')
 
 @dace.program
 def transpose(input, output):
+
     @dace.map(_[0:H, 0:W])
     def compute(i, j):
         a << input[j, i]
@@ -19,6 +22,7 @@ def transpose(input, output):
 
 @dace.program
 def bla(A, B, alpha):
+
     @dace.tasklet
     def something():
         al << alpha
@@ -111,6 +115,7 @@ def test_empty_memlets():
 
 
 def test_multistate_inline():
+
     @dace.program
     def nested(A: dace.float64[20]):
         for i in range(5):
@@ -134,6 +139,7 @@ def test_multistate_inline():
 
 
 def test_multistate_inline_samename():
+
     @dace.program
     def nested(A: dace.float64[20]):
         for i in range(5):
@@ -187,6 +193,7 @@ def test_inline_symexpr():
 
 
 def test_inline_unsqueeze():
+
     @dace.program
     def nested_squeezed(c: dace.int32[5], d: dace.int32[5]):
         d[:] = c
@@ -209,6 +216,7 @@ def test_inline_unsqueeze():
 
 
 def test_inline_unsqueeze2():
+
     @dace.program
     def nested_squeezed(c, d):
         d[:] = c
@@ -232,6 +240,7 @@ def test_inline_unsqueeze2():
 
 
 def test_inline_unsqueeze3():
+
     @dace.program
     def nested_squeezed(c, d):
         d[:] = c
@@ -255,6 +264,7 @@ def test_inline_unsqueeze3():
 
 
 def test_inline_unsqueeze4():
+
     @dace.program
     def nested_squeezed(c, d):
         d[:] = c
@@ -278,6 +288,7 @@ def test_inline_unsqueeze4():
 
 
 def test_inline_symbol_assignment():
+
     def nested(a, num):
         cat = num - 1
         last_step = (cat == 0)
@@ -320,6 +331,37 @@ def test_regression_inline_subset():
     assert np.allclose(out, data[32:64, :] + 1)
 
 
+def test_inlining_view_input():
+
+    @dace.program
+    def test(A: dace.float64[96, 32], B: dace.float64[42, 32]):
+        O = np.zeros([96 * 2, 42], dace.float64)
+        for i in dace.map[0:2]:
+            O[i * 96:(i + 1) * 96, :] = np.einsum("ij,kj->ik", A, B)
+        return O
+
+    sdfg = test.to_sdfg()
+    with change_default(blas, "pure"):
+        sdfg.expand_library_nodes()
+    sdfg.simplify()
+
+    state = sdfg.nodes()[1]
+    # find nested_sdfg
+    nsdfg = [n for n in state.nodes() if isinstance(n, dace.sdfg.nodes.NestedSDFG)][0]
+    # delete gemm initialization state
+    nsdfg.sdfg.remove_node(nsdfg.sdfg.nodes()[0])
+
+    # check that inlining the sdfg works
+    sdfg.simplify()
+
+    A = np.random.rand(96, 32)
+    B = np.random.rand(42, 32)
+
+    expected = np.concatenate([A @ B.T, A @ B.T], axis=0)
+    actual = sdfg(A=A, B=B)
+    np.testing.assert_allclose(expected, actual)
+
+
 if __name__ == "__main__":
     test()
     # Skipped to to bug that cannot be reproduced
@@ -334,3 +376,4 @@ if __name__ == "__main__":
     test_inline_unsqueeze4()
     test_inline_symbol_assignment()
     test_regression_inline_subset()
+    test_inlining_view_input()

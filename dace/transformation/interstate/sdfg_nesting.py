@@ -281,7 +281,7 @@ class InlineSDFG(transformation.SingleStateTransformation):
                 d = e.src.data
                 if d in sdfg.arrays and isinstance(sdfg.arrays[d], data.View):
                     ve = sdutil.get_view_edge(state, e.src)
-                    arr = ve.src.data
+                    arr = state.memlet_tree(ve).root().edge.src.data
                     srcset = ve.data.src_subset
                     dstset = ve.data.dst_subset
                     mem = dc(ve.data)
@@ -296,7 +296,7 @@ class InlineSDFG(transformation.SingleStateTransformation):
                 d = e.dst.data
                 if d in sdfg.arrays and isinstance(sdfg.arrays[d], data.View):
                     ve = sdutil.get_view_edge(state, e.dst)
-                    arr = ve.dst.data
+                    arr = state.memlet_tree(ve).root().edge.dst.data
                     srcset = ve.data.src_subset
                     dstset = ve.data.dst_subset
                     mem = dc(ve.data)
