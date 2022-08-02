@@ -176,15 +176,15 @@ class MoveLoopIntoMap(DetectLoop, transformation.MultiStateTransformation):
         for body_outedge in sdfg.out_edges(body):
             sdfg.remove_edge(body_outedge)
         for guard_inedge in sdfg.in_edges(guard):
-            before_guard_edge.data.assignments.update(guard_inedge.data.assignments)
-            guard_inedge.data.assignments = {}
+            # before_guard_edge.data.assignments.update(guard_inedge.data.assignments)
+            # guard_inedge.data.assignments = {}
             sdfg.add_edge(guard_inedge.src, body, guard_inedge.data)
             sdfg.remove_edge(guard_inedge)
         for guard_outedge in sdfg.out_edges(guard):
-            if guard_outedge.dst is body:
-                guard_body_edge.data.assignments.update(guard_outedge.data.assignments)
-            else:
-                guard_after_edge.data.assignments.update(guard_outedge.data.assignments)
+            # if guard_outedge.dst is body:
+            #     guard_body_edge.data.assignments.update(guard_outedge.data.assignments)
+            # else:
+            #     guard_after_edge.data.assignments.update(guard_outedge.data.assignments)
             guard_outedge.data.condition = CodeBlock("1")
             sdfg.add_edge(body, guard_outedge.dst, guard_outedge.data)
             sdfg.remove_edge(guard_outedge)
