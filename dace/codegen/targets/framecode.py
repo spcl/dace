@@ -64,11 +64,13 @@ class DaCeCodeGenerator(object):
 
                 # found a new nested sdfg: resolve symbols and constants
                 result = nsdfg.free_symbols.union(nsdfg.constants_prop.keys())
-                result |= self._symbols_and_constants[nsdfg._parent_sdfg.sdfg_id]
+
+                parent_constants = self._symbols_and_constants[nsdfg._parent_sdfg.sdfg_id]
+                result |= parent_constants
 
                 # check for constant inputs
                 for edge in state.in_edges(nested):
-                    if edge.data.data in state.parent.constants_prop:
+                    if edge.data.data in parent_constants:
                         # this edge is constant => propagate to nested sdfg
                         result.add(edge.dst_conn)
 
