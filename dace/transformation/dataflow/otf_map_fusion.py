@@ -46,12 +46,6 @@ class OTFMapFusion(transformation.SingleStateTransformation):
                 if prod != self.first_map_exit:
                     return False
 
-            # Check that array is not co-consumed by other child map
-            consumers = set(map(lambda edge: edge.dst, graph.out_edges(node)))
-            for cons in consumers:
-                if cons != self.second_map_entry:
-                    return False
-
         # No WCR on first map
         for edge in graph.in_edges(self.first_map_exit):
             if edge.data.wcr is not None:
@@ -92,7 +86,8 @@ class OTFMapFusion(transformation.SingleStateTransformation):
         # Add edges for input of first map to second map
         for edge in graph.in_edges(first_map_entry):
             if self.second_map_entry.add_in_connector(edge.dst_conn + "_"):
-                graph.add_edge(edge.src, edge.src_conn, self.second_map_entry, edge.dst_conn + "_", edge.data)
+                memlet = copy.deepcopy(edge.data)
+                graph.add_edge(edge.src, edge.src_conn, self.second_map_entry, edge.dst_conn + "_", memlet)
             else:
                 raise ValueError("Failed to connect")
 
@@ -193,9 +188,17 @@ class OTFMapFusion(transformation.SingleStateTransformation):
 
                         graph.remove_edge(edge)
 
-        graph.remove_nodes_from(
-            graph.all_nodes_between(first_map_entry, self.first_map_exit) | {first_map_entry, self.first_map_exit})
+        # Check if first_map is still consumed by some node
+        remove_first_map = True
+        for dnode in intermediate_dnodes:
+            remove_first_map = remove_first_map and (graph.out_degree(dnode) == 0)
 
+        # Remove if not
+        if remove_first_map:
+            graph.remove_nodes_from(
+                graph.all_nodes_between(first_map_entry, self.first_map_exit) | {first_map_entry, self.first_map_exit})
+
+        # Remove isolated nodes. Find elegant solution
         for node in graph.nodes():
             if not isinstance(node, nds.AccessNode):
                 continue
@@ -252,9 +255,7 @@ class OTFMapFusion(transformation.SingleStateTransformation):
             :return: mapping of parameters.
         """
 
-        # Make sure that parameters of first_map_entry
-        # are different symbols than parameters of
-        # second_map_entry
+        # Make sure that parameters of first_map_entry are different symbols than parameters of second_map_entry.
         first_params_subs = {}
         first_params_subs_ = {}
         for i, param in enumerate(first_params):
