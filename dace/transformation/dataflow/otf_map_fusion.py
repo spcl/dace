@@ -237,6 +237,21 @@ class OTFMapFusion(transformation.SingleStateTransformation):
 
     @staticmethod
     def solve(first_params, write_accesses, second_params, read_accesses):
+        """ Infers the memory access for the write memlet given the
+            location/parameters of the read access.
+
+            Example:
+            - Write memlet: A[i + 1, j]
+            - Read memlet: A[k, l]
+            - Infer: k -> i - 1, l - > j
+
+            :param first_params: parameters of the first_map_entry.
+            :param write_accesses: subset ranges of the write memlet.
+            :param second_params: parameters of the second map_entry.
+            :param read_accesses: subset ranges of the read memlet.
+            :return: mapping of parameters.
+        """
+
         # Make sure that parameters of first_map_entry
         # are different symbols than parameters of
         # second_map_entry
