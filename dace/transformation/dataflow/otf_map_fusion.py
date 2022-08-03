@@ -10,6 +10,7 @@ from dace.sdfg.state import SDFGState
 from dace.sdfg import nodes as nds
 from dace.memlet import Memlet
 from dace.sdfg import utils as sdutil
+from dace.subsets import Range
 from dace.transformation import transformation
 from dace import data as dt
 from dace import symbolic
@@ -182,14 +183,18 @@ class OTFMapFusion(transformation.SingleStateTransformation):
                         ranges = []
                         for i, access in enumerate(memlet.subset.ranges):
                             b, e, s = access
-                            b = sympy.sympify(b, locals=sdfg.constants)
-                            e = sympy.sympify(e, locals=sdfg.constants)
+                            b = sympy.sympify(b)
+                            e = sympy.sympify(e)
+                            s = sympy.sympify(s)
+
                             for param, sub in param_subs[i].items():
                                 b = b.subs(param, sub)
                                 e = e.subs(param, sub)
+                                s = s.subs(param, sub)
 
-                            ranges.append((b, e, s))
-                        memlet.subset.ranges = ranges
+                            ranges.append((str(b), str(e), str(s)))
+
+                        memlet.subset = Range(ranges)
 
                         in_connector = edge.src_conn.replace("OUT", "IN")
                         if in_connector in connector_mapping:
@@ -325,6 +330,7 @@ class OTFMapFusion(transformation.SingleStateTransformation):
                 b_eq = sympy.Eq(b0, b1)
                 e_eq = sympy.Eq(e0, e1)
                 params = b0.free_symbols.union(e0.free_symbols)
+                params = params.intersection(first_params_subs_.keys())
                 sol_ = sympy.solve((b_eq, e_eq), params)
                 if not sol_:
                     return None
