@@ -7,9 +7,6 @@ from scipy.signal import convolve2d
 
 from dace.transformation.dataflow import OTFMapFusion
 
-N = dace.symbol("N")
-M = dace.symbol("M")
-
 
 def count_maps(sdfg):
     maps = 0
@@ -55,6 +52,10 @@ def fusion_chain_renamed(A: dace.float64[10, 20], B: dace.float64[10, 20]):
             b >> B[k, l]
 
             b = a + 2
+
+
+N = dace.symbol("N")
+M = dace.symbol("M")
 
 
 @dace.program
@@ -117,6 +118,40 @@ def fusion_convolve(A: dace.float64[20, 20], B: dace.float64[16, 16]):
             a1 << tmp[i - 1, j]
             a2 << tmp[i - 1, j + 1]
             a3 << tmp[i, j - 1]
+            a4 << tmp[i, j]
+            a5 << tmp[i, j + 1]
+            a6 << tmp[i + 1, j - 1]
+            a7 << tmp[i + 1, j]
+            a8 << tmp[i + 1, j + 1]
+            b >> B[i - 1, j - 1]
+
+            b = (a0 + a1 + a2 + a3 + a4 + a5 + a6 + a7 + a8) / 9.0
+
+
+@dace.program
+def fusion_convolve_overlap(A: dace.float64[20, 20], B: dace.float64[16, 16]):
+    tmp = dace.define_local([18, 18], dtype=A.dtype)
+    for i, j in dace.map[1:19, 1:19]:
+        with dace.tasklet:
+            a0 << A[i - 1, j]
+            a1 << A[i - 1, j]
+            a2 << A[i - 1, j + 1]
+            a3 << A[i, j]
+            a4 << A[i, j]
+            a5 << A[i, j + 1]
+            a6 << A[i + 1, j - 1]
+            a7 << A[i + 1, j]
+            a8 << A[i + 1, j + 1]
+            b >> tmp[i - 1, j - 1]
+
+            b = (a0 + a1 + a2 + a3 + a4 + a5 + a6 + a7 + a8) / 9.0
+
+    for i, j in dace.map[1:17, 1:17]:
+        with dace.tasklet:
+            a0 << tmp[i - 1, j]
+            a1 << tmp[i - 1, j]
+            a2 << tmp[i - 1, j + 1]
+            a3 << tmp[i, j]
             a4 << tmp[i, j]
             a5 << tmp[i, j + 1]
             a6 << tmp[i + 1, j - 1]
@@ -312,11 +347,15 @@ def test_fusion_flip():
 
     # Validate output
 
-    A = np.random.rand(10, 20).astype(np.float64)
+    M = 20
+    N = 10
+
+    A = np.random.rand(N, M).astype(np.float64)
     B = np.zeros_like(A)
 
     target = np.flip(A * A + 2, axis=(0, 1))
-    sdfg(A=A, B=B, M=20, N=10)
+
+    sdfg(A=A, B=B, M=M, N=N)
 
     diff = np.linalg.norm(target - B)
     assert diff <= 1e-12
@@ -369,6 +408,20 @@ def test_fusion_convolve():
 
     diff = np.linalg.norm(target - B)
     assert diff <= 1e-12
+
+
+def test_fusion_convolve_overlap():
+    # Overlapping accesses should be connected correctly
+    sdfg = fusion_convolve_overlap.to_sdfg()
+    sdfg.simplify()
+
+    assert count_maps(sdfg) == 2
+
+    sdfg.apply_transformations(OTFMapFusion, validate_all=False)
+    assert count_maps(sdfg) == 1
+
+    # Validate SDFG
+    sdfg.validate()
 
 
 def test_fusion_convolve_transposed():
@@ -433,5 +486,6 @@ if __name__ == '__main__':
     test_fusion_flip()
     test_fusion_transposed()
     test_fusion_convolve()
+    test_fusion_convolve_overlap()
     test_fusion_convolve_transposed()
     test_fusion_tree()
