@@ -161,6 +161,31 @@ def fusion_convolve_transposed(A: dace.float64[20, 20], B: dace.float64[16, 16])
             b = (a0 + a1 + a2 + a3 + a4 + a5 + a6 + a7 + a8) / 9.0
 
 
+@dace.program
+def fusion_tree(A: dace.float64[10, 20], B: dace.float64[10, 20], C: dace.float64[10, 20]):
+    tmp = dace.define_local([10, 20], dtype=A.dtype)
+    for i, j in dace.map[0:10, 0:20]:
+        with dace.tasklet:
+            a << A[i, j]
+            b >> tmp[i, j]
+
+            b = a * a
+
+    for i, j in dace.map[0:10, 0:20]:
+        with dace.tasklet:
+            a << tmp[i, j]
+            b >> B[i, j]
+
+            b = a + 2
+
+    for i, j in dace.map[0:10, 0:20]:
+        with dace.tasklet:
+            a << tmp[i, j]
+            c >> C[i, j]
+
+            c = a + 4
+
+
 def test_memlet_equation():
     i, j = sympy.symbols('i, j')
     write_params = [i, j]
@@ -373,6 +398,35 @@ def test_fusion_convolve_transposed():
     assert diff <= 1e-12
 
 
+def test_fusion_tree():
+    sdfg = fusion_tree.to_sdfg()
+    sdfg.simplify()
+
+    assert count_maps(sdfg) == 3
+
+    sdfg.apply_transformations(OTFMapFusion)
+    assert count_maps(sdfg) == 3
+
+    sdfg.apply_transformations(OTFMapFusion)
+    assert count_maps(sdfg) == 2
+
+    # Validate output
+
+    A = np.random.rand(10, 20).astype(np.float64)
+    B = np.zeros_like(A)
+    C = np.zeros_like(A)
+
+    b_target = A * A + 2
+    c_target = A * A + 4
+    sdfg(A=A, B=B, C=C)
+
+    diff = np.linalg.norm(b_target - B)
+    assert diff <= 1e-12
+
+    diff = np.linalg.norm(c_target - C)
+    assert diff <= 1e-12
+
+
 if __name__ == '__main__':
     test_fusion_chain()
     test_fusion_chain_renamed()
@@ -380,3 +434,4 @@ if __name__ == '__main__':
     test_fusion_transposed()
     test_fusion_convolve()
     test_fusion_convolve_transposed()
+    test_fusion_tree()
