@@ -12,6 +12,7 @@ from dace.memlet import Memlet
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation
 from dace import data as dt
+from dace import symbolic
 
 
 class OTFMapFusion(transformation.SingleStateTransformation):
@@ -84,24 +85,10 @@ class OTFMapFusion(transformation.SingleStateTransformation):
 
         ### Prepare Access Nodes
 
-        # Add edges for input of first map to second map
-        new_out_connectors = {}
-        for edge in graph.in_edges(first_map_entry):
-            old_in_connector = edge.dst_conn
-            new_in_connector = edge.dst_conn + "_" + str(random.randint(1, 65536))
-            if self.second_map_entry.add_in_connector(new_in_connector):
-                memlet = copy.deepcopy(edge.data)
-                graph.add_edge(edge.src, edge.src_conn, self.second_map_entry, new_in_connector, memlet)
-
-                old_out_connector = old_in_connector.replace("IN", "OUT")
-                new_out_connector = new_in_connector.replace("IN", "OUT")
-                new_out_connectors[old_out_connector] = new_out_connector
-            else:
-                raise ValueError("Failed to connect")
-
         # Collect output nodes of first map
         intermediate_dnodes = set()
-        for _, _, node, _, _ in graph.out_edges(self.first_map_exit):
+        for edge in graph.out_edges(self.first_map_exit):
+            node = edge.dst
             if not isinstance(node, nds.AccessNode):
                 continue
 
@@ -111,6 +98,19 @@ class OTFMapFusion(transformation.SingleStateTransformation):
         for dnode in intermediate_dnodes:
             for edge in graph.edges_between(dnode, self.second_map_entry):
                 graph.remove_edge_and_connectors(edge)
+
+        # Add edges for input of first map to second map
+        connector_mapping = {}
+        for edge in graph.in_edges(first_map_entry):
+            old_in_connector = edge.dst_conn
+            new_in_connector = "IN_" + str(random.randint(16384, 65536))
+            if self.second_map_entry.add_in_connector(new_in_connector):
+                memlet = copy.deepcopy(edge.data)
+                graph.add_edge(edge.src, edge.src_conn, self.second_map_entry, new_in_connector, memlet)
+
+                connector_mapping[old_in_connector] = new_in_connector
+            else:
+                raise ValueError("Failed to connect")
 
         ### Re-wiring the memlets ###
 
@@ -139,7 +139,7 @@ class OTFMapFusion(transformation.SingleStateTransformation):
 
             accesses = read_memlet.subset.ranges
             accesses = tuple(accesses)
-            if accesses not in read_memlets:
+            if accesses not in read_memlets[array]:
                 read_memlets[array][accesses] = []
 
             read_memlets[array][accesses].append(edge)
@@ -162,17 +162,17 @@ class OTFMapFusion(transformation.SingleStateTransformation):
                 # Connect read-in memlets to tmp_access node
                 read_memlet_group = read_memlets[array][read_accesses]
                 for edge in read_memlet_group:
-                    graph.add_edge(tmp_access, None, edge.dst, edge.dst_conn, Memlet(tmp_name))
-
                     self.second_map_entry.remove_out_connector(edge.src_conn)
                     graph.remove_edge(edge)
+
+                    graph.add_edge(tmp_access, None, edge.dst, edge.dst_conn, Memlet(tmp_name))
 
                 # Connect new sub graph
                 for node in new_nodes:
                     # Connect new OTF nodes to tmp_access for write
                     for edge in graph.edges_between(node, self.first_map_exit):
-                        graph.add_edge(edge.src, edge.src_conn, tmp_access, None, Memlet(tmp_name))
                         graph.remove_edge(edge)
+                        graph.add_edge(edge.src, edge.src_conn, tmp_access, None, Memlet(tmp_name))
 
                     # Connect new OTF nodes to second map entry for read
                     for edge in graph.edges_between(first_map_entry, node):
@@ -191,9 +191,18 @@ class OTFMapFusion(transformation.SingleStateTransformation):
                             ranges.append((b, e, s))
                         memlet.subset.ranges = ranges
 
-                        new_connector = new_out_connectors[edge.src_conn]
-                        self.second_map_entry.add_out_connector(new_connector)
-                        graph.add_edge(self.second_map_entry, new_connector, node, edge.dst_conn, memlet)
+                        in_connector = edge.src_conn.replace("OUT", "IN")
+                        if in_connector in connector_mapping:
+                            in_connector = connector_mapping[in_connector]
+                            out_connector = new_in_connector.replace("IN", "OUT")
+                        else:
+                            out_connector = edge.src_conn
+
+                        assert in_connector in self.second_map_entry.in_connectors
+                        if out_connector not in self.second_map_entry.out_connectors:
+                            self.second_map_entry.add_out_connector(out_connector)
+
+                        graph.add_edge(self.second_map_entry, out_connector, node, edge.dst_conn, memlet)
 
                         graph.remove_edge(edge)
 
@@ -282,21 +291,30 @@ class OTFMapFusion(transformation.SingleStateTransformation):
         solutions = []
         for write_access, read_access in zip(write_accesses, read_accesses):
             b0, e0, s0 = write_access
+            if isinstance(e0, symbolic.SymExpr):
+                return None
+
             b0 = sympy.sympify(b0)
             e0 = sympy.sympify(e0)
+            s0 = sympy.sympify(s0)
             for param in first_params_subs:
                 b0 = b0.subs(param, first_params_subs[param])
                 e0 = e0.subs(param, first_params_subs[param])
+                s0 = s0.subs(param, first_params_subs[param])
 
             b1, e1, s1 = read_access
+            if isinstance(e1, symbolic.SymExpr):
+                return None
+
             b1 = sympy.sympify(b1)
             e1 = sympy.sympify(e1)
+            s1 = sympy.sympify(s1)
             for param in second_params_subs:
                 b1 = b1.subs(param, second_params_subs[param])
                 e1 = e1.subs(param, second_params_subs[param])
+                s1 = s1.subs(param, second_params_subs[param])
 
             # Step is constant
-            s0 = int(s0)
             assert (s0 - s1) == 0
 
             if (b0 - b1) == 0 and (e0 - e1) == 0:
