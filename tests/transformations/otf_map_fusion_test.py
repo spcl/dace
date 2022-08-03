@@ -7,6 +7,9 @@ from scipy.signal import convolve2d
 
 from dace.transformation.dataflow import OTFMapFusion
 
+N = dace.symbol("N")
+M = dace.symbol("M")
+
 
 def count_maps(sdfg):
     maps = 0
@@ -52,10 +55,6 @@ def fusion_chain_renamed(A: dace.float64[10, 20], B: dace.float64[10, 20]):
             b >> B[k, l]
 
             b = a + 2
-
-
-N = dace.symbol("N")
-M = dace.symbol("M")
 
 
 @dace.program
@@ -346,16 +345,11 @@ def test_fusion_flip():
     assert count_maps(sdfg) == 1
 
     # Validate output
+    A = np.random.rand(10, 20).astype(np.float64)
+    target = np.flip(A * A + 2)
 
-    M = 20
-    N = 10
-
-    A = np.random.rand(N, M).astype(np.float64)
     B = np.zeros_like(A)
-
-    target = np.flip(A * A + 2, axis=(0, 1))
-
-    sdfg(A=A, B=B, M=M, N=N)
+    sdfg(A=A, B=B, M=20, N=10)
 
     diff = np.linalg.norm(target - B)
     assert diff <= 1e-12
