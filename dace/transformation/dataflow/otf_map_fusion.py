@@ -3,6 +3,7 @@
 """
 import copy
 import sympy
+import random
 
 from dace.sdfg.sdfg import SDFG
 from dace.sdfg.state import SDFGState
@@ -84,10 +85,17 @@ class OTFMapFusion(transformation.SingleStateTransformation):
         ### Prepare Access Nodes
 
         # Add edges for input of first map to second map
+        new_out_connectors = {}
         for edge in graph.in_edges(first_map_entry):
-            if self.second_map_entry.add_in_connector(edge.dst_conn + "_"):
+            old_in_connector = edge.dst_conn
+            new_in_connector = edge.dst_conn + "_" + str(random.randint(1, 65536))
+            if self.second_map_entry.add_in_connector(new_in_connector):
                 memlet = copy.deepcopy(edge.data)
-                graph.add_edge(edge.src, edge.src_conn, self.second_map_entry, edge.dst_conn + "_", memlet)
+                graph.add_edge(edge.src, edge.src_conn, self.second_map_entry, new_in_connector, memlet)
+
+                old_out_connector = old_in_connector.replace("IN", "OUT")
+                new_out_connector = new_in_connector.replace("IN", "OUT")
+                new_out_connectors[old_out_connector] = new_out_connector
             else:
                 raise ValueError("Failed to connect")
 
@@ -183,8 +191,9 @@ class OTFMapFusion(transformation.SingleStateTransformation):
                             ranges.append((b, e, s))
                         memlet.subset.ranges = ranges
 
-                        self.second_map_entry.add_out_connector(edge.src_conn + "_")
-                        graph.add_edge(self.second_map_entry, edge.src_conn + "_", node, edge.dst_conn, memlet)
+                        new_connector = new_out_connectors[edge.src_conn]
+                        self.second_map_entry.add_out_connector(new_connector)
+                        graph.add_edge(self.second_map_entry, new_connector, node, edge.dst_conn, memlet)
 
                         graph.remove_edge(edge)
 
