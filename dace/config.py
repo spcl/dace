@@ -1,8 +1,9 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 import contextlib
 import os
 import platform
 import tempfile
+from typing import Any, Dict
 import yaml
 import warnings
 
@@ -84,9 +85,11 @@ def _add_defaults(config, metadata):
 class Config(object):
     """ Interface to the DaCe hierarchical configuration file. """
 
+    default_filename = '.dace.conf'
     _config = {}
     _config_metadata = {}
     _cfg_filename = None
+    _default_cfg_path = None
     _metadata_filename = None
 
     @staticmethod
@@ -104,16 +107,17 @@ class Config(object):
         """
 
         # If already initialized, skip
-        if Config._cfg_filename is not None:
+        if Config._config_metadata:
             return
 
         # Override default configuration file path
-        default_filename = '.dace.conf'
         if 'DACE_CONFIG' in os.environ:
             default_cfg_filename = os.environ['DACE_CONFIG']
         else:
             home = os.path.expanduser("~")
-            default_cfg_filename = os.path.join(home, default_filename)
+            default_cfg_filename = os.path.join(home, Config.default_filename)
+
+        Config._default_cfg_path = default_cfg_filename
 
         dace_path = os.path.dirname(os.path.abspath(__file__))
         Config._metadata_filename = os.path.join(dace_path, 'config_schema.yml')
@@ -122,7 +126,7 @@ class Config(object):
         Config.load_schema()
 
         # Priority order: current working directory, default configuration file (DACE_CONFIG), then ~/.dace.conf
-        for filename in [default_filename, default_cfg_filename]:
+        for filename in [Config.default_filename, default_cfg_filename]:
             Config._cfg_filename = filename
             try:
                 if os.path.isfile(filename):
@@ -132,23 +136,15 @@ class Config(object):
                 # If any filesystem-related error happened during file load, move on to next candidate
                 continue
         else:
-            # None of the files were found
-
-            # Load the defaults from metadata
+            # None of the files were found, load defaults from metadata
+            Config._cfg_filename = None
             Config._config = {}
             _add_defaults(Config._config, Config._config_metadata['required'])
 
-            # Try to create a new config file in reversed priority order, and if all else fails keep config in memory
-            for filename in [default_cfg_filename, default_filename, None]:
-                Config._cfg_filename = filename
-                try:
-                    Config.save()
-                    break
-                except (FileNotFoundError, PermissionError, OSError):
-                    # If any filesystem-related error happened during file save, move on to next candidate
-                    continue
-            else:
-                warnings.warn('No DaCe configuration file was able to be saved')
+        # Check for old configurations to update the file
+        if 'execution' in Config._config and Config._cfg_filename:
+            # Reset config to only nondefault ones
+            Config.save(all=False)
 
     @staticmethod
     def load(filename=None):
@@ -167,9 +163,7 @@ class Config(object):
             Config._config = {}
 
         # Add defaults from metadata
-        modified = _add_defaults(Config._config, Config._config_metadata['required'])
-        if modified:  # Update file if changed
-            Config.save()
+        _add_defaults(Config._config, Config._config_metadata['required'])
 
     @staticmethod
     def load_schema(filename=None):
@@ -183,17 +177,34 @@ class Config(object):
             Config._config_metadata = yaml.load(f.read(), Loader=yaml.SafeLoader)
 
     @staticmethod
-    def save(path=None):
-        """ Saves the current configuration to a file.
-            :param path: The file to save to. If unspecified,
-                         uses default configuration file.
+    def save(path=None, all: bool = False):
+        """
+        Saves the current configuration to a file.
+
+        :param path: The file to save to. If unspecified,
+                     uses default configuration file.
+        :param all: If False, only saves non-default configuration entries.
+                    Otherwise saves all entries.
         """
         if path is None:
             path = Config._cfg_filename
-        if path is not None:
-            # Write configuration file
-            with open(path, 'w') as f:
-                yaml.dump(Config._config, f, default_flow_style=False)
+            if path is None:
+                # Try to create a new config file in reversed priority order, and if all else fails keep config in memory
+                for filename in [Config._default_cfg_path, Config.default_filename]:
+                    try:
+                        Config.save(path=filename, all=all)
+                        Config._cfg_filename = filename
+                        return
+                    except (FileNotFoundError, PermissionError, OSError):
+                        # If any filesystem-related error happened during file save, move on to next candidate
+                        continue
+
+                warnings.warn('No DaCe configuration file was able to be saved')
+                return
+
+        # Write configuration file
+        with open(path, 'w') as f:
+            yaml.dump(Config._config if all else Config.nondefaults(), f, default_flow_style=False)
 
     @staticmethod
     def get_metadata(*key_hierarchy):
@@ -319,6 +330,32 @@ class Config(object):
         current_conf[key_hierarchy[-1]] = value
         if autosave:
             Config.save()
+
+    @staticmethod
+    def nondefaults() -> Dict[str, Any]:
+        current_conf = Config._config
+        defaults = Config._config_metadata
+        system_default_key = 'default_' + platform.system()
+
+        def traverse(conf: Dict[str, Any], defaults: Dict[str, Any], result: Dict[str, Any]):
+            for k, v in conf.items():
+                if k not in defaults:  # Configuration entry no longer exists
+                    continue
+                elif 'required' in defaults[k]:  # Traverse further
+                    internal = {}
+                    traverse(v, defaults[k]['required'], internal)
+                    if internal:
+                        result[k] = internal
+                elif system_default_key in defaults[k]:
+                    if v != defaults[k][system_default_key]:
+                        result[k] = v
+                elif 'default' in defaults[k]:
+                    if v != defaults[k]['default']:
+                        result[k] = v
+
+        output = {}
+        traverse(current_conf, defaults['required'], output)
+        return output
 
 
 # Code that runs when the module is loaded
