@@ -68,17 +68,17 @@ class OTFMapFusion(transformation.SingleStateTransformation):
 
             write_memlets[array] = memlet
 
-        # Volume of read must match volume of write
-        # Could be relaxed in the future
+        # Memlets access must be inferable
+        first_map_entry = graph.entry_node(self.first_map_exit)
         for edge in graph.out_edges(self.second_map_entry):
             read_memlet = edge.data
             if read_memlet.data not in write_memlets:
                 continue
 
             write_memlet = write_memlets[read_memlet.data]
-            # Shortcut
-            # FIXME: Check full compatible
-            if write_memlet.volume != read_memlet.volume:
+            param_subs = OTFMapFusion.solve(first_map_entry.map.params, write_memlet.subset.ranges,
+                                            self.second_map_entry.map.params, read_memlet.subset.ranges)
+            if param_subs is None:
                 return False
 
         # Success
