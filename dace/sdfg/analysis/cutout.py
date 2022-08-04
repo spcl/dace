@@ -5,13 +5,125 @@ testing or optimization.
 """
 from collections import deque
 import copy
-from typing import Deque, Dict, List, Set
+from typing import Deque, Dict, List, Set, Tuple
 from dace import data
 from dace.sdfg import nodes as nd, SDFG, SDFGState, utils as sdutil
+from dace.sdfg.graph import SubgraphView
 from dace.sdfg.state import StateSubgraphView
 
 
-def cutout_state(state: SDFGState, *nodes: nd.Node, make_copy: bool = True) -> SDFG:
+def _stateset_frontier(sdfg: SDFG, states: Set[SDFGState]) -> Tuple[Set[SDFGState], Set]:
+    frontier = set()
+    frontier_edges = set()
+    for state in states:
+        for iedge in sdfg.in_edges(state):
+            if iedge.src not in states:
+                if iedge.src not in frontier:
+                    frontier.add(iedge.src)
+                if iedge not in frontier_edges:
+                    frontier_edges.add(iedge)
+    return frontier, frontier_edges
+
+
+def multistate_cutout(
+    sdfg: SDFG, *states: SDFGState, inserted_states: Dict[SDFGState, SDFGState] = None
+) -> SDFG:
+    create_element = copy.deepcopy
+
+    cutout_states: Set[SDFGState] = set(states)
+
+    # Determine the start state and ensure there IS a unique start state. If there is no unique
+    # start state, keep adding states from the predecessor frontier in the state machine until
+    # a unique start state can be determined.
+    start_state: SDFGState = None
+    for state in cutout_states:
+        if state == sdfg.start_state:
+            start_state = state
+            break
+
+    if start_state is None:
+        bfs_queue = deque()
+        bfs_queue.append(_stateset_frontier(sdfg, cutout_states))
+
+        while len(bfs_queue) > 0:
+            frontier, frontier_edges = bfs_queue.popleft()
+            if len(frontier_edges) == 0:
+                # No explicit start state, but also no frontier to select from.
+                return sdfg
+            elif len(frontier_edges) == 1:
+                # The destination of the only frontier edge must be the
+                # start state, since only one edge leads into the subgraph.
+                start_state = list(frontier_edges)[0].dst
+            else:
+                if len(frontier) == 0:
+                    # No explicit start state, but also no frontier to select from.
+                    return sdfg
+                if len(frontier) == 1:
+                    # For many frontier edges but only one frontier state,
+                    # the frontier state is the new start state and is
+                    # included in the cutout.
+                    start_state = list(frontier)[0]
+                    cutout_states.add(start_state)
+                else:
+                    for s in frontier:
+                        cutout_states.add(s)
+                    bfs_queue.append(
+                        _stateset_frontier(sdfg, cutout_states)
+                    )
+
+    subgraph: SubgraphView = SubgraphView(sdfg, cutout_states)
+
+    # Make a new SDFG with the included constants, used symbols, and data containers
+    new_sdfg = SDFG(f'{sdfg.name}_cutout', sdfg.constants_prop)
+    defined_symbols: Dict[str, data.Data] = dict()
+    free_symbols: Set[str] = set()
+    for state in cutout_states:
+        free_symbols |= state.free_symbols
+        state_defined_symbols = state.defined_symbols()
+        for sym in state_defined_symbols:
+            defined_symbols[sym] = state_defined_symbols[sym]
+    for sym in free_symbols:
+        new_sdfg.add_symbol(sym, defined_symbols[sym])
+
+    for state in cutout_states:
+        for dnode in state.data_nodes():
+            if dnode.data in new_sdfg.arrays:
+                continue
+            new_desc = sdfg.arrays[dnode.data].clone()
+            # TODO: If transient is defined outside, it becomes a global
+            #if dnode.data in other_arrays:
+            #    new_desc.transient = False
+            new_sdfg.add_datadesc(dnode.data, new_desc)
+
+    if inserted_states is None:
+        inserted_states: Dict[SDFGState, SDFGState] = {}
+    for is_edge in subgraph.edges():
+        if is_edge.src not in inserted_states:
+            inserted_states[is_edge.src] = create_element(is_edge.src)
+            new_sdfg.add_node(inserted_states[is_edge.src], is_start_state=(is_edge.src == start_state))
+            inserted_states[is_edge.src].parent = new_sdfg
+        if is_edge.dst not in inserted_states:
+            inserted_states[is_edge.dst] = create_element(is_edge.dst)
+            new_sdfg.add_node(inserted_states[is_edge.dst], is_start_state=(is_edge.dst == start_state))
+            inserted_states[is_edge.dst].parent = new_sdfg
+        new_sdfg.add_edge(
+            inserted_states[is_edge.src],
+            inserted_states[is_edge.dst],
+            create_element(is_edge.data)
+        )
+
+    for state in subgraph.nodes():
+        if state not in inserted_states:
+            inserted_states[state] = create_element(state)
+            new_sdfg.add_node(inserted_states[state], is_start_state=(state == start_state))
+            inserted_states[state].parent = new_sdfg
+
+    return new_sdfg
+
+
+def cutout_state(
+    state: SDFGState, *nodes: nd.Node, make_copy: bool = True, inserted_nodes: Dict[nd.Node, nd.Node] = None
+) -> SDFG:
     """
     Cut out a subgraph of a state from an SDFG to run separately for localized testing or optimization.
     The subgraph defined by the list of nodes will be extended to include access nodes of data containers necessary
@@ -45,7 +157,8 @@ def cutout_state(state: SDFGState, *nodes: nd.Node, make_copy: bool = True) -> S
 
     # Add a single state with the extended subgraph
     new_state = new_sdfg.add_state(state.label, is_start_state=True)
-    inserted_nodes: Dict[nd.Node, nd.Node] = {}
+    if inserted_nodes is None:
+        inserted_nodes: Dict[nd.Node, nd.Node] = {}
     for e in subgraph.edges():
         if e.src not in inserted_nodes:
             inserted_nodes[e.src] = create_element(e.src)

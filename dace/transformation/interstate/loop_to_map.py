@@ -6,7 +6,7 @@ import copy
 import itertools
 import sympy as sp
 import networkx as nx
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple, Union
 
 from dace import dtypes, memlet, nodes, registry, sdfg as sd, symbolic, subsets
 from dace.properties import Property, make_properties, CodeBlock
@@ -89,6 +89,34 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
         desc='The name of the iteration variable (optional).',
     )
 
+    def _get_loop_body(self, sdfg: SDFG, body_states: Set[SDFGState] = None) -> Set[SDFGState]:
+        if body_states is None:
+            body_states = set()
+        to_visit = [self.loop_begin]
+        while to_visit:
+            state = to_visit.pop(0)
+            for _, dst, _ in sdfg.out_edges(state):
+                if dst not in body_states and dst is not self.loop_guard:
+                    to_visit.append(dst)
+            body_states.add(state)
+        return body_states
+
+    def affected_nodes(self, sdfg: SDFG) -> Set[Union[nodes.Node, SDFGState]]:
+        if sdfg is None:
+            raise Exception('LoopToMap requires an sdfg argument to check for affected nodes')
+
+        affected_nodes = set([self.loop_guard, self.exit_state])
+
+        affected_nodes = self._get_loop_body(sdfg, affected_nodes)
+
+        # ALL incoming nodes to a valid loop construct are affected, since one of the incoming edges
+        # contains the loop variable initial assignment.
+        for iedge in sdfg.in_edges(self.loop_guard):
+            if iedge.src not in affected_nodes:
+                affected_nodes.add(iedge.src)
+
+        return affected_nodes
+
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
         # Is this even a loop
         if not super().can_be_applied(graph, expr_index, sdfg, permissive):
@@ -115,14 +143,7 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
                 return False
 
         # Find all loop-body states
-        states = set()
-        to_visit = [begin]
-        while to_visit:
-            state = to_visit.pop(0)
-            for _, dst, _ in sdfg.out_edges(state):
-                if dst not in states and dst is not guard:
-                    to_visit.append(dst)
-            states.add(state)
+        states = self._get_loop_body(sdfg)
 
         assert (body_end in states)
 
@@ -254,14 +275,7 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
         itervar, (start, end, step), (_, body_end) = find_for_loop(sdfg, guard, body, itervar=self.itervar)
 
         # Find all loop-body states
-        states = set()
-        to_visit = [body]
-        while to_visit:
-            state = to_visit.pop(0)
-            for _, dst, _ in sdfg.out_edges(state):
-                if dst not in states and dst is not guard:
-                    to_visit.append(dst)
-            states.add(state)
+        states = self._get_loop_body(sdfg)
 
         # Nest loop-body states
         if len(states) > 1:
