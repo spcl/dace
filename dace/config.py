@@ -217,6 +217,10 @@ class Config(object):
                                   path a->b.
             :return: Configuration specification as a dictionary.
         """
+        # Support for "a.b.c" in calls
+        if len(key_hierarchy) == 1 and '.' in key_hierarchy[0]:
+            key_hierarchy = key_hierarchy[0].split('.')
+
         # Traverse the key hierarchy
         current_conf = Config._config_metadata
         for key in key_hierarchy:
@@ -234,6 +238,10 @@ class Config(object):
                                   path a->b.
             :return: Default configuration value.
         """
+        # Support for "a.b.c" in calls
+        if len(key_hierarchy) == 1 and '.' in key_hierarchy[0]:
+            key_hierarchy = key_hierarchy[0].split('.')
+
         # Traverse the key hierarchy
         current_conf = Config._config_metadata
         for key in key_hierarchy:
@@ -252,6 +260,10 @@ class Config(object):
                                   path a->b.
             :return: Configuration entry value.
         """
+        # Support for "a.b.c" in calls
+        if len(key_hierarchy) == 1 and '.' in key_hierarchy[0]:
+            key_hierarchy = key_hierarchy[0].split('.')
+
         # Environment variable override
         # NOTE: will only work if a specific key is accessed!
         envvar = 'DACE_' + '_'.join(key_hierarchy)
@@ -297,6 +309,10 @@ class Config(object):
                              after modification.
             :return: Current configuration entry value.
         """
+        # Support for "a.b.c" in calls
+        if len(key_hierarchy) == 1 and '.' in key_hierarchy[0]:
+            key_hierarchy = key_hierarchy[0].split('.')
+
         # Traverse the key hierarchy up until the next to last element
         current_conf = Config._config
         for key in key_hierarchy[:-1]:
@@ -322,6 +338,10 @@ class Config(object):
             :param autosave: If True, saves the configuration to the file
                              after modification.
         """
+        # Support for "a.b.c" in calls
+        if len(key_hierarchy) == 1 and '.' in key_hierarchy[0]:
+            key_hierarchy = key_hierarchy[0].split('.')
+
         # Traverse the key hierarchy up until the next to last element
         current_conf = Config._config
         for key in key_hierarchy[:-1]:
