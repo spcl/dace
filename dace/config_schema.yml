@@ -744,6 +744,13 @@ required:
                     0 means unrolling every loop, and a value above zero sets a size threshold beyond which a
                     constant-sized loop will not be automatically unrolled.
 
+            check_args:
+                type: bool
+                default: false
+                title: Check arguments on SDFG call
+                description: >
+                    Perform an early type check on arguments passed to an SDFG when called directly (from 
+                    ``SDFG.__call__``). Another type check is performed when calling compiled SDFGs.
 
 
     #############################################
