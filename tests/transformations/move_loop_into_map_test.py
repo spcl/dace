@@ -1,5 +1,4 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-from math import perm
 import dace
 from dace.transformation.interstate import MoveLoopIntoMap
 import unittest
