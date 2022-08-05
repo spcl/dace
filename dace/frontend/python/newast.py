@@ -4142,8 +4142,9 @@ class ProgramVisitor(ExtNodeVisitor):
         # Check if this is a method called on an object
         if ('.' in funcname and len(modname) > 0 and modname in self.defined):
             methodname = funcname[len(modname) + 1:]
-            classname = type(self.defined[modname]).__name__
-            func = oprepo.Replacements.get_method(classname, methodname)
+            cls = type(self.defined[modname])
+            classname = cls.__name__
+            func = oprepo.Replacements.get_method(cls, methodname)
             if func is None:
                 nm = rname(node)
                 if create_callbacks and nm in self.closure.callbacks:
@@ -4410,7 +4411,7 @@ class ProgramVisitor(ExtNodeVisitor):
             return result
 
         # Try to find sub-SDFG attribute
-        func = oprepo.Replacements.get_attribute(type(arr).__name__, node.attr)
+        func = oprepo.Replacements.get_attribute(type(arr), node.attr)
         if func is not None:
             return func(self, self.sdfg, self.last_state, result)
 
@@ -4458,9 +4459,9 @@ class ProgramVisitor(ExtNodeVisitor):
         result = []
         for operand in operands:
             if isinstance(operand, str) and operand in self.sdfg.arrays:
-                result.append((operand, type(self.sdfg.arrays[operand]).__name__))
+                result.append((operand, type(self.sdfg.arrays[operand])))
             elif isinstance(operand, str) and operand in self.scope_arrays:
-                result.append((operand, type(self.scope_arrays[operand]).__name__))
+                result.append((operand, type(self.scope_arrays[operand])))
             elif isinstance(operand, tuple(dtypes.DTYPE_TO_TYPECLASS.keys())):
                 if isinstance(operand, (bool, numpy.bool_)):
                     result.append((operand, 'BoolConstant'))
@@ -4469,7 +4470,7 @@ class ProgramVisitor(ExtNodeVisitor):
             elif isinstance(operand, sympy.Basic):
                 result.append((operand, 'symbol'))
             else:
-                result.append((operand, type(operand).__name__))
+                result.append((operand, type(operand)))
 
         return result
 
@@ -4498,10 +4499,9 @@ class ProgramVisitor(ExtNodeVisitor):
             # Check for SDFG as fallback
             func = oprepo.Replacements.getop(op1type, opname, otherclass=op2type)
             if func is None:
-                raise DaceSyntaxError(self, node,
-                                      'Operator "%s" is not defined for types %s and %s' % (opname, op1type, op2type))
-            print('WARNING: Operator "%s" is not registered with an implementation for'
-                  'types %s and %s, falling back to SDFG' % (opname, op1type, op2type))
+                op1name = getattr(op1type, '__name__', op1type)
+                op2name = getattr(op2type, '__name__', op2type)
+                raise DaceSyntaxError(self, node, f'Operator {opname} is not defined for types {op1name} and {op2name}')
 
         self._add_state('%s_%d' % (type(node).__name__, node.lineno))
         self.last_state.set_default_lineinfo(self.current_lineinfo)
