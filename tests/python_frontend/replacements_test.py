@@ -3,7 +3,10 @@
 import dace
 import numpy as np
 
+from dace.properties import make_properties
 
+
+@make_properties
 class ArraySubclass(dace.data.Array):
     pass
 
