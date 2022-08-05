@@ -1,4 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+from math import perm
 import dace
 from dace.transformation.interstate import MoveLoopIntoMap
 import unittest
@@ -42,6 +43,14 @@ def should_not_apply_2():
     for i in range(2, 20):
         a = np.ndarray([i], np.float64)
         a[0:2] = 0
+
+
+@dace.program
+def should_not_apply_3():
+    a = np.ndarray((2, 10), np.float64)
+    for i in range(20):
+        for j in dace.map[10]:
+            a[i%2, j] = a[(i+1)%2, j]
 
 
 @dace.program
@@ -94,12 +103,17 @@ class MoveLoopIntoMapTest(unittest.TestCase):
         count = sdfg.apply_transformations(MoveLoopIntoMap)
         self.assertEquals(count, 0)
     
+    def test_non_injective_index(self):
+        sdfg = should_not_apply_3.to_sdfg(simplify=True)
+        count = sdfg.apply_transformations(MoveLoopIntoMap)
+        self.assertEquals(count, 0)
+    
     def test_apply_multiple_times(self):
         sdfg = apply_multiple_times.to_sdfg(simplify=True)
         overall = 0
         count = 1
         while (count > 0):
-            count = sdfg.apply_transformations(MoveLoopIntoMap)
+            count = sdfg.apply_transformations(MoveLoopIntoMap, permissive=True)
             overall += count
             sdfg.simplify()
         
@@ -118,7 +132,7 @@ class MoveLoopIntoMapTest(unittest.TestCase):
         overall = 0
         count = 1
         while (count > 0):
-            count = sdfg.apply_transformations(MoveLoopIntoMap)
+            count = sdfg.apply_transformations(MoveLoopIntoMap, permissive=True)
             overall += count
             sdfg.simplify()
         
