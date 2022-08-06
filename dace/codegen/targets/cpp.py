@@ -1377,7 +1377,11 @@ def synchronize_streams(sdfg, dfg, state_id, node, scope_exit, callsite_stream, 
             ptrname = ptr(name, desc, sd, codegen._frame)
             if isinstance(desc, data.Array) and desc.start_offset != 0:
                 ptrname = f'({ptrname} - {sym2cpp(desc.start_offset)})'
-            callsite_stream.write(f'DACE_CUDA_CHECK({backend}FreeAsync({ptrname}, {cudastream}));\n', sdfg, state_id, scope_exit)
+            if Config.get_bool('compiler', 'cuda', 'syncdebug'):
+                callsite_stream.write(f'DACE_CUDA_CHECK({backend}FreeAsync({ptrname}, {cudastream}));\n', sdfg, state_id, scope_exit)
+                callsite_stream.write(f'DACE_CUDA_CHECK({backend}DeviceSynchronize());')
+            else:
+                callsite_stream.write(f'{backend}FreeAsync({ptrname}, {cudastream});\n', sdfg, state_id, scope_exit)
             to_remove.add((sd, name))
 
     # Clear all released memory from tracking
