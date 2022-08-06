@@ -104,7 +104,7 @@ class OTFMapFusion(transformation.SingleStateTransformation):
         connector_mapping = {}
         for edge in graph.in_edges(first_map_entry):
             old_in_connector = edge.dst_conn
-            new_in_connector = "IN_" + str(random.randint(16384, 65536))
+            new_in_connector = "IN_" + str(random.randint(32, 65536))
             if self.second_map_entry.add_in_connector(new_in_connector):
                 memlet = copy.deepcopy(edge.data)
                 graph.add_edge(edge.src, edge.src_conn, self.second_map_entry, new_in_connector, memlet)
@@ -145,6 +145,9 @@ class OTFMapFusion(transformation.SingleStateTransformation):
 
             read_memlets[array][accesses].append(edge)
 
+            self.second_map_entry.remove_out_connector(edge.src_conn)
+            graph.remove_edge(edge)
+
         # OTF: Replace read memlet by copying full map content of corresponding write memlet
         for array in read_memlets:
             write_memlet = write_memlets[array]
@@ -163,9 +166,6 @@ class OTFMapFusion(transformation.SingleStateTransformation):
                 # Connect read-in memlets to tmp_access node
                 read_memlet_group = read_memlets[array][read_accesses]
                 for edge in read_memlet_group:
-                    self.second_map_entry.remove_out_connector(edge.src_conn)
-                    graph.remove_edge(edge)
-
                     graph.add_edge(tmp_access, None, edge.dst, edge.dst_conn, Memlet(tmp_name))
 
                 # Connect new sub graph
@@ -198,12 +198,10 @@ class OTFMapFusion(transformation.SingleStateTransformation):
 
                         in_connector = edge.src_conn.replace("OUT", "IN")
                         if in_connector in connector_mapping:
-                            in_connector = connector_mapping[in_connector]
-                            out_connector = new_in_connector.replace("IN", "OUT")
+                            out_connector = connector_mapping[in_connector].replace("IN", "OUT")
                         else:
                             out_connector = edge.src_conn
 
-                        assert in_connector in self.second_map_entry.in_connectors
                         if out_connector not in self.second_map_entry.out_connectors:
                             self.second_map_entry.add_out_connector(out_connector)
 
