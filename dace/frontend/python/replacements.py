@@ -15,7 +15,7 @@ from dace.codegen.tools import type_inference
 from dace.config import Config
 from dace import data, dtypes, subsets, symbolic, sdfg as sd
 from dace.frontend.common import op_repository as oprepo
-from dace.frontend.python.common import DaceSyntaxError
+from dace.frontend.python.common import DaceSyntaxError, StringLiteral
 import dace.frontend.python.memlet_parser as mem_parser
 from dace.frontend.python import astutils
 from dace.frontend.python.nested_call import NestedCall
@@ -112,7 +112,7 @@ def _define_literal_ex(pv: 'ProgramVisitor',
                        obj: Any,
                        dtype: dace.typeclass = None,
                        copy: bool = True,
-                       order: str = 'K',
+                       order: StringLiteral = StringLiteral('K'),
                        subok: bool = False,
                        ndmin: int = 0,
                        like: Any = None,
@@ -133,10 +133,10 @@ def _define_literal_ex(pv: 'ProgramVisitor',
             desc.dtype = dtype
     else:  # From literal / constant
         if dtype is None:
-            arr = np.array(obj, copy=copy, order=order, subok=subok, ndmin=ndmin)
+            arr = np.array(obj, copy=copy, order=str(order), subok=subok, ndmin=ndmin)
         else:
             npdtype = dtype.as_numpy_dtype()
-            arr = np.array(obj, npdtype, copy=copy, order=order, subok=subok, ndmin=ndmin)
+            arr = np.array(obj, npdtype, copy=copy, order=str(order), subok=subok, ndmin=ndmin)
         desc = data.create_datadescriptor(arr)
 
     # Set extra properties
@@ -3946,17 +3946,20 @@ def implement_ufunc_outer(visitor: 'ProgramVisitor', ast_node: ast.Call, sdfg: S
 
 
 @oprepo.replaces('numpy.reshape')
-def reshape(pv: 'ProgramVisitor',
-            sdfg: SDFG,
-            state: SDFGState,
-            arr: str,
-            newshape: Union[str, symbolic.SymbolicType, Tuple[Union[str, symbolic.SymbolicType]]],
-            order='C') -> str:
+def reshape(
+    pv: 'ProgramVisitor',
+    sdfg: SDFG,
+    state: SDFGState,
+    arr: str,
+    newshape: Union[str, symbolic.SymbolicType, Tuple[Union[str, symbolic.SymbolicType]]],
+    order: StringLiteral = StringLiteral('C')
+) -> str:
     if isinstance(arr, (list, tuple)) and len(arr) == 1:
         arr = arr[0]
     desc = sdfg.arrays[arr]
 
     # "order" determines stride orders
+    order = str(order)
     fortran_strides = False
     if order == 'F' or (order == 'A' and desc.strides[0] == 1):
         # FORTRAN strides
@@ -4046,8 +4049,10 @@ def size(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str) -> Size:
 @oprepo.replaces_attribute('Array', 'flat')
 @oprepo.replaces_attribute('Scalar', 'flat')
 @oprepo.replaces_attribute('View', 'flat')
-def flat(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str, order: str = 'C') -> str:
+def flat(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str,
+         order: StringLiteral = StringLiteral('C')) -> str:
     desc = sdfg.arrays[arr]
+    order = str(order)
     totalsize = data._prod(desc.shape)
     if order not in ('C', 'F'):
         raise NotImplementedError(f'Order "{order}" not yet supported for flattening')
@@ -4136,12 +4141,14 @@ def _ndarray_fill(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str, 
 
 @oprepo.replaces_method('Array', 'reshape')
 @oprepo.replaces_method('View', 'reshape')
-def _ndarray_reshape(pv: 'ProgramVisitor',
-                     sdfg: SDFG,
-                     state: SDFGState,
-                     arr: str,
-                     newshape: Union[str, symbolic.SymbolicType, Tuple[Union[str, symbolic.SymbolicType]]],
-                     order='C') -> str:
+def _ndarray_reshape(
+    pv: 'ProgramVisitor',
+    sdfg: SDFG,
+    state: SDFGState,
+    arr: str,
+    newshape: Union[str, symbolic.SymbolicType, Tuple[Union[str, symbolic.SymbolicType]]],
+    order: StringLiteral = StringLiteral('C')
+) -> str:
     return reshape(pv, sdfg, state, arr, newshape, order)
 
 
@@ -4158,7 +4165,11 @@ def _ndarray_transpose(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: 
 @oprepo.replaces_method('Array', 'flatten')
 @oprepo.replaces_method('Scalar', 'flatten')
 @oprepo.replaces_method('View', 'flatten')
-def _ndarray_flatten(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str, order: str = 'C') -> str:
+def _ndarray_flatten(pv: 'ProgramVisitor',
+                     sdfg: SDFG,
+                     state: SDFGState,
+                     arr: str,
+                     order: StringLiteral = StringLiteral('C')) -> str:
     new_arr = flat(pv, sdfg, state, arr, order)
     # `flatten` always returns a copy
     if isinstance(new_arr, data.View):
@@ -4169,7 +4180,11 @@ def _ndarray_flatten(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: st
 @oprepo.replaces_method('Array', 'ravel')
 @oprepo.replaces_method('Scalar', 'ravel')
 @oprepo.replaces_method('View', 'ravel')
-def _ndarray_ravel(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str, order: str = 'C') -> str:
+def _ndarray_ravel(pv: 'ProgramVisitor',
+                   sdfg: SDFG,
+                   state: SDFGState,
+                   arr: str,
+                   order: StringLiteral = StringLiteral('C')) -> str:
     # `ravel` returns a copy only when necessary (sounds like ndarray.flat)
     return flat(pv, sdfg, state, arr, order)
 

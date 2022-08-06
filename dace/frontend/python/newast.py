@@ -2,7 +2,6 @@
 import ast
 from collections import OrderedDict
 import copy
-from dataclasses import dataclass
 import itertools
 import inspect
 import re
@@ -19,7 +18,8 @@ from dace import sourcemap
 from dace.config import Config
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python import astutils
-from dace.frontend.python.common import (DaceSyntaxError, SDFGClosure, SDFGConvertible, inverse_dict_lookup)
+from dace.frontend.python.common import (DaceSyntaxError, SDFGClosure, SDFGConvertible, inverse_dict_lookup,
+                                         StringLiteral)
 from dace.frontend.python.astutils import ExtNodeVisitor, ExtNodeTransformer
 from dace.frontend.python.astutils import rname
 from dace.frontend.python import nested_call, replacements, preprocessing
@@ -47,10 +47,6 @@ ShapeList = List[Size]
 Shape = Union[ShapeTuple, ShapeList]
 DependencyType = Dict[str, Tuple[SDFGState, Union[Memlet, nodes.Tasklet], Tuple[int]]]
 
-@dataclass(unsafe_hash=True)
-class StringLiteral:
-    """ A string literal found in a parsed DaCe program. """
-    value: Union[str, bytes]
 
 class SkipCall(Exception):
     """ Exception used to skip calls to functions that cannot be parsed. """
@@ -585,6 +581,7 @@ class TaskletTransformer(ExtNodeTransformer):
     """ A visitor that traverses a data-centric tasklet, removes memlet
         annotations and returns input and output memlets.
     """
+
     def __init__(self,
                  visitor,
                  defined,
@@ -4628,6 +4625,7 @@ class ProgramVisitor(ExtNodeVisitor):
         """ Parses the slice attribute of an ast.Subscript node.
             Scalar data are promoted to symbols.
         """
+
         def _promote(node: ast.AST) -> Union[Any, str, symbolic.symbol]:
             node_str = astutils.unparse(node)
             sym = None
