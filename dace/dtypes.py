@@ -1428,10 +1428,12 @@ def is_array(obj: Any) -> bool:
         # In PyTorch, accessing this attribute throws a runtime error for
         # variables that require grad, or KeyError when a boolean array is used
         return True
-    if hasattr(obj, 'data_ptr') or hasattr(obj, '__array_interface__'):
+    if hasattr(obj, '__array_interface__'):
+        return len(obj.__array_interface__['shape']) > 0  # NumPy scalars contain an empty shape tuple
+    if hasattr(obj, 'data_ptr'):
         try:
             return hasattr(obj, 'shape') and len(obj.shape) > 0
-        except TypeError:  # NumPy scalar objects define an attribute called shape that cannot be used
+        except TypeError:  # PyTorch scalar objects define an attribute called shape that cannot be used
             return False
     return False
 
