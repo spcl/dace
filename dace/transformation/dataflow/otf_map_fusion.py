@@ -1,5 +1,6 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" This module contains classes that implement the OTF map fusion transformation.
+# Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
+"""
+This module contains classes that implement the OTF map fusion transformation.
 """
 import copy
 import sympy
@@ -17,8 +18,9 @@ from dace import symbolic
 
 
 class OTFMapFusion(transformation.SingleStateTransformation):
-    """ Performs fusion of two maps by replicating the contents of the first into the second map
-        until all the input dependencies (memlets) of the second one are met.
+    """
+    Performs fusion of two maps by replicating the contents of the first into the second map
+    until all the input dependencies (memlets) of the second one are met.
     """
     first_map_exit = transformation.PatternNode(nds.ExitNode)
     array = transformation.PatternNode(nds.AccessNode)
@@ -183,9 +185,9 @@ class OTFMapFusion(transformation.SingleStateTransformation):
                         ranges = []
                         for i, access in enumerate(memlet.subset.ranges):
                             b, e, s = access
-                            b = sympy.sympify(b)
-                            e = sympy.sympify(e)
-                            s = sympy.sympify(s)
+                            b = symbolic.pystr_to_symbolic(b)
+                            e = symbolic.pystr_to_symbolic(e)
+                            s = symbolic.pystr_to_symbolic(s)
 
                             for param, sub in param_subs[i].items():
                                 b = b.subs(param, sub)
@@ -261,33 +263,34 @@ class OTFMapFusion(transformation.SingleStateTransformation):
 
     @staticmethod
     def solve(first_params, write_accesses, second_params, read_accesses):
-        """ Infers the memory access for the write memlet given the
-            location/parameters of the read access.
+        """
+        Infers the memory access for the write memlet given the
+        location/parameters of the read access.
 
-            Example:
-            - Write memlet: A[i + 1, j]
-            - Read memlet: A[k, l]
-            - Infer: k -> i - 1, l - > j
+        Example:
+        - Write memlet: ``A[i + 1, j]``
+        - Read memlet: ``A[k, l]``
+        - Infer: ``k -> i - 1, l - > j``
 
-            :param first_params: parameters of the first_map_entry.
-            :param write_accesses: subset ranges of the write memlet.
-            :param second_params: parameters of the second map_entry.
-            :param read_accesses: subset ranges of the read memlet.
-            :return: mapping of parameters.
+        :param first_params: parameters of the first_map_entry.
+        :param write_accesses: subset ranges of the write memlet.
+        :param second_params: parameters of the second map_entry.
+        :param read_accesses: subset ranges of the read memlet.
+        :return: mapping of parameters.
         """
 
         # Make sure that parameters of first_map_entry are different symbols than parameters of second_map_entry.
         first_params_subs = {}
         first_params_subs_ = {}
         for i, param in enumerate(first_params):
-            s = sympy.symbols(f'f_{i}')
+            s = symbolic.symbol(f'f_{i}')
             first_params_subs[param] = s
             first_params_subs_[s] = param
 
         second_params_subs = {}
         second_params_subs_ = {}
         for i, param in enumerate(second_params):
-            s = sympy.symbols(f's_{i}')
+            s = symbolic.symbol(f's_{i}')
             second_params_subs[param] = s
             second_params_subs_[s] = param
 
@@ -297,9 +300,9 @@ class OTFMapFusion(transformation.SingleStateTransformation):
             if isinstance(e0, symbolic.SymExpr):
                 return None
 
-            b0 = sympy.sympify(b0)
-            e0 = sympy.sympify(e0)
-            s0 = sympy.sympify(s0)
+            b0 = symbolic.pystr_to_symbolic(b0)
+            e0 = symbolic.pystr_to_symbolic(e0)
+            s0 = symbolic.pystr_to_symbolic(s0)
             for param in first_params_subs:
                 b0 = b0.subs(param, first_params_subs[param])
                 e0 = e0.subs(param, first_params_subs[param])
@@ -309,9 +312,9 @@ class OTFMapFusion(transformation.SingleStateTransformation):
             if isinstance(e1, symbolic.SymExpr):
                 return None
 
-            b1 = sympy.sympify(b1)
-            e1 = sympy.sympify(e1)
-            s1 = sympy.sympify(s1)
+            b1 = symbolic.pystr_to_symbolic(b1)
+            e1 = symbolic.pystr_to_symbolic(e1)
+            s1 = symbolic.pystr_to_symbolic(s1)
             for param in second_params_subs:
                 b1 = b1.subs(param, second_params_subs[param])
                 e1 = e1.subs(param, second_params_subs[param])

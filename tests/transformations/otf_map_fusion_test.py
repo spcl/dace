@@ -221,11 +221,13 @@ def fusion_tree(A: dace.float64[10, 20], B: dace.float64[10, 20], C: dace.float6
 
 
 def test_memlet_equation():
-    i, j = sympy.symbols('i, j')
+    i = dace.symbolic.symbol('i')
+    j = dace.symbolic.symbol('j')
     write_params = [i, j]
     write_accesses = ((i, i, 1), (j - 1, j - 1, 1))
 
-    k, l = sympy.symbols('k, l')
+    k = dace.symbolic.symbol('k')
+    l = dace.symbolic.symbol('l')
     read_params = [k, l]
     read_accesses = ((k, k, 1), (l + 2, l + 2, 1))
 
@@ -235,7 +237,8 @@ def test_memlet_equation():
 
 
 def test_memlet_equation_same_symbols():
-    i, j = sympy.symbols('i, j')
+    i = dace.symbolic.symbol('i')
+    j = dace.symbolic.symbol('j')
     write_params = [i, j]
     write_accesses = ((i, i, 1), (j - 1, j - 1, 1))
 
@@ -248,7 +251,7 @@ def test_memlet_equation_same_symbols():
 
 
 def test_memlet_equation_constant_read():
-    i = sympy.symbols('i')
+    i = dace.symbolic.symbol('i')
     write_params = [i]
     write_accesses = ((i, i, 1), )
 
@@ -282,7 +285,7 @@ def test_memlet_equation_constant_read_and_write_fail():
 
 
 def test_memlet_equation_constant_write():
-    i = sympy.symbols('i')
+    i = dace.symbolic.symbol('i')
     write_params = [i]
     write_accesses = ((0, 0, 1), )
 
