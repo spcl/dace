@@ -2,6 +2,7 @@
 import ast
 from collections import OrderedDict
 import copy
+from dataclasses import dataclass
 import itertools
 import inspect
 import re
@@ -46,6 +47,10 @@ ShapeList = List[Size]
 Shape = Union[ShapeTuple, ShapeList]
 DependencyType = Dict[str, Tuple[SDFGState, Union[Memlet, nodes.Tasklet], Tuple[int]]]
 
+@dataclass(unsafe_hash=True)
+class StringLiteral:
+    """ A string literal found in a parsed DaCe program. """
+    value: Union[str, bytes]
 
 class SkipCall(Exception):
     """ Exception used to skip calls to functions that cannot be parsed. """
@@ -3855,14 +3860,15 @@ class ProgramVisitor(ExtNodeVisitor):
                     else:
                         allargs.append(parsed_arg)
                 else:
-                    if isinstance(parsed_arg, (Number, numpy.number, type(None))):
+                    if isinstance(parsed_arg, StringLiteral):
+                        # Special case for strings
+                        parsed_arg = f'"{astutils.escape_string(parsed_arg.value)}"'
+                        atype = data.Scalar(dtypes.string())
+                    elif isinstance(parsed_arg, (Number, numpy.number, type(None))):
                         atype = data.create_datadescriptor(type(parsed_arg))
                     else:
                         atype = data.create_datadescriptor(parsed_arg)
 
-                    if isinstance(parsed_arg, str):
-                        # Special case for strings
-                        parsed_arg = f'"{astutils.escape_string(parsed_arg)}"'
                     allargs.append(parsed_arg)
 
                 argtypes.append(atype)
@@ -4375,8 +4381,12 @@ class ProgramVisitor(ExtNodeVisitor):
 
     #### Visitors that return arrays
     def visit_Str(self, node: ast.Str):
-        # A string constant returns itself
-        return node.s
+        # A string constant returns a string literal
+        return StringLiteral(node.s)
+
+    def visit_Bytes(self, node: ast.Bytes):
+        # A bytes constant returns a string literal
+        return StringLiteral(node.s)
 
     def visit_Num(self, node: ast.Num):
         if isinstance(node.n, bool):
@@ -4390,6 +4400,8 @@ class ProgramVisitor(ExtNodeVisitor):
             return dace.bool_(node.value)
         if isinstance(node.value, (int, float, complex)):
             return dtypes.DTYPE_TO_TYPECLASS[type(node.value)](node.value)
+        if isinstance(node.value, (str, bytes)):
+            return StringLiteral(node.value)
         return node.value
 
     def visit_Name(self, node: ast.Name):
