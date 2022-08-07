@@ -4,7 +4,6 @@ This module contains classes that implement the OTF map fusion transformation.
 """
 import copy
 import sympy
-import random
 
 from dace.sdfg.sdfg import SDFG
 from dace.sdfg.state import SDFGState
@@ -106,7 +105,7 @@ class OTFMapFusion(transformation.SingleStateTransformation):
         connector_mapping = {}
         for edge in graph.in_edges(first_map_entry):
             old_in_connector = edge.dst_conn
-            new_in_connector = "IN_" + str(random.randint(32, 65536))
+            new_in_connector = self.second_map_entry.next_connector(old_in_connector)
             if self.second_map_entry.add_in_connector(new_in_connector):
                 memlet = copy.deepcopy(edge.data)
                 graph.add_edge(edge.src, edge.src_conn, self.second_map_entry, new_in_connector, memlet)
