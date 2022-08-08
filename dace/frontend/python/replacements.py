@@ -21,7 +21,7 @@ from dace.frontend.python import astutils
 from dace.frontend.python.nested_call import NestedCall
 from dace.memlet import Memlet
 from dace.sdfg import nodes, SDFG, SDFGState
-from dace.symbolic import pystr_to_symbolic, issymbolic
+from dace.symbolic import pystr_to_symbolic, issymbolic, inequal_symbols
 
 import numpy as np
 import sympy as sp
@@ -1131,7 +1131,7 @@ def _broadcast_together(arr1_shape, arr2_shape, unidirectional=False):
     for i, (dim1, dim2) in enumerate(itertools.zip_longest(reversed(arr1_shape), reversed(arr2_shape))):
         all_idx.append(get_idx(i))
 
-        if dim1 == dim2:
+        if not inequal_symbols(dim1, dim2):
             a1_idx.append(get_idx(i))
             a2_idx.append(get_idx(i))
 

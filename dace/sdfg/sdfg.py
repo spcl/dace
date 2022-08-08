@@ -535,6 +535,8 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             return self._arrays[dataname]
         if str(dataname) in self.symbols:
             return self.symbols[str(dataname)]
+        if dataname in self.constants_prop:
+            return self.constants_prop[dataname][0]
         raise KeyError('Data descriptor with name "%s" not found in SDFG' % dataname)
 
     def replace(self, name: str, new_name: str):
@@ -895,8 +897,8 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         handle = binaryobj.initialize(*args, **kwargs)
         set_report(handle, ctypes.c_char_p(os.path.abspath(dreport.folder).encode('utf-8')))
 
-        # Verify passed arguments (unless disabled by the user)
-        if dace.config.Config.get_bool("execution", "general", "check_args"):
+        # Verify passed arguments (if enabled)
+        if Config.get_bool('frontend', 'check_args'):
             self.argument_typecheck(args, kwargs)
         return binaryobj(*args, **kwargs)
 
@@ -2277,8 +2279,8 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
         binaryobj = sdfg.compile()
 
-        # Verify passed arguments (unless disabled by the user)
-        if dace.config.Config.get_bool("execution", "general", "check_args"):
+        # Verify passed arguments (if enabled)
+        if Config.get_bool('frontend', 'check_args'):
             sdfg.argument_typecheck(args, kwargs)
         return binaryobj(*args, **kwargs)
 
@@ -2626,7 +2628,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
            :param array: the name of the array
            :return: a Memlet that fully transfers array
         """
-        return dace.Memlet.from_array(array, self.arrays[array])
+        return dace.Memlet.from_array(array, self.data(array))
 
 
 def _get_optimizer_class(class_override):

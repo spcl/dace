@@ -552,12 +552,14 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                 strides = [1]
                 total_size = 1
 
-            nsdfg.data(nname).strides = tuple(strides)
-            nsdfg.data(nname).total_size = total_size
+            if isinstance(nsdfg.data(nname), data.Array):
+                nsdfg.data(nname).strides = tuple(strides)
+                nsdfg.data(nname).total_size = total_size
 
         else:
-            nsdfg.data(nname).strides = sdfg.data(name).strides
-            nsdfg.data(nname).total_size = sdfg.data(name).total_size
+            if isinstance(nsdfg.data(nname), data.Array):
+                nsdfg.data(nname).strides = sdfg.data(name).strides
+                nsdfg.data(nname).total_size = sdfg.data(name).total_size
 
         # traverse the whole graph and search for arrays
         for ngraph in nsdfg.nodes():
@@ -1133,47 +1135,64 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                     if isinstance(e.dst, nodes.AccessNode) and node.data == e.dst.data:
                         onode = e.dst
                         break
+
                 to_remove = set()
+
+                # Compute the union of all incoming subsets.
+                # TODO: Do we expect this operation to ever fail?
+                in_subset: subsets.Subset = None
                 for ie in graph.in_edges(node):
-                    # Used to flag cases where we cannot remove the ie (inner) edge.
-                    should_remove = True
-                    for oe in graph.out_edges(node):
-                        new_node = None
-                        # Special cases if subsets intersect.
-                        if ie.data.dst_subset.intersects(oe.data.src_subset):
-                            # If the subsets are exactly the same, then we add a new transient.
-                            # The edges are redirected to the transient.
-                            # We add a memlet path from the transient to the outer exit access node.
-                            if ie.data.dst_subset == oe.data.src_subset:
-                                desc = sdfg.arrays[node.data]
-                                name, new_desc = sdfg.add_temp_transient(ie.data.dst_subset.bounding_box_size(),
-                                                                         desc.dtype, desc.storage)
-                                new_node = graph.add_access(name)
-                                graph.add_edge(ie.src, ie.src_conn, new_node, ie.dst_conn,
-                                               Memlet.from_array(name, new_desc))
-                                graph.add_edge(new_node, oe.src_conn, oe.dst, oe.dst_conn,
-                                               Memlet.from_array(name, new_desc))
-                                if not onode:
-                                    onode = graph.add_access(node.data)
-                                graph.add_memlet_path(new_node,
-                                                      global_map_exit,
-                                                      onode,
-                                                      memlet=oe.data,
-                                                      src_conn=oe.src_conn)
-                                to_remove.add(ie)
-                                to_remove.add(oe)
-                            should_remove = False
-                        else:
-                            to_remove.add(oe)
-                            if not inode:
-                                inode = graph.add_access(node.data)
-                            graph.add_memlet_path(inode, global_map_entry, oe.dst, memlet=oe.data, dst_conn=oe.dst_conn)
-                    if should_remove:
-                        to_remove.add(ie)
-                        if not onode:
-                            onode = graph.add_access(node.data)
-                        graph.add_memlet_path(ie.src, global_map_exit, onode, memlet=ie.data, src_conn=ie.src_conn)
-                print(to_remove)
+                    if in_subset:
+                        in_subset = subsets.union(in_subset, ie.data.dst_subset)
+                    else:
+                        in_subset = ie.data.dst_subset
+
+                # Create transient data corresponding to the union of the incoming subsets.
+                desc = sdfg.arrays[node.data]
+                name, new_desc = sdfg.add_temp_transient(in_subset.bounding_box_size(), desc.dtype, desc.storage)
+                new_node = graph.add_access(name)
+
+                # Reconnect incoming edges through the transient data.
+                for ie in graph.in_edges(node):
+                    mem = Memlet(data=name,
+                                 subset=ie.data.dst_subset.offset_new(in_subset, True),
+                                 other_subset=ie.data.src_subset)
+                    new_edge = graph.add_edge(ie.src, ie.src_conn, new_node, None, mem)
+                    to_remove.add(ie)
+                    # Update memlet paths.
+                    for e in graph.memlet_path(new_edge):
+                        if e.data.data == node.data:
+                            e.data.data = name
+                            e.data.dst_subset.offset(in_subset, True)
+
+                # Reconnect outgoing edges through the transient data.
+                for oe in graph.out_edges(node):
+                    if in_subset.covers(oe.data.src_subset):
+                        mem = Memlet(data=name,
+                                     subset=oe.data.src_subset.offset_new(in_subset, True),
+                                     other_subset=oe.data.dst_subset)
+                        new_edge = graph.add_edge(new_node, None, oe.dst, oe.dst_conn, mem)
+                        # Update memlet paths.
+                        for e in graph.memlet_path(new_edge):
+                            if e.data.data == node.data:
+                                e.data.data = name
+                                e.data.src_subset.offset(in_subset, True)
+                    else:
+                        # If the outgoing subset is not covered by the transient data, connect to the outer input node.
+                        if not inode:
+                            inode = graph.add_access(node.data)
+                        graph.add_memlet_path(inode, global_map_entry, oe.dst, memlet=oe.data, dst_conn=oe.dst_conn)
+                    to_remove.add(oe)
+
+                # Connect transient data to the outer output node.
+                if not onode:
+                    onode = graph.add_access(node.data)
+                graph.add_memlet_path(new_node,
+                                      global_map_exit,
+                                      onode,
+                                      memlet=Memlet(data=node.data, subset=in_subset),
+                                      src_conn=None)
+
                 for e in to_remove:
                     graph.remove_edge(e)
                 if to_remove:

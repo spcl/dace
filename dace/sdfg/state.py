@@ -832,9 +832,9 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
         if not isinstance(memlet, mm.Memlet):
             raise TypeError("Memlet is not of type Memlet (type: %s)" % str(type(memlet)))
 
-        if u_connector and isinstance(u, nd.AccessNode):
+        if u_connector and isinstance(u, nd.AccessNode) and u_connector not in u.out_connectors:
             u.add_out_connector(u_connector, force=True)
-        if v_connector and isinstance(v, nd.AccessNode):
+        if v_connector and isinstance(v, nd.AccessNode) and v_connector not in v.in_connectors:
             v.add_in_connector(v_connector, force=True)
 
         self._clear_scopedict_cache()
@@ -1671,8 +1671,6 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
 
             self.remove_edge(edge)
 
-            edges_remain = len(self.edges_between(edge.src, edge.dst)) > 0
-
             # Check if there are any other edges exiting the source node that
             # use the same connector
             for e in self.out_edges(edge.src):
@@ -1696,7 +1694,8 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
             if isinstance(edge.src, nd.EntryNode):
                 # If removing this edge orphans the entry node, replace the
                 # edge with an empty edge
-                if not edges_remain:
+                # NOTE: The entry node is an orphan iff it has no other outgoing edges.
+                if self.out_degree(edge.src) == 0:
                     self.add_nedge(edge.src, edge.dst, mm.Memlet())
                 if other_outgoing:
                     # If other inner memlets use the outer memlet, we have to
@@ -1706,7 +1705,8 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
             if isinstance(edge.dst, nd.ExitNode):
                 # If removing this edge orphans the exit node, replace the
                 # edge with an empty edge
-                if not edges_remain:
+                # NOTE: The exit node is an orphan iff it has no other incoming edges.
+                if self.in_degree(edge.dst) == 0:
                     self.add_nedge(edge.src, edge.dst, mm.Memlet())
                 if other_incoming:
                     # If other inner memlets use the outer memlet, we have to

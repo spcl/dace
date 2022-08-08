@@ -147,6 +147,7 @@ class symbol(sympy.Symbol):
 class SymExpr(object):
     """ Symbolic expressions with support for an overapproximation expression.
     """
+
     def __init__(self, main_expr: Union[str, 'SymExpr'], approx_expr: Optional[Union[str, 'SymExpr']] = None):
         self._main_expr = pystr_to_symbolic(main_expr)
         if approx_expr is None:
@@ -579,6 +580,7 @@ def sympy_numeric_fix(expr):
 
 
 class int_floor(sympy.Function):
+
     @classmethod
     def eval(cls, x, y):
         """
@@ -596,6 +598,7 @@ class int_floor(sympy.Function):
 
 
 class int_ceil(sympy.Function):
+
     @classmethod
     def eval(cls, x, y):
         """
@@ -613,6 +616,7 @@ class int_ceil(sympy.Function):
 
 
 class OR(sympy.Function):
+
     @classmethod
     def eval(cls, x, y):
         """
@@ -630,6 +634,7 @@ class OR(sympy.Function):
 
 
 class AND(sympy.Function):
+
     @classmethod
     def eval(cls, x, y):
         """
@@ -646,7 +651,32 @@ class AND(sympy.Function):
         return True
 
 
+class BitwiseAnd(sympy.Function):
+    pass
+
+
+class BitwiseOr(sympy.Function):
+    pass
+
+
+class BitwiseXor(sympy.Function):
+    pass
+
+
+class BitwiseNot(sympy.Function):
+    pass
+
+
+class LeftShift(sympy.Function):
+    pass
+
+
+class RightShift(sympy.Function):
+    pass
+
+
 class ROUND(sympy.Function):
+
     @classmethod
     def eval(cls, x):
         """
@@ -931,6 +961,38 @@ class SympyBooleanConverter(ast.NodeTransformer):
         return self.visit_Constant(node)
 
 
+class BitwiseOpConverter(ast.NodeTransformer):
+    """ 
+    Replaces C/C++ bitwise operations with functions to avoid sympification to boolean operations.
+    """
+    _ast_to_sympy_functions = {
+        ast.BitAnd: 'BitwiseAnd',
+        ast.BitOr: 'BitwiseOr',
+        ast.BitXor: 'BitwiseXor',
+        ast.Invert: 'BitwiseNot',
+        ast.LShift: 'LeftShift',
+        ast.RShift: 'RightShift'
+    }
+
+    def visit_UnaryOp(self, node):
+        if isinstance(node.op, ast.Invert):
+            func_node = ast.copy_location(
+                ast.Name(id=BitwiseOpConverter._ast_to_sympy_functions[type(node.op)], ctx=ast.Load()), node)
+            new_node = ast.Call(func=func_node, args=[self.visit(node.operand)], keywords=[])
+            return ast.copy_location(new_node, node)
+        return node
+
+    def visit_BinOp(self, node):
+        if type(node.op) in BitwiseOpConverter._ast_to_sympy_functions:
+            func_node = ast.copy_location(
+                ast.Name(id=BitwiseOpConverter._ast_to_sympy_functions[type(node.op)], ctx=ast.Load()), node)
+            new_node = ast.Call(func=func_node,
+                                args=[self.visit(value) for value in (node.left, node.right)],
+                                keywords=[])
+            return ast.copy_location(new_node, node)
+        return node
+
+
 @lru_cache(maxsize=16384)
 def pystr_to_symbolic(expr, symbol_map=None, simplify=None) -> sympy.Basic:
     """ Takes a Python string and converts it into a symbolic expression. """
@@ -971,6 +1033,12 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None) -> sympy.Basic:
         'arg': sympy.Symbol('arg'),
         'Is': Is,
         'IsNot': IsNot,
+        'BitwiseAnd': BitwiseAnd,
+        'BitwiseOr': BitwiseOr,
+        'BitwiseXor': BitwiseXor,
+        'BitwiseNot': BitwiseNot,
+        'LeftShift': LeftShift,
+        'RightShift': RightShift
     }
     # _clash1 enables all one-letter variables like N as symbols
     # _clash also allows pi, beta, zeta and other common greek letters
@@ -980,6 +1048,11 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None) -> sympy.Basic:
     # And/Or(x, y), Not(x)
     if isinstance(expr, str) and re.search(r'\bnot\b|\band\b|\bor\b|\bNone\b|==|!=|\bis\b', expr):
         expr = unparse(SympyBooleanConverter().visit(ast.parse(expr).body[0]))
+
+    # NOTE: If the expression contains bitwise operations, replace them with user-functions.
+    # NOTE: Sympy does not support bitwise operations and converts them to boolean operations.
+    if isinstance(expr, str) and re.search('[&]|[|]|[\^]|[~]|[<<]|[>>]', expr):
+        expr = unparse(BitwiseOpConverter().visit(ast.parse(expr).body[0]))
 
     # TODO: support SymExpr over-approximated expressions
     try:
@@ -999,6 +1072,7 @@ def simplify(expr: SymbolicType) -> SymbolicType:
 class DaceSympyPrinter(sympy.printing.str.StrPrinter):
     """ Several notational corrections for integer math and C++ translation
         that sympy.printing.cxxcode does not provide. """
+
     def __init__(self, arrays, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.arrays = arrays or set()
@@ -1172,6 +1246,7 @@ class SympyAwarePickler(pickle.Pickler):
     Custom Pickler class that safely saves SymPy expressions
     with function definitions in expressions (e.g., int_ceil).
     """
+
     def persistent_id(self, obj):
         if isinstance(obj, sympy.Basic):
             # Save sympy expression as srepr
@@ -1186,6 +1261,7 @@ class SympyAwareUnpickler(pickle.Unpickler):
     Custom Unpickler class that safely restores SymPy expressions
     with function definitions in expressions (e.g., int_ceil).
     """
+
     def persistent_load(self, pid):
         type_tag, value = pid
         if type_tag == "DaCeSympyExpression":

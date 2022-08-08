@@ -1,11 +1,11 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-from dace import dtypes, symbolic
+# Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
+from copy import deepcopy
+from dace import data, dtypes, sdfg as sd, symbolic
 from dace.sdfg import SDFG
 from dace.properties import CodeBlock
 from dace.codegen import cppunparse
 from functools import lru_cache
 from typing import List, Optional, Set, Union
-import sympy
 import warnings
 
 
@@ -51,7 +51,9 @@ def sym2cpp(s, arrayexprs: Optional[Set[str]] = None) -> Union[str, List[str]]:
 
 
 def codeblock_to_cpp(cb: CodeBlock):
-    """ Converts a CodeBlock object to a C++ string. """
+    """
+    Converts a CodeBlock object to a C++ string.
+    """
     if cb.language == dtypes.Language.CPP:
         return cb.as_string
     elif cb.language == dtypes.Language.Python:
@@ -59,3 +61,22 @@ def codeblock_to_cpp(cb: CodeBlock):
     else:
         warnings.warn('Unrecognized language %s in codeblock' % cb.language)
         return cb.as_string
+
+
+def update_persistent_desc(desc: data.Data, sdfg: SDFG):
+    """
+    Replaces the symbols used in a persistent data descriptor according to NestedSDFG's symbol mapping.
+    The replacement happens recursively up to the top-level SDFG.
+    """
+    if (desc.lifetime == dtypes.AllocationLifetime.Persistent and sdfg.parent and
+            any(str(s) in sdfg.parent_nsdfg_node.symbol_mapping for s in desc.free_symbols)):
+        newdesc = deepcopy(desc)
+        csdfg = sdfg
+        while csdfg.parent_sdfg:
+            if any(str(s) not in csdfg.parent_nsdfg_node.symbol_mapping for s in newdesc.free_symbols):
+                raise ValueError("Persistent data descriptor depends on symbols defined in NestedSDFG scope.")
+            symbolic.safe_replace(csdfg.parent_nsdfg_node.symbol_mapping,
+                                  lambda m: sd.replace_properties_dict(newdesc, m))
+            csdfg = csdfg.parent_sdfg
+        return newdesc
+    return desc

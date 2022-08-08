@@ -148,6 +148,10 @@ def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integer
 
             # Check inputs
             if isinstance(edge.src, nodes.AccessNode):
+                # Ensure that the storage is the same
+                if sdfg.arrays[edge.src.data].storage != sdfg.arrays[candidate].storage:
+                    candidates.remove(candidate)
+                    continue
                 # If input is array, ensure it is not a stream
                 if isinstance(sdfg.arrays[edge.src.data], dt.Stream):
                     candidates.remove(candidate)
@@ -706,7 +710,11 @@ class ScalarToSymbolPromotion(passes.Pass):
             for aname, assignment in ise.assignments.items():
                 for scalar in to_promote:
                     if scalar in assignment:
-                        ise.assignments[aname] = cleanup_re[scalar].sub(scalar, assignment.strip())
+                        # NOTE: At least in Python 3.7, the string `assignment` is a copy of `ise.assignments[aname]`.
+                        # Performing all substitutions in `assignment` and finally setting `ise.assignments[aname]`
+                        # should work for all Python versions.
+                        assignment = cleanup_re[scalar].sub(scalar, assignment.strip())
+                ise.assignments[aname] = assignment
 
         # Step 7: Indirection
         remove_symbol_indirection(sdfg)

@@ -153,6 +153,7 @@ class InstrumentationType(aenum.AutoNumberEnum):
     No_Instrumentation = ()
     Timer = ()
     PAPI_Counters = ()
+    LIKWID_Counters = ()
     GPU_Events = ()
     FPGA = ()
 
@@ -179,7 +180,7 @@ class TilingType(aenum.AutoNumberEnum):
 
 # Maps from ScheduleType to default StorageType
 SCOPEDEFAULT_STORAGE = {
-    StorageType.Default: StorageType.Default,
+    ScheduleType.Default: StorageType.Default,
     None: StorageType.CPU_Heap,
     ScheduleType.Sequential: StorageType.Register,
     ScheduleType.MPI: StorageType.CPU_Heap,
@@ -962,10 +963,7 @@ class callback(typeclass):
             if isinstance(arg, data.Array):
                 inp_arraypos.append(index)
                 inp_types_and_sizes.append((arg.dtype.as_ctypes(), arg.shape))
-                if arg.storage == StorageType.GPU_Global:
-                    inp_converters.append(ptrtocupy)
-                else:
-                    inp_converters.append(ptrtonumpy)
+                inp_converters.append(partial(data.make_reference_from_descriptor, arg))
             elif isinstance(arg, data.Scalar) and isinstance(arg.dtype, string):
                 inp_arraypos.append(index)
                 inp_types_and_sizes.append((ctypes.c_char_p, []))
@@ -981,10 +979,7 @@ class callback(typeclass):
             if isinstance(arg, data.Array):
                 ret_arraypos.append(index + offset)
                 ret_types_and_sizes.append((arg.dtype.as_ctypes(), arg.shape))
-                if arg.storage == StorageType.GPU_Global:
-                    ret_converters.append(ptrtocupy)
-                else:
-                    ret_converters.append(ptrtonumpy)
+                ret_converters.append(partial(data.make_reference_from_descriptor, arg))
             elif isinstance(arg, data.Scalar) and isinstance(arg.dtype, string):
                 ret_arraypos.append(index + offset)
                 ret_types_and_sizes.append((ctypes.c_char_p, []))
@@ -1015,7 +1010,7 @@ class callback(typeclass):
                         non_symbolic_sizes.append(other_arguments[str(s)])
                     else:
                         non_symbolic_sizes.append(s)
-                list_of_other_inputs[i] = inp_converters[i](other_inputs[i], data_type, non_symbolic_sizes)
+                list_of_other_inputs[i] = inp_converters[i](other_inputs[i], other_arguments)
             for j, i in enumerate(ret_indices):
                 data_type, size = ret_data_types_and_sizes[j]
                 non_symbolic_sizes = []
@@ -1024,8 +1019,8 @@ class callback(typeclass):
                         non_symbolic_sizes.append(other_arguments[str(s)])
                     else:
                         non_symbolic_sizes.append(s)
-                list_of_outputs[i - ret_indices[0]] = ret_converters[i - ret_indices[0]](other_inputs[i], data_type,
-                                                                                         non_symbolic_sizes)
+                list_of_outputs[i - ret_indices[0]] = ret_converters[i - ret_indices[0]](other_inputs[i],
+                                                                                         other_arguments)
             if ret_indices:
                 ret = orig_function(*list_of_other_inputs)
                 if len(list_of_outputs) == 1:
@@ -1439,10 +1434,12 @@ def is_array(obj: Any) -> bool:
         # In PyTorch, accessing this attribute throws a runtime error for
         # variables that require grad, or KeyError when a boolean array is used
         return True
-    if hasattr(obj, 'data_ptr') or hasattr(obj, '__array_interface__'):
+    if hasattr(obj, '__array_interface__'):
+        return len(obj.__array_interface__['shape']) > 0  # NumPy scalars contain an empty shape tuple
+    if hasattr(obj, 'data_ptr'):
         try:
             return hasattr(obj, 'shape') and len(obj.shape) > 0
-        except TypeError:  # NumPy scalar objects define an attribute called shape that cannot be used
+        except TypeError:  # PyTorch scalar objects define an attribute called shape that cannot be used
             return False
     return False
 

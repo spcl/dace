@@ -52,13 +52,33 @@ class DaCeCodeGenerator(object):
         fsyms = self.free_symbols(sdfg)
         self.arglist = sdfg.arglist(scalars_only=False, free_symbols=fsyms)
 
+        # resolve all symbols and constants
+        # first handle root
+        self._symbols_and_constants[sdfg.sdfg_id] = sdfg.free_symbols.union(sdfg.constants_prop.keys())
+        # then recurse
+        for nested, state in sdfg.all_nodes_recursive():
+            if isinstance(nested, nodes.NestedSDFG):
+                state: SDFGState
+
+                nsdfg = nested.sdfg
+
+                # found a new nested sdfg: resolve symbols and constants
+                result = nsdfg.free_symbols.union(nsdfg.constants_prop.keys())
+
+                parent_constants = self._symbols_and_constants[nsdfg._parent_sdfg.sdfg_id]
+                result |= parent_constants
+
+                # check for constant inputs
+                for edge in state.in_edges(nested):
+                    if edge.data.data in parent_constants:
+                        # this edge is constant => propagate to nested sdfg
+                        result.add(edge.dst_conn)
+
+                self._symbols_and_constants[nsdfg.sdfg_id] = result
+
     # Cached fields
     def symbols_and_constants(self, sdfg: SDFG):
-        if sdfg.sdfg_id in self._symbols_and_constants:
-            return self._symbols_and_constants[sdfg.sdfg_id]
-        result = sdfg.free_symbols.union(sdfg.constants.keys())
-        self._symbols_and_constants[sdfg.sdfg_id] = result
-        return result
+        return self._symbols_and_constants[sdfg.sdfg_id]
 
     def free_symbols(self, obj: Any):
         k = id(obj)
@@ -653,10 +673,11 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                     instances = access_instances[sdfg.sdfg_id][name]
                     if any(inst not in reachability[sdfg.sdfg_id][first_state_instance] for inst in instances):
                         first_state_instance, last_state_instance = _get_dominator_and_postdominator(sdfg, instances)
-                        first_node_instance = nodes.AccessNode(name)
-                        last_node_instance = nodes.AccessNode(name)
                         # Declare in SDFG scope
-                        self.to_allocate[curscope].append((sdfg, None, first_node_instance, True, False, False))
+                        # NOTE: Even if we declare the data at a common dominator, we keep the first and last node
+                        # instances. This is especially needed for Views which require both the SDFGState and the
+                        # AccessNode.
+                        self.to_allocate[curscope].append((sdfg, None, nodes.AccessNode(name), True, False, False))
                     else:
                         self.to_allocate[curscope].append(
                             (sdfg, first_state_instance, first_node_instance, True, False, False))
