@@ -13,19 +13,52 @@ high-performance code. In a data-centric programming paradigm, three governing p
     2. Data movement must be explicit, both from data containers to computations and to other data containers.
     3. Control flow dependencies must be minimized, and only define execution order if no implicit dataflow is given.
 
-As opposed to
-data-centric vs. control-centric
+As opposed to instruction-driven execution that augments analyses with dataflow (i.e., the *control-centric* view), 
+execution in the *data-centric* view is data-driven. This means that concepts such as parallelism are inherent to
+the representation, and can be scheduled to run efficiently on a wide variety of platforms. 
 
+Some of the main differences between SDFGs and other representations are:
 
-differentiate between scopes and data-centric "scopes"
-differentiate between read/write/update
-differentiate between symbols and scalars
+    * Scoping is different: instead of functions and modules, in SDFGs the scopes relate to dataflow: a 
+      scope can be a graph, a parallel region (see :ref:`sdfg-map`), or anything that has regions of data passed in/out of it.
+    * There are two kinds of scalar values: **scalar** data containers and **symbols** (see :ref:`sdfg-symbol` for more
+      information).
+    * We make a distinction between three types of data movement: **read**, **write**, and **update** (for which we
+      use a write-conflict resolution function). See :ref:`sdfg-memlet` for more details.
 
 The Language
 ------------
 
-with pictures
+In a nutshell, an SDFG is a state machine of acyclic dataflow multigraphs. Here is an example graph:
 
+.. raw:: html
+
+  <iframe width="100%" height="500" frameborder="0" src="../_static/embed.html?url=sdfg/example.sdfg"></iframe>
+
+
+.. note::
+  Use the left mouse button to navigate and scroll wheel to zoom. Hover over edges or zoom into certain nodes (e.g., 
+  tasklets) to see more information.
+
+
+The cyan rectangles are called **states** and together they form a state machine, executing the code from the starting
+state and following the blue edge that matches the conditions. In each state, an acyclic multigraph controls execution
+through dataflow. There are four elements in the above state:
+
+    * **Access nodes** (ovals) that give access to data containers
+    * **Memlets** (edges/dotted arrows) that represent units of data movement
+    * **Tasklets** (octagons) that contain computations (zoom in on the above example to see the code)
+    * **Map scopes** (trapezoids) representing parametric parallel sections (replicating all the nodes inside them N x N
+      times)
+
+Dataflow is captured in the memlets, which can go from access nodes and tasklets to each other, moving through map
+scopes. As you can see in the example, a memlet can split after going into a map, as the parallel region forms a scope.
+
+The state machine shown in the example is a for-loop (``for _ in range(5)``). The init state is where execution starts,
+the guard state controls the loop, and at the end the result is copied to the special ``__return`` data container, which
+designates the return value of the function.
+
+There are other kinds of elements in an SDFG, as detailed below.
 
 .. _sdfg-lang:
 
@@ -44,7 +77,7 @@ Data container types: array/scalar/stream.
 
 See :class:`~dace.data.Array` for how it is allocated and how to customize this behavior.
 
-Transient property, aliasing assumptions.
+Transient property, aliasing assumptions. Allocation lifetime
 
 Views and references, see below.
 
@@ -60,6 +93,12 @@ Memlets
 ~~~~~~~
 
 anatomy of a memlet
+
+Reads and writes are self-explanatory, and updates can be implemented in a platform-dependent way, for example atomic
+operations, or different kinds of accumulators on FPGAs. 
+
+No WCR for streams.
+
 
 .. _sdfg-map:
 
