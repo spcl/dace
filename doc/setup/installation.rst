@@ -131,6 +131,8 @@ Common issues with the DaCe Python module
     the ``CPATH`` environment variable, and the library folders to the ``LIBRARY_PATH`` and ``LD_LIBRARY_PATH`` environment
     variables.
 
+  * **Bug in DaCe**: If you suspect an issue happens within DaCe, see :ref:`debugging` for ways to pinpoint the source
+    of the issue.
 
 .. _qa_vscode:
 
