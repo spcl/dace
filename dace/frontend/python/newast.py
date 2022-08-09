@@ -1068,6 +1068,7 @@ class ProgramVisitor(ExtNodeVisitor):
         self.variables = dict()  # Dict[str, str]
         self.accesses = dict()
         self.views: Dict[str, Tuple[str, Memlet]] = {}  # Keeps track of views
+        self.reference_assigns: Dict[str, str] = {}  # Keeps track of reference assignments
         self.nested_closure_arrays: Dict[str, Tuple[Any, data.Data]] = {}
         self.annotated_types: Dict[str, data.Data] = annotated_types or {}
 
@@ -1241,6 +1242,16 @@ class ProgramVisitor(ExtNodeVisitor):
             while nodes:
                 nodes = _views_to_data(state, nodes)
 
+        # Assign References from Phi nodes
+        for state in self.sdfg.nodes():
+            nodes = list(state.data_nodes())
+            for node in nodes:
+                if node.data in self.reference_assigns:
+                    ref_name = self.reference_assigns[node.data]
+                    r = state.add_read(node.data)
+                    w = state.add_write(ref_name)
+                    state.add_edge(r, None, w, Memlet(node.data))
+
         # Try to replace transients with their python-assigned names
         for pyname, arrname in self.variables.items():
             if arrname in self.sdfg.arrays:
@@ -1395,6 +1406,38 @@ class ProgramVisitor(ExtNodeVisitor):
                         "You may use up to 3 arguments (start:stop:step).")
 
         return result
+
+    def visit_PhiAssign(self, node: 'PhiAssign'):
+
+        sdfg = self.sdfg
+
+        phi_target: str = node.target
+        phi_operands: List[str] = node.operand_names
+
+        defined_vars = {**self.variables, **self.scope_vars}
+        defined_arrays = {**self.sdfg.arrays, **self.scope_arrays}
+
+        desc = None
+        for op in phi_operands:
+            if op in defined_vars:
+                true_name = defined_vars[op]
+                desc = defined_arrays[true_name]
+            elif op in defined_arrays:
+                desc = defined_arrays[op]
+        
+        assert desc is not None, f"No descriptor found for {phi_target}"
+
+        name, _ = sdfg.add_reference(phi_target, desc.shape, desc.dtype, desc.storage, find_new_name=True)
+
+        
+        for op in phi_operands:
+            self.reference_assigns[op] = name
+
+        # state = self.last_state
+        # r = state.add_read(assign_array)
+        # w = state.add_write(name)
+        # state.add_edge(r, None, w, 'set', Memlet(assign_array))
+
 
     def visit_FunctionDef(self, node: ast.FunctionDef):
         # Supported decorated function types: map, mapscope, consume,

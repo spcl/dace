@@ -34,6 +34,8 @@ def test_reference_branch():
     B = np.random.rand(20)
     out = np.random.rand(20)
 
+    sdfg.save('bla.sdfg')
+
     sdfg(A=A, B=B, out=out, i=10)
     assert np.allclose(out, B)
 
