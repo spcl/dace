@@ -113,7 +113,8 @@ def copy_expr(
         else:
             return data_name
     else:
-        raise NotImplementedError("copy_expr not implemented " "for connector type: {}".format(def_type))
+        raise NotImplementedError("copy_expr not implemented "
+                                  "for connector type: {}".format(def_type))
 
 
 def memlet_copy_to_absolute_strides(dispatcher, sdfg, memlet, src_node, dst_node, packed_types=False):
@@ -775,6 +776,7 @@ def is_write_conflicted_with_reason(dfg, edge, datanode=None, sdfg_schedule=None
 
 
 class LambdaToFunction(ast.NodeTransformer):
+
     def visit_Lambda(self, node: ast.Lambda):
         newbody = [ast.Return(value=node.body)]
         newnode = ast.FunctionDef(name="_anonymous", args=node.args, body=newbody, decorator_list=[])
@@ -911,8 +913,14 @@ def unparse_tasklet(sdfg, state_id, dfg, node, function_stream, callsite_stream,
         if node.language == dtypes.Language.CPP:
             callsite_stream.write(type(node).__properties__["code"].to_string(node.code), sdfg, state_id, node)
 
-        if hasattr(node, "_cuda_stream") and not is_devicelevel_gpu(sdfg, state_dfg, node):
-            synchronize_streams(sdfg, state_dfg, state_id, node, node, callsite_stream)
+        if not is_devicelevel_gpu(sdfg, state_dfg, node):
+            # Get GPU codegen
+            from dace.codegen.targets import cuda  # Avoid import loop
+            try:
+                gpu_codegen = next(cg for cg in codegen._dispatcher.used_targets if isinstance(cg, cuda.CUDACodeGen))
+            except StopIteration:
+                return
+            synchronize_streams(sdfg, state_dfg, state_id, node, node, callsite_stream, gpu_codegen)
         return
 
     body = node.code.code
@@ -981,6 +989,7 @@ class InterstateEdgeUnparser(cppunparse.CPPUnparser):
     multidimensional array expressions from an existing SDFGs. Used in
     inter-state edge code generation.
     """
+
     def __init__(self, sdfg: SDFG, tree: ast.AST, file: IO[str], defined_symbols=None, codegen=None):
         self.sdfg = sdfg
         self.codegen = codegen
@@ -1033,6 +1042,7 @@ class DaCeKeywordRemover(ExtNodeTransformer):
         :note: Assumes that the DaCe syntax is correct (as verified by the
                Python frontend).
     """
+
     def __init__(self, sdfg, memlets, constants, codegen):
         self.sdfg = sdfg
         self.memlets = memlets
@@ -1290,6 +1300,7 @@ class DaCeKeywordRemover(ExtNodeTransformer):
 class StructInitializer(ExtNodeTransformer):
     """ Replace struct creation calls with compound literal struct
         initializers in tasklets. """
+
     def __init__(self, sdfg: SDFG):
         self._structs = {}
         if sdfg is None:
@@ -1326,7 +1337,7 @@ def presynchronize_streams(sdfg, dfg, state_id, node, callsite_stream):
         return
     backend = Config.get('compiler', 'cuda', 'backend')
     for e in state_dfg.in_edges(node):
-        if hasattr(e.src, "_cuda_stream"):
+        if hasattr(e.src, "_cuda_stream") and e.src._cuda_stream != 'nullptr':
             cudastream = "__state->gpu_context->streams[%d]" % e.src._cuda_stream
             callsite_stream.write(
                 "%sStreamSynchronize(%s);" % (backend, cudastream),
@@ -1337,15 +1348,54 @@ def presynchronize_streams(sdfg, dfg, state_id, node, callsite_stream):
 
 
 # TODO: This should be in the CUDA code generator. Add appropriate conditions to node dispatch predicate
-def synchronize_streams(sdfg, dfg, state_id, node, scope_exit, callsite_stream):
+def synchronize_streams(sdfg, dfg, state_id, node, scope_exit, callsite_stream, codegen):
     # Post-kernel stream synchronization (with host or other streams)
     max_streams = int(Config.get("compiler", "cuda", "max_concurrent_streams"))
     backend = Config.get('compiler', 'cuda', 'backend')
     if max_streams >= 0:
         cudastream = "__state->gpu_context->streams[%d]" % node._cuda_stream
+    else:  # Only default stream is used
+        cudastream = 'nullptr'
+
+    ########################################################
+    # Memory synchronization
+
+    # Try to see if we are removing the last element of a pooled allocation, and if so release the memory
+    to_remove = set()
+    for (sd, name), (state, terminators) in codegen.pool_release.items():
+        if sd is not sdfg or state is not dfg:
+            continue
+        if len(terminators) == 0:  # Already empty, let end-of-state handle
+            continue
+        if scope_exit not in terminators:
+            continue
+
+        # If we are the ones to remove the last terminator, release memory
+        terminators.remove(scope_exit)
+        if len(terminators) == 0:
+            desc = sd.arrays[name]
+            ptrname = ptr(name, desc, sd, codegen._frame)
+            if isinstance(desc, data.Array) and desc.start_offset != 0:
+                ptrname = f'({ptrname} - {sym2cpp(desc.start_offset)})'
+            if Config.get_bool('compiler', 'cuda', 'syncdebug'):
+                callsite_stream.write(f'DACE_CUDA_CHECK({backend}FreeAsync({ptrname}, {cudastream}));\n', sdfg, state_id, scope_exit)
+                callsite_stream.write(f'DACE_CUDA_CHECK({backend}DeviceSynchronize());')
+            else:
+                callsite_stream.write(f'{backend}FreeAsync({ptrname}, {cudastream});\n', sdfg, state_id, scope_exit)
+            to_remove.add((sd, name))
+
+    # Clear all released memory from tracking
+    for sd, name in to_remove:
+        del codegen.pool_release[(sd, name)]
+
+    ########################################################
+    # Stream synchronization
+
+    # Synchronize end of kernel with output data (multiple kernels
+    # lead to same data node)
+    if max_streams >= 0 and hasattr(node, "_cuda_stream"):
         for edge in dfg.out_edges(scope_exit):
-            # Synchronize end of kernel with output data (multiple kernels
-            # lead to same data node)
+
             if (isinstance(edge.dst, nodes.AccessNode) and hasattr(edge.dst, '_cuda_stream')
                     and edge.dst._cuda_stream != node._cuda_stream):
                 callsite_stream.write(
