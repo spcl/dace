@@ -65,7 +65,46 @@ There are other kinds of elements in an SDFG, as detailed below.
 Elements
 ~~~~~~~~
 
-all the IR elements
+.. figure:: images/elements.svg
+  :figwidth: 40%
+  :align: right
+  :alt: Elements of the SDFG IR.
+
+  Elements of the SDFG IR.
+
+**Access Node**:
+
+An access node will take the form of the data container it's pointing to. For example, if the data container is a
+stream, the line around it would be dashed.
+For more information, see :ref:`descriptors`.
+
+**Tasklet**:
+
+Tasklets can be written in any language, as long as the code generator supports it. The recommended language is always
+Python (even if the source language is different), because then tasklets can be analyzed. Other supported languages are
+C++, MLIR, SystemVerilog, and others (see :class:`~dace.dtypes.Language`).
+
+**Nested SDFG**:
+
+
+**Map**:
+
+For more information, see :ref:`sdfg-map`.
+
+**Consume**:
+
+**Library Node**:
+
+For more information, see :ref:`libnodes`.
+
+
+**Memlet**: Data movement unit. Mention WCR here.
+
+For more information, see :ref:`sdfg-memlet`.
+
+**State**: Contains any of the above dataflow elements.
+
+**State Transition** (inter-state edge): Condition, assignments
 
 
 .. _descriptors:
@@ -79,13 +118,16 @@ See :class:`~dace.data.Array` for how it is allocated and how to customize this 
 
 Transient property, aliasing assumptions. Allocation lifetime
 
-Views and references, see below.
+Views and references, see :ref:`below <viewref-lang>`.
 
 .. _sdfg-symbol:
 
 Symbols
 ~~~~~~~~
 Scalars vs. symbols
+
+The SDFG symbol storage and what it means.
+We say that a symbol that does not have a defined value is a *free symbol*.
 
 .. _sdfg-memlet:
 

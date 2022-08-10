@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Generator: Adobe Illustrator 26.4.1, SVG Export Plug-In . SVG Version: 6.00 Build 0)  -->
+<svg version="1.1" id="Layer_1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" x="0px" y="0px"
+	 width="412.67px" height="1127.67px" viewBox="0 0 412.67 1127.67" enable-background="new 0 0 412.67 1127.67"
+	 xml:space="preserve">
+<path fill="#F2F2F2" d="M404.34,216.45H8.33c-4.6,0-8.33-3.73-8.33-8.33V14.35c0-4.6,3.73-8.33,8.33-8.33h396.01
+	c4.6,0,8.33,3.73,8.33,8.33v193.78C412.67,212.72,408.94,216.45,404.34,216.45z"/>
+<path fill-rule="evenodd" clip-rule="evenodd" fill="#FFFFFF" stroke="#000000" stroke-width="3" stroke-miterlimit="8" d="
+	M75.49,84.74c0-14.63,24.79-26.5,55.36-26.5s55.36,11.87,55.36,26.5c0,14.64-24.79,26.5-55.36,26.5S75.49,99.37,75.49,84.74z"/>
+<text transform="matrix(1 0 0 1 122.945 32.2236)" font-family="'ArialMT'" font-size="28px">Access Nodes</text>
+<path fill-rule="evenodd" clip-rule="evenodd" fill="#FFFFFF" stroke="#000000" stroke-width="1.3333" stroke-miterlimit="8" d="
+	M209.38,84.74c0-14.63,32.01-26.5,71.5-26.5s71.5,11.87,71.5,26.5c0,14.64-32.01,26.5-71.5,26.5S209.38,99.37,209.38,84.74z"/>
+<text transform="matrix(1 0 0 1 235.3017 93.2632)" enable-background="new    "><tspan x="0" y="0" font-family="'ArialMT'" font-size="24px">T</tspan><tspan x="13.77" y="0" font-family="'ArialMT'" font-size="24px">ransient</tspan></text>
+<text transform="matrix(1 0 0 1 96.1712 93.2632)" font-family="'ArialMT'" font-size="24px">Global</text>
+<path fill-rule="evenodd" clip-rule="evenodd" fill="#FFFFFF" stroke="#000000" stroke-width="1.3333" stroke-miterlimit="8" stroke-dasharray="5.3333,4" d="
+	M3.06,172.74c0-14.63,24.62-26.5,55-26.5s55,11.87,55,26.5c0,14.64-24.62,26.5-55,26.5S3.06,187.37,3.06,172.74z"/>
+<text transform="matrix(1 0 0 1 23.3812 179.7359)" font-family="'ArialMT'" font-size="24px">Stream</text>
+<path fill-rule="evenodd" clip-rule="evenodd" fill="#F0FDFF" stroke="#000000" stroke-width="1.3333" stroke-miterlimit="8" d="
+	M151.06,172.74c0-14.63,24.62-26.5,55-26.5s55,11.87,55,26.5c0,14.64-24.62,26.5-55,26.5S151.06,187.37,151.06,172.74z"/>
+<text transform="matrix(1 0 0 1 179.1187 179.7359)" enable-background="new    "><tspan x="0" y="0" font-family="'ArialMT'" font-size="24px">V</tspan><tspan x="15.57" y="0" font-family="'ArialMT'" font-size="24px">iew</tspan></text>
+<path fill-rule="evenodd" clip-rule="evenodd" fill="#FFDEDE" stroke="#000000" stroke-width="1.3333" stroke-miterlimit="8" d="
+	M299.06,172.74c0-14.63,24.62-26.5,55-26.5s55,11.87,55,26.5c0,14.64-24.62,26.5-55,26.5S299.06,187.37,299.06,172.74z"/>
+<text transform="matrix(1 0 0 1 314.2275 178.7359)" font-family="'ArialMT'" font-size="19px">Reference</text>
+<path fill-rule="evenodd" clip-rule="evenodd" fill="#FFFFFF" stroke="#000000" stroke-width="1.3333" stroke-miterlimit="8" d="
+	M31.49,286.23l13.18-13.18h121.64l13.18,13.18v18.64l-13.18,13.18H44.67l-13.18-13.18V286.23z"/>
+<text transform="matrix(1 0 0 1 67.6431 303.5469)" enable-background="new    "><tspan x="0" y="0" font-family="'ArialMT'" font-size="24px" letter-spacing="-2">T</tspan><tspan x="12" y="0" font-family="'ArialMT'" font-size="24px">asklet</tspan></text>
+<rect x="237.49" y="287.05" fill="#DEEBF7" stroke="#4472C4" stroke-width="1.3333" stroke-miterlimit="8" width="28" height="22"/>
+<rect x="291.49" y="287.05" fill="#DEEBF7" stroke="#4472C4" stroke-width="1.3333" stroke-miterlimit="8" width="28" height="22"/>
+<rect x="344.49" y="287.05" fill="#DEEBF7" stroke="#4472C4" stroke-width="1.3333" stroke-miterlimit="8" width="28" height="22"/>
+<path fill="#5B9BD5" d="M227.49,297.71h5.82v0.67h-5.82V297.71z M231.97,294.05l5.33,4l-5.33,4V294.05z"/>
+<path fill="#5B9BD5" d="M265.49,297.71l21.61,0.05l0,0.67l-21.61-0.05L265.49,297.71z M285.77,294.09l5.32,4.01l-5.34,3.99
+	L285.77,294.09z"/>
+<path fill="#5B9BD5" d="M319.4,297.5l1.38-0.25l-0.08,0.03l1.38-0.62l-0.09,0.06l2.44-2.31l-0.07,0.09l1.75-3.31l-0.03,0.1
+	l0.62-3.75l0,0.1l-0.25-1.88l0.02,0.07l-0.69-1.88l0.03,0.06l-1.06-1.69l0.03,0.04l-1.38-1.56l0.06,0.06l-3.44-2.31l0.08,0.04
+	l-1.94-0.62l0.06,0.01l-2-0.25l0.07,0l-2,0.19l0.07-0.01l-2,0.62l0.08-0.04l-3.44,2.19l0.06-0.05l-1.38,1.44l0.07-0.1l-0.6,1.46
+	l-0.62-0.25l0.62-1.52l1.45-1.51l3.51-2.23l2.08-0.65l2.07-0.19l2.07,0.26l2.01,0.65l3.51,2.36l1.42,1.61l1.1,1.74l0.71,1.94
+	l0.26,1.96l-0.64,3.85l-1.8,3.41l-2.52,2.39l-1.46,0.67l-1.42,0.26L319.4,297.5z M311.08,283.41l-5.59,3.63l-1.92-6.38
+	L311.08,283.41z"/>
+<path fill="#5B9BD5" d="M319.49,298.44l21.61-0.05l0-0.67l-21.61,0.05L319.49,298.44z M339.77,302.06l5.32-4.01l-5.34-3.99
+	L339.77,302.06z"/>
+<path fill-rule="evenodd" clip-rule="evenodd" fill="#FFFFFF" fill-opacity="0.651" d="M216.99,286.58l15.03-15.03h142.94
+	l15.03,15.03v15.94l-15.03,15.03H232.02l-15.03-15.03V286.58z"/>
+<path d="M214.99,285.75l16.2-16.2h144.59l16.2,16.2v17.59l-16.2,16.2H231.2l-16.2-16.2V285.75z M216.33,302.79l15.42,15.42h143.49
+	l15.42-15.42V286.3l-15.42-15.42H231.75l-15.42,15.42V302.79z M217.66,286.85l14.64-14.64h142.38l14.64,14.64v15.38l-14.64,14.64
+	H232.3l-14.64-14.64V286.85z M218.99,301.69l13.86,13.86h141.28l13.86-13.86v-14.28l-13.86-13.86H232.85l-13.86,13.86V301.69z"/>
+<text transform="matrix(1 0 0 1 232.8946 303.5469)" font-family="'ArialMT'" font-size="24px">Nested SDFG</text>
+<path fill-rule="evenodd" clip-rule="evenodd" fill="#FFFFFF" stroke="#000000" stroke-width="3" stroke-miterlimit="8" stroke-dasharray="9,3" d="
+	M220.49,437.05l37.61-39h91.79l37.61,39H220.49z"/>
+<text transform="matrix(1 0 0 1 250.4776 429.5469)" font-family="'ArialMT'" font-size="27px">Consume</text>
+<path fill-rule="evenodd" clip-rule="evenodd" fill="#FFFFFF" stroke="#000000" stroke-width="3" stroke-miterlimit="8" stroke-dasharray="9,3" d="
+	M387.49,490.05l-37.61,39H258.1l-37.61-39H387.49z"/>
+<path fill-rule="evenodd" clip-rule="evenodd" fill="#FFFFFF" stroke="#000000" stroke-width="3" stroke-miterlimit="8" d="
+	M23.49,437.05l37.61-39h91.79l37.61,39H23.49z"/>
+<text transform="matrix(1 0 0 1 80.7049 429.5469)" font-family="'ArialMT'" font-size="27px">Map</text>
+<path fill-rule="evenodd" clip-rule="evenodd" fill="#FFFFFF" stroke="#000000" stroke-width="3" stroke-miterlimit="8" d="
+	M190.49,490.05l-37.61,39H61.1l-37.61-39H190.49z"/>
+<text transform="matrix(1 0 0 1 96.6216 464.5469)" font-family="'ArialMT'" font-size="24px">...</text>
+<path fill-rule="evenodd" clip-rule="evenodd" fill="#FFFFFF" stroke="#000000" stroke-width="1.3333" stroke-miterlimit="8" stroke-dasharray="5.3333,4" d="
+	M291.49,367.55c0-7.46,5.6-13.5,12.5-13.5s12.5,6.04,12.5,13.5s-5.6,13.5-12.5,13.5S291.49,375,291.49,367.55z"/>
+<path d="M304.83,381.05v9.78h-0.67v-9.78H304.83z M308.49,389.5l-4,8l-4-8H308.49z"/>
+<path fill-rule="evenodd" clip-rule="evenodd" fill="#FFFFFF" stroke="#000000" stroke-width="3" stroke-miterlimit="8" d="
+	M90.49,609.05h220.92l9.08,9.08v47.92h-230V609.05z"/>
+<text transform="matrix(1 0 0 1 137.7216 647.5469)" font-family="'ArialMT'" font-size="24px">Library Node</text>
+<path fill="none" stroke="#000000" stroke-width="3" stroke-miterlimit="8" d="M310.49,609.05v9.5"/>
+<path fill="none" stroke="#000000" stroke-width="3" stroke-miterlimit="8" d="M309.03,618.05h10.88"/>
+<text transform="matrix(1 0 0 1 293.5616 464.5469)" font-family="'ArialMT'" font-size="24px">...</text>
+<path d="M292.64,849.31v12.8h-3.2v-12.8H292.64z M292.64,871.72v12.8h-3.2v-12.8H292.64z M292.64,894.12v12.8h-3.2v-12.8H292.64z
+	 M292.64,916.53v12.8h-3.2v-12.8H292.64z M292.64,938.94v12.8h-3.2v-12.8H292.64z M299.05,959.68l-8,16.01l-8-16.01H299.05z"/>
+<text transform="matrix(1 0 0 1 301.987 895.7191)" font-family="'ArialMT'" font-size="31.1027px">A[0]</text>
+<text transform="matrix(1 0 0 1 300.8307 926.8236)" font-family="'Arial-BoldMT'" font-size="24.623px">CR: Sum</text>
+<text transform="matrix(1 0 0 1 301.9889 950.1508)" enable-background="new    "><tspan x="0" y="0" font-family="'ArialMT'" font-size="19.4392px" letter-spacing="-1">V</tspan><tspan x="11.89" y="0" font-family="'ArialMT'" font-size="19.4392px">olume: 1</tspan></text>
+<path d="M292.64,696.31l0,111.91h-3.2l0-111.91H292.64z M299.05,806.62l-8,16.01l-8-16.01H299.05z"/>
+<text transform="matrix(1 0 0 1 299.1393 758.2539)" font-family="'ArialMT'" font-size="31.1027px">B[i, j]</text>
+<text transform="matrix(1 0 0 1 299.0514 784.1719)" enable-background="new    "><tspan x="0" y="0" font-family="'ArialMT'" font-size="19.4392px" letter-spacing="-1">V</tspan><tspan x="11.89" y="0" font-family="'ArialMT'" font-size="19.4392px">olume: 1</tspan></text>
+<text transform="matrix(1 0 0 1 45.5647 764.6731)" font-family="'ArialMT'" font-size="28.0101px">Memlet</text>
+<text transform="matrix(1 0 0 1 45.5647 901.7043)"><tspan x="0" y="0" font-family="'ArialMT'" font-size="28.0101px">W</tspan><tspan x="25.93" y="0" font-family="'ArialMT'" font-size="28.0101px">rite-Conflict</tspan><tspan x="0" y="33.61" font-family="'ArialMT'" font-size="28.0101px">Resolution</tspan></text>
+<rect x="16" y="1038.33" fill="#DEEBF7" width="196.89" height="53.33"/>
+<text transform="matrix(1 0 0 1 85.7414 1073.6106)" font-family="'ArialMT'" font-size="28.0101px">State</text>
+<text transform="matrix(1 0 0 1 283.114 1053.8434)"><tspan x="0" y="0" fill="#86ADD9" font-family="'ArialMT'" font-size="28.0101px">State</tspan><tspan x="-28.27" y="42" fill="#86ADD9" font-family="'ArialMT'" font-size="28.0101px" letter-spacing="-1">T</tspan><tspan x="-12.2" y="42" fill="#86ADD9" font-family="'ArialMT'" font-size="28.0101px">ransition</tspan></text>
+<path fill="#86ADD9" d="M240.33,1063.69l142.96,0v3.2l-142.96,0V1063.69z M381.7,1057.29l16.01,8l-16.01,8V1057.29z"/>
+</svg>
