@@ -180,7 +180,7 @@ class TilingType(aenum.AutoNumberEnum):
 
 # Maps from ScheduleType to default StorageType
 SCOPEDEFAULT_STORAGE = {
-    StorageType.Default: StorageType.Default,
+    ScheduleType.Default: StorageType.Default,
     None: StorageType.CPU_Heap,
     ScheduleType.Sequential: StorageType.Register,
     ScheduleType.MPI: StorageType.CPU_Heap,
