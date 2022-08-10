@@ -78,14 +78,22 @@ An access node will take the form of the data container it's pointing to. For ex
 stream, the line around it would be dashed.
 For more information, see :ref:`descriptors`.
 
-**Tasklet**:
+**Tasklet**: *must not access any external memory apart from what is given to it*.
 
 Tasklets can be written in any language, as long as the code generator supports it. The recommended language is always
 Python (even if the source language is different), because then tasklets can be analyzed. Other supported languages are
 C++, MLIR, SystemVerilog, and others (see :class:`~dace.dtypes.Language`).
 
-**Nested SDFG**:
+**Nested SDFG**: Nodes that contain an entire SDFG in a state. When invoked, the nested SDFG will be executed in that
+context, independently from other instances if parallel.
+The semantics are similar to a Tasklet: connectors specify input and output parameters, and there is acyclic dataflow
+going in and out of the node. However, as opposed to a Tasklet, a nested SDFG is completely analyzable.
 
+Such nodes are useful when control flow is necessary in parallel regions. For example, when there is a loop inside a map,
+or when two separate components need to each run its own state machine.
+
+Several transformations (e.g., :class:`~dace.transformation.interstate.sdfg_nesting.InlineSDFG`, :class:`~dace.transformation.dataflow.map_fission.MapFission`)
+work directly with nested SDFGs, and the :ref:`simplify` tries to remove/inline them as much as possible.
 
 **Map**:
 
@@ -142,15 +150,6 @@ operations, or different kinds of accumulators on FPGAs.
 No WCR for streams.
 
 
-.. _sdfg-map:
-
-Parametric Parallelism
-~~~~~~~~~~~~~~~~~~~~~~
-
-Map consume
-schedule types
-
-
 Connectors
 ~~~~~~~~~~
 
@@ -162,18 +161,47 @@ and two input edges, and three output edges. Three of them marked in orange and 
 Mention *memlet paths* and the general *memlet tree* that can go through arbitrary scopes
 
 
-Dynamic Map Ranges
-~~~~~~~~~~~~~~~~~~~
+.. _sdfg-map:
+
+Parametric Parallelism
+~~~~~~~~~~~~~~~~~~~~~~
+
+Map consume
+schedule types
+
+
+**Dynamic Map Ranges**: 
 
 Explain + example (image / embedded viewer)
+
 
 .. _viewref-lang:
 
 Views and References
 ~~~~~~~~~~~~~~~~~~~~
-view/reference
 
-Use reference sparingly.
+What is a *View* and what does it do?
+
+Similarly to a NumPy view, a View is created whenever an array is sliced, reshaped, or reinterpreted, among other things.
+It never creates a copy, in C it would be equivalent to setting a pointer, though in DaCe it is more confined.
+
+Why is it useful
+
+A view is always connected to a data container from one side. In case of ambiguity, the ``views`` connector points to
+the data being viewed. 
+
+Another place where views can be found is in a Nested SDFG connector: any data container in a nested SDFG is a view of
+the memlet going in or out of it.
+
+As opposed to Views, *References* can be set in one place (using the ``set`` connector), and then be used as normal access nodes
+later anywhere else. They can be set to different containers (even more than once), as long as the descriptors match (like
+views). References are useful for patterns such as multiple-buffering (``a, b = b, a``) and polymorphism.
+
+Since references detach the access node from the data container, it inhibits the strength of data-centric analysis for
+transformations and optimization. Frontends generate them only when absolutely necessary. 
+Therefore, **use references sparingly** (or not at all, if possible).
+
+
 
 .. _libnodes:
 
