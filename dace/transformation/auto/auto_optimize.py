@@ -420,11 +420,12 @@ def make_transients_persistent(sdfg: SDFG, device: dtypes.DeviceType, toplevel_o
     :param device: Device type
     :param toplevel_only: If True, only converts access nodes that do not appear in any scope.
     '''
+    
     for nsdfg in sdfg.all_sdfgs_recursive():       
         fsyms: Set[str] = nsdfg.free_symbols
         persistent: Set[str] = set()
         not_persistent: Set[str] = set()
-
+        
         for state in nsdfg.nodes():
             for dnode in state.data_nodes():
                 if dnode.data in not_persistent:
@@ -446,9 +447,12 @@ def make_transients_persistent(sdfg: SDFG, device: dtypes.DeviceType, toplevel_o
                     pass
                 
                 # Only convert arrays with top-level access nodes
+                
                 parent_map, pmapstate = xfh.get_parent_map(state, dnode)
                 if parent_map is not None:
+                    print(parent_map.map.schedule)
                     if device == dtypes.DeviceType.CPU:
+                        print(parent_map.map.schedule)
                         if xfh.get_parent_map(pmapstate, parent_map) is None and parent_map.map.schedule == dtypes.ScheduleType.CPU_Multicore:
                             print('HEELLO', dnode.data)
                             nsdfg.arrays[dnode.data].storage = dtypes.StorageType.CPU_ThreadLocal
@@ -538,7 +542,7 @@ def auto_optimize(sdfg: SDFG,
 
     # Move Loops inside Maps when possible
     from dace.transformation.interstate import MoveLoopIntoMap
-    sdfg.apply_transformations_repeated([MoveLoopIntoMap])
+    #sdfg.apply_transformations_repeated([MoveLoopIntoMap])
 
     if device == dtypes.DeviceType.FPGA:
         # apply FPGA Transformations

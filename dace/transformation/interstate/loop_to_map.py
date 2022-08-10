@@ -365,6 +365,7 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
                     del data.assignments[itervar]
                 nsdfg.add_edge(body_end, exit_state, data)
             sdfg.add_edge(new_body, guard, InterstateEdge())
+            
             # # Move body_end -> guard edge to new_body -> guard
             # if body_end is body:
             #     for src, dst, data in sdfg.edges_between(body_end, guard):
@@ -411,6 +412,8 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
                 del sdfg.symbols[sym]
             for sym, dtype in nsymbols.items():
                 nsdfg.symbols[sym] = dtype
+            #for s in nsdfg.free_symbols:
+            #    cnode.symbol_mapping[s] = s                
             if itervar not in nsdfg.symbols:
                 nsdfg.add_symbol(itervar, sdfg.symbols[itervar])
             if itervar not in cnode.symbol_mapping:
