@@ -3193,7 +3193,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     independent = True
                     waccess = inverse_dict_lookup(self.accesses, (new_name, new_rng))
                     if self.map_symbols and waccess:
-                        if Config.get_bool('frontend', 'avoid_wcr'):
+                        if not Config.get_bool('frontend', 'avoid_wcr'):
                             independent = False
                         else:
                             for s in self.map_symbols:
