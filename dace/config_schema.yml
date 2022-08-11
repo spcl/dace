@@ -764,8 +764,18 @@ required:
                     Perform an early type check on arguments passed to an SDFG when called directly (from 
                     ``SDFG.__call__``). Another type check is performed when calling compiled SDFGs.
 
+            avoid_wcr:
+                type: bool
+                default: false
+                title: Avoid using WCR for augmented assignments when possible
+                description: >
+                    Perform a map-symbol-dependency check on the write-subsets of augemented
+                    assignments that appear inside Maps to avoid using of WCR when possible.
+                    This feature works correctly only when there is a single augmented assignment
+                    for each data dimension inside a Map.
 
     #############################################
+
     # General settings
 
     debugprint:
