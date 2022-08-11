@@ -3189,14 +3189,17 @@ class ProgramVisitor(ExtNodeVisitor):
             # Strict independent access check for augmented assignments
             if op:
                 independent = False
-                if Config.get_bool('frontend', 'avoid_wcr') and not _subset_is_local_symbol_dependent(new_rng, self):
+                if not _subset_is_local_symbol_dependent(new_rng, self):
                     independent = True
                     waccess = inverse_dict_lookup(self.accesses, (new_name, new_rng))
                     if self.map_symbols and waccess:
-                        for s in self.map_symbols:
-                            if s not in waccess[1].free_symbols:
-                                independent = False
-                                break
+                        if Config.get_bool('frontend', 'avoid_wcr'):
+                            independent = False
+                        else:
+                            for s in self.map_symbols:
+                                if s not in waccess[1].free_symbols:
+                                    independent = False
+                                    break
 
             # Handle output indirection
             output_indirection = None
