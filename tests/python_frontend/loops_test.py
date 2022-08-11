@@ -457,6 +457,37 @@ def test_while_else():
     assert np.allclose(A, expected)
 
 
+@dace.program
+def branch_in_for(cond: dace.int32):
+    for i in range(10):
+        if cond > 0:
+            break
+        else:
+            continue
+
+
+def test_branch_in_for():
+    sdfg = branch_in_for.to_sdfg(simplify=False)
+    assert len(sdfg.source_nodes()) == 1
+
+
+@dace.program
+def branch_in_while(cond: dace.int32):
+    i = 0
+    while i < 10:
+        if cond > 0:
+            break
+        else:
+            i += 1
+            continue
+
+
+def test_branch_in_while():
+    sdfg = branch_in_while.to_sdfg(simplify=False)
+    sdfg.view()
+    assert len(sdfg.source_nodes()) == 1
+
+
 if __name__ == "__main__":
     test_for_loop()
     test_for_loop_with_break_continue()
@@ -478,3 +509,5 @@ if __name__ == "__main__":
     test_nested_map_with_symbol()
     test_for_else()
     test_while_else()
+    test_branch_in_for()
+    test_branch_in_while()
