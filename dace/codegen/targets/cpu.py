@@ -7,11 +7,11 @@ import warnings
 
 from sympy.functions.elementary.complexes import arg
 
-from dace import data, dtypes, registry, memlet as mmlt, subsets, symbolic, Config
+from dace import data, dtypes, registry, memlet as mmlt, sdfg as sd, subsets, symbolic, Config
 from dace.codegen import cppunparse, exceptions as cgx
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets import cpp
-from dace.codegen.targets.common import codeblock_to_cpp, sym2cpp
+from dace.codegen.targets.common import codeblock_to_cpp, sym2cpp, update_persistent_desc
 from dace.codegen.targets.target import TargetCodeGenerator, make_absolute
 from dace.codegen.dispatcher import DefinedType, TargetDispatcher
 from dace.frontend import operations
@@ -217,7 +217,11 @@ class CPUCodeGen(TargetCodeGenerator):
     def declare_array(self, sdfg, dfg, state_id, node, nodedesc, function_stream, declaration_stream):
 
         fsymbols = self._frame.symbols_and_constants(sdfg)
-        if not sdutils.is_nonfree_sym_dependent(node, nodedesc, dfg, fsymbols):
+        # NOTE: `dfg` (state) will be None iff `nodedesc` is non-free symbol dependent
+        # (see `DaCeCodeGenerator.determine_allocation_lifetime` in `dace.codegen.targets.framecode`).
+        # We add the `dfg is not None` check because the `sdutils.is_nonfree_sym_dependent` check will fail if
+        # `nodedesc` is a View and `dfg` is None.
+        if dfg and not sdutils.is_nonfree_sym_dependent(node, nodedesc, dfg, fsymbols):
             raise NotImplementedError("The declare_array method should only be used for variables "
                                       "that must have their declaration and allocation separate.")
 
@@ -229,10 +233,6 @@ class CPUCodeGen(TargetCodeGenerator):
 
         # Check if array is already declared
         if self._dispatcher.declared_arrays.has(ptrname):
-            return
-
-        # If this is a view/reference, do not declare it here
-        if isinstance(nodedesc, (data.View, data.Reference)):
             return
 
         # Compute array size
@@ -277,15 +277,16 @@ class CPUCodeGen(TargetCodeGenerator):
         # Check if array is already declared
         declared = self._dispatcher.declared_arrays.has(alloc_name)
 
+        define_var = self._dispatcher.defined_vars.add
+        if nodedesc.lifetime == dtypes.AllocationLifetime.Persistent:
+            define_var = self._dispatcher.defined_vars.add_global
+            nodedesc = update_persistent_desc(nodedesc, sdfg)
+
         # Compute array size
         arrsize = nodedesc.total_size
         arrsize_bytes = None
         if not isinstance(nodedesc.dtype, dtypes.opaque):
             arrsize_bytes = arrsize * nodedesc.dtype.bytes
-
-        define_var = self._dispatcher.defined_vars.add
-        if nodedesc.lifetime == dtypes.AllocationLifetime.Persistent:
-            define_var = self._dispatcher.defined_vars.add_global
 
         if isinstance(nodedesc, data.View):
             return self.allocate_view(sdfg, dfg, state_id, node, function_stream, declaration_stream, allocation_stream)
@@ -1107,13 +1108,14 @@ class CPUCodeGen(TargetCodeGenerator):
             else:
                 conntype = conntype.dtype
 
-        is_scalar = not isinstance(conntype, dtypes.pointer)
+        desc = sdfg.arrays[memlet.data]
+
+        is_scalar = not isinstance(conntype, dtypes.pointer) or desc.dtype == conntype
         is_pointer = isinstance(conntype, dtypes.pointer)
 
         # Allocate variable type
         memlet_type = conntype.dtype.ctype
 
-        desc = sdfg.arrays[memlet.data]
         ptr = cpp.ptr(memlet.data, desc, sdfg, self._frame)
         types = None
         # Non-free symbol dependent Arrays due to their shape
@@ -1422,8 +1424,10 @@ class CPUCodeGen(TargetCodeGenerator):
             pass
         elif isinstance(cdtype, dtypes.pointer):
             # If pointer, also point to output
-            ptrname = cpp.ptr(edge.data.data, sdfg.arrays[edge.data.data], sdfg, self._frame)
-            defined_type, _ = self._dispatcher.defined_vars.get(ptrname)
+            desc = sdfg.arrays[edge.data.data]
+            ptrname = cpp.ptr(edge.data.data, desc, sdfg, self._frame)
+            is_global = desc.lifetime in (dtypes.AllocationLifetime.Global, dtypes.AllocationLifetime.Persistent)
+            defined_type, _ = self._dispatcher.defined_vars.get(ptrname, is_global=is_global)
             base_ptr = cpp.cpp_ptr_expr(sdfg, edge.data, defined_type, codegen=self._frame)
             callsite_stream.write(f'{cdtype.ctype} {edge.src_conn} = {base_ptr};', sdfg, state_id, src_node)
         else:

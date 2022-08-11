@@ -11,7 +11,6 @@ from dace.transformation.dataflow import StreamingMemory, StreamingComposition
 from dace.transformation.auto.auto_optimize import auto_optimize, fpga_auto_opt
 from dace.config import set_temporary
 
-
 M, N = (dc.symbol(s, dtype=dc.int32) for s in ('M', 'N'))
 
 
@@ -93,6 +92,7 @@ def test_gpu():
 @fpga_test(assert_ii_1=False)
 def test_fpga():
     return run_atax(dace.dtypes.DeviceType.FPGA)
+
 
 @xilinx_test(assert_ii_1=False)
 def test_xilinx_decoupled_array_interfaces():

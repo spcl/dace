@@ -21,7 +21,7 @@ from dace.frontend.python import astutils
 from dace.frontend.python.nested_call import NestedCall
 from dace.memlet import Memlet
 from dace.sdfg import nodes, SDFG, SDFGState
-from dace.symbolic import pystr_to_symbolic, issymbolic
+from dace.symbolic import pystr_to_symbolic, issymbolic, inequal_symbols
 
 import numpy as np
 import sympy as sp
@@ -731,6 +731,17 @@ def _round(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, input: Union[str,
     return _simple_call(sdfg, state, input, 'round', dtypes.typeclass(int))
 
 
+@oprepo.replaces('len')
+def _len_array(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a: str):
+    # len(numpy_array) is equivalent to numpy_array.shape[0]
+    if isinstance(a, str):
+        if a in sdfg.arrays:
+            return sdfg.arrays[a].shape[0]
+        if a in sdfg.constants_prop:
+            return len(sdfg.constants[a])
+    raise TypeError(f'`len` is not supported for input "{a}" (type {type(a)})')
+
+
 @oprepo.replaces('transpose')
 @oprepo.replaces('dace.transpose')
 @oprepo.replaces('numpy.transpose')
@@ -770,6 +781,12 @@ def _transpose(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, inpname: str,
 @oprepo.replaces('numpy.sum')
 def _sum(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a: str, axis=None):
     return _reduce(pv, sdfg, state, "lambda x, y: x + y", a, axis=axis, identity=0)
+
+
+@oprepo.replaces('sum')
+def _sum_array(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a: str):
+    # sum(numpy_array) is equivalent to np.sum(numpy_array, axis=0)
+    return _reduce(pv, sdfg, state, "lambda x, y: x + y", a, axis=0, identity=0)
 
 
 @oprepo.replaces('numpy.mean')
@@ -1130,7 +1147,7 @@ def _broadcast_together(arr1_shape, arr2_shape, unidirectional=False):
     for i, (dim1, dim2) in enumerate(itertools.zip_longest(reversed(arr1_shape), reversed(arr2_shape))):
         all_idx.append(get_idx(i))
 
-        if dim1 == dim2:
+        if not inequal_symbols(dim1, dim2):
             a1_idx.append(get_idx(i))
             a2_idx.append(get_idx(i))
 

@@ -1,7 +1,10 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-from setuptools import setup, find_packages
 import glob
 import os
+import shutil
+import subprocess
+
+from setuptools import find_packages, setup
 
 # Find runtime and external library files by obtaining the module path and
 # trimming the absolute path of the resulting files.
@@ -25,6 +28,21 @@ hlslib_files = [f[len(dace_path):] for f in glob.glob(dace_path + 'external/hlsl
 rtllib_files = [f[len(dace_path):] for f in glob.glob(dace_path + 'external/rtllib/cmake/**/*', recursive=True)] + [
     f[len(dace_path):] for f in glob.glob(dace_path + 'external/rtllib/templates/**/*', recursive=True)
 ]
+
+# See if CMake is available and if not, install as a dependency
+cmake_requires = ['scikit-build', 'cmake']
+try:
+    cmake_path = shutil.which('cmake')
+    if cmake_path:
+        # CMake is available, check version
+        output = subprocess.check_output([cmake_path, '--version'], text=True)
+        cmake_version = tuple(int(t) for t in output.splitlines()[0].split(' ')[-1].split('.'))
+        # If version meets minimum requirements, CMake is not necessary
+        if cmake_version >= (3, 15):
+            cmake_requires = []
+except (subprocess.CalledProcessError, OSError, IndexError, ValueError):
+    # Any failure in getting the CMake version counts as "not found"
+    pass
 
 with open("README.md", "r") as fp:
     long_description = fp.read()
@@ -56,9 +74,9 @@ setup(name='dace',
       include_package_data=True,
       install_requires=[
           'numpy', 'networkx >= 2.5', 'astunparse', 'sympy<=1.9', 'pyyaml', 'ply', 'websockets', 'requests', 'flask',
-          'scikit-build', 'cmake', 'aenum >= 3.1', 'dataclasses; python_version < "3.7"', 'dill',
-          'pyreadline;platform_system=="Windows"', 'typing-compat; python_version < "3.8"'
-      ],
+          'aenum >= 3.1', 'dataclasses; python_version < "3.7"', 'dill', 'pyreadline;platform_system=="Windows"',
+          'typing-compat; python_version < "3.8"'
+      ] + cmake_requires,
       extras_require={
           'testing': ['coverage', 'pytest-cov', 'scipy', 'absl-py', 'opt_einsum', 'pymlir', 'click'],
           'docs': ['jinja2<3.1.0']

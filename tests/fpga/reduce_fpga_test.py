@@ -4,6 +4,7 @@
 import dace
 import numpy as np
 from dace.fpga_testing import fpga_test
+from dace.transformation.interstate import FPGATransformSDFG
 
 
 def create_reduce_sdfg(wcr_str, reduction_axis, sdfg_name, input_data, output_data, dtype):
@@ -127,6 +128,22 @@ def test_reduce_max():
     sdfg.expand_library_nodes()
     sdfg(A=A, B=B)
     assert np.allclose(B, np.max(A, axis=1))
+    return sdfg
+
+
+@fpga_test(assert_ii_1=False)
+def test_reduce_scalar():
+    @dace.program
+    def reduction_to_scalar(A: dace.float64[64]):
+        result = dace.reduce(lambda a, b: a + b, A)
+        return result
+
+    sdfg = reduction_to_scalar.to_sdfg()
+    sdfg.apply_transformations(FPGATransformSDFG)
+
+    A = np.random.rand(64)
+    res = sdfg(A)
+    assert np.allclose(res, np.sum(A))
     return sdfg
 
 

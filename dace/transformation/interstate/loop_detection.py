@@ -120,17 +120,21 @@ def find_for_loop(
     # Extract state transition edge information
     guard_inedges = sdfg.in_edges(guard)
     condition_edge = sdfg.edges_between(guard, entry)[0]
+    
+    # All incoming edges to the guard must set the same variable
     if itervar is None:
-        itvars = None
+        itervars = None
         for iedge in guard_inedges:
-            if itvars is None:
-                itvars = set(iedge.data.assignments.keys())
+            if itervars is None:
+                itervars = set(iedge.data.assignments.keys())
             else:
-                itvars &= iedge.data.assignments.keys()
-        if itvars and len(itvars) == 1:
-            itervar = next(iter(itvars))
+                itervars &= iedge.data.assignments.keys()
+        if itervars and len(itervars) == 1:
+            itervar = next(iter(itervars))
         else:
-            raise ValueError('Ambiguous iteration variable')
+            # Ambiguous or no iteration variable
+            return None
+    
     condition = condition_edge.data.condition_sympy()
 
     # Find the stride edge. All in-edges to the guard except for the stride edge
