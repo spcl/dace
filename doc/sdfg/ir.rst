@@ -51,8 +51,8 @@ through dataflow. There are four elements in the above state:
     * **Map scopes** (trapezoids) representing parametric parallel sections (replicating all the nodes inside them N x N
       times)
 
-Dataflow is captured in the memlets, which can go from access nodes and tasklets to each other, moving through map
-scopes. As you can see in the example, a memlet can split after going into a map, as the parallel region forms a scope.
+Dataflow is captured in the memlets, which connect access nodes and tasklets and pass through scopes (such as maps).
+As you can see in the example, a memlet can split after going into a map, as the parallel region forms a scope.
 
 The state machine shown in the example is a for-loop (``for _ in range(5)``). The init state is where execution starts,
 the guard state controls the loop, and at the end the result is copied to the special ``__return`` data container, which
@@ -72,17 +72,22 @@ Elements
 
   Elements of the SDFG IR.
 
-**Access Node**:
+**Access Node**: A node that points to a named data container. An edge going out of one would read from the container 
+and an edge going into one would write or update the memory. There can be more than one instance of the same container,
+even in the same state (see above example).
 
-An access node will take the form of the data container it's pointing to. For example, if the data container is a
+An access node will take the form of the data container it is pointing to. For example, if the data container is a
 stream, the line around it would be dashed.
 For more information, see :ref:`descriptors`.
 
-**Tasklet**: *must not access any external memory apart from what is given to it*.
+**Tasklet**: Tasklets are the computational nodes of SDFGs. They can perform arbitrary computations, with one restriction:
+*they must not access any external memory apart from what is given to them via edges*. In the data-centric paradigm, 
+Tasklets are viewed as black-boxes, which means that only limited analysis is performed on them, and transformations rarely
+use their contents.
 
 Tasklets can be written in any language, as long as the code generator supports it. The recommended language is always
-Python (even if the source language is different), because then tasklets can be analyzed. Other supported languages are
-C++, MLIR, SystemVerilog, and others (see :class:`~dace.dtypes.Language`).
+Python (even if the source language is different), which allows the limited analysis (e.g., operation count). Other
+supported languages are C++, MLIR, SystemVerilog, and others (see :class:`~dace.dtypes.Language`).
 
 **Nested SDFG**: Nodes that contain an entire SDFG in a state. When invoked, the nested SDFG will be executed in that
 context, independently from other instances if parallel.
@@ -91,11 +96,17 @@ going in and out of the node. However, as opposed to a Tasklet, a nested SDFG is
 
 Such nodes are useful when control flow is necessary in parallel regions. For example, when there is a loop inside a map,
 or when two separate components need to each run its own state machine.
-
 Several transformations (e.g., :class:`~dace.transformation.interstate.sdfg_nesting.InlineSDFG`, :class:`~dace.transformation.dataflow.map_fission.MapFission`)
 work directly with nested SDFGs, and the :ref:`simplify` tries to remove/inline them as much as possible.
 
-**Map**:
+To use the inputs and outputs, the node's connectors have data containers with matching names in the internal SDFG. To
+pass symbols into the SDFG, the :class:`~dace.sdfg.nodes.NestedSDFG.symbol_mapping` is a dictionary mapping from internal
+symbol names to symbolic expressions based on external values. Symbols cannot be transferred out of the nested SDFG (as
+this breaks the assumptions behind symbol values, see :ref:`sdfg-symbol` for more information).
+
+**Map**: A scope that denotes parallelism. consists of at least two nodes: entry (trapezoid) and exit (inverted trapezoid) nodes. The two nodes
+can wrap an arbitrary subgraph by dominating and post-dominating the contents, which means that every edge that originates
+from outside the scope must go through one of the entry/exit nodes.
 
 For more information, see :ref:`sdfg-map`.
 
@@ -120,7 +131,9 @@ For more information, see :ref:`sdfg-memlet`.
 Data Containers and Access Nodes
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Data container types: array/scalar/stream.
+Globals and transients.
+
+Data container types: array/scalar/stream/view/reference/constant.
 
 See :class:`~dace.data.Array` for how it is allocated and how to customize this behavior.
 
@@ -136,6 +149,9 @@ Scalars vs. symbols
 
 The SDFG symbol storage and what it means.
 We say that a symbol that does not have a defined value is a *free symbol*.
+
+If you are developing with expressions, read :ref:`symbolic`.
+
 
 .. _sdfg-memlet:
 
@@ -169,6 +185,7 @@ Parametric Parallelism
 Map consume
 schedule types
 
+empty memlets and how they can be used.
 
 **Dynamic Map Ranges**: 
 
@@ -180,27 +197,54 @@ Explain + example (image / embedded viewer)
 Views and References
 ~~~~~~~~~~~~~~~~~~~~
 
-What is a *View* and what does it do?
+Similarly to a NumPy view, a *View* data container is created whenever an array is sliced, reshaped, reinterpreted,
+or by other NumPy functions (e.g., with a ``keepdims`` argument).
+A view never creates a copy, but simply reinterprets the properties (shape, strides, type, etc.) of the viewed container.
+In C it would be equivalent to setting a pointer to another pointer with an offset (that is also how the code generator
+implements it). Views are useful for performance, reducing memory footprint, and to modify sub-arrays in meaningful ways,
+for example solving a system of equations on matrices made from a long 1-dimensional vector.
 
-Similarly to a NumPy view, a View is created whenever an array is sliced, reshaped, or reinterpreted, among other things.
-It never creates a copy, in C it would be equivalent to setting a pointer, though in DaCe it is more confined.
+.. figure:: images/views.svg
+  :figwidth: 50%
+  :align: right
+  :alt: Chained views example.
 
-Why is it useful
+  Chained views and the corresponding generated code. A column of ``A`` is turned into a matrix, which is
+  viewed again at a sub-column. Each data descriptor must set the appropriate strides, as the viewed
+  memlet is only used to offset a pointer.
 
-A view is always connected to a data container from one side. In case of ambiguity, the ``views`` connector points to
-the data being viewed. 
+A view is always connected to another data container from one side, and on the other it is used just like a normal access node. 
+In case of ambiguity, the ``views`` connector points to the data being viewed. You can even chain multiple views 
+together using this connector (see figure on the right).
 
-Another place where views can be found is in a Nested SDFG connector: any data container in a nested SDFG is a view of
-the memlet going in or out of it.
+Another place where views can be found is in Nested SDFG connectors: any data container in a nested SDFG is in fact a 
+*View* of the memlet going in or out of it.
 
 As opposed to Views, *References* can be set in one place (using the ``set`` connector), and then be used as normal access nodes
-later anywhere else. They can be set to different containers (even more than once), as long as the descriptors match (like
-views). References are useful for patterns such as multiple-buffering (``a, b = b, a``) and polymorphism.
+later anywhere else. They can be set to different containers (even more than once), as long as the descriptors match (as
+with views). References are useful for patterns such as multiple-buffering (``a, b = b, a``) and polymorphism.
 
-Since references detach the access node from the data container, it inhibits the strength of data-centric analysis for
-transformations and optimization. Frontends generate them only when absolutely necessary. 
-Therefore, **use references sparingly** (or not at all, if possible).
+.. warning::
+  Since references detach the access node from the data container, it inhibits the strength of data-centric analysis for
+  transformations and optimization. Frontends generate them only when absolutely necessary. 
+  Therefore, **use references sparingly**, or not at all if possible.
 
+An example use of references can be created with the following code:
+
+.. code-block:: python
+
+  @dace
+  def refs(a, b, i, out):
+      if i < 5:
+          c = a
+      else:
+          c = b
+      out[:] = c
+
+
+.. raw:: html
+
+  <iframe width="100%" height="500" frameborder="0" src="../_static/embed.html?url=sdfg/reference.sdfg"></iframe>
 
 
 .. _libnodes:

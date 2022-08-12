@@ -7,9 +7,9 @@ adding new types of nodes, frontend languages, transformations, and hardware arc
 .. toctree::
    :maxdepth: 1
 
+   symbolic
    libraries
    frontend
    sdfgconvertible
    backend
-
 

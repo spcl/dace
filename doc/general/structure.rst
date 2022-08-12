@@ -13,7 +13,7 @@ DaCe is divided into the following subfolders:
         * data.py
         * memlet.py
         * subsets.py
-        * symbolic.py
+        * symbolic.py : :ref:`symbolic`
     * Optimization and transformation:
         * transformation
         * optimization

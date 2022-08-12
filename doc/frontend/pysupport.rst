@@ -113,9 +113,12 @@ All Python atoms are parsed. However, their intended usage may not be supported:
 Similarly to atoms, Python primaries are parsed. However, their intended usage may not be supported:
 
 - Attribute references: Supported for a subset of the DaCe and Numpy modules
-- Subscriptions: Supported on DaCe/Numpy arrays
-- Slicings: Supported on DaCe/Numpy arrays
+- Subscripts: Supported on DaCe/Numpy arrays
+- Slicing: Supported on DaCe/Numpy arrays
 - Calls: Supported for other DaCe programs, and a subset of methods from the DaCe and NumPy modules
+
+One caveat of subscripts with NumPy arrays is that NumPy allows negative indices to wrap around the array. In DaCe
+this is not supported.
 
 6.4 Await expression
 ^^^^^^^^^^^^^^^^^^^^
