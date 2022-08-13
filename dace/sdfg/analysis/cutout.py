@@ -5,10 +5,10 @@ testing or optimization.
 """
 from collections import deque
 import copy
-from typing import Deque, Dict, List, Set, Tuple
-from dace import data
+from typing import Deque, Dict, List, Set, Tuple, Union
+from dace import data, Memlet
 from dace.sdfg import nodes as nd, SDFG, SDFGState, utils as sdutil
-from dace.sdfg.graph import SubgraphView
+from dace.sdfg.graph import SubgraphView, MultiConnectorEdge
 from dace.sdfg.state import StateSubgraphView
 
 
@@ -172,16 +172,95 @@ def cutout_state(
             inserted_nodes[n] = create_element(n)
             new_state.add_node(inserted_nodes[n])
 
-    # Remove remaining dangling connectors from scope nodes
-    for node in inserted_nodes.values():
-        used_connectors = set(e.dst_conn for e in new_state.in_edges(node))
-        for conn in (node.in_connectors.keys() - used_connectors):
-            node.remove_in_connector(conn)
-        used_connectors = set(e.src_conn for e in new_state.out_edges(node))
-        for conn in (node.out_connectors.keys() - used_connectors):
-            node.remove_out_connector(conn)
+    # Remove remaining dangling connectors from scope nodes and add new data
+    # containers and corresponding accesses for dangling connectors on other
+    # nodes
+    for orig_node in inserted_nodes.keys():
+        new_node = inserted_nodes[orig_node]
+        if isinstance(orig_node, nd.Tasklet):
+            used_connectors = set(e.dst_conn for e in new_state.in_edges(new_node))
+            for conn in (new_node.in_connectors.keys() - used_connectors):
+                for e in state.in_edges(orig_node):
+                    if e.dst_conn and e.dst_conn == conn:
+                        _create_alibi_access_node_for_edge(
+                            new_sdfg, new_state, sdfg, e, None, None, new_node,
+                            conn
+                        )
+                        prune = False
+                        break
+                if prune:
+                    new_node.remove_in_connector(conn)
+            used_connectors = set(e.src_conn for e in new_state.out_edges(new_node))
+            for conn in (new_node.out_connectors.keys() - used_connectors):
+                prune = True
+                for e in state.out_edges(orig_node):
+                    if e.src_conn and e.src_conn == conn:
+                        _create_alibi_access_node_for_edge(
+                            new_sdfg, new_state, sdfg, e, new_node, conn, None,
+                            None
+                        )
+                        prune = False
+                        break
+                if prune:
+                    new_node.remove_out_connector(conn)
+        else:
+            used_connectors = set(e.dst_conn for e in new_state.in_edges(new_node))
+            for conn in (new_node.in_connectors.keys() - used_connectors):
+                new_node.remove_in_connector(conn)
+            used_connectors = set(e.src_conn for e in new_state.out_edges(new_node))
+            for conn in (new_node.out_connectors.keys() - used_connectors):
+                new_node.remove_out_connector(conn)
 
     return new_sdfg
+
+
+def _create_alibi_access_node_for_edge(
+    target_sdfg: SDFG, target_state: SDFGState, original_sdfg: SDFG,
+    original_edge: MultiConnectorEdge[Memlet], from_node: Union[nd.Node, None],
+    from_connector: Union[str, None], to_node: [nd.Node, None],
+    to_connector: Union[str, None]
+) -> data.Data:
+    """ Add an alibi data container and access node to a dangling connector inside of scopes. """
+    original_edge.data
+    access_size = original_edge.data.subset.size_exact()
+    container_name = '__cutout_' + str(original_edge.data.data)
+    container_name = data.find_new_name(
+        container_name, target_sdfg._arrays.keys()
+    )
+    original_array = original_sdfg._arrays[original_edge.data.data]
+    memlet_str = ''
+    if original_edge.data.subset.num_elements_exact() > 1:
+        access_size = original_edge.data.subset.size_exact()
+        target_sdfg.add_array(
+            container_name, access_size, original_array.dtype
+        )
+        memlet_str = container_name + '['
+        sep = None
+        for dim_len in original_edge.data.subset.bounding_box_size():
+            if sep is not None:
+                memlet_str += ','
+            if dim_len > 1:
+                memlet_str += '0:' + str(dim_len - 1)
+            else:
+                memlet_str += '0'
+            sep = ','
+        memlet_str += ']'
+    else:
+        target_sdfg.add_scalar(container_name, original_array.dtype)
+        memlet_str = container_name + '[0]'
+    alibi_access_node = target_state.add_access(container_name)
+    if from_node is None:
+        target_state.add_edge(
+            alibi_access_node, None, to_node, to_connector, Memlet(
+                memlet_str
+            )
+        )
+    else:
+        target_state.add_edge(
+            from_node, from_connector, alibi_access_node, None, Memlet(
+                memlet_str
+            )
+        )
 
 
 def _extend_subgraph_with_access_nodes(state: SDFGState, subgraph: StateSubgraphView) -> StateSubgraphView:
@@ -203,21 +282,33 @@ def _extend_subgraph_with_access_nodes(state: SDFGState, subgraph: StateSubgraph
             # Special case: IN_* connectors are not traversed further
             if isinstance(e.dst, (nd.EntryNode, nd.ExitNode)) and (e.dst_conn is None or e.dst_conn.startswith('IN_')):
                 continue
-            mpath = state.memlet_path(e)
-            new_nodes = [mpe.src for mpe in mpath if mpe.src not in result]
-            result.extend(new_nodes)
-            # Memlet path may end in a code node, continue traversing and expanding graph
-            queue.extend(new_nodes)
+
+            # We don't want to extend access nodes over scope entry nodes, but rather we
+            # want to introduce alibi data containers for the correct subset instead. Handled separately.
+            if isinstance(e.src, nd.EntryNode):
+                continue
+            else:
+                mpath = state.memlet_path(e)
+                new_nodes = [mpe.src for mpe in mpath if mpe.src not in result]
+                result.extend(new_nodes)
+                # Memlet path may end in a code node, continue traversing and expanding graph
+                queue.extend(new_nodes)
 
         for e in state.out_edges(node):
             # Special case: OUT_* connectors are not traversed further
             if isinstance(e.src, (nd.EntryNode, nd.ExitNode)) and (e.src_conn is None or e.src_conn.startswith('OUT_')):
                 continue
-            mpath = state.memlet_path(e)
-            new_nodes = [mpe.dst for mpe in mpath if mpe.dst not in result]
-            result.extend(new_nodes)
-            # Memlet path may end in a code node, continue traversing and expanding graph
-            queue.extend(new_nodes)
+
+            # We don't want to extend access nodes over scope entry nodes, but rather we
+            # want to introduce alibi data containers for the correct subset instead. Handled separately.
+            if isinstance(e.dst, nd.ExitNode):
+                continue
+            else:
+                mpath = state.memlet_path(e)
+                new_nodes = [mpe.dst for mpe in mpath if mpe.dst not in result]
+                result.extend(new_nodes)
+                # Memlet path may end in a code node, continue traversing and expanding graph
+                queue.extend(new_nodes)
 
     # Check for mismatch in scopes
     for node in result:

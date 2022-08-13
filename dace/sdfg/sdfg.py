@@ -124,10 +124,10 @@ class InterstateEdge(object):
         loop iterates).
     """
 
-    assignments = Property(dtype=dict,
-                           desc="Assignments to perform upon transition (e.g., 'x=x+1; y = 0')",
-                           from_string=_assignments_from_string,
-                           to_string=_assignments_to_string)
+    assignments = DictProperty(str, str,
+                               desc="Assignments to perform upon transition (e.g., 'x=x+1; y = 0')",
+                               from_string=_assignments_from_string,
+                               to_string=_assignments_to_string)
     condition = CodeProperty(desc="Transition condition", default=CodeBlock("1"))
 
     def __init__(self, condition: CodeBlock = None, assignments=None):
