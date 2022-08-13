@@ -876,8 +876,8 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         handle = binaryobj.initialize(*args, **kwargs)
         set_report(handle, ctypes.c_char_p(os.path.abspath(dreport.folder).encode('utf-8')))
 
-        # Verify passed arguments (unless disabled by the user)
-        if dace.config.Config.get_bool("execution", "general", "check_args"):
+        # Verify passed arguments (if enabled)
+        if Config.get_bool('frontend', 'check_args'):
             self.argument_typecheck(args, kwargs)
         return binaryobj(*args, **kwargs)
 
@@ -2233,8 +2233,8 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
         binaryobj = sdfg.compile()
 
-        # Verify passed arguments (unless disabled by the user)
-        if dace.config.Config.get_bool("execution", "general", "check_args"):
+        # Verify passed arguments (if enabled)
+        if Config.get_bool('frontend', 'check_args'):
             sdfg.argument_typecheck(args, kwargs)
         return binaryobj(*args, **kwargs)
 
