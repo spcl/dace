@@ -301,7 +301,7 @@ def _extend_subgraph_with_access_nodes(state: SDFGState, subgraph: StateSubgraph
 
             # We don't want to extend access nodes over scope entry nodes, but rather we
             # want to introduce alibi data containers for the correct subset instead. Handled separately.
-            if isinstance(e.src, nd.EntryNode):
+            if isinstance(e.src, nd.EntryNode) and e.src not in result and state.exit_node(e.src) not in result:
                 continue
             else:
                 mpath = state.memlet_path(e)
@@ -317,7 +317,7 @@ def _extend_subgraph_with_access_nodes(state: SDFGState, subgraph: StateSubgraph
 
             # We don't want to extend access nodes over scope entry nodes, but rather we
             # want to introduce alibi data containers for the correct subset instead. Handled separately.
-            if isinstance(e.dst, nd.ExitNode):
+            if isinstance(e.dst, nd.ExitNode) and e.dst not in result and state.entry_node(e.dst) not in result:
                 continue
             else:
                 mpath = state.memlet_path(e)
