@@ -13,6 +13,13 @@ from dace.sdfg.state import StateSubgraphView
 
 
 def _stateset_frontier(sdfg: SDFG, states: Set[SDFGState]) -> Tuple[Set[SDFGState], Set]:
+    """
+    For a set of states, return the frontier.
+    The frontier in this case refers to the predecessor states leading into the given set of states.
+    :param sdfg: SDFG in which the states reside.
+    :param states: The set of states for which to gather the frontier.
+    :return: A 2-tuple with the state frontier, and all corresponding frontier edges.
+    """
     frontier = set()
     frontier_edges = set()
     for state in states:
@@ -28,6 +35,15 @@ def _stateset_frontier(sdfg: SDFG, states: Set[SDFGState]) -> Tuple[Set[SDFGStat
 def multistate_cutout(
     sdfg: SDFG, *states: SDFGState, inserted_states: Dict[SDFGState, SDFGState] = None
 ) -> SDFG:
+    """
+    Cut out a multi-state subgraph from an SDFG to run separately for localized testing or optimization.
+    The subgraph defined by the list of states will be extended to include any further states necessary to make the
+    resulting cutout executable, i.e, to ensure that there is a distinct start state. This is achieved by gradually
+    adding more states from the cutout's state machine frontier until a distinct, single entry state is obtained.
+    :param state: The SDFG in which the subgraph resides.
+    :param states: The states in the subgraph to cut out.
+    :param inserted_states: A dictionary that provides a mapping from the original states to their cutout counterparts.
+    """
     create_element = copy.deepcopy
 
     cutout_states: Set[SDFGState] = set(states)
@@ -73,7 +89,7 @@ def multistate_cutout(
 
     subgraph: SubgraphView = SubgraphView(sdfg, cutout_states)
 
-    # Make a new SDFG with the included constants, used symbols, and data containers
+    # Make a new SDFG with the included constants, used symbols, and data containers.
     new_sdfg = SDFG(f'{sdfg.name}_cutout', sdfg.constants_prop)
     defined_symbols: Dict[str, data.Data] = dict()
     free_symbols: Set[str] = set()
@@ -90,11 +106,9 @@ def multistate_cutout(
             if dnode.data in new_sdfg.arrays:
                 continue
             new_desc = sdfg.arrays[dnode.data].clone()
-            # TODO: If transient is defined outside, it becomes a global
-            #if dnode.data in other_arrays:
-            #    new_desc.transient = False
             new_sdfg.add_datadesc(dnode.data, new_desc)
 
+    # Add all states and state transitions required to the new cutout SDFG by traversing the state machine edges.
     if inserted_states is None:
         inserted_states: Dict[SDFGState, SDFGState] = {}
     for is_edge in subgraph.edges():
@@ -112,6 +126,7 @@ def multistate_cutout(
             create_element(is_edge.data)
         )
 
+    # Add remaining necessary states.
     for state in subgraph.nodes():
         if state not in inserted_states:
             inserted_states[state] = create_element(state)
@@ -132,6 +147,7 @@ def cutout_state(
     :param state: The SDFG state in which the subgraph resides.
     :param nodes: The nodes in the subgraph to cut out.
     :param make_copy: If True, deep-copies every SDFG element in the copy. Otherwise, original references are kept.
+    :param inserted_nodes: A dictionary that maps nodes from the original SDFG to their cutout counterparts.
     """
     create_element = copy.deepcopy if make_copy else (lambda x: x)
     sdfg = state.parent
@@ -177,7 +193,14 @@ def cutout_state(
     # nodes
     for orig_node in inserted_nodes.keys():
         new_node = inserted_nodes[orig_node]
-        if isinstance(orig_node, nd.Tasklet):
+        if isinstance(orig_node, (nd.EntryNode, nd.ExitNode)):
+            used_connectors = set(e.dst_conn for e in new_state.in_edges(new_node))
+            for conn in (new_node.in_connectors.keys() - used_connectors):
+                new_node.remove_in_connector(conn)
+            used_connectors = set(e.src_conn for e in new_state.out_edges(new_node))
+            for conn in (new_node.out_connectors.keys() - used_connectors):
+                new_node.remove_out_connector(conn)
+        else:
             used_connectors = set(e.dst_conn for e in new_state.in_edges(new_node))
             for conn in (new_node.in_connectors.keys() - used_connectors):
                 for e in state.in_edges(orig_node):
@@ -203,13 +226,6 @@ def cutout_state(
                         break
                 if prune:
                     new_node.remove_out_connector(conn)
-        else:
-            used_connectors = set(e.dst_conn for e in new_state.in_edges(new_node))
-            for conn in (new_node.in_connectors.keys() - used_connectors):
-                new_node.remove_in_connector(conn)
-            used_connectors = set(e.src_conn for e in new_state.out_edges(new_node))
-            for conn in (new_node.out_connectors.keys() - used_connectors):
-                new_node.remove_out_connector(conn)
 
     return new_sdfg
 
@@ -217,7 +233,7 @@ def cutout_state(
 def _create_alibi_access_node_for_edge(
     target_sdfg: SDFG, target_state: SDFGState, original_sdfg: SDFG,
     original_edge: MultiConnectorEdge[Memlet], from_node: Union[nd.Node, None],
-    from_connector: Union[str, None], to_node: [nd.Node, None],
+    from_connector: Union[str, None], to_node: Union[nd.Node, None],
     to_connector: Union[str, None]
 ) -> data.Data:
     """ Add an alibi data container and access node to a dangling connector inside of scopes. """
