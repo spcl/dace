@@ -416,7 +416,9 @@ def set_fast_implementations(sdfg: SDFG, device: dtypes.DeviceType, blocklist: L
                     node.implementation = 'CUDA (device)'
 
 
-def make_transients_persistent(sdfg: SDFG, device: dtypes.DeviceType, toplevel_only: bool = True) -> None:
+def make_transients_persistent(sdfg: SDFG,
+                               device: dtypes.DeviceType,
+                               toplevel_only: bool = True) -> Dict[int, Set[str]]:
     ''' 
     Helper function to change several storage and scheduling properties
     - Makes non-view array lifetimes persistent, with some 
@@ -429,7 +431,9 @@ def make_transients_persistent(sdfg: SDFG, device: dtypes.DeviceType, toplevel_o
     :param sdfg: SDFG
     :param device: Device type
     :param toplevel_only: If True, only converts access nodes that do not appear in any scope.
+    :return: A dictionary mapping SDFG IDs to a set of transient arrays that were made persistent.
     '''
+    result: Dict[int, Set[str]] = {}
     for nsdfg in sdfg.all_sdfgs_recursive():
         fsyms: Set[str] = nsdfg.free_symbols
         persistent: Set[str] = set()
@@ -473,12 +477,16 @@ def make_transients_persistent(sdfg: SDFG, device: dtypes.DeviceType, toplevel_o
         for aname in (persistent - not_persistent):
             nsdfg.arrays[aname].lifetime = dtypes.AllocationLifetime.Persistent
 
+        result[nsdfg.sdfg_id] = (persistent - not_persistent)
+
     if device == dtypes.DeviceType.GPU:
         # Reset nonatomic WCR edges
         for n, _ in sdfg.all_nodes_recursive():
             if isinstance(n, SDFGState):
                 for edge in n.edges():
                     edge.data.wcr_nonatomic = False
+
+    return result
 
 
 def auto_optimize(sdfg: SDFG,
@@ -581,6 +589,12 @@ def auto_optimize(sdfg: SDFG,
     for nsdfg in sdfg.all_sdfgs_recursive():
         nsdfg.openmp_sections = False
 
+    # Set all Default storage types that are constant sized to registers
+    move_small_arrays_to_stack(sdfg)
+
+    # Make all independent arrays persistent
+    make_transients_persistent(sdfg, device)
+
     if symbols:
         # Specialize for all known symbols
         known_symbols = {s: v for (s, v) in symbols.items() if s in sdfg.free_symbols}
@@ -598,12 +612,6 @@ def auto_optimize(sdfg: SDFG,
         if debugprint and len(known_symbols) > 0:
             print("Specializing the SDFG for symbols", known_symbols)
         sdfg.specialize(known_symbols)
-
-    # Set all Default storage types that are constant sized to registers
-    move_small_arrays_to_stack(sdfg)
-
-    # Make all independent arrays persistent
-    make_transients_persistent(sdfg, device)
 
     # Validate at the end
     if validate or validate_all:
