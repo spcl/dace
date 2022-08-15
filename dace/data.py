@@ -321,6 +321,20 @@ class Data:
         self.strides = strides
         self.total_size = totalsize
 
+    def __matmul__(self, storage: dtypes.StorageType):
+        """
+        Syntactic sugar for specifying the storage of a data descriptor.
+        This lets us write code like:
+
+        .. code-block:: python
+            @dace
+            def add(X: dace.float32[10, 10] @ dace.StorageType.GPU_Global):
+                return X + 1
+        """
+        new_desc = cp.deepcopy(self)
+        new_desc.storage = storage
+        return new_desc
+
 
 @make_properties
 class Scalar(Data):
