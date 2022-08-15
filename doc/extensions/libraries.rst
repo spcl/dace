@@ -7,6 +7,8 @@ Library Nodes
 -------------
 Library nodes, implementations, example
 
+.. _replacements:
+
 Frontend replacements
 ~~~~~~~~~~~~~~~~~~~~~
 
