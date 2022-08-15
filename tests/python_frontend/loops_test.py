@@ -405,6 +405,7 @@ def test_nested_map_with_symbol():
 
 
 def test_for_else():
+
     @dace.program
     def for_else(A: dace.float64[20]):
         for i in range(1, 20):
@@ -435,6 +436,7 @@ def test_for_else():
 
 
 def test_while_else():
+
     @dace.program
     def while_else(A: dace.float64[2]):
         while A[0] < 5.0:
@@ -484,7 +486,6 @@ def branch_in_while(cond: dace.int32):
 
 def test_branch_in_while():
     sdfg = branch_in_while.to_sdfg(simplify=False)
-    sdfg.view()
     assert len(sdfg.source_nodes()) == 1
 
 
