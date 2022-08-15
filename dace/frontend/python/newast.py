@@ -25,7 +25,7 @@ from dace.frontend.python.astutils import rname
 from dace.frontend.python import nested_call, replacements, preprocessing
 from dace.frontend.python.memlet_parser import (DaceSyntaxError, parse_memlet, pyexpr_to_symbolic, ParseMemlet,
                                                 inner_eval_ast, MemletExpr)
-from dace.sdfg import nodes
+from dace.sdfg import nodes, utils as sdutil
 from dace.sdfg.propagation import propagate_memlet, propagate_subset, propagate_states
 from dace.memlet import Memlet
 from dace.properties import LambdaProperty, CodeBlock
@@ -581,6 +581,7 @@ class TaskletTransformer(ExtNodeTransformer):
     """ A visitor that traverses a data-centric tasklet, removes memlet
         annotations and returns input and output memlets.
     """
+
     def __init__(self,
                  visitor,
                  defined,
@@ -2195,15 +2196,11 @@ class ProgramVisitor(ExtNodeVisitor):
                 # The state that all "break" edges go to
                 loop_end = self._add_state(f'postloop_{node.lineno}')
 
-            body_states = set()
-            to_visit = [first_loop_state]
-            while to_visit:
-                state = to_visit.pop(0)
-                for _, dst, _ in self.sdfg.out_edges(state):
-                    if dst not in body_states and dst is not loop_guard:
-                        to_visit.append(dst)
-                body_states.add(state)
-            
+            body_states = list(
+                sdutil.dfs_conditional(self.sdfg,
+                                       sources=[first_loop_state],
+                                       condition=lambda p, c: c is not loop_guard))
+
             continue_states = self.continue_states.pop()
             while continue_states:
                 next_state = continue_states.pop()
@@ -2222,8 +2219,6 @@ class ProgramVisitor(ExtNodeVisitor):
 
             for state in body_states:
                 if not nx.has_path(self.sdfg.nx, loop_guard, state):
-                    for e in self.sdfg.all_edges(state):
-                        self.sdfg.remove_edge(e)
                     self.sdfg.remove_node(state)
         else:
             raise DaceSyntaxError(self, node, 'Unsupported for-loop iterator "%s"' % iterator)
@@ -2318,15 +2313,9 @@ class ProgramVisitor(ExtNodeVisitor):
 
             # The state that all "break" edges go to
             loop_end = self._add_state(f'postwhile_{node.lineno}')
-        
-        body_states = set()
-        to_visit = [first_loop_state]
-        while to_visit:
-            state = to_visit.pop(0)
-            for _, dst, _ in self.sdfg.out_edges(state):
-                if dst not in body_states and dst is not loop_guard:
-                    to_visit.append(dst)
-            body_states.add(state)
+
+        body_states = list(
+            sdutil.dfs_conditional(self.sdfg, sources=[first_loop_state], condition=lambda p, c: c is not loop_guard))
 
         continue_states = self.continue_states.pop()
         while continue_states:
@@ -2346,8 +2335,6 @@ class ProgramVisitor(ExtNodeVisitor):
 
         for state in body_states:
             if not nx.has_path(self.sdfg.nx, end_guard, state):
-                for e in self.sdfg.all_edges(state):
-                    self.sdfg.remove_edge(e)
                 self.sdfg.remove_node(state)
 
     def visit_Break(self, node: ast.Break):
@@ -4650,6 +4637,7 @@ class ProgramVisitor(ExtNodeVisitor):
         """ Parses the slice attribute of an ast.Subscript node.
             Scalar data are promoted to symbols.
         """
+
         def _promote(node: ast.AST) -> Union[Any, str, symbolic.symbol]:
             node_str = astutils.unparse(node)
             sym = None
