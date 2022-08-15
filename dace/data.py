@@ -324,9 +324,10 @@ class Data:
     def __matmul__(self, storage: dtypes.StorageType):
         """
         Syntactic sugar for specifying the storage of a data descriptor.
-        This lets us write code like:
+        This enables controlling the storage location as follows:
 
         .. code-block:: python
+
             @dace
             def add(X: dace.float32[10, 10] @ dace.StorageType.GPU_Global):
                 return X + 1
