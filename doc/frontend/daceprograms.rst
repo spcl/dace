@@ -170,6 +170,27 @@ inputs have to be provided in order for parsing to work:
     sample_input = np.random.rand(20, 10)
     sdfg = partially_annotated.to_sdfg(sample_input)  # OK
 
+Annotating Storage and Schedule
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+It is also possible to annotate the storage location of an array or where a map will run directly using the ``@`` operator:
+
+.. code-block:: python
+
+    from dace.dtypes import StorageType, ScheduleType
+    import cupy
+
+    @dace
+    def runs_on_gpu(a: dace.float64[20] @ StorageType.GPU_Global, 
+                    b: dace.float64[20] @ StorageType.GPU_Global):
+        # This map will become a GPU kernel
+        for i in dace.map[0:20] @ ScheduleType.GPU_Device:
+            b[i] = a[i] + 1.0
+
+    gpu_a = cupy.random.rand(20)
+    gpu_b = cupy.random.rand(20)
+    runs_on_gpu(gpu_a, gpu_b)
+
 
 Symbols
 ~~~~~~~
