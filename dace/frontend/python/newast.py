@@ -12,6 +12,7 @@ from os import path
 import warnings
 from numbers import Number
 from typing import Any, Dict, List, Set, Tuple, Union, Callable, Optional
+import operator
 
 import dace
 from dace import data, dtypes, subsets, symbolic, sdfg as sd
@@ -1620,10 +1621,49 @@ class ProgramVisitor(ExtNodeVisitor):
             NotImplementedError: If iterator type is not implemented
 
         Returns:
-            Tuple[str, List[str], List[ast.AST]] -- Iterator type, iteration 
+            Tuple[str, List[str], List[ast.AST], Optional[ScheduleType]] --
+                                                    Iterator type, iteration
                                                     ranges, and AST versions of
-                                                    the ranges
+                                                    the ranges. If present, the
+                                                    schedule type is returned.
         """
+
+        if isinstance(node, (ast.BinOp)):
+            # special case:
+            # We allow iterating over binops like:
+            # dace.map[0:N] @ ScheduleType
+            if not isinstance(node.op, ast.MatMult):
+                raise DaceSyntaxError(
+                    self, node, "Binop in for-loop iterator is not supported, "
+                    "except when using the @ operator to specify "
+                    "Schedule types")
+
+            # parse schedule type
+            schedule_name = preprocessing.ModuleResolver(self.modules, True).visit(node.right)
+            schedule_name = rname(schedule_name)
+
+            if schedule_name.startswith("ScheduleType."):
+                # support ScheduleType.<...>
+                schedule_type = schedule_name[len("ScheduleType."):]
+                schedule = getattr(dtypes.ScheduleType, schedule_type)
+            else:
+                # check if it's a module (e.g. dace.ScheduleType or dtypes.ScheduleType)
+                modname = until(schedule_name, '.')
+                if ('.' in schedule_name and modname and modname in self.globals
+                        and dtypes.ismodule(self.globals[modname])):
+                    schedule = operator.attrgetter(schedule_name[len(modname) + 1:])(self.globals[modname])
+                elif schedule_name in self.globals:
+                    schedule = self.globals[schedule_name]
+                else:
+                    schedule = None
+
+                if not isinstance(schedule, dtypes.ScheduleType):
+                    raise DaceSyntaxError(self, node, "RHS of dace.map @ operand must be a ScheduleType")
+
+            node = node.left
+
+        else:
+            schedule = None
 
         if not isinstance(node, (ast.Call, ast.Subscript)):
             raise DaceSyntaxError(self, node, "Iterator of ast.For must be a function or a subscript")
@@ -1635,6 +1675,8 @@ class ProgramVisitor(ExtNodeVisitor):
 
         if iterator not in {'range', 'prange', 'parrange', 'dace.map'}:
             raise DaceSyntaxError(self, node, "Iterator {} is unsupported".format(iterator))
+        if schedule is not None and iterator == "range":
+            raise DaceSyntaxError(self, node, "Cannot specify schedule on range loops")
         elif iterator in ['range', 'prange', 'parrange']:
             # AST nodes for common expressions
             zero = ast.parse('0').body[0]
@@ -1674,7 +1716,7 @@ class ProgramVisitor(ExtNodeVisitor):
             else:  # isinstance(node.slice, ast.Index) is True
                 ranges.append(self._parse_index_as_range(node.slice))
 
-        return (iterator, ranges, ast_ranges)
+        return (iterator, ranges, ast_ranges, schedule)
 
     def _parse_map_inputs(self, name: str, params: List[Tuple[str, str]],
                           node: ast.AST) -> Tuple[Dict[str, str], Dict[str, Memlet]]:
@@ -2078,7 +2120,7 @@ class ProgramVisitor(ExtNodeVisitor):
         # 3. `for i,j,k in dace.map[0:M, 0:N, 0:K]`: Creates an ND map
         # print(ast.dump(node))
         indices = self._parse_for_indices(node.target)
-        iterator, ranges, ast_ranges = self._parse_for_iterator(node.iter)
+        iterator, ranges, ast_ranges, schedule = self._parse_for_iterator(node.iter)
 
         if len(indices) != len(ranges):
             raise DaceSyntaxError(self, node, "Number of indices and ranges of for-loop do not match")
@@ -2086,13 +2128,16 @@ class ProgramVisitor(ExtNodeVisitor):
         if iterator == 'dace.map':
             if node.orelse:
                 raise DaceSyntaxError(self, node, '"else" clause not supported on DaCe maps')
+            if schedule is None:
+                schedule = dtypes.ScheduleType.Default
 
             state = self._add_state('MapState')
             params = [(k, ':'.join([str(t) for t in v])) for k, v in zip(indices, ranges)]
             params, map_inputs = self._parse_map_inputs('map_%d' % node.lineno, params, node)
             me, mx = state.add_map(name='%s_%d' % (self.name, node.lineno),
                                    ndrange=params,
-                                   debuginfo=self.current_lineinfo)
+                                   debuginfo=self.current_lineinfo,
+                                   schedule=schedule)
             # body = SDFG('MapBody')
             body, inputs, outputs, symbols = self._parse_subprogram(
                 self.name,
