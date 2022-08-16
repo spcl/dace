@@ -120,6 +120,31 @@ def method(f: F,
 
 
 # Dataflow constructs
+class MapGenerator:
+    """
+    An SDFG map generator class that allows applying operators on it, used
+    for syntactic sugar.
+    """
+
+    def __init__(self, rng: Union[slice, Tuple[slice]]):
+        self.rng = rng
+
+    def __matmul__(self, schedule: dtypes.ScheduleType):
+        """
+        Syntactic sugar for specifying the schedule of the map.
+        This enables controlling the hardware scheduling of the map as follows:
+
+        .. code-block:: python
+
+            for i, j in dace.map[0:N, 0:M] @ ScheduleType.GPU_Global:
+                b[i, j] = a[i, j] + 1
+        """
+        # Ignored in Python mode
+        return self
+
+    def __iter__(self):
+        return ndloop.ndrange(self.rng)
+
 class MapMetaclass(type):
     """ Metaclass for map, to enable ``dace.map[0:N]`` syntax. """
 
@@ -131,32 +156,6 @@ class MapMetaclass(type):
                     N-dimensional range to iterate over.
         :return: Generator of N-dimensional tuples of iterates.
         """
-
-        class MapGenerator:
-            """
-            An SDFG map generator class that allows applying operators on it, used
-            for syntactic sugar.
-            """
-
-            def __init__(self, rng: Union[slice, Tuple[slice]]):
-                self.rng = rng
-
-            def __matmul__(self, schedule: dtypes.ScheduleType):
-                """
-                Syntactic sugar for specifying the schedule of the map.
-                This enables controlling the hardware scheduling of the map as follows:
-
-                .. code-block:: python
-
-                    for i, j in dace.map[0:N, 0:M] @ ScheduleType.GPU_Global:
-                        b[i, j] = a[i, j] + 1
-                """
-                # Ignored in Python mode
-                return self
-
-            def __iter__(self):
-                return ndloop.ndrange(self.rng)
-
         return MapGenerator(rng)
 
 
