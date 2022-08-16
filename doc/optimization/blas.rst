@@ -1,3 +1,5 @@
+.. _blas:
+
 Working with Fast Linear Algebra (BLAS) Libraries
 =================================================
 

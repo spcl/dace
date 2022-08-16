@@ -339,9 +339,21 @@ a read and a write). Several fields describe the data being moved:
   
 There are more properties you can set, see :class:`~dace.memlet.Memlet` for a full list.
 
-Memlet subsets 
-subset as constraint, volume, and indirect access. Volume can be used for analyzing (or estimating, if dynamic) data
-movement costs.
+Memlet subsets and volumes are used for analyzing (or estimating, if dynamic) data movement patterns and costs.
+A memlet's ``subset`` does not necessarily mean that all values in that subset would be read at runtime. It rather acts as a
+*constraint* on the potential accessed values. This can be used to ensure certain memory is accessible after some optimizations
+Together with ``volume``, we can define important memory access patterns, such as indirect access:
+
+.. code-block:: python
+
+  # ...
+  for i in dace.map[0:N]:
+    mileage += distances[destinations[i]]
+  # ...
+  
+In the above, the memlets inside the map are :pycode:`dace.Memlet(data='destinations', subset='i', volume=1)` and 
+:pycode:`dace.Memlet(data='distances', subset='0:20', volume=1)`. Notice that in the latter, we know *one* element would
+be read in the range ``0:20``, but we do not know which one it is going to be.
 
 memlet path, memlet trees, and how to get them with the API
 Mention *memlet paths* and the general *memlet tree* that can go through arbitrary scopes
@@ -445,6 +457,29 @@ For example, calling \texttt{numpy.dot} or the \texttt{@} operator translates to
 \textit{Library Nodes} are spawned that can be used for optimizations based on their semantics (e.g., fusing a
 multiplication with a transposition).
 
+During compilation, or optimization, a library node will be expanded using the ``expand`` method of the chosen implementation.
+If no implementation is chosen, the ``default_implementation`` field of the library node class will be chosen. One can
+override default implementations for a library node type, or for an entire library. This can be used, for example, to set
+:ref:`BLAS <blas>` to default to a certain library:
+
+.. code-block:: python
+
+  from dace.libraries import blas
+
+  @dace
+  def mult(a, b):
+    return a @ b
+
+  mult(a, b)  # will use the default implementation in the config file ("pure")
+
+  blas.default_implementation = 'MKL'
+
+  @dace
+  def mult2(a, b):
+    return a @ b
+
+  mult2(a, b)  # will use Intel MKL
+  
 
 .. _memprop:
 

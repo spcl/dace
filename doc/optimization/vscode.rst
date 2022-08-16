@@ -37,7 +37,7 @@ symbols can be parameterized, causing the heatmap overlays to be updated on-the-
 Fine-Grained Data Access and Reuse Analysis (Experimental)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-.. note:: 
+.. warning:: 
     This feature is still in development and is only available in certain pre-release versions of the VS Code
     extension at this time. This feature may consequently be subject to changes.
 
