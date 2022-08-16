@@ -311,29 +311,47 @@ cases will fail validation, with dangling connectors marked in red upon display.
 Memlets
 ~~~~~~~
 
-Simply put, memlets represent data movement in SDFGs. They can connect access nodes with other access nodes (creating a copy),
-access nodes with cyan :ref:`connectors <connectors>` (creating a reference), or directly connect a tasklet to a tasklet or a cyan connector (creating a copy).
-This means code nodes (tasklets, library nodes, and nested SDFGs), access nodes to other access nodes (creating a copy), or tasklets to other tasklets.  There are several fields that describe the data being moved:
+Memlets represent data movement in SDFGs. They can connect access nodes with other access nodes (creating a
+read *and* a write operation), access nodes with :ref:`view connectors <connectors>` (creating a read *or* a write
+operation, depending on the direction), or directly connect a tasklet to a tasklet or a view connector (creating both
+a read and a write). Several fields describe the data being moved:
 
-  * ``data``: The data container being accessed
-  * ``subset`` and ``other_subset``: The source and destination :class:`~dace.subsets.Subset` objects that represent
-    the part of the container being moved (e.g., sub-array or stream in a multidimensional set of streams). Typically,
-    only ``subset`` is necessary for memlets that 
-    (using the alias properties ``src_subset`` and ``dst_subset``)
+  * ``data``: The data container being accessed.
+  * ``subset``: A :class:`~dace.subsets.Subset` object that represents the part of the container potentially being moved.
+  * ``volume``: The number of elements moved (as a symbolic expression). The ``dynamic`` boolean property complements
+    this --- if set to True, we say the number of elements moved is *up to* the value of ``volume``.
+  
+      * If ``volume`` is set to ``-1`` and ``dynamic`` is True, the memlet is defined as unbounded, which means there is
+        no way to analyze how much (and when) data will move.
 
-anatomy of a memlet
+  * ``wcr`` (default None): An optional lambda function that specifies the Write-Conflict Resolution function. 
+    If not None, every movement into the destination container will instead become an update (see below). The first argument
+    of the lambda function is the old value, whereas the second is the incoming value.
+  * ``other_subset``: Typically, only ``subset`` is necessary for memlets that connect access nodes with view connectors.
+    For other cases (for example, access node to access node), the other subset can be used to offset the
+    sub-region of the container *not* named in ``data``. 
+    
+      * For example, the copy ``B[1:21, 0:3] = A[i:i+20, j-1:j+2]`` can be represented by ``dace.Memlet(data='A', subset='i:i+20, j-1:j+2', other_subset='1:21, 0:3')``.
+        *For performance reasons, always prefer constructing range subsets from* :class:`~dace.subsets.Range` *over a string.*
+      * The alias properties ``src_subset`` and ``dst_subset`` specify the source and destination subsets, regardless of the
+        value of ``data``.
+  
+There are more properties you can set, see :class:`~dace.memlet.Memlet` for a full list.
 
-Reads and writes are self-explanatory, and updates can be implemented in a platform-dependent way, for example atomic
-operations, or different kinds of accumulators on FPGAs. 
+Memlet subsets 
+subset as constraint, volume, and indirect access. Volume can be used for analyzing (or estimating, if dynamic) data
+movement costs.
 
 memlet path, memlet trees, and how to get them with the API
 Mention *memlet paths* and the general *memlet tree* that can go through arbitrary scopes
 
 
-Memlets in code generation create references/copies in the innermost scope (because of the replicated definition)
+In code generation, memlets create references/copies in the innermost scope (because of the replicated definition)
 
+WCR - how the expression is symbolically analyzed (with sympy) and replaced with a built-in operator (``a + b`` becomes
+:class:`dace.dtypes.ReductionType.Sum`).
+Updates can be implemented in a platform-dependent way, for example atomic operations, or different kinds of accumulators on FPGAs. 
 No WCR for streams.
-
 WCR goes all the way in the memlet path (even through nested SDFGs), only applied in the innermost scope though.
 
 
