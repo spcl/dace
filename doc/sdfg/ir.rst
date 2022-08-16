@@ -295,7 +295,7 @@ A view connector does not need to define a data container. This is because conne
 of the memlet connected to it. However, connectors can have types of their own. By default, the type of a connector is
 ``None``, which means its type is inferred automatically by DaCe in :func:`~dace.sdfg.infer_types.infer_connector_types`.
 If an type is defined, it acts as a "cast" of the data it is referring to. This is used, among other places, in SIMD
-vectorization. For example, an access ``A[4*i:4*i + 4]`` connected to a connector of type ``dace.vector(dace.float64, 4)``
+vectorization. For example, an access :pycode:`A[4*i : 4*i + 4]` connected to a connector of type :pycode:`dace.vector(dace.float64, 4)`
 will reinterpret the data as a 4-element vector.
 
 Passthrough connectors are identified only by name: the incoming connector must start with ``IN_`` and outgoing connector
@@ -331,7 +331,8 @@ a read and a write). Several fields describe the data being moved:
     For other cases (for example, access node to access node), the other subset can be used to offset the
     sub-region of the container *not* named in ``data``. 
     
-      * For example, the copy ``B[1:21, 0:3] = A[i:i+20, j-1:j+2]`` can be represented by ``dace.Memlet(data='A', subset='i:i+20, j-1:j+2', other_subset='1:21, 0:3')``.
+      * For example, the copy :pycode:`B[1:21, 0:3] = A[i:i+20, j-1:j+2]` can be represented by 
+        :pycode:`dace.Memlet(data='A', subset='i:i+20, j-1:j+2', other_subset='1:21, 0:3')`.
         *For performance reasons, always prefer constructing range subsets from* :class:`~dace.subsets.Range` *over a string.*
       * The alias properties ``src_subset`` and ``dst_subset`` specify the source and destination subsets, regardless of the
         value of ``data``.

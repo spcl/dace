@@ -11,7 +11,7 @@ Scope
 
 This document describes DaCe's core Python language parser, implemented by the :class:`~dace.frontend.python.newast.ProgramVisitor` class.
 The :class:`~dace.frontend.python.newast.ProgramVisitor` supports a restricted subset of Python's features that can be expressed directly as SDFG elements.
-A larger subset of the Python language is supported either through code preprocessing (see :doc:`preprocessing`) and/or in JIT mode (see :doc:`jitoop`).
+A larger subset of the Python language is supported either through code preprocessing (see :doc:`preprocessing`) and/or in JIT mode.
 
 Supported Python Versions
 -------------------------
@@ -24,7 +24,7 @@ official `Python documentation <https://docs.python.org/3/library/ast.html>`_.
 Main Limitations
 ----------------
 
-- Classes and object-oriented programing are only supported in JIT mode (see :doc:`jitoop`).
+- Classes and object-oriented programing are only supported in JIT mode.
 - Python native containers (tuples, lists, sets, and dictionaries) are not supported **directly** as :class:`~dace.data.Data`. Specific instances of them may be **indirectly** supported through code preprocessing (see :doc:`preprocessing`). There is also limited support for specific uses, e.g., as arguments to some methods.
 - Only the `range <https://docs.python.org/3/library/stdtypes.html#range>`_, :func:`parrange`, and :func:`~dace.frontend.python.interface.map` iterators are **directly** supported. Other iterators, e.g., `zip <https://docs.python.org/3/library/functions.html#zip>`_ may be **indirectly** supported through code preprocessing (see :doc:`preprocessing`).
 - Recursion is not supported.
@@ -62,7 +62,7 @@ Abstract Syntax sub-Tree. The :class:`~dace.frontend.python.newast.ProgramVisito
 - `orig_name`: The name of the Data-Centric Python program.
 - `name`: The name of the generated :class:`~dace.sdfg.sdfg.SDFG` object. `name` and `orig_name` differ when generating a :class:`~dace.sdfg.nodes.NestedSDFG`.
 - `globals`: The variables defined in the global scope. Typically, these are modules imported and global variables defined in the file containing the Data-Centric Python program. 
-- `closure`: The closure of the Data-Centric Python program (see :doc:`preprocessing` and :doc:`jitoop`).
+- `closure`: The closure of the Data-Centric Python program (see :doc:`preprocessing`).
 - `nested`: True if generating a :class:`~dace.sdfg.nodes.NestedSDFG`.
 - `simplify`: True if the :func:`~dace.sdfg.sdfg.SDFG.simplfy` should be called on the generated :class:`~dace.sdfg.sdfg.SDFG` object.
 - `scope_arrays`: The Data-Centric Data (see :mod:`~dace.data`) defined in the parent :class:`~dace.sdfg.sdfg.SDFG` scope.
@@ -71,7 +71,7 @@ Abstract Syntax sub-Tree. The :class:`~dace.frontend.python.newast.ProgramVisito
 - `variables`: The variables defined in the current :class:`~dace.frontend.python.newast.ProgramVisitor` scope.
 - `accesses`: A dictionary of the accesses to Data defined in a parent :class:`~dace.sdfg.sdfg.SDFG` scope. Used to avoid generating duplicate :class:`~dace.sdfg.nodes.NestedSDFG` connectors for the same Data subsets accessed.
 - `views`: A dictionary of Views and the Data subsets viewed. Used to generate Views for Array slices.
-- `nested_closure_arrays`: The closure of nested Data-Centric Python programs (see :doc:`preprocessing` and :doc:`jitoop`).
+- `nested_closure_arrays`: The closure of nested Data-Centric Python programs (see :doc:`preprocessing`).
 - `annotated_types`: A dictionary from Python variables to Data-Centric datatypes. Used when variables are explicitly type-annotated in the Python code.
 - `map_symbols`: The :class:`~dace.sdfg.nodes.Map` symbols defined in the :class:`~dace.sdfg.sdfg.SDFG`. Useful when deciding when an augmented assignment should be implemented with WCR or not.
 - `sdfg`: The generated :class:`~dace.sdfg.sdfg.SDFG` object.

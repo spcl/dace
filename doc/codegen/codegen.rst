@@ -3,6 +3,7 @@
 Code Generation
 ===============
 
+
 File structure (framecode etc.)
 
 .. _codegen_how_it_works:
@@ -174,4 +175,7 @@ Systolic Arrays
 
 
 
+.. toctree::
+    :maxdepth: 1
 
+    runtime

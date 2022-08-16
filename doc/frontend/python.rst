@@ -9,6 +9,5 @@ DaCe Python Frontend
 
     preprocessing
     parsing
-    jitoop
     pysupport
     npsupport

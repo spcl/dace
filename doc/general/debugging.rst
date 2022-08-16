@@ -21,6 +21,8 @@ For issues with :ref:`properties`, enable :envvar:`testing.serialization` and :e
 
 Below we provide a more detailed methodology for debugging particular issues.
 
+.. _sdfg-validation:
+
 Graph Validation
 ----------------
 

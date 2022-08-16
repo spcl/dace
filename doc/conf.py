@@ -56,6 +56,17 @@ html_static_path = ['_static']
 
 master_doc = 'index'
 
+# Add inline python code as prologue to every .rst file
+rst_prolog = '''
+.. role:: pycode(code)
+  :language: python
+  :class: code-literal
+
+'''
+
+html_css_files = [
+    'css/custom.css',
+]
 
 # Generate docs for config schema
 generate_docs()

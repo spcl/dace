@@ -2,7 +2,7 @@ Core Python Language Support
 ============================
 
 This document describes in detail which features of Python are supported by the Data-Centric Python-Frontend. It does not
-include features supported by :doc:`preprocessing` or :doc:`jitoop`.
+include features supported by :doc:`preprocessing`.
 The comparison is made against the `Python Language Reference <https://docs.python.org/3/reference>`_.
 
 NOTE: This document has to be updated.
@@ -325,7 +325,7 @@ type-annotated. Nested ``dace.program`` definitions are not supported.
 8.7 Class definitions
 ^^^^^^^^^^^^^^^^^^^^^
 
-See :doc:`preprocessing` and :doc:`jitoop`.
+See :doc:`preprocessing`.
 
 8.8 Coroutines
 ^^^^^^^^^^^^^^
