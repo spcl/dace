@@ -132,7 +132,7 @@ class DeadStateElimination(ppl.Pass):
 
         # Evaluate condition
         scond = edge.condition_sympy()
-        if scond == True or scond == sp.Not(sp.logic.boolalg.BooleanFalse(), evaluate=False):
+        if scond == True or scond == sp.Not(sp.S.false, evaluate=False):
             return True
 
         # Evaluate non-optional arrays
@@ -150,7 +150,7 @@ class DeadStateElimination(ppl.Pass):
 
         # Evaluate condition
         scond = edge.condition_sympy()
-        if scond == False or scond == sp.Not(sp.logic.boolalg.BooleanTrue(), evaluate=False):
+        if scond == False or scond == sp.Not(sp.S.true, evaluate=False):
             return True
 
         # Evaluate non-optional arrays
