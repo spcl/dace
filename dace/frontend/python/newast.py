@@ -4,6 +4,7 @@ from collections import OrderedDict
 import copy
 import itertools
 import inspect
+import networkx as nx
 import re
 import sys
 import time
@@ -24,7 +25,7 @@ from dace.frontend.python.astutils import rname
 from dace.frontend.python import nested_call, replacements, preprocessing
 from dace.frontend.python.memlet_parser import (DaceSyntaxError, parse_memlet, pyexpr_to_symbolic, ParseMemlet,
                                                 inner_eval_ast, MemletExpr)
-from dace.sdfg import nodes
+from dace.sdfg import nodes, utils as sdutil
 from dace.sdfg.propagation import propagate_memlet, propagate_subset, propagate_states
 from dace.memlet import Memlet
 from dace.properties import LambdaProperty, CodeBlock
@@ -2198,6 +2199,11 @@ class ProgramVisitor(ExtNodeVisitor):
                 # The state that all "break" edges go to
                 loop_end = self._add_state(f'postloop_{node.lineno}')
 
+            body_states = list(
+                sdutil.dfs_conditional(self.sdfg,
+                                       sources=[first_loop_state],
+                                       condition=lambda p, c: c is not loop_guard))
+
             continue_states = self.continue_states.pop()
             while continue_states:
                 next_state = continue_states.pop()
@@ -2213,6 +2219,10 @@ class ProgramVisitor(ExtNodeVisitor):
                     self.sdfg.remove_edge(e)
                 self.sdfg.add_edge(next_state, loop_end, dace.InterstateEdge())
             self.loop_idx -= 1
+
+            for state in body_states:
+                if not nx.has_path(self.sdfg.nx, loop_guard, state):
+                    self.sdfg.remove_node(state)
         else:
             raise DaceSyntaxError(self, node, 'Unsupported for-loop iterator "%s"' % iterator)
 
@@ -2307,6 +2317,9 @@ class ProgramVisitor(ExtNodeVisitor):
             # The state that all "break" edges go to
             loop_end = self._add_state(f'postwhile_{node.lineno}')
 
+        body_states = list(
+            sdutil.dfs_conditional(self.sdfg, sources=[first_loop_state], condition=lambda p, c: c is not loop_guard))
+
         continue_states = self.continue_states.pop()
         while continue_states:
             next_state = continue_states.pop()
@@ -2322,6 +2335,10 @@ class ProgramVisitor(ExtNodeVisitor):
                 self.sdfg.remove_edge(e)
             self.sdfg.add_edge(next_state, loop_end, dace.InterstateEdge())
         self.loop_idx -= 1
+
+        for state in body_states:
+            if not nx.has_path(self.sdfg.nx, end_guard, state):
+                self.sdfg.remove_node(state)
 
     def visit_Break(self, node: ast.Break):
         if self.loop_idx < 0:
@@ -3166,10 +3183,13 @@ class ProgramVisitor(ExtNodeVisitor):
                     independent = True
                     waccess = inverse_dict_lookup(self.accesses, (new_name, new_rng))
                     if self.map_symbols and waccess:
-                        for s in self.map_symbols:
-                            if s not in waccess[1].free_symbols:
-                                independent = False
-                                break
+                        if not Config.get_bool('frontend', 'avoid_wcr'):
+                            independent = False
+                        else:
+                            for s in self.map_symbols:
+                                if s not in waccess[1].free_symbols:
+                                    independent = False
+                                    break
 
             # Handle output indirection
             output_indirection = None

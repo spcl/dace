@@ -32,8 +32,8 @@ class StorageType(aenum.AutoNumberEnum):
     CPU_Pinned = ()  #: Host memory that can be DMA-accessed from accelerators
     CPU_Heap = ()  #: Host memory allocated on heap
     CPU_ThreadLocal = ()  #: Thread-local host memory
-    GPU_Global = ()  #: Global memory
-    GPU_Shared = ()  #: Shared memory
+    GPU_Global = ()  #: GPU global memory
+    GPU_Shared = ()  #: On-GPU shared memory
     FPGA_Global = ()  #: Off-chip global memory (DRAM)
     FPGA_Local = ()  #: On-chip memory (bulk storage)
     FPGA_Registers = ()  #: On-chip memory (fully partitioned registers)
@@ -180,7 +180,7 @@ class TilingType(aenum.AutoNumberEnum):
 
 # Maps from ScheduleType to default StorageType
 SCOPEDEFAULT_STORAGE = {
-    StorageType.Default: StorageType.Default,
+    ScheduleType.Default: StorageType.Default,
     None: StorageType.CPU_Heap,
     ScheduleType.Sequential: StorageType.Register,
     ScheduleType.MPI: StorageType.CPU_Heap,
@@ -700,7 +700,7 @@ class vector(typeclass):
         self._veclen = val
 
 
-class string(pointer):
+class stringtype(pointer):
     """
     A specialization of the string data type to improve 
     Python/generated code marshalling.
@@ -718,7 +718,7 @@ class string(pointer):
 
     @staticmethod
     def from_json(json_obj, context=None):
-        return string()
+        return stringtype()
 
 
 class struct(typeclass):
@@ -958,7 +958,7 @@ class callback(typeclass):
                 inp_arraypos.append(index)
                 inp_types_and_sizes.append((arg.dtype.as_ctypes(), arg.shape))
                 inp_converters.append(partial(data.make_reference_from_descriptor, arg))
-            elif isinstance(arg, data.Scalar) and isinstance(arg.dtype, string):
+            elif isinstance(arg, data.Scalar) and arg.dtype == string:
                 inp_arraypos.append(index)
                 inp_types_and_sizes.append((ctypes.c_char_p, []))
                 inp_converters.append(lambda a, *args: ctypes.cast(a, ctypes.c_char_p).value.decode('utf-8'))
@@ -974,7 +974,7 @@ class callback(typeclass):
                 ret_arraypos.append(index + offset)
                 ret_types_and_sizes.append((arg.dtype.as_ctypes(), arg.shape))
                 ret_converters.append(partial(data.make_reference_from_descriptor, arg))
-            elif isinstance(arg, data.Scalar) and isinstance(arg.dtype, string):
+            elif isinstance(arg, data.Scalar) and arg.dtype == string:
                 ret_arraypos.append(index + offset)
                 ret_types_and_sizes.append((ctypes.c_char_p, []))
                 ret_converters.append(lambda a, *args: ctypes.cast(a, ctypes.c_char_p).value.decode('utf-8'))
@@ -1115,7 +1115,7 @@ float32 = typeclass(numpy.float32)
 float64 = typeclass(numpy.float64)
 complex64 = typeclass(numpy.complex64)
 complex128 = typeclass(numpy.complex128)
-
+string = stringtype()
 
 @undefined_safe_enum
 @extensible_enum

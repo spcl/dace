@@ -173,11 +173,11 @@ class ConstantPropagation(ppl.Pass):
                                           sdfg.number_of_nodes(), self.progress):
             if state in result:
                 continue
-            result[state] = {}
 
             # Get predecessors
             in_edges = sdfg.in_edges(state)
             if len(in_edges) == 1:  # Special case, propagate as-is
+                result[state] = {}
                 # First the prior state
                 self._propagate(result[state], result[in_edges[0].src])
 
@@ -205,6 +205,7 @@ class ConstantPropagation(ppl.Pass):
                     else:
                         assignments[aname] = aval
 
+            result[state] = {}
             self._propagate(result[state], assignments)
 
         return result

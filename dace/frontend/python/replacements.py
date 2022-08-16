@@ -731,6 +731,17 @@ def _round(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, input: Union[str,
     return _simple_call(sdfg, state, input, 'round', dtypes.typeclass(int))
 
 
+@oprepo.replaces('len')
+def _len_array(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a: str):
+    # len(numpy_array) is equivalent to numpy_array.shape[0]
+    if isinstance(a, str):
+        if a in sdfg.arrays:
+            return sdfg.arrays[a].shape[0]
+        if a in sdfg.constants_prop:
+            return len(sdfg.constants[a])
+    raise TypeError(f'`len` is not supported for input "{a}" (type {type(a)})')
+
+
 @oprepo.replaces('transpose')
 @oprepo.replaces('dace.transpose')
 @oprepo.replaces('numpy.transpose')
@@ -770,6 +781,12 @@ def _transpose(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, inpname: str,
 @oprepo.replaces('numpy.sum')
 def _sum(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a: str, axis=None):
     return _reduce(pv, sdfg, state, "lambda x, y: x + y", a, axis=axis, identity=0)
+
+
+@oprepo.replaces('sum')
+def _sum_array(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a: str):
+    # sum(numpy_array) is equivalent to np.sum(numpy_array, axis=0)
+    return _reduce(pv, sdfg, state, "lambda x, y: x + y", a, axis=0, identity=0)
 
 
 @oprepo.replaces('numpy.mean')
