@@ -1,7 +1,5 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-"""
-Helper function to compute GPU schedule for reduction node "auto" expansion
-"""
+# Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
+""" Helper function to compute GPU schedule for reduction node "auto" expansion. """
 
 from dace import dtypes
 from dace.data import Array
@@ -9,7 +7,7 @@ from typing import List
 
 
 def get_reduction_schedule(in_array: Array, axes: List[int]):
-    
+
     # apply vectorization or not
     use_vectorization = True
     # apply mini-warps optimitation or not
@@ -17,26 +15,36 @@ def get_reduction_schedule(in_array: Array, axes: List[int]):
 
     # define the warp size
     warp_size = 32
-    wide_load_size = 16     #bytes
+    wide_load_size = 16  #bytes
 
-    schedule = {'grid': [], 'block': [], 'sequential': [], 'shared_mem': 0, 'contiguous_dim': False,
-                'in_shape' : [], 'out_shape': [], 'in_strides' : [], 'out_strides' : [], 'axes' : [],
-                'vectorize' : False, 'mini_warps' : False, 'vec_len' : 1, 'error' : False, 'num_mini_warps' : 0}
+    schedule = {
+        'grid': [],
+        'block': [],
+        'sequential': [],
+        'shared_mem': 0,
+        'contiguous_dim': False,
+        'in_shape': [],
+        'out_shape': [],
+        'in_strides': [],
+        'out_strides': [],
+        'axes': [],
+        'vectorize': False,
+        'mini_warps': False,
+        'vec_len': 1,
+        'error': False,
+        'num_mini_warps': 0
+    }
 
     shape = []
     strides = []
 
-
     dtype = in_array.dtype
     bytes = dtype.bytes
-
 
     num_loaded_elements = 1
     if use_vectorization:
         num_loaded_elements = wide_load_size // bytes
         schedule['vec_len'] = num_loaded_elements
-
-
 
     # remove "fake" dimensions
     for i in range(len(in_array.shape)):
@@ -49,13 +57,11 @@ def get_reduction_schedule(in_array: Array, axes: List[int]):
                 if axes[j] > i:
                     axes[j] -= 1
 
-    
-
     # combine axes:
     combined_shape = []
     combined_axes = []
     combined_strides = []
-    
+
     curr_axis_index = 0
     i = 0
     num_combined = 0
@@ -75,19 +81,18 @@ def get_reduction_schedule(in_array: Array, axes: List[int]):
             combined_strides.append(strides[i])
         i += 1
         prev_reduced = False
-        if i-1 == curr_axis:
+        if i - 1 == curr_axis:
             prev_reduced = True
             # add curr dim and axis
             combined_axes.append(curr_axis - num_combined)
             curr_axis_index += 1
-            while curr_axis_index < len(axes) and axes[curr_axis_index-1] + 1 == axes[curr_axis_index]:
+            while curr_axis_index < len(axes) and axes[curr_axis_index - 1] + 1 == axes[curr_axis_index]:
                 # actually combine
                 combined_shape[-1] *= shape[i]
                 combined_strides[-1] = strides[i]
                 i += 1
                 curr_axis_index += 1
                 num_combined += 1
-
 
     shape = combined_shape
     axes = combined_axes
@@ -103,7 +108,7 @@ def get_reduction_schedule(in_array: Array, axes: List[int]):
 
     if out_shape == []:
         out_shape = [1]
-    
+
     schedule['out_shape'] = out_shape
     schedule['in_shape'] = shape
     schedule['in_strides'] = strides
@@ -114,8 +119,6 @@ def get_reduction_schedule(in_array: Array, axes: List[int]):
             out_strides[j] *= d
 
     schedule['out_strides'] = out_strides
-
-
 
     # get contiguity:
     contiguity = []
@@ -133,47 +136,40 @@ def get_reduction_schedule(in_array: Array, axes: List[int]):
     except Exception:
         pass
 
-
-
     # non-neighbouring multi-axes reduction not supported yet (e.g. reduce axes [0,2])
     if len(axes) > 1:
         schedule['error'] = True
         return schedule
-                    
 
     if contiguous_dimension in axes:
         # we are reducing the contigious dimension
         schedule['contiguous_dim'] = True
 
         # TODO: Fix vectorization for non-exact-fitting sizes
-        if (shape[contiguous_dimension] > 32) == True and (shape[contiguous_dimension] % num_loaded_elements == 0) == True and use_vectorization:
+        if (shape[contiguous_dimension] > 32) == True and (shape[contiguous_dimension] % num_loaded_elements
+                                                           == 0) == True and use_vectorization:
             schedule['vectorize'] = True
 
         for i, s in enumerate(shape):
             if i != contiguous_dimension:
                 schedule['grid'].append(s)
-        
+
         if schedule['grid'] == []:
             # TODO: solve this issue
             schedule['error'] = True
             return schedule
 
-
-        threads_per_block = warp_size if (shape[contiguous_dimension] > warp_size) == True else shape[contiguous_dimension]
+        threads_per_block = warp_size if (
+            shape[contiguous_dimension] > warp_size) == True else shape[contiguous_dimension]
         schedule['block'] = [threads_per_block]
-
 
         stride = warp_size * num_loaded_elements if schedule['vectorize'] else warp_size
         schedule['sequential'].append([0, shape[contiguous_dimension], stride])
 
-
-
-
     else:
         # we are reducing a non-contiguous dimension
 
-
-        schedule['sequential'] = [shape[axes[0]]]      # one thread sums up the whole axis
+        schedule['sequential'] = [shape[axes[0]]]  # one thread sums up the whole axis
 
         schedule['block'] = [shape[contiguous_dimension]]
 
@@ -191,7 +187,7 @@ def get_reduction_schedule(in_array: Array, axes: List[int]):
         if use_mini_warps:
             #check if we can use mini_warps
             # i.e. check if warp is not filled and power of 2 (for now only works for powers of 2)
-            if (schedule['block'][0] < 32) == True and (schedule['block'][0] & (schedule['block'][0]-1) == 0) == True:
+            if (schedule['block'][0] < 32) == True and (schedule['block'][0] & (schedule['block'][0] - 1) == 0) == True:
                 schedule['mini_warps'] = True
                 schedule['num_mini_warps'] = warp_size // schedule['block'][0]
         if use_vectorization and not schedule['num_mini_warps']:
@@ -203,8 +199,5 @@ def get_reduction_schedule(in_array: Array, axes: List[int]):
             # TODO: solve this issue
             schedule['error'] = True
             return schedule
-    
+
     return schedule
-
-
-
