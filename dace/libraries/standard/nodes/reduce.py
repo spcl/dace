@@ -1081,9 +1081,9 @@ reduce_out = {reduction_expr}''')
 @dace.library.expansion
 class ExpandReduceAuto(pm.ExpandTransformation):
     """
-        auto expansion
+        auto expansion for GPU
     """
-    environments = []
+    environments = [CUDA]
 
     @staticmethod
     def expansion(node: 'Reduce', state: SDFGState, sdfg: SDFG):
@@ -1114,12 +1114,18 @@ class ExpandReduceAuto(pm.ExpandTransformation):
         # call the planner script
         schedule = get_reduction_schedule(input_data, axes)
 
-        # print(schedule)
-
+        print(schedule)
+        
         if schedule['error']:
             # return pure expansion if error
+
+            ########################################################
+            ###    This gives segfault if we reduce all axes     ###
+            ###(GPU map with 1 thread block doesn't seem to work)###
+            ########################################################
+
             pure_sdfg = ExpandReducePure.expansion(node, state, sdfg)
-            # need to apply gpu transformations, else runs on CPU
+            # need to apply gpu transformations, else runs on CPU (and our input data is on GPU)
             pure_sdfg.apply_gpu_transformations()
             return pure_sdfg
 
@@ -1233,11 +1239,9 @@ class ExpandReduceAuto(pm.ExpandTransformation):
                                                 dtypes.Language.CPP)
 
                                             
-
             cond_tasklet = nstate.add_tasklet('cond_write', {'_input'}, {'_output'}, 'if threadIdx.x == 0: _output = _input')
 
             
-
             # Connect everything
             r = nstate.add_read('_in')
             w = nstate.add_write('_out')
@@ -1281,7 +1285,6 @@ class ExpandReduceAuto(pm.ExpandTransformation):
                                         schedule=dtypes.ScheduleType.GPU_ThreadBlock)
 
                 outm = dace.Memlet.simple('_out', ','.join(['_o%d' % i for i in range(len(schedule['out_shape']))]))
-                # outm = dace.Memlet.simple('_out', '_o0,_o1')
 
                 inmm = dace.Memlet.simple('_in', ','.join(input_subset))
 
@@ -1321,7 +1324,7 @@ class ExpandReduceAuto(pm.ExpandTransformation):
 
 
                 
-                # add MINI-warpReduce tasklet
+                # add mini-warpReduce tasklet
                 ctype = output_data.dtype
                 redtype = detect_reduction_type(node.wcr)
                 if redtype == dtypes.ReductionType.Custom:
@@ -1497,8 +1500,9 @@ class Reduce(dace.sdfg.nodes.LibraryNode):
         # 'CUDA (warp allreduce)': ExpandReduceCUDAWarpAll
     }
 
-    # default_implementation = 'pure'
-    default_implementation = 'auto'
+    default_implementation = 'pure'
+    # we can only set this to default if input data resides on GPU, right?
+    # default_implementation = 'auto' 
 
     # Properties
     axes = ListProperty(element_type=int, allow_none=True)

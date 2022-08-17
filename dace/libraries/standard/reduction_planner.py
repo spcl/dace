@@ -12,7 +12,7 @@ def get_reduction_schedule(in_array: Array, axes: List[int]):
     
     # apply vectorization or not
     use_vectorization = True
-    # appliy mini-warps optimitation or not
+    # apply mini-warps optimitation or not
     use_mini_warps = True
 
     # define the warp size
@@ -28,10 +28,8 @@ def get_reduction_schedule(in_array: Array, axes: List[int]):
 
 
     dtype = in_array.dtype
-    bytes = 4
+    bytes = dtype.bytes
 
-    if dtype == dtypes.float64:
-        bytes = 8
 
     num_loaded_elements = 1
     if use_vectorization:
@@ -128,17 +126,16 @@ def get_reduction_schedule(in_array: Array, axes: List[int]):
             contiguous_dimension = i
 
     try:
-        # may fail if strides arent numbers
+        # may fail if strides arent numbers (i.e. symbols)
         enum_strides.sort(key=lambda a: a[1])
         for i, s in enum_strides:
             contiguity.append(i)
-
     except Exception:
         pass
 
 
 
-    # non-neighbouring multi-axes reduction not supported yet
+    # non-neighbouring multi-axes reduction not supported yet (e.g. reduce axes [0,2])
     if len(axes) > 1:
         schedule['error'] = True
         return schedule
@@ -148,7 +145,7 @@ def get_reduction_schedule(in_array: Array, axes: List[int]):
         # we are reducing the contigious dimension
         schedule['contiguous_dim'] = True
 
-        # TODO: Fix vectorization for non exact fitting sizes
+        # TODO: Fix vectorization for non-exact-fitting sizes
         if (shape[contiguous_dimension] > 32) == True and (shape[contiguous_dimension] % num_loaded_elements == 0) == True and use_vectorization:
             schedule['vectorize'] = True
 
@@ -157,7 +154,9 @@ def get_reduction_schedule(in_array: Array, axes: List[int]):
                 schedule['grid'].append(s)
         
         if schedule['grid'] == []:
-            schedule['grid'].append(1)
+            # TODO: solve this issue
+            schedule['error'] = True
+            return schedule
 
 
         threads_per_block = warp_size if (shape[contiguous_dimension] > warp_size) == True else shape[contiguous_dimension]
@@ -197,7 +196,7 @@ def get_reduction_schedule(in_array: Array, axes: List[int]):
                 schedule['num_mini_warps'] = warp_size // schedule['block'][0]
         if use_vectorization and not schedule['num_mini_warps']:
             #check if we can use vectorization
-            if shape[contiguous_dimension] % num_loaded_elements == 0:
+            if (shape[contiguous_dimension] % num_loaded_elements == 0) == True:
                 schedule['vectorize'] = True
 
         if schedule['grid'] == []:
