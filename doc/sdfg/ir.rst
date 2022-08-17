@@ -104,6 +104,14 @@ pass symbols into the SDFG, the :class:`~dace.sdfg.nodes.NestedSDFG.symbol_mappi
 symbol names to symbolic expressions based on external values. Symbols cannot be transferred out of the nested SDFG (as
 this breaks the assumptions behind symbol values, see :ref:`sdfg-symbol` for more information).
 
+.. figure:: images/scope.svg
+  :figwidth: 30%
+  :width: 100%
+  :align: right
+  :alt: Scope nodes.
+
+  SDFG scope nodes.
+
 **Map**: A scope that denotes parallelism. Maps consist of at least two nodes: entry (trapezoid) and exit (inverted
 trapezoid) nodes. Those nodes are annotated with parameters and symbolic ranges, which specify the parallel iteration space.
 The two nodes can wrap an arbitrary subgraph by dominating and post-dominating the contents, which
@@ -350,19 +358,31 @@ Together with ``volume``, we can define important memory access patterns, such a
   for i in dace.map[0:N]:
     mileage += distances[destinations[i]]
   # ...
-  
+
 In the above, the memlets inside the map are :pycode:`dace.Memlet(data='destinations', subset='i', volume=1)` and 
 :pycode:`dace.Memlet(data='distances', subset='0:20', volume=1)`. Notice that in the latter, we know *one* element would
 be read in the range ``0:20``, but we do not know which one it is going to be.
 
-memlet path, memlet trees, and how to get them with the API
+.. figure:: images/memlet-scopes.svg
+  :name: memtree
+  :figwidth: 40%
+  :width: 100%
+  :align: right
+  :alt: Memlet paths and trees.
+
+  Memlet paths and trees.
+
+**Memlet paths**: when using scopes
+
+, memlet trees, and how to get them with the API
 Mention *memlet paths* and the general *memlet tree* that can go through arbitrary scopes
 
 
 In code generation, memlets create references/copies in the innermost scope (because of the replicated definition)
 
 WCR - how the expression is symbolically analyzed (with sympy) and replaced with a built-in operator (``a + b`` becomes
-:class:`dace.dtypes.ReductionType.Sum`).
+:class:`dace.dtypes.ReductionType.Sum`). If it can detect a :class:`~dace.dtypes.ReductionType`, it knows more properties
+such as commutativity and associativity.
 Updates can be implemented in a platform-dependent way, for example atomic operations, or different kinds of accumulators on FPGAs. 
 No WCR for streams.
 WCR goes all the way in the memlet path (even through nested SDFGs), only applied in the innermost scope though.
@@ -376,12 +396,68 @@ Parametric Parallelism
 Map consume
 schedule types
 
+
+.. figure:: images/scope-tree.svg
+  :figwidth: 30%
+  :width: 100%
+  :align: right
+  :alt: Scope trees.
+
+  SDFG scopes in :numref:`memtree`.
+
+Scopes form a tree
+
 empty memlets and how they can be used.
 
-**Dynamic Map Ranges**: 
+text
 
-Explain + example (image / embedded viewer)
+text
 
+text
+
+text
+
+text
+
+text
+
+text
+
+**Dynamic Map Ranges**: Such ranges can use memlets to define the map ranges directly from data containers, while 
+still retaining the dataflow of a single state. As they are fed into a view connector on the map entry node, their value
+(described by the connector name) can be used in the symbolic expressions of the map range. Only scalar connectors are
+allowed.
+
+In the following example, we use dynamic map ranges to compute a sparse matrix-vector multiplication,
+where the vector is dense. Every output row has a defined range (standard, symbolic map), whereas the corresponding rows
+of the input sparse matrix have a dynamic length (dynamic-range.)
+
+
+.. raw:: html
+
+  <div class="figure align-right" id="scalarsym" style="width: 35%">
+    <iframe width="100%" height="300" frameborder="0" src="../_static/embed.html?url=sdfg/spmv.sdfg"></iframe>
+  </div>
+
+
+.. code-block:: python
+
+  @dace.program
+  def spmv(A_row: dace.uint32[H + 1], A_col: dace.uint32[nnz], 
+           A_val: dace.float32[nnz], x: dace.float32[W],
+           b: dace.float32[H]):
+
+      for i in dace.map[0:H]:
+          for j in dace.map[A_row[i]:A_row[i + 1]]:
+              with dace.tasklet:  # Explicit dataflow syntax
+                  aval << A_val[j]
+                  xval << x[A_col[j]]
+
+                  out = aval * xval
+                  
+                  out >> b(1, lambda a,b: a+b)[i]  # WCR output
+
+  spmv.to_sdfg().view()
 
 .. _viewref-lang:
 

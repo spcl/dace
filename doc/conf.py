@@ -56,6 +56,9 @@ html_static_path = ['_static']
 
 master_doc = 'index'
 
+# Enable numbered figures
+numfig = True
+
 # Add inline python code as prologue to every .rst file
 rst_prolog = '''
 .. role:: pycode(code)
