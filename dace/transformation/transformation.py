@@ -392,10 +392,9 @@ class PatternTransformation(TransformationBase):
         serialize.set_properties_from_json(ret, json_obj, context=context, ignore_properties={'transformation', 'type'})
         return ret
 
-    def affected_nodes(self, sdfg: SDFG) -> Set[Union[nd.Node, SDFGState]]:
+    def affected_nodes(self) -> Set[Union[nd.Node, SDFGState]]:
         """
         Returns the set of graph nodes in a given SDFG affected by this transformation.
-        :param sdfg: The SDFG in which to look for affected nodes.
         """
         affected_nodes = set()
         for k, _ in self._get_pattern_nodes().items():

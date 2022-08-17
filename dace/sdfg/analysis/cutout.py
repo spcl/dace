@@ -12,18 +12,17 @@ from dace.sdfg.graph import SubgraphView, MultiConnectorEdge
 from dace.sdfg.state import StateSubgraphView
 
 
-def _stateset_frontier(sdfg: SDFG, states: Set[SDFGState]) -> Tuple[Set[SDFGState], Set]:
+def _stateset_frontier(states: Set[SDFGState]) -> Tuple[Set[SDFGState], Set]:
     """
     For a set of states, return the frontier.
     The frontier in this case refers to the predecessor states leading into the given set of states.
-    :param sdfg: SDFG in which the states reside.
     :param states: The set of states for which to gather the frontier.
     :return: A 2-tuple with the state frontier, and all corresponding frontier edges.
     """
     frontier = set()
     frontier_edges = set()
     for state in states:
-        for iedge in sdfg.in_edges(state):
+        for iedge in state.parent.in_edges(state):
             if iedge.src not in states:
                 if iedge.src not in frontier:
                     frontier.add(iedge.src)
@@ -33,18 +32,22 @@ def _stateset_frontier(sdfg: SDFG, states: Set[SDFGState]) -> Tuple[Set[SDFGStat
 
 
 def multistate_cutout(
-    sdfg: SDFG, *states: SDFGState, inserted_states: Dict[SDFGState, SDFGState] = None
+    *states: SDFGState, inserted_states: Dict[SDFGState, SDFGState] = None
 ) -> SDFG:
     """
     Cut out a multi-state subgraph from an SDFG to run separately for localized testing or optimization.
     The subgraph defined by the list of states will be extended to include any further states necessary to make the
     resulting cutout executable, i.e, to ensure that there is a distinct start state. This is achieved by gradually
     adding more states from the cutout's state machine frontier until a distinct, single entry state is obtained.
-    :param state: The SDFG in which the subgraph resides.
     :param states: The states in the subgraph to cut out.
     :param inserted_states: A dictionary that provides a mapping from the original states to their cutout counterparts.
     """
     create_element = copy.deepcopy
+
+    # Check that all states are inside the same SDFG.
+    sdfg = list(states)[0].parent
+    if any(i.parent != sdfg for i in states):
+        raise Exception('Not all cutout states reside in the same SDFG')
 
     cutout_states: Set[SDFGState] = set(states)
 
@@ -59,7 +62,7 @@ def multistate_cutout(
 
     if start_state is None:
         bfs_queue = deque()
-        bfs_queue.append(_stateset_frontier(sdfg, cutout_states))
+        bfs_queue.append(_stateset_frontier(cutout_states))
 
         while len(bfs_queue) > 0:
             frontier, frontier_edges = bfs_queue.popleft()
@@ -84,7 +87,7 @@ def multistate_cutout(
                     for s in frontier:
                         cutout_states.add(s)
                     bfs_queue.append(
-                        _stateset_frontier(sdfg, cutout_states)
+                        _stateset_frontier(cutout_states)
                     )
 
     subgraph: SubgraphView = SubgraphView(sdfg, cutout_states)
@@ -137,7 +140,8 @@ def multistate_cutout(
 
 
 def cutout_state(
-    state: SDFGState, *nodes: nd.Node, make_copy: bool = True, inserted_nodes: Dict[nd.Node, nd.Node] = None
+    state: SDFGState, *nodes: nd.Node, make_copy: bool = True,
+    inserted_nodes: Dict[Union[nd.Node, SDFGState], Union[nd.Node, SDFGState]] = None
 ) -> SDFG:
     """
     Cut out a subgraph of a state from an SDFG to run separately for localized testing or optimization.
@@ -226,6 +230,8 @@ def cutout_state(
                         break
                 if prune:
                     new_node.remove_out_connector(conn)
+
+    inserted_nodes[state] = new_state
 
     return new_sdfg
 
