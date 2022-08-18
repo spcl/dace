@@ -988,10 +988,13 @@ class LoopUnroller(ast.NodeTransformer):
 
     def visit_For(self, node: ast.For) -> Any:
         # Avoid import loops
+        from dace.frontend.python.interface import MapGenerator
+
         EXPLICIT_GENERATORS = [
             range,  # Handled in ProgramVisitor
             dace.map,
             dace.consume,
+            MapGenerator
         ]
 
         node = self.generic_visit(node)
@@ -1037,6 +1040,17 @@ class LoopUnroller(ast.NodeTransformer):
 
         # Find out if unrolling should be done implicitly
         implicit = True
+        
+        # Special case for map with @ operator
+        if isinstance(niter, ast.BinOp) and isinstance(niter.op, ast.MatMult):
+            try:
+                geniter = astutils.evalnode(niter.left, self.globals)
+                if isinstance(geniter, MapGenerator):
+                    niter = niter.left
+            except SyntaxError:
+                pass
+        # End of special case
+
         # Anything not a call is implicitly allowed
         if isinstance(niter, (ast.Call, ast.Subscript)):
             if isinstance(niter, ast.Subscript):

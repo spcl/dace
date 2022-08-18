@@ -405,6 +405,7 @@ def test_nested_map_with_symbol():
 
 
 def test_for_else():
+
     @dace.program
     def for_else(A: dace.float64[20]):
         for i in range(1, 20):
@@ -435,6 +436,7 @@ def test_for_else():
 
 
 def test_while_else():
+
     @dace.program
     def while_else(A: dace.float64[2]):
         while A[0] < 5.0:
@@ -455,6 +457,36 @@ def test_while_else():
     expected = np.array([-1.0, -1.0])
     while_else(A)
     assert np.allclose(A, expected)
+
+
+@dace.program
+def branch_in_for(cond: dace.int32):
+    for i in range(10):
+        if cond > 0:
+            break
+        else:
+            continue
+
+
+def test_branch_in_for():
+    sdfg = branch_in_for.to_sdfg(simplify=False)
+    assert len(sdfg.source_nodes()) == 1
+
+
+@dace.program
+def branch_in_while(cond: dace.int32):
+    i = 0
+    while i < 10:
+        if cond > 0:
+            break
+        else:
+            i += 1
+            continue
+
+
+def test_branch_in_while():
+    sdfg = branch_in_while.to_sdfg(simplify=False)
+    assert len(sdfg.source_nodes()) == 1
 
 
 if __name__ == "__main__":
@@ -478,3 +510,5 @@ if __name__ == "__main__":
     test_nested_map_with_symbol()
     test_for_else()
     test_while_else()
+    test_branch_in_for()
+    test_branch_in_while()

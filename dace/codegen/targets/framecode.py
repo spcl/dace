@@ -666,6 +666,15 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                     # If any state is not reachable from first state, find common denominators in the form of
                     # dominator and postdominator.
                     instances = access_instances[sdfg.sdfg_id][name]
+
+                    # A view gets "allocated" everywhere it appears
+                    if isinstance(desc, data.View):
+                        for s, n in instances:
+                            self.to_allocate[s].append((sdfg, s, n, False, True, False))
+                            self.to_allocate[s].append((sdfg, s, n, False, False, True))
+                        self.where_allocated[(sdfg, name)] = cursdfg
+                        continue
+
                     if any(inst not in reachability[sdfg.sdfg_id][first_state_instance] for inst in instances):
                         first_state_instance, last_state_instance = _get_dominator_and_postdominator(sdfg, instances)
                         # Declare in SDFG scope
