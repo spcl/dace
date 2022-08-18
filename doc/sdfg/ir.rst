@@ -377,6 +377,7 @@ be read in the range ``0:20``, but we do not know which one it is going to be.
 , memlet trees, and how to get them with the API
 Mention *memlet paths* and the general *memlet tree* that can go through arbitrary scopes
 
+TODO: Empty memlets
 
 In code generation, memlets create references/copies in the innermost scope (because of the replicated definition)
 
