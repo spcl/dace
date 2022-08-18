@@ -1271,6 +1271,9 @@ class ProgramVisitor(ExtNodeVisitor):
         # TODO: Is there a case of a variable-symbol?
         result.update({k: self.sdfg.symbols[v] for k, v in self.variables.items() if v in self.sdfg.symbols})
 
+        # Add SDFG arrays, in case a replacement added a new output
+        result.update(self.sdfg.arrays)
+
         return result
 
     def _add_state(self, label=None):
