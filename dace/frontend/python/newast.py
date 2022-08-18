@@ -262,7 +262,7 @@ DISALLOWED_STMTS = [
 ]
 # Extra AST node types that are disallowed after preprocessing
 _DISALLOWED_STMTS = DISALLOWED_STMTS + [
-    'Global', 'Assert', 'Print', 'Nonlocal', 'Raise', 'Starred', 'AsyncFor', 'Bytes', 'ListComp', 'GeneratorExp',
+    'Global', 'Assert', 'Print', 'Nonlocal', 'Raise', 'Starred', 'AsyncFor', 'ListComp', 'GeneratorExp',
     'SetComp', 'DictComp', 'comprehension'
 ]
 
