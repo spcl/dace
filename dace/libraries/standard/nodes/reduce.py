@@ -1080,12 +1080,17 @@ reduce_out = {reduction_expr}''')
 @dace.library.expansion
 class ExpandReduceAuto(pm.ExpandTransformation):
     """
-        auto expansion for GPU
+        GPU implementation of the reduce node. This expansion aims to map the reduction inputs to an optimal GPU schedule.
     """
     environments = [CUDA]
 
     @staticmethod
     def expansion(node: 'Reduce', state: SDFGState, sdfg: SDFG):
+        '''
+        :param node: the node to expand
+        :param state: the state in which the node is in
+        :param sdfg: the SDFG in which the node is in
+        '''
         node.validate(sdfg, state)
         inedge: graph.MultiConnectorEdge = state.in_edges(node)[0]
         outedge: graph.MultiConnectorEdge = state.out_edges(node)[0]
@@ -1099,6 +1104,10 @@ class ExpandReduceAuto(pm.ExpandTransformation):
         output_data = sdfg.arrays[outedge.data.data]
 
         in_type = input_data.dtype
+
+        if input_data.storage != dtypes.StorageType.GPU_Global:
+            # data doesnt reside on GPU --> return pure expansion
+            return ExpandReducePure.expansion(node, state, sdfg)
 
         if len(osqdim) == 0:  # Fix for scalars
             osqdim = [0]
@@ -1485,9 +1494,8 @@ class Reduce(dace.sdfg.nodes.LibraryNode):
         # 'CUDA (warp allreduce)': ExpandReduceCUDAWarpAll
     }
 
-    default_implementation = 'pure'
-    # we can only set this to default if input data resides on GPU, right?
-    # default_implementation = 'auto'
+    # default_implementation = 'pure'
+    default_implementation = 'auto'  # if input data not on GPU, this returns pure expansion anyway
 
     # Properties
     axes = ListProperty(element_type=int, allow_none=True)

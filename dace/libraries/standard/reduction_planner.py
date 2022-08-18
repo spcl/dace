@@ -7,6 +7,12 @@ from typing import List
 
 
 def get_reduction_schedule(in_array: Array, axes: List[int]):
+    """
+    Computes a GPU reduction schedule depending on the input data's shape and the axes to reduce
+
+    :in_array: DaCe array describing the input data
+    :axes: List of all the axes to reduce
+    """
 
     # apply vectorization or not
     use_vectorization = True
