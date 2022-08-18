@@ -3925,7 +3925,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     if isinstance(parsed_arg, StringLiteral):
                         # Special case for strings
                         parsed_arg = f'"{astutils.escape_string(parsed_arg.value)}"'
-                        atype = data.Scalar(dtypes.string())
+                        atype = data.Scalar(dtypes.string)
                     elif isinstance(parsed_arg, (Number, numpy.number, type(None))):
                         atype = data.create_datadescriptor(type(parsed_arg))
                     else:
