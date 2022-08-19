@@ -350,7 +350,7 @@ class SoapStatement:
         strategy = "squeeze_dims"
         strategy = "increaseX"
         strategy = "narrowest_dim_first"
-        if (sp.prod(self.p_grid) > comm_world):
+        while (sp.prod(self.p_grid) > comm_world):
             if Config.get("soap", "decomposition", "chosen_par_setup") == "memory_dependent" and stream_dim_number >= 0:
                 if self.p_grid[stream_dim_number] == 1:
                     print("\n\nERROR!!!\nMemory-dependent bound. For S={}, the minimum number of ranks is p_min={}. \
