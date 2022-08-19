@@ -532,7 +532,11 @@ class CPPUnparser:
             # Substitute overflowing decimal literal for AST infinities.
             self.write(result.replace("inf", INFSTR))
         else:
-            self.write(result.replace('\'', '\"'))
+            # Special case for strings of containing byte literals (but are still strings).
+            if result.find("b'") >= 0:
+                self.write(result)
+            else:
+                self.write(result.replace('\'', '\"'))
 
     def _Constant(self, t):
         value = t.value

@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ DaCe Python parsing functionality and entry point to Python frontend. """
+import ast
 from dataclasses import dataclass
 import inspect
 import itertools
@@ -523,7 +524,7 @@ class DaceProgram(pycommon.SDFGConvertible):
 
                 types.update({f'__arg{j}': create_datadescriptor(varg) for j, varg in enumerate(vargs)})
                 arg_mapping.update({f'__arg{j}': varg for j, varg in enumerate(vargs)})
-                gvar_mapping[aname] = tuple(f'__arg{j}' for j in range(len(vargs)))
+                gvar_mapping[aname] = tuple(ast.Name(id=f'__arg{j}') for j in range(len(vargs)))
                 specified_args.update(set(gvar_mapping[aname]))
                 # Shift arg_ind to the end
                 arg_ind = len(given_args)
@@ -538,7 +539,7 @@ class DaceProgram(pycommon.SDFGConvertible):
                                       f'arguments (invalid argument name: "{aname}").')
                 types.update({f'__kwarg_{k}': v for k, v in vargs.items()})
                 arg_mapping.update({f'__kwarg_{k}': given_kwargs[k] for k in vargs.keys()})
-                gvar_mapping[aname] = {k: f'__kwarg_{k}' for k in vargs.keys()}
+                gvar_mapping[aname] = {k: ast.Name(id=f'__kwarg_{k}') for k in vargs.keys()}
                 specified_args.update({f'__kwarg_{k}' for k in vargs.keys()})
             # END OF VARIABLE-LENGTH ARGUMENTS
             else:
