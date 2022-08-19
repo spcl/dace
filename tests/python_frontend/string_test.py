@@ -48,6 +48,26 @@ def test_bytes_literal_in_callback():
     assert success is True
 
 
+def test_string_literal_in_callback_2():
+    success = False
+    @callback_inhibitor
+    def cb(a):
+        nonlocal success
+        if a == "b'Hello World!'":
+            success = True
+
+
+    @dace
+    def tester(a):
+        cb("b'Hello World!'")
+
+    
+    a = np.random.rand(1)
+    tester(a)
+
+    assert success is True
+
+
 @pytest.mark.skip
 def test_string_literal():
 
@@ -71,5 +91,6 @@ def test_bytes_literal():
 if __name__ == '__main__':
     test_string_literal_in_callback()
     test_bytes_literal_in_callback()
+    test_string_literal_in_callback_2()
     # test_string_literal()
     # test_bytes_literal()

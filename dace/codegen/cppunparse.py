@@ -527,14 +527,14 @@ class CPPUnparser:
         self.leave()
 
     def _write_constant(self, value):
-        # Special case for byte literal
-        if isinstance(value, str) and value[:2] == "b'":
-            self.write(repr(value))
+        result = repr(value)
+        if isinstance(value, (float, complex)):
+            # Substitute overflowing decimal literal for AST infinities.
+            self.write(result.replace("inf", INFSTR))
         else:
-            result = repr(value)
-            if isinstance(value, (float, complex)):
-                # Substitute overflowing decimal literal for AST infinities.
-                self.write(result.replace("inf", INFSTR))
+            # Special case for strings of containing byte literals (but are still strings).
+            if result.find("b'") >= 0:
+                self.write(result)
             else:
                 self.write(result.replace('\'', '\"'))
 

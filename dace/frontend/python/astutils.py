@@ -687,7 +687,7 @@ def create_constant(value: Any, node: Optional[ast.AST] = None) -> ast.AST:
 def escape_string(value: Union[bytes, str]):
     """ Converts special Python characters in strings back to their parsable version (e.g., newline to ``\n``) """
     if isinstance(value, bytes):
-        return value
+        return f"{chr(0xFFFF)}{value.decode('utf-8')}"
     if sys.version_info >= (3, 0):
         return value.encode("unicode_escape").decode("utf-8")
     # Python 2.x

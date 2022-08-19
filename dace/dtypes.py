@@ -949,8 +949,8 @@ class callback(typeclass):
 
         def _string_converter(a: str, *args):
             tmp = ctypes.cast(a, ctypes.c_char_p).value.decode('utf-8')
-            if tmp[:2] == "b'":
-                return bytes(tmp[2:-1], 'utf-8')
+            if tmp.startswith(chr(0xFFFF)):
+                return bytes(tmp[1:], 'utf-8')
             return tmp
 
         inp_arraypos = []
