@@ -11,10 +11,11 @@ def test_mttkrp_io():
     Test MTTKRP I/O lower bound Q >= 3*N^4/S**(2/3)
     """
     # get MTTKRP sdfg with auto-generated default tensor sizes  
-    # einsum_str = 'ijk,jl,kl->il' 
+    'ik,kj->ij'
+    einsum_str = 'ijk,jl,kl->il' 
+    # einsum_str = 'a,b,bc,cd->ad'
+    # einsum_str = 'ab,bc,c,d->ad'
     # einsum_str = 'ik,kj,jl->il'
-    # i0-4 = abcde
-    # j0-4 = fghij
     # einsum_str = 'af,bg,ch,di,ej,bcgh,fghij->abcde'
     # einsum_str = 'ab,ab->ab'
     # einsum_str = 'abc,jb,kc->ajk'
@@ -24,7 +25,7 @@ def test_mttkrp_io():
     # einsum_str = 'ijklm,ja,ka,la,ma->ia' # 5-mode MTTKRP
     # einsum_str = 'ijklm,ia,ja,ka,la->ma' # 5-mode MTTKRP
     # einsum_str = 'ijklm,jb,kc,ld,me->ibcde' # 5-mode TTMc
-    einsum_str = 'ijk,jb,kc->ibc' # 3-mode TTMc
+    # einsum_str = 'ijk,jb,kc->ibc' # 3-mode TTMc
     # einsum_str = 'ijklm,jklmbcde->ibcde' # 5-mode TTMc test
     # einsum_str = 'ijklm,jb,kc,ld,me,il,ke,jd->ibcde' # 5-mode TTMc redistr
     # einsum_str = 'ik, kj, jl, lm -> im' # 3mm
@@ -36,29 +37,10 @@ def test_mttkrp_io():
     # einsum_str = 'ijk, ia, ka -> ja'
     # einsum_str = 'ijk, ia, ja -> ka'
     # einsum_str = 'ijk, ja, ka, al -> il'
-    # decomp_params=[("p", 17), ("Ss", 1024), ("S0", 256), ("S1", 256), ("S2", 256), ("S3", 256)]
-    # decomp_params=[("p", 64), ("Ss", 1024), ("S0", 6400 * 4), ("S1", 4400 * 4), ("S2", 7200 * 4), ("S3", 256)]
     decomp_params = [("p", 64), ("Ss", 1024), ("S0", 200), ("S1", 200), ("S2", 200), ("S3", 200), ("S4", 200)]
-    decomp_params = [("p", 256), ("Ss", 1024)]
+    decomp_params = [("p", 256), ("Ss", 1e10)]
     for i in range(10):
         decomp_params.append((f"S{i}", 100))
-    # for i in range(5):
-    #     decomp_params.append((f'S{5+i}', 24))
-    # # p = 128
-    # # NI = 6400
-    # # NJ = 7200
-    # # NK = 4400
-    # # NL = 4800
-    # # def scale(N: int):
-    # #     return int(np.ceil(int(N * np.cbrt(p)) / 2) * 2)
-    # # S0 = scale(NI)
-    # # S1 = scale(NK)
-    # # S2 = scale(NJ)
-    # # S3 = scale(NL)
-    # # decomp_params=[("p", p), ("Ss", 1024), ("S0", S0), ("S1", S1), ("S2", S2), ("S3", S3)]
-    # einsum_str = 'ijk,jl,kl->il'
-    # # einsum_str = 'ik,kj,jl->il'  # ik,kj -> ij.....    ij, jl -> il
-    # decomp_params=[("p", 17), ("Ss", 1024), ("S0", 256), ("S1", 256), ("S2", 256), ("S3", 25600)]
     soap_result = perform_soap_analysis_einsum(einsum_str, decomp_params, generate_schedule=True)
     for i, sgraph in enumerate(soap_result.subgraphs):
         print(f"Subgraph {i}==================================================")

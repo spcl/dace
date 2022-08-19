@@ -272,7 +272,7 @@ class SoapStatement:
 
 
     def init_decomposition(self, subs_list):
-        dimensions = {str(d[0]) : d[2] - d[1] + 1 for d in list(self.ranges.values())[0]}
+        dimensions = {str(d[0]).replace('_', 'x') : d[2] - d[1] + 1 for d in list(self.ranges.values())[0]}
         self.dimensions_ordered = [sp.sympify(str(dimensions[str(i)])).subs(subs_list) for i in self.variables]
         stream_dim_number = self.variables.index(self.stream_dim) if hasattr(self, 'stream_dim') else -1
         self.param_vals = [(sp.symbols(p), val) for (p, val) in subs_list]            
@@ -425,7 +425,7 @@ class SoapStatement:
             for access, pars in accesses.items():
                 rngs = {}
                 for it in access.split('*'):
-                    rngs[it] = iter_ranges[it]
+                    rngs[it] = iter_ranges[it.replace('_', 'x')]
             par_distribution[arr] = rngs
                             
         return par_distribution    

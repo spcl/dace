@@ -66,7 +66,7 @@ class IOAnalysis():
 
 
 def perform_soap_analysis(sdfg : Union[SDFG, SubgraphView], decomp_params: List = [],
-                    generate_schedule : bool = False, solver_timeout : int = 10) -> IOAnalysis:
+                    generate_schedule : bool = False, solver_timeout : int = 60) -> IOAnalysis:
     """
     Main interface of the SOAP analysis. 
 
@@ -100,8 +100,9 @@ def perform_soap_analysis(sdfg : Union[SDFG, SubgraphView], decomp_params: List 
                     outer_tile = subgr.outer_tile, input_arrays = subgr.phis, 
                     tasklets = subgr.tasklet)                    
         if generate_schedule:
-            decomp_list = Config.get("soap", "decomposition", "decomposition_params")
-            decomp_params = list(zip(decomp_list[::2],decomp_list[1::2]))
+            if len(decomp_params) == 0:
+                decomp_list = Config.get("soap", "decomposition", "decomposition_params")
+                decomp_params = list(zip(decomp_list[::2],decomp_list[1::2]))
             subgr.init_decomposition(decomp_params)
             io_res_sg.loc_domain_dims = subgr.loc_domain_dims
             io_res_sg.p_grid = subgr.p_grid

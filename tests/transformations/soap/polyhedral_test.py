@@ -7,24 +7,36 @@ from dace.transformation.estimator.soap.utils import d2sp
 import numpy as np
 import sympy as sp
 
-#M, N = (dc.symbol(s, dtype=dc.int64) for s in ('M', 'N'))
-M = 10
-N = 5
+dim_m, dim_n = (dc.symbol(s, dtype=dc.int64) for s in ('dim_m', 'dim_n'))
+@dc.program
+def jacobi1d(TSTEPS: dc.int32, A: dc.float32[dim_m], B: dc.float32[dim_m]):
+    for t in range(1, TSTEPS):
+        B[1:-1] = 0.33333 * (A[:-2] + A[1:-1] + A[2:])
+        A[1:-1] = 0.33333 * (B[:-2] + B[1:-1] + B[2:])
 
-def kernel(alpha: dc.float64, beta: dc.float64, C: dc.float64[M, N],
-           A: dc.float64[M, M], B: dc.float64[M, N]):
 
-    temp2 = np.empty((N, ), dtype=C.dtype)
-    C *= beta
-    for i in range(M):
-        for j in range(N):
-            C[:i, j] += alpha * B[i, j] * A[i, :i]
-            temp2[j] = B[:i, j] @ A[i, :i]
-        C[i, :] += alpha * B[i, :] * A[i, i] + alpha * temp2
+@dc.program
+def fdtd_2d(TSTEPS: dc.int32, ex: dc.float32[dim_m,dim_n], ey: dc.float32[dim_m,dim_n],
+                hz: dc.float32[dim_m,dim_n], _fict_: dc.float32[dim_m]):
+    for t in range(TSTEPS):
+        # ey[0, :] = _fict_[t]
+        ey[1:, :] -= 0.5 * (hz[1:, :] - hz[:-1, :])
+        ex[:, 1:] -= 0.5 * (hz[:, 1:] - hz[:, :-1])
+        hz[:-1, :-1] -= 0.7 * (ex[:-1, 1:] - ex[:-1, :-1] + ey[1:, :-1] -
+                               ey[:-1, :-1])
+
 
 
 if __name__ == "__main__":
-    C = np.zeros([M,N])
-    A = np.random.rand(M,N)
-    B = np.random.rand(M,N)
-    kernel(1,2, C, A, B)
+    sdfg = fdtd_2d.to_sdfg()
+    decomp_params = [("p", 255), ("Ss", 102400)]
+    for i in range(10):
+        decomp_params.append((f"S{i}", 100))
+    decomp_params.append(('TSTEPS', 20))
+    decomp_params.append(('dim_m', 20000))
+    decomp_params.append(('dim_n', 1000))
+    soap_result = perform_soap_analysis(sdfg, decomp_params,
+                    generate_schedule = True)
+    soap_result.subgraphs[0].get_data_decomposition(0)
+    print(soap_result.subgraphs[0].p_grid)
+    a = 1
