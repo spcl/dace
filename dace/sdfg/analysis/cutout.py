@@ -5,7 +5,8 @@ testing or optimization.
 """
 from collections import deque
 import copy
-from typing import Deque, Dict, List, Set, Tuple, Union
+from re import I
+from typing import Deque, Dict, List, Optional, Set, Tuple, Union
 from dace import data, Memlet
 from dace.sdfg import nodes as nd, SDFG, SDFGState, utils as sdutil
 from dace.sdfg.graph import SubgraphView, MultiConnectorEdge
@@ -31,9 +32,7 @@ def _stateset_frontier(states: Set[SDFGState]) -> Tuple[Set[SDFGState], Set]:
     return frontier, frontier_edges
 
 
-def multistate_cutout(
-    *states: SDFGState, inserted_states: Dict[SDFGState, SDFGState] = None
-) -> SDFG:
+def multistate_cutout(*states: SDFGState, inserted_states: Dict[SDFGState, SDFGState] = None) -> SDFG:
     """
     Cut out a multi-state subgraph from an SDFG to run separately for localized testing or optimization.
     The subgraph defined by the list of states will be extended to include any further states necessary to make the
@@ -86,9 +85,7 @@ def multistate_cutout(
                 else:
                     for s in frontier:
                         cutout_states.add(s)
-                    bfs_queue.append(
-                        _stateset_frontier(cutout_states)
-                    )
+                    bfs_queue.append(_stateset_frontier(cutout_states))
 
     subgraph: SubgraphView = SubgraphView(sdfg, cutout_states)
 
@@ -363,3 +360,26 @@ def _containers_defined_outside(sdfg: SDFG, state: SDFGState, subgraph: StateSub
             result.add(dnode.data)
 
     return result
+
+
+def cutout(
+    *nodes: Union[nd.Node, SDFGState], translation: Dict[Union[nd.Node, SDFGState], Union[nd.Node, SDFGState]],
+    state: Optional[SDFGState] = None
+) -> SDFG:
+    if state is not None:
+        if any([isinstance(n, SDFGState) for n in nodes]):
+            raise Exception('Mixing cutout nodes of type Node and SDFGState is not allowed')
+        new_sdfg = cutout_state(state, *nodes, make_copy=True, inserted_nodes=translation)
+    else:
+        if any([isinstance(n, nd.Node) for n in nodes]):
+            raise Exception('Mixing cutout nodes of type Node and SDFGState is not allowed')
+        new_sdfg = multistate_cutout(*nodes, inserted_states=translation)
+            
+    # Ensure the parent relationships and SDFG list is correct.
+    for s in new_sdfg.states():
+        for node in s.nodes():
+            if isinstance(node, nd.NestedSDFG):
+                node.sdfg._parent_sdfg = new_sdfg
+    new_sdfg.reset_sdfg_list()
+
+    return new_sdfg
