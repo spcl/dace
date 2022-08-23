@@ -134,11 +134,10 @@ Write-After-Read dependencies to the Vitis compiler, resulting in erroneous hard
 possibly reaching the limits supported by the device/Vitis.
 
 
+.. _codegen_fpga_kernels:
 
 FPGA Kernels and Processing Elements
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-.. _codegen_fpga_kernel:
-
 
 When the DaCe code generator backend encounters a state that only accesses containers situated on the FPGA, it designates it as an *FPGA kernel*
 and triggers FPGA code generation (:func:`~dace.codegen.targets.fpga.FPGACodeGen.generate_state`).
@@ -151,7 +150,7 @@ Here, DaCe supports two options:
       The notion of partitioning the functionality of a kernel into multiple independently-scheduled modules 
       is central to designing large FPGA architectures. 
         
-    * if the ``DACE_compiler_fpga_concurrent_kernel_detection`` configuration option is set to True, 
+    * if the ``DACE_compiler_fpga_concurrent_kernel_detection`` configuration option is set to ``True``, 
       a heuristic will further inspect each independent component for other parallelism opportunities (e.g., branches of the SDFG
       that can be executed in parallel). With this, inside the same state there could be multiple FPGA Kernels, that may depending
       on each other (e.g., a kernel must wait for the completion of a previous one before it can be executed). 
@@ -171,9 +170,18 @@ separate OpenCL kernel. Launching each processing element is thus done directly 
 
 Systolic Arrays
 ^^^^^^^^^^^^^^^
+Systolic arrays are used to express parametric parallelism, by using an array of communicating processing elements that can be programmed to perform a common operation.
+
+In a SDFG, 1D systolic arrays can be represented by unrolled maps in the outermost FPGA kernel scope.
+The map can have a symbolic, but compile-time specialized, number of iterations, and must be coupled with array(s) of stream objects. 
+
+When the map is unrolled, its body get replicated, and each instance becomes a weakly connected component in the state, resulting in them being instantiated as separate processing elements (see  :ref:`codegen_fpga_kernels`).
 
 
+The actual code generation varies between Xilinx and Intel FPGA. In the former case, it is sufficient to unroll a loop in the C++ kernel code with bounds known at compile tim. For Intel, the OpenCL kernel representing the processing element is replicated and specialized directly in the generated code.
 
+
+.. TODO: adding figure/example may help understanding what's going on.
 
 .. toctree::
     :maxdepth: 1
