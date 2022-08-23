@@ -188,6 +188,124 @@ def sdfg_gen(subscripts: str, arrays: List[np.ndarray] = None, inp_dim: int = 10
     return sdfg, path_info[1].contraction_list
 
 
+def sdfg_gen2(subscripts: str, symbols: Dict[str, dace.symbol], arrays: List[np.ndarray] = None, inp_dim: int = 10) -> dace.SDFG:
+    """ 
+    Generates an SDFG for the given einsum description. The SDFG comprises separates map for each contraction, based
+    on the analysis done by the opt_einsum module.
+
+    :param subscripts: The einsum's subscript description.
+    :param arrays: The einsum's inputs. If not provided, the arrays are auto-generated using the same size in each
+                   tensor mode (inp_dim).
+    :param inp_dim: If arrays are not provided, inp_dim is used to auto-generate them.
+    :return: The SDFG implementing the einsums.
+    """
+
+    # if input arrays are not provided, create them
+    if not arrays:
+        arrays = []
+        inputs = subscripts.replace(' ', '').split('->')[0].split(',')         
+        for input in inputs:
+            order = len(input)
+            A = np.random.rand(inp_dim**order).reshape([inp_dim] * order)           
+            arrays.append(A)
+            
+
+    # Extract symbols
+    path_info = oe.contract_path(subscripts, *arrays, optimize='optimal')
+
+    counter = 0
+    array_names = []
+    unique_arrays = []
+    dace_arrays = {}
+    array_shapes = {}
+    tokens = re.split(',|->', subscripts)
+    for arr, t in zip(arrays, tokens[:-1]):
+        try:
+            idx = unique_arrays.index(arr)
+            arr_name = f'inp{idx}'
+        except ValueError:
+            unique_arrays.append(arr)
+            arr_name = f'inp{counter}'
+            counter += 1
+            dace_arrays[arr_name] = arr
+            shape = []
+            for char in t.strip():
+                shape.append(symbols[char])
+            array_shapes[arr_name] = shape
+        array_names.append(arr_name)
+    
+    sdfg = dace.SDFG('tensor_contractions')
+    for name, arr in dace_arrays.items():
+        sdfg.add_array(name, array_shapes[name], dt[arr.dtype.type])
+    
+    counter = 0
+    state = None
+    for contraction in path_info[1].contraction_list:
+
+        print(contraction)
+
+        tokens = re.split(',|->', contraction[2])
+        assert(len(tokens) == 3)
+
+        first_idx, second_idx = contraction[0]
+        if first_idx > second_idx:
+            first_inp = array_names.pop(first_idx)
+            second_inp = array_names.pop(second_idx)
+        else:
+            second_inp = array_names.pop(second_idx)
+            first_inp = array_names.pop(first_idx)
+
+        first_arr = dace_arrays[first_inp]
+        second_arr = dace_arrays[second_inp]
+        output = np.einsum(contraction[2], first_arr, second_arr)
+        out_name = f'out{counter}'
+        counter += 1
+        array_names.append(out_name)
+        dace_arrays[out_name] = output
+        output_shape = [symbols[char] for char in tokens[-1].strip()]
+        sdfg.add_transient(out_name, output_shape, dt[output.dtype.type])
+
+        prv_state = state
+        state = sdfg.add_state(f'contraction_{first_inp}_{second_inp}')
+        if prv_state:
+            sdfg.add_edge(prv_state, state, dace.InterstateEdge())
+
+        map_ranges = {}
+        needs_wcr = set(tokens[0]).union(set(tokens[1])) != set(tokens[2])
+        wcr = None
+        if needs_wcr:
+            wcr = 'lambda a, b: a + b'
+        for t, arr in zip(tokens, [first_arr, second_arr, output]):
+            for i, idx in enumerate(t.strip()):
+                if idx in map_ranges.keys():
+                    continue
+                # map_ranges[idx] = (0, arr.shape[i]-1, 1)
+                map_ranges[idx] = (0, symbols[idx]-1, 1)
+        in_memlets = {}
+        in_memlets['__in0'] = dace.Memlet(
+                data=first_inp,
+                subset=','.join(c for c in tokens[0].strip()))
+        in_memlets['__in1'] = dace.Memlet(
+                data=second_inp,
+                subset=','.join(c for c in tokens[1].strip()))
+        out_memlets = {}
+        out_memlets['__out'] = dace.Memlet(
+            data = out_name,
+            subset=','.join(c for c in tokens[-1].strip()),
+            wcr=wcr)
+        state.add_mapped_tasklet(state.label,
+                                 map_ranges,
+                                 in_memlets, 
+                                 '__out = __in0 * __in1',
+                                 out_memlets,
+                                 external_edges=True)
+    
+    counter -= 1
+    sdfg.arrays[f'out{counter}'].transient = False
+
+    return sdfg, path_info[1].contraction_list
+
+
 def sdfg_multigen(subscripts: List[str], out_match: Dict[int, Dict[int, Union[int, List[int]]]],
                   arrays: List[np.ndarray] = None, inp_match: Dict[int, List[int]] = None,
                   inp_dim: int = 10) -> dace.SDFG:
@@ -201,6 +319,18 @@ def sdfg_multigen(subscripts: List[str], out_match: Dict[int, Dict[int, Union[in
     :param inp_dim: If arrays are not provided, inp_dim is used to auto-generate them.
     :return: The SDFG implementing the einsums.
     """
+
+    # Extract symbols from subscripts
+    symbols = {}
+    symidx = 0
+    for sscript in subscripts:
+        tokens = re.split(',|->', sscript)
+        for t in tokens[:-1]:
+            for char in t.strip():
+                if char not in symbols:
+                    newsym = dace.symbol(f'S{symidx}')
+                    symidx += 1
+                    symbols[char] = newsym
 
     sdfgs = []
     contraction_list = []
@@ -221,7 +351,7 @@ def sdfg_multigen(subscripts: List[str], out_match: Dict[int, Dict[int, Union[in
         inparrays = None
         if arrays:
             inparrays = arrays[i]
-        sdfg, contractions = sdfg_gen(sscript, inparrays, inp_dim)
+        sdfg, contractions = sdfg_gen2(sscript, symbols, inparrays, inp_dim)
         sdfgs.append(sdfg)
         contraction_list.extend(contractions)
         inputs.append(list(inpiter(sdfg)))
@@ -257,9 +387,11 @@ def sdfg_multigen(subscripts: List[str], out_match: Dict[int, Dict[int, Union[in
         for j, inp in enumerate(filtered_inputs[i]):
             if isinstance(inp, tuple):
                 name, arr = inp
-                mapping.update({str(s): f"einsum_{i}_{s}" for s in arr.shape})
-                shape = (dace.symbol(f"einsum_{i}_{s}") for s in arr.shape)
-                sdfg.add_array(f"einsum_{i}_{name}", shape, arr.dtype)
+                # mapping.update({str(s): f"einsum_{i}_{s}" for s in arr.shape})
+                mapping.update({str(s): str(s) for s in arr.shape})
+                # shape = (dace.symbol(f"einsum_{i}_{s}") for s in arr.shape)
+                # sdfg.add_array(f"einsum_{i}_{name}", shape, arr.dtype)
+                sdfg.add_array(f"einsum_{i}_{name}", arr.shape, arr.dtype)
                 acc = state.add_access(f"einsum_{i}_{name}")
                 inpaccess[acc] = name
             else:
@@ -270,15 +402,18 @@ def sdfg_multigen(subscripts: List[str], out_match: Dict[int, Dict[int, Union[in
                     tmp = filtered_outputs[tmp]
                 oarr = tmp[1]
                 name, iarr = inputs[i][j]
-                mapping.update({str(s1): f"einsum_{inp}_{s0}" for s0, s1 in zip(iarr.shape, oarr.shape)})
+                # mapping.update({str(s1): f"einsum_{inp}_{s0}" for s0, s1 in zip(iarr.shape, oarr.shape)})
+                mapping.update({str(s1): str(s0) for s0, s1 in zip(iarr.shape, oarr.shape)})
                 acc = state.add_access(f"einsum_{sidx}_out")
                 inpaccess[acc] = name
         if isinstance(filtered_outputs[i], tuple):
             name, arr = filtered_outputs[i]
-            mapping.update({str(s): f"einsum_{i}_{s}" for s in arr.shape})
-            shape = (dace.symbol(f"einsum_{i}_{s}") for s in arr.shape)
+            # mapping.update({str(s): f"einsum_{i}_{s}" for s in arr.shape})
+            mapping.update({str(s): str(s) for s in arr.shape})
+            # shape = (dace.symbol(f"einsum_{i}_{s}") for s in arr.shape)
             # sdfg.add_array(f"einsum_{i}_out", shape, arr.dtype, transient = (i != real_output))
-            sdfg.add_array(f"einsum_{i}_out", shape, arr.dtype)
+            # sdfg.add_array(f"einsum_{i}_out", shape, arr.dtype)
+            sdfg.add_array(f"einsum_{i}_out", arr.shape, arr.dtype)
             acc = state.add_access(f"einsum_{i}_out")
             outaccess[acc] = name
         else:
@@ -289,7 +424,8 @@ def sdfg_multigen(subscripts: List[str], out_match: Dict[int, Dict[int, Union[in
                 tmp = filtered_outputs[tmp]
             oarr = tmp[1]
             name, iarr = outputs[i]
-            mapping.update({str(s1): f"einsum_{i}_{s0}" for s0, s1 in zip(iarr.shape, oarr.shape)})
+            # mapping.update({str(s1): f"einsum_{i}_{s0}" for s0, s1 in zip(iarr.shape, oarr.shape)})
+            mapping.update({str(s1): str(s0) for s0, s1 in zip(iarr.shape, oarr.shape)})
             acc = state.add_access(f"einsum_{sidx}_out")
             outaccess[acc] = name
         
@@ -327,7 +463,7 @@ if __name__ == '__main__':
 
     val1 = np.zeros((128, 128))
     sdfg(einsum_0_inp0=A, einsum_0_inp1=B, einsum_1_inp0=C, einsum_1_inp1=D, einsum_0_out=val1,
-         einsum_0_S0=128, einsum_0_S1=64, einsum_0_S2=128, einsum_1_S0=128, einsum_1_S1=32, einsum_1_S2=128)
+         S0=128, S1=64, S2=128, S3=32)
         
     assert(np.allclose(val0, ref))
     assert(np.allclose(val1, ref))
@@ -344,8 +480,7 @@ if __name__ == '__main__':
     val1 = np.zeros((128, 256))
     sdfg2(einsum_0_inp0=A, einsum_0_inp1=B, einsum_1_inp0=C, einsum_1_inp1=D, einsum_2_inp1=E,
           einsum_0_out = tmp0, einsum_2_out=val1,
-          einsum_0_S0=128, einsum_0_S1=64, einsum_0_S2=128, einsum_1_S0=128, einsum_1_S1=32, einsum_1_S2=128,
-          einsum_2_S0=128, einsum_2_S1=128, einsum_2_S2=256)
+          S0=128, S1=64,S2=128, S3=32, S4=256)
         
     assert(np.allclose(val0, ref))
     assert(np.allclose(val1, ref))
