@@ -232,22 +232,22 @@ def test_memlet_equation():
     read_accesses = ((k, k, 1), (l + 2, l + 2, 1))
 
     sol = OTFMapFusion.solve(write_params, write_accesses, read_params, read_accesses)
-    assert sol[0] == {i: k}
-    assert sol[1] == {j: l + 3}
+    assert sol[i] == k
+    assert sol[j] == l + 3
 
 
-def test_memlet_equation_same_symbols():
+def test_memlet_equation_transposed():
     i = dace.symbolic.symbol('i')
     j = dace.symbolic.symbol('j')
     write_params = [i, j]
     write_accesses = ((i, i, 1), (j - 1, j - 1, 1))
 
-    read_params = [i, j]
-    read_accesses = ((i, i, 1), (j + 2, j + 2, 1))
+    read_params = [j, i]
+    read_accesses = ((j + 2, j + 2, 1), (i, i, 1))
 
     sol = OTFMapFusion.solve(write_params, write_accesses, read_params, read_accesses)
-    assert sol[0] == {i: i}
-    assert sol[1] == {j: j + 3}
+    assert sol[i] == j + 2
+    assert sol[j] == i + 1
 
 
 def test_memlet_equation_constant_read():
@@ -259,18 +259,7 @@ def test_memlet_equation_constant_read():
     read_accesses = ((0, 0, 1), )
 
     sol = OTFMapFusion.solve(write_params, write_accesses, read_params, read_accesses)
-    assert sol[0] == {i: 0}
-
-
-def test_memlet_equation_constant_read_and_write_match():
-    write_params = []
-    write_accesses = ((2, 2, 1), )
-
-    read_params = []
-    read_accesses = ((2, 2, 1), )
-
-    sol = OTFMapFusion.solve(write_params, write_accesses, read_params, read_accesses)
-    assert sol[0] == {2: 2}
+    assert sol[i] == 0
 
 
 def test_memlet_equation_constant_read_and_write_fail():
