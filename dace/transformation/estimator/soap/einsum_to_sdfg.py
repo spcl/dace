@@ -1,3 +1,4 @@
+import copy
 import dace
 import numpy as np
 import opt_einsum as oe
@@ -5,24 +6,19 @@ import re
 
 from dace.dtypes import DTYPE_TO_TYPECLASS as dt
 from dace import subsets
-from typing import List
+from typing import Dict, List, Tuple, Union
 
 
 def sdfg_gen(subscripts: str, arrays: List[np.ndarray] = None, inp_dim: int = 10) -> dace.SDFG:
     """ 
-    Generates an SDFG for the given einsum discription. The SDFG comprises
-        separates map for each contraction, based on the analysis done by the
-        opt_einsum module.
+    Generates an SDFG for the given einsum description. The SDFG comprises separates map for each contraction, based
+    on the analysis done by the opt_einsum module.
 
-    Args:
-        subscripts (str): The einsum's subscript-description.
-        arrays [Optional] (List[np.ndarray]): The einsum's inputs. If not provided,
-                the arrays are auto-generated using the same size in each tensor mode (inp_dim)
-        inp_dim [Optinal] (int): If arrays are not provided, inp_dim is used to auto-generate them
-
-
-    Returns:
-        dace.SDFG: The SDFG implementing the einsum.
+    :param subscripts: The einsum's subscript description.
+    :param arrays: The einsum's inputs. If not provided, the arrays are auto-generated using the same size in each
+                   tensor mode (inp_dim).
+    :param inp_dim: If arrays are not provided, inp_dim is used to auto-generate them.
+    :return: The SDFG implementing the einsums.
     """
 
     # if input arrays are not provided, create them
@@ -192,26 +188,187 @@ def sdfg_gen(subscripts: str, arrays: List[np.ndarray] = None, inp_dim: int = 10
     return sdfg, path_info[1].contraction_list
 
 
+def sdfg_multigen(subscripts: List[str], out_match: Dict[int, Dict[int, Union[int, List[int]]]],
+                  arrays: List[np.ndarray] = None, inp_match: Dict[int, List[int]] = None,
+                  inp_dim: int = 10) -> dace.SDFG:
+    """ 
+    Generates an SDFG for the given list of einsum descriptions. The SDFG comprises separates map for each contraction,
+    based on the analysis done by the opt_einsum module.
+
+    :param subscripts: The einsum's subscript descriptions.
+    :param arrays: The einsum's inputs. If not provided, the arrays are auto-generated using the same size in each
+                   tensor mode (inp_dim).
+    :param inp_dim: If arrays are not provided, inp_dim is used to auto-generate them.
+    :return: The SDFG implementing the einsums.
+    """
+
+    sdfgs = []
+    contraction_list = []
+    inputs = []
+    outputs = []
+
+    def inpiter(sd):
+        for n, arr in sd.arrays.items():
+            if n.startswith('inp'):
+                yield n, arr
+
+    def outiter(sd):
+        for n, arr in sd.arrays.items():
+            if n.startswith('out') and not arr.transient:
+                yield n, arr
+
+    for i, sscript in enumerate(subscripts):
+        inparrays = None
+        if arrays:
+            inparrays = arrays[i]
+        sdfg, contractions = sdfg_gen(sscript, inparrays, inp_dim)
+        sdfgs.append(sdfg)
+        contraction_list.extend(contractions)
+        inputs.append(list(inpiter(sdfg)))
+        outputs.append(next(outiter(sdfg)))
+
+    # Filter inputs/outputs
+    filtered_inputs = copy.deepcopy(inputs)
+    filtered_outputs = copy.deepcopy(outputs)
+    real_output = len(subscripts) - 1
+    for i in reversed(range(len(subscripts))):
+        if i in out_match:
+            for sidx, dst in out_match[i].items():
+                if isinstance(dst, int):
+                    dst = [dst]
+                for idx in dst:
+                    if idx == -1:
+                        filtered_outputs[sidx] = i
+                        if sidx == real_output:
+                            real_output = i
+                    else:
+                        filtered_inputs[sidx][idx] = i
+    
+    print(real_output)
+    sdfg = dace.SDFG('combined')
+
+    for i, sd in enumerate(sdfgs):
+
+        state = sdfg.add_state(f"einsum_{i}")
+
+        mapping = {}
+        inpaccess = {}
+        outaccess = {}
+        for j, inp in enumerate(filtered_inputs[i]):
+            if isinstance(inp, tuple):
+                name, arr = inp
+                mapping.update({str(s): f"einsum_{i}_{s}" for s in arr.shape})
+                shape = (dace.symbol(f"einsum_{i}_{s}") for s in arr.shape)
+                sdfg.add_array(f"einsum_{i}_{name}", shape, arr.dtype)
+                acc = state.add_access(f"einsum_{i}_{name}")
+                inpaccess[acc] = name
+            else:
+                sidx = inp
+                tmp = inp
+                while isinstance(tmp, int):
+                    sidx = tmp
+                    tmp = filtered_outputs[tmp]
+                oarr = tmp[1]
+                name, iarr = inputs[i][j]
+                mapping.update({str(s1): f"einsum_{inp}_{s0}" for s0, s1 in zip(iarr.shape, oarr.shape)})
+                acc = state.add_access(f"einsum_{sidx}_out")
+                inpaccess[acc] = name
+        if isinstance(filtered_outputs[i], tuple):
+            name, arr = filtered_outputs[i]
+            mapping.update({str(s): f"einsum_{i}_{s}" for s in arr.shape})
+            shape = (dace.symbol(f"einsum_{i}_{s}") for s in arr.shape)
+            # sdfg.add_array(f"einsum_{i}_out", shape, arr.dtype, transient = (i != real_output))
+            sdfg.add_array(f"einsum_{i}_out", shape, arr.dtype)
+            acc = state.add_access(f"einsum_{i}_out")
+            outaccess[acc] = name
+        else:
+            sidx = i
+            tmp = filtered_outputs[i]
+            while isinstance(tmp, int):
+                sidx = tmp
+                tmp = filtered_outputs[tmp]
+            oarr = tmp[1]
+            name, iarr = outputs[i]
+            mapping.update({str(s1): f"einsum_{i}_{s0}" for s0, s1 in zip(iarr.shape, oarr.shape)})
+            acc = state.add_access(f"einsum_{sidx}_out")
+            outaccess[acc] = name
+        
+        nsd = state.add_nested_sdfg(sd, sdfg, set(inpaccess.values()), set(outaccess.values()), mapping)
+        for acc, conn in inpaccess.items():
+            state.add_edge(acc, None, nsd, conn, dace.Memlet.from_array(acc.data, sdfg.arrays[acc.data]))
+        for acc, conn in outaccess.items():
+            state.add_edge(nsd, conn, acc, None, dace.Memlet.from_array(acc.data, sdfg.arrays[acc.data]))
+        
+        if i > 0:
+            sdfg.add_edge(prv_state, state, dace.InterstateEdge())
+        
+        prv_state = state
+
+    sdfg.simplify()
+    sdfg.validate()
+
+    return sdfg
+
+
 if __name__ == '__main__':
 
-    dim = 30
-    I = np.random.rand(dim, dim, dim, dim)
-    A = np.random.rand(dim, dim)
-    B = np.random.rand(dim, dim)
-    C = np.random.rand(dim, dim)
-    D = np.random.rand(dim, dim)
-    E = np.random.rand(dim, dim, dim)
+    sdfg = sdfg_multigen(['ik,kj->ij', 'il,lj->ij'], {0: {1: -1}})
 
-    # einsum_string = 'ik, kjl->ijl'
-    einsum_string = 'ijk,jl,kl->il'
-    # # einsum_string = 'ik,kj->ijk'
-    sdfg = sdfg_gen(einsum_string, [E, A, B])
-    # sdfg = sdfg_gen(einsum_string, [A, B])
+    rng = np.random.default_rng(42)
+    A = rng.random((128, 64))
+    B = rng.random((64, 128))
+    C = rng.random((128, 32))
+    D = rng.random((32, 128))
 
-    # einsum_string = 'pi,qj,ijkl,rk,sl->pqrs'
-    # sdfg = sdfg_gen(einsum_string, [A, B, I, C, D])
-    import pathlib
-    sdfg.save(f'{pathlib.Path(__file__).parent.resolve()}/test.sdfg')
+    ref = A @ B + C @ D
+
+    val0 = oe.contract('ik,kj->ij', A, B)
+    val0 += oe.contract('il,lj->ij', C, D)
+
+    val1 = np.zeros((128, 128))
+    sdfg(einsum_0_inp0=A, einsum_0_inp1=B, einsum_1_inp0=C, einsum_1_inp1=D, einsum_0_out=val1,
+         einsum_0_S0=128, einsum_0_S1=64, einsum_0_S2=128, einsum_1_S0=128, einsum_1_S1=32, einsum_1_S2=128)
+        
+    assert(np.allclose(val0, ref))
+    assert(np.allclose(val1, ref))
+
+    sdfg2 = sdfg_multigen(['ik,kj->ij', 'il,lj->ij','ij,jm->im'], {0: {1: -1}, 1:{2: 0}})
+    sdfg2.view()
+    E = rng.random((128, 256))
+
+    ref = (A @ B + C @ D) @ E
+
+    val0 = oe.contract('ij,jm->im', val0, E)
+
+    tmp0 = np.zeros((128, 128))
+    val1 = np.zeros((128, 256))
+    sdfg2(einsum_0_inp0=A, einsum_0_inp1=B, einsum_1_inp0=C, einsum_1_inp1=D, einsum_2_inp1=E,
+          einsum_0_out = tmp0, einsum_2_out=val1,
+          einsum_0_S0=128, einsum_0_S1=64, einsum_0_S2=128, einsum_1_S0=128, einsum_1_S1=32, einsum_1_S2=128,
+          einsum_2_S0=128, einsum_2_S1=128, einsum_2_S2=256)
+        
+    assert(np.allclose(val0, ref))
+    assert(np.allclose(val1, ref))
+
+
+    # dim = 30
+    # I = np.random.rand(dim, dim, dim, dim)
+    # A = np.random.rand(dim, dim)
+    # B = np.random.rand(dim, dim)
+    # C = np.random.rand(dim, dim)
+    # D = np.random.rand(dim, dim)
+    # E = np.random.rand(dim, dim, dim)
+
+    # # einsum_string = 'ik, kjl->ijl'
+    # einsum_string = 'ijk,jl,kl->il'
+    # # # einsum_string = 'ik,kj->ijk'
+    # sdfg = sdfg_gen(einsum_string, [E, A, B])
+    # # sdfg = sdfg_gen(einsum_string, [A, B])
+
+    # # einsum_string = 'pi,qj,ijkl,rk,sl->pqrs'
+    # # sdfg = sdfg_gen(einsum_string, [A, B, I, C, D])
+    # import pathlib
+    # sdfg.save(f'{pathlib.Path(__file__).parent.resolve()}/test.sdfg')
 
 
 
