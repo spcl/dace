@@ -20,7 +20,8 @@ from dace import sourcemap
 from dace.config import Config
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python import astutils
-from dace.frontend.python.common import (DaceSyntaxError, SDFGClosure, SDFGConvertible, inverse_dict_lookup)
+from dace.frontend.python.common import (DaceSyntaxError, SDFGClosure, SDFGConvertible, inverse_dict_lookup,
+                                         StringLiteral)
 from dace.frontend.python.astutils import ExtNodeVisitor, ExtNodeTransformer
 from dace.frontend.python.astutils import rname
 from dace.frontend.python import nested_call, replacements, preprocessing
@@ -261,7 +262,7 @@ DISALLOWED_STMTS = [
 ]
 # Extra AST node types that are disallowed after preprocessing
 _DISALLOWED_STMTS = DISALLOWED_STMTS + [
-    'Global', 'Assert', 'Print', 'Nonlocal', 'Raise', 'Starred', 'AsyncFor', 'Bytes', 'ListComp', 'GeneratorExp',
+    'Global', 'Assert', 'Print', 'Nonlocal', 'Raise', 'Starred', 'AsyncFor', 'ListComp', 'GeneratorExp',
     'SetComp', 'DictComp', 'comprehension'
 ]
 
@@ -3924,14 +3925,15 @@ class ProgramVisitor(ExtNodeVisitor):
                     else:
                         allargs.append(parsed_arg)
                 else:
-                    if isinstance(parsed_arg, (Number, numpy.number, type(None))):
+                    if isinstance(parsed_arg, StringLiteral):
+                        # Special case for strings
+                        parsed_arg = f'"{astutils.escape_string(parsed_arg.value)}"'
+                        atype = data.Scalar(dtypes.string)
+                    elif isinstance(parsed_arg, (Number, numpy.number, type(None))):
                         atype = data.create_datadescriptor(type(parsed_arg))
                     else:
                         atype = data.create_datadescriptor(parsed_arg)
 
-                    if isinstance(parsed_arg, str):
-                        # Special case for strings
-                        parsed_arg = f'"{astutils.escape_string(parsed_arg)}"'
                     allargs.append(parsed_arg)
 
                 argtypes.append(atype)
@@ -4444,8 +4446,12 @@ class ProgramVisitor(ExtNodeVisitor):
 
     #### Visitors that return arrays
     def visit_Str(self, node: ast.Str):
-        # A string constant returns itself
-        return node.s
+        # A string constant returns a string literal
+        return StringLiteral(node.s)
+
+    def visit_Bytes(self, node: ast.Bytes):
+        # A bytes constant returns a string literal
+        return StringLiteral(node.s)
 
     def visit_Num(self, node: ast.Num):
         if isinstance(node.n, bool):
@@ -4459,6 +4465,8 @@ class ProgramVisitor(ExtNodeVisitor):
             return dace.bool_(node.value)
         if isinstance(node.value, (int, float, complex)):
             return dtypes.DTYPE_TO_TYPECLASS[type(node.value)](node.value)
+        if isinstance(node.value, (str, bytes)):
+            return StringLiteral(node.value)
         return node.value
 
     def visit_Name(self, node: ast.Name):
