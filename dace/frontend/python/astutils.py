@@ -10,7 +10,7 @@ import numbers
 import numpy
 import sympy
 import sys
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Union
 
 from dace import dtypes, symbolic
 
@@ -684,8 +684,10 @@ def create_constant(value: Any, node: Optional[ast.AST] = None) -> ast.AST:
     return newnode
 
 
-def escape_string(value: str):
+def escape_string(value: Union[bytes, str]):
     """ Converts special Python characters in strings back to their parsable version (e.g., newline to ``\n``) """
+    if isinstance(value, bytes):
+        return f"{chr(0xFFFF)}{value.decode('utf-8')}"
     if sys.version_info >= (3, 0):
         return value.encode("unicode_escape").decode("utf-8")
     # Python 2.x

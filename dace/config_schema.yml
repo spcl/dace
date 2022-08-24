@@ -392,6 +392,18 @@ required:
                         description: Additional linked libraries required by target
                         default: ''
 
+                    mempool_release_threshold:
+                        type: int
+                        title: Memory pool memory release threshold
+                        default: -1
+                        description: >
+                            A value that determines how large a memory allocation has to be before it is
+                            automatically released from the memory pool to the system. The default is -1,
+                            which indicates "never release". Other values may be 0 (always release), or
+                            any byte value.
+                            For more information, see ``cudaMemPoolAttrReleaseThreshold`` in the CUDA toolkit
+                            documentation.
+
             #############################################
             # General FPGA flags
             fpga:
@@ -631,101 +643,6 @@ required:
                         default_Darwin: ''
                         default_Windows: ''
 
-
-    execution:
-        type: dict
-        title: Execution
-        description: Binary execution preferences
-        required:
-            general:
-                type: dict
-                title: General
-                description: General execution preferences
-                required:
-                    host:
-                        type: str
-                        default: localhost
-                        title: Host
-                        description: Hostname to use for execution
-
-                    workdir:
-                        type: str
-                        default: '/tmp/'
-                        title: Working directory
-                        description: Working directory on the remote host
-
-                    check_args:
-                        type: bool
-                        default: true
-                        title: Check arguments
-                        description: >
-                            Do strict verification that arguments passed when
-                            calling a DaCe program match the expected dtypes.
-
-                    execcmd:
-                        type: str
-                        title: Command
-                        description: >
-                            Command to use to execute ${command} on ${host}
-                        default: 'ssh ${host} ${command}'
-                        template_vars:
-                            - host
-                            - command
-
-                    copycmd_r2l:
-                        type: str
-                        default: 'scp ${host}:${srcfile} ${dstfile}'
-                        title: "Remote->Local copy command"
-                        description: >
-                            Command to use to copy ${srcfile} on ${host} to
-                            the local ${dstfile}.
-                        template_vars:
-                            - host
-                            - srcfile
-                            - dstfile
-
-                    copycmd_l2r:
-                        type: str
-                        default: "scp ${srcfile} ${host}:${dstfile}"
-                        title: "Local->Remote copy command"
-                        description: >
-                            Command to use to copy the local ${srcfile} to the
-                            remote ${dstfile}.
-                        template_vars:
-                            - host
-                            - srcfile
-                            - dstfile
-
-                    repetitions:
-                        type: int
-                        default: 5
-                        title: "Repetitions per Run"
-                        description: >
-                            Number of repetitions to run for each click of the
-                            Run button (median value will be reported in the
-                            performance chart).
-            mpi:
-                type: dict
-                title: MPI
-                description: MPI execution preferences
-                required:
-                    mpiexec:
-                        type: str
-                        default: 'mpirun -n ${num_procs} ${command}'
-                        title: mpirun command
-                        description: >
-                            Command to use to execute MPI job ${command} with
-                            ${num_procs} processes.
-                        template_vars:
-                            - num_procs
-                            - command
-
-                    num_procs:
-                        type: int
-                        default: 4
-                        title: Number of processes
-                        description: Number of MPI processes to use
-
     instrumentation:
         type: dict
         title: Instrumentation
@@ -839,9 +756,26 @@ required:
                     0 means unrolling every loop, and a value above zero sets a size threshold beyond which a
                     constant-sized loop will not be automatically unrolled.
 
+            check_args:
+                type: bool
+                default: false
+                title: Check arguments on SDFG call
+                description: >
+                    Perform an early type check on arguments passed to an SDFG when called directly (from 
+                    ``SDFG.__call__``). Another type check is performed when calling compiled SDFGs.
 
+            avoid_wcr:
+                type: bool
+                default: false
+                title: Avoid using WCR for augmented assignments when possible
+                description: >
+                    Perform a map-symbol-dependency check on the write-subsets of augmented
+                    assignments that appear inside Maps to avoid using WCR when possible.
+                    This feature works correctly only when there is a single augmented assignment
+                    for each data dimension inside a Map.
 
     #############################################
+
     # General settings
 
     debugprint:

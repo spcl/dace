@@ -71,6 +71,24 @@ class ExpandReducePure(pm.ExpandTransformation):
                         strides=[s for i, s in enumerate(output_data.strides) if i in osqdim],
                         storage=output_data.storage)
 
+        # Rename outer connectors and add to node
+        inedge._dst_conn = '_in'
+        outedge._src_conn = '_out'
+        node.add_in_connector('_in')
+        node.add_out_connector('_out')
+
+        if len(axes) == 0:
+            # Degenerate reduction, do nothing
+            nstate = nsdfg.add_state()
+            r = nstate.add_read('_in')
+            w = nstate.add_write('_out')
+            nstate.add_edge(
+                r, None, w, None,
+                dace.Memlet(data='_in',
+                            subset=dace.subsets.Range.from_array(nsdfg.arrays['_in']),
+                            other_subset=dace.subsets.Range.from_array(nsdfg.arrays['_out'])))
+            return nsdfg
+
         # If identity is defined, add an initialization state
         if node.identity is not None:
             init_state = nsdfg.add_state()
@@ -131,12 +149,6 @@ class ExpandReducePure(pm.ExpandTransformation):
             nstate.add_memlet_path(r, ime, t, dst_conn='__inp', memlet=inmm)
             nstate.add_memlet_path(t, imx, w, src_conn='__out', memlet=outm)
 
-        # Rename outer connectors and add to node
-        inedge._dst_conn = '_in'
-        outedge._src_conn = '_out'
-        node.add_in_connector('_in')
-        node.add_out_connector('_out')
-
         from dace.transformation import dataflow
         nsdfg.apply_transformations_repeated(dataflow.MapCollapse)
 
@@ -169,8 +181,11 @@ class ExpandReducePureSequentialDim(pm.ExpandTransformation):
             osqdim = [0]
 
         # Standardize and squeeze axes
-        axes = node.axes if node.axes else [i for i in range(len(inedge.data.subset))]
+        axes = node.axes if node.axes is not None else [i for i in range(len(inedge.data.subset))]
         axes = [axis for axis in axes if axis in isqdim]
+
+        if not axes:  # Degenerate reduction
+            return ExpandReducePure.expansion(node, state, sdfg)
 
         assert node.identity is not None
 
@@ -275,6 +290,8 @@ class ExpandReduceOpenMP(pm.ExpandTransformation):
         node.validate(sdfg, state)
         inedge: graph.MultiConnectorEdge = state.in_edges(node)[0]
         outedge: graph.MultiConnectorEdge = state.out_edges(node)[0]
+        insubset = dcpy(inedge.data.subset)
+        isqdim = insubset.squeeze()
         input_dims = len(inedge.data.subset)
         output_dims = len(outedge.data.subset)
         input_data = sdfg.arrays[inedge.data.data]
@@ -288,7 +305,11 @@ class ExpandReduceOpenMP(pm.ExpandTransformation):
         omptype, expr = ExpandReduceOpenMP._REDUCTION_TYPE_TO_OPENMP[redtype]
 
         # Standardize axes
-        axes = node.axes if node.axes else [i for i in range(input_dims)]
+        axes = node.axes if node.axes is not None else [i for i in range(input_dims)]
+        sqaxes = [axis for axis in axes if axis in isqdim]
+
+        if not sqaxes:  # Degenerate reduction
+            return ExpandReducePure.expansion(node, state, sdfg)
 
         outer_loops = len(axes) != input_dims
 
@@ -383,10 +404,19 @@ class ExpandReduceCUDADevice(pm.ExpandTransformation):
         node.validate(sdfg, state)
         input_edge: graph.MultiConnectorEdge = state.in_edges(node)[0]
         output_edge: graph.MultiConnectorEdge = state.out_edges(node)[0]
+        insubset = dcpy(input_edge.data.subset)
+        isqdim = insubset.squeeze()
         input_dims = len(input_edge.data.subset)
         output_dims = len(output_edge.data.subset)
         input_data = sdfg.arrays[input_edge.data.data]
         output_data = sdfg.arrays[output_edge.data.data]
+
+        # Standardize axes
+        axes = node.axes if node.axes is not None else [i for i in range(input_dims)]
+        sqaxes = [axis for axis in axes if axis in isqdim]
+
+        if not sqaxes:  # Degenerate reduction
+            return ExpandReducePure.expansion(node, state, sdfg)
 
         # Setup all locations in which code will be written
         cuda_globalcode = CodeIOStream()
@@ -411,7 +441,8 @@ class ExpandReduceCUDADevice(pm.ExpandTransformation):
         output_type = dtype.ctype
 
         if node.identity is None:
-            raise ValueError('For device reduce nodes, initial value must be ' 'specified')
+            raise ValueError('For device reduce nodes, initial value must be '
+                             'specified')
 
         # Create a functor or use an existing one for reduction
         if redtype == dtypes.ReductionType.Custom:
@@ -461,11 +492,13 @@ class ExpandReduceCUDADevice(pm.ExpandTransformation):
 
         # Verify that data is on the GPU
         if input_data.storage not in [dtypes.StorageType.GPU_Global, dtypes.StorageType.CPU_Pinned]:
-            warnings.warn('Input of GPU reduction must either reside ' ' in global GPU memory or pinned CPU memory')
+            warnings.warn('Input of GPU reduction must either reside '
+                          ' in global GPU memory or pinned CPU memory')
             return ExpandReducePure.expansion(node, state, sdfg)
 
         if output_data.storage not in [dtypes.StorageType.GPU_Global, dtypes.StorageType.CPU_Pinned]:
-            warnings.warn('Output of GPU reduction must either reside ' ' in global GPU memory or pinned CPU memory')
+            warnings.warn('Output of GPU reduction must either reside '
+                          ' in global GPU memory or pinned CPU memory')
             return ExpandReducePure.expansion(node, state, sdfg)
 
         # Determine reduction type
@@ -622,7 +655,8 @@ class ExpandReduceCUDABlock(pm.ExpandTransformation):
         output_type = dtype.ctype
 
         if node.identity is None:
-            raise ValueError('For device reduce nodes, initial value must be ' 'specified')
+            raise ValueError('For device reduce nodes, initial value must be '
+                             'specified')
 
         # Create a functor or use an existing one for reduction
         if redtype == dtypes.ReductionType.Custom:
@@ -650,13 +684,17 @@ class ExpandReduceCUDABlock(pm.ExpandTransformation):
 
         # Checks
         if block_threads is None:
-            raise ValueError('Block-wide GPU reduction must occur within' ' a GPU kernel')
+            raise ValueError('Block-wide GPU reduction must occur within'
+                             ' a GPU kernel')
         if issymbolic(block_threads, sdfg.constants):
-            raise ValueError('Block size has to be constant for block-wide ' 'reduction (got %s)' % str(block_threads))
+            raise ValueError('Block size has to be constant for block-wide '
+                             'reduction (got %s)' % str(block_threads))
         if (node.axes is not None and len(node.axes) < input_dims):
-            raise ValueError('Only full reduction is supported for block-wide reduce,' ' please use the pure expansion')
+            raise ValueError('Only full reduction is supported for block-wide reduce,'
+                             ' please use the pure expansion')
         if (input_data.storage != dtypes.StorageType.Register or output_data.storage != dtypes.StorageType.Register):
-            raise ValueError('Block-wise reduction only supports GPU register inputs ' 'and outputs')
+            raise ValueError('Block-wise reduction only supports GPU register inputs '
+                             'and outputs')
         if redtype in ExpandReduceCUDABlock._SPECIAL_RTYPES:
             raise ValueError('%s block reduction not supported' % redtype)
 
