@@ -2086,13 +2086,14 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         dll = cs.ReloadableDLL(binary_filename, self.name)
         return dll.is_loaded()
 
-    def compile(self, output_file=None, validate=True) -> \
+    def compile(self, output_file=None, validate=True, in_place=False) -> \
             'dace.codegen.compiler.CompiledSDFG':
         """ Compiles a runnable binary from this SDFG.
             :param output_file: If not None, copies the output library file to
                                 the specified path.
             :param validate: If True, validates the SDFG prior to generating
                              code.
+            :param in_place: Compilation may modify the SDFG's contents.
             :return: A callable CompiledSDFG object.
         """
 
@@ -2112,7 +2113,10 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         # DaCe Compilation Process #
 
         # Clone SDFG as the other modules may modify its contents
-        sdfg = copy.deepcopy(self)
+        if not in_place:
+            sdfg = copy.deepcopy(self)
+        else:
+            sdfg = self
         # Fix the build folder name on the copied SDFG to avoid it changing
         # if the codegen modifies the SDFG (thereby changing its hash)
         sdfg.build_folder = build_folder
