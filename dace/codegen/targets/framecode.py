@@ -52,13 +52,33 @@ class DaCeCodeGenerator(object):
         fsyms = self.free_symbols(sdfg)
         self.arglist = sdfg.arglist(scalars_only=False, free_symbols=fsyms)
 
+        # resolve all symbols and constants
+        # first handle root
+        self._symbols_and_constants[sdfg.sdfg_id] = sdfg.free_symbols.union(sdfg.constants_prop.keys())
+        # then recurse
+        for nested, state in sdfg.all_nodes_recursive():
+            if isinstance(nested, nodes.NestedSDFG):
+                state: SDFGState
+
+                nsdfg = nested.sdfg
+
+                # found a new nested sdfg: resolve symbols and constants
+                result = nsdfg.free_symbols.union(nsdfg.constants_prop.keys())
+
+                parent_constants = self._symbols_and_constants[nsdfg._parent_sdfg.sdfg_id]
+                result |= parent_constants
+
+                # check for constant inputs
+                for edge in state.in_edges(nested):
+                    if edge.data.data in parent_constants:
+                        # this edge is constant => propagate to nested sdfg
+                        result.add(edge.dst_conn)
+
+                self._symbols_and_constants[nsdfg.sdfg_id] = result
+
     # Cached fields
     def symbols_and_constants(self, sdfg: SDFG):
-        if sdfg.sdfg_id in self._symbols_and_constants:
-            return self._symbols_and_constants[sdfg.sdfg_id]
-        result = sdfg.free_symbols.union(sdfg.constants.keys())
-        self._symbols_and_constants[sdfg.sdfg_id] = result
-        return result
+        return self._symbols_and_constants[sdfg.sdfg_id]
 
     def free_symbols(self, obj: Any):
         k = id(obj)
@@ -646,6 +666,15 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                     # If any state is not reachable from first state, find common denominators in the form of
                     # dominator and postdominator.
                     instances = access_instances[sdfg.sdfg_id][name]
+
+                    # A view gets "allocated" everywhere it appears
+                    if isinstance(desc, data.View):
+                        for s, n in instances:
+                            self.to_allocate[s].append((sdfg, s, n, False, True, False))
+                            self.to_allocate[s].append((sdfg, s, n, False, False, True))
+                        self.where_allocated[(sdfg, name)] = cursdfg
+                        continue
+
                     if any(inst not in reachability[sdfg.sdfg_id][first_state_instance] for inst in instances):
                         first_state_instance, last_state_instance = _get_dominator_and_postdominator(sdfg, instances)
                         # Declare in SDFG scope
