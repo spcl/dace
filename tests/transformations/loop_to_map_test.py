@@ -4,12 +4,14 @@ import dace
 import numpy as np
 import os
 import tempfile
+from dace.sdfg import nodes
 from dace.transformation.interstate import LoopToMap
 
 
 def make_sdfg(with_wcr, map_in_guard, reverse_loop, use_variable, assign_after, log_path):
 
-    sdfg = dace.SDFG(f"loop_to_map_test_{with_wcr}_{map_in_guard}_" f"{reverse_loop}_{use_variable}_{assign_after}")
+    sdfg = dace.SDFG(f"loop_to_map_test_{with_wcr}_{map_in_guard}_"
+                     f"{reverse_loop}_{use_variable}_{assign_after}")
     sdfg.set_global_code("#include <fstream>\n#include <mutex>")
 
     init = sdfg.add_state("init")
@@ -160,6 +162,7 @@ def test_loop_to_map_variable_reassigned(n=None):
 
 
 def test_output_copy():
+
     @dace.program
     def l2mtest_copy(A: dace.float64[20, 20]):
         for i in range(1, 20):
@@ -179,6 +182,7 @@ def test_output_copy():
 
 
 def test_output_accumulate():
+
     @dace.program
     def l2mtest_accumulate(A: dace.float64[20, 20]):
         for i in range(1, 20):
@@ -235,6 +239,29 @@ def test_specialize():
     assert np.allclose(y, regression)
 
 
+def test_empty_loop():
+
+    @dace.program
+    def empty_loop():
+        for i in range(10):
+            pass
+
+    sdfg = empty_loop.to_sdfg(simplify=False)
+    sdfg.apply_transformations(LoopToMap)
+    sdfg.view()
+
+    try:
+        sdfg.validate()
+    except:
+        assert False
+
+    for node, _ in sdfg.all_nodes_recursive():
+        if isinstance(node, nodes.MapEntry):
+            return
+
+    assert False
+
+
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
@@ -251,3 +278,4 @@ if __name__ == "__main__":
     test_loop_to_map_variable_reassigned(n)
     test_output_copy()
     test_output_accumulate()
+    test_empty_loop()
