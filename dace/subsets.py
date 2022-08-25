@@ -990,9 +990,9 @@ def bounding_box_union(subset_a: Subset, subset_b: Subset) -> Range:
                 elif len(brb.free_symbols) == 0:
                     minrb = brb
                 else:
-                    raise
+                    minrb = sympy.Min(arb, brb)
             else:
-                raise
+                minrb = sympy.Min(arb, brb)
 
         try:
             maxre = max(are, bre)
@@ -1003,9 +1003,9 @@ def bounding_box_union(subset_a: Subset, subset_b: Subset) -> Range:
                 elif len(bre.free_symbols) == 0:
                     maxre = are
                 else:
-                    raise
+                    maxre = sympy.Max(are, bre)
             else:
-                raise
+                maxre = sympy.Max(are, bre)
 
         result.append((minrb, maxre, 1))
 
