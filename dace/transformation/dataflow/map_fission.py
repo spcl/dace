@@ -7,6 +7,7 @@ from dace import registry, sdfg as sd, memlet as mm, subsets, data as dt
 from dace.sdfg import nodes, graph as gr
 from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import OrderedDiGraph
+from dace.sdfg.propagation import propagate_memlets_state
 from dace.symbolic import pystr_to_symbolic
 from dace.transformation import transformation, helpers
 from typing import List, Optional, Tuple
@@ -197,11 +198,15 @@ class MapFission(transformation.SingleStateTransformation):
             for edge in graph.out_edges(map_entry):
                 if edge.data.data:
                     map_syms.update(edge.data.subset.free_symbols)
+                # NOTE: The following code is related to
+                # tests.transformations.mapfission_test.test_mapfission_with_symbols
                 if edge.data.data in parent_sdfg.arrays:
                     map_syms.update(parent_sdfg.arrays[edge.data.data].free_symbols)
             for edge in graph.in_edges(map_exit):
                 if edge.data.data:
                     map_syms.update(edge.data.subset.free_symbols)
+                # NOTE: The following code is related to
+                # tests.transformations.mapfission_test.test_mapfission_with_symbols
                 if edge.data.data in parent_sdfg.arrays:
                     map_syms.update(parent_sdfg.arrays[edge.data.data].free_symbols)
             for sym in map_syms:
@@ -311,36 +316,47 @@ class MapFission(transformation.SingleStateTransformation):
                 new_map_entries.append(me)
 
                 # Reconnect edges through new map
+                conn_idx = 0
                 for e in state.in_edges(component_in):
-                    # NOTE: The following old code avoid the force-union approach of `add_memlet_path`, which may be
-                    # undesirable. However, it causes issues with connectors when a union of the subsets is possible.
-                    # TODO: Investigate the issue further.
-                    # state.add_edge(me, None, e.dst, e.dst_conn, dcpy(e.data))
-                    # # Reconnect inner edges at source directly to external nodes
-                    # if self.expr_index == 0 and e in external_edges_entry:
-                    #     state.add_edge(edge_to_outer[e].src, edge_to_outer[e].src_conn, me, None,
-                    #                    dcpy(edge_to_outer[e].data))
-                    # else:
-                    #     state.add_edge(e.src, e.src_conn, me, None, dcpy(e.data))
-                    if self.expr_index == 0 and e in external_edges_entry:
-                        state.add_memlet_path(edge_to_outer[e].src, me, e.dst, memlet=dcpy(e.data),
-                                              src_conn=edge_to_outer[e].src_conn, dst_conn=e.dst_conn)
+                    if e.data.data:
+                        in_conn = f"IN_{conn_idx}"
+                        out_conn = f"OUT_{conn_idx}"
+                        conn_idx += 1
+                        me.add_in_connector(in_conn)
+                        me.add_out_connector(out_conn)
                     else:
-                        state.add_memlet_path(e.src, me, e.dst, memlet=dcpy(e.data),
-                                              src_conn=e.src_conn, dst_conn=e.dst_conn)
+                        in_conn = None
+                        out_conn = None
+                    state.add_edge(me, out_conn, e.dst, e.dst_conn, dcpy(e.data))
+                    # Reconnect inner edges at source directly to external nodes
+                    if self.expr_index == 0 and e in external_edges_entry:
+                        state.add_edge(edge_to_outer[e].src, edge_to_outer[e].src_conn, me, in_conn,
+                                       dcpy(edge_to_outer[e].data))
+                    else:
+                        state.add_edge(e.src, e.src_conn, me, in_conn, dcpy(e.data))
                     state.remove_edge(e)
                 # Empty memlet edge in nested SDFGs
                 if state.in_degree(component_in) == 0:
                     state.add_edge(me, None, component_in, None, mm.Memlet())
 
+                conn_idx = 0
                 for e in state.out_edges(component_out):
-                    state.add_edge(e.src, e.src_conn, mx, None, dcpy(e.data))
+                    if e.data.data:
+                        in_conn = f"IN_{conn_idx}"
+                        out_conn = f"OUT_{conn_idx}"
+                        conn_idx += 1
+                        mx.add_in_connector(in_conn)
+                        mx.add_out_connector(out_conn)
+                    else:
+                        in_conn = None
+                        out_conn = None
+                    state.add_edge(e.src, e.src_conn, mx, in_conn, dcpy(e.data))
                     # Reconnect inner edges at sink directly to external nodes
                     if self.expr_index == 0 and e in external_edges_exit:
-                        state.add_edge(mx, None, edge_to_outer[e].dst, edge_to_outer[e].dst_conn,
+                        state.add_edge(mx, out_conn, edge_to_outer[e].dst, edge_to_outer[e].dst_conn,
                                        dcpy(edge_to_outer[e].data))
                     else:
-                        state.add_edge(mx, None, e.dst, e.dst_conn, dcpy(e.data))
+                        state.add_edge(mx, out_conn, e.dst, e.dst_conn, dcpy(e.data))
                     state.remove_edge(e)
                 # Empty memlet edge in nested SDFGs
                 if state.out_degree(component_out) == 0:
@@ -400,19 +416,22 @@ class MapFission(transformation.SingleStateTransformation):
 
                         # Modify shape of internal array to match outer one
                         outer_desc = sdfg.arrays[outer_edge.data.data]
-                        if not isinstance(desc, dt.Scalar):
+                        if isinstance(desc, dt.Scalar):
+                            parent.arrays[node.data] = dcpy(outer_desc)
+                            desc = parent.arrays[node.data]
+                            desc.transient = False
+                        elif isinstance(desc, dt.Array):
                             desc.shape = outer_desc.shape
-                            if isinstance(desc, dt.Array):
-                                desc.strides = outer_desc.strides
-                                desc.total_size = outer_desc.total_size
+                            desc.strides = outer_desc.strides
+                            desc.total_size = outer_desc.total_size
 
-                            # Inside the nested SDFG, offset all memlets to include
-                            # the offsets from within the map.
-                            # NOTE: Relies on propagation to fix outer memlets
-                            for internal_edge in state.all_edges(node):
-                                for e in state.memlet_tree(internal_edge):
-                                    e.data.subset.offset(desc.offset, False)
-                                    e.data.subset = helpers.unsqueeze_memlet(e.data, outer_edge.data).subset
+                        # Inside the nested SDFG, offset all memlets to include
+                        # the offsets from within the map.
+                        # NOTE: Relies on propagation to fix outer memlets
+                        for internal_edge in state.all_edges(node):
+                            for e in state.memlet_tree(internal_edge):
+                                e.data.subset.offset(desc.offset, False)
+                                e.data.subset = helpers.unsqueeze_memlet(e.data, outer_edge.data).subset
 
                         # Only after offsetting memlets we can modify the
                         # overall offset
