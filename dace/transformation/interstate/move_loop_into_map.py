@@ -9,6 +9,7 @@ from dace.properties import CodeBlock
 from dace.sdfg import nodes, propagation
 from dace.transformation import transformation
 from dace.transformation.interstate.loop_detection import (DetectLoop, find_for_loop)
+from sympy import diff
 from typing import List, Set, Tuple
 
 
@@ -94,6 +95,15 @@ class MoveLoopIntoMap(DetectLoop, transformation.MultiStateTransformation):
                     if fsymbols.intersection(mparams):
                         return (False, [])
                     else:
+                        # Strong checks
+                        if not permissive:
+                            # Only indices allowed
+                            if len(r) > 1 and r[0] != r[1]:
+                                return (False, [])
+                            derivative = diff(r[0])
+                            # Index function must be injective
+                            if not (((derivative > 0) == True) or ((derivative < 0) == True)):
+                                return (False, [])
                         dims.append(i)
             return (True, dims)
 

@@ -44,6 +44,31 @@ def should_not_apply_2():
         a[0:2] = 0
 
 
+@dace.program
+def should_not_apply_3():
+    a = np.ndarray((2, 10), np.float64)
+    for i in range(20):
+        for j in dace.map[10]:
+            a[i%2, j] = a[(i+1)%2, j]
+
+
+@dace.program
+def apply_multiple_times(A: dace.float64[10, 10, 10]):
+    for i in range(10):
+        for j in range(10):
+            for k in dace.map[0:10]:
+                A[k, i , j] = i * 100 + j * 10 + k
+
+
+@dace.program
+def apply_multiple_times_1(A: dace.float64[10, 10, 10, 10]):
+    l = 5
+    for i in range(l, 10):
+        for j in range(l, 10):
+            for k in dace.map[0:10]:
+                A[k, i, j, l] = k * 1000 + i * 100 + j * 10 + l
+
+   
 class MoveLoopIntoMapTest(unittest.TestCase):
     def semantic_eq(self, program):
         A1 = np.random.rand(16, 16)
@@ -77,6 +102,48 @@ class MoveLoopIntoMapTest(unittest.TestCase):
         count = sdfg.apply_transformations(MoveLoopIntoMap)
         self.assertEquals(count, 0)
 
+    def test_non_injective_index(self):
+        sdfg = should_not_apply_3.to_sdfg(simplify=True)
+        count = sdfg.apply_transformations(MoveLoopIntoMap)
+        self.assertEquals(count, 0)
+
+    def test_apply_multiple_times(self):
+        sdfg = apply_multiple_times.to_sdfg(simplify=True)
+        overall = 0
+        count = 1
+        while (count > 0):
+            count = sdfg.apply_transformations(MoveLoopIntoMap, permissive=True)
+            overall += count
+            sdfg.simplify()
+
+        self.assertEqual(overall, 2)
+
+        val = np.zeros((10, 10, 10), dtype=np.float64)
+        ref = val.copy()
+
+        sdfg(A=val)
+        apply_multiple_times.f(ref)
+
+        self.assertTrue(np.allclose(val, ref))
+
+    def test_apply_multiple_times_1(self):
+        sdfg = apply_multiple_times_1.to_sdfg(simplify=True)
+        overall = 0
+        count = 1
+        while (count > 0):
+            count = sdfg.apply_transformations(MoveLoopIntoMap, permissive=True)
+            overall += count
+            sdfg.simplify()
+
+        self.assertEqual(overall, 2)
+
+        val = np.zeros((10, 10, 10, 10), dtype=np.float64)
+        ref = val.copy()
+
+        sdfg(A=val)
+        apply_multiple_times_1.f(ref)
+
+        self.assertTrue(np.allclose(val, ref))
 
 if __name__ == '__main__':
     unittest.main()
