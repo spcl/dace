@@ -166,7 +166,8 @@ class MapFission(transformation.SingleStateTransformation):
         # TODO(later): Support this case? Ambiguous array sizes and memlets
         external_arrays = (border_arrays - self._internal_border_arrays(total_components, subgraphs))
         if len(external_arrays) > 0:
-            return False
+            # return False
+            pass
 
         return True
 
@@ -183,6 +184,7 @@ class MapFission(transformation.SingleStateTransformation):
             nsdfg_node = self.nested_sdfg
             subgraphs = [(state, state) for state in nsdfg_node.sdfg.nodes()]
             parent = nsdfg_node.sdfg
+            parent_sdfg = parent.parent_sdfg
         modified_arrays = set()
 
         # Get map information
@@ -195,9 +197,13 @@ class MapFission(transformation.SingleStateTransformation):
             for edge in graph.out_edges(map_entry):
                 if edge.data.data:
                     map_syms.update(edge.data.subset.free_symbols)
+                if edge.data.data in parent_sdfg.arrays:
+                    map_syms.update(parent_sdfg.arrays[edge.data.data].free_symbols)
             for edge in graph.in_edges(map_exit):
                 if edge.data.data:
                     map_syms.update(edge.data.subset.free_symbols)
+                if edge.data.data in parent_sdfg.arrays:
+                    map_syms.update(parent_sdfg.arrays[edge.data.data].free_symbols)
             for sym in map_syms:
                 symname = str(sym)
                 if symname in outer_map.params:
@@ -306,13 +312,22 @@ class MapFission(transformation.SingleStateTransformation):
 
                 # Reconnect edges through new map
                 for e in state.in_edges(component_in):
-                    state.add_edge(me, None, e.dst, e.dst_conn, dcpy(e.data))
-                    # Reconnect inner edges at source directly to external nodes
+                    # NOTE: The following old code avoid the force-union approach of `add_memlet_path`, which may be
+                    # undesirable. However, it causes issues with connectors when a union of the subsets is possible.
+                    # TODO: Investigate the issue further.
+                    # state.add_edge(me, None, e.dst, e.dst_conn, dcpy(e.data))
+                    # # Reconnect inner edges at source directly to external nodes
+                    # if self.expr_index == 0 and e in external_edges_entry:
+                    #     state.add_edge(edge_to_outer[e].src, edge_to_outer[e].src_conn, me, None,
+                    #                    dcpy(edge_to_outer[e].data))
+                    # else:
+                    #     state.add_edge(e.src, e.src_conn, me, None, dcpy(e.data))
                     if self.expr_index == 0 and e in external_edges_entry:
-                        state.add_edge(edge_to_outer[e].src, edge_to_outer[e].src_conn, me, None,
-                                       dcpy(edge_to_outer[e].data))
+                        state.add_memlet_path(edge_to_outer[e].src, me, e.dst, memlet=dcpy(e.data),
+                                              src_conn=edge_to_outer[e].src_conn, dst_conn=e.dst_conn)
                     else:
-                        state.add_edge(e.src, e.src_conn, me, None, dcpy(e.data))
+                        state.add_memlet_path(e.src, me, e.dst, memlet=dcpy(e.data),
+                                              src_conn=e.src_conn, dst_conn=e.dst_conn)
                     state.remove_edge(e)
                 # Empty memlet edge in nested SDFGs
                 if state.in_degree(component_in) == 0:
@@ -387,17 +402,17 @@ class MapFission(transformation.SingleStateTransformation):
                         outer_desc = sdfg.arrays[outer_edge.data.data]
                         if not isinstance(desc, dt.Scalar):
                             desc.shape = outer_desc.shape
-                        if isinstance(desc, dt.Array):
-                            desc.strides = outer_desc.strides
-                            desc.total_size = outer_desc.total_size
+                            if isinstance(desc, dt.Array):
+                                desc.strides = outer_desc.strides
+                                desc.total_size = outer_desc.total_size
 
-                        # Inside the nested SDFG, offset all memlets to include
-                        # the offsets from within the map.
-                        # NOTE: Relies on propagation to fix outer memlets
-                        for internal_edge in state.all_edges(node):
-                            for e in state.memlet_tree(internal_edge):
-                                e.data.subset.offset(desc.offset, False)
-                                e.data.subset = helpers.unsqueeze_memlet(e.data, outer_edge.data).subset
+                            # Inside the nested SDFG, offset all memlets to include
+                            # the offsets from within the map.
+                            # NOTE: Relies on propagation to fix outer memlets
+                            for internal_edge in state.all_edges(node):
+                                for e in state.memlet_tree(internal_edge):
+                                    e.data.subset.offset(desc.offset, False)
+                                    e.data.subset = helpers.unsqueeze_memlet(e.data, outer_edge.data).subset
 
                         # Only after offsetting memlets we can modify the
                         # overall offset
