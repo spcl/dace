@@ -913,7 +913,7 @@ def unparse_tasklet(sdfg, state_id, dfg, node, function_stream, callsite_stream,
         if node.language == dtypes.Language.CPP:
             callsite_stream.write(type(node).__properties__["code"].to_string(node.code), sdfg, state_id, node)
 
-        if not is_devicelevel_gpu(sdfg, state_dfg, node):
+        if not is_devicelevel_gpu(sdfg, state_dfg, node) and hasattr(node, "_cuda_stream"):
             # Get GPU codegen
             from dace.codegen.targets import cuda  # Avoid import loop
             try:
