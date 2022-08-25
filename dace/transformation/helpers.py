@@ -17,6 +17,132 @@ from dace.sdfg import graph
 from dace.memlet import Memlet
 
 
+def nest_sdfg_subgraph(sdfg: SDFG,
+                       subgraph: SubgraphView,
+                       start: Optional[SDFGState] = None,
+                       name: Optional[str] = None) -> SDFGState:
+    
+    # Nest states
+    states = subgraph.nodes()
+    if len(states) > 1:
+
+        if start is not None:
+            source_node = start
+        else:
+            src_nodes = subgraph.source_nodes()
+            if len(src_nodes) != 1:
+                raise NotImplementedError
+            source_node = src_nodes[0]
+        
+        sink_nodes = subgraph.sink_nodes()
+        if len(sink_nodes) != 1:
+            raise NotImplementedError
+        sink_node = sink_nodes[0]
+
+
+        # Find read/write sets
+        read_set, write_set = set(), set()
+        for state in states:
+            rset, wset = state.read_and_write_sets()
+            read_set |= rset
+            write_set |= wset
+            # Add to write set also scalars between tasklets
+            for src_node in state.nodes():
+                if not isinstance(src_node, nodes.Tasklet):
+                    continue
+                for dst_node in state.nodes():
+                    if src_node is dst_node:
+                        continue
+                    if not isinstance(dst_node, nodes.Tasklet):
+                        continue
+                    for e in state.edges_between(src_node, dst_node):
+                        if e.data.data and e.data.data in sdfg.arrays:
+                            write_set.add(e.data.data)
+        # Add data from edges
+        for src in states:
+            for dst in states:
+                for edge in sdfg.edges_between(src, dst):
+                    for s in edge.data.free_symbols:
+                        if s in sdfg.arrays:
+                            read_set.add(s)
+
+        # Find NestedSDFG's unique data
+        rw_set = read_set | write_set
+        unique_set = set()
+        for name in rw_set:
+            if not sdfg.arrays[name].transient:
+                continue
+            found = False
+            for state in sdfg.states():
+                if state in states:
+                    continue
+                for node in state.nodes():
+                    if (isinstance(node, nodes.AccessNode) and node.data == name):
+                        found = True
+                        break
+            if not found:
+                unique_set.add(name)
+
+        # Find NestedSDFG's connectors
+        read_set = {n for n in read_set if n not in unique_set or not sdfg.arrays[n].transient}
+        write_set = {n for n in write_set if n not in unique_set or not sdfg.arrays[n].transient}
+
+        # Find defined subgraph symbols
+        defined_symbols = set()
+        strictly_defined_symbols = set()
+        for e in subgraph.edges():
+            defined_symbols.update(set(e.data.assignments.keys()))
+            for k, v in e.data.assignments.items():
+                if k not in {str(a) for a in symbolic.pystr_to_symbolic(v).args}:
+                    strictly_defined_symbols.add(k)
+
+        new_state = sdfg.add_state('nested_sdfg_parent')
+        nsdfg = SDFG("nested_sdfg", constants=sdfg.constants_prop, parent=new_state)
+        true_source = nsdfg.add_state('start_state', is_start_state=True)
+        nsdfg.add_nodes_from([s for s in states])
+        for s in states:
+            s.parent = nsdfg
+        nsdfg.add_edge(true_source, source_node, InterstateEdge())
+        for e in subgraph.edges():
+            nsdfg.add_edge(e.src, e.dst, e.data)
+
+        for e in sdfg.in_edges(source_node):
+            sdfg.add_edge(e.src, new_state, e.data)
+        for e in sdfg.out_edges(sink_node):
+            sdfg.add_edge(new_state, e.dst, e.data)
+
+        sdfg.remove_nodes_from(states)
+
+        # Add NestedSDFG arrays
+        for name in read_set | write_set:
+            nsdfg.arrays[name] = copy.deepcopy(sdfg.arrays[name])
+            nsdfg.arrays[name].transient = False
+        for name in unique_set:
+            nsdfg.arrays[name] = sdfg.arrays[name]
+            del sdfg.arrays[name]
+
+        # Add NestedSDFG node
+        fsymbols = nsdfg.free_symbols
+        fsymbols.update(defined_symbols - strictly_defined_symbols)
+        mapping = {s: s for s in fsymbols}
+        cnode = new_state.add_nested_sdfg(nsdfg, None, read_set, write_set, mapping)
+        for s in strictly_defined_symbols:
+            if s in sdfg.symbols:
+                sdfg.remove_symbol(s)
+
+        for name in read_set:
+            r = new_state.add_read(name)
+            new_state.add_edge(r, None, cnode, name, Memlet.from_array(name, sdfg.arrays[name]))
+        for name in write_set:
+            w = new_state.add_write(name)
+            new_state.add_edge(cnode, name, w, None, Memlet.from_array(name, sdfg.arrays[name]))
+
+    else:
+        new_state = states[0]
+    
+    return new_state
+
+
 def nest_state_subgraph(sdfg: SDFG,
                         state: SDFGState,
                         subgraph: SubgraphView,
@@ -221,6 +347,7 @@ def nest_state_subgraph(sdfg: SDFG,
             edge.data.data = new_edge.data.data
             if not full_data:
                 edge.data.subset.offset(global_subsets[original_edge.data.data][1], True)
+                edge.data.subset.offset(nsdfg.arrays[edge.data.data].offset, True)
 
     # Add nested SDFG node to the input state
     nested_sdfg = state.add_nested_sdfg(nsdfg, None,
