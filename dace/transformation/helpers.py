@@ -93,8 +93,12 @@ def nest_sdfg_subgraph(sdfg: SDFG,
         for e in subgraph.edges():
             defined_symbols.update(set(e.data.assignments.keys()))
             for k, v in e.data.assignments.items():
-                if k not in {str(a) for a in symbolic.pystr_to_symbolic(v).args}:
-                    strictly_defined_symbols.add(k)
+                try:
+                    if k not in {str(a) for a in symbolic.pystr_to_symbolic(v).args}:
+                        strictly_defined_symbols.add(k)
+                except AttributeError:
+                    # `symbolic.pystr_to_symbolic` may return bool, which doesn't have attribute `args`
+                    pass
 
         new_state = sdfg.add_state('nested_sdfg_parent')
         nsdfg = SDFG("nested_sdfg", constants=sdfg.constants_prop, parent=new_state)
@@ -141,6 +145,62 @@ def nest_sdfg_subgraph(sdfg: SDFG,
         new_state = states[0]
     
     return new_state
+
+
+def _next_component(state: SDFGState, sdfg: SDFG, ipostdom: Dict[SDFGState, SDFGState],
+                    component: Set[SDFGState] = None):
+    
+    component = component or set()
+
+    if state in component:
+        return component, None
+
+    component.add(state)
+
+    edges = sdfg.out_edges(state)
+
+    if len(edges) == 0:
+        return component, None
+
+    if len(edges) == 1:
+        if edges[0].data.is_unconditional:
+            problem = False
+            for _, v in edges[0].data.assignments.items():
+                if symbolic.issymbolic(v):
+                    problem = True
+            if not edges[0].data.assignments or not problem:
+                return component, edges[0].dst
+        return _next_component(edges[0].dst, sdfg, ipostdom, component)
+    
+    # len(edges) > 1
+    last_state = ipostdom[state]
+    component.update(utils.dfs_conditional(sdfg, [state], lambda _, c: c is not last_state))
+    return _next_component(last_state, sdfg, ipostdom, component)   
+
+
+def nest_sdfg_control_flow(sdfg: SDFG):
+
+    split_interstate_edges(sdfg)
+    ipostdom = utils.postdominators(sdfg)
+
+    components = {}
+    unvisited = set(sdfg.states())
+    start = sdfg.start_state
+
+    while unvisited:
+
+        if start is None:
+            raise
+
+        component, nstart = _next_component(start, sdfg, ipostdom)
+        unvisited.difference_update(component)
+        components[start] = component
+        start = nstart
+    
+    num_components = len(components)
+    for i, (start, component) in enumerate(components.items()):
+        nest_sdfg_subgraph(sdfg, graph.SubgraphView(sdfg, component), start)
+        print(f"Nested {i+1} components out of {num_components}.")
 
 
 def nest_state_subgraph(sdfg: SDFG,
