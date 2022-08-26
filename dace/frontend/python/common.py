@@ -8,6 +8,7 @@ from dace.sdfg.sdfg import SDFG
 
 
 class DaceSyntaxError(Exception):
+
     def __init__(self, visitor, node: ast.AST, message: str):
         self.visitor = visitor
         self.node = node
@@ -37,10 +38,20 @@ def inverse_dict_lookup(dict: Dict[str, Any], value: Any):
     return None
 
 
+@dataclass(unsafe_hash=True)
+class StringLiteral:
+    """ A string literal found in a parsed DaCe program. """
+    value: Union[str, bytes]
+
+    def __str__(self) -> str:
+        return self.value
+
+
 class SDFGConvertible(object):
     """ 
     A mixin that defines the interface to annotate SDFG-convertible objects.
     """
+
     def __sdfg__(self, *args, **kwargs) -> SDFG:
         """
         Returns an SDFG representation of this object.

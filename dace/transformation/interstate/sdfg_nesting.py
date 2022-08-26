@@ -987,7 +987,8 @@ class RefineNestedAccess(transformation.SingleStateTransformation):
                 if len(nstate.ranges) > 0:
                     # Re-annotate loop ranges, in case someone changed them
                     # TODO: Move out of here!
-                    nstate.ranges = {}
+                    for ns in nsdfg.sdfg.states():
+                        ns.ranges = {}
                     from dace.sdfg.propagation import _annotate_loop_ranges
                     _annotate_loop_ranges(nsdfg.sdfg, [])
 

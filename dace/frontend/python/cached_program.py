@@ -41,6 +41,12 @@ def _make_hashable(obj):
     except TypeError:
         return repr(obj)
 
+def _make_sortable(obj):
+    try:
+        obj < obj
+        return obj
+    except TypeError:
+        return repr(obj)
 
 @dataclass
 class ProgramCacheKey:
@@ -61,7 +67,7 @@ class ProgramCacheKey:
             tuple((k, str(v.to_json())) for k, v in sorted(arg_types.items())),
             tuple((k, str(v.to_json())) for k, v in sorted(closure_types.items())),
             tuple((k, _make_hashable(v)) for k, v in sorted(closure_constants.items())),
-            tuple(sorted(specified_args)),
+            tuple(sorted(_make_sortable(a) for a in specified_args)),
         )
 
     def __hash__(self) -> int:

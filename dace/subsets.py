@@ -150,9 +150,8 @@ class Range(Subset):
             if isinstance(obj, symbolic.SymExpr):
                 return {'main': str(obj.expr), 'approx': str(obj.approx)}
             else:
-                return str(obj)
+                return _simplified_str(obj)
 
-        # TODO: Check if approximations should also be saved
         for (start, end, step), tile in zip(self.ranges, self.tile_sizes):
             ret.append({'start': a2s(start), 'end': a2s(end), 'step': a2s(step), 'tile': a2s(tile)})
 

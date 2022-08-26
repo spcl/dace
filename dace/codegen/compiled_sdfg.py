@@ -383,6 +383,12 @@ class CompiledSDFG(object):
                     pass
                 elif (isinstance(arg, int) and atype.dtype.type == np.uint32 and arg >= 0 and arg <= (1 << 32) - 1):
                     pass
+                elif (isinstance(arg, str) or arg is None) and atype.dtype == dtypes.string:
+                    if arg is None:
+                        arglist[i] = ctypes.c_char_p(None)
+                    else:
+                        # Cast to bytes
+                        arglist[i] = ctypes.c_char_p(arg.encode('utf-8'))
                 else:
                     warnings.warn(f'Casting scalar argument "{a}" from {type(arg).__name__} to {atype.dtype.type}')
                     arglist[i] = atype.dtype.type(arg)

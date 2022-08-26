@@ -17,7 +17,7 @@ from dace import data, dtypes, subsets, symbolic, sdfg as sd
 from dace.config import Config
 from dace.sdfg import SDFG
 from dace.frontend.python import astutils
-from dace.frontend.python.common import (DaceSyntaxError, SDFGConvertible, SDFGClosure)
+from dace.frontend.python.common import (DaceSyntaxError, SDFGConvertible, SDFGClosure, StringLiteral)
 
 
 class DaceRecursionError(Exception):
@@ -476,10 +476,14 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
         elif isinstance(value, symbolic.symbol):
             # Symbols resolve to the symbol name
             newnode = ast.Name(id=value.name, ctx=ast.Load())
-        elif (dtypes.isconstant(value) or isinstance(value, SDFG) or hasattr(value, '__sdfg__')):
+        elif isinstance(value, ast.Name):
+            newnode = ast.Name(id=value.id, ctx=ast.Load())
+        elif (dtypes.isconstant(value) or isinstance(value, (StringLiteral, SDFG)) or hasattr(value, '__sdfg__')):
             # Could be a constant, an SDFG, or SDFG-convertible object
             if isinstance(value, SDFG) or hasattr(value, '__sdfg__'):
                 self.closure.closure_sdfgs[id(value)] = (qualname, value)
+            elif isinstance(value, StringLiteral):
+                value = value.value
             else:
                 # If this is a function call to a None function, do not add its result to the closure
                 if isinstance(parent_node, ast.Call):
@@ -987,10 +991,13 @@ class LoopUnroller(ast.NodeTransformer):
 
     def visit_For(self, node: ast.For) -> Any:
         # Avoid import loops
+        from dace.frontend.python.interface import MapGenerator
+
         EXPLICIT_GENERATORS = [
             range,  # Handled in ProgramVisitor
             dace.map,
             dace.consume,
+            MapGenerator
         ]
 
         node = self.generic_visit(node)
@@ -1036,6 +1043,17 @@ class LoopUnroller(ast.NodeTransformer):
 
         # Find out if unrolling should be done implicitly
         implicit = True
+        
+        # Special case for map with @ operator
+        if isinstance(niter, ast.BinOp) and isinstance(niter.op, ast.MatMult):
+            try:
+                geniter = astutils.evalnode(niter.left, self.globals)
+                if isinstance(geniter, MapGenerator):
+                    niter = niter.left
+            except SyntaxError:
+                pass
+        # End of special case
+
         # Anything not a call is implicitly allowed
         if isinstance(niter, (ast.Call, ast.Subscript)):
             if isinstance(niter, ast.Subscript):

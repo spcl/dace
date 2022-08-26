@@ -858,6 +858,9 @@ class Map(object):
             ["{}={}".format(i, r)
              for i, r in zip(self._params, [sbs.Range.dim_to_string(d) for d in self._range])]) + "]"
 
+    def __repr__(self):
+        return type(self).__name__ + ' (' + self.__str__() + ')'
+
     def validate(self, sdfg, state, node):
         if not dtypes.validate_name(self.label):
             raise NameError('Invalid map name "%s"' % self.label)

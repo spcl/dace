@@ -1129,6 +1129,12 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
 
         # Validate missing symbols
         missing_symbols = [s for s in symbols if s not in symbol_mapping]
+        if missing_symbols and parent:
+            # If symbols are missing, try to get them from the parent SDFG
+            parent_mapping = {s: s for s in missing_symbols if s in parent.symbols}
+            symbol_mapping.update(parent_mapping)
+            s.symbol_mapping = symbol_mapping
+            missing_symbols = [s for s in symbols if s not in symbol_mapping]
         if missing_symbols:
             raise ValueError('Missing symbols on nested SDFG "%s": %s' % (name, missing_symbols))
 

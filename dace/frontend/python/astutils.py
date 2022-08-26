@@ -10,7 +10,7 @@ import numbers
 import numpy
 import sympy
 import sys
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Union
 
 from dace import dtypes, symbolic
 
@@ -222,6 +222,7 @@ def subscript_to_ast_slice_recursive(node):
 
 
 class ExtUnparser(astunparse.Unparser):
+
     def _Subscript(self, t):
         self.dispatch(t.value)
         self.write('[')
@@ -364,7 +365,8 @@ def negate_expr(node):
         node = node.code
     if hasattr(node, "__len__"):
         if len(node) > 1:
-            raise ValueError("negate_expr only expects " "single expressions, got: {}".format(node))
+            raise ValueError("negate_expr only expects "
+                             "single expressions, got: {}".format(node))
         expr = node[0]
     else:
         expr = node
@@ -384,7 +386,9 @@ def copy_tree(node: ast.AST) -> ast.AST:
     :param node: The tree to copy.
     :return: The copied tree.
     """
+
     class Copier(ast.NodeTransformer):
+
         def visit_Num(self, node):
             # Ignore n
             return ast.copy_location(ast.Num(n=node.n), node)
@@ -433,6 +437,7 @@ class ExtNodeTransformer(ast.NodeTransformer):
         this class is capable of traversing over top-level expressions in 
         bodies in order to discern DaCe statements from others.
     """
+
     def visit_TopLevel(self, node):
         clsname = type(node).__name__
         if getattr(self, "visit_TopLevel" + clsname, False):
@@ -471,6 +476,7 @@ class ExtNodeVisitor(ast.NodeVisitor):
         As opposed to `NodeVisitor`, this class is capable of traversing over 
         top-level expressions in bodies in order to discern DaCe statements 
         from others. """
+
     def visit_TopLevel(self, node):
         clsname = type(node).__name__
         if getattr(self, "visit_TopLevel" + clsname, False):
@@ -495,10 +501,13 @@ class ExtNodeVisitor(ast.NodeVisitor):
                 self.visit(old_value)
         return node
 
+
 class NameFound(Exception):
     pass
 
+
 class ASTFindReplace(ast.NodeTransformer):
+
     def __init__(self, repldict: Dict[str, str], trigger_names: Set[str] = None):
         self.replace_count = 0
         self.repldict = repldict
@@ -533,6 +542,7 @@ class ASTFindReplace(ast.NodeTransformer):
 
 
 class RemoveSubscripts(ast.NodeTransformer):
+
     def __init__(self, keywords: Set[str]):
         self.keywords = keywords
 
@@ -548,6 +558,7 @@ class TaskletFreeSymbolVisitor(ast.NodeVisitor):
     Simple Python AST visitor to find free symbols in a code, not including
     attributes and function calls.
     """
+
     def __init__(self, defined_syms):
         super().__init__()
         self.free_symbols = set()
@@ -578,12 +589,14 @@ class TaskletFreeSymbolVisitor(ast.NodeVisitor):
 
 
 class AnnotateTopLevel(ExtNodeTransformer):
+
     def visit_TopLevel(self, node):
         node.toplevel = True
         return super().visit_TopLevel(node)
 
 
 class ConstantExtractor(ast.NodeTransformer):
+
     def __init__(self, globals: Dict[str, Any]):
         super().__init__()
         self.id = 0
@@ -607,6 +620,7 @@ class ConstantExtractor(ast.NodeTransformer):
 
 class ASTHelperMixin:
     """ A mixin that adds useful helper functions for AST node transformers and visitors """
+
     def generic_visit_filtered(self, node: ast.AST, filter: Optional[Set[str]] = None):
         """
         Modification of ast.NodeTransformer.generic_visit that visits all fields without the
@@ -693,10 +707,12 @@ def create_constant(value: Any, node: Optional[ast.AST] = None) -> ast.AST:
     return newnode
 
 
-def escape_string(value: str):
+def escape_string(value: Union[bytes, str]):
     """
     Converts special Python characters in strings back to their parsable version (e.g., newline to ``\\n``)
     """
+    if isinstance(value, bytes):
+        return f"{chr(0xFFFF)}{value.decode('utf-8')}"
     if sys.version_info >= (3, 0):
         return value.encode("unicode_escape").decode("utf-8")
     # Python 2.x
