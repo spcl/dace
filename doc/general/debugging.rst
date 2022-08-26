@@ -19,7 +19,8 @@ There are several other important configuration entries: for frontend and debugg
 use :envvar:`frontend.verbose_errors`. For transformations that fail during matching, use :envvar:`optimizer.match_exception`.
 For issues with :ref:`properties`, enable :envvar:`testing.serialization` and :envvar:`testing.deserialize_exception`.
 
-Below we provide a more detailed methodology for debugging particular issues.
+Below we provide a more detailed methodology for debugging particular issues. You can find common errors and solutions
+:ref:`here <errors>`.
 
 .. _sdfg-validation:
 

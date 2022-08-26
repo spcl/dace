@@ -68,6 +68,7 @@ If you use DaCe, cite us:
 
    general/structure
    general/debugging
+   general/errors
    sdfg/transforming
    frontend/python
    codegen/codegen
