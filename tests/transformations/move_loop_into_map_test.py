@@ -112,7 +112,7 @@ class MoveLoopIntoMapTest(unittest.TestCase):
         overall = 0
         count = 1
         while (count > 0):
-            count = sdfg.apply_transformations(MoveLoopIntoMap, permissive=True)
+            count = sdfg.apply_transformations_repeated(MoveLoopIntoMap, permissive=True)
             overall += count
             sdfg.simplify()
 
@@ -131,7 +131,7 @@ class MoveLoopIntoMapTest(unittest.TestCase):
         overall = 0
         count = 1
         while (count > 0):
-            count = sdfg.apply_transformations(MoveLoopIntoMap, permissive=True)
+            count = sdfg.apply_transformations_repeated(MoveLoopIntoMap, permissive=True)
             overall += count
             sdfg.simplify()
 
@@ -144,6 +144,7 @@ class MoveLoopIntoMapTest(unittest.TestCase):
         apply_multiple_times_1.f(ref)
 
         self.assertTrue(np.allclose(val, ref))
+
 
 if __name__ == '__main__':
     unittest.main()

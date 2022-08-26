@@ -115,6 +115,7 @@ class MoveLoopIntoMap(DetectLoop, transformation.MultiStateTransformation):
         for e in body.edges():
             if e.src in subgraph.nodes() and e.dst in subgraph.nodes():
                 if itervar in e.data.free_symbols:
+                    e.data.try_initialize(sdfg, subgraph, e)
                     for i, subset in enumerate((e.data.src_subset, e.data.dst_subset)):
                         if subset:
                             if i == 0:
