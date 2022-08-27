@@ -747,26 +747,31 @@ def _len_array(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a: str):
 @oprepo.replaces('numpy.transpose')
 def _transpose(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, inpname: str, axes=None):
 
+    # Reversed list
     if axes is None:
         arr1 = sdfg.arrays[inpname]
-        restype = arr1.dtype
-        outname, arr2 = sdfg.add_temp_transient((arr1.shape[1], arr1.shape[0]), restype, arr1.storage)
+        axes = tuple(range(len(arr1.shape) - 1, -1, -1))
+    else:
+        if len(axes) != len(arr1.shape) or sorted(axes) != list(range(len(arr1.shape))):
+            raise ValueError("axes don't match array")
+        axes = tuple(axes)
 
+    if axes == (0,):  # Special (degenerate) case for 1D "transposition"
+        return inpname
+
+    restype = arr1.dtype
+    new_shape = [arr1.shape[i] for i in axes]
+    outname, arr2 = sdfg.add_temp_transient(new_shape, restype, arr1.storage)
+
+    if axes == (1, 0):  # Special case for 2D transposition
         acc1 = state.add_read(inpname)
         acc2 = state.add_write(outname)
         import dace.libraries.blas  # Avoid import loop
         tasklet = dace.libraries.blas.Transpose('_Transpose_', restype)
         state.add_node(tasklet)
-        state.add_edge(acc1, None, tasklet, '_inp', dace.Memlet.from_array(inpname, arr1))
-        state.add_edge(tasklet, '_out', acc2, None, dace.Memlet.from_array(outname, arr2))
+        state.add_edge(acc1, None, tasklet, '_inp', Memlet.from_array(inpname, arr1))
+        state.add_edge(tasklet, '_out', acc2, None, Memlet.from_array(outname, arr2))
     else:
-        arr1 = sdfg.arrays[inpname]
-        if len(axes) != len(arr1.shape) or sorted(axes) != list(range(len(arr1.shape))):
-            raise ValueError("axes don't match array")
-
-        new_shape = [arr1.shape[i] for i in axes]
-        outname, arr2 = sdfg.add_temp_transient(new_shape, arr1.dtype, arr1.storage)
-
         state.add_mapped_tasklet(
             "_transpose_", {"_i{}".format(i): "0:{}".format(s)
                             for i, s in enumerate(arr1.shape)},
