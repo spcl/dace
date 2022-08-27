@@ -1,0 +1,530 @@
+import copy
+import math
+import time
+import json
+import itertools
+
+import dace.transformation.helpers as xfh
+import dace.optimization.superoptimization.utils as utils
+import dace.sdfg.analysis.cutout as cutter
+
+from dace.optimization import auto_tuner
+
+from pathlib import Path
+from typing import Union, Dict, Tuple, List
+from tqdm import tqdm
+
+from dace.sdfg.sdfg import SDFG, SDFGState
+from dace import DeviceType, ScheduleType, nodes
+
+from dace.transformation.auto.auto_optimize import (
+    set_fast_implementations,
+    make_transients_persistent,
+    move_small_arrays_to_stack,
+)
+
+from dace.transformation import PatternTransformation
+from dace.transformation.dataflow import (InlineNestedReduce, RedundantSecondArray, TrivialMapElimination, MapCollapse,
+                                          OTFMapFusion)
+
+from dace.codegen.instrumentation.data.data_report import InstrumentedDataReport
+
+from dace.optimization.measure import measure, random_arguments, create_data_report, arguments_from_data_report
+from dace.optimization.superoptimization.enumerator import map_fusion_enumerator, map_schedule_enumerator
+
+MINIMUM_SPEEDUP = 1.05
+LOWER_BOUND_SCALING = 1.2
+
+
+class Superoptimizer(auto_tuner.AutoTuner):
+
+    def __init__(self,
+                 sdfg: SDFG,
+                 device_type: DeviceType = DeviceType.CPU,
+                 measurements: int = 20,
+                 warmup: int = 10) -> None:
+        super().__init__(sdfg)
+        assert device_type == DeviceType.CPU
+        self._device_type = device_type
+
+        self._measurements = measurements
+        self._warmup = warmup
+
+        # Create cache directories
+        self._build_folder = sdfg.build_folder
+        self._cache_folder = Path(sdfg.build_folder) / "tuning"
+        self._cache_folder.mkdir(parents=True, exist_ok=True)
+
+        self._map_schedule_cache_folder = self._cache_folder / "map_schedule"
+        self._map_schedule_cache_folder.mkdir(parents=False, exist_ok=True)
+
+        self._map_fusion_cache_folder = self._cache_folder / "map_fusion"
+        self._map_fusion_cache_folder.mkdir(parents=False, exist_ok=True)
+
+    def tune(self, apply: bool = True, compile_folder: Union[str, Path] = None) -> SDFG:
+        """
+        
+        """
+        start = time.time()
+
+        dreport = self._sdfg.get_instrumented_data()
+        if dreport is None:
+            print("No data report available. Aborting")
+            return sdfg
+
+        if not apply:
+            sdfg = copy.deepcopy(self._sdfg)
+        else:
+            sdfg = self._sdfg
+
+        if not compile_folder is None:
+            sdfg.build_folder = compile_folder
+
+        arguments = arguments_from_data_report(sdfg, data_report=dreport)
+        initial_time, _ = measure(sdfg, arguments=arguments, measurements=self._measurements, warmup=self._warmup)
+        print(f"Initial time {initial_time}")
+
+        Superoptimizer._canonicalize_sdfg(sdfg, device_type=self._device_type)
+        canon_time, _ = measure(sdfg, arguments=arguments, measurements=self._measurements, warmup=self._warmup)
+        print(f"Canonicalized time {canon_time}")
+
+        print("Optimizing subgraphs")
+        self._optimize_subgraphs(sdfg=sdfg, data_report=dreport)
+
+        with open(self._cache_folder / "fused.sdfg", "w") as handle:
+            json.dump(sdfg.to_json(), handle)
+
+        print("Optimizing maps")
+        self._optimize_maps(sdfg=sdfg, data_report=dreport)
+
+        with open(self._cache_folder / "optimized.sdfg", "w") as handle:
+            json.dump(sdfg.to_json(), handle)
+
+        args = arguments_from_data_report(sdfg, dreport)
+        tuned_runtime, _ = measure(sdfg, arguments=args, measurements=self._measurements, warmup=self._warmup)
+        print(f"Tuned runtime {tuned_runtime}, speedup {initial_time / tuned_runtime}")
+
+        sdfg.build_folder = self._build_folder
+
+        end = time.time()
+        print(f"Tuning took {(end - start) / 60.0:.3f} minutes")
+        return sdfg
+
+    def _optimize_subgraphs(self, sdfg: SDFG, data_report: InstrumentedDataReport) -> None:
+        initial_map_runtimes = self._measure_initial_map_runtimes(sdfg, data_report=data_report)
+
+        for subgraph, matches in map_fusion_enumerator(sdfg):
+            print("Finding optimal map fusions in subgraph")
+
+            # Create independent cutout of subgraph
+            cutout = cutter.cutout_state(subgraph.graph, *subgraph.nodes(), make_copy=False)
+            cutout.build_folder = sdfg.build_folder
+            cutout_hash = cutout.hash_sdfg()
+            cutout_tmp_copy = cutout.to_json()
+
+            # Handle cache initialization
+            subgraph_cache = {}
+            subgraph_cache_path = self._map_fusion_cache_folder / f"{cutout_hash}.json"
+            if subgraph_cache_path.is_file():
+                with open(subgraph_cache_path, "r") as handle:
+                    subgraph_cache = json.load(handle)
+            else:
+                args = arguments_from_data_report(cutout, data_report=data_report)
+                subgraph_time, subgraph_process_time = measure(cutout,
+                                                               args,
+                                                               measurements=self._measurements,
+                                                               warmup=self._warmup)
+
+                subgraph_cache[cutout_hash] = {
+                    "runtime": subgraph_time,
+                    "process time": subgraph_process_time,
+                    "fusions": {}
+                }
+
+                with open(subgraph_cache_path, "w") as handle:
+                    json.dump(subgraph_cache, handle)
+
+            # Collect map entries for lower bounds
+            subgraph_nodes = set(subgraph.nodes())
+            subgraph_map_runtimes = []
+            for map_entry in initial_map_runtimes:
+                if map_entry in subgraph_nodes:
+                    subgraph_map_runtimes.append(initial_map_runtimes[map_entry])
+            subgraph_map_runtimes = sorted(subgraph_map_runtimes)
+
+            if "best fusion" in subgraph_cache[cutout_hash]:
+                best_fusion = subgraph_cache[cutout_hash]["best fusion"]["fusion"]
+                best_runtime = subgraph_cache[cutout_hash]["best fusion"]["runtime"]
+                best_process_time = subgraph_cache[cutout_hash]["best fusion"]["process time"]
+
+                for match in best_fusion:
+                    first_map_entry, access_node, second_map_entry = match
+                    first_map_exit = subgraph.graph.exit_node(first_map_entry)
+
+                    OTFMapFusion.apply_to(sdfg=sdfg,
+                                          first_map_exit=first_map_exit,
+                                          array=access_node,
+                                          second_map_entry=second_map_entry,
+                                          verify=True,
+                                          save=True)
+                    continue
+
+            # Optimize over fusions
+            best_process_time = subgraph_cache[cutout_hash]["process time"]
+            best_runtime = subgraph_cache[cutout_hash]["runtime"]
+            best_fusion = []
+            for k in range(len(matches), -1, -1):
+                t = len(matches) - k + 1
+                lb = sum(subgraph_map_runtimes[:t]) * LOWER_BOUND_SCALING
+                print(f"{k}-lower bound: {lb}")
+
+                cache_timer = time.time()
+                for k_fusions in tqdm(list(itertools.combinations(matches, r=k))):
+                    start = time.time()
+
+                    fused = SDFG.from_json(cutout_tmp_copy)
+                    fused.build_folder = cutout.build_folder
+
+                    # Converting subgraph nodes to cutout nodes
+                    k_fusions_ = []
+                    k_fusion_desc = []
+                    for match in k_fusions:
+                        first_map_entry, access_node, second_map_entry = match
+                        f_node_id = cutout.start_state.node_id(first_map_entry)
+                        first_map_entry = fused.start_state.node(f_node_id)
+                        array_node_id = cutout.start_state.node_id(access_node)
+                        access_node = fused.start_state.node(array_node_id)
+                        s_node_id = cutout.start_state.node_id(second_map_entry)
+                        second_map_entry = fused.start_state.node(s_node_id)
+
+                        first_map_exit = fused.start_state.exit_node(first_map_entry)
+                        k_fusions_.append((first_map_exit, access_node, second_map_entry))
+
+                        k_fusion_desc.append((f_node_id, array_node_id, s_node_id))
+
+                    k_fusion_desc = str(tuple(sorted(k_fusion_desc)))
+
+                    if not k_fusion_desc in subgraph_cache[cutout_hash]["fusions"]:
+                        # Applying fusion in topological order
+                        for fusion in k_fusions_:
+                            first_map_exit, array, second_map_entry = fusion
+                            OTFMapFusion.apply_to(sdfg=fused,
+                                                  first_map_exit=first_map_exit,
+                                                  array=array,
+                                                  second_map_entry=second_map_entry,
+                                                  verify=False,
+                                                  save=False)
+
+                        # Small tuning
+                        make_transients_persistent(sdfg=fused, device=self._device_type)
+                        move_small_arrays_to_stack(sdfg=fused)
+
+                        try:
+                            fused.validate()
+                            args = arguments_from_data_report(cutout, data_report=data_report)
+                            fused_time, fused_process_time = measure(fused,
+                                                                     args,
+                                                                     measurements=self._measurements,
+                                                                     warmup=self._warmup,
+                                                                     timeout=best_process_time * 1.25)
+                        except:
+                            fused_time = math.inf
+
+                        subgraph_cache[cutout_hash]["fusions"][k_fusion_desc] = {
+                            "runtime": fused_time,
+                            "process time": fused_process_time
+                        }
+
+                    fused_time = subgraph_cache[cutout_hash]["fusions"][k_fusion_desc]["runtime"]
+                    fused_process_time = subgraph_cache[cutout_hash]["fusions"][k_fusion_desc]["process time"]
+
+                    if best_runtime / fused_time >= MINIMUM_SPEEDUP:
+                        best_process_time = fused_process_time
+                        best_runtime = fused_time
+                        best_fusion = k_fusions
+
+                    end = time.time()
+                    print(
+                        f"Hypothesis took {end - start}, compile+measure was {fused_process_time}, runtime {fused_time}"
+                    )
+
+                    if best_runtime <= lb:
+                        break
+
+                    if ((time.time() - cache_timer) / 60.0) > 2.0:
+                        with open(subgraph_cache_path, "w") as handle:
+                            json.dump(subgraph_cache, handle)
+                        cache_timer = time.time()
+
+                        print("Cache dumped")
+
+                with open(subgraph_cache_path, "w") as handle:
+                    json.dump(subgraph_cache, handle)
+
+                if best_runtime <= lb:
+                    break
+
+            subgraph_cache[cutout_hash]["best fusion"] = {
+                "runtime": best_runtime,
+                "process time": best_process_time,
+                "fusion": best_fusion
+            }
+            with open(subgraph_cache_path, "w") as handle:
+                json.dump(subgraph_cache, handle)
+
+            for match in best_fusion:
+                first_map_entry, access_node, second_map_entry = match
+                first_map_exit = subgraph.graph.exit_node(first_map_entry)
+
+                OTFMapFusion.apply_to(sdfg=sdfg,
+                                      first_map_exit=first_map_exit,
+                                      array=access_node,
+                                      second_map_entry=second_map_entry,
+                                      verify=True,
+                                      save=True)
+
+    def _optimize_maps(self, sdfg: SDFG, data_report: InstrumentedDataReport) -> None:
+        maps = {}
+        maps_schedules = {}
+        maps_runtime = {}
+        for nsdfg in tqdm(sdfg.all_sdfgs_recursive()):
+            for state in tqdm(nsdfg.nodes()):
+                state_start_time = time.time()
+
+                # Collecting outermost map entries + maps cutouts
+                outermost_maps = {}
+                for node in state.nodes():
+                    if not isinstance(node, nodes.MapEntry):
+                        continue
+
+                    if not xfh.get_parent_map(state, node) is None:
+                        continue
+
+                    map_cutout = utils.cutout_map(state, node, make_copy=False)
+                    map_cutout.transformation_hist.clear()
+                    map_cutout.build_folder = sdfg.build_folder
+
+                    maps_hash = map_cutout.hash_sdfg()
+                    if not maps_hash in maps:
+                        maps[maps_hash] = map_cutout
+
+                    outermost_maps[node] = maps_hash
+
+                for map_entry in tqdm(outermost_maps):
+                    maps_hash = outermost_maps[map_entry]
+                    map_cutout = maps[maps_hash]
+
+                    if not maps_hash in maps_schedules:
+                        schedule, schedule_runtime = self._find_best_map_schedule(map_cutout,
+                                                                                  maps_hash,
+                                                                                  data_report=data_report)
+                        maps_schedules[maps_hash] = schedule
+                        maps_runtime[maps_hash] = schedule_runtime
+
+                    schedule = maps_schedules[maps_hash]
+                    Superoptimizer._apply_map_schedule(nsdfg, state, map_cutout, schedule)
+
+                state_end_time = time.time()
+                print(f"Optimization of {state} took {state_end_time - state_start_time}")
+
+    def _find_best_map_schedule(self, map, map_hash, data_report) -> Tuple[List, float]:
+        print("Optimizing map")
+
+        # Create arguments once
+        arguments = arguments_from_data_report(map, data_report=data_report)
+
+        map_cache_path = self._map_schedule_cache_folder / f"{map_hash}.json"
+        map_cache = {}
+        if map_cache_path.is_file():
+            with open(map_cache_path, "r") as handle:
+                map_cache = json.load(handle)
+        else:
+            map_runtime, map_process_time = measure(map,
+                                                    arguments,
+                                                    measurements=self._measurements,
+                                                    warmup=self._warmup)
+
+            map_cache[map_hash] = {"runtime": map_runtime, "process time": map_process_time, "schedules": {}}
+
+            with open(map_cache_path, "w") as handle:
+                json.dump(map_cache, handle)
+
+        if "best schedule" in map_cache[map_hash]:
+            best_schedule = map_cache[map_hash]["best schedule"]["schedule"]
+            best_runtime = map_cache[map_hash]["best schedule"]["runtime"]
+            return best_schedule, best_runtime
+
+        initial_time = map_cache[map_hash]["runtime"]
+        best_process_time = map_cache[map_hash]["process time"]
+        best_runtime = initial_time
+        best_schedule = []
+        best_schedule_desc = None
+
+        cache_timer = time.time()
+        start = time.time()
+        print(f"Initial time {initial_time}")
+        for scheduled_map, schedule_desc in map_schedule_enumerator(map):
+            scheduled_map.build_folder = map.build_folder
+
+            # Tuning
+            make_transients_persistent(sdfg=scheduled_map, device=self._device_type)
+            move_small_arrays_to_stack(sdfg=scheduled_map)
+
+            if not schedule_desc in map_cache[map_hash]["schedules"]:
+                runtime, process_time = measure(scheduled_map,
+                                                arguments,
+                                                measurements=self._measurements,
+                                                warmup=self._warmup,
+                                                timeout=best_process_time * 1.25)
+
+                schedule = []
+                for trans in scheduled_map.transformation_hist:
+                    schedule.append(trans.to_json())
+
+                map_cache[map_hash]["schedules"][schedule_desc] = {
+                    "runtime": runtime,
+                    "process time": process_time,
+                    "schedule": schedule
+                }
+
+            runtime = map_cache[map_hash]["schedules"][schedule_desc]["runtime"]
+            process_time = map_cache[map_hash]["schedules"][schedule_desc]["process time"]
+            schedule = map_cache[map_hash]["schedules"][schedule_desc]["schedule"]
+
+            end = time.time()
+            print(f"Hypothesis took {end -start}, {process_time}")
+            print(runtime, schedule_desc)
+
+            start = time.time()
+
+            if ((time.time() - cache_timer) / 60.0) > 2.0:
+                with open(map_cache_path, "w") as handle:
+                    json.dump(map_cache, handle)
+
+            if runtime == math.inf:
+                continue
+            else:
+                scheduled_map.clear_instrumentation_reports()
+
+            if best_runtime / runtime >= MINIMUM_SPEEDUP:
+                best_runtime = runtime
+                best_schedule = schedule
+                best_process_time = process_time
+                best_schedule_desc = schedule_desc
+
+        print(f"Best schedule {best_runtime}, {best_schedule}")
+
+        map_cache[map_hash]["best schedule"] = {
+            "runtime": best_runtime,
+            "schedule": best_schedule,
+            "process time": best_process_time,
+            "schedule desc": best_schedule_desc
+        }
+
+        with open(map_cache_path, "w") as handle:
+            json.dump(map_cache, handle)
+
+        return best_schedule, best_runtime
+
+    def _measure_initial_map_runtimes(self, sdfg: SDFG,
+                                      data_report: InstrumentedDataReport) -> Dict[nodes.MapEntry, float]:
+        print("Measuring initial map runtimes")
+
+        cache_path = self._map_fusion_cache_folder / "initial_map_runtimes.json"
+        cache = {}
+        if cache_path.is_file():
+            with open(cache_path, "r") as handle:
+                cache = json.load(handle)
+
+        initial_map_runtimes = {}
+        for nsdfg in sdfg.all_sdfgs_recursive():
+            for state in nsdfg.nodes():
+                for node in state.nodes():
+                    if not isinstance(node, nodes.MapEntry) or not xfh.get_parent_map(state, node) is None:
+                        continue
+
+                    cutout = utils.cutout_map(state, node, make_copy=False)
+                    cutout.build_folder = sdfg.build_folder
+
+                    cutout_hash = f"{nsdfg.sdfg_id}:{nsdfg.node_id(state)}:{state.node_id(node)}"
+                    if not cutout_hash in cache:
+                        args = arguments_from_data_report(cutout, data_report=data_report)
+                        runtime, _ = measure(cutout,
+                                             arguments=args,
+                                             measurements=self._measurements,
+                                             warmup=self._warmup)
+
+                        cache[cutout_hash] = runtime
+
+                    initial_map_runtimes[node] = cache[cutout_hash]
+
+            with open(cache_path, "w") as handle:
+                json.dump(cache, handle)
+
+        return initial_map_runtimes
+
+    @staticmethod
+    def _apply_map_schedule(sdfg: SDFG, state: SDFGState, cutout: SDFG, transformations: List):
+        # TODO: This only works for a subset of transformations
+        # I.e., transformations on cutout translate to transformations in original state
+        for trans in transformations:
+            xform = copy.deepcopy(trans)
+
+            xform = PatternTransformation.from_json(xform)
+            xform._sdfg = cutout
+            xform.state_id = cutout.node_id(cutout.start_state)
+
+            xform.apply(cutout.start_state, cutout)
+
+        sdfg.validate()
+
+    @staticmethod
+    def _canonicalize_sdfg(sdfg: SDFG, device_type: DeviceType) -> None:
+        """
+        Canonicalized the SDFG before superoptimization.
+
+        :param sdfg: the SDFG.
+        :param device_type: the target device type of the optimization.
+        """
+        sdfg.simplify()
+
+        # Specialize library nodes
+        set_fast_implementations(sdfg, device_type)
+
+        # Enforce fusion opportunities over reductions
+        sdfg.expand_library_nodes()
+        # sdfg.apply_transformationed_repeated(InlineSDFG)
+        sdfg.apply_transformations_repeated(InlineNestedReduce)
+        sdfg.apply_transformations_repeated(RedundantSecondArray)
+
+        # Canonicalize pure maps
+        for nsdfg in sdfg.all_sdfgs_recursive():
+            for state in nsdfg.nodes():
+                for node in state.nodes():
+                    if not isinstance(node, nodes.MapEntry):
+                        continue
+
+                    node.schedule = ScheduleType.Sequential
+                    node.collapse = 1
+
+        # Bring all maps into collapsed normal-form
+        sdfg.apply_transformations_repeated(TrivialMapElimination)
+        sdfg.apply_transformations_repeated(MapCollapse)
+
+        sdfg.simplify()
+
+    @staticmethod
+    def dry_run(sdfg: SDFG) -> InstrumentedDataReport:
+        """
+        Generates a data report suitable for superoptimization (including all transients). This instrumentation can take considerable amount of disk space and time. This needs to be considered when choosing the build folder.
+
+        :param sdfg: sdfg to instrument.
+        :return: data report.
+        """
+        dreport = sdfg.get_instrumented_data()
+        if dreport is None:
+            print("Creating data report")
+            args = random_arguments(sdfg)
+            dreport = create_data_report(sdfg, args, transients=True)
+
+        return dreport

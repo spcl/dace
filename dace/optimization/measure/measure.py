@@ -85,7 +85,6 @@ def _measure(sdfg_json: Dict, build_folder: str, filename: str, arguments: Dict,
 
 
 class MeasureProcess(mp.Process):
-
     def __init__(self, *args, **kwargs):
         mp.Process.__init__(self, *args, **kwargs)
         self._pconn, self._cconn = mp.Pipe()
