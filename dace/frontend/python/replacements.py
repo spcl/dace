@@ -747,9 +747,10 @@ def _len_array(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a: str):
 @oprepo.replaces('numpy.transpose')
 def _transpose(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, inpname: str, axes=None):
 
+    arr1 = sdfg.arrays[inpname]
+
     # Reversed list
     if axes is None:
-        arr1 = sdfg.arrays[inpname]
         axes = tuple(range(len(arr1.shape) - 1, -1, -1))
     else:
         if len(axes) != len(arr1.shape) or sorted(axes) != list(range(len(arr1.shape))):
