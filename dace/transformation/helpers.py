@@ -94,7 +94,7 @@ def nest_sdfg_subgraph(sdfg: SDFG,
             defined_symbols.update(set(e.data.assignments.keys()))
             for k, v in e.data.assignments.items():
                 try:
-                    if k not in {str(a) for a in symbolic.pystr_to_symbolic(v).args}:
+                    if k not in sdfg.symbols and k not in {str(a) for a in symbolic.pystr_to_symbolic(v).args}:
                         strictly_defined_symbols.add(k)
                 except AttributeError:
                     # `symbolic.pystr_to_symbolic` may return bool, which doesn't have attribute `args`
@@ -124,6 +124,28 @@ def nest_sdfg_subgraph(sdfg: SDFG,
         for name in unique_set:
             nsdfg.arrays[name] = sdfg.arrays[name]
             del sdfg.arrays[name]
+        
+        # Handle symbols taking new value inside NestedSDFG
+        ndefined_symbols = set()
+        out_mapping = {}
+        out_state = None
+        for e in nsdfg.edges():
+            ndefined_symbols.update(set(e.data.assignments.keys()))
+        if ndefined_symbols:
+            out_state = nsdfg.add_state('symbolic_output')
+            nsdfg.add_edge(sink_node, out_state, InterstateEdge())
+            for s in ndefined_symbols:
+                if s in nsdfg.symbols:
+                    dtype = nsdfg.symbols[s]
+                else:
+                    dtype = sdfg.symbols[s]
+                name, _ = sdfg.add_scalar(f"__sym_out_{s}", dtype, transient=True, find_new_name=True)
+                out_mapping[s] = name
+                nname, ndesc = nsdfg.add_scalar(f"__sym_out_{s}", dtype, find_new_name=True)
+                tasklet = out_state.add_tasklet(f"set_{nname}", {}, {'__out'}, f'__out = {s}')
+                acc = out_state.add_access(nname)
+                out_state.add_edge(tasklet, '__out', acc, None, Memlet.from_array(nname, ndesc))
+                write_set.add(name)
 
         # Add NestedSDFG node
         fsymbols = nsdfg.free_symbols
@@ -133,13 +155,21 @@ def nest_sdfg_subgraph(sdfg: SDFG,
         for s in strictly_defined_symbols:
             if s in sdfg.symbols:
                 sdfg.remove_symbol(s)
-
+        
         for name in read_set:
             r = new_state.add_read(name)
             new_state.add_edge(r, None, cnode, name, Memlet.from_array(name, sdfg.arrays[name]))
         for name in write_set:
             w = new_state.add_write(name)
             new_state.add_edge(cnode, name, w, None, Memlet.from_array(name, sdfg.arrays[name]))
+
+        if out_state is not None:
+            extra_state = sdfg.add_state('symbolic_output')
+            for e in sdfg.out_edges(new_state):
+                sdfg.add_edge(extra_state, e.dst, e.data)
+                sdfg.remove_edge(e)
+            sdfg.add_edge(new_state, extra_state, InterstateEdge(assignments=out_mapping))
+            new_state = extra_state
 
     else:
         new_state = states[0]
