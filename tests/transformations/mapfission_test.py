@@ -350,6 +350,30 @@ class MapFissionTest(unittest.TestCase):
 
         self.assertTrue(np.array_equal(B, ref))
 
+    def test_if_scope(self):
+
+        @dace.program
+        def map_with_if(A: dace.int32[10]):
+            for i in dace.map[0:10]:
+                j = i < 5
+                if j:
+                    A[i] = 0
+                else:
+                    A[i] = 1
+        
+        ref = np.array([0] * 5 + [1] * 5, dtype=np.int32)
+
+        sdfg = map_with_if.to_sdfg(simplify=False)
+        val0 = np.ndarray((10,), dtype=np.int32)
+        sdfg(A=val0)
+        self.assertTrue(np.array_equal(val0, ref))
+
+
+        sdfg.apply_transformations(MapFission)
+        val1 = np.ndarray((10,), dtype=np.int32)
+        sdfg(A=val1)
+        self.assertTrue(np.array_equal(val1, ref))
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -262,6 +262,36 @@ def test_empty_loop():
     assert False
 
 
+def test_interstate_dep():
+
+    sdfg = dace.SDFG('intestate_dep')
+    sdfg.add_array('A', (10,), dtype=np.int32)
+    init = sdfg.add_state('init', is_start_state=True)
+    guard = sdfg.add_state('guard')
+    body0 = sdfg.add_state('body0')
+    body1 = sdfg.add_state('body1')
+    pexit = sdfg.add_state('exit')
+
+    sdfg.add_edge(init, guard, dace.InterstateEdge(assignments={'i': '1'}))
+    sdfg.add_edge(guard, body0, dace.InterstateEdge(condition='i < 9'))
+    sdfg.add_edge(body0, body1, dace.InterstateEdge(assignments={'s': 'A[i-1] + A[i+1]'}))
+    sdfg.add_edge(body1, guard, dace.InterstateEdge(assignments={'i': 'i+1'}))
+    sdfg.add_edge(guard, pexit, dace.InterstateEdge(condition='i >= 9'))
+
+    t = body1.add_tasklet('tasklet', {}, {'__out'}, '__out = s')
+    a = body1.add_access('A')
+    body1.add_edge(t, '__out', a, None, dace.Memlet('A[i]'))
+
+    ref = np.ndarray((10,), dtype=np.int32)
+    sdfg(A=ref)
+
+    val = np.ndarray((10,), dtype=np.int32)
+    sdfg.apply_transformations(LoopToMap)
+    sdfg(A=val)
+
+    assert(np.array_equal(val, ref))
+
+
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
@@ -279,3 +309,4 @@ if __name__ == "__main__":
     test_output_copy()
     test_output_accumulate()
     test_empty_loop()
+    test_interstate_dep()
