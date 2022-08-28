@@ -3095,15 +3095,17 @@ class ProgramVisitor(ExtNodeVisitor):
 
             new_data, rng = None, None
             dtype_keys = tuple(dtypes.DTYPE_TO_TYPECLASS.keys())
-            if not (symbolic.issymbolic(result) or isinstance(result, dtype_keys) or
+            if not (result in self.sdfg.symbols or symbolic.issymbolic(result) or isinstance(result, dtype_keys) or
                     (isinstance(result, str) and result in self.sdfg.arrays)):
                 raise DaceSyntaxError(
                     self, node, "In assignments, the rhs may only be "
                     "data, numerical/boolean constants "
                     "and symbols")
             if not true_name:
-                if (symbolic.issymbolic(result) or isinstance(result, dtype_keys)):
-                    if symbolic.issymbolic(result):
+                if result in self.sdfg.symbols or symbolic.issymbolic(result) or isinstance(result, dtype_keys):
+                    if result in self.sdfg.symbols:
+                        rtype = self.sdfg.symbols[result]
+                    elif symbolic.issymbolic(result):
                         rtype = _sym_type(result)
                     else:
                         rtype = type(result)
