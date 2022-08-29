@@ -46,32 +46,41 @@ class StringLiteral:
     def __str__(self) -> str:
         return self.value
 
+    def __lt__(self, other) -> bool:
+        return self.value < other
+
+    def __eq__(self, other) -> bool:
+        return self.value == other
+
+    def __gt__(self, other) -> bool:
+        return self.value > other
+
 
 class SDFGConvertible(object):
-    """ 
+    """
     A mixin that defines the interface to annotate SDFG-convertible objects.
     """
 
     def __sdfg__(self, *args, **kwargs) -> SDFG:
         """
         Returns an SDFG representation of this object.
-        :param args: Arguments or argument types (given as DaCe data 
+        :param args: Arguments or argument types (given as DaCe data
                      descriptors) that can be used for compilation.
-        :param kwargs: Keyword arguments or argument types (given as DaCe data 
+        :param kwargs: Keyword arguments or argument types (given as DaCe data
                        descriptors) that can be used for compilation.
         :return: A parsed SDFG object representing this object.
         """
         raise NotImplementedError
 
     def __sdfg_closure__(self, reevaluate: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
-        """ 
+        """
         Returns the closure arrays of the SDFG represented by this object
         as a mapping between array name and the corresponding value.
         :param reevaluate: If given, re-evaluates closure elements based on the
                            input mapping (keys: array names, values: expressions
                            to evaluate). Otherwise, re-evaluates default
                            argument names.
-        :return: A dictionary mapping between a name in the closure and the 
+        :return: A dictionary mapping between a name in the closure and the
                  currently evaluated value.
         """
         raise NotImplementedError
@@ -91,7 +100,7 @@ class SDFGConvertible(object):
                          constant_args: Dict[str, Any],
                          given_args: Set[str],
                          parent_closure: Optional['SDFGClosure'] = None) -> 'SDFGClosure':
-        """ 
+        """
         Returns an SDFGClosure object representing the closure of the
         object to be converted to an SDFG.
         :param constant_args: Arguments whose values are already resolved to
