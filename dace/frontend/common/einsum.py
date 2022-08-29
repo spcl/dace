@@ -167,7 +167,8 @@ def create_einsum_sdfg(pv: 'dace.frontend.python.newast.ProgramVisitor',
                        optimize: bool = False,
                        output: Optional[str] = None,
                        alpha: Optional[symbolic.SymbolicType] = 1.0,
-                       beta: Optional[symbolic.SymbolicType] = 0.0):
+                       beta: Optional[symbolic.SymbolicType] = 0.0,
+                       force_pure=False):
     return _create_einsum_internal(sdfg,
                                    state,
                                    einsum_string,
@@ -176,7 +177,8 @@ def create_einsum_sdfg(pv: 'dace.frontend.python.newast.ProgramVisitor',
                                    optimize=optimize,
                                    output=output,
                                    alpha=alpha,
-                                   beta=beta)[0]
+                                   beta=beta,
+                                   force_pure=force_pure)[0]
 
 
 def _create_einsum_internal(sdfg: SDFG,
@@ -189,7 +191,8 @@ def _create_einsum_internal(sdfg: SDFG,
                             nodes: Optional[Dict[str, AccessNode]] = None,
                             init_output: bool = None,
                             alpha: Optional[symbolic.SymbolicType] = None,
-                            beta: Optional[symbolic.SymbolicType] = None):
+                            beta: Optional[symbolic.SymbolicType] = None,
+                            force_pure=False):
     # Infer shapes and strides of input/output arrays
     einsum = EinsumParser(einsum_string)
 
@@ -274,7 +277,7 @@ def _create_einsum_internal(sdfg: SDFG,
     if not is_conflicted and init_output is None:
         to_init = False
 
-    if einsum.is_reduce() and alpha == 1 and (beta == 0 or beta == 1):
+    if not force_pure and einsum.is_reduce() and alpha == 1 and (beta == 0 or beta == 1):
         from dace.libraries.standard.nodes.reduce import Reduce
         # Get reduce axes
         axes = tuple(i for i, s in enumerate(einsum.inputs[0]) if s not in einsum.output)
@@ -291,7 +294,7 @@ def _create_einsum_internal(sdfg: SDFG,
             dace.Memlet(data=inode.data, subset=subsets.Range([(0, chardict[k] - 1, 1) for k in einsum.inputs[0]])))
         state.add_nedge(rnode, c, dace.Memlet(data=output, subset=subsets.Range([(0, s - 1, 1) for s in output_shape])))
 
-    elif not einsum.is_bmm():
+    elif force_pure or not einsum.is_bmm():
         # Fall back to "pure" SDFG einsum with conflict resolution
         c = state.add_write(output)
 

@@ -79,3 +79,52 @@ class SpecializeEinsum(xf.ExpandTransformation):
                                   alpha=node.alpha,
                                   beta=node.beta)
         return sdfg
+
+
+@library.register_expansion(Einsum, 'pure')
+class PureEinsum(xf.ExpandTransformation):
+    environments = []
+
+    @staticmethod
+    def expansion(node: Einsum, parent_state: SDFGState, parent_sdfg: SDFG) -> SDFG:
+        # Make an SDFG for the expansion
+        sdfg = SDFG('einsum')
+        state = sdfg.add_state()
+
+        # Add the given arrays (as given by memlets) to the expansion SDFG
+        inputs = []
+        output = None
+        for e in parent_state.in_edges(node):
+            inputs.append(e.dst_conn)
+            desc = parent_sdfg.arrays[e.data.data]
+            insubset = deepcopy(e.data.src_subset)
+            isqdim = insubset.squeeze()
+            sdfg.add_array(e.dst_conn,
+                           insubset.size(),
+                           desc.dtype,
+                           strides=[s for i, s in enumerate(desc.strides) if i in isqdim],
+                           storage=desc.storage)
+
+        for e in parent_state.out_edges(node):
+            output = e.src_conn
+            desc = parent_sdfg.arrays[e.data.data]
+            outsubset = deepcopy(e.data.dst_subset)
+            osqdim = outsubset.squeeze()
+            sdfg.add_array(output,
+                           outsubset.size(),
+                           desc.dtype,
+                           strides=[s for i, s in enumerate(desc.strides) if i in osqdim],
+                           storage=desc.storage)
+        #######################################
+
+        # Fill SDFG with einsum contents
+        einsum.create_einsum_sdfg(None,
+                                  sdfg,
+                                  state,
+                                  node.einsum_str,
+                                  *sorted(inputs),
+                                  output=output,
+                                  alpha=node.alpha,
+                                  beta=node.beta,
+                                  force_pure=True)
+        return sdfg

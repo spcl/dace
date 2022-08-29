@@ -1,6 +1,9 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import pytest
 import dace
+from dace.library import change_default
+from dace.libraries import blas
+from dace import nodes
 import numpy as np
 
 M = dace.symbol('M')
@@ -27,6 +30,23 @@ def test_matmul():
     A = np.random.rand(10, 20)
     B = np.random.rand(20, 10)
     assert np.allclose(einsumtest(A, B), A @ B)
+
+
+def test_matmul_pure():
+
+    @dace.program
+    def einsumtest(A: dace.float64[M, N], B: dace.float64[N, M]):
+        return np.einsum('ik,kj', A, B)
+
+    A = np.random.rand(10, 20)
+    B = np.random.rand(20, 10)
+    with change_default(blas.Einsum, 'pure'):
+        sdfg = einsumtest.to_sdfg()
+        sdfg.expand_library_nodes()
+        assert any(isinstance(n, nodes.MapEntry) for n, _ in sdfg.all_nodes_recursive())
+        result = sdfg(A=A, B=B, N=20, M=10)
+
+    assert np.allclose(result, A @ B)
 
 
 def test_batch_matmul():
