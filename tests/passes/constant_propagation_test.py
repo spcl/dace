@@ -327,13 +327,45 @@ def test_for_with_external_init():
     N = dace.symbol('N')
 
     sdfg = dace.SDFG('for_with_external_init')
-    sdfg.add_array('A', (N,), dace.int32)
+    sdfg.add_symbol('i', dace.int64)
+    sdfg.add_array('A', {
+        N,
+    }, dace.int32)
+    init = sdfg.add_state('init')
+    body = sdfg.add_state('body')
+    sdfg.add_loop(init, body, None, 'i', None, 'i < N', 'i + 1')
+
+    a = body.add_read('A')
+    t = body.add_tasklet('tasklet', {}, {'__out'}, '__out = i')
+    body.add_edge(t, '__out', a, None, dace.Memlet('A[i]'))
+    sdfg.validate()
+
+    init_i = 4
+    ref = np.arange(10, dtype=np.int32)
+    ref[:init_i] = 0
+    val0 = np.zeros((10, ), dtype=np.int32)
+    sdfg(A=val0, N=10, i=init_i)
+    assert (np.allclose(val0, ref))
+    ConstantPropagation().apply_pass(sdfg, {})
+    val1 = np.zeros((10, ), dtype=np.int32)
+    sdfg(A=val1, N=10, i=init_i)
+    assert (np.allclose(val1, ref))
+
+
+def test_for_with_external_init_nested():
+
+    N = dace.symbol('N')
+
+    sdfg = dace.SDFG('for_with_external_init')
+    sdfg.add_array('A', (N, ), dace.int32)
     init = sdfg.add_state('init', is_start_state=True)
     main = sdfg.add_state('main')
     sdfg.add_edge(init, main, dace.InterstateEdge(assignments={'i': 'N-1'}))
 
     nsdfg = dace.SDFG('nested_sdfg')
-    nsdfg.add_array('inner_A', {N,}, dace.int32)
+    nsdfg.add_array('inner_A', {
+        N,
+    }, dace.int32)
     ninit = nsdfg.add_state('nested_init', is_start_state=True)
     nguard = nsdfg.add_state('nested_guard')
     nbody = nsdfg.add_state('nested_body')
@@ -353,16 +385,14 @@ def test_for_with_external_init():
 
     sdfg.validate()
 
-
     ref = np.arange(10, dtype=np.int32)
-    val0 = np.ndarray((10,), dtype=np.int32)
+    val0 = np.ndarray((10, ), dtype=np.int32)
     sdfg(A=val0, N=10)
-    assert(np.allclose(val0, ref))
+    assert (np.allclose(val0, ref))
     ConstantPropagation().apply_pass(sdfg, {})
-    val1 = np.ndarray((10,), dtype=np.int32)
+    val1 = np.ndarray((10, ), dtype=np.int32)
     sdfg(A=val1, N=10)
-    assert(np.allclose(val1, ref))
-
+    assert (np.allclose(val1, ref))
 
 
 if __name__ == '__main__':
@@ -379,3 +409,4 @@ if __name__ == '__main__':
     test_allocation_varying(False)
     test_allocation_varying(True)
     test_for_with_external_init()
+    test_for_with_external_init_nested()
