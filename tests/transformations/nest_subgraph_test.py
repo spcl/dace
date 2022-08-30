@@ -1,7 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 from dace.codegen import control_flow as cf
-from dace.transformation.helpers import nest_state_subgraph, nest_sdfg_subgraph
+from dace.transformation.helpers import nest_state_subgraph, nest_sdfg_subgraph, nest_sdfg_control_flow
 from dace.sdfg import utils
 from dace.sdfg.graph import SubgraphView
 from dace.sdfg.state import StateSubgraphView
@@ -92,7 +92,49 @@ def test_symbolic_return():
     assert(val == ref)
 
 
+def test_nest_cf_simple_for_loop():
+
+    @dace.program
+    def simple_for_loop():
+        A = np.ndarray((10,), dtype=np.int32)
+        for i in range(10):
+            A[i] = i
+        return A
+    
+    sdfg = simple_for_loop.to_sdfg()
+    nest_sdfg_control_flow(sdfg)
+
+    assert(np.array_equal(sdfg(), np.arange(10, dtype=np.int32)))
+
+
+def test_nest_cf_simple_while_loop():
+
+    def force_callback(f):
+        return f
+
+    @force_callback
+    def update(x):
+        return x + 1
+
+    @dace.program
+    def simple_while_loop():
+        i = 0
+        A = np.ndarray((10,), dtype=np.int32)
+        while i < 10:
+            A[i] = i
+            i = update(A[i])
+        return A
+    
+    sdfg = simple_while_loop.to_sdfg(simplify=False)
+    nest_sdfg_control_flow(sdfg)
+    # sdfg.view()
+
+    assert(np.array_equal(sdfg(), np.arange(10, dtype=np.int32)))
+
+
 if __name__ == '__main__':
-    test_nest_oneelementmap()
-    test_internal_outarray()
-    test_symbolic_return()
+    # test_nest_oneelementmap()
+    # test_internal_outarray()
+    # test_symbolic_return()
+    test_nest_cf_simple_for_loop()
+    test_nest_cf_simple_while_loop()

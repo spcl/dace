@@ -9,6 +9,7 @@ import dace.subsets as subsets
 from typing import Dict, List, Optional, Tuple, Set, Union
 
 from dace import data, dtypes, symbolic
+from dace.codegen import control_flow as cf
 from dace.sdfg import nodes, utils
 from dace.sdfg.graph import SubgraphView, MultiConnectorEdge
 from dace.sdfg.scope import ScopeSubgraphView, ScopeTree
@@ -148,7 +149,7 @@ def nest_sdfg_subgraph(sdfg: SDFG,
                 write_set.add(name)
 
         # Add NestedSDFG node
-        fsymbols = nsdfg.free_symbols
+        fsymbols = sdfg.symbols.keys() | nsdfg.free_symbols
         fsymbols.update(defined_symbols - strictly_defined_symbols)
         mapping = {s: s for s in fsymbols}
         cnode = new_state.add_nested_sdfg(nsdfg, None, read_set, write_set, mapping)
@@ -208,24 +209,75 @@ def _next_component(state: SDFGState, sdfg: SDFG, ipostdom: Dict[SDFGState, SDFG
     return _next_component(last_state, sdfg, ipostdom, component)   
 
 
+def _copy_state(sdfg: SDFG, state: SDFGState, before: bool = True, states: Optional[Set[SDFGState]] = None) -> SDFGState:
+
+    state_copy = copy.deepcopy(state)
+    state_copy._label += '_copy'
+    sdfg.add_node(state_copy)
+
+    for e in sdfg.in_edges(state):
+        if states and e.src not in states:
+            continue
+        sdfg.add_edge(e.src, state_copy, e.data)
+        sdfg.remove_edge(e)
+
+    for e in sdfg.out_edges(state):
+        if states and e.src not in states:
+            continue
+        sdfg.add_edge(state_copy, e.dst, e.data)
+        sdfg.remove_edge(e)
+
+    if before:
+        sdfg.add_edge(state_copy, state, InterstateEdge())
+    else:
+        sdfg.add_edge(state, state_copy, InterstateEdge())
+    
+    return state_copy
+
+
 def nest_sdfg_control_flow(sdfg: SDFG):
 
     split_interstate_edges(sdfg)
     ipostdom = utils.postdominators(sdfg)
+    cft = cf.structured_control_flow_tree(sdfg, None)
 
     components = {}
-    unvisited = set(sdfg.states())
-    start = sdfg.start_state
+    for child in cft.children:
+        if isinstance(child, cf.SingleState):
+            components[child.state] = set([child.state])
+        elif isinstance(child, (cf.ForScope, cf.WhileScope)):
+            guard = child.guard
+            fexit = None
+            for e in sdfg.out_edges(guard):
+                if e.data.condition != child.condition:
+                    fexit = e.dst
+                    break
+            if fexit is None:
+                raise ValueError("Cannot find for-scope's exit states.")
 
-    while unvisited:
+            states = set(utils.dfs_conditional(sdfg, [guard], lambda p, _: p is not fexit))
+            guard_copy = _copy_state(sdfg, guard, False, states)
+            states.remove(guard)
+            states.add(guard_copy)
+            fexit_copy = _copy_state(sdfg, fexit, True, states)
+            states.remove(fexit)
+            states.add(fexit_copy)
+            
+            components[guard_copy] = states
 
-        if start is None:
-            raise
+    # components = {}
+    # unvisited = set(sdfg.states())
+    # start = sdfg.start_state
 
-        component, nstart = _next_component(start, sdfg, ipostdom)
-        unvisited.difference_update(component)
-        components[start] = component
-        start = nstart
+    # while unvisited:
+
+    #     if start is None:
+    #         raise
+
+    #     component, nstart = _next_component(start, sdfg, ipostdom)
+    #     unvisited.difference_update(component)
+    #     components[start] = component
+    #     start = nstart
     
     num_components = len(components)
     for i, (start, component) in enumerate(components.items()):
