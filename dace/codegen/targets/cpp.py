@@ -17,7 +17,7 @@ from typing import IO, List, Optional, Tuple, Union
 import dace
 from dace import data, subsets, symbolic, dtypes, memlet as mmlt, nodes
 from dace.codegen import cppunparse
-from dace.codegen.targets.common import (sym2cpp, find_incoming_edges, codeblock_to_cpp)
+from dace.codegen.common import (sym2cpp, find_incoming_edges, codeblock_to_cpp)
 from dace.codegen.dispatcher import DefinedType
 from dace.config import Config
 from dace.frontend import operations
@@ -1022,16 +1022,6 @@ class InterstateEdgeUnparser(cppunparse.CPPUnparser):
             self.write(cpp_array_expr(self.sdfg, memlet, codegen=self.codegen))
 
 
-def unparse_interstate_edge(code_ast: Union[ast.AST, str], sdfg: SDFG, symbols=None, codegen=None) -> str:
-    # Convert from code to AST as necessary
-    if isinstance(code_ast, str):
-        code_ast = ast.parse(code_ast).body[0]
-
-    strio = StringIO()
-    InterstateEdgeUnparser(sdfg, code_ast, strio, symbols, codegen)
-    return strio.getvalue().strip()
-
-
 class DaCeKeywordRemover(ExtNodeTransformer):
     """ Removes memlets and other DaCe keywords from a Python AST, and
         converts array accesses to C++ methods that can be generated.
@@ -1378,7 +1368,8 @@ def synchronize_streams(sdfg, dfg, state_id, node, scope_exit, callsite_stream, 
             if isinstance(desc, data.Array) and desc.start_offset != 0:
                 ptrname = f'({ptrname} - {sym2cpp(desc.start_offset)})'
             if Config.get_bool('compiler', 'cuda', 'syncdebug'):
-                callsite_stream.write(f'DACE_CUDA_CHECK({backend}FreeAsync({ptrname}, {cudastream}));\n', sdfg, state_id, scope_exit)
+                callsite_stream.write(f'DACE_CUDA_CHECK({backend}FreeAsync({ptrname}, {cudastream}));\n', sdfg,
+                                      state_id, scope_exit)
                 callsite_stream.write(f'DACE_CUDA_CHECK({backend}DeviceSynchronize());')
             else:
                 callsite_stream.write(f'{backend}FreeAsync({ptrname}, {cudastream});\n', sdfg, state_id, scope_exit)

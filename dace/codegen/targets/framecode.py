@@ -14,8 +14,7 @@ from dace.cli import progress
 from dace.codegen import control_flow as cflow
 from dace.codegen import dispatcher as disp
 from dace.codegen.prettycode import CodeIOStream
-from dace.codegen.targets.common import codeblock_to_cpp, sym2cpp
-from dace.codegen.targets.cpp import unparse_interstate_edge
+from dace.codegen.common import codeblock_to_cpp, sym2cpp, unparse_interstate_edge
 from dace.codegen.targets.target import TargetCodeGenerator
 from dace.frontend.python import wrappers
 from dace.sdfg import SDFG, ScopeSubgraphView, SDFGState, nodes
