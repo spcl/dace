@@ -73,7 +73,7 @@ def test_string_literal_comparison():
     def tester():
         return "foo" < "bar"
 
-    assert tester() is False
+    assert np.allclose(tester(), False)
 
 
 @pytest.mark.skip
@@ -102,3 +102,4 @@ if __name__ == '__main__':
     test_string_literal_in_callback_2()
     # test_string_literal()
     # test_bytes_literal()
+    test_string_literal_comparison()
