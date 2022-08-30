@@ -947,6 +947,12 @@ class callback(typeclass):
         from functools import partial
         from dace import data, symbolic
 
+        def _string_converter(a: str, *args):
+            tmp = ctypes.cast(a, ctypes.c_char_p).value.decode('utf-8')
+            if tmp.startswith(chr(0xFFFF)):
+                return bytes(tmp[1:], 'utf-8')
+            return tmp
+
         inp_arraypos = []
         ret_arraypos = []
         inp_types_and_sizes = []
@@ -961,7 +967,7 @@ class callback(typeclass):
             elif isinstance(arg, data.Scalar) and arg.dtype == string:
                 inp_arraypos.append(index)
                 inp_types_and_sizes.append((ctypes.c_char_p, []))
-                inp_converters.append(lambda a, *args: ctypes.cast(a, ctypes.c_char_p).value.decode('utf-8'))
+                inp_converters.append(_string_converter)
             elif isinstance(arg, data.Scalar) and isinstance(arg.dtype, pointer):
                 inp_arraypos.append(index)
                 inp_types_and_sizes.append((ctypes.c_void_p, []))

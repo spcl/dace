@@ -294,7 +294,10 @@ class CPUCodeGen(TargetCodeGenerator):
             return self.allocate_reference(sdfg, dfg, state_id, node, function_stream, declaration_stream,
                                            allocation_stream)
         if isinstance(nodedesc, data.Scalar):
-            declaration_stream.write("%s %s;\n" % (nodedesc.dtype.ctype, name), sdfg, state_id, node)
+            if node.setzero:
+                declaration_stream.write("%s %s = 0;\n" % (nodedesc.dtype.ctype, name), sdfg, state_id, node)
+            else:
+                declaration_stream.write("%s %s;\n" % (nodedesc.dtype.ctype, name), sdfg, state_id, node)
             define_var(name, DefinedType.Scalar, nodedesc.dtype.ctype)
         elif isinstance(nodedesc, data.Stream):
             ###################################################################
