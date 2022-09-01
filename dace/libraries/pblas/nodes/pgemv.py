@@ -20,11 +20,11 @@ class ExpandPgemvMKL(ExpandTransformation):
         code = f"""
             const double  zero = 0.0E+0, one = 1.0E+0;
             const char trans = '{transa}';
-            MKL_INT grows = (trans == 'T' ? {node._m} : {node._n});
+            MKL_INT grows = (trans == 'T' ? {node.m} : {node.n});
             MKL_INT gcols = 1;
-            MKL_INT a_rows = {node._n};
-            MKL_INT a_cols = {node._m};
-            MKL_INT b_rows = (trans == 'T' ? {node._n} : {node._m});
+            MKL_INT a_rows = {node.n};
+            MKL_INT a_cols = {node.m};
+            MKL_INT b_rows = (trans == 'T' ? {node.n} : {node.m});
             MKL_INT b_cols = 1;
             MKL_INT brows = grows / __state->__mkl_scalapack_size;
             MKL_INT bcols = 1;
@@ -69,11 +69,15 @@ class Pgemv(dace.sdfg.nodes.LibraryNode):
     }
     default_implementation = "MKL"
 
+    transa = dace.properties.Property(dtype=str, default='N')
+    m = dace.properties.SymbolicProperty(allow_none=True, default=None)
+    n = dace.properties.SymbolicProperty(allow_none=True, default=None)
+
     def __init__(self, name, transa='N', m=None, n=None, *args, **kwargs):
         super().__init__(name, *args, inputs={"_a", "_b", "_a_block_sizes", "_b_block_sizes"}, outputs={"_c"}, **kwargs)
-        self._transa = transa
-        self._m = m
-        self._n = n
+        self.transa = transa
+        self.m = m
+        self.n = n
 
     def validate(self, sdfg, state):
         """

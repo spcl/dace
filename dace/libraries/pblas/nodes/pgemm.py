@@ -19,10 +19,10 @@ class ExpandPgemmMKL(ExpandTransformation):
         code = f"""
             const double  zero = 0.0E+0, one = 1.0E+0;
             const char trans = 'N';
-            MKL_INT grows = {node._m};
-            MKL_INT gcols = {node._n};
-            MKL_INT a_cols = {node._k};
-            MKL_INT b_rows = {node._k};
+            MKL_INT grows = {node.m};
+            MKL_INT gcols = {node.n};
+            MKL_INT a_cols = {node.k};
+            MKL_INT b_rows = {node.k};
             MKL_INT brows = _a_block_sizes[0];
             MKL_INT bcols = (gcols > 1 ? _b_block_sizes[1]: 1);
             MKL_INT a_brows = _a_block_sizes[0];
@@ -65,11 +65,15 @@ class Pgemm(dace.sdfg.nodes.LibraryNode):
     }
     default_implementation = "MKL"
 
+    m = dace.properties.SymbolicProperty(allow_none=True, default=None)
+    n = dace.properties.SymbolicProperty(allow_none=True, default=None)
+    k = dace.properties.SymbolicProperty(allow_none=True, default=None)
+
     def __init__(self, name, m=None, n=None, k=None, *args, **kwargs):
         super().__init__(name, *args, inputs={"_a", "_b", "_a_block_sizes", "_b_block_sizes"}, outputs={"_c"}, **kwargs)
-        self._m = m
-        self._n = n
-        self._k = k
+        self.m = m
+        self.n = n
+        self.k = k
 
     def validate(self, sdfg, state):
         """
