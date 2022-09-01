@@ -45,7 +45,7 @@ class NumpySerializer:
     def to_json(obj):
         if obj is None:
             return None
-        return {'type': 'ndarray', 'data': obj.tolist(), 'dtype': str(obj.dtype)}
+        return {'type': 'ndarray', 'data': obj.tolist(), 'dtype': dace.dtypes.DTYPE_TO_TYPECLASS[obj.dtype].to_json()}
 
 
 _DACE_SERIALIZE_TYPES = {
@@ -58,6 +58,7 @@ _DACE_SERIALIZE_TYPES = {
     "ndarray": NumpySerializer,
     "DebugInfo": dace.dtypes.DebugInfo,
     "string": dace.dtypes.string,
+    "bool_": dace.dtypes.bool,
     # All classes annotated with the make_properties decorator will register
     # themselves here.
 }

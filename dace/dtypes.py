@@ -371,6 +371,8 @@ class typeclass(object):
                 wrapped_type = numpy.complex64
             else:
                 raise NameError("Unknown configuration for default_data_types: {}".format(config_data_types))
+        elif getattr(wrapped_type, '__name__', '') == 'bool_' and typename is None:
+            typename = 'bool'
 
         self.type = wrapped_type  # Type in Python
         self.ctype = _CTYPES[wrapped_type]  # Type in C
