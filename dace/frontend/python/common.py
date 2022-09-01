@@ -47,13 +47,13 @@ class StringLiteral:
         return self.value
 
     def __lt__(self, other) -> bool:
-        return self.value < other
+        return self.value < str(other)
 
     def __eq__(self, other) -> bool:
-        return self.value == other
+        return self.value == str(other)
 
     def __gt__(self, other) -> bool:
-        return self.value > other
+        return self.value > str(other)
 
 
 class SDFGConvertible(object):
