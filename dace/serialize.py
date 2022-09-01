@@ -45,7 +45,13 @@ class NumpySerializer:
     def to_json(obj):
         if obj is None:
             return None
-        return {'type': 'ndarray', 'data': obj.tolist(), 'dtype': dace.dtypes.DTYPE_TO_TYPECLASS[obj.dtype].to_json()}
+
+        try:
+            dtype_json = dace.dtypes.DTYPE_TO_TYPECLASS[obj.dtype.type].to_json()
+        except KeyError:
+            dtype_json = str(obj.dtype)
+
+        return {'type': 'ndarray', 'data': obj.tolist(), 'dtype': dtype_json}
 
 
 _DACE_SERIALIZE_TYPES = {
