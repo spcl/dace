@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 import os
 from dace.config import Config
 import dace.library
@@ -22,9 +22,6 @@ class IntelMKLScaLAPACK:
     cmake_variables = {}
     cmake_compile_flags = []
     cmake_libraries = []
-    # cmake_link_flags = [
-    #     "-L $MKLROOT/lib -lmkl_scalapack_lp64 -Wl,--no-as-needed -lmkl_intel_lp64 -lmkl_gnu_thread -lmkl_core -lmkl_blacs_intelmpi_lp64 -lmpich -lgomp -lpthread -lm -ldl"
-    # ]
     cmake_files = []
 
     headers = ["mkl.h", "mkl_scalapack.h", "mkl_blacs.h", "mkl_pblas.h"]
@@ -55,9 +52,35 @@ class IntelMKLScaLAPACK:
     dependencies = []
     # NOTE: The last library (mkl_avx2) must be set to whatever matches the
     # target hardware, e.g., mkl_avx512
-    libraries = [
-        "mkl_scalapack_lp64", "mkl_blacs_intelmpi_lp64", "mkl_intel_lp64", "mkl_gnu_thread", "mkl_core"#, "mkl_avx2"
-    ]
+    libraries = ["mkl_scalapack_lp64", "mkl_blacs_intelmpi_lp64", "mkl_intel_lp64", "mkl_gnu_thread", "mkl_core"]
+    simd = "mkl_avx2"
+
+    @staticmethod
+    def _find_mkl_lib_path() -> str:
+
+        if 'MKLROOT' in os.environ:
+            prefix = Config.get('compiler', 'library_prefix')
+            suffix = Config.get('compiler', 'library_extension')
+            libpath = os.path.join(os.environ['MKLROOT'], 'lib')
+            libfile = os.path.join(os.environ['MKLROOT'], 'lib', f"{prefix}mkl_scalapack_lp64.{suffix}")
+            if not os.path.isfile(libfile):
+                # Try with ${MKLROOT}/lib/intel64 (oneAPI on Linux)
+                libpath = os.path.join(os.environ['MKLROOT'], 'lib', 'intel64')
+                libfile = os.path.join(os.environ['MKLROOT'], 'lib', 'intel64', f"{prefix}mkl_scalapack_lp64.{suffix}")
+            if os.path.isfile(libfile):
+                return libpath
+
+        libfile = ctypes.util.find_library('mkl_scalapack_lp64')
+        if libfile:
+            return os.path.abspath(libpath)
+
+        if 'CONDA_PREFIX' in os.environ:
+            warnings.warn('Anaconda Python is installed but the MKL library file cannot be found for linkage. Please '
+                          'install libraries with "conda install mkl-devel" or set the MKLROOT environment variable.')
+        else:
+            warnings.warn('MKL was not found. Please install MKL or set hte MKLROOT environment variable.')
+
+        return ""
 
     @staticmethod
     def cmake_includes():
@@ -84,66 +107,30 @@ class IntelMKLScaLAPACK:
 
     @staticmethod
     def cmake_libraries():
-        if 'MKLROOT' in os.environ:
-            prefix = Config.get('compiler', 'library_prefix')
-            suffix = Config.get('compiler', 'library_extension')
-            libfiles = [
-                os.path.join(os.environ['MKLROOT'], 'lib', prefix + name + "." + suffix)
-                for name in IntelMKLScaLAPACK.libraries
-            ]
-            # Try with ${MKLROOT}/lib/intel64 (oneAPI on Linux)
-            if not all([os.path.isfile(f) for f in libfiles]):
-                libfiles = [
-                    os.path.join(os.environ['MKLROOT'], 'lib', 'intel64', prefix + name + "." + suffix)
-                    for name in IntelMKLScaLAPACK.libraries
-                ]
-            if all([os.path.isfile(f) for f in libfiles]):
-                return libfiles + [os.path.join(os.environ['MKLROOT'], 'lib', 'intel64', 'libmkl_avx2.so.2'),'libmpichcxx.so']
 
-        path = ctypes.util.find_library('mkl_scalapack_lp64')
-        if path:
-            # Attempt to link on Windows
-            if path.endswith('.dll'):
-                libfiles = [
-                    os.path.join(os.path.dirname(os.path.abspath(path)), '..', 'lib', name + '.lib')
-                    for name in IntelMKLScaLAPACK.libraries
-                ]
-                if all([os.path.isfile(f) for f in libfiles]):
-                    return libfiles
-                elif 'CONDA_PREFIX' in os.environ:
-                    warnings.warn('Anaconda Python is installed but the MKL library file '
-                                  'cannot be found for linkage. Please install libraries with '
-                                  '"conda install mkl-devel" or set the MKLROOT environment '
-                                  'variable')
-                    return []
-                else:
-                    return []
+        libpath = IntelMKLScaLAPACK._find_mkl_lib_path()
 
-            return [path]
+        prefix = Config.get('compiler', 'library_prefix')
+        suffix = Config.get('compiler', 'library_extension')
 
-        # If all else fails, let CMake find the library
-        return IntelMKLScaLAPACK.libraries + ["${MPI_mpichcxx_LIBRARY}"]
+        libfiles = [os.path.join(libpath, f"{prefix}{name}.{suffix}") for name in IntelMKLScaLAPACK.libraries]
+        
+        simd_libfile = os.path.join(libpath, f"{prefix}{IntelMKLScaLAPACK.simd}.{suffix}")
+        if not os.path.isfile(simd_libfile):
+            simd_libfile = os.path.join(libpath, f"{prefix}{IntelMKLScaLAPACK.simd}.{suffix}.2")
+        if os.path.isfile(simd_libfile):
+            libfiles.append(simd_libfile)
+        
+        libfiles.append("${MPI_mpichcxx_LIBRARY}")
+        # libfiles.append('libmpichcxx.so')
+        
+        return libfiles
     
-
     @staticmethod
     def cmake_link_flags():
-        if 'MKLROOT' in os.environ:
-            prefix = Config.get('compiler', 'library_prefix')
-            suffix = Config.get('compiler', 'library_extension')
-            libfiles = [
-                os.path.join(os.environ['MKLROOT'], 'lib', prefix + name + "." + suffix)
-                for name in IntelMKLScaLAPACK.libraries
-            ]
-            libpath = "-L ${MKLROOT}/lib"
-            # Try with ${MKLROOT}/lib/intel64 (oneAPI on Linux)
-            if not all([os.path.isfile(f) for f in libfiles]):
-                libfiles = [
-                    os.path.join(os.environ['MKLROOT'], 'lib', 'intel64', prefix + name + "." + suffix)
-                    for name in IntelMKLScaLAPACK.libraries
-                ]
-                libpath = "-L ${MKLROOT}/lib/intel64"
-            else:
-                libpath = ""
-            return [
-                f"{libpath} -lmkl_scalapack_lp64 -Wl,--no-as-needed -lmkl_intel_lp64 -lmkl_gnu_thread -lmkl_core -lmkl_blacs_intelmpi_lp64 -lmpich -lgomp -lpthread -lm -ldl"
-            ]
+
+        libpath = IntelMKLScaLAPACK._find_mkl_lib_path()
+
+        return [
+            f"-L {libpath} -lmkl_scalapack_lp64 -Wl,--no-as-needed -lmkl_intel_lp64 -lmkl_gnu_thread -lmkl_core -lmkl_blacs_intelmpi_lp64 -lmpich -lgomp -lpthread -lm -ldl"
+        ]
