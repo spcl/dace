@@ -54,6 +54,63 @@ class ExpandPgemmMKL(ExpandTransformation):
         return tasklet
 
 
+@dace.library.expansion
+class ExpandPgemmReferenceMPICH(ExpandTransformation):
+    environments = [environments.ref_mpich.ScaLAPACKMPICH]
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg, **kwargs):
+        a, b, c, desca, descb, gdescc, ldesc = node.validate(parent_sdfg, parent_state)
+        dtype = a.dtype.base_type
+        lapack_dtype_str = blas_helpers.to_blastype(dtype.type).lower()
+
+        code = f"""
+            double  zero = 0.0E+0, one = 1.0E+0;
+            char trans = 'N';
+            int grows = {node.m};
+            int gcols = {node.n};
+            int a_cols = {node.k};
+            int b_rows = {node.k};
+            int brows = _a_block_sizes[0];
+            int bcols = (gcols > 1 ? _b_block_sizes[1]: 1);
+            int a_brows = _a_block_sizes[0];
+            int a_bcols = (a_cols > 1 ? _a_block_sizes[1]: 1);
+            int b_brows = _b_block_sizes[0];
+            int b_bcols = _b_block_sizes[1];
+            int mloc = numroc_( &grows, &brows, &__state->__scalapack_myprow, &__state->__int_zero, &__state->__scalapack_prows);
+            int nloc = numroc_( &gcols, &bcols, &__state->__scalapack_mypcol, &__state->__int_zero, &__state->__scalapack_pcols);
+            int akloc = numroc_( &a_cols, &a_bcols, &__state->__scalapack_mypcol, &__state->__int_zero, &__state->__scalapack_pcols);
+            int bkloc = numroc_( &b_rows, &b_brows, &__state->__scalapack_myprow, &__state->__int_zero, &__state->__scalapack_prows);
+            int info;
+            int _a_ldesc[9],  _b_ldesc[9], _c_ldesc[9];
+            int a_lld = max(akloc, a_bcols);
+            descinit_(_a_ldesc, &a_cols, &grows, &a_bcols, &brows, &__state->__int_zero, &__state->__int_zero, &__state->__scalapack_context, &a_lld, &info);
+            int b_lld = max(nloc, bcols);
+            descinit_(_b_ldesc, &gcols, &b_rows, &bcols, &b_brows, &__state->__int_zero, &__state->__int_zero, &__state->__scalapack_context, &b_lld, &info);
+            int c_lld = max(nloc, bcols);
+            descinit_(_c_ldesc, &gcols, &grows, &bcols, &brows, &__state->__int_zero, &__state->__int_zero, &__state->__scalapack_context, &c_lld, &info);
+            int _m = grows, _n = gcols, _k = a_cols;
+            p{lapack_dtype_str}gemm_(
+                &trans, &trans, &_n, &_m, &_k, &one, _b, &__state->__int_one, &__state->__int_one, _b_ldesc,
+                _a, &__state->__int_one, &__state->__int_one, _a_ldesc, &zero, _c, &__state->__int_one, &__state->__int_one, _c_ldesc);
+        """
+        tasklet = dace.sdfg.nodes.Tasklet(node.name,
+                                          node.in_connectors,
+                                          node.out_connectors,
+                                          code,
+                                          language=dace.dtypes.Language.CPP)
+        return tasklet
+
+
+@dace.library.expansion
+class ExpandPgemmReferenceOpenMPI(ExpandTransformation):
+    environments = [environments.ref_openmpi.ScaLAPACKOpenMPI]
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg, **kwargs):
+        return ExpandPgemmReferenceMPICH.expansion(node, parent_state, parent_sdfg, **kwargs)
+
+
 @dace.library.node
 class Pgemm(dace.sdfg.nodes.LibraryNode):
     """Executes alpha * (A @ B) + beta * C.
@@ -62,8 +119,10 @@ class Pgemm(dace.sdfg.nodes.LibraryNode):
     # Global properties
     implementations = {
         "MKL": ExpandPgemmMKL,
+        "ReferenceMPICH": ExpandPgemmReferenceMPICH,
+        "ReferenceOpenMPI": ExpandPgemmReferenceOpenMPI
     }
-    default_implementation = "MKL"
+    default_implementation = None
 
     m = dace.properties.SymbolicProperty(allow_none=True, default=None)
     n = dace.properties.SymbolicProperty(allow_none=True, default=None)
