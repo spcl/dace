@@ -85,6 +85,20 @@ def test_string_literal():
 
     assert tester()[0] == 'Hello World!'
 
+def test_string_callback():
+    success = False
+    @callback_inhibitor
+    def callback(val):
+        nonlocal success
+        if isinstance(val, str):
+            success = True
+
+    @dace
+    def tester():
+        callback('hi')
+
+    tester()
+
 
 @pytest.mark.skip
 def test_bytes_literal():
