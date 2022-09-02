@@ -757,7 +757,7 @@ def _transpose(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, inpname: str,
             raise ValueError("axes don't match array")
         axes = tuple(axes)
 
-    if axes == (0,):  # Special (degenerate) case for 1D "transposition"
+    if axes == (0, ):  # Special (degenerate) case for 1D "transposition"
         return inpname
 
     restype = arr1.dtype
@@ -4591,3 +4591,21 @@ def _cupy_empty_like(pv: 'ProgramVisitor',
 def _cupy_empty(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, shape: Shape, dtype: dace.typeclass):
     """ Creates an unitialized array of the specificied shape and dtype. """
     return _define_cupy_local(pv, sdfg, state, shape, dtype)
+
+
+_boolop_to_method = {
+    'Eq': '__eq__',
+    'NotEq': '__ne__',
+    'Lt': '__lt__',
+    'LtE': '__le__',
+    'Gt': '__gt__',
+    'GtE': '__ge__'
+}
+
+def _makeboolop(op: str, method: str):
+    @oprepo.replaces_operator('StringLiteral', op, otherclass='StringLiteral')
+    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: StringLiteral, op2: StringLiteral):
+        return getattr(op1, method)(op2)
+
+for op, method in _boolop_to_method.items():
+    _makeboolop(op, method)
