@@ -7,8 +7,8 @@ from dace.libraries.blas import blas_helpers
 
 
 @dace.library.expansion
-class ExpandPgemvMKL(ExpandTransformation):
-    environments = [environments.intel_mkl.IntelMKLScaLAPACK]
+class ExpandPgemvMKLMPICH(ExpandTransformation):
+    environments = [environments.intel_mkl_mpich.IntelMKLScaLAPACKMPICH]
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, **kwargs):
@@ -56,6 +56,15 @@ class ExpandPgemvMKL(ExpandTransformation):
                                           code,
                                           language=dace.dtypes.Language.CPP)
         return tasklet
+
+
+@dace.library.expansion
+class ExpandPgemvMKLOpenMPI(ExpandTransformation):
+    environments = [environments.intel_mkl_openmpi.IntelMKLScaLAPACKOpenMPI]
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg, **kwargs):
+        return ExpandPgemvMKLMPICH.expansion(node, parent_state, parent_sdfg, **kwargs)
 
 
 @dace.library.expansion
@@ -126,7 +135,8 @@ class Pgemv(dace.sdfg.nodes.LibraryNode):
 
     # Global properties
     implementations = {
-        "MKL": ExpandPgemvMKL,
+        "MKLMPICH": ExpandPgemvMKLMPICH,
+        "MKLOpenMPI": ExpandPgemvMKLOpenMPI,
         "ReferenceMPICH": ExpandPgemvReferenceMPICH,
         "ReferenceOpenMPI": ExpandPgemvReferenceOpenMPI
     }

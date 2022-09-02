@@ -7,10 +7,8 @@ import warnings
 
 
 @dace.library.environment
-class IntelMKLScaLAPACK:
-    """ 
-    An environment for the Intel Math Kernel Library (MKL), which implements
-    the PBLAS library.
+class IntelMKLScaLAPACKMPICH:
+    """ An environment for the Intel Math Kernel Library (MKL), which implements the ScaLAPACK library using MPICH.
     """
 
     # NOTE: MKL ScaLAPACK linking needs special options depending on the
@@ -108,16 +106,16 @@ class IntelMKLScaLAPACK:
     @staticmethod
     def cmake_libraries():
 
-        libpath = IntelMKLScaLAPACK._find_mkl_lib_path()
+        libpath = IntelMKLScaLAPACKMPICH._find_mkl_lib_path()
 
         prefix = Config.get('compiler', 'library_prefix')
         suffix = Config.get('compiler', 'library_extension')
 
-        libfiles = [os.path.join(libpath, f"{prefix}{name}.{suffix}") for name in IntelMKLScaLAPACK.libraries]
+        libfiles = [os.path.join(libpath, f"{prefix}{name}.{suffix}") for name in IntelMKLScaLAPACKMPICH.libraries]
         
-        simd_libfile = os.path.join(libpath, f"{prefix}{IntelMKLScaLAPACK.simd}.{suffix}")
+        simd_libfile = os.path.join(libpath, f"{prefix}{IntelMKLScaLAPACKMPICH.simd}.{suffix}")
         if not os.path.isfile(simd_libfile):
-            simd_libfile = os.path.join(libpath, f"{prefix}{IntelMKLScaLAPACK.simd}.{suffix}.2")
+            simd_libfile = os.path.join(libpath, f"{prefix}{IntelMKLScaLAPACKMPICH.simd}.{suffix}.2")
         if os.path.isfile(simd_libfile):
             libfiles.append(simd_libfile)
         
@@ -129,7 +127,7 @@ class IntelMKLScaLAPACK:
     @staticmethod
     def cmake_link_flags():
 
-        libpath = IntelMKLScaLAPACK._find_mkl_lib_path()
+        libpath = IntelMKLScaLAPACKMPICH._find_mkl_lib_path()
 
         return [
             f"-L {libpath} -lmkl_scalapack_lp64 -Wl,--no-as-needed -lmkl_intel_lp64 -lmkl_gnu_thread -lmkl_core -lmkl_blacs_intelmpi_lp64 -lmpich -lgomp -lpthread -lm -ldl"
