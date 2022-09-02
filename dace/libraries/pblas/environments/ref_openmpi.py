@@ -3,16 +3,16 @@ import dace.library
 
 
 @dace.library.environment
-class ScaLAPACKMPICH:
-    """ An environment for the reference ScaLAPACK library using MPICH. """
+class ScaLAPACKOpenMPI:
+    """ An environment for the reference ScaLAPACK library using OpenMPI. """
 
     cmake_minimum_version = None
     cmake_packages = []
     cmake_variables = {}
     cmake_compile_flags = []
-    cmake_link_flags = ["-lscalapack-mpich"]
+    cmake_link_flags = ["-lscalapack-openmpi"]
     cmake_includes = []
-    cmake_libraries = ['libscalapack-mpich.so']
+    cmake_libraries = ['libscalapack-openmpi.so']
     cmake_files = []
 
     headers = ["../include/scalapack.h"]
