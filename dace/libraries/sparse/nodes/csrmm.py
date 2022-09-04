@@ -253,7 +253,7 @@ class ExpandCSRCuSPARSE(ExpandTransformation):
         
         opt['layout'] = 'CUSPARSE_ORDER_ROW'
 
-        opt['compute'] = f'CUSPARSE_R_{to_cublas_computetype(dtype)}'
+        opt['compute'] = f'CUDA_R_{to_cublas_computetype(dtype)}'
         opt['handle'] = '__dace_cusparse_handle'
 
         opt['alpha'] = alpha
@@ -307,7 +307,6 @@ class ExpandCSRCuSPARSE(ExpandTransformation):
             dace::sparse::CheckCusparseError( cusparseDestroySpMat(matA) );
             dace::sparse::CheckCusparseError( cusparseDestroyDnMat(matB) );
             dace::sparse::CheckCusparseError( cusparseDestroyDnMat(matC) );
-            dace::sparse::CheckCusparseError( cusparseDestroy(handle) );
             cudaFree(dBuffer);
         """.format_map(opt)
 

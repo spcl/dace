@@ -34,6 +34,6 @@ class cuSPARSE:
         code = """\
 const int __dace_cuda_device = {location};
 cusparseHandle_t &__dace_cusparse_handle = __state->cusparse_handle.Get(__dace_cuda_device);
-cusparseSetStream(__dace_cusprase_handle, __dace_current_stream);\n"""
+cusparseSetStream(__dace_cusparse_handle, __dace_current_stream);\n"""
 
         return code.format(location=location)
