@@ -216,6 +216,7 @@ if __name__ == '__main__':
     A_data = cupy.asarray(lA.data)
     H1 = cupy.asarray(H[x*tx:(x+1)*tx, :])
     H2 = cupy.asarray(H[y*ty:(y+1)*ty, :])
+    lW = cupy.asarray(W)
 
     out = cupy.asarray(np.ndarray((tx, NWcols), dtype=nptype))
 
@@ -223,7 +224,7 @@ if __name__ == '__main__':
         print(f"##### Vanilla Attention #####\nGlobal Sizes: {weak_scaling[size]}\nGrid: {grid[size]}""", flush=True)
     
     runtimes = timeit.repeat(
-        """out[:] = func(A_rowptr=A_rowptr, A_colidx=A_colidx, A_data=A_data, H1=H1, H2=H2, W=W, Px=Nx, Py=Ny,
+        """out[:] = func(A_rowptr=A_rowptr, A_colidx=A_colidx, A_data=A_data, H1=H1, H2=H2, W=lW, Px=Nx, Py=Ny,
                          LArows=tx, LAcols=ty, LAnnz=A_data.size, LHcols=NHcols, LWcols=NWcols); commworld.Barrier()
         """,
         setup="commworld.Barrier()",
@@ -250,6 +251,6 @@ if __name__ == '__main__':
         # print(f"Median compute runtime: {np.median(runtimes)} seconds")
         # write_time(str(datetime.now()),"mttkrp_order_5_mode_0_compute", "dace_cpu", size, (S, S, S, S, S, R), runtimes, file_name, field_names, append=True)
 
-    ref = vanilla_npsp(A, H, W)
-    lref = ref[x*tx:(x+1)*tx, :]
-    assert(np.allclose(out, lref))
+    #ref = vanilla_npsp(A, H, W)
+    #lref = ref[x*tx:(x+1)*tx, :]
+    #assert(np.allclose(out, lref))
