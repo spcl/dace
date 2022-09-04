@@ -75,7 +75,7 @@ def _get_csrmm_operands(node, state, sdfg,
 
 @dace.library.expansion
 class ExpandCSRMMMKL(ExpandTransformation):
-    environments = [environments.intel_mkl.IntelMKLSparse]
+    environments = [environments.IntelMKLSparse]
 
     @staticmethod
     def expansion(node, state, sdfg):
@@ -157,194 +157,266 @@ class ExpandCSRMMMKL(ExpandTransformation):
         return tasklet
 
 
-# @dace.library.expansion
-# class ExpandGemmCuBLAS(ExpandTransformation):
+@dace.library.expansion
+class ExpandCSRCuSPARSE(ExpandTransformation):
 
-#     environments = [environments.cublas.cuBLAS]
+    environments = [environments.cuSPARSE]
 
-#     @staticmethod
-#     def expansion(node, state, sdfg):
-#         node.validate(sdfg, state)
+    @staticmethod
+    def expansion(node, state, sdfg):
+        node.validate(sdfg, state)
 
-#         # Find inputs and output
-#         adesc, bdesc, cdesc = None, None, None
-#         for e in state.in_edges(node):
-#             if e.dst_conn == '_a':
-#                 anode = state.memlet_path(e)[0].src
-#                 if isinstance(anode, dace.sdfg.nodes.AccessNode):
-#                     adesc: dt.Array = sdfg.arrays[anode.data]
-#             elif e.dst_conn == '_b':
-#                 bnode = state.memlet_path(e)[0].src
-#                 if isinstance(bnode, dace.sdfg.nodes.AccessNode):
-#                     bdesc: dt.Array = sdfg.arrays[bnode.data]
-#         for e in state.out_edges(node):
-#             if e.src_conn == '_c':
-#                 cnode = state.memlet_path(e)[-1].dst
-#                 if isinstance(cnode, dace.sdfg.nodes.AccessNode):
-#                     cdesc: dt.Array = sdfg.arrays[cnode.data]
-#         if not adesc or not bdesc or not cdesc:
-#             raise ValueError('Unsupported input/output arrays')
+        operands = _get_csrmm_operands(node, state, sdfg)
+        arows = operands['_a_rows'][1]
+        acols = operands['_a_cols'][1]
+        avals = operands['_a_vals'][1]
+        bdesc = operands['_b'][1]
+        cdesc = sdfg.arrays[state.out_edges(node)[0].data.data]
 
-#         # If buffers are not on the GPU, copy them
-#         needs_copy = any(desc.storage not in (dace.StorageType.GPU_Global, dace.StorageType.CPU_Pinned)
-#                          for desc in (adesc, bdesc, cdesc))
+        # If buffers are not on the GPU, copy them
+        needs_copy = any(desc.storage not in (dace.StorageType.GPU_Global, dace.StorageType.CPU_Pinned)
+                         for desc in (arows, acols, avals, bdesc, cdesc))
 
-#         dtype = adesc.dtype.base_type
-#         func = '%sgemm' % to_blastype(dtype.type)
-#         if dtype == dace.float16:
-#             cdtype = '__half'
-#             factort = 'Half'
-#         elif dtype == dace.float32:
-#             cdtype = 'float'
-#             factort = 'Float'
-#         elif dtype == dace.float64:
-#             cdtype = 'double'
-#             factort = 'Double'
-#         elif dtype == dace.complex64:
-#             cdtype = 'cuComplex'
-#             factort = 'Complex64'
-#         elif dtype == dace.complex128:
-#             cdtype = 'cuDoubleComplex'
-#             factort = 'Complex128'
-#         else:
-#             raise ValueError("Unsupported type: " + str(dtype))
+        dtype = avals.dtype.base_type
+        func = "cusparseSpMM"
+        if dtype == dace.float16:
+            cdtype = '__half'
+            factort = 'Half'
+        elif dtype == dace.float32:
+            cdtype = 'float'
+            factort = 'Float'
+        elif dtype == dace.float64:
+            cdtype = 'double'
+            factort = 'Double'
+        elif dtype == dace.complex64:
+            cdtype = 'cuComplex'
+            factort = 'Complex64'
+        elif dtype == dace.complex128:
+            cdtype = 'cuDoubleComplex'
+            factort = 'Complex128'
+        else:
+            raise ValueError("Unsupported type: " + str(dtype))
 
-#         call_prefix = environments.cublas.cuBLAS.handle_setup_code(node)
-#         call_suffix = ''
+        call_prefix = environments.cuSPARSE.handle_setup_code(node)
+        call_suffix = ''
 
-#         # Handle alpha / beta
-#         constants = {
-#             1.0: f"__state->cublas_handle.Constants(__dace_cuda_device).{factort}Pone()",
-#             #-1.0: f"__state->cublas_handle.Constants(__dace_cuda_device).{factort}Mone()",
-#             0.0: f"__state->cublas_handle.Constants(__dace_cuda_device).{factort}Zero()",
-#         }
-#         if node.alpha not in constants or node.beta not in constants:
-#             # Deal with complex input constants
-#             if isinstance(node.alpha, complex):
-#                 alpha = f'{dtype.ctype}({node.alpha.real}, {node.alpha.imag})'
-#             else:
-#                 alpha = f'{dtype.ctype}({node.alpha})'
-#             if isinstance(node.beta, complex):
-#                 beta = f'{dtype.ctype}({node.beta.real}, {node.beta.imag})'
-#             else:
-#                 beta = f'{dtype.ctype}({node.beta})'
+        # Handle alpha / beta
+        # TODO: Maybe fix this later
+        # constants = {
+        #     1.0: f"__state->cublas_handle.Constants(__dace_cuda_device).{factort}Pone()",
+        #     #-1.0: f"__state->cublas_handle.Constants(__dace_cuda_device).{factort}Mone()",
+        #     0.0: f"__state->cublas_handle.Constants(__dace_cuda_device).{factort}Zero()",
+        # }
+        # if node.alpha not in constants or node.beta not in constants:
+        if True:
+            # Deal with complex input constants
+            if isinstance(node.alpha, complex):
+                alpha = f'{dtype.ctype}({node.alpha.real}, {node.alpha.imag})'
+            else:
+                alpha = f'{dtype.ctype}({node.alpha})'
+            if isinstance(node.beta, complex):
+                beta = f'{dtype.ctype}({node.beta.real}, {node.beta.imag})'
+            else:
+                beta = f'{dtype.ctype}({node.beta})'
 
-#             # Set pointer mode to host
-#             call_prefix += f'''cublasSetPointerMode(__dace_cublas_handle, CUBLAS_POINTER_MODE_HOST);
-#             {dtype.ctype} alpha = {alpha};
-#             {dtype.ctype} beta = {beta};
-#             '''
-#             call_suffix += '''cublasSetPointerMode(__dace_cublas_handle, CUBLAS_POINTER_MODE_DEVICE);'''
-#             alpha = f'({cdtype} *)&alpha'
-#             beta = f'({cdtype} *)&beta'
-#         else:
-#             alpha = constants[node.alpha]
-#             beta = constants[node.beta]
+            # Set pointer mode to host
+            call_prefix += f'''cusparseSetPointerMode(__dace_cusparse_handle, CUSPARSE_POINTER_MODE_HOST);
+            {dtype.ctype} alpha = {alpha};
+            {dtype.ctype} beta = {beta};
+            '''
+            call_suffix += '''cusparseSetPointerMode(__dace_cusparse_handle, CUSPARSE_POINTER_MODE_DEVICE);'''
+            alpha = f'({cdtype} *)&alpha'
+            beta = f'({cdtype} *)&beta'
+        else:
+            alpha = constants[node.alpha]
+            beta = constants[node.beta]
 
-#         # Set up options for code formatting
-#         opt = _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, alpha, beta, cdtype, func)
-#         opt['arr_prefix'] = arr_prefix = ''
-#         if needs_copy:
-#             opt['arr_prefix'] = arr_prefix = '_conn'
+        # Set up options for code formatting
+        # opt = _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, alpha, beta, cdtype, func)
+        
+        opt = {}
 
-#         # Matrix multiplication
-#         if (node.compute_type is None and node.accumulator_type is None and node.algorithm is None):
-#             call = '''cublas{func}(__dace_cublas_handle,
-#                 CUBLAS_OP_{ta}, CUBLAS_OP_{tb},
-#                 {M}, {N}, {K},
-#                 {alpha},
-#                 ({dtype}*){arr_prefix}{x}, {lda},
-#                 ({dtype}*){arr_prefix}{y}, {ldb},
-#                 {beta},
-#                 ({dtype}*){arr_prefix}_c, {ldc});'''.format_map(opt)
-#         else:
-#             if node.compute_type is not None:
-#                 acctype = node.compute_type
-#             elif node.accumulator_type is not None:
-#                 acc_dtype: dtypes.typeclass = node.accumulator_type
-#                 acctype = f'CUBLAS_COMPUTE_{to_cublas_computetype(acc_dtype)}'
-#             else:
-#                 acctype = f'CUBLAS_COMPUTE_{to_cublas_computetype(dtype)}'
+        opt['arr_prefix'] = arr_prefix = ''
+        if needs_copy:
+            opt['arr_prefix'] = arr_prefix = '_conn'
 
-#             algorithm = 'CUBLAS_GEMM_DEFAULT_TENSOR_OP'
-#             if node.algorithm is not None:
-#                 algorithm = node.algorithm
+        opt['func'] = func
 
-#             call = f'''
-#             cublasGemmEx(__dace_cublas_handle,
-#                 CUBLAS_OP_{opt['ta']}, CUBLAS_OP_{opt['tb']},
-#                 {opt['M']}, {opt['N']}, {opt['K']},
-#                 {alpha},
-#                 {arr_prefix}{opt['x']},
-#                 {dtype_to_cudadatatype(opt['xdtype'])},
-#                 {opt['lda']},
-#                 {arr_prefix}{opt['y']},
-#                 {dtype_to_cudadatatype(opt['ydtype'])},
-#                 {opt['ldb']},
-#                 {beta},
-#                 {arr_prefix}_c,
-#                 {dtype_to_cudadatatype(opt['cdtype'])},
-#                 {opt['ldc']},
-#                 {acctype},
-#                 {algorithm});
-#             '''
+        if node.opA == 1:
+            opt['opA'] = 'CUSPARSE_OPERATION_TRANSPOSE'
+        elif node.opA == 2:
+            opt['opA'] = 'CUSPARSE_OPERATION_CONJUGATE_TRANSPOSE'
+        else:
+            opt['opA'] = 'CUSPARSE_OPERATION_NON_TRANSPOSE'
+        
+        opt['opB'] = 'CUSPARSE_OPERATION_NON_TRANSPOSE'
+        
+        opt['layout'] = 'CUSPARSE_ORDER_ROW'
 
-#         code = (call_prefix + call + call_suffix)
-#         tasklet = dace.sdfg.nodes.Tasklet(
-#             node.name,
-#             node.in_connectors,
-#             node.out_connectors,
-#             code,
-#             language=dace.dtypes.Language.CPP,
-#         )
+        opt['compute'] = f'CUSPARSE_R_{to_cublas_computetype(dtype)}'
+        opt['handle'] = '__dace_cusparse_handle'
 
-#         # If buffers are not on the GPU, copy them
-#         if needs_copy:
-#             nsdfg = dace.SDFG('nested_gemm')
-#             for name, desc in [('_a', adesc), ('_b', bdesc), ('_c', cdesc)]:
-#                 if isinstance(desc, dt.View):
-#                     dcopy = desc.as_array()
-#                 else:
-#                     dcopy = dc(desc)
-#                 dcopy.lifetime = dtypes.AllocationLifetime.Scope
-#                 dcopy_gpu = dc(dcopy)
-#                 dcopy.transient = False
-#                 nsdfg.add_datadesc(name, dcopy)
-#                 dcopy_gpu.transient = True
-#                 dcopy_gpu.storage = dace.StorageType.GPU_Global
-#                 nsdfg.add_datadesc(name + '_gpu', dcopy_gpu)
-#             nstate = nsdfg.add_state()
-#             a = nstate.add_read('_a')
-#             ga = nstate.add_access('_a_gpu')
-#             b = nstate.add_read('_b')
-#             gb = nstate.add_access('_b_gpu')
-#             c = nstate.add_write('_c')
-#             gc = nstate.add_access('_c_gpu')
+        opt['alpha'] = alpha
+        opt['beta'] = beta
+        
+        opt['nrows'] = cdesc.shape[0]
+        opt['ncols'] = cdesc.shape[1]
+        opt['arows'] = cdesc.shape[0]
+        opt['acols'] = bdesc.shape[0]
+        opt['bcols'] = bdesc.shape[1]
+        opt['annz'] = avals.shape[0]
+        if node.opA != 0:
+            opt['arows'], opt['acols'] = opt['acols'], opt['arows']
+        
+        opt['ldb'] = opt['ncols']
+        opt['ldc'] = opt['ncols']
 
-#             # Reset code and connectors
-#             tasklet.in_connectors = {"_conn" + k: None for k in tasklet.in_connectors}
-#             tasklet.out_connectors = {"_conn" + k: None for k in tasklet.out_connectors}
+        call = """
+            cusparseSpMatDescr_t matA;
+            cusparseDnMatDescr_t matB, matC;
+            void*                dBuffer    = NULL;
+            size_t               bufferSize = 0;
+            // Create sparse matrix A in CSR format
+            dace::sparse::CheckCusparseError( cusparseCreateCsr(&matA, {arows}, {acols}, {annz},
+                                                {arr_prefix}_a_rows, {arr_prefix}_a_cols, {arr_prefix}_a_vals,
+                                                CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
+                                                CUSPARSE_INDEX_BASE_ZERO, {compute}) );
+            // Create dense matrix B
+            dace::sparse::CheckCusparseError( cusparseCreateDnMat(&matB, {acols}, {bcols}, {ldb}, {arr_prefix}_b,
+                                                {compute}, {layout}) );
+            // Create dense matrix C
+            dace::sparse::CheckCusparseError( cusparseCreateDnMat(&matC, {arows}, {bcols}, {ldc}, {arr_prefix}_c,
+                                                {compute}, {layout}) );
+            // allocate an external buffer if needed
+            dace::sparse::CheckCusparseError( cusparseSpMM_bufferSize(
+                                            {handle},
+                                            {opA},
+                                            {opB},
+                                            {alpha}, matA, matB, {beta}, matC, {compute},
+                                            CUSPARSE_SPMM_ALG_DEFAULT, &bufferSize) );
+            cudaMalloc(&dBuffer, bufferSize);
 
-#             nstate.add_node(tasklet)
-#             nstate.add_nedge(a, ga, dace.Memlet.from_array('_a', adesc))
-#             nstate.add_nedge(b, gb, dace.Memlet.from_array('_b', bdesc))
+            // execute SpMM
+            dace::sparse::CheckCusparseError( cusparseSpMM({handle},
+                                            {opA},
+                                            {opB},
+                                            {alpha}, matA, matB, {beta}, matC, {compute},
+                                            CUSPARSE_SPMM_ALG_DEFAULT, dBuffer) );
 
-#             nstate.add_edge(ga, None, tasklet, '_conn_a', dace.Memlet.from_array('_a_gpu', adesc))
-#             nstate.add_edge(gb, None, tasklet, '_conn_b', dace.Memlet.from_array('_b_gpu', bdesc))
-#             nstate.add_edge(tasklet, '_conn_c', gc, None, dace.Memlet.from_array('_c_gpu', cdesc))
-#             nstate.add_nedge(gc, c, dace.Memlet.from_array('_c', cdesc))
+            // destroy matrix/vector descriptors
+            dace::sparse::CheckCusparseError( cusparseDestroySpMat(matA) );
+            dace::sparse::CheckCusparseError( cusparseDestroyDnMat(matB) );
+            dace::sparse::CheckCusparseError( cusparseDestroyDnMat(matC) );
+            dace::sparse::CheckCusparseError( cusparseDestroy(handle) );
+            cudaFree(dBuffer);
+        """.format_map(opt)
 
-#             if node.beta != 0.0:
-#                 rc = nstate.add_read('_c')
-#                 rgc = nstate.add_access('_c_gpu')
-#                 tasklet.add_in_connector('_conn_cin')
-#                 nstate.add_nedge(rc, rgc, dace.Memlet('_c'))
-#                 nstate.add_edge(rgc, None, tasklet, '_conn_cin', dace.Memlet('_c_gpu'))
+        # # Matrix multiplication
+        # if (node.compute_type is None and node.accumulator_type is None and node.algorithm is None):
+        #     call = '''cublas{func}(__dace_cublas_handle,
+        #         CUBLAS_OP_{ta}, CUBLAS_OP_{tb},
+        #         {M}, {N}, {K},
+        #         {alpha},
+        #         ({dtype}*){arr_prefix}{x}, {lda},
+        #         ({dtype}*){arr_prefix}{y}, {ldb},
+        #         {beta},
+        #         ({dtype}*){arr_prefix}_c, {ldc});'''.format_map(opt)
+        # else:
+        #     if node.compute_type is not None:
+        #         acctype = node.compute_type
+        #     elif node.accumulator_type is not None:
+        #         acc_dtype: dtypes.typeclass = node.accumulator_type
+        #         acctype = f'CUBLAS_COMPUTE_{to_cublas_computetype(acc_dtype)}'
+        #     else:
+        #         acctype = f'CUBLAS_COMPUTE_{to_cublas_computetype(dtype)}'
 
-#             return nsdfg
-#         # End of copy to GPU
+        #     algorithm = 'CUBLAS_GEMM_DEFAULT_TENSOR_OP'
+        #     if node.algorithm is not None:
+        #         algorithm = node.algorithm
 
-#         return tasklet
+        #     call = f'''
+        #     cublasGemmEx(__dace_cublas_handle,
+        #         CUBLAS_OP_{opt['ta']}, CUBLAS_OP_{opt['tb']},
+        #         {opt['M']}, {opt['N']}, {opt['K']},
+        #         {alpha},
+        #         {arr_prefix}{opt['x']},
+        #         {dtype_to_cudadatatype(opt['xdtype'])},
+        #         {opt['lda']},
+        #         {arr_prefix}{opt['y']},
+        #         {dtype_to_cudadatatype(opt['ydtype'])},
+        #         {opt['ldb']},
+        #         {beta},
+        #         {arr_prefix}_c,
+        #         {dtype_to_cudadatatype(opt['cdtype'])},
+        #         {opt['ldc']},
+        #         {acctype},
+        #         {algorithm});
+        #     '''
+
+        code = (call_prefix + call + call_suffix)
+        tasklet = dace.sdfg.nodes.Tasklet(
+            node.name,
+            node.in_connectors,
+            node.out_connectors,
+            code,
+            language=dace.dtypes.Language.CPP,
+        )
+
+        # If buffers are not on the GPU, copy them
+        if needs_copy:
+            nsdfg = dace.SDFG('nested_gemm')
+            for name, desc in [('_a_rows', arows), ('_a_cols', acols), ('_a_vals', avals), ('_b', bdesc), ('_c', cdesc)]:
+                if isinstance(desc, dt.View):
+                    dcopy = desc.as_array()
+                else:
+                    dcopy = dc(desc)
+                dcopy.lifetime = dtypes.AllocationLifetime.Scope
+                dcopy_gpu = dc(dcopy)
+                dcopy.transient = False
+                nsdfg.add_datadesc(name, dcopy)
+                dcopy_gpu.transient = True
+                dcopy_gpu.storage = dace.StorageType.GPU_Global
+                nsdfg.add_datadesc(name + '_gpu', dcopy_gpu)
+            nstate = nsdfg.add_state()
+            ar = nstate.add_read('_a_rows')
+            gar = nstate.add_access('_a_rows_gpu')
+            ac = nstate.add_read('_a_cols')
+            gac = nstate.add_access('_a_cols_gpu')
+            av = nstate.add_read('_a_vals')
+            gav = nstate.add_access('_a_vals_gpu')
+            b = nstate.add_read('_b')
+            gb = nstate.add_access('_b_gpu')
+            c = nstate.add_write('_c')
+            gc = nstate.add_access('_c_gpu')
+
+            # Reset code and connectors
+            tasklet.in_connectors = {"_conn" + k: None for k in tasklet.in_connectors}
+            tasklet.out_connectors = {"_conn" + k: None for k in tasklet.out_connectors}
+
+            nstate.add_node(tasklet)
+            nstate.add_nedge(ar, gar, dace.Memlet.from_array('_a_rows', arows))
+            nstate.add_nedge(ac, gac, dace.Memlet.from_array('_a_cols', acols))
+            nstate.add_nedge(av, gav, dace.Memlet.from_array('_a_vals', avals))
+            nstate.add_nedge(b, gb, dace.Memlet.from_array('_b', bdesc))
+
+            nstate.add_edge(gar, None, tasklet, '_conn_a_rows', dace.Memlet.from_array('_a_rows_gpu', arows))
+            nstate.add_edge(gac, None, tasklet, '_conn_a_cols', dace.Memlet.from_array('_a_cols_gpu', arows))
+            nstate.add_edge(gav, None, tasklet, '_conn_a_vals', dace.Memlet.from_array('_a_vals_gpu', arows))
+            nstate.add_edge(gb, None, tasklet, '_conn_b', dace.Memlet.from_array('_b_gpu', bdesc))
+            nstate.add_edge(tasklet, '_conn_c', gc, None, dace.Memlet.from_array('_c_gpu', cdesc))
+            nstate.add_nedge(gc, c, dace.Memlet.from_array('_c', cdesc))
+
+            if node.beta != 0.0:
+                rc = nstate.add_read('_c')
+                rgc = nstate.add_access('_c_gpu')
+                tasklet.add_in_connector('_conn_cin')
+                nstate.add_nedge(rc, rgc, dace.Memlet('_c'))
+                nstate.add_edge(rgc, None, tasklet, '_conn_cin', dace.Memlet('_c_gpu'))
+
+            return nsdfg
+        # End of copy to GPU
+
+        return tasklet
 
 
 @dace.library.node
@@ -357,6 +429,7 @@ class CSRMM(dace.sdfg.nodes.LibraryNode):
     # Global properties
     implementations = {
         "MKL": ExpandCSRMMMKL,
+        "cuSPARSE": ExpandCSRCuSPARSE
     }
     default_implementation = None
 
@@ -443,38 +516,3 @@ class CSRMM(dace.sdfg.nodes.LibraryNode):
             raise ValueError("matrix-matrix product only supported on matrices")
         if len(size5) == 2 and list(size5) != [A_rows, B_cols]:
             raise ValueError("Output to matrix-matrix product must agree in the m and n " "dimensions")
-
-
-# # Numpy replacement
-# @oprepo.replaces('dace.libraries.sparse.csrmm')
-# @oprepo.replaces('dace.libraries.sparse.CSRMM')
-# def csrmm_libnode(pv: 'ProgramVisitor',
-#                   sdfg: SDFG,
-#                   state: SDFGState,
-#                   A_rows,
-#                   A_cols,
-#                   A_vals,
-#                   B,
-#                   C,
-#                   alpha,
-#                   beta,
-#                   op_a=0):
-#     # Add nodes
-#     A_rows_in, A_cols_in, A_vals_in, B_in = (state.add_access(name) for name in (A_rows, A_cols, A_vals, B))
-#     C_out = state.add_write(C)
-
-#     libnode = CSRMM('csrmm', opA=op_a, alpha=alpha, beta=beta)
-#     state.add_node(libnode)
-
-#     # Connect nodes
-#     state.add_edge(A_rows_in, None, libnode, '_a_rows', mm.Memlet(A_rows))
-#     state.add_edge(A_cols_in, None, libnode, '_a_cols', mm.Memlet(A_cols))
-#     state.add_edge(A_vals_in, None, libnode, '_a_vals', mm.Memlet(A_vals))
-#     state.add_edge(B_in, None, libnode, '_b', mm.Memlet(B))
-#     state.add_edge(libnode, '_c', C_out, None, mm.Memlet(C))
-
-#     if beta != 0:
-#         C_in = state.add_read(C)
-#         state.add_edge(C_in, None, libnode, '_cin', mm.Memlet(C))
-
-#     return []
