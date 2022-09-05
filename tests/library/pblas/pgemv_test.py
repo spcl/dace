@@ -3,6 +3,7 @@
 
 import dace
 import numpy as np
+import pytest
 
 from dace.transformation.auto.auto_optimize import auto_optimize
 from dace.sdfg import utils
@@ -57,7 +58,8 @@ grid = {
 rng = np.random.default_rng(42)
 
 
-def test_pgemm():
+pytest.mark.skip
+def test_pgemv():
 
     commworld = MPI.COMM_WORLD
     rank = commworld.Get_rank()
@@ -72,9 +74,6 @@ def test_pgemm():
     Nmult = 1024
     M, N = size * Mmult, size * Nmult
 
-    # @dace.program
-    # def pdgemv(A: dace.float64[LMx, LNy], x: dace.float64[LNy]):
-    #     return dace.distr.MatMult(A, x, (Px*LMx, Py*LNy), c_block_sizes=(LMx, 1))
     @dace.program
     def pdgemv(A: dace.float64[LMx, LNy], x: dace.float64[GN]):
         return dace.distr.MatMult(A, x, (Px*LMx, Py*LNy), c_block_sizes=(GM, 1))
@@ -86,30 +85,18 @@ def test_pgemm():
     func = utils.distributed_compile(sdfg, commworld)
     
     A = rng.random((M, N), dtype=np.float64)
-    # A = np.arange(M*N, dtype=np.float64).reshape(M, N)
     x = rng.random((N,), dtype=np.float64)
-    # x = np.ones((N,), dtype=np.float64)
     y = A @ x
 
     ti, tj = M // NPx, N // NPy
     lA = A[i*ti:(i+1)*ti, j*tj:(j+1)*tj].copy()
-    lx = x[j*tj:(j+1)*tj].copy()
 
-    # val = func(A=lA, x=lx, LMx=ti, LNy=tj, Px=NPx, Py=NPy)
     val = func(A=lA, x=x, GM=M, GN=N, LMx=ti, LNy=tj, Px=NPx, Py=NPy)
-    # print(rank, val, flush=True)
-    # if rank < NPx:
-    #     ref = y[rank*ti:(rank+1)*ti]
-    #     print(rank, val, ref, flush=True)
-    #     assert(np.allclose(val, ref))
     if rank == 0:
         assert(np.allclose(val, y))
 
     commworld.Barrier()
 
-    # @dace.program
-    # def pdgemv_T(A: dace.float64[LMx, LNy], x: dace.float64[LMx]):
-    #     return dace.distr.MatMult(x, A, (Px*LMx, Py*LNy), c_block_sizes=(LNy, 1))
     @dace.program
     def pdgemv_T(A: dace.float64[LMx, LNy], x: dace.float64[GM]):
         return dace.distr.MatMult(x, A, (Px*LMx, Py*LNy), c_block_sizes=(GN, 1))
@@ -121,32 +108,18 @@ def test_pgemm():
     func1 = utils.distributed_compile(sdfg1, commworld)
     
     A = rng.random((M, N), dtype=np.float64)
-    # A = np.arange(M*N, dtype=np.float64).reshape(M, N)
-    # A = np.ones((M, N), dtype=np.float64)
     x = rng.random((M,), dtype=np.float64)
-    # x = np.ones((M,), dtype=np.float64)
-    # x = np.arange(M, dtype=np.float64).copy()
     y = A.T @ x
 
     ti, tj = M // NPx, N // NPy
     lA = A[i*ti:(i+1)*ti, j*tj:(j+1)*tj].copy()
-    lx = x[i*ti:(i+1)*ti].copy()
 
-    # val = func1(A=lA, x=lx, LMx=ti, LNy=tj, Px=NPx, Py=NPy)
     val = func1(A=lA, x=x, LMx=ti, LNy=tj, GM=M, GN=N, Px=NPx, Py=NPy)
-    # if rank < NPx:
-    #     ref = y[rank*tj:(rank+1)*tj]
-    #     print(rank, val, ref, flush=True)
-    #     # assert(np.allclose(val, ref))
     if rank == 0:
         assert(np.allclose(val, y))
 
     commworld.Barrier()
 
-    # @dace.program
-    # def atax(A: dace.float64[LMx, LNy], x: dace.float64[LNy], y: dace.float64[LNy]):
-    #     tmp = dace.distr.MatMult(A, x, (Px*LMx, Py*LNy), c_block_sizes=(LMx, 1))
-    #     y[:] = dace.distr.MatMult(tmp, A, (M, N), c_block_sizes=(LNy, 1))
     @dace.program
     def atax(A: dace.float64[LMx, LNy], x: dace.float64[GN], y: dace.float64[GN]):
         tmp = dace.distr.MatMult(A, x, (Px*LMx, Py*LNy), c_block_sizes=(GM, 1))
@@ -159,25 +132,14 @@ def test_pgemm():
     func2 = utils.distributed_compile(sdfg2, commworld)
     
     A = rng.random((M, N), dtype=np.float64)
-    # A = np.arange(M*N, dtype=np.float64).reshape(M, N)
     x = rng.random((N,), dtype=np.float64)
-    # x = np.ones((N,), dtype=np.float64)
     y = A.T @ (A @ x)
 
     ti, tj = M // NPx, N // NPy
     lA = A[i*ti:(i+1)*ti, j*tj:(j+1)*tj].copy()
-    lx = x[j*tj:(j+1)*tj].copy()
 
-    # val = np.ndarray((tj,), dtype=np.float64)
-    # func2(A=lA, x=lx, y=val, LMx=ti, LNy=tj, Px=NPx, Py=NPy)
-    # tmp = np.ndarray((M,), dtype=np.float64)
     val = np.ndarray((N,), dtype=np.float64)
     func2(A=lA, x=x, y=val, LMx=ti, LNy=tj, GM=M, GN=N, Px=NPx, Py=NPy)
-    # print(rank, val, flush=True)
-    # if rank < NPx:
-    #     ref = y[rank*tj:(rank+1)*tj]
-    #     # print(rank, val, ref, flush=True)
-    #     assert(np.allclose(val, ref))
     if rank == 0:
         assert(np.allclose(val, y))
     
@@ -291,4 +253,4 @@ def test_pgemm():
 
 if __name__ == '__main__':
 
-    test_pgemm()
+    test_pgemv()
