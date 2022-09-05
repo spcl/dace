@@ -45,7 +45,7 @@ def run_bicg(device_type: dace.dtypes.DeviceType):
 
     elif device_type == dace.dtypes.DeviceType.FPGA:
         # Parse SDFG and apply FPGA friendly optimization
-        sdfg = kernel.to_sdfg(simplify=True)
+        sdfg = bicg_kernel.to_sdfg(simplify=True)
         applied = sdfg.apply_transformations([FPGATransformSDFG])
         assert applied == 1
 
@@ -53,12 +53,13 @@ def run_bicg(device_type: dace.dtypes.DeviceType):
         from dace.libraries.blas import Gemv
         Gemv.default_implementation = "FPGA_Accumulate"
         sdfg.expand_library_nodes()
+        
         sm_applied = sdfg.apply_transformations_repeated([InlineSDFG, StreamingMemory],
                                                          [{}, {
                                                              'storage': dace.StorageType.FPGA_Local
                                                          }],
                                                          print_report=True)
-        assert sm_applied == 6  # 3 inlines and 3 Streaming memories
+        assert sm_applied == 8  # 3 inlines and 3 Streaming memories
 
         ###########################
         # FPGA Auto Opt
