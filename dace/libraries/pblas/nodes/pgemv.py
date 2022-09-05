@@ -17,35 +17,39 @@ class ExpandPgemvMKLMPICH(ExpandTransformation):
         lapack_dtype_str = blas_helpers.to_blastype(dtype.type).lower()
 
         # NOTE: MKL ScaLAPACK is using column-major order
-        transa = 'T' if node.transa == 'N' else 'N'
+        transa = 'N' if node.transa == 'T' else 'T'
         code = f"""
             const double  zero = 0.0E+0, one = 1.0E+0;
             const char trans = '{transa}';
             MKL_INT ga_rows = (trans == 'N' ? {node.n} : {node.n});
             MKL_INT ga_cols = (trans == 'N' ? {node.m} : {node.m});
+            //printf(\"M: {node.m}, N: {node.n}\\n\");
             MKL_INT gy_rows = (trans == 'N' ? {node.n} : {node.m});
             MKL_INT gy_cols = 1;
             MKL_INT gx_rows = (trans == 'N' ? {node.m} : {node.n});
             MKL_INT gx_cols = 1;
             MKL_INT la_rows = (trans == 'N' ? _a_block_sizes[1] : _a_block_sizes[1]);
             MKL_INT la_cols = (trans == 'N' ? _a_block_sizes[0] : _a_block_sizes[0]);
-            MKL_INT ly_rows = (trans == 'N' ? _a_block_sizes[1] : _a_block_sizes[0]);
+            // MKL_INT ly_rows = (trans == 'N' ? _a_block_sizes[1] : _a_block_sizes[0]);
+            MKL_INT ly_rows = gy_rows;
             MKL_INT ly_cols = 1;
-            MKL_INT lx_rows = (trans == 'N' ? _a_block_sizes[0] : _a_block_sizes[1]);
+            // MKL_INT lx_rows = (trans == 'N' ? _a_block_sizes[0] : _a_block_sizes[1]);
+            MKL_INT lx_rows = gx_rows;
             MKL_INT lx_cols = 1;
-            printf(\"(%d, %d)x(%d, %d)->(%d, %d)\\n\", la_rows, la_cols, lx_rows, lx_cols, ly_rows, ly_cols);
-            MKL_INT n_ly_rows = numroc( &gy_rows, &ly_rows, &__state->__mkl_scalapack_mypcol, &__state->__mkl_int_zero, &__state->__mkl_scalapack_pcols);
-            MKL_INT n_ly_cols = numroc( &gy_cols, &ly_cols, &__state->__mkl_scalapack_mypcol, &__state->__mkl_int_zero, &__state->__mkl_scalapack_pcols);
-            //MKL_INT n_ly_rows = numroc( &gy_rows, &ly_rows, &__state->__mkl_scalapack_myprow, &__state->__mkl_int_zero, &__state->__mkl_scalapack_prows);
-            //MKL_INT n_ly_cols = numroc( &gy_cols, &ly_cols, &__state->__mkl_scalapack_myprow, &__state->__mkl_int_zero, &__state->__mkl_scalapack_prows);
-            printf(\"y: (%d, %d)\\n\", n_ly_rows, n_ly_cols);
+            //printf(\"(%d, %d)x(%d, %d)->(%d, %d)\\n\", la_rows, la_cols, lx_rows, lx_cols, ly_rows, ly_cols);
+            //MKL_INT n_ly_rows = numroc( &gy_rows, &ly_rows, &__state->__mkl_scalapack_mypcol, &__state->__mkl_int_zero, &__state->__mkl_scalapack_pcols);
+            //MKL_INT n_ly_cols = numroc( &gy_cols, &ly_cols, &__state->__mkl_scalapack_mypcol, &__state->__mkl_int_zero, &__state->__mkl_scalapack_pcols);
+            MKL_INT n_ly_rows = numroc( &gy_rows, &ly_rows, &__state->__mkl_scalapack_myprow, &__state->__mkl_int_zero, &__state->__mkl_scalapack_prows);
+            MKL_INT n_ly_cols = numroc( &gy_cols, &ly_cols, &__state->__mkl_scalapack_myprow, &__state->__mkl_int_zero, &__state->__mkl_scalapack_prows);
+            //printf(\"y: (%d, %d)\\n\", n_ly_rows, n_ly_cols);
             //assert(ly_rows == n_ly_rows);
             //assert(ly_cols == n_ly_cols);
             MKL_INT y_lld = max(n_ly_rows, 1);
-            //MKL_INT n_la_rows = numroc( &ga_rows, &la_rows, &__state->__mkl_scalapack_myprow, &__state->__mkl_int_zero, &__state->__mkl_scalapack_prows);
-            //MKL_INT n_la_cols = numroc( &ga_cols, &la_cols, &__state->__mkl_scalapack_mypcol, &__state->__mkl_int_zero, &__state->__mkl_scalapack_pcols);
-            MKL_INT n_la_rows = numroc( &ga_rows, &la_rows, &__state->__mkl_scalapack_mypcol, &__state->__mkl_int_zero, &__state->__mkl_scalapack_pcols);
-            MKL_INT n_la_cols = numroc( &ga_cols, &la_cols, &__state->__mkl_scalapack_myprow, &__state->__mkl_int_zero, &__state->__mkl_scalapack_prows);
+            //MKL_INT y_lld = (__state->__mkl_scalapack_rank == 0 ? ly_rows : 1);
+            MKL_INT n_la_rows = numroc( &ga_rows, &la_rows, &__state->__mkl_scalapack_myprow, &__state->__mkl_int_zero, &__state->__mkl_scalapack_prows);
+            MKL_INT n_la_cols = numroc( &ga_cols, &la_cols, &__state->__mkl_scalapack_mypcol, &__state->__mkl_int_zero, &__state->__mkl_scalapack_pcols);
+            //MKL_INT n_la_rows = numroc( &ga_rows, &la_rows, &__state->__mkl_scalapack_mypcol, &__state->__mkl_int_zero, &__state->__mkl_scalapack_pcols);
+            //MKL_INT n_la_cols = numroc( &ga_cols, &la_cols, &__state->__mkl_scalapack_myprow, &__state->__mkl_int_zero, &__state->__mkl_scalapack_prows);
             //assert(la_rows == n_la_rows);
             //assert(la_cols == n_la_cols);
             MKL_INT a_lld = max(la_rows, 1);
@@ -53,12 +57,13 @@ class ExpandPgemvMKLMPICH(ExpandTransformation):
             MKL_INT n_lx_cols = numroc( &gx_cols, &lx_cols, &__state->__mkl_scalapack_myprow, &__state->__mkl_int_zero, &__state->__mkl_scalapack_prows);
             //MKL_INT n_lx_rows = numroc( &gx_rows, &lx_rows, &__state->__mkl_scalapack_mypcol, &__state->__mkl_int_zero, &__state->__mkl_scalapack_pcols);
             //MKL_INT n_lx_cols = numroc( &gx_cols, &lx_cols, &__state->__mkl_scalapack_mypcol, &__state->__mkl_int_zero, &__state->__mkl_scalapack_pcols);
-            printf(\"x: (%d, %d)\\n\", n_lx_rows, n_lx_cols);
+            //printf(\"x: (%d, %d)\\n\", n_lx_rows, n_lx_cols);
             //assert(lx_rows == n_lx_rows);
             // assert(lx_cols == n_lx_cols);
             MKL_INT x_lld = max(n_lx_rows, 1);
-            printf(\"Px: %d, Py: %d\\n\", __state->__mkl_scalapack_prows, __state->__mkl_scalapack_pcols);
-            printf(\"a: %d, x: %d, y:%d\\n\", a_lld, x_lld, y_lld);
+            //MKL_INT x_lld = (__state->__mkl_scalapack_rank == 0 ? lx_rows : 1);
+            //printf(\"Px: %d, Py: %d\\n\", __state->__mkl_scalapack_prows, __state->__mkl_scalapack_pcols);
+            //printf(\"a: %d, x: %d, y:%d\\n\", a_lld, x_lld, y_lld);
             MKL_INT info;
             MKL_INT _a_ldesc[9],  _x_ldesc[9], _y_ldesc[9];
             descinit(_a_ldesc, &ga_rows, &ga_cols, &la_rows, &la_cols, &__state->__mkl_int_zero, &__state->__mkl_int_zero, &__state->__mkl_scalapack_context, &a_lld, &info);
@@ -67,9 +72,9 @@ class ExpandPgemvMKLMPICH(ExpandTransformation):
             // MKL_INT c_lld = mloc;
             descinit(_y_ldesc, &gy_rows, &gy_cols, &ly_rows, &ly_cols, &__state->__mkl_int_zero, &__state->__mkl_int_zero, &__state->__mkl_scalapack_context, &y_lld, &info);
             MKL_INT _m = ga_rows, _n = ga_cols;
-            // MKL_INT _m = (trans == 'N' ? ga_cols : ga_rows);
-            // MKL_INT _n = (trans == 'N' ? ga_rows : ga_cols);
-            const char transa = 'T';
+            //MKL_INT _m = (trans == 'N' ? ga_cols : ga_rows);
+            //MKL_INT _n = (trans == 'N' ? ga_rows : ga_cols);
+            //const char transa = 'T';
             p{lapack_dtype_str}gemv(
                 &trans, &_m, &_n, &one, _a, &__state->__mkl_int_one, &__state->__mkl_int_one, _a_ldesc,
                 _b, &__state->__mkl_int_one, &__state->__mkl_int_one, _x_ldesc, &__state->__mkl_int_one,
