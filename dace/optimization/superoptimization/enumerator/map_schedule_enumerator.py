@@ -6,7 +6,7 @@ from dace import SDFG, data, nodes, ScheduleType
 import dace.optimization.superoptimization.utils as utils
 
 import dace.transformation.helpers as xfh
-from dace.transformation.dataflow import MapDimShuffle, MapExpansion, MapCollapse, MapTiling, InLocalStorage, OutLocalStorage, MapSchedule, Vectorization
+from dace.transformation.dataflow import MapDimShuffle, MapExpansion, MapCollapse, MapTiling, InLocalStorage, OutLocalStorage, MapSchedule, Vectorization, AccumulateTransient
 
 
 def map_schedule_enumerator(map: SDFG) -> SDFG:
@@ -29,7 +29,8 @@ def map_schedule_enumerator(map: SDFG) -> SDFG:
             for local_storage in _local_storage(expanded_params, in_arrays, out_arrays):
                 local_storage_map_ = SDFG.from_json(tiled_map_tmp)
 
-                _apply_local_storage(local_storage_map_, local_storage=local_storage)
+                if not _apply_local_storage(local_storage_map_, local_storage=local_storage):
+                    continue
                 _collapse_all_maps(local_storage_map_)
 
                 collapsed_params = utils.map_params(local_storage_map_)
@@ -203,15 +204,41 @@ def _apply_local_storage(map: SDFG, local_storage):
             outer_map_exit = map.start_state.exit_node(levels_flat[i])
             inner_map_exit = map.start_state.exit_node(levels_flat[i + 1])
 
-            OutLocalStorage.apply_to(
-                sdfg=map,
-                node_a=inner_map_exit,
-                node_b=outer_map_exit,
-                options={"array": array},
-                save=True,
-                verify=False,
-            )
+            xform = OutLocalStorage()
+            xform._sdfg = map
+            xform.state_id = map.node_id(map.start_state)
+            xform.node_a = inner_map_exit
+            xform.node_b = outer_map_exit
+            xform.array = array
+            if xform.can_be_applied(map.start_state, sdfg=map, expr_index=0):
+                OutLocalStorage.apply_to(
+                    sdfg=map,
+                    node_a=inner_map_exit,
+                    node_b=outer_map_exit,
+                    options={"array": array},
+                    save=True,
+                    verify=False,
+                )
+            else:
+                xform = AccumulateTransient()
+                xform._sdfg = map
+                xform.state_id = map.node_id(map.start_state)
+                xform.map_exit = inner_map_exit
+                xform.outer_map_exit = outer_map_exit
+                xform.array = array
+                if xform.can_be_applied(map.start_state, sdfg=map, expr_index=0):
+                    AccumulateTransient.apply_to(
+                        sdfg=map,
+                        map_exit=inner_map_exit,
+                        outer_map_exit=outer_map_exit,
+                        options={"array": array},
+                        save=True,
+                        verify=False
+                    )
+                else:
+                    return False
 
+    return True
 
 def _apply_parallelization(map: SDFG, parallelization):
     levels = utils.map_levels(map)
@@ -331,10 +358,6 @@ def _arrays(map: SDFG):
 
         out_array = map.arrays[edge.data.data]
         if isinstance(out_array, data.Scalar):
-            continue
-
-        # TODO
-        if not edge.data.wcr is None:
             continue
 
         out_arrays.add(edge.data.data)

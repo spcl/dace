@@ -30,7 +30,10 @@ def measure(sdfg: SDFG,
     with config.set_temporary('instrumentation', 'report_each_invocation', value=False):
         with config.set_temporary('compiler', 'allow_view_arguments', value=True):
             sdfg.instrument = InstrumentationType.Timer
-            csdfg = sdfg.compile(validate=False, in_place=True)
+            try:
+                csdfg = sdfg.compile(validate=False, in_place=True)
+            except:
+                return math.inf, math.inf
 
             proc = MeasureProcess(target=_measure,
                                   args=(sdfg.to_json(), sdfg.build_folder, csdfg._lib._library_filename, arguments,
