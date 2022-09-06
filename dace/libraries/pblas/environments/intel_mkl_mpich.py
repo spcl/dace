@@ -70,7 +70,7 @@ class IntelMKLScaLAPACKMPICH:
 
         libfile = ctypes.util.find_library('mkl_scalapack_lp64')
         if libfile:
-            return os.path.abspath(libpath)
+            return os.path.abspath(libfile)
 
         if 'CONDA_PREFIX' in os.environ:
             warnings.warn('Anaconda Python is installed but the MKL library file cannot be found for linkage. Please '
@@ -120,7 +120,6 @@ class IntelMKLScaLAPACKMPICH:
             libfiles.append(simd_libfile)
         
         libfiles.append("${MPI_mpichcxx_LIBRARY}")
-        # libfiles.append('libmpichcxx.so')
         
         return libfiles
     

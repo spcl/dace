@@ -49,10 +49,6 @@ class IntelMKLScaLAPACKOpenMPI:
     // blacs_exit(&__state->__mkl_int_zero);
     """
     dependencies = []
-    # NOTE: The last library (mkl_avx2) must be set to whatever matches the
-    # target hardware, e.g., mkl_avx512
-    libraries = ["mkl_scalapack_lp64", "mkl_blacs_openmpi_lp64", "mkl_intel_lp64", "mkl_gnu_thread", "mkl_core"]
-    simd = "mkl_avx2"
 
     @staticmethod
     def _find_mkl_lib_path() -> str:
@@ -71,7 +67,7 @@ class IntelMKLScaLAPACKOpenMPI:
 
         libfile = ctypes.util.find_library('mkl_scalapack_lp64')
         if libfile:
-            return os.path.abspath(libpath)
+            return os.path.abspath(libfile)
 
         if 'CONDA_PREFIX' in os.environ:
             warnings.warn('Anaconda Python is installed but the MKL library file cannot be found for linkage. Please '
@@ -103,42 +99,12 @@ class IntelMKLScaLAPACKOpenMPI:
             return []
         else:
             return []
-
-    @staticmethod
-    def cmake_libraries():
-
-        # libpath = IntelMKLScaLAPACKOpenMPI._find_mkl_lib_path()
-
-        # prefix = Config.get('compiler', 'library_prefix')
-        # # suffix = Config.get('compiler', 'library_extension')
-        # suffix = 'a'
-
-        # libfiles = [os.path.join(libpath, f"{prefix}{name}.{suffix}") for name in IntelMKLScaLAPACKOpenMPI.libraries]
-        
-        # simd_libfile = os.path.join(libpath, f"{prefix}{IntelMKLScaLAPACKOpenMPI.simd}.{suffix}")
-        # if not os.path.isfile(simd_libfile):
-        #     simd_libfile = os.path.join(libpath, f"{prefix}{IntelMKLScaLAPACKOpenMPI.simd}.{suffix}.2")
-        # if os.path.isfile(simd_libfile):
-        #     libfiles.append(simd_libfile)
-        
-        # libfiles.append("${MPI_mpi_cxx_LIBRARY}")
-        # libfiles.append('libmpi_cxx.so')
-        
-        # return libfiles
-        # return ["${MPI_mpi_LIBRARY}"]
-        return ['libmpi.so']
     
     @staticmethod
     def cmake_link_flags():
 
         libpath = IntelMKLScaLAPACKOpenMPI._find_mkl_lib_path()
 
-        # return [
-        #     f"{libpath}/libmkl_scalapack_lp64.a -Wl,--start-group {libpath}/libmkl_intel_lp64.a {libpath}/libmkl_gnu_thread.a {libpath}/libmkl_core.a {libpath}/libmkl_blacs_openmpi_lp64.a -Wl,--end-group -lgomp -lpthread -lm -ldl"
-        # ]
         return [
-            f"{libpath}/libmkl_scalapack_lp64.a -Wl,--start-group {libpath}/libmkl_cdft_core.a {libpath}/libmkl_intel_lp64.a {libpath}/libmkl_gnu_thread.a {libpath}/libmkl_core.a {libpath}/libmkl_blacs_openmpi_lp64.a -Wl,--end-group -lmpi -lgomp -lpthread -lm -ldl"
+            f"-Wl,--whole-archive {libpath}/libmkl_scalapack_lp64.a -Wl,--no-whole-archive -Wl,--start-group {libpath}/libmkl_intel_lp64.a {libpath}/libmkl_gnu_thread.a {libpath}/libmkl_core.a -Wl,--whole-archive {libpath}/libmkl_blacs_openmpi_lp64.a -Wl,--no-whole-archive -Wl,--end-group -lmpi -lgomp -lpthread -lm -ldl"
         ]
-        # return [
-        #     f"-L {libpath} -lmkl_scalapack_lp64 -lmkl_blacs_openmpi_lp64  -lmkl_intel_ilp64  -lmkl_gnu_thread -lmkl_core -lgomp -lpthread -lm -ldl"
-        # ]
