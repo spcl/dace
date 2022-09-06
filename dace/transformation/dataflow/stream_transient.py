@@ -185,8 +185,24 @@ class AccumulateTransient(transformation.SingleStateTransformation):
                                                                node_a=map_exit,
                                                                node_b=outer_map_exit)
 
-        if self.identity is None:
-            warnings.warn('AccumulateTransient did not properly initialize ' 'newly-created transient!')
+        # Infer identity
+        identity = self.identity
+        if identity is None:
+            edge = graph.out_edges(map_exit)[0]
+            memlet = edge.data
+
+            red_type = detect_reduction_type(memlet.wcr)
+            if red_type == dtypes.ReductionType.Custom:
+                warnings.warn('AccumulateTransient did not properly initialize '
+                              'newly-created transient!')
+                return
+
+            dtype = sdfg.arrays[memlet.data].dtype
+            identity = dtypes.reduction_identity(dtype, red_type)
+
+        # Special case: use the setzero initialization
+        if identity == 0:
+            data_node.setzero = True
             return
 
         sdfg_state: SDFGState = sdfg.node(self.state_id)
@@ -210,7 +226,7 @@ class AccumulateTransient(transformation.SingleStateTransformation):
             map_ranges={'_o%d' % i: '0:%s' % symstr(d)
                         for i, d in enumerate(temp_array.shape)},
             inputs={},
-            code='out = %s' % self.identity,
+            code='out = %s' % identity,
             outputs={
                 'out':
                 dace.Memlet.simple(data=data_node.data,
