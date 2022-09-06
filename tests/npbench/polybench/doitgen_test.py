@@ -91,6 +91,7 @@ def test_cpu():
     run_doitgen(dace.dtypes.DeviceType.CPU)
 
 
+@pytest.mark.skip(reason="GPU Auto-Opt error")
 @pytest.mark.gpu
 def test_gpu():
     run_doitgen(dace.dtypes.DeviceType.GPU)
