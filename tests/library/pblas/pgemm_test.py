@@ -7,8 +7,6 @@ import pytest
 
 from dace.transformation.auto.auto_optimize import auto_optimize
 from dace.sdfg import utils
-from mpi4py import MPI
-
 
 # Symbols
 
@@ -19,7 +17,6 @@ GM, GN, GK, GR, GS, GT = (dace.symbol(s, positive=True) for s in ('GM', 'GN', 'G
 # Local sizes
 LMx, LMy, LNx, LNy, LKx, LKy = (dace.symbol(s, positive=True) for s in ('LMx', 'LMy', 'LNx', 'LNy', 'LKx', 'LKy'))
 LRx, LRy, LSx, LSy, LTx, LTy = (dace.symbol(s, positive=True) for s in ('LRx', 'LRy', 'LSx', 'LSy', 'LTx', 'LTy'))
-
 
 grids = {
     1: [(1, 1)],
@@ -32,12 +29,13 @@ grids = {
     8: [(8, 1), (4, 2), (2, 4), (1, 8)]
 }
 
-
 rng = np.random.default_rng(42)
 
 
-pytest.mark.scalapack
+@pytest.mark.scalapack
 def test_pgemm():
+
+    from mpi4py import MPI
 
     commworld = MPI.COMM_WORLD
     rank = commworld.Get_rank()
@@ -45,27 +43,27 @@ def test_pgemm():
 
     if size not in grids:
         raise NotImplementedError("Please run this test with 1-8 MPI processes.")
-    
+
     # DaCe programs
     @dace.program
     def pdgemm(A: dace.float64[LMx, LKy], B: dace.float64[LKx, LNy]):
-        return dace.distr.MatMult(A, B, (LMx*Px, LNy*Py, GK))
-    
+        return dace.distr.MatMult(A, B, (LMx * Px, LNy * Py, GK))
+
     @dace.program
-    def gemm(alpha: dace.float64, beta: dace.float64, C: dace.float64[LMx, LNy],
-             A: dace.float64[LMx, LKy], B: dace.float64[LKx, LNy]):
-        C[:] = alpha * dace.distr.MatMult(A, B, (LMx*Px, LNy*Py, GK)) + beta * C
-    
+    def gemm(alpha: dace.float64, beta: dace.float64, C: dace.float64[LMx, LNy], A: dace.float64[LMx, LKy],
+             B: dace.float64[LKx, LNy]):
+        C[:] = alpha * dace.distr.MatMult(A, B, (LMx * Px, LNy * Py, GK)) + beta * C
+
     @dace.program
     def k2mm(alpha: dace.float64, beta: dace.float64, A: dace.float64[LMx, LKy], B: dace.float64[LKx, LNy],
              C: dace.float64[LNx, LRy], D: dace.float64[LMx, LRy]):
-        tmp = dace.distr.MatMult(A, B, (LMx*Px, LNy*Py, GK))
+        tmp = dace.distr.MatMult(A, B, (LMx * Px, LNy * Py, GK))
         D[:] = alpha * dace.distr.MatMult(tmp, C, (GM, GR, GN)) + beta * D
-    
+
     @dace.program
-    def k3mm(A: dace.float64[LMx, LKy], B: dace.float64[LKx, LNy], C: dace.float64[LNx, LRy],
-             D: dace.float64[LRx, LSy], E: dace.float64[LMx, LSy]):
-        tmp1 = dace.distr.MatMult(A, B, (LMx*Px, LNy*Py, GK))
+    def k3mm(A: dace.float64[LMx, LKy], B: dace.float64[LKx, LNy], C: dace.float64[LNx, LRy], D: dace.float64[LRx, LSy],
+             E: dace.float64[LMx, LSy]):
+        tmp1 = dace.distr.MatMult(A, B, (LMx * Px, LNy * Py, GK))
         tmp2 = dace.distr.MatMult(tmp1, C, (GM, GR, GN))
         E[:] = dace.distr.MatMult(tmp2, D, (GM, GS, GR))
 
@@ -75,10 +73,10 @@ def test_pgemm():
             return auto_optimize(sdfg, dace.DeviceType.CPU)
         else:
             return None
-    
+
     def compile(sdfg):
         return utils.distributed_compile(sdfg, commworld)
-    
+
     sdfgs = []
     for prog in (pdgemm, gemm, k2mm, k3mm):
         sdfgs.append(optimize(prog))
@@ -97,45 +95,45 @@ def test_pgemm():
         Smult = 67
         M, N, K, R, S = size * Mmult, size * Nmult, size * Kmult, size * Rmult, size * Smult
 
-        for _ in range(5): # The sizes are permuted at the end of each iteration.
+        for _ in range(5):  # The sizes are permuted at the end of each iteration.
 
             funcs = []
             for sd in sdfgs:
                 funcs.append(compile(sd))
             func, func1, func2, func3 = funcs
-            
+
             A = rng.random((M, K), dtype=np.float64)
             B = rng.random((K, N), dtype=np.float64)
             C = A @ B
 
             ti, tj, tki, tkj = M // NPx, N // NPy, K // NPx, K // NPy
-            lA = A[i*ti:(i+1)*ti, j*tkj:(j+1)*tkj].copy()
-            lB = B[i*tki:(i+1)*tki, j*tj:(j+1)*tj].copy()
+            lA = A[i * ti:(i + 1) * ti, j * tkj:(j + 1) * tkj].copy()
+            lB = B[i * tki:(i + 1) * tki, j * tj:(j + 1) * tj].copy()
 
             val = func(A=lA, B=lB, LMx=ti, LNy=tj, LKx=tki, LKy=tkj, GK=K, Px=NPx, Py=NPy)
-            ref = C[i*ti:(i+1)*ti, j*tj:(j+1)*tj]
-            assert(np.allclose(val, ref))
+            ref = C[i * ti:(i + 1) * ti, j * tj:(j + 1) * tj]
+            assert (np.allclose(val, ref))
 
             commworld.Barrier()
-            
+
             A = rng.random((M, K), dtype=np.float64)
             B = rng.random((K, N), dtype=np.float64)
             C = rng.random((M, N), dtype=np.float64)
             alpha = 1.5
             beta = 1.2
-            C2 = alpha * A @ B + beta * C 
+            C2 = alpha * A @ B + beta * C
 
             ti, tj, tki, tkj = M // NPx, N // NPy, K // NPx, K // NPy
-            lA = A[i*ti:(i+1)*ti, j*tkj:(j+1)*tkj].copy()
-            lB = B[i*tki:(i+1)*tki, j*tj:(j+1)*tj].copy()
-            lC = C[i*ti:(i+1)*ti, j*tj:(j+1)*tj].copy()
+            lA = A[i * ti:(i + 1) * ti, j * tkj:(j + 1) * tkj].copy()
+            lB = B[i * tki:(i + 1) * tki, j * tj:(j + 1) * tj].copy()
+            lC = C[i * ti:(i + 1) * ti, j * tj:(j + 1) * tj].copy()
 
             func1(alpha=alpha, beta=beta, C=lC, A=lA, B=lB, LMx=ti, LNy=tj, LKx=tki, LKy=tkj, GK=K, Px=NPx, Py=NPy)
-            ref = C2[i*ti:(i+1)*ti, j*tj:(j+1)*tj]
-            assert(np.allclose(lC, ref))
+            ref = C2[i * ti:(i + 1) * ti, j * tj:(j + 1) * tj]
+            assert (np.allclose(lC, ref))
 
             commworld.Barrier()
-            
+
             A = rng.random((M, K), dtype=np.float64)
             B = rng.random((K, N), dtype=np.float64)
             C = rng.random((N, R), dtype=np.float64)
@@ -146,18 +144,34 @@ def test_pgemm():
 
             ti, tj, tki, tkj = M // NPx, N // NPy, K // NPx, K // NPy
             tji, tr = N // NPx, R // NPy
-            lA = A[i*ti:(i+1)*ti, j*tkj:(j+1)*tkj].copy()
-            lB = B[i*tki:(i+1)*tki, j*tj:(j+1)*tj].copy()
-            lC = C[i*tji:(i+1)*tji, j*tr:(j+1)*tr].copy()
-            lD = D[i*ti:(i+1)*ti, j*tr:(j+1)*tr].copy()
+            lA = A[i * ti:(i + 1) * ti, j * tkj:(j + 1) * tkj].copy()
+            lB = B[i * tki:(i + 1) * tki, j * tj:(j + 1) * tj].copy()
+            lC = C[i * tji:(i + 1) * tji, j * tr:(j + 1) * tr].copy()
+            lD = D[i * ti:(i + 1) * ti, j * tr:(j + 1) * tr].copy()
 
-            func2(alpha=alpha, beta=beta, A=lA, B=lB, C=lC, D=lD, LMx=ti, LNy=tj, LKx=tki, LKy=tkj, LNx=tji, LRy=tr,
-                  GM=M, GN=N, GK=K, GR=R, Px=NPx, Py=NPy)
-            ref = D2[i*ti:(i+1)*ti, j*tr:(j+1)*tr]
-            assert(np.allclose(lD, ref))
+            func2(alpha=alpha,
+                  beta=beta,
+                  A=lA,
+                  B=lB,
+                  C=lC,
+                  D=lD,
+                  LMx=ti,
+                  LNy=tj,
+                  LKx=tki,
+                  LKy=tkj,
+                  LNx=tji,
+                  LRy=tr,
+                  GM=M,
+                  GN=N,
+                  GK=K,
+                  GR=R,
+                  Px=NPx,
+                  Py=NPy)
+            ref = D2[i * ti:(i + 1) * ti, j * tr:(j + 1) * tr]
+            assert (np.allclose(lD, ref))
 
             commworld.Barrier()
-            
+
             A = rng.random((M, K), dtype=np.float64)
             B = rng.random((K, N), dtype=np.float64)
             C = rng.random((N, R), dtype=np.float64)
@@ -168,16 +182,34 @@ def test_pgemm():
 
             ti, tj, tki, tkj = M // NPx, N // NPy, K // NPx, K // NPy
             tji, tri, trj, ts = N // NPx, R // NPx, R // NPy, S // NPy
-            lA = A[i*ti:(i+1)*ti, j*tkj:(j+1)*tkj].copy()
-            lB = B[i*tki:(i+1)*tki, j*tj:(j+1)*tj].copy()
-            lC = C[i*tji:(i+1)*tji, j*trj:(j+1)*trj].copy()
-            lD = D[i*tri:(i+1)*tri, j*ts:(j+1)*ts].copy()
+            lA = A[i * ti:(i + 1) * ti, j * tkj:(j + 1) * tkj].copy()
+            lB = B[i * tki:(i + 1) * tki, j * tj:(j + 1) * tj].copy()
+            lC = C[i * tji:(i + 1) * tji, j * trj:(j + 1) * trj].copy()
+            lD = D[i * tri:(i + 1) * tri, j * ts:(j + 1) * ts].copy()
 
             val = np.ndarray((ti, ts), dtype=np.float64)
-            func3(A=lA, B=lB, C=lC, D=lD, E=val, LMx=ti, LNy=tj, LKx=tki, LKy=tkj, LNx=tji, LRx=tri, LRy=trj, LSy=ts,
-                  GM=M, GN=N, GK=K, GR=R, GS=S, Px=NPx, Py=NPy)
-            ref = E[i*ti:(i+1)*ti, j*ts:(j+1)*ts]
-            assert(np.allclose(val, ref))
+            func3(A=lA,
+                  B=lB,
+                  C=lC,
+                  D=lD,
+                  E=val,
+                  LMx=ti,
+                  LNy=tj,
+                  LKx=tki,
+                  LKy=tkj,
+                  LNx=tji,
+                  LRx=tri,
+                  LRy=trj,
+                  LSy=ts,
+                  GM=M,
+                  GN=N,
+                  GK=K,
+                  GR=R,
+                  GS=S,
+                  Px=NPx,
+                  Py=NPy)
+            ref = E[i * ti:(i + 1) * ti, j * ts:(j + 1) * ts]
+            assert (np.allclose(val, ref))
 
             M, N, K, R, S = N, K, R, S, M
 
