@@ -149,7 +149,7 @@ def run_deriche(device_type: dace.dtypes.DeviceType):
 def test_cpu():
     run_deriche(dace.dtypes.DeviceType.CPU)
 
-
+@pytest.mark.skip(reason="GPU AutoOpt support")
 @pytest.mark.gpu
 def test_gpu():
     run_deriche(dace.dtypes.DeviceType.GPU)
