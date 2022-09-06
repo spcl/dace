@@ -64,7 +64,7 @@ jobs:
         export DACE_optimizer_interface=" "
         for i in {1..8}
         do
-          mpirun -n $i coverage run --source=dace -m pytest -x --with-mpi --tb=short -m "scalapack"
+          mpirun -n "$i" coverage run --source=dace -m pytest -x --with-mpi --tb=short -m "scalapack"
         done
 
     - name: Report overall coverage
