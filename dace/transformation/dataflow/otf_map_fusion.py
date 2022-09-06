@@ -62,16 +62,10 @@ class OTFMapFusion(transformation.SingleStateTransformation):
             memlet = edge.data
 
             # Limitation: Only scalars for now
-            for access in memlet.subset:
-                b, e, s = access
-                if s > 1:
-                    return False
+            if memlet.num_elements() > 1:
+                return False
 
-                length = symbolic.evaluate(e - b, symbols=sdfg.constants)
-                if length > 1:
-                    return False
-
-            # WCR must have identity zero. Otherwise, we must specifically initialize the temporary data
+            # In general, WCR requires initialization of the data with the identity of the reduction. In the special case of "0"-identity, we don't need to explicitly initialize but can set the "setzero" flag at creation of the data. This avoids adding states.
             if not memlet.wcr is None:
                 red_type = detect_reduction_type(memlet.wcr)
                 if red_type == dtypes.ReductionType.Custom:
@@ -100,14 +94,8 @@ class OTFMapFusion(transformation.SingleStateTransformation):
                 continue
 
             # Only fuse scalars
-            for access in memlet.subset:
-                b, e, s = access
-                if s > 1:
-                    return False
-
-                length = symbolic.evaluate(e - b, symbols=sdfg.constants)
-                if length > 1:
-                    return False
+            if memlet.num_elements() > 1:
+                return False
 
             if memlet.data not in in_memlets:
                 in_memlets[memlet.data] = {}
@@ -254,7 +242,6 @@ class OTFMapFusion(transformation.SingleStateTransformation):
                     ranges = []
                     for access in node.map.range:
                         b, e, s = access
-
                         b = symbolic.pystr_to_symbolic(b)
                         e = symbolic.pystr_to_symbolic(e)
                         s = symbolic.pystr_to_symbolic(s)
@@ -263,7 +250,7 @@ class OTFMapFusion(transformation.SingleStateTransformation):
                         e = e.subs(param_mapping)
                         s = s.subs(param_mapping)
 
-                        ranges.append((str(b), str(e), str(s)))
+                        ranges.append((b, e, s))
                     node.map.range = Range(ranges)
 
                     # Re-name all memlets in subgraph
@@ -283,7 +270,7 @@ class OTFMapFusion(transformation.SingleStateTransformation):
                             e = e.subs(scope_subs)
                             s = s.subs(scope_subs)
 
-                            ranges.append((str(b), str(e), str(s)))
+                            ranges.append((b, e, s))
                         memlet.subset = Range(ranges)
 
                 # Now connect the nodes to the otf_scalar and second map entry
@@ -324,7 +311,7 @@ class OTFMapFusion(transformation.SingleStateTransformation):
                             e = e.subs(param_mapping)
                             s = s.subs(param_mapping)
 
-                            ranges.append((str(b), str(e), str(s)))
+                            ranges.append((b, e, s))
 
                         memlet.subset = Range(ranges)
 
@@ -453,13 +440,6 @@ class OTFMapFusion(transformation.SingleStateTransformation):
 
             # Step is constant
             assert (s0 - s1) == 0
-
-            b_eq = sympy.Eq(b0, b1)
-            e_eq = sympy.Eq(e0, e1)
-
-            params = b0.free_symbols.union(e0.free_symbols)
-            params = params.intersection(first_params_subs_.keys())
-
             if (b0 - b1) == 0 and (e0 - e1) == 0:
                 if b0 in mapping:
                     return None
