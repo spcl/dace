@@ -62,6 +62,7 @@ jobs:
         export DACE_testing_deserialize_exception=1
         export DACE_cache=unique
         export DACE_optimizer_interface=" "
+        export DACE_library_pblas_default_implementation=MKLOpenMPI
         for i in {1..8}
         do
           mpirun -n "$i" coverage run --source=dace -m pytest -x --with-mpi --tb=short -m "scalapack"

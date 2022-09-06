@@ -107,6 +107,9 @@ def test_pgemv():
 
         for _ in range(2):  # The sizes are permuted at the end of each iteration.
 
+            if rank == 0:
+                print(f"Testing PBLAS GEMV on a [{NPx}, {NPy}] grid with sizes ({M}, {N}).", flush=True)
+
             funcs = []
             for sd in sdfgs:
                 funcs.append(compile(sd))
@@ -235,7 +238,7 @@ def test_pgemv():
             if rank == 0:
                 assert (np.allclose(val, y))
 
-        M, N = N, M
+            M, N = N, M
 
 
 if __name__ == '__main__':
