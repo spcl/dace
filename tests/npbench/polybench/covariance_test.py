@@ -81,7 +81,7 @@ def run_covariance(device_type: dace.dtypes.DeviceType):
     gt_data = np.copy(data)
 
     if device_type in {dace.dtypes.DeviceType.CPU, dace.dtypes.DeviceType.GPU}:
-        # Parse the SDFG and apply autopot
+        # Parse the SDFG and apply auto-opt
         sdfg = covariance_kernel.to_sdfg()
         sdfg = auto_optimize(sdfg, device_type)
         dace_res = sdfg(float_n=float_n, data=data, M=M, N=N)

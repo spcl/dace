@@ -75,7 +75,7 @@ def run_durbin(device_type: dace.dtypes.DeviceType):
     y_ref = ground_truth(r)
 
     if device_type in {dace.dtypes.DeviceType.CPU, dace.dtypes.DeviceType.GPU}:
-        # Parse the SDFG and apply autopot
+        # Parse the SDFG and apply auto-opt
         sdfg = durbin_kernel.to_sdfg()
         sdfg = auto_optimize(sdfg, device_type)
         y = sdfg(r, N=N)

@@ -124,7 +124,7 @@ def run_adi(device_type: dace.dtypes.DeviceType):
     dace_u = u.copy()
 
     if device_type in {dace.dtypes.DeviceType.CPU, dace.dtypes.DeviceType.GPU}:
-        # Parse the SDFG and apply autopot
+        # Parse the SDFG and apply auto-opt
         sdfg = dace_kernel.to_sdfg()
         sdfg = auto_optimize(sdfg, device_type)
         sdfg(TSTEPS=TSTEPS, u=dace_u, N=N)

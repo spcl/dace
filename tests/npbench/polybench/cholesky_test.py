@@ -60,7 +60,7 @@ def run_cholesky(device_type: dace.dtypes.DeviceType):
     A = init_data(N)
     gt_A = np.copy(A)
     if device_type in {dace.dtypes.DeviceType.CPU, dace.dtypes.DeviceType.GPU}:
-        # Parse the SDFG and apply autopot
+        # Parse the SDFG and apply auto-opt
         sdfg = kernel.to_sdfg()
         sdfg = auto_optimize(sdfg, device_type)
         sdfg(A=A, N=N)

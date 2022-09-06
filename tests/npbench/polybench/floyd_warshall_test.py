@@ -54,7 +54,7 @@ def run_floyd_warshall(device_type: dace.dtypes.DeviceType):
     gt_path = np.copy(path)
 
     if device_type in {dace.dtypes.DeviceType.CPU, dace.dtypes.DeviceType.GPU}:
-        # Parse the SDFG and apply autopot
+        # Parse the SDFG and apply auto-opt
         sdfg = kernel.to_sdfg()
         sdfg = auto_optimize(sdfg, device_type)
         sdfg(path=path, N=N)

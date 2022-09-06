@@ -37,7 +37,7 @@ def run_bicg(device_type: dace.dtypes.DeviceType):
     A, p, r = initialize(M, N)
 
     if device_type in {dace.dtypes.DeviceType.CPU, dace.dtypes.DeviceType.GPU}:
-        # Parse the SDFG and apply autopot
+        # Parse the SDFG and apply auto-opt
         sdfg = bicg_kernel.to_sdfg()
         sdfg = auto_optimize(sdfg, device_type)
         s, q = sdfg(A, p, r, M=M, N=N)
@@ -53,7 +53,7 @@ def run_bicg(device_type: dace.dtypes.DeviceType):
         from dace.libraries.blas import Gemv
         Gemv.default_implementation = "FPGA_Accumulate"
         sdfg.expand_library_nodes()
-        
+
         sm_applied = sdfg.apply_transformations_repeated([InlineSDFG, StreamingMemory],
                                                          [{}, {
                                                              'storage': dace.StorageType.FPGA_Local

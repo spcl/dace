@@ -43,7 +43,7 @@ def run_atax(device_type: dace.dtypes.DeviceType):
     A, x, y_ref = init_data(M, N)
 
     if device_type in {dace.dtypes.DeviceType.CPU, dace.dtypes.DeviceType.GPU}:
-        # Parse the SDFG and apply autopot
+        # Parse the SDFG and apply auto-opt
         sdfg = kernel.to_sdfg()
         sdfg = auto_optimize(sdfg, device_type)
         y = sdfg(A, x, M=M, N=N)

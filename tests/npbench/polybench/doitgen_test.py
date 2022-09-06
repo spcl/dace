@@ -56,7 +56,7 @@ def run_doitgen(device_type: dace.dtypes.DeviceType):
     A_ref = np.copy(A)
 
     if device_type in {dace.dtypes.DeviceType.CPU, dace.dtypes.DeviceType.GPU}:
-        # Parse the SDFG and apply autopot
+        # Parse the SDFG and apply auto-opt
         sdfg = doitgen_kernel.to_sdfg()
         sdfg = auto_optimize(sdfg, device_type)
         sdfg(A, C4, NR=NR, NQ=NQ, NP=NP)
