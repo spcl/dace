@@ -321,9 +321,9 @@ class LIKWIDInstrumentationGPU(InstrumentationProvider):
         global_stream.write(header_code, sdfg)
 
         init_code = f'''
-setenv("LIKWID_GPUS", "0", 1);
-setenv("LIKWID_GEVENTS", "{self._default_events}", 1);
-setenv("LIKWID_GPUFILEPATH", "{likwid_marker_file_gpu.absolute()}", 1);
+setenv("LIKWID_GPUS", "0", 0);
+setenv("LIKWID_GEVENTS", "{self._default_events}", 0);
+setenv("LIKWID_GPUFILEPATH", "{likwid_marker_file_gpu.absolute()}", 0);
 
 LIKWID_NVMARKER_INIT;
 '''
