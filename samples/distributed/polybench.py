@@ -85,7 +85,6 @@ def optimize_compile(program, rank, commworld, autoopt=True):
         sdfg = program.to_sdfg(simplify=True)
         if autoopt:
             sdfg = auto_optimize(sdfg, dace.DeviceType.CPU)
-            sdfg.simplify()
     return utils.distributed_compile(sdfg, commworld)
 
 
