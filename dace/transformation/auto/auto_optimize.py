@@ -582,7 +582,6 @@ def auto_optimize(sdfg: SDFG,
     infer_types.infer_connector_types(sdfg)
     infer_types.set_default_schedule_and_storage_types(sdfg, None)
     sdfg.expand_library_nodes()
-    sdfg.simplify()
 
     # TODO(later): Safe vectorization
 
