@@ -4,6 +4,7 @@ from dace.config import Config
 import dace.library
 import ctypes.util
 import warnings
+from typing import Union
 
 
 @dace.library.environment
@@ -127,7 +128,20 @@ class IntelMKLScaLAPACKMPICH:
     @staticmethod
     def cmake_link_flags():
 
-        is_daint = bool(int(os.getenv('IS_DAINT')))
+        # From https://stackoverflow.com/questions/15008758/parsing-boolean-values-with-argparse
+        def str2bool(v: Union[None, str, bool]) -> bool:
+            if v is None:
+                return False
+            if isinstance(v, bool):
+                return v
+            if isinstance(v, str):
+                if v.lower() in ('yes', 'true', 't', 'y', '1'):
+                    return True
+                if v.lower() in ('no', 'false', 'f', 'n', '0'):
+                    return False
+            return False
+
+        is_daint = str2bool(os.getenv('IS_DAINT'))
         if is_daint:
             mpichlib_path = "-L /opt/cray/pe/mpt/7.7.18/gni/mpich-gnu/8.2/lib"
             mpichlib_name = "mpichcxx_gnu_82"

@@ -608,9 +608,9 @@ def run_gesummv(validate=False):
     cart_comm = commworld.Create_cart((NPx, NPy))
     i, j = cart_comm.Get_coords(rank)
 
-    sizes = gemver_sizes
+    sizes = gesummv_sizes
     if validate:
-        sizes = [int_ceil(s, 100) for s in gemver_sizes]
+        sizes = [int_ceil(s, 100) for s in gesummv_sizes]
 
     if rank == 0:
         print("===== gesummv =====")
@@ -925,7 +925,6 @@ def mvt_distr_init(N, lM, lN, datatype, pi, pj):
     x2 = np.fromfunction(lambda i: ((i + 1) % N) / N, shape=(N, ), dtype=datatype)
     y_1 = np.fromfunction(lambda i: ((i + 3) % N) / N, shape=(N, ), dtype=datatype)
     y_2 = np.fromfunction(lambda i: ((i + 4) % N) / N, shape=(N, ), dtype=datatype)
-    A = np.fromfunction(lambda i, j: (i * j % N) / N, shape=(N, N), dtype=datatype)
     A = np.fromfunction(lambda i, j: (l2g(i, pi, lM) * l2g(j, pj, lN) % N) / N, shape=(lM, lN), dtype=datatype)
     return x1, x2, y_1, y_2, A
 
