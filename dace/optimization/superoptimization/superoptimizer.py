@@ -1,3 +1,4 @@
+import ast
 import copy
 import math
 import time
@@ -37,7 +38,6 @@ LOWER_BOUND_SCALING = 1.2
 
 
 class Superoptimizer(auto_tuner.AutoTuner):
-
     def __init__(self,
                  sdfg: SDFG,
                  device_type: DeviceType = DeviceType.CPU,
@@ -80,6 +80,7 @@ class Superoptimizer(auto_tuner.AutoTuner):
         if not compile_folder is None:
             sdfg.build_folder = compile_folder
 
+        print("Measuring initial runtime")
         arguments = arguments_from_data_report(sdfg, data_report=dreport)
         initial_time, _ = measure(sdfg, arguments=arguments, measurements=self._measurements, warmup=self._warmup)
         print(f"Initial time {initial_time}")
@@ -143,6 +144,8 @@ class Superoptimizer(auto_tuner.AutoTuner):
 
                 with open(subgraph_cache_path, "w") as handle:
                     json.dump(subgraph_cache, handle)
+                with open(self._map_fusion_cache_folder / f"{cutout_hash}.sdfg", "w") as handle:
+                    json.dump(cutout_tmp_copy, handle)
 
             # Collect map entries for lower bounds
             subgraph_nodes = set(subgraph.nodes())
@@ -153,26 +156,34 @@ class Superoptimizer(auto_tuner.AutoTuner):
             subgraph_map_runtimes = sorted(subgraph_map_runtimes)
 
             if "best fusion" in subgraph_cache[cutout_hash]:
-                best_fusion = subgraph_cache[cutout_hash]["best fusion"]["fusion"]
+                best_fusion_desc = subgraph_cache[cutout_hash]["best fusion"]["fusion"]
                 best_runtime = subgraph_cache[cutout_hash]["best fusion"]["runtime"]
                 best_process_time = subgraph_cache[cutout_hash]["best fusion"]["process time"]
 
-                for match in best_fusion:
-                    first_map_entry, access_node, second_map_entry = match
-                    first_map_exit = subgraph.graph.exit_node(first_map_entry)
+                if not best_fusion_desc is None:
+                    best_fusion = []
+                    for match in ast.literal_eval(best_fusion_desc):
+                        first_map_entry_id, access_node_id, second_map_entry_id = match
+                        first_map_entry = cutout.start_state.node(first_map_entry_id)
+                        access_node = cutout.start_state.node(access_node_id)
+                        second_map_entry = cutout.start_state.node(second_map_entry_id)
+                        first_map_exit = subgraph.graph.exit_node(first_map_entry)
 
-                    OTFMapFusion.apply_to(sdfg=sdfg,
-                                          first_map_exit=first_map_exit,
-                                          array=access_node,
-                                          second_map_entry=second_map_entry,
-                                          verify=True,
-                                          save=True)
+                        best_fusion.append((first_map_exit, access_node, second_map_entry))
+
+                    for (f, a, s) in best_fusion:
+                        OTFMapFusion.apply_to(sdfg=sdfg,
+                                              first_map_exit=f,
+                                              array=a,
+                                              second_map_entry=s,
+                                              verify=True,
+                                              save=True)
                     continue
 
             # Optimize over fusions
             best_process_time = subgraph_cache[cutout_hash]["process time"]
             best_runtime = subgraph_cache[cutout_hash]["runtime"]
-            best_fusion = []
+            best_fusion_desc = None
             for k in range(len(matches), -1, -1):
                 t = len(matches) - k + 1
                 lb = sum(subgraph_map_runtimes[:t]) * LOWER_BOUND_SCALING
@@ -202,7 +213,7 @@ class Superoptimizer(auto_tuner.AutoTuner):
 
                         k_fusion_desc.append((f_node_id, array_node_id, s_node_id))
 
-                    k_fusion_desc = str(tuple(sorted(k_fusion_desc)))
+                    k_fusion_desc = str(k_fusion_desc)
 
                     if not k_fusion_desc in subgraph_cache[cutout_hash]["fusions"]:
                         # Applying fusion in topological order
@@ -214,10 +225,6 @@ class Superoptimizer(auto_tuner.AutoTuner):
                                                   second_map_entry=second_map_entry,
                                                   verify=False,
                                                   save=False)
-
-                        # Small tuning
-                        make_transients_persistent(sdfg=fused, device=self._device_type)
-                        move_small_arrays_to_stack(sdfg=fused)
 
                         try:
                             fused.validate()
@@ -241,7 +248,7 @@ class Superoptimizer(auto_tuner.AutoTuner):
                     if best_runtime / fused_time >= MINIMUM_SPEEDUP:
                         best_process_time = fused_process_time
                         best_runtime = fused_time
-                        best_fusion = k_fusions
+                        best_fusion_desc = k_fusion_desc
 
                     end = time.time()
                     print(
@@ -267,21 +274,29 @@ class Superoptimizer(auto_tuner.AutoTuner):
             subgraph_cache[cutout_hash]["best fusion"] = {
                 "runtime": best_runtime,
                 "process time": best_process_time,
-                "fusion": best_fusion
+                "fusion": best_fusion_desc
             }
             with open(subgraph_cache_path, "w") as handle:
                 json.dump(subgraph_cache, handle)
 
-            for match in best_fusion:
-                first_map_entry, access_node, second_map_entry = match
-                first_map_exit = subgraph.graph.exit_node(first_map_entry)
+            if not best_fusion_desc is None:
+                best_fusion = []
+                for match in ast.literal_eval(best_fusion_desc):
+                    first_map_entry_id, access_node_id, second_map_entry_id = match
+                    first_map_entry = cutout.start_state.node(first_map_entry_id)
+                    access_node = cutout.start_state.node(access_node_id)
+                    second_map_entry = cutout.start_state.node(second_map_entry_id)
+                    first_map_exit = subgraph.graph.exit_node(first_map_entry)
 
-                OTFMapFusion.apply_to(sdfg=sdfg,
-                                      first_map_exit=first_map_exit,
-                                      array=access_node,
-                                      second_map_entry=second_map_entry,
-                                      verify=True,
-                                      save=True)
+                    best_fusion.append((first_map_exit, access_node, second_map_entry))
+
+                for (f, a, s) in best_fusion:
+                    OTFMapFusion.apply_to(sdfg=sdfg,
+                                          first_map_exit=f,
+                                          array=a,
+                                          second_map_entry=s,
+                                          verify=True,
+                                          save=True)
 
     def _optimize_maps(self, sdfg: SDFG, data_report: InstrumentedDataReport) -> None:
         maps = {}
@@ -348,6 +363,8 @@ class Superoptimizer(auto_tuner.AutoTuner):
 
             with open(map_cache_path, "w") as handle:
                 json.dump(map_cache, handle)
+            with open(self._map_schedule_cache_folder / f"{map_hash}.sdfg", "w") as handle:
+                json.dump(map.to_json(), handle)
 
         if "best schedule" in map_cache[map_hash]:
             best_schedule = map_cache[map_hash]["best schedule"]["schedule"]
@@ -365,11 +382,6 @@ class Superoptimizer(auto_tuner.AutoTuner):
         print(f"Initial time {initial_time}")
         for scheduled_map, schedule_desc in map_schedule_enumerator(map):
             scheduled_map.build_folder = map.build_folder
-
-            # Tuning
-            make_transients_persistent(sdfg=scheduled_map, device=self._device_type)
-            move_small_arrays_to_stack(sdfg=scheduled_map)
-
             if not schedule_desc in map_cache[map_hash]["schedules"]:
                 runtime, process_time = measure(scheduled_map,
                                                 arguments,
@@ -465,16 +477,70 @@ class Superoptimizer(auto_tuner.AutoTuner):
 
     @staticmethod
     def _apply_map_schedule(sdfg: SDFG, state: SDFGState, cutout: SDFG, transformations: List):
-        # TODO: This only works for a subset of transformations
-        # I.e., transformations on cutout translate to transformations in original state
+        # Restrict area of interest in state to subgraph of cutout
+        subgraph = cutout
+
+        cutout_ = copy.deepcopy(cutout)
         for trans in transformations:
-            xform = copy.deepcopy(trans)
+            pattern = copy.deepcopy(trans)
+            for pattern_node in trans["_subgraph"]:
+                node = cutout_.start_state.node(trans["_subgraph"][pattern_node])
+                node_type = type(node)
 
-            xform = PatternTransformation.from_json(xform)
-            xform._sdfg = cutout
-            xform.state_id = cutout.node_id(cutout.start_state)
+                scope_level = 0
+                scope_entry = cutout_.start_state.entry_node(node)
+                while not scope_entry is None:
+                    scope_level += 1
+                    scope_entry = cutout_.start_state.entry_node(scope_entry)
 
-            xform.apply(cutout.start_state, cutout)
+                pattern["_subgraph"][pattern_node] = {"type": node_type, "scope_level": scope_level}
+
+            sdfg_trans = copy.deepcopy(trans)
+            nodes_picked = set()
+            for pattern_node in pattern["_subgraph"]:
+                picked = False
+                for node in subgraph.start_state.nodes():
+                    if node in nodes_picked:
+                        continue
+
+                    node_type = type(node)
+
+                    scope_level = 0
+                    scope_entry = state.entry_node(node)
+                    while not scope_entry is None:
+                        scope_level += 1
+                        scope_entry = state.entry_node(scope_entry)
+
+                    if pattern["_subgraph"][pattern_node]["type"] == node_type and pattern["_subgraph"][pattern_node][
+                            "scope_level"] == scope_level:
+                        sdfg_trans["_subgraph"][pattern_node] = state.node_id(node)
+                        nodes_picked.add(node)
+                        picked = True
+                        break
+
+                if not picked:
+                    raise ValueError("Pattern not mached")
+
+            xform = PatternTransformation.from_json(trans)
+            xform._sdfg = cutout_
+            xform.state_id = cutout_.node_id(cutout_.start_state)
+            xform.apply(cutout_.start_state, cutout_)
+
+            xform = PatternTransformation.from_json(sdfg_trans)
+            xform._sdfg = sdfg
+            xform.state_id = sdfg.node_id(state)
+            xform.apply(state, sdfg)
+
+            top_level_map = None
+            for node in subgraph.start_state.nodes():
+                if isinstance(node, nodes.MapEntry):
+                    top_level_map = node
+                    break
+
+            while not state.entry_node(top_level_map) is None:
+                top_level_map = state.entry_node(top_level_map)
+
+            subgraph = utils.cutout_map(state, top_level_map, make_copy=False)
 
         sdfg.validate()
 

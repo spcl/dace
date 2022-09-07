@@ -227,18 +227,17 @@ def _apply_local_storage(map: SDFG, local_storage):
                 xform.outer_map_exit = outer_map_exit
                 xform.array = array
                 if xform.can_be_applied(map.start_state, sdfg=map, expr_index=0):
-                    AccumulateTransient.apply_to(
-                        sdfg=map,
-                        map_exit=inner_map_exit,
-                        outer_map_exit=outer_map_exit,
-                        options={"array": array},
-                        save=True,
-                        verify=False
-                    )
+                    AccumulateTransient.apply_to(sdfg=map,
+                                                 map_exit=inner_map_exit,
+                                                 outer_map_exit=outer_map_exit,
+                                                 options={"array": array},
+                                                 save=True,
+                                                 verify=False)
                 else:
                     return False
 
     return True
+
 
 def _apply_parallelization(map: SDFG, parallelization):
     levels = utils.map_levels(map)
@@ -287,7 +286,7 @@ def _apply_vectorization(map: SDFG, vector_len: int):
                                save=True,
                                verify=False)
         return True
-    
+
     return False
 
 
