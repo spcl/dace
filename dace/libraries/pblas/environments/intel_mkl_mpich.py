@@ -117,7 +117,8 @@ class IntelMKLScaLAPACKMPICH:
         if not os.path.isfile(simd_libfile):
             for num in range(1, 6):
                 simd_libfile = os.path.join(libpath, f"{prefix}{IntelMKLScaLAPACKMPICH.simd}.{suffix}.{num}")
-                break
+                if os.path.isfile(simd_libfile):
+                    break
         if os.path.isfile(simd_libfile):
             libfiles.append(simd_libfile)
 
@@ -126,7 +127,7 @@ class IntelMKLScaLAPACKMPICH:
     @staticmethod
     def cmake_link_flags():
 
-        is_daint = bool(os.getenv('IS_DAINT'))
+        is_daint = bool(int(os.getenv('IS_DAINT')))
         if is_daint:
             mpichlib_path = "-L /opt/cray/pe/mpt/7.7.18/gni/mpich-gnu/8.2/lib"
             mpichlib_name = "mpichcxx_gnu_82"
