@@ -3,6 +3,7 @@ import os
 from dace.config import Config
 import dace.library
 import ctypes.util
+import subprocess
 import warnings
 
 
@@ -119,15 +120,21 @@ class IntelMKLScaLAPACKMPICH:
         if os.path.isfile(simd_libfile):
             libfiles.append(simd_libfile)
         
-        libfiles.append("${MPI_mpichcxx_LIBRARY}")
-        
         return libfiles
     
     @staticmethod
     def cmake_link_flags():
 
+        is_cray = subprocess.check_output(['hostname']).decode('utf-8').startswith('daint')
+        if is_cray:
+            mpichlib_path = "-L /opt/cray/pe/mpt/7.7.18/gni/mpich-gnu/8.2/lib"
+            mpichlib_name = "mpichcxx_gnu_82"
+        else:
+            mpichlib_path = ""
+            mpichlib_name = "mpich"
+
         libpath = IntelMKLScaLAPACKMPICH._find_mkl_lib_path()
 
         return [
-            f"-L {libpath} -lmkl_scalapack_lp64 -Wl,--no-as-needed -lmkl_intel_lp64 -lmkl_gnu_thread -lmkl_core -lmkl_blacs_intelmpi_lp64 -lmpich -lgomp -lpthread -lm -ldl"
+            f"-L {libpath} -lmkl_scalapack_lp64 -Wl,--no-as-needed -lmkl_intel_lp64 -lmkl_gnu_thread -lmkl_core -lmkl_blacs_intelmpi_lp64 {mpichlib_path} -l{mpichlib_name} -lgomp -lpthread -lm -ldl"
         ]
