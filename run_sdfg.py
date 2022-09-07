@@ -17,19 +17,63 @@ from random import randint
 #     # a = i
 #     return bleh
 
+@dace
+def refs(a, b, i, out):
+    aa = a
+    bb = b
+    if i < 5:
+        c = np.copy(aa)
+    else:
+        c = bb
+    out[:] = c
+
+
+@dace
+def refs(A, B, i, out):
+    if i < 5:
+        ref = A
+    else:
+        ref = B
+    out[:] = ref
+
+@dace
+def fors(A, B):
+    
+    a = 0
+    for i in range(7):
+        a = a + 1
+
+
+a = np.random.rand(20)
+b = np.random.rand(20)
+i = 1
+out = np.random.rand(20)
+sdfg = refs.to_sdfg(a, b, i, out)
+sdfg.save('bla.sdfg')
+
 @dace.program
 def main(x: int, b):
 
-    i = np.full((20,), 1)
+    i = np.full((20,), 0)
 
     if x < 100:
         if x < 50:
-            i = np.full((20,), 2)
+            i = np.full((20,), 50)
     else:
         if x > 200:
-            i = np.full((20,), 3)
+            i = np.full((20,), 200)
 
     return b + i
+
+# @dace.program
+# def main(x: int, b):
+
+#     i = np.full((20,), 1)
+
+#     if x < 100:
+#         i = np.full((20,), 2)
+
+#     return b + i
 
 # def f(x):
 #     return x
@@ -42,7 +86,19 @@ def main(x: int, b):
 
 #     return b
 
-main.to_sdfg(1, np.full((20,), 2)).save('bla.sdfg')
+# return ref fail
+
+# a = np.random.rand(20)
+# b = np.random.rand(20)
+# i = 1
+# out = np.random.rand(20)
+# sdfg = refs.to_sdfg(a, b, i, out)
+# sdfg.validate()
+# sdfg.simplify()
+# sdfg.save('bla.sdfg')
+# sdfg.compile()
+
+# print(main(201, np.full((20,), 2)))
 
 
 # B = 7

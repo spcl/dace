@@ -637,6 +637,19 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         self._start_state = state_id
         self._cached_start_state = self.node(state_id)
 
+    def try_topological_sort(self):
+        """
+        Tries to loop over SDFG states in topological ordering, or through the states
+        in general otherwise.
+        """
+        try:
+            gen = self.topological_sort(self.start_state)
+        except ValueError:
+            gen = self.nodes()
+        
+        yield from gen
+
+
     def set_global_code(self, cpp_code: str, location: str = 'frame'):
         """
         Sets C++ code that will be generated in a global scope on
