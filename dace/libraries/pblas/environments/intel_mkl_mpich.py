@@ -115,7 +115,9 @@ class IntelMKLScaLAPACKMPICH:
         
         simd_libfile = os.path.join(libpath, f"{prefix}{IntelMKLScaLAPACKMPICH.simd}.{suffix}")
         if not os.path.isfile(simd_libfile):
-            simd_libfile = os.path.join(libpath, f"{prefix}{IntelMKLScaLAPACKMPICH.simd}.{suffix}.2")
+            for num in range(1, 6):
+                simd_libfile = os.path.join(libpath, f"{prefix}{IntelMKLScaLAPACKMPICH.simd}.{suffix}.{num}")
+                break
         if os.path.isfile(simd_libfile):
             libfiles.append(simd_libfile)
         
