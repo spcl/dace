@@ -1,6 +1,7 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 """ Assortment of distributed Polybench kernels. """
 
+import argparse
 import csv
 import dace
 import numpy as np
@@ -9,6 +10,7 @@ import timeit
 from mpi4py import MPI
 from dace.transformation.auto.auto_optimize import auto_optimize
 from dace.sdfg import utils
+from typing import Union
 
 # Symbols
 # Process grid
@@ -83,7 +85,20 @@ def optimize_compile(program, rank, commworld, autoopt=True):
         sdfg = program.to_sdfg(simplify=True)
         if autoopt:
             sdfg = auto_optimize(sdfg, dace.DeviceType.CPU)
+            sdfg.simplify()
     return utils.distributed_compile(sdfg, commworld)
+
+
+# From https://stackoverflow.com/questions/15008758/parsing-boolean-values-with-argparse
+def str2bool(v: Union[str, bool]) -> bool:
+    if isinstance(v, bool):
+        return v
+    if v.lower() in ('yes', 'true', 't', 'y', '1'):
+        return True
+    elif v.lower() in ('no', 'false', 'f', 'n', '0'):
+        return False
+    else:
+        raise argparse.ArgumentTypeError('Boolean value expected.')
 
 
 # atax
@@ -1193,7 +1208,7 @@ def run_jacobi_2d(validate=False):
         print("sizes: {}".format(sizes), flush=True)
 
     TSTEPS, N = sizes
-    N = adjust_size(N, lambda x: x, size, size)
+    N = adjust_size(N, lambda x: np.sqrt(x), size, size)
     if rank == 0:
         print("adjusted sizes: {}".format((TSTEPS, N)), flush=True)
 
@@ -1256,7 +1271,15 @@ def run_jacobi_2d(validate=False):
 
 if __name__ == '__main__':
 
-    validate = True
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-v",
+                        "--validate",
+                        type=str2bool,
+                        nargs="?",
+                        default=False)
+    args = vars(parser.parse_args())
+
+    validate = args["validate"]
 
     run_atax(validate)
     run_bicg(validate)
