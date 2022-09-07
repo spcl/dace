@@ -3,7 +3,6 @@ import os
 from dace.config import Config
 import dace.library
 import ctypes.util
-import subprocess
 import warnings
 
 
@@ -125,8 +124,8 @@ class IntelMKLScaLAPACKMPICH:
     @staticmethod
     def cmake_link_flags():
 
-        is_cray = subprocess.check_output(['hostname']).decode('utf-8').startswith('daint')
-        if is_cray:
+        is_daint = bool(os.getenv('IS_DAINT'))
+        if is_daint:
             mpichlib_path = "-L /opt/cray/pe/mpt/7.7.18/gni/mpich-gnu/8.2/lib"
             mpichlib_name = "mpichcxx_gnu_82"
         else:
