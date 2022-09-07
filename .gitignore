@@ -189,3 +189,5 @@ _build/
 
 
 .*cache/
+
+run_sdfg.py
