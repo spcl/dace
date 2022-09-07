@@ -18,10 +18,8 @@ class ScaLAPACKMPICH:
     headers = ["../include/scalapack.h"]
     state_fields = [
         "int __scalapack_context;", "int __scalapack_rank, __scalapack_size;",
-        "int __scalapack_prows = 0, __scalapack_pcols = 0;",
-        "int __scalapack_myprow = 0, __scalapack_mypcol = 0;",
-        "int __int_zero = 0, __int_one = 1, __int_negone = -1;",
-        "bool __scalapack_grid_init = false;"
+        "int __scalapack_prows = 0, __scalapack_pcols = 0;", "int __scalapack_myprow = 0, __scalapack_mypcol = 0;",
+        "int __int_zero = 0, __int_one = 1, __int_negone = -1;", "bool __scalapack_grid_init = false;"
     ]
     init_code = """
     Cblacs_pinfo(&__state->__scalapack_rank, &__state->__scalapack_size);

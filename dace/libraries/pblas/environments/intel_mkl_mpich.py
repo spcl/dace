@@ -112,7 +112,7 @@ class IntelMKLScaLAPACKMPICH:
         suffix = Config.get('compiler', 'library_extension')
 
         libfiles = [os.path.join(libpath, f"{prefix}{name}.{suffix}") for name in IntelMKLScaLAPACKMPICH.libraries]
-        
+
         simd_libfile = os.path.join(libpath, f"{prefix}{IntelMKLScaLAPACKMPICH.simd}.{suffix}")
         if not os.path.isfile(simd_libfile):
             for num in range(1, 6):
@@ -120,9 +120,9 @@ class IntelMKLScaLAPACKMPICH:
                 break
         if os.path.isfile(simd_libfile):
             libfiles.append(simd_libfile)
-        
+
         return libfiles
-    
+
     @staticmethod
     def cmake_link_flags():
 

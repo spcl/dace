@@ -99,7 +99,7 @@ class IntelMKLScaLAPACKOpenMPI:
             return []
         else:
             return []
-    
+
     @staticmethod
     def cmake_link_flags():
 
