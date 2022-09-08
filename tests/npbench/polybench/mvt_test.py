@@ -5,92 +5,88 @@ import numpy as np
 import dace as dc
 import pytest
 import argparse
-from dace.fpga_testing import fpga_test
+from dace.fpga_testing import fpga_test, xilinx_test
 from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
 from dace.transformation.dataflow import StreamingMemory, StreamingComposition
-from dace.transformation.auto.auto_optimize import auto_optimize
+from dace.transformation.auto.auto_optimize import auto_optimize, fpga_auto_opt
 from dace.config import set_temporary
 
-# Dataset sizes
-# TSTEPS, N
-sizes = {"mini": (20, 30), "small": (40, 120), "medium": (100, 400), "large": (500, 2000), "extra-large": (1000, 4000)}
+# Data set sizes
+# N
+sizes = {"mini": 40, "small": 120, "medium": 400, "large": 2000, "extra-large": 4000}
+
 N = dc.symbol('N', dtype=dc.int64)
 
 
 @dc.program
-def jacobi_1d_kernel(TSTEPS: dc.int64, A: dc.float64[N], B: dc.float64[N]):
+def mvt_kernel(x1: dc.float64[N], x2: dc.float64[N], y_1: dc.float64[N], y_2: dc.float64[N], A: dc.float64[N, N]):
 
-    for t in range(1, TSTEPS):
-        B[1:-1] = 0.33333 * (A[:-2] + A[1:-1] + A[2:])
-        A[1:-1] = 0.33333 * (B[:-2] + B[1:-1] + B[2:])
+    x1 += A @ y_1
+    x2 += y_2 @ A
 
 
 def initialize(N, datatype=np.float64):
-    A = np.fromfunction(lambda i: (i + 2) / N, (N, ), dtype=datatype)
-    B = np.fromfunction(lambda i: (i + 3) / N, (N, ), dtype=datatype)
+    x1 = np.fromfunction(lambda i: (i % N) / N, (N, ), dtype=datatype)
+    x2 = np.fromfunction(lambda i: ((i + 1) % N) / N, (N, ), dtype=datatype)
+    y_1 = np.fromfunction(lambda i: ((i + 3) % N) / N, (N, ), dtype=datatype)
+    y_2 = np.fromfunction(lambda i: ((i + 4) % N) / N, (N, ), dtype=datatype)
+    A = np.fromfunction(lambda i, j: (i * j % N) / N, (N, N), dtype=datatype)
 
-    return A, B
-
-
-def ground_truth(TSTEPS, A, B):
-
-    for t in range(1, TSTEPS):
-        B[1:-1] = 0.33333 * (A[:-2] + A[1:-1] + A[2:])
-        A[1:-1] = 0.33333 * (B[:-2] + B[1:-1] + B[2:])
+    return x1, x2, y_1, y_2, A
 
 
-def run_jacobi_1d(device_type: dace.dtypes.DeviceType):
+def run_mvt(device_type: dace.dtypes.DeviceType):
     '''
-    Runs Jacobi 1d for the given device
+    Runs MVT for the given device
     :return: the SDFG
     '''
 
     # Initialize data (polybench small size)
-    TSTEPS, N = sizes["small"]
-    A, B = initialize(N)
-    A_ref = np.copy(A)
-    B_ref = np.copy(B)
+    N = sizes["small"]
+    x1, x2, y_1, y_2, A = initialize(N)
+    x1_ref = np.copy(x1)
+    x2_ref = np.copy(x2)
 
     if device_type in {dace.dtypes.DeviceType.CPU, dace.dtypes.DeviceType.GPU}:
         # Parse the SDFG and apply auto-opt
-        sdfg = jacobi_1d_kernel.to_sdfg()
+        sdfg = mvt_kernel.to_sdfg()
         sdfg = auto_optimize(sdfg, device_type)
-        sdfg(TSTEPS, A, B, N=N)
+        sdfg(x1, x2, y_1, y_2, A, N=N)
     elif device_type == dace.dtypes.DeviceType.FPGA:
         # Parse SDFG and apply FPGA friendly optimization
-        sdfg = jacobi_1d_kernel.to_sdfg(simplify=True)
+        sdfg = mvt_kernel.to_sdfg(simplify=True)
         applied = sdfg.apply_transformations([FPGATransformSDFG])
         assert applied == 1
 
         # Use FPGA Expansion for lib nodes, and expand them to enable further optimizations
-        from dace.libraries.blas import Dot
-        Dot.default_implementation = "FPGA_PartialSums"
+        from dace.libraries.blas import Gemv
+        Gemv.default_implementation = "FPGA_Accumulate"
         sdfg.expand_library_nodes()
         # In this case, we want to generate the top-level state as an host-based state,
         # not an FPGA kernel. We need to explicitly indicate that
         sdfg.apply_transformations_repeated([InlineSDFG], print_report=True)
         sdfg.specialize(dict(N=N))
-        sdfg(TSTEPS, A, B)
+        sdfg(x1, x2, y_1, y_2, A)
 
     # Compute ground truth and validate
-    ground_truth(TSTEPS, A_ref, B_ref)
-    assert np.allclose(A, A_ref)
+    mvt_kernel.f(x1_ref, x2_ref, y_1, y_2, A)
+    assert np.allclose(x1, x1_ref)
+    assert np.allclose(x2, x2_ref)
     return sdfg
 
 
 def test_cpu():
-    run_jacobi_1d(dace.dtypes.DeviceType.CPU)
+    run_mvt(dace.dtypes.DeviceType.CPU)
 
 
 @pytest.mark.gpu
 def test_gpu():
-    run_jacobi_1d(dace.dtypes.DeviceType.GPU)
+    run_mvt(dace.dtypes.DeviceType.GPU)
 
 
-@pytest.mark.skip(reason="Intel FPGA missing support for long long")
 @fpga_test(assert_ii_1=False)
 def test_fpga():
-    return run_jacobi_1d(dace.dtypes.DeviceType.FPGA)
+    return run_mvt(dace.dtypes.DeviceType.FPGA)
 
 
 if __name__ == "__main__":
@@ -102,8 +98,8 @@ if __name__ == "__main__":
     target = args["target"]
 
     if target == "cpu":
-        run_jacobi_1d(dace.dtypes.DeviceType.CPU)
+        run_mvt(dace.dtypes.DeviceType.CPU)
     elif target == "gpu":
-        run_jacobi_1d(dace.dtypes.DeviceType.GPU)
+        run_mvt(dace.dtypes.DeviceType.GPU)
     elif target == "fpga":
-        run_jacobi_1d(dace.dtypes.DeviceType.FPGA)
+        run_mvt(dace.dtypes.DeviceType.FPGA)

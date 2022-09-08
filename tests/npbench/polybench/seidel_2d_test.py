@@ -13,52 +13,58 @@ from dace.config import set_temporary
 
 # Dataset sizes
 # TSTEPS, N
-sizes = {"mini": (20, 30), "small": (40, 120), "medium": (100, 400), "large": (500, 2000), "extra-large": (1000, 4000)}
+sizes = {"mini": (20, 40), "small": (40, 120), "medium": (100, 400), "large": (500, 2000), "extra-large": (1000, 4000)}
 N = dc.symbol('N', dtype=dc.int64)
 
 
 @dc.program
-def jacobi_1d_kernel(TSTEPS: dc.int64, A: dc.float64[N], B: dc.float64[N]):
+def seidel_2d_kernel(TSTEPS: dc.int64, A: dc.float64[N, N]):
 
-    for t in range(1, TSTEPS):
-        B[1:-1] = 0.33333 * (A[:-2] + A[1:-1] + A[2:])
-        A[1:-1] = 0.33333 * (B[:-2] + B[1:-1] + B[2:])
+    for t in range(0, TSTEPS - 1):
+        for i in range(1, N - 1):
+            A[i, 1:-1] += (A[i - 1, :-2] + A[i - 1, 1:-1] + A[i - 1, 2:] + A[i, 2:] + A[i + 1, :-2] + A[i + 1, 1:-1] +
+                           A[i + 1, 2:])
+            for j in range(1, N - 1):
+                A[i, j] += A[i, j - 1]
+                A[i, j] /= 9.0
 
 
 def initialize(N, datatype=np.float64):
-    A = np.fromfunction(lambda i: (i + 2) / N, (N, ), dtype=datatype)
-    B = np.fromfunction(lambda i: (i + 3) / N, (N, ), dtype=datatype)
+    A = np.fromfunction(lambda i, j: (i * (j + 2) + 2) / N, (N, N), dtype=datatype)
 
-    return A, B
-
-
-def ground_truth(TSTEPS, A, B):
-
-    for t in range(1, TSTEPS):
-        B[1:-1] = 0.33333 * (A[:-2] + A[1:-1] + A[2:])
-        A[1:-1] = 0.33333 * (B[:-2] + B[1:-1] + B[2:])
+    return A
 
 
-def run_jacobi_1d(device_type: dace.dtypes.DeviceType):
+def ground_truth(TSTEPS, N, A):
+
+    for t in range(0, TSTEPS - 1):
+        for i in range(1, N - 1):
+            A[i, 1:-1] += (A[i - 1, :-2] + A[i - 1, 1:-1] + A[i - 1, 2:] + A[i, 2:] + A[i + 1, :-2] + A[i + 1, 1:-1] +
+                           A[i + 1, 2:])
+            for j in range(1, N - 1):
+                A[i, j] += A[i, j - 1]
+                A[i, j] /= 9.0
+
+
+def run_seidel_2d(device_type: dace.dtypes.DeviceType):
     '''
-    Runs Jacobi 1d for the given device
+    Runs Seidel 2d for the given device
     :return: the SDFG
     '''
 
-    # Initialize data (polybench small size)
-    TSTEPS, N = sizes["small"]
-    A, B = initialize(N)
+    # Initialize data (polybench mini size)
+    TSTEPS, N = sizes["mini"]
+    A = initialize(N)
     A_ref = np.copy(A)
-    B_ref = np.copy(B)
 
     if device_type in {dace.dtypes.DeviceType.CPU, dace.dtypes.DeviceType.GPU}:
         # Parse the SDFG and apply auto-opt
-        sdfg = jacobi_1d_kernel.to_sdfg()
-        sdfg = auto_optimize(sdfg, device_type)
-        sdfg(TSTEPS, A, B, N=N)
+        sdfg = seidel_2d_kernel.to_sdfg()
+        # sdfg = auto_optimize(sdfg, device_type) # TBD
+        sdfg(TSTEPS, A, N=N)
     elif device_type == dace.dtypes.DeviceType.FPGA:
         # Parse SDFG and apply FPGA friendly optimization
-        sdfg = jacobi_1d_kernel.to_sdfg(simplify=True)
+        sdfg = seidel_2d_kernel.to_sdfg(simplify=True)
         applied = sdfg.apply_transformations([FPGATransformSDFG])
         assert applied == 1
 
@@ -70,27 +76,32 @@ def run_jacobi_1d(device_type: dace.dtypes.DeviceType):
         # not an FPGA kernel. We need to explicitly indicate that
         sdfg.apply_transformations_repeated([InlineSDFG], print_report=True)
         sdfg.specialize(dict(N=N))
-        sdfg(TSTEPS, A, B)
+        sdfg(TSTEPS, A)
 
     # Compute ground truth and validate
-    ground_truth(TSTEPS, A_ref, B_ref)
+    ground_truth(
+        TSTEPS,
+        N,
+        A_ref,
+    )
+    print(np.linalg.norm(A - A_ref) / np.linalg.norm(A_ref))
     assert np.allclose(A, A_ref)
     return sdfg
 
 
 def test_cpu():
-    run_jacobi_1d(dace.dtypes.DeviceType.CPU)
+    run_seidel_2d(dace.dtypes.DeviceType.CPU)
 
 
 @pytest.mark.gpu
 def test_gpu():
-    run_jacobi_1d(dace.dtypes.DeviceType.GPU)
+    run_seidel_2d(dace.dtypes.DeviceType.GPU)
 
 
 @pytest.mark.skip(reason="Intel FPGA missing support for long long")
 @fpga_test(assert_ii_1=False)
 def test_fpga():
-    return run_jacobi_1d(dace.dtypes.DeviceType.FPGA)
+    return run_seidel_2d(dace.dtypes.DeviceType.FPGA)
 
 
 if __name__ == "__main__":
@@ -102,8 +113,8 @@ if __name__ == "__main__":
     target = args["target"]
 
     if target == "cpu":
-        run_jacobi_1d(dace.dtypes.DeviceType.CPU)
+        run_seidel_2d(dace.dtypes.DeviceType.CPU)
     elif target == "gpu":
-        run_jacobi_1d(dace.dtypes.DeviceType.GPU)
+        run_seidel_2d(dace.dtypes.DeviceType.GPU)
     elif target == "fpga":
-        run_jacobi_1d(dace.dtypes.DeviceType.FPGA)
+        run_seidel_2d(dace.dtypes.DeviceType.FPGA)
