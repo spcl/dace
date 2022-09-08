@@ -233,7 +233,7 @@ class Superoptimizer(auto_tuner.AutoTuner):
                                                                      args,
                                                                      measurements=self._measurements,
                                                                      warmup=self._warmup,
-                                                                     timeout=best_process_time * 1.25)
+                                                                     timeout=best_process_time * 1.5)
                         except:
                             fused_time = math.inf
 
@@ -387,7 +387,7 @@ class Superoptimizer(auto_tuner.AutoTuner):
                                                 arguments,
                                                 measurements=self._measurements,
                                                 warmup=self._warmup,
-                                                timeout=best_process_time * 1.25)
+                                                timeout=best_process_time * 1.5)
 
                 schedule = []
                 for trans in scheduled_map.transformation_hist:
