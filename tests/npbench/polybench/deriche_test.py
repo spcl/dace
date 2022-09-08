@@ -10,6 +10,16 @@ from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
 from dace.transformation.dataflow import StreamingMemory
 from dace.transformation.auto.auto_optimize import auto_optimize, fpga_auto_opt
 
+# Data set sizes
+# W, H
+sizes = {
+    "mini": (64, 64),
+    "small": (192, 128),
+    "medium": (720, 480),
+    "large": (4096, 2160),
+    "extra-large": (7680, 4320)
+}
+
 W, H = (dc.symbol(s, dtype=dc.int64) for s in ('W', 'H'))
 
 
@@ -113,7 +123,7 @@ def run_deriche(device_type: dace.dtypes.DeviceType):
     '''
 
     # Initialize data (polybench small size)
-    W, H = (192, 128)
+    W, H = sizes["small"]
     alpha, imgIn = initialize(W, H)
 
     if device_type in {dace.dtypes.DeviceType.CPU, dace.dtypes.DeviceType.GPU}:
@@ -148,6 +158,7 @@ def run_deriche(device_type: dace.dtypes.DeviceType):
 
 def test_cpu():
     run_deriche(dace.dtypes.DeviceType.CPU)
+
 
 @pytest.mark.skip(reason="GPU AutoOpt support")
 @pytest.mark.gpu

@@ -7,6 +7,10 @@ import pytest
 import argparse
 from dace.transformation.auto.auto_optimize import auto_optimize
 
+# Data set sizes
+# M, N
+sizes = {"mini": (28, 32), "small": (80, 100), "medium": (240, 260), "large": (1200, 1400), "extra-large": (2600, 3000)}
+
 M, N = (dc.symbol(s, dtype=dc.int64) for s in ('M', 'N'))
 
 
@@ -58,7 +62,7 @@ def run_correlation(device_type: dace.dtypes.DeviceType):
     '''
 
     # Initialize data (polybench small size)
-    M, N = (80, 100)
+    M, N = sizes["small"]
     float_n, data = initialize(M, N)
     float_n_ref = np.copy(float_n)
     data_ref = np.copy(data)

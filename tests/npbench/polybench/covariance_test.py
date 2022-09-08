@@ -13,6 +13,10 @@ from dace.transformation.auto.auto_optimize import auto_optimize, fpga_auto_opt
 from dace.libraries.standard import Reduce
 from dace.libraries.blas import Gemv
 
+# Data set sizes
+# M, N
+sizes = {"mini": (28, 32), "small": (80, 100), "medium": (240, 260), "large": (1200, 1400), "extra-large": (2600, 3000)}
+
 M, N = (dc.symbol(s, dtype=dc.int32) for s in ('M', 'N'))
 
 
@@ -75,7 +79,7 @@ def run_covariance(device_type: dace.dtypes.DeviceType):
     '''
 
     # Initialize data (polybench small size)
-    M, N = (80, 100)
+    M, N = sizes["small"]
     float_n, data = init_data(M, N)
 
     gt_data = np.copy(data)

@@ -11,6 +11,16 @@ from dace.transformation.dataflow import StreamingMemory, StreamingComposition
 from dace.transformation.auto.auto_optimize import auto_optimize, fpga_auto_opt
 from dace.config import set_temporary
 
+# Data set sizes
+# M, N
+sizes = {
+    "mini": (38, 42),
+    "small": (116, 124),
+    "medium": (390, 410),
+    "large": (1900, 2100),
+    "extra-large": (1800, 2200)
+}
+
 M, N = (dc.symbol(s, dtype=dc.int32) for s in ('M', 'N'))
 
 
@@ -38,8 +48,8 @@ def run_atax(device_type: dace.dtypes.DeviceType):
     :return: the SDFG
     '''
 
-    # Initialize data (polybench medium size)
-    M, N = (390, 410)
+    # Initialize data (polybench small size)
+    M, N = sizes["small"]
     A, x, y_ref = init_data(M, N)
 
     if device_type in {dace.dtypes.DeviceType.CPU, dace.dtypes.DeviceType.GPU}:
