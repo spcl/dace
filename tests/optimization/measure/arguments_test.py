@@ -1,5 +1,6 @@
 import dace
 import numpy as np
+import multiprocessing
 
 from dace.sdfg.analysis.cutout import cutout_state
 from dace.optimization.measure import random_arguments, create_data_report, arguments_from_data_report
@@ -101,4 +102,7 @@ def test_cutout_arguments_from_dreport():
 
 
 if __name__ == '__main__':
+    test_create_data_report()
+    test_create_data_report_transients()
+    test_cutout_arguments_from_dreport()
     test_random_arguments()

@@ -1,6 +1,7 @@
 import dace
 import math
 import numpy as np
+import multiprocessing
 
 from dace.optimization.measure import measure
 
@@ -53,3 +54,4 @@ def test_measure_exception():
 
 if __name__ == '__main__':
     test_measure()
+    test_measure_exception()
