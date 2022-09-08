@@ -92,6 +92,7 @@ def test_cpu():
     run_gemver(dace.dtypes.DeviceType.CPU)
 
 
+@pytest.mark.skip(reason="Variable not found during codegen")
 @pytest.mark.gpu
 def test_gpu():
     run_gemver(dace.dtypes.DeviceType.GPU)

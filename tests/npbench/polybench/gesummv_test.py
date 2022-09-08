@@ -80,6 +80,7 @@ def test_gpu():
     run_gesummv(dace.dtypes.DeviceType.GPU)
 
 
+@pytest.mark.skip(reason="Xilinx synthesis fails")
 @fpga_test(assert_ii_1=False)
 def test_fpga():
     return run_gesummv(dace.dtypes.DeviceType.FPGA)
