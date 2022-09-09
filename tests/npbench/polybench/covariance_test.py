@@ -78,8 +78,8 @@ def run_covariance(device_type: dace.dtypes.DeviceType):
     :return: the SDFG
     '''
 
-    # Initialize data (polybench small size)
-    M, N = sizes["small"]
+    # Initialize data (polybench mini size)
+    M, N = sizes["mini"]
     float_n, data = init_data(M, N)
 
     gt_data = np.copy(data)

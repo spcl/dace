@@ -59,8 +59,8 @@ def run_cholesky(device_type: dace.dtypes.DeviceType):
     :return: the SDFG
     '''
 
-    # Initialize data (polybench small size)
-    N = sizes["small"]
+    # Initialize data (polybench mini size)
+    N = sizes["mini"]
     A = init_data(N)
     gt_A = np.copy(A)
     if device_type in {dace.dtypes.DeviceType.CPU, dace.dtypes.DeviceType.GPU}:

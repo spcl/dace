@@ -68,8 +68,6 @@ def run_k2mm(device_type: dace.dtypes.DeviceType):
         from dace.libraries.blas import Gemm
         Gemm.default_implementation = "FPGA1DSystolic"
         sdfg.expand_library_nodes()
-        # In this case, we want to generate the top-level state as an host-based state,
-        # not an FPGA kernel. We need to explicitly indicate that
         sdfg.apply_transformations_repeated([InlineSDFG], print_report=True)
         sdfg.specialize(dict(NI=NI, NJ=NJ, NK=NK, NL=NL))
         sdfg(alpha, beta, A, B, C, D)

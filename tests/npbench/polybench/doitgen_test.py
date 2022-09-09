@@ -50,8 +50,8 @@ def run_doitgen(device_type: dace.dtypes.DeviceType):
     :return: the SDFG
     '''
 
-    # Initialize data (polybench small size)
-    NQ, NR, NP = sizes["small"]
+    # Initialize data (polybench mini size)
+    NQ, NR, NP = sizes["mini"]
     A, C4 = initialize(NR, NQ, NP)
     A_ref = np.copy(A)
 
@@ -71,8 +71,6 @@ def run_doitgen(device_type: dace.dtypes.DeviceType):
         from dace.libraries.blas import Gemm
         Gemm.default_implementation = "FPGA1DSystolic"
         sdfg.expand_library_nodes()
-        # In this case, we want to generate the top-level state as an host-based state,
-        # not an FPGA kernel. We need to explicitly indicate that
         sdfg.apply_transformations_repeated([InlineSDFG], print_report=True)
         sdfg.states()[0].location["is_FPGA_kernel"] = False
         # we need to specialize both the top-level SDFG and the nested SDFG

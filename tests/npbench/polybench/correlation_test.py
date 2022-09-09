@@ -61,8 +61,8 @@ def run_correlation(device_type: dace.dtypes.DeviceType):
     :return: the SDFG
     '''
 
-    # Initialize data (polybench small size)
-    M, N = sizes["small"]
+    # Initialize data (polybench mini size)
+    M, N = sizes["mini"]
     float_n, data = initialize(M, N)
     float_n_ref = np.copy(float_n)
     data_ref = np.copy(data)

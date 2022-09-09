@@ -13,75 +13,56 @@ from dace.config import set_temporary
 
 # Data set sizes
 # M, N
-# Note: these have been swapped to improve numerical stability
-sizes = {"mini": (30, 20), "small": (80, 60), "medium": (240, 200), "large": (1200, 1000), "extra-large": (2600, 2000)}
+sizes = {"mini": (20, 30), "small": (60, 80), "medium": (200, 240), "large": (1000, 1200), "extra-large": (2000, 2600)}
 
 M, N, S = (dc.symbol(s, dtype=dc.int64) for s in ('M', 'N', 'S'))
 
 
 @dc.program
-def gramschmidt_kernel(A: dc.float64[M, N]):
+def trmm_kernel(alpha: dc.float64, A: dc.float64[M, M], B: dc.float64[M, N]):
 
-    Q = np.zeros_like(A)
-    R = np.zeros((N, N), dtype=A.dtype)
-
-    for k in range(N):
-        nrm = np.dot(A[:, k], A[:, k])
-        R[k, k] = np.sqrt(nrm)
-        Q[:, k] = A[:, k] / R[k, k]
-        for j in range(k + 1, N):
-            R[k, j] = np.dot(Q[:, k], A[:, j])
-            A[:, j] -= Q[:, k] * R[k, j]
-
-    return Q, R
+    for i in range(M):
+        for j in range(N):
+            B[i, j] += np.dot(A[i + 1:, i], B[i + 1:, j])
+    B *= alpha
 
 
 def initialize(M, N, datatype=np.float64):
-    from numpy.random import default_rng
-    rng = default_rng(42)
+    alpha = datatype(1.5)
+    A = np.fromfunction(lambda i, j: ((i * j) % M) / M, (M, M), dtype=datatype)
+    for i in range(M):
+        A[i, i] = 1.0
+    B = np.fromfunction(lambda i, j: ((N + i - j) % N) / N, (M, N), dtype=datatype)
 
-    A = rng.random((M, N), dtype=datatype)
-    while np.linalg.matrix_rank(A) < N:
-        A = rng.random((M, N), dtype=datatype)
-
-    return A
-
-
-def ground_truth(A):
-
-    Q = np.zeros_like(A)
-    R = np.zeros((A.shape[1], A.shape[1]), dtype=A.dtype)
-
-    for k in range(A.shape[1]):
-        nrm = np.dot(A[:, k], A[:, k])
-        R[k, k] = np.sqrt(nrm)
-        Q[:, k] = A[:, k] / R[k, k]
-        for j in range(k + 1, A.shape[1]):
-            R[k, j] = np.dot(Q[:, k], A[:, j])
-            A[:, j] -= Q[:, k] * R[k, j]
-
-    return Q, R
+    return alpha, A, B
 
 
-def run_gramschmidt(device_type: dace.dtypes.DeviceType):
+def ground_truth(alpha, A, B):
+    for i in range(B.shape[0]):
+        for j in range(B.shape[1]):
+            B[i, j] += np.dot(A[i + 1:, i], B[i + 1:, j])
+    B *= alpha
+
+
+def run_trmm(device_type: dace.dtypes.DeviceType):
     '''
-    Runs Gesummv for the given device
+    Runs trmm for the given device
     :return: the SDFG
     '''
 
     # Initialize data (polybench mini size)
     M, N = sizes["mini"]
-    A = initialize(M, N)
-    A_ref = np.copy(A)
+    alpha, A, B = initialize(M, N)
+    B_ref = np.copy(B)
 
     if device_type in {dace.dtypes.DeviceType.CPU, dace.dtypes.DeviceType.GPU}:
         # Parse the SDFG and apply auto-opt
-        sdfg = gramschmidt_kernel.to_sdfg()
+        sdfg = trmm_kernel.to_sdfg()
         sdfg = auto_optimize(sdfg, device_type)
-        Q, R = sdfg(A, M=M, N=N)
+        sdfg(alpha, A, B, M=M, N=N)
     elif device_type == dace.dtypes.DeviceType.FPGA:
         # Parse SDFG and apply FPGA friendly optimization
-        sdfg = gramschmidt_kernel.to_sdfg(simplify=True)
+        sdfg = trmm_kernel.to_sdfg(simplify=True)
         applied = sdfg.apply_transformations([FPGATransformSDFG])
         assert applied == 1
 
@@ -91,27 +72,26 @@ def run_gramschmidt(device_type: dace.dtypes.DeviceType):
         sdfg.expand_library_nodes()
         sdfg.apply_transformations_repeated([InlineSDFG], print_report=True)
         sdfg.specialize(dict(M=M, N=N))
-        Q, R = sdfg(A)
+        sdfg(alpha, A, B)
 
     # Compute ground truth and validate
-    Q_ref, R_ref = ground_truth(A_ref)
-    assert np.allclose(Q, Q_ref)
-    assert np.allclose(R, R_ref)
+    ground_truth(alpha, A, B_ref)
+    assert np.allclose(B, B_ref)
     return sdfg
 
 
 def test_cpu():
-    run_gramschmidt(dace.dtypes.DeviceType.CPU)
+    run_trmm(dace.dtypes.DeviceType.CPU)
 
 
 @pytest.mark.gpu
 def test_gpu():
-    run_gramschmidt(dace.dtypes.DeviceType.GPU)
+    run_trmm(dace.dtypes.DeviceType.GPU)
 
 
 @fpga_test(assert_ii_1=False)
 def test_fpga():
-    return run_gramschmidt(dace.dtypes.DeviceType.FPGA)
+    return run_trmm(dace.dtypes.DeviceType.FPGA)
 
 
 if __name__ == "__main__":
@@ -123,8 +103,8 @@ if __name__ == "__main__":
     target = args["target"]
 
     if target == "cpu":
-        run_gramschmidt(dace.dtypes.DeviceType.CPU)
+        run_trmm(dace.dtypes.DeviceType.CPU)
     elif target == "gpu":
-        run_gramschmidt(dace.dtypes.DeviceType.GPU)
+        run_trmm(dace.dtypes.DeviceType.GPU)
     elif target == "fpga":
-        run_gramschmidt(dace.dtypes.DeviceType.FPGA)
+        run_trmm(dace.dtypes.DeviceType.FPGA)

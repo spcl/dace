@@ -79,8 +79,6 @@ def run_heat_3d(device_type: dace.dtypes.DeviceType):
         from dace.libraries.blas import Dot
         Dot.default_implementation = "FPGA_PartialSums"
         sdfg.expand_library_nodes()
-        # In this case, we want to generate the top-level state as an host-based state,
-        # not an FPGA kernel. We need to explicitly indicate that
         sdfg.apply_transformations_repeated([InlineSDFG], print_report=True)
         sdfg.specialize(dict(N=N))
         sdfg(TSTEPS, A, B)

@@ -21,28 +21,20 @@ sizes = {
     "extra-large": (1600, 1800, 2000, 2200, 2400)
 }
 
-NI, NJ, NK, NL, NM = (dc.symbol(s, dtype=dc.int64)
-                      for s in ('NI', 'NJ', 'NK', 'NL', 'NM'))
+NI, NJ, NK, NL, NM = (dc.symbol(s, dtype=dc.int64) for s in ('NI', 'NJ', 'NK', 'NL', 'NM'))
 
 
 @dc.program
-def k3mm_kernel(A: dc.float64[NI, NK], B: dc.float64[NK, NJ], C: dc.float64[NJ, NM],
-           D: dc.float64[NM, NL]):
+def k3mm_kernel(A: dc.float64[NI, NK], B: dc.float64[NK, NJ], C: dc.float64[NJ, NM], D: dc.float64[NM, NL]):
 
     return A @ B @ C @ D
 
 
 def initialize(NI, NJ, NK, NL, NM, datatype=np.float64):
-    A = np.fromfunction(lambda i, j: ((i * j + 1) % NI) / (5 * NI), (NI, NK),
-                        dtype=datatype)
-    B = np.fromfunction(lambda i, j: ((i * (j + 1) + 2) % NJ) / (5 * NJ),
-                        (NK, NJ),
-                        dtype=datatype)
-    C = np.fromfunction(lambda i, j: (i * (j + 3) % NL) / (5 * NL), (NJ, NM),
-                        dtype=datatype)
-    D = np.fromfunction(lambda i, j: ((i * (j + 2) + 2) % NK) / (5 * NK),
-                        (NM, NL),
-                        dtype=datatype)
+    A = np.fromfunction(lambda i, j: ((i * j + 1) % NI) / (5 * NI), (NI, NK), dtype=datatype)
+    B = np.fromfunction(lambda i, j: ((i * (j + 1) + 2) % NJ) / (5 * NJ), (NK, NJ), dtype=datatype)
+    C = np.fromfunction(lambda i, j: (i * (j + 3) % NL) / (5 * NL), (NJ, NM), dtype=datatype)
+    D = np.fromfunction(lambda i, j: ((i * (j + 2) + 2) % NK) / (5 * NK), (NM, NL), dtype=datatype)
 
     return A, B, C, D
 
@@ -72,13 +64,11 @@ def run_k3mm(device_type: dace.dtypes.DeviceType):
         from dace.libraries.blas import Gemm
         Gemm.default_implementation = "FPGA1DSystolic"
         sdfg.expand_library_nodes()
-        # In this case, we want to generate the top-level state as an host-based state,
-        # not an FPGA kernel. We need to explicitly indicate that
         sdfg.apply_transformations_repeated([InlineSDFG], print_report=True)
         sdfg.specialize(dict(NI=NI, NJ=NJ, NK=NK, NL=NL, NM=NM))
-        E= sdfg(A, B, C, D)
+        E = sdfg(A, B, C, D)
     # Compute ground truth and validate
-    E_ref = k3mm_kernel.f( A, B, C, D)
+    E_ref = k3mm_kernel.f(A, B, C, D)
     assert np.allclose(E, E_ref)
     return sdfg
 
