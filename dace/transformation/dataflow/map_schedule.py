@@ -5,15 +5,17 @@ from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.state import SDFGState
 from dace.transformation import transformation
-from dace.properties import make_properties, Property
+from dace.properties import make_properties, Property, EnumProperty
 
 
 @make_properties
 class MapSchedule(transformation.SingleStateTransformation):
     map_entry = transformation.PatternNode(nodes.MapEntry)
 
-    schedule_type = Property(dtype=str, default="Sequential", allow_none=False)
-    collapse = Property(dtype=int, default=0)
+    schedule_type = EnumProperty(dtype=dace.ScheduleType,
+                                 default=dace.ScheduleType.Default,
+                                 desc="Schedule type of the map")
+    collapse = Property(dtype=int, default=1)
 
     @classmethod
     def expressions(cls):
@@ -23,9 +25,5 @@ class MapSchedule(transformation.SingleStateTransformation):
         return True
 
     def apply(self, state: SDFGState, sdfg: SDFG):
-        if self.schedule_type == "ScheduleType.Sequential":
-            self.map_entry.map.schedule = dace.ScheduleType.Sequential
-            self.map_entry.map.collapse = self.collapse
-        elif self.schedule_type == "ScheduleType.CPU_Multicore":
-            self.map_entry.map.schedule = dace.ScheduleType.CPU_Multicore
-            self.map_entry.map.collapse = self.collapse
+        self.map_entry.map.schedule = self.schedule_type
+        self.map_entry.map.collapse = self.collapse
