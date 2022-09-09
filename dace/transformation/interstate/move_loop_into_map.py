@@ -4,7 +4,7 @@
 import copy
 import dace.transformation.helpers as helpers
 from dace.sdfg.scope import ScopeTree
-from dace import Memlet, nodes, sdfg as sd, subsets as sbs, symbolic, symbol
+from dace import data as dt, Memlet, nodes, sdfg as sd, subsets as sbs, symbolic, symbol
 from dace.properties import CodeBlock
 from dace.sdfg import nodes, propagation
 from dace.transformation import transformation
@@ -54,16 +54,19 @@ class MoveLoopIntoMap(DetectLoop, transformation.MultiStateTransformation):
         if len(maps) != 1:
             return False
 
+        map_entry = maps[0]
+        map_exit = body.exit_node(map_entry)
+        subgraph = body.scope_subgraph(map_entry)
+        src_dst_nodes = set([e.src for e in body.in_edges(map_entry)]) | set([e.dst for e in body.out_edges(map_exit)])
+
         # Check that everything else is independent of the loop's itervar
-        subgraph = body.scope_subgraph(maps[0])
-        map_exit = body.exit_node(maps[0])
         descs: Set[str] = set()
         for e in body.edges():
             if not e.data.is_empty():
                 descs.add(e.data.data)
             if e.src in subgraph.nodes() or e.dst in subgraph.nodes():
                 continue
-            if e.dst is maps[0] and isinstance(e.src, nodes.AccessNode):
+            if e.dst is map_entry and isinstance(e.src, nodes.AccessNode):
                 continue
             if e.src is map_exit and isinstance(e.dst, nodes.AccessNode):
                 continue
@@ -74,9 +77,13 @@ class MoveLoopIntoMap(DetectLoop, transformation.MultiStateTransformation):
                 continue
             if str(itervar) in n.free_symbols:
                 return False
+            # Only Views may exist outside the Map scope and its src/dst nodes.
+            if n not in src_dst_nodes:
+                if not (isinstance(n, nodes.AccessNode) and isinstance(sdfg.arrays[n.data], dt.View)):
+                    return False
 
         # Check for iteration variable in map and data descriptors
-        if str(itervar) in maps[0].free_symbols:
+        if str(itervar) in map_entry.free_symbols:
             return False
         for arr in descs:
             if str(itervar) in set(map(str, sdfg.arrays[arr].free_symbols)):
@@ -110,7 +117,7 @@ class MoveLoopIntoMap(DetectLoop, transformation.MultiStateTransformation):
         # Check that Map memlets depend on itervar in a consistent manner
         # a. A container must either not depend at all on itervar, or depend on it always in the same dimensions.
         # b. Abort when a dimension depends on both the itervar and a Map parameter.
-        mparams = set(maps[0].map.params)
+        mparams = set(map_entry.map.params)
         data_dependency = dict()
         for e in body.edges():
             if e.src in subgraph.nodes() and e.dst in subgraph.nodes():
