@@ -1440,6 +1440,17 @@ class ProgramVisitor(ExtNodeVisitor):
 
         return result
 
+    def visit_SSAFor(self, node: 'SSAFor'):
+
+        new_for = ast.For(
+            iter=node.iter,
+            target=node.target,
+            body=node.body,
+            orelse=node.orelse,
+        )
+
+        return self.visit_For(new_for)
+
     def visit_PhiAssign(self, node: 'PhiAssign'):
 
         sdfg = self.sdfg

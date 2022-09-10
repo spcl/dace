@@ -400,7 +400,7 @@ class ForCFG(AST):
         body = self.ifelse.body[:-1]
         orelse = self.ifelse.orelse[:-1]
 
-        new_node = SSAFor(
+        new_node = For(
             head=phi_assigns,
             target=target,
             iter=self.iter,
