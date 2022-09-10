@@ -16,6 +16,20 @@ def print_exp(code: str) -> None:
     print(dump(exp))
 
 
+class Counting_UID:
+
+    def __init__(self) -> None:
+
+        self.counter = 0
+
+    def __call__(self, name: str) -> str:
+
+        self.counter += 1
+        uid = name + "_" + str(self.counter)
+
+        return uid
+
+
 class EnclosingLoop:
 
     def __init__(self, ast_visitor, loop_node):

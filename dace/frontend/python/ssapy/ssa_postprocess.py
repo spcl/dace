@@ -2,7 +2,11 @@
 from ast import NodeTransformer
 
 
-class SSA_Postprocessor(NodeTransformer):
+class SSA_Reducer(NodeTransformer):
+
+    def __init__(self, clean_interface: bool = True) -> None:
+        
+        self.clean_interface = clean_interface
     
     #################
     # Parent Nodes
@@ -18,7 +22,13 @@ class SSA_Postprocessor(NodeTransformer):
 
         node = self.generic_visit(node)
         
-        return node.to_While()
+        return node.to_WhileCFG()
+
+    def visit_ForCFG(self, node):
+
+        node = self.generic_visit(node)
+        
+        return node.to_SSAFor()
 
     def visit_SimpleFunction(self, node):
 
@@ -34,7 +44,7 @@ class SSA_Postprocessor(NodeTransformer):
 
     def visit_Interface(self, node):
 
-        return node.to_assignments()
+        return node.to_assignments(include_dels=self.clean_interface)
 
     #################
     # Leaf Nodes
@@ -49,7 +59,7 @@ class SSA_Postprocessor(NodeTransformer):
         return node.cleaned()
 
 
-class SSA_Finisher(NodeTransformer):
+class SSA_Postprocessor(NodeTransformer):
     
     def visit_WhileCFG(self, node):
 

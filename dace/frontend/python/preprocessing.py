@@ -15,7 +15,6 @@ from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
 import dace
 from dace import data, dtypes, subsets, symbolic, sdfg as sd
 from dace.config import Config
-from dace.frontend.python.ssapy.ssa_postprocess import SSA_Finisher
 from dace.sdfg import SDFG
 from dace.frontend.python import astutils
 from dace.frontend.python.common import (DaceSyntaxError, SDFGConvertible, SDFGClosure)
@@ -1372,7 +1371,10 @@ def preprocess_dace_program(f: Callable[..., Any],
     src_ast, src_file, src_line, src = astutils.function_to_ast(f)
 
     # SSA
-    from .ssapy import SSA_Preprocessor, SSA_Transpiler, SSA_Postprocessor, DaCe_Finisher, PhiCollector
+    from .ssapy.ssa_preprocess import SSA_Preprocessor
+    from .ssapy.ssa_transpiler import SSA_Transpiler
+    from .ssapy.ssa_postprocess import SSA_Reducer, SSA_Postprocessor
+    from .ssapy.dace_specific import DaCe_Postprocessor
     definiton_sources = collections.ChainMap(global_vars, argtypes)
     definitions = {name: (name, None) for name in definiton_sources}
     function_def: ast.FunctionDef = src_ast.body[0]
@@ -1381,14 +1383,14 @@ def preprocess_dace_program(f: Callable[..., Any],
     print(ast.unparse(src_ast))
     SSA_Preprocessor().visit(function_body)
     SSA_Transpiler().visit(function_body, definitions)
-    SSA_Postprocessor().visit(function_body)
-    DaCe_Finisher().visit(function_body)
+    SSA_Reducer().visit(function_body)
+    DaCe_Postprocessor().visit(function_body)
     ast.fix_missing_locations(function_body)
 
     src_ast.body[0].body = function_body.body
     print('##################')
     ast_copy = copy.deepcopy(src_ast)
-    SSA_Finisher().visit(ast_copy)
+    SSA_Postprocessor().visit(ast_copy)
     ast.fix_missing_locations(ast_copy)
     print(ast.unparse(ast_copy))
 
