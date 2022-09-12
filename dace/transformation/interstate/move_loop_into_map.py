@@ -152,13 +152,6 @@ class MoveLoopIntoMap(DetectLoop, transformation.MultiStateTransformation):
                                 else:
                                     data_dependency[access.data] = dims
 
-        for node in body.nodes():
-            if isinstance(node, nodes.AccessNode):
-                if body.in_edges(node).count(True) > 1:
-                    return False
-                if body.out_edges(node).count(True) > 1:
-                    return False
-
         return True
 
     def apply(self, _, sdfg: sd.SDFG):
