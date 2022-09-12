@@ -3,6 +3,7 @@
 
 import copy
 import dace.transformation.helpers as helpers
+import networkx as nx
 from dace.sdfg.scope import ScopeTree
 from dace import data as dt, Memlet, nodes, sdfg as sd, subsets as sbs, symbolic, symbol
 from dace.properties import CodeBlock
@@ -26,6 +27,7 @@ class MoveLoopIntoMap(DetectLoop, transformation.MultiStateTransformation):
     """
     Moves a loop around a map into the map
     """
+
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
         # Is this even a loop
         if not super().can_be_applied(graph, expr_index, sdfg, permissive):
@@ -49,6 +51,15 @@ class MoveLoopIntoMap(DetectLoop, transformation.MultiStateTransformation):
         if body != body_end:
             return False
 
+        # Body must have only a single connected component
+        # NOTE: This is a strict check that can be potentially relaxed.
+        # If only one connected component includes a Map and the others do not create RW dependencies, then we could
+        # proceed with the transformation. However, that would be a case of an SDFG with redundant computation/copying,
+        # which is unlikely after simplification transformations. Alternatively, we could try to apply the
+        # transformation to each component separately, but this would require a lot more checks.
+        if len(list(nx.weakly_connected_components(body._nx))) > 1:
+            return False
+
         # Check if body contains exactly one map
         maps = [node for node in body.nodes() if isinstance(node, nodes.MapEntry)]
         if len(maps) != 1:
@@ -57,13 +68,17 @@ class MoveLoopIntoMap(DetectLoop, transformation.MultiStateTransformation):
         map_entry = maps[0]
         map_exit = body.exit_node(map_entry)
         subgraph = body.scope_subgraph(map_entry)
-        src_dst_nodes = set([e.src for e in body.in_edges(map_entry)]) | set([e.dst for e in body.out_edges(map_exit)])
+        read_set, write_set = body.read_and_write_sets()
 
-        # Check that everything else is independent of the loop's itervar
-        descs: Set[str] = set()
+        # Check for iteration variable in map and data descriptors
+        if str(itervar) in map_entry.free_symbols:
+            return False
+        for arr in (read_set | write_set):
+            if str(itervar) in set(map(str, sdfg.arrays[arr].free_symbols)):
+                return False
+
+        # Check that everything else outside the Map is independent of the loop's itervar
         for e in body.edges():
-            if not e.data.is_empty():
-                descs.add(e.data.data)
             if e.src in subgraph.nodes() or e.dst in subgraph.nodes():
                 continue
             if e.dst is map_entry and isinstance(e.src, nodes.AccessNode):
@@ -72,21 +87,19 @@ class MoveLoopIntoMap(DetectLoop, transformation.MultiStateTransformation):
                 continue
             if str(itervar) in e.data.free_symbols:
                 return False
+            if isinstance(e.dst, nodes.AccessNode) and e.dst.data in read_set:
+                # NOTE: This is strict check that can be potentially relaxed.
+                # If some data written indirectly by the Map (i.e., it is not an immediate output of the MapExit) is
+                # also read, then abort. In practice, we could follow the edges and with subset compositions figure out
+                # if there is a RW dependency on the loop variable. However, in such complicated cases, it is far more
+                # likely that the simplification redundant array/copying transformations trigger first. If they don't,
+                # this is a good hint that there is a RW dependency.
+                if nx.has_path(body._nx, map_exit, e.dst):
+                    return False
         for n in body.nodes():
             if n in subgraph.nodes():
                 continue
             if str(itervar) in n.free_symbols:
-                return False
-            # Only Views may exist outside the Map scope and its src/dst nodes.
-            if n not in src_dst_nodes:
-                if not (isinstance(n, nodes.AccessNode) and isinstance(sdfg.arrays[n.data], dt.View)):
-                    return False
-
-        # Check for iteration variable in map and data descriptors
-        if str(itervar) in map_entry.free_symbols:
-            return False
-        for arr in descs:
-            if str(itervar) in set(map(str, sdfg.arrays[arr].free_symbols)):
                 return False
 
         def test_subset_dependency(subset: sbs.Subset, mparams: Set[int]) -> Tuple[bool, List[int]]:
