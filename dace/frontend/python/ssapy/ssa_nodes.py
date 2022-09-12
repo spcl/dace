@@ -254,6 +254,10 @@ class PhiAssign(AST):
         else:
             self.operands.append((new_uid, definition))
 
+            # Activate newly added Phi operands
+            if self.active and isinstance(definition, PhiAssign):
+                definition.activate()
+
 
 class IfCFG(AST):
     _fields = ('test', 'body', 'orelse', 'exit')
@@ -349,9 +353,20 @@ class WhileCFG(AST):
         return [new_node] + self.exit
 
 
+@dataclass
 class SSAFor(AST):
     _fields = ('head','target', 'iter', 'body', 'orelse', 'type_comment')
     _attributes = ('lineno', 'col_offset', 'end_lineno', 'end_col_offset')
+
+    target: AST
+    iter: AST
+
+    head: List[AST] = field(default_factory=list)
+    body: List[AST] = field(default_factory=list)
+    orelse: List[AST] = field(default_factory=list)
+
+    type_comment: str = None
+
 
 
 class ForCFG(AST):
@@ -433,7 +448,7 @@ class ForCFG(AST):
                                                          args=[self.iter], keywords=[]))
         copy_location(create_iter, self)
 
-        next_call = Call(func=Name(id='next', ctx=Load()), args=[self.iter], keywords=[])
+        next_call = Call(func=Name(id='next', ctx=Load()), args=[Name(id=self.iter_name, ctx=Load())], keywords=[])
         iter_stmt = SingleAssign.create(target=self.target, value=next_call)
 
         new_head = self.head + [iter_stmt]
