@@ -6,6 +6,8 @@ import dace
 import pytest
 import argparse
 from dace.transformation.auto.auto_optimize import auto_optimize
+from dace.fpga_testing import fpga_test
+from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
 
 N, bins, npt = (dace.symbol(s, dtype=dace.int64) for s in ('N', 'bins', 'npt'))
 
@@ -96,9 +98,17 @@ def run_azimint_hist(device_type: dace.dtypes.DeviceType):
     if device_type in {dace.dtypes.DeviceType.CPU, dace.dtypes.DeviceType.GPU}:
         # Parse the SDFG and apply autopot
         sdfg = dace_azimint_hist.to_sdfg()
-        sdfg.save('test.sdfg')
         sdfg = auto_optimize(sdfg, device_type)
         val = sdfg(data=data, radius=radius, N=N, npt=npt)
+    elif device_type == dace.dtypes.DeviceType.FPGA:
+        # Parse SDFG and apply FPGA friendly optimization
+        sdfg = dace_azimint_hist.to_sdfg(simplify=True)
+        applied = sdfg.apply_transformations([FPGATransformSDFG])
+        assert applied == 1
+
+        sdfg.apply_transformations_repeated([InlineSDFG], print_report=True)
+        sdfg.specialize(dict(N=N, npt=npt))
+        val = sdfg(data=data, radius=radius)
 
     # Compute ground truth and Validate result
     ref = numpy_azimint_hist(data, radius, npt)
@@ -119,10 +129,16 @@ def test_gpu():
     run_azimint_hist(dace.dtypes.DeviceType.GPU)
 
 
+@pytest.mark.skip(reason="FPGA Transform error")
+@fpga_test(assert_ii_1=False)
+def test_fpga():
+    run_azimint_hist(dace.dtypes.DeviceType.FPGA)
+
+
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
+    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu', 'fpga'], help='Target platform')
 
     args = vars(parser.parse_args())
     target = args["target"]
@@ -131,3 +147,5 @@ if __name__ == "__main__":
         run_azimint_hist(dace.dtypes.DeviceType.CPU)
     elif target == "gpu":
         run_azimint_hist(dace.dtypes.DeviceType.GPU)
+    elif target == "fpga":
+        run_azimint_hist(dace.dtypes.DeviceType.FPGA)
