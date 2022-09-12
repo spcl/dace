@@ -1,56 +1,61 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 # Original application code: NPBench - https://github.com/spcl/npbench
 import dace.dtypes
 import numpy as np
 import dace as dc
 import pytest
 import argparse
-from dace.fpga_testing import fpga_test, xilinx_test
+from dace.fpga_testing import fpga_test
 from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
-from dace.transformation.dataflow import StreamingMemory, StreamingComposition
+from dace.transformation.dataflow import StreamingMemory
 from dace.transformation.auto.auto_optimize import auto_optimize, fpga_auto_opt
-from dace.config import set_temporary
 
-M, N = (dc.symbol(s, dtype=dc.int32) for s in ('M', 'N'))
+# Data set sizes
+# M, N
+sizes = {
+    "mini": (38, 42),
+    "small": (116, 124),
+    "medium": (390, 410),
+    "large": (1900, 2100),
+    "extra-large": (1800, 2200)
+}
+
+M, N = (dc.symbol(s, dtype=dc.int64) for s in ('M', 'N'))
+
+
+def initialize(M, N, datatype=np.float64):
+    A = np.fromfunction(lambda i, j: (i * (j + 1) % N) / N, (N, M), dtype=datatype)
+    p = np.fromfunction(lambda i: (i % M) / M, (M, ), dtype=datatype)
+    r = np.fromfunction(lambda i: (i % N) / N, (N, ), dtype=datatype)
+
+    return A, p, r
 
 
 @dc.program
-def kernel(A: dc.float32[M, N], x: dc.float32[N]):
-    return (A @ x) @ A
+def bicg_kernel(A: dc.float64[N, M], p: dc.float64[M], r: dc.float64[N]):
+    return r @ A, A @ p
 
 
-def init_data(M, N):
-    fn = np.float32(N)
-    A = np.empty((M, N), dtype=np.float32)
-    x = np.empty((N, ), dtype=np.float32)
-    y = np.empty((N, ), dtype=np.float32)
-    for i in range(N):
-        x[i] = 1 + (i / fn)
-    for i in range(M):
-        for j in range(N):
-            A[i, j] = ((i + j) % N) / (5 * M)
-    return A, x, y
-
-
-def run_atax(device_type: dace.dtypes.DeviceType):
+def run_bicg(device_type: dace.dtypes.DeviceType):
     '''
-    Runs ATAX for the given device
+    Runs BiCG for the given device
     :return: the SDFG
     '''
 
-    # Initialize data (polybench medium size)
-    M, N = (390, 410)
-    A, x, y_ref = init_data(M, N)
+    # Initialize data (polybench small size)
+    M, N = sizes["small"]
+    A, p, r = initialize(M, N)
 
     if device_type in {dace.dtypes.DeviceType.CPU, dace.dtypes.DeviceType.GPU}:
-        # Parse the SDFG and apply autopot
-        sdfg = kernel.to_sdfg()
+        # Parse the SDFG and apply auto-opt
+        sdfg = bicg_kernel.to_sdfg()
         sdfg = auto_optimize(sdfg, device_type)
-        y = sdfg(A, x, M=M, N=N)
+        s, q = sdfg(A, p, r, M=M, N=N)
 
     elif device_type == dace.dtypes.DeviceType.FPGA:
         # Parse SDFG and apply FPGA friendly optimization
-        sdfg = kernel.to_sdfg(simplify=True)
+        # Note: currently the kernel uses double-precision floating point numbers
+        sdfg = bicg_kernel.to_sdfg(simplify=True)
         applied = sdfg.apply_transformations([FPGATransformSDFG])
         assert applied == 1
 
@@ -58,12 +63,13 @@ def run_atax(device_type: dace.dtypes.DeviceType):
         from dace.libraries.blas import Gemv
         Gemv.default_implementation = "FPGA_Accumulate"
         sdfg.expand_library_nodes()
+
         sm_applied = sdfg.apply_transformations_repeated([InlineSDFG, StreamingMemory],
                                                          [{}, {
                                                              'storage': dace.StorageType.FPGA_Local
                                                          }],
                                                          print_report=True)
-        assert sm_applied == 6  # 3 inlines and 3 Streaming memories
+        assert sm_applied == 8  # 3 inlines and 3 Streaming memories
 
         ###########################
         # FPGA Auto Opt
@@ -72,32 +78,27 @@ def run_atax(device_type: dace.dtypes.DeviceType):
 
         # specialize the SDFG (needed by the GEMV expansion)
         sdfg.specialize(dict(M=M, N=N))
-        y = sdfg(A, x)
+        s, q = sdfg(A, p, r)
 
     # Compute ground truth and Validate result
-    y_ref = kernel.f(A, x)
-    assert np.allclose(y, y_ref)
+    s_ref, q_ref = bicg_kernel.f(A, p, r)
+    assert np.allclose(s, s_ref)
+    assert np.allclose(q, q_ref)
     return sdfg
 
 
 def test_cpu():
-    run_atax(dace.dtypes.DeviceType.CPU)
+    run_bicg(dace.dtypes.DeviceType.CPU)
 
 
 @pytest.mark.gpu
 def test_gpu():
-    run_atax(dace.dtypes.DeviceType.GPU)
+    run_bicg(dace.dtypes.DeviceType.GPU)
 
 
 @fpga_test(assert_ii_1=False)
 def test_fpga():
-    return run_atax(dace.dtypes.DeviceType.FPGA)
-
-
-@xilinx_test(assert_ii_1=False)
-def test_xilinx_decoupled_array_interfaces():
-    with set_temporary("compiler", "xilinx", "decouple_array_interfaces", value=True):
-        return run_atax(dace.dtypes.DeviceType.FPGA)
+    return run_bicg(dace.dtypes.DeviceType.FPGA)
 
 
 if __name__ == "__main__":
@@ -109,8 +110,8 @@ if __name__ == "__main__":
     target = args["target"]
 
     if target == "cpu":
-        run_atax(dace.dtypes.DeviceType.CPU)
+        run_bicg(dace.dtypes.DeviceType.CPU)
     elif target == "gpu":
-        run_atax(dace.dtypes.DeviceType.GPU)
+        run_bicg(dace.dtypes.DeviceType.GPU)
     elif target == "fpga":
-        run_atax(dace.dtypes.DeviceType.FPGA)
+        run_bicg(dace.dtypes.DeviceType.FPGA)

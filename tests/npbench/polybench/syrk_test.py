@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 # Original application code: NPBench - https://github.com/spcl/npbench
 
 import dace.dtypes
@@ -10,6 +10,9 @@ from dace.fpga_testing import fpga_test
 from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
 from dace.transformation.dataflow import StreamingMemory, MapFusion, StreamingComposition, PruneConnectors
 from dace.transformation.auto.auto_optimize import auto_optimize, fpga_auto_opt
+
+# M, N
+sizes = {"mini": (20, 30), "small": (60, 80), "medium": (200, 240), "large": (1000, 1200), "extra-large": (2000, 2600)}
 
 M, N = (dc.symbol(s, dtype=dc.int32) for s in ('M', 'N'))
 
@@ -53,13 +56,13 @@ def run_syrk(device_type: dace.dtypes.DeviceType):
     :return: the SDFG
     '''
 
-    # Initialize data (polybench medium size)
-    M, N = (200, 240)
+    # Initialize data (polybench mini size)
+    M, N = sizes["mini"]
     alpha, beta, C, A = init_data(N, M)
     gt_C = np.copy(C)
 
     if device_type in {dace.dtypes.DeviceType.CPU, dace.dtypes.DeviceType.GPU}:
-        # Parse the SDFG and apply autopot
+        # Parse the SDFG and apply auto-opt
         sdfg = kernel.to_sdfg()
         sdfg = auto_optimize(sdfg, device_type)
         sdfg(alpha=alpha, beta=beta, C=C, A=A, M=M, N=N)
