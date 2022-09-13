@@ -355,7 +355,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
             sdfg.add_edge(e.src, source, e.data)
         for e in sdfg.out_edges(outer_state):
             for sink in sinks:
-                sdfg.add_edge(sink, e.dst, e.data)
+                sdfg.add_edge(sink, e.dst, dc(e.data))
 
         # Modify start state as necessary
         if outer_start_state is outer_state:
