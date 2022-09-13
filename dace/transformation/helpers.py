@@ -215,36 +215,22 @@ def _copy_state(sdfg: SDFG, state: SDFGState, before: bool = True, states: Optio
     state_copy._label += '_copy'
     sdfg.add_node(state_copy)
 
-    in_conditions = []
     for e in sdfg.in_edges(state):
         if states and e.src not in states:
             continue
         sdfg.add_edge(e.src, state_copy, e.data)
         sdfg.remove_edge(e)
-        if not e.data.is_unconditional():
-            in_conditions.append(e.data.condition.as_string)
 
-    out_conditions = []
     for e in sdfg.out_edges(state):
-        if states and e.dst not in states:
+        if states and e.src not in states:
             continue
         sdfg.add_edge(state_copy, e.dst, e.data)
         sdfg.remove_edge(e)
-        if not e.data.is_unconditional():
-            out_conditions.append(e.data.condition.as_string)
 
     if before:
-        condition = None
-        if in_conditions:
-            condition = 'or'.join([f"({c})" for c in in_conditions])
-        sdfg.add_edge(state_copy, state, InterstateEdge(condition=condition))
+        sdfg.add_edge(state_copy, state, InterstateEdge())
     else:
-        condition = None
-        # NOTE: The following should be unecessary for preserving program semantics. Therefore we comment it out to
-        # avoid the overhead of evaluating the condition.
-        # if out_conditions:
-        #     condition = 'or'.join([f"({c})" for c in out_conditions])
-        sdfg.add_edge(state, state_copy, InterstateEdge(condition=condition))
+        sdfg.add_edge(state, state_copy, InterstateEdge())
     
     return state_copy
 
@@ -279,21 +265,20 @@ def nest_sdfg_control_flow(sdfg: SDFG):
             states.add(fexit_copy)
             
             components[guard_copy] = states
-        elif isinstance(child, (cf.IfScope, cf.IfElseChain)):
-            guard = child.branch_state
-            ifexit = ipostdom[guard]
 
-            states = set(utils.dfs_conditional(sdfg, [guard], lambda p, _: p is not ifexit))
-            guard_copy = _copy_state(sdfg, guard, False, states)
-            states.remove(guard)
-            states.add(guard_copy)
-            ifexit_copy = _copy_state(sdfg, ifexit, True, states)
-            states.remove(ifexit)
-            states.add(ifexit_copy)
+    # components = {}
+    # unvisited = set(sdfg.states())
+    # start = sdfg.start_state
 
-            components[guard_copy] = states
-        else:
-            raise ValueError(f"Unsupported control flow class {type(child)}")
+    # while unvisited:
+
+    #     if start is None:
+    #         raise
+
+    #     component, nstart = _next_component(start, sdfg, ipostdom)
+    #     unvisited.difference_update(component)
+    #     components[start] = component
+    #     start = nstart
     
     num_components = len(components)
     for i, (start, component) in enumerate(components.items()):
