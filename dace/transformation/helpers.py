@@ -248,8 +248,9 @@ def nest_sdfg_control_flow(sdfg: SDFG):
         elif isinstance(child, (cf.ForScope, cf.WhileScope)):
             guard = child.guard
             fexit = None
+            condition = child.condition if isinstance(child, cf.ForScope) else child.test
             for e in sdfg.out_edges(guard):
-                if e.data.condition != child.condition:
+                if e.data.condition != condition:
                     fexit = e.dst
                     break
             if fexit is None:

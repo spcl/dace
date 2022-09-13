@@ -127,14 +127,13 @@ def test_nest_cf_simple_while_loop():
     
     sdfg = simple_while_loop.to_sdfg(simplify=False)
     nest_sdfg_control_flow(sdfg)
-    # sdfg.view()
 
-    assert(np.array_equal(sdfg(), np.arange(10, dtype=np.int32)))
+    assert(np.array_equal(sdfg(update=update), np.arange(10, dtype=np.int32)))
 
 
 if __name__ == '__main__':
-    # test_nest_oneelementmap()
-    # test_internal_outarray()
-    # test_symbolic_return()
+    test_nest_oneelementmap()
+    test_internal_outarray()
+    test_symbolic_return()
     test_nest_cf_simple_for_loop()
     test_nest_cf_simple_while_loop()
