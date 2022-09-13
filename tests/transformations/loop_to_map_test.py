@@ -247,8 +247,7 @@ def test_empty_loop():
             pass
 
     sdfg = empty_loop.to_sdfg(simplify=False)
-    sdfg.apply_transformations(LoopToMap)
-    sdfg.view()
+    assert sdfg.apply_transformations(LoopToMap) == 1
 
     try:
         sdfg.validate()
@@ -265,7 +264,7 @@ def test_empty_loop():
 def test_interstate_dep():
 
     sdfg = dace.SDFG('intestate_dep')
-    sdfg.add_array('A', (10,), dtype=np.int32)
+    sdfg.add_array('A', (10, ), dtype=np.int32)
     init = sdfg.add_state('init', is_start_state=True)
     guard = sdfg.add_state('guard')
     body0 = sdfg.add_state('body0')
@@ -282,14 +281,14 @@ def test_interstate_dep():
     a = body1.add_access('A')
     body1.add_edge(t, '__out', a, None, dace.Memlet('A[i]'))
 
-    ref = np.ndarray((10,), dtype=np.int32)
+    ref = np.random.randint(0, 10, size=(10, ), dtype=np.int32)
+    val = np.copy(ref)
     sdfg(A=ref)
 
-    val = np.ndarray((10,), dtype=np.int32)
-    sdfg.apply_transformations(LoopToMap)
+    assert sdfg.apply_transformations(LoopToMap) == 0
     sdfg(A=val)
 
-    assert(np.array_equal(val, ref))
+    assert np.array_equal(val, ref)
 
 
 if __name__ == "__main__":
