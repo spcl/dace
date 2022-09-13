@@ -4711,7 +4711,12 @@ class ProgramVisitor(ExtNodeVisitor):
                     if not sym:
                         sym = dace.symbol(f'__sym_{scalar}', dtype=desc.dtype)
                         self.indirections[node_str] = sym
-                        self.sdfg.add_symbol(f'__sym_{scalar}', desc.dtype)
+                        try:
+                            self.sdfg.add_symbol(f'__sym_{scalar}', desc.dtype)
+                        except FileExistsError:
+                            # NOTE: By design, it is possible to try here to add an already existing symbol even if
+                            # `not sym` returns True. This exception is benign.
+                            pass
                     state = self._add_state(f'promote_{scalar}_to_{str(sym)}')
                     edge = self.sdfg.in_edges(state)[0]
                     edge.data.assignments = {str(sym): scalar}
