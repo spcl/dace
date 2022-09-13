@@ -131,9 +131,77 @@ def test_nest_cf_simple_while_loop():
     assert(np.array_equal(sdfg(update=update), np.arange(10, dtype=np.int32)))
 
 
+def test_nest_cf_simple_if():
+
+    @dace.program
+    def simple_if(i: dace.int64):
+        if i < 5:
+            return 0
+        else:
+            return 1
+        
+    sdfg = simple_if.to_sdfg(simplify=False)
+    nest_sdfg_control_flow(sdfg)
+
+    assert(sdfg(2)[0] == 0)
+    assert(sdfg(5)[0] == 1)
+
+
+def test_nest_cf_simple_if_elif():
+
+    @dace.program
+    def simple_if_elif(i: dace.int64):
+        if i < 2:
+            return 0
+        elif i < 4:
+            return 1
+        elif i < 6:
+            return 2
+        elif i < 8:
+            return 3
+        else:
+            return 4
+        
+    sdfg = simple_if_elif.to_sdfg(simplify=False)
+    nest_sdfg_control_flow(sdfg)
+
+    assert(sdfg(0)[0] == 0)
+    assert(sdfg(2)[0] == 1)
+    assert(sdfg(4)[0] == 2)
+    assert(sdfg(7)[0] == 3)
+    assert(sdfg(15)[0] == 4)
+
+
+def test_nest_cf_simple_if_chain():
+
+    @dace.program
+    def simple_if_chain(i: dace.int64):
+        if i < 2:
+            return 0
+        if i < 4:
+            return 1
+        if i < 6:
+            return 2
+        if i < 8:
+            return 3
+        return 4
+        
+    sdfg = simple_if_chain.to_sdfg(simplify=False)
+    nest_sdfg_control_flow(sdfg)
+
+    assert(sdfg(0)[0] == 0)
+    assert(sdfg(2)[0] == 1)
+    assert(sdfg(4)[0] == 2)
+    assert(sdfg(7)[0] == 3)
+    assert(sdfg(15)[0] == 4)
+
+
 if __name__ == '__main__':
     test_nest_oneelementmap()
     test_internal_outarray()
     test_symbolic_return()
     test_nest_cf_simple_for_loop()
     test_nest_cf_simple_while_loop()
+    test_nest_cf_simple_if()
+    test_nest_cf_simple_if_elif()
+    test_nest_cf_simple_if_chain()
