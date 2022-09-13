@@ -20,30 +20,6 @@ from dace.frontend.python import astutils
 from dace.frontend.python.common import (DaceSyntaxError, SDFGConvertible, SDFGClosure)
 
 
-def create_dummy_func(func_def: ast.FunctionDef) -> ast.FunctionDef:
-
-    orig_args = func_def.args
-    args = ast.arguments(
-        posonlyargs = orig_args.posonlyargs,
-        args = orig_args.args,
-        vararg = orig_args.vararg,
-        kwonlyargs = orig_args.kwonlyargs,
-        kwarg = orig_args.kwarg,
-        kw_defaults = [],
-        defaults = [],
-    )
-
-    dummy_func = ast.FunctionDef(
-        name=func_def.name,
-        args=args,
-        body=func_def.body,
-        decorator_list=[],
-        returns=func_def.returns,
-        type_comment=func_def.type_comment
-    )
-
-    return dummy_func
-
 
 class DaceRecursionError(Exception):
     """

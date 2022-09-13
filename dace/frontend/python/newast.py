@@ -1070,6 +1070,7 @@ class ProgramVisitor(ExtNodeVisitor):
         self.views: Dict[str, Tuple[str, Memlet]] = {}  # Keeps track of views
         self.references: Set[str] = set()  # All containers that participate in PhiAssigns
         self.reference_assigns: Dict[str, str] = {}  # Keeps track of reference assignments
+        self.references_remaining: Dict[str, str] = {}  # Keeps track of phi operands left to process
         self.nested_closure_arrays: Dict[str, Tuple[Any, data.Data]] = {}
         self.annotated_types: Dict[str, data.Data] = annotated_types or {}
 
@@ -1219,41 +1220,33 @@ class ProgramVisitor(ExtNodeVisitor):
                 arr.transient = False
                 self.outputs[arrname] = (None, Memlet.from_array(arrname, arr), [])
 
-        def ref_assign(read: dace.nodes.AccessNode, target: str, ref_assigns):
-            assign_list = ref_assigns[target]
-            for ref_name in assign_list:
-                write = state.add_write(ref_name)
-                state.add_edge(read, None, write, 'set', Memlet(read.data))
-                if ref_name in ref_assigns:
-                    ref_assign(write, ref_name, ref_assigns)
-
-
         # Assign References from Phi nodes
-        print("views:", self.views)
-        print("reference assigns:", self.reference_assigns)
-
-
         defined_vars = {**self.variables, **self.scope_vars}
         defined_arrays = {**self.sdfg.arrays, **self.scope_arrays}
 
-        refs_to_assign = {}
-
-        for name, phi_operands in self.reference_assigns.items():
-            for op in phi_operands:
+        for name in self.references_remaining:
+            for op in self.references_remaining[name]:
                 if op in defined_vars:
                     true_name = defined_vars[op]
-                    assign_list = refs_to_assign.get(true_name, [])
+                    assign_list = self.reference_assigns.get(true_name, [])
                     assign_list.append(name)
-                    refs_to_assign[true_name] = assign_list
+                    self.reference_assigns[true_name] = assign_list
                     print("MAP", true_name, "TO", name, "(defined_vars)")
                 elif op in defined_arrays:
-                    assign_list = refs_to_assign.get(op, [])
+                    assign_list = self.reference_assigns.get(op, [])
                     assign_list.append(name)
-                    refs_to_assign[op] = assign_list
+                    self.reference_assigns[op] = assign_list
                     print("MAP", op, "TO", name, "(defined_arrays)")
                 else:
                     raise Exception(f"Cannot find variable {op}")
 
+        def ref_assign(read: dace.nodes.AccessNode, target: str):
+            assign_list = self.reference_assigns[target]
+            for ref_name in assign_list:
+                write = state.add_write(ref_name)
+                state.add_edge(read, None, write, 'set', Memlet(read.data))
+                if ref_name in self.reference_assigns:
+                    ref_assign(write, ref_name)
 
         for state in self.sdfg.try_topological_sort():
             
@@ -1261,12 +1254,12 @@ class ProgramVisitor(ExtNodeVisitor):
             # same name should appear in one state (pre-simplified SDFG)
             nodes = list(state.data_nodes())
             for node in nodes:
-                if node.data in refs_to_assign:
+                if node.data in self.reference_assigns:
                     base_read = node
-                    ref_assign(base_read, node.data, refs_to_assign)
+                    ref_assign(base_read, node.data)
 
                     # Only assign to the reference once
-                    del refs_to_assign[node.data]
+                    del self.reference_assigns[node.data]
 
         def _views_to_data(state: SDFGState, nodes: List[dace.nodes.AccessNode]) -> List[dace.nodes.AccessNode]:
             new_nodes = []
@@ -1486,37 +1479,39 @@ class ProgramVisitor(ExtNodeVisitor):
         defined_arrays = {**self.sdfg.arrays, **self.scope_arrays}
 
         desc = None
+        remaining_ops = []
         for op in phi_operands:
             if op in defined_vars:
                 true_name = defined_vars[op]
                 desc = defined_arrays[true_name]
                 print(f"desc for {op} in vars")
-                break
             elif op in defined_arrays:
                 desc = defined_arrays[op]
                 print(f"desc for {op} in arrs")
-                break
+            else:
+                remaining_ops.append(op)
         
         assert desc is not None, f"No descriptor found for {phi_target}"
 
         name, ref = sdfg.add_reference(phi_target, desc.shape, desc.dtype, desc.storage, find_new_name=True)
+        self.references_remaining[name] = remaining_ops
 
-        self.reference_assigns[name] = phi_operands
-        
-        # for op in phi_operands:
-        #     if op in defined_vars:
-        #         true_name = defined_vars[op]
-        #         assign_list = self.reference_assigns.get(true_name, [])
-        #         assign_list.append(name)
-        #         self.reference_assigns[true_name] = assign_list
-        #         print("MAP", true_name, "TO", name, "(defined_vars)")
-        #     elif op in defined_arrays:
-        #         assign_list = self.reference_assigns.get(op, [])
-        #         assign_list.append(name)
-        #         self.reference_assigns[op] = assign_list
-        #         print("MAP", op, "TO", name, "(defined_arrays)")
-        #     else:
-        #         raise Exception(f"Cannot find variable {op}")
+        for op in phi_operands:
+            if op in defined_vars:
+                true_name = defined_vars[op]
+                assign_list = self.reference_assigns.get(true_name, [])
+                assign_list.append(name)
+                self.reference_assigns[true_name] = assign_list
+                print("MAP", true_name, "TO", name, "(defined_vars)")
+            elif op in defined_arrays:
+                assign_list = self.reference_assigns.get(op, [])
+                assign_list.append(name)
+                self.reference_assigns[op] = assign_list
+                print("MAP", op, "TO", name, "(defined_arrays)")
+            elif op in remaining_ops:
+                pass
+            else:
+                raise Exception(f"Cannot find variable {op}")
 
 
     def visit_FunctionDef(self, node: ast.FunctionDef):
