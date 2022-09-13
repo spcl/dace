@@ -21,7 +21,7 @@ from dace.codegen.codeobject import CodeObject
 from dace.codegen.dispatcher import DefinedType
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets import cpp
-from dace.codegen.targets.common import update_persistent_desc
+from dace.codegen.common import update_persistent_desc
 from dace.codegen.targets.cpp import (codeblock_to_cpp, cpp_array_expr, memlet_copy_to_absolute_strides, sym2cpp,
                                       synchronize_streams, unparse_cr, unparse_cr_split)
 from dace.codegen.targets.target import IllegalCopy, TargetCodeGenerator, make_absolute

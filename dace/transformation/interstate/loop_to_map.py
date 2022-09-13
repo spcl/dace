@@ -448,6 +448,9 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
                     body.add_edge_pair(exit, e.src, n, e.data, internal_connector=e.src_conn)
             else:
                 body.add_nedge(n, exit, memlet.Memlet())
+            
+        if not source_nodes and not sink_nodes:
+            body.add_nedge(entry, exit, memlet.Memlet())
 
         # Get rid of the loop exit condition edge
         after_edge = sdfg.edges_between(guard, after)[0]

@@ -469,5 +469,3 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
         # Step 9: Simplify
         if not self.simplify:
             return
-
-        sdfg.simplify()

@@ -1157,20 +1157,31 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         # Start with the set of SDFG free symbols
         free_syms |= set(self.symbols.keys())
 
-        # Exclude data descriptor names
+        # Exclude data descriptor names and constants
         for name, desc in self.arrays.items():
             defined_syms.add(name)
+        defined_syms |= set(self.constants_prop.keys())
 
         # Add free state symbols
-        for state in self.nodes():
+        used_before_assignment = set()
+
+        try:
+            ordered_states = self.topological_sort(self.start_state)
+        except ValueError:  # Failsafe (e.g., for invalid or empty SDFGs)
+            ordered_states = self.nodes()
+
+        for state in ordered_states:
             free_syms |= state.free_symbols
 
-        # Add free inter-state symbols
-        for e in self.edges():
-            defined_syms |= set(e.data.assignments.keys())
-            free_syms |= e.data.free_symbols
+            # Add free inter-state symbols
+            for e in self.out_edges(state):
+                defined_syms |= set(e.data.assignments.keys())
+                efsyms = e.data.free_symbols
+                used_before_assignment.update(efsyms - defined_syms)
+                free_syms |= efsyms
 
-        defined_syms |= set(self.constants.keys())
+        # Remove symbols that were used before they were assigned
+        defined_syms -= used_before_assignment
 
         # Subtract symbols defined in inter-state edges and constants
         return free_syms - defined_syms

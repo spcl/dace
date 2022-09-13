@@ -163,8 +163,61 @@ def test_fusion_with_transient():
     assert np.allclose(A, expected)
 
 
+def test_fusion_with_inverted_indices():
+
+    @dace.program
+    def inverted_maps(A: dace.int32[10]):
+        B = np.empty_like(A)
+        for i in dace.map[0:10]:
+            B[i] = i
+        for i in dace.map[0:10]:
+            A[9-i] = B[9-i] + 5
+    
+    ref = np.arange(5, 15, dtype=np.int32)
+
+    sdfg = inverted_maps.to_sdfg(simplify=True)
+    val0 = np.ndarray((10,), dtype=np.int32)
+    sdfg(A=val0)
+    assert(np.array_equal(val0, ref))
+
+    sdfg.apply_transformations(MapFusion)
+    val1 = np.ndarray((10,), dtype=np.int32)
+    sdfg(A=val1)
+    assert(np.array_equal(val1, ref))
+
+
+def test_fusion_with_empty_memlet():
+
+    N = dace.symbol('N', positive=True)
+
+    @dace.program
+    def inner_product(A: dace.float32[N], B: dace.float32[N], out: dace.float32[1]):
+        tmp = np.empty_like(A)
+        for i in dace.map[0:N:128]:
+            for j in dace.map[0:128]:
+                tmp[i+j] = A[i+j] * B[i+j]
+        for i in dace.map[0:N:128]:
+            lsum = dace.float32(0)
+            for j in dace.map[0:128]:
+                lsum = lsum + tmp[i+j]
+            out[0] += lsum
+    
+    sdfg = inner_product.to_sdfg(simplify=True)
+    count = sdfg.apply_transformations_repeated(MapFusion)
+    assert(count == 2)
+
+    A = np.arange(1024, dtype=np.float32)
+    B = np.arange(1024, dtype=np.float32)
+    val = np.zeros((1,), dtype=np.float32)
+    sdfg(A=A, B=B, out=val, N=1024)
+    ref = A @ B
+    assert(np.allclose(val[0], ref))
+
+
 if __name__ == '__main__':
     test_fusion_simple()
     test_multiple_fusions()
     test_fusion_chain()
     test_fusion_with_transient()
+    test_fusion_with_inverted_indices()
+    test_fusion_with_empty_memlet()

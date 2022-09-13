@@ -9,12 +9,281 @@ import dace.subsets as subsets
 from typing import Dict, List, Optional, Tuple, Set, Union
 
 from dace import data, dtypes, symbolic
+from dace.codegen import control_flow as cf
 from dace.sdfg import nodes, utils
 from dace.sdfg.graph import SubgraphView, MultiConnectorEdge
 from dace.sdfg.scope import ScopeSubgraphView, ScopeTree
 from dace.sdfg import SDFG, SDFGState, InterstateEdge
 from dace.sdfg import graph
 from dace.memlet import Memlet
+
+
+def nest_sdfg_subgraph(sdfg: SDFG,
+                       subgraph: SubgraphView,
+                       start: Optional[SDFGState] = None,
+                       name: Optional[str] = None) -> SDFGState:
+    
+    # Nest states
+    states = subgraph.nodes()
+    if len(states) > 1:
+
+        if start is not None:
+            source_node = start
+        else:
+            src_nodes = subgraph.source_nodes()
+            if len(src_nodes) != 1:
+                raise NotImplementedError
+            source_node = src_nodes[0]
+        
+        sink_nodes = subgraph.sink_nodes()
+        if len(sink_nodes) != 1:
+            raise NotImplementedError
+        sink_node = sink_nodes[0]
+
+
+        # Find read/write sets
+        read_set, write_set = set(), set()
+        for state in states:
+            rset, wset = state.read_and_write_sets()
+            read_set |= rset
+            write_set |= wset
+            # Add to write set also scalars between tasklets
+            for src_node in state.nodes():
+                if not isinstance(src_node, nodes.Tasklet):
+                    continue
+                for dst_node in state.nodes():
+                    if src_node is dst_node:
+                        continue
+                    if not isinstance(dst_node, nodes.Tasklet):
+                        continue
+                    for e in state.edges_between(src_node, dst_node):
+                        if e.data.data and e.data.data in sdfg.arrays:
+                            write_set.add(e.data.data)
+        # Add data from edges
+        for src in states:
+            for dst in states:
+                for edge in sdfg.edges_between(src, dst):
+                    for s in edge.data.free_symbols:
+                        if s in sdfg.arrays:
+                            read_set.add(s)
+
+        # Find NestedSDFG's unique data
+        rw_set = read_set | write_set
+        unique_set = set()
+        for name in rw_set:
+            if not sdfg.arrays[name].transient:
+                continue
+            found = False
+            for state in sdfg.states():
+                if state in states:
+                    continue
+                for node in state.nodes():
+                    if (isinstance(node, nodes.AccessNode) and node.data == name):
+                        found = True
+                        break
+            if not found:
+                unique_set.add(name)
+
+        # Find NestedSDFG's connectors
+        read_set = {n for n in read_set if n not in unique_set or not sdfg.arrays[n].transient}
+        write_set = {n for n in write_set if n not in unique_set or not sdfg.arrays[n].transient}
+
+        # Find defined subgraph symbols
+        defined_symbols = set()
+        strictly_defined_symbols = set()
+        for e in subgraph.edges():
+            defined_symbols.update(set(e.data.assignments.keys()))
+            for k, v in e.data.assignments.items():
+                try:
+                    if k not in sdfg.symbols and k not in {str(a) for a in symbolic.pystr_to_symbolic(v).args}:
+                        strictly_defined_symbols.add(k)
+                except AttributeError:
+                    # `symbolic.pystr_to_symbolic` may return bool, which doesn't have attribute `args`
+                    pass
+
+        new_state = sdfg.add_state('nested_sdfg_parent')
+        nsdfg = SDFG("nested_sdfg", constants=sdfg.constants_prop, parent=new_state)
+        true_source = nsdfg.add_state('start_state', is_start_state=True)
+        nsdfg.add_nodes_from([s for s in states])
+        for s in states:
+            s.parent = nsdfg
+        nsdfg.add_edge(true_source, source_node, InterstateEdge())
+        for e in subgraph.edges():
+            nsdfg.add_edge(e.src, e.dst, e.data)
+
+        for e in sdfg.in_edges(source_node):
+            sdfg.add_edge(e.src, new_state, e.data)
+        for e in sdfg.out_edges(sink_node):
+            sdfg.add_edge(new_state, e.dst, e.data)
+
+        sdfg.remove_nodes_from(states)
+
+        # Add NestedSDFG arrays
+        for name in read_set | write_set:
+            nsdfg.arrays[name] = copy.deepcopy(sdfg.arrays[name])
+            nsdfg.arrays[name].transient = False
+        for name in unique_set:
+            nsdfg.arrays[name] = sdfg.arrays[name]
+            del sdfg.arrays[name]
+        
+        # Handle symbols taking new value inside NestedSDFG
+        ndefined_symbols = set()
+        out_mapping = {}
+        out_state = None
+        for e in nsdfg.edges():
+            ndefined_symbols.update(set(e.data.assignments.keys()))
+        if ndefined_symbols:
+            out_state = nsdfg.add_state('symbolic_output')
+            nsdfg.add_edge(sink_node, out_state, InterstateEdge())
+            for s in ndefined_symbols:
+                if s in nsdfg.symbols:
+                    dtype = nsdfg.symbols[s]
+                else:
+                    dtype = sdfg.symbols[s]
+                name, _ = sdfg.add_scalar(f"__sym_out_{s}", dtype, transient=True, find_new_name=True)
+                out_mapping[s] = name
+                nname, ndesc = nsdfg.add_scalar(f"__sym_out_{s}", dtype, find_new_name=True)
+                tasklet = out_state.add_tasklet(f"set_{nname}", {}, {'__out'}, f'__out = {s}')
+                acc = out_state.add_access(nname)
+                out_state.add_edge(tasklet, '__out', acc, None, Memlet.from_array(nname, ndesc))
+                write_set.add(name)
+
+        # Add NestedSDFG node
+        fsymbols = sdfg.symbols.keys() | nsdfg.free_symbols
+        fsymbols.update(defined_symbols - strictly_defined_symbols)
+        mapping = {s: s for s in fsymbols}
+        cnode = new_state.add_nested_sdfg(nsdfg, None, read_set, write_set, mapping)
+        for s in strictly_defined_symbols:
+            if s in sdfg.symbols:
+                sdfg.remove_symbol(s)
+        
+        for name in read_set:
+            r = new_state.add_read(name)
+            new_state.add_edge(r, None, cnode, name, Memlet.from_array(name, sdfg.arrays[name]))
+        for name in write_set:
+            w = new_state.add_write(name)
+            new_state.add_edge(cnode, name, w, None, Memlet.from_array(name, sdfg.arrays[name]))
+
+        if out_state is not None:
+            extra_state = sdfg.add_state('symbolic_output')
+            for e in sdfg.out_edges(new_state):
+                sdfg.add_edge(extra_state, e.dst, e.data)
+                sdfg.remove_edge(e)
+            sdfg.add_edge(new_state, extra_state, InterstateEdge(assignments=out_mapping))
+            new_state = extra_state
+
+    else:
+        new_state = states[0]
+    
+    return new_state
+
+
+def _next_component(state: SDFGState, sdfg: SDFG, ipostdom: Dict[SDFGState, SDFGState],
+                    component: Set[SDFGState] = None):
+    
+    component = component or set()
+
+    if state in component:
+        return component, None
+
+    component.add(state)
+
+    edges = sdfg.out_edges(state)
+
+    if len(edges) == 0:
+        return component, None
+
+    if len(edges) == 1:
+        if edges[0].data.is_unconditional:
+            problem = False
+            for _, v in edges[0].data.assignments.items():
+                if symbolic.issymbolic(v):
+                    problem = True
+            if not edges[0].data.assignments or not problem:
+                return component, edges[0].dst
+        return _next_component(edges[0].dst, sdfg, ipostdom, component)
+    
+    # len(edges) > 1
+    last_state = ipostdom[state]
+    component.update(utils.dfs_conditional(sdfg, [state], lambda _, c: c is not last_state))
+    return _next_component(last_state, sdfg, ipostdom, component)   
+
+
+def _copy_state(sdfg: SDFG, state: SDFGState, before: bool = True, states: Optional[Set[SDFGState]] = None) -> SDFGState:
+
+    state_copy = copy.deepcopy(state)
+    state_copy._label += '_copy'
+    sdfg.add_node(state_copy)
+
+    for e in sdfg.in_edges(state):
+        if states and e.src not in states:
+            continue
+        sdfg.add_edge(e.src, state_copy, e.data)
+        sdfg.remove_edge(e)
+
+    for e in sdfg.out_edges(state):
+        if states and e.src not in states:
+            continue
+        sdfg.add_edge(state_copy, e.dst, e.data)
+        sdfg.remove_edge(e)
+
+    if before:
+        sdfg.add_edge(state_copy, state, InterstateEdge())
+    else:
+        sdfg.add_edge(state, state_copy, InterstateEdge())
+    
+    return state_copy
+
+
+def nest_sdfg_control_flow(sdfg: SDFG):
+
+    split_interstate_edges(sdfg)
+    ipostdom = utils.postdominators(sdfg)
+    cft = cf.structured_control_flow_tree(sdfg, None)
+
+    components = {}
+    for child in cft.children:
+        if isinstance(child, cf.SingleState):
+            components[child.state] = set([child.state])
+        elif isinstance(child, (cf.ForScope, cf.WhileScope)):
+            guard = child.guard
+            fexit = None
+            condition = child.condition if isinstance(child, cf.ForScope) else child.test
+            for e in sdfg.out_edges(guard):
+                if e.data.condition != condition:
+                    fexit = e.dst
+                    break
+            if fexit is None:
+                raise ValueError("Cannot find for-scope's exit states.")
+
+            states = set(utils.dfs_conditional(sdfg, [guard], lambda p, _: p is not fexit))
+            guard_copy = _copy_state(sdfg, guard, False, states)
+            states.remove(guard)
+            states.add(guard_copy)
+            fexit_copy = _copy_state(sdfg, fexit, True, states)
+            states.remove(fexit)
+            states.add(fexit_copy)
+            
+            components[guard_copy] = states
+
+    # components = {}
+    # unvisited = set(sdfg.states())
+    # start = sdfg.start_state
+
+    # while unvisited:
+
+    #     if start is None:
+    #         raise
+
+    #     component, nstart = _next_component(start, sdfg, ipostdom)
+    #     unvisited.difference_update(component)
+    #     components[start] = component
+    #     start = nstart
+    
+    num_components = len(components)
+    for i, (start, component) in enumerate(components.items()):
+        nest_sdfg_subgraph(sdfg, graph.SubgraphView(sdfg, component), start)
+        print(f"Nested {i+1} components out of {num_components}.")
 
 
 def nest_state_subgraph(sdfg: SDFG,
@@ -221,6 +490,7 @@ def nest_state_subgraph(sdfg: SDFG,
             edge.data.data = new_edge.data.data
             if not full_data:
                 edge.data.subset.offset(global_subsets[original_edge.data.data][1], True)
+                edge.data.subset.offset(nsdfg.arrays[edge.data.data].offset, True)
 
     # Add nested SDFG node to the input state
     nested_sdfg = state.add_nested_sdfg(nsdfg, None,
