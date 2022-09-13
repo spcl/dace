@@ -126,9 +126,46 @@ def test_call_while():
     assert (np.array_equal(A, ref))
 
 
+def test_if_return_both():
+
+    @dace.program
+    def if_return_both(i: dace.int64):
+        if i < 5:
+            return 0
+        else:
+            return 1
+        return 2
+
+    assert(if_return_both(4)[0] == 0)
+    assert(if_return_both(7)[0] == 1)
+
+
+def test_if_return_chain():
+
+    @dace.program
+    def if_return_chain(i: dace.int64):
+        if i < 2:
+            return 0
+        if i < 4:
+            return 1
+        if i < 6:
+            return 2
+        if i < 8:
+            return 3
+        return 4
+
+    assert(if_return_chain(0)[0] == 0)
+    assert(if_return_chain(2)[0] == 1)
+    assert(if_return_chain(4)[0] == 2)
+    assert(if_return_chain(7)[0] == 3)
+    assert(if_return_chain(15)[0] == 4)
+
+
 if __name__ == "__main__":
     test_simple_if()
     test_call_if()
     test_call_if2()
     test_simple_while()
     test_call_while()
+    test_if_return_both
+    test_if_return_chain()

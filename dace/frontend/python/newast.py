@@ -1171,6 +1171,8 @@ class ProgramVisitor(ExtNodeVisitor):
         else:
             for stmt in program.body:
                 self.visit_TopLevel(stmt)
+                if isinstance(stmt, ast.Return):
+                    break
         if len(self.sdfg.nodes()) == 0:
             self.sdfg.add_state("EmptyState")
 
@@ -2095,8 +2097,12 @@ class ProgramVisitor(ExtNodeVisitor):
             self.globals.update(extra_symbols)
 
         # Recursive loop processing
+        return_stmt = False
         for stmt in body:
             self.visit_TopLevel(stmt)
+            if isinstance(stmt, ast.Return):
+                return_stmt = True
+                break
 
         # Create the next state
         last_internal_state = self.last_state
@@ -2108,7 +2114,7 @@ class ProgramVisitor(ExtNodeVisitor):
         if extra_symbols:
             self.globals = old_globals
 
-        return before_state, first_internal_state, last_internal_state
+        return before_state, first_internal_state, last_internal_state, return_stmt
 
     def _replace_with_global_symbols(self, expr: sympy.Expr) -> sympy.Expr:
         repldict = dict()
@@ -2222,10 +2228,10 @@ class ProgramVisitor(ExtNodeVisitor):
             self.loop_idx += 1
             self.continue_states.append([])
             self.break_states.append([])
-            laststate, first_loop_state, last_loop_state = self._recursive_visit(node.body,
-                                                                                 'for',
-                                                                                 node.lineno,
-                                                                                 extra_symbols=extra_syms)
+            laststate, first_loop_state, last_loop_state, _ = self._recursive_visit(node.body,
+                                                                                    'for',
+                                                                                    node.lineno,
+                                                                                    extra_symbols=extra_syms)
             end_loop_state = self.last_state
 
             # Add loop to SDFG
@@ -2317,7 +2323,7 @@ class ProgramVisitor(ExtNodeVisitor):
         self.loop_idx += 1
         self.continue_states.append([])
         self.break_states.append([])
-        laststate, first_loop_state, last_loop_state = \
+        laststate, first_loop_state, last_loop_state, _ = \
             self._recursive_visit(node.body, 'while', node.lineno)
         end_loop_state = self.last_state
 
@@ -2414,23 +2420,23 @@ class ProgramVisitor(ExtNodeVisitor):
         cond, cond_else = self._visit_test(node.test)
 
         # Visit recursively
-        laststate, first_if_state, last_if_state = \
+        laststate, first_if_state, last_if_state, return_stmt = \
             self._recursive_visit(node.body, 'if', node.lineno)
         end_if_state = self.last_state
 
         # Connect the states
         self.sdfg.add_edge(laststate, first_if_state, dace.InterstateEdge(cond))
-        self.sdfg.add_edge(last_if_state, end_if_state, dace.InterstateEdge())
+        self.sdfg.add_edge(last_if_state, end_if_state, dace.InterstateEdge(condition=f"{not return_stmt}"))
 
         # Process 'else'/'elif' statements
         if len(node.orelse) > 0:
             # Visit recursively
-            _, first_else_state, last_else_state = \
+            _, first_else_state, last_else_state, return_stmt = \
                 self._recursive_visit(node.orelse, 'else', node.lineno, False)
 
             # Connect the states
             self.sdfg.add_edge(laststate, first_else_state, dace.InterstateEdge(cond_else))
-            self.sdfg.add_edge(last_else_state, end_if_state, dace.InterstateEdge())
+            self.sdfg.add_edge(last_else_state, end_if_state, dace.InterstateEdge(condition=f"{not return_stmt}"))
             self.last_state = end_if_state
         else:
             self.sdfg.add_edge(laststate, end_if_state, dace.InterstateEdge(cond_else))
