@@ -1077,9 +1077,7 @@ reduce_out = {reduction_expr}''')
 
 @dace.library.expansion
 class WarpReductionExpansion(pm.ExpandTransformation):
-    
-    
-    
+     
     environments = [CUDA]
     
     @staticmethod
@@ -1130,7 +1128,7 @@ class WarpReductionExpansion(pm.ExpandTransformation):
             dst_node = state.add_access(mS)
             
             me,mx = state.add_map('gridSized_strides_map', dict(tId = 'i*BlockDim+j:N:MaxTs'))
-            tasklet = state.add_tasklet('mult', {'in1', '__in3'}, {'out'},  'out = in1 + __in3')
+            tasklet = state.add_tasklet('add', {'in1', '__in3'}, {'out'},  'out = in1 + __in3')
             
             state.add_memlet_path(src_A, me, tasklet, dst_conn='in1', memlet=dace.Memlet(data=i1, subset='tId'))
             state.add_memlet_path(sum_node, me, tasklet, dst_conn='__in3', memlet=dace.Memlet.from_array(mS, state.parent.arrays[mS]))
