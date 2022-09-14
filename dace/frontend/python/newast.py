@@ -61,6 +61,8 @@ def until(val, substr):
         return val
     return val[:val.find(substr)]
 
+# Array names that sympy and other python dependencies cannot accept
+FORBIDDEN_ARRAY_NAMES = set(symbolic._sympy_clash.keys())
 
 augassign_ops = {
     'Add': '+',
@@ -1249,7 +1251,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
         # Try to replace transients with their python-assigned names
         for pyname, arrname in self.variables.items():
-            if arrname in self.sdfg.arrays:
+            if arrname in self.sdfg.arrays and pyname not in FORBIDDEN_ARRAY_NAMES:
                 if self.sdfg.arrays[arrname].transient:
                     if (pyname and dtypes.validate_name(pyname) and pyname not in self.sdfg.arrays):
                         self.sdfg.replace(arrname, pyname)
