@@ -11,6 +11,16 @@ from dace.transformation.dataflow import StreamingMemory, StreamingComposition, 
 from dace.transformation.auto.auto_optimize import auto_optimize
 import argparse
 
+# Data set sizes
+# TMAX, NX, NY
+sizes = {
+    "mini": (20, 20, 30),
+    "small": (40, 60, 80),
+    "medium": (100, 200, 240),
+    "large": (500, 1000, 1200),
+    "extra-large": (1000, 2000, 2600)
+}
+
 TMAX, NX, NY = (dc.symbol(s, dtype=dc.int32) for s in ('TMAX', 'NX', 'NY'))
 
 
@@ -56,7 +66,7 @@ def run_fdtd_2d(device_type: dace.dtypes.DeviceType):
     '''
 
     # Initialize data (polybench mini size)
-    TMAX, NX, NY = (20, 20, 30)
+    TMAX, NX, NY = sizes["mini"]
 
     ex, ey, hz, _fict_ = init_data(TMAX, NX, NY)
     gt_ex, gt_ey, gt_hz = np.copy(ex), np.copy(ey), np.copy(hz)

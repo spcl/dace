@@ -11,6 +11,10 @@ from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
 from dace.transformation.dataflow import StreamingMemory, MapFusion, StreamingComposition, PruneConnectors
 from dace.transformation.auto.auto_optimize import auto_optimize, fpga_auto_opt
 
+# Data set sizes
+# N
+sizes = {"mini": 60, "small": 180, "medium": 500, "large": 2800, "extra-large": 5600}
+
 N = dc.symbol('N', dtype=dc.int32)
 
 
@@ -49,12 +53,12 @@ def run_floyd_warshall(device_type: dace.dtypes.DeviceType):
     '''
 
     # Initialize data (polybench mini size)
-    N = 60
+    N = sizes["mini"]
     path = init_data(N)
     gt_path = np.copy(path)
 
     if device_type in {dace.dtypes.DeviceType.CPU, dace.dtypes.DeviceType.GPU}:
-        # Parse the SDFG and apply autopot
+        # Parse the SDFG and apply auto-opt
         sdfg = kernel.to_sdfg()
         sdfg = auto_optimize(sdfg, device_type)
         sdfg(path=path, N=N)
