@@ -33,8 +33,7 @@ rng = np.random.default_rng(42)
 
 
 # NOTE: The test passes with MKLMPICH, ReferenceMPICH, and ReferenceOpenMPI. It segfaults with MKLOpenMPI.
-# @pytest.mark.scalapack
-@pytest.mark.skip
+@pytest.mark.scalapack
 def test_pgemm():
 
     from mpi4py import MPI

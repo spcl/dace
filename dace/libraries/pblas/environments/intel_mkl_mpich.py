@@ -1,6 +1,6 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 import os
-from dace.config import Config
+from dace.config import _env2bool, Config
 import dace.library
 import ctypes.util
 import warnings
@@ -128,20 +128,7 @@ class IntelMKLScaLAPACKMPICH:
     @staticmethod
     def cmake_link_flags():
 
-        # From https://stackoverflow.com/questions/15008758/parsing-boolean-values-with-argparse
-        def str2bool(v: Union[None, str, bool]) -> bool:
-            if v is None:
-                return False
-            if isinstance(v, bool):
-                return v
-            if isinstance(v, str):
-                if v.lower() in ('yes', 'true', 't', 'y', '1'):
-                    return True
-                if v.lower() in ('no', 'false', 'f', 'n', '0'):
-                    return False
-            return False
-
-        is_daint = str2bool(os.getenv('IS_DAINT'))
+        is_daint = _env2bool(os.getenv('IS_DAINT'))
         if is_daint:
             mpichlib_path = "-L /opt/cray/pe/mpt/7.7.18/gni/mpich-gnu/8.2/lib"
             mpichlib_name = "mpichcxx_gnu_82"
