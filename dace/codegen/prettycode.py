@@ -5,6 +5,7 @@
 import inspect
 from six import StringIO
 from dace.config import Config
+from dace.sdfg.graph import NodeNotFoundError
 
 
 class CodeIOStream(StringIO):
@@ -37,14 +38,17 @@ class CodeIOStream(StringIO):
                         node_id = [node_id]
                     for i, nid in enumerate(node_id):
                         if not isinstance(nid, int):
-                            node_id[i] = sdfg.nodes()[state_id].node_id(nid)
+                            try:
+                                node_id[i] = sdfg.node(state_id).node_id(nid)
+                            except NodeNotFoundError:
+                                node_id[i] = -1
                     location_identifier += ':' + ','.join([str(nid) for nid in node_id])
         else:
             location_identifier = ''
 
         # Annotate code generator line
         if self._lineinfo:
-            caller = inspect.getframeinfo(inspect.stack()[1][0])
+            caller = inspect.getframeinfo(inspect.stack()[1][0], context=0)
             location_identifier += f'  ////__CODEGEN;{caller.filename};{caller.lineno}'
 
         # Write each line separately

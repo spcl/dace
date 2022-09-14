@@ -119,7 +119,7 @@ def test_auto_unroll_dictionary():
     Tests that unrolling functionality works automatically on dictionaries.
     """
     @dace.program
-    def tounroll(A: dace.float64[1], d: dace.constant):
+    def tounroll(A: dace.float64[1], d: dace.compiletime):
         for val in d:
             A += val
 
@@ -134,7 +134,7 @@ def test_auto_unroll_dictionary_method():
     Tests that unrolling functionality works automatically on dict methods.
     """
     @dace.program
-    def tounroll(A: dace.float64[1], d: dace.constant):
+    def tounroll(A: dace.float64[1], d: dace.compiletime):
         for val in d.values():
             A += val
 
@@ -274,7 +274,7 @@ def test_arrays_keys_closure():
 
 def test_arrays_keys_daceconstant():
     @dace.program
-    def prog(d: dace.constant):
+    def prog(d: dace.compiletime):
         for arr in d.keys():
             d[arr].arr += 1
 
@@ -306,7 +306,7 @@ def test_objects():
         arr[:] = arr[:] * scal
 
     @dace.program
-    def program(wrapped_arr: dace.constant, scal):
+    def program(wrapped_arr: dace.compiletime, scal):
         for warr in wrapped_arr.values():
             nested(warr.arr, scal)
 

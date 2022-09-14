@@ -607,6 +607,8 @@ def _annotate_loop_ranges(sdfg, unannotated_cycle_states):
                 if itvarsym in pystr_to_symbolic(iedge.data.assignments[itvar]).free_symbols:
                     increment_edge = iedge
                     break
+            if increment_edge is None:
+                continue
             if increment_edge.src not in cycle:
                 continue
 
@@ -1143,12 +1145,15 @@ def propagate_memlets_state(sdfg, state):
     propagate_memlets_scope(sdfg, state, state.scope_leaves())
 
 
-def propagate_memlets_scope(sdfg, state, scopes):
+def propagate_memlets_scope(sdfg, state, scopes, propagate_entry=True, propagate_exit=True):
     """ 
     Propagate memlets from the given scopes outwards. 
+
     :param sdfg: The SDFG in which the scopes reside.
     :param state: The SDFG state in which the scopes reside.
     :param scopes: The ScopeTree object or a list thereof to start from.
+    :param propagate_entry: If False, skips propagating out of the scope entry node.
+    :param propagate_exit: If False, skips propagating out of the scope exit node.
     :note: This operation is performed in-place on the given SDFG.
     """
     from dace.sdfg.scope import ScopeTree
@@ -1168,10 +1173,12 @@ def propagate_memlets_scope(sdfg, state, scopes):
                 continue
 
             # Propagate out of entry
-            _propagate_node(state, scope.entry)
+            if propagate_entry:
+                _propagate_node(state, scope.entry)
 
             # Propagate out of exit
-            _propagate_node(state, scope.exit)
+            if propagate_exit:
+                _propagate_node(state, scope.exit)
 
             # Add parent to next frontier
             next_scopes.add(scope.parent)

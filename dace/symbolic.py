@@ -66,6 +66,24 @@ class symbol(sympy.Symbol):
     def __getstate__(self):
         return dict(self.assumptions0, **{'value': self.value, 'dtype': self.dtype, '_constraints': self._constraints})
 
+    def _eval_subs(self, old, new):
+        """
+        From sympy: Override this stub if you want to do anything more than
+        attempt a replacement of old with new in the arguments of self.
+
+        See also
+        ========
+
+        _subs
+        """
+        try:
+            # Compare DaCe symbols by name rather than type/assumptions
+            if self.name == old.name:
+                return new
+            return None
+        except AttributeError:
+            return None
+
     def is_initialized(self):
         return self.value is not None
 
@@ -129,6 +147,7 @@ class symbol(sympy.Symbol):
 class SymExpr(object):
     """ Symbolic expressions with support for an overapproximation expression.
     """
+
     def __init__(self, main_expr: Union[str, 'SymExpr'], approx_expr: Optional[Union[str, 'SymExpr']] = None):
         self._main_expr = pystr_to_symbolic(main_expr)
         if approx_expr is None:
@@ -307,7 +326,7 @@ def symlist(values):
             true_expr = expr
         else:
             continue
-        for atom in true_expr.atoms():
+        for atom in sympy.preorder_traversal(true_expr):
             if isinstance(atom, symbol):
                 result[atom.name] = atom
     return result
@@ -501,7 +520,8 @@ def swalk(expr, enter_functions=False):
 
 
 _builtin_userfunctions = {
-    'int_floor', 'int_ceil', 'abs', 'Abs', 'min', 'Min', 'max', 'Max', 'not', 'Not', 'Eq', 'NotEq', 'Ne', 'AND', 'OR'
+    'int_floor', 'int_ceil', 'abs', 'Abs', 'min', 'Min', 'max', 'Max', 'not', 'Not', 'Eq', 'NotEq', 'Ne', 'AND', 'OR',
+    'pow', 'round'
 }
 
 
@@ -558,6 +578,7 @@ def sympy_numeric_fix(expr):
 
 
 class int_floor(sympy.Function):
+
     @classmethod
     def eval(cls, x, y):
         if x.is_Number and y.is_Number:
@@ -568,6 +589,7 @@ class int_floor(sympy.Function):
 
 
 class int_ceil(sympy.Function):
+
     @classmethod
     def eval(cls, x, y):
         if x.is_Number and y.is_Number:
@@ -578,6 +600,7 @@ class int_ceil(sympy.Function):
 
 
 class OR(sympy.Function):
+
     @classmethod
     def eval(cls, x, y):
         if x.is_Boolean and y.is_Boolean:
@@ -588,6 +611,7 @@ class OR(sympy.Function):
 
 
 class AND(sympy.Function):
+
     @classmethod
     def eval(cls, x, y):
         if x.is_Boolean and y.is_Boolean:
@@ -595,6 +619,49 @@ class AND(sympy.Function):
 
     def _eval_is_boolean(self):
         return True
+
+
+class BitwiseAnd(sympy.Function):
+    pass
+
+
+class BitwiseOr(sympy.Function):
+    pass
+
+
+class BitwiseXor(sympy.Function):
+    pass
+
+
+class BitwiseNot(sympy.Function):
+    pass
+
+
+class LeftShift(sympy.Function):
+    pass
+
+
+class RightShift(sympy.Function):
+    pass
+
+
+class ROUND(sympy.Function):
+
+    @classmethod
+    def eval(cls, x):
+        if x.is_Number:
+            return round(x)
+
+    def _eval_is_integer(self):
+        return True
+
+
+class Is(sympy.Function):
+    pass
+
+
+class IsNot(sympy.Function):
+    pass
 
 
 def sympy_intdiv_fix(expr):
@@ -735,6 +802,70 @@ def simplify_ext(expr):
     return expr
 
 
+def evaluate_optional_arrays(expr, sdfg):
+    """
+    Evaluate Is(...) and IsNot(...) expressions for arrays.
+
+    :param expr: The symbolic expression to evaluate.
+    :param sdfg: SDFG that contains arrays.
+    :return: A simplified version of the expression.
+    """
+    if not isinstance(expr, sympy.Basic):
+        return expr
+
+    none = symbol('NoneSymbol')
+
+    def _process_is(elem: Union[Is, IsNot]):
+        if elem.args[0] == none:
+            if elem.args[1] == none:  # Both arguments are None
+                return True
+            cand = str(elem.args[1])
+            if cand in sdfg.arrays and sdfg.arrays[cand].optional is False:
+                # Equivalent to `None is x` for a non-optional x
+                return False
+
+        else:  # elem.args[0] is not None
+            if elem.args[1] == none:
+                cand = str(elem.args[0])
+                if cand in sdfg.arrays and sdfg.arrays[cand].optional is False:
+                    # Equivalent to `x is None` for a non-optional x
+                    return False
+
+        # Neither argument is None
+        return None
+
+    # Check internal expressions
+    reevaluate = False
+    for elem in sympy.postorder_traversal(expr):
+        if any(a.func is Is or a.func is IsNot for a in elem.args):
+            args = list(elem.args)
+            for i, a in enumerate(args):
+                changed = False
+                if a.func is Is:
+                    res = _process_is(a)
+                    if res is not None:
+                        args[i] = sympy.sympify(res)
+                        changed = True
+                elif a.func is IsNot:
+                    res = _process_is(a)
+                    if res is not None:
+                        args[i] = sympy.sympify(not res)
+                        changed = True
+                if changed:
+                    elem._args = tuple(args)
+                    reevaluate = True
+    if reevaluate:  # If an internal expression changed, re-simplify expression as a whole
+        expr = expr.simplify()
+
+    # Check top-level expression
+    if expr.func is Is or expr.func is IsNot:
+        res = _process_is(expr)
+        if res is not None:
+            return sympy.sympify(res if expr.func is Is else not res)
+
+    return expr
+
+
 class SympyBooleanConverter(ast.NodeTransformer):
     """ 
     Replaces boolean operations with the appropriate SymPy functions to avoid
@@ -763,7 +894,15 @@ class SympyBooleanConverter(ast.NodeTransformer):
 
     def visit_BoolOp(self, node):
         func_node = ast.copy_location(ast.Name(id=type(node.op).__name__, ctx=ast.Load()), node)
-        new_node = ast.Call(func=func_node, args=[self.visit(value) for value in node.values], keywords=[])
+
+        # First two arguments are given as one call
+        new_node = ast.Call(func=func_node, args=[self.visit(value) for value in node.values[:2]], keywords=[])
+        new_node = ast.copy_location(new_node, node)
+        # If more than two arguments, chain bool op calls (``and(and(x,y), z)``)
+        for i in range(2, len(node.values)):
+            new_node = ast.Call(func=func_node, args=[new_node, self.visit(node.values[i])], keywords=[])
+            new_node = ast.copy_location(new_node, node)
+
         return ast.copy_location(new_node, node)
 
     def visit_Compare(self, node: ast.Compare):
@@ -785,7 +924,40 @@ class SympyBooleanConverter(ast.NodeTransformer):
         return self.visit_Constant(node)
 
 
-def pystr_to_symbolic(expr, symbol_map=None, simplify=None):
+class BitwiseOpConverter(ast.NodeTransformer):
+    """ 
+    Replaces C/C++ bitwise operations with functions to avoid sympification to boolean operations.
+    """
+    _ast_to_sympy_functions = {
+        ast.BitAnd: 'BitwiseAnd',
+        ast.BitOr: 'BitwiseOr',
+        ast.BitXor: 'BitwiseXor',
+        ast.Invert: 'BitwiseNot',
+        ast.LShift: 'LeftShift',
+        ast.RShift: 'RightShift'
+    }
+
+    def visit_UnaryOp(self, node):
+        if isinstance(node.op, ast.Invert):
+            func_node = ast.copy_location(
+                ast.Name(id=BitwiseOpConverter._ast_to_sympy_functions[type(node.op)], ctx=ast.Load()), node)
+            new_node = ast.Call(func=func_node, args=[self.visit(node.operand)], keywords=[])
+            return ast.copy_location(new_node, node)
+        return node
+
+    def visit_BinOp(self, node):
+        if type(node.op) in BitwiseOpConverter._ast_to_sympy_functions:
+            func_node = ast.copy_location(
+                ast.Name(id=BitwiseOpConverter._ast_to_sympy_functions[type(node.op)], ctx=ast.Load()), node)
+            new_node = ast.Call(func=func_node,
+                                args=[self.visit(value) for value in (node.left, node.right)],
+                                keywords=[])
+            return ast.copy_location(new_node, node)
+        return node
+
+
+@lru_cache(maxsize=16384)
+def pystr_to_symbolic(expr, symbol_map=None, simplify=None) -> sympy.Basic:
     """ Takes a Python string and converts it into a symbolic expression. """
     from dace.frontend.python.astutils import unparse  # Avoid import loops
 
@@ -815,12 +987,21 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None):
         'NotEq': sympy.Ne,
         'floor': sympy.floor,
         'ceil': sympy.ceiling,
+        'round': ROUND,
         # Convert and/or to special sympy functions to avoid boolean evaluation
         'And': AND,
         'Or': OR,
         'var': sympy.Symbol('var'),
         'root': sympy.Symbol('root'),
         'arg': sympy.Symbol('arg'),
+        'Is': Is,
+        'IsNot': IsNot,
+        'BitwiseAnd': BitwiseAnd,
+        'BitwiseOr': BitwiseOr,
+        'BitwiseXor': BitwiseXor,
+        'BitwiseNot': BitwiseNot,
+        'LeftShift': LeftShift,
+        'RightShift': RightShift
     }
     # _clash1 enables all one-letter variables like N as symbols
     # _clash also allows pi, beta, zeta and other common greek letters
@@ -828,8 +1009,13 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None):
 
     # Sympy processes "not/and/or" as direct evaluation. Replace with
     # And/Or(x, y), Not(x)
-    if isinstance(expr, str) and re.search(r'\bnot\b|\band\b|\bor\b|\bNone\b|==|!=', expr):
+    if isinstance(expr, str) and re.search(r'\bnot\b|\band\b|\bor\b|\bNone\b|==|!=|\bis\b', expr):
         expr = unparse(SympyBooleanConverter().visit(ast.parse(expr).body[0]))
+
+    # NOTE: If the expression contains bitwise operations, replace them with user-functions.
+    # NOTE: Sympy does not support bitwise operations and converts them to boolean operations.
+    if isinstance(expr, str) and re.search('[&]|[|]|[\^]|[~]|[<<]|[>>]', expr):
+        expr = unparse(BitwiseOpConverter().visit(ast.parse(expr).body[0]))
 
     # TODO: support SymExpr over-approximated expressions
     try:
@@ -849,6 +1035,7 @@ def simplify(expr: SymbolicType) -> SymbolicType:
 class DaceSympyPrinter(sympy.printing.str.StrPrinter):
     """ Several notational corrections for integer math and C++ translation
         that sympy.printing.cxxcode does not provide. """
+
     def __init__(self, arrays, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.arrays = arrays or set()
@@ -932,8 +1119,6 @@ def symstr(sym, arrayexprs: Optional[Set[str]] = None) -> str:
                        user-functions back to array expressions.
     :return: C++-compilable expression.
     """
-    def repstr(s):
-        return s.replace('Min', 'min').replace('Max', 'max').replace('Abs', 'abs')
 
     if isinstance(sym, SymExpr):
         return symstr(sym.expr, arrayexprs)
@@ -947,12 +1132,12 @@ def symstr(sym, arrayexprs: Optional[Set[str]] = None) -> str:
 
         if isinstance(sym, symbol) or isinstance(sym, sympy.Symbol) or isinstance(
                 sym, sympy.Number) or dtypes.isconstant(sym):
-            return repstr(sstr)
+            return sstr
         else:
-            return '(' + repstr(sstr) + ')'
+            return '(' + sstr + ')'
     except (AttributeError, TypeError, ValueError):
         sstr = DaceSympyPrinter(arrayexprs).doprint(sym)
-        return '(' + repstr(sstr) + ')'
+        return '(' + sstr + ')'
 
 
 def safe_replace(mapping: Dict[Union[SymbolicType, str], Union[SymbolicType, str]],
@@ -1022,6 +1207,7 @@ class SympyAwarePickler(pickle.Pickler):
     Custom Pickler class that safely saves SymPy expressions
     with function definitions in expressions (e.g., int_ceil).
     """
+
     def persistent_id(self, obj):
         if isinstance(obj, sympy.Basic):
             # Save sympy expression as srepr
@@ -1036,6 +1222,7 @@ class SympyAwareUnpickler(pickle.Unpickler):
     Custom Unpickler class that safely restores SymPy expressions
     with function definitions in expressions (e.g., int_ceil).
     """
+
     def persistent_load(self, pid):
         type_tag, value = pid
         if type_tag == "DaCeSympyExpression":

@@ -117,6 +117,13 @@ static DACE_CONSTEXPR DACE_HDFI T left_shift(const T& left_operand, const T2& ri
     return left_operand << right_operand;
 }
 
+#define AND(x, y) ((x) && (y))
+#define OR(x, y) ((x) || (y))
+
+template <typename T>
+static DACE_CONSTEXPR DACE_HDFI T ROUND(const T& value) {
+    return round(value);
+}
 
 // Workarounds for float16 in CUDA
 // NOTES: * Half precision types are not trivially convertible, so other types

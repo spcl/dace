@@ -1,4 +1,4 @@
-aenum==2.2.4
+aenum==3.1.11
 astunparse==1.6.3
 chardet==3.0.4
 click==7.1.2

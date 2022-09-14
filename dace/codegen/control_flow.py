@@ -53,6 +53,7 @@ GeneralBlock({
 })
 """
 
+import ast
 from dataclasses import dataclass
 from typing import (Callable, Dict, Iterator, List, Optional, Sequence, Set, Tuple, Union)
 import sympy as sp
@@ -125,7 +126,7 @@ class SingleState(ControlFlow):
         else:
             # Dispatch empty state in any case in order to register that the
             # state was dispatched
-            self.dispatch_state(self.state)
+            expr += self.dispatch_state(self.state)
 
         # If any state has no children, it should jump to the end of the SDFG
         if not self.last_state and sdfg.out_degree(self.state) == 0:
@@ -163,7 +164,8 @@ class SingleState(ControlFlow):
                 for variable, value in edge.data.assignments.items()
             ] + [''])
 
-        if ((successor is None or edge.dst is not successor) and not assignments_only):
+        if (not edge.data.is_unconditional()
+                or ((successor is None or edge.dst is not successor) and not assignments_only)):
             expr += 'goto __state_{}_{};\n'.format(sdfg.sdfg_id, edge.dst.label)
 
         if not edge.data.is_unconditional() and not assignments_only:
@@ -317,6 +319,7 @@ class IfElseChain(ControlFlow):
     @property
     def children(self) -> List[ControlFlow]:
         return [block for _, block in self.body]
+
 
 def _clean_loop_body(body: str) -> str:
     """ Cleans loop body from extraneous statements. """
@@ -550,12 +553,20 @@ def _cases_from_branches(
     m = cond.match(sp.Eq(a, b))
     if m:
         # Obtain original code for variable
-        astvar = edges[0].data.condition.code[0].value.left
+        call_or_compare = edges[0].data.condition.code[0].value
+        if isinstance(call_or_compare, ast.Call):
+            astvar = call_or_compare.args[0]
+        else:  # Binary comparison
+            astvar = call_or_compare.left
     else:
         # Try integer == symbol
         m = cond.match(sp.Eq(b, a))
         if m:
-            astvar = edges[0].data.condition.code[0].value.right
+            call_or_compare = edges[0].data.condition.code[0].value
+            if isinstance(call_or_compare, ast.Call):
+                astvar = call_or_compare.args[1]
+            else:  # Binary comparison
+                astvar = call_or_compare.right
         else:
             return None
 

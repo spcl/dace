@@ -7,6 +7,7 @@ from dace.transformation.transformation import ExpandTransformation
 from .. import environments
 from dace.codegen.targets import cpp
 from dace import subsets
+from dace.libraries.mpi.nodes.node import MPINode
 
 
 @library.expansion
@@ -349,7 +350,7 @@ class ExpandRedistribute(ExpandTransformation):
 
 
 @library.node
-class Redistribute(nodes.LibraryNode):
+class Redistribute(MPINode):
 
     # Global properties
     implementations = {

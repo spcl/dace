@@ -150,9 +150,8 @@ class Range(Subset):
             if isinstance(obj, symbolic.SymExpr):
                 return {'main': str(obj.expr), 'approx': str(obj.approx)}
             else:
-                return str(obj)
+                return _simplified_str(obj)
 
-        # TODO: Check if approximations should also be saved
         for (start, end, step), tile in zip(self.ranges, self.tile_sizes):
             ret.append({'start': a2s(start), 'end': a2s(end), 'step': a2s(step), 'tile': a2s(tile)})
 
@@ -184,7 +183,10 @@ class Range(Subset):
     @staticmethod
     def from_array(array: 'dace.data.Data'):
         """ Constructs a range that covers the full array given as input. """
-        return Range([(0, s - 1, 1) for s in array.shape])
+        result = Range([(0, s - 1, 1) for s in array.shape])
+        if any(o != 0 for o in array.offset):
+            result.offset(array.offset, True)
+        return result
 
     def __hash__(self):
         return hash(tuple(r for r in self.ranges))

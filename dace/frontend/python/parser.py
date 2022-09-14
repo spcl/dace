@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ DaCe Python parsing functionality and entry point to Python frontend. """
+import ast
 from dataclasses import dataclass
 import inspect
 import itertools
@@ -16,9 +17,9 @@ from dace.sdfg import SDFG
 from dace.data import create_datadescriptor, Data
 
 try:
-    from typing import get_origin
+    from typing import get_origin, get_args
 except ImportError:
-    from typing_compat import get_origin
+    from typing_compat import get_origin, get_args
 
 ArgTypes = Dict[str, Data]
 
@@ -47,7 +48,7 @@ def _get_locals_and_globals(f):
     """ Retrieves a list of local and global variables for the function ``f``.
         This is used to retrieve variables around and defined before  @dace.programs for adding symbols and constants.
     """
-    result = {}
+    result = {'__dace__': True}
     # Update globals, then locals
     result.update(f.__globals__)
     # grab the free variables (i.e. locals)
@@ -77,6 +78,7 @@ def infer_symbols_from_datadescriptor(sdfg: SDFG, args: Dict[str, Any],
     exclude = set(symbolic.symbol(s) for s in exclude)
     equations = []
     symbols = set()
+
     # Collect equations and symbols from arguments and shapes
     for arg_name, arg_val in args.items():
         if arg_name in sdfg.arrays:
@@ -116,7 +118,8 @@ def infer_symbols_from_datadescriptor(sdfg: SDFG, args: Dict[str, Any],
     # Solve for all at once
     results = sympy.solve(equations, *symbols, dict=True, exclude=exclude)
     if len(results) > 1:
-        raise ValueError('Ambiguous values for symbols in inference. ' 'Options: %s' % str(results))
+        raise ValueError('Ambiguous values for symbols in inference. '
+                         'Options: %s' % str(results))
     if len(results) == 0:
         raise ValueError('Cannot infer values for symbols in inference.')
 
@@ -131,6 +134,7 @@ def infer_symbols_from_datadescriptor(sdfg: SDFG, args: Dict[str, Any],
 class DaceProgram(pycommon.SDFGConvertible):
     """ A data-centric program object, obtained by decorating a function with
         ``@dace.program``. """
+
     def __init__(self, f, args, kwargs, auto_optimize, device, constant_functions=False, method=False):
         from dace.codegen import compiled_sdfg  # Avoid import loops
 
@@ -166,9 +170,9 @@ class DaceProgram(pycommon.SDFGConvertible):
             for arg, pval in zip(self.dec_args, self.signature.parameters.values()):
                 pval._annotation = arg
 
-        # Keep a set of constant arguments to ignore
+        # Keep a set of compile-time arguments to ignore
         self.constant_args = set(pname for pname, pval in self.signature.parameters.items()
-                                 if pval.annotation is dtypes.constant)
+                                 if pval.annotation is dtypes.compiletime)
 
         if self.argnames is None:
             self.argnames = []
@@ -202,7 +206,19 @@ class DaceProgram(pycommon.SDFGConvertible):
         return autoopt.auto_optimize(sdfg, self.device, symbols=symbols)
 
     def to_sdfg(self, *args, simplify=None, save=False, validate=False, use_cache=False, **kwargs) -> SDFG:
-        """ Parses the DaCe function into an SDFG. """
+        """
+        Creates an SDFG from the DaCe function. If no type hints are provided on the function, example arrays/scalars
+        (i.e., with the same shape and type) must be given to this method in order to construct a valid SDFG.
+
+        :param args: JIT (i.e., without type hints) argument examples.
+        :param kwargs: JIT (i.e., without type hints) keyword argument examples.
+        :param simplify: Whether to simplify the SDFG after parsing (default is None, which uses the .dace.conf setting)
+        :param save: Whether to save the SDFG to a file after parsing
+        :param validate: Whether to validate the parsed SDFG
+        :param use_cache: If True, tries to find an already parsed SDFG in the local cache. Otherwise, re-parses SDFG.
+        :return: An SDFG object that can be transformed, saved, or called.
+        """
+
         if use_cache:
             # Update global variables with current closure
             self.global_vars = _get_locals_and_globals(self.f)
@@ -402,7 +418,6 @@ class DaceProgram(pycommon.SDFGConvertible):
             sdfg = self._auto_optimize(sdfg, symbols=sdfg_args)
             sdfg.simplify()
 
-
         # Compile SDFG (note: this is done after symbol inference due to shape
         # altering transformations such as Vectorization)
         binaryobj = sdfg.compile(validate=self.validate)
@@ -442,17 +457,7 @@ class DaceProgram(pycommon.SDFGConvertible):
         # Apply simplification pass automatically
         if not cached and (simplify == True or
                            (simplify is None and Config.get_bool('optimizer', 'automatic_simplification'))):
-
-            # Promote scalars to symbols as necessary
-            promoted = scal2sym.promote_scalars_to_symbols(sdfg)
-            if Config.get_bool('debugprint') and len(promoted) > 0:
-                print('Promoted scalars {%s} to symbols.' % ', '.join(p for p in sorted(promoted)))
-
             sdfg.simplify(validate=False)
-
-            # Split back edges with assignments and conditions to allow richer
-            # control flow detection in code generation
-            xfh.split_interstate_edges(sdfg)
 
         # Save the SDFG. Skip this step if running from a cached SDFG, as
         # it might overwrite the cached SDFG.
@@ -464,6 +469,15 @@ class DaceProgram(pycommon.SDFGConvertible):
             sdfg.validate()
 
         return sdfg
+
+    def _evaluate_annotation(self, ann):
+        try:
+            return eval(ann.__forward_arg__, self.global_vars)
+        except AttributeError:
+            return ann
+        except:
+            # Evaluating arbitrary code - anything can happen. Good luck.
+            return dtypes.compiletime
 
     def _get_type_annotations(
             self, given_args: Tuple[Any],
@@ -510,7 +524,7 @@ class DaceProgram(pycommon.SDFGConvertible):
 
                 types.update({f'__arg{j}': create_datadescriptor(varg) for j, varg in enumerate(vargs)})
                 arg_mapping.update({f'__arg{j}': varg for j, varg in enumerate(vargs)})
-                gvar_mapping[aname] = tuple(f'__arg{j}' for j in range(len(vargs)))
+                gvar_mapping[aname] = tuple(ast.Name(id=f'__arg{j}') for j in range(len(vargs)))
                 specified_args.update(set(gvar_mapping[aname]))
                 # Shift arg_ind to the end
                 arg_ind = len(given_args)
@@ -525,24 +539,45 @@ class DaceProgram(pycommon.SDFGConvertible):
                                       f'arguments (invalid argument name: "{aname}").')
                 types.update({f'__kwarg_{k}': v for k, v in vargs.items()})
                 arg_mapping.update({f'__kwarg_{k}': given_kwargs[k] for k in vargs.keys()})
-                gvar_mapping[aname] = {k: f'__kwarg_{k}' for k in vargs.keys()}
+                gvar_mapping[aname] = {k: ast.Name(id=f'__kwarg_{k}') for k in vargs.keys()}
                 specified_args.update({f'__kwarg_{k}' for k in vargs.keys()})
             # END OF VARIABLE-LENGTH ARGUMENTS
             else:
                 # Regular arguments (annotations take precedence)
                 curarg = None
                 is_constant = False
+                is_optional = None
                 if not _is_empty(ann):
                     # If constant, use given argument
-                    if ann is dtypes.constant:
+                    if ann is dtypes.compiletime:
                         curarg = None
                         is_constant = True
                     else:
                         curarg = ann
 
-                    # If annotation specifies to skip its data descriptor and favor JIT types
                     try:
-                        if get_origin(ann) is Union or create_datadescriptor(ann) is None:
+                        # If annotation specifies a union, ensure it consists of only one type and NoneType
+                        if get_origin(ann) is Union:
+                            hint_args = get_args(ann)
+                            if len(hint_args) == 1:
+                                ann = hint_args[0]
+                            else:
+                                # Check for invalid Union type hints
+                                if (len(hint_args) > 2 or len(hint_args) == 0
+                                        or (hint_args[0] is not type(None) and hint_args[1] is not type(None))):
+                                    raise SyntaxError(
+                                        f'Argument "{aname}" can only have a type hint that can create a '
+                                        'data descriptor or use the Optional[T] or Union[T, None] type hints.')
+                                # Set the annotation to be the not-None value, and the data descriptor to be optional
+                                ann = hint_args[1] if hint_args[0] is type(None) else hint_args[0]
+                                is_optional = True
+
+                            if not is_constant:  # Reset curarg
+                                curarg = ann
+                        ann = self._evaluate_annotation(ann)
+
+                        # If annotation specifies to skip its data descriptor and favor JIT types
+                        if create_datadescriptor(ann) is None:
                             curarg = None
                     except (TypeError, ValueError):
                         # Skip for now
@@ -554,8 +589,14 @@ class DaceProgram(pycommon.SDFGConvertible):
                         if curarg is None and not _is_empty(sig_arg.default):
                             curarg = sig_arg.default
                         elif curarg is None:
-                            raise SyntaxError('Not enough arguments given to program (missing '
-                                              f'argument: "{aname}").')
+                            if _is_empty(ann):
+                                raise SyntaxError('Not enough arguments given to program (missing '
+                                                  f'argument: "{aname}"). Since no type hint is decorated on the '
+                                                  'function parameter, an example parameter (e.g., array of the same '
+                                                  'shape and type) must be given.')
+                            else:
+                                raise SyntaxError('Not enough arguments given to program (missing '
+                                                  f'argument: "{aname}").')
                     else:
                         if curarg is None:
                             curarg = given_args[arg_ind]
@@ -567,8 +608,15 @@ class DaceProgram(pycommon.SDFGConvertible):
                             if curarg is None and not _is_empty(sig_arg.default):
                                 curarg = sig_arg.default
                             elif curarg is None:
-                                raise SyntaxError('Not enough arguments given to program (missing '
-                                                  f'argument: "{aname}").')
+                                if _is_empty(ann):
+                                    raise SyntaxError(
+                                        'Not enough arguments given to program (missing '
+                                        f'argument: "{aname}"). Since no type hint is decorated on the '
+                                        'function parameter, an example parameter (e.g., array of the same '
+                                        'shape and type) must be given.')
+                                else:
+                                    raise SyntaxError('Not enough arguments given to program (missing '
+                                                      f'argument: "{aname}").')
                         elif curarg is None:
                             curarg = given_kwargs[aname]
                     else:
@@ -581,8 +629,14 @@ class DaceProgram(pycommon.SDFGConvertible):
                         if curarg is None and not _is_empty(sig_arg.default):
                             curarg = sig_arg.default
                         elif curarg is None:
-                            raise SyntaxError('Not enough arguments given to program (missing '
-                                              f'argument: "{aname}").')
+                            if _is_empty(ann):
+                                raise SyntaxError('Not enough arguments given to program (missing '
+                                                  f'argument: "{aname}"). Since no type hint is decorated on the '
+                                                  'function parameter, an example parameter (e.g., array of the same '
+                                                  'shape and type) must be given.')
+                            else:
+                                raise SyntaxError('Not enough arguments given to program (missing '
+                                                  f'argument: "{aname}").')
                     elif curarg is None:
                         curarg = given_kwargs[aname]
 
@@ -592,6 +646,8 @@ class DaceProgram(pycommon.SDFGConvertible):
 
                 # Set type
                 types[aname] = create_datadescriptor(curarg)
+                if is_optional is True and isinstance(types[aname], data.Array):
+                    types[aname].optional = True
 
         # Set __return* arrays from return type annotations
         rettype = self.signature.return_annotation
@@ -618,6 +674,10 @@ class DaceProgram(pycommon.SDFGConvertible):
             sdfg = SDFG.from_file(path)
         else:
             sdfg = None
+
+        # Move "self" from an argument into the closure
+        if self.methodobj is not None:
+            self.global_vars[self.objname] = self.methodobj
 
         # Perform preprocessing to obtain closure
         argtypes, _, constant_args, given_args = self._get_type_annotations(args, kwargs)
@@ -687,7 +747,7 @@ class DaceProgram(pycommon.SDFGConvertible):
         _, key = self._load_sdfg(None, *args, **kwargs)
         return key
 
-    def _generate_pdp(self, args, kwargs, simplify=None) -> SDFG:
+    def _generate_pdp(self, args: Tuple[Any], kwargs: Dict[str, Any], simplify: Optional[bool] = None) -> SDFG:
         """ Generates the parsed AST representation of a DaCe program.
             :param args: The given arguments to the program.
             :param kwargs: The given keyword arguments to the program.
@@ -709,9 +769,10 @@ class DaceProgram(pycommon.SDFGConvertible):
             if isinstance(v, data.View):  # Arguments to (nested) SDFG cannot be Views
                 argtypes[k] = v.as_array()
                 argtypes[k].transient = False
-            elif v.transient:  # Arguments to (nested) SDFGs cannot be transient
+            else:
                 v_cpy = copy.deepcopy(v)
-                v_cpy.transient = False
+                if v_cpy.transient:  # Arguments to (nested) SDFGs cannot be transient
+                    v_cpy.transient = False
                 argtypes[k] = v_cpy
 
         #############################################
@@ -726,14 +787,14 @@ class DaceProgram(pycommon.SDFGConvertible):
             if v.dtype.type is None:
                 global_vars[k] = None
                 removed_args.add(k)
-        
+
         # Set module aliases to point to their actual names
         modules = {k: v.__name__ for k, v in global_vars.items() if dtypes.ismodule(v)}
         modules['builtins'] = ''
 
         # Add symbols as globals with their actual names (sym_0 etc.)
         global_vars.update({v.name: v for _, v in global_vars.items() if isinstance(v, symbolic.symbol)})
-        
+
         # Add default arguments to global vars
         unspecified_default_args = {k: v for k, v in self.default_args.items() if k not in specified}
         removed_args.update(unspecified_default_args)
@@ -745,7 +806,6 @@ class DaceProgram(pycommon.SDFGConvertible):
         argtypes = {k: v for k, v in argtypes.items() if k not in removed_args}
         for argtype in argtypes.values():
             global_vars.update({v.name: v for v in argtype.free_symbols})
-
 
         # Parse AST to create the SDFG
         parsed_ast, closure = preprocessing.preprocess_dace_program(dace_func,
@@ -766,6 +826,10 @@ class DaceProgram(pycommon.SDFGConvertible):
         cachekey = self._cache.make_key(argtypes, specified, self.closure_array_keys, self.closure_constant_keys, gvars)
         if self._cache.has(cachekey):
             sdfg = self._cache.get(cachekey).sdfg
+
+            # We might be in a parsing context (parsing a nested SDFG), do not reuse existing reference
+            sdfg = copy.deepcopy(sdfg)
+
             cached = True
         else:
             cached = False

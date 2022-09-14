@@ -46,6 +46,11 @@ class CodeLibraryNode(LibraryNode):
     inputdict = Property(dtype=dict, default={})
     outputdict = Property(dtype=dict, default={})
 
+    @property
+    def has_side_effects(self) -> bool:
+        # By default, assume code library nodes have side effects unless said otherwise
+        return True
+
     def generate_code(self, inputs: Dict[str, Data], outputs: Dict[str, Data]) -> str:
         """ Method that is responsible for generating the code related to
             this node.

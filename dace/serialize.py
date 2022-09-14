@@ -4,6 +4,7 @@ import json
 import numpy as np
 import warnings
 import dace.dtypes
+from dace import config
 
 
 class SerializableObject(object):
@@ -27,6 +28,7 @@ class SerializableObject(object):
 
 class NumpySerializer:
     """ Helper class to load/store numpy arrays from JSON. """
+
     @staticmethod
     def from_json(json_obj, context=None):
         if json_obj is None:
@@ -43,7 +45,13 @@ class NumpySerializer:
     def to_json(obj):
         if obj is None:
             return None
-        return {'type': 'ndarray', 'data': obj.tolist(), 'dtype': str(obj.dtype)}
+
+        try:
+            dtype_json = dace.dtypes.DTYPE_TO_TYPECLASS[obj.dtype.type].to_json()
+        except KeyError:
+            dtype_json = str(obj.dtype)
+
+        return {'type': 'ndarray', 'data': obj.tolist(), 'dtype': dtype_json}
 
 
 _DACE_SERIALIZE_TYPES = {
@@ -56,6 +64,7 @@ _DACE_SERIALIZE_TYPES = {
     "ndarray": NumpySerializer,
     "DebugInfo": dace.dtypes.DebugInfo,
     "string": dace.dtypes.string,
+    "bool_": dace.dtypes.bool,
     # All classes annotated with the make_properties decorator will register
     # themselves here.
 }
@@ -136,6 +145,8 @@ def from_json(obj, context=None, known_type=None):
         try:
             deserialized = _DACE_SERIALIZE_TYPES[t].from_json(obj, context=context)
         except Exception as ex:
+            if config.Config.get_bool('testing', 'deserialize_exception'):
+                raise
             warnings.warn(f'Failed to deserialize element, {type(ex).__name__}: {ex}')
             deserialized = SerializableObject.from_json(obj, context=context, typename=t)
         return deserialized
@@ -165,6 +176,8 @@ def dump(*args, **kwargs):
 def all_properties_to_json(object_with_properties):
     retdict = {}
     for x, v in object_with_properties.properties():
+        if x.optional and not x.optional_condition(object_with_properties):
+            continue
         retdict[x.attr_name] = x.to_json(v)
 
     return retdict
@@ -201,8 +214,6 @@ def set_properties_from_json(object_with_properties, json_obj, context=None, ign
 
         if isinstance(val, dict):
             val = prop.from_json(val, context)
-            if val is None and attrs[prop_name] is not None:
-                raise ValueError("Unparsed to None from: {}".format(attrs[prop_name]))
         else:
             try:
                 val = prop.from_json(val, context)
@@ -211,8 +222,8 @@ def set_properties_from_json(object_with_properties, json_obj, context=None, ign
                 # dictionary has been fully deserialized, and on raw json
                 # objects. In the interest of time, we're not failing here, but
                 # should untangle this eventually
-                print("WARNING: failed to parse object {}"
-                      " for property {} of type {}. Error was: {}".format(val, prop_name, prop, err))
+                warnings.warn("Failed to parse object {}"
+                              " for property {} of type {}. Error was: {}".format(val, prop_name, prop, err))
                 raise
 
         setattr(object_with_properties, prop_name, val)
@@ -222,4 +233,4 @@ def set_properties_from_json(object_with_properties, json_obj, context=None, ign
     remaining_properties = set(prop for prop in remaining_properties if not prop.startswith('_meta'))
     if len(remaining_properties) > 0:
         # TODO: elevate to error once #28 is fixed.
-        print("WARNING: unused properties: {}".format(", ".join(sorted(remaining_properties))))
+        warnings.warn("Unused properties: {}".format(", ".join(sorted(remaining_properties))))

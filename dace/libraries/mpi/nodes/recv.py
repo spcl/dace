@@ -4,6 +4,7 @@ import dace.properties
 import dace.sdfg.nodes
 from dace.transformation.transformation import ExpandTransformation
 from .. import environments
+from dace.libraries.mpi.nodes.node import MPINode
 
 
 @dace.library.expansion
@@ -44,7 +45,7 @@ class ExpandRecvMPI(ExpandTransformation):
 
 
 @dace.library.node
-class Recv(dace.sdfg.nodes.LibraryNode):
+class Recv(MPINode):
 
     # Global properties
     implementations = {

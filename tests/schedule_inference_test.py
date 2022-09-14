@@ -20,4 +20,4 @@ def test_schedule_inference_simple():
     sdfg.apply_transformations_repeated(StateFusion)
 
     entry = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry)][0]
-    assert entry.schedule is dace.ScheduleType.CPU_Multicore
+    assert entry.schedule == dace.ScheduleType.CPU_Multicore

@@ -1,12 +1,13 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Python interface for DaCe functions. """
 
-from functools import wraps
 import inspect
+from functools import wraps
+from typing import Any, Callable, Deque, Dict, Generator, Optional, Tuple, TypeVar, Union, overload
+
 from dace import dtypes
 from dace.dtypes import paramdec
-from dace.frontend.python import parser, ndloop, tasklet_runner
-from typing import (Any, Callable, Deque, Dict, Generator, Optional, Tuple, TypeVar, overload, Union)
+from dace.frontend.python import ndloop, parser, tasklet_runner
 
 #############################################
 
@@ -97,6 +98,7 @@ def method(f: F,
 
     # Create a wrapper class that can bind to the object instance
     class MethodWrapper:
+
         def __init__(self):
             self.wrapped: Dict[int, parser.DaceProgram] = {}
 
@@ -118,8 +120,34 @@ def method(f: F,
 
 
 # Dataflow constructs
+class MapGenerator:
+    """
+    An SDFG map generator class that allows applying operators on it, used
+    for syntactic sugar.
+    """
+
+    def __init__(self, rng: Union[slice, Tuple[slice]]):
+        self.rng = rng
+
+    def __matmul__(self, schedule: dtypes.ScheduleType):
+        """
+        Syntactic sugar for specifying the schedule of the map.
+        This enables controlling the hardware scheduling of the map as follows:
+
+        .. code-block:: python
+
+            for i, j in dace.map[0:N, 0:M] @ ScheduleType.GPU_Global:
+                b[i, j] = a[i, j] + 1
+        """
+        # Ignored in Python mode
+        return self
+
+    def __iter__(self):
+        return ndloop.ndrange(self.rng)
+
 class MapMetaclass(type):
     """ Metaclass for map, to enable ``dace.map[0:N]`` syntax. """
+
     @classmethod
     def __getitem__(cls, rng: Union[slice, Tuple[slice]]) -> Generator[Tuple[int], None, None]:
         """ 
@@ -128,7 +156,7 @@ class MapMetaclass(type):
                     N-dimensional range to iterate over.
         :return: Generator of N-dimensional tuples of iterates.
         """
-        yield from ndloop.ndrange(rng)
+        return MapGenerator(rng)
 
 
 class map(metaclass=MapMetaclass):
@@ -141,6 +169,7 @@ class map(metaclass=MapMetaclass):
 
 
 class consume:
+
     def __init__(self, stream: Deque[T], processing_elements: int = 1, condition: Optional[Callable[[], bool]] = None):
         """ 
         Consume is a scope, like ``Map``, that creates parallel execution.
@@ -168,10 +197,11 @@ class consume:
 
 class TaskletMetaclass(type):
     """ Metaclass for tasklet, to enable ``with dace.tasklet:`` syntax. """
+
     def __enter__(self):
         # Parse and run tasklet
         frame = inspect.stack()[1][0]
-        filename = inspect.getframeinfo(frame).filename
+        filename = inspect.getframeinfo(frame, context=0).filename
         tasklet_ast = tasklet_runner.get_tasklet_ast(frame=frame)
         tasklet_runner.run_tasklet(tasklet_ast, filename, frame.f_globals, frame.f_locals)
 
@@ -196,6 +226,7 @@ class tasklet(metaclass=TaskletMetaclass):
 
     The DaCe framework cannot analyze these tasklets for optimization. 
     """
+
     def __init__(self, language: Union[str, dtypes.Language] = dtypes.Language.Python):
         if isinstance(language, str):
             language = dtypes.Language[language]
@@ -207,7 +238,7 @@ class tasklet(metaclass=TaskletMetaclass):
 
         # Parse and run tasklet
         frame = inspect.stack()[1][0]
-        filename = inspect.getframeinfo(frame).filename
+        filename = inspect.getframeinfo(frame, context=0).filename
         tasklet_ast = tasklet_runner.get_tasklet_ast(frame=frame)
         tasklet_runner.run_tasklet(tasklet_ast, filename, frame.f_globals, frame.f_locals)
 
@@ -226,9 +257,19 @@ def unroll(generator):
     """
     yield from generator
 
+
 def nounroll(generator):
     """
     Explicitly annotates that a loop should not be unrolled during parsing.
     :param generator: The original generator to loop over.
     """
     yield from generator
+
+
+def in_program() -> bool:
+    """
+    Returns True if in a DaCe program parsing context. This function can be used to test whether the current
+    code runs inside the ``@dace.program`` parser.
+    :return: True if in a DaCe program parsing context, or False otherwise.
+    """
+    return False

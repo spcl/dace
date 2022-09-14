@@ -31,7 +31,7 @@ def get_tasklet_ast(stack_depth=2, frame=None) -> ast.With:
     """
     if frame is None:
         frame = inspect.stack()[stack_depth][0]
-    caller = inspect.getframeinfo(frame)
+    caller = inspect.getframeinfo(frame, context=0)
     try:
         with open(caller.filename, 'r') as fp:
             pysrc = fp.read()

@@ -13,7 +13,7 @@ import copy
 
 import dace
 from dace.codegen.targets import cpp
-from dace import subsets, data as dt, dtypes, memlet, symbolic
+from dace import subsets, data as dt, dtypes, memlet, sdfg as sd, symbolic
 from dace.config import Config
 from dace.frontend import operations
 from dace.sdfg import SDFG, nodes, utils, dynamic_map_inputs
@@ -22,10 +22,12 @@ from dace.codegen import exceptions as cgx
 from dace.codegen.codeobject import CodeObject
 from dace.codegen.dispatcher import DefinedType
 from dace.codegen.prettycode import CodeIOStream
+from dace.codegen.targets.common import update_persistent_desc
 from dace.codegen.targets.target import (TargetCodeGenerator, IllegalCopy, make_absolute)
 from dace.codegen import cppunparse
 from dace.properties import Property, make_properties, indirect_properties
 from dace.sdfg.state import SDFGState
+from dace.sdfg.utils import is_fpga_kernel
 from dace.symbolic import evaluate
 from dace.transformation.dataflow import MapUnroll
 from collections import defaultdict
@@ -48,24 +50,6 @@ def vector_element_type_of(dtype):
     elif isinstance(dtype, dace.vector):
         return dtype.base_type
     return dtype
-
-
-def is_fpga_kernel(sdfg, state):
-    """
-    Returns whether the given state is an FPGA kernel and should be dispatched
-    to the FPGA code generator.
-    :return: True if this is an FPGA kernel, False otherwise.
-    """
-    if ("is_FPGA_kernel" in state.location and state.location["is_FPGA_kernel"] == False):
-        return False
-    data_nodes = state.data_nodes()
-    if len(data_nodes) == 0:
-        return False
-    for n in data_nodes:
-        if n.desc(sdfg).storage not in (dtypes.StorageType.FPGA_Global, dtypes.StorageType.FPGA_Local,
-                                        dtypes.StorageType.FPGA_Registers, dtypes.StorageType.FPGA_ShiftRegister):
-            return False
-    return True
 
 
 def is_external_stream(node: dace.sdfg.nodes.Node, subgraph: Union[dace.sdfg.SDFGState, ScopeSubgraphView]):
@@ -108,7 +92,7 @@ def is_multibank_array_with_distributed_index(array: dt.Data):
     if is_multibank_array(array):
         res = parse_location_bank(array)
         low, high = get_multibank_ranges_from_subset(res[1], None)
-        return high - low > 1 or str(array.shape[0]) == "1"
+        return high - low > 1 or (len(array.shape) > 1 and str(array.shape[0]) == "1")
     else:
         return False
 
@@ -503,22 +487,26 @@ class FPGACodeGen(TargetCodeGenerator):
             # Then, try to split these components further
             subgraphs = dace.sdfg.concurrent_subgraphs(state)
 
-            start_kernel = 0
-            for sg in subgraphs:
-                # Determine kernels in state
-                num_kernels, dependencies = self.partition_kernels(sg, default_kernel=start_kernel)
-                if num_kernels > 1:
-                    # For each kernel, derive the corresponding subgraphs
-                    # and keep track of dependencies
-                    kernels.extend(self._kernels_subgraphs(sg, dependencies))
-                    self._kernels_dependencies.update(dependencies)
-                else:
-                    kernels.append((sg, start_kernel))
-                start_kernel = start_kernel + num_kernels
+            if Config.get_bool("compiler", "fpga", "concurrent_kernel_detection"):
+                start_kernel = 0
+                for sg in subgraphs:
+                    # Determine kernels in state
+                    num_kernels, dependencies = self.partition_kernels(sg, default_kernel=start_kernel)
+                    if num_kernels > 1:
+                        # For each kernel, derive the corresponding subgraphs
+                        # and keep track of dependencies
+                        kernels.extend(self._kernels_subgraphs(sg, dependencies))
+                        self._kernels_dependencies.update(dependencies)
+                    else:
+                        kernels.append((sg, start_kernel))
+                    start_kernel = start_kernel + num_kernels
 
-            # There is no need to generate additional kernels if the number of found kernels
-            # is equal to the number of connected components: use PEs instead (only one kernel)
-            if len(subgraphs) == len(kernels):
+                # There is no need to generate additional kernels if the number of found kernels
+                # is equal to the number of connected components: use PEs instead (only one kernel)
+                if len(subgraphs) == len(kernels):
+                    kernels = [(state, 0)]
+            else:
+                # Only one FPGA kernel (possibly with multiple PEs)
                 kernels = [(state, 0)]
 
             self._num_kernels = len(kernels)
@@ -1066,6 +1054,12 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
 
     def allocate_array(self, sdfg, dfg, state_id, node, nodedesc, function_stream, declaration_stream,
                        allocation_stream):
+
+        # NOTE: The code below fixes symbol-related issues with transient data originally defined in a NestedSDFG scope
+        # but promoted to be persistent. These data must have their free symbols replaced with the corresponding
+        # top-level SDFG symbols.
+        if nodedesc.lifetime == dtypes.AllocationLifetime.Persistent:
+            nodedesc = update_persistent_desc(nodedesc, sdfg)
 
         result_decl = StringIO()
         result_alloc = StringIO()

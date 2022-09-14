@@ -1,12 +1,15 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Tests WarpTiling and fusion on the softmax operator. """
-import dace
-from dace.transformation.dataflow import (MapFusion, WarpTiling, TrivialMapElimination, Vectorization)
-from dace.transformation.interstate import (HoistState, InlineSDFG, StateFusion, GPUTransformSDFG)
-from dace.transformation.subgraph import (SubgraphFusion, MultiExpansion, ReduceExpansion)
-
 import numpy as np
 import pytest
+
+import dace
+from dace.transformation.dataflow import (MapFusion, ReduceExpansion,
+                                          TrivialMapElimination, Vectorization,
+                                          WarpTiling)
+from dace.transformation.interstate import (GPUTransformSDFG, HoistState,
+                                            InlineSDFG, StateFusion)
+from dace.transformation.subgraph import MultiExpansion, SubgraphFusion
 
 dn1, dn2, dn3, dr = (dace.symbol(s) for s in ('dn1', 'dn2', 'dn3', 'dr'))
 
