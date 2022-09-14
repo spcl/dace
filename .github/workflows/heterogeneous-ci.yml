@@ -65,7 +65,7 @@ jobs:
         export DACE_library_pblas_default_implementation=ReferenceOpenMPI
         for i in {1..8}
         do
-          mpirun -n "$i" coverage run --source=dace --parallel-mode -m pytest -x --with-mpi --tb=short -m "scalapack"
+          mpirun -n "$i" --oversubscribe coverage run --source=dace --parallel-mode -m pytest -x --with-mpi --tb=short -m "scalapack"
         done
 
     - name: Report overall coverage
