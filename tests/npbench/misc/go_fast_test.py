@@ -38,7 +38,7 @@ def ground_truth(a):
 
 def run_go_fast(device_type: dace.dtypes.DeviceType):
     '''
-    Runs CRC16 for the given device
+    Runs go_fast for the given device
     :return: the SDFG
     '''
 
