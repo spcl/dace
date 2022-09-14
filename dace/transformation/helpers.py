@@ -22,7 +22,7 @@ def nest_sdfg_subgraph(sdfg: SDFG,
                        subgraph: SubgraphView,
                        start: Optional[SDFGState] = None,
                        name: Optional[str] = None) -> SDFGState:
-    
+
     # Nest states
     states = subgraph.nodes()
     if len(states) > 1:
@@ -34,12 +34,11 @@ def nest_sdfg_subgraph(sdfg: SDFG,
             if len(src_nodes) != 1:
                 raise NotImplementedError
             source_node = src_nodes[0]
-        
+
         sink_nodes = subgraph.sink_nodes()
         if len(sink_nodes) != 1:
             raise NotImplementedError
         sink_node = sink_nodes[0]
-
 
         # Find read/write sets
         read_set, write_set = set(), set()
@@ -103,11 +102,10 @@ def nest_sdfg_subgraph(sdfg: SDFG,
 
         new_state = sdfg.add_state('nested_sdfg_parent')
         nsdfg = SDFG("nested_sdfg", constants=sdfg.constants_prop, parent=new_state)
-        true_source = nsdfg.add_state('start_state', is_start_state=True)
-        nsdfg.add_nodes_from([s for s in states])
+        nsdfg.add_node(source_node, is_start_state=True)
+        nsdfg.add_nodes_from([s for s in states if s is not source_node])
         for s in states:
             s.parent = nsdfg
-        nsdfg.add_edge(true_source, source_node, InterstateEdge())
         for e in subgraph.edges():
             nsdfg.add_edge(e.src, e.dst, e.data)
 
@@ -125,7 +123,7 @@ def nest_sdfg_subgraph(sdfg: SDFG,
         for name in unique_set:
             nsdfg.arrays[name] = sdfg.arrays[name]
             del sdfg.arrays[name]
-        
+
         # Handle symbols taking new value inside NestedSDFG
         ndefined_symbols = set()
         out_mapping = {}
@@ -156,7 +154,7 @@ def nest_sdfg_subgraph(sdfg: SDFG,
         for s in strictly_defined_symbols:
             if s in sdfg.symbols:
                 sdfg.remove_symbol(s)
-        
+
         for name in read_set:
             r = new_state.add_read(name)
             new_state.add_edge(r, None, cnode, name, Memlet.from_array(name, sdfg.arrays[name]))
@@ -174,42 +172,14 @@ def nest_sdfg_subgraph(sdfg: SDFG,
 
     else:
         new_state = states[0]
-    
+
     return new_state
 
 
-def _next_component(state: SDFGState, sdfg: SDFG, ipostdom: Dict[SDFGState, SDFGState],
-                    component: Set[SDFGState] = None):
-    
-    component = component or set()
-
-    if state in component:
-        return component, None
-
-    component.add(state)
-
-    edges = sdfg.out_edges(state)
-
-    if len(edges) == 0:
-        return component, None
-
-    if len(edges) == 1:
-        if edges[0].data.is_unconditional:
-            problem = False
-            for _, v in edges[0].data.assignments.items():
-                if symbolic.issymbolic(v):
-                    problem = True
-            if not edges[0].data.assignments or not problem:
-                return component, edges[0].dst
-        return _next_component(edges[0].dst, sdfg, ipostdom, component)
-    
-    # len(edges) > 1
-    last_state = ipostdom[state]
-    component.update(utils.dfs_conditional(sdfg, [state], lambda _, c: c is not last_state))
-    return _next_component(last_state, sdfg, ipostdom, component)   
-
-
-def _copy_state(sdfg: SDFG, state: SDFGState, before: bool = True, states: Optional[Set[SDFGState]] = None) -> SDFGState:
+def _copy_state(sdfg: SDFG,
+                state: SDFGState,
+                before: bool = True,
+                states: Optional[Set[SDFGState]] = None) -> SDFGState:
 
     state_copy = copy.deepcopy(state)
     state_copy._label += '_copy'
@@ -245,20 +215,24 @@ def _copy_state(sdfg: SDFG, state: SDFGState, before: bool = True, states: Optio
         # if out_conditions:
         #     condition = 'or'.join([f"({c})" for c in out_conditions])
         sdfg.add_edge(state, state_copy, InterstateEdge(condition=condition))
-    
+
     return state_copy
 
 
-def nest_sdfg_control_flow(sdfg: SDFG):
+def find_sdfg_control_flow(sdfg: SDFG):
 
     split_interstate_edges(sdfg)
     ipostdom = utils.postdominators(sdfg)
     cft = cf.structured_control_flow_tree(sdfg, None)
 
     components = {}
-    for child in cft.children:
+    visited = {}  # Dict[SDFGState, bool]: True if SDFGState in Scope (non-SingleState)
+    for i, child in enumerate(cft.children):
         if isinstance(child, cf.SingleState):
-            components[child.state] = set([child.state])
+            if child.state in visited:
+                continue
+            components[child.state] = (set([child.state]), child)
+            visited[child.state] = False
         elif isinstance(child, (cf.ForScope, cf.WhileScope)):
             guard = child.guard
             fexit = None
@@ -271,34 +245,70 @@ def nest_sdfg_control_flow(sdfg: SDFG):
                 raise ValueError("Cannot find for-scope's exit states.")
 
             states = set(utils.dfs_conditional(sdfg, [guard], lambda p, _: p is not fexit))
-            guard_copy = _copy_state(sdfg, guard, False, states)
-            states.remove(guard)
-            states.add(guard_copy)
-            fexit_copy = _copy_state(sdfg, fexit, True, states)
-            states.remove(fexit)
-            states.add(fexit_copy)
-            
-            components[guard_copy] = states
+
+            if guard in visited:
+                if visited[guard]:
+                    guard_copy = _copy_state(sdfg, guard, False, states)
+                    guard.remove_nodes_from(guard.nodes())
+                    states.remove(guard)
+                    states.add(guard_copy)
+                    guard = guard_copy
+                else:
+                    del components[guard]
+                    del visited[guard]
+
+            if not (i == len(cft.children) - 2 and isinstance(cft.children[i + 1], cf.SingleState)
+                    and cft.children[i + 1].state is fexit):
+                fexit_copy = _copy_state(sdfg, fexit, True, states)
+                fexit.remove_nodes_from(fexit.nodes())
+                states.remove(fexit)
+                states.add(fexit_copy)
+
+            components[guard] = (states, child)
+            visited.update({s: True for s in states})
         elif isinstance(child, (cf.IfScope, cf.IfElseChain)):
             guard = child.branch_state
             ifexit = ipostdom[guard]
 
             states = set(utils.dfs_conditional(sdfg, [guard], lambda p, _: p is not ifexit))
-            guard_copy = _copy_state(sdfg, guard, False, states)
-            states.remove(guard)
-            states.add(guard_copy)
-            ifexit_copy = _copy_state(sdfg, ifexit, True, states)
-            states.remove(ifexit)
-            states.add(ifexit_copy)
 
-            components[guard_copy] = states
+            if guard in visited:
+                if visited[guard]:
+                    guard_copy = _copy_state(sdfg, guard, False, states)
+                    guard.remove_nodes_from(guard.nodes())
+                    states.remove(guard)
+                    states.add(guard_copy)
+                    guard = guard_copy
+                else:
+                    del components[guard]
+                    del visited[guard]
+
+            if not (i == len(cft.children) - 2 and isinstance(cft.children[i + 1], cf.SingleState)
+                    and cft.children[i + 1].state is ifexit):
+                ifexit_copy = _copy_state(sdfg, ifexit, True, states)
+                ifexit.remove_nodes_from(ifexit.nodes())
+                states.remove(ifexit)
+                states.add(ifexit_copy)
+
+            components[guard] = (states, child)
+            visited.update({s: True for s in states})
         else:
             raise ValueError(f"Unsupported control flow class {type(child)}")
-    
+
+    return components
+
+
+def nest_sdfg_control_flow(sdfg: SDFG, components=None):
+
+    components = components or find_sdfg_control_flow(sdfg)
+
     num_components = len(components)
-    for i, (start, component) in enumerate(components.items()):
+
+    if num_components < 2:
+        return
+
+    for i, (start, (component, _)) in enumerate(components.items()):
         nest_sdfg_subgraph(sdfg, graph.SubgraphView(sdfg, component), start)
-        print(f"Nested {i+1} components out of {num_components}.")
 
 
 def nest_state_subgraph(sdfg: SDFG,
