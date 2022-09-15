@@ -49,7 +49,8 @@ class ExpandIsendMPI(ExpandTransformation):
                                           node.in_connectors,
                                           node.out_connectors,
                                           code,
-                                          language=dace.dtypes.Language.CPP)
+                                          language=dace.dtypes.Language.CPP,
+                                          side_effects=True)
         conn = tasklet.in_connectors
         conn = {c: (dtypes.int32 if c == '_dest' else t) for c, t in conn.items()}
         tasklet.in_connectors = conn

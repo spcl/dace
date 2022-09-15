@@ -5,7 +5,13 @@ import numpy as np
 import dace
 import pytest
 import argparse
-from dace.transformation.auto.auto_optimize import auto_optimize
+from dace.transformation.auto.auto_optimize import auto_optimize, fpga_auto_opt
+from dace.fpga_testing import fpga_test
+from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
+
+# Dataset sizes
+# TSTEPS, N
+sizes = {"mini": (20, 20), "small": (40, 60), "medium": (100, 200), "large": (500, 1000), "extra-large": (1000, 2000)}
 
 N = dace.symbol('N', dtype=dace.int64)
 
@@ -62,7 +68,7 @@ def numpy_kernel(TSTEPS, N, u):
 
 
 @dace.program
-def dace_kernel(TSTEPS: dace.int64, u: dace.float64[N, N]):
+def adi_kernel(TSTEPS: dace.int64, u: dace.float64[N, N]):
 
     v = np.empty(u.shape, dtype=u.dtype)
     p = np.empty(u.shape, dtype=u.dtype)
@@ -118,16 +124,31 @@ def run_adi(device_type: dace.dtypes.DeviceType):
     :return: the SDFG
     '''
 
-    # Initialize data (npbench S size)
-    TSTEPS, N = (5, 100)
+    # Initialize data (polybench small)
+    TSTEPS, N = sizes["small"]
     u = initialize(N)
     dace_u = u.copy()
 
     if device_type in {dace.dtypes.DeviceType.CPU, dace.dtypes.DeviceType.GPU}:
-        # Parse the SDFG and apply autopot
-        sdfg = dace_kernel.to_sdfg()
+        # Parse the SDFG and apply auto-opt
+        sdfg = adi_kernel.to_sdfg()
         sdfg = auto_optimize(sdfg, device_type)
         sdfg(TSTEPS=TSTEPS, u=dace_u, N=N)
+    elif device_type == dace.dtypes.DeviceType.FPGA:
+        # Parse SDFG and apply FPGA friendly optimization
+        sdfg = adi_kernel.to_sdfg(simplify=True)
+        applied = sdfg.apply_transformations([FPGATransformSDFG])
+        assert applied == 1
+
+        # Use FPGA Expansion for lib nodes, and expand them to enable further optimizations
+        from dace.libraries.blas import Gemm
+        Gemm.default_implementation = "FPGA1DSystolic"
+        sdfg.expand_library_nodes()
+        # In this case, we want to generate the top-level state as an host-based state,
+        # not an FPGA kernel. We need to explicitly indicate that
+        sdfg.apply_transformations_repeated([InlineSDFG], print_report=True)
+        sdfg.specialize(dict(N=N))
+        sdfg(TSTEPS=TSTEPS, u=dace_u)
 
     # Compute ground truth and Validate result
     numpy_kernel(TSTEPS, N, u)
@@ -144,10 +165,16 @@ def test_gpu():
     run_adi(dace.dtypes.DeviceType.GPU)
 
 
+@pytest.mark.skip(reason="Intel FPGA missing support for long long")
+@fpga_test(assert_ii_1=False)
+def test_fpga():
+    return run_adi(dace.dtypes.DeviceType.FPGA)
+
+
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
+    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu', 'fpga'], help='Target platform')
 
     args = vars(parser.parse_args())
     target = args["target"]
@@ -156,3 +183,5 @@ if __name__ == "__main__":
         run_adi(dace.dtypes.DeviceType.CPU)
     elif target == "gpu":
         run_adi(dace.dtypes.DeviceType.GPU)
+    elif target == "fpga":
+        run_adi(dace.dtypes.DeviceType.FPGA)
