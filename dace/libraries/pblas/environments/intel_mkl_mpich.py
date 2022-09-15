@@ -128,8 +128,7 @@ class IntelMKLScaLAPACKMPICH:
     @staticmethod
     def cmake_link_flags():
 
-        mpi_libs = ''
-        mpi_link = ''
+        link_line = ""
 
         import tempfile
 
@@ -137,47 +136,23 @@ class IntelMKLScaLAPACKMPICH:
         with tempfile.TemporaryDirectory() as tmp_dir:
 
             os.chdir(tmp_dir)
-            with open("CMakeLists.txt", "w") as f: 
-                f.write("find_package(MPI)")
+            with open("CMakeLists.txt", "w") as f:
+                f.write("make_minimum_required(VERSION 3.10)\nproject(DACE_findMPI)\nfind_package(MPI)\n")
             os.mkdir('build')
             os.chdir(os.path.join(tmp_dir, 'build'))
             os.system("cmake ..")
-            output = os.popen("cmake -LA ..")
+            script = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'intel_mkl_mpich.cmake')
+            output = os.popen(f"cmake -C {script}")
 
-            # Get MPI libraries names and link flags
-            libs = []
-            vars = {}
             line = output.readline()
-            while not line.startswith('-- Cache values'):
+            while not line.startswith('--'):
                 line = output.readline()
-            for line in output:
-                try:
-                    tokens = line.strip('\n').split(':', maxsplit=1)
-                    name = tokens[0]
-                    tokens = tokens[1].split("=", maxsplit=1)
-                    value = tokens[1]
-                    vars[name] = value
-                    if name == "MPI_CXX_LIB_NAMES":
-                        libs = value.split(';')
-                    if name == "MPI_CXX_LINK_FLAGS":
-                        mpi_link = value
-                except IndexError:
-                    print(f"Line {line} does not define a CMake variable.")
+            link_line = line[2:].strip('\n')
 
-            # Get MPI libraries paths
-            if libs:
-                for l in libs:
-                    try:
-                        name = f"MPI_{l}_LIBRARY"
-                        libfile = vars[name]
-                        mpi_libs += f"-L {os.path.dirname(os.path.abspath(libfile))} -l{l} "
-                    except KeyError:
-                        print(f"CMake variable {name} was not found.")
-            
             os.chdir(cwd)
 
         libpath = IntelMKLScaLAPACKMPICH._find_mkl_lib_path()
 
         return [
-            f"-L {libpath} -lmkl_scalapack_lp64 -Wl,--no-as-needed -lmkl_intel_lp64 -lmkl_gnu_thread -lmkl_core -lmkl_blacs_intelmpi_lp64 {mpi_link} {mpi_libs} -lgomp -lpthread -lm -ldl"
+            f"-L {libpath} -lmkl_scalapack_lp64 -Wl,--no-as-needed -lmkl_intel_lp64 -lmkl_gnu_thread -lmkl_core -lmkl_blacs_intelmpi_lp64 {link_line} -lgomp -lpthread -lm -ldl"
         ]
