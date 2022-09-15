@@ -137,9 +137,10 @@ class IntelMKLScaLAPACKMPICH:
 
             os.chdir(tmp_dir)
             with open("CMakeLists.txt", "w") as f:
-                f.write("make_minimum_required(VERSION 3.10)\nproject(DACE_findMPI)\nfind_package(MPI)\n")
+                f.write("cmake_minimum_required(VERSION 3.10)\nproject(DACE_findMPI)\nfind_package(MPI)\n")
             os.mkdir('build')
             os.chdir(os.path.join(tmp_dir, 'build'))
+            os.system("cmake ..")
             os.system("cmake ..")
             script = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'intel_mkl_mpich.cmake')
             output = os.popen(f"cmake -C {script}")
@@ -148,6 +149,7 @@ class IntelMKLScaLAPACKMPICH:
             while not line.startswith('--'):
                 line = output.readline()
             link_line = line[2:].strip('\n')
+            print(link_line, flush=True)
 
             os.chdir(cwd)
 
