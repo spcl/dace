@@ -125,7 +125,7 @@ def test_nest_cf_simple_while_loop():
             i = update(A[i])
         return A
     
-    sdfg = simple_while_loop.to_sdfg(simplify=False)
+    sdfg = simple_while_loop.to_sdfg()
     nest_sdfg_control_flow(sdfg)
 
     assert(np.array_equal(sdfg(update=update), np.arange(10, dtype=np.int32)))
@@ -140,7 +140,7 @@ def test_nest_cf_simple_if():
         else:
             return 1
         
-    sdfg = simple_if.to_sdfg(simplify=False)
+    sdfg = simple_if.to_sdfg()
     nest_sdfg_control_flow(sdfg)
 
     assert(sdfg(2)[0] == 0)
@@ -162,7 +162,7 @@ def test_nest_cf_simple_if_elif():
         else:
             return 4
         
-    sdfg = simple_if_elif.to_sdfg(simplify=False)
+    sdfg = simple_if_elif.to_sdfg()
     nest_sdfg_control_flow(sdfg)
 
     assert(sdfg(0)[0] == 0)
@@ -186,7 +186,7 @@ def test_nest_cf_simple_if_chain():
             return 3
         return 4
         
-    sdfg = simple_if_chain.to_sdfg(simplify=False)
+    sdfg = simple_if_chain.to_sdfg()
     nest_sdfg_control_flow(sdfg)
 
     assert(sdfg(0)[0] == 0)

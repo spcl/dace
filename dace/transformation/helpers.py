@@ -222,6 +222,14 @@ def _copy_state(sdfg: SDFG,
 def find_sdfg_control_flow(sdfg: SDFG):
 
     split_interstate_edges(sdfg)
+
+    # Create a unique sink state to avoid issues with finding control flow.
+    sink_states = sdfg.sink_nodes()
+    if len(sink_states) > 1:
+        new_sink = sdfg.add_state('common_sink')
+        for s in sink_states:
+            sdfg.add_edge(s, new_sink, InterstateEdge())
+
     ipostdom = utils.postdominators(sdfg)
     cft = cf.structured_control_flow_tree(sdfg, None)
 
