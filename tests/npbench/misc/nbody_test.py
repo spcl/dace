@@ -304,6 +304,7 @@ def test_cpu():
     run_nbody(dace.dtypes.DeviceType.CPU)
 
 
+@pytest.mark.skip(reason="Compiler error")
 @pytest.mark.gpu
 def test_gpu():
     run_nbody(dace.dtypes.DeviceType.GPU)
