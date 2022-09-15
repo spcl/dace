@@ -360,7 +360,7 @@ class MapFissionTest(unittest.TestCase):
 
         ref = np.array([0] * 5 + [1] * 5, dtype=np.int32)
 
-        sdfg = map_with_if.to_sdfg(simplify=False)
+        sdfg = map_with_if.to_sdfg()
         val0 = np.ndarray((10, ), dtype=np.int32)
         sdfg(A=val0)
         self.assertTrue(np.array_equal(val0, ref))
@@ -384,7 +384,7 @@ class MapFissionTest(unittest.TestCase):
 
         ref = np.array([0] * 5 + [1] * 5, dtype=np.int32)
 
-        sdfg = map_with_if_2.to_sdfg(simplify=False)
+        sdfg = map_with_if_2.to_sdfg()
         val0 = np.ndarray((10, ), dtype=np.int32)
         sdfg(A=val0)
         self.assertTrue(np.array_equal(val0, ref))
