@@ -7,7 +7,7 @@ from typing import Optional, Union, List, Tuple
 
 
 def is_simple_expr(node: AST) -> bool:
-    return isinstance(node, (Constant, Name, UniqueName))
+    return isinstance(node, (Constant, Name, UniqueName, ast.UnaryOp))
 
 
 class _DefiniteReturn(NodeVisitor):

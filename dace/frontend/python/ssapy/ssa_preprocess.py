@@ -395,7 +395,7 @@ class SSA_Preprocessor(NodeTransformer):
             new_node = SingleAssign.create(target=target, value=value)
             copy_location(new_node, node)
 
-            return value_stmts + [new_node] + add_assigns
+            return value_stmts + add_assigns + [new_node]
 
         assign_var = self.multi_assign_varname
         uid_assign = self.get_unique_id(assign_var)
@@ -461,77 +461,78 @@ class SSA_Preprocessor(NodeTransformer):
 
         # Tuple/List Assignments
         elif isinstance(target, (ast.Tuple, ast.List)):
+            return target, additional_assigns
 
-            assert isinstance(target.ctx, Store), f"target.ctx is not ast.Store() for target {ast.unparse(target)}"
+            # assert isinstance(target.ctx, Store), f"target.ctx is not ast.Store() for target {ast.unparse(target)}"
 
-            assign_var = self.tuple_assign_varname
-            uid_assign = self.get_unique_id(assign_var)
-            new_target = UniqueName(id=uid_assign, ctx=Store())
-            copy_location(new_target, target)
+            # assign_var = self.tuple_assign_varname
+            # uid_assign = self.get_unique_id(assign_var)
+            # new_target = UniqueName(id=uid_assign, ctx=Store())
+            # copy_location(new_target, target)
 
-            pos_stmts = []
-            neg_stmts = []
-            nested_pos = []
-            nested_neg = []
-            starred = None
+            # pos_stmts = []
+            # neg_stmts = []
+            # nested_pos = []
+            # nested_neg = []
+            # starred = None
 
-            # Positive index targets (before starred)
-            i_pos = -1
-            for i_pos, element in enumerate(target.elts):
+            # # Positive index targets (before starred)
+            # i_pos = -1
+            # for i_pos, element in enumerate(target.elts):
 
-                if isinstance(element, ast.Starred):
-                    starred = element.value
-                    break
+            #     if isinstance(element, ast.Starred):
+            #         starred = element.value
+            #         break
 
-                element, nested_stmts = self.visit_target(element)
-                nested_pos.extend(nested_stmts)
+            #     element, nested_stmts = self.visit_target(element)
+            #     nested_pos.extend(nested_stmts)
                 
-                subscript = ast.Subscript(value=UniqueName(id=uid_assign, ctx=Load()), 
-                                          slice=Constant(value=i_pos), ctx=Load())
-                pos_stmts.append(SingleAssign.create(target=element, value=subscript))
+            #     subscript = ast.Subscript(value=UniqueName(id=uid_assign, ctx=Load()), 
+            #                               slice=Constant(value=i_pos), ctx=Load())
+            #     pos_stmts.append(SingleAssign.create(target=element, value=subscript))
 
-            # Negative index targets (after starred)
-            for i, element in enumerate(target.elts[i_pos+1:], 1):
-                i_neg = -i
+            # # Negative index targets (after starred)
+            # for i, element in enumerate(target.elts[i_pos+1:], 1):
+            #     i_neg = -i
 
-                if isinstance(element, ast.Starred):
-                    raise SyntaxError('two starred expressions in assignment (SSA_Preprocessor')
+            #     if isinstance(element, ast.Starred):
+            #         raise SyntaxError('two starred expressions in assignment (SSA_Preprocessor')
 
-                element, nested_stmts = self.visit_target(element)
-                nested_neg.extend(reversed(nested_stmts))
+            #     element, nested_stmts = self.visit_target(element)
+            #     nested_neg.extend(reversed(nested_stmts))
                 
-                subscript = ast.Subscript(value=UniqueName(id=uid_assign, ctx=Load()), 
-                                          slice=Constant(value=i_neg), ctx=Load())
-                neg_stmts.append(SingleAssign.create(target=element, value=subscript))
+            #     subscript = ast.Subscript(value=UniqueName(id=uid_assign, ctx=Load()), 
+            #                               slice=Constant(value=i_neg), ctx=Load())
+            #     neg_stmts.append(SingleAssign.create(target=element, value=subscript))
 
-            # Starred index: all remaining elements
-            if starred is not None:
+            # # Starred index: all remaining elements
+            # if starred is not None:
 
-                try:
-                    star_slice = ast.Slice(lower=Constant(value=i_pos), upper=Constant(value=i_neg))
-                except UnboundLocalError:
-                    star_slice = ast.Slice(lower=Constant(value=i_pos))
+            #     try:
+            #         star_slice = ast.Slice(lower=Constant(value=i_pos), upper=Constant(value=i_neg))
+            #     except UnboundLocalError:
+            #         star_slice = ast.Slice(lower=Constant(value=i_pos))
 
-                element, nested_stmts = self.visit_target(starred)
-                nested_pos.extend(nested_stmts)
+            #     element, nested_stmts = self.visit_target(starred)
+            #     nested_pos.extend(nested_stmts)
                 
-                subscript = ast.Subscript(value=UniqueName(id=uid_assign, ctx=Load()), slice=star_slice, ctx=Load())
-                pos_stmts.append(SingleAssign.create(target=element, value=subscript))
+            #     subscript = ast.Subscript(value=UniqueName(id=uid_assign, ctx=Load()), slice=star_slice, ctx=Load())
+            #     pos_stmts.append(SingleAssign.create(target=element, value=subscript))
 
-                additional_assigns.extend(pos_stmts)
-                additional_assigns.extend(reversed(neg_stmts))
-                additional_assigns.extend(nested_pos)
-                additional_assigns.extend(reversed(nested_neg))
+            #     additional_assigns.extend(pos_stmts)
+            #     additional_assigns.extend(reversed(neg_stmts))
+            #     additional_assigns.extend(nested_pos)
+            #     additional_assigns.extend(reversed(nested_neg))
 
-            else:
-                # no Starred thus no negative indexing
-                additional_assigns.extend(pos_stmts)
-                additional_assigns.extend(nested_pos)
+            # else:
+            #     # no Starred thus no negative indexing
+            #     additional_assigns.extend(pos_stmts)
+            #     additional_assigns.extend(nested_pos)
 
-            for new_stmt in additional_assigns:
-                copy_location(new_stmt, target)
+            # for new_stmt in additional_assigns:
+            #     copy_location(new_stmt, target)
 
-            return new_target, additional_assigns
+            # return new_target, additional_assigns
 
         # Illegal or unsupported Assignments
         elif isinstance(target, ast.Starred):
@@ -751,8 +752,9 @@ class SSA_Preprocessor(NodeTransformer):
     
     def visit_Return(self, node: ast.Return) -> List[StmtAST]:
         new_value, stmts1 = self.visit(node.value)
-        node.value, stmts2 = self.simplify_value(new_value, self.return_varname)
-        return stmts1 + stmts2 + [node]
+        # node.value, stmts2 = self.simplify_value(new_value, self.return_varname)
+        # return stmts1 + stmts2 + [node]
+        return stmts1 + [node]
 
     def visit_ClassDef(self, node: ast.ClassDef) -> List[StmtAST]:
         #  ClassDef(identifier name, expr* bases,

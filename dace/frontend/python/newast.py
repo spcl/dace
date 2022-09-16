@@ -1068,6 +1068,7 @@ class ProgramVisitor(ExtNodeVisitor):
         self.variables = dict()  # Dict[str, str]
         self.accesses = dict()
         self.views: Dict[str, Tuple[str, Memlet]] = {}  # Keeps track of views
+        self.phis: Set[str] = set()  # All variables defined by a phi
         self.references: Set[str] = set()  # All containers that participate in PhiAssigns
         self.reference_assigns: Dict[str, str] = {}  # Keeps track of reference assignments
         self.references_remaining: Dict[str, str] = {}  # Keeps track of phi operands left to process
@@ -1240,13 +1241,23 @@ class ProgramVisitor(ExtNodeVisitor):
                 else:
                     raise Exception(f"Cannot find variable {op}")
 
-        def ref_assign(read: dace.nodes.AccessNode, target: str):
+        def ref_assign(read: dace.nodes.AccessNode, target: str, state):
             assign_list = self.reference_assigns[target]
             for ref_name in assign_list:
                 write = state.add_write(ref_name)
                 state.add_edge(read, None, write, 'set', Memlet(read.data))
                 if ref_name in self.reference_assigns:
-                    ref_assign(write, ref_name)
+                    ref_assign(write, ref_name, state)
+
+        # Add phi assignments for function arguments
+        init_state = self.sdfg.start_state
+        for arg, arr in self.sdfg.arglist().items():
+            if arg in self.reference_assigns:
+                base_read = init_state.add_read(arg)
+                ref_assign(base_read, arg, init_state)
+
+                # Only assign to the reference once
+                del self.reference_assigns[arg]
 
         for state in self.sdfg.try_topological_sort():
             
@@ -1255,8 +1266,9 @@ class ProgramVisitor(ExtNodeVisitor):
             nodes = list(state.data_nodes())
             for node in nodes:
                 if node.data in self.reference_assigns:
-                    base_read = node
-                    ref_assign(base_read, node.data)
+                    if node.data not in self.phis:
+                        base_read = node
+                        ref_assign(base_read, node.data, state)
 
                     # Only assign to the reference once
                     del self.reference_assigns[node.data]
@@ -1314,6 +1326,7 @@ class ProgramVisitor(ExtNodeVisitor):
         from dace.frontend.python.ssapy import ssa_nodes
         for node in ast.walk(program):
             if isinstance(node, ssa_nodes.PhiAssign):
+                self.phis.add(node.target)
                 self.references.update(set(node.operand_names))
 
     @property
@@ -1457,17 +1470,6 @@ class ProgramVisitor(ExtNodeVisitor):
 
         return result
 
-    def visit_SSAFor(self, node: 'SSAFor'):
-
-        new_for = ast.For(
-            iter=node.iter,
-            target=node.target,
-            body=node.body,
-            orelse=node.orelse,
-        )
-
-        return self.visit_For(new_for)
-
     def visit_PhiAssign(self, node: 'PhiAssign'):
 
         sdfg = self.sdfg
@@ -1488,13 +1490,17 @@ class ProgramVisitor(ExtNodeVisitor):
             elif op in defined_arrays:
                 desc = defined_arrays[op]
                 print(f"desc for {op} in arrs")
+            elif op is None:
+                raise ValueError('Phi node for {phi_target} has en execution path with no definition for the variable!')
             else:
                 remaining_ops.append(op)
         
         assert desc is not None, f"No descriptor found for {phi_target}"
 
         name, ref = sdfg.add_reference(phi_target, desc.shape, desc.dtype, desc.storage, find_new_name=True)
+        self.variables[phi_target] = name
         self.references_remaining[name] = remaining_ops
+        print("DELAYED OPS TO ASSIGN:", remaining_ops)
 
         for op in phi_operands:
             if op in defined_vars:

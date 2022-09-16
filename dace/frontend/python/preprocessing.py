@@ -1349,7 +1349,7 @@ def preprocess_dace_program(f: Callable[..., Any],
     # SSA
     from .ssapy.ssa_preprocess import SSA_Preprocessor
     from .ssapy.ssa_transpiler import SSA_Transpiler
-    from .ssapy.ssa_postprocess import SSA_Reducer, SSA_Postprocessor
+    from .ssapy.ssa_postprocess import SSA_Reducer
     from .ssapy.dace_specific import DaCe_Postprocessor
     definiton_sources = collections.ChainMap(global_vars, argtypes)
     definitions = {name: (name, None) for name in definiton_sources}
@@ -1364,11 +1364,15 @@ def preprocess_dace_program(f: Callable[..., Any],
     ast.fix_missing_locations(function_body)
 
     src_ast.body[0].body = function_body.body
-    print('##################')
-    ast_copy = copy.deepcopy(src_ast)
-    SSA_Postprocessor().visit(ast_copy)
-    ast.fix_missing_locations(ast_copy)
-    print(ast.unparse(ast_copy))
+
+    if True:  # Print the SSA-converted AST for debugging
+        from .ssapy.ssa_postprocess import SSA_Postprocessor
+        print('#'*20)
+        ast_copy = copy.deepcopy(src_ast)
+        SSA_Postprocessor().visit(ast_copy)
+        ast.fix_missing_locations(ast_copy)
+        print(ast.unparse(ast_copy))
+        print('#'*20)
 
     # Resolve data structures
     src_ast = StructTransformer(global_vars).visit(src_ast)

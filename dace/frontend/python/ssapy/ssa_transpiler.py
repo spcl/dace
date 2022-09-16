@@ -219,6 +219,7 @@ class SSA_Transpiler(NodeVisitor):
     def visit_WhileCFG(self, node: WhileCFG, variables: Variables) -> Variables:
 
         head_block = node.head
+        if_cond = node.ifelse.test
         if_body = node.ifelse.body
         if_else = node.ifelse.orelse
 
@@ -258,6 +259,7 @@ class SSA_Transpiler(NodeVisitor):
             # 5: process header
             # print("header lookup: ", ChainMap(entry_phis, variables))
             header_vars = self.visit_block(head_block, ChainMap(entry_phis, variables))
+            self.visit(if_cond, ChainMap(entry_phis, variables))
 
             # 6: process body & else, fill phi nodes
             #    for each continue -> fill all variables into entry phi nodes
@@ -286,6 +288,7 @@ class SSA_Transpiler(NodeVisitor):
     def visit_ForCFG(self, node: ForCFG, variables: Variables) -> Variables:
 
         head_block = node.head
+        if_cond = node.ifelse.test
         if_body = node.ifelse.body
         if_else = node.ifelse.orelse
 
@@ -321,6 +324,7 @@ class SSA_Transpiler(NodeVisitor):
 
             # 5: process header
             header_vars = self.visit_block(head_block, ChainMap(entry_phis, variables))
+            self.visit(if_cond, ChainMap(entry_phis, variables))
 
             # 6: process body & else, fill phi nodes
             #    for each continue -> fill all variables into entry phi nodes
@@ -380,9 +384,13 @@ class SSA_Transpiler(NodeVisitor):
         var_name = node.id
         res = variables.get(var_name)
 
+        # if res is None:
+        #     undef_label = self.undefined_label + var_name
+        #     res = (undef_label, None)
+        
         if res is None:
-            undef_label = self.undefined_label + var_name
-            res = (undef_label, None)
+            # default to not touching undefined variables
+            res = (var_name, None)
         
         uid, definition = res
 
