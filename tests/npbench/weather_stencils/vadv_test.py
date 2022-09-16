@@ -215,6 +215,7 @@ def test_cpu():
     run_vadv(dace.dtypes.DeviceType.CPU)
 
 
+@pytest.mark.skip(reason="Compiler error")
 @pytest.mark.gpu
 def test_gpu():
     run_vadv(dace.dtypes.DeviceType.GPU)
