@@ -1,0 +1,20 @@
+cmake_minimum_required(VERSION 3.10)
+project(DACE_findMKLMPICH)
+
+set(DACE_LINK_LINE "${MPI_CXX_LINK_FLAGS}")
+
+set(DACE_MPI_LIB_NAMES "${MPI_CXX_LIB_NAMES}")
+string(REGEX MATCHALL "[^;]+|[^;]+$" DACE_MPI_LIBS "${DACE_MPI_LIB_NAMES}")
+foreach(name ${DACE_MPI_LIBS})
+    set(DACE_MPI_LIB_FILE "${MPI_${name}_LIBRARY}")
+    string(FIND "${DACE_MPI_LIB_FILE}" "/" DACE_SEP_IDX REVERSE)
+    if(${DACE_SEP_IDX} GREATER_EQUAL 0)
+        string(SUBSTRING "${DACE_MPI_LIB_FILE}" 0 ${DACE_SEP_IDX} DACE_LIB_PATH)
+        string(PREPEND DACE_LIB_PATH " -L ")
+    else()
+        set(DACE_LIB_PATH " ")
+    endif()
+    string(APPEND DACE_LINK_LINE "${DACE_LIB_PATH} -l${name}")
+endforeach()
+
+message(STATUS "${DACE_LINK_LINE}")

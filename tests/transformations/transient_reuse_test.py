@@ -42,7 +42,7 @@ def test_reuse():
 
     sdfg = operation.to_sdfg(simplify=True)
     result = TransientReuse().apply_pass(sdfg, {})
-    assert result == {'__tmp4', 'E'}
+    assert(len(result) == 2)
     sdfg(A=A, B=B, C=C, D=D, M=m, N=n)
 
     C_regression = np.dot(np.dot(A, np.dot(np.dot(A, B), np.dot(A, B))), np.dot(B, D))
