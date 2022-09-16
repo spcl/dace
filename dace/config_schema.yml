@@ -947,3 +947,18 @@ required:
                         description: >
                             Force the default implementation, even if an
                             implementation has been explicitly set on a node.
+            pblas:
+                type: dict
+                title: PBLAS
+                description: Built-in PBLAS DaCe library.
+                required:
+                    default_implementation:
+                        type: str
+                        default: MKLMPICH
+                        description: Default implementation PBLAS library nodes.
+                    override:
+                        type: bool
+                        default: false
+                        description: >
+                            Force the default implementation, even if an
+                            implementation has been explicitly set on a node.
