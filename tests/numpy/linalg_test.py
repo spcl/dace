@@ -185,6 +185,7 @@ def test_tensordot_21():
         assert(np.allclose(tensordot_2b(A.copy(), B.copy()), ref))
 
 
+@pytest.mark.gpu
 def test_tensordot_22():
 
     @dace.program(device=dace.dtypes.DeviceType.GPU)
@@ -209,15 +210,15 @@ def test_tensordot_22():
 
 
 if __name__ == "__main__":
-    # test_linalg_inv()
-    # test_linalg_solve()
-    # test_linalg_cholesky()
-    # test_tensordot_0()
-    # test_tensordot_1()
-    # test_tensordot_01()
-    # test_tensordot_11()
-    # test_tensordot_2()
-    # test_tensordot_21()
+    test_linalg_inv()
+    test_linalg_solve()
+    test_linalg_cholesky()
+    test_tensordot_0()
+    test_tensordot_1()
+    test_tensordot_01()
+    test_tensordot_11()
+    test_tensordot_2()
+    test_tensordot_21()
     test_tensordot_02()
     test_tensordot_12()
     test_tensordot_22()
