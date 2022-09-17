@@ -194,9 +194,10 @@ def run_lenet(device_type: dace.dtypes.DeviceType):
     return sdfg
 
 
-@pytest.mark.skip(reason="Serialization issue (otherwise it works)")
 def test_cpu():
-    run_lenet(dace.dtypes.DeviceType.CPU)
+    # Serialization causes issues, we temporarily disable it
+    with set_temporary("testing", "serialization", value=False):
+        run_lenet(dace.dtypes.DeviceType.CPU)
 
 
 @pytest.mark.skip(reason="Code error")
