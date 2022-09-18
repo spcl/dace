@@ -9,7 +9,8 @@ from dace.fpga_testing import fpga_test, xilinx_test
 from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
 from dace.transformation.dataflow import StreamingMemory, StreamingComposition
 from dace.transformation.auto.auto_optimize import auto_optimize, fpga_auto_opt
-from dace.config import set_temporary
+from dace.config import temporary_config, Config
+import os
 
 N, H, W, C_before_fc1, S0, S1, S2, S3, S4, S5 = (dc.symbol(s, dtype=dc.int64)
                                                  for s in ('N', 'H', 'W', 'C_before_fc1', 'S0', 'S1', 'S2', 'S3', 'S4',
@@ -194,10 +195,12 @@ def run_lenet(device_type: dace.dtypes.DeviceType):
     return sdfg
 
 
-def test_cpu():
+def test_cpu(monkeypatch):
     # Serialization causes issues, we temporarily disable it
-    with set_temporary("testing", "serialization", value=False):
-        run_lenet(dace.dtypes.DeviceType.CPU)
+    monkeypatch.setenv("DACE_testing_serialization", 0)
+    import pdb
+    pdb.set_trace()
+    run_lenet(dace.dtypes.DeviceType.CPU)
 
 
 @pytest.mark.skip(reason="Code error")
