@@ -198,8 +198,6 @@ def run_lenet(device_type: dace.dtypes.DeviceType):
 def test_cpu(monkeypatch):
     # Serialization causes issues, we temporarily disable it
     monkeypatch.setenv("DACE_testing_serialization", 0)
-    import pdb
-    pdb.set_trace()
     run_lenet(dace.dtypes.DeviceType.CPU)
 
 
