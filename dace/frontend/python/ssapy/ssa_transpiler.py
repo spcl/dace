@@ -12,7 +12,6 @@ from .ssa_nodes import ForCFG, IfCFG, PhiAssign, SingleAssign, UniqueClass, Uniq
 
 class LoopAnalyzer(NodeVisitor):
     """Node visitor that collects used and defined variables"""
-
     def __init__(self) -> None:
 
         self.used = set()
@@ -25,7 +24,7 @@ class LoopAnalyzer(NodeVisitor):
             self.visit(stmt)
 
     def visit_Name(self, node: Name) -> None:
-        
+
         varname = node.id
 
         if isinstance(node.ctx, Store):
@@ -51,7 +50,7 @@ class SSA_Transpiler(NodeVisitor):
         self.uid_stack = []
         self.make_interface = make_interface
         self.uid_func = uid_func
-    
+
     def get_unique_id(self, name):
 
         uid = self.uid_func(name)
@@ -70,7 +69,7 @@ class SSA_Transpiler(NodeVisitor):
         new_variables = {}
 
         for field, value in ast.iter_fields(node):
-            
+
             if isinstance(value, list):
 
                 for item in value:
@@ -78,12 +77,12 @@ class SSA_Transpiler(NodeVisitor):
                         defs = self.visit(item, variables)
                         if defs is not None:
                             new_variables.update(defs)
-                        
+
             elif isinstance(value, AST):
                 defs = self.visit(value, variables)
                 if defs is not None:
                     new_variables.update(defs)
-                
+
         return new_variables
 
     def visit_Constant(self, node: ast.Constant, variables: Variables) -> Variables:
@@ -130,7 +129,7 @@ class SSA_Transpiler(NodeVisitor):
         return new_variables
 
     def visit_IfCFG(self, node: IfCFG, variables: Variables) -> Variables:
-        
+
         test_exp = node.test
         body_block = node.body
         else_block = node.orelse
@@ -235,7 +234,7 @@ class SSA_Transpiler(NodeVisitor):
 
         # 2: place empty entry phi nodes for vars in body
         entry_phis = {}
-        entry_phi_vars = body_var_finder.defined  | head_var_finder.defined
+        entry_phi_vars = body_var_finder.defined | head_var_finder.defined
 
         for var in entry_phi_vars:
             new_uid = self.get_unique_id(var)
@@ -280,7 +279,7 @@ class SSA_Transpiler(NodeVisitor):
         new_variables = {**entry_phis, **header_vars, **exit_phis}
 
         entry_phi_stmts = [phi for _, phi in entry_phis.values()]
-        exit_phi_stmts =  [phi for _, phi in exit_phis.values()]
+        exit_phi_stmts = [phi for _, phi in exit_phis.values()]
 
         node.head = entry_phi_stmts + node.head
         node.exit = node.exit + exit_phi_stmts
@@ -345,7 +344,7 @@ class SSA_Transpiler(NodeVisitor):
         new_variables = {**entry_phis, **header_vars, **exit_phis}
 
         entry_phi_stmts = [phi for _, phi in entry_phis.values()]
-        exit_phi_stmts =  [phi for _, phi in exit_phis.values()]
+        exit_phi_stmts = [phi for _, phi in exit_phis.values()]
 
         node.head = entry_phi_stmts + node.head
         node.exit = node.exit + exit_phi_stmts
@@ -389,11 +388,11 @@ class SSA_Transpiler(NodeVisitor):
         # if res is None:
         #     undef_label = self.undefined_label + var_name
         #     res = (undef_label, None)
-        
+
         if res is None:
             # default to not touching undefined variables
             res = (var_name, None)
-        
+
         uid, definition = res
 
         if uid is None:
@@ -534,9 +533,9 @@ class SSA_Transpiler(NodeVisitor):
         for target in node.targets:
             vars = self.visit_deletion(target, variables)
             new_variables.update(vars)
-        
+
         return new_variables
-        
+
     def visit_Import(self, node: ast.Import, variables: Variables) -> Variables:
 
         new_variables = {}
@@ -553,7 +552,7 @@ class SSA_Transpiler(NodeVisitor):
             alias.asname = uid_name
             new_variables[top_module] = top_module, None
             new_variables[uid_name] = uid_name, None
-        
+
         return new_variables
 
     def visit_ImportFrom(self, node: ast.ImportFrom, variables: Variables) -> Variables:
@@ -566,9 +565,8 @@ class SSA_Transpiler(NodeVisitor):
             uid_name = self.get_unique_id(import_name)
             alias.asname = uid_name
             new_variables[import_chain] = uid_name, None
-        
-        return new_variables
 
+        return new_variables
 
     #########################
     # Function & Class Nodes
@@ -585,7 +583,7 @@ class SSA_Transpiler(NodeVisitor):
         for arg in arguments.args:
             var = arg.arg
             new_variables[var] = var, None
-        
+
         if arguments.vararg:
             var = arguments.vararg.arg
             new_variables[var] = var, None
@@ -601,7 +599,7 @@ class SSA_Transpiler(NodeVisitor):
         return new_variables
 
     def visit_SimpleFunction(self, node, variables: Variables) -> Variables:
-        
+
         name = node.name
         new_variables = {name: (name, None)}
 
@@ -611,21 +609,20 @@ class SSA_Transpiler(NodeVisitor):
         for arg in args.posonlyargs:
             if arg.annotation:
                 self.visit(arg.annotation, variables)
-        
+
         for arg in args.args:
             if arg.annotation:
                 self.visit(arg.annotation, variables)
-        
+
         if args.vararg and args.vararg.annotation:
             self.visit(args.vararg.annotation, variables)
-        
+
         for arg in args.kwonlyargs:
             if arg.annotation:
                 self.visit(arg.annotation, variables)
-        
+
         if args.kwarg and args.kwarg.annotation:
             self.visit(args.kwarg.annotation, variables)
-        
 
         if node.returns:
             self.visit(node.returns, variables)
@@ -663,7 +660,7 @@ class SSA_Transpiler(NodeVisitor):
                 print("With target: ", target)
                 vars = self.visit_assignment(target, variables, value)
                 new_variables.update(vars)
-        
+
         self.visit_block(node.body, ChainMap(new_variables, variables))
 
         return new_variables

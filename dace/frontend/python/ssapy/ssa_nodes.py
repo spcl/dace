@@ -12,9 +12,8 @@ def is_simple_expr(node: AST) -> bool:
 
 
 class _DefiniteReturn(NodeVisitor):
-
     def make_definite_return(self, block: List[AST]) -> List[AST]:
-        
+
         block_returns = self.visit_block(block)
 
         if not block_returns:
@@ -22,10 +21,10 @@ class _DefiniteReturn(NodeVisitor):
             block.append(return_stmt)
 
         return block
-    
+
     def generic_visit(self, node):
         return False
-    
+
     def visit_block(self, block: List[AST]) -> bool:
 
         returns = False
@@ -35,14 +34,14 @@ class _DefiniteReturn(NodeVisitor):
             stmt_returns = self.visit(block[i])
             if stmt_returns:
                 returns = True
-                block[:] = block[:i+1]
+                block[:] = block[:i + 1]
                 break
-        
+
         return returns
 
     def visit_Return(self, node: ast.Return) -> bool:
         return True
-    
+
     def visit_IfCFG(self, node: ast.If) -> bool:
         body_returns = self.visit_block(node.body)
         else_returns = self.visit_block(node.orelse)
@@ -57,7 +56,6 @@ class _DefiniteReturn(NodeVisitor):
         body_returns = self.visit_block(node.body)
         else_returns = self.visit_block(node.orelse)
         return body_returns and else_returns
-
 
 
 class UniqueName(AST):
@@ -80,8 +78,9 @@ class SimpleFunction(AST):
         body = func_def.body
 
         # Check certain "simple" attributes about the function
-        simple_defaults = [is_simple_expr(default) or default is None
-                           for default in chain(args.defaults, args.kw_defaults)]
+        simple_defaults = [
+            is_simple_expr(default) or default is None for default in chain(args.defaults, args.kw_defaults)
+        ]
 
         # 1) Only simple default values
         if not all(simple_defaults):
@@ -122,7 +121,7 @@ class SimpleFunction(AST):
 class UniqueClass(AST):
     _fields = ('bases', 'keywords', 'body', 'decorator_list')
     _attributes = ('lineno', 'col_offset', 'end_lineno', 'end_col_offset')
-    
+
     @classmethod
     def from_ClassDef(cls, func_def: ast.ClassDef) -> 'UniqueClass':
 
@@ -153,7 +152,7 @@ class SingleAssign(AST):
     _attributes = ('lineno', 'col_offset', 'end_lineno', 'end_col_offset')
 
     @classmethod
-    def create(cls, target: AST, value: Optional[AST]=None, annotation: Optional[AST]=None) -> 'SingleAssign':
+    def create(cls, target: AST, value: Optional[AST] = None, annotation: Optional[AST] = None) -> 'SingleAssign':
 
         assert value or annotation, "Either value or annotation must be set!"
 
@@ -198,16 +197,15 @@ class PhiAssign(AST):
 
     def to_Assign(self) -> Union[Assign, AnnAssign]:
 
-        operands = [Name(id=uid, ctx=Load()) if uid is not None else Constant(value=None)
-                    for uid, _ in self.operands]
-        
+        operands = [Name(id=uid, ctx=Load()) if uid is not None else Constant(value=None) for uid, _ in self.operands]
+
         if len(operands) == 1:
             value = operands[0]
         else:
             value = Call(func=Name(id='__phi__', ctx=Load()), args=operands, keywords=[])
 
         target = Name(id=self.target, ctx=Store())
-        
+
         if self.annotation is None:
             assign_stmt = Assign(targets=[target], value=value)
         else:
@@ -231,7 +229,7 @@ class PhiAssign(AST):
             assign_stmt = SingleAssign.create(target=target, value=value)
             copy_location(assign_stmt, self)
             return assign_stmt
-        
+
         # else keep phi node
         else:
             return self
@@ -240,14 +238,14 @@ class PhiAssign(AST):
 
         if self.active:
             return
-        
+
         self.active = True
         for uid, value in self.operands:
             if isinstance(value, PhiAssign):
                 value.activate()
 
     def add_operand(self, new_uid: str, definition: AST) -> None:
-        
+
         assert isinstance(new_uid, str) or (new_uid is None)
 
         if any([new_uid == uid for uid, _ in self.operands]):
@@ -277,9 +275,9 @@ class IfCFG(AST):
     def to_If(self) -> Union[If, List[AST]]:
 
         if_stmt = If(
-            test = self.test,
-            body = self.body,
-            orelse = self.orelse,
+            test=self.test,
+            body=self.body,
+            orelse=self.orelse,
         )
         copy_location(if_stmt, self)
 
@@ -340,7 +338,7 @@ class WhileCFG(AST):
 
         if isinstance(while_body[-1], ast.Continue):
             while_body = while_body[:-1]
-        
+
         if isinstance(while_else[-1], ast.Break):
             while_else = while_else[:-1]
 
@@ -356,7 +354,7 @@ class WhileCFG(AST):
 
 @dataclass
 class SSAFor(AST):
-    _fields = ('head','target', 'iter', 'body', 'orelse', 'type_comment')
+    _fields = ('head', 'target', 'iter', 'body', 'orelse', 'type_comment')
     _attributes = ('lineno', 'col_offset', 'end_lineno', 'end_col_offset')
 
     target: AST
@@ -369,11 +367,9 @@ class SSAFor(AST):
     type_comment: str = None
 
 
-
 class ForCFG(AST):
     _fields = ('target', 'iter', 'head', 'ifelse', 'exit')
     _attributes = ('lineno', 'col_offset', 'end_lineno', 'end_col_offset')
-
 
     def __init__(self, *, target: AST, iter: AST, head: List[AST], ifelse: If, iter_name: str):
 
@@ -394,12 +390,7 @@ class ForCFG(AST):
 
         new_body = self.head + [self.ifelse]
 
-        new_node = For(
-            target=self.target,
-            iter=self.iter,
-            body=new_body,
-            orelse=[]
-        )
+        new_node = For(target=self.target, iter=self.iter, body=new_body, orelse=[])
         copy_location(new_node, self)
 
         return [new_node] + self.exit
@@ -416,13 +407,7 @@ class ForCFG(AST):
         body = self.ifelse.body[:-1]
         orelse = self.ifelse.orelse[:-1]
 
-        new_node = For(
-            head=phi_assigns,
-            target=target,
-            iter=self.iter,
-            body=body,
-            orelse=orelse
-        )
+        new_node = For(head=phi_assigns, target=target, iter=self.iter, body=body, orelse=orelse)
         copy_location(new_node, self)
 
         return phi_assigns + [new_node] + self.exit
@@ -446,7 +431,8 @@ class ForCFG(AST):
 
         create_iter = SingleAssign.create(target=Name(id=self.iter_name, ctx=Store()),
                                           value=ast.Call(func=Name(id='for_iter', ctx=Load()),
-                                                         args=[self.iter], keywords=[]))
+                                                         args=[self.iter],
+                                                         keywords=[]))
         copy_location(create_iter, self)
 
         next_call = Call(func=Name(id='next', ctx=Load()), args=[Name(id=self.iter_name, ctx=Load())], keywords=[])

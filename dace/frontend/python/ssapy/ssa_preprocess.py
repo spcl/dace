@@ -9,14 +9,13 @@ from .ssa_nodes import SingleAssign, PhiAssign, UniqueName, SimpleFunction, Uniq
 
 
 class GeneratorCheck(NodeVisitor):
-
     def visit_NamedExpr(self, node: ast.NamedExpr) -> NoReturn:
-        raise SyntaxError('Assignment expressions in generator'
-                          ' expressions are not supported!')
+        raise SyntaxError('Assignment expressions in generator' ' expressions are not supported!')
 
 
-ExprAST = AST    # more specific types due to
-StmtAST = AST    # ast.AST not discerning these
+ExprAST = AST  # more specific types due to
+StmtAST = AST  # ast.AST not discerning these
+
 
 class SSA_Preprocessor(NodeTransformer):
 
@@ -63,7 +62,6 @@ class SSA_Preprocessor(NodeTransformer):
     assert_test_varname = "assert_val"
     assert_msg_varname = "assert_msg"
 
-
     def __init__(self, uid_func: Callable[[str], str] = Counting_UID()) -> None:
 
         self.get_unique_id = uid_func
@@ -71,7 +69,7 @@ class SSA_Preprocessor(NodeTransformer):
     def generic_visit(self, node: ExprAST) -> Tuple[ExprAST, List[StmtAST]]:
 
         ret_stmts = []
-        
+
         for field, old_value in iter_fields(node):
             if isinstance(old_value, list):
                 new_values = []
@@ -109,7 +107,7 @@ class SSA_Preprocessor(NodeTransformer):
 
         self.visit_block(node.body)
         return [node]
-    
+
     def visit_Constant(self, node: Constant) -> Tuple[Constant, List[ExprAST]]:
         return node, []
 
@@ -156,9 +154,9 @@ class SSA_Preprocessor(NodeTransformer):
         copy_location(else_stmt, node)
 
         if_stmt = IfCFG(
-            test = test,
-            body = body_befores + [body_stmt],
-            orelse = else_befores + [else_stmt],
+            test=test,
+            body=body_befores + [body_stmt],
+            orelse=else_befores + [else_stmt],
         )
         copy_location(if_stmt, node)
 
@@ -172,7 +170,7 @@ class SSA_Preprocessor(NodeTransformer):
 
         new_node = UniqueName(id=uid_phi_, ctx=Load())
         copy_location(new_node, node)
-        
+
         statements_before = test_befores + [if_stmt, assn_stmt]
 
         return new_node, statements_before
@@ -193,7 +191,7 @@ class SSA_Preprocessor(NodeTransformer):
         copy_location(new_node, node)
 
         statements_before = value_stmts + target_stmts + [assn_stmt1, assn_stmt2]
-        
+
         return new_node, statements_before
 
     def visit_ListComp(self, node: ast.ListComp) -> Tuple[ExprAST, List[StmtAST]]:
@@ -209,10 +207,8 @@ class SSA_Preprocessor(NodeTransformer):
         )
         copy_location(assn_stmt, node)
 
-        element = ast.Expr(ast.Call(
-            func=ast.Attribute(value=new_node, attr='append', ctx=Load()),
-            args=[node.elt], keywords=[]
-        ))
+        element = ast.Expr(
+            ast.Call(func=ast.Attribute(value=new_node, attr='append', ctx=Load()), args=[node.elt], keywords=[]))
         copy_location(element, node)
 
         comp_body = self.replace_comprehension([element], node.generators)
@@ -233,10 +229,8 @@ class SSA_Preprocessor(NodeTransformer):
         )
         copy_location(assn_stmt, node)
 
-        element = ast.Expr(ast.Call(
-            func=ast.Attribute(value=new_node, attr='add', ctx=Load()),
-            args=[node.elt], keywords=[]
-        ))
+        element = ast.Expr(
+            ast.Call(func=ast.Attribute(value=new_node, attr='add', ctx=Load()), args=[node.elt], keywords=[]))
         copy_location(element, node)
 
         comp_body = self.replace_comprehension([element], node.generators)
@@ -284,12 +278,16 @@ class SSA_Preprocessor(NodeTransformer):
 
         comp_body = self.replace_comprehension([element], node.generators)
 
-        generator_def = SimpleFunction(
-            name=uid,
-            args=ast.arguments(posonlyargs=[], args=[], kwonlyargs=[], kw_defaults=[], defaults=[]),
-            body=comp_body, 
-            decorator_list=[], returns=None, type_comment=None
-        )
+        generator_def = SimpleFunction(name=uid,
+                                       args=ast.arguments(posonlyargs=[],
+                                                          args=[],
+                                                          kwonlyargs=[],
+                                                          kw_defaults=[],
+                                                          defaults=[]),
+                                       body=comp_body,
+                                       decorator_list=[],
+                                       returns=None,
+                                       type_comment=None)
         copy_location(generator_def, node)
         fix_missing_locations(new_node)
 
@@ -304,16 +302,12 @@ class SSA_Preprocessor(NodeTransformer):
         for comp in reversed(comprehensions):
 
             for if_exp in comp.ifs:
-                new_node = ast.If(
-                    test=if_exp,
-                    body=new_body,
-                    orelse=[]
-                )
+                new_node = ast.If(test=if_exp, body=new_body, orelse=[])
                 copy_location(new_node, body[-1])
                 new_body = [new_node]
 
             new_node = ast.For(
-                target=comp.target, 
+                target=comp.target,
                 iter=comp.iter,
                 body=new_body,
                 orelse=[],
@@ -340,7 +334,7 @@ class SSA_Preprocessor(NodeTransformer):
 
     def visit_Continue(self, node: ast.Continue) -> List[ast.Continue]:
         return [node]
-    
+
     def visit_Import(self, node: ast.Import) -> List[ast.Import]:
         return [node]
 
@@ -389,7 +383,7 @@ class SSA_Preprocessor(NodeTransformer):
 
         targets = node.targets
         value, value_stmts = self.visit(node.value)
-        
+
         if len(targets) == 1:
             target, add_assigns = self.visit_target(targets[0])
 
@@ -403,7 +397,7 @@ class SSA_Preprocessor(NodeTransformer):
 
         new_node = SingleAssign.create(target=UniqueName(id=uid_assign, ctx=Store()), value=value)
         copy_location(new_node, node)
-        
+
         new_assigns = [new_node]
         nested_assigns = []
 
@@ -487,8 +481,8 @@ class SSA_Preprocessor(NodeTransformer):
 
             #     element, nested_stmts = self.visit_target(element)
             #     nested_pos.extend(nested_stmts)
-                
-            #     subscript = ast.Subscript(value=UniqueName(id=uid_assign, ctx=Load()), 
+
+            #     subscript = ast.Subscript(value=UniqueName(id=uid_assign, ctx=Load()),
             #                               slice=Constant(value=i_pos), ctx=Load())
             #     pos_stmts.append(SingleAssign.create(target=element, value=subscript))
 
@@ -501,8 +495,8 @@ class SSA_Preprocessor(NodeTransformer):
 
             #     element, nested_stmts = self.visit_target(element)
             #     nested_neg.extend(reversed(nested_stmts))
-                
-            #     subscript = ast.Subscript(value=UniqueName(id=uid_assign, ctx=Load()), 
+
+            #     subscript = ast.Subscript(value=UniqueName(id=uid_assign, ctx=Load()),
             #                               slice=Constant(value=i_neg), ctx=Load())
             #     neg_stmts.append(SingleAssign.create(target=element, value=subscript))
 
@@ -516,7 +510,7 @@ class SSA_Preprocessor(NodeTransformer):
 
             #     element, nested_stmts = self.visit_target(starred)
             #     nested_pos.extend(nested_stmts)
-                
+
             #     subscript = ast.Subscript(value=UniqueName(id=uid_assign, ctx=Load()), slice=star_slice, ctx=Load())
             #     pos_stmts.append(SingleAssign.create(target=element, value=subscript))
 
@@ -540,7 +534,6 @@ class SSA_Preprocessor(NodeTransformer):
             raise SyntaxError('starred assignment target must be in a list or tuple (in SSA_Preprocessor)')
         else:
             raise NotImplementedError(f'Node type {type(target)} as assignment target')
-
 
     ###########################
     # Replaced Loop Nodes
@@ -630,7 +623,9 @@ class SSA_Preprocessor(NodeTransformer):
         test_expr = UniqueName(id=uid_next, ctx=Load())
         ifelse = ast.If(test=test_expr, body=if_body, orelse=if_else)
 
-        for_target = ast.Tuple(elts=[UniqueName(id=uid_value, ctx=Store()), UniqueName(id=uid_next, ctx=Store())], ctx=Store())
+        for_target = ast.Tuple(elts=[UniqueName(id=uid_value, ctx=Store()),
+                                     UniqueName(id=uid_next, ctx=Store())],
+                               ctx=Store())
         # for_iter = UniqueName(id=iter, ctx=Load())
 
         new_node = ForCFG(target=for_target, iter=iter, head=head, ifelse=ifelse, iter_name=uid_iter)
@@ -638,7 +633,7 @@ class SSA_Preprocessor(NodeTransformer):
         fix_missing_locations(new_node)
 
         return setup + [new_node]
-    
+
     def visit_With(self, node: ast.With) -> List[StmtAST]:
 
         add_stmts = []
@@ -675,12 +670,12 @@ class SSA_Preprocessor(NodeTransformer):
 
         new_body = body_stmts + [return_stmt]
 
-        lambda_func = SimpleFunction(
-            name=uid_lambda,
-            args=node.args,
-            body=new_body,
-            decorator_list=[], returns=None, type_comment=None
-        )
+        lambda_func = SimpleFunction(name=uid_lambda,
+                                     args=node.args,
+                                     body=new_body,
+                                     decorator_list=[],
+                                     returns=None,
+                                     type_comment=None)
         copy_location(lambda_func, node)
 
         new_node = UniqueName(id=uid_lambda, ctx=Load())
@@ -696,7 +691,7 @@ class SSA_Preprocessor(NodeTransformer):
 
         func_name = node.name
         body = node.body
-        
+
         self.visit_block(body)
 
         # Remove complex default values
@@ -747,10 +742,10 @@ class SSA_Preprocessor(NodeTransformer):
         del_stmt = ast.Delete(targets=[UniqueName(id=func_name, ctx=ast.Del())])
         copy_location(del_stmt, node)
 
-        return args_stmts + [new_node] + dec_stmts + [ assn_stmt, del_stmt]
-    
+        return args_stmts + [new_node] + dec_stmts + [assn_stmt, del_stmt]
+
     visit_AsyncFunctionDef = visit_FunctionDef
-    
+
     def visit_Return(self, node: ast.Return) -> List[StmtAST]:
         new_value, stmts1 = self.visit(node.value)
         # node.value, stmts2 = self.simplify_value(new_value, self.return_varname)
@@ -759,13 +754,13 @@ class SSA_Preprocessor(NodeTransformer):
 
     def visit_ClassDef(self, node: ast.ClassDef) -> List[StmtAST]:
         #  ClassDef(identifier name, expr* bases,
-        #           keyword* keywords, stmt* body, 
+        #           keyword* keywords, stmt* body,
         #           expr* decorator_list)
 
         class_name = node.name
 
         self.visit_block(node.body)
-        
+
         # Remove complex bases
         base_varname = class_name + self.class_base_varname
         args_stmts = []
@@ -796,7 +791,7 @@ class SSA_Preprocessor(NodeTransformer):
         # Create UniqueClass
         new_node = UniqueClass.from_ClassDef(node)
         copy_location(new_node, node)
-        
+
         assn_stmt = SingleAssign.create(
             target=Name(id=class_name, ctx=Store()),
             value=new_value,
@@ -806,8 +801,8 @@ class SSA_Preprocessor(NodeTransformer):
         del_stmt = ast.Delete(targets=[UniqueName(id=class_name, ctx=ast.Del())])
         copy_location(del_stmt, node)
 
-        return args_stmts + [new_node] + dec_stmts + [ assn_stmt, del_stmt]
-    
+        return args_stmts + [new_node] + dec_stmts + [assn_stmt, del_stmt]
+
     def replace_decorators(self, element: ExprAST, decorators: List[ExprAST]) -> Tuple[ExprAST, List[StmtAST]]:
 
         add_stmts = []
@@ -821,7 +816,7 @@ class SSA_Preprocessor(NodeTransformer):
             add_stmts.extend(stmts_dec)
             add_stmts.extend(stmts_el)
             prev_element = simple_element
-        
+
         return prev_element, add_stmts
 
     #################################
@@ -858,7 +853,7 @@ class SSA_Preprocessor(NodeTransformer):
         add_stmts = []
 
         if isinstance(slice, ast.Slice):
-            
+
             if hasattr(slice, 'lower') and (slice.lower is not None):
                 lower_slice, stmts1 = self.visit(slice.lower)
                 slice.lower, stmts2 = self.simplify_value(lower_slice, self.slice_lower_varname)
@@ -874,13 +869,13 @@ class SSA_Preprocessor(NodeTransformer):
                 slice.step, stmts2 = self.simplify_value(step_slice, self.slice_step_varname)
                 add_stmts.extend(stmts1)
                 add_stmts.extend(stmts2)
-            
+
         elif not is_simple_expr(slice):
             node_slice, stmts1 = self.visit(node.slice)
             node.slice, stmts2 = self.simplify_value(node_slice, self.slice_varname)
             add_stmts.extend(stmts1)
             add_stmts.extend(stmts2)
-        
+
         return node, add_stmts
 
     def visit_Attribute(self, node: ast.Attribute) -> Tuple[ExprAST, List[StmtAST]]:

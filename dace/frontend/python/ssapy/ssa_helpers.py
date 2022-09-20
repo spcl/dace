@@ -17,7 +17,6 @@ def print_exp(code: str) -> None:
 
 
 class Counting_UID:
-
     def __init__(self) -> None:
 
         self.counter = 0
@@ -31,12 +30,11 @@ class Counting_UID:
 
 
 class EnclosingLoop:
-
     def __init__(self, ast_visitor, loop_node):
 
         self.ast_visitor = ast_visitor
         self.loop_node = loop_node
-    
+
     def __enter__(self):
 
         ast_visitor = self.ast_visitor
@@ -49,8 +47,8 @@ class EnclosingLoop:
         # create new state
         ast_visitor.current_loop = loop_node
         ast_visitor.has_break = False
-    
-    def __exit__(self, exc_type,exc_value, exc_traceback):
+
+    def __exit__(self, exc_type, exc_value, exc_traceback):
 
         # restore old state
         self.ast_visitor.current_loop = self.prev_loop
