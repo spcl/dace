@@ -52,6 +52,26 @@ class Program_Node(Node):
     )
 
 
+class BinOp_Node(Node):
+    _attributes = (
+        'op',
+        'type',
+    )
+    _fields = (
+        'lvalue',
+        'rvalue',
+    )
+
+
+class UnOp_Node(Node):
+    _attributes = (
+        'op',
+        'postfix',
+        'type',
+    )
+    _fields = ('lvalue', )
+
+
 class Main_Program_Node(Node):
     _attributes = ("name", )
     _fields = ("execution_part", "specification_part")
@@ -92,7 +112,7 @@ class Program_Stmt_Node(Node):
 
 class Subroutine_Stmt_Node(Node):
     _attributes = ('name', )
-    _fields = ()
+    _fields = ('args', )
 
 
 class Name_Node(Node):
@@ -161,6 +181,10 @@ class Var_Decl_Node(Statement_Node):
     )
 
 
+class Dummy_Arg_List_Node(Node):
+    _fields = ('args', )
+
+
 class Decl_Stmt_Node(Statement_Node):
     _attributes = ()
     _fields = ('vardecl', )
@@ -172,6 +196,71 @@ class VarType:
 
 class Void(VarType):
     _attributes = ()
+
+
+class Int_Literal_Node(Node):
+    _attributes = ('value', )
+    _fields = ()
+
+
+class Real_Literal_Node(Node):
+    _attributes = ('value', )
+    _fields = ()
+
+
+class Bool_Literal_Node(Node):
+    _attributes = ('value', )
+    _fields = ()
+
+
+class String_Literal_Node(Node):
+    _attributes = ('value', )
+    _fields = ()
+
+
+class Char_Literal_Node(Node):
+    _attributes = ('value', )
+    _fields = ()
+
+
+class Call_Expr_Node(Node):
+    _attributes = ('type', 'subroutine')
+    _fields = (
+        'name',
+        'args',
+    )
+
+
+class Section_Subscript_List_Node(Node):
+    _fields = ('list')
+
+
+class For_Stmt_Node(Node):
+    _attributes = ()
+    _fields = (
+        'init',
+        'cond',
+        'body',
+        'iter',
+    )
+
+
+class Nonlabel_Do_Stmt_Node(Node):
+    _attributes = ()
+    _fields = (
+        'init',
+        'cond',
+        'iter',
+    )
+
+
+class Loop_Control_Node(Node):
+    _attributes = ()
+    _fields = (
+        'init',
+        'cond',
+        'iter',
+    )
 
 
 # The following class is used to translate the fparser AST to our own AST of Fortran
@@ -392,6 +481,8 @@ class InternalFortranAst:
 
     def create_ast(self, node=None):
         if node is not None:
+            if isinstance(node, (list, tuple)):
+                return [self.create_ast(child) for child in node]
             return self.supported_fortran_syntax[type(node).__name__](node)
         return None
 
@@ -436,20 +527,13 @@ class InternalFortranAst:
         name = get_child(children, Subroutine_Stmt_Node)
         specification = get_child(children, Specification_Part_Node)
         execution_part = get_child(children, Execution_Part_Node)
-
+        args = name.args
         type = Void
-        if node.children[0].children[2] is None:
-            return Subroutine_Subprogram_Node(name=name,
-                                              specification=specification,
-                                              execution=execution_part,
-                                              type=type)
-        else:
-            args = self.create_children(node.children[0].children[2].children)
-            return Subroutine_Subprogram_Node(name=name,
-                                              args=args,
-                                              specification=specification,
-                                              execution=execution_part,
-                                              type=type)
+        return Subroutine_Subprogram_Node(name=name,
+                                          args=args,
+                                          specification=specification,
+                                          execution=execution_part,
+                                          type=type)
 
     def end_program_stmt(self, node):
         return node
@@ -460,7 +544,10 @@ class InternalFortranAst:
     def subroutine_stmt(self, node):
         children = self.create_children(node)
         name = get_child(children, Name_Node)
-        return Subroutine_Stmt_Node(name=name, line_number=node.item.span)
+        args = get_children(children, Dummy_Arg_List_Node)
+        return Subroutine_Stmt_Node(name=name,
+                                    args=args,
+                                    line_number=node.item.span)
 
     def function_stmt(self, node):
         return node
@@ -694,7 +781,13 @@ class InternalFortranAst:
         return node
 
     def assignment_stmt(self, node):
-        return node
+        children = self.create_children(node)
+        if len(children) == 3:
+            return BinOp_Node(lval=children[0],
+                              op=children[1],
+                              rval=children[2])
+        else:
+            return UnOp_Node(lval=children[0], op=children[1])
 
     def pointer_assignment_stmt(self, node):
         return node
@@ -772,7 +865,11 @@ class InternalFortranAst:
         return node
 
     def nonlabel_do_stmt(self, node):
-        return node
+        children = self.create_children(node)
+        loop_control = get_child(children, Loop_Control_Node)
+        return Nonlabel_Do_Stmt_Node(iter=loop_control.iter,
+                                     cond=loop_control.cond,
+                                     init=loop_control.init)
 
     def end_do_stmt(self, node):
         return node
@@ -808,19 +905,60 @@ class InternalFortranAst:
         return node
 
     def dummy_arg_list(self, node):
-        return node
+        children = self.create_children(node)
+        return Dummy_Arg_List_Node(args=children)
 
     def attr_spec_list(self, node):
         return node
 
     def part_ref(self, node):
-        return node
+        children = self.create_children(node)
+        name = get_child(children, Name_Node)
+        args = get_child(children, Section_Subscript_List_Node)
+        return Call_Expr_Node(name=name, args=args.list)
 
     def loop_control(self, node):
-        return node
+        children = self.create_children(node)
+        #Structure of loop control is:
+        # child[1]. Loop control variable
+        # child[1][0] Loop start
+        # child[1][1] Loop end
+        iteration_variable = children[1][0]
+        loop_start = children[1][1][0]
+        loop_end = children[1][1][1]
+        if len(children[1][1]) == 3:
+            loop_step = children[1][1][2]
+        else:
+            loop_step = Int_Literal_Node(value="1")
+        init_expr = BinOp_Node(lval=iteration_variable,
+                               op="=",
+                               rval=loop_start)
+        if isinstance(loop_step, UnOp_Node):
+            if loop_step.op == "-":
+                cond_expr = BinOp_Node(lval=iteration_variable,
+                                       op=">=",
+                                       rval=loop_end)
+        else:
+            cond_expr = BinOp_Node(lval=iteration_variable,
+                                   op="<=",
+                                   rval=loop_end)
+        iter_expr = BinOp_Node(lval=iteration_variable,
+                               op="=",
+                               rval=BinOp_Node(lval=iteration_variable,
+                                               op="+",
+                                               rval=loop_step))
+        return Loop_Control_Node(init=init_expr,
+                                 cond=cond_expr,
+                                 iter=iter_expr)
 
     def block_nonlabel_do_construct(self, node):
-        return node
+        children = self.create_children(node)
+        do = get_child(children, Nonlabel_Do_Stmt_Node)
+        body = children[1:-1]
+        return For_Stmt_Node(init=do.init,
+                             cond=do.cond,
+                             iter=do.iter,
+                             body=body)
 
     def real_literal_constant(self, node):
         return node
@@ -829,7 +967,8 @@ class InternalFortranAst:
         return node
 
     def section_subscript_list(self, node):
-        return node
+        children = self.create_children(node)
+        return Section_Subscript_List_Node(list=children)
 
     def specification_part(self, node):
         others = [
@@ -884,7 +1023,10 @@ class InternalFortranAst:
         return node
 
     def int_literal_constant(self, node):
-        return node
+        return Int_Literal_Node(value=node.string)
+
+    def real_literal_constant(self, node):
+        return Real_Literal_Node(value=node.string)
 
     def actual_arg_spec_list(self, node):
         return node
