@@ -508,13 +508,15 @@ class RedundantArray(pm.SingleStateTransformation):
         from dace.libraries.standard import Reduce
         reduction = False
         for e in graph.in_edges(in_array):
-            if isinstance(e.src, Reduce):
+            if isinstance(e.src, Reduce) or (isinstance(e.src, nodes.NestedSDFG)
+                                             and len(in_desc.shape) != len(out_desc.shape)):
                 reduction = True
 
         # If:
-        # 1. A reduce node is involved;
-        # 2. The memlet does not cover the removed array; or
-        # 3. Dimensions are mismatching (all dimensions are popped);
+        # 1. A reduce node is involved; or
+        # 2. A NestedSDFG node is involved and the arrays have different dimensionality; or
+        # 3. The memlet does not cover the removed array; or
+        # 4. Dimensions are mismatching (all dimensions are popped);
         # create a view.
         if reduction or len(a_dims_to_pop) == len(in_desc.shape) or any(
                 m != a for m, a in zip(a1_subset.size(), in_desc.shape)):
@@ -975,7 +977,6 @@ class RedundantSecondArray(pm.SingleStateTransformation):
                     conn = source_edge.dst_conn
                     inner_desc = source_edge.dst.sdfg.arrays[conn]
                     inner_desc.strides = out_desc.strides
-
 
         # Finally, remove out_array node
         graph.remove_node(out_array)
