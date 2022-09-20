@@ -1,3 +1,4 @@
+# Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 
 import ast
 
@@ -41,6 +42,7 @@ Variables = Dict[str, Tuple[str, AST]]
 
 
 class SSA_Transpiler(NodeVisitor):
+    "Applies SSA conversion algorithm to Python AST"
 
     undefined_label = "__UNDEFINED_"
 

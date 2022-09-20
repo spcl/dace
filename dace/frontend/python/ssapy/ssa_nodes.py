@@ -1,3 +1,4 @@
+# Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 
 import ast
 from ast import AST, AnnAssign, Assign, Call, Constant, If, Name, For, While, Load, Store, copy_location, NodeVisitor

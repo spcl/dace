@@ -1,3 +1,4 @@
+# Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 
 import ast
 from typing import Tuple, List, Union, NoReturn, Callable
