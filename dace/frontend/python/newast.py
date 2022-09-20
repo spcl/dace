@@ -1232,12 +1232,10 @@ class ProgramVisitor(ExtNodeVisitor):
                     assign_list = self.reference_assigns.get(true_name, [])
                     assign_list.append(name)
                     self.reference_assigns[true_name] = assign_list
-                    print("MAP", true_name, "TO", name, "(defined_vars)")
                 elif op in defined_arrays:
                     assign_list = self.reference_assigns.get(op, [])
                     assign_list.append(name)
                     self.reference_assigns[op] = assign_list
-                    print("MAP", op, "TO", name, "(defined_arrays)")
                 else:
                     raise Exception(f"Cannot find variable {op}")
 
@@ -1486,10 +1484,8 @@ class ProgramVisitor(ExtNodeVisitor):
             if op in defined_vars:
                 true_name = defined_vars[op]
                 desc = defined_arrays[true_name]
-                print(f"desc for {op} in vars")
             elif op in defined_arrays:
                 desc = defined_arrays[op]
-                print(f"desc for {op} in arrs")
             elif op is None:
                 raise ValueError('Phi node for {phi_target} has en execution path with no definition for the variable!')
             else:
@@ -1500,7 +1496,6 @@ class ProgramVisitor(ExtNodeVisitor):
         name, ref = sdfg.add_reference(phi_target, desc.shape, desc.dtype, desc.storage, find_new_name=True)
         self.variables[phi_target] = name
         self.references_remaining[name] = remaining_ops
-        print("DELAYED OPS TO ASSIGN:", remaining_ops)
 
         for op in phi_operands:
             if op in defined_vars:
@@ -1508,12 +1503,10 @@ class ProgramVisitor(ExtNodeVisitor):
                 assign_list = self.reference_assigns.get(true_name, [])
                 assign_list.append(name)
                 self.reference_assigns[true_name] = assign_list
-                print("MAP", true_name, "TO", name, "(defined_vars)")
             elif op in defined_arrays:
                 assign_list = self.reference_assigns.get(op, [])
                 assign_list.append(name)
                 self.reference_assigns[op] = assign_list
-                print("MAP", op, "TO", name, "(defined_arrays)")
             elif op in remaining_ops:
                 pass
             else:

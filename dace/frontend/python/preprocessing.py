@@ -1356,7 +1356,6 @@ def preprocess_dace_program(f: Callable[..., Any],
     function_def: ast.FunctionDef = src_ast.body[0]
     function_body = ast.Module(function_def.body)
 
-    print(ast.unparse(src_ast))
     SSA_Preprocessor().visit(function_body)
     SSA_Transpiler().visit(function_body, definitions)
     SSA_Reducer().visit(function_body)
