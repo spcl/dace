@@ -1364,7 +1364,7 @@ def preprocess_dace_program(f: Callable[..., Any],
 
     src_ast.body[0].body = function_body.body
 
-    if True:  # Print the SSA-converted AST for debugging
+    if False:  # Print the SSA-converted AST for debugging
         from .ssapy.ssa_postprocess import SSA_Postprocessor
         print('#'*20)
         ast_copy = copy.deepcopy(src_ast)
