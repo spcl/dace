@@ -35,10 +35,10 @@ class Solver():
         else:
             address = 'localhost'
             # start matlab in background
-            call("matlab.exe -nosplash -nodesktop -r \"cd('" + Config.get("soap", "solver", "local_solver_path") + 
-                "'); BackgroundSolver(" + str(port) + ");exit\"", shell=True)
+            # call("matlab.exe -nosplash -nodesktop -r \"cd('" + Config.get("soap", "solver", "local_solver_path") + 
+            #     "'); BackgroundSolver(" + str(port) + ");exit\"", shell=True)
             # try:
-            #     call("matlab.exe -nosplash -nodesktop -r \"cd('/home/alexnick/Projects/sdg/matlab'); BackgroundSolver(" + str(port) + ");exit\"", shell=True, timeout=1)
+            #     call("/usr/local/MATLAB/R2021a/bin/matlab -nosplash -nodesktop -r \"cd('/home/alexnick/Projects/sdg/matlab'); BackgroundSolver(" + str(port) + ");exit\"", shell=True, timeout=1)
             # except TimeoutExpired:
             #     pass
 

@@ -12,7 +12,7 @@ def test_mttkrp_io():
     """
     # get MTTKRP sdfg with auto-generated default tensor sizes  
     'ik,kj->ij'
-    einsum_str = 'ijk,jl,kl->il' 
+    # einsum_str = 'ijk,jl,kl->il' 
     # einsum_str = 'a,b,bc,cd->ad'
     # einsum_str = 'ab,bc,c,d->ad'
     # einsum_str = 'ik,kj,jl->il'
@@ -36,7 +36,7 @@ def test_mttkrp_io():
     # einsum_str = 'ijk, ja, ka -> ia'
     # einsum_str = 'ijk, ia, ka -> ja'
     # einsum_str = 'ijk, ia, ja -> ka'
-    # einsum_str = 'ijk, ja, ka, al -> il'
+    einsum_str = 'ijk, ja, ka, al -> il'
     decomp_params = [("p", 64), ("Ss", 1024), ("S0", 200), ("S1", 200), ("S2", 200), ("S3", 200), ("S4", 200)]
     decomp_params = [("p", 256), ("Ss", 1e10)]
     for i in range(10):

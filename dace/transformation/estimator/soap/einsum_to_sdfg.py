@@ -83,6 +83,23 @@ def sdfg_gen(subscripts: str, arrays: List[np.ndarray] = None, inp_dim: int = 10
     # )
     # return sdfg
 
+    sdfg.add_array('out', [symbols['i'], symbols['l']], dt[arr.dtype.type])
+    
+    state = sdfg.add_state("contraction")
+    state.add_mapped_tasklet(
+        state.label,
+        {idx: (0, symbols[idx]-1, 1) for idx in 'ijkla'},
+        {
+           '__in0': dace.Memlet(f"{array_names[0]}[i,j,k]"),
+           '__in1': dace.Memlet(f"{array_names[1]}[j,a]"),
+           '__in2': dace.Memlet(f"{array_names[2]}[k,a]"),
+           '__in3': dace.Memlet(f"{array_names[3]}[a,l]")                
+        }, 
+        '__out = __in0 * __in1 * __in2 * __in3',
+        {'__out': dace.Memlet(f"out[i,l]", wcr='lambda a, b: a + b')},
+        external_edges=True
+    )
+    return sdfg, None
     
     counter = 0
     state = None
