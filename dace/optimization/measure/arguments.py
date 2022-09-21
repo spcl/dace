@@ -25,7 +25,7 @@ def random_arguments(sdfg: SDFG) -> Dict:
     for k, v in sdfg.constants.items():
         symbols[k] = int(v)
     for k in sdfg.free_symbols:
-        symbols[k] = random.randint(1, 3)
+        symbols[k] = 1
 
     arguments = {**symbols}
     for state in sdfg.nodes():
@@ -93,6 +93,8 @@ def arguments_from_data_report(sdfg: SDFG, data_report: InstrumentedDataReport) 
     symbols = {}
     for k, v in sdfg.constants.items():
         symbols[k] = int(v)
+    for k in sdfg.free_symbols:
+        symbols[k] = 1
 
     arguments = {**symbols}
     for state in sdfg.nodes():
