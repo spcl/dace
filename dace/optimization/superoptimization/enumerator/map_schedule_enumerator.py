@@ -4,9 +4,11 @@ import itertools
 from dace import SDFG, data, nodes, ScheduleType
 
 import dace.optimization.superoptimization.utils as utils
+from dace.transformation.dataflow.strip_mining import StripMining
 
 import dace.transformation.helpers as xfh
-from dace.transformation.dataflow import MapDimShuffle, MapExpansion, MapCollapse, MapTiling, InLocalStorage, OutLocalStorage, MapSchedule, Vectorization, AccumulateTransient
+from dace.transformation.dataflow import (MapDimShuffle, MapExpansion, MapCollapse, MapTiling, InLocalStorage,
+                                          OutLocalStorage, MapSchedule, Vectorization, AccumulateTransient)
 
 
 def map_schedule_enumerator(map: SDFG, last_tile_sizes) -> SDFG:
@@ -21,7 +23,7 @@ def map_schedule_enumerator(map: SDFG, last_tile_sizes) -> SDFG:
         permuted_map_tmp = permuted_map.to_json()
         tile_ranges = None
         if last_tile_sizes is not None:
-            tile_ranges = range(int(math.log2(last_tile_sizes)), 7)
+            tile_ranges = range(int(math.log2(last_tile_sizes)), 9)
         for tiling in _tilings(permuted_params, tile_ranges):
             tiled_map = SDFG.from_json(permuted_map_tmp)
             _apply_tiling(tiled_map, tiling)
@@ -64,9 +66,10 @@ def _permutations(all_params):
 def _tilings(all_params, tile_sizes_range=None):
     if tile_sizes_range is None:
         tile_sizes_range = range(0, 7)
+
+    # Go over all square tilings, tiling with each dimension.
     tile_sizes = [2**k for k in tile_sizes_range]
     tilings = itertools.product(tile_sizes, repeat=len(all_params))
-
     for tiling in tilings:
         strategy = {}
         for i, group in enumerate(all_params):
@@ -74,6 +77,16 @@ def _tilings(all_params, tile_sizes_range=None):
                 strategy[param] = tiling[i]
 
         yield strategy
+
+    # Go over 'strip mining' tilings - i.e., tiling only one dimension at a time.
+    for i, group in enumerate(all_params):
+        for param in group:
+            for tiling in [2**k for k in tile_sizes_range]:
+                if tiling < 2:
+                    continue
+                strategy = {p: 1 for p in group}
+                strategy[param] = tiling
+                yield strategy
 
 
 def _local_storage(all_params, in_arrays, out_arrays):
@@ -154,13 +167,25 @@ def _apply_tiling(map: SDFG, tiling):
         map_entry = levels[map_entry]
 
         tile_sizes = [tiling[param] for param in map_entry.map.params]
-        non_trivial = False
-        for tile in tile_sizes:
+        n_tiled = 0
+        ts = 0
+        t_idx = 0
+        for i, tile in enumerate(tile_sizes):
             if tile > 1:
-                non_trivial = True
-                break
+                n_tiled += 1
+                ts = tile
+                t_idx = i
 
-        if non_trivial:
+        if n_tiled == 1:
+            StripMining.apply_to(sdfg=map,
+                                 options={
+                                    "tile_size": ts,
+                                    "dim_idx": t_idx,
+                                 },
+                                 map_entry=map_entry,
+                                 save=True,
+                                 verify=False)
+        elif n_tiled > 1:
             MapTiling.apply_to(sdfg=map,
                                options={
                                    "tile_sizes": tile_sizes,
@@ -169,6 +194,8 @@ def _apply_tiling(map: SDFG, tiling):
                                map_entry=map_entry,
                                save=True,
                                verify=False)
+
+    pass
 
 
 def _apply_local_storage(map: SDFG, local_storage):
@@ -263,7 +290,7 @@ def _apply_parallelization(map: SDFG, parallelization):
         MapSchedule.apply_to(sdfg=map,
                              map_entry=map_entry,
                              options={
-                                 "schedule_type": str(schedule_type),
+                                 "schedule_type": schedule_type,
                                  "collapse": collapse
                              },
                              save=True,

@@ -357,8 +357,11 @@ class Superoptimizer(auto_tuner.AutoTuner):
                 map_cache = json.load(handle)
                 last_tile_sizes = map_cache[next(iter(map_cache))]["schedules"]
                 last_tile_sizes = list(last_tile_sizes.keys())
-                last_tile_sizes_lst = list(map(lambda s: int(re.findall(r'\b\d+\b', ((s.split(':')[3]).strip()))[0]), last_tile_sizes))
-                last_tile_size = max(last_tile_sizes_lst)
+                last_tile_sizes_lst = list(
+                    map(lambda s: int(re.findall(r'\b\d+\b', ((s.split(':')[3]).strip()))[0]), last_tile_sizes)
+                )
+                if last_tile_sizes_lst:
+                    last_tile_size = max(last_tile_sizes_lst)
                 print("Tile size: ", last_tile_size)
         else:
             map_runtime, map_process_time = measure(mp,
@@ -589,7 +592,9 @@ class Superoptimizer(auto_tuner.AutoTuner):
     @staticmethod
     def dry_run(sdfg: SDFG) -> InstrumentedDataReport:
         """
-        Generates a data report suitable for superoptimization (including all transients). This instrumentation can take considerable amount of disk space and time. This needs to be considered when choosing the build folder.
+        Generates a data report suitable for superoptimization (including all transients).
+        This instrumentation can take considerable amount of disk space and time. This needs to be considered when
+        choosing the build folder.
 
         :param sdfg: sdfg to instrument.
         :return: data report.
