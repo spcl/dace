@@ -1173,8 +1173,6 @@ class ProgramVisitor(ExtNodeVisitor):
         else:
             for stmt in program.body:
                 self.visit_TopLevel(stmt)
-                if isinstance(stmt, ast.Return):
-                    break
         if len(self.sdfg.nodes()) == 0:
             self.sdfg.add_state("EmptyState")
 
@@ -2084,10 +2082,11 @@ class ProgramVisitor(ExtNodeVisitor):
                     elif sym.name in self.closure.callbacks:
                         self.sdfg.add_symbol(sym.name, nsdfg_node.sdfg.symbols[sym.name])
 
-    def _recursive_visit(self, body: List[ast.AST], name: str, lineno: int, last_state=True, extra_symbols=None):
-        """ Visits a subtree of the AST, creating special states before and after the visit.
-            Returns the previous state, and the first and last internal states of the
-            recursive visit. """
+    def _recursive_visit(self, body: List[ast.AST], name: str, lineno: int, last_state=True, extra_symbols=None) -> Tuple[SDFGState, SDFGState, SDFGState, bool]:
+        """ Visits a subtree of the AST, creating special states before and after the visit. Returns the previous state,
+            and the first and last internal states of the recursive visit. Also returns a boolean value indicating
+            whether a return statement was met or not. This value can be used by other visitor methods, e.g., visit_If,
+            to generate correct control flow. """
         before_state = self.last_state
         self.last_state = None
         first_internal_state = self._add_state('%s_%d' % (name, lineno))
@@ -2104,7 +2103,6 @@ class ProgramVisitor(ExtNodeVisitor):
             self.visit_TopLevel(stmt)
             if isinstance(stmt, ast.Return):
                 return_stmt = True
-                break
 
         # Create the next state
         last_internal_state = self.last_state
