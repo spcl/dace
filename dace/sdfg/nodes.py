@@ -17,7 +17,7 @@ from dace.properties import (EnumProperty, Property, CodeProperty, LambdaPropert
                              ListProperty, SDFGReferenceProperty, DictProperty, LibraryImplementationProperty,
                              CodeBlock)
 from dace.frontend.operations import detect_reduction_type
-from dace.symbolic import pystr_to_symbolic
+from dace.symbolic import issymbolic, pystr_to_symbolic
 from dace import data, subsets as sbs, dtypes
 import pydoc
 import warnings
@@ -1315,6 +1315,14 @@ class LibraryNode(CodeNode):
         """Register an implementation to belong to this library node type."""
         cls.implementations[name] = transformation_type
         transformation_type._match_node = cls
+    
+    @property
+    def free_symbols(self) -> Set[str]:
+        fsyms = super(LibraryNode, self).free_symbols
+        for p, v in self.properties():
+            if isinstance(p, SymbolicProperty) and issymbolic(v):
+                fsyms.update((str(s) for s in v.free_symbols))
+        return fsyms
 
 
 class UnregisteredLibraryNode(LibraryNode):

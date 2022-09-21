@@ -26,7 +26,8 @@ class ExpandWaitMPI(ExpandTransformation):
                                           node.in_connectors,
                                           node.out_connectors,
                                           code,
-                                          language=dace.dtypes.Language.CPP)
+                                          language=dace.dtypes.Language.CPP,
+                                          side_effects=True)
         conn = tasklet.in_connectors
         conn = {c: (dtypes.pointer(dtypes.opaque("MPI_Request")) if c == '_request' else t) for c, t in conn.items()}
         tasklet.in_connectors = conn
@@ -93,7 +94,8 @@ class ExpandWaitallMPI(ExpandTransformation):
                                           node.in_connectors,
                                           node.out_connectors,
                                           code,
-                                          language=dace.dtypes.Language.CPP)
+                                          language=dace.dtypes.Language.CPP,
+                                          side_effects=True)
         conn = tasklet.in_connectors
         conn = {c: (dtypes.pointer(dtypes.opaque("MPI_Request")) if c == '_request' else t) for c, t in conn.items()}
         tasklet.in_connectors = conn

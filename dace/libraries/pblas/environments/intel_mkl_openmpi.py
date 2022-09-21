@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 import os
 from dace.config import Config
 import dace.library
@@ -7,24 +7,20 @@ import warnings
 
 
 @dace.library.environment
-class IntelMKLScaLAPACK:
-    """ 
-    An environment for the Intel Math Kernel Library (MKL), which implements
-    the PBLAS library.
+class IntelMKLScaLAPACKOpenMPI:
+    """ An environment for the Intel Math Kernel Library (MKL), which implements the ScaLAPACK library using OpenMPI.
     """
 
     # NOTE: MKL ScaLAPACK linking needs special options depending on the
     # compiler, MPI vendor and machine (e.g., CRAY). The following work for a
-    # typical Ubuntu installation on an AVX2 machine with MPICH.
+    # typical Ubuntu installation on an AVX2 machine with OpenMPI.
 
     cmake_minimum_version = None
     cmake_packages = ["MPI"]
+    cmake_packages = []
     cmake_variables = {}
     cmake_compile_flags = []
     cmake_libraries = []
-    cmake_link_flags = [
-        "-L $MKLROOT/lib -lmkl_scalapack_lp64 -Wl,--no-as-needed -lmkl_intel_lp64 -lmkl_gnu_thread -lmkl_core -lmkl_blacs_intelmpi_lp64 -lmpich -lgomp -lpthread -lm -ldl"
-    ]
     cmake_files = []
 
     headers = ["mkl.h", "mkl_scalapack.h", "mkl_blacs.h", "mkl_pblas.h"]
@@ -53,11 +49,33 @@ class IntelMKLScaLAPACK:
     // blacs_exit(&__state->__mkl_int_zero);
     """
     dependencies = []
-    # NOTE: The last library (mkl_avx2) must be set to whatever matches the
-    # target hardware, e.g., mkl_avx512
-    libraries = [
-        "mkl_scalapack_lp64", "mkl_blacs_intelmpi_lp64", "mkl_intel_lp64", "mkl_gnu_thread", "mkl_core", "mkl_avx2"
-    ]
+
+    @staticmethod
+    def _find_mkl_lib_path() -> str:
+
+        if 'MKLROOT' in os.environ:
+            prefix = Config.get('compiler', 'library_prefix')
+            suffix = Config.get('compiler', 'library_extension')
+            libpath = os.path.join(os.environ['MKLROOT'], 'lib')
+            libfile = os.path.join(os.environ['MKLROOT'], 'lib', f"{prefix}mkl_scalapack_lp64.{suffix}")
+            if not os.path.isfile(libfile):
+                # Try with ${MKLROOT}/lib/intel64 (oneAPI on Linux)
+                libpath = os.path.join(os.environ['MKLROOT'], 'lib', 'intel64')
+                libfile = os.path.join(os.environ['MKLROOT'], 'lib', 'intel64', f"{prefix}mkl_scalapack_lp64.{suffix}")
+            if os.path.isfile(libfile):
+                return libpath
+
+        libfile = ctypes.util.find_library('mkl_scalapack_lp64')
+        if libfile:
+            return os.path.dirname(os.path.abspath(libfile))
+
+        if 'CONDA_PREFIX' in os.environ:
+            warnings.warn('Anaconda Python is installed but the MKL library file cannot be found for linkage. Please '
+                          'install libraries with "conda install mkl-devel" or set the MKLROOT environment variable.')
+        else:
+            warnings.warn('MKL was not found. Please install MKL or set hte MKLROOT environment variable.')
+
+        return ""
 
     @staticmethod
     def cmake_includes():
@@ -83,37 +101,10 @@ class IntelMKLScaLAPACK:
             return []
 
     @staticmethod
-    def cmake_libraries():
-        if 'MKLROOT' in os.environ:
-            prefix = Config.get('compiler', 'library_prefix')
-            suffix = Config.get('compiler', 'library_extension')
-            libfiles = [
-                os.path.join(os.environ['MKLROOT'], 'lib', prefix + name + "." + suffix)
-                for name in IntelMKLScaLAPACK.libraries
-            ]
-            if all([os.path.isfile(f) for f in libfiles]):
-                return libfiles + ['libmpichcxx.so']
+    def cmake_link_flags():
 
-        path = ctypes.util.find_library('mkl_scalapack_lp64')
-        if path:
-            # Attempt to link on Windows
-            if path.endswith('.dll'):
-                libfiles = [
-                    os.path.join(os.path.dirname(os.path.abspath(path)), '..', 'lib', name + '.lib')
-                    for name in IntelMKLScaLAPACK.libraries
-                ]
-                if all([os.path.isfile(f) for f in libfiles]):
-                    return libfiles
-                elif 'CONDA_PREFIX' in os.environ:
-                    warnings.warn('Anaconda Python is installed but the MKL library file '
-                                  'cannot be found for linkage. Please install libraries with '
-                                  '"conda install mkl-devel" or set the MKLROOT environment '
-                                  'variable')
-                    return []
-                else:
-                    return []
+        libpath = IntelMKLScaLAPACKOpenMPI._find_mkl_lib_path()
 
-            return [path]
-
-        # If all else fails, let CMake find the library
-        return IntelMKLScaLAPACK.libraries + ["${MPI_mpichcxx_LIBRARY}"]
+        return [
+            f"-Wl,--whole-archive {libpath}/libmkl_scalapack_lp64.a -Wl,--no-whole-archive -Wl,--start-group {libpath}/libmkl_intel_lp64.a {libpath}/libmkl_gnu_thread.a {libpath}/libmkl_core.a -Wl,--whole-archive {libpath}/libmkl_blacs_openmpi_lp64.a -Wl,--no-whole-archive -Wl,--end-group -lmpi -lgomp -lpthread -lm -ldl"
+        ]
