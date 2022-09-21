@@ -13,6 +13,10 @@ from dace.transformation.auto.auto_optimize import auto_optimize, fpga_auto_opt
 from dace.libraries.standard import Reduce
 from dace.libraries.blas import Gemv
 
+# Data set sizes
+# M, N
+sizes = {"mini": (28, 32), "small": (80, 100), "medium": (240, 260), "large": (1200, 1400), "extra-large": (2600, 3000)}
+
 M, N = (dc.symbol(s, dtype=dc.int32) for s in ('M', 'N'))
 
 
@@ -75,14 +79,14 @@ def run_covariance(device_type: dace.dtypes.DeviceType):
     :return: the SDFG
     """
 
-    # Initialize data (polybench small size)
-    M, N = (80, 100)
+    # Initialize data (polybench mini size)
+    M, N = sizes["mini"]
     float_n, data = init_data(M, N)
 
     gt_data = np.copy(data)
 
     if device_type in {dace.dtypes.DeviceType.CPU, dace.dtypes.DeviceType.GPU}:
-        # Parse the SDFG and apply autopot
+        # Parse the SDFG and apply auto-opt
         sdfg = covariance_kernel.to_sdfg()
         sdfg = auto_optimize(sdfg, device_type)
         dace_res = sdfg(float_n=float_n, data=data, M=M, N=N)

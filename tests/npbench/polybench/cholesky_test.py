@@ -11,6 +11,10 @@ from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
 from dace.transformation.dataflow import StreamingMemory, StreamingComposition
 from dace.transformation.auto.auto_optimize import auto_optimize
 
+# Data set sizes
+# N
+sizes = {"mini": 40, "small": 120, "medium": 400, "large": 2000, "extra-large": 4000}
+
 N = dc.symbol('N', dtype=dc.int32)
 
 
@@ -56,12 +60,12 @@ def run_cholesky(device_type: dace.dtypes.DeviceType):
     :return: the SDFG
     """
 
-    # Initialize data (polybench medium size)
-    N = 400
+    # Initialize data (polybench mini size)
+    N = sizes["mini"]
     A = init_data(N)
     gt_A = np.copy(A)
     if device_type in {dace.dtypes.DeviceType.CPU, dace.dtypes.DeviceType.GPU}:
-        # Parse the SDFG and apply autopot
+        # Parse the SDFG and apply auto-opt
         sdfg = kernel.to_sdfg()
         sdfg = auto_optimize(sdfg, device_type)
         sdfg(A=A, N=N)

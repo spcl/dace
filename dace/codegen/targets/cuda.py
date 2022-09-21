@@ -276,6 +276,24 @@ class CUDACodeGen(TargetCodeGenerator):
 
                     self.pool_release[(sdfg, aname)] = (state, terminators)
 
+            # If there is unfreed pooled memory, free at the end of the SDFG
+            unfreed = set(arr for arr in pooled if (sdfg, arr) not in self.pool_release)
+            if unfreed:
+                # Find or make single sink node
+                sinks = sdfg.sink_nodes()
+                if len(sinks) == 1:
+                    sink = sinks[0]
+                elif len(sinks) > 1:
+                    sink = sdfg.add_state()
+                    for s in sinks:
+                        sdfg.add_edge(s, sink)
+                else:  # len(sinks) == 0:
+                    raise ValueError('End state not found when trying to free pooled memory')
+
+                # Add sink as terminator state
+                for arr in unfreed:
+                    self.pool_release[(sdfg, arr)] = (sink, set())
+
     # Generate final code
     def get_generated_codeobjects(self):
         fileheader = CodeIOStream()
@@ -416,6 +434,9 @@ void __dace_exit_cuda({sdfg.name}_t *__state) {{
                 for e in state.in_edges(node):
                     if hasattr(e.src, '_cuda_stream'):
                         return True
+        for s, _ in self.pool_release.values():
+            if s is state:
+                return True
         return False
 
     @property
@@ -873,7 +894,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     # Copy after which data is needed by the host
                     is_sync = True
                 elif dst_node._cuda_stream != src_node._cuda_stream:
-                    syncwith[dst_node._cuda_stream] = edge._cuda_event
+                    syncwith[dst_node._cuda_stream] = getattr(edge, '_cuda_event', None)
                 else:
                     pass  # Otherwise, no need to synchronize
             elif hasattr(dst_node, '_cuda_stream'):
@@ -1168,7 +1189,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
             backend = Config.get('compiler', 'cuda', 'backend')
             for (sd, name), (pstate, terminators) in self.pool_release.items():
                 if sd is not sdfg or state is not pstate:
-                    continue              
+                    continue
 
                 desc = sd.arrays[name]
                 ptrname = cpp.ptr(name, desc, sd, self._frame)
