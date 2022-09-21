@@ -9,7 +9,7 @@ import dace.transformation.helpers as xfh
 from dace.transformation.dataflow import MapDimShuffle, MapExpansion, MapCollapse, MapTiling, InLocalStorage, OutLocalStorage, MapSchedule, Vectorization, AccumulateTransient
 
 
-def map_schedule_enumerator(map: SDFG) -> SDFG:
+def map_schedule_enumerator(map: SDFG, last_tile_sizes) -> SDFG:
     map_tmp = map.to_json()
 
     in_arrays, out_arrays = _arrays(map)
@@ -19,7 +19,10 @@ def map_schedule_enumerator(map: SDFG) -> SDFG:
         _apply_permutation(permuted_map, permutation=permuted_params)
 
         permuted_map_tmp = permuted_map.to_json()
-        for tiling in _tilings(permuted_params):
+        tile_ranges = None
+        if last_tile_sizes is not None:
+            tile_ranges = range(int(math.log2(last_tile_sizes)), 7)
+        for tiling in _tilings(permuted_params, tile_ranges):
             tiled_map = SDFG.from_json(permuted_map_tmp)
             _apply_tiling(tiled_map, tiling)
             _expand_all_maps(tiled_map)
@@ -56,9 +59,11 @@ def _permutations(all_params):
     perms = itertools.product(*perms)
     for perm in perms:
         yield perm
+        break
 
-
-def _tilings(all_params, tile_sizes_range=range(0, 9)):
+def _tilings(all_params, tile_sizes_range=None):
+    if tile_sizes_range is None:
+        tile_sizes_range = range(0, 7)
     tile_sizes = [2**k for k in tile_sizes_range]
     tilings = itertools.product(tile_sizes, repeat=len(all_params))
 
