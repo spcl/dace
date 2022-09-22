@@ -136,7 +136,7 @@ class MapFusion(transformation.SingleStateTransformation):
         # of the first map, or other unrelated maps
         for second_edge in graph.out_edges(second_map_entry):
             # NOTE: We ignore edges that do not carry data (e.g., connecting a tasklet with no inputs to the MapEntry)
-            if not second_edge.data.data:
+            if second_edge.data.is_empty():
                 continue
             # Memlets that do not come from one of the intermediate arrays
             if second_edge.data.data not in intermediate_data:
@@ -414,9 +414,9 @@ class MapFusion(transformation.SingleStateTransformation):
         
         # NOTE: Check the second MapEntry for output edges with empty memlets
         for edge in graph.out_edges(second_entry):
-            if not edge.data.data:
+            if edge.data.is_empty():
                 graph.remove_edge(edge)
-                graph.add_edge(first_entry, None, edge.dst, edge.dst_conn, edge.data)
+                graph.add_edge(first_entry, edge.src_conn, edge.dst, edge.dst_conn, edge.data)
 
         ###
         # Second node is isolated and can now be safely removed
