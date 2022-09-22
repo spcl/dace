@@ -26,7 +26,7 @@ def _check_range(subset, a, itersym, b, step):
         m = rb.match(a * itersym + b)
         if m is None:
             continue
-        if (m[a] >= 1) != True:
+        if (abs(m[a]) >= 1) != True:
             continue
         if re != rb:
             if isinstance(rb, symbolic.SymExpr):
@@ -42,7 +42,7 @@ def _check_range(subset, a, itersym, b, step):
             m = re.match(a * itersym + b)
             if m is None:
                 continue
-            if (m[a] >= 1) != True:
+            if (abs(m[a]) >= 1) != True:
                 continue
         found = True
         break
@@ -159,7 +159,7 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
                             return False
                         # To be sure that the value is only written at unique
                         # indices per loop iteration, we want to match symbols
-                        # of the form "a*i+b" where a >= 1, and i is the iteration
+                        # of the form "a*i+b" where |a| >= 1, and i is the iteration
                         # variable. The iteration variable must be used.
                         if e.data.wcr is None:
                             dst_subset = e.data.get_dst_subset(e, state)
