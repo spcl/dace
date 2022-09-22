@@ -451,6 +451,20 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
             access_node = body.add_read(rd)
             body.add_memlet_path(access_node, entry, dst_conn=rd, memlet=memlet.Memlet(rd))
 
+        # Direct edges among source and sink access nodes must pass through a tasklet.
+        # We first gather them and handle them later.
+        direct_edges = set()
+        for n1 in source_nodes:
+            if not isinstance(n1, nodes.AccessNode):
+                continue
+            for n2 in sink_nodes:
+                if not isinstance(n2, nodes.AccessNode):
+                    continue
+                for e in body.edges_between(n1, n2):
+                    e.data.try_initialize(sdfg, body, e)
+                    direct_edges.add(e)
+                    body.remove_edge(e)
+
         # Reroute all memlets through the entry and exit nodes
         for n in source_nodes:
             if isinstance(n, nodes.AccessNode):
@@ -466,6 +480,36 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
                     body.add_edge_pair(exit, e.src, n, e.data, internal_connector=e.src_conn)
             else:
                 body.add_nedge(n, exit, memlet.Memlet())
+
+        # Here we handle the direct edges among source and sink access nodes.
+        for e in direct_edges:
+            src = e.src.data
+            dst = e.dst.data
+            if e.data.subset.num_elements() == 1:
+                t = body.add_tasklet(f"{n1}_{n2}", {'__inp'}, {'__out'}, "__out =  __inp")
+                src_conn, dst_conn = '__out', '__inp'
+            else:
+                desc = sdfg.arrays[src]
+                tname, _ = sdfg.add_transient('tmp',
+                                              e.data.src_subset.size(),
+                                              desc.dtype,
+                                              desc.storage,
+                                              find_new_name=True)
+                t = body.add_access(tname)
+                src_conn, dst_conn = None, None
+            body.add_memlet_path(n1,
+                                 entry,
+                                 t,
+                                 memlet=memlet.Memlet(data=src, subset=e.data.src_subset),
+                                 dst_conn=dst_conn)
+            body.add_memlet_path(t,
+                                 exit,
+                                 n2,
+                                 memlet=memlet.Memlet(data=dst,
+                                                      subset=e.data.dst_subset,
+                                                      wcr=e.data.wcr,
+                                                      wcr_nonatomic=e.data.wcr_nonatomic),
+                                 src_conn=src_conn)
 
         if not source_nodes and not sink_nodes:
             body.add_nedge(entry, exit, memlet.Memlet())
