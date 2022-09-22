@@ -18,10 +18,14 @@ from dace.sdfg import graph
 from dace.memlet import Memlet
 
 
-def nest_sdfg_subgraph(sdfg: SDFG,
-                       subgraph: SubgraphView,
-                       start: Optional[SDFGState] = None,
-                       name: Optional[str] = None) -> SDFGState:
+def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: Optional[SDFGState] = None) -> SDFGState:
+    """
+    Nests an SDFG subgraph (SDFGStates and InterstateEdges).
+    :param sdfg: The SDFG containing the subgraph.
+    :param subgraph: The SubgraphView description of the subgraph.
+    :param start: The start state of the subgraph.
+    :return: The SDFGState containing the NestedSDFG node (containing the nested SDFG subgraph).
+    """
 
     # Nest states
     states = subgraph.nodes()
@@ -32,7 +36,8 @@ def nest_sdfg_subgraph(sdfg: SDFG,
         else:
             src_nodes = subgraph.source_nodes()
             if len(src_nodes) != 1:
-                raise NotImplementedError
+                raise ValueError('Ambiguous start state of the SDFG subgraph. '
+                                 'Please provide the start state via the "start" argument.')
             source_node = src_nodes[0]
 
         sink_nodes = subgraph.sink_nodes()
@@ -124,7 +129,10 @@ def nest_sdfg_subgraph(sdfg: SDFG,
             nsdfg.arrays[name] = sdfg.arrays[name]
             del sdfg.arrays[name]
 
-        # Handle symbols taking new value inside NestedSDFG
+        # If there are symbols (new or not) assigned value in the subgraph, their values will be propagated to the
+        # (outer) SDFG through a symbol-scalar-symbol conversion. This is happening in two parts: (1) inside the nested
+        # SDFG (symbol -> scalar), (2) in the outer SDFG, just after the SDFGState containing the NestedSDFG node
+        # (scalar -> symbol).
         ndefined_symbols = set()
         out_mapping = {}
         out_state = None
@@ -141,6 +149,7 @@ def nest_sdfg_subgraph(sdfg: SDFG,
                 name, _ = sdfg.add_scalar(f"__sym_out_{s}", dtype, transient=True, find_new_name=True)
                 out_mapping[s] = name
                 nname, ndesc = nsdfg.add_scalar(f"__sym_out_{s}", dtype, find_new_name=True)
+                # Part (1)
                 tasklet = out_state.add_tasklet(f"set_{nname}", {}, {'__out'}, f'__out = {s}')
                 acc = out_state.add_access(nname)
                 out_state.add_edge(tasklet, '__out', acc, None, Memlet.from_array(nname, ndesc))
@@ -155,6 +164,7 @@ def nest_sdfg_subgraph(sdfg: SDFG,
             if s in sdfg.symbols:
                 sdfg.remove_symbol(s)
 
+        # Connect input/output data of the subgraph to the NestedSDFG node.
         for name in read_set:
             r = new_state.add_read(name)
             new_state.add_edge(r, None, cnode, name, Memlet.from_array(name, sdfg.arrays[name]))
@@ -162,6 +172,7 @@ def nest_sdfg_subgraph(sdfg: SDFG,
             w = new_state.add_write(name)
             new_state.add_edge(cnode, name, w, None, Memlet.from_array(name, sdfg.arrays[name]))
 
+        # Part (2) 
         if out_state is not None:
             extra_state = sdfg.add_state('symbolic_output')
             for e in sdfg.out_edges(new_state):
@@ -180,6 +191,15 @@ def _copy_state(sdfg: SDFG,
                 state: SDFGState,
                 before: bool = True,
                 states: Optional[Set[SDFGState]] = None) -> SDFGState:
+    """
+    Duplicates a state, placing the copy before or after (see param before) the original and redirecting a subset of its
+    edges (see param state). The state is expected to be a scope's source or sink state and this method facilitates the
+    nesting of SDFG subgraphs where the state may be part of multiple scopes.
+    :param state: The SDFGState to copy.
+    :param before: True if the copy should be placed before the original.
+    :param states: A collection of SDFGStates that should be considered for edge redirection.
+    :return: The SDFGState copy.
+    """
 
     state_copy = copy.deepcopy(state)
     state_copy._label += '_copy'
@@ -219,7 +239,15 @@ def _copy_state(sdfg: SDFG,
     return state_copy
 
 
-def find_sdfg_control_flow(sdfg: SDFG):
+def find_sdfg_control_flow(sdfg: SDFG) -> Dict[SDFGState, Set[SDFGState]]:
+    """
+    Partitions the SDFG to subgraphs that can be nested independently of each other. The method does not nest the
+    subgraphs but alters the SDFG; (1) interstate edges are split, (2) scope source/sink states that belong to multiple
+    scopes are duplicated (see _copy_state).
+    :param sdfg: The SDFG to be partitioned.
+    :return: The found subgraphs in the form of a dictionary where the keys are the start state of the subgraphs and the
+    values are the sets of SDFGStates contained withing each subgraph.
+    """
 
     split_interstate_edges(sdfg)
 
@@ -233,6 +261,8 @@ def find_sdfg_control_flow(sdfg: SDFG):
     ipostdom = utils.postdominators(sdfg)
     cft = cf.structured_control_flow_tree(sdfg, None)
 
+    # Iterate over the SDFG's control flow scopes and create for each an SDFG subraph. These subgraphs must be disjoint,
+    # so we duplicate SDFGStates that appear in more than one scopes (guards and exits of loops and conditionals).
     components = {}
     visited = {}  # Dict[SDFGState, bool]: True if SDFGState in Scope (non-SingleState)
     for i, child in enumerate(cft.children):
@@ -307,6 +337,11 @@ def find_sdfg_control_flow(sdfg: SDFG):
 
 
 def nest_sdfg_control_flow(sdfg: SDFG, components=None):
+    """
+    Partitions the SDFG to subgraphs and nestes them.
+    :param sdfg: The SDFG to be partitioned.
+    :param components: An existing partition of the SDFG.
+    """
 
     components = components or find_sdfg_control_flow(sdfg)
 
