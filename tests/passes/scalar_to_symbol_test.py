@@ -661,8 +661,8 @@ def test_dynamic_mapind():
         if isinstance(n, dace.nodes.MapEntry):
             range_end = n.map.range[0][1]
             break
-    assert(range_end == 4)
-    assert(len(promoted) >= 1)
+    assert range_end == 4
+    assert len(promoted) >= 1
     sdfg.compile()
 
 
