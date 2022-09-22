@@ -192,7 +192,7 @@ def dfs_conditional(G, sources=None, condition=None, reverse=False, yield_parent
     will not be traversed.
     
 
-    :param G: An input DiGraph (assumed acyclic).
+    :param G: An input DiGraph (may have cycles).
     :param sources: (optional) node or list of nodes that
                     specify starting point(s) for depth-first search and return
                     edges in the component reachable from source. If None, traverses from

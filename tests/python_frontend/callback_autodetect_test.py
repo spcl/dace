@@ -731,6 +731,40 @@ def test_unused_callback():
     assert np.allclose(result, expected)
 
 
+def test_callback_with_nested_calls():
+    success = False
+
+    @dace_inhibitor
+    def callback(array):
+        nonlocal success
+        if array == 20.0:
+            success = True
+
+    @dace
+    def tester(A: dace.float64[20]):
+        callback(np.sum(A))
+
+    tester(np.ones([20]))
+
+    assert success is True
+
+
+def test_string_callback():
+    result = (None, None)
+
+    @dace_inhibitor
+    def cb(aa, bb):
+        nonlocal result
+        result = aa, bb
+
+    @dace.program
+    def printmystring(a: str):
+        cb('hello', a)
+
+    printmystring('world')
+    assert result == ('hello', 'world')
+
+
 if __name__ == '__main__':
     test_automatic_callback()
     test_automatic_callback_2()
@@ -765,3 +799,5 @@ if __name__ == '__main__':
     test_callback_literal_dict(False)
     test_callback_literal_dict(True)
     test_unused_callback()
+    test_callback_with_nested_calls()
+    test_string_callback()

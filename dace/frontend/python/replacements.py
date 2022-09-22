@@ -15,7 +15,7 @@ from dace.codegen.tools import type_inference
 from dace.config import Config
 from dace import data, dtypes, subsets, symbolic, sdfg as sd
 from dace.frontend.common import op_repository as oprepo
-from dace.frontend.python.common import DaceSyntaxError
+from dace.frontend.python.common import DaceSyntaxError, StringLiteral
 import dace.frontend.python.memlet_parser as mem_parser
 from dace.frontend.python import astutils
 from dace.frontend.python.nested_call import NestedCall
@@ -111,7 +111,7 @@ def _define_literal_ex(pv: 'ProgramVisitor',
                        obj: Any,
                        dtype: dace.typeclass = None,
                        copy: bool = True,
-                       order: str = 'K',
+                       order: StringLiteral = StringLiteral('K'),
                        subok: bool = False,
                        ndmin: int = 0,
                        like: Any = None,
@@ -132,10 +132,10 @@ def _define_literal_ex(pv: 'ProgramVisitor',
             desc.dtype = dtype
     else:  # From literal / constant
         if dtype is None:
-            arr = np.array(obj, copy=copy, order=order, subok=subok, ndmin=ndmin)
+            arr = np.array(obj, copy=copy, order=str(order), subok=subok, ndmin=ndmin)
         else:
             npdtype = dtype.as_numpy_dtype()
-            arr = np.array(obj, npdtype, copy=copy, order=order, subok=subok, ndmin=ndmin)
+            arr = np.array(obj, npdtype, copy=copy, order=str(order), subok=subok, ndmin=ndmin)
         desc = data.create_datadescriptor(arr)
 
     # Set extra properties
@@ -730,31 +730,48 @@ def _round(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, input: Union[str,
     return _simple_call(sdfg, state, input, 'round', dtypes.typeclass(int))
 
 
+@oprepo.replaces('len')
+def _len_array(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a: str):
+    # len(numpy_array) is equivalent to numpy_array.shape[0]
+    if isinstance(a, str):
+        if a in sdfg.arrays:
+            return sdfg.arrays[a].shape[0]
+        if a in sdfg.constants_prop:
+            return len(sdfg.constants[a])
+    raise TypeError(f'`len` is not supported for input "{a}" (type {type(a)})')
+
+
 @oprepo.replaces('transpose')
 @oprepo.replaces('dace.transpose')
 @oprepo.replaces('numpy.transpose')
 def _transpose(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, inpname: str, axes=None):
 
-    if axes is None:
-        arr1 = sdfg.arrays[inpname]
-        restype = arr1.dtype
-        outname, arr2 = sdfg.add_temp_transient((arr1.shape[1], arr1.shape[0]), restype, arr1.storage)
+    arr1 = sdfg.arrays[inpname]
 
+    # Reversed list
+    if axes is None:
+        axes = tuple(range(len(arr1.shape) - 1, -1, -1))
+    else:
+        if len(axes) != len(arr1.shape) or sorted(axes) != list(range(len(arr1.shape))):
+            raise ValueError("axes don't match array")
+        axes = tuple(axes)
+
+    if axes == (0, ):  # Special (degenerate) case for 1D "transposition"
+        return inpname
+
+    restype = arr1.dtype
+    new_shape = [arr1.shape[i] for i in axes]
+    outname, arr2 = sdfg.add_temp_transient(new_shape, restype, arr1.storage)
+
+    if axes == (1, 0):  # Special case for 2D transposition
         acc1 = state.add_read(inpname)
         acc2 = state.add_write(outname)
         import dace.libraries.blas  # Avoid import loop
         tasklet = dace.libraries.blas.Transpose('_Transpose_', restype)
         state.add_node(tasklet)
-        state.add_edge(acc1, None, tasklet, '_inp', dace.Memlet.from_array(inpname, arr1))
-        state.add_edge(tasklet, '_out', acc2, None, dace.Memlet.from_array(outname, arr2))
+        state.add_edge(acc1, None, tasklet, '_inp', Memlet.from_array(inpname, arr1))
+        state.add_edge(tasklet, '_out', acc2, None, Memlet.from_array(outname, arr2))
     else:
-        arr1 = sdfg.arrays[inpname]
-        if len(axes) != len(arr1.shape) or sorted(axes) != list(range(len(arr1.shape))):
-            raise ValueError("axes don't match array")
-
-        new_shape = [arr1.shape[i] for i in axes]
-        outname, arr2 = sdfg.add_temp_transient(new_shape, arr1.dtype, arr1.storage)
-
         state.add_mapped_tasklet(
             "_transpose_", {"_i{}".format(i): "0:{}".format(s)
                             for i, s in enumerate(arr1.shape)},
@@ -769,6 +786,12 @@ def _transpose(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, inpname: str,
 @oprepo.replaces('numpy.sum')
 def _sum(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a: str, axis=None):
     return _reduce(pv, sdfg, state, "lambda x, y: x + y", a, axis=axis, identity=0)
+
+
+@oprepo.replaces('sum')
+def _sum_array(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a: str):
+    # sum(numpy_array) is equivalent to np.sum(numpy_array, axis=0)
+    return _reduce(pv, sdfg, state, "lambda x, y: x + y", a, axis=0, identity=0)
 
 
 @oprepo.replaces('numpy.mean')
@@ -3945,17 +3968,20 @@ def implement_ufunc_outer(visitor: 'ProgramVisitor', ast_node: ast.Call, sdfg: S
 
 
 @oprepo.replaces('numpy.reshape')
-def reshape(pv: 'ProgramVisitor',
-            sdfg: SDFG,
-            state: SDFGState,
-            arr: str,
-            newshape: Union[str, symbolic.SymbolicType, Tuple[Union[str, symbolic.SymbolicType]]],
-            order='C') -> str:
+def reshape(
+    pv: 'ProgramVisitor',
+    sdfg: SDFG,
+    state: SDFGState,
+    arr: str,
+    newshape: Union[str, symbolic.SymbolicType, Tuple[Union[str, symbolic.SymbolicType]]],
+    order: StringLiteral = StringLiteral('C')
+) -> str:
     if isinstance(arr, (list, tuple)) and len(arr) == 1:
         arr = arr[0]
     desc = sdfg.arrays[arr]
 
     # "order" determines stride orders
+    order = str(order)
     fortran_strides = False
     if order == 'F' or (order == 'A' and desc.strides[0] == 1):
         # FORTRAN strides
@@ -4045,8 +4071,10 @@ def size(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str) -> Size:
 @oprepo.replaces_attribute('Array', 'flat')
 @oprepo.replaces_attribute('Scalar', 'flat')
 @oprepo.replaces_attribute('View', 'flat')
-def flat(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str, order: str = 'C') -> str:
+def flat(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str,
+         order: StringLiteral = StringLiteral('C')) -> str:
     desc = sdfg.arrays[arr]
+    order = str(order)
     totalsize = data._prod(desc.shape)
     if order not in ('C', 'F'):
         raise NotImplementedError(f'Order "{order}" not yet supported for flattening')
@@ -4135,12 +4163,14 @@ def _ndarray_fill(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str, 
 
 @oprepo.replaces_method('Array', 'reshape')
 @oprepo.replaces_method('View', 'reshape')
-def _ndarray_reshape(pv: 'ProgramVisitor',
-                     sdfg: SDFG,
-                     state: SDFGState,
-                     arr: str,
-                     newshape: Union[str, symbolic.SymbolicType, Tuple[Union[str, symbolic.SymbolicType]]],
-                     order='C') -> str:
+def _ndarray_reshape(
+    pv: 'ProgramVisitor',
+    sdfg: SDFG,
+    state: SDFGState,
+    arr: str,
+    newshape: Union[str, symbolic.SymbolicType, Tuple[Union[str, symbolic.SymbolicType]]],
+    order: StringLiteral = StringLiteral('C')
+) -> str:
     return reshape(pv, sdfg, state, arr, newshape, order)
 
 
@@ -4157,7 +4187,11 @@ def _ndarray_transpose(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: 
 @oprepo.replaces_method('Array', 'flatten')
 @oprepo.replaces_method('Scalar', 'flatten')
 @oprepo.replaces_method('View', 'flatten')
-def _ndarray_flatten(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str, order: str = 'C') -> str:
+def _ndarray_flatten(pv: 'ProgramVisitor',
+                     sdfg: SDFG,
+                     state: SDFGState,
+                     arr: str,
+                     order: StringLiteral = StringLiteral('C')) -> str:
     new_arr = flat(pv, sdfg, state, arr, order)
     # `flatten` always returns a copy
     if isinstance(new_arr, data.View):
@@ -4168,7 +4202,11 @@ def _ndarray_flatten(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: st
 @oprepo.replaces_method('Array', 'ravel')
 @oprepo.replaces_method('Scalar', 'ravel')
 @oprepo.replaces_method('View', 'ravel')
-def _ndarray_ravel(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str, order: str = 'C') -> str:
+def _ndarray_ravel(pv: 'ProgramVisitor',
+                   sdfg: SDFG,
+                   state: SDFGState,
+                   arr: str,
+                   order: StringLiteral = StringLiteral('C')) -> str:
     # `ravel` returns a copy only when necessary (sounds like ndarray.flat)
     return flat(pv, sdfg, state, arr, order)
 
@@ -4552,3 +4590,21 @@ def _cupy_empty_like(pv: 'ProgramVisitor',
 def _cupy_empty(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, shape: Shape, dtype: dace.typeclass):
     """ Creates an unitialized array of the specificied shape and dtype. """
     return _define_cupy_local(pv, sdfg, state, shape, dtype)
+
+
+_boolop_to_method = {
+    'Eq': '__eq__',
+    'NotEq': '__ne__',
+    'Lt': '__lt__',
+    'LtE': '__le__',
+    'Gt': '__gt__',
+    'GtE': '__ge__'
+}
+
+def _makeboolop(op: str, method: str):
+    @oprepo.replaces_operator('StringLiteral', op, otherclass='StringLiteral')
+    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: StringLiteral, op2: StringLiteral):
+        return getattr(op1, method)(op2)
+
+for op, method in _boolop_to_method.items():
+    _makeboolop(op, method)

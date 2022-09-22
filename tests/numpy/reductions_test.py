@@ -109,6 +109,7 @@ def test_return_both():
 
 
 def test_argmin_result_type():
+
     @dace.program
     def test_argmin_result(A: dace.float64[10, 5, 3]):
         return np.argmin(A, axis=1, result_type=dace.int64)
@@ -188,8 +189,8 @@ def test_scalar_reduction():
         rhov = u[1]
         E = u[2]
         v = rhov / rho
-        p = (E - 0.5*rhov*v)*(gamma - 1)
-        c = np.sqrt(gamma*p / rho)
+        p = (E - 0.5 * rhov * v) * (gamma - 1)
+        c = np.sqrt(gamma * p / rho)
         ret = np.empty_like(u)
         ret[0] = v - c
         ret[1] = v
@@ -198,7 +199,7 @@ def test_scalar_reduction():
 
     @dace.program
     def flux_min1(ul: dace.float64[3], ur: dace.float64[3]):
-        fl = np.array([0.0442802,  0.13597403, 0.12488015])
+        fl = np.array([0.0442802, 0.13597403, 0.12488015])
         fr = np.array([0., 0.1, 0.])
         eigvalsl = eigenvalues(ul)
         eigvalsr = eigenvalues(ur)
@@ -209,11 +210,21 @@ def test_scalar_reduction():
         elif sr <= 0:
             return fr
         else:
-            return (sl*sr*(ur - ul) + fl*sr - fr*sl)/(sr-sl)
-    
-    ul = np.array([0.15532005, 0.0442802,  0.31468739])
-    ur = np.array([0.125, 0.,    0.25 ])
-    assert(np.allclose(flux_min1(ul, ur), flux_min1.f(ul, ur)))
+            return (sl * sr * (ur - ul) + fl * sr - fr * sl) / (sr - sl)
+
+    ul = np.array([0.15532005, 0.0442802, 0.31468739])
+    ur = np.array([0.125, 0., 0.25])
+    assert (np.allclose(flux_min1(ul, ur), flux_min1.f(ul, ur)))
+
+
+@compare_numpy_output()
+def test_degenerate_reduction_explicit(A: dace.float64[20]):
+    return np.sum(A, axis=())
+
+
+@compare_numpy_output()
+def test_degenerate_reduction_implicit(A: dace.float64[1, 20]):
+    return np.sum(A, axis=0)
 
 
 if __name__ == '__main__':
@@ -258,3 +269,5 @@ if __name__ == '__main__':
     test_mean_reduce_symbolic_shape()
 
     test_scalar_reduction()
+    test_degenerate_reduction_explicit()
+    test_degenerate_reduction_implicit()

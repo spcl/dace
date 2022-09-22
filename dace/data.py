@@ -114,11 +114,11 @@ def create_datadescriptor(obj, no_custom_desc=False):
     elif obj is type(None):
         # NoneType is void *
         return Scalar(dtypes.pointer(dtypes.typeclass(None)))
+    elif isinstance(obj, str) or obj is str:
+        return Scalar(dtypes.string)
     elif callable(obj):
         # Cannot determine return value/argument types from function object
         return Scalar(dtypes.callback(None))
-    elif isinstance(obj, str):
-        return Scalar(dtypes.string())
 
     raise TypeError(f'Could not create a DaCe data descriptor from object {obj}. '
                     'If this is a custom object, consider creating a `__descriptor__` '
@@ -321,6 +321,21 @@ class Data:
         self.strides = strides
         self.total_size = totalsize
 
+    def __matmul__(self, storage: dtypes.StorageType):
+        """
+        Syntactic sugar for specifying the storage of a data descriptor.
+        This enables controlling the storage location as follows:
+
+        .. code-block:: python
+
+            @dace
+            def add(X: dace.float32[10, 10] @ dace.StorageType.GPU_Global):
+                return X + 1
+        """
+        new_desc = cp.deepcopy(self)
+        new_desc.storage = storage
+        return new_desc
+
 
 @make_properties
 class Scalar(Data):
@@ -376,6 +391,10 @@ class Scalar(Data):
 
     @property
     def optional(self) -> bool:
+        return False
+    
+    @property
+    def pool(self) -> bool:
         return False
 
     def is_equivalent(self, other):
@@ -497,6 +516,7 @@ class Array(Data):
                         desc='Specifies whether this array may have a value of None. '
                         'If False, the array must not be None. If option is not set, '
                         'it is inferred by other properties and the OptionalArrayInference pass.')
+    pool = Property(dtype=bool, default=False, desc='Hint to the allocator that using a memory pool is preferred')
 
     def __init__(self,
                  dtype,
@@ -513,7 +533,8 @@ class Array(Data):
                  debuginfo=None,
                  total_size=None,
                  start_offset=None,
-                 optional=None):
+                 optional=None,
+                 pool=False):
 
         super(Array, self).__init__(dtype, shape, transient, storage, location, lifetime, debuginfo)
 
@@ -528,6 +549,7 @@ class Array(Data):
         self.optional = optional
         if optional is None and self.transient:
             self.optional = False
+        self.pool = pool
 
         if strides is not None:
             self.strides = cp.copy(strides)
@@ -553,7 +575,7 @@ class Array(Data):
     def clone(self):
         return type(self)(self.dtype, self.shape, self.transient, self.allow_conflicts, self.storage, self.location,
                           self.strides, self.offset, self.may_alias, self.lifetime, self.alignment, self.debuginfo,
-                          self.total_size, self.start_offset, self.optional)
+                          self.total_size, self.start_offset, self.optional, self.pool)
 
     def to_json(self):
         attrs = serialize.all_properties_to_json(self)

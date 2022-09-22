@@ -35,7 +35,11 @@ try:
     cmake_path = shutil.which('cmake')
     if cmake_path:
         # CMake is available, check version
-        output = subprocess.check_output([cmake_path, '--version'], text=True)
+
+
+
+        output = subprocess.check_output([cmake_path, '--version']).decode('utf-8')
+
         cmake_version = tuple(int(t) for t in output.splitlines()[0].split(' ')[-1].split('.'))
         # If version meets minimum requirements, CMake is not necessary
         if cmake_version >= (3, 15):
