@@ -182,14 +182,6 @@ class MapFission(transformation.SingleStateTransformation):
                             if e.dst.data in not_subgraph:
                                 return False
 
-        # Fail if there are arrays inside the map that are not a direct
-        # output of a computational component
-        # TODO(later): Support this case? Ambiguous array sizes and memlets
-        external_arrays = (border_arrays - self._internal_border_arrays(total_components, subgraphs))
-        if len(external_arrays) > 0:
-            # return False
-            pass
-
         return True
 
     def apply(self, graph: sd.SDFGState, sdfg: sd.SDFG):
@@ -214,20 +206,17 @@ class MapFission(transformation.SingleStateTransformation):
         mapsize = outer_map.range.size()
 
         # Add new symbols from outer map to nested SDFG
+        # Add new symbols also from the adjacent edge subsets and the data descriptors they carry.
         if self.expr_index == 1:
             map_syms = outer_map.range.free_symbols
             for edge in graph.out_edges(map_entry):
                 if edge.data.data:
                     map_syms.update(edge.data.subset.free_symbols)
-                # NOTE: The following code is related to
-                # tests.transformations.mapfission_test.test_mapfission_with_symbols
                 if edge.data.data in parent_sdfg.arrays:
                     map_syms.update(parent_sdfg.arrays[edge.data.data].free_symbols)
             for edge in graph.in_edges(map_exit):
                 if edge.data.data:
                     map_syms.update(edge.data.subset.free_symbols)
-                # NOTE: The following code is related to
-                # tests.transformations.mapfission_test.test_mapfission_with_symbols
                 if edge.data.data in parent_sdfg.arrays:
                     map_syms.update(parent_sdfg.arrays[edge.data.data].free_symbols)
             for sym in map_syms:
