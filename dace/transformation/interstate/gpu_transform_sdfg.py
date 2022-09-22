@@ -32,6 +32,12 @@ def _recursive_out_check(node, state, gpu_scalars):
                 scalset = scalset.union(sset)
                 scalout = scalout and ssout
                 continue
+            if desc.shape == (1,):  # Pseudo-scalar
+                scalout = False
+                sset, ssout = _recursive_out_check(last_edge.dst, state, gpu_scalars)
+                scalset = scalset.union(sset)
+                scalout = scalout and ssout
+                continue
             if desc.storage not in gpu_storage and last_edge.data.num_elements() == 1:
                 sset, ssout = _recursive_out_check(last_edge.dst, state, gpu_scalars)
                 scalset = scalset.union(sset)
@@ -56,6 +62,12 @@ def _recursive_in_check(node, state, gpu_scalars):
                 if desc.storage in gpu_storage or last_edge.src.data in gpu_scalars:
                     scalout = False
                 scalset.add(last_edge.src.data)
+                sset, ssout = _recursive_in_check(last_edge.src, state, gpu_scalars)
+                scalset = scalset.union(sset)
+                scalout = scalout and ssout
+                continue
+            if desc.shape == (1,):  # Pseudo-scalar
+                scalout = False
                 sset, ssout = _recursive_in_check(last_edge.src, state, gpu_scalars)
                 scalset = scalset.union(sset)
                 scalout = scalout and ssout
@@ -255,12 +267,6 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
 
         #######################################################
         # Step 4: Change all top-level maps and library nodes to GPU schedule
-
-        # Convert transient pseudo-scalars to Scalars
-        for name, desc in sdfg.arrays.items():
-            if desc.transient and isinstance(desc, data.Array) and desc.shape == (1, ):
-                sdfg.arrays[name] = data.Scalar(desc.dtype, True, desc.storage, desc.allow_conflicts, desc.location,
-                                                desc.lifetime, desc.debuginfo)
 
         gpu_nodes = set()
         for state in sdfg.nodes():
