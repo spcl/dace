@@ -7,8 +7,8 @@ from dace.libraries.blas import blas_helpers
 
 
 @dace.library.expansion
-class ExpandPgemmMKL(ExpandTransformation):
-    environments = [environments.intel_mkl.IntelMKLScaLAPACK]
+class ExpandPgemmMKLMPICH(ExpandTransformation):
+    environments = [environments.intel_mkl_mpich.IntelMKLScaLAPACKMPICH]
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, **kwargs):
@@ -17,33 +17,37 @@ class ExpandPgemmMKL(ExpandTransformation):
         lapack_dtype_str = blas_helpers.to_blastype(dtype.type).lower()
 
         code = f"""
-            const double  zero = 0.0E+0, one = 1.0E+0;
+            const {dtype.ctype} zero = 0.0E+0, one = 1.0E+0;
             const char trans = 'N';
-            MKL_INT grows = {node._m};
-            MKL_INT gcols = {node._n};
-            MKL_INT a_cols = {node._k};
-            MKL_INT b_rows = {node._k};
-            MKL_INT brows = _a_block_sizes[0];
-            MKL_INT bcols = (gcols > 1 ? _b_block_sizes[1]: 1);
-            MKL_INT a_brows = _a_block_sizes[0];
-            MKL_INT a_bcols = (a_cols > 1 ? _a_block_sizes[1]: 1);
-            MKL_INT b_brows = _b_block_sizes[0];
-            MKL_INT b_bcols = _b_block_sizes[1];
-            MKL_INT mloc = numroc( &grows, &brows, &__state->__mkl_scalapack_myprow, &__state->__mkl_int_zero, &__state->__mkl_scalapack_prows);
-            MKL_INT nloc = numroc( &gcols, &bcols, &__state->__mkl_scalapack_mypcol, &__state->__mkl_int_zero, &__state->__mkl_scalapack_pcols);
-            MKL_INT akloc = numroc( &a_cols, &a_bcols, &__state->__mkl_scalapack_mypcol, &__state->__mkl_int_zero, &__state->__mkl_scalapack_pcols);
-            MKL_INT bkloc = numroc( &b_rows, &b_brows, &__state->__mkl_scalapack_myprow, &__state->__mkl_int_zero, &__state->__mkl_scalapack_prows);
+            MKL_INT gc_rows = {node.n};
+            MKL_INT gc_cols = {node.m};
+            MKL_INT ga_rows = {node.k};
+            MKL_INT ga_cols = {node.m};
+            MKL_INT gb_rows = {node.n};
+            MKL_INT gb_cols = {node.k};
+            MKL_INT lc_rows = _b_block_sizes[1];
+            MKL_INT lc_cols = _a_block_sizes[0];
+            MKL_INT la_rows = _a_block_sizes[1];
+            MKL_INT la_cols = _a_block_sizes[0];
+            MKL_INT lb_rows = _b_block_sizes[1];
+            MKL_INT lb_cols = _b_block_sizes[0];
+            MKL_INT n_lc_rows = numroc_( &gc_rows, &lc_rows, &__state->__mkl_scalapack_myprow, &__state->__mkl_int_zero, &__state->__mkl_scalapack_prows);
+            // MKL_INT n_lc_cols = numroc_( &gc_cols, &lc_cols, &__state->__mkl_scalapack_mypcol, &__state->__mkl_int_zero, &__state->__mkl_scalapack_pcols);
+            MKL_INT c_lld = max(n_lc_rows, 1);
+            MKL_INT n_la_rows = numroc_( &ga_rows, &la_rows, &__state->__mkl_scalapack_myprow, &__state->__mkl_int_zero, &__state->__mkl_scalapack_prows);
+            // MKL_INT n_la_cols = numroc_( &ga_cols, &la_cols, &__state->__mkl_scalapack_mypcol, &__state->__mkl_int_zero, &__state->__mkl_scalapack_pcols);
+            MKL_INT a_lld = max(n_la_rows, 1);
+            MKL_INT n_lb_rows = numroc_( &gb_rows, &lb_rows, &__state->__mkl_scalapack_myprow, &__state->__mkl_int_zero, &__state->__mkl_scalapack_prows);
+            // MKL_INT n_lb_cols = numroc_( &gb_cols, &lb_cols, &__state->__mkl_scalapack_mypcol, &__state->__mkl_int_zero, &__state->__mkl_scalapack_pcols);
+            MKL_INT b_lld = max(n_lb_rows, 1);
             MKL_INT info;
-            MKL_INT _a_ldesc[9],  _b_ldesc[9], _c_ldesc[9];
-            MKL_INT a_lld = max(akloc, a_bcols);
-            descinit(_a_ldesc, &a_cols, &grows, &a_bcols, &brows, &__state->__mkl_int_zero, &__state->__mkl_int_zero, &__state->__mkl_scalapack_context, &a_lld, &info);
-            MKL_INT b_lld = max(nloc, bcols);
-            descinit(_b_ldesc, &gcols, &b_rows, &bcols, &b_brows, &__state->__mkl_int_zero, &__state->__mkl_int_zero, &__state->__mkl_scalapack_context, &b_lld, &info);
-            MKL_INT c_lld = max(nloc, bcols);
-            descinit(_c_ldesc, &gcols, &grows, &bcols, &brows, &__state->__mkl_int_zero, &__state->__mkl_int_zero, &__state->__mkl_scalapack_context, &c_lld, &info);
-            MKL_INT _m = grows, _n = gcols, _k = a_cols;
-            p{lapack_dtype_str}gemm(
-                &trans, &trans, &_n, &_m, &_k, &one, _b, &__state->__mkl_int_one, &__state->__mkl_int_one, _b_ldesc,
+            MKL_INT _c_ldesc[9], _a_ldesc[9],  _b_ldesc[9];
+            descinit_(_c_ldesc, &gc_rows, &gc_cols, &lc_rows, &lc_cols, &__state->__mkl_int_zero, &__state->__mkl_int_zero, &__state->__mkl_scalapack_context, &c_lld, &info);
+            descinit_(_a_ldesc, &ga_rows, &ga_cols, &la_rows, &la_cols, &__state->__mkl_int_zero, &__state->__mkl_int_zero, &__state->__mkl_scalapack_context, &a_lld, &info);
+            descinit_(_b_ldesc, &gb_rows, &gb_cols, &lb_rows, &lb_cols, &__state->__mkl_int_zero, &__state->__mkl_int_zero, &__state->__mkl_scalapack_context, &b_lld, &info);
+            MKL_INT _m = gc_rows, _n = gc_cols, _k = ga_rows;
+            p{lapack_dtype_str}gemm_(
+                &trans, &trans, &_m, &_n, &_k, &one, _b, &__state->__mkl_int_one, &__state->__mkl_int_one, _b_ldesc,
                 _a, &__state->__mkl_int_one, &__state->__mkl_int_one, _a_ldesc, &zero, _c, &__state->__mkl_int_one, &__state->__mkl_int_one, _c_ldesc);
         """
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
@@ -54,6 +58,76 @@ class ExpandPgemmMKL(ExpandTransformation):
         return tasklet
 
 
+@dace.library.expansion
+class ExpandPgemmMKLOpenMPI(ExpandTransformation):
+    environments = [environments.intel_mkl_openmpi.IntelMKLScaLAPACKOpenMPI]
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg, **kwargs):
+        return ExpandPgemmMKLMPICH.expansion(node, parent_state, parent_sdfg, **kwargs)
+
+
+@dace.library.expansion
+class ExpandPgemmReferenceMPICH(ExpandTransformation):
+    environments = [environments.ref_mpich.ScaLAPACKMPICH]
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg, **kwargs):
+        a, b, c, desca, descb, gdescc, ldesc = node.validate(parent_sdfg, parent_state)
+        dtype = a.dtype.base_type
+        lapack_dtype_str = blas_helpers.to_blastype(dtype.type).lower()
+
+        code = f"""
+            {dtype.ctype} zero = 0.0E+0, one = 1.0E+0;
+            char trans = 'N';
+            int gc_rows = {node.n};
+            int gc_cols = {node.m};
+            int ga_rows = {node.k};
+            int ga_cols = {node.m};
+            int gb_rows = {node.n};
+            int gb_cols = {node.k};
+            int lc_rows = _b_block_sizes[1];
+            int lc_cols = _a_block_sizes[0];
+            int la_rows = _a_block_sizes[1];
+            int la_cols = _a_block_sizes[0];
+            int lb_rows = _b_block_sizes[1];
+            int lb_cols = _b_block_sizes[0];
+            int n_lc_rows = numroc_( &gc_rows, &lc_rows, &__state->__scalapack_myprow, &__state->__int_zero, &__state->__scalapack_prows);
+            // int n_lc_cols = numroc_( &gc_cols, &lc_cols, &__state->__scalapack_mypcol, &__state->__int_zero, &__state->__scalapack_pcols);
+            int c_lld = max(n_lc_rows, 1);
+            int n_la_rows = numroc_( &ga_rows, &la_rows, &__state->__scalapack_myprow, &__state->__int_zero, &__state->__scalapack_prows);
+            // int n_la_cols = numroc_( &ga_cols, &la_cols, &__state->__scalapack_mypcol, &__state->__int_zero, &__state->__scalapack_pcols);
+            int a_lld = max(n_la_rows, 1);
+            int n_lb_rows = numroc_( &gb_rows, &lb_rows, &__state->__scalapack_myprow, &__state->__int_zero, &__state->__scalapack_prows);
+            // int n_lb_cols = numroc_( &gb_cols, &lb_cols, &__state->__scalapack_mypcol, &__state->__int_zero, &__state->__scalapack_pcols);
+            int b_lld = max(n_lb_rows, 1);
+            int info;
+            int _c_ldesc[9], _a_ldesc[9],  _b_ldesc[9];
+            descinit_(_c_ldesc, &gc_rows, &gc_cols, &lc_rows, &lc_cols, &__state->__int_zero, &__state->__int_zero, &__state->__scalapack_context, &c_lld, &info);
+            descinit_(_a_ldesc, &ga_rows, &ga_cols, &la_rows, &la_cols, &__state->__int_zero, &__state->__int_zero, &__state->__scalapack_context, &a_lld, &info);
+            descinit_(_b_ldesc, &gb_rows, &gb_cols, &lb_rows, &lb_cols, &__state->__int_zero, &__state->__int_zero, &__state->__scalapack_context, &b_lld, &info);
+            int _m = gc_rows, _n = gc_cols, _k = ga_rows;
+            p{lapack_dtype_str}gemm_(
+                &trans, &trans, &_m, &_n, &_k, &one, _b, &__state->__int_one, &__state->__int_one, _b_ldesc,
+                _a, &__state->__int_one, &__state->__int_one, _a_ldesc, &zero, _c, &__state->__int_one, &__state->__int_one, _c_ldesc);
+        """
+        tasklet = dace.sdfg.nodes.Tasklet(node.name,
+                                          node.in_connectors,
+                                          node.out_connectors,
+                                          code,
+                                          language=dace.dtypes.Language.CPP)
+        return tasklet
+
+
+@dace.library.expansion
+class ExpandPgemmReferenceOpenMPI(ExpandTransformation):
+    environments = [environments.ref_openmpi.ScaLAPACKOpenMPI]
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg, **kwargs):
+        return ExpandPgemmReferenceMPICH.expansion(node, parent_state, parent_sdfg, **kwargs)
+
+
 @dace.library.node
 class Pgemm(dace.sdfg.nodes.LibraryNode):
     """Executes alpha * (A @ B) + beta * C.
@@ -61,15 +135,22 @@ class Pgemm(dace.sdfg.nodes.LibraryNode):
 
     # Global properties
     implementations = {
-        "MKL": ExpandPgemmMKL,
+        "MKLMPICH": ExpandPgemmMKLMPICH,
+        "MKLOpenMPI": ExpandPgemmMKLOpenMPI,
+        "ReferenceMPICH": ExpandPgemmReferenceMPICH,
+        "ReferenceOpenMPI": ExpandPgemmReferenceOpenMPI
     }
-    default_implementation = "MKL"
+    default_implementation = None
+
+    m = dace.properties.SymbolicProperty(allow_none=True, default=None)
+    n = dace.properties.SymbolicProperty(allow_none=True, default=None)
+    k = dace.properties.SymbolicProperty(allow_none=True, default=None)
 
     def __init__(self, name, m=None, n=None, k=None, *args, **kwargs):
         super().__init__(name, *args, inputs={"_a", "_b", "_a_block_sizes", "_b_block_sizes"}, outputs={"_c"}, **kwargs)
-        self._m = m
-        self._n = n
-        self._k = k
+        self.m = m
+        self.n = n
+        self.k = k
 
     def validate(self, sdfg, state):
         """
