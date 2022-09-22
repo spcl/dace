@@ -167,5 +167,5 @@ if __name__ == "__main__":
     test_call_if2()
     test_simple_while()
     test_call_while()
-    test_if_return_both
+    test_if_return_both()
     test_if_return_chain()
