@@ -6,6 +6,8 @@ import dace
 import pytest
 import argparse
 from dace.transformation.auto.auto_optimize import auto_optimize
+from dace.fpga_testing import fpga_test
+from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
 
 
 def relerror(val, ref):
@@ -85,6 +87,20 @@ def run_contour_integral(device_type: dace.dtypes.DeviceType):
         sdfg = dace_contour_integral.to_sdfg()
         sdfg = auto_optimize(sdfg, device_type)
         val0, val1 = sdfg(Ham=Ham, int_pts=int_pts, Y=Y, NR=NR, NM=NM, slab_per_bc=slab_per_bc)
+    elif device_type == dace.dtypes.DeviceType.FPGA:
+        # Parse SDFG and apply FPGA friendly optimization
+        sdfg = dace_contour_integral.to_sdfg(simplify=True)
+        applied = sdfg.apply_transformations([FPGATransformSDFG])
+        assert applied == 1
+
+        from dace.libraries.standard import Reduce
+        Reduce.default_implementation = "FPGAPartialReduction"
+        sdfg.expand_library_nodes()
+
+        sdfg.apply_transformations_repeated([InlineSDFG], print_report=True)
+
+        sdfg.specialize(dict(NR=NR, NM=NM, slab_per_bc=slab_per_bc))
+        val0, val1 = sdfg(Ham=Ham, int_pts=int_pts, Y=Y)
 
     # Compute ground truth and Validate result
     ref0, ref1 = numpy_contour_integral(NR, NM, slab_per_bc, Ham, int_pts, Y)
@@ -104,10 +120,16 @@ def test_gpu():
     run_contour_integral(dace.dtypes.DeviceType.GPU)
 
 
+@pytest.mark.skip(reason="Missing FPGA friendly expansions for solve, getrf, getrs")
+@fpga_test(assert_ii_1=False)
+def test_fpga():
+    run_contour_integral(dace.dtypes.DeviceType.FPGA)
+
+
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
+    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu', 'fpga'], help='Target platform')
 
     args = vars(parser.parse_args())
     target = args["target"]
@@ -116,3 +138,5 @@ if __name__ == "__main__":
         run_contour_integral(dace.dtypes.DeviceType.CPU)
     elif target == "gpu":
         run_contour_integral(dace.dtypes.DeviceType.GPU)
+    elif target == "fpga":
+        run_contour_integral(dace.dtypes.DeviceType.FPGA)

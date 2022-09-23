@@ -5,7 +5,9 @@ import numpy as np
 import dace
 import pytest
 import argparse
-from dace.transformation.auto.auto_optimize import auto_optimize
+from dace.transformation.auto.auto_optimize import auto_optimize, fpga_auto_opt
+from dace.fpga_testing import fpga_test
+from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
 
 nx, ny, nit = (dace.symbol(s, dace.int64) for s in ('nx', 'ny', 'nit'))
 
@@ -160,6 +162,19 @@ def run_cavity_flow(device_type: dace.dtypes.DeviceType):
         sdfg = dace_cavity_flow.to_sdfg()
         sdfg = auto_optimize(sdfg, device_type)
         sdfg(nt=nt, nit=nit, u=dace_u, v=dace_v, dt=dt, dx=dx, dy=dy, p=dace_p, rho=rho, nu=nu, ny=ny, nx=nx)
+    elif device_type == dace.dtypes.DeviceType.FPGA:
+        # Parse SDFG and apply FPGA friendly optimization
+        sdfg = dace_cavity_flow.to_sdfg(simplify=True)
+        applied = sdfg.apply_transformations([FPGATransformSDFG])
+        assert applied == 1
+
+        sdfg.apply_transformations_repeated([InlineSDFG], print_report=True)
+        ###########################
+        # FPGA Auto Opt
+        fpga_auto_opt.fpga_global_to_local(sdfg)
+
+        sdfg.specialize(dict(nx=nx, ny=ny))
+        sdfg(nt=nt, u=dace_u, v=dace_v, dt=dt, dx=dx, dy=dy, p=dace_p, rho=rho, nu=nu, nit=nit)
 
     # Compute ground truth and Validate result
     numpy_cavity_flow(nx, ny, nt, nit, u, v, dt, dx, dy, p, rho, nu)
@@ -178,10 +193,16 @@ def test_gpu():
     run_cavity_flow(dace.dtypes.DeviceType.GPU)
 
 
+@pytest.mark.skip(reason="Intel FPGA kernel arguments")
+@fpga_test(assert_ii_1=False)
+def test_fpga():
+    run_cavity_flow(dace.dtypes.DeviceType.FPGA)
+
+
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
+    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu', 'fpga'], help='Target platform')
 
     args = vars(parser.parse_args())
     target = args["target"]
@@ -190,3 +211,5 @@ if __name__ == "__main__":
         run_cavity_flow(dace.dtypes.DeviceType.CPU)
     elif target == "gpu":
         run_cavity_flow(dace.dtypes.DeviceType.GPU)
+    elif target == "fpga":
+        run_cavity_flow(dace.dtypes.DeviceType.FPGA)
