@@ -21,6 +21,7 @@ from dace.memlet import Memlet
 def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: Optional[SDFGState] = None) -> SDFGState:
     """
     Nests an SDFG subgraph (SDFGStates and InterstateEdges).
+    
     :param sdfg: The SDFG containing the subgraph.
     :param subgraph: The SubgraphView description of the subgraph.
     :param start: The start state of the subgraph.
@@ -195,6 +196,7 @@ def _copy_state(sdfg: SDFG,
     Duplicates a state, placing the copy before or after (see param before) the original and redirecting a subset of its
     edges (see param state). The state is expected to be a scope's source or sink state and this method facilitates the
     nesting of SDFG subgraphs where the state may be part of multiple scopes.
+    
     :param state: The SDFGState to copy.
     :param before: True if the copy should be placed before the original.
     :param states: A collection of SDFGStates that should be considered for edge redirection.
@@ -244,9 +246,10 @@ def find_sdfg_control_flow(sdfg: SDFG) -> Dict[SDFGState, Set[SDFGState]]:
     Partitions the SDFG to subgraphs that can be nested independently of each other. The method does not nest the
     subgraphs but alters the SDFG; (1) interstate edges are split, (2) scope source/sink states that belong to multiple
     scopes are duplicated (see _copy_state).
+    
     :param sdfg: The SDFG to be partitioned.
     :return: The found subgraphs in the form of a dictionary where the keys are the start state of the subgraphs and the
-    values are the sets of SDFGStates contained withing each subgraph.
+             values are the sets of SDFGStates contained withing each subgraph.
     """
 
     split_interstate_edges(sdfg)
@@ -338,7 +341,8 @@ def find_sdfg_control_flow(sdfg: SDFG) -> Dict[SDFGState, Set[SDFGState]]:
 
 def nest_sdfg_control_flow(sdfg: SDFG, components=None):
     """
-    Partitions the SDFG to subgraphs and nestes them.
+    Partitions the SDFG to subgraphs and nests them.
+    
     :param sdfg: The SDFG to be partitioned.
     :param components: An existing partition of the SDFG.
     """
