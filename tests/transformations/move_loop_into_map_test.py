@@ -174,7 +174,8 @@ class MoveLoopIntoMapTest(unittest.TestCase):
         self.assertFalse(count > 0)
 
     def test_more_than_a_map_1(self):
-        """ `out` is written indirectly by the MapExit but is not read and, therefore, does not create a RW dependency.
+        """
+        `out` is written indirectly by the MapExit but is not read and, therefore, does not create a RW dependency.
         """
         sdfg = dace.SDFG('more_than_a_map_1')
         _, aarr = sdfg.add_array('A', (3, 3), dace.float64)
