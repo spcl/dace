@@ -61,11 +61,10 @@ def _permutations(all_params):
     perms = itertools.product(*perms)
     for perm in perms:
         yield perm
-        break
 
 def _tilings(all_params, tile_sizes_range=None):
     if tile_sizes_range is None:
-        tile_sizes_range = range(0, 7)
+        tile_sizes_range = range(0, 9)
 
     # Go over all square tilings, tiling with each dimension.
     tile_sizes = [2**k for k in tile_sizes_range]
