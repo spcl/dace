@@ -27,14 +27,16 @@ from typing import List, Tuple, Set
 
 
 def add_tasklet(substate: SDFGState, name: str, vars_in: Set[str],
-                vars_out: Set[str], code: str):
-    tasklet = substate.add_tasklet(
-        name="T" + name,
-        inputs=vars_in,
-        outputs=vars_out,
-        code=code,
-        #debuginfo=dace.DebugInfo(),
-        language=dace.Language.Python)
+                vars_out: Set[str], code: str, debuginfo: list, source: str):
+    tasklet = substate.add_tasklet(name="T" + name,
+                                   inputs=vars_in,
+                                   outputs=vars_out,
+                                   code=code,
+                                   debuginfo=dace.DebugInfo(
+                                       start_line=debuginfo[0],
+                                       start_column=debuginfo[1],
+                                       filename=source),
+                                   language=dace.Language.Python)
     return tasklet
 
 
@@ -99,16 +101,25 @@ class TaskletWriter:
             Int_Literal_Node: self.intlit2string,
             Real_Literal_Node: self.floatlit2string,
             UnOp_Node: self.unop2string,
+            Array_Subscript_Node: self.arraysub2string,
         }
 
     def write_tasklet_code(self, node: Node):
         if node.__class__ in self.ast_elements:
             text = self.ast_elements[node.__class__](node)
             #print("RET TW:",text)
+            #    text = text.replace("][", ",")
             return text
         else:
 
             print("ERROR:", node.__class__.__name__)
+
+    def arraysub2string(self, node: Array_Subscript_Node):
+        str_to_return = self.write_tasklet_code(
+            node.name) + "[" + self.write_tasklet_code(node.indices[0])
+        for i in node.indices[1:]:
+            str_to_return += ", " + self.write_tasklet_code(i) + "]"
+        return str_to_return
 
     def name2string(self, node: Name_Node):
         return_value = node.name
@@ -121,7 +132,7 @@ class TaskletWriter:
                 self.outputs.pop(0)
                 self.outputs_changes.pop(0)
             #print("RETURN VALUE:",return_value)
-        return return_value
+        return str(return_value)
 
     def intlit2string(self, node: Int_Literal_Node):
 
@@ -184,10 +195,10 @@ def generate_memlet(op, top_sdfg, state):
     # print(shape)
     tmp_node = op
     indices = []
-    while isinstance(tmp_node, ArraySubscriptExpr):
-        if isinstance(tmp_node.index, DeclRefExpr):
+    while isinstance(tmp_node, Array_Subscript_Node):
+        if isinstance(tmp_node.index, Name_Node):
             indices.append(state.name_mapping[top_sdfg][tmp_node.index.name])
-        elif isinstance(tmp_node.index, IntLiteral):
+        elif isinstance(tmp_node.index, Int_Literal_Node):
             indices.append("".join(map(str, tmp_node.index.value)))
         tmp_node = tmp_node.unprocessed_name
     # for i in indices:
@@ -370,14 +381,48 @@ class FindOutputNodesVisitor(NodeVisitor):
         if node.op == "=":
             if isinstance(node.lval, Name_Node):
                 self.nodes.append(node.lval)
+            elif isinstance(node.lval, Array_Subscript_Node):
+                self.nodes.append(node.lval.name)
             self.visit(node.rval)
 
 
+# TODO rewrite this
+class CallToArray(NodeTransformer):
+    def __init__(self, funcs=[]):
+        self.funcs = funcs
+
+    def visit_Call_Expr_Node(self, node: Call_Expr_Node):
+
+        self.count = self.count + 1 if hasattr(self, "count") else 0
+        tmp = self.count
+        if node.name in [
+                "malloc", "exp", "pow", "sqrt", "cbrt", "max", "abs", "min",
+                "dace_sum", "dace_sign", "tanh"
+        ]:
+            args2 = []
+            for i in node.args:
+                arg = CallToArray(self.funcs).visit(i)
+                args2.append(arg)
+            node.args = args2
+            return node
+        if node.name in self.funcs:
+            args2 = []
+            if hasattr(node, "args"):
+                for i in node.args:
+                    arg = CallToArray(self.funcs).visit(i)
+                    args2.append(arg)
+            node.args = args2
+            return node
+        indices = [CallToArray(self.funcs).visit(i) for i in node.args]
+        return Array_Subscript_Node(name=node.name, indices=indices)
+
+
 class AST_translator:
-    def __init__(self, ast: InternalFortranAst):
+    def __init__(self, ast: InternalFortranAst, source):
         self.tables = ast.tables
         self.name_mapping = NameMap()
         self.contexts = {}
+        self.file_name = source
         self.all_array_names = []
         self.last_sdfg_states = {}
         self.ast_elements = {
@@ -395,7 +440,7 @@ class AST_translator:
             #Constant_Decl_Node: self.const2sdfg,
             #Parm_Decl_Node: self.parmdecl2sdfg,
             #Type_Decl_Node: self.typedecl2sdfg,
-            #CallExpr: self.call2sdfg,
+            #Call_Expr_Node: self.call2sdfg,
             #AllocList: self.alloclist2sdfg,
             #ContinueStmt: self.cont2sdfg,
             #GotoStmt: self.goto2sdfg,
@@ -457,6 +502,7 @@ class AST_translator:
             self.translate(i, sdfg)
         self.translate(node.main_program.execution_part.execution, sdfg)
 
+    #TODO REWRITE THIS nicely
     def binop2sdfg(self, node: BinOp_Node, sdfg: SDFG):
         print(node)
 
@@ -489,15 +535,19 @@ class AST_translator:
                 input_names.append(mapped_name)
                 input_names_tasklet.append(i.name)
 
-        substate = add_simple_state_to_sdfg(self, sdfg,
-                                            "_state" + str(1) + "_" + str(1))
+        substate = add_simple_state_to_sdfg(
+            self, sdfg, "_state_l" + str(node.line_number[0]) + "_c" +
+            str(node.line_number[1]))
 
         output_names_changed = [o_t + "_out" for o_t in output_names_tasklet]
 
         #output_names_dict = {on: dace.pointer(dace.int32) for on in output_names_changed}
 
-        tasklet = add_tasklet(substate, str(1), input_names_tasklet,
-                              output_names_changed, "text")
+        tasklet = add_tasklet(
+            substate,
+            "_l" + str(node.line_number[0]) + "_c" + str(node.line_number[1]),
+            input_names_tasklet, output_names_changed, "text",
+            node.line_number, self.file_name)
 
         for i, j in zip(input_names, input_names_tasklet):
             memlet_range = self.get_memlet_range(sdfg, input_vars, i, j)
@@ -529,8 +579,12 @@ class AST_translator:
             sizes = []
             offset = []
             offset_value = -1
-            print(node.sizes)
-            raise NotImplementedError
+            for i in node.sizes:
+                tw = TaskletWriter([], [])
+                text = tw.write_tasklet_code(i)
+                sizes.append(dace.symbolic.pystr_to_symbolic(text))
+                offset.append(offset_value)
+
         else:
             sizes = None
         # create and check name
@@ -572,8 +626,11 @@ if __name__ == "__main__":
     own_ast = InternalFortranAst(ast, tables)
     #own_ast.list_tables()
     program = own_ast.create_ast(ast)
-
-    Ast2Sdfg = AST_translator(own_ast)
+    fd = []
+    program = CallToArray(fd).visit(program)
+    Ast2Sdfg = AST_translator(
+        own_ast,
+        "/mnt/c/Users/Alexwork/Desktop/Git/f2dace/tests/" + testname + ".f90")
     sdfg = SDFG("top_level")
     Ast2Sdfg.translate(program, sdfg)
 

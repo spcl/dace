@@ -1,3 +1,4 @@
+from fileinput import lineno
 from fparser.two.Fortran2008 import *
 from fparser.two.Fortran2003 import *
 from fparser.two.symbol_table import *
@@ -58,8 +59,8 @@ class BinOp_Node(Node):
         'type',
     )
     _fields = (
-        'lvalue',
-        'rvalue',
+        'lval',
+        'rval',
     )
 
 
@@ -69,7 +70,7 @@ class UnOp_Node(Node):
         'postfix',
         'type',
     )
-    _fields = ('lvalue', )
+    _fields = ('lval', )
 
 
 class Main_Program_Node(Node):
@@ -131,6 +132,14 @@ class Execution_Part_Node(Node):
 class Statement_Node(Node):
     _attributes = ('col_offset', )
     _fields = ()
+
+
+class Array_Subscript_Node(Node):
+    _attributes = (
+        'name',
+        'type',
+    )
+    _fields = ('indices', )
 
 
 class Type_Decl_Node(Statement_Node):
@@ -642,8 +651,9 @@ class InternalFortranAst:
         for var in names:
             #first handle dimensions
             size = None
+            var_components = self.create_children(var)
             array_sizes = get_children(var, "Explicit_Shape_Spec_List")
-
+            actual_name = get_child(var_components, Name_Node)
             if len(array_sizes) == 1:
                 array_sizes = array_sizes[0]
                 size = []
@@ -673,27 +683,30 @@ class InternalFortranAst:
             if symbol == False:
 
                 vardecls.append(
-                    Var_Decl_Node(name=var.string,
+                    Var_Decl_Node(name=actual_name.name,
                                   type=testtype,
                                   alloc=alloc,
                                   sizes=size,
-                                  kind=kind))
+                                  kind=kind,
+                                  line_number=node.item.span))
             else:
                 if size is None:
                     vardecls.append(
-                        Constant_Decl_Node(name=var.string,
+                        Constant_Decl_Node(name=actual_name.name,
                                            type=testtype,
                                            alloc=alloc,
-                                           init=init))
+                                           init=init,
+                                           line_number=node.item.span))
                 else:
                     vardecls.append(
-                        Symbol_Decl_Node(name=var.string,
+                        Symbol_Decl_Node(name=actual_name.name,
                                          type=testtype,
                                          alloc=alloc,
                                          sizes=size,
-                                         kind=kind))
+                                         kind=kind,
+                                         line_number=node.item.span))
 
-        return Decl_Stmt_Node(vardecl=vardecls)
+        return Decl_Stmt_Node(vardecl=vardecls, line_number=node.item.span)
 
     def entity_decl(self, node):
         return node
@@ -785,9 +798,12 @@ class InternalFortranAst:
         if len(children) == 3:
             return BinOp_Node(lval=children[0],
                               op=children[1],
-                              rval=children[2])
+                              rval=children[2],
+                              line_number=node.item.span)
         else:
-            return UnOp_Node(lval=children[0], op=children[1])
+            return UnOp_Node(lval=children[0],
+                             op=children[1],
+                             line_number=node.item.span)
 
     def pointer_assignment_stmt(self, node):
         return node
@@ -869,7 +885,8 @@ class InternalFortranAst:
         loop_control = get_child(children, Loop_Control_Node)
         return Nonlabel_Do_Stmt_Node(iter=loop_control.iter,
                                      cond=loop_control.cond,
-                                     init=loop_control.init)
+                                     init=loop_control.init,
+                                     line_number=node.item.span)
 
     def end_do_stmt(self, node):
         return node
@@ -915,7 +932,10 @@ class InternalFortranAst:
         children = self.create_children(node)
         name = get_child(children, Name_Node)
         args = get_child(children, Section_Subscript_List_Node)
-        return Call_Expr_Node(name=name, args=args.list)
+        return Call_Expr_Node(
+            name=name,
+            args=args.list,
+        )
 
     def loop_control(self, node):
         children = self.create_children(node)
@@ -970,6 +990,7 @@ class InternalFortranAst:
         children = self.create_children(node)
         return Section_Subscript_List_Node(list=children)
 
+    #to rewrite properly!
     def specification_part(self, node):
         others = [
             self.create_ast(i) for i in node.children
