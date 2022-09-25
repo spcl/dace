@@ -154,6 +154,7 @@ def _apply_permutation(map: SDFG, permutation):
         MapDimShuffle.apply_to(sdfg=map,
                                map_entry=map_entry,
                                options={"parameters": list(permutation[i])},
+                               annotate=False,
                                save=True,
                                verify=False)
         i = i + 1
@@ -293,6 +294,7 @@ def _apply_parallelization(map: SDFG, parallelization):
                                  "schedule_type": schedule_type,
                                  "collapse": collapse
                              },
+                             annotate=False,
                              save=True,
                              verify=False)
         i = i + 1
@@ -328,7 +330,7 @@ def _expand_all_maps(map: SDFG):
     while map_entry in levels:
         map_entry = levels[map_entry]
         if len(map_entry.map.params) > 1:
-            MapExpansion.apply_to(sdfg=map, map_entry=map_entry, save=True, verify=False)
+            MapExpansion.apply_to(sdfg=map, map_entry=map_entry, save=True, verify=False, annotate=False)
 
 
 def _collapse_all_maps(map: SDFG):
@@ -355,6 +357,7 @@ def _collapse_all_maps(map: SDFG):
             inner, _ = MapCollapse.apply_to(sdfg=map,
                                             outer_map_entry=outer,
                                             inner_map_entry=inner,
+                                            annotate=False,
                                             save=True,
                                             verify=False)
         else:
