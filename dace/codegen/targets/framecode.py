@@ -14,8 +14,7 @@ from dace.cli import progress
 from dace.codegen import control_flow as cflow
 from dace.codegen import dispatcher as disp
 from dace.codegen.prettycode import CodeIOStream
-from dace.codegen.targets.common import codeblock_to_cpp, sym2cpp
-from dace.codegen.targets.cpp import unparse_interstate_edge
+from dace.codegen.common import codeblock_to_cpp, sym2cpp, unparse_interstate_edge
 from dace.codegen.targets.target import TargetCodeGenerator
 from dace.frontend.python import wrappers
 from dace.sdfg import SDFG, ScopeSubgraphView, SDFGState, nodes
@@ -802,6 +801,11 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
             if isvarType is None:
                 raise TypeError(f'Type inference failed for symbol {isvarName}')
 
+            # NOTE: NestedSDFGs frequently contain tautologies in their symbol mapping, e.g., `'i': i`. Do not
+            # redefine the symbols in such cases.
+            if (not is_top_level and isvarName in sdfg.parent_nsdfg_node.symbol_mapping.keys() and
+                    str(sdfg.parent_nsdfg_node.symbol_mapping[isvarName] == isvarName)):
+                continue
             isvar = data.Scalar(isvarType)
             callsite_stream.write('%s;\n' % (isvar.as_arg(with_types=True, name=isvarName)), sdfg)
             self.dispatcher.defined_vars.add(isvarName, disp.DefinedType.Scalar, isvarType.ctype)

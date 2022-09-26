@@ -180,7 +180,12 @@ class ExpandTransposeCuBLAS(ExpandTransformation):
         node.validate(sdfg, state)
         dtype = node.dtype
 
-        func, cdtype, factort = blas_helpers.cublas_type_metadata(dtype)
+        try:
+            func, cdtype, factort = blas_helpers.cublas_type_metadata(dtype)
+        except TypeError as ex:
+            warnings.warn(f'{ex}. Falling back to pure expansion')
+            return ExpandTransposePure.expansion(node, state, sdfg, **kwargs)
+
         func = func + 'geam'
 
         alpha = f"__state->cublas_handle.Constants(__dace_cuda_device).{factort}Pone()"

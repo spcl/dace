@@ -8,7 +8,6 @@ from dace.sdfg import SDFG, SDFGState
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation
-from dace.transformation.helpers import nest_state_subgraph
 from typing import Tuple
 
 
@@ -39,6 +38,9 @@ class MapToForLoop(transformation.SingleStateTransformation):
     def apply(self, graph: SDFGState, sdfg: SDFG) -> Tuple[nodes.NestedSDFG, SDFGState]:
         """ Applies the transformation and returns a tuple with the new nested
             SDFG node and the main state in the for-loop. """
+
+        # Avoid import loop
+        from dace.transformation.helpers import nest_state_subgraph
 
         # Retrieve map entry and exit nodes.
         map_entry = self.map_entry

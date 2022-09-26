@@ -656,7 +656,13 @@ def test_dynamic_mapind():
 
     sdfg = prog.to_sdfg(simplify=False)
     promoted = scalar_to_symbol.ScalarToSymbolPromotion().apply_pass(sdfg, {})
-    assert 'E' in promoted
+    range_end = None
+    for n, _ in sdfg.all_nodes_recursive():
+        if isinstance(n, dace.nodes.MapEntry):
+            range_end = n.map.range[0][1]
+            break
+    assert range_end == 4
+    assert len(promoted) >= 1
     sdfg.compile()
 
 
