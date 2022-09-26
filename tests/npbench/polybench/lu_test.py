@@ -66,6 +66,7 @@ def run_lu(device_type: dace.dtypes.DeviceType):
     if device_type in {dace.dtypes.DeviceType.CPU, dace.dtypes.DeviceType.GPU}:
         # Parse the SDFG and apply autopot
         sdfg = lu_kernel.to_sdfg()
+        sdfg = auto_optimize(sdfg, device_type)
         dace_res = sdfg(A=A, N=N)
 
     elif device_type == dace.dtypes.DeviceType.FPGA:
