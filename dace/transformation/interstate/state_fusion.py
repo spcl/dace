@@ -611,11 +611,12 @@ class SmartStateFusion(transformation.MultiStateTransformation):
     def expressions(cls):
         return [sdutil.node_path_graph(cls.first_state, cls.second_state)]
     
-    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
+    def can_be_applied(self, graph, expr_index, sdfg, permissive):
         first_state: SDFGState = self.first_state
         second_state: SDFGState = self.second_state
 
-        if not StateFusion._basic_check(graph, first_state, second_state):
+        # NOTE: SmartStateFusion does not operate in permissive mode
+        if not StateFusion._basic_check(graph, first_state, second_state, permissive=True):
             return False
 
         # Do not fuse FPGA and NON-FPGA states (unless one of them is empty)
