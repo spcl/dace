@@ -179,7 +179,7 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
                     for e in state.out_edges(dn):
                         # If the same container is both read and written, only match if
                         # it read and written at locations that will not create data races
-                        src_subset = mmlt.get_src_subset(e, state)
+                        src_subset = e.data.get_src_subset(e, state)
                         if not self.test_read_memlet(sdfg, itersym, itervar, start, end, step, write_memlets, e.data,
                                                      src_subset):
                             return False

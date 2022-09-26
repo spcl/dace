@@ -187,6 +187,8 @@ class MapFusion(transformation.SingleStateTransformation):
             del first_map_inputnodes[v]
             e = sdutil.get_view_edge(graph, v)
             if e:
+                while not isinstance(e.src, nodes.AccessNode):
+                    e = graph.memlet_path(e)[0]
                 first_map_inputnodes[e.src] = e.src.data
                 viewed_inputnodes[e.src.data] = v
         second_map_outputnodes = {
@@ -202,6 +204,8 @@ class MapFusion(transformation.SingleStateTransformation):
             del second_map_outputnodes[v]
             e = sdutil.get_view_edge(graph, v)
             if e:
+                while not isinstance(e.dst, nodes.AccessNode):
+                    e = graph.memlet_path(e)[-1]
                 second_map_outputnodes[e.dst] = e.dst.data
                 viewed_outputnodes[e.dst.data] = v
         common_data = set(first_map_inputnodes.values()).intersection(set(second_map_outputnodes.values()))

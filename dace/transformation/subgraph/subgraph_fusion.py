@@ -269,7 +269,7 @@ class SubgraphFusion(transformation.SubgraphTransformation):
             outputs = set(n.data for n in out_nodes)
             from dace.transformation.interstate import StateFusion
             for node in in_nodes:
-                if node.data in outputs:
+                if isinstance(node, nodes.AccessNode) and node.data in outputs:
                     matching_outputs = [n for n in out_nodes if n.data == node.data]
                     # Overall ranges overlap: potential data race
                     if StateFusion.memlets_intersect(graph, [node], True, graph, matching_outputs, False):

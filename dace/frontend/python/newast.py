@@ -3084,8 +3084,10 @@ class ProgramVisitor(ExtNodeVisitor):
                     and not isinstance(true_array, data.Scalar) and not (true_array.shape == (1, ))):
                 if (isinstance(result, str) and result in self.sdfg.arrays
                         and self.sdfg.arrays[result].is_equivalent(true_array)):
-                    # Skip error if the arrays are defined exactly in the same way
-                    true_name = None
+                    # Skip error if the arrays are defined exactly in the same way.
+                    # Change target to a full-range subscript.
+                    target = ast.parse(f"{name}[:]").body[0].value
+                    assert isinstance(target, ast.Subscript)
                 else:
                     raise DaceSyntaxError(self, target, 'Cannot reassign value to variable "{}"'.format(name))
 
