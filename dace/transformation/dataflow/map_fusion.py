@@ -6,6 +6,7 @@ from copy import deepcopy as dcpy
 from dace.sdfg.sdfg import SDFG
 from dace.sdfg.state import SDFGState
 from dace import data, dtypes, symbolic, subsets
+from dace.properties import make_properties, Property
 from dace.sdfg import nodes
 from dace.memlet import Memlet
 from dace.sdfg import replace
@@ -15,6 +16,7 @@ from typing import List, Union
 import networkx as nx
 
 
+@make_properties
 class MapFusion(transformation.SingleStateTransformation):
     """ Implements the MapFusion transformation.
         It wil check for all patterns MapExit -> AccessNode -> MapEntry, and
@@ -43,6 +45,12 @@ class MapFusion(transformation.SingleStateTransformation):
     first_map_exit = transformation.PatternNode(nodes.ExitNode)
     array = transformation.PatternNode(nodes.AccessNode)
     second_map_entry = transformation.PatternNode(nodes.EntryNode)
+
+    allow_arrays = Property(dtype=bool,
+                            default=True,
+                            desc="If false, MapFusion applies only when the intermediate data after fusion "
+                                 "are scalars.",
+                            allow_none=True)
 
     @staticmethod
     def annotates_memlets():
@@ -165,6 +173,8 @@ class MapFusion(transformation.SingleStateTransformation):
                 # If there is a covered subset, it is provided
                 if first_memlet.subset.covers(sbs_permuted):
                     provided = True
+                    if not self.allow_arrays and first_memlet.subset.num_elements() != 1:
+                        return False
                     break
 
             # If none of the output memlets of the first map provide the info,

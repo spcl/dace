@@ -48,10 +48,17 @@ class CompositeFusion(transformation.SubgraphTransformation):
 
     expansion_split = Property(desc="Allow MultiExpansion to split up maps, if enabled", dtype=bool, default=True)
 
+    allow_arrays = Property(dtype=bool,
+                            default=True,
+                            desc="If false, MapFusion applies only when the intermediate data after fusion "
+                                  "are scalars.",
+                            allow_none=True)
+
     def can_be_applied(self, sdfg: SDFG, subgraph: SubgraphView) -> bool:
         graph = subgraph.graph
         if self.allow_expansion == True:
             subgraph_fusion = SubgraphFusion()
+            subgraph_fusion.allow_arrays = self.allow_arrays
             subgraph_fusion.setup_match(subgraph)
             if subgraph_fusion.can_be_applied(sdfg, subgraph):
                 # try w/o copy first
@@ -74,6 +81,7 @@ class CompositeFusion(transformation.SubgraphTransformation):
                 expansion.apply(sdfg_copy)
 
                 subgraph_fusion = SubgraphFusion()
+                subgraph_fusion.allow_arrays = self.allow_arrays
                 subgraph_fusion.setup_match(subgraph_copy)
                 if subgraph_fusion.can_be_applied(sdfg_copy, subgraph_copy):
                     return True
@@ -85,6 +93,7 @@ class CompositeFusion(transformation.SubgraphTransformation):
 
         else:
             subgraph_fusion = SubgraphFusion()
+            subgraph_fusion.allow_arrays = self.allow_arrays
             subgraph_fusion.setup_match(subgraph)
             if subgraph_fusion.can_be_applied(sdfg, subgraph):
                 return True

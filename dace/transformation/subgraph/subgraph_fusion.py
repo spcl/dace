@@ -74,6 +74,12 @@ class SubgraphFusion(transformation.SubgraphTransformation):
         desc="A list of array names to treat as non-transients and not compress",
     )
 
+    allow_arrays = Property(dtype=bool,
+                            default=True,
+                            desc="If false, MapFusion applies only when the intermediate data after fusion "
+                                 "are scalars.",
+                            allow_none=True)
+
     def can_be_applied(self, sdfg: SDFG, subgraph: SubgraphView) -> bool:
         '''
         Fusible if
@@ -211,6 +217,8 @@ class SubgraphFusion(transformation.SubgraphTransformation):
             # every lower subset must be completely covered by union_upper
             for lower_subset in lower_subsets:
                 if not union_upper.covers(lower_subset):
+                    return False
+                if not self.allow_arrays and union_upper.num_elements() != 1:
                     return False
 
         # 2.4 Check for WCRs in out nodes: If there is one, the corresponding
