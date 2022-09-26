@@ -1,6 +1,10 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ This module initializes the dataflow transformations package. """
 
+# Misc
+from .set_properties import SetProperties
+from .set_array_properties import SetArrayProperties
+
 # Map-related
 from .mapreduce import MapReduceFusion, MapWCRFusion
 from .map_expansion import MapExpansion

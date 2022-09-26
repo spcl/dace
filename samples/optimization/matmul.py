@@ -10,7 +10,9 @@ from typing import List, Tuple
 
 # For optimizations
 from dace.transformation.dataflow import (DoubleBuffering, MapCollapse, MapExpansion, MapReduceFusion, StripMining,
-                                          InLocalStorage, AccumulateTransient, Vectorization)
+                                          InLocalStorage, AccumulateTransient, Vectorization, MapSchedule,
+                                          SetProperties)
+from dace.transformation.dataflow.set_array_properties import SetArrayProperties
 from dace.transformation.interstate import FPGATransformSDFG
 from dace.transformation import helpers as xfutil
 
@@ -126,8 +128,11 @@ def optimize_for_cpu(sdfg: dace.SDFG, m: int, n: int, k: int):
     tile_j = find_map_by_param(sdfg, 'tile_j')
     MapCollapse.apply_to(sdfg, outer_map_entry=tile_i, inner_map_entry=tile_j)
     tile_ij = find_map_by_param(sdfg, 'tile_i')  # Find newly created map
-    tile_ij.map.schedule = dace.ScheduleType.CPU_Multicore
-    tile_ij.map.collapse = 2
+    #tile_ij.map.schedule = dace.ScheduleType.CPU_Multicore
+    #tile_ij.map.collapse = 2
+    MapSchedule.apply_to(sdfg, map_entry=tile_ij, options=dict(collapse=2, schedule_type=dace.ScheduleType.CPU_Multicore))
+
+    print(sdfg)
 
 
 def optimize_for_gpu(sdfg: dace.SDFG, m: int, n: int, k: int):
@@ -157,14 +162,17 @@ def optimize_for_gpu(sdfg: dace.SDFG, m: int, n: int, k: int):
     MapCollapse.apply_to(sdfg, outer_map_entry=gtile_i, inner_map_entry=gtile_j, permissive=True)
     MapCollapse.apply_to(sdfg, outer_map_entry=btile_i, inner_map_entry=btile_j, permissive=True)
     btile = find_map_by_param(sdfg, 'tile1_i')
+    #SetProperties.apply_to(sdfg, node=btile, options=dict(ps={ 'map.schedule': dace.ScheduleType.GPU_ThreadBlock }))
     btile.map.schedule = dace.ScheduleType.GPU_ThreadBlock
 
     # Add local storage (shared memory) for A and B on GPU
     ktile = find_map_by_param(sdfg, 'tile_k')
     smem_a = InLocalStorage.apply_to(sdfg, dict(array='A'), node_a=ktile, node_b=btile)
     smem_b = InLocalStorage.apply_to(sdfg, dict(array='B'), node_a=ktile, node_b=btile)
-    sdfg.arrays[smem_a.data].storage = dace.StorageType.GPU_Shared
-    sdfg.arrays[smem_b.data].storage = dace.StorageType.GPU_Shared
+    SetArrayProperties.apply_to(sdfg, node=smem_a, options=dict(ps={ 'storage': dace.StorageType.GPU_Shared }))
+    SetArrayProperties.apply_to(sdfg, node=smem_b, options=dict(ps={ 'storage': dace.StorageType.GPU_Shared }))
+    #sdfg.arrays[smem_a.data].storage = dace.StorageType.GPU_Shared
+    #sdfg.arrays[smem_b.data].storage = dace.StorageType.GPU_Shared
 
     # Add local storage (registers) for A and B
     ttile = find_map_by_param(sdfg, 'k')
@@ -179,18 +187,24 @@ def optimize_for_gpu(sdfg: dace.SDFG, m: int, n: int, k: int):
     AccumulateTransient.apply_to(sdfg, map_exit=warptile_exit, outer_map_exit=btile_exit)
     # Set C tile to zero on allocation
     c_access = next(n for n in state.data_nodes() if n.data == 'trans_gpu_C')
-    c_access.setzero = True
+    #c_access.setzero = True
+    SetProperties.apply_to(sdfg, node=c_access, options=dict(ps={ 'setzero': True }))
 
     # Unroll microkernel maps
-    ttile.map.unroll = True
+    #ttile.map.unroll = True
+    SetProperties.apply_to(sdfg, node=ttile, options=dict(ps={ 'map.unroll': True }))
 
     # Apply double-buffering on shared memory
     DoubleBuffering.apply_to(sdfg, map_entry=ktile, transient=smem_a)
+
+    print(sdfg)
 
 
 #####################################################################
 # Main function
 
+optimize_for_gpu(matmul.to_sdfg(), 1024, 1024, 1024)
+'''
 
 @click.command()
 @click.option('-M', type=int, default=64)
@@ -262,3 +276,4 @@ def cli(m, k, n, version, verify):
 
 if __name__ == "__main__":
     cli()
+    '''
