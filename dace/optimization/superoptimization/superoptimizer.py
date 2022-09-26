@@ -403,10 +403,19 @@ class Superoptimizer(auto_tuner.AutoTuner):
                 print(f"Optimization of {state} took {state_end_time - state_start_time}")
 
     def _find_best_map_schedule(self, mp, map_hash, data_report) -> Tuple[List, float]:
+        m_ts = time.perf_counter()
+        self._profile['MapOpt'][map_hash] = {
+            'meta': {},
+            'enum': {},
+        }
+
         print("Optimizing map")
 
         # Create arguments once
         arguments = arguments_from_data_report(mp, data_report=data_report)
+
+        self._profile['MapOpt'][map_hash]['meta']['args_from_drep'] = time.perf_counter() - m_ts
+        m_ts = time.perf_counter()
 
         map_cache_path = self._map_schedule_cache_folder / f"{map_hash}.json"
         map_cache = {}
@@ -422,11 +431,15 @@ class Superoptimizer(auto_tuner.AutoTuner):
                 if last_tile_sizes_lst:
                     last_tile_size = max(last_tile_sizes_lst)
                 print("Tile size: ", last_tile_size)
+            self._profile['MapOpt'][map_hash]['meta']['load_cached'] = time.perf_counter() - m_ts
+            m_ts = time.perf_counter()
         else:
             map_runtime, map_process_time = measure(mp,
                                                     arguments,
                                                     measurements=self._measurements,
                                                     warmup=self._warmup)
+            self._profile['MapOpt'][map_hash]['meta']['re_measure'] = time.perf_counter() - m_ts
+            m_ts = time.perf_counter()
 
             map_cache[map_hash] = {"runtime": map_runtime, "process time": map_process_time, "schedules": {}}
 
@@ -434,6 +447,8 @@ class Superoptimizer(auto_tuner.AutoTuner):
                 json.dump(map_cache, handle)
             with open(self._map_schedule_cache_folder / f"{map_hash}.sdfg", "w") as handle:
                 json.dump(mp.to_json(), handle)
+            self._profile['MapOpt'][map_hash]['meta']['dump_re_measure'] = time.perf_counter() - m_ts
+            m_ts = time.perf_counter()
 
         if "best schedule" in map_cache[map_hash]:
             best_schedule = map_cache[map_hash]["best schedule"]["schedule"]
@@ -449,7 +464,7 @@ class Superoptimizer(auto_tuner.AutoTuner):
         cache_timer = time.time()
         start = time.time()
         print(f"Initial time {initial_time}")
-        for scheduled_map, schedule_desc in map_schedule_enumerator(mp, last_tile_size):
+        for scheduled_map, schedule_desc in map_schedule_enumerator(mp, last_tile_size, self._profile['MapOpt'][map_hash]['enum']):
             scheduled_map.build_folder = mp.build_folder
             if not schedule_desc in map_cache[map_hash]["schedules"]:
                 runtime, process_time = measure(scheduled_map,

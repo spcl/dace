@@ -1,5 +1,6 @@
 import math
 import itertools
+from time import perf_counter
 
 from dace import SDFG, data, nodes, ScheduleType
 
@@ -11,45 +12,102 @@ from dace.transformation.dataflow import (MapDimShuffle, MapExpansion, MapCollap
                                           OutLocalStorage, MapSchedule, Vectorization, AccumulateTransient)
 
 
-def map_schedule_enumerator(map: SDFG, last_tile_sizes) -> SDFG:
+def map_schedule_enumerator(map: SDFG, last_tile_sizes, profile = None) -> SDFG:
+    ts = perf_counter()
+
     map_tmp = map.to_json()
+
+    profile['serialization'] = []
+    profile['parallelization'] = []
+    profile['vectorization'] = []
+    profile['deserialization'] = []
+    profile['get_params'] = []
+    profile['perumte_params'] = []
+    profile['expand_maps'] = []
+    profile['collapse_maps'] = []
+    profile['apply_tiling'] = []
+    profile['local_storage'] = []
+    profile['validation'] = []
+
+    profile['serialization'].append(perf_counter() - ts)
+    ts = perf_counter()
 
     in_arrays, out_arrays = _arrays(map)
     all_params = utils.map_params(map)
+    profile['get_params'].append(perf_counter() - ts)
+    ts = perf_counter()
     for permuted_params in _permutations(all_params):
         permuted_map = SDFG.from_json(map_tmp)
+        profile['deserialization'].append(perf_counter() - ts)
+        ts = perf_counter()
         _apply_permutation(permuted_map, permutation=permuted_params)
+        profile['permute_params'].append(perf_counter() - ts)
+        ts = perf_counter()
 
         permuted_map_tmp = permuted_map.to_json()
+        profile['serialization'].append(perf_counter() - ts)
+        ts = perf_counter()
         tile_ranges = None
         if last_tile_sizes is not None:
             tile_ranges = range(int(math.log2(last_tile_sizes)), 9)
         for tiling in _tilings(permuted_params, tile_ranges):
             tiled_map = SDFG.from_json(permuted_map_tmp)
+            profile['deserialization'].append(perf_counter() - ts)
+            ts = perf_counter()
             _apply_tiling(tiled_map, tiling)
+            profile['apply_tiling'].append(perf_counter() - ts)
+            ts = perf_counter()
             _expand_all_maps(tiled_map)
+            profile['expand_maps'].append(perf_counter() - ts)
+            ts = perf_counter()
 
             tiled_map_tmp = tiled_map.to_json()
+            profile['serialization'].append(perf_counter() - ts)
+            ts = perf_counter()
             expanded_params = utils.map_params(tiled_map)
+            profile['get_params'].append(perf_counter() - ts)
+            ts = perf_counter()
             for local_storage in _local_storage(expanded_params, in_arrays, out_arrays):
                 local_storage_map_ = SDFG.from_json(tiled_map_tmp)
+                profile['deserialization'].append(perf_counter() - ts)
+                ts = perf_counter()
 
                 if not _apply_local_storage(local_storage_map_, local_storage=local_storage):
                     continue
+                profile['local_storage'].append(perf_counter() - ts)
+                ts = perf_counter()
                 _collapse_all_maps(local_storage_map_)
+                profile['collapse_maps'].append(perf_counter() - ts)
+                ts = perf_counter()
 
                 collapsed_params = utils.map_params(local_storage_map_)
+                profile['get_params'].append(perf_counter() - ts)
+                ts = perf_counter()
                 local_storage_map_tmp = local_storage_map_.to_json()
+                profile['serialization'].append(perf_counter() - ts)
+                ts = perf_counter()
                 for parallelization in _parallelizations(collapsed_params):
                     scheduled_map = SDFG.from_json(local_storage_map_tmp)
+                    profile['deserialization'].append(perf_counter() - ts)
+                    ts = perf_counter()
                     _apply_parallelization(scheduled_map, parallelization)
+                    profile['parallelization'].append(perf_counter() - ts)
+                    ts = perf_counter()
 
                     scheduled_map_tmp = scheduled_map.to_json()
+                    profile['serialization'].append(perf_counter() - ts)
+                    ts = perf_counter()
                     for vec_len in _vectorizations():
                         final_map = SDFG.from_json(scheduled_map_tmp)
+                        profile['deserialization'].append(perf_counter() - ts)
+                        ts = perf_counter()
                         if _apply_vectorization(final_map, vec_len):
+                            profile['vectorization'].append(perf_counter() - ts)
+                            ts = perf_counter()
                             try:
                                 final_map.validate()
+                                profile['validation'].append(perf_counter() - ts)
+                                ts = perf_counter()
                                 schedule_desc = f"{permuted_params}:{tiling}:{local_storage}:{parallelization}:{vec_len}"
                                 yield final_map, schedule_desc
                             except:
