@@ -39,6 +39,7 @@ LOWER_BOUND_SCALING = 1.2
 
 
 class Superoptimizer(auto_tuner.AutoTuner):
+
     def __init__(self,
                  sdfg: SDFG,
                  device_type: DeviceType = DeviceType.CPU,
@@ -47,6 +48,10 @@ class Superoptimizer(auto_tuner.AutoTuner):
         super().__init__(sdfg)
         assert device_type == DeviceType.CPU
         self._device_type = device_type
+        self._profile = {
+            'SubgraphOpt': {},
+            'MapOpt': {},
+        }
 
         self._measurements = measurements
         self._warmup = warmup
@@ -62,16 +67,23 @@ class Superoptimizer(auto_tuner.AutoTuner):
         self._map_fusion_cache_folder = self._cache_folder / "map_fusion"
         self._map_fusion_cache_folder.mkdir(parents=False, exist_ok=True)
 
+    def _register_profile_event(self, name: str):
+        self._profile[name] = time.perf_counter() - self._event_start_ts
+        self._event_start_ts = time.perf_counter()
+
     def tune(self, apply: bool = True, compile_folder: Union[str, Path] = None) -> SDFG:
         """
         
         """
-        start = time.time()
+        tuning_start = time.perf_counter()
+        self._event_start_ts = time.perf_counter()
 
         dreport = self._sdfg.get_instrumented_data()
         if dreport is None:
             print("No data report available. Aborting")
             return sdfg
+
+        self._register_profile_event('get_instr')
 
         if not apply:
             sdfg = copy.deepcopy(self._sdfg)
@@ -81,41 +93,71 @@ class Superoptimizer(auto_tuner.AutoTuner):
         if not compile_folder is None:
             sdfg.build_folder = compile_folder
 
+        self._register_profile_event('initial_copy')
+
         print("Measuring initial runtime")
         arguments = arguments_from_data_report(sdfg, data_report=dreport)
+        self._register_profile_event('args_from_drep')
         initial_time, _ = measure(sdfg, arguments=arguments, measurements=self._measurements, warmup=self._warmup)
+        self._register_profile_event('initial_measure')
         print(f"Initial time {initial_time}")
 
         Superoptimizer._canonicalize_sdfg(sdfg, device_type=self._device_type)
+        self._register_profile_event('canonicalization')
         canon_time, _ = measure(sdfg, arguments=arguments, measurements=self._measurements, warmup=self._warmup)
+        self._register_profile_event('canon_measure')
         print(f"Canonicalized time {canon_time}")
 
         print("Optimizing subgraphs")
         self._optimize_subgraphs(sdfg=sdfg, data_report=dreport)
+        self._register_profile_event('sg_optimization')
 
         with open(self._cache_folder / "fused.sdfg", "w") as handle:
             json.dump(sdfg.to_json(), handle)
+        self._register_profile_event('dumping_fused')
 
         print("Optimizing maps")
         self._optimize_maps(sdfg=sdfg, data_report=dreport)
+        self._register_profile_event('optimize_maps')
 
         with open(self._cache_folder / "optimized.sdfg", "w") as handle:
             json.dump(sdfg.to_json(), handle)
+        self._register_profile_event('dumping_optimized')
 
         args = arguments_from_data_report(sdfg, dreport)
+        self._register_profile_event('args_from_drep_post_opt')
         tuned_runtime, _ = measure(sdfg, arguments=args, measurements=self._measurements, warmup=self._warmup)
+        self._register_profile_event('opt_measure')
         print(f"Tuned runtime {tuned_runtime}, speedup {initial_time / tuned_runtime}")
 
         sdfg.build_folder = self._build_folder
 
-        end = time.time()
-        print(f"Tuning took {(end - start) / 60.0:.3f} minutes")
+        tuning_end = time.perf_counter()
+        self._profile['tuning'] = tuning_end - tuning_start
+
+        print(f"Tuning took {(tuning_end - tuning_start) / 60.0:.3f} minutes")
+
+        print('Profile:')
+        print(self._profile)
+
         return sdfg
 
     def _optimize_subgraphs(self, sdfg: SDFG, data_report: InstrumentedDataReport) -> None:
+        sg_timer = time.perf_counter()
         initial_map_runtimes = self._measure_initial_map_runtimes(sdfg, data_report=data_report)
+        self._profile['SubgraphOpt']['initial_measure'] = time.perf_counter() - sg_timer
+        sg_timer = time.perf_counter()
 
+        self._profile['SubgraphOpt']['enumeration'] = []
+        self._profile['SubgraphOpt']['cutout'] = []
+        self._profile['SubgraphOpt']['cache_init'] = []
+        self._profile['SubgraphOpt']['collect'] = []
+        self._profile['SubgraphOpt']['fusions'] = []
+        self._profile['SubgraphOpt']['cdump'] = []
+        self._profile['SubgraphOpt']['apply'] = []
         for subgraph, matches in map_fusion_enumerator(sdfg):
+            self._profile['SubgraphOpt']['enumeration'].append(time.perf_counter() - sg_timer)
+            sg_timer = time.perf_counter()
             print("Finding optimal map fusions in subgraph")
 
             # Create independent cutout of subgraph
@@ -123,6 +165,8 @@ class Superoptimizer(auto_tuner.AutoTuner):
             cutout.build_folder = sdfg.build_folder
             cutout_hash = cutout.hash_sdfg()
             cutout_tmp_copy = cutout.to_json()
+            self._profile['SubgraphOpt']['cutout'].append(time.perf_counter() - sg_timer)
+            sg_timer = time.perf_counter()
 
             # Handle cache initialization
             subgraph_cache = {}
@@ -147,6 +191,9 @@ class Superoptimizer(auto_tuner.AutoTuner):
                     json.dump(subgraph_cache, handle)
                 with open(self._map_fusion_cache_folder / f"{cutout_hash}.sdfg", "w") as handle:
                     json.dump(cutout_tmp_copy, handle)
+
+            self._profile['SubgraphOpt']['cache_init'].append(time.perf_counter() - sg_timer)
+            sg_timer = time.perf_counter()
 
             # Collect map entries for lower bounds
             subgraph_nodes = set(subgraph.nodes())
@@ -180,6 +227,9 @@ class Superoptimizer(auto_tuner.AutoTuner):
                                               verify=True,
                                               save=True)
                     continue
+
+            self._profile['SubgraphOpt']['collect'].append(time.perf_counter() - sg_timer)
+            sg_timer = time.perf_counter()
 
             # Optimize over fusions
             best_process_time = subgraph_cache[cutout_hash]["process time"]
@@ -272,6 +322,9 @@ class Superoptimizer(auto_tuner.AutoTuner):
                 if best_runtime <= lb:
                     break
 
+            self._profile['SubgraphOpt']['fusions'].append(time.perf_counter() - sg_timer)
+            sg_timer = time.perf_counter()
+
             subgraph_cache[cutout_hash]["best fusion"] = {
                 "runtime": best_runtime,
                 "process time": best_process_time,
@@ -279,6 +332,9 @@ class Superoptimizer(auto_tuner.AutoTuner):
             }
             with open(subgraph_cache_path, "w") as handle:
                 json.dump(subgraph_cache, handle)
+
+            self._profile['SubgraphOpt']['cdump'].append(time.perf_counter() - sg_timer)
+            sg_timer = time.perf_counter()
 
             if not best_fusion_desc is None:
                 best_fusion = []
@@ -298,6 +354,9 @@ class Superoptimizer(auto_tuner.AutoTuner):
                                           second_map_entry=s,
                                           verify=True,
                                           save=True)
+
+            self._profile['SubgraphOpt']['apply'].append(time.perf_counter() - sg_timer)
+            sg_timer = time.perf_counter()
 
     def _optimize_maps(self, sdfg: SDFG, data_report: InstrumentedDataReport) -> None:
         maps = {}
