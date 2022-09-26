@@ -3,7 +3,7 @@ import ast
 from copy import deepcopy as dcpy, copy
 from functools import reduce
 import operator
-from typing import List, Optional, Set, Union
+from typing import TYPE_CHECKING, List, Optional, Set, Union
 import warnings
 
 import dace
@@ -14,6 +14,8 @@ from dace.frontend.python.astutils import unparse
 from dace.properties import (Property, make_properties, DataProperty, SubsetProperty, SymbolicProperty,
                              DebugInfoProperty, LambdaProperty)
 
+if TYPE_CHECKING:
+    import dace.sdfg.graph
 
 @make_properties
 class Memlet(object):

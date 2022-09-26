@@ -6,6 +6,8 @@ import dace
 import pytest
 import argparse
 from dace.transformation.auto.auto_optimize import auto_optimize
+from dace.fpga_testing import fpga_test
+from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
 
 N = dace.symbol('N', dtype=dace.int64)
 
@@ -48,6 +50,20 @@ def run_arc_distance(device_type: dace.dtypes.DeviceType):
         sdfg = arc_distance.to_sdfg()
         sdfg = auto_optimize(sdfg, device_type)
         val = sdfg(theta_1=t0, phi_1=p0, theta_2=t1, phi_2=p1, N=N)
+    elif device_type == dace.dtypes.DeviceType.FPGA:
+        # Parse SDFG and apply FPGA friendly optimization
+        sdfg = arc_distance.to_sdfg(simplify=True)
+        applied = sdfg.apply_transformations([FPGATransformSDFG])
+        assert applied == 1
+
+        sdfg.apply_transformations_repeated([InlineSDFG], print_report=True)
+        sdfg.specialize(dict(N=N, ))
+        val = sdfg(
+            theta_1=t0,
+            phi_1=p0,
+            theta_2=t1,
+            phi_2=p1,
+        )
 
     # Compute ground truth and Validate result
     ref = arc_distance.f(t0, p0, t1, p1)
@@ -64,10 +80,16 @@ def test_gpu():
     run_arc_distance(dace.dtypes.DeviceType.GPU)
 
 
+@pytest.mark.skip(reason="Validation error")
+@fpga_test(assert_ii_1=False)
+def test_fpga():
+    return run_arc_distance(dace.dtypes.DeviceType.FPGA)
+
+
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu'], help='Target platform')
+    parser.add_argument("-t", "--target", default='cpu', choices=['cpu', 'gpu', 'fpga'], help='Target platform')
 
     args = vars(parser.parse_args())
     target = args["target"]
@@ -76,3 +98,5 @@ if __name__ == "__main__":
         run_arc_distance(dace.dtypes.DeviceType.CPU)
     elif target == "gpu":
         run_arc_distance(dace.dtypes.DeviceType.GPU)
+    elif target == "fpga":
+        run_arc_distance(dace.dtypes.DeviceType.FPGA)

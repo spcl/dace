@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
+import warnings
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
@@ -71,7 +72,12 @@ class ExpandDotOpenBLAS(ExpandTransformation):
         dtype = desc_x.dtype.base_type
         veclen = desc_x.dtype.veclen
 
-        func, _, _ = blas_helpers.cublas_type_metadata(dtype)
+        try:
+            func, _, _ = blas_helpers.cublas_type_metadata(dtype)
+        except TypeError as ex:
+            warnings.warn(f'{ex}. Falling back to pure expansion')
+            return ExpandDotPure.expansion(node, parent_state, parent_sdfg, n, **kwargs)
+
         func = func.lower() + 'dot'
 
         n = n or node.n or sz
@@ -107,7 +113,11 @@ class ExpandDotCuBLAS(ExpandTransformation):
         dtype = desc_x.dtype.base_type
         veclen = desc_x.dtype.veclen
 
-        func, _, _ = blas_helpers.cublas_type_metadata(dtype)
+        try:
+            func, _, _ = blas_helpers.cublas_type_metadata(dtype)
+        except TypeError as ex:
+            warnings.warn(f'{ex}. Falling back to pure expansion')
+            return ExpandDotPure.expansion(node, parent_state, parent_sdfg, n, **kwargs)
         func = func + 'dot'
 
         n = n or node.n or sz

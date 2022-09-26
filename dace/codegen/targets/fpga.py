@@ -22,14 +22,13 @@ from dace.codegen import exceptions as cgx
 from dace.codegen.codeobject import CodeObject
 from dace.codegen.dispatcher import DefinedType
 from dace.codegen.prettycode import CodeIOStream
-from dace.codegen.targets.common import update_persistent_desc
+from dace.codegen.common import update_persistent_desc
 from dace.codegen.targets.target import (TargetCodeGenerator, IllegalCopy, make_absolute)
 from dace.codegen import cppunparse
 from dace.properties import Property, make_properties, indirect_properties
 from dace.sdfg.state import SDFGState
 from dace.sdfg.utils import is_fpga_kernel
 from dace.symbolic import evaluate
-from dace.transformation.dataflow import MapUnroll
 from collections import defaultdict
 
 _CPU_STORAGE_TYPES = {dtypes.StorageType.CPU_Heap, dtypes.StorageType.CPU_ThreadLocal, dtypes.StorageType.CPU_Pinned}
@@ -464,6 +463,8 @@ class FPGACodeGen(TargetCodeGenerator):
         state_id = sdfg.node_id(state)
 
         if not self._in_device_code:
+            # Avoid import loop
+            from dace.transformation.dataflow import MapUnroll
 
             # Unroll maps directly in the SDFG so the subgraphs can be
             # recognized as independent processing elements
