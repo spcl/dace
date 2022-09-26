@@ -1,7 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ This module initializes the inter-state transformations package."""
 
-from .state_fusion import StateFusion
+from .state_fusion import StateFusion, SmartStateFusion
 from .state_elimination import (EndStateElimination, StartStateElimination, StateAssignElimination,
                                 SymbolAliasPromotion, HoistState)
 from .fpga_transform_state import FPGATransformState
