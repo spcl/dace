@@ -51,6 +51,8 @@ def map_schedule_enumerator(map: SDFG, last_tile_sizes, profile = None) -> SDFG:
         if last_tile_sizes is not None:
             tile_ranges = range(int(math.log2(last_tile_sizes)), 9)
         for tiling in _tilings(permuted_params, tile_ranges):
+            print('profile')
+            print(profile)
             tiled_map = SDFG.from_json(permuted_map_tmp)
             profile['deserialization'].append(perf_counter() - ts)
             ts = perf_counter()
