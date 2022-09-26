@@ -647,36 +647,38 @@ class SmartStateFusion(transformation.MultiStateTransformation):
         second_access: nodes.AccessNode = self.second_access
 
         # Split the non-matching CCs of the first state to a pre-state.
-        pre_state = sdfg.add_state(f"pre_{first_state.label}")
         first_cc = [cc_nodes for cc_nodes in nx.weakly_connected_components(first_state._nx)]
-        for fcc in first_cc:
-            if first_access in fcc:
-                continue
-            sgraph = SubgraphView(first_state, fcc)
-            pre_state.add_nodes_from(fcc)
-            for e in sgraph.edges():
-                pre_state.add_edge(e.src, e.src_conn, e.dst, e.dst_conn, e.data)
-            first_state.remove_nodes_from(fcc)
-        for e in sdfg.in_edges(first_state):
-            sdfg.add_edge(e.src, pre_state, e.data)
-            sdfg.remove_edge(e)
-        sdfg.add_edge(pre_state, first_state, InterstateEdge())
+        if len(first_cc) > 1:
+            pre_state = sdfg.add_state(f"pre_{first_state.label}")
+            for fcc in first_cc:
+                if first_access in fcc:
+                    continue
+                sgraph = SubgraphView(first_state, fcc)
+                pre_state.add_nodes_from(fcc)
+                for e in sgraph.edges():
+                    pre_state.add_edge(e.src, e.src_conn, e.dst, e.dst_conn, e.data)
+                first_state.remove_nodes_from(fcc)
+            for e in sdfg.in_edges(first_state):
+                sdfg.add_edge(e.src, pre_state, e.data)
+                sdfg.remove_edge(e)
+            sdfg.add_edge(pre_state, first_state, InterstateEdge())
 
         # Split the non-matching CCs of the second state to a post-state.
-        post_state = sdfg.add_state(f"post_{second_state.label}")
         second_cc = [cc_nodes for cc_nodes in nx.weakly_connected_components(second_state._nx)]
-        for scc in second_cc:
-            if second_access in scc:
-                continue
-            sgraph = SubgraphView(second_state, scc)
-            post_state.add_nodes_from(scc)
-            for e in sgraph.edges():
-                post_state.add_edge(e.src, e.src_conn, e.dst, e.dst_conn, e.data)
-            second_state.remove_nodes_from(scc)
-        for e in sdfg.out_edges(second_state):
-            sdfg.add_edge(post_state, e.dst, e.data)
-            sdfg.remove_edge(e)
-        sdfg.add_edge(second_state, post_state, InterstateEdge())
+        if len(second_cc) > 1:
+            post_state = sdfg.add_state(f"post_{second_state.label}")
+            for scc in second_cc:
+                if second_access in scc:
+                    continue
+                sgraph = SubgraphView(second_state, scc)
+                post_state.add_nodes_from(scc)
+                for e in sgraph.edges():
+                    post_state.add_edge(e.src, e.src_conn, e.dst, e.dst_conn, e.data)
+                second_state.remove_nodes_from(scc)
+            for e in sdfg.out_edges(second_state):
+                sdfg.add_edge(post_state, e.dst, e.data)
+                sdfg.remove_edge(e)
+            sdfg.add_edge(second_state, post_state, InterstateEdge())
         
         # Apply StateFusion on first state and second state.
         StateFusion.apply_to(sdfg, first_state=first_state, second_state=second_state)
