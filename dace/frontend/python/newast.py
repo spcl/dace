@@ -3087,7 +3087,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     # Skip error if the arrays are defined exactly in the same way.
                     # Change target to a full-range subscript.
                     target = ast.parse(f"{name}[:]").body[0].value
-                    assert(isinstance(target, ast.Subscript))
+                    assert isinstance(target, ast.Subscript)
                 else:
                     raise DaceSyntaxError(self, target, 'Cannot reassign value to variable "{}"'.format(name))
 

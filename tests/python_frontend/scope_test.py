@@ -26,10 +26,10 @@ def test_reassignment_simple():
     sdfg = reassignment_simple.to_sdfg(simplify=False)
     func = sdfg.compile()
     val = func(a=A, b=B)
-    assert(np.allclose(val, ref))
+    assert np.allclose(val, ref)
 
     val = reassignment_simple(A, B)
-    assert(np.allclose(val, ref))
+    assert np.allclose(val, ref)
 
 
 def test_reassignment_if():
@@ -50,14 +50,14 @@ def test_reassignment_if():
     sdfg = reassignment_if.to_sdfg(simplify=False)
     func = sdfg.compile()
     val0 = func(a=A, b=B, c=2)
-    assert(np.allclose(val0, ref0))
+    assert np.allclose(val0, ref0)
     val1 = func(a=A, b=B, c=4)
-    assert(np.allclose(val1, ref1))
+    assert np.allclose(val1, ref1)
 
     val0 = reassignment_if(A, B, 2)
-    assert(np.allclose(val0, ref0))
+    assert np.allclose(val0, ref0)
     val1 = reassignment_if(A, B, 4)
-    assert(np.allclose(val1, ref1))
+    assert np.allclose(val1, ref1)
 
 
 def test_reassignment_for():
@@ -76,16 +76,16 @@ def test_reassignment_for():
     sdfg = reassignment_for.to_sdfg(simplify=False)
     func = sdfg.compile()
     val = func(a=A, b=B)
-    assert(np.allclose(val, ref))
+    assert np.allclose(val, ref)
 
     sdfg = reassignment_for.to_sdfg(simplify=True)
     sdfg.view()
     func = sdfg.compile()
     val = func(a=A, b=B)
-    assert(np.allclose(val, ref))
+    assert np.allclose(val, ref)
 
     val = reassignment_for(A, B)
-    assert(np.allclose(val, ref))
+    assert np.allclose(val, ref)
 
 
 def test_reassignment_while():
@@ -106,10 +106,10 @@ def test_reassignment_while():
     sdfg = reassignment_while.to_sdfg(simplify=False)
     func = sdfg.compile()
     val = func(a=A, b=B)
-    assert(np.allclose(val, ref))
+    assert np.allclose(val, ref)
 
     val = reassignment_while(A, B)
-    assert(np.allclose(val, ref))
+    assert np.allclose(val, ref)
 
 
 if __name__ == "__main__":
