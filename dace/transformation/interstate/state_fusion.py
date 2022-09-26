@@ -171,7 +171,7 @@ class StateFusion(transformation.MultiStateTransformation):
         return True
     
     @staticmethod
-    def _basic_check(graph, first_state, second_state):
+    def _basic_check(graph, first_state, second_state, permissive=False):
 
         out_edges = graph.out_edges(first_state)
         in_edges = graph.in_edges(first_state)
@@ -222,39 +222,40 @@ class StateFusion(transformation.MultiStateTransformation):
                 if dst == second_state:
                     return False
         
-        # Strict mode that inhibits state fusion if Python callbacks are involved
-        if Config.get_bool('frontend', 'dont_fuse_callbacks'):
-            for node in (first_state.data_nodes() + second_state.data_nodes()):
-                if node.data == '__pystate':
-                    return False
+        if not permissive:
+            # Strict mode that inhibits state fusion if Python callbacks are involved
+            if Config.get_bool('frontend', 'dont_fuse_callbacks'):
+                for node in (first_state.data_nodes() + second_state.data_nodes()):
+                    if node.data == '__pystate':
+                        return False
 
-        # NOTE: This is quick fix for MPI Waitall (probably also needed for
-        # Wait), until we have a better SDFG representation of the buffer
-        # dependencies.
-        try:
-            next(node for node in first_state.nodes()
-                    if (isinstance(node, nodes.LibraryNode) and type(node).__name__ == 'Waitall')
-                    or node.label == '_Waitall_')
-            return False
-        except StopIteration:
-            pass
-        try:
-            next(node for node in second_state.nodes()
-                    if (isinstance(node, nodes.LibraryNode) and type(node).__name__ == 'Waitall')
-                    or node.label == '_Waitall_')
-            return False
-        except StopIteration:
-            pass
+            # NOTE: This is quick fix for MPI Waitall (probably also needed for
+            # Wait), until we have a better SDFG representation of the buffer
+            # dependencies.
+            try:
+                next(node for node in first_state.nodes()
+                        if (isinstance(node, nodes.LibraryNode) and type(node).__name__ == 'Waitall')
+                        or node.label == '_Waitall_')
+                return False
+            except StopIteration:
+                pass
+            try:
+                next(node for node in second_state.nodes()
+                        if (isinstance(node, nodes.LibraryNode) and type(node).__name__ == 'Waitall')
+                        or node.label == '_Waitall_')
+                return False
+            except StopIteration:
+                pass
 
-        # If second state has other input edges, there might be issues
-        # Exceptions are when none of the states contain dataflow, unless
-        # the first state is an initial state (in which case the new initial
-        # state would be ambiguous).
-        first_in_edges = graph.in_edges(first_state)
-        second_in_edges = graph.in_edges(second_state)
-        if ((not second_state.is_empty() or not first_state.is_empty() or len(first_in_edges) == 0)
-                and len(second_in_edges) != 1):
-            return False
+            # If second state has other input edges, there might be issues
+            # Exceptions are when none of the states contain dataflow, unless
+            # the first state is an initial state (in which case the new initial
+            # state would be ambiguous).
+            first_in_edges = graph.in_edges(first_state)
+            second_in_edges = graph.in_edges(second_state)
+            if ((not second_state.is_empty() or not first_state.is_empty() or len(first_in_edges) == 0)
+                    and len(second_in_edges) != 1):
+                return False
         
         return True
     
@@ -455,281 +456,17 @@ class StateFusion(transformation.MultiStateTransformation):
         first_state: SDFGState = self.first_state
         second_state: SDFGState = self.second_state
 
-        out_edges = graph.out_edges(first_state)
-        in_edges = graph.in_edges(first_state)
-
-        # First state must have only one output edge (with dst the second
-        # state).
-        if len(out_edges) != 1:
+        if not self._basic_check(graph, first_state, second_state, permissive):
             return False
-        # If both states have more than one incoming edge, some control flow
-        # may become ambiguous
-        if len(in_edges) > 1 and graph.in_degree(second_state) > 1:
-            return False
-        # The interstate edge must not have a condition.
-        if not out_edges[0].data.is_unconditional():
-            return False
-        # The interstate edge may have assignments, as long as there are input
-        # edges to the first state that can absorb them.
-        if out_edges[0].data.assignments:
-            if not in_edges:
-                return False
-            # Fail if symbol is set before the state to fuse
-            new_assignments = set(out_edges[0].data.assignments.keys())
-            if any((new_assignments & set(e.data.assignments.keys())) for e in in_edges):
-                return False
-            # Fail if symbol is used in the dataflow of that state
-            if len(new_assignments & first_state.free_symbols) > 0:
-                return False
-            # Fail if assignments have free symbols that are updated in the
-            # first state
-            freesyms = out_edges[0].data.free_symbols
-            if freesyms and any(n.data in freesyms for n in first_state.nodes()
-                                if isinstance(n, nodes.AccessNode) and first_state.in_degree(n) > 0):
-                return False
-            # Fail if symbols assigned on the first edge are free symbols on the
-            # second edge
-            symbols_used = set(out_edges[0].data.free_symbols)
-            for e in in_edges:
-                if e.data.assignments.keys() & symbols_used:
-                    return False
-                # Also fail in the inverse; symbols assigned on the second edge are free symbols on the first edge
-                if new_assignments & set(e.data.free_symbols):
-                    return False
-
-        # There can be no state that have output edges pointing to both the
-        # first and the second state. Such a case will produce a multi-graph.
-        for src, _, _ in in_edges:
-            for _, dst, _ in graph.out_edges(src):
-                if dst == second_state:
-                    return False
 
         if not permissive:
-            # Strict mode that inhibits state fusion if Python callbacks are involved
-            if Config.get_bool('frontend', 'dont_fuse_callbacks'):
-                for node in (first_state.data_nodes() + second_state.data_nodes()):
-                    if node.data == '__pystate':
-                        return False
-
-            # NOTE: This is quick fix for MPI Waitall (probably also needed for
-            # Wait), until we have a better SDFG representation of the buffer
-            # dependencies.
-            try:
-                next(node for node in first_state.nodes()
-                     if (isinstance(node, nodes.LibraryNode) and type(node).__name__ == 'Waitall')
-                     or node.label == '_Waitall_')
-                return False
-            except StopIteration:
-                pass
-            try:
-                next(node for node in second_state.nodes()
-                     if (isinstance(node, nodes.LibraryNode) and type(node).__name__ == 'Waitall')
-                     or node.label == '_Waitall_')
-                return False
-            except StopIteration:
-                pass
-
-            # If second state has other input edges, there might be issues
-            # Exceptions are when none of the states contain dataflow, unless
-            # the first state is an initial state (in which case the new initial
-            # state would be ambiguous).
-            first_in_edges = graph.in_edges(first_state)
-            second_in_edges = graph.in_edges(second_state)
-            if ((not second_state.is_empty() or not first_state.is_empty() or len(first_in_edges) == 0)
-                    and len(second_in_edges) != 1):
-                return False
 
             # Get connected components.
             first_cc = [cc_nodes for cc_nodes in nx.weakly_connected_components(first_state._nx)]
             second_cc = [cc_nodes for cc_nodes in nx.weakly_connected_components(second_state._nx)]
 
-            # Find source/sink (data) nodes
-            first_input = {node for node in first_state.source_nodes() if isinstance(node, nodes.AccessNode)}
-            first_output = {
-                node
-                for node in first_state.scope_children()[None]
-                if isinstance(node, nodes.AccessNode) and node not in first_input
-            }
-            second_input = {node for node in second_state.source_nodes() if isinstance(node, nodes.AccessNode)}
-            second_output = {
-                node
-                for node in second_state.scope_children()[None]
-                if isinstance(node, nodes.AccessNode) and node not in second_input
-            }
-
-            # Find source/sink (data) nodes by connected component
-            first_cc_input = [cc.intersection(first_input) for cc in first_cc]
-            first_cc_output = [cc.intersection(first_output) for cc in first_cc]
-            second_cc_input = [cc.intersection(second_input) for cc in second_cc]
-            second_cc_output = [cc.intersection(second_output) for cc in second_cc]
-
-            # Apply transformation in case all paths to the second state's
-            # nodes go through the same access node, which implies sequential
-            # behavior in SDFG semantics.
-            first_output_names = {node.data for node in first_output}
-            second_input_names = {node.data for node in second_input}
-
-            # If any second input appears more than once, fail
-            if len(second_input) > len(second_input_names):
+            if not self._cc_check(first_state, first_cc, second_state, second_cc):
                 return False
-
-            # If any first output that is an input to the second state
-            # appears in more than one CC, fail
-            matches = first_output_names & second_input_names
-            for match in matches:
-                cc_appearances = 0
-                for cc in first_cc_output:
-                    if len([n for n in cc if n.data == match]) > 0:
-                        cc_appearances += 1
-                if cc_appearances > 1:
-                    return False
-
-            # Recreate fused connected component correspondences, and then
-            # check for hazards
-            resulting_ccs: List[CCDesc] = StateFusion.find_fused_components(first_cc_input, first_cc_output,
-                                                                            second_cc_input, second_cc_output)
-
-            # Check for data races
-            for fused_cc in resulting_ccs:
-                # Write-Write hazard - data is output of both first and second
-                # states, without a read in between
-                write_write_candidates = ((fused_cc.first_outputs & fused_cc.second_outputs) - fused_cc.second_inputs)
-
-                # Find the leaf (topological) instances of the matches
-                order = [
-                    x for x in reversed(list(nx.topological_sort(first_state._nx)))
-                    if isinstance(x, nodes.AccessNode) and x.data in fused_cc.first_outputs
-                ]
-                # Those nodes will be the connection points upon fusion
-                match_nodes: Dict[nodes.AccessNode, nodes.AccessNode] = {
-                    next(n for n in order
-                         if n.data == match): next(n for n in fused_cc.second_input_nodes if n.data == match)
-                    for match in (fused_cc.first_outputs
-                                  & fused_cc.second_inputs)
-                }
-
-                # If we have potential candidates, check if there is a
-                # path from the first write to the second write (in that
-                # case, there is no hazard):
-                for cand in write_write_candidates:
-                    nodes_first = [n for n in first_output if n.data == cand]
-                    nodes_second = [n for n in second_output if n.data == cand]
-
-                    # If there is a path for the candidate that goes through
-                    # the match nodes in both states, there is no conflict
-                    if not self._check_paths(first_state, second_state, match_nodes, nodes_first, nodes_second,
-                                             second_input, False, False):
-                        return False
-                # End of write-write hazard check
-
-                first_inout = fused_cc.first_inputs | fused_cc.first_outputs
-                for other_cc in resulting_ccs:
-                    # NOTE: Special handling for `other_cc is fused_cc`
-                    if other_cc is fused_cc:
-                        # Checking for potential Read-Write data races
-                        for d in first_inout:
-                            if d in other_cc.second_outputs:
-                                nodes_second = [n for n in second_output if n.data == d]
-                                # Read-Write race
-                                if d in fused_cc.first_inputs:
-                                    nodes_first = [n for n in first_input if n.data == d]
-                                else:
-                                    nodes_first = []
-                                for n2 in nodes_second:
-                                    for e in second_state.in_edges(n2):
-                                        path = second_state.memlet_path(e)
-                                        src = path[0].src
-                                        if src in second_input and src.data in fused_cc.first_outputs:
-                                            for n1 in fused_cc.first_output_nodes:
-                                                if n1.data == src.data:
-                                                    for n0 in nodes_first:
-                                                        if not nx.has_path(first_state._nx, n0, n1):
-                                                            return False
-                                # Read-write hazard where an access node is connected
-                                # to more than one output at once: (a) -> (b)  |  (d) -> [code] -> (d)
-                                #                                     \-> (c)  |
-                                # in the first state, and the same memory is inout in the second state
-                                # All paths need to lead to `src`
-                                if not self._check_all_paths(first_state, second_state, match_nodes, nodes_first,
-                                                             nodes_second, True, False):
-                                    return False
-
-                        continue
-                    # If an input/output of a connected component in the first
-                    # state is an output of another connected component in the
-                    # second state, we have a potential data race (Read-Write
-                    # or Write-Write)
-                    for d in first_inout:
-                        if d in other_cc.second_outputs:
-                            # Check for intersection (if None, fusion is ok)
-                            nodes_second = [n for n in second_output if n.data == d]
-                            # Read-Write race
-                            if d in fused_cc.first_inputs:
-                                nodes_first = [n for n in first_input if n.data == d]
-                                if StateFusion.memlets_intersect(first_state, nodes_first, True, second_state,
-                                                                 nodes_second, False):
-                                    return False
-                            # Write-Write race
-                            if d in fused_cc.first_outputs:
-                                nodes_first = [n for n in first_output if n.data == d]
-                                if StateFusion.memlets_intersect(first_state, nodes_first, False, second_state,
-                                                                 nodes_second, False):
-                                    return False
-                    # End of data race check
-
-                # Read-after-write dependencies: if there is an output of the
-                # second state that is an input of the first, ensure all paths
-                # from the input of the first state lead to the output.
-                # Otherwise, there may be a RAW due to topological sort or
-                # concurrency.
-                second_inout = ((fused_cc.first_inputs | fused_cc.first_outputs) & fused_cc.second_outputs)
-                for inout in second_inout:
-                    nodes_first = [n for n in match_nodes if n.data == inout]
-                    if any(first_state.out_degree(n) > 0 for n in nodes_first):
-                        return False
-
-                    # If we have potential candidates, check if there is a
-                    # path from the first read to the second write (in that
-                    # case, there is no hazard):
-                    nodes_first = {
-                        n
-                        for n in fused_cc.first_input_nodes
-                        | fused_cc.first_output_nodes if n.data == inout
-                    }
-                    nodes_second = {n for n in fused_cc.second_output_nodes if n.data == inout}
-
-                    # If there is a path for the candidate that goes through
-                    # the match nodes in both states, there is no conflict
-                    if not self._check_paths(first_state, second_state, match_nodes, nodes_first, nodes_second,
-                                             second_input, True, False):
-                        return False
-
-                # End of read-write hazard check
-
-                # Read-after-write dependencies: if there is more than one first
-                # output with the same data, make sure it can be unambiguously
-                # connected to the second state
-                if (len(fused_cc.first_output_nodes) > len(fused_cc.first_outputs)):
-                    for inpnode in fused_cc.second_input_nodes:
-                        found = None
-                        for outnode in fused_cc.first_output_nodes:
-                            if outnode.data != inpnode.data:
-                                continue
-                            if StateFusion.memlets_intersect(first_state, [outnode], False, second_state, [inpnode],
-                                                             True):
-                                # If found more than once, either there is a
-                                # path from one to another or it is ambiguous
-                                if found is not None:
-                                    if nx.has_path(first_state.nx, outnode, found):
-                                        # Found is a descendant, continue
-                                        continue
-                                    elif nx.has_path(first_state.nx, found, outnode):
-                                        # New node is a descendant, set as found
-                                        found = outnode
-                                    else:
-                                        # No path: ambiguous match
-                                        return False
-                                found = outnode
 
         # Do not fuse FPGA and NON-FPGA states (unless one of them is empty)
         if first_state.number_of_nodes() > 0 and second_state.number_of_nodes() > 0 and sdutil.is_fpga_kernel(
@@ -855,9 +592,10 @@ class StateFusion(transformation.MultiStateTransformation):
 class SmartStateFusion(transformation.MultiStateTransformation):
     """ Implements the smart-state-fusion transformation.
 
-        State-fusion takes two states that are connected through a single edge,
-        and fuses them into one state. Smart-state-fusion will dynamically split states with multiple connected
-        components
+        State-fusion takes two states that are connected through a single edge, and fuses them into one state. However,
+        applying state-fusion may fail when there are multiple connected components (CCs), even if there is a way to
+        fuse some of the CCs. In such cases, smart-state-fusion finds a pair of CCs from the candidate states that can
+        be fused and splits the rest CCs to pre- and post-states, so that state-fusion can apply.
     """
 
     first_state = transformation.PatternNode(sdfg.SDFGState)
@@ -879,11 +617,19 @@ class SmartStateFusion(transformation.MultiStateTransformation):
 
         if not StateFusion._basic_check(graph, first_state, second_state):
             return False
+
+        # Do not fuse FPGA and NON-FPGA states (unless one of them is empty)
+        if first_state.number_of_nodes() > 0 and second_state.number_of_nodes() > 0 and sdutil.is_fpga_kernel(
+                sdfg, first_state) != sdutil.is_fpga_kernel(sdfg, second_state):
+            return False
         
         # Get connected components.
         first_cc = [cc_nodes for cc_nodes in nx.weakly_connected_components(first_state._nx)]
         second_cc = [cc_nodes for cc_nodes in nx.weakly_connected_components(second_state._nx)]
 
+        # If any combination between one of the first state's CC and one of the second state's CC, the transformation
+        # can be applied. This is a greedy approach that could be improved by finding all applicable combinations and
+        # choosing the best one based on some metric.
         for fcc in first_cc:
             for scc in second_cc:
                 if StateFusion._cc_check(first_state, [fcc], second_state, [scc]):
@@ -899,6 +645,7 @@ class SmartStateFusion(transformation.MultiStateTransformation):
         second_state: SDFGState = self.second_state
         second_access: nodes.AccessNode = self.second_access
 
+        # Split the non-matching CCs of the first state to a pre-state.
         pre_state = sdfg.add_state(f"pre_{first_state.label}")
         first_cc = [cc_nodes for cc_nodes in nx.weakly_connected_components(first_state._nx)]
         for fcc in first_cc:
@@ -914,6 +661,7 @@ class SmartStateFusion(transformation.MultiStateTransformation):
             sdfg.remove_edge(e)
         sdfg.add_edge(pre_state, first_state, InterstateEdge())
 
+        # Split the non-matching CCs of the second state to a post-state.
         post_state = sdfg.add_state(f"post_{second_state.label}")
         second_cc = [cc_nodes for cc_nodes in nx.weakly_connected_components(second_state._nx)]
         for scc in second_cc:
@@ -928,7 +676,6 @@ class SmartStateFusion(transformation.MultiStateTransformation):
             sdfg.add_edge(post_state, e.dst, e.data)
             sdfg.remove_edge(e)
         sdfg.add_edge(second_state, post_state, InterstateEdge())
-            
+        
+        # Apply StateFusion on first state and second state.
         StateFusion.apply_to(sdfg, first_state=first_state, second_state=second_state)
-
-
