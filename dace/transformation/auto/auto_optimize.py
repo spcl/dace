@@ -39,7 +39,8 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
                 stencil: bool = False,
                 stencil_tile=None,
                 permutations_only: bool = True,
-                expand_reductions: bool = False) -> None:
+                expand_reductions: bool = False,
+                allow_arrays: bool = True) -> None:
     '''
     Greedily fuses maps of an SDFG or graph, operating in-place.
     :param graph_or_subgraph: SDFG, SDFGState or Subgraph
@@ -56,7 +57,8 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
         # If we have an SDFG, recurse into graphs
         graph_or_subgraph.simplify(validate_all=validate_all)
         # MapFusion for trivial cases
-        graph_or_subgraph.apply_transformations_repeated(MapFusion, validate_all=validate_all)
+        graph_or_subgraph.apply_transformations_repeated(MapFusion, {'allow_arrays': allow_arrays},
+                                                         validate_all=validate_all)
         # recurse into graphs
         for graph in graph_or_subgraph.nodes():
 
@@ -73,7 +75,7 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
         sdfg, graph, subgraph = None, None, None
         if isinstance(graph_or_subgraph, SDFGState):
             sdfg = graph_or_subgraph.parent
-            sdfg.apply_transformations_repeated(MapFusion, validate_all=validate_all)
+            sdfg.apply_transformations_repeated(MapFusion, {'allow_arrays': allow_arrays}, validate_all=validate_all)
             graph = graph_or_subgraph
             subgraph = SubgraphView(graph, graph.nodes())
         else:
@@ -83,6 +85,7 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
 
         # create condition function object
         fusion_condition = CompositeFusion()
+        fusion_condition.allow_arrays = allow_arrays
         fusion_condition.setup_match(SubgraphView(graph, graph.nodes()))
 
         # within SDFGState: greedily enumerate fusible components
@@ -122,6 +125,7 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
             if len(map_entries) > 1:
                 current_subgraph = xfsh.subgraph_from_maps(sdfg, graph, map_entries)
                 cf = CompositeFusion()
+                cf.allow_arrays = allow_arrays
                 cf.setup_match(current_subgraph)
                 # transfer settings
                 cf.allow_tiling = fusion_condition.allow_tiling
@@ -142,7 +146,8 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
                             stencil=stencil,
                             stencil_tile=stencil_tile,
                             permutations_only=permutations_only,
-                            expand_reductions=expand_reductions)
+                            expand_reductions=expand_reductions,
+                            allow_arrays=allow_arrays)
 
         for node in graph_or_subgraph.nodes():
             if isinstance(node, nodes.NestedSDFG):
@@ -153,7 +158,8 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
                             stencil_tile=stencil_tile,
                             recursive=recursive,
                             permutations_only=permutations_only,
-                            expand_reductions=expand_reductions)
+                            expand_reductions=expand_reductions,
+                            allow_arrays=allow_arrays)
 
         if applied_transformations > 0:
             if debugprint:
@@ -533,24 +539,29 @@ def auto_optimize(sdfg: SDFG,
     # Collapse maps and eliminate trivial dimensions
     sdfg.simplify()
     sdfg.apply_transformations_repeated(MapCollapse, validate=False, validate_all=validate_all)
-
-    # Apply GPU transformations and set library node implementations
-
-    if device == dtypes.DeviceType.GPU:
-        sdfg.apply_gpu_transformations()
-        sdfg.simplify()
-
-    # fuse subgraphs greedily
     sdfg.simplify()
 
+    # fuse subgraphs greedily
     greedy_fuse(sdfg, device=device, validate_all=validate_all)
-
     # fuse stencils greedily
     greedy_fuse(sdfg, device=device, validate_all=validate_all, recursive=False, stencil=True)
 
     # Move Loops inside Maps when possible
     from dace.transformation.interstate import MoveLoopIntoMap
     sdfg.apply_transformations_repeated([MoveLoopIntoMap])
+
+    # Apply GPU transformations
+    if device == dtypes.DeviceType.GPU:
+        from dace.transformation.dataflow import MapFission
+        sdfg.apply_transformations_repeated(MapFission)
+        sdfg.simplify()
+        sdfg.apply_transformations_repeated(MapCollapse, validate=False, validate_all=validate_all)
+        sdfg.simplify()
+        sdfg.view()
+        greedy_fuse(sdfg, device=device, validate_all=validate_all, allow_arrays=False)
+        sdfg.simplify()
+        sdfg.apply_gpu_transformations()
+        sdfg.simplify()
 
     if device == dtypes.DeviceType.FPGA:
         # apply FPGA Transformations
