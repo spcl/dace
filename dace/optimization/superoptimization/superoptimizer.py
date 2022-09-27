@@ -137,8 +137,8 @@ class Superoptimizer(auto_tuner.AutoTuner):
 
         print(f"Tuning took {(tuning_end - tuning_start) / 60.0:.3f} minutes")
 
-        print('Profile:')
-        print(self._profile)
+        with open('profile.json', 'w') as proffp:
+            json.dump(self._profile, proffp)
 
         return sdfg
 
@@ -490,6 +490,8 @@ class Superoptimizer(auto_tuner.AutoTuner):
             end = time.time()
             print(f"Hypothesis took {end -start}, {process_time}")
             print(runtime, schedule_desc)
+            with open('profile.json', 'w') as proffp:
+                json.dump(self._profile, proffp)
 
             start = time.time()
 
