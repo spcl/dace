@@ -440,7 +440,7 @@ class MapFissionTest(unittest.TestCase):
         A = np.arange(10, dtype=np.int32)
         B = np.empty((10,), dtype=np.int32)
         sdfg(inp=A, out=B)
-        assert np.array_equal(A, B)
+        assert np.array_equal(A+1, B)
 
 
 
