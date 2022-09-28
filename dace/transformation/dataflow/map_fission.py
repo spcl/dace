@@ -455,9 +455,21 @@ class MapFission(transformation.SingleStateTransformation):
                     for edge in state.all_edges(node):
                         for e in state.memlet_tree(edge):
                             # Prepend map dimensions to memlet
-                            e.data.subset = subsets.Range([(pystr_to_symbolic(d) - r[0], pystr_to_symbolic(d) - r[0], 1)
-                                                           for d, r in zip(outer_map.params, outer_map.range)] +
-                                                          e.data.subset.ranges)
+                            # NOTE: Do this only for the subset corresponding to `node.data`. If the edge is copying
+                            # to/from another AccessNode, the other data may not need extra dimensions. For example, see
+                            # `test.transformations.mapfission_test.MapFissionTest.test_array_copy_outside_scope`.
+                            if e.data.data == node.data:
+                                if e.data.subset:
+                                    e.data.subset = subsets.Range([(pystr_to_symbolic(d) - r[0],
+                                                                    pystr_to_symbolic(d) - r[0], 1)
+                                                                   for d, r in zip(outer_map.params, outer_map.range)] +
+                                                                  e.data.subset.ranges)
+                            else:
+                                if e.data.other_subset:
+                                    e.data.other_subset = subsets.Range(
+                                        [(pystr_to_symbolic(d) - r[0], pystr_to_symbolic(d) - r[0], 1)
+                                         for d, r in zip(outer_map.params, outer_map.range)] +
+                                        e.data.other_subset.ranges)
 
         # If nested SDFG, reconnect nodes around map and modify memlets
         if self.expr_index == 1:
