@@ -22,7 +22,7 @@ from dace.properties import CodeBlock
 
 import ast_components
 from ast_components import *
-
+from ast_trasforms import *
 from typing import List, Tuple, Set
 
 
@@ -240,207 +240,35 @@ class NameMap(dict):
         return super().__setitem__(k, v)
 
 
-def iter_fields(node):
-    """
-    Yield a tuple of ``(fieldname, value)`` for each field in ``node._fields``
-    that is present on *node*.
-    """
-    if not hasattr(node, "_fields"):
-        a = 1
-    for field in node._fields:
-        try:
-            yield field, getattr(node, field)
-        except AttributeError:
-            pass
-
-
-def iter_child_nodes(node):
-    """
-    Yield all direct child nodes of *node*, that is, all fields that are nodes
-    and all items of fields that are lists of nodes.
-    """
-    #print("CLASS: ",node.__class__)
-    #if isinstance(node,DeclRefExpr):
-    #print("NAME: ", node.name)
-
-    for name, field in iter_fields(node):
-        #print("NASME:",name)
-        if isinstance(field, Node):
-            yield field
-        elif isinstance(field, list):
-            for item in field:
-                if isinstance(item, Node):
-                    yield item
-
-
-class NodeVisitor(object):
-    def visit(self, node):
-        # print(node.__class__.__name__)
-        method = 'visit_' + node.__class__.__name__
-        visitor = getattr(self, method, self.generic_visit)
-        return visitor(node)
-
-    def generic_visit(self, node):
-        """Called if no explicit visitor function exists for a node."""
-        for field, value in iter_fields(node):
-            if isinstance(value, list):
-                for item in value:
-                    if isinstance(item, Node):
-                        self.visit(item)
-            elif isinstance(value, Node):
-                self.visit(value)
-
-
-class NodeTransformer(NodeVisitor):
-    """
-    A :class:`NodeVisitor` subclass that walks the abstract syntax tree and
-    allows modification of nodes.
-
-    The `NodeTransformer` will walk the AST and use the return value of the
-    visitor methods to replace or remove the old node.  If the return value of
-    the visitor method is ``None``, the node will be removed from its location,
-    otherwise it is replaced with the return value.  The return value may be the
-    original node in which case no replacement takes place.
-
-    Here is an example transformer that rewrites all occurrences of name lookups
-    (``foo``) to ``data['foo']``::
-
-       class RewriteName(NodeTransformer):
-
-           def visit_Name(self, node):
-               return copy_location(Subscript(
-                   value=Name(id='data', ctx=Load()),
-                   slice=Index(value=Str(s=node.id)),
-                   ctx=node.ctx
-               ), node)
-
-    Keep in mind that if the node you're operating on has child nodes you must
-    either transform the child nodes yourself or call the :meth:`generic_visit`
-    method for the node first.
-
-    For nodes that were part of a collection of statements (that applies to all
-    statement nodes), the visitor may also return a list of nodes rather than
-    just a single node.
-
-    Usually you use the transformer like this::
-
-       node = YourTransformer().visit(node)
-    """
-    def as_list(self, x):
-        if isinstance(x, list):
-            return x
-        if x is None:
-            return []
-        return [x]
-
-    def generic_visit(self, node):
-        for field, old_value in iter_fields(node):
-            if isinstance(old_value, list):
-                new_values = []
-                for value in old_value:
-                    if isinstance(value, Node):
-                        value = self.visit(value)
-                        if value is None:
-                            continue
-                        elif not isinstance(value, Node):
-                            new_values.extend(value)
-                            continue
-                    new_values.append(value)
-                old_value[:] = new_values
-            elif isinstance(old_value, Node):
-                new_node = self.visit(old_value)
-                if new_node is None:
-                    delattr(node, field)
-                else:
-                    setattr(node, field, new_node)
-        return node
-
-
-class FindInputNodesVisitor(NodeVisitor):
-    def __init__(self):
-        self.nodes: List[Name_Node] = []
-
-    def visit_Name_Node(self, node: Name_Node):
-        self.nodes.append(node)
-
-    def visit_BinOp_Node(self, node: BinOp_Node):
-        if node.op == "=":
-            if isinstance(node.lval, Name_Node):
-                pass
-
-        else:
-            self.visit(node.lval)
-        self.visit(node.rval)
-
-
-class FindOutputNodesVisitor(NodeVisitor):
-    def __init__(self):
-        self.nodes: List[Name_Node] = []
-
-    def visit_BinOp_Node(self, node: BinOp_Node):
-        if node.op == "=":
-            if isinstance(node.lval, Name_Node):
-                self.nodes.append(node.lval)
-            elif isinstance(node.lval, Array_Subscript_Node):
-                self.nodes.append(node.lval.name)
-            self.visit(node.rval)
-
-
-# TODO rewrite this
-class CallToArray(NodeTransformer):
-    def __init__(self, funcs=[]):
-        self.funcs = funcs
-
-    def visit_Call_Expr_Node(self, node: Call_Expr_Node):
-
-        self.count = self.count + 1 if hasattr(self, "count") else 0
-        tmp = self.count
-        if node.name in [
-                "malloc", "exp", "pow", "sqrt", "cbrt", "max", "abs", "min",
-                "dace_sum", "dace_sign", "tanh"
-        ]:
-            args2 = []
-            for i in node.args:
-                arg = CallToArray(self.funcs).visit(i)
-                args2.append(arg)
-            node.args = args2
-            return node
-        if node.name in self.funcs:
-            args2 = []
-            if hasattr(node, "args"):
-                for i in node.args:
-                    arg = CallToArray(self.funcs).visit(i)
-                    args2.append(arg)
-            node.args = args2
-            return node
-        indices = [CallToArray(self.funcs).visit(i) for i in node.args]
-        return Array_Subscript_Node(name=node.name, indices=indices)
-
-
 class AST_translator:
     def __init__(self, ast: InternalFortranAst, source):
         self.tables = ast.tables
+        self.top_level = None
+        self.globalsdfg = None
+        self.functions_and_subroutines = ast.functions_and_subroutines
         self.name_mapping = NameMap()
         self.contexts = {}
+        self.libstates = []
         self.file_name = source
         self.all_array_names = []
         self.last_sdfg_states = {}
+        self.last_call_expression = {}
         self.ast_elements = {
             #WhileStmt: self.while2sdfg,
             #DoStmt: self.do2sdfg,
             #RetStmt: self.ret2sdfg,
             #IfStmt: self.ifstmt2sdfg,
             #ForStmt: self.forstmt2sdfg,
-            #BasicBlock: self.basicblock2sdfg,
+            Execution_Part_Node: self.basicblock2sdfg,
             #FunctionSubprogram: self.funcdecl2sdfg,
             #SubroutineSubprogram: self.subroutine2sdfg,
             BinOp_Node: self.binop2sdfg,
             Decl_Stmt_Node: self.declstmt2sdfg,
             Var_Decl_Node: self.vardecl2sdfg,
-            #Constant_Decl_Node: self.const2sdfg,
+            Constant_Decl_Node: self.const2sdfg,
             #Parm_Decl_Node: self.parmdecl2sdfg,
             #Type_Decl_Node: self.typedecl2sdfg,
-            #Call_Expr_Node: self.call2sdfg,
+            Call_Expr_Node: self.call2sdfg,
             #AllocList: self.alloclist2sdfg,
             #ContinueStmt: self.cont2sdfg,
             #GotoStmt: self.goto2sdfg,
@@ -502,11 +330,436 @@ class AST_translator:
             self.translate(i, sdfg)
         self.translate(node.main_program.execution_part.execution, sdfg)
 
+    def basicblock2sdfg(self, node: Execution_Part_Node, sdfg: SDFG):
+        for i in node.execution:
+            self.translate(i, sdfg)
+
+    def const2sdfg(self, node: Constant_Decl_Node, sdfg: SDFG):
+        # for i in node.__dict__:
+        #    print(i)
+        #    print(node.__getattribute__(i))
+        if self.contexts.get(sdfg.name) is None:
+            self.contexts[sdfg.name] = Context(name=sdfg.name)
+        if self.contexts[sdfg.name].constants.get(node.name) is None:
+            if isinstance(node.init, Int_Literal_Node) or isinstance(
+                    node.init, Real_Literal_Node):
+                self.contexts[sdfg.name].constants[node.name] = node.init.value
+            if isinstance(node.init, Name_Node):
+                self.contexts[sdfg.name].constants[node.name] = self.contexts[
+                    sdfg.name].constants[node.init.name]
+        datatype = self.get_dace_type(node.type)
+        if node.name not in sdfg.symbols:
+            sdfg.add_symbol(node.name, datatype)
+            if self.last_sdfg_states.get(sdfg) is None:
+                bstate = sdfg.add_state("SDFGbegin", is_start_state=True)
+                self.last_sdfg_states[sdfg] = bstate
+            substate = sdfg.add_state("Dummystate_" + node.name)
+            increment = TaskletWriter([], []).write_tasklet_code(node.init)
+
+            entry = {node.name: increment}
+            sdfg.add_edge(self.last_sdfg_states[sdfg], substate,
+                          dace.InterstateEdge(assignments=entry))
+            self.last_sdfg_states[sdfg] = substate
+
+    def subroutine2sdfg(self, node: Subroutine_Subprogram_Node, sdfg: SDFG):
+
+        if node.execution_part is None:
+            return
+
+        inputnodefinder = FindInputs()
+        inputnodefinder.visit(node)
+        input_vars = inputnodefinder.nodes
+        outputnodefinder = FindOutputs()
+        outputnodefinder.visit(node)
+        output_vars = outputnodefinder.nodes
+
+        parameters = node.args.copy()
+
+        new_sdfg = dace.SDFG(node.name.name)
+        substate = add_simple_state_to_sdfg(self, sdfg,
+                                            "state" + node.name.name)
+        variables_in_call = []
+        if self.last_call_expression.get(sdfg) is not None:
+            variables_in_call = self.last_call_expression[sdfg]
+
+        # Sanity check to make sure the parameter numbers match
+        if not ((len(variables_in_call) == len(parameters)) or
+                (len(variables_in_call) == len(parameters) + 1
+                 and not isinstance(node.result_type, Void))):
+            for i in variables_in_call:
+                print("VAR CALL: ", i)
+            for j in parameters:
+                print("LOCAL TO UPDATE: ", j)
+            raise ValueError(
+                "number of parameters does not match the function signature")
+
+        # creating new arrays for nested sdfg
+        inouts_in_new_sdfg = []
+
+        views = []
+        for variable_in_call in variables_in_call:
+            all_arrays = self.get_arrays_in_context(sdfg)
+
+            sdfg_name = self.name_mapping.get(sdfg).get(variable_in_call.name)
+            globalsdfg_name = self.name_mapping.get(self.globalsdfg).get(
+                variable_in_call.name)
+            matched = False
+            for array_name, array in all_arrays.items():
+                if array_name in [sdfg_name]:
+                    matched = True
+                    local_name = parameters[variables_in_call.index(
+                        variable_in_call)]
+                    self.name_mapping[new_sdfg][
+                        local_name.name] = new_sdfg._find_new_name(
+                            local_name.name)
+                    self.all_array_names.append(
+                        self.name_mapping[new_sdfg][local_name.name])
+
+                    inouts_in_new_sdfg.append(
+                        self.name_mapping[new_sdfg][local_name.name])
+
+                    indices = 0
+                    index_list = []
+                    shape = []
+                    tmp_node = variable_in_call
+                    strides = list(array.strides)
+                    offsets = list(array.offset)
+                    mysize = 1
+                    if isinstance(variable_in_call, Array_Subscript_Node):
+                        for i in variable_in_call.indices:
+                            if isinstance(i, ParDecl_Node):
+                                if i.type == "ALL":
+                                    shape.insert(0, array.shape[-indices - 1])
+                                    mysize = mysize * array.shape[-indices - 1]
+                                else:
+                                    raise NotImplementedError(
+                                        "Index in ParDecl should be ALL")
+                            else:
+                                index_list.append(i)
+                                strides.pop(-indices - 1)
+                                offsets.pop(-indices - 1)
+                        indices = indices + 1
+                        tmp_node = tmp_node.unprocessed_name
+                    if isinstance(variable_in_call, Name_Node):
+                        shape = list(array.shape)
+                    if shape == () or shape == (
+                            1, ) or shape == [] or shape == [1]:
+                        new_sdfg.add_scalar(
+                            self.name_mapping[new_sdfg][local_name.name],
+                            array.dtype, array.storage)
+                    else:
+                        if not isinstance(variable_in_call, Name_Node):
+                            viewname, view = sdfg.add_view(
+                                array_name + "_view_" + str(len(views)),
+                                shape,
+                                array.dtype,
+                                storage=array.storage,
+                                strides=strides,
+                                offset=offsets)
+                            from dace import subsets
+                            indices = []
+                            tmp_node = variable_in_call
+                            while isinstance(tmp_node, ArraySubscriptExpr):
+                                if isinstance(tmp_node.index, DeclRefExpr):
+                                    indices.append(self.name_mapping[sdfg][
+                                        tmp_node.index.name])
+                                elif isinstance(tmp_node.index, IntLiteral):
+                                    indices.append("".join(
+                                        map(str, tmp_node.index.value)))
+                                tmp_node = tmp_node.unprocessed_name
+                            all_indices = [None] * (len(array.shape) -
+                                                    len(indices)) + indices
+                            subset = subsets.Range([
+                                (i, i, 1) if i is not None else (1, s, 1)
+                                for i, s in zip(all_indices, array.shape)
+                            ])
+                            smallsubset = subsets.Range([(1, s, 1)
+                                                         for s in shape])
+
+                            memlet = dace.Memlet(
+                                f'{array_name}[{subset}]->{smallsubset}')
+                            memlet2 = dace.Memlet(
+                                f'{viewname}[{smallsubset}]->{subset}')
+                            r = substate.add_read(array_name)
+                            wv = substate.add_write(viewname)
+                            rv = substate.add_read(viewname)
+                            w = substate.add_write(array_name)
+                            substate.add_edge(r, None, wv, 'views',
+                                              copy.deepcopy(memlet))
+                            substate.add_edge(rv, 'views2', w, None,
+                                              copy.deepcopy(memlet2))
+
+                            views.append([array_name, wv, rv])
+
+                        new_sdfg.add_array(
+                            self.name_mapping[new_sdfg][local_name.name],
+                            shape,
+                            array.dtype,
+                            array.storage,
+                            strides=strides,
+                            offset=offsets)
+            if not matched:
+                for array_name, array in all_arrays.items():
+                    if array_name in [globalsdfg_name]:
+                        local_name = parameters[variables_in_call.index(
+                            variable_in_call)]
+                        self.name_mapping[new_sdfg][
+                            local_name.name] = find_new_array_name(
+                                self.all_array_names, local_name.name)
+                        self.all_array_names.append(
+                            self.name_mapping[new_sdfg][local_name.name])
+
+                        inouts_in_new_sdfg.append(
+                            self.name_mapping[new_sdfg][local_name.name])
+
+                        indices = 0
+                        tmp_node = variable_in_call
+                        while isinstance(tmp_node, ArraySubscriptExpr):
+                            indices += 1
+                            tmp_node = tmp_node.unprocessed_name
+
+                        shape = array.shape[indices:]
+
+                        if shape == () or shape == (1, ):
+                            new_sdfg.add_scalar(
+                                self.name_mapping[new_sdfg][local_name.name],
+                                array.dtype, array.storage)
+                        else:
+                            new_sdfg.add_array(
+                                self.name_mapping[new_sdfg][local_name.name],
+                                shape,
+                                array.dtype,
+                                array.storage,
+                                strides=array.strides,
+                                offset=array.offset)
+
+        # Preparing symbol dictionary for nested sdfg
+        sym_dict = {}
+        for i in sdfg.symbols:
+            sym_dict[i] = i
+        #print("FUNC: ",sym_dict)
+        #if sdfg is not self.globalsdfg:
+
+        write_names = node.execution_part.written_vars
+        read_names = node.execution_part.read_vars
+        not_found_write_names = []
+        not_found_read_names = []
+        for i in write_names:
+            if self.name_mapping[new_sdfg].get(i) is None:
+                not_found_write_names.append(i)
+        for i in read_names:
+            if self.name_mapping[new_sdfg].get(i) is None:
+                not_found_read_names.append(i)
+
+        for i in self.libstates:
+            self.name_mapping[new_sdfg][i] = find_new_array_name(
+                self.all_array_names, i)
+            self.all_array_names.append(self.name_mapping[new_sdfg][i])
+            inouts_in_new_sdfg.append(self.name_mapping[new_sdfg][i])
+            new_sdfg.add_scalar(self.name_mapping[new_sdfg][i],
+                                dace.int32,
+                                transient=False)
+        addedmemlets = []
+        globalmemlets = []
+        for i in not_found_read_names:
+            if i in self.module_vars:
+                if self.name_mapping[sdfg].get(i) is not None:
+                    self.name_mapping[new_sdfg][i] = find_new_array_name(
+                        self.all_array_names, i)
+                    addedmemlets.append(i)
+                    self.all_array_names.append(self.name_mapping[new_sdfg][i])
+                    inouts_in_new_sdfg.append(self.name_mapping[new_sdfg][i])
+                    array_in_global = sdfg.arrays[self.name_mapping[sdfg][i]]
+                    if isinstance(array_in_global, Scalar):
+                        new_sdfg.add_scalar(self.name_mapping[new_sdfg][i],
+                                            array_in_global.dtype,
+                                            transient=False)
+                    elif array_in_global.type == "Array":
+                        new_sdfg.add_array(self.name_mapping[new_sdfg][i],
+                                           array_in_global.shape,
+                                           array_in_global.dtype,
+                                           array_in_global.storage,
+                                           transient=False,
+                                           strides=array_in_global.strides,
+                                           offset=array_in_global.offset)
+                elif self.name_mapping[globalsdfg].get(i) is not None:
+                    self.name_mapping[new_sdfg][i] = find_new_array_name(
+                        self.all_array_names, i)
+                    globalmemlets.append(i)
+                    self.all_array_names.append(self.name_mapping[new_sdfg][i])
+                    inouts_in_new_sdfg.append(self.name_mapping[new_sdfg][i])
+                    array_in_global = globalsdfg.arrays[
+                        self.name_mapping[globalsdfg][i]]
+                    if isinstance(array_in_global, Scalar):
+                        new_sdfg.add_scalar(self.name_mapping[new_sdfg][i],
+                                            array_in_global.dtype,
+                                            transient=False)
+                    elif array_in_global.type == "Array":
+                        new_sdfg.add_array(self.name_mapping[new_sdfg][i],
+                                           array_in_global.shape,
+                                           array_in_global.dtype,
+                                           array_in_global.storage,
+                                           transient=False,
+                                           strides=array_in_global.strides,
+                                           offset=array_in_global.offset)
+        for i in not_found_write_names:
+            if i in not_found_read_names:
+                continue
+            if i in self.module_vars:
+                if self.name_mapping[sdfg].get(i) is not None:
+                    self.name_mapping[new_sdfg][i] = find_new_array_name(
+                        self.all_array_names, i)
+                    addedmemlets.append(i)
+                    self.all_array_names.append(self.name_mapping[new_sdfg][i])
+                    inouts_in_new_sdfg.append(self.name_mapping[new_sdfg][i])
+                    array = sdfg.arrays[self.name_mapping[sdfg][i]]
+                    if isinstance(array_in_global, Scalar):
+                        new_sdfg.add_scalar(self.name_mapping[new_sdfg][i],
+                                            array_in_global.dtype,
+                                            transient=False)
+                    elif array_in_global.type == "Array":
+                        new_sdfg.add_array(self.name_mapping[new_sdfg][i],
+                                           array_in_global.shape,
+                                           array_in_global.dtype,
+                                           array_in_global.storage,
+                                           transient=False,
+                                           strides=array_in_global.strides,
+                                           offset=array_in_global.offset)
+                elif self.name_mapping[globalsdfg].get(i) is not None:
+                    self.name_mapping[new_sdfg][i] = find_new_array_name(
+                        self.all_array_names, i)
+                    globalmemlets.append(i)
+                    self.all_array_names.append(self.name_mapping[new_sdfg][i])
+                    inouts_in_new_sdfg.append(self.name_mapping[new_sdfg][i])
+                    array = globalsdfg.arrays[self.name_mapping[globalsdfg][i]]
+                    if isinstance(array_in_global, Scalar):
+                        new_sdfg.add_scalar(self.name_mapping[new_sdfg][i],
+                                            array_in_global.dtype,
+                                            transient=False)
+                    elif array_in_global.type == "Array":
+                        new_sdfg.add_array(self.name_mapping[new_sdfg][i],
+                                           array_in_global.shape,
+                                           array_in_global.dtype,
+                                           array_in_global.storage,
+                                           transient=False,
+                                           strides=array_in_global.strides,
+                                           offset=array_in_global.offset)
+
+        #print(inouts_in_new_sdfg)
+
+        internal_sdfg = substate.add_nested_sdfg(new_sdfg,
+                                                 sdfg,
+                                                 inouts_in_new_sdfg,
+                                                 inouts_in_new_sdfg,
+                                                 symbol_mapping=sym_dict)
+        #if sdfg is not self.globalsdfg:
+        for i in self.libstates:
+            memlet = "0"
+            add_memlet_write(substate, self.name_mapping[sdfg][i],
+                             internal_sdfg, self.name_mapping[new_sdfg][i],
+                             memlet)
+            add_memlet_read(substate, self.name_mapping[sdfg][i],
+                            internal_sdfg, self.name_mapping[new_sdfg][i],
+                            memlet)
+
+        for i in variables_in_call:
+
+            local_name = parameters[variables_in_call.index(i)]
+            if self.name_mapping.get(sdfg).get(i.name) is not None:
+                var = sdfg.arrays.get(self.name_mapping[sdfg][i.name])
+                mapped_name = self.name_mapping[sdfg][i.name]
+            # TODO: FIx symbols in function calls
+            elif i.name in sdfg.symbols:
+                var = i.name
+                mapped_name = i.name
+            elif self.name_mapping.get(self.globalsdfg).get(
+                    i.name) is not None:
+                var = self.globalsdfg.arrays.get(
+                    self.name_mapping[self.globalsdfg][i.name])
+                mapped_name = self.name_mapping[self.globalsdfg][i.name]
+            else:
+                raise NameError("Variable name not found: " + i.name)
+
+            # print("Context change:",i.name," ",var.shape)
+            if not hasattr(var, "shape") or len(var.shape) == 0:
+                memlet = ""
+            elif (len(var.shape) == 1 and var.shape[0] == 1):
+                memlet = "0"
+            else:
+                memlet = generate_memlet(i, sdfg, self)
+            # print("MEMLET: "+memlet)
+            found = False
+            for elem in views:
+                if mapped_name == elem[0]:
+                    found = True
+                    memlet = subsets.Range([
+                        (1, s, 1) for s in sdfg.arrays[elem[1].label].shape
+                    ])
+                    substate.add_memlet_path(
+                        internal_sdfg,
+                        elem[2],
+                        src_conn=self.name_mapping[new_sdfg][local_name.name],
+                        memlet=dace.Memlet(expr=elem[1].label, subset=memlet))
+                    substate.add_memlet_path(
+                        elem[1],
+                        internal_sdfg,
+                        dst_conn=self.name_mapping[new_sdfg][local_name.name],
+                        memlet=dace.Memlet(expr=elem[1].label, subset=memlet))
+
+            if not found:
+                add_memlet_write(substate, mapped_name, internal_sdfg,
+                                 self.name_mapping[new_sdfg][local_name.name],
+                                 memlet)
+                add_memlet_read(substate, mapped_name, internal_sdfg,
+                                self.name_mapping[new_sdfg][local_name.name],
+                                memlet)
+
+        for i in addedmemlets:
+
+            memlet = generate_memlet(Name_Node(name=i), sdfg, self)
+            add_memlet_write(substate, self.name_mapping[sdfg][i],
+                             internal_sdfg, self.name_mapping[new_sdfg][i],
+                             memlet)
+            add_memlet_read(substate, self.name_mapping[sdfg][i],
+                            internal_sdfg, self.name_mapping[new_sdfg][i],
+                            memlet)
+        for i in globalmemlets:
+
+            memlet = generate_memlet(Name_Node(name=i), sdfg, self)
+            add_memlet_write(substate, self.name_mapping[self.globalsdfg][i],
+                             internal_sdfg, self.name_mapping[new_sdfg][i],
+                             memlet)
+            add_memlet_read(substate, self.name_mapping[self.globalsdfg][i],
+                            internal_sdfg, self.name_mapping[new_sdfg][i],
+                            memlet)
+
+        # make_nested_sdfg_with_context_change(sdfg, new_sdfg, node.name, used_vars, self)
+
+        if node.execution_part is not None:
+            for j in node.specification_part.uses:
+                for k in j.list:
+                    if self.contexts.get(new_sdfg.name) is None:
+                        self.contexts[new_sdfg.name] = Context(
+                            name=new_sdfg.name)
+                    if self.contexts[new_sdfg.name].constants.get(
+                            k) is None and self.contexts[
+                                self.globalsdfg.name].constants.get(
+                                    k) is not None:
+                        self.contexts[
+                            new_sdfg.name].constants[k] = self.contexts[
+                                self.globalsdfg.name].constants[k]
+
+                    print(k)
+                    pass
+            for j in node.specification_part.specifications:
+                self.declstmt2sdfg(j, new_sdfg)
+            self.translate(node.execution_part, new_sdfg)
+
     #TODO REWRITE THIS nicely
     def binop2sdfg(self, node: BinOp_Node, sdfg: SDFG):
         print(node)
 
-        outputnodefinder = FindOutputNodesVisitor()
+        outputnodefinder = FindOutputs()
         outputnodefinder.visit(node)
         output_vars = outputnodefinder.nodes
         output_names = []
@@ -520,7 +773,7 @@ class AST_translator:
                 output_names.append(mapped_name)
                 output_names_tasklet.append(i.name)
 
-        inputnodefinder = FindInputNodesVisitor()
+        inputnodefinder = FindInputs()
         inputnodefinder.visit(node)
         input_vars = inputnodefinder.nodes
         input_names = []
@@ -565,6 +818,140 @@ class AST_translator:
         # print("BINOPTASKLET:",text)
         tasklet.code = CodeBlock(text, dace.Language.Python)
 
+    def call2sdfg(self, node: Call_Expr_Node, sdfg: SDFG):
+        self.last_call_expression[sdfg] = node.args
+        match_found = False
+        rettype = "Int"
+        hasret = False
+        if node.name in self.functions_and_subroutines:
+            for i in self.top_level.function_definitions:
+                if i.name == node.name:
+                    self.function2sdfg(i, sdfg)
+                    return
+            for i in self.top_level.subroutine_definitions:
+                if i.name == node.name:
+                    self.subroutine2sdfg(i, sdfg)
+                    return
+            for j in self.top_level.modules:
+                for i in j.function_definitions:
+                    if i.name == node.name:
+                        self.function2sdfg(i, sdfg)
+                        return
+                for i in j.subroutine_definitions:
+                    if i.name == node.name:
+                        self.subroutine2sdfg(i, sdfg)
+                        return
+        else:
+            #TODO rewrite this
+            libstate = self.libraries.get(node.name)
+            if not isinstance(rettype, Void) and hasattr(node, "hasret"):
+                if node.hasret:
+                    hasret = True
+                    retval = node.args.pop(len(node.args) - 1)
+            if node.name == "free":
+                return
+            input_names_tasklet = {}
+            output_names_tasklet = []
+            input_names = []
+            output_names = []
+            special_list_in = {}
+            special_list_out = []
+            if libstate is not None:
+                #print("LIBSTATE:", libstate)
+                special_list_in[self.name_mapping[sdfg][libstate] +
+                                "_task"] = dace.pointer(
+                                    sdfg.arrays.get(self.name_mapping[sdfg]
+                                                    [libstate]).dtype)
+                special_list_out.append(self.name_mapping[sdfg][libstate] +
+                                        "_task_out")
+            used_vars = [
+                node for node in walk(node) if isinstance(node, Name_Node)
+            ]
+
+            for i in used_vars:
+                for j in sdfg.arrays:
+                    if self.name_mapping.get(sdfg).get(
+                            i.name) == j and j not in input_names:
+                        elem = sdfg.arrays.get(j)
+                        scalar = False
+                        if len(elem.shape) == 0:
+                            scalar = True
+                        elif (len(elem.shape) == 1 and elem.shape[0] == 1):
+                            scalar = True
+                        if not scalar and not node.name.name in [
+                                "fprintf", "printf"
+                        ]:
+                            #    print("ADDING!",
+                            #          not node.name.name in ["fprintf", "printf"],
+                            #          not scalar)
+                            output_names.append(j)
+                            output_names_tasklet.append(i.name)
+                        #print("HERE: ", elem.__class__, j, scalar,
+                        #      node.name.name)
+
+                        input_names_tasklet[i.name] = dace.pointer(elem.dtype)
+                        input_names.append(j)
+
+            output_names_changed = []
+            for o, o_t in zip(output_names, output_names_tasklet):
+                # changes=False
+                # for i,i_t in zip(input_names,input_names_tasklet):
+                #    if o_t==i_t:
+                #        var=sdfg.arrays.get(i)
+                #        if len(var.shape) == 0 or (len(var.shape) == 1 and var.shape[0] is 1):
+                output_names_changed.append(o_t + "_out")
+
+            node.location_line = self.tasklet_count
+            tw = TaskletWriter(output_names_tasklet.copy(),
+                               output_names_changed.copy())
+            if not isinstance(rettype, Void) and hasret:
+                special_list_in[retval.name] = dace.pointer(
+                    self.get_dace_type(rettype))
+                # special_list_in.append(retval.name)
+                special_list_out.append(retval.name + "_out")
+                text = tw.write_tasklet_code(
+                    BinOp_Node(lvalue=retval, op="=", rvalue=node)) + ";"
+
+            else:
+                text = tw.write_tasklet_code(node) + ";"
+            substate = add_simple_state_to_sdfg(
+                self, sdfg, "_state" + str(node.location_line) + "_" +
+                str(self.tasklet_count))
+            self.tasklet_count = self.tasklet_count + 1
+
+            tasklet = add_tasklet(substate, str(node.location_line), {
+                **input_names_tasklet,
+                **special_list_in
+            }, output_names_changed + special_list_out, "text")
+            if libstate is not None:
+                add_memlet_read(substate, self.name_mapping[sdfg][libstate],
+                                tasklet,
+                                self.name_mapping[sdfg][libstate] + "_task",
+                                "0")
+
+                add_memlet_write(
+                    substate, self.name_mapping[sdfg][libstate], tasklet,
+                    self.name_mapping[sdfg][libstate] + "_task_out", "0")
+            if not isinstance(rettype, Void) and hasret:
+                add_memlet_read(substate, self.name_mapping[sdfg][retval.name],
+                                tasklet, retval.name, "0")
+
+                add_memlet_write(substate,
+                                 self.name_mapping[sdfg][retval.name], tasklet,
+                                 retval.name + "_out", "0")
+
+            for i, j in zip(input_names, input_names_tasklet):
+                memlet_range = self.get_memlet_range(sdfg, used_vars, i, j)
+                add_memlet_read(substate, i, tasklet, j, memlet_range)
+
+            for i, j, k in zip(output_names, output_names_tasklet,
+                               output_names_changed):
+
+                memlet_range = self.get_memlet_range(sdfg, used_vars, i, j)
+                add_memlet_write(substate, i, tasklet, k, memlet_range)
+
+            setattr(tasklet, "code", CodeBlock(text, dace.Language.Python))
+
     def declstmt2sdfg(self, node: Decl_Stmt_Node, sdfg: SDFG):
         for i in node.vardecl:
             self.translate(i, sdfg)
@@ -589,9 +976,11 @@ class AST_translator:
             sizes = None
         # create and check name
         if self.name_mapping[sdfg].get(node.name) is not None:
-            raise ValueError("Name already defined in this scope")
+            return
+            #raise ValueError("Name already defined in this scope")
         if node.name in sdfg.symbols:
-            raise ValueError("Name already defined as symbol")
+            return
+            #raise ValueError("Name already defined as symbol")
         self.name_mapping[sdfg][node.name] = sdfg._find_new_name(node.name)
 
         if sizes is None:
@@ -626,13 +1015,18 @@ if __name__ == "__main__":
     own_ast = InternalFortranAst(ast, tables)
     #own_ast.list_tables()
     program = own_ast.create_ast(ast)
-    fd = []
-    program = CallToArray(fd).visit(program)
-    Ast2Sdfg = AST_translator(
+    functions_and_subroutines_builder = FindFunctionAndSubroutines()
+    functions_and_subroutines_builder.visit(program)
+    own_ast.functions_and_subroutines = functions_and_subroutines_builder.nodes
+    program = CallToArray(
+        functions_and_subroutines_builder.nodes).visit(program)
+    ast2sdfg = AST_translator(
         own_ast,
         "/mnt/c/Users/Alexwork/Desktop/Git/f2dace/tests/" + testname + ".f90")
     sdfg = SDFG("top_level")
-    Ast2Sdfg.translate(program, sdfg)
+    ast2sdfg.top_level = program
+    ast2sdfg.globalsdfg = sdfg
+    ast2sdfg.translate(program, sdfg)
 
     sdfg.validate()
     sdfg.compile()

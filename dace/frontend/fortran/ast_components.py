@@ -116,6 +116,11 @@ class Subroutine_Stmt_Node(Node):
     _fields = ('args', )
 
 
+class Function_Stmt_Node(Node):
+    _attributes = ('name', )
+    _fields = ('args', 'return')
+
+
 class Name_Node(Node):
     _attributes = ('name', 'type')
     _fields = ()
@@ -190,7 +195,7 @@ class Var_Decl_Node(Statement_Node):
     )
 
 
-class Dummy_Arg_List_Node(Node):
+class Arg_List_Node(Node):
     _fields = ('args', )
 
 
@@ -270,6 +275,11 @@ class Loop_Control_Node(Node):
         'cond',
         'iter',
     )
+
+
+class ParDecl_Node(Node):
+    _attributes = ('type', )
+    _fields = ('ranges', )
 
 
 # The following class is used to translate the fparser AST to our own AST of Fortran
@@ -361,6 +371,7 @@ class InternalFortranAst:
     def __init__(self, ast: Program, tables: SymbolTables):
         self.ast = ast
         self.tables = tables
+        self.functions_and_subroutines = []
         self.types = {
             "LOGICAL": "BOOL",
             "CHARACTER": "CHAR",
@@ -534,15 +545,14 @@ class InternalFortranAst:
         children = self.create_children(node)
 
         name = get_child(children, Subroutine_Stmt_Node)
-        specification = get_child(children, Specification_Part_Node)
+        specification_part = get_child(children, Specification_Part_Node)
         execution_part = get_child(children, Execution_Part_Node)
-        args = name.args
-        type = Void
-        return Subroutine_Subprogram_Node(name=name,
-                                          args=args,
-                                          specification=specification,
-                                          execution=execution_part,
-                                          type=type)
+        return_type = Void
+        return Subroutine_Subprogram_Node(name=name.name,
+                                          args=name.args,
+                                          specification_part=specification_part,
+                                          execution_part=execution_part,
+                                          type=return_type)
 
     def end_program_stmt(self, node):
         return node
@@ -553,9 +563,9 @@ class InternalFortranAst:
     def subroutine_stmt(self, node):
         children = self.create_children(node)
         name = get_child(children, Name_Node)
-        args = get_children(children, Dummy_Arg_List_Node)
+        args = get_child(children, Arg_List_Node)
         return Subroutine_Stmt_Node(name=name,
-                                    args=args,
+                                    args=args.args,
                                     line_number=node.item.span)
 
     def function_stmt(self, node):
@@ -913,7 +923,13 @@ class InternalFortranAst:
         return node
 
     def call_stmt(self, node):
-        return node
+        children = self.create_children(node)
+        name = get_child(children, Name_Node)
+        args = get_child(children, Arg_List_Node)
+        return Call_Expr_Node(name=name,
+                              args=args.args,
+                              type=None,
+                              line_number=node.item.span)
 
     def return_stmt(self, node):
         return node
@@ -923,7 +939,7 @@ class InternalFortranAst:
 
     def dummy_arg_list(self, node):
         children = self.create_children(node)
-        return Dummy_Arg_List_Node(args=children)
+        return Arg_List_Node(args=children)
 
     def attr_spec_list(self, node):
         return node
@@ -1050,7 +1066,8 @@ class InternalFortranAst:
         return Real_Literal_Node(value=node.string)
 
     def actual_arg_spec_list(self, node):
-        return node
+        children = self.create_children(node)
+        return Arg_List_Node(args=children)
 
     def initialization(self, node):
         return node
