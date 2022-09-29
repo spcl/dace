@@ -54,8 +54,7 @@ def test_scalar_to_symbol_in_nested_sdfg():
     
     sdfg = main_program.to_sdfg(simplify=False)
     sdfg.apply_transformations(GPUTransformSDFG)
-    out = np.empty((10,), dtype=np.int32)
-    sdfg(a=4, out=out)
+    out = sdfg(a=4)
     assert np.array_equal(out, np.array([0, 10] * 5, dtype=np.int32))
 
 
