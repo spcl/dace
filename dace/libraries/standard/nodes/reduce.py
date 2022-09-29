@@ -1086,11 +1086,11 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
 
     @staticmethod
     def expansion(node: 'Reduce', state: SDFGState, sdfg: SDFG):
-        '''
+        """
         :param node: the node to expand
         :param state: the state in which the node is in
         :param sdfg: the SDFG in which the node is in
-        '''
+        """
         node.validate(sdfg, state)
         inedge: graph.MultiConnectorEdge = state.in_edges(node)[0]
         outedge: graph.MultiConnectorEdge = state.out_edges(node)[0]
@@ -1114,10 +1114,13 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
             osqdim = [0]
 
         # Standardize and squeeze axes
-        axes = node.axes if node.axes else [i for i in range(len(inedge.data.subset))]
+        axes = node.axes if node.axes is not None else [i for i in range(len(inedge.data.subset))]
         axes = [axis for axis in axes if axis in isqdim]
 
-        assert node.identity is not None
+        if node.identity is None:
+            warnings.warn('Cannot use GPUAuto expansion: node.identity is None.')
+            return ExpandReducePure.expansion(node, state, sdfg)
+
 
         # call the planner script
         schedule = red_planner.get_reduction_schedule(raw_input_data, axes)
@@ -1157,7 +1160,7 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
                 input_subset.append('_o%d' % octr)
                 octr += 1
 
-        if (schedule.contiguous_dim):
+        if schedule.contiguous_dim:
             # we are reducing the contiguous dimension
 
             vectorize = schedule.vectorize
@@ -1259,7 +1262,7 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
             # we are reducing a non-contiguous dimension
 
             mini_warps = schedule.mini_warps
-            if (mini_warps):
+            if mini_warps:
                 num_mini_warps = schedule.num_mini_warps
 
                 nsdfg.add_scalar('acc', nsdfg.arrays['_in'].dtype, dtypes.StorageType.Register, True)
@@ -1325,7 +1328,7 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
                 nstate.add_memlet_path(accwrite, wr, dst_conn='__a', memlet=dace.Memlet('acc[0]'))
                 nstate.add_memlet_path(wr, wmx, bmx, omx, w, src_conn='__out', memlet=outm)
 
-            else:
+            else: # no mini-warps
 
                 vectorize = schedule.vectorize
 

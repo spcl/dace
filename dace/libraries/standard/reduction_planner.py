@@ -1,5 +1,5 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
-""" Helper function to compute GPU schedule for reduction node "auto" expansion. """
+""" Helper function to compute GPU schedule for reduction node "GPUAuto" expansion. """
 
 from dace.data import Array
 from typing import List
@@ -15,7 +15,8 @@ def get_reduction_schedule(in_array: Array,
                            warp_size=32,
                            wide_load_bytes=16):
     """
-    Computes a GPU reduction schedule depending on the input data's shape and the axes to reduce
+    Computes a data movement minimizing GPU reduction schedule depending on the input data shape and 
+    the axes to reduce.
 
     :param in_array: DaCe array describing the input data
     :param axes: List of all the axes to reduce
@@ -58,7 +59,7 @@ def get_reduction_schedule(in_array: Array,
         num_loaded_elements = wide_load_bytes // bytes
         schedule.vec_len = num_loaded_elements
 
-    # remove "fake" dimensions
+    # Remove degenerate (size 1) dimensions
     for i in range(len(in_array.shape)):
         if in_array.shape[i] != 1:
             shape.append(in_array.shape[i])
@@ -69,7 +70,7 @@ def get_reduction_schedule(in_array: Array,
                 if axes[j] > i:
                     axes[j] -= 1
 
-    # combine axes:
+    # Combine contiguous axes:
     combined_shape = []
     combined_axes = []
     combined_strides = []
@@ -149,6 +150,7 @@ def get_reduction_schedule(in_array: Array,
         pass
 
     # non-neighbouring multi-axes reduction not supported yet (e.g. reduce axes [0,2])
+    # --> TODO
     if len(axes) > 1:
         warnings.warn('Multi-axes reduction not supported yet. Falling back to pure expansion.')
         schedule.error = True
@@ -200,7 +202,7 @@ def get_reduction_schedule(in_array: Array,
                 schedule.grid.append(s)
 
         if use_mini_warps:
-            #check if we can use mini_warps
+            # Check if we can use mini_warps
             # i.e. check if warp is not filled and power of 2 (for now only works for powers of 2)
             if (schedule.block[0] < 32) == True and (schedule.block[0] & (schedule.block[0] - 1) == 0) == True:
                 schedule.mini_warps = True
