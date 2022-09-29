@@ -122,6 +122,21 @@ def test_assignment_to_nonexistent_variable():
         badprog.to_sdfg()
 
 
+def test_assign_return_symbols():
+
+    @dace.program
+    def assign_symbols():
+        a = 6
+        for i in range(10):
+            a = 5
+        a -= 1
+        return i, a
+    
+    result = assign_symbols()
+    a = result[1][0]
+    assert a == 4
+
+
 if __name__ == "__main__":
     test_single_target()
     test_single_target_parentheses()
@@ -133,3 +148,5 @@ if __name__ == "__main__":
 
     test_ann_assign_supported_type()
     test_assignment_to_nonexistent_variable()
+
+    test_assign_return_symbols()

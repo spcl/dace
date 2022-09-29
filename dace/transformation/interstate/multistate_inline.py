@@ -14,7 +14,7 @@ from dace import memlet, registry, sdfg as sd, Memlet, symbolic, dtypes, subsets
 from dace.frontend.python import astutils
 from dace.sdfg import nodes, propagation
 from dace.sdfg.graph import MultiConnectorEdge, SubgraphView
-from dace.sdfg import SDFG, SDFGState
+from dace.sdfg import InterstateEdge, SDFG, SDFGState
 from dace.sdfg import utils as sdutil, infer_types, propagation
 from dace.sdfg.replace import replace_datadesc_names
 from dace.transformation import transformation, helpers
@@ -356,7 +356,11 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
             sdfg.add_edge(e.src, source, e.data)
         for e in sdfg.out_edges(outer_state):
             for sink in sinks:
-                sdfg.add_edge(sink, e.dst, e.data)
+                sdfg.add_edge(sink, e.dst, dc(e.data))
+                # Redirect sink incoming edges with a `False` condition to e.dst (return statements)
+                for e2 in sdfg.in_edges(sink):
+                    if e2.data.condition_sympy() == False:
+                        sdfg.add_edge(e2.src, e.dst, InterstateEdge())
 
         # Modify start state as necessary
         if outer_start_state is outer_state:

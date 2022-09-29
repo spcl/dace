@@ -642,7 +642,8 @@ class ExpandGemvCuBLAS(ExpandTransformation):
         elif strides_a[1] == 1:
             lda = strides_a[0]
         else:
-            warnings.warn('Matrix must be contiguous in at least ' 'one dimension. Falling back to pure expansion.')
+            warnings.warn('Matrix must be contiguous in at least '
+                          'one dimension. Falling back to pure expansion.')
             return ExpandGemvPure.expansion(node, state, sdfg, m=m, n=n, **kwargs)
 
         trans = 'CUBLAS_OP_N' if transA else 'CUBLAS_OP_T'
@@ -653,7 +654,11 @@ class ExpandGemvCuBLAS(ExpandTransformation):
             warnings.warn('Vector GEMV not supported, falling back to pure')
             return ExpandGemvPure.expansion(node, state, sdfg, m=m, n=n, **kwargs)
 
-        func, ctype, runtimetype = blas_helpers.cublas_type_metadata(dtype)
+        try:
+            func, ctype, runtimetype = blas_helpers.cublas_type_metadata(dtype)
+        except TypeError as ex:
+            warnings.warn(f'{ex}. Falling back to pure expansion')
+            return ExpandGemvPure.expansion(node, state, sdfg, m=m, n=n, **kwargs)
         func += 'gemv'
         call_prefix = environments.cublas.cuBLAS.handle_setup_code(node)
         call_suffix = ''
@@ -739,7 +744,8 @@ class ExpandGemvOpenBLAS(ExpandTransformation):
         elif strides_a[1] == 1:
             lda = strides_a[0]
         else:
-            warnings.warn('Matrix must be contiguous in at least ' 'one dimension. Falling back to pure expansion.')
+            warnings.warn('Matrix must be contiguous in at least '
+                          'one dimension. Falling back to pure expansion.')
             return ExpandGemvPure.expansion(node, state, sdfg, m=m, n=n, **kwargs)
 
         layout = 'CblasColMajor'
@@ -751,7 +757,12 @@ class ExpandGemvOpenBLAS(ExpandTransformation):
             warnings.warn('Vector GEMV not supported, falling back to pure.')
             return ExpandGemvPure.expansion(node, state, sdfg, m=m, n=n, **kwargs)
 
-        func, ctype, runtimetype = blas_helpers.cublas_type_metadata(dtype)
+        try:
+            func, ctype, runtimetype = blas_helpers.cublas_type_metadata(dtype)
+        except TypeError as ex:
+            warnings.warn(f'{ex}. Falling back to pure expansion')
+            return ExpandGemvPure.expansion(node, state, sdfg, m=m, n=n, **kwargs)
+
         func = func.lower() + 'gemv'
 
         code = f"""cblas_{func}({layout}, {trans}, {m}, {n}, {node.alpha}, _A, {lda},
@@ -898,7 +909,8 @@ class Gemv(dace.sdfg.nodes.LibraryNode):
         a_rows = size_a[0] if not self.transA else size_a[1]
 
         if a_cols != size_x[0]:
-            raise ValueError(f"Columns of A ({a_cols}) don't match " f"size of x ({size_x[0]}).")
+            raise ValueError(f"Columns of A ({a_cols}) don't match "
+                             f"size of x ({size_x[0]}).")
 
         out_edges = state.out_edges(self)
         if len(out_edges) != 1:

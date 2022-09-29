@@ -40,15 +40,21 @@ class Subset(object):
             try:
                 for rb, re, orb, ore in zip(self.min_element_approx(), self.max_element_approx(),
                                             other.min_element_approx(), other.max_element_approx()):
+                    # NOTE: We first test for equality, which always returns True or False. If the equality test returns
+                    # False, then we test for less-equal and greater-equal, which may return an expression, leading to
+                    # TypeError. This is a workaround for the case where two expressions are the same or equal and
+                    # SymPy confirms this but fails to return True when testing less-equal and greater-equal.
 
                     # lower bound: first check whether symbolic positive condition applies
                     if not (len(rb.free_symbols) == 0 and len(orb.free_symbols) == 1):
-                        if not symbolic.simplify_ext(nng(rb)) <= symbolic.simplify_ext(nng(orb)):
+                        if not (symbolic.simplify_ext(nng(rb)) == symbolic.simplify_ext(nng(orb)) or
+                                symbolic.simplify_ext(nng(rb)) <= symbolic.simplify_ext(nng(orb))):
                             return False
 
                     # upper bound: first check whether symbolic positive condition applies
                     if not (len(re.free_symbols) == 1 and len(ore.free_symbols) == 0):
-                        if not symbolic.simplify_ext(nng(re)) >= symbolic.simplify_ext(nng(ore)):
+                        if not (symbolic.simplify_ext(nng(re)) == symbolic.simplify_ext(nng(ore)) or
+                                symbolic.simplify_ext(nng(re)) >= symbolic.simplify_ext(nng(ore))):
                             return False
             except TypeError:
                 return False
@@ -994,9 +1000,9 @@ def bounding_box_union(subset_a: Subset, subset_b: Subset) -> Range:
                 elif len(brb.free_symbols) == 0:
                     minrb = brb
                 else:
-                    raise
+                    minrb = sympy.Min(arb, brb)
             else:
-                raise
+                minrb = sympy.Min(arb, brb)
 
         try:
             maxre = max(are, bre)
@@ -1007,9 +1013,9 @@ def bounding_box_union(subset_a: Subset, subset_b: Subset) -> Range:
                 elif len(bre.free_symbols) == 0:
                     maxre = are
                 else:
-                    raise
+                    maxre = sympy.Max(are, bre)
             else:
-                raise
+                maxre = sympy.Max(are, bre)
 
         result.append((minrb, maxre, 1))
 

@@ -1156,7 +1156,7 @@ class Pipeline(Map):
         return "__" + "".join(self.params)
 
     def loop_bound_str(self):
-        from dace.codegen.targets.common import sym2cpp
+        from dace.codegen.common import sym2cpp
         bound = 1
         for begin, end, step in self.range:
             bound *= (step + end - begin) // step

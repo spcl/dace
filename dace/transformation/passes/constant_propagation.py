@@ -259,7 +259,6 @@ class ConstantPropagation(ppl.Pass):
             return
 
         repl = {k: v for k, v in symbols.items() if v is not _UnknownValue}
-        unknowns = {k for k, v in symbols.items() if v is _UnknownValue}
 
         # Replace interstate edge assignment (which is Python code)
         def _replace_assignment(v, assignment):
@@ -281,7 +280,7 @@ class ConstantPropagation(ppl.Pass):
 
         # Update results with values of other propagated symbols
         propagated_symbols = {
-            k: _replace_assignment(v, {k} & unknowns) if v is not _UnknownValue else _UnknownValue
+            k: _replace_assignment(v, {k}) if v is not _UnknownValue else _UnknownValue
             for k, v in new_symbols.items()
         }
         symbols.update(propagated_symbols)

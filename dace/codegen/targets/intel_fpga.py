@@ -18,13 +18,13 @@ from dace.codegen.dispatcher import DefinedType
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets.target import make_absolute
 from dace.codegen.targets import cpp, fpga
-from dace.codegen.targets.common import codeblock_to_cpp
+from dace.codegen.common import codeblock_to_cpp
 from dace.codegen.tools.type_inference import infer_expr_type
 from dace.frontend.python.astutils import rname, unparse
 from dace.frontend import operations
 from dace.sdfg import find_input_arraynode, find_output_arraynode
 from dace.sdfg import nodes, utils as sdutils
-from dace.codegen.targets.common import sym2cpp
+from dace.codegen.common import sym2cpp
 from dace.sdfg import SDFGState
 import dace.sdfg.utils as utils
 from dace.symbolic import evaluate

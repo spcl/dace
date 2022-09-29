@@ -8,7 +8,7 @@ from dace import dtypes, config, registry, symbolic, nodes, sdfg, data
 from dace.sdfg import graph, state, find_input_arraynode, find_output_arraynode
 from dace.codegen import codeobject, dispatcher, prettycode
 from dace.codegen.targets import target, framecode
-from dace.codegen.targets.common import sym2cpp
+from dace.codegen.common import sym2cpp
 
 
 @registry.autoregister_params(name='rtl')

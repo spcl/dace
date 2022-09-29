@@ -1,10 +1,12 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
+import ast
 from copy import deepcopy
 from dace import data, dtypes, sdfg as sd, symbolic
 from dace.sdfg import SDFG
 from dace.properties import CodeBlock
 from dace.codegen import cppunparse
 from functools import lru_cache
+from io import StringIO
 from typing import List, Optional, Set, Union
 import warnings
 
@@ -68,8 +70,8 @@ def update_persistent_desc(desc: data.Data, sdfg: SDFG):
     Replaces the symbols used in a persistent data descriptor according to NestedSDFG's symbol mapping.
     The replacement happens recursively up to the top-level SDFG.
     """
-    if (desc.lifetime == dtypes.AllocationLifetime.Persistent and sdfg.parent and
-            any(str(s) in sdfg.parent_nsdfg_node.symbol_mapping for s in desc.free_symbols)):
+    if (desc.lifetime == dtypes.AllocationLifetime.Persistent and sdfg.parent
+            and any(str(s) in sdfg.parent_nsdfg_node.symbol_mapping for s in desc.free_symbols)):
         newdesc = deepcopy(desc)
         csdfg = sdfg
         while csdfg.parent_sdfg:
@@ -80,3 +82,15 @@ def update_persistent_desc(desc: data.Data, sdfg: SDFG):
             csdfg = csdfg.parent_sdfg
         return newdesc
     return desc
+
+
+def unparse_interstate_edge(code_ast: Union[ast.AST, str], sdfg: SDFG, symbols=None, codegen=None) -> str:
+    from dace.codegen.targets.cpp import InterstateEdgeUnparser  # Avoid import loop
+
+    # Convert from code to AST as necessary
+    if isinstance(code_ast, str):
+        code_ast = ast.parse(code_ast).body[0]
+
+    strio = StringIO()
+    InterstateEdgeUnparser(sdfg, code_ast, strio, symbols, codegen)
+    return strio.getvalue().strip()

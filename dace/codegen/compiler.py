@@ -124,7 +124,8 @@ def configure_and_compile(program_folder, program_name=None, output_stream=None)
     # We do this instead of iterating over source files in the directory to
     # avoid globbing files from previous compilations, such that we don't need
     # to wipe the directory for every compilation.
-    file_list = [line.strip().split(",") for line in open(os.path.join(program_folder, "dace_files.csv"), "r")]
+    with open(os.path.join(program_folder, "dace_files.csv"), "r") as f:
+        file_list = [line.strip().split(",") for line in f]
 
     # Get absolute paths and targets for all source files
     files = []
@@ -158,7 +159,8 @@ def configure_and_compile(program_folder, program_name=None, output_stream=None)
     ]
 
     # Get required environments are retrieve the CMake information
-    environments = set(l.strip() for l in open(os.path.join(program_folder, "dace_environments.csv"), "r"))
+    with open(os.path.join(program_folder, "dace_environments.csv"), "r") as f:
+        environments = set(l.strip() for l in f)
 
     environments = dace.library.get_environments_and_dependencies(environments)
 
