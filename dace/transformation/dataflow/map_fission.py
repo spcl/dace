@@ -4,6 +4,7 @@
 from copy import deepcopy as dcpy
 from collections import defaultdict
 from dace import registry, sdfg as sd, memlet as mm, subsets, data as dt
+from dace.codegen import control_flow as cf
 from dace.sdfg import nodes, graph as gr
 from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import OrderedDiGraph
@@ -114,10 +115,29 @@ class MapFission(transformation.SingleStateTransformation):
         if expr_index == 0:  # Map with subgraph
             subgraphs = [graph.scope_subgraph(map_node, include_entry=False, include_exit=False)]
         else:  # Map with nested SDFG
-            nsdfg_node = self.nested_sdfg
+            nsdfg_node = dcpy(self.nested_sdfg)
             # Make sure there are no other internal nodes in the map
             if len(set(e.dst for e in graph.out_edges(map_node))) > 1:
                 return False
+
+            # Get NestedSDFG control flow components
+            cf_comp = helpers.find_sdfg_control_flow(nsdfg_node.sdfg)
+            if len(cf_comp) == 1:
+                child = list(cf_comp.values())[0][1]
+                conditions = []
+                if isinstance(child, (cf.ForScope, cf.WhileScope, cf.IfScope)):
+                    conditions.append(child.condition if isinstance(child, (cf.ForScope, cf.IfScope)) else child.test)
+                for cond in conditions:
+                    if any(p in cond.get_free_symbols() for p in map_node.map.params):
+                        return False
+                    for s in cond.get_free_symbols():
+                        for e in graph.edges_by_connector(self.nested_sdfg, s):
+                            if any(p in e.data.free_symbols for p in map_node.map.params):
+                                return False
+                    if any(p in cond.get_free_symbols() for p in map_node.map.params):
+                        return False
+            helpers.nest_sdfg_control_flow(nsdfg_node.sdfg, cf_comp)
+
             subgraphs = list(nsdfg_node.sdfg.nodes())
 
         # Test subgraphs
@@ -162,14 +182,6 @@ class MapFission(transformation.SingleStateTransformation):
                             if e.dst.data in not_subgraph:
                                 return False
 
-        # Fail if there are arrays inside the map that are not a direct
-        # output of a computational component
-        # TODO(later): Support this case? Ambiguous array sizes and memlets
-        external_arrays = (border_arrays - self._internal_border_arrays(total_components, subgraphs))
-        if len(external_arrays) > 0:
-            # return False
-            pass
-
         return True
 
     def apply(self, graph: sd.SDFGState, sdfg: sd.SDFG):
@@ -183,6 +195,7 @@ class MapFission(transformation.SingleStateTransformation):
             parent = sdfg
         else:  # Map with nested SDFG
             nsdfg_node = self.nested_sdfg
+            helpers.nest_sdfg_control_flow(nsdfg_node.sdfg)
             subgraphs = [(state, state) for state in nsdfg_node.sdfg.nodes()]
             parent = nsdfg_node.sdfg
             parent_sdfg = parent.parent_sdfg
@@ -193,20 +206,17 @@ class MapFission(transformation.SingleStateTransformation):
         mapsize = outer_map.range.size()
 
         # Add new symbols from outer map to nested SDFG
+        # Add new symbols also from the adjacent edge subsets and the data descriptors they carry.
         if self.expr_index == 1:
             map_syms = outer_map.range.free_symbols
             for edge in graph.out_edges(map_entry):
                 if edge.data.data:
                     map_syms.update(edge.data.subset.free_symbols)
-                # NOTE: The following code is related to
-                # tests.transformations.mapfission_test.test_mapfission_with_symbols
                 if edge.data.data in parent_sdfg.arrays:
                     map_syms.update(parent_sdfg.arrays[edge.data.data].free_symbols)
             for edge in graph.in_edges(map_exit):
                 if edge.data.data:
                     map_syms.update(edge.data.subset.free_symbols)
-                # NOTE: The following code is related to
-                # tests.transformations.mapfission_test.test_mapfission_with_symbols
                 if edge.data.data in parent_sdfg.arrays:
                     map_syms.update(parent_sdfg.arrays[edge.data.data].free_symbols)
             for sym in map_syms:
@@ -386,8 +396,8 @@ class MapFission(transformation.SingleStateTransformation):
                 desc = parent.arrays[array]
                 if isinstance(desc, dt.Scalar):  # Scalar needs to be augmented to an array
                     desc = dt.Array(desc.dtype, desc.shape, desc.transient, desc.allow_conflicts, desc.storage,
-                                    desc.location, desc.strides, desc.offset, False, desc.lifetime,
-                                    0, desc.debuginfo, desc.total_size, desc.start_offset)
+                                    desc.location, desc.strides, desc.offset, False, desc.lifetime, 0, desc.debuginfo,
+                                    desc.total_size, desc.start_offset)
                     parent.arrays[array] = desc
                 for sz in reversed(mapsize):
                     desc.strides = [desc.total_size] + list(desc.strides)

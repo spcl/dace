@@ -134,7 +134,7 @@ def test_assign_return_symbols():
     
     result = assign_symbols()
     a = result[1][0]
-    assert(a == 4)
+    assert a == 4
 
 
 if __name__ == "__main__":

@@ -165,7 +165,7 @@ def get_outermost_scope_maps(sdfg, graph, subgraph=None, scope_dict=None):
     If subgraph == None, the whole graph is taken
     for analysis.
     """
-    subgraph = graph if not subgraph else subgraph
+    subgraph = graph if subgraph is None else subgraph
     if scope_dict is None:
         scope_dict = graph.scope_dict()
 

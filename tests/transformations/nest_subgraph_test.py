@@ -74,11 +74,11 @@ def test_symbolic_return():
         if isinstance(child, (cf.ForScope, cf.WhileScope)):
             for_scope = child
             break
-    assert(for_scope)
+    assert for_scope
 
-    assert(i < len(cft.children) - 1)
+    assert i < len(cft.children) - 1
     exit_scope = cft.children[i+1]
-    assert(isinstance(exit_scope, cf.SingleState))
+    assert isinstance(exit_scope, cf.SingleState)
 
     guard = for_scope.guard
     fexit = exit_scope.first_state
@@ -89,7 +89,7 @@ def test_symbolic_return():
     result = sdfg()
     val = result[1][0]
     _, ref = symbolic_return.f()
-    assert(val == ref)
+    assert val == ref
 
 
 def test_nest_cf_simple_for_loop():
@@ -104,7 +104,7 @@ def test_nest_cf_simple_for_loop():
     sdfg = simple_for_loop.to_sdfg()
     nest_sdfg_control_flow(sdfg)
 
-    assert(np.array_equal(sdfg(), np.arange(10, dtype=np.int32)))
+    assert np.array_equal(sdfg(), np.arange(10, dtype=np.int32))
 
 
 def test_nest_cf_simple_while_loop():
@@ -125,10 +125,10 @@ def test_nest_cf_simple_while_loop():
             i = update(A[i])
         return A
     
-    sdfg = simple_while_loop.to_sdfg(simplify=False)
+    sdfg = simple_while_loop.to_sdfg()
     nest_sdfg_control_flow(sdfg)
 
-    assert(np.array_equal(sdfg(update=update), np.arange(10, dtype=np.int32)))
+    assert np.array_equal(sdfg(update=update), np.arange(10, dtype=np.int32))
 
 
 def test_nest_cf_simple_if():
@@ -140,11 +140,11 @@ def test_nest_cf_simple_if():
         else:
             return 1
         
-    sdfg = simple_if.to_sdfg(simplify=False)
+    sdfg = simple_if.to_sdfg()
     nest_sdfg_control_flow(sdfg)
 
-    assert(sdfg(2)[0] == 0)
-    assert(sdfg(5)[0] == 1)
+    assert sdfg(2)[0] == 0
+    assert sdfg(5)[0] == 1
 
 
 def test_nest_cf_simple_if_elif():
@@ -162,14 +162,14 @@ def test_nest_cf_simple_if_elif():
         else:
             return 4
         
-    sdfg = simple_if_elif.to_sdfg(simplify=False)
+    sdfg = simple_if_elif.to_sdfg()
     nest_sdfg_control_flow(sdfg)
 
-    assert(sdfg(0)[0] == 0)
-    assert(sdfg(2)[0] == 1)
-    assert(sdfg(4)[0] == 2)
-    assert(sdfg(7)[0] == 3)
-    assert(sdfg(15)[0] == 4)
+    assert sdfg(0)[0] == 0
+    assert sdfg(2)[0] == 1
+    assert sdfg(4)[0] == 2
+    assert sdfg(7)[0] == 3
+    assert sdfg(15)[0] == 4
 
 
 def test_nest_cf_simple_if_chain():
@@ -186,14 +186,14 @@ def test_nest_cf_simple_if_chain():
             return 3
         return 4
         
-    sdfg = simple_if_chain.to_sdfg(simplify=False)
+    sdfg = simple_if_chain.to_sdfg()
     nest_sdfg_control_flow(sdfg)
 
-    assert(sdfg(0)[0] == 0)
-    assert(sdfg(2)[0] == 1)
-    assert(sdfg(4)[0] == 2)
-    assert(sdfg(7)[0] == 3)
-    assert(sdfg(15)[0] == 4)
+    assert sdfg(0)[0] == 0
+    assert sdfg(2)[0] == 1
+    assert sdfg(4)[0] == 2
+    assert sdfg(7)[0] == 3
+    assert sdfg(15)[0] == 4
 
 
 if __name__ == '__main__':

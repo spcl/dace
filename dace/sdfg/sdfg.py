@@ -88,6 +88,27 @@ def _assignments_to_string(assdict):
     return '; '.join(['%s=%s' % (k, v) for k, v in assdict.items()])
 
 
+def memlets_in_ast(node: ast.AST, arrays: Dict[str, dt.Data]) -> List[mm.Memlet]:
+    """
+    Generates a list of memlets from each of the subscripts that appear in the Python AST.
+    Assumes the subscript slice can be coerced to a symbolic expression (e.g., no indirect access).
+
+    :param node: The AST node to find memlets in.
+    :param arrays: A dictionary mapping array names to their data descriptors (a-la ``sdfg.arrays``)
+    :return: A list of Memlet objects in the order they appear in the AST.
+    """
+    result: List[mm.Memlet] = []
+
+    for subnode in ast.walk(node):
+        if isinstance(subnode, ast.Subscript):
+            data = astutils.rname(subnode.value)
+            data, slc = astutils.subscript_to_slice(subnode, arrays)
+            subset = sbs.Range(slc)
+            result.append(mm.Memlet(data=data, subset=subset))
+
+    return result
+
+
 @make_properties
 class LogicalGroup(object):
     """ Logical element groupings on a per-SDFG level.
@@ -235,6 +256,22 @@ class InterstateEdge(object):
             alltypes = symbols
 
         return {k: infer_expr_type(v, alltypes) for k, v in self.assignments.items()}
+
+    def get_read_memlets(self, arrays: Dict[str, dt.Data]) -> List[mm.Memlet]:
+        """
+        Returns a list of memlets (with data descriptors and subsets) used in this edge. This includes
+        both reads in the condition and in every assignment.
+
+        :param arrays: A dictionary mapping names to their corresponding data descriptors (a-la ``sdfg.arrays``)
+        :return: A list of Memlet objects for each read.
+        """
+        result: List[mm.Memlet] = []
+        result.extend(memlets_in_ast(self.condition.code[0], arrays))
+        for assign in self.assignments.values():
+            vast = ast.parse(assign)
+            result.extend(memlets_in_ast(vast, arrays))
+
+        return result
 
     def to_json(self, parent=None):
         return {

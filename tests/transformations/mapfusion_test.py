@@ -178,12 +178,12 @@ def test_fusion_with_inverted_indices():
     sdfg = inverted_maps.to_sdfg(simplify=True)
     val0 = np.ndarray((10,), dtype=np.int32)
     sdfg(A=val0)
-    assert(np.array_equal(val0, ref))
+    assert np.array_equal(val0, ref)
 
     sdfg.apply_transformations(MapFusion)
     val1 = np.ndarray((10,), dtype=np.int32)
     sdfg(A=val1)
-    assert(np.array_equal(val1, ref))
+    assert np.array_equal(val1, ref)
 
 
 def test_fusion_with_empty_memlet():
@@ -204,14 +204,14 @@ def test_fusion_with_empty_memlet():
     
     sdfg = inner_product.to_sdfg(simplify=True)
     count = sdfg.apply_transformations_repeated(MapFusion)
-    assert(count == 2)
+    assert count == 2
 
     A = np.arange(1024, dtype=np.float32)
     B = np.arange(1024, dtype=np.float32)
     val = np.zeros((1,), dtype=np.float32)
     sdfg(A=A, B=B, out=val, N=1024)
     ref = A @ B
-    assert(np.allclose(val[0], ref))
+    assert np.allclose(val[0], ref)
 
 
 if __name__ == '__main__':

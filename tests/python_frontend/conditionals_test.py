@@ -136,8 +136,8 @@ def test_if_return_both():
             return 1
         return 2
 
-    assert(if_return_both(4)[0] == 0)
-    assert(if_return_both(7)[0] == 1)
+    assert if_return_both(4)[0] == 0
+    assert if_return_both(7)[0] == 1 
 
 
 def test_if_return_chain():
@@ -154,11 +154,11 @@ def test_if_return_chain():
             return 3
         return 4
 
-    assert(if_return_chain(0)[0] == 0)
-    assert(if_return_chain(2)[0] == 1)
-    assert(if_return_chain(4)[0] == 2)
-    assert(if_return_chain(7)[0] == 3)
-    assert(if_return_chain(15)[0] == 4)
+    assert if_return_chain(0)[0] == 0
+    assert if_return_chain(2)[0] == 1
+    assert if_return_chain(4)[0] == 2
+    assert if_return_chain(7)[0] == 3
+    assert if_return_chain(15)[0] == 4
 
 
 if __name__ == "__main__":
@@ -167,5 +167,5 @@ if __name__ == "__main__":
     test_call_if2()
     test_simple_while()
     test_call_while()
-    test_if_return_both
+    test_if_return_both()
     test_if_return_chain()

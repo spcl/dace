@@ -56,7 +56,7 @@ class SVECodeGen(TargetCodeGenerator):
         self.dispatcher = frame_codegen._dispatcher
         self.dispatcher.register_map_dispatcher(dace.ScheduleType.SVE_Map, self)
         self.dispatcher.register_node_dispatcher(
-            self, lambda state, sdfg, node: is_in_scope(state, sdfg, node, [dace.ScheduleType.SVE_Map]))
+            self, lambda sdfg, state, node: is_in_scope(sdfg, state, node, [dace.ScheduleType.SVE_Map]))
 
         cpu_storage = [
             dtypes.StorageType.CPU_Heap, dtypes.StorageType.CPU_ThreadLocal, dtypes.StorageType.Register,

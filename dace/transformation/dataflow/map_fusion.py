@@ -136,7 +136,7 @@ class MapFusion(transformation.SingleStateTransformation):
         # of the first map, or other unrelated maps
         for second_edge in graph.out_edges(second_map_entry):
             # NOTE: We ignore edges that do not carry data (e.g., connecting a tasklet with no inputs to the MapEntry)
-            if not second_edge.data.data:
+            if second_edge.data.is_empty():
                 continue
             # Memlets that do not come from one of the intermediate arrays
             if second_edge.data.data and second_edge.data.data not in intermediate_data:
@@ -187,6 +187,8 @@ class MapFusion(transformation.SingleStateTransformation):
             del first_map_inputnodes[v]
             e = sdutil.get_view_edge(graph, v)
             if e:
+                while not isinstance(e.src, nodes.AccessNode):
+                    e = graph.memlet_path(e)[0]
                 first_map_inputnodes[e.src] = e.src.data
                 viewed_inputnodes[e.src.data] = v
         second_map_outputnodes = {
@@ -202,6 +204,8 @@ class MapFusion(transformation.SingleStateTransformation):
             del second_map_outputnodes[v]
             e = sdutil.get_view_edge(graph, v)
             if e:
+                while not isinstance(e.dst, nodes.AccessNode):
+                    e = graph.memlet_path(e)[-1]
                 second_map_outputnodes[e.dst] = e.dst.data
                 viewed_outputnodes[e.dst.data] = v
         common_data = set(first_map_inputnodes.values()).intersection(set(second_map_outputnodes.values()))
@@ -414,9 +418,9 @@ class MapFusion(transformation.SingleStateTransformation):
         
         # NOTE: Check the second MapEntry for output edges with empty memlets
         for edge in graph.out_edges(second_entry):
-            if not edge.data.data:
+            if edge.data.is_empty():
                 graph.remove_edge(edge)
-                graph.add_edge(first_entry, None, edge.dst, edge.dst_conn, edge.data)
+                graph.add_edge(first_entry, edge.src_conn, edge.dst, edge.dst_conn, edge.data)
 
         ###
         # Second node is isolated and can now be safely removed

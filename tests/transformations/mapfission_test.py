@@ -60,6 +60,7 @@ def config():
 
 
 class MapFissionTest(unittest.TestCase):
+
     def test_subgraph(self):
         A, expected = config()
         B = np.random.rand(2)
@@ -123,7 +124,7 @@ class MapFissionTest(unittest.TestCase):
         state.add_memlet_path(rnode, me, nsdfg_node, dst_conn='a', memlet=dace.Memlet.simple('A', 'i'))
         state.add_memlet_path(nsdfg_node, mx, wnode, src_conn='b', memlet=dace.Memlet.simple('A', 'i'))
 
-        self.assertGreater(sdfg.apply_transformations(MapFission), 0)
+        self.assertGreater(sdfg.apply_transformations_repeated(MapFission), 0)
 
         # Test
         A = np.random.rand(2)
@@ -185,7 +186,7 @@ class MapFissionTest(unittest.TestCase):
         anode = state.add_write('A')
         state.add_memlet_path(nsdfg_node, mx, anode, src_conn='a', memlet=dace.Memlet.simple('A', 'i,j'))
 
-        self.assertGreater(sdfg.apply_transformations(MapFission), 0)
+        self.assertGreater(sdfg.apply_transformations_repeated(MapFission), 0)
 
         # Test
         A = np.random.rand(2, 3)
@@ -250,7 +251,6 @@ class MapFissionTest(unittest.TestCase):
         sdfg(A=A)
         self.assertTrue(np.allclose(A, expected))
 
-
     def test_mapfission_with_symbols(self):
         '''
         Tests MapFission in the case of a Map containing a NestedSDFG that is using some symbol from the top-level SDFG
@@ -283,7 +283,7 @@ class MapFissionTest(unittest.TestCase):
         a = state.add_access('A')
         b = state.add_access('B')
         t = nodes.NestedSDFG('child_sdfg', nsdfg, {}, {'inner_A', 'inner_B'}, {})
-        nsdfg.parent = nstate
+        nsdfg.parent = state
         nsdfg.parent_sdfg = sdfg
         nsdfg.parent_nsdfg_node = t
         state.add_node(t)
@@ -291,19 +291,17 @@ class MapFissionTest(unittest.TestCase):
         state.add_memlet_path(t, mx, a, memlet=dace.Memlet('A[0, i]'), src_conn='inner_A')
         state.add_memlet_path(t, mx, b, memlet=dace.Memlet('B[0, i]'), src_conn='inner_B')
 
-
-        num = sdfg.apply_transformations(MapFission)
+        num = sdfg.apply_transformations_repeated(MapFission)
         self.assertTrue(num == 1)
 
         A = np.ndarray((2, 10), dtype=np.int32)
         B = np.ndarray((2, 10), dtype=np.int32)
         sdfg(A=A, B=B, M=2, N=10)
 
-        ref = np.full((10,), fill_value=2, dtype=np.int32)
+        ref = np.full((10, ), fill_value=2, dtype=np.int32)
 
         self.assertTrue(np.array_equal(A[0], ref))
         self.assertTrue(np.array_equal(B[0], ref))
-
 
     def test_two_edges_through_map(self):
         '''
@@ -315,14 +313,14 @@ class MapFissionTest(unittest.TestCase):
         N = dace.symbol('N')
 
         sdfg = dace.SDFG('two_edges_through_map')
-        sdfg.add_array('A', (N,), dace.int32)
-        sdfg.add_array('B', (N,), dace.int32)
+        sdfg.add_array('A', (N, ), dace.int32)
+        sdfg.add_array('B', (N, ), dace.int32)
 
         state = sdfg.add_state('parent', is_start_state=True)
         me, mx = state.add_map('parent_map', {'i': '0:N'})
 
         nsdfg = dace.SDFG('nested_sdfg')
-        nsdfg.add_array('inner_A', (N,), dace.int32)
+        nsdfg.add_array('inner_A', (N, ), dace.int32)
         nsdfg.add_scalar('inner_B', dace.int32)
 
         nstate = nsdfg.add_state('child', is_start_state=True)
@@ -338,15 +336,15 @@ class MapFissionTest(unittest.TestCase):
         t = state.add_nested_sdfg(nsdfg, None, {'inner_A'}, {'inner_B'}, {'N': 'N', 'i': 'i'})
         state.add_memlet_path(a, me, t, memlet=dace.Memlet.from_array('A', sdfg.arrays['A']), dst_conn='inner_A')
         state.add_memlet_path(t, mx, b, memlet=dace.Memlet('B[i]'), src_conn='inner_B')
-        
-        num = sdfg.apply_transformations(MapFission)
+
+        num = sdfg.apply_transformations_repeated(MapFission)
         self.assertTrue(num == 1)
 
         A = np.arange(10, dtype=np.int32)
-        B = np.ndarray((10,), dtype=np.int32)
+        B = np.ndarray((10, ), dtype=np.int32)
         sdfg(A=A, B=B, N=10)
 
-        ref = np.full((10,), fill_value=9, dtype=np.int32)
+        ref = np.full((10, ), fill_value=9, dtype=np.int32)
 
         self.assertTrue(np.array_equal(B, ref))
 
@@ -355,22 +353,45 @@ class MapFissionTest(unittest.TestCase):
         @dace.program
         def map_with_if(A: dace.int32[10]):
             for i in dace.map[0:10]:
+                if i < 5:
+                    A[i] = 0
+                else:
+                    A[i] = 1
+
+        ref = np.array([0] * 5 + [1] * 5, dtype=np.int32)
+
+        sdfg = map_with_if.to_sdfg()
+        val0 = np.ndarray((10, ), dtype=np.int32)
+        sdfg(A=val0)
+        self.assertTrue(np.array_equal(val0, ref))
+
+        sdfg.apply_transformations_repeated(MapFission)
+
+        val1 = np.ndarray((10, ), dtype=np.int32)
+        sdfg(A=val1)
+        self.assertTrue(np.array_equal(val1, ref))
+
+    def test_if_scope_2(self):
+
+        @dace.program
+        def map_with_if_2(A: dace.int32[10]):
+            for i in dace.map[0:10]:
                 j = i < 5
                 if j:
                     A[i] = 0
                 else:
                     A[i] = 1
-        
+
         ref = np.array([0] * 5 + [1] * 5, dtype=np.int32)
 
-        sdfg = map_with_if.to_sdfg(simplify=False)
-        val0 = np.ndarray((10,), dtype=np.int32)
+        sdfg = map_with_if_2.to_sdfg()
+        val0 = np.ndarray((10, ), dtype=np.int32)
         sdfg(A=val0)
         self.assertTrue(np.array_equal(val0, ref))
 
+        sdfg.apply_transformations_repeated(MapFission)
 
-        sdfg.apply_transformations(MapFission)
-        val1 = np.ndarray((10,), dtype=np.int32)
+        val1 = np.ndarray((10, ), dtype=np.int32)
         sdfg(A=val1)
         self.assertTrue(np.array_equal(val1, ref))
 

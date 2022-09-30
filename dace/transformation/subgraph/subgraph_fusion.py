@@ -265,6 +265,28 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                 if isinstance(node, nodes.AccessNode):
                     container_dict[node.data].append(node)
 
+            # Check for read/write dependencies between input and output nodes
+            outputs = set(n.data for n in out_nodes)
+            from dace.transformation.interstate import StateFusion
+            for node in in_nodes:
+                if isinstance(node, nodes.AccessNode) and node.data in outputs:
+                    matching_outputs = [n for n in out_nodes if n.data == node.data]
+                    # Overall ranges overlap: potential data race
+                    if StateFusion.memlets_intersect(graph, [node], True, graph, matching_outputs, False):
+                        # Check memlet leaves in more detail
+                        in_leaves = [l for e in graph.out_edges(node) for l in graph.memlet_tree(e).leaves()]
+                        out_leaves = [
+                            l for n in matching_outputs for e in graph.in_edges(n)
+                            for l in graph.memlet_tree(e).leaves()
+                        ]
+                        # All-pairs check. If memlets are equal then there are no races.
+                        # If they are not, and we cannot know whether they intersect or they do, we do not match.
+                        for ea in in_leaves:
+                            for eb in out_leaves:
+                                if ea.data.src_subset == eb.data.dst_subset:  # Equal - no data race
+                                    continue
+                                return False  # Otherwise - potential data race
+
             for (node_data, compressible) in is_compressible.items():
                 # we only care about disjoint subsets...
                 # 1. if the array is not compressible
