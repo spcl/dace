@@ -1,3 +1,4 @@
+from calendar import c
 from fileinput import lineno
 from fparser.two.Fortran2008 import *
 from fparser.two.Fortran2003 import *
@@ -245,6 +246,16 @@ class Call_Expr_Node(Node):
     )
 
 
+class Array_Constructor_Node(Node):
+    _attributes = ()
+    _fields = ('value_list', )
+
+
+class Ac_Value_List_Node(Node):
+    _attributes = ()
+    _fields = ('value_list', )
+
+
 class Section_Subscript_List_Node(Node):
     _fields = ('list')
 
@@ -257,6 +268,20 @@ class For_Stmt_Node(Node):
         'body',
         'iter',
     )
+
+
+class If_Stmt_Node(Node):
+    _attributes = ()
+    _fields = (
+        'cond',
+        'body',
+        'else_body',
+    )
+
+
+class Else_Separator_Node(Node):
+    _attributes = ()
+    _fields = ()
 
 
 class Nonlabel_Do_Stmt_Node(Node):
@@ -408,6 +433,8 @@ class InternalFortranAst:
             "Type_Declaration_Stmt": self.type_declaration_stmt,
             "Entity_Decl": self.entity_decl,
             "Array_Spec": self.array_spec,
+            "Ac_Value_List": self.ac_value_list,
+            "Array_Constructor": self.array_constructor,
             "Loop_Control": self.loop_control,
             "Block_Nonlabel_Do_Construct": self.block_nonlabel_do_construct,
             "Real_Literal_Constant": self.real_literal_constant,
@@ -487,6 +514,10 @@ class InternalFortranAst:
             "Stop_Stmt": self.stop_stmt,
             "Dummy_Arg_List": self.dummy_arg_list,
             "Part_Ref": self.part_ref,
+            "Level_2_Expr": self.level_2_expr,
+            "Equiv_Operand": self.level_2_expr,
+            "Level_3_Expr": self.level_2_expr,
+            "Level_4_Expr": self.level_2_expr,
         }
 
     def list_tables(self):
@@ -548,11 +579,12 @@ class InternalFortranAst:
         specification_part = get_child(children, Specification_Part_Node)
         execution_part = get_child(children, Execution_Part_Node)
         return_type = Void
-        return Subroutine_Subprogram_Node(name=name.name,
-                                          args=name.args,
-                                          specification_part=specification_part,
-                                          execution_part=execution_part,
-                                          type=return_type)
+        return Subroutine_Subprogram_Node(
+            name=name.name,
+            args=name.args,
+            specification_part=specification_part,
+            execution_part=execution_part,
+            type=return_type)
 
     def end_program_stmt(self, node):
         return node
@@ -567,6 +599,15 @@ class InternalFortranAst:
         return Subroutine_Stmt_Node(name=name,
                                     args=args.args,
                                     line_number=node.item.span)
+
+    def ac_value_list(self, node):
+        children = self.create_children(node)
+        return Ac_Value_List_Node(value_list=children)
+
+    def array_constructor(self, node):
+        children = self.create_children(node)
+        value_list = get_child(children, Ac_Value_List_Node)
+        return Array_Constructor_Node(value_list=value_list.value_list)
 
     def function_stmt(self, node):
         return node
@@ -714,6 +755,7 @@ class InternalFortranAst:
                                          alloc=alloc,
                                          sizes=size,
                                          kind=kind,
+                                         init=init,
                                          line_number=node.item.span))
 
         return Decl_Stmt_Node(vardecl=vardecls, line_number=node.item.span)
@@ -803,6 +845,15 @@ class InternalFortranAst:
     def action_stmt(self, node):
         return node
 
+    def level_2_expr(self, node):
+        children = self.create_children(node)
+        if len(children) == 3:
+            return BinOp_Node(lval=children[0],
+                              op=children[1],
+                              rval=children[2])
+        else:
+            return UnOp_Node(lval=children[0], op=children[1])
+
     def assignment_stmt(self, node):
         children = self.create_children(node)
         if len(children) == 3:
@@ -858,16 +909,38 @@ class InternalFortranAst:
         return node
 
     def if_construct(self, node):
-        return node
+        children = self.create_children(node)
+        cond = children[0]
+        body = []
+        body_else = []
+        else_mode = False
+        for i in children[1:-1]:
+            if isinstance(i, Else_Separator_Node):
+                else_mode = True
+                continue
+            if else_mode:
+                body_else.append(i)
+            else:
+                body.append(i)
+
+        return If_Stmt_Node(cond=cond,
+                            body=body,
+                            body_else=body_else,
+                            line_number=cond.line_number)
 
     def if_then_stmt(self, node):
-        return node
+        children = self.create_children(node)
+        if len(children) != 1:
+            raise ValueError("If statement must have a condition")
+        return_value = children[0]
+        return_value.line_number = node.item.span
+        return return_value
 
     def else_if_stmt(self, node):
         return node
 
     def else_stmt(self, node):
-        return node
+        return Else_Separator_Node(line_number=node.item.span)
 
     def end_if_stmt(self, node):
         return node
@@ -994,13 +1067,17 @@ class InternalFortranAst:
         return For_Stmt_Node(init=do.init,
                              cond=do.cond,
                              iter=do.iter,
-                             body=body)
+                             body=body,
+                             line_number=do.line_number)
 
     def real_literal_constant(self, node):
         return node
 
     def subscript_triplet(self, node):
-        return node
+        if node.string == ":":
+            return ParDecl_Node(type="ALL")
+        children = self.create_children(node)
+        return ParDecl_Node(type="RANGE", range=children)
 
     def section_subscript_list(self, node):
         children = self.create_children(node)

@@ -90,6 +90,15 @@ def finish_add_state_to_sdfg(state: SDFGState, top_sdfg: SDFG,
     state.last_sdfg_states[top_sdfg] = substate
 
 
+def get_name(node: Node):
+    if isinstance(node, Name_Node):
+        return node.name
+    elif isinstance(node, Array_Subscript_Node):
+        return node.name.name
+    else:
+        raise NameError("Name not found")
+
+
 class TaskletWriter:
     def __init__(self, outputs: List[str], outputs_changes: List[str]):
         self.outputs = outputs
@@ -104,7 +113,7 @@ class TaskletWriter:
             Array_Subscript_Node: self.arraysub2string,
         }
 
-    def write_tasklet_code(self, node: Node):
+    def write_code(self, node: Node):
         if node.__class__ in self.ast_elements:
             text = self.ast_elements[node.__class__](node)
             #print("RET TW:",text)
@@ -115,10 +124,11 @@ class TaskletWriter:
             print("ERROR:", node.__class__.__name__)
 
     def arraysub2string(self, node: Array_Subscript_Node):
-        str_to_return = self.write_tasklet_code(
-            node.name) + "[" + self.write_tasklet_code(node.indices[0])
+        str_to_return = self.write_code(node.name) + "[" + self.write_code(
+            node.indices[0])
         for i in node.indices[1:]:
-            str_to_return += ", " + self.write_tasklet_code(i) + "]"
+            str_to_return += ", " + self.write_code(i)
+        str_to_return += "]"
         return str_to_return
 
     def name2string(self, node: Name_Node):
@@ -146,11 +156,11 @@ class TaskletWriter:
         op = node.op
         if op == ".NOT.":
             op = "not "
-        return op + self.write_tasklet_code(node.lval)
+        return op + self.write_code(node.lval)
 
     def binop2string(self, node: BinOp_Node):
-        #print("BL: ",self.write_tasklet_code(node.lvalue))
-        #print("RL: ",self.write_tasklet_code(node.rvalue))
+        #print("BL: ",self.write_code(node.lvalue))
+        #print("RL: ",self.write_code(node.rvalue))
         # print(node.op)
         op = node.op
         if op == ".EQ.":
@@ -175,34 +185,32 @@ class TaskletWriter:
             op = ">"
         # if op == "&&":
         #    op=" and "
-        # if self.write_tasklet_code(node.lvalue) is None:
+        # if self.write_code(node.lvalue) is None:
         #    a=1
-        # if self.write_tasklet_code(node.rvalue) is None:
+        # if self.write_code(node.rvalue) is None:
         #    a=1
-        return self.write_tasklet_code(
-            node.lval) + op + self.write_tasklet_code(node.rval)
+        return self.write_code(node.lval) + op + self.write_code(node.rval)
 
 
 def generate_memlet(op, top_sdfg, state):
-    if state.name_mapping.get(top_sdfg).get(op.name) is not None:
-        shape = top_sdfg.arrays[state.name_mapping[top_sdfg][op.name]].shape
-    elif state.name_mapping.get(state.globalsdfg).get(op.name) is not None:
+    if state.name_mapping.get(top_sdfg).get(get_name(op)) is not None:
+        shape = top_sdfg.arrays[state.name_mapping[top_sdfg][get_name(
+            op)]].shape
+    elif state.name_mapping.get(state.globalsdfg).get(
+            get_name(op)) is not None:
         shape = state.globalsdfg.arrays[state.name_mapping[state.globalsdfg][
-            op.name]].shape
+            get_name(op)]].shape
     else:
-        raise NameError("Variable name not found: ", op.name)
+        raise NameError("Variable name not found: ", get_name(op))
     # print("SHAPE:")
     # print(shape)
-    tmp_node = op
     indices = []
-    while isinstance(tmp_node, Array_Subscript_Node):
-        if isinstance(tmp_node.index, Name_Node):
-            indices.append(state.name_mapping[top_sdfg][tmp_node.index.name])
-        elif isinstance(tmp_node.index, Int_Literal_Node):
-            indices.append("".join(map(str, tmp_node.index.value)))
-        tmp_node = tmp_node.unprocessed_name
-    # for i in indices:
-    # print("INDICES:",i)
+    if isinstance(op, Array_Subscript_Node):
+        for i in op.indices:
+            tw = TaskletWriter([], [])
+            text = tw.write_code(i)
+            #This might need to be replaced with the name in the context of the top/current sdfg
+            indices.append(dace.symbolic.pystr_to_symbolic(text))
     memlet = '0'
     if len(shape) == 1:
         if shape[0] == 1:
@@ -212,6 +220,29 @@ def generate_memlet(op, top_sdfg, state):
     subset = subsets.Range([(i, i, 1) if i is not None else (1, s, 1)
                             for i, s in zip(all_indices, shape)])
     return subset
+
+
+class ProcessedWriter(TaskletWriter):
+    def __init__(self, sdfg: SDFG, mapping):
+        self.sdfg = sdfg
+        self.mapping = mapping
+        self.ast_elements = {
+            BinOp_Node: self.binop2string,
+            Name_Node: self.name2string,
+            Int_Literal_Node: self.intlit2string,
+            Real_Literal_Node: self.floatlit2string,
+            UnOp_Node: self.unop2string,
+            Array_Subscript_Node: self.arraysub2string,
+        }
+
+    def name2string(self, node: Name_Node):
+        name = node.name
+        for i in self.sdfg.arrays:
+            sdfg_name = self.mapping.get(self.sdfg).get(name)
+            if sdfg_name == i:
+                name = i
+                break
+        return name
 
 
 class Context:
@@ -252,26 +283,21 @@ class AST_translator:
         self.file_name = source
         self.all_array_names = []
         self.last_sdfg_states = {}
+        self.last_loop_continues = {}
+        self.last_loop_breaks = {}
+        self.last_returns = {}
         self.last_call_expression = {}
         self.ast_elements = {
-            #WhileStmt: self.while2sdfg,
-            #DoStmt: self.do2sdfg,
-            #RetStmt: self.ret2sdfg,
-            #IfStmt: self.ifstmt2sdfg,
-            #ForStmt: self.forstmt2sdfg,
+            If_Stmt_Node: self.ifstmt2sdfg,
+            For_Stmt_Node: self.forstmt2sdfg,
             Execution_Part_Node: self.basicblock2sdfg,
-            #FunctionSubprogram: self.funcdecl2sdfg,
-            #SubroutineSubprogram: self.subroutine2sdfg,
+            Subroutine_Subprogram_Node: self.subroutine2sdfg,
             BinOp_Node: self.binop2sdfg,
             Decl_Stmt_Node: self.declstmt2sdfg,
             Var_Decl_Node: self.vardecl2sdfg,
             Constant_Decl_Node: self.const2sdfg,
-            #Parm_Decl_Node: self.parmdecl2sdfg,
-            #Type_Decl_Node: self.typedecl2sdfg,
+            Symbol_Decl_Node: self.symbol2sdfg,
             Call_Expr_Node: self.call2sdfg,
-            #AllocList: self.alloclist2sdfg,
-            #ContinueStmt: self.cont2sdfg,
-            #GotoStmt: self.goto2sdfg,
             Program_Node: self.ast2sdfg
         }
         self.fortrantypes2dacetypes = {
@@ -334,10 +360,97 @@ class AST_translator:
         for i in node.execution:
             self.translate(i, sdfg)
 
+    def ifstmt2sdfg(self, node: If_Stmt_Node, sdfg: SDFG):
+
+        name = "If_l_" + str(node.line_number[0]) + "_c_" + str(
+            node.line_number[1])
+        begin_state = add_simple_state_to_sdfg(self, sdfg, "Begin" + name)
+        guard_substate = sdfg.add_state("Guard" + name)
+        sdfg.add_edge(begin_state, guard_substate, dace.InterstateEdge())
+
+        condition = ProcessedWriter(sdfg,
+                                    self.name_mapping).write_code(node.cond)
+
+        body_ifstart_state = sdfg.add_state("BodyIfStart" + name)
+        self.last_sdfg_states[sdfg] = body_ifstart_state
+        self.translate(node.body, sdfg)
+        final_substate = sdfg.add_state("MergeState" + name)
+
+        sdfg.add_edge(guard_substate, body_ifstart_state,
+                      dace.InterstateEdge(condition))
+
+        if self.last_sdfg_states[sdfg] not in [
+                self.last_loop_breaks.get(sdfg),
+                self.last_loop_continues.get(sdfg),
+                self.last_returns.get(sdfg)
+        ]:
+            body_ifend_state = add_simple_state_to_sdfg(
+                self, sdfg, "BodyIfEnd" + name)
+            sdfg.add_edge(body_ifend_state, final_substate,
+                          dace.InterstateEdge())
+
+        if len(node.body_else) > 0:
+            name_else = "Else_l_" + str(node.line_number[0]) + "_c_" + str(
+                node.line_number[1])
+            body_elsestart_state = sdfg.add_state("BodyElseStart" + name_else)
+            self.last_sdfg_states[sdfg] = body_elsestart_state
+            self.translate(node.body_else, sdfg)
+            body_elseend_state = add_simple_state_to_sdfg(
+                self, sdfg, "BodyElseEnd" + name_else)
+            sdfg.add_edge(guard_substate, body_elsestart_state,
+                          dace.InterstateEdge("not (" + condition + ")"))
+            sdfg.add_edge(body_elseend_state, final_substate,
+                          dace.InterstateEdge())
+        else:
+            sdfg.add_edge(guard_substate, final_substate,
+                          dace.InterstateEdge("not (" + condition + ")"))
+        self.last_sdfg_states[sdfg] = final_substate
+
+    def forstmt2sdfg(self, node: For_Stmt_Node, sdfg: SDFG):
+
+        declloop = False
+        name = "FOR_l_" + str(node.line_number[0]) + "_c_" + str(
+            node.line_number[1])
+        begin_state = add_simple_state_to_sdfg(self, sdfg, "Begin" + name)
+        guard_substate = sdfg.add_state("Guard" + name)
+        final_substate = sdfg.add_state("Merge" + name)
+        self.last_sdfg_states[sdfg] = final_substate
+        decl_node = node.init
+        entry = {}
+        if isinstance(decl_node, BinOp_Node):
+            iter_name = self.name_mapping[sdfg][decl_node.lval.name]
+            entry[iter_name] = ProcessedWriter(
+                sdfg, self.name_mapping).write_code(decl_node.rval)
+
+        sdfg.add_edge(begin_state, guard_substate,
+                      dace.InterstateEdge(assignments=entry))
+
+        condition = ProcessedWriter(sdfg,
+                                    self.name_mapping).write_code(node.cond)
+
+        increment = "i+0+1"
+        if isinstance(node.iter, BinOp_Node):
+            increment = ProcessedWriter(sdfg, self.name_mapping).write_code(
+                node.iter.rval)
+        entry = {iter_name: increment}
+
+        begin_loop_state = sdfg.add_state("BeginLoop" + name)
+        end_loop_state = sdfg.add_state("EndLoop" + name)
+        self.last_sdfg_states[sdfg] = begin_loop_state
+        self.last_loop_continues[sdfg] = end_loop_state
+        self.translate(node.body, sdfg)
+
+        sdfg.add_edge(self.last_sdfg_states[sdfg], end_loop_state,
+                      dace.InterstateEdge())
+        sdfg.add_edge(guard_substate, begin_loop_state,
+                      dace.InterstateEdge(condition))
+        sdfg.add_edge(end_loop_state, guard_substate,
+                      dace.InterstateEdge(assignments=entry))
+        sdfg.add_edge(guard_substate, final_substate,
+                      dace.InterstateEdge("not (" + condition + ")"))
+        self.last_sdfg_states[sdfg] = final_substate
+
     def const2sdfg(self, node: Constant_Decl_Node, sdfg: SDFG):
-        # for i in node.__dict__:
-        #    print(i)
-        #    print(node.__getattribute__(i))
         if self.contexts.get(sdfg.name) is None:
             self.contexts[sdfg.name] = Context(name=sdfg.name)
         if self.contexts[sdfg.name].constants.get(node.name) is None:
@@ -354,12 +467,17 @@ class AST_translator:
                 bstate = sdfg.add_state("SDFGbegin", is_start_state=True)
                 self.last_sdfg_states[sdfg] = bstate
             substate = sdfg.add_state("Dummystate_" + node.name)
-            increment = TaskletWriter([], []).write_tasklet_code(node.init)
+            increment = TaskletWriter([], []).write_code(node.init)
 
             entry = {node.name: increment}
             sdfg.add_edge(self.last_sdfg_states[sdfg], substate,
                           dace.InterstateEdge(assignments=entry))
             self.last_sdfg_states[sdfg] = substate
+
+    def symbol2sdfg(self, node: Symbol_Decl_Node, sdfg: SDFG):
+        return NotImplementedError(
+            "Symbol_Decl_Node not implemented. This should be done via a transformation that itemizes the constant array."
+        )
 
     def subroutine2sdfg(self, node: Subroutine_Subprogram_Node, sdfg: SDFG):
 
@@ -400,9 +518,10 @@ class AST_translator:
         for variable_in_call in variables_in_call:
             all_arrays = self.get_arrays_in_context(sdfg)
 
-            sdfg_name = self.name_mapping.get(sdfg).get(variable_in_call.name)
+            sdfg_name = self.name_mapping.get(sdfg).get(
+                get_name(variable_in_call))
             globalsdfg_name = self.name_mapping.get(self.globalsdfg).get(
-                variable_in_call.name)
+                get_name(variable_in_call))
             matched = False
             for array_name, array in all_arrays.items():
                 if array_name in [sdfg_name]:
@@ -429,17 +548,20 @@ class AST_translator:
                         for i in variable_in_call.indices:
                             if isinstance(i, ParDecl_Node):
                                 if i.type == "ALL":
-                                    shape.insert(0, array.shape[-indices - 1])
-                                    mysize = mysize * array.shape[-indices - 1]
+                                    shape.append(array.shape[indices])
+                                    mysize = mysize * array.shape[indices]
                                 else:
                                     raise NotImplementedError(
                                         "Index in ParDecl should be ALL")
                             else:
-                                index_list.append(i)
-                                strides.pop(-indices - 1)
-                                offsets.pop(-indices - 1)
-                        indices = indices + 1
-                        tmp_node = tmp_node.unprocessed_name
+                                text = ProcessedWriter(
+                                    sdfg, self.name_mapping).write_code(i)
+                                index_list.append(
+                                    dace.symbolic.pystr_to_symbolic(text))
+                                strides.pop(indices)
+                                offsets.pop(indices)
+                            indices = indices + 1
+
                     if isinstance(variable_in_call, Name_Node):
                         shape = list(array.shape)
                     if shape == () or shape == (
@@ -457,18 +579,9 @@ class AST_translator:
                                 strides=strides,
                                 offset=offsets)
                             from dace import subsets
-                            indices = []
-                            tmp_node = variable_in_call
-                            while isinstance(tmp_node, ArraySubscriptExpr):
-                                if isinstance(tmp_node.index, DeclRefExpr):
-                                    indices.append(self.name_mapping[sdfg][
-                                        tmp_node.index.name])
-                                elif isinstance(tmp_node.index, IntLiteral):
-                                    indices.append("".join(
-                                        map(str, tmp_node.index.value)))
-                                tmp_node = tmp_node.unprocessed_name
-                            all_indices = [None] * (len(array.shape) -
-                                                    len(indices)) + indices
+
+                            all_indices = index_list + [None] * (
+                                len(array.shape) - len(index_list))
                             subset = subsets.Range([
                                 (i, i, 1) if i is not None else (1, s, 1)
                                 for i, s in zip(all_indices, array.shape)
@@ -665,20 +778,20 @@ class AST_translator:
         for i in variables_in_call:
 
             local_name = parameters[variables_in_call.index(i)]
-            if self.name_mapping.get(sdfg).get(i.name) is not None:
-                var = sdfg.arrays.get(self.name_mapping[sdfg][i.name])
-                mapped_name = self.name_mapping[sdfg][i.name]
+            if self.name_mapping.get(sdfg).get(get_name(i)) is not None:
+                var = sdfg.arrays.get(self.name_mapping[sdfg][get_name(i)])
+                mapped_name = self.name_mapping[sdfg][get_name(i)]
             # TODO: FIx symbols in function calls
-            elif i.name in sdfg.symbols:
-                var = i.name
-                mapped_name = i.name
+            elif get_name(i) in sdfg.symbols:
+                var = get_name(i)
+                mapped_name = get_name(i)
             elif self.name_mapping.get(self.globalsdfg).get(
-                    i.name) is not None:
+                    get_name(i)) is not None:
                 var = self.globalsdfg.arrays.get(
-                    self.name_mapping[self.globalsdfg][i.name])
-                mapped_name = self.name_mapping[self.globalsdfg][i.name]
+                    self.name_mapping[self.globalsdfg][get_name(i)])
+                mapped_name = self.name_mapping[self.globalsdfg][get_name(i)]
             else:
-                raise NameError("Variable name not found: " + i.name)
+                raise NameError("Variable name not found: " + get_name(i))
 
             # print("Context change:",i.name," ",var.shape)
             if not hasattr(var, "shape") or len(var.shape) == 0:
@@ -814,7 +927,7 @@ class AST_translator:
 
         tw = TaskletWriter(output_names_tasklet, output_names_changed)
         # print("BINOP:",output_names,output_names_tasklet,output_names_changed)
-        text = tw.write_tasklet_code(node)
+        text = tw.write_code(node)
         # print("BINOPTASKLET:",text)
         tasklet.code = CodeBlock(text, dace.Language.Python)
 
@@ -909,11 +1022,11 @@ class AST_translator:
                     self.get_dace_type(rettype))
                 # special_list_in.append(retval.name)
                 special_list_out.append(retval.name + "_out")
-                text = tw.write_tasklet_code(
+                text = tw.write_code(
                     BinOp_Node(lvalue=retval, op="=", rvalue=node)) + ";"
 
             else:
-                text = tw.write_tasklet_code(node) + ";"
+                text = tw.write_code(node) + ";"
             substate = add_simple_state_to_sdfg(
                 self, sdfg, "_state" + str(node.location_line) + "_" +
                 str(self.tasklet_count))
@@ -968,7 +1081,7 @@ class AST_translator:
             offset_value = -1
             for i in node.sizes:
                 tw = TaskletWriter([], [])
-                text = tw.write_tasklet_code(i)
+                text = tw.write_code(i)
                 sizes.append(dace.symbolic.pystr_to_symbolic(text))
                 offset.append(offset_value)
 
