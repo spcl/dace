@@ -177,7 +177,7 @@ class RedundantArray(pm.SingleStateTransformation):
     def expressions(cls):
         return [sdutil.node_path_graph(cls.in_array, cls.out_array)]
 
-    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
+    def can_be_applied(self, graph: SDFGState, expr_index, sdfg, permissive=False):
         in_array = self.in_array
         out_array = self.out_array
 
@@ -403,6 +403,8 @@ class RedundantArray(pm.SingleStateTransformation):
 
             # 2-d. If array is connected to a nested SDFG, and strides are unequal to the internal ones, skip
             if in_desc.strides != out_desc.strides:
+                if not permissive:
+                    return False
                 sources = []
                 if path.downwards:
                     sources = [path.root().edge]
@@ -845,6 +847,8 @@ class RedundantSecondArray(pm.SingleStateTransformation):
 
             # 2-d. If array is connected to a nested SDFG, and strides are unequal to the internal ones, skip
             if in_desc.strides != out_desc.strides:
+                if not permissive:
+                    return False
                 sources = []
                 if not path.downwards:
                     sources = [path.root().edge]
