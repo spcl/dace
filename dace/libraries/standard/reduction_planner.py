@@ -8,6 +8,27 @@ import dataclasses
 from dace.frontend.python.replacements import Size
 
 
+def combine(shape, strides, dims):
+    # combines the contiguous dimensions in dims
+    new_shape_element = 1
+    for d in dims:
+        new_shape_element *= shape[d]
+
+    combined_shape = shape[0:dims[0]]
+    combined_shape.append(new_shape_element)
+    combined_shape.extend(shape[dims[-1] + 1:])
+
+    new_stride_element = strides[dims[0]]
+    for d in dims[0:]:
+        new_stride_element = min(new_stride_element, strides[d])
+
+    combined_strides = strides[0:dims[0]]
+    combined_strides.append(new_stride_element)
+    combined_strides.extend(strides[dims[-1] + 1:])
+
+    return combined_shape, combined_strides
+
+
 def get_reduction_schedule(in_array: Array,
                            axes: List[int],
                            use_vectorization=True,
@@ -30,20 +51,21 @@ def get_reduction_schedule(in_array: Array,
 
     @dataclasses.dataclass
     class ReductionSchedule:
-        grid: List[Size]  # dimension of the grid
-        block: List[Size]  # dimension of the thread blocks
-        sequential: List[Size]  # number of sequentially summed elements
-        contiguous_dim: bool  # whether reducing contiguous elements in memory or not
-        in_shape: List[Size]  # input tensor shape
-        in_strides: List[Size]  # input tensor strides
-        out_shape: List[Size]  # output tensor shape
-        out_strides: List[Size]  # output tensor strides
-        axes: List[int]  # axes to reduce
-        vectorize: bool  # whether vectorization will be used or not
-        mini_warps: bool  # whether mini_warps optimization will be used or not
-        num_mini_warps: int  # number of mini_warps
-        vec_len: int  # size of vectors
-        error: bool  # True, if an error occured
+        grid: List[Size]  #: dimension of the grid (grid = [10, 20] gives us 200 blocks of threads)
+        block: List[Size]  #: dimension of the thread blocks (block = [32, 32] gives us 1024 threads)
+        sequential: List[Size]  #: number of sequentially summed elements
+        # if len(sequential) == 3, then this list is of the form [start, end, stride]
+        contiguous_dim: bool  #: whether reducing contiguous elements in memory or not
+        in_shape: List[Size]  #: input tensor shape
+        in_strides: List[Size]  #: input tensor strides
+        out_shape: List[Size]  #: output tensor shape
+        out_strides: List[Size]  #: output tensor strides
+        axes: List[int]  #: axes to reduce
+        vectorize: bool  #: whether vectorization will be used or not
+        mini_warps: bool  #: whether mini_warps optimization will be used or not
+        num_mini_warps: int  #: number of mini_warps
+        vec_len: int  #: size of vectors
+        error: bool  #: True, if an error occured
 
     # initialize empty schedule
     schedule = ReductionSchedule([], [], [], False, [], [], [], [], [], False, False, 1, 1, False)
@@ -60,64 +82,45 @@ def get_reduction_schedule(in_array: Array,
         schedule.vec_len = num_loaded_elements
 
     # Remove degenerate (size 1) dimensions
-    for i in range(len(in_array.shape)):
-        if in_array.shape[i] != 1:
-            shape.append(in_array.shape[i])
-            strides.append(in_array.strides[i])
-        else:
-            # decrease axes if necessary
-            for j in range(len(axes)):
-                if axes[j] > i:
-                    axes[j] -= 1
+    degenerate_dims_indices = [i for i, s in enumerate(in_array.shape) if s == 1]
+    shape = [s for i, s in enumerate(in_array.shape) if i not in degenerate_dims_indices]
+    strides = [s for i, s in enumerate(in_array.strides) if i not in degenerate_dims_indices]
+
+    for i in degenerate_dims_indices:
+        for j in range(len(axes)):
+            if axes[j] > i:
+                axes[j] -= 1
 
     # Combine contiguous axes:
-    combined_shape = []
-    combined_axes = []
-    combined_strides = []
+    dimensions_to_combine = []
 
-    curr_axis_index = 0
-    i = 0
-    num_combined = 0
-    prev_reduced = False
-
-    while i < len(shape):
-        if curr_axis_index < len(axes):
-            curr_axis = axes[curr_axis_index]
+    prev = axes[0]
+    prev_combined = False
+    curr_dimensions = []
+    for curr in axes[1:]:
+        if prev == curr - 1:
+            # found contiguous axes
+            if not prev_combined:
+                curr_dimensions.append(prev)
+            curr_dimensions.append(curr)
+            prev_combined = True
         else:
-            curr_axis = -1
-        if not prev_reduced and i != 0 and not i == curr_axis:
-            combined_shape[-1] *= shape[i]
-            combined_strides[-1] = strides[i]
-            num_combined += 1
-        else:
-            combined_shape.append(shape[i])
-            combined_strides.append(strides[i])
-        i += 1
-        prev_reduced = False
-        if i - 1 == curr_axis:
-            prev_reduced = True
-            # add curr dim and axis
-            combined_axes.append(curr_axis - num_combined)
-            curr_axis_index += 1
-            while curr_axis_index < len(axes) and axes[curr_axis_index - 1] + 1 == axes[curr_axis_index]:
-                # actually combine
-                combined_shape[-1] *= shape[i]
-                combined_strides[-1] = strides[i]
-                i += 1
-                curr_axis_index += 1
-                num_combined += 1
+            prev_combined = False
+            if curr_dimensions != []:
+                dimensions_to_combine.append(curr_dimensions)
+                curr_dimensions = []
+        prev = curr
+    if curr_dimensions != []:
+        dimensions_to_combine.append(curr_dimensions)
 
-    shape = combined_shape
-    axes = combined_axes
-    strides = combined_strides
+    for dims in dimensions_to_combine:
+        shape, strides = combine(shape, strides, dims)
+        axes = [a for a in axes if a <= dims[0]]
+        axes.extend([a - len(dims) for a in axes if a > dims[-1]])
 
     schedule.axes = axes
 
-    out_shape = []
-
-    for i, d in enumerate(shape):
-        if i not in axes:
-            out_shape.append(d)
+    out_shape = [d for i, d in enumerate(shape) if i not in axes]
 
     if out_shape == []:
         out_shape = [1]
@@ -126,28 +129,21 @@ def get_reduction_schedule(in_array: Array,
     schedule.in_shape = shape
     schedule.in_strides = strides
 
-    out_strides = [1] * len(out_shape)
-    for i, d in enumerate(out_shape):
-        for j in range(i):
-            out_strides[j] *= d
+    out_strides = strides
+    for ax in axes:
+        # remove index ax from strides and divide all out_strides[i] by shape[ax] if out_strides[i] > out_strides[ax]
+        sh = shape[ax]
+        st = out_strides[ax]
+        out_strides = [os for i, os in enumerate(out_strides) if i != ax]
+        for i in range(len(out_strides)):
+            if out_strides[i] > st:
+                out_strides[i] /= sh
 
     schedule.out_strides = out_strides
 
-    # get contiguity:
-    contiguity = []
-    enum_strides = list(enumerate(strides))
-
-    for i, s in enum_strides:
+    for i, s in enumerate(strides):
         if s == 1:
             contiguous_dimension = i
-
-    try:
-        # may fail if strides arent numbers (i.e. symbols)
-        enum_strides.sort(key=lambda a: a[1])
-        for i, s in enum_strides:
-            contiguity.append(i)
-    except Exception:
-        pass
 
     # non-neighbouring multi-axes reduction not supported yet (e.g. reduce axes [0,2])
     # --> TODO
@@ -171,7 +167,7 @@ def get_reduction_schedule(in_array: Array,
 
         if schedule.grid == []:
             # TODO: solve this issue
-            warnings.warn('Falling back to pure expansion, since invalid schedule.')
+            warnings.warn('Falling back to pure expansion due to invalid schedule.')
             schedule.error = True
             return schedule
 
@@ -191,7 +187,7 @@ def get_reduction_schedule(in_array: Array,
 
         # if too many threads per block, throw error for now --> TODO
         if (schedule.block[0] > 1024) == True:
-            warnings.warn('Falling back to pure expansion, since invalid schedule.')
+            warnings.warn('Falling back to pure expansion due to invalid schedule.')
             schedule.error = True
             return schedule
 
@@ -208,13 +204,13 @@ def get_reduction_schedule(in_array: Array,
                 schedule.mini_warps = True
                 schedule.num_mini_warps = warp_size // schedule.block[0]
         if use_vectorization and not schedule.mini_warps:
-            #check if we can use vectorization
+            # check if we can use vectorization
             if (shape[contiguous_dimension] % num_loaded_elements == 0) == True:
                 schedule.vectorize = True
 
         if schedule.grid == []:
             # TODO: solve this issue
-            warnings.warn('Falling back to pure expansion, since invalid schedule.')
+            warnings.warn('Falling back to pure expansion due to invalid schedule.')
             schedule.error = True
             return schedule
 
