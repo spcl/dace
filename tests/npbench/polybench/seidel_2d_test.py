@@ -60,7 +60,7 @@ def run_seidel_2d(device_type: dace.dtypes.DeviceType):
     if device_type in {dace.dtypes.DeviceType.CPU, dace.dtypes.DeviceType.GPU}:
         # Parse the SDFG and apply auto-opt
         sdfg = seidel_2d_kernel.to_sdfg()
-        # sdfg = auto_optimize(sdfg, device_type) # TBD
+        sdfg = auto_optimize(sdfg, device_type)
         sdfg(TSTEPS, A, N=N)
     elif device_type == dace.dtypes.DeviceType.FPGA:
         # Parse SDFG and apply FPGA friendly optimization
@@ -82,7 +82,6 @@ def run_seidel_2d(device_type: dace.dtypes.DeviceType):
         N,
         A_ref,
     )
-    print(np.linalg.norm(A - A_ref) / np.linalg.norm(A_ref))
     assert np.allclose(A, A_ref)
     return sdfg
 

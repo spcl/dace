@@ -79,7 +79,7 @@ def run_durbin(device_type: dace.dtypes.DeviceType):
         sdfg = durbin_kernel.to_sdfg()
         sdfg = auto_optimize(sdfg, device_type)
         y = sdfg(r, N=N)
-        assert np.allclose(y, y_ref)
+        assert np.allclose(y, y_ref, atol=1e-6)
     elif device_type == dace.dtypes.DeviceType.FPGA:
         # Parse SDFG and apply FPGA friendly optimization
         sdfg = durbin_kernel.to_sdfg(simplify=True)
@@ -100,7 +100,6 @@ def run_durbin(device_type: dace.dtypes.DeviceType):
     return sdfg
 
 
-@pytest.mark.skip(reason="Validation error")
 def test_cpu():
     run_durbin(dace.dtypes.DeviceType.CPU)
 
