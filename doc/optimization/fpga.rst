@@ -1,6 +1,10 @@
 FPGA Optimization Best Practices
 ================================
 
+In the following, we provide guidance on leveraging DaCe functionalities to optimize DaCe programs targeting FPGAs.
+Once that the user program is parsed into an SDFG, the performance engineer can optimize (transform) it for the sake of improving
+performance. In the case of FPGA programs, best-practice and transformations can be applied to reduce data-movements, and to
+increase spatial parallelism. 
 
 
 Maps and parallelism
@@ -17,9 +21,23 @@ programmatically or through the VSCode plugin).
 
 
 
-Exploit FPGA Memory hierarchy
+FPGA Memory hierarchy
 -----------------------------
 
+Modern FPGAs are characterized by having small fast on-chip memory, and large, but slower, off-chip memory.
+
+DaCe allows to specify for each FPGA container, where it should be allocated by specifying its :py:data:`~dace.dtypes.StorageType`, either programmatically
+or through the VSCode plugin. We can distinguish between:
+
+  * *global* memory (:py:data:`~dace.dtypes.StorageType.FPGA_Global`), which represents data present in off-chip, memory-mapped storage such as DDR or HBM. 
+    Containers in global memory can be created/accessed from both the host and the device side;
+  * *local* memory (:py:data:`~dace.dtypes.StorageType.FPGA_Local`), representing any on-chip memory implementation such as registers, BRAM/M20K, 
+    LUTRAM, or UltraRAM. Which one will be actually used is left up to the HLS compiler;
+  * *register* memory (:py:data:`~dace.dtypes.StorageType.FPGA_Register`), which is a subset of local memory, but forces the compiler to implement it 
+    as register (LUT), allowing parallel read/write to the container. This can be useful in the presence of unrolled maps.
+
+
+.. TODO: introduce also Shift Register
 
 Streams and how to exploit them
 -------------------------------
@@ -27,11 +45,11 @@ In FPGAs, streams are implemented in hardware (FIFOs) to exploit the on-chip res
 communication between different program components.
 
 
-.. Talk more about streams, how to define them, what characterizes them and how to transform
+.. Talk more about streams, how to define them, what characterizes them and how to transform and the requirements
 
 
-Library Node and FPGA specialization
-------------------------------------
+Library Nodes and FPGA specialization
+-------------------------------------
 
 
 FPGA Kernels and Processing Elements
@@ -39,7 +57,7 @@ FPGA Kernels and Processing Elements
 
 In DaCe, a state that only accesses containers situated on the FPGA will trigger FPGA code generation.
 
-In DaCe we hierachically organize the code in *FPGA Kernels*, that can be further dividided in multiple *Processing elements*.
+In DaCe we hierarchically organize the code in *FPGA Kernels*, that can be further dividided in multiple *Processing elements*.
 These concepts will be mapped to different entities depending on the used FPGA backend (see :ref:`codegen_fpga_kernels`).
 
 
@@ -52,4 +70,6 @@ a heuristic will further inspect each independent component for other parallelis
 that can be executed in parallel). If this is the case, multiple, possibly depending, FPGA Kernels are generated for the same state.
 
 
-
+Suggested transformation for FPGA programs
+------------------------------------------
+.. Streaming, MapFusion and coalescing, auto-opt
