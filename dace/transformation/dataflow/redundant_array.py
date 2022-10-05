@@ -403,8 +403,6 @@ class RedundantArray(pm.SingleStateTransformation):
 
             # 2-d. If array is connected to a nested SDFG, and strides are unequal to the internal ones, skip
             if in_desc.strides != out_desc.strides:
-                if not permissive:
-                    return False
                 sources = []
                 if path.downwards:
                     sources = [path.root().edge]
@@ -413,6 +411,8 @@ class RedundantArray(pm.SingleStateTransformation):
                 for source_edge in sources:
                     if not isinstance(source_edge.src, nodes.NestedSDFG):
                         continue
+                    if not permissive:
+                        return False
                     conn = source_edge.src_conn
                     inner_desc = source_edge.src.sdfg.arrays[conn]
                     if inner_desc.strides != in_desc.strides:
@@ -847,8 +847,6 @@ class RedundantSecondArray(pm.SingleStateTransformation):
 
             # 2-d. If array is connected to a nested SDFG, and strides are unequal to the internal ones, skip
             if in_desc.strides != out_desc.strides:
-                if not permissive:
-                    return False
                 sources = []
                 if not path.downwards:
                     sources = [path.root().edge]
@@ -857,6 +855,8 @@ class RedundantSecondArray(pm.SingleStateTransformation):
                 for source_edge in sources:
                     if not isinstance(source_edge.dst, nodes.NestedSDFG):
                         continue
+                    if not permissive:
+                        return False
                     conn = source_edge.dst_conn
                     inner_desc = source_edge.dst.sdfg.arrays[conn]
                     if inner_desc.strides != in_desc.strides:
