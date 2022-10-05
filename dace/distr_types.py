@@ -452,10 +452,10 @@ class RedistrArray(object):
             __state->{self.name}_recv_status = new MPI_Status[max_recvs];
             __state->{self.name}_fix_send_src = new int[max_sends * {len(array_a.shape)}];
             __state->{self.name}_fix_send_size = new int[max_sends * {len(array_a.shape)}];
-            __state->{self.name}_send_buffers = new double*[max_sends];
+            __state->{self.name}_send_buffers = new {array_a.dtype.ctype}*[max_sends];
             __state->{self.name}_fix_recv_dst = new int[max_recvs * {len(array_b.shape)}];
             __state->{self.name}_fix_recv_size = new int[max_recvs * {len(array_b.shape)}];
-            __state->{self.name}_recv_buffers = new double*[max_recvs];
+            __state->{self.name}_recv_buffers = new {array_b.dtype.ctype}*[max_recvs];
         """
         tmp += f"""
             if (__state->{array_b.pgrid}_valid) {{
@@ -526,9 +526,9 @@ class RedistrArray(object):
             """
         tmp += f"""
 
-                __state->{self.name}_recv_buffers[__state->{self.name}_recvs] = new double[total_size];
+                __state->{self.name}_recv_buffers[__state->{self.name}_recvs] = new {array_b.dtype.ctype}[total_size];
                 //if (__state->{self.name}_recv_buffers == __state->__rdistrarray_0_recv_buffers)
-                //cudaMalloc((void**)&(__state->{self.name}_recv_buffers[__state->{self.name}_recvs]), total_size * sizeof(double));
+                //cudaMalloc((void**)&(__state->{self.name}_recv_buffers[__state->{self.name}_recvs]), total_size * sizeof({array_b.dtype.ctype}));
 
                 MPI_Type_create_subarray({len(array_b.shape)},  sizes, subsizes, origin, MPI_ORDER_C, {utils.MPI_DDT(array_b.dtype.base_type)}, &__state->{self.name}_recv_types[__state->{self.name}_recvs]);
                 MPI_Type_commit(&__state->{self.name}_recv_types[__state->{self.name}_recvs]);
@@ -606,9 +606,9 @@ class RedistrArray(object):
                 __state->{self.name}_send_sizes[__state->{self.name}_sends] = std::accumulate(subsizes, subsizes + {len(array_a.subshape)}, 1, std::multiplies<long long int>());
                 
                 
-                __state->{self.name}_send_buffers[__state->{self.name}_sends] = new double[__state->{self.name}_send_sizes[__state->{self.name}_sends]];
+                __state->{self.name}_send_buffers[__state->{self.name}_sends] = new {array_a.dtype.ctype}[__state->{self.name}_send_sizes[__state->{self.name}_sends]];
                 //if (__state->{self.name}_send_buffers == __state->__rdistrarray_0_send_buffers)
-                //cudaMalloc((void**)&(__state->{self.name}_send_buffers[__state->{self.name}_sends]), __state->{self.name}_send_sizes[__state->{self.name}_sends] * sizeof(double));
+                //cudaMalloc((void**)&(__state->{self.name}_send_buffers[__state->{self.name}_sends]), __state->{self.name}_send_sizes[__state->{self.name}_sends] * sizeof({array_a.dtype.ctype}));
 
                 MPI_Type_create_subarray({len(array_a.shape)},  sizes, subsizes, origin, MPI_ORDER_C, {utils.MPI_DDT(array_a.dtype.base_type)}, &__state->{self.name}_send_types[__state->{self.name}_sends]);
                 MPI_Type_commit(&__state->{self.name}_send_types[__state->{self.name}_sends]);
