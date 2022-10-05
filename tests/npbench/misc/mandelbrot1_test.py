@@ -39,20 +39,10 @@ def mandelbrot_kernel(xmin: dc.float64, xmax: dc.float64, ymin: dc.float64, ymax
     for n in range(maxiter):
         I = np.less(np.absolute(Z), horizon)
         N[I] = n
-        # np.positive(n, out=N, where=I)
-        # for j, k in dace.map[0:YN, 0:XN]:
-        #     if I[j, k]:
-        #         N[j, k] = n
-        # Z[I] = Z[I]**2 + C[I]
-        # np.add(np.power(Z, 2, where=I), C, out=Z, where=I)
         for j, k in dc.map[0:YN, 0:XN]:
             if I[j, k]:
                 Z[j, k] = Z[j, k]**2 + C[j, k]
     N[N == maxiter - 1] = 0
-    # np.positive(0, out=N, where=N==maxiter-1)
-    # for j, k in dace.map[0:YN, 0:XN]:
-    #     if N[j, k] == maxiter-1:
-    #         N[j, k] = 0
     return Z, N
 
 
@@ -97,9 +87,9 @@ def run_mandelbrot1(device_type: dace.dtypes.DeviceType):
         Z, N = sdfg(xmin, xmax, ymin, ymax, maxiter, horizon)
 
     # Compute ground truth and validate
-    Z_ref, N_ref = ground_truth(xmin, xmax, ymin, ymax, xn, yn, maxiter)
-    assert np.allclose(Z, Z_ref)
-    assert np.allclose(N, N_ref)
+    Z_ref, N_ref = ground_truth(xmin, xmax, ymin, ymax, XN, YN, maxiter)
+    assert np.linalg.norm(Z - Z_ref) / np.linalg.norm(Z_ref) < 1e-6
+    assert np.linalg.norm(N - N_ref) / np.linalg.norm(N_ref) < 1e-6
     return sdfg
 
 
