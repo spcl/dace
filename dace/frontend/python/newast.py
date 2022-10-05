@@ -20,7 +20,8 @@ from dace import sourcemap
 from dace.config import Config
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python import astutils
-from dace.frontend.python.common import (DaceSyntaxError, SDFGClosure, SDFGConvertible, inverse_dict_lookup)
+from dace.frontend.python.common import (DaceSyntaxError, SDFGClosure, SDFGConvertible, inverse_dict_lookup,
+                                         StringLiteral)
 from dace.frontend.python.astutils import ExtNodeVisitor, ExtNodeTransformer
 from dace.frontend.python.astutils import rname
 from dace.frontend.python import nested_call, replacements, preprocessing
@@ -60,6 +61,8 @@ def until(val, substr):
         return val
     return val[:val.find(substr)]
 
+# Array names that sympy and other python dependencies cannot accept
+FORBIDDEN_ARRAY_NAMES = set(symbolic._sympy_clash.keys())
 
 augassign_ops = {
     'Add': '+',
@@ -261,7 +264,7 @@ DISALLOWED_STMTS = [
 ]
 # Extra AST node types that are disallowed after preprocessing
 _DISALLOWED_STMTS = DISALLOWED_STMTS + [
-    'Global', 'Assert', 'Print', 'Nonlocal', 'Raise', 'Starred', 'AsyncFor', 'Bytes', 'ListComp', 'GeneratorExp',
+    'Global', 'Assert', 'Print', 'Nonlocal', 'Raise', 'Starred', 'AsyncFor', 'ListComp', 'GeneratorExp',
     'SetComp', 'DictComp', 'comprehension'
 ]
 
@@ -1246,7 +1249,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
         # Try to replace transients with their python-assigned names
         for pyname, arrname in self.variables.items():
-            if arrname in self.sdfg.arrays:
+            if arrname in self.sdfg.arrays and pyname not in FORBIDDEN_ARRAY_NAMES:
                 if self.sdfg.arrays[arrname].transient:
                     if (pyname and dtypes.validate_name(pyname) and pyname not in self.sdfg.arrays):
                         self.sdfg.replace(arrname, pyname)
@@ -1269,6 +1272,9 @@ class ProgramVisitor(ExtNodeVisitor):
         result.update({v: self.sdfg.arrays[v] for _, v in self.variables.items() if v in self.sdfg.arrays})
         # TODO: Is there a case of a variable-symbol?
         result.update({k: self.sdfg.symbols[v] for k, v in self.variables.items() if v in self.sdfg.symbols})
+
+        # Add SDFG arrays, in case a replacement added a new output
+        result.update(self.sdfg.arrays)
 
         return result
 
@@ -2076,10 +2082,11 @@ class ProgramVisitor(ExtNodeVisitor):
                     elif sym.name in self.closure.callbacks:
                         self.sdfg.add_symbol(sym.name, nsdfg_node.sdfg.symbols[sym.name])
 
-    def _recursive_visit(self, body: List[ast.AST], name: str, lineno: int, last_state=True, extra_symbols=None):
-        """ Visits a subtree of the AST, creating special states before and after the visit.
-            Returns the previous state, and the first and last internal states of the
-            recursive visit. """
+    def _recursive_visit(self, body: List[ast.AST], name: str, lineno: int, last_state=True, extra_symbols=None) -> Tuple[SDFGState, SDFGState, SDFGState, bool]:
+        """ Visits a subtree of the AST, creating special states before and after the visit. Returns the previous state,
+            and the first and last internal states of the recursive visit. Also returns a boolean value indicating
+            whether a return statement was met or not. This value can be used by other visitor methods, e.g., visit_If,
+            to generate correct control flow. """
         before_state = self.last_state
         self.last_state = None
         first_internal_state = self._add_state('%s_%d' % (name, lineno))
@@ -2091,8 +2098,11 @@ class ProgramVisitor(ExtNodeVisitor):
             self.globals.update(extra_symbols)
 
         # Recursive loop processing
+        return_stmt = False
         for stmt in body:
             self.visit_TopLevel(stmt)
+            if isinstance(stmt, ast.Return):
+                return_stmt = True
 
         # Create the next state
         last_internal_state = self.last_state
@@ -2104,7 +2114,7 @@ class ProgramVisitor(ExtNodeVisitor):
         if extra_symbols:
             self.globals = old_globals
 
-        return before_state, first_internal_state, last_internal_state
+        return before_state, first_internal_state, last_internal_state, return_stmt
 
     def _replace_with_global_symbols(self, expr: sympy.Expr) -> sympy.Expr:
         repldict = dict()
@@ -2218,10 +2228,10 @@ class ProgramVisitor(ExtNodeVisitor):
             self.loop_idx += 1
             self.continue_states.append([])
             self.break_states.append([])
-            laststate, first_loop_state, last_loop_state = self._recursive_visit(node.body,
-                                                                                 'for',
-                                                                                 node.lineno,
-                                                                                 extra_symbols=extra_syms)
+            laststate, first_loop_state, last_loop_state, _ = self._recursive_visit(node.body,
+                                                                                    'for',
+                                                                                    node.lineno,
+                                                                                    extra_symbols=extra_syms)
             end_loop_state = self.last_state
 
             # Add loop to SDFG
@@ -2313,7 +2323,7 @@ class ProgramVisitor(ExtNodeVisitor):
         self.loop_idx += 1
         self.continue_states.append([])
         self.break_states.append([])
-        laststate, first_loop_state, last_loop_state = \
+        laststate, first_loop_state, last_loop_state, _ = \
             self._recursive_visit(node.body, 'while', node.lineno)
         end_loop_state = self.last_state
 
@@ -2410,23 +2420,23 @@ class ProgramVisitor(ExtNodeVisitor):
         cond, cond_else = self._visit_test(node.test)
 
         # Visit recursively
-        laststate, first_if_state, last_if_state = \
+        laststate, first_if_state, last_if_state, return_stmt = \
             self._recursive_visit(node.body, 'if', node.lineno)
         end_if_state = self.last_state
 
         # Connect the states
         self.sdfg.add_edge(laststate, first_if_state, dace.InterstateEdge(cond))
-        self.sdfg.add_edge(last_if_state, end_if_state, dace.InterstateEdge())
+        self.sdfg.add_edge(last_if_state, end_if_state, dace.InterstateEdge(condition=f"{not return_stmt}"))
 
         # Process 'else'/'elif' statements
         if len(node.orelse) > 0:
             # Visit recursively
-            _, first_else_state, last_else_state = \
+            _, first_else_state, last_else_state, return_stmt = \
                 self._recursive_visit(node.orelse, 'else', node.lineno, False)
 
             # Connect the states
             self.sdfg.add_edge(laststate, first_else_state, dace.InterstateEdge(cond_else))
-            self.sdfg.add_edge(last_else_state, end_if_state, dace.InterstateEdge())
+            self.sdfg.add_edge(last_else_state, end_if_state, dace.InterstateEdge(condition=f"{not return_stmt}"))
             self.last_state = end_if_state
         else:
             self.sdfg.add_edge(laststate, end_if_state, dace.InterstateEdge(cond_else))
@@ -3074,8 +3084,10 @@ class ProgramVisitor(ExtNodeVisitor):
                     and not isinstance(true_array, data.Scalar) and not (true_array.shape == (1, ))):
                 if (isinstance(result, str) and result in self.sdfg.arrays
                         and self.sdfg.arrays[result].is_equivalent(true_array)):
-                    # Skip error if the arrays are defined exactly in the same way
-                    true_name = None
+                    # Skip error if the arrays are defined exactly in the same way.
+                    # Change target to a full-range subscript.
+                    target = ast.parse(f"{name}[:]").body[0].value
+                    assert isinstance(target, ast.Subscript)
                 else:
                     raise DaceSyntaxError(self, target, 'Cannot reassign value to variable "{}"'.format(name))
 
@@ -3091,15 +3103,17 @@ class ProgramVisitor(ExtNodeVisitor):
 
             new_data, rng = None, None
             dtype_keys = tuple(dtypes.DTYPE_TO_TYPECLASS.keys())
-            if not (symbolic.issymbolic(result) or isinstance(result, dtype_keys) or
+            if not (result in self.sdfg.symbols or symbolic.issymbolic(result) or isinstance(result, dtype_keys) or
                     (isinstance(result, str) and result in self.sdfg.arrays)):
                 raise DaceSyntaxError(
                     self, node, "In assignments, the rhs may only be "
                     "data, numerical/boolean constants "
                     "and symbols")
             if not true_name:
-                if (symbolic.issymbolic(result) or isinstance(result, dtype_keys)):
-                    if symbolic.issymbolic(result):
+                if result in self.sdfg.symbols or symbolic.issymbolic(result) or isinstance(result, dtype_keys):
+                    if result in self.sdfg.symbols:
+                        rtype = self.sdfg.symbols[result]
+                    elif symbolic.issymbolic(result):
                         rtype = _sym_type(result)
                     else:
                         rtype = type(result)
@@ -3921,14 +3935,15 @@ class ProgramVisitor(ExtNodeVisitor):
                     else:
                         allargs.append(parsed_arg)
                 else:
-                    if isinstance(parsed_arg, (Number, numpy.number, type(None))):
+                    if isinstance(parsed_arg, StringLiteral):
+                        # Special case for strings
+                        parsed_arg = f'"{astutils.escape_string(parsed_arg.value)}"'
+                        atype = data.Scalar(dtypes.string)
+                    elif isinstance(parsed_arg, (Number, numpy.number, type(None))):
                         atype = data.create_datadescriptor(type(parsed_arg))
                     else:
                         atype = data.create_datadescriptor(parsed_arg)
 
-                    if isinstance(parsed_arg, str):
-                        # Special case for strings
-                        parsed_arg = f'"{astutils.escape_string(parsed_arg)}"'
                     allargs.append(parsed_arg)
 
                 argtypes.append(atype)
@@ -4441,8 +4456,12 @@ class ProgramVisitor(ExtNodeVisitor):
 
     #### Visitors that return arrays
     def visit_Str(self, node: ast.Str):
-        # A string constant returns itself
-        return node.s
+        # A string constant returns a string literal
+        return StringLiteral(node.s)
+
+    def visit_Bytes(self, node: ast.Bytes):
+        # A bytes constant returns a string literal
+        return StringLiteral(node.s)
 
     def visit_Num(self, node: ast.Num):
         if isinstance(node.n, bool):
@@ -4456,6 +4475,8 @@ class ProgramVisitor(ExtNodeVisitor):
             return dace.bool_(node.value)
         if isinstance(node.value, (int, float, complex)):
             return dtypes.DTYPE_TO_TYPECLASS[type(node.value)](node.value)
+        if isinstance(node.value, (str, bytes)):
+            return StringLiteral(node.value)
         return node.value
 
     def visit_Name(self, node: ast.Name):
@@ -4698,6 +4719,12 @@ class ProgramVisitor(ExtNodeVisitor):
                     if not sym:
                         sym = dace.symbol(f'__sym_{scalar}', dtype=desc.dtype)
                         self.indirections[node_str] = sym
+                        try:
+                            self.sdfg.add_symbol(f'__sym_{scalar}', desc.dtype)
+                        except FileExistsError:
+                            # NOTE: By design, it is possible to try here to add an already existing symbol even if
+                            # `not sym` returns True. This exception is benign.
+                            pass
                     state = self._add_state(f'promote_{scalar}_to_{str(sym)}')
                     edge = self.sdfg.in_edges(state)[0]
                     edge.data.assignments = {str(sym): scalar}
