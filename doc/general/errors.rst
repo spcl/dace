@@ -3,8 +3,7 @@
 Common Development Errors
 =========================
 
-AttributeError: no attribute 'data'
------------------------------------
+``AttributeError: no attribute 'data'``
 
 The error manifests as an AttributeError exception and occurs due to trying to access an object's attribute named data
 that doesn't exist. For example:

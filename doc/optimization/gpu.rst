@@ -1,6 +1,11 @@
 GPU Optimization Best Practices
 ===============================
 
+.. note::
+    Experiencing errors or unintended behavior during GPU optimization? Refer to :ref:`gpu-debugging` for information
+    on how to pinpoint the issue.
+
+
 fusion and auto-optimize
 
 memory allocation (shared, registers, global). lifetime (persistent), memory pooling

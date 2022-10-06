@@ -3,7 +3,7 @@
 Profiling and Instrumentation
 =============================
 
-``DACE_profiling``
+:envvar:`profiling` and how to use it
 
 the files
 
@@ -13,6 +13,7 @@ In-depth instrumentation and types
 
 The file can be found in ...
 
+Data instrumentation
 
 Chrome tracing format. You can view it in several ways:
 

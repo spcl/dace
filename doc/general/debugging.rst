@@ -104,6 +104,7 @@ It even supports mapping breakpoints from the Python code to the generated code.
 For low-level access of the CMake configuration, you could also access the build folder, go to the ``build/`` 
 subdirectory, and call ``ccmake .`` to modify it. After that run ``make`` to rebuild.
 
+.. _gpu-debugging:
 
 GPU Debugging in DaCe
 ~~~~~~~~~~~~~~~~~~~~~

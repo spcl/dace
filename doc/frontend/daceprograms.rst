@@ -239,30 +239,30 @@ Typeclasses
 The typeclasses that can be used as element types for data containers are versatile, and can be used for performance
 and compatibility with other codes:
 
-    * Base types such as ``dace.uint8`` (see :class:`~dace.dtypes.Typeclasses` for a full list)
+    * Base types such as :pycode:`dace.uint8` (see :class:`~dace.dtypes.Typeclasses` for a full list)
     * Native :class:`~dace.dtypes.vector` types (vectors of vectors also supported)
 
-        * Example: ``dace.vector(dtype, vector_length)``
+        * Example: :pycode:`dace.vector(dtype, vector_length)`
     
     * Compound :class:`~dace.dtypes.struct` types
 
-        * Example: ``dace.struct(x=dace.float64, y=dace.float64, mass=dace.float16)``
+        * Example: :pycode:`dace.struct(x=dace.float64, y=dace.float64, mass=dace.float16)`
     
     * Callbacks to native code via :class:`~dace.dtypes.callback`
     
-        * Example: ``dace.callback(return_type, *arg_types)``
+        * Example: :pycode:`dace.callback(return_type, *arg_types)`
     
     * Interoperability with libraries via the :class:`~dace.dtypes.pointer` and :class:`~dace.dtypes.opaque` types
 
-        * Example: ``dace.pointer(dace.opaque('MPI_Request'))``
+        * Example: :pycode:`dace.pointer(dace.opaque('MPI_Request'))`
 
 
-Closure
-~~~~~~~
+Closure (arguments, fields, and globals)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Python functions can also use variables defined out of their scope. Those (among other things) define the *closure* of the function.
 DaCe natively supports closures, and works differently depending on the type of external variable used. Once the function
-is compiled, Scalars and constants are assumed to be compile-time constants, whereas arrays are given to the function 
+is compiled, **scalars and constants are assumed to be compile-time constants**, whereas arrays are given to the function 
 as implicit arguments. This emulates the natural behavior of Python functions and their interaction with globals (which 
 is read-only unless the ``global`` or ``nonlocal`` keywords are used).
 

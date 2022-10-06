@@ -1,5 +1,5 @@
 .. _opt_sdfgapi:
 
-Interactive Optimization with The SDFG API
+Interactive Optimization with the SDFG API
 ==========================================
 
