@@ -296,9 +296,9 @@ def padded_conv2d(input: dace.float64[N, H, W, C_in], weights: dace.float64[1, 1
 
 def test_padded_conv2d():
     """ Tests for issues regarding redundant arrays with views in nested SDFGs. """
-    input = np.random.rand(8, 64, 64, 3)
+    input = np.random.rand(8, 32, 32, 3)
     weights = np.random.rand(1, 1, 3, 16)
-    reference = np.zeros((8, 66, 66, 16), dtype=np.float64)
+    reference = np.zeros((8, 34, 34, 16), dtype=np.float64)
     reference[:, 1:-1, 1:-1, :] = conv2d_py(input, weights)
 
     output = padded_conv2d(input, weights)
