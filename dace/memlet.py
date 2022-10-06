@@ -54,14 +54,14 @@ class Memlet(object):
     allow_oob = Property(dtype=bool, default=False, desc='Bypass out-of-bounds validation')
 
     def __init__(self,
-                 expr: str = None,
-                 data: str = None,
-                 subset: Union[str, subsets.Subset] = None,
-                 other_subset: Union[str, subsets.Subset] = None,
-                 volume: Union[int, str, symbolic.SymbolicType] = None,
+                 expr: Optional[str] = None,
+                 data: Optional[str] = None,
+                 subset: Union[str, subsets.Subset, None] = None,
+                 other_subset: Union[str, subsets.Subset, None] = None,
+                 volume: Union[int, str, symbolic.SymbolicType, None] = None,
                  dynamic: bool = False,
-                 wcr: Union[str, ast.AST] = None,
-                 debuginfo: dtypes.DebugInfo = None,
+                 wcr: Union[str, ast.AST, None] = None,
+                 debuginfo: Optional[dtypes.DebugInfo] = None,
                  wcr_nonatomic: bool = False,
                  allow_oob: bool = False):
         """ 
