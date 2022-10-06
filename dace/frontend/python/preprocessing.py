@@ -26,11 +26,12 @@ class DaceRecursionError(Exception):
     The exception includes the id of the topmost function as a stopping
     condition for parsing.
     """
+
     def __init__(self, fid: int):
         self.fid = fid
 
     def __str__(self) -> str:
-        return ('Non-analyzable recursion detected, function cannot be parsed ' 'as data-centric')
+        return ('Non-analyzable recursion detected, function cannot be parsed as data-centric')
 
 
 @dataclass
@@ -49,6 +50,7 @@ class PreprocessedAST:
 class StructTransformer(ast.NodeTransformer):
     """ A Python AST transformer that replaces `Call`s to create structs with
         the custom StructInitializer AST node. """
+
     def __init__(self, gvars):
         super().__init__()
         self._structs = {k: v for k, v in gvars.items() if isinstance(v, dtypes.struct)}
@@ -77,6 +79,7 @@ class StructTransformer(ast.NodeTransformer):
 
 # Replaces instances of modules Y imported with "import X as Y" by X
 class ModuleResolver(ast.NodeTransformer):
+
     def __init__(self, modules: Dict[str, str], always_replace=False):
         self.modules = modules
         self.should_replace = False
@@ -109,6 +112,7 @@ class RewriteSympyEquality(ast.NodeTransformer):
     This is done because a test ``if x == 0`` where ``x`` is a symbol would
     result in False, even in indeterminate cases.
     """
+
     def __init__(self, globals: Dict[str, Any]) -> None:
         super().__init__()
         self.globals = globals
@@ -145,6 +149,7 @@ class ConditionalCodeResolver(ast.NodeTransformer):
     """ 
     Replaces if conditions by their bodies if can be evaluated at compile time.
     """
+
     def __init__(self, globals: Dict[str, Any]):
         super().__init__()
         self.globals_and_locals = copy.copy(globals)
@@ -194,6 +199,7 @@ class _FindBreakContinueStmts(ast.NodeVisitor):
     Find control statements in the given loop (break / continue), without
     traversing into nested loops.
     """
+
     def __init__(self) -> None:
         super().__init__()
         self.has_cflow = False
@@ -221,6 +227,7 @@ class _FindBreakContinueStmts(ast.NodeVisitor):
 
 class DeadCodeEliminator(ast.NodeTransformer):
     """ Removes any code within scope after return/break/continue/raise. """
+
     def generic_visit(self, node: ast.AST):
         for field, old_value in ast.iter_fields(node):
             if isinstance(old_value, list):
@@ -316,6 +323,7 @@ def _create_unflatten_instruction(arg: ast.AST) -> Tuple[Callable, int]:
     elif isinstance(arg, ast.Dict):
         # Use two levels of functions to preserve keyword names
         def make_remake(kwnames):
+
             def remake_dict(args):
                 return {k: a for k, a in zip(kwnames, args)}
 
@@ -379,6 +387,7 @@ def flatten_callback(func: Callable, node: ast.Call):
     if instructions_exist:
         # If unflattening is necessary, have one version of the callback
         def make_cb(keywords, poscount, instructions):
+
             def cb_func(*all_args):
                 # Create an unflattened version of the original arguments
                 unflattened = []
@@ -393,6 +402,7 @@ def flatten_callback(func: Callable, node: ast.Call):
     else:
 
         def make_cb(keywords, poscount, _):
+
             def cb_func(*all_args):
                 args = all_args[:poscount]
                 kwargs = {kw: arg for kw, arg in zip(keywords, all_args[poscount:])}
@@ -406,6 +416,7 @@ def flatten_callback(func: Callable, node: ast.Call):
 class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
     """ Resolves global constants and lambda expressions if not
         already defined in the given scope. """
+
     def __init__(self, globals: Dict[str, Any], resolve_functions: bool = False, default_args: Set[str] = None):
         self._globals = globals
         self.resolve_functions = resolve_functions
@@ -819,6 +830,7 @@ class ContextManagerInliner(ast.NodeTransformer, astutils.ASTHelperMixin):
     in the right places, i.e., at the end of the body or when the context is left due to
     a return statement, or top-level break/continue statements.
     """
+
     def __init__(self, globals: Dict[str, Any], filename: str, closure_resolver: GlobalResolver) -> None:
         super().__init__()
         self.with_statements: List[ast.With] = []
@@ -1040,7 +1052,7 @@ class LoopUnroller(ast.NodeTransformer):
 
         # Find out if unrolling should be done implicitly
         implicit = True
-        
+
         # Special case for map with @ operator
         if isinstance(niter, ast.BinOp) and isinstance(niter.op, ast.MatMult):
             try:
@@ -1162,6 +1174,7 @@ class LoopUnroller(ast.NodeTransformer):
 
 
 class CallTreeResolver(ast.NodeVisitor):
+
     def __init__(self, closure: SDFGClosure, globals: Dict[str, Any]) -> None:
         self.closure = closure
         self.seen_calls: Set[str] = set()
@@ -1307,6 +1320,7 @@ class CallTreeResolver(ast.NodeVisitor):
 
 
 class ArrayClosureResolver(ast.NodeVisitor):
+
     def __init__(self, closure: SDFGClosure):
         self.closure = closure
         self.arrays: Set[str] = set()
@@ -1317,7 +1331,43 @@ class ArrayClosureResolver(ast.NodeVisitor):
         self.generic_visit(node)
 
 
+class DisallowedAssignmentChecker(ast.NodeVisitor):
+    """
+    Tests a pre-processed program for disallowed assignments to compile-time constants, and raises a 
+    ``DaceSyntaxError`` exception if one is found.
+    """
+
+    def __init__(self, filename: str) -> None:
+        super().__init__()
+        self.visitor = collections.namedtuple('Visitor', 'filename')
+        self.visitor.filename = filename
+
+    def _check_assignment_target(self, node: ast.expr, parent_node: ast.AST):
+        if hasattr(node, 'qualname'):
+            raise DaceSyntaxError(
+                self.visitor, parent_node, f'Trying to assign to a compile-time constant "{node.qualname}", which is '
+                'disallowed. Refer to the Frequently Asked Questions in the documentation on how to avoid this issue.')
+
+    def visit_Assign(self, node: ast.Assign):
+        for target in node.targets:
+            self._check_assignment_target(target, node)
+        self.generic_visit(node)
+
+    def visit_AugAssign(self, node: ast.AugAssign):
+        self._check_assignment_target(node.target, node)
+        self.generic_visit(node)
+
+    def visit_AnnAssign(self, node: ast.AnnAssign):
+        self._check_assignment_target(node.target, node)
+        self.generic_visit(node)
+
+    def visit_NamedExpr(self, node):
+        self._check_assignment_target(node.target, node)
+        self.generic_visit(node)
+
+
 class AugAssignExpander(ast.NodeTransformer):
+
     def visit_AugAssign(self, node: ast.AugAssign) -> ast.Assign:
         target = self.generic_visit(node.target)
         value = self.generic_visit(node.value)
@@ -1421,6 +1471,7 @@ def preprocess_dace_program(f: Callable[..., Any],
         try:
             closure_resolver.toplevel_function = True
             src_ast = closure_resolver.visit(src_ast)
+            DisallowedAssignmentChecker(src_file).visit(src_ast)
             src_ast = LoopUnroller(resolved, src_file, closure_resolver).visit(src_ast)
             src_ast = ContextManagerInliner(resolved, src_file, closure_resolver).visit(src_ast)
             src_ast = ConditionalCodeResolver(resolved).visit(src_ast)
@@ -1436,7 +1487,7 @@ def preprocess_dace_program(f: Callable[..., Any],
         ctr.visit(src_ast)
     except DaceRecursionError as ex:
         if id(f) == ex.fid:
-            raise TypeError('Parsing failed due to recursion in a data-centric ' 'context called from this function')
+            raise TypeError('Parsing failed due to recursion in a data-centric context called from this function')
         else:
             raise ex
     used_arrays = ArrayClosureResolver(closure_resolver.closure)
