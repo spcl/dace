@@ -148,6 +148,14 @@ dace.transformation.dataflow.redundant\_array\_copying module
    :undoc-members:
    :show-inheritance:
 
+dace.transformation.dataflow.streaming\_memory module
+-----------------------------------------------------
+
+.. automodule:: dace.transformation.dataflow.streaming_memory
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 dace.transformation.dataflow.stream\_transient module
 -----------------------------------------------------
 

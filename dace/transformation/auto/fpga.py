@@ -1,5 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" FPGA-Oriented Automatic optimization routines for SDFGs. """
+""" 
+FPGA-Oriented Automatic optimization routines for SDFGs.
+"""
 
 from dace.sdfg import SDFG, SDFGState, trace_nested_access
 from dace import config, data as dt, dtypes, Memlet, symbolic
@@ -9,12 +11,12 @@ from dace.sdfg import SDFG, nodes, graph as gr
 def fpga_global_to_local(sdfg: SDFG, max_size: int = 1048576) -> None:
     """ Takes an entire  SDFG and changes the storage type of a global FPGA data container
         to Local in the following situation:
-           - the data is transient,
-           - the data is not a transient shared with other states, and
-           - the data has a compile-time known size.
+        - the data is transient,
+        - the data is not a transient shared with other states, and
+        - the data has a compile-time known size.
         :param sdfg: The SDFG to operate on. It must be a top-level SDFG.
         :param max_size: maximum size (in bytes) that a container can have to be considered for
-            storage type change
+        storage type change
         :note: Operates in-place on the SDFG.
     """
     converted = []
