@@ -246,6 +246,18 @@ def parse_dace_program(name: str,
             initial, total = ProgramVisitor.progress_bar
             ProgramVisitor.progress_bar = tqdm(total=total, initial=initial, desc='Parsing Python program')
         ProgramVisitor.increment_progress()
+    except SkipCall:
+        raise
+    except Exception:
+        # Print the offending line causing the exception
+        li = visitor.current_lineinfo
+        print('Exception raised while parsing DaCe program:\n'
+              f'  in File "{li.filename}", line {li.start_line}')
+        lines = preprocessed_ast.src.split('\n')
+        lineid = li.start_line - preprocessed_ast.src_line - 1
+        if lineid >= 0 and lineid < len(lines):
+            print(f'    {lines[lineid].strip()}')
+        raise
     finally:
         if teardown_progress:
             if not isinstance(ProgramVisitor.progress_bar, tuple):
@@ -264,8 +276,8 @@ DISALLOWED_STMTS = [
 ]
 # Extra AST node types that are disallowed after preprocessing
 _DISALLOWED_STMTS = DISALLOWED_STMTS + [
-    'Global', 'Assert', 'Print', 'Nonlocal', 'Raise', 'Starred', 'AsyncFor', 'ListComp', 'GeneratorExp',
-    'SetComp', 'DictComp', 'comprehension'
+    'Global', 'Assert', 'Print', 'Nonlocal', 'Raise', 'Starred', 'AsyncFor', 'ListComp', 'GeneratorExp', 'SetComp',
+    'DictComp', 'comprehension'
 ]
 
 TaskletType = Union[ast.FunctionDef, ast.With, ast.For]
