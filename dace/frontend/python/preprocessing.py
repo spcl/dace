@@ -309,11 +309,18 @@ def has_replacement(callobj: Callable, parent_object: Optional[Any] = None, node
     return oprepo.Replacements.get(astutils.rname(node)) is not None
 
 
-def _create_unflatten_instruction(arg: ast.AST) -> Tuple[Callable, int]:
+def _create_unflatten_instruction(arg: ast.AST, global_vars: Dict[str, Any]) -> Tuple[Callable, int]:
     """
     Creates a lambda function for recreating the original Python object and returns the number of 
     arguments to increment.
     """
+    try:
+        # Constant-valued arguments stay as-is
+        val = astutils.evalnode(arg, global_vars)
+        return (lambda *args: val), 0, True
+    except SyntaxError:
+        pass
+
     if isinstance(arg, ast.List):
         return (list, len(arg.elts))
     elif isinstance(arg, ast.Tuple):
@@ -343,11 +350,11 @@ def _create_unflatten_instruction(arg: ast.AST) -> Tuple[Callable, int]:
             else:
                 raise NotImplementedError(f'Key type {type(kw).__name__} is not supported')
 
-        return (make_remake(kwarg_names), len(arg.keys))
-    return (None, 1)
+        return (make_remake(kwarg_names), len(arg.keys), False)
+    return (None, 1, False)
 
 
-def flatten_callback(func: Callable, node: ast.Call):
+def flatten_callback(func: Callable, node: ast.Call, global_vars: Dict[str, Any]):
     """
     Creates a version of the function that has only marshallable arguments and no keyword arguments.
     Arguments in callback matches the number of arguments used exactly.
@@ -356,32 +363,47 @@ def flatten_callback(func: Callable, node: ast.Call):
     """
 
     # Find out if any Python arguments should be flattened
-    unflatten_instructions: Dict[int, Tuple[Callable, int]] = collections.OrderedDict()
+    unflatten_instructions: List[Tuple[int, Callable, int, bool]] = []
     curarg = 0
     instructions_exist = False
-    for arg in node.args:
-        call, inc = _create_unflatten_instruction(arg)
+
+    # Constant [keyword] arguments to remove
+    args_to_remove = []
+    kwargs_to_remove = []
+
+    for i, arg in enumerate(node.args):
+        call, inc, constant = _create_unflatten_instruction(arg, global_vars)
         if call is not None:
             instructions_exist = True
         else:
             call = lambda x: x[0]
-        unflatten_instructions[curarg] = call, inc
+        if constant:
+            args_to_remove.append(i)
+        unflatten_instructions.append((curarg, call, inc, constant))
         curarg += inc
-    for kw in node.keywords:
-        call, inc = _create_unflatten_instruction(kw.value)
+    for i, kw in enumerate(node.keywords):
+        call, inc, constant = _create_unflatten_instruction(kw.value, global_vars)
         if call is not None:
             instructions_exist = True
         else:
             call = lambda x: x[0]
-        unflatten_instructions[curarg] = call, inc
+        if constant:
+            kwargs_to_remove.append(i)
+        unflatten_instructions.append((curarg, call, inc, constant))
         curarg += inc
+
+    # Filter arguments from AST
+    poscount = len(node.args)
+    node.args = [a for i, a in enumerate(node.args) if i not in args_to_remove]
 
     # Nothing to do, early exit
     if not node.keywords and not instructions_exist:
         return func
 
     keywords = [kw.arg for kw in node.keywords]
-    poscount = len(node.args)
+
+    # Filter keyword arguments from AST
+    node.keywords = [a for i, a in enumerate(node.keywords) if i not in kwargs_to_remove]
 
     # Using two levels of functions to ensure keywords are stored with the callback
     if instructions_exist:
@@ -391,8 +413,11 @@ def flatten_callback(func: Callable, node: ast.Call):
             def cb_func(*all_args):
                 # Create an unflattened version of the original arguments
                 unflattened = []
-                for i, (unflatten, skip) in instructions.items():
-                    unflattened.append(unflatten(all_args[i:i + skip]))
+                for i, unflatten, skip, constant in instructions:
+                    if constant:
+                        unflattened.append(unflatten())
+                    else:
+                        unflattened.append(unflatten(all_args[i:i + skip]))
 
                 args = unflattened[:poscount]
                 kwargs = {kw: arg for kw, arg in zip(keywords, unflattened[poscount:])}
@@ -549,19 +574,24 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
 
                 # Store the handle to the original callable, in case parsing fails
                 if isinstance(parent_node, ast.Call):
+                    if hasattr(parent_node, 'qualname') and parent_node.qualname in self.closure.callbacks:
+                        # Already parsed
+                        return None
+
                     cbqualname = astutils.unparse(parent_node.func)
                 else:
                     cbqualname = astutils.rname(parent_node)
                 cbname = self._qualname_to_array_name(cbqualname, prefix='')
 
                 # Make a version of the callback without keyword arguments or Python literal objects (list, tuple, ...)
-                cb_func = flatten_callback(value, parent_node)
+                cb_func = flatten_callback(value, parent_node, self.globals)
 
                 # If the callback already exists, and the details differ (e.g., different kwarg names), make new
                 if cbname in self.closure.callbacks and cb_func is not self.closure.callbacks[cbname][1]:
                     cbname = data.find_new_name(cbname, self.closure.callbacks)
 
                 self.closure.callbacks[cbname] = (cbqualname, cb_func, False)
+                parent_node.qualname = cbname
 
                 # From this point on, any failure will result in a callback
                 newnode = ast.Name(id=cbname, ctx=ast.Load())
