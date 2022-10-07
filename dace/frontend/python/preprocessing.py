@@ -322,11 +322,11 @@ def _create_unflatten_instruction(arg: ast.AST, global_vars: Dict[str, Any]) -> 
         pass
 
     if isinstance(arg, ast.List):
-        return (list, len(arg.elts))
+        return (list, len(arg.elts), False)
     elif isinstance(arg, ast.Tuple):
-        return (tuple, len(arg.elts))
+        return (tuple, len(arg.elts), False)
     elif isinstance(arg, ast.Set):
-        return (set, len(arg.elts))
+        return (set, len(arg.elts), False)
     elif isinstance(arg, ast.Dict):
         # Use two levels of functions to preserve keyword names
         def make_remake(kwnames):
