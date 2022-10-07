@@ -394,16 +394,16 @@ def flatten_callback(func: Callable, node: ast.Call, global_vars: Dict[str, Any]
 
     # Filter arguments from AST
     poscount = len(node.args)
-    node.args = [a for i, a in enumerate(node.args) if i not in args_to_remove]
 
     # Nothing to do, early exit
     if not node.keywords and not instructions_exist:
         return func
 
     keywords = [kw.arg for kw in node.keywords]
-
-    # Filter keyword arguments from AST
-    node.keywords = [a for i, a in enumerate(node.keywords) if i not in kwargs_to_remove]
+    
+    # Annotate that these arguments should not be visited during callback generation
+    node.skip_args = args_to_remove
+    node.skip_keywords = kwargs_to_remove
 
     # Using two levels of functions to ensure keywords are stored with the callback
     if instructions_exist:

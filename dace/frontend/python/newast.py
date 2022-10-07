@@ -3916,13 +3916,17 @@ class ProgramVisitor(ExtNodeVisitor):
         func: Callable[..., Any]
         _, func, _ = self.closure.callbacks[funcname]
 
+        skip_args = getattr(node, 'skip_args', [])
+        skip_kwargs = getattr(node, 'skip_keywords', [])
+
         # Infer the type of the function arguments and return value
         argtypes = []
         args = []
         outargs = []
         allargs = []
-        kwargs = [kw.value for kw in node.keywords]
-        for arg in itertools.chain(node.args, kwargs):
+        nodeargs = [a for i, a in enumerate(node.args) if i not in skip_args]
+        kwargs = [kw.value for i, kw in enumerate(node.keywords) if i not in skip_kwargs]
+        for arg in itertools.chain(nodeargs, kwargs):
             parsed_args = self._parse_function_arg(arg)
 
             # Flatten literal arguments in call (will be unflattened in callback,
