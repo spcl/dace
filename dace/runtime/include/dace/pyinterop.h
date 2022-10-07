@@ -37,6 +37,7 @@ private:
     iterator end_;
 };
 
+typedef void *pyobject;
 
 // Sympy functions
 template <typename U, typename... T>

@@ -400,7 +400,7 @@ def flatten_callback(func: Callable, node: ast.Call, global_vars: Dict[str, Any]
         return func
 
     keywords = [kw.arg for kw in node.keywords]
-    
+
     # Annotate that these arguments should not be visited during callback generation
     node.skip_args = args_to_remove
     node.skip_keywords = kwargs_to_remove
@@ -1395,6 +1395,12 @@ class DisallowedAssignmentChecker(ast.NodeVisitor):
         self._check_assignment_target(node.target, node)
         self.generic_visit(node)
 
+    def visit_Call(self, node: ast.Call):
+        if any(k.arg is None for k in node.keywords):
+            raise DaceSyntaxError(
+                self.visitor, node, 'Double-starred (dictionary unpacking, e.g., `**a`) arguments are '
+                'currently unsupported.')
+
 
 class AugAssignExpander(ast.NodeTransformer):
 
@@ -1411,6 +1417,10 @@ def find_disallowed_statements(node: ast.AST):
         # Found disallowed statement
         if type(subnode).__name__ in DISALLOWED_STMTS:
             return type(subnode).__name__
+
+        if isinstance(subnode, ast.Call):
+            if any(k.arg is None for k in subnode.keywords):
+                return type(subnode).__name__
     return None
 
 

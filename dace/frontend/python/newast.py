@@ -61,6 +61,7 @@ def until(val, substr):
         return val
     return val[:val.find(substr)]
 
+
 # Array names that sympy and other python dependencies cannot accept
 FORBIDDEN_ARRAY_NAMES = set(symbolic._sympy_clash.keys())
 
@@ -2094,7 +2095,12 @@ class ProgramVisitor(ExtNodeVisitor):
                     elif sym.name in self.closure.callbacks:
                         self.sdfg.add_symbol(sym.name, nsdfg_node.sdfg.symbols[sym.name])
 
-    def _recursive_visit(self, body: List[ast.AST], name: str, lineno: int, last_state=True, extra_symbols=None) -> Tuple[SDFGState, SDFGState, SDFGState, bool]:
+    def _recursive_visit(self,
+                         body: List[ast.AST],
+                         name: str,
+                         lineno: int,
+                         last_state=True,
+                         extra_symbols=None) -> Tuple[SDFGState, SDFGState, SDFGState, bool]:
         """ Visits a subtree of the AST, creating special states before and after the visit. Returns the previous state,
             and the first and last internal states of the recursive visit. Also returns a boolean value indicating
             whether a return statement was met or not. This value can be used by other visitor methods, e.g., visit_If,
@@ -4022,7 +4028,7 @@ class ProgramVisitor(ExtNodeVisitor):
                         n, arr = self.sdfg.add_temp_transient(shape, dtype)
                     else:
                         if isinstance(tarr, data.Scalar):
-                            n, arr = self.sdfg.add_temp_transient((1, ), tarr.dtype)
+                            n, arr = self.sdfg.add_scalar(self.sdfg.temp_data_name(), tarr.dtype, transient=True)
                         else:
                             n, arr = self.sdfg.add_temp_transient_like(tarr)
                 elif name in self.annotated_types:
@@ -4032,25 +4038,19 @@ class ProgramVisitor(ExtNodeVisitor):
                     elif isinstance(dtype, dtypes.typeclass):
                         n, arr = self.sdfg.add_temp_transient((1, ), dtype)
                     else:
-                        n, arr = None, None
+                        n, arr = self.sdfg.add_scalar('pyobj', dtypes.pyobject(), transient=True, find_new_name=True)
                 else:
-                    n, arr = None, None
+                    n, arr = self.sdfg.add_scalar('pyobj', dtypes.pyobject(), transient=True, find_new_name=True)
                 return n, arr
 
             for target in parent.targets:
                 if isinstance(target, ast.Tuple):
                     for actual_target in target.elts:
                         n, arr = parse_target(actual_target)
-                        if not arr:
-                            return_type = None
-                            break
                         return_names.append(n)
                         return_type.append(arr)
                 else:
                     n, arr = parse_target(target)
-                    if not arr:
-                        return_type = None
-                        break
                     return_names.append(n)
                     return_type.append(arr)
 
@@ -4062,15 +4062,15 @@ class ProgramVisitor(ExtNodeVisitor):
 
         # If not annotated, nor the array didn't exist,
         # raise a syntax error with an example of how to do it
-        if return_type is None:
-            raise DaceSyntaxError(
-                self, node, f'Cannot infer return type of function call "{funcname}". '
-                'To ensure that the return types can be inferred, try to '
-                'extract the call to a separate statement and annotate the '
-                'return values. For example:\n'
-                '  a: dace.int32\n'
-                '  b: dace.float64[N]\n'
-                '  a, b = call(c, d)')
+        if isinstance(return_type, list) and any(isinstance(r.dtype, dtypes.pyobject) for r in return_type):
+            warnings.warn(f'Cannot infer return type of function call "{funcname}":\n'
+                          f'  in File "{self.filename}", line {node.lineno}\n'
+                          'To ensure that the return types can be inferred, try to '
+                          'extract the call to a separate statement and annotate the '
+                          'return values. For example:\n'
+                          '  a: dace.int32\n'
+                          '  b: dace.float64[N]\n'
+                          '  a, b = call(c, d)')
 
         # Create a matching callback symbol from function type
         if (not isinstance(return_type, (list, tuple)) and return_type == dtypes.typeclass(None)):
@@ -4102,7 +4102,7 @@ class ProgramVisitor(ExtNodeVisitor):
                                                                               for name in args} | {'__istate'},
                                                   {f'__out_{name}'
                                                    for name in outargs} | {'__ostate'},
-                                                  f'__out_{outargs[0]} = {funcname}({call_args})',
+                                                  f'__out_{return_names[0]} = {funcname}({call_args})',
                                                   side_effects=True)
         else:
             call_args = ', '.join(str(s) for s in allargs)

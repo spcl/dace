@@ -177,6 +177,7 @@ class CompiledSDFG(object):
         self._return_syms: Dict[str, Any] = None
         self._retarray_shapes: List[Tuple[str, np.dtype, dtypes.StorageType, Tuple[int], Tuple[int], int]] = []
         self._return_arrays: List[np.ndarray] = []
+        self._callback_retval_references: List[Any] = []  # Avoids garbage-collecting callback return values
 
         # Cache SDFG argument properties
         self._typedict = self._sdfg.arglist()
@@ -405,7 +406,7 @@ class CompiledSDFG(object):
         for index, (arg, argtype) in enumerate(zip(arglist, argtypes)):
             # Call a wrapper function to make NumPy arrays from pointers.
             if isinstance(argtype.dtype, dtypes.callback):
-                arglist[index] = argtype.dtype.get_trampoline(arg, kwargs)
+                arglist[index] = argtype.dtype.get_trampoline(arg, kwargs, self._callback_retval_references)
             # List to array
             elif isinstance(arg, list) and isinstance(argtype, dt.Array):
                 arglist[index] = np.array(arg, dtype=argtype.dtype.type)
@@ -488,6 +489,9 @@ class CompiledSDFG(object):
         syms = dict()
         syms.update({k: v for k, v in kwargs.items() if k not in self.sdfg.arrays})
         syms.update(self.sdfg.constants)
+
+        # Clear references from last call (allow garbage collection)
+        self._callback_retval_references.clear()
 
         if self._initialized:
             if self._return_syms == syms:
