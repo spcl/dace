@@ -803,6 +803,56 @@ def test_unknown_pyobject():
     assert success_counter == 20
 
 
+def test_pyobject_return():
+    counter = 1
+
+    class MyCustomObject:
+
+        @dace_inhibitor
+        def __init__(self) -> None:
+            nonlocal counter
+            self.q = counter
+            counter += 1
+
+        def __str__(self):
+            return f'MyCustomObject(q={self.q})'
+
+    @dace
+    def tester():
+        MyCustomObject()
+        return MyCustomObject()
+
+    obj = tester()
+    assert isinstance(obj, MyCustomObject)
+    assert obj.q == 2
+
+
+def test_pyobject_return_tuple():
+    counter = 1
+
+    class MyCustomObject:
+
+        @dace_inhibitor
+        def __init__(self) -> None:
+            nonlocal counter
+            self.q = counter
+            counter += 1
+
+        def __str__(self):
+            return f'MyCustomObject(q={self.q})'
+
+    @dace
+    def tester():
+        MyCustomObject()
+        return MyCustomObject(), MyCustomObject()
+
+    obj, obj2 = tester()
+    assert isinstance(obj, MyCustomObject)
+    assert obj.q == 2
+    assert isinstance(obj2, MyCustomObject)
+    assert obj2.q == 3
+
+
 def test_custom_generator():
 
     def reverse_range(sz):
@@ -925,6 +975,8 @@ if __name__ == '__main__':
     test_callback_with_nested_calls()
     test_string_callback()
     test_unknown_pyobject()
+    test_pyobject_return()
+    test_pyobject_return_tuple()
     test_custom_generator()
     test_custom_generator_with_break()
     # test_matplotlib_with_compute()

@@ -826,6 +826,7 @@ class pyobject(opaque):
     def __init__(self):
         super().__init__('pyobject')
         self.bytes = ctypes.sizeof(ctypes.c_void_p)
+        self.type = numpy.object_
 
     def as_ctypes(self):
         return ctypes.py_object
@@ -1028,7 +1029,7 @@ class callback(typeclass):
             elif isinstance(arg, data.Scalar) and isinstance(arg.dtype, pyobject):
                 ret_arraypos.append(index + offset)
                 ret_types_and_sizes.append((ctypes.py_object, []))
-                ret_converters.append(lambda a, *args: id(a))
+                ret_converters.append(lambda a, *args: a)
             else:
                 if not self.is_scalar_function():
                     ret_arraypos.append(index + offset)

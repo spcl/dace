@@ -3990,6 +3990,14 @@ class ProgramVisitor(ExtNodeVisitor):
                         parent = anode
                         parent_is_toplevel = getattr(anode, 'toplevel', False)
                         break
+                if hasattr(child, 'elts'):  # Tuples, e.g., in multiple return values
+                    for subchild in child.elts:
+                        if subchild is node:
+                            parent = anode
+                            parent_is_toplevel = getattr(anode, 'toplevel', False)
+                            break
+                    if parent is not None:
+                        break
         if parent is None:
             raise DaceSyntaxError(self, node, f'Cannot obtain parent AST node for callback "{funcname}"')
 
@@ -4011,7 +4019,20 @@ class ProgramVisitor(ExtNodeVisitor):
             outargs.extend(return_names)
             allargs.extend([f'__out_{n}' for n in return_names])
 
-        elif isinstance(parent, (ast.Assign, ast.AugAssign)):
+        elif isinstance(parent, (ast.Assign, ast.AugAssign, ast.Return)):
+            if isinstance(parent, (ast.Assign, ast.AugAssign)):
+                targets = parent.targets
+            elif isinstance(parent, ast.Return):
+                if isinstance(parent.value, (ast.Tuple, ast.List)):
+                    # If part of a return tuple, find proper index
+                    index = next(i for i, n in enumerate(parent.value.elts) if n is node)
+                    targets = [f'__return_{index}']
+                else:
+                    # One return value
+                    targets = ['__return']
+            else:
+                targets = []
+
             defined_vars = {**self.variables, **self.scope_vars}
             defined_arrays = {**self.sdfg.arrays, **self.scope_arrays}
 
@@ -4038,12 +4059,12 @@ class ProgramVisitor(ExtNodeVisitor):
                     elif isinstance(dtype, dtypes.typeclass):
                         n, arr = self.sdfg.add_temp_transient((1, ), dtype)
                     else:
-                        n, arr = self.sdfg.add_scalar('pyobj', dtypes.pyobject(), transient=True, find_new_name=True)
+                        n, arr = self.sdfg.add_scalar(name, dtypes.pyobject(), transient=True, find_new_name=True)
                 else:
-                    n, arr = self.sdfg.add_scalar('pyobj', dtypes.pyobject(), transient=True, find_new_name=True)
+                    n, arr = self.sdfg.add_scalar(name, dtypes.pyobject(), transient=True, find_new_name=True)
                 return n, arr
 
-            for target in parent.targets:
+            for target in targets:
                 if isinstance(target, ast.Tuple):
                     for actual_target in target.elts:
                         n, arr = parse_target(actual_target)
