@@ -1,14 +1,15 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Exception classes and methods for validation of SDFGs. """
 import copy
+from dace.dtypes import DebugInfo, StorageType
 import os
+from typing import TYPE_CHECKING, Dict, Set, Tuple, Union
 import warnings
-from typing import Dict, Set, Tuple, Union
+from dace import dtypes, data as dt, subsets
+from dace import symbolic
 
-import dace
-from dace import data as dt
-from dace import dtypes, subsets, symbolic
-from dace.dtypes import StorageType
+if TYPE_CHECKING:
+    from dace.sdfg import SDFG
 
 ###########################################
 # Validation
@@ -231,7 +232,8 @@ def validate_state(state: 'dace.sdfg.SDFGState',
         raise InvalidSDFGError("Invalid state name", sdfg, state_id)
 
     if state._parent != sdfg:
-        raise InvalidSDFGError("State does not point to the correct " "parent", sdfg, state_id)
+        raise InvalidSDFGError("State does not point to the correct "
+                               "parent", sdfg, state_id)
 
     # Unreachable
     ########################################
@@ -617,25 +619,60 @@ def validate_state(state: 'dace.sdfg.SDFGState',
 
 class InvalidSDFGError(Exception):
     """ A class of exceptions thrown when SDFG validation fails. """
-    def __init__(self, message: str, sdfg, state_id):
+
+    def __init__(self, message: str, sdfg: 'SDFG', state_id: int):
         self.message = message
         self.sdfg = sdfg
         self.state_id = state_id
+
+    def _getlineinfo(self, obj) -> str:
+        """
+        Tries to retrieve the source line information of an entity, if exists.
+
+        :param obj: The entity to retrieve.
+        :return: A string that contains the file and line of the issue, or an empty string if
+                 cannot be evaluated.
+        """
+        if not hasattr(obj, 'debuginfo'):
+            return ''
+
+        lineinfo: DebugInfo = obj.debuginfo
+        if lineinfo is None or not lineinfo.filename:
+            return ''
+
+        if lineinfo.start_line >= 0:
+            if lineinfo.start_column > 0:
+                return (f'File "{lineinfo.filename}", line {lineinfo.start_line}, '
+                        f'column {lineinfo.start_column}')
+            return f'File "{lineinfo.filename}", line {lineinfo.start_line}'
+
+        return f'File "{lineinfo.filename}"'
 
     def to_json(self):
         return dict(message=self.message, sdfg_id=self.sdfg.sdfg_id, state_id=self.state_id)
 
     def __str__(self):
         if self.state_id is not None:
-            state = self.sdfg.nodes()[self.state_id]
-            return "%s (at state %s)" % (self.message, str(state.label))
+            state = self.sdfg.node(self.state_id)
+            locinfo = self._getlineinfo(state)
+            suffix = f' (at state {state.label})'
         else:
-            return "%s" % self.message
+            suffix = ''
+            if self.sdfg.number_of_nodes() >= 1:
+                locinfo = self._getlineinfo(self.sdfg.node(0))
+            else:
+                locinfo = ''
+
+        if locinfo:
+            locinfo = '\nOriginating from source code at ' + locinfo
+
+        return f'{self.message}{suffix}{locinfo}'
 
 
 class InvalidSDFGInterstateEdgeError(InvalidSDFGError):
     """ Exceptions of invalid inter-state edges in an SDFG. """
-    def __init__(self, message: str, sdfg, edge_id):
+
+    def __init__(self, message: str, sdfg: 'SDFG', edge_id: int):
         self.message = message
         self.sdfg = sdfg
         self.edge_id = edge_id
@@ -659,7 +696,8 @@ class InvalidSDFGInterstateEdgeError(InvalidSDFGError):
 
 class InvalidSDFGNodeError(InvalidSDFGError):
     """ Exceptions of invalid nodes in an SDFG state. """
-    def __init__(self, message: str, sdfg, state_id, node_id):
+
+    def __init__(self, message: str, sdfg: 'SDFG', state_id: int, node_id: int):
         self.message = message
         self.sdfg = sdfg
         self.state_id = state_id
@@ -669,15 +707,22 @@ class InvalidSDFGNodeError(InvalidSDFGError):
         return dict(message=self.message, sdfg_id=self.sdfg.sdfg_id, state_id=self.state_id, node_id=self.node_id)
 
     def __str__(self):
-        state = self.sdfg.nodes()[self.state_id]
+        state = self.sdfg.node(self.state_id)
+        locinfo = ''
 
         if self.node_id is not None:
-            node = state.nodes()[self.node_id]
-            nodestr = ", node %s" % str(node)
+            from dace.sdfg.nodes import Node
+            node: Node = state.node(self.node_id)
+            nodestr = f', node {node}'
+            locinfo = self._getlineinfo(node)
         else:
-            nodestr = ""
+            nodestr = ''
+            locinfo = self._getlineinfo(state)
 
-        return "%s (at state %s%s)" % (self.message, str(state.label), nodestr)
+        if locinfo:
+            locinfo = '\nOriginating from source code at ' + locinfo
+
+        return f'{self.message} (at state {state.label}{nodestr}){locinfo}'
 
 
 class NodeNotExpandedError(InvalidSDFGNodeError):
@@ -685,13 +730,15 @@ class NodeNotExpandedError(InvalidSDFGNodeError):
     Exception that is raised whenever a library node was not expanded
     before code generation.
     """
-    def __init__(self, sdfg: 'dace.sdfg.SDFG', state_id: int, node_id: int):
+
+    def __init__(self, sdfg: 'SDFG', state_id: int, node_id: int):
         super().__init__('Library node not expanded', sdfg, state_id, node_id)
 
 
 class InvalidSDFGEdgeError(InvalidSDFGError):
     """ Exceptions of invalid edges in an SDFG state. """
-    def __init__(self, message: str, sdfg, state_id, edge_id):
+
+    def __init__(self, message: str, sdfg: 'SDFG', state_id: int, edge_id: int):
         self.message = message
         self.sdfg = sdfg
         self.state_id = state_id
@@ -701,7 +748,7 @@ class InvalidSDFGEdgeError(InvalidSDFGError):
         return dict(message=self.message, sdfg_id=self.sdfg.sdfg_id, state_id=self.state_id, edge_id=self.edge_id)
 
     def __str__(self):
-        state = self.sdfg.nodes()[self.state_id]
+        state = self.sdfg.node(self.state_id)
 
         if self.edge_id is not None:
             e = state.edges()[self.edge_id]
@@ -712,7 +759,12 @@ class InvalidSDFGEdgeError(InvalidSDFGError):
                 str(e.dst),
                 e.dst_conn,
             )
+            locinfo = self._getlineinfo(e.data)
         else:
-            edgestr = ""
+            edgestr = ''
+            locinfo = self._getlineinfo(state)
 
-        return "%s (at state %s%s)" % (self.message, str(state.label), edgestr)
+        if locinfo:
+            locinfo = '\nOriginating from source code at ' + locinfo
+
+        return f'{self.message} (at state {state.label}{edgestr}){locinfo}'
