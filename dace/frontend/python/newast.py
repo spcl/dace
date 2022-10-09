@@ -4597,6 +4597,18 @@ class ProgramVisitor(ExtNodeVisitor):
         else:
             operand2, op2type = None, None
 
+        # Type-check operands in order to provide a clear error message
+        if (isinstance(operand1, str) and operand1 in self.defined
+                and isinstance(self.defined[operand1].dtype, dtypes.pyobject)):
+            raise DaceSyntaxError(
+                self, op1, 'Trying to operate on a callback return value with an undefined type. '
+                f'Please add a type hint to "{operand1}" to enable using it within the program.')
+        if (isinstance(operand2, str) and operand2 in self.defined
+                and isinstance(self.defined[operand2].dtype, dtypes.pyobject)):
+            raise DaceSyntaxError(
+                self, op2, 'Trying to operate on a callback return value with an undefined type. '
+                f'Please add a type hint to "{operand2}" to enable using it within the program.')
+
         func = oprepo.Replacements.getop(op1type, opname, otherclass=op2type)
         if func is None:
             # Check for SDFG as fallback
