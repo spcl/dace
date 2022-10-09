@@ -20,6 +20,7 @@ from dace.frontend import operations
 class ReloadableDLL(object):
     """ A reloadable shared object (or dynamically linked library), which
         bypasses Python's dynamic library reloading issues. """
+
     def __init__(self, library_filename, program_name):
         """ Creates a new reloadable shared object.
             :param library_filename: Path to library file.
@@ -159,6 +160,7 @@ def _array_interface_ptr(array: Any, array_type: dt.Array) -> int:
 
 class CompiledSDFG(object):
     """ A compiled SDFG object that can be called through Python. """
+
     def __init__(self, sdfg, lib: ReloadableDLL, argnames: List[str] = None):
         self._sdfg = sdfg
         self._lib = lib
@@ -176,6 +178,7 @@ class CompiledSDFG(object):
         self._create_new_arrays: bool = True
         self._return_syms: Dict[str, Any] = None
         self._retarray_shapes: List[Tuple[str, np.dtype, dtypes.StorageType, Tuple[int], Tuple[int], int]] = []
+        self._retarray_is_scalar: List[bool] = []
         self._return_arrays: List[np.ndarray] = []
         self._callback_retval_references: List[Any] = []  # Avoids garbage-collecting callback return values
 
@@ -301,7 +304,7 @@ class CompiledSDFG(object):
             else:
                 self._cfunc(self._libhandle, *argtuple)
 
-            return self._return_arrays
+            return self._convert_return_values()
         except (RuntimeError, TypeError, UnboundLocalError, KeyError, cgx.DuplicateDLLError, ReferenceError):
             self._lib.unload()
             raise
@@ -322,12 +325,8 @@ class CompiledSDFG(object):
         """
         # Return value initialization (for values that have not been given)
         self._initialize_return_values(kwargs)
-        if self._return_arrays is not None:
-            if len(self._retarray_shapes) == 1:
-                kwargs[self._retarray_shapes[0][0]] = self._return_arrays
-            else:
-                for desc, arr in zip(self._retarray_shapes, self._return_arrays):
-                    kwargs[desc[0]] = arr
+        for desc, arr in zip(self._retarray_shapes, self._return_arrays):
+            kwargs[desc[0]] = arr
 
         # Argument construction
         sig = self._sig
@@ -500,17 +499,9 @@ class CompiledSDFG(object):
                 else:
                     self._create_new_arrays = False
                     # Use stored sizes to recreate arrays (fast path)
-                    if self._return_arrays is None:
-                        return
-                    elif isinstance(self._return_arrays, tuple):
-                        self._return_arrays = tuple(kwargs[desc[0]] if desc[0] in kwargs else self._create_array(*desc)
-                                                    for desc in self._retarray_shapes)
-                        return
-                    else:  # Single array return value
-                        desc = self._retarray_shapes[0]
-                        arr = (kwargs[desc[0]] if desc[0] in kwargs else self._create_array(*desc))
-                        self._return_arrays = arr
-                        return
+                    self._return_arrays = tuple(kwargs[desc[0]] if desc[0] in kwargs else self._create_array(*desc)
+                                                for desc in self._retarray_shapes)
+                    return
 
         self._return_syms = syms
         self._create_new_arrays = False
@@ -533,16 +524,19 @@ class CompiledSDFG(object):
                 total_size = int(symbolic.evaluate(arr.total_size, syms))
                 strides = tuple(symbolic.evaluate(s, syms) * arr.dtype.bytes for s in arr.strides)
                 shape_desc = (arrname, dtype, arr.storage, shape, strides, total_size)
+                self._retarray_is_scalar.append(isinstance(arr, dt.Scalar) or isinstance(arr.dtype, dtypes.pyobject))
                 self._retarray_shapes.append(shape_desc)
 
                 # Create an array with the properties of the SDFG array
                 arr = self._create_array(*shape_desc)
                 self._return_arrays.append(arr)
 
-        # Set up return_arrays field
-        if len(self._return_arrays) == 0:
-            self._return_arrays = None
+
+    def _convert_return_values(self):
+        # Return the values as they would be from a Python function
+        if self._return_arrays is None or len(self._return_arrays) == 0:
+            return None
         elif len(self._return_arrays) == 1:
-            self._return_arrays = self._return_arrays[0]
+            return self._return_arrays[0].item() if self._retarray_is_scalar[0] else self._return_arrays[0]
         else:
-            self._return_arrays = tuple(self._return_arrays)
+            return tuple(r.item() if scalar else r for r, scalar in zip(self._return_arrays, self._retarray_is_scalar))
