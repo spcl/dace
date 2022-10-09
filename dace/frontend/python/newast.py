@@ -4084,14 +4084,17 @@ class ProgramVisitor(ExtNodeVisitor):
         # If not annotated, nor the array didn't exist,
         # raise a syntax error with an example of how to do it
         if isinstance(return_type, list) and any(isinstance(r.dtype, dtypes.pyobject) for r in return_type):
-            warnings.warn(f'Cannot infer return type of function call "{funcname}":\n'
+            error_text = (f'Cannot infer return type of function call "{funcname}":\n'
                           f'  in File "{self.filename}", line {node.lineno}\n'
                           'To ensure that the return types can be inferred, try to '
                           'extract the call to a separate statement and annotate the '
-                          'return values. For example:\n'
-                          '  a: dace.int32\n'
-                          '  b: dace.float64[N]\n'
-                          '  a, b = call(c, d)')
+                          'return values. For example: a: dace.int32 = call(b, c).\n'
+                          'To enforce only callbacks with explicit return types, set '
+                          'the `frontend.typed_callbacks_only` configuration entry to True.')
+            if Config.get_bool('frontend', 'typed_callbacks_only'):
+                raise DaceSyntaxError(self, node, error_text)
+            else:
+                warnings.warn(error_text)
 
         # Create a matching callback symbol from function type
         if (not isinstance(return_type, (list, tuple)) and return_type == dtypes.typeclass(None)):
