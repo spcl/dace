@@ -1009,9 +1009,9 @@ class callback(typeclass):
             elif isinstance(arg, data.Scalar) and isinstance(arg.dtype, pyobject):
                 inp_arraypos.append(index)
                 inp_types_and_sizes.append((ctypes.py_object, []))
-                inp_converters.append(lambda a, *args: ctypes.cast(a, ctypes.py_object).value)
+                inp_converters.append(lambda a, *args: a)
             else:
-                inp_converters.append(lambda a: a)
+                inp_converters.append(lambda a, *args: a)
         offset = len(self.input_types)
         for index, arg in enumerate(self.return_types):
             if isinstance(arg, data.Array):
