@@ -513,6 +513,7 @@ class CompiledSDFG(object):
             if arrname.startswith('__return') and not arr.transient:
                 if arrname in kwargs:
                     self._return_arrays.append(kwargs[arrname])
+                    self._retarray_is_scalar.append(isinstance(arr, dt.Scalar))
                     self._retarray_shapes.append((arrname, ))
                     continue
 
