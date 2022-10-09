@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 from dace.sdfg import InvalidSDFGError
+import pytest
 
 sdfg = dace.SDFG('const_access_test')
 sdfg.add_array('A', [1], dace.float64)
@@ -18,12 +19,8 @@ state.add_edge(state.add_read('A'), None, nsdfg_node, 'a', dace.Memlet.simple('A
 
 
 def test():
-    try:
+    with pytest.raises(InvalidSDFGError):
         sdfg.validate()
-        raise AssertionError('SDFG should not validate')
-    except InvalidSDFGError:
-        print('Test passed')
-
 
 if __name__ == '__main__':
     test()
