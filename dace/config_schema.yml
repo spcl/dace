@@ -746,6 +746,14 @@ required:
                     Stricter mode of operation where callbacks into Python don't participate
                     in state fusion transformations.
 
+            typed_callbacks_only:
+                type: bool
+                title: Only allow typed callbacks
+                default: false
+                description: >
+                    Stricter mode of operation where callbacks into Python must have explicit return value
+                    types in order to compile.
+
             unroll_threshold:
                 type: int
                 title: Automatic unroll loop size threshold
