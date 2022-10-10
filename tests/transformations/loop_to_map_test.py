@@ -342,6 +342,22 @@ def test_need_for_transient():
         start = i * 10
         assert np.array_equal(B[i], np.arange(start + 9, start - 1, -1, dtype=np.int32))
 
+def test_iteration_variable_used_outside():
+    N = dace.symbol("N", dace.int32)
+
+    @dace.program
+    def tester(A: dace.float64[N], output: dace.float64[1]):
+        i = -1
+
+        for i in range(N):
+            A[i] += 1
+        
+        if i > 10:
+            output[0] = 1.0
+
+    sdfg = tester.to_sdfg(simplify=True)
+    assert sdfg.apply_transformations(LoopToMap) == 0
+
 
 def test_symbol_race():
 
@@ -456,6 +472,7 @@ if __name__ == "__main__":
     test_interstate_dep()
     test_need_for_tasklet()
     test_need_for_transient()
+    test_iteration_variable_used_outside()
     test_symbol_race()
     test_symbol_write_before_read()
     test_symbol_array_mix(False)
