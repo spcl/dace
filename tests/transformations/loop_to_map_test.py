@@ -13,8 +13,7 @@ from dace.transformation.interstate import LoopToMap
 
 def make_sdfg(with_wcr, map_in_guard, reverse_loop, use_variable, assign_after, log_path):
 
-    sdfg = dace.SDFG(f"loop_to_map_test_{with_wcr}_{map_in_guard}_"
-                     f"{reverse_loop}_{use_variable}_{assign_after}")
+    sdfg = dace.SDFG(f"loop_to_map_test_{with_wcr}_{map_in_guard}_{reverse_loop}_{use_variable}_{assign_after}")
     sdfg.set_global_code("#include <fstream>\n#include <mutex>")
 
     init = sdfg.add_state("init")
@@ -165,7 +164,6 @@ def test_loop_to_map_variable_reassigned(n=None):
 
 
 def test_output_copy():
-
     @dace.program
     def l2mtest_copy(A: dace.float64[20, 20]):
         for i in range(1, 20):
@@ -185,7 +183,6 @@ def test_output_copy():
 
 
 def test_output_accumulate():
-
     @dace.program
     def l2mtest_accumulate(A: dace.float64[20, 20]):
         for i in range(1, 20):
@@ -243,7 +240,6 @@ def test_specialize():
 
 
 def test_empty_loop():
-
     @dace.program
     def empty_loop():
         for i in range(10):
@@ -387,8 +383,31 @@ def test_symbol_write_before_read():
     assert sdfg.apply_transformations(LoopToMap) == 1
 
 
-def test_symbol_array_mix():
-    pass
+@pytest.mark.parametrize('overwrite', (False, True))
+def test_symbol_array_mix(overwrite):
+    sdfg = dace.SDFG('tester')
+    sdfg.add_transient('tmp', [1], dace.float64)
+    sdfg.add_symbol('sym', dace.float64)
+    init = sdfg.add_state(is_start_state=True)
+    body_start = sdfg.add_state()
+    body = sdfg.add_state()
+    body_end = sdfg.add_state()
+    after = sdfg.add_state()
+    sdfg.add_loop(init, body_start, after, 'i', '0', 'i < 20', 'i + 1', loop_end_state=body_end)
+
+    sdfg.out_edges(init)[0].data.assignments['sym'] = '0.0'
+
+    # Internal loop structure
+    t = body_start.add_tasklet('def', {}, {'o'}, 'o = i')
+    body_start.add_edge(t, 'o', body_start.add_write('tmp'), None, dace.Memlet('tmp'))
+
+    if overwrite:
+        sdfg.add_edge(body_start, body, dace.InterstateEdge(assignments=dict(sym='tmp')))
+    else:
+        sdfg.add_edge(body_start, body, dace.InterstateEdge(assignments=dict(sym='sym + tmp')))
+    sdfg.add_edge(body, body_end, dace.InterstateEdge(assignments=dict(sym='sym + 1.0')))
+
+    assert sdfg.apply_transformations(LoopToMap) == (1 if overwrite else 0)
 
 
 @pytest.mark.parametrize('overwrite', (False, True))
@@ -439,6 +458,7 @@ if __name__ == "__main__":
     test_need_for_transient()
     test_symbol_race()
     test_symbol_write_before_read()
-    test_symbol_array_mix()
+    test_symbol_array_mix(False)
+    test_symbol_array_mix(True)
     test_internal_symbol_used_outside(False)
     test_internal_symbol_used_outside(True)
