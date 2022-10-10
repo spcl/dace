@@ -993,6 +993,8 @@ def make_reference_from_descriptor(descriptor: Array,
     import numpy as np
     symbols = symbols or {}
 
+    original_array: int = ctypes.cast(original_array, ctypes.c_void_p).value
+
     free_syms = set(map(str, descriptor.free_symbols)) - symbols.keys()
     if free_syms:
         raise NotImplementedError(f'Cannot make Python references to arrays with undefined symbolic sizes: {free_syms}')
