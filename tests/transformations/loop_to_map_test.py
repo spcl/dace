@@ -351,7 +351,7 @@ def test_iteration_variable_used_outside():
 
         for i in range(N):
             A[i] += 1
-        
+
         if i > 10:
             output[0] = 1.0
 
@@ -425,6 +425,31 @@ def test_symbol_array_mix(overwrite):
 
     assert sdfg.apply_transformations(LoopToMap) == (1 if overwrite else 0)
 
+@pytest.mark.parametrize('parallel', (False, True))
+def test_symbol_array_mix_2(parallel):
+    sdfg = dace.SDFG('tester')
+    sdfg.add_array('A', [20], dace.float64)
+    sdfg.add_array('B', [20], dace.float64)
+    sdfg.add_symbol('sym', dace.float64)
+    init = sdfg.add_state(is_start_state=True)
+    body_start = sdfg.add_state()
+    body_end = sdfg.add_state()
+    after = sdfg.add_state()
+    sdfg.add_loop(init, body_start, after, 'i', '1', 'i < 20', 'i + 1', loop_end_state=body_end)
+
+    sdfg.out_edges(init)[0].data.assignments['sym'] = '0.0'
+
+    # Internal loop structure
+    if not parallel:
+        t = body_start.add_tasklet('def', {}, {'o'}, 'o = i')
+        body_start.add_edge(t, 'o', body_start.add_write('A'), None, dace.Memlet('A[i]'))
+
+    sdfg.add_edge(body_start, body_end, dace.InterstateEdge(assignments=dict(sym='A[i - 1]')))
+    t = body_start.add_tasklet('use', {}, {'o'}, 'o = sym')
+    body_start.add_edge(t, 'o', body_start.add_write('B'), None, dace.Memlet('B[i]'))
+
+    assert sdfg.apply_transformations(LoopToMap) == (1 if parallel else 0)
+
 
 @pytest.mark.parametrize('overwrite', (False, True))
 def test_internal_symbol_used_outside(overwrite):
@@ -477,5 +502,7 @@ if __name__ == "__main__":
     test_symbol_write_before_read()
     test_symbol_array_mix(False)
     test_symbol_array_mix(True)
+    test_symbol_array_mix_2(False)
+    test_symbol_array_mix_2(True)
     test_internal_symbol_used_outside(False)
     test_internal_symbol_used_outside(True)
