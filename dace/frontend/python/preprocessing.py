@@ -1413,21 +1413,22 @@ class AugAssignExpander(ast.NodeTransformer):
 
 def find_disallowed_statements(node: ast.AST):
     from dace.frontend.python.newast import DISALLOWED_STMTS  # Avoid import loop
-    skip = True  # Skip everything until the function contents
-    for subnode in ast.walk(node):
-        if skip:
-            # Skip the function definition itself (in case there are disallowed statements in a decorator)
-            if isinstance(node, ast.FunctionDef):
-                skip = False
-            continue
+    # Skip everything until the function contents (in case there are disallowed statements in a decorator)
+    if isinstance(node, ast.Module) and isinstance(node.body[0], ast.FunctionDef):
+        nodes = node.body[0].body
+    else:
+        nodes = [node]
 
-        # Found disallowed statement
-        if type(subnode).__name__ in DISALLOWED_STMTS:
-            return type(subnode).__name__
-
-        if isinstance(subnode, ast.Call):
-            if any(k.arg is None for k in subnode.keywords):
+    for topnode in nodes:
+        for subnode in ast.walk(topnode):
+            # Found disallowed statement
+            if type(subnode).__name__ in DISALLOWED_STMTS:
                 return type(subnode).__name__
+
+            # Calls with double-starred arguments (**args)
+            if isinstance(subnode, ast.Call):
+                if any(k.arg is None for k in subnode.keywords):
+                    return type(subnode).__name__
     return None
 
 
