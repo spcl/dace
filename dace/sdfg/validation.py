@@ -261,6 +261,18 @@ def validate_state(state: 'dace.sdfg.SDFGState',
         except Exception as ex:
             raise InvalidSDFGNodeError("Node validation failed: " + str(ex), sdfg, state_id, nid) from ex
 
+        if Config.get_bool('check_race_conditions'):
+            if isinstance(node, nd.AccessNode):
+                incoming_edge_memlet_ranges = []
+                for e in state.in_edges(node):
+                    incoming_edge_memlet_ranges.append(e.data.subset)
+                if (len(incoming_edge_memlet_ranges) > 0):
+                    sorted(incoming_edge_memlet_ranges)
+                    for i in range(1, len(incoming_edge_memlet_ranges)):
+                        if (incoming_edge_memlet_ranges[i].intersects(incoming_edge_memlet_ranges[i-1])):
+                            warnings.warn('Memlet range overlap while writing in "%s" in state %s' %
+                                          (node, state.label))
+
         # Isolated nodes
         ########################################
         if state.in_degree(node) + state.out_degree(node) == 0:
