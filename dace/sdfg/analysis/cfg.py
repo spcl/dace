@@ -225,6 +225,7 @@ def _stateorder_topological_sort(sdfg: SDFG,
         if node in visited or node is stop:
             continue
         yield node
+        visited.add(node)
 
         oe = sdfg.out_edges(node)
         if len(oe) == 0:  # End state
