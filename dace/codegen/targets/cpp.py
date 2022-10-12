@@ -312,13 +312,6 @@ def emit_memlet_reference(dispatcher,
         else:
             return expr
 
-    def make_restrict(expr: str) -> str:
-        # check whether const has already been added before
-        if expr.strip().endswith('*'):
-            return expr + ' __restrict__ '
-        else:
-            return expr
-
     if (defined_type == DefinedType.Pointer
             or (defined_type == DefinedType.ArrayInterface and isinstance(desc, data.View))):
         if not is_scalar and desc.dtype == conntype.base_type:
@@ -335,9 +328,6 @@ def emit_memlet_reference(dispatcher,
             if memlet.data in dispatcher.frame.symbols_and_constants(sdfg):
                 ref = '*'
                 typedef = make_const(typedef)
-
-        if not sdfg.arrays[memlet.data].may_alias:
-            typedef = make_restrict(typedef)
 
     elif defined_type == DefinedType.ArrayInterface:
         base_ctype = conntype.base_type.ctype
