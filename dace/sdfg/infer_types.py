@@ -4,7 +4,7 @@ from dace.codegen.tools import type_inference
 from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg import nodes
 from dace.sdfg.utils import dfs_topological_sort
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set
 
 #############################################################################
 # Connector type inference
@@ -268,3 +268,48 @@ def _set_default_storage_types(sdfg: SDFG, toplevel_schedule: dtypes.ScheduleTyp
                             desc.storage = sdfg.arrays[e.data.data].storage
                             break
             _set_default_storage_types(node.sdfg, node.schedule)
+
+
+def infer_aliasing(node: nodes.NestedSDFG, sdfg: SDFG, state: SDFGState) -> None:
+    """
+    Infers aliasing information on nested SDFG arrays based on external edges and connectors.
+    Operates in-place on nested SDFG node.
+
+    :param node: The nested SDFG node.
+    :param sdfg: Parent SDFG of the nested SDFG node.
+    :param state: Parent state of the nested SDFG node.
+    """
+    data_to_conn: Dict[str, str] = {}
+    may_alias: Set[str] = set()
+
+    # Infer for input arrays
+    for e in state.in_edges(node):
+        if e.data.is_empty():  # Skip empty memlets
+            continue
+
+        if e.data.data in data_to_conn and data_to_conn[e.data.data] != e.dst_conn:
+            may_alias.add(e.dst_conn)
+        else:
+            data_to_conn[e.data.data] = e.dst_conn
+
+            if sdfg.arrays[e.data.data].may_alias:
+                may_alias.add(e.dst_conn)
+
+    # Infer for output arrays
+    for e in state.out_edges(node):
+        if e.data.is_empty():  # Skip empty memlets
+            continue
+
+        if e.data.data in data_to_conn and data_to_conn[e.data.data] != e.src_conn:
+            may_alias.add(e.src_conn)
+        else:
+            data_to_conn[e.data.data] = e.src_conn
+
+            if sdfg.arrays[e.data.data].may_alias:
+                may_alias.add(e.src_conn)
+
+    # Modify internal arrays
+    for aname in may_alias:
+        desc = node.sdfg.arrays[aname]
+        if isinstance(desc, data.Array):  # The only data type where may_alias can be set
+            desc.may_alias = True
