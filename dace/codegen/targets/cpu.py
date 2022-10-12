@@ -1453,7 +1453,7 @@ class CPUCodeGen(TargetCodeGenerator):
                     return '__restrict__'
                 else:
                     return ''
-            if not node.sdfg.arrays[aname].may_alias:
+            if aname in node.sdfg.arrays and not node.sdfg.arrays[aname].may_alias:
                 restrict_args.append(make_restrict(atype))
             restrict_args.append('')
 
