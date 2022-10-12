@@ -1455,7 +1455,8 @@ class CPUCodeGen(TargetCodeGenerator):
                     return ''
             if aname in node.sdfg.arrays and not node.sdfg.arrays[aname].may_alias:
                 restrict_args.append(make_restrict(atype))
-            restrict_args.append('')
+            else:
+                restrict_args.append('')
 
         arguments += [f'{atype} {restrict} {aname}' for (atype, aname, _), restrict in zip(memlet_references, restrict_args)]
         arguments += [
