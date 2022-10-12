@@ -1,10 +1,13 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+from collections import defaultdict
 from dace import data, dtypes
 from dace.codegen.tools import type_inference
+from dace.memlet import Memlet
 from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg import nodes
+from dace.sdfg.graph import Edge
 from dace.sdfg.utils import dfs_topological_sort
-from typing import Dict, List, Optional
+from typing import Callable, Dict, List, Optional, Set
 
 #############################################################################
 # Connector type inference
@@ -268,3 +271,70 @@ def _set_default_storage_types(sdfg: SDFG, toplevel_schedule: dtypes.ScheduleTyp
                             desc.storage = sdfg.arrays[e.data.data].storage
                             break
             _set_default_storage_types(node.sdfg, node.schedule)
+
+
+def infer_aliasing(node: nodes.NestedSDFG, sdfg: SDFG, state: SDFGState) -> None:
+    """
+    Infers aliasing information on nested SDFG arrays based on external edges and connectors.
+    Operates in-place on nested SDFG node.
+
+    :param node: The nested SDFG node.
+    :param sdfg: Parent SDFG of the nested SDFG node.
+    :param state: Parent state of the nested SDFG node.
+    """
+    data_to_conn: Dict[str, Set[str]] = defaultdict(set)
+
+    def _infer_aliased_connectors(
+        get_edges: Callable[[nodes.NestedSDFG], List[Edge[Memlet]]],
+        get_conn: Callable[[Edge[Memlet]], str],
+        outgoing: bool,
+    ):
+        for e in get_edges(node):
+            if e.data.is_empty():  # Skip empty memlets
+                continue
+
+            # Get all addressed arrays (through views)
+            dnames = _get_addressed_arrays(state, e, outgoing=outgoing)
+
+            # Register data name mapping to matching connectors
+            conn = get_conn(e)
+            for dname in dnames:
+                data_to_conn[dname].add(conn)
+
+    # Infer for input arrays
+    _infer_aliased_connectors(state.in_edges, lambda e: e.dst_conn, False)
+
+    # Infer for output arrays
+    _infer_aliased_connectors(state.out_edges, lambda e: e.src_conn, True)
+
+    # If array is already connected to the nested SDFG in multiple, different connector names;
+    # it may alias with others.
+    for dname, conns in data_to_conn.items():
+        # If the original array may alias already, set the child to alias too
+        if len(conns) > 1 or sdfg.arrays[dname].may_alias:
+            for aname in conns:
+                # Modify internal arrays
+                if aname in node.sdfg.arrays:
+                    desc = node.sdfg.arrays[aname]
+                    if isinstance(desc, data.Array):  # The only data type where may_alias can be set
+                        desc.may_alias = True
+
+
+def _get_addressed_arrays(state: SDFGState, edge: Edge[Memlet], outgoing: bool) -> Set[str]:
+    """
+    Helper function that returns the actual array data descriptor name from a memlet.
+    Traces the memlet path out, including through views.
+    """
+    # Avoid import loop
+    from dace.sdfg import utils as sdutil
+
+    mpath = state.memlet_path(edge)
+    last_node = mpath[-1].dst if outgoing else mpath[0].src
+    if not isinstance(last_node, nodes.AccessNode):
+        return {edge.data.data}
+
+    # If access node, find viewed node
+    last_node = sdutil.get_all_view_nodes(state, last_node)
+    if last_node is None:
+        return {edge.data.data}
+    return set(n.data for n in last_node)
