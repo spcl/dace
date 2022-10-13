@@ -141,7 +141,9 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None):
             undef_syms = set(edge.data.free_symbols) - set(symbols.keys())
             if len(undef_syms) > 0:
                 eid = sdfg.edge_id(edge)
-                raise InvalidSDFGInterstateEdgeError("Undefined symbols in edge: %s" % undef_syms, sdfg, eid)
+                raise InvalidSDFGInterstateEdgeError(
+                    f'Undefined symbols in edge: {undef_syms}. Add those with '
+                    '`sdfg.add_symbol()` or define outside with `dace.symbol()`', sdfg, eid)
 
             # Validate inter-state edge names
             issyms = edge.data.new_symbols(sdfg, symbols)
@@ -231,8 +233,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
         raise InvalidSDFGError("Invalid state name", sdfg, state_id)
 
     if state._parent != sdfg:
-        raise InvalidSDFGError("State does not point to the correct "
-                               "parent", sdfg, state_id)
+        raise InvalidSDFGError("State does not point to the correct " "parent", sdfg, state_id)
 
     # Unreachable
     ########################################
@@ -618,7 +619,6 @@ def validate_state(state: 'dace.sdfg.SDFGState',
 
 class InvalidSDFGError(Exception):
     """ A class of exceptions thrown when SDFG validation fails. """
-
     def __init__(self, message: str, sdfg: 'SDFG', state_id: int):
         self.message = message
         self.sdfg = sdfg
@@ -641,8 +641,7 @@ class InvalidSDFGError(Exception):
 
         if lineinfo.start_line >= 0:
             if lineinfo.start_column > 0:
-                return (f'File "{lineinfo.filename}", line {lineinfo.start_line}, '
-                        f'column {lineinfo.start_column}')
+                return (f'File "{lineinfo.filename}", line {lineinfo.start_line}, ' f'column {lineinfo.start_column}')
             return f'File "{lineinfo.filename}", line {lineinfo.start_line}'
 
         return f'File "{lineinfo.filename}"'
@@ -670,7 +669,6 @@ class InvalidSDFGError(Exception):
 
 class InvalidSDFGInterstateEdgeError(InvalidSDFGError):
     """ Exceptions of invalid inter-state edges in an SDFG. """
-
     def __init__(self, message: str, sdfg: 'SDFG', edge_id: int):
         self.message = message
         self.sdfg = sdfg
@@ -687,15 +685,31 @@ class InvalidSDFGInterstateEdgeError(InvalidSDFGError):
                 str(e.src),
                 str(e.dst),
             )
+            locinfo_src = self._getlineinfo(e.src)
+            locinfo_dst = self._getlineinfo(e.dst)
         else:
-            edgestr = ""
+            edgestr = ''
+            locinfo_src = locinfo_dst = ''
 
-        return "%s%s" % (self.message, edgestr)
+        if locinfo_src or locinfo_dst:
+            if locinfo_src == locinfo_dst:
+                locinfo = f'at {locinfo_src}'
+            elif locinfo_src and not locinfo_dst:
+                locinfo = f'at {locinfo_src}'
+            elif locinfo_dst and not locinfo_src:
+                locinfo = f'at {locinfo_src}'
+            else:
+                locinfo = f'between\n {locinfo_src}\n and\n {locinfo_dst}'
+
+            locinfo = f'\nOriginating from source code {locinfo}'
+        else:
+            locinfo = ''
+
+        return f'{self.message}{edgestr}{locinfo}'
 
 
 class InvalidSDFGNodeError(InvalidSDFGError):
     """ Exceptions of invalid nodes in an SDFG state. """
-
     def __init__(self, message: str, sdfg: 'SDFG', state_id: int, node_id: int):
         self.message = message
         self.sdfg = sdfg
@@ -729,14 +743,12 @@ class NodeNotExpandedError(InvalidSDFGNodeError):
     Exception that is raised whenever a library node was not expanded
     before code generation.
     """
-
     def __init__(self, sdfg: 'SDFG', state_id: int, node_id: int):
         super().__init__('Library node not expanded', sdfg, state_id, node_id)
 
 
 class InvalidSDFGEdgeError(InvalidSDFGError):
     """ Exceptions of invalid edges in an SDFG state. """
-
     def __init__(self, message: str, sdfg: 'SDFG', state_id: int, edge_id: int):
         self.message = message
         self.sdfg = sdfg
