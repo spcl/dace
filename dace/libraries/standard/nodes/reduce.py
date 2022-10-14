@@ -1130,7 +1130,7 @@ class WarpReductionExpansion(pm.ExpandTransformation):
             me,mx = state.add_map('gridSized_strides_map', dict(tId = 'i*BlockDim+j:N:MaxTs'))
             tasklet = state.add_tasklet('add', {'in1', '__in3'}, {'out'},  'out = in1 + __in3')
             
-            state.add_memlet_path(src_A, me, tasklet, dst_conn='in1', memlet=dace.Memlet(data=i1, subset='tId'))
+            state.add_memlet_path(src_A, me, tasklet, dst_conn='in1', memlet=dace.Memlet(data=i1, subset='tId-i*BlockDim - j'))
             state.add_memlet_path(sum_node, me, tasklet, dst_conn='__in3', memlet=dace.Memlet.from_array(mS, state.parent.arrays[mS]))
             state.add_memlet_path(tasklet, mx, dst_node, src_conn='out', memlet=dace.Memlet(data=mS, subset='0'))
         
@@ -1155,9 +1155,7 @@ class WarpReductionExpansion(pm.ExpandTransformation):
                           output_data.dtype,
                           strides= [s for i, s in enumerate(output_data.strides) if i in os_q_dim],
                           storage= output_data.storage)
-        
-        
-        
+
         
         ###################
         # Adding the GPU map
@@ -1228,7 +1226,7 @@ class WarpReductionExpansion(pm.ExpandTransformation):
         Ain = gpuCallState.add_read('in_A')
         ROut = gpuCallState.add_write('out_res')
 
-        gpuCallState.add_memlet_path(Ain, me, da_whole_SDFG, memlet=dace.Memlet(data='in_A', subset='0: (min(int_ceil(N, BlockDim), GridDim) * BlockDim)'), dst_conn='sA')
+        gpuCallState.add_memlet_path(Ain, me, da_whole_SDFG, memlet=dace.Memlet(data='in_A', subset='BlockDim * i + j: (min(int_ceil(N, BlockDim), GridDim) * BlockDim)'), dst_conn='sA')
         gpuCallState.add_memlet_path(da_whole_SDFG, mx, ROut, memlet=dace.Memlet(data='out_res', subset='0'), src_conn='sRes')
 
         ###################
@@ -1242,10 +1240,10 @@ class WarpReductionExpansion(pm.ExpandTransformation):
        
         ###################
         # Rename outer connectors and add to node (appearently that needs to be done)
-        input_edge_A._dst_conn = 'in_A'
-        output_edge._src_conn = 'out_res'
         node.add_in_connector('in_A')
         node.add_out_connector('out_res')
+        input_edge_A._dst_conn = 'in_A'
+        output_edge._src_conn = 'out_res'
         
         
         return subSDFG
