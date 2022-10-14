@@ -177,7 +177,7 @@ class RedundantArray(pm.SingleStateTransformation):
     def expressions(cls):
         return [sdutil.node_path_graph(cls.in_array, cls.out_array)]
 
-    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
+    def can_be_applied(self, graph: SDFGState, expr_index, sdfg, permissive=False):
         in_array = self.in_array
         out_array = self.out_array
 
@@ -401,7 +401,7 @@ class RedundantArray(pm.SingleStateTransformation):
                         warnings.warn(f'validate_subsets failed: {ex}')
                         return False
 
-            # 2-d. If array is connected to a nested SDFG, and strides are unequal to the internal ones, skip
+            # 2-d. If array is connected to a nested SDFG or view and strides are unequal, skip
             if in_desc.strides != out_desc.strides:
                 sources = []
                 if path.downwards:
@@ -409,13 +409,18 @@ class RedundantArray(pm.SingleStateTransformation):
                 else:
                     sources = [e for e in path.leaves()]
                 for source_edge in sources:
-                    if not isinstance(source_edge.src, nodes.NestedSDFG):
-                        continue
-                    conn = source_edge.src_conn
-                    inner_desc = source_edge.src.sdfg.arrays[conn]
-                    if inner_desc.strides != in_desc.strides:
-                        # Cannot safely remove node without modifying strides and correctness
-                        return False
+                    if isinstance(source_edge.src, nodes.AccessNode):
+                        if isinstance(source_edge.src.desc(sdfg), data.View):
+                            if not permissive:
+                                return False
+                    elif isinstance(source_edge.src, nodes.NestedSDFG):
+                        if not permissive:
+                            return False
+                        conn = source_edge.src_conn
+                        inner_desc = source_edge.src.sdfg.arrays[conn]
+                        if inner_desc.strides != in_desc.strides:
+                            # Cannot safely remove node without modifying strides and correctness
+                            return False
 
         return True
 
@@ -843,7 +848,7 @@ class RedundantSecondArray(pm.SingleStateTransformation):
                         warnings.warn(f'validate_subsets failed: {ex}')
                         return False
 
-            # 2-d. If array is connected to a nested SDFG, and strides are unequal to the internal ones, skip
+            # 2-d. If array is connected to a nested SDFG or view and strides are unequal, skip
             if in_desc.strides != out_desc.strides:
                 sources = []
                 if not path.downwards:
@@ -851,13 +856,18 @@ class RedundantSecondArray(pm.SingleStateTransformation):
                 else:
                     sources = [e for e in path.leaves()]
                 for source_edge in sources:
-                    if not isinstance(source_edge.dst, nodes.NestedSDFG):
-                        continue
-                    conn = source_edge.dst_conn
-                    inner_desc = source_edge.dst.sdfg.arrays[conn]
-                    if inner_desc.strides != in_desc.strides:
-                        # Cannot safely remove node without modifying strides and correctness
-                        return False
+                    if isinstance(source_edge.dst, nodes.AccessNode):
+                        if isinstance(source_edge.dst.desc(sdfg), data.View):
+                            if not permissive:
+                                return False
+                    elif isinstance(source_edge.dst, nodes.NestedSDFG):
+                        if not permissive:
+                            return False
+                        conn = source_edge.dst_conn
+                        inner_desc = source_edge.dst.sdfg.arrays[conn]
+                        if inner_desc.strides != in_desc.strides:
+                            # Cannot safely remove node without modifying strides and correctness
+                            return False
 
         return True
 
