@@ -114,25 +114,41 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
             if symbolic.contains_sympy_functions(expr):
                 return False
 
+        in_order_states = list(cfg.stateorder_topological_sort(sdfg))
+        loop_begin_idx = in_order_states.index(begin)
+        loop_end_idx = in_order_states.index(body_end)
+
+        if loop_end_idx < loop_begin_idx:  # Malformed loop
+            return False
+
         # Find all loop-body states
-        states = set()
-        to_visit = [begin]
-        while to_visit:
-            state = to_visit.pop(0)
-            for _, dst, _ in sdfg.out_edges(state):
-                if dst not in states and dst is not guard:
-                    to_visit.append(dst)
-            states.add(state)
+        states: List[SDFGState] = in_order_states[loop_begin_idx:loop_end_idx + 1]
 
         assert (body_end in states)
 
-        write_set = set()
+        write_set: Set[str] = set()
         for state in states:
             _, wset = state.read_and_write_sets()
             write_set |= wset
 
+        # Collect symbol reads and writes from inter-state assignments
+        symbols_that_may_be_used: Set[str] = {itervar}
+        used_before_assignment: Set[str] = set()
+        for state in states:
+            for e in sdfg.out_edges(state):
+                # Collect read-before-assigned symbols (this works because the states are always in order,
+                # see above call to `stateorder_topological_sort`)
+                read_symbols = e.data.read_symbols()
+                read_symbols -= symbols_that_may_be_used
+                used_before_assignment |= read_symbols
+                # If symbol was read before it is assigned, the loop cannot be parallel
+                if e.data.assignments.keys() & used_before_assignment:
+                    return False
+
+                symbols_that_may_be_used |= e.data.assignments.keys()
+
         # Get access nodes from other states to isolate local loop variables
-        other_access_nodes = set()
+        other_access_nodes: Set[str] = set()
         for state in sdfg.nodes():
             if state in states:
                 continue
@@ -141,7 +157,7 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
         for state in states:
             other_access_nodes |= set(n.data for n in state.data_nodes() if not sdfg.arrays[n.data].transient)
 
-        write_memlets = defaultdict(list)
+        write_memlets: Dict[str, List[memlet.Memlet]] = defaultdict(list)
 
         itersym = symbolic.pystr_to_symbolic(itervar)
         a = sp.Wild('a', exclude=[itersym])
@@ -185,7 +201,7 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
                             return False
 
         # Consider reads in inter-state edges (could be in assignments or in condition)
-        isread_set = set()
+        isread_set: Set[memlet.Memlet] = set()
         for s in states:
             for e in sdfg.all_edges(s):
                 isread_set |= set(e.data.get_read_memlets(sdfg.arrays))
@@ -195,25 +211,33 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
                                              mmlt.subset):
                     return False
 
-        # Check that the iteration variable is not used on other edges or states
-        # before it is reassigned
-        prior_states = True
-        for state in cfg.stateorder_topological_sort(sdfg):
-            # Skip all states up to guard
-            if prior_states:
-                if state is begin:
-                    prior_states = False
-                continue
-            # We do not need to check the loop-body states
-            if state in states:
-                continue
-            if itervar in state.free_symbols:
-                return False
-            # Don't continue in this direction, as the variable has
-            # now been reassigned
-            # TODO: Handle case of subset of out_edges
-            if all(itervar in e.data.assignments for e in sdfg.out_edges(state)):
+        # Check that the iteration variable and other symbols are not used on other edges or states
+        # before they are reassigned
+        for state in in_order_states[loop_end_idx + 1:]:
+            # Don't continue in this direction, as all loop symbols have been reassigned
+            if not symbols_that_may_be_used:
                 break
+
+            # Check state contents
+            if symbols_that_may_be_used & state.free_symbols:
+                return False
+
+            # Check inter-state edges
+            reassigned_symbols: Set[str] = None
+            for e in sdfg.out_edges(state):
+                if symbols_that_may_be_used & e.data.read_symbols():
+                    return False
+
+                # Check for symbols that are set by all outgoing edges
+                # TODO: Handle case of subset of out_edges
+                if reassigned_symbols is None:
+                    reassigned_symbols = set(e.data.assignments.keys())
+                else:
+                    reassigned_symbols &= e.data.assignments.keys()
+
+            # Remove reassigned symbols
+            if reassigned_symbols is not None:
+                symbols_that_may_be_used -= reassigned_symbols
 
         return True
 
@@ -390,7 +414,8 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
 
             # Fix SDFG symbols
             for sym in sdfg.free_symbols - fsymbols:
-                del sdfg.symbols[sym]
+                if sym in sdfg.symbols:
+                    del sdfg.symbols[sym]
             for sym, dtype in nsymbols.items():
                 nsdfg.symbols[sym] = dtype
 

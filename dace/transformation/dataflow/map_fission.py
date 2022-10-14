@@ -8,7 +8,7 @@ from dace.codegen import control_flow as cf
 from dace.sdfg import nodes, graph as gr
 from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import OrderedDiGraph
-from dace.sdfg.propagation import propagate_memlets_state
+from dace.sdfg.propagation import propagate_memlets_state, propagate_subset
 from dace.symbolic import pystr_to_symbolic
 from dace.transformation import transformation, helpers
 from typing import List, Optional, Tuple
@@ -413,6 +413,14 @@ class MapFission(transformation.SingleStateTransformation):
             # Correct connectors and memlets in nested SDFGs to account for
             # missing outside map
             if self.expr_index == 1:
+
+                # NOTE: In the following scope dictionary, we mark the new MapEntries as existing in their own scope.
+                # This makes it easier to detect edges that are outside the new Map scopes (after MapFission).
+                scope_dict = state.scope_dict()
+                for k, v in scope_dict.items():
+                    if isinstance(k, nodes.MapEntry) and k in new_map_entries and v is None:
+                        scope_dict[k] = k
+
                 to_correct = ([(e, e.src) for e in external_edges_entry] + [(e, e.dst) for e in external_edges_exit])
                 corrected_nodes = set()
                 for edge, node in to_correct:
@@ -442,6 +450,12 @@ class MapFission(transformation.SingleStateTransformation):
                             for e in state.memlet_tree(internal_edge):
                                 e.data.subset.offset(desc.offset, False)
                                 e.data.subset = helpers.unsqueeze_memlet(e.data, outer_edge.data).subset
+                                # NOTE: If the edge is outside of the new Map scope, then try to propagate it. This is
+                                # needed for edges directly connecting AccessNodes, because the standard memlet
+                                # propagation will stop at the first AccessNode outside the Map scope. For example, see
+                                # `test.transformations.mapfission_test.MapFissionTest.test_array_copy_outside_scope`.
+                                if not (scope_dict[e.src] and scope_dict[e.dst]):
+                                    e.data = propagate_subset([e.data], desc, outer_map.params, outer_map.range)
 
                         # Only after offsetting memlets we can modify the
                         # overall offset
@@ -455,9 +469,21 @@ class MapFission(transformation.SingleStateTransformation):
                     for edge in state.all_edges(node):
                         for e in state.memlet_tree(edge):
                             # Prepend map dimensions to memlet
-                            e.data.subset = subsets.Range([(pystr_to_symbolic(d) - r[0], pystr_to_symbolic(d) - r[0], 1)
-                                                           for d, r in zip(outer_map.params, outer_map.range)] +
-                                                          e.data.subset.ranges)
+                            # NOTE: Do this only for the subset corresponding to `node.data`. If the edge is copying
+                            # to/from another AccessNode, the other data may not need extra dimensions. For example, see
+                            # `test.transformations.mapfission_test.MapFissionTest.test_array_copy_outside_scope`.
+                            if e.data.data == node.data:
+                                if e.data.subset:
+                                    e.data.subset = subsets.Range([(pystr_to_symbolic(d) - r[0],
+                                                                    pystr_to_symbolic(d) - r[0], 1)
+                                                                   for d, r in zip(outer_map.params, outer_map.range)] +
+                                                                  e.data.subset.ranges)
+                            else:
+                                if e.data.other_subset:
+                                    e.data.other_subset = subsets.Range(
+                                        [(pystr_to_symbolic(d) - r[0], pystr_to_symbolic(d) - r[0], 1)
+                                         for d, r in zip(outer_map.params, outer_map.range)] +
+                                        e.data.other_subset.ranges)
 
         # If nested SDFG, reconnect nodes around map and modify memlets
         if self.expr_index == 1:
@@ -486,3 +512,7 @@ class MapFission(transformation.SingleStateTransformation):
 
         # Remove outer map
         graph.remove_nodes_from([map_entry, map_exit])
+
+        # NOTE: It is better to manually call memlet propagation here to ensure that all subsets are properly updated.
+        # This can solve issues when, e.g., applying MapFission through `SDFG.apply_transformations_repeated`.
+        propagate_memlets_state(sdfg, graph)
