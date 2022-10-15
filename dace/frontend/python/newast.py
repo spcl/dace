@@ -3696,12 +3696,16 @@ class ProgramVisitor(ExtNodeVisitor):
         arrays_before = list(sdfg.arrays.items())
         for arrname, array in arrays_before:
             if array.transient and arrname[:5] == '__tmp':
-                if int(arrname[5:]) < self.sdfg._temp_transients:
-                    if self.sdfg._temp_transients > sdfg._temp_transients:
-                        new_name = self.sdfg.temp_data_name()
-                    else:
-                        new_name = sdfg.temp_data_name()
-                    names_to_replace[arrname] = new_name
+                try:
+                    if int(arrname[5:]) < self.sdfg._temp_transients:
+                        if self.sdfg._temp_transients > sdfg._temp_transients:
+                            new_name = self.sdfg.temp_data_name()
+                        else:
+                            new_name = sdfg.temp_data_name()
+                        names_to_replace[arrname] = new_name
+                except ValueError:
+                    # In case the name is __tmp_* but not a number, do nothing
+                    pass
         self.sdfg._temp_transients = max(self.sdfg._temp_transients, sdfg._temp_transients)
         sdfg._temp_transients = self.sdfg._temp_transients
         replace_datadesc_names(sdfg, names_to_replace)
