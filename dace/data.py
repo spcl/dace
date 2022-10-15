@@ -397,6 +397,10 @@ class Scalar(Data):
     def pool(self) -> bool:
         return False
 
+    @property
+    def may_alias(self) -> bool:
+        return False
+
     def is_equivalent(self, other):
         if not isinstance(other, Scalar):
             return False
@@ -763,6 +767,10 @@ class Stream(Data):
 
     @property
     def optional(self) -> bool:
+        return False
+
+    @property
+    def may_alias(self) -> bool:
         return False
 
     def clone(self):

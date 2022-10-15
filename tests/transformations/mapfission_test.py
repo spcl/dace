@@ -394,6 +394,54 @@ class MapFissionTest(unittest.TestCase):
         val1 = np.ndarray((10, ), dtype=np.int32)
         sdfg(A=val1)
         self.assertTrue(np.array_equal(val1, ref))
+    
+    def test_array_copy_outside_scope(self):
+
+        """
+        This test checks for two issues occuring when MapFission applies on a NestedSDFG with a state-subgraph
+        containing copies among AccessNodes. In such cases, these copies may end up outside the scope of the generated
+        Maps (after MapFssion), potentially leading to the following errors:
+        1. The memlet subset corresponding to a NestedSDFG connector (input/output) may have its dimensionality
+        erroneously increased.
+        2. The memlet subset corresponding to a NestedSDFG connector (input/output) may not be propagated even if it uses
+        the Map's parameters.
+        """
+
+        sdfg = dace.SDFG('array_copy_outside_scope')
+        iname, _ = sdfg.add_array('inp', (10,), dtype=dace.int32)
+        oname, _ = sdfg.add_array('out', (10,), dtype=dace.int32)
+        
+        nsdfg = dace.SDFG('nested_sdfg')
+        niname, nidesc = nsdfg.add_array('ninp', (1,), dtype=dace.int32)
+        ntname, ntdesc = nsdfg.add_scalar('ntmp', dtype=dace.int32, transient=True)
+        noname, nodesc = nsdfg.add_array('nout', (1,), dtype=dace.int32)
+
+        nstate = nsdfg.add_state('nmain')
+        ninode = nstate.add_access(niname)
+        ntnode = nstate.add_access(ntname)
+        nonode = nstate.add_access(noname)
+        tasklet = nstate.add_tasklet('tasklet', {'__inp'}, {'__out'}, '__out = __inp + 1')
+        nstate.add_edge(ninode, None, tasklet, '__inp', dace.Memlet.from_array(niname, nidesc))
+        nstate.add_edge(tasklet, '__out', ntnode, None, dace.Memlet.from_array(ntname, ntdesc))
+        nstate.add_nedge(ntnode, nonode, dace.Memlet.from_array(noname, nodesc))
+
+        state = sdfg.add_state('main')
+        inode = state.add_access(iname)
+        onode = state.add_access(oname)
+        me, mx = state.add_map('map', {'i': '0:10'})
+        snode = state.add_nested_sdfg(nsdfg, None, {'ninp'}, {'nout'})
+        state.add_memlet_path(inode, me, snode, memlet=dace.Memlet(data=iname, subset='i'), dst_conn='ninp')
+        state.add_memlet_path(snode, mx, onode, memlet=dace.Memlet(data=oname, subset='i'), src_conn='nout')
+
+        # Issue no. 1 will be caught by validation after MapFission
+        sdfg.apply_transformations(MapFission)
+
+        # Issue no. 2 will be caught by code-generation due to `i` existing in a memlet outside the Map's scope.
+        A = np.arange(10, dtype=np.int32)
+        B = np.empty((10,), dtype=np.int32)
+        sdfg(inp=A, out=B)
+        assert np.array_equal(A+1, B)
+
 
 
 if __name__ == '__main__':

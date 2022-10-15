@@ -573,7 +573,11 @@ class NestedSDFG(CodeNode):
 
     def infer_connector_types(self, sdfg, state):
         # Avoid import loop
-        from dace.sdfg.infer_types import infer_connector_types
+        from dace.sdfg.infer_types import infer_connector_types, infer_aliasing
+
+        # Propagate aliasing information into SDFG
+        infer_aliasing(self, sdfg, state)
+
         # Infer internal connector types
         infer_connector_types(self.sdfg)
 

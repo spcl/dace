@@ -1,17 +1,19 @@
 # Copyright 2020-2020 ETH Zurich and the DaCe authors. All rights reserved.
 import argparse
-import dace
-import numpy as np
 import os
 import tempfile
+
+import numpy as np
+import pytest
+
+import dace
 from dace.sdfg import nodes
 from dace.transformation.interstate import LoopToMap
 
 
 def make_sdfg(with_wcr, map_in_guard, reverse_loop, use_variable, assign_after, log_path):
 
-    sdfg = dace.SDFG(f"loop_to_map_test_{with_wcr}_{map_in_guard}_"
-                     f"{reverse_loop}_{use_variable}_{assign_after}")
+    sdfg = dace.SDFG(f"loop_to_map_test_{with_wcr}_{map_in_guard}_{reverse_loop}_{use_variable}_{assign_after}")
     sdfg.set_global_code("#include <fstream>\n#include <mutex>")
 
     init = sdfg.add_state("init")
@@ -162,7 +164,6 @@ def test_loop_to_map_variable_reassigned(n=None):
 
 
 def test_output_copy():
-
     @dace.program
     def l2mtest_copy(A: dace.float64[20, 20]):
         for i in range(1, 20):
@@ -182,7 +183,6 @@ def test_output_copy():
 
 
 def test_output_accumulate():
-
     @dace.program
     def l2mtest_accumulate(A: dace.float64[20, 20]):
         for i in range(1, 20):
@@ -240,7 +240,6 @@ def test_specialize():
 
 
 def test_empty_loop():
-
     @dace.program
     def empty_loop():
         for i in range(10):
@@ -291,8 +290,8 @@ def test_interstate_dep():
 def test_need_for_tasklet():
 
     sdfg = dace.SDFG('needs_tasklet')
-    aname, _ = sdfg.add_array('A', (10,), dace.int32)
-    bname, _ = sdfg.add_array('B', (10,), dace.int32)
+    aname, _ = sdfg.add_array('A', (10, ), dace.int32)
+    bname, _ = sdfg.add_array('B', (10, ), dace.int32)
     body = sdfg.add_state('body')
     _, _, _ = sdfg.add_loop(None, body, None, 'i', '0', 'i < 10', 'i + 1', None)
     anode = body.add_access(aname)
@@ -305,11 +304,11 @@ def test_need_for_tasklet():
         if isinstance(n, nodes.Tasklet):
             found = True
             break
-    
+
     assert found
 
     A = np.arange(10, dtype=np.int32)
-    B = np.empty((10,), dtype=np.int32)
+    B = np.empty((10, ), dtype=np.int32)
     sdfg(A=A, B=B)
 
     assert np.array_equal(B, np.arange(9, -1, -1, dtype=np.int32))
@@ -332,7 +331,7 @@ def test_need_for_transient():
         if isinstance(n, nodes.AccessNode) and n.data not in (aname, bname):
             found = True
             break
-    
+
     assert found
 
     A = np.arange(100, dtype=np.int32).reshape(10, 10).copy()
@@ -341,8 +340,141 @@ def test_need_for_transient():
 
     for i in range(10):
         start = i * 10
-        assert np.array_equal(B[i], np.arange(start + 9, start -1, -1, dtype=np.int32))
+        assert np.array_equal(B[i], np.arange(start + 9, start - 1, -1, dtype=np.int32))
 
+def test_iteration_variable_used_outside():
+    N = dace.symbol("N", dace.int32)
+
+    @dace.program
+    def tester(A: dace.float64[N], output: dace.float64[1]):
+        i = -1
+
+        for i in range(N):
+            A[i] += 1
+
+        if i > 10:
+            output[0] = 1.0
+
+    sdfg = tester.to_sdfg(simplify=True)
+    assert sdfg.apply_transformations(LoopToMap) == 0
+
+
+def test_symbol_race():
+
+    # Adapted from npbench's crc16 test
+    # https://github.com/spcl/npbench/blob/main/npbench/benchmarks/crc16/crc16_dace.py
+    poly: dace.uint16 = 0x8408
+
+    @dace.program
+    def tester(data: dace.int32[20]):
+        crc: dace.uint16 = 0xFFFF
+        for i in range(20):
+            b = data[i]
+            cur_byte = 0xFF & b
+            for _ in range(0, 8):
+                if (crc & 0x0001) ^ (cur_byte & 0x0001):
+                    crc = (crc >> 1) ^ poly
+                else:
+                    crc >>= 1
+                cur_byte >>= 1
+        crc = (~crc & 0xFFFF)
+        crc = (crc << 8) | ((crc >> 8) & 0xFF)
+
+    sdfg = tester.to_sdfg(simplify=True)
+    assert sdfg.apply_transformations(LoopToMap) == 0
+
+
+def test_symbol_write_before_read():
+    sdfg = dace.SDFG('tester')
+    init = sdfg.add_state(is_start_state=True)
+    body_start = sdfg.add_state()
+    body = sdfg.add_state()
+    body_end = sdfg.add_state()
+    sdfg.add_loop(init, body_start, None, 'i', '0', 'i < 20', 'i + 1', loop_end_state=body_end)
+
+    # Internal loop structure
+    sdfg.add_edge(body_start, body, dace.InterstateEdge(assignments=dict(j='0')))
+    sdfg.add_edge(body, body_end, dace.InterstateEdge(assignments=dict(j='j + 1')))
+
+    assert sdfg.apply_transformations(LoopToMap) == 1
+
+
+@pytest.mark.parametrize('overwrite', (False, True))
+def test_symbol_array_mix(overwrite):
+    sdfg = dace.SDFG('tester')
+    sdfg.add_transient('tmp', [1], dace.float64)
+    sdfg.add_symbol('sym', dace.float64)
+    init = sdfg.add_state(is_start_state=True)
+    body_start = sdfg.add_state()
+    body = sdfg.add_state()
+    body_end = sdfg.add_state()
+    after = sdfg.add_state()
+    sdfg.add_loop(init, body_start, after, 'i', '0', 'i < 20', 'i + 1', loop_end_state=body_end)
+
+    sdfg.out_edges(init)[0].data.assignments['sym'] = '0.0'
+
+    # Internal loop structure
+    t = body_start.add_tasklet('def', {}, {'o'}, 'o = i')
+    body_start.add_edge(t, 'o', body_start.add_write('tmp'), None, dace.Memlet('tmp'))
+
+    if overwrite:
+        sdfg.add_edge(body_start, body, dace.InterstateEdge(assignments=dict(sym='tmp')))
+    else:
+        sdfg.add_edge(body_start, body, dace.InterstateEdge(assignments=dict(sym='sym + tmp')))
+    sdfg.add_edge(body, body_end, dace.InterstateEdge(assignments=dict(sym='sym + 1.0')))
+
+    assert sdfg.apply_transformations(LoopToMap) == (1 if overwrite else 0)
+
+@pytest.mark.parametrize('parallel', (False, True))
+def test_symbol_array_mix_2(parallel):
+    sdfg = dace.SDFG('tester')
+    sdfg.add_array('A', [20], dace.float64)
+    sdfg.add_array('B', [20], dace.float64)
+    sdfg.add_symbol('sym', dace.float64)
+    init = sdfg.add_state(is_start_state=True)
+    body_start = sdfg.add_state()
+    body_end = sdfg.add_state()
+    after = sdfg.add_state()
+    sdfg.add_loop(init, body_start, after, 'i', '1', 'i < 20', 'i + 1', loop_end_state=body_end)
+
+    sdfg.out_edges(init)[0].data.assignments['sym'] = '0.0'
+
+    # Internal loop structure
+    if not parallel:
+        t = body_start.add_tasklet('def', {}, {'o'}, 'o = i')
+        body_start.add_edge(t, 'o', body_start.add_write('A'), None, dace.Memlet('A[i]'))
+
+    sdfg.add_edge(body_start, body_end, dace.InterstateEdge(assignments=dict(sym='A[i - 1]')))
+    t = body_start.add_tasklet('use', {}, {'o'}, 'o = sym')
+    body_start.add_edge(t, 'o', body_start.add_write('B'), None, dace.Memlet('B[i]'))
+
+    assert sdfg.apply_transformations(LoopToMap) == (1 if parallel else 0)
+
+
+@pytest.mark.parametrize('overwrite', (False, True))
+def test_internal_symbol_used_outside(overwrite):
+    sdfg = dace.SDFG('tester')
+    init = sdfg.add_state(is_start_state=True)
+    body_start = sdfg.add_state()
+    body = sdfg.add_state()
+    body_end = sdfg.add_state()
+    after = sdfg.add_state()
+    sdfg.add_loop(init, body_start, after, 'i', '0', 'i < 20', 'i + 1', loop_end_state=body_end)
+
+    # Internal loop structure
+    sdfg.add_edge(body_start, body, dace.InterstateEdge(assignments=dict(j='0')))
+    sdfg.add_edge(body, body_end, dace.InterstateEdge(assignments=dict(j='j + 1')))
+
+    # Use after
+    after_1 = sdfg.add_state()
+    after_1.add_tasklet('use', {}, {}, 'printf("%d\\n", j)')
+
+    if overwrite:
+        sdfg.add_edge(after, after_1, dace.InterstateEdge(assignments=dict(j='5')))
+    else:
+        sdfg.add_edge(after, after_1, dace.InterstateEdge())
+
+    assert sdfg.apply_transformations(LoopToMap) == (1 if overwrite else 0)
 
 
 if __name__ == "__main__":
@@ -365,3 +497,12 @@ if __name__ == "__main__":
     test_interstate_dep()
     test_need_for_tasklet()
     test_need_for_transient()
+    test_iteration_variable_used_outside()
+    test_symbol_race()
+    test_symbol_write_before_read()
+    test_symbol_array_mix(False)
+    test_symbol_array_mix(True)
+    test_symbol_array_mix_2(False)
+    test_symbol_array_mix_2(True)
+    test_internal_symbol_used_outside(False)
+    test_internal_symbol_used_outside(True)
