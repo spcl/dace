@@ -398,6 +398,10 @@ class Scalar(Data):
         return False
 
     @property
+    def alignment(self) -> int:
+        return 0
+
+    @property
     def may_alias(self) -> bool:
         return False
 

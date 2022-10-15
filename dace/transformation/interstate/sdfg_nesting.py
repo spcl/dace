@@ -318,11 +318,15 @@ class InlineSDFG(transformation.SingleStateTransformation):
             # Any differing strides will become views
             if aname in inputs:
                 edge = inputs[aname]
+                if isinstance(array, data.Scalar):
+                    continue
                 if array.strides != sdfg.arrays[edge.data.data].strides:
                     reshapes.add(aname)
                     continue
             if aname in outputs:
                 edge = outputs[aname]
+                if isinstance(array, data.Scalar):
+                    continue
                 if array.strides != sdfg.arrays[edge.data.data].strides:
                     reshapes.add(aname)
                     continue
