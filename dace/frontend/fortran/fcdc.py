@@ -109,16 +109,27 @@ class TaskletWriter:
             Name_Node: self.name2string,
             Int_Literal_Node: self.intlit2string,
             Real_Literal_Node: self.floatlit2string,
+            Bool_Literal_Node: self.boollit2string,
             UnOp_Node: self.unop2string,
             Array_Subscript_Node: self.arraysub2string,
+            Parenthesis_Expr_Node: self.parenthesis2string,
+            Call_Expr_Node: self.call2string,
+            ParDecl_Node: self.pardecl2string,
         }
+
+    def pardecl2string(self, node: ParDecl_Node):
+        return "ERROR" + node.type
 
     def write_code(self, node: Node):
         if node.__class__ in self.ast_elements:
             text = self.ast_elements[node.__class__](node)
+            if text is None:
+                raise NameError("Error in code generation")
             #print("RET TW:",text)
             #    text = text.replace("][", ",")
             return text
+        elif isinstance(node, str):
+            return node
         else:
 
             print("ERROR:", node.__class__.__name__)
@@ -131,7 +142,10 @@ class TaskletWriter:
         str_to_return += "]"
         return str_to_return
 
-    def name2string(self, node: Name_Node):
+    def name2string(self, node):
+        if isinstance(node, str):
+            return node
+
         return_value = node.name
 
         if len(self.outputs) > 0:
@@ -152,11 +166,26 @@ class TaskletWriter:
 
         return "".join(map(str, node.value))
 
+    def boollit2string(self, node: Bool_Literal_Node):
+
+        return str(node.value)
+
     def unop2string(self, node: UnOp_Node):
         op = node.op
         if op == ".NOT.":
             op = "not "
         return op + self.write_code(node.lval)
+
+    def parenthesis2string(self, node: Parenthesis_Expr_Node):
+        return "(" + self.write_code(node.expr) + ")"
+
+    def call2string(self, node: Call_Expr_Node):
+        return_str = self.write_code(node.name) + "(" + self.write_code(
+            node.args[0])
+        for i in node.args[1:]:
+            return_str += ", " + self.write_code(i)
+        return_str += ")"
+        return return_str
 
     def binop2string(self, node: BinOp_Node):
         #print("BL: ",self.write_code(node.lvalue))
@@ -189,7 +218,9 @@ class TaskletWriter:
         #    a=1
         # if self.write_code(node.rvalue) is None:
         #    a=1
-        return self.write_code(node.lval) + op + self.write_code(node.rval)
+        left = self.write_code(node.lval)
+        right = self.write_code(node.rval)
+        return left + op + right
 
 
 def generate_memlet(op, top_sdfg, state):
@@ -231,8 +262,12 @@ class ProcessedWriter(TaskletWriter):
             Name_Node: self.name2string,
             Int_Literal_Node: self.intlit2string,
             Real_Literal_Node: self.floatlit2string,
+            Bool_Literal_Node: self.boollit2string,
             UnOp_Node: self.unop2string,
             Array_Subscript_Node: self.arraysub2string,
+            Parenthesis_Expr_Node: self.parenthesis2string,
+            Call_Expr_Node: self.call2string,
+            ParDecl_Node: self.pardecl2string,
         }
 
     def name2string(self, node: Name_Node):
@@ -271,6 +306,22 @@ class NameMap(dict):
         return super().__setitem__(k, v)
 
 
+class ModuleMap(dict):
+    def __getitem__(self, k):
+        assert isinstance(k, Module_Node)
+        if k not in self:
+            self[k] = {}
+
+        return super().__getitem__(k)
+
+    def get(self, k):
+        return self[k]
+
+    def __setitem__(self, k, v) -> None:
+        assert isinstance(k, Module_Node)
+        return super().__setitem__(k, v)
+
+
 class AST_translator:
     def __init__(self, ast: InternalFortranAst, source):
         self.tables = ast.tables
@@ -286,6 +337,7 @@ class AST_translator:
         self.last_loop_continues = {}
         self.last_loop_breaks = {}
         self.last_returns = {}
+        self.module_vars = []
         self.last_call_expression = {}
         self.ast_elements = {
             If_Stmt_Node: self.ifstmt2sdfg,
@@ -348,6 +400,20 @@ class AST_translator:
 
     def ast2sdfg(self, node: Program_Node, sdfg: SDFG):
         self.globalsdfg = sdfg
+        for i in node.modules:
+            for j in i.specification_part.typedecls:
+                self.translate(j, sdfg)
+                for k in j.vardecl:
+                    self.module_vars.append((k.name, i.name))
+            for j in i.specification_part.symbols:
+                self.translate(j, sdfg)
+                for k in j.vardecl:
+                    self.module_vars.append((k.name, i.name))
+            for j in i.specification_part.specifications:
+                self.translate(j, sdfg)
+                for k in j.vardecl:
+                    self.module_vars.append((k.name, i.name))
+
         for i in node.main_program.specification_part.typedecls:
             self.translate(i, sdfg)
         for i in node.main_program.specification_part.symbols:
@@ -515,6 +581,57 @@ class AST_translator:
         inouts_in_new_sdfg = []
 
         views = []
+        ind_count = 0
+
+        var2 = []
+        literals = []
+        literal_values = []
+        par2 = []
+
+        symbol_arguments = []
+
+        for arg_i, variable in enumerate(variables_in_call):
+            # print(i.__class__)
+            if isinstance(variable, Name_Node):
+                varname = variable.name
+            elif isinstance(variable, Array_Subscript_Node):
+                varname = variable.name.name
+            if isinstance(variable, Literal) or varname == "LITERAL":
+                literals.append(parameters[arg_i])
+                literal_values.append(variable)
+                continue
+            elif varname in sdfg.symbols:
+                symbol_arguments.append((parameters[arg_i], variable))
+                continue
+
+            par2.append(parameters[arg_i])
+            var2.append(variable)
+
+        variables_in_call = var2
+        parameters = par2
+        assigns = []
+        for lit, litval in zip(literals, literal_values):
+            local_name = lit
+            #self.translate(local_name, new_sdfg)
+            #print("LOCAL_NAME SPECIAL: ",local_name.name,local_name.__class__)
+            # self.name_mapping[(new_sdfg, local_name.name)] = find_new_array_name(self.all_array_names,
+            #                                                                     local_name.name)
+            #self.all_array_names.append(self.name_mapping[(new_sdfg, local_name.name)])
+            assigns.append(
+                BinOp_Node(lval=Name_Node(name=local_name.name),
+                           rval=litval,
+                           op="=",
+                           line_number=node.line_number))
+
+        for parameter, symbol in symbol_arguments:
+            #self.translate(parameter, new_sdfg)
+            if parameter.name != symbol.name:
+                assigns.append(
+                    BinOp_Node(lval=Name_Node(name=parameter.name),
+                               rval=Name_Node(name=symbol.name),
+                               op="=",
+                               line_number=node.line_number))
+
         for variable_in_call in variables_in_call:
             all_arrays = self.get_arrays_in_context(sdfg)
 
@@ -617,8 +734,8 @@ class AST_translator:
                         local_name = parameters[variables_in_call.index(
                             variable_in_call)]
                         self.name_mapping[new_sdfg][
-                            local_name.name] = find_new_array_name(
-                                self.all_array_names, local_name.name)
+                            local_name.name] = new_sdfg._find_new_name(
+                                local_name.name)
                         self.all_array_names.append(
                             self.name_mapping[new_sdfg][local_name.name])
 
@@ -626,10 +743,8 @@ class AST_translator:
                             self.name_mapping[new_sdfg][local_name.name])
 
                         indices = 0
-                        tmp_node = variable_in_call
-                        while isinstance(tmp_node, ArraySubscriptExpr):
-                            indices += 1
-                            tmp_node = tmp_node.unprocessed_name
+                        if isinstance(variable_in_call, Array_Subscript_Node):
+                            indices = len(variable_in_call.indices)
 
                         shape = array.shape[indices:]
 
@@ -653,8 +768,8 @@ class AST_translator:
         #print("FUNC: ",sym_dict)
         #if sdfg is not self.globalsdfg:
 
-        write_names = node.execution_part.written_vars
-        read_names = node.execution_part.read_vars
+        write_names = list(dict.fromkeys([i.name for i in output_vars]))
+        read_names = list(dict.fromkeys([i.name for i in input_vars]))
         not_found_write_names = []
         not_found_read_names = []
         for i in write_names:
@@ -665,8 +780,7 @@ class AST_translator:
                 not_found_read_names.append(i)
 
         for i in self.libstates:
-            self.name_mapping[new_sdfg][i] = find_new_array_name(
-                self.all_array_names, i)
+            self.name_mapping[new_sdfg][i] = new_sdfg._find_new_name(i)
             self.all_array_names.append(self.name_mapping[new_sdfg][i])
             inouts_in_new_sdfg.append(self.name_mapping[new_sdfg][i])
             new_sdfg.add_scalar(self.name_mapping[new_sdfg][i],
@@ -675,10 +789,9 @@ class AST_translator:
         addedmemlets = []
         globalmemlets = []
         for i in not_found_read_names:
-            if i in self.module_vars:
+            if i in [a[0] for a in self.module_vars]:
                 if self.name_mapping[sdfg].get(i) is not None:
-                    self.name_mapping[new_sdfg][i] = find_new_array_name(
-                        self.all_array_names, i)
+                    self.name_mapping[new_sdfg][i] = new_sdfg._find_new_name(i)
                     addedmemlets.append(i)
                     self.all_array_names.append(self.name_mapping[new_sdfg][i])
                     inouts_in_new_sdfg.append(self.name_mapping[new_sdfg][i])
@@ -695,14 +808,13 @@ class AST_translator:
                                            transient=False,
                                            strides=array_in_global.strides,
                                            offset=array_in_global.offset)
-                elif self.name_mapping[globalsdfg].get(i) is not None:
-                    self.name_mapping[new_sdfg][i] = find_new_array_name(
-                        self.all_array_names, i)
+                elif self.name_mapping[self.globalsdfg].get(i) is not None:
+                    self.name_mapping[new_sdfg][i] = new_sdfg._find_new_name(i)
                     globalmemlets.append(i)
                     self.all_array_names.append(self.name_mapping[new_sdfg][i])
                     inouts_in_new_sdfg.append(self.name_mapping[new_sdfg][i])
-                    array_in_global = globalsdfg.arrays[
-                        self.name_mapping[globalsdfg][i]]
+                    array_in_global = self.globalsdfg.arrays[self.name_mapping[
+                        self.globalsdfg][i]]
                     if isinstance(array_in_global, Scalar):
                         new_sdfg.add_scalar(self.name_mapping[new_sdfg][i],
                                             array_in_global.dtype,
@@ -718,10 +830,9 @@ class AST_translator:
         for i in not_found_write_names:
             if i in not_found_read_names:
                 continue
-            if i in self.module_vars:
+            if i in [a[0] for a in self.module_vars]:
                 if self.name_mapping[sdfg].get(i) is not None:
-                    self.name_mapping[new_sdfg][i] = find_new_array_name(
-                        self.all_array_names, i)
+                    self.name_mapping[new_sdfg][i] = new_sdfg._find_new_name(i)
                     addedmemlets.append(i)
                     self.all_array_names.append(self.name_mapping[new_sdfg][i])
                     inouts_in_new_sdfg.append(self.name_mapping[new_sdfg][i])
@@ -738,13 +849,13 @@ class AST_translator:
                                            transient=False,
                                            strides=array_in_global.strides,
                                            offset=array_in_global.offset)
-                elif self.name_mapping[globalsdfg].get(i) is not None:
-                    self.name_mapping[new_sdfg][i] = find_new_array_name(
-                        self.all_array_names, i)
+                elif self.name_mapping[self.globalsdfg].get(i) is not None:
+                    self.name_mapping[new_sdfg][i] = new_sdfg._find_new_name(i)
                     globalmemlets.append(i)
                     self.all_array_names.append(self.name_mapping[new_sdfg][i])
                     inouts_in_new_sdfg.append(self.name_mapping[new_sdfg][i])
-                    array = globalsdfg.arrays[self.name_mapping[globalsdfg][i]]
+                    array = self.globalsdfg.arrays[self.name_mapping[
+                        self.globalsdfg][i]]
                     if isinstance(array_in_global, Scalar):
                         new_sdfg.add_scalar(self.name_mapping[new_sdfg][i],
                                             array_in_global.dtype,
@@ -855,22 +966,36 @@ class AST_translator:
                         self.contexts[new_sdfg.name] = Context(
                             name=new_sdfg.name)
                     if self.contexts[new_sdfg.name].constants.get(
-                            k) is None and self.contexts[
+                            get_name(k)) is None and self.contexts[
                                 self.globalsdfg.name].constants.get(
-                                    k) is not None:
-                        self.contexts[
-                            new_sdfg.name].constants[k] = self.contexts[
-                                self.globalsdfg.name].constants[k]
+                                    get_name(k)) is not None:
+                        self.contexts[new_sdfg.name].constants[get_name(
+                            k)] = self.contexts[
+                                self.globalsdfg.name].constants[get_name(k)]
 
-                    print(k)
+                    print(get_name(k))
                     pass
             for j in node.specification_part.specifications:
                 self.declstmt2sdfg(j, new_sdfg)
+            for i in assigns:
+                self.translate(i, new_sdfg)
             self.translate(node.execution_part, new_sdfg)
 
     #TODO REWRITE THIS nicely
     def binop2sdfg(self, node: BinOp_Node, sdfg: SDFG):
-        print(node)
+        #print(node)
+
+        calls=FindFunctionCalls()
+        calls.visit(node)
+        if len(calls.nodes)==1:
+            augmented_call=calls.nodes[0]
+            if augmented_call.name not in [
+                    "sqrt", "exp", "pow", "max", "min", "abs", "tanh"
+            ]:
+                augmented_call.args.append(node.lval)
+                augmented_call.hasret=True
+                self.call2sdfg(augmented_call, sdfg)
+                return
 
         outputnodefinder = FindOutputs()
         outputnodefinder.visit(node)
@@ -1023,7 +1148,10 @@ class AST_translator:
                 # special_list_in.append(retval.name)
                 special_list_out.append(retval.name + "_out")
                 text = tw.write_code(
-                    BinOp_Node(lvalue=retval, op="=", rvalue=node)) + ";"
+                    BinOp_Node(lval=retval,
+                               op="=",
+                               rval=node,
+                               line_number=node.line_number)) + ";"
 
             else:
                 text = tw.write_code(node) + ";"
@@ -1118,7 +1246,8 @@ class AST_translator:
 
 if __name__ == "__main__":
     parser = ParserFactory().create(std="f2008")
-    testname = "loop3"
+    testname = "funcstate"
+    #testname = "cloudscexp2"
     reader = FortranFileReader(
         os.path.realpath("/mnt/c/Users/Alexwork/Desktop/Git/f2dace/tests/" +
                          testname + ".f90"))
@@ -1131,8 +1260,10 @@ if __name__ == "__main__":
     functions_and_subroutines_builder = FindFunctionAndSubroutines()
     functions_and_subroutines_builder.visit(program)
     own_ast.functions_and_subroutines = functions_and_subroutines_builder.nodes
+    program = functionStatementEliminator(program)
     program = CallToArray(
         functions_and_subroutines_builder.nodes).visit(program)
+    program = CallExtractor().visit(program)    
     ast2sdfg = AST_translator(
         own_ast,
         "/mnt/c/Users/Alexwork/Desktop/Git/f2dace/tests/" + testname + ".f90")

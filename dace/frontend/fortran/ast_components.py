@@ -1,5 +1,6 @@
 from calendar import c
 from fileinput import lineno
+from symbol import func_type
 from fparser.two.Fortran2008 import *
 from fparser.two.Fortran2003 import *
 from fparser.two.symbol_table import *
@@ -83,7 +84,6 @@ class Module_Node(Node):
     _attributes = ('name', )
     _fields = (
         'specification_part',
-        'execution_part',
         'subroutine_definitions',
         'function_definitions',
     )
@@ -107,6 +107,11 @@ class Subroutine_Subprogram_Node(Node):
     )
 
 
+class Module_Stmt_Node(Node):
+    _attributes = ('name', )
+    _fields = ()
+
+
 class Program_Stmt_Node(Node):
     _attributes = ('name', )
     _fields = ()
@@ -123,6 +128,11 @@ class Function_Stmt_Node(Node):
 
 
 class Name_Node(Node):
+    _attributes = ('name', 'type')
+    _fields = ()
+
+
+class Type_Name_Node(Node):
     _attributes = ('name', 'type')
     _fields = ()
 
@@ -200,6 +210,10 @@ class Arg_List_Node(Node):
     _fields = ('args', )
 
 
+class Component_Spec_List_Node(Node):
+    _fields = ('args', )
+
+
 class Decl_Stmt_Node(Statement_Node):
     _attributes = ()
     _fields = ('vardecl', )
@@ -213,28 +227,33 @@ class Void(VarType):
     _attributes = ()
 
 
-class Int_Literal_Node(Node):
+class Literal(Node):
     _attributes = ('value', )
     _fields = ()
 
 
-class Real_Literal_Node(Node):
-    _attributes = ('value', )
+class Int_Literal_Node(Literal):
+    _attributes = ()
     _fields = ()
 
 
-class Bool_Literal_Node(Node):
-    _attributes = ('value', )
+class Real_Literal_Node(Literal):
+    _attributes = ()
     _fields = ()
 
 
-class String_Literal_Node(Node):
-    _attributes = ('value', )
+class Bool_Literal_Node(Literal):
+    _attributes = ()
     _fields = ()
 
 
-class Char_Literal_Node(Node):
-    _attributes = ('value', )
+class String_Literal_Node(Literal):
+    _attributes = ()
+    _fields = ()
+
+
+class Char_Literal_Node(Literal):
+    _attributes = ()
     _fields = ()
 
 
@@ -275,13 +294,18 @@ class If_Stmt_Node(Node):
     _fields = (
         'cond',
         'body',
-        'else_body',
+        'body_else',
     )
 
 
 class Else_Separator_Node(Node):
     _attributes = ()
     _fields = ()
+
+
+class Parenthesis_Expr_Node(Node):
+    _attributes = ()
+    _fields = ('expr', )
 
 
 class Nonlabel_Do_Stmt_Node(Node):
@@ -302,9 +326,29 @@ class Loop_Control_Node(Node):
     )
 
 
+class Else_If_Stmt_Node(Node):
+    _attributes = ()
+    _fields = ('cond', )
+
+
+class Only_List_Node(Node):
+    _attributes = ()
+    _fields = ('names', )
+
+
 class ParDecl_Node(Node):
     _attributes = ('type', )
     _fields = ('ranges', )
+
+
+class Structure_Constructor_Node(Node):
+    _attributes = ('type', )
+    _fields = ('name', 'args')
+
+
+class Use_Stmt_Node(Node):
+    _attributes = ('name', )
+    _fields = ('list', )
 
 
 # The following class is used to translate the fparser AST to our own AST of Fortran
@@ -390,6 +434,20 @@ def get_children(node: Union[FASTNode, List[FASTNode]],
                    children))
 
     return children_of_type
+
+
+def get_line(node):
+    line = None
+    if node.item is not None and hasattr(node.item, "span"):
+        line = node.item.span
+    else:
+        tmp = node
+        while tmp.parent is not None:
+            tmp = tmp.parent
+            if tmp.item is not None and hasattr(tmp.item, "span"):
+                line = tmp.item.span
+                break
+    return line
 
 
 class InternalFortranAst:
@@ -482,6 +540,7 @@ class InternalFortranAst:
             "End_Forall_Stmt": self.end_forall_stmt,
             "Arithmetic_If_Stmt": self.arithmetic_if_stmt,
             "If_Construct": self.if_construct,
+            "If_Stmt": self.if_stmt,
             "If_Then_Stmt": self.if_then_stmt,
             "Else_If_Stmt": self.else_if_stmt,
             "Else_Stmt": self.else_stmt,
@@ -499,10 +558,12 @@ class InternalFortranAst:
             "End_Interface_Stmt": self.end_interface_stmt,
             "Generic_Spec": self.generic_spec,
             "Name": self.name,
+            "Type_Name": self.type_name,
             "Specification_Part": self.specification_part,
             "Intrinsic_Type_Spec": self.intrinsic_type_spec,
             "Entity_Decl_List": self.entity_decl_list,
             "Int_Literal_Constant": self.int_literal_constant,
+            "Logical_Literal_Constant": self.logical_literal_constant,
             "Actual_Arg_Spec_List": self.actual_arg_spec_list,
             "Attr_Spec_List": self.attr_spec_list,
             "Initialization": self.initialization,
@@ -518,6 +579,17 @@ class InternalFortranAst:
             "Equiv_Operand": self.level_2_expr,
             "Level_3_Expr": self.level_2_expr,
             "Level_4_Expr": self.level_2_expr,
+            "Add_Operand": self.level_2_expr,
+            "Or_Operand": self.level_2_expr,
+            "And_Operand": self.level_2_expr,
+            "Level_2_Unary_Expr": self.level_2_expr,
+            "Mult_Operand": self.power_expr,
+            "Parenthesis": self.parenthesis_expr,
+            "Intrinsic_Name": self.intrinsic_name,
+            "Intrinsic_Function_Reference": self.intrinsic_function_reference,
+            "Only_List": self.only_list,
+            "Structure_Constructor": self.structure_constructor,
+            "Component_Spec_List": self.component_spec_list,
         }
 
     def list_tables(self):
@@ -584,10 +656,17 @@ class InternalFortranAst:
             args=name.args,
             specification_part=specification_part,
             execution_part=execution_part,
-            type=return_type)
+            type=return_type,
+            line_number=name.line_number,
+        )
 
     def end_program_stmt(self, node):
         return node
+
+    def only_list(self, node):
+        children = self.create_children(node)
+        names = [i for i in children if isinstance(i, Name_Node)]
+        return Only_List_Node(names=names)
 
     def function_subprogram(self, node):
         return node
@@ -595,7 +674,7 @@ class InternalFortranAst:
     def subroutine_stmt(self, node):
         children = self.create_children(node)
         name = get_child(children, Name_Node)
-        args = get_child(children, Arg_List_Node)
+        args = get_child(children, Component_Spec_List_Node)
         return Subroutine_Stmt_Node(name=name,
                                     args=args.args,
                                     line_number=node.item.span)
@@ -604,10 +683,84 @@ class InternalFortranAst:
         children = self.create_children(node)
         return Ac_Value_List_Node(value_list=children)
 
+    def power_expr(self, node):
+        children = self.create_children(node)
+        line = get_line(node)
+        #child 0 is the base, child 2 is the exponent
+        #child 1 is "**"
+        return Call_Expr_Node(name="pow",
+                              args=[children[0], children[2]],
+                              line_number=line)
+
     def array_constructor(self, node):
         children = self.create_children(node)
         value_list = get_child(children, Ac_Value_List_Node)
         return Array_Constructor_Node(value_list=value_list.value_list)
+
+    def structure_constructor(self, node):
+        children = self.create_children(node)
+        name = get_child(children, Type_Name_Node)
+        args = get_child(children, Component_Spec_List_Node)
+        return Structure_Constructor_Node(name=name, args=args.args, type=None)
+
+    def intrinsic_name(self, node):
+        name = node.string
+        replacements = {
+            "INT": "dace_int",
+            "DBLE": "dace_dble",
+            "SQRT": "sqrt",
+            "COSH": "cosh",
+            "ABS": "abs",
+            "MIN": "min",
+            "MAX": "max",
+            "EXP": "exp",
+            "EPSILON": "dace_epsilon",
+            "TANH": "tanh",
+            "SUM": "dace_sum",
+            "SIGN": "dace_sign",
+            "EXP": "exp",
+            "SELECTED_INT_KIND": "dace_selected_int_kind",
+            "SELECTED_REAL_KIND": "dace_selected_real_kind",
+        }
+        return Name_Node(name=replacements[name])
+
+    def intrinsic_function_reference(self, node):
+        children = self.create_children(node)
+        line = get_line(node)
+        name = get_child(children, Name_Node)
+        args = get_child(children, Arg_List_Node)
+        if name.name == "dace_selected_int_kind":
+            import math
+            return Int_Literal_Node(value=str(
+                math.ceil(
+                    (math.log2(math.pow(10, int(args.args[0].value))) + 1) /
+                    8)),
+                                    line_number=line)
+        # TODO This needs a better translation
+        elif name.name == "dace_selected_real_kind":
+            return Int_Literal_Node(value="8", line_number=line)
+        func_types = {
+            "dace_int": "INT",
+            "dace_dble": "DOUBLE",
+            "sqrt": "DOUBLE",
+            "cosh": "DOUBLE",
+            "abs": "DOUBLE",
+            "min": "DOUBLE",
+            "max": "DOUBLE",
+            "exp": "DOUBLE",
+            "dace_epsilon": "DOUBLE",
+            "tanh": "DOUBLE",
+            "dace_sum": "DOUBLE",
+            "dace_sign": "DOUBLE",
+            "exp": "DOUBLE",
+            "dace_selected_int_kind": "INT",
+            "dace_selected_real_kind": "INT",
+        }
+        call_type = func_types[name.name]
+        return Call_Expr_Node(name=name.name,
+                              type=call_type,
+                              args=args.args,
+                              line_number=line)
 
     def function_stmt(self, node):
         return node
@@ -618,17 +771,43 @@ class InternalFortranAst:
     def end_function_stmt(self, node):
         return node
 
+    def parenthesis_expr(self, node):
+        children = self.create_children(node)
+        return Parenthesis_Expr_Node(expr=children[1])
+
     def module(self, node):
-        return node
+        children = self.create_children(node)
+        name = get_child(children, Module_Stmt_Node)
+        specification_part = get_child(children, Specification_Part_Node)
+
+        function_definitions = [
+            i for i in children if isinstance(i, Function_Subprogram_Node)
+        ]
+
+        subroutine_definitions = [
+            i for i in children if isinstance(i, Subroutine_Subprogram_Node)
+        ]
+        return Module_Node(
+            name=name.name,
+            specification_part=specification_part,
+            function_definitions=function_definitions,
+            subroutine_definitions=subroutine_definitions,
+            line_number=name.line_number,
+        )
 
     def module_stmt(self, node):
-        return node
+        children = self.create_children(node)
+        name = get_child(children, Name_Node)
+        return Module_Stmt_Node(name=name, line_number=node.item.span)
 
     def end_module_stmt(self, node):
         return node
 
     def use_stmt(self, node):
-        return node
+        children = self.create_children(node)
+        name = get_child(children, Name_Node)
+        only_list = get_child(children, Only_List_Node)
+        return Use_Stmt_Node(name=name.name, list=only_list.names)
 
     def implicit_part(self, node):
         return node
@@ -847,24 +1026,30 @@ class InternalFortranAst:
 
     def level_2_expr(self, node):
         children = self.create_children(node)
-        if len(children) == 3:
-            return BinOp_Node(lval=children[0],
-                              op=children[1],
-                              rval=children[2])
-        else:
-            return UnOp_Node(lval=children[0], op=children[1])
-
-    def assignment_stmt(self, node):
-        children = self.create_children(node)
+        line = get_line(node)
         if len(children) == 3:
             return BinOp_Node(lval=children[0],
                               op=children[1],
                               rval=children[2],
-                              line_number=node.item.span)
+                              line_number=line)
         else:
-            return UnOp_Node(lval=children[0],
-                             op=children[1],
-                             line_number=node.item.span)
+            return UnOp_Node(lval=children[1],
+                             op=children[0],
+                             line_number=line)
+
+    def assignment_stmt(self, node):
+        children = self.create_children(node)
+        line = get_line(node)
+
+        if len(children) == 3:
+            return BinOp_Node(lval=children[0],
+                              op=children[1],
+                              rval=children[2],
+                              line_number=line)
+        else:
+            return UnOp_Node(lval=children[1],
+                             op=children[0],
+                             line_number=line)
 
     def pointer_assignment_stmt(self, node):
         return node
@@ -908,13 +1093,35 @@ class InternalFortranAst:
     def arithmetic_if_stmt(self, node):
         return node
 
+    def if_stmt(self, node):
+        children = self.create_children(node)
+        line = get_line(node)
+        cond = children[0]
+        body = children[1:]
+        return If_Stmt_Node(cond=cond,
+                            body=Execution_Part_Node(execution=body),
+                            body_else=Execution_Part_Node(execution=[]),
+                            line_number=line)
+
     def if_construct(self, node):
         children = self.create_children(node)
         cond = children[0]
         body = []
         body_else = []
         else_mode = False
+        line = get_line(node)
+        if line is None:
+            line = cond.line_number
+        toplevelIf = If_Stmt_Node(cond=cond, line_number=line)
+        currentIf = toplevelIf
         for i in children[1:-1]:
+            if isinstance(i, Else_If_Stmt_Node):
+                newif = If_Stmt_Node(cond=i.cond, line_number=i.line_number)
+                currentIf.body = Execution_Part_Node(execution=body)
+                currentIf.body_else = Execution_Part_Node(execution=[newif])
+                currentIf = newif
+                body = []
+                continue
             if isinstance(i, Else_Separator_Node):
                 else_mode = True
                 continue
@@ -922,11 +1129,9 @@ class InternalFortranAst:
                 body_else.append(i)
             else:
                 body.append(i)
-
-        return If_Stmt_Node(cond=cond,
-                            body=body,
-                            body_else=body_else,
-                            line_number=cond.line_number)
+        currentIf.body = Execution_Part_Node(execution=body)
+        currentIf.body_else = Execution_Part_Node(execution=body_else)
+        return toplevelIf
 
     def if_then_stmt(self, node):
         children = self.create_children(node)
@@ -937,7 +1142,8 @@ class InternalFortranAst:
         return return_value
 
     def else_if_stmt(self, node):
-        return node
+        children = self.create_children(node)
+        return Else_If_Stmt_Node(cond=children[0], line_number=get_line(node))
 
     def else_stmt(self, node):
         return Else_Separator_Node(line_number=node.item.span)
@@ -1014,16 +1220,22 @@ class InternalFortranAst:
         children = self.create_children(node)
         return Arg_List_Node(args=children)
 
+    def component_spec_list(self, node):
+        children = self.create_children(node)
+        return Component_Spec_List_Node(args=children)
+
     def attr_spec_list(self, node):
         return node
 
     def part_ref(self, node):
         children = self.create_children(node)
+        line = get_line(node)
         name = get_child(children, Name_Node)
         args = get_child(children, Section_Subscript_List_Node)
         return Call_Expr_Node(
             name=name,
             args=args.list,
+            line=line,
         )
 
     def loop_control(self, node):
@@ -1067,7 +1279,7 @@ class InternalFortranAst:
         return For_Stmt_Node(init=do.init,
                              cond=do.cond,
                              iter=do.iter,
-                             body=body,
+                             body=Execution_Part_Node(execution=body),
                              line_number=do.line_number)
 
     def real_literal_constant(self, node):
@@ -1139,6 +1351,13 @@ class InternalFortranAst:
     def int_literal_constant(self, node):
         return Int_Literal_Node(value=node.string)
 
+    def logical_literal_constant(self, node):
+        if node.string in [".TRUE.", ".true.", ".True."]:
+            return Bool_Literal_Node(value="True")
+        if node.string in [".FALSE.", ".false.", ".False."]:
+            return Bool_Literal_Node(value="False")
+        raise ValueError("Unknown logical literal constant")
+
     def real_literal_constant(self, node):
         return Real_Literal_Node(value=node.string)
 
@@ -1151,6 +1370,9 @@ class InternalFortranAst:
 
     def name(self, node):
         return Name_Node(name=node.string)
+
+    def type_name(self, node):
+        return Type_Name_Node(name=node.string)
 
     def tuple_node(self, node):
         return node
