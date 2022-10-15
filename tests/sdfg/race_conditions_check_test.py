@@ -1,6 +1,8 @@
+# Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
 import pytest
+
 
 def test_memlet_range_overlap_numeric_ranges():
     sdfg = dace.SDFG('memlet_range_overlap_numeric_ranges')
@@ -25,6 +27,7 @@ def test_memlet_range_overlap_numeric_ranges():
 
     with pytest.warns(UserWarning):
         sdfg(A=A, B=B)
+
 
 def test_memlet_range_overlap_symbolic_ranges():
     M = dace.symbol('M')
@@ -53,6 +56,7 @@ def test_memlet_range_overlap_symbolic_ranges():
     with pytest.warns(UserWarning):
         with pytest.raises(KeyError):
             sdfg(A=A, B=B)
+
 
 if __name__ == '__main__':
     test_memlet_range_overlap_numeric_ranges()

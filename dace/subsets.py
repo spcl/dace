@@ -12,9 +12,11 @@ from dace.config import Config
 
 class Subset(object):
     """ Defines a subset of a data descriptor. """
+
     def covers(self, other):
         """ Returns True if this subset covers (using a bounding box) another
             subset. """
+
         def nng(expr):
             # When dealing with set sizes, assume symbols are non-negative
             try:
@@ -47,14 +49,14 @@ class Subset(object):
 
                     # lower bound: first check whether symbolic positive condition applies
                     if not (len(rb.free_symbols) == 0 and len(orb.free_symbols) == 1):
-                        if not (symbolic.simplify_ext(nng(rb)) == symbolic.simplify_ext(nng(orb)) or
-                                symbolic.simplify_ext(nng(rb)) <= symbolic.simplify_ext(nng(orb))):
+                        if not (symbolic.simplify_ext(nng(rb)) == symbolic.simplify_ext(nng(orb))
+                                or symbolic.simplify_ext(nng(rb)) <= symbolic.simplify_ext(nng(orb))):
                             return False
 
                     # upper bound: first check whether symbolic positive condition applies
                     if not (len(re.free_symbols) == 1 and len(ore.free_symbols) == 0):
-                        if not (symbolic.simplify_ext(nng(re)) == symbolic.simplify_ext(nng(ore)) or
-                                symbolic.simplify_ext(nng(re)) >= symbolic.simplify_ext(nng(ore))):
+                        if not (symbolic.simplify_ext(nng(re)) == symbolic.simplify_ext(nng(ore))
+                                or symbolic.simplify_ext(nng(re)) >= symbolic.simplify_ext(nng(ore))):
                             return False
             except TypeError:
                 return False
@@ -131,6 +133,7 @@ def _tuple_to_symexpr(val):
 @dace.serialize.serializable
 class Range(Subset):
     """ Subset defined in terms of a fixed range. """
+
     def __init__(self, ranges):
         parsed_ranges = []
         parsed_tiles = []
@@ -202,10 +205,9 @@ class Range(Subset):
         return Range(sum_ranges)
 
     def __lt__(self, other):
-        if (type(self.min_element()[0]) == dace.symbolic.symbol or 
-            type(self.min_element()[0]) == sympy.core.add.Add or 
-            type(self.max_element()[0]) == dace.symbolic.symbol or 
-            type(self.max_element()[0]) == sympy.core.add.Add):
+        if (type(self.min_element()[0]) == dace.symbolic.symbol or type(self.min_element()[0]) == sympy.core.add.Add
+                or type(self.max_element()[0]) == dace.symbolic.symbol
+                or type(self.max_element()[0]) == sympy.core.add.Add):
 
             if (self.min_element()[0].compare(other.min_element()[0])):
                 return max(0, other.min_element()[0].compare(self.min_element()[0]))
@@ -739,9 +741,11 @@ class Range(Subset):
 class Indices(Subset):
     """ A subset of one element representing a single index in an
         N-dimensional data descriptor. """
+
     def __init__(self, indices):
         if indices is None or len(indices) == 0:
-            raise TypeError('Expected an array of index expressions: got empty' ' array or None')
+            raise TypeError('Expected an array of index expressions: got empty'
+                            ' array or None')
         if isinstance(indices, str):
             raise TypeError("Expected collection of index expression: got str")
         elif isinstance(indices, symbolic.SymExpr):
@@ -751,6 +755,7 @@ class Indices(Subset):
         self.tile_sizes = [1]
 
     def to_json(self):
+
         def a2s(obj):
             if isinstance(obj, symbolic.SymExpr):
                 return str(obj.expr)

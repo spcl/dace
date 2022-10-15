@@ -7,8 +7,6 @@ from typing import TYPE_CHECKING, Dict, Set, Tuple, Union
 import warnings
 from dace import dtypes, data as dt, subsets
 from dace import symbolic
-import sympy as sym
-# from sympy import *
 
 if TYPE_CHECKING:
     from dace.sdfg import SDFG
@@ -235,7 +233,8 @@ def validate_state(state: 'dace.sdfg.SDFGState',
         raise InvalidSDFGError("Invalid state name", sdfg, state_id)
 
     if state._parent != sdfg:
-        raise InvalidSDFGError("State does not point to the correct " "parent", sdfg, state_id)
+        raise InvalidSDFGError("State does not point to the correct "
+                               "parent", sdfg, state_id)
 
     # Unreachable
     ########################################
@@ -272,7 +271,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                 if (len(incoming_edge_memlet_ranges) > 0):
                     incoming_edge_memlet_ranges.sort()
                     for i in range(1, len(incoming_edge_memlet_ranges)):
-                        if (incoming_edge_memlet_ranges[i].intersects(incoming_edge_memlet_ranges[i-1])):
+                        if (incoming_edge_memlet_ranges[i].intersects(incoming_edge_memlet_ranges[i - 1])):
                             warnings.warn('Memlet range overlap while writing to "%s" in state %s' %
                                           (node, state.label))
 
@@ -633,6 +632,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
 
 class InvalidSDFGError(Exception):
     """ A class of exceptions thrown when SDFG validation fails. """
+
     def __init__(self, message: str, sdfg: 'SDFG', state_id: int):
         self.message = message
         self.sdfg = sdfg
@@ -655,7 +655,8 @@ class InvalidSDFGError(Exception):
 
         if lineinfo.start_line >= 0:
             if lineinfo.start_column > 0:
-                return (f'File "{lineinfo.filename}", line {lineinfo.start_line}, ' f'column {lineinfo.start_column}')
+                return (f'File "{lineinfo.filename}", line {lineinfo.start_line}, '
+                        f'column {lineinfo.start_column}')
             return f'File "{lineinfo.filename}", line {lineinfo.start_line}'
 
         return f'File "{lineinfo.filename}"'
@@ -683,6 +684,7 @@ class InvalidSDFGError(Exception):
 
 class InvalidSDFGInterstateEdgeError(InvalidSDFGError):
     """ Exceptions of invalid inter-state edges in an SDFG. """
+
     def __init__(self, message: str, sdfg: 'SDFG', edge_id: int):
         self.message = message
         self.sdfg = sdfg
@@ -724,6 +726,7 @@ class InvalidSDFGInterstateEdgeError(InvalidSDFGError):
 
 class InvalidSDFGNodeError(InvalidSDFGError):
     """ Exceptions of invalid nodes in an SDFG state. """
+
     def __init__(self, message: str, sdfg: 'SDFG', state_id: int, node_id: int):
         self.message = message
         self.sdfg = sdfg
@@ -757,12 +760,14 @@ class NodeNotExpandedError(InvalidSDFGNodeError):
     Exception that is raised whenever a library node was not expanded
     before code generation.
     """
+
     def __init__(self, sdfg: 'SDFG', state_id: int, node_id: int):
         super().__init__('Library node not expanded', sdfg, state_id, node_id)
 
 
 class InvalidSDFGEdgeError(InvalidSDFGError):
     """ Exceptions of invalid edges in an SDFG state. """
+
     def __init__(self, message: str, sdfg: 'SDFG', state_id: int, edge_id: int):
         self.message = message
         self.sdfg = sdfg
