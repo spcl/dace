@@ -201,59 +201,21 @@ class Range(Subset):
         sum_ranges = self.ranges + other.ranges
         return Range(sum_ranges)
 
-    # def __lt__(self, other):
-    #     if (self.min_element() != other.min_element()):
-        #     return self.min_element() < other.min_element()
-        # else:
-        #     return self.max_element() < other.max_element()
-
     def __lt__(self, other):
-        print(type(self.min_element()[0]))
-        print(self.min_element())
-        print(self.min_element()[0])
         if (type(self.min_element()[0]) == dace.symbolic.symbol or 
             type(self.min_element()[0]) == sympy.core.add.Add or 
             type(self.max_element()[0]) == dace.symbolic.symbol or 
             type(self.max_element()[0]) == sympy.core.add.Add):
-            print("Here Here")
-
-            # self_min = sympy.core.symbol.Symbol(str(self.min_element()))
-            # self_max = sympy.core.symbol.Symbol(str(self.max_element()))
-
-            # other_min = sympy.core.symbol.Symbol(str(other.min_element()))
-            # other_max = sympy.core.symbol.Symbol(str(other.max_element()))
-
-            # if (self_min.compare(other_min)):
-            #     return max(0, other_min.compare(self_min))
-            # else:
-            #     return max(0, other_max.compare(self_max))
 
             if (self.min_element()[0].compare(other.min_element()[0])):
                 return max(0, other.min_element()[0].compare(self.min_element()[0]))
             else:
                 return max(0, other.max_element()[0].compare(self.max_element()[0]))
         else:
-            print("Here")
-
             if (self.min_element() != other.min_element()):
                 return self.min_element() < other.min_element()
             else:
                 return self.max_element() < other.max_element()
-
-
-    # def __lt__(self, other):
-    #     if (type(self.min_element() == sympy.core.symbol.Symbol)):
-    #         other_min = type(self.min_element())(str(other.min_element))
-    #         other_max = type(self.max_element())(str(other.max_element))
-    #         if (self.min_element().compare(other_min)):
-    #             return max(0, self.min_element().compare(other_min))
-    #         else:
-    #             return max(0, self.max_element().compare(other_max))
-    #     else:
-    #         if (self.min_element() != other.min_element()):
-    #             return self.min_element() < other.min_element()
-    #         else:
-    #             return self.max_element() < other.max_element()
 
     def num_elements(self):
         return reduce(sp.Mul, self.size(), 1)

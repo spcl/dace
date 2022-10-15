@@ -1,9 +1,8 @@
 import dace
 import numpy as np
-import warnings
-warnings.filterwarnings("error")
+import pytest
 
-def memlet_range_overlap_numeric_ranges():
+def test_memlet_range_overlap_numeric_ranges():
     sdfg = dace.SDFG('memlet_range_overlap_numeric_ranges')
     sdfg.add_array('A', [5], dace.int32)
     sdfg.add_array('B', [5], dace.int32)
@@ -24,16 +23,13 @@ def memlet_range_overlap_numeric_ranges():
     A = np.ones([5], dtype=np.int32)
     B = np.zeros([5], dtype=np.int32)
 
-    try:
+    with pytest.warns(UserWarning):
         sdfg(A=A, B=B)
-        raise AssertionError('No warning generated, test failed.')
-    except UserWarning:
-        print("Warning successfully caught, test passed.")
 
-M = dace.symbol('M')
-N = dace.symbol('N')
+def test_memlet_range_overlap_symbolic_ranges():
+    M = dace.symbol('M')
+    N = dace.symbol('N')
 
-def memlet_range_overlap_symbolic_ranges():
     sdfg = dace.SDFG('memlet_range_overlap_symbolic_ranges')
     sdfg.add_array('A', [M], dace.int32)
     sdfg.add_array('B', [N], dace.int32)
@@ -49,20 +45,15 @@ def memlet_range_overlap_symbolic_ranges():
     state.add_edge(r, None, t2, 'a', dace.Memlet('A[M-3:M-1]'))
 
     state.add_edge(t1, 'b', w, None, dace.Memlet('B[N-4:N-1]'))
-    state.add_edge(t2, 'b', w, None, dace.Memlet('B[N+4:N-1]'))
+    state.add_edge(t2, 'b', w, None, dace.Memlet('B[N-3:N-1]'))
 
     A = np.ones([5], dtype=np.int32)
     B = np.zeros([5], dtype=np.int32)
 
-    try:
-        sdfg(A=A, B=B)
-        raise AssertionError('No warning generated, test failed.')
-    except UserWarning:
-        print("Warning successfully caught, test passed.")
+    with pytest.warns(UserWarning):
+        with pytest.raises(KeyError):
+            sdfg(A=A, B=B)
 
 if __name__ == '__main__':
-    A = np.random.rand(5).astype(np.int32)
-    B = np.random.rand(5).astype(np.int32)
-
-    # memlet_range_overlap_numeric_ranges()
-    memlet_range_overlap_symbolic_ranges()
+    test_memlet_range_overlap_numeric_ranges()
+    test_memlet_range_overlap_symbolic_ranges()
