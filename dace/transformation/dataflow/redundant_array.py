@@ -207,6 +207,9 @@ class RedundantArray(pm.SingleStateTransformation):
         # Find the true in desc (in case in_array is a view).
         true_in_array = in_array
         true_in_desc = in_desc
+        if isinstance(in_desc, data.Reference) and any(e.dst_conn == 'set' for e in graph.in_edges(in_array)):
+            # Reference sets cannot be removed
+            return False
         if isinstance(in_desc, data.View):
             true_in_array = sdutil.get_last_view_node(graph, in_array)
             if not true_in_array:
@@ -670,6 +673,9 @@ class RedundantSecondArray(pm.SingleStateTransformation):
         # Find the true out_desc (in case out_array is a view).
         true_out_array = out_array
         true_out_desc = out_desc
+        if isinstance(out_desc, data.Reference) and e1.dst_conn == 'set':
+            # Reference sets cannot be removed
+            return False
         if isinstance(out_desc, data.View):
             true_out_array = sdutil.get_last_view_node(graph, out_array)
             if not true_out_array:

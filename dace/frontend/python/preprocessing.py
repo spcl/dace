@@ -20,6 +20,7 @@ from dace.frontend.python import astutils
 from dace.frontend.python.common import (DaceSyntaxError, SDFGConvertible, SDFGClosure, StringLiteral)
 
 
+
 class DaceRecursionError(Exception):
     """
     Exception that indicates a recursion in a data-centric parsed context.
@@ -1460,6 +1461,33 @@ def preprocess_dace_program(f: Callable[..., Any],
     :return: A 2-tuple of the AST and its reduced (used) closure.
     """
     src_ast, src_file, src_line, src = astutils.function_to_ast(f)
+
+    # SSA
+    from .ssapy.ssa_preprocess import SSA_Preprocessor
+    from .ssapy.ssa_transpiler import SSA_Transpiler
+    from .ssapy.ssa_postprocess import SSA_Reducer
+    from .ssapy.dace_specific import DaCe_Postprocessor
+    definiton_sources = collections.ChainMap(global_vars, argtypes)
+    definitions = {name: (name, None) for name in definiton_sources}
+    function_def: ast.FunctionDef = src_ast.body[0]
+    function_body = ast.Module(function_def.body)
+
+    SSA_Preprocessor().visit(function_body)
+    SSA_Transpiler().visit(function_body, definitions)
+    SSA_Reducer().visit(function_body)
+    DaCe_Postprocessor().visit(function_body)
+    ast.fix_missing_locations(function_body)
+
+    src_ast.body[0].body = function_body.body
+
+    if False:  # Print the SSA-converted AST for debugging
+        from .ssapy.ssa_postprocess import SSA_Postprocessor
+        print('#'*20)
+        ast_copy = copy.deepcopy(src_ast)
+        SSA_Postprocessor().visit(ast_copy)
+        ast.fix_missing_locations(ast_copy)
+        print(ast.unparse(ast_copy))
+        print('#'*20)
 
     # Resolve data structures
     src_ast = StructTransformer(global_vars).visit(src_ast)

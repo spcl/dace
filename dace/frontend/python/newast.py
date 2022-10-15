@@ -1087,6 +1087,10 @@ class ProgramVisitor(ExtNodeVisitor):
         self.variables = dict()  # Dict[str, str]
         self.accesses = dict()
         self.views: Dict[str, Tuple[str, Memlet]] = {}  # Keeps track of views
+        self.phis: Set[str] = set()  # All variables defined by a phi
+        self.references: Set[str] = set()  # All containers that participate in PhiAssigns
+        self.reference_assigns: Dict[str, str] = {}  # Keeps track of reference assignments
+        self.references_remaining: Dict[str, str] = {}  # Keeps track of phi operands left to process
         self.nested_closure_arrays: Dict[str, Tuple[Any, data.Data]] = {}
         self.annotated_types: Dict[str, data.Data] = annotated_types or {}
 
@@ -1180,6 +1184,9 @@ class ProgramVisitor(ExtNodeVisitor):
         program = astutils.AnnotateTopLevel().visit(program)
         self.program_ast = program
 
+        # Annotate all data containers that participate in reference (phi) assignments
+        self.find_references(program)
+
         if is_tasklet:
             program.decorator_list = []
             self.visit_FunctionDef(program)
@@ -1233,6 +1240,56 @@ class ProgramVisitor(ExtNodeVisitor):
                 arr.transient = False
                 self.outputs[arrname] = (None, Memlet.from_array(arrname, arr), [])
 
+        # Assign References from Phi nodes
+        defined_vars = {**self.variables, **self.scope_vars}
+        defined_arrays = {**self.sdfg.arrays, **self.scope_arrays}
+
+        for name in self.references_remaining:
+            for op in self.references_remaining[name]:
+                if op in defined_vars:
+                    true_name = defined_vars[op]
+                    assign_list = self.reference_assigns.get(true_name, [])
+                    assign_list.append(name)
+                    self.reference_assigns[true_name] = assign_list
+                elif op in defined_arrays:
+                    assign_list = self.reference_assigns.get(op, [])
+                    assign_list.append(name)
+                    self.reference_assigns[op] = assign_list
+                else:
+                    raise Exception(f"Cannot find variable {op}")
+
+        def ref_assign(read: dace.nodes.AccessNode, target: str, state):
+            assign_list = self.reference_assigns[target]
+            for ref_name in assign_list:
+                write = state.add_write(ref_name)
+                state.add_edge(read, None, write, 'set', Memlet(read.data))
+                if ref_name in self.reference_assigns:
+                    ref_assign(write, ref_name, state)
+
+        # Add phi assignments for function arguments
+        init_state = self.sdfg.start_state
+        for arg, arr in self.sdfg.arglist().items():
+            if arg in self.reference_assigns:
+                base_read = init_state.add_read(arg)
+                ref_assign(base_read, arg, init_state)
+
+                # Only assign to the reference once
+                del self.reference_assigns[arg]
+
+        for state in self.sdfg.try_topological_sort():
+            
+            # Data nodes are already "topologically ordered" because only one with the
+            # same name should appear in one state (pre-simplified SDFG)
+            nodes = list(state.data_nodes())
+            for node in nodes:
+                if node.data in self.reference_assigns:
+                    if node.data not in self.phis:
+                        base_read = node
+                        ref_assign(base_read, node.data, state)
+
+                    # Only assign to the reference once
+                    del self.reference_assigns[node.data]
+
         def _views_to_data(state: SDFGState, nodes: List[dace.nodes.AccessNode]) -> List[dace.nodes.AccessNode]:
             new_nodes = []
             for vnode in nodes:
@@ -1250,7 +1307,10 @@ class ProgramVisitor(ExtNodeVisitor):
                         state.add_edge(vnode, 'views', w, None, copy.deepcopy(m))
                         new_nodes.append(w)
                     else:
-                        raise ValueError(f'View "{vnode.data}" already has both incoming and outgoing edges')
+                        # The view is already registered with an access node, potentially
+                        # due to reference assignments. Skip.
+                        continue
+                        # raise ValueError(f'View "{vnode.data}" already has both incoming and outgoing edges')
             return new_nodes
 
         # Map view access nodes to their respective data
@@ -1259,7 +1319,7 @@ class ProgramVisitor(ExtNodeVisitor):
             nodes = list(state.data_nodes())
             while nodes:
                 nodes = _views_to_data(state, nodes)
-
+        
         # Try to replace transients with their python-assigned names
         for pyname, arrname in self.variables.items():
             if arrname in self.sdfg.arrays and pyname not in FORBIDDEN_ARRAY_NAMES:
@@ -1273,6 +1333,18 @@ class ProgramVisitor(ExtNodeVisitor):
                 memlet.dynamic = True
 
         return self.sdfg, self.inputs, self.outputs, self.symbols
+
+    def find_references(self, program: ast.FunctionDef):
+        """
+        Annotates all participants of reference (phi) assignments.
+        Should be called as a preprocessing method before visiting the AST to enable
+        finding reference assignments of data containers that are not immediately used (e.g., ``ref = a``).
+        """
+        from dace.frontend.python.ssapy import ssa_nodes
+        for node in ast.walk(program):
+            if isinstance(node, ssa_nodes.PhiAssign):
+                self.phis.add(node.target)
+                self.references.update(set(node.operand_names))
 
     @property
     def defined(self):
@@ -1417,6 +1489,51 @@ class ProgramVisitor(ExtNodeVisitor):
                         "You may use up to 3 arguments (start:stop:step).")
 
         return result
+
+    def visit_PhiAssign(self, node: 'PhiAssign'):
+
+        sdfg = self.sdfg
+
+        phi_target: str = node.target
+        phi_operands: List[str] = node.operand_names
+
+        defined_vars = {**self.variables, **self.scope_vars}
+        defined_arrays = {**self.sdfg.arrays, **self.scope_arrays}
+
+        desc = None
+        remaining_ops = []
+        for op in phi_operands:
+            if op in defined_vars:
+                true_name = defined_vars[op]
+                desc = defined_arrays[true_name]
+            elif op in defined_arrays:
+                desc = defined_arrays[op]
+            elif op is None:
+                raise ValueError('Phi node for {phi_target} has en execution path with no definition for the variable!')
+            else:
+                remaining_ops.append(op)
+        
+        assert desc is not None, f"No descriptor found for {phi_target}"
+
+        name, ref = sdfg.add_reference(phi_target, desc.shape, desc.dtype, desc.storage, find_new_name=True)
+        self.variables[phi_target] = name
+        self.references_remaining[name] = remaining_ops
+
+        for op in phi_operands:
+            if op in defined_vars:
+                true_name = defined_vars[op]
+                assign_list = self.reference_assigns.get(true_name, [])
+                assign_list.append(name)
+                self.reference_assigns[true_name] = assign_list
+            elif op in defined_arrays:
+                assign_list = self.reference_assigns.get(op, [])
+                assign_list.append(name)
+                self.reference_assigns[op] = assign_list
+            elif op in remaining_ops:
+                pass
+            else:
+                raise Exception(f"Cannot find variable {op}")
+
 
     def visit_FunctionDef(self, node: ast.FunctionDef):
         # Supported decorated function types: map, mapscope, consume,
@@ -2618,7 +2735,11 @@ class ProgramVisitor(ExtNodeVisitor):
                     memlet.other_subset = op_subset
                     if op:
                         memlet.wcr = LambdaProperty.from_string('lambda x, y: x {} y'.format(op))
-                    state.add_nedge(op1, op2, memlet)
+                    if isinstance(self.sdfg.arrays[target_name], data.View):
+                        # Forced view assignment (from references)
+                        state.add_edge(op1, None, op2, 'views', memlet)
+                    else:
+                        state.add_nedge(op1, op2, memlet)
             else:
                 memlet = Memlet("{a}[{s}]".format(a=target_name,
                                                   s=','.join(['__i%d' % i for i in range(len(target_subset))])))
@@ -3166,7 +3287,14 @@ class ProgramVisitor(ExtNodeVisitor):
                         self.views[true_name] = (result, Memlet.from_array(result, result_data))
                         self.variables[name] = true_name
                         defined_vars[name] = true_name
-                        continue
+
+                        # If the target is a reference, we still need the access->access
+                        # edge such that the reference assignment is always added.
+                        # Otherwise (below), the default is not to add such an edge at all,
+                        # and let uses of the view create access nodes that will be handled
+                        # by post-processing.
+                        if name not in self.references:
+                            continue
                     elif not result_data.transient or result in self.sdfg.constants_prop:
                         true_name, new_data = _add_transient_data(self.sdfg, result_data, dtype)
                         self.variables[name] = true_name

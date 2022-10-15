@@ -61,7 +61,6 @@ def _define_local_ex(pv: 'ProgramVisitor',
     name, _ = sdfg.add_temp_transient(shape, dtype, storage=storage, lifetime=lifetime)
     return name
 
-
 @oprepo.replaces('numpy.ndarray')
 def _define_local(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, shape: Shape, dtype: dace.typeclass):
     """ Defines a local array in a DaCe program. """
