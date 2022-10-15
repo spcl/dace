@@ -823,7 +823,7 @@ required:
 
     check_race_conditions:
         type: bool
-        default: false
+        default: true
         title: Check race conditions 
         description: Check for probable race conditions during the program's execution.
 

@@ -7,6 +7,8 @@ from typing import TYPE_CHECKING, Dict, Set, Tuple, Union
 import warnings
 from dace import dtypes, data as dt, subsets
 from dace import symbolic
+import sympy as sym
+# from sympy import *
 
 if TYPE_CHECKING:
     from dace.sdfg import SDFG
@@ -267,7 +269,8 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                 for e in state.in_edges(node):
                     incoming_edge_memlet_ranges.append(e.data.subset)
                 if (len(incoming_edge_memlet_ranges) > 0):
-                    sorted(incoming_edge_memlet_ranges)
+                    incoming_edge_memlet_ranges.sort()
+                    print(incoming_edge_memlet_ranges)
                     for i in range(1, len(incoming_edge_memlet_ranges)):
                         if (incoming_edge_memlet_ranges[i].intersects(incoming_edge_memlet_ranges[i-1])):
                             warnings.warn('Memlet range overlap while writing in "%s" in state %s' %
