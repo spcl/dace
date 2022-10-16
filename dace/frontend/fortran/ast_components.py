@@ -132,6 +132,11 @@ class Name_Node(Node):
     _fields = ()
 
 
+class Name_Range_Node(Node):
+    _attributes = ('name', 'type', 'arrname', 'pos')
+    _fields = ()
+
+
 class Type_Name_Node(Node):
     _attributes = ('name', 'type')
     _fields = ()
@@ -289,6 +294,12 @@ class For_Stmt_Node(Node):
     )
 
 
+class Map_Stmt_Node(For_Stmt_Node):
+    _attributes = ()
+    _fields = (
+    )
+
+
 class If_Stmt_Node(Node):
     _attributes = ()
     _fields = (
@@ -349,6 +360,11 @@ class Structure_Constructor_Node(Node):
 class Use_Stmt_Node(Node):
     _attributes = ('name', )
     _fields = ('list', )
+
+
+class Write_Stmt_Node(Node):
+    _attributes = ()
+    _fields = ('args', )
 
 
 # The following class is used to translate the fparser AST to our own AST of Fortran
@@ -590,6 +606,7 @@ class InternalFortranAst:
             "Only_List": self.only_list,
             "Structure_Constructor": self.structure_constructor,
             "Component_Spec_List": self.component_spec_list,
+            "Write_Stmt": self.write_stmt,
         }
 
     def list_tables(self):
@@ -608,6 +625,11 @@ class InternalFortranAst:
                 return [self.create_ast(child) for child in node]
             return self.supported_fortran_syntax[type(node).__name__](node)
         return None
+
+    def write_stmt(self, node):
+        children = self.create_children(node.children[1])
+
+        return Write_Stmt_Node(args=children)
 
     def program(self, node):
         children = self.create_children(node)
@@ -674,7 +696,7 @@ class InternalFortranAst:
     def subroutine_stmt(self, node):
         children = self.create_children(node)
         name = get_child(children, Name_Node)
-        args = get_child(children, Component_Spec_List_Node)
+        args = get_child(children, Arg_List_Node)
         return Subroutine_Stmt_Node(name=name,
                                     args=args.args,
                                     line_number=node.item.span)
@@ -688,7 +710,7 @@ class InternalFortranAst:
         line = get_line(node)
         #child 0 is the base, child 2 is the exponent
         #child 1 is "**"
-        return Call_Expr_Node(name="pow",
+        return Call_Expr_Node(name=Name_Node(name="pow"),
                               args=[children[0], children[2]],
                               line_number=line)
 
@@ -757,7 +779,7 @@ class InternalFortranAst:
             "dace_selected_real_kind": "INT",
         }
         call_type = func_types[name.name]
-        return Call_Expr_Node(name=name.name,
+        return Call_Expr_Node(name=name,
                               type=call_type,
                               args=args.args,
                               line_number=line)

@@ -338,6 +338,7 @@ class AST_translator:
         self.last_loop_breaks = {}
         self.last_returns = {}
         self.module_vars = []
+        self.libraries = {}
         self.last_call_expression = {}
         self.ast_elements = {
             If_Stmt_Node: self.ifstmt2sdfg,
@@ -350,7 +351,8 @@ class AST_translator:
             Constant_Decl_Node: self.const2sdfg,
             Symbol_Decl_Node: self.symbol2sdfg,
             Call_Expr_Node: self.call2sdfg,
-            Program_Node: self.ast2sdfg
+            Program_Node: self.ast2sdfg,
+            Write_Stmt_Node: self.write2sdfg,
         }
         self.fortrantypes2dacetypes = {
             "DOUBLE": dace.float64,
@@ -426,6 +428,9 @@ class AST_translator:
         for i in node.execution:
             self.translate(i, sdfg)
 
+    def write2sdfg(self, node: Write_Stmt_Node, sdfg: SDFG):
+        print(node)
+
     def ifstmt2sdfg(self, node: If_Stmt_Node, sdfg: SDFG):
 
         name = "If_l_" + str(node.line_number[0]) + "_c_" + str(
@@ -455,7 +460,7 @@ class AST_translator:
             sdfg.add_edge(body_ifend_state, final_substate,
                           dace.InterstateEdge())
 
-        if len(node.body_else) > 0:
+        if len(node.body_else.execution) > 0:
             name_else = "Else_l_" + str(node.line_number[0]) + "_c_" + str(
                 node.line_number[1])
             body_elsestart_state = sdfg.add_state("BodyElseStart" + name_else)
@@ -985,15 +990,15 @@ class AST_translator:
     def binop2sdfg(self, node: BinOp_Node, sdfg: SDFG):
         #print(node)
 
-        calls=FindFunctionCalls()
+        calls = FindFunctionCalls()
         calls.visit(node)
-        if len(calls.nodes)==1:
-            augmented_call=calls.nodes[0]
-            if augmented_call.name not in [
+        if len(calls.nodes) == 1:
+            augmented_call = calls.nodes[0]
+            if augmented_call.name.name not in [
                     "sqrt", "exp", "pow", "max", "min", "abs", "tanh"
             ]:
                 augmented_call.args.append(node.lval)
-                augmented_call.hasret=True
+                augmented_call.hasret = True
                 self.call2sdfg(augmented_call, sdfg)
                 return
 
@@ -1059,7 +1064,7 @@ class AST_translator:
     def call2sdfg(self, node: Call_Expr_Node, sdfg: SDFG):
         self.last_call_expression[sdfg] = node.args
         match_found = False
-        rettype = "Int"
+        rettype = "INTEGER"
         hasret = False
         if node.name in self.functions_and_subroutines:
             for i in self.top_level.function_definitions:
@@ -1081,7 +1086,7 @@ class AST_translator:
                         return
         else:
             #TODO rewrite this
-            libstate = self.libraries.get(node.name)
+            libstate = self.libraries.get(node.name.name)
             if not isinstance(rettype, Void) and hasattr(node, "hasret"):
                 if node.hasret:
                     hasret = True
@@ -1139,7 +1144,6 @@ class AST_translator:
                 #        if len(var.shape) == 0 or (len(var.shape) == 1 and var.shape[0] is 1):
                 output_names_changed.append(o_t + "_out")
 
-            node.location_line = self.tasklet_count
             tw = TaskletWriter(output_names_tasklet.copy(),
                                output_names_changed.copy())
             if not isinstance(rettype, Void) and hasret:
@@ -1151,19 +1155,18 @@ class AST_translator:
                     BinOp_Node(lval=retval,
                                op="=",
                                rval=node,
-                               line_number=node.line_number)) + ";"
+                               line_number=node.line_number))
 
             else:
-                text = tw.write_code(node) + ";"
+                text = tw.write_code(node)
             substate = add_simple_state_to_sdfg(
-                self, sdfg, "_state" + str(node.location_line) + "_" +
-                str(self.tasklet_count))
-            self.tasklet_count = self.tasklet_count + 1
+                self, sdfg, "_state" + str(node.line_number[0]))
 
-            tasklet = add_tasklet(substate, str(node.location_line), {
+            tasklet = add_tasklet(substate, str(node.line_number), {
                 **input_names_tasklet,
                 **special_list_in
-            }, output_names_changed + special_list_out, "text")
+            }, output_names_changed + special_list_out, "text",
+                                  node.line_number, self.file_name)
             if libstate is not None:
                 add_memlet_read(substate, self.name_mapping[sdfg][libstate],
                                 tasklet,
@@ -1246,7 +1249,7 @@ class AST_translator:
 
 if __name__ == "__main__":
     parser = ParserFactory().create(std="f2008")
-    testname = "funcstate"
+    testname = "arrayrange1"
     #testname = "cloudscexp2"
     reader = FortranFileReader(
         os.path.realpath("/mnt/c/Users/Alexwork/Desktop/Git/f2dace/tests/" +
@@ -1263,7 +1266,9 @@ if __name__ == "__main__":
     program = functionStatementEliminator(program)
     program = CallToArray(
         functions_and_subroutines_builder.nodes).visit(program)
-    program = CallExtractor().visit(program)    
+    program = CallExtractor().visit(program)
+    program = SignToIf().visit(program)
+    program = ArrayToLoop().visit(program)
     ast2sdfg = AST_translator(
         own_ast,
         "/mnt/c/Users/Alexwork/Desktop/Git/f2dace/tests/" + testname + ".f90")
