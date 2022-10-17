@@ -563,6 +563,13 @@ class DiGraph(Graph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
 
     def find_cycles(self):
         return nx.simple_cycles(self._nx)
+    
+    def has_cycles(self) -> bool:
+        try:
+            nx.find_cycle(self._nx, self.source_nodes())
+            return True
+        except nx.NetworkXNoCycle:
+            return False
 
 
 class MultiDiGraph(DiGraph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
@@ -620,7 +627,16 @@ class OrderedDiGraph(Graph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
         return self._nx
 
     def node(self, id: int) -> NodeT:
-        return list(self._nodes.keys())[id]
+        try:
+            return next(n for i, n in enumerate(self._nodes.keys()) if i == id)
+        except StopIteration:
+            raise NodeNotFoundError
+
+    def node_id(self, node: NodeT) -> int:
+        try:
+            return next(i for i, n in enumerate(self._nodes.keys()) if n is node)
+        except StopIteration:
+            raise NodeNotFoundError(node)
 
     def nodes(self) -> List[NodeT]:
         return list(self._nodes.keys())
@@ -655,10 +671,13 @@ class OrderedDiGraph(Graph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
         return self._nx.add_edge(src, dst, data=data)
 
     def remove_node(self, node: NodeT):
-        for edge in itertools.chain(self.in_edges(node), self.out_edges(node)):
-            self.remove_edge(edge)
-        del self._nodes[node]
-        self._nx.remove_node(node)
+        try:
+            for edge in itertools.chain(self.in_edges(node), self.out_edges(node)):
+                self.remove_edge(edge)
+            del self._nodes[node]
+            self._nx.remove_node(node)
+        except KeyError:
+            pass
 
     def remove_edge(self, edge: Edge[EdgeT]):
         src = edge.src
@@ -689,8 +708,17 @@ class OrderedDiGraph(Graph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
 
     def find_cycles(self):
         return nx.simple_cycles(self._nx)
+    
+    def has_cycles(self) -> bool:
+        try:
+            nx.find_cycle(self._nx, self.source_nodes())
+            return True
+        except nx.NetworkXNoCycle:
+            return False
 
     def edges_between(self, source: NodeT, destination: NodeT) -> List[Edge[EdgeT]]:
+        if (source, destination) in self._edges:
+            return [self._edges[(source, destination)]]
         if source not in self.nodes(): return []
         return [e for e in self.out_edges(source) if e.dst == destination]
 

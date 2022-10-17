@@ -6,17 +6,22 @@ testing or optimization.
 from collections import deque
 import copy
 from typing import Deque, Dict, List, Set
-from dace.sdfg import nodes as nd, SDFG, SDFGState
+from dace import data
+from dace.sdfg import nodes as nd, SDFG, SDFGState, utils as sdutil
 from dace.sdfg.state import StateSubgraphView
 
 
-def cutout_state(state: SDFGState, *nodes: nd.Node) -> SDFG:
+def cutout_state(state: SDFGState, *nodes: nd.Node, make_copy: bool = True) -> SDFG:
     """
     Cut out a subgraph of a state from an SDFG to run separately for localized testing or optimization.
     The subgraph defined by the list of nodes will be extended to include access nodes of data containers necessary
     to run the graph separately. In addition, all transient data containers created outside the cut out graph will
     become global.
+    :param state: The SDFG state in which the subgraph resides.
+    :param nodes: The nodes in the subgraph to cut out.
+    :param make_copy: If True, deep-copies every SDFG element in the copy. Otherwise, original references are kept.
     """
+    create_element = copy.deepcopy if make_copy else (lambda x: x)
     sdfg = state.parent
     subgraph: StateSubgraphView = StateSubgraphView(state, nodes)
     subgraph = _extend_subgraph_with_access_nodes(state, subgraph)
@@ -30,6 +35,8 @@ def cutout_state(state: SDFGState, *nodes: nd.Node) -> SDFG:
         new_sdfg.add_symbol(sym, defined_syms[sym])
 
     for dnode in subgraph.data_nodes():
+        if dnode.data in new_sdfg.arrays:
+            continue
         new_desc = sdfg.arrays[dnode.data].clone()
         # If transient is defined outside, it becomes a global
         if dnode.data in other_arrays:
@@ -41,10 +48,16 @@ def cutout_state(state: SDFGState, *nodes: nd.Node) -> SDFG:
     inserted_nodes: Dict[nd.Node, nd.Node] = {}
     for e in subgraph.edges():
         if e.src not in inserted_nodes:
-            inserted_nodes[e.src] = copy.deepcopy(e.src)
+            inserted_nodes[e.src] = create_element(e.src)
         if e.dst not in inserted_nodes:
-            inserted_nodes[e.dst] = copy.deepcopy(e.dst)
-        new_state.add_edge(inserted_nodes[e.src], e.src_conn, inserted_nodes[e.dst], e.dst_conn, copy.deepcopy(e.data))
+            inserted_nodes[e.dst] = create_element(e.dst)
+        new_state.add_edge(inserted_nodes[e.src], e.src_conn, inserted_nodes[e.dst], e.dst_conn, create_element(e.data))
+
+    # Insert remaining isolated nodes
+    for n in subgraph.nodes():
+        if n not in inserted_nodes:
+            inserted_nodes[n] = create_element(n)
+            new_state.add_node(inserted_nodes[n])
 
     # Remove remaining dangling connectors from scope nodes
     for node in inserted_nodes.values():
@@ -60,6 +73,7 @@ def cutout_state(state: SDFGState, *nodes: nd.Node) -> SDFG:
 
 def _extend_subgraph_with_access_nodes(state: SDFGState, subgraph: StateSubgraphView) -> StateSubgraphView:
     """ Expands a subgraph view to include necessary input/output access nodes, using memlet paths. """
+    sdfg = state.parent
     result: List[nd.Node] = copy.copy(subgraph.nodes())
     queue: Deque[nd.Node] = deque(subgraph.nodes())
 
@@ -67,28 +81,30 @@ def _extend_subgraph_with_access_nodes(state: SDFGState, subgraph: StateSubgraph
     while len(queue) > 0:
         node = queue.pop()
         if isinstance(node, nd.AccessNode):
+            if isinstance(node.desc(sdfg), data.View):
+                vnode = sdutil.get_view_node(state, node)
+                result.append(vnode)
+                queue.append(vnode)
             continue
         for e in state.in_edges(node):
             # Special case: IN_* connectors are not traversed further
-            if e.dst_conn.startswith('IN_'):
+            if isinstance(e.dst, (nd.EntryNode, nd.ExitNode)) and (e.dst_conn is None or e.dst_conn.startswith('IN_')):
                 continue
-            if e.src not in result:
-                mpath = state.memlet_path(e)
-                new_nodes = [mpe.src for mpe in mpath if mpe.src not in result]
-                result.extend(new_nodes)
-                # Memlet path may end in a code node, continue traversing and expanding graph
-                queue.extend(new_nodes)
+            mpath = state.memlet_path(e)
+            new_nodes = [mpe.src for mpe in mpath if mpe.src not in result]
+            result.extend(new_nodes)
+            # Memlet path may end in a code node, continue traversing and expanding graph
+            queue.extend(new_nodes)
 
         for e in state.out_edges(node):
             # Special case: OUT_* connectors are not traversed further
-            if e.src_conn.startswith('OUT_'):
+            if isinstance(e.src, (nd.EntryNode, nd.ExitNode)) and (e.src_conn is None or e.src_conn.startswith('OUT_')):
                 continue
-            if e.dst not in result:
-                mpath = state.memlet_path(e)
-                new_nodes = [mpe.dst for mpe in mpath if mpe.dst not in result]
-                result.extend(new_nodes)
-                # Memlet path may end in a code node, continue traversing and expanding graph
-                queue.extend(new_nodes)
+            mpath = state.memlet_path(e)
+            new_nodes = [mpe.dst for mpe in mpath if mpe.dst not in result]
+            result.extend(new_nodes)
+            # Memlet path may end in a code node, continue traversing and expanding graph
+            queue.extend(new_nodes)
 
     # Check for mismatch in scopes
     for node in result:

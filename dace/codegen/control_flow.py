@@ -53,6 +53,7 @@ GeneralBlock({
 })
 """
 
+import ast
 from dataclasses import dataclass
 from typing import (Callable, Dict, Iterator, List, Optional, Sequence, Set, Tuple, Union)
 import sympy as sp
@@ -62,7 +63,7 @@ from dace.sdfg.sdfg import SDFG, InterstateEdge
 from dace.sdfg.graph import Edge
 from dace.properties import CodeBlock
 from dace.codegen import cppunparse
-from dace.codegen.targets import cpp
+from dace.codegen.common import unparse_interstate_edge, sym2cpp
 
 ###############################################################################
 
@@ -125,7 +126,7 @@ class SingleState(ControlFlow):
         else:
             # Dispatch empty state in any case in order to register that the
             # state was dispatched
-            self.dispatch_state(self.state)
+            expr += self.dispatch_state(self.state)
 
         # If any state has no children, it should jump to the end of the SDFG
         if not self.last_state and sdfg.out_degree(self.state) == 0:
@@ -152,18 +153,19 @@ class SingleState(ControlFlow):
         :return: A c++ string representing the state transition code.
         """
         expr = ''
-        condition_string = cpp.unparse_interstate_edge(edge.data.condition.code[0], sdfg, codegen=framecode)
+        condition_string = unparse_interstate_edge(edge.data.condition.code[0], sdfg, codegen=framecode)
 
         if not edge.data.is_unconditional() and not assignments_only:
             expr += f'if ({condition_string}) {{\n'
 
         if len(edge.data.assignments) > 0:
             expr += ';\n'.join([
-                "{} = {}".format(variable, cpp.unparse_interstate_edge(value, sdfg, codegen=framecode))
+                "{} = {}".format(variable, unparse_interstate_edge(value, sdfg, codegen=framecode))
                 for variable, value in edge.data.assignments.items()
             ] + [''])
 
-        if ((successor is None or edge.dst is not successor) and not assignments_only):
+        if (not edge.data.is_unconditional()
+                or ((successor is None or edge.dst is not successor) and not assignments_only)):
             expr += 'goto __state_{}_{};\n'.format(sdfg.sdfg_id, edge.dst.label)
 
         if not edge.data.is_unconditional() and not assignments_only:
@@ -262,7 +264,7 @@ class IfScope(ControlFlow):
     orelse: Optional[GeneralBlock] = None  #: Optional body of else condition
 
     def as_cpp(self, codegen, symbols) -> str:
-        condition_string = cpp.unparse_interstate_edge(self.condition.code[0], self.sdfg, codegen=codegen)
+        condition_string = unparse_interstate_edge(self.condition.code[0], self.sdfg, codegen=codegen)
         expr = f'if ({condition_string}) {{\n'
         expr += self.body.as_cpp(codegen, symbols)
         expr += '\n}'
@@ -295,7 +297,7 @@ class IfElseChain(ControlFlow):
             # First block in the chain is just "if", rest are "else if"
             prefix = '' if i == 0 else ' else '
 
-            condition_string = cpp.unparse_interstate_edge(condition.code[0], self.sdfg, codegen=codegen)
+            condition_string = unparse_interstate_edge(condition.code[0], self.sdfg, codegen=codegen)
             expr += f'{prefix}if ({condition_string}) {{\n'
             expr += body.as_cpp(codegen, symbols)
             expr += '\n}'
@@ -317,6 +319,7 @@ class IfElseChain(ControlFlow):
     @property
     def children(self) -> List[ControlFlow]:
         return [block for _, block in self.body]
+
 
 def _clean_loop_body(body: str) -> str:
     """ Cleans loop body from extraneous statements. """
@@ -356,11 +359,11 @@ class ForScope(ControlFlow):
             for edge in self.init_edges:
                 for k, v in edge.data.assignments.items():
                     if k != self.itervar:
-                        cppinit = cpp.unparse_interstate_edge(v, sdfg, codegen=codegen)
+                        cppinit = unparse_interstate_edge(v, sdfg, codegen=codegen)
                         preinit += f'{k} = {cppinit};\n'
 
         if self.condition is not None:
-            cond = cpp.unparse_interstate_edge(self.condition.code[0], sdfg, codegen=codegen)
+            cond = unparse_interstate_edge(self.condition.code[0], sdfg, codegen=codegen)
         else:
             cond = ''
 
@@ -392,7 +395,7 @@ class WhileScope(ControlFlow):
     def as_cpp(self, codegen, symbols) -> str:
         if self.test is not None:
             sdfg = self.guard.parent
-            test = cpp.unparse_interstate_edge(self.test.code[0], sdfg, codegen=codegen)
+            test = unparse_interstate_edge(self.test.code[0], sdfg, codegen=codegen)
         else:
             test = 'true'
 
@@ -419,7 +422,7 @@ class DoWhileScope(ControlFlow):
 
     def as_cpp(self, codegen, symbols) -> str:
         if self.test is not None:
-            test = cpp.unparse_interstate_edge(self.test.code[0], self.sdfg, codegen=codegen)
+            test = unparse_interstate_edge(self.test.code[0], self.sdfg, codegen=codegen)
         else:
             test = 'true'
 
@@ -550,12 +553,20 @@ def _cases_from_branches(
     m = cond.match(sp.Eq(a, b))
     if m:
         # Obtain original code for variable
-        astvar = edges[0].data.condition.code[0].value.left
+        call_or_compare = edges[0].data.condition.code[0].value
+        if isinstance(call_or_compare, ast.Call):
+            astvar = call_or_compare.args[0]
+        else:  # Binary comparison
+            astvar = call_or_compare.left
     else:
         # Try integer == symbol
         m = cond.match(sp.Eq(b, a))
         if m:
-            astvar = edges[0].data.condition.code[0].value.right
+            call_or_compare = edges[0].data.condition.code[0].value
+            if isinstance(call_or_compare, ast.Call):
+                astvar = call_or_compare.args[1]
+            else:  # Binary comparison
+                astvar = call_or_compare.right
         else:
             return None
 
@@ -571,7 +582,7 @@ def _cases_from_branches(
             if not ematch:
                 return None
         # Create mapping to codeblocks
-        result[cpp.sym2cpp(ematch[b])] = cblocks[e]
+        result[sym2cpp(ematch[b])] = cblocks[e]
 
     return switchvar, result
 

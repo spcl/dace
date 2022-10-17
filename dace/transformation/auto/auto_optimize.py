@@ -3,20 +3,20 @@
 
 import dace
 import sympy
+from dace.sdfg import infer_types
 from dace.sdfg.state import SDFGState
 from dace.sdfg.graph import SubgraphView
 from dace.sdfg.propagation import propagate_states
-from dace.sdfg.scope import is_devicelevel_gpu
+from dace.sdfg.scope import is_devicelevel_gpu_kernel
 from dace import config, data as dt, dtypes, Memlet, symbolic
 from dace.sdfg import SDFG, nodes, graph as gr
 from typing import Set, Tuple, Union, List, Iterable, Dict
 import warnings
 
 # Transformations
-from dace.transformation.dataflow import MapCollapse, TrivialMapElimination, MapFusion
+from dace.transformation.dataflow import MapCollapse, TrivialMapElimination, MapFusion, ReduceExpansion
 from dace.transformation.interstate import LoopToMap, RefineNestedAccess
 from dace.transformation.subgraph.composite import CompositeFusion
-from dace.transformation.subgraph import ReduceExpansion
 from dace.transformation.subgraph import helpers as xfsh
 from dace.transformation import helpers as xfh
 
@@ -82,7 +82,8 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
             subgraph = graph_or_subgraph
 
         # create condition function object
-        fusion_condition = CompositeFusion(SubgraphView(graph, graph.nodes()))
+        fusion_condition = CompositeFusion()
+        fusion_condition.setup_match(SubgraphView(graph, graph.nodes()))
 
         # within SDFGState: greedily enumerate fusible components
         # and apply transformation
@@ -120,7 +121,8 @@ def greedy_fuse(graph_or_subgraph: GraphViewType,
         for map_entries in enumerator:
             if len(map_entries) > 1:
                 current_subgraph = xfsh.subgraph_from_maps(sdfg, graph, map_entries)
-                cf = CompositeFusion(current_subgraph)
+                cf = CompositeFusion()
+                cf.setup_match(current_subgraph)
                 # transfer settings
                 cf.allow_tiling = fusion_condition.allow_tiling
                 cf.schedule_innermaps = fusion_condition.schedule_innermaps
@@ -260,7 +262,7 @@ def tile_wcrs(graph_or_subgraph: GraphViewType, validate_all: bool, prefer_parti
             # If smaller than tile size, don't transform and instead
             # make map sequential
             if debugprint:
-                print(f'Making map "{mapentry}" sequential due to being ' 'smaller than tile size')
+                print(f'Making map "{mapentry}" sequential due to being smaller than tile size')
             mapentry.map.schedule = dtypes.ScheduleType.Sequential
             continue
 
@@ -318,7 +320,7 @@ def find_fast_library(device: dtypes.DeviceType) -> List[str]:
     # Returns the optimized library node implementations for the given target
     # device
     if device is dtypes.DeviceType.GPU:
-        return ['cuBLAS', 'CUB', 'pure']
+        return ['cuBLAS', 'cuSolverDn', 'CUB', 'pure']
     elif device is dtypes.DeviceType.FPGA:
         return ['FPGA_PartialSums', 'FPGAPartialReduction', 'FPGA_Accumulate', 'FPGA1DSystolic', 'pure']
     elif device is dtypes.DeviceType.CPU:
@@ -386,6 +388,11 @@ def set_fast_implementations(sdfg: SDFG, device: dtypes.DeviceType, blocklist: L
     # general nodes
     for node, _ in sdfg.all_nodes_recursive():
         if isinstance(node, nodes.LibraryNode):
+            # NOTE: LibraryNodes with sequential schedule on GPU must be expanded to CUDA kernel-compatible code.
+            # NOTE: Pure implementations are a safe choice for now but this should be revisited in the future.
+            if device == dtypes.DeviceType.GPU and node.schedule == dtypes.ScheduleType.Sequential:
+                node.implementation = "pure"
+                continue
             for impl in implementation_prio:
                 if impl in node.implementations:
                     if isinstance(
@@ -399,38 +406,87 @@ def set_fast_implementations(sdfg: SDFG, device: dtypes.DeviceType, blocklist: L
     if device == dtypes.DeviceType.GPU:
         for node, state in sdfg.all_nodes_recursive():
             if isinstance(node, dace.nodes.LibraryNode):
+                if device == dtypes.DeviceType.GPU and node.schedule == dtypes.ScheduleType.Sequential:
+                    node.implementation = "pure"
+                    continue
                 # Use CUB for device-level reductions
-                if ('CUDA (device)' in node.implementations and not is_devicelevel_gpu(state.parent, state, node)
+                if ('CUDA (device)' in node.implementations
+                        and not is_devicelevel_gpu_kernel(state.parent, state, node)
                         and state.scope_dict()[node] is None):
                     node.implementation = 'CUDA (device)'
 
 
-def make_transients_persistent(sdfg: SDFG, device: dtypes.DeviceType) -> None:
+def make_transients_persistent(sdfg: SDFG,
+                               device: dtypes.DeviceType,
+                               toplevel_only: bool = True) -> Dict[int, Set[str]]:
     ''' 
     Helper function to change several storage and scheduling properties
     - Makes non-view array lifetimes persistent, with some 
       restrictions depending on the device 
     - Reset nonatomic WCR edges on GPU 
+    The only arrays that are made persistent by default are ones that do not exist inside a scope (and thus may be
+    allocated multiple times), and whose symbols are always given as parameters to the SDFG (so that they can be
+    allocated in a persistent manner).
+
     :param sdfg: SDFG
     :param device: Device type
+    :param toplevel_only: If True, only converts access nodes that do not appear in any scope.
+    :return: A dictionary mapping SDFG IDs to a set of transient arrays that were made persistent.
     '''
+    result: Dict[int, Set[str]] = {}
     for nsdfg in sdfg.all_sdfgs_recursive():
-        for aname, arr in nsdfg.arrays.items():
-            if arr.transient and not isinstance(arr, dt.View) and not symbolic.issymbolic(arr.total_size):
-                if arr.storage != dtypes.StorageType.Register:
-                    arr.lifetime = dtypes.AllocationLifetime.Persistent
+        fsyms: Set[str] = nsdfg.free_symbols
+        persistent: Set[str] = set()
+        not_persistent: Set[str] = set()
+
+        for state in nsdfg.nodes():
+            for dnode in state.data_nodes():
+                if dnode.data in not_persistent:
+                    continue
+                # Only convert arrays and scalars that are not compile-time constants
+                if dnode.data in nsdfg.constants_prop:
+                    not_persistent.add(dnode.data)
+                    continue
+                desc = dnode.desc(nsdfg)
+                # Only convert arrays and scalars that are not registers
+                if not desc.transient or type(desc) not in {dt.Array, dt.Scalar}:
+                    not_persistent.add(dnode.data)
+                    continue
+                if desc.storage == dtypes.StorageType.Register:
+                    not_persistent.add(dnode.data)
+                    continue
+                # Only convert arrays where the size depends on SDFG parameters
+                try:
+                    if set(map(str, desc.total_size.free_symbols)) - fsyms:
+                        not_persistent.add(dnode.data)
+                        continue
+                except AttributeError:  # total_size is an integer / has no free symbols
+                    pass
+
+                # Only convert arrays with top-level access nodes
+                if xfh.get_parent_map(state, dnode) is not None:
+                    if toplevel_only:
+                        not_persistent.add(dnode.data)
+                        continue
+                    elif desc.lifetime == dtypes.AllocationLifetime.Scope:
+                        not_persistent.add(dnode.data)
+                        continue
+
+                persistent.add(dnode.data)
+
+        for aname in (persistent - not_persistent):
+            nsdfg.arrays[aname].lifetime = dtypes.AllocationLifetime.Persistent
+
+        result[nsdfg.sdfg_id] = (persistent - not_persistent)
 
     if device == dtypes.DeviceType.GPU:
-        for aname, arr in sdfg.arrays.items():
-            if arr.transient and not isinstance(arr, dt.View):  #and size only depends on SDFG params
-                if arr.storage == dtypes.StorageType.GPU_Global:
-                    arr.lifetime = dtypes.AllocationLifetime.Persistent
-
         # Reset nonatomic WCR edges
         for n, _ in sdfg.all_nodes_recursive():
             if isinstance(n, SDFGState):
                 for edge in n.edges():
                     edge.data.wcr_nonatomic = False
+
+    return result
 
 
 def auto_optimize(sdfg: SDFG,
@@ -492,6 +548,10 @@ def auto_optimize(sdfg: SDFG,
     # fuse stencils greedily
     greedy_fuse(sdfg, device=device, validate_all=validate_all, recursive=False, stencil=True)
 
+    # Move Loops inside Maps when possible
+    from dace.transformation.interstate import MoveLoopIntoMap
+    sdfg.apply_transformations_repeated([MoveLoopIntoMap])
+
     if device == dtypes.DeviceType.FPGA:
         # apply FPGA Transformations
         sdfg.apply_fpga_transformations()
@@ -518,6 +578,9 @@ def auto_optimize(sdfg: SDFG,
     # Set all library nodes to expand to fast library calls
     set_fast_implementations(sdfg, device)
 
+    # NOTE: We need to `infer_types` in case a LibraryNode expands to other LibraryNodes (e.g., np.linalg.solve)
+    infer_types.infer_connector_types(sdfg)
+    infer_types.set_default_schedule_and_storage_types(sdfg, None)
     sdfg.expand_library_nodes()
 
     # TODO(later): Safe vectorization
@@ -525,6 +588,12 @@ def auto_optimize(sdfg: SDFG,
     # Disable OpenMP parallel sections on a per-SDFG basis
     for nsdfg in sdfg.all_sdfgs_recursive():
         nsdfg.openmp_sections = False
+
+    # Set all Default storage types that are constant sized to registers
+    move_small_arrays_to_stack(sdfg)
+
+    # Make all independent arrays persistent
+    make_transients_persistent(sdfg, device)
 
     if symbols:
         # Specialize for all known symbols
@@ -543,14 +612,6 @@ def auto_optimize(sdfg: SDFG,
         if debugprint and len(known_symbols) > 0:
             print("Specializing the SDFG for symbols", known_symbols)
         sdfg.specialize(known_symbols)
-
-    # Set all Default storage types that are constant sized to registers
-    move_small_arrays_to_stack(sdfg)
-    '''
-    # Fix storage and allocation properties, e.g., for benchmarking purposes
-    # FORNOW: Leave out
-    make_transients_persistent(sdfg, device)
-    '''
 
     # Validate at the end
     if validate or validate_all:

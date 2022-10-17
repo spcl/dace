@@ -70,6 +70,7 @@
 ### END OF astunparse LICENSES
 
 from __future__ import print_function, unicode_literals
+from functools import lru_cache
 import inspect
 import six
 import sys
@@ -77,6 +78,8 @@ import ast
 import numpy as np
 import os
 import tokenize
+
+import sympy
 import dace
 from numbers import Number
 from six import StringIO
@@ -529,7 +532,11 @@ class CPPUnparser:
             # Substitute overflowing decimal literal for AST infinities.
             self.write(result.replace("inf", INFSTR))
         else:
-            self.write(result.replace('\'', '\"'))
+            # Special case for strings of containing byte literals (but are still strings).
+            if result.find("b'") >= 0:
+                self.write(result)
+            else:
+                self.write(result.replace('\'', '\"'))
 
     def _Constant(self, t):
         value = t.value
@@ -855,24 +862,48 @@ class CPPUnparser:
             self.dispatch(t.right)
 
             self.write(")")
-        # Special case for integer power
+        # Special cases for powers
         elif t.op.__class__.__name__ == 'Pow':
-            if (isinstance(t.right, (ast.Num, ast.Constant)) and int(t.right.n) == t.right.n and t.right.n >= 0):
-                self.write("(")
-                if t.right.n == 0:
-                    self.write("1")
-                else:
-                    self.dispatch(t.left)
-                    for i in range(int(t.right.n) - 1):
-                        self.write(" * ")
+            if isinstance(t.right, (ast.Num, ast.Constant, ast.UnaryOp)):
+                power = None
+                if isinstance(t.right, (ast.Num, ast.Constant)):
+                    power = t.right.n
+                elif isinstance(t.right, ast.UnaryOp) and isinstance(t.right.op, ast.USub):
+                    if isinstance(t.right.operand, (ast.Num, ast.Constant)):
+                        power = -t.right.operand.n
+
+                if power is not None and int(power) == power:
+                    negative = power < 0
+                    power = int(-power if negative else power)
+                    if negative:
+                        self.write("reciprocal(")
+                    else:
+                        self.write("(")
+                    if power == 0:
+                        self.write("1")
+                    else:
+                        self.write("dace::math::ipow(")
                         self.dispatch(t.left)
-                self.write(")")
-            else:
-                self.write("dace::math::pow(")
-                self.dispatch(t.left)
-                self.write(", ")
-                self.dispatch(t.right)
-                self.write(")")
+                        self.write(f", {power})")
+                    self.write(")")
+                    return
+                elif power is not None and float(power) == 0.5 or float(power) == -0.5:  # Square root
+                    if float(power) == -0.5:
+                        # rsqrt
+                        self.write("reciprocal(")
+                    self.write("dace::math::sqrt(")
+                    self.dispatch(t.left)
+                    self.write(")")
+                    if float(power) == -0.5:
+                        self.write(")")
+                    return
+
+            # General pow operator
+            self.write("dace::math::pow(")
+            self.dispatch(t.left)
+            self.write(", ")
+            self.dispatch(t.right)
+            self.write(")")
         else:
             self.write("(")
 
@@ -927,7 +958,38 @@ class CPPUnparser:
             self.write(".")
         self.write(t.attr)
 
-    def _Call(self, t):
+    # Replace boolean ops from SymPy
+    callcmps = {
+        "Eq": ast.Eq,
+        "NotEq": ast.NotEq,
+        "Ne": ast.NotEq,
+        "Lt": ast.Lt,
+        "Le": ast.LtE,
+        "LtE": ast.LtE,
+        "Gt": ast.Gt,
+        "Ge": ast.GtE,
+        "GtE": ast.GtE,
+    }
+    callbools = {
+        "And": ast.And,
+        "Or": ast.Or,
+    }
+
+    def _Call(self, t: ast.Call):
+        # Special cases for sympy functions
+        if isinstance(t.func, ast.Name):
+            if t.func.id in self.callcmps:
+                op = self.callcmps[t.func.id]()
+                self.dispatch(
+                    ast.Compare(left=t.args[0],
+                                ops=[op for _ in range(1, len(t.args))],
+                                comparators=[t.args[i] for i in range(1, len(t.args))]))
+                return
+            elif t.func.id in self.callbools:
+                op = self.callbools[t.func.id]()
+                self.dispatch(ast.BoolOp(op=op, values=t.args))
+                return
+
         self.dispatch(t.func)
         self.write("(")
         comma = False
@@ -1068,6 +1130,9 @@ def py2cpp(code, expr_semicolon=True, defined_symbols=None):
         return cppunparse(code, expr_semicolon, defined_symbols=defined_symbols)
     elif isinstance(code, list):
         return '\n'.join(py2cpp(stmt) for stmt in code)
+    elif isinstance(code, sympy.Basic):
+        from dace import symbolic
+        return cppunparse(ast.parse(symbolic.symstr(code)), expr_semicolon, defined_symbols=defined_symbols)
     elif code.__class__.__name__ == 'function':
         try:
             code_str = inspect.getsource(code)
@@ -1086,6 +1151,6 @@ def py2cpp(code, expr_semicolon=True, defined_symbols=None):
     else:
         raise NotImplementedError('Unsupported type for py2cpp')
 
-
+@lru_cache(maxsize=16384)
 def pyexpr2cpp(expr):
     return py2cpp(expr, expr_semicolon=False)

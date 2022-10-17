@@ -78,11 +78,11 @@ def generate_program_folder(sdfg, code_objects: List[CodeObject], out_path: str,
     with open(os.path.join(out_path, "dace_environments.csv"), "w") as env_file:
         env_file.write("\n".join(environments))
 
-    # Copy snapshot of configuration script
+    # Copy a full snapshot of configuration script
     if config is not None:
-        config.save(os.path.join(out_path, "dace.conf"))
+        config.save(os.path.join(out_path, "dace.conf"), all=True)
     else:
-        Config.save(os.path.join(out_path, "dace.conf"))
+        Config.save(os.path.join(out_path, "dace.conf"), all=True)
 
     if sdfg is not None:
         # Save the SDFG itself and its hash
@@ -124,7 +124,8 @@ def configure_and_compile(program_folder, program_name=None, output_stream=None)
     # We do this instead of iterating over source files in the directory to
     # avoid globbing files from previous compilations, such that we don't need
     # to wipe the directory for every compilation.
-    file_list = [line.strip().split(",") for line in open(os.path.join(program_folder, "dace_files.csv"), "r")]
+    with open(os.path.join(program_folder, "dace_files.csv"), "r") as f:
+        file_list = [line.strip().split(",") for line in f]
 
     # Get absolute paths and targets for all source files
     files = []
@@ -158,7 +159,8 @@ def configure_and_compile(program_folder, program_name=None, output_stream=None)
     ]
 
     # Get required environments are retrieve the CMake information
-    environments = set(l.strip() for l in open(os.path.join(program_folder, "dace_environments.csv"), "r"))
+    with open(os.path.join(program_folder, "dace_environments.csv"), "r") as f:
+        environments = set(l.strip() for l in f)
 
     environments = dace.library.get_environments_and_dependencies(environments)
 
@@ -292,17 +294,21 @@ def get_environment_flags(environments) -> Tuple[List[str], Set[str]]:
         cmake_files |= set(
             (f if os.path.isabs(f) else os.path.join(env_dir, f)) + (".cmake" if not f.endswith(".cmake") else "")
             for f in _get_or_eval(env.cmake_files))
-        for header in _get_or_eval(env.headers):
-            if os.path.isabs(header):
-                # Giving an absolute path is not good practice, but allow it
-                # for emergency overriding
-                cmake_includes.add(os.path.dirname(header))
-            abs_path = os.path.join(env_dir, header)
-            if os.path.isfile(abs_path):
-                # Allow includes stored with the library, specified with a
-                # relative path
-                cmake_includes.add(env_dir)
-                break
+        headers = _get_or_eval(env.headers)
+        if not isinstance(headers, dict):
+            headers = {'frame': headers}
+        for header_group in headers.values():
+            for header in header_group:
+                if os.path.isabs(header):
+                    # Giving an absolute path is not good practice, but allow it
+                    # for emergency overriding
+                    cmake_includes.add(os.path.dirname(header))
+                abs_path = os.path.join(env_dir, header)
+                if os.path.isfile(abs_path):
+                    # Allow includes stored with the library, specified with a
+                    # relative path
+                    cmake_includes.add(env_dir)
+                    break
 
     environment_flags = [
         "-DDACE_ENV_MINIMUM_VERSION={}".format(".".join(map(str, cmake_minimum_version))),

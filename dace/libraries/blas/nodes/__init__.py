@@ -8,3 +8,4 @@ from .batched_matmul import BatchedMatMul
 from .transpose import Transpose
 
 from .axpy import Axpy
+from .einsum import Einsum

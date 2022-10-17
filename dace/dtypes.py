@@ -8,7 +8,7 @@ import itertools
 import numpy
 import re
 from functools import wraps
-from typing import Any, Callable, Optional
+from typing import Any
 from dace.config import Config
 from dace.registry import extensible_enum, undefined_safe_enum
 
@@ -19,6 +19,7 @@ class DeviceType(aenum.AutoNumberEnum):
     CPU = ()  #: Multi-core CPU
     GPU = ()  #: GPU (AMD or NVIDIA)
     FPGA = ()  #: FPGA (Intel or Xilinx)
+    Snitch = ()  #: Compute Cluster (RISC-V)
 
 
 @undefined_safe_enum
@@ -31,23 +32,32 @@ class StorageType(aenum.AutoNumberEnum):
     CPU_Pinned = ()  #: Host memory that can be DMA-accessed from accelerators
     CPU_Heap = ()  #: Host memory allocated on heap
     CPU_ThreadLocal = ()  #: Thread-local host memory
-    GPU_Global = ()  #: Global memory
-    GPU_Shared = ()  #: Shared memory
+    GPU_Global = ()  #: GPU global memory
+    GPU_Shared = ()  #: On-GPU shared memory
     FPGA_Global = ()  #: Off-chip global memory (DRAM)
     FPGA_Local = ()  #: On-chip memory (bulk storage)
     FPGA_Registers = ()  #: On-chip memory (fully partitioned registers)
     FPGA_ShiftRegister = ()  #: Only accessible at constant indices
     SVE_Register = ()  #: SVE register
+    Snitch_TCDM = ()  #: Cluster-private memory
+    Snitch_L2 = ()  #: External memory
+    Snitch_SSR = ()  #: Memory accessed by SSR streamer
+
+
+@undefined_safe_enum
+@extensible_enum
+class OMPScheduleType(aenum.AutoNumberEnum):
+    """ Available OpenMP shedule types for Maps with CPU-Multicore schedule. """
+    Default = ()  #: OpenMP library default
+    Static = ()  #: Static schedule
+    Dynamic = ()  #: Dynamic schedule
+    Guided = ()  #: Guided schedule
 
 
 @undefined_safe_enum
 @extensible_enum
 class ScheduleType(aenum.AutoNumberEnum):
     """ Available map schedule types in the SDFG. """
-    # TODO: Address different targets w.r.t. sequential
-    # TODO: Add per-type properties for scope nodes. Consider TargetType enum
-    #       and a MapScheduler class
-
     Default = ()  #: Scope-default parallel schedule
     Sequential = ()  #: Sequential code (single-thread)
     MPI = ()  #: MPI processes
@@ -62,6 +72,8 @@ class ScheduleType(aenum.AutoNumberEnum):
     GPU_ThreadBlock_Dynamic = ()  #: Allows rescheduling work within a block
     GPU_Persistent = ()
     FPGA_Device = ()
+    Snitch = ()
+    Snitch_Multicore = ()
     FPGA_Double = () #: Used for double pumping
     FPGA_Double_out = ()
 
@@ -143,6 +155,7 @@ class InstrumentationType(aenum.AutoNumberEnum):
     No_Instrumentation = ()
     Timer = ()
     PAPI_Counters = ()
+    LIKWID_Counters = ()
     GPU_Events = ()
     FPGA = ()
 
@@ -169,7 +182,7 @@ class TilingType(aenum.AutoNumberEnum):
 
 # Maps from ScheduleType to default StorageType
 SCOPEDEFAULT_STORAGE = {
-    StorageType.Default: StorageType.Default,
+    ScheduleType.Default: StorageType.Default,
     None: StorageType.CPU_Heap,
     ScheduleType.Sequential: StorageType.Register,
     ScheduleType.MPI: StorageType.CPU_Heap,
@@ -180,7 +193,8 @@ SCOPEDEFAULT_STORAGE = {
     ScheduleType.GPU_ThreadBlock: StorageType.Register,
     ScheduleType.GPU_ThreadBlock_Dynamic: StorageType.Register,
     ScheduleType.FPGA_Device: StorageType.FPGA_Global,
-    ScheduleType.SVE_Map: StorageType.CPU_Heap
+    ScheduleType.SVE_Map: StorageType.CPU_Heap,
+    ScheduleType.Snitch: StorageType.Snitch_TCDM
 }
 
 # Maps from ScheduleType to default ScheduleType for sub-scopes
@@ -199,7 +213,9 @@ SCOPEDEFAULT_SCHEDULE = {
     ScheduleType.FPGA_Device: ScheduleType.FPGA_Device,
     ScheduleType.FPGA_Double: ScheduleType.FPGA_Device,
     ScheduleType.FPGA_Double_out: ScheduleType.FPGA_Device,
-    ScheduleType.SVE_Map: ScheduleType.Sequential
+    ScheduleType.SVE_Map: ScheduleType.Sequential,
+    ScheduleType.Snitch: ScheduleType.Snitch,
+    ScheduleType.Snitch_Multicore: ScheduleType.Snitch_Multicore
 }
 
 # Translation of types to C types
@@ -328,7 +344,8 @@ class typeclass(object):
             2. Enabling declaration syntax: `dace.float32[M,N]`
             3. Enabling extensions such as `dace.struct` and `dace.vector`
     """
-    def __init__(self, wrapped_type):
+
+    def __init__(self, wrapped_type, typename=None):
         # Convert python basic types
         if isinstance(wrapped_type, str):
             try:
@@ -358,19 +375,22 @@ class typeclass(object):
                 wrapped_type = numpy.complex64
             else:
                 raise NameError("Unknown configuration for default_data_types: {}".format(config_data_types))
+        elif getattr(wrapped_type, '__name__', '') == 'bool_' and typename is None:
+            typename = 'bool'
 
         self.type = wrapped_type  # Type in Python
         self.ctype = _CTYPES[wrapped_type]  # Type in C
         self.ctype_unaligned = self.ctype  # Type in C (without alignment)
         self.dtype = self  # For compatibility support with numpy
         self.bytes = _BYTES[wrapped_type]  # Number of bytes for this type
+        self.typename = typename
 
     def __hash__(self):
         return hash((self.type, self.ctype))
 
     def to_string(self):
         """ A Numpy-like string-representation of the underlying data type. """
-        return self.type.__name__
+        return self.typename or self.type.__name__
 
     def as_ctypes(self):
         """ Returns the ctypes version of the typeclass. """
@@ -387,7 +407,7 @@ class typeclass(object):
     def to_json(self):
         if self.type is None:
             return None
-        return self.type.__name__
+        return self.typename or self.type.__name__
 
     @staticmethod
     def from_json(json_obj, context=None):
@@ -556,6 +576,7 @@ def result_type_of(lhs, *rhs):
 
 class opaque(typeclass):
     """ A data type for an opaque object, useful for C bindings/libnodes, i.e., MPI_Request. """
+
     def __init__(self, typename):
         self.type = typename
         self.ctype = typename
@@ -590,10 +611,11 @@ class pointer(typeclass):
 
         Example use:
             `dace.pointer(dace.struct(x=dace.float32, y=dace.float32))`. """
+
     def __init__(self, wrapped_typeclass):
         self._typeclass = wrapped_typeclass
         self.type = wrapped_typeclass.type
-        self.bytes = int64.bytes
+        self.bytes = ctypes.sizeof(ctypes.c_void_p)
         self.ctype = wrapped_typeclass.ctype + "*"
         self.ctype_unaligned = wrapped_typeclass.ctype_unaligned + "*"
         self.dtype = self
@@ -633,6 +655,7 @@ class vector(typeclass):
 
     Example use: `dace.vector(dace.float32, 4)` becomes float4.
     """
+
     def __init__(self, dtype: typeclass, vector_length: int):
         self.vtype = dtype
         self.type = dtype.type
@@ -684,21 +707,25 @@ class vector(typeclass):
         self._veclen = val
 
 
-class string(pointer):
+class stringtype(pointer):
     """
     A specialization of the string data type to improve 
     Python/generated code marshalling.
     Used internally when `str` types are given
     """
+
     def __init__(self):
         super().__init__(int8)
+
+    def __call__(self, *args, **kwargs):
+        return str(*args, **kwargs)
 
     def to_json(self):
         return {'type': 'string'}
 
     @staticmethod
     def from_json(json_obj, context=None):
-        return string()
+        return stringtype()
 
 
 class struct(typeclass):
@@ -706,6 +733,7 @@ class struct(typeclass):
 
         Example use: `dace.struct(a=dace.int32, b=dace.float64)`.
     """
+
     def __init__(self, name, **fields_and_types):
         # self._data = fields_and_types
         self.type = ctypes.Structure
@@ -792,7 +820,29 @@ class struct(typeclass):
         )
 
 
-class constant:
+class pyobject(opaque):
+    """
+    A generic data type for Python objects in un-annotated callbacks.
+    It cannot be used inside a DaCe program, but can be passed back to other Python callbacks.
+    Use with caution, and ensure the value is not removed by the garbage collector or the program will crash.
+    """
+
+    def __init__(self):
+        super().__init__('pyobject')
+        self.bytes = ctypes.sizeof(ctypes.c_void_p)
+        self.type = numpy.object_
+
+    def as_ctypes(self):
+        return ctypes.py_object
+
+    def as_numpy_dtype(self):
+        return numpy.dtype(numpy.object_)
+
+    def to_python(self, obj_id: int):
+        return ctypes.cast(obj_id, ctypes.py_object).value
+
+
+class compiletime:
     """
     Data descriptor type hint signalling that argument evaluation is
     deferred to call time.
@@ -800,7 +850,7 @@ class constant:
     Example usage::
 
         @dace.program
-        def example(A: dace.float64[20], constant: dace.constant):
+        def example(A: dace.float64[20], constant: dace.compiletime):
             if constant == 0:
                 return A + 1
             else:
@@ -810,9 +860,10 @@ class constant:
     In the above code, ``constant`` will be replaced with its value at call time
     during parsing.
     """
+
     @staticmethod
     def __descriptor__():
-        raise ValueError('All constant arguments must be provided in order to compile the SDFG ahead-of-time.')
+        raise ValueError('All compile-time arguments must be provided in order to compile the SDFG ahead-of-time.')
 
 
 ####### Utility function ##############
@@ -830,6 +881,7 @@ def ptrtocupy(ptr, inner_ctype, shape):
 
 class callback(typeclass):
     """ Looks like dace.callback([None, <some_native_type>], *types)"""
+
     def __init__(self, return_types, *variadic_args):
         from dace import data
         if return_types is None:
@@ -860,16 +912,19 @@ class callback(typeclass):
         return_ctype = self.cfunc_return_type().as_ctypes()
         input_ctypes = []
 
-        if self.is_scalar_function():
-            args = self.input_types
-        else:
-            args = itertools.chain(self.input_types, self.return_types)
-
-        for some_arg in args:
+        for some_arg in self.input_types:
             if isinstance(some_arg, data.Array):
                 input_ctypes.append(ctypes.c_void_p)
             else:
                 input_ctypes.append(some_arg.dtype.as_ctypes() if some_arg is not None else None)
+
+        if not self.is_scalar_function():
+            for some_arg in self.return_types:
+                if isinstance(some_arg, data.Array):
+                    input_ctypes.append(ctypes.c_void_p)
+                else:
+                    input_ctypes.append(pointer(some_arg.dtype).as_ctypes() if some_arg is not None else None)
+
         if input_ctypes == [None]:
             input_ctypes = []
         cf_object = ctypes.CFUNCTYPE(return_ctype, *input_ctypes)
@@ -903,12 +958,7 @@ class callback(typeclass):
 
         input_type_cstring = []
 
-        if self.is_scalar_function():
-            args = self.input_types
-        else:
-            args = itertools.chain(self.input_types, self.return_types)
-
-        for arg in args:
+        for arg in self.input_types:
             if arg is None:
                 continue
             if isinstance(arg, data.Array):
@@ -917,12 +967,29 @@ class callback(typeclass):
             else:
                 input_type_cstring.append(arg.ctype)
 
+        if not self.is_scalar_function():
+            for arg in self.return_types:
+                if arg is None:
+                    continue
+                if isinstance(arg, data.Array):
+                    # const hack needed to prevent error in casting const int* to int*
+                    input_type_cstring.append(arg.dtype.ctype + " const *")
+                else:
+                    input_type_cstring.append(pointer(arg.dtype).ctype)
+
+
         retval = self.cfunc_return_type()
         return f'{retval} (*{name})({", ".join(input_type_cstring)})'
 
-    def get_trampoline(self, pyfunc, other_arguments):
+    def get_trampoline(self, pyfunc, other_arguments, refs):
         from functools import partial
         from dace import data, symbolic
+
+        def _string_converter(a: str, *args):
+            tmp = ctypes.cast(a, ctypes.c_char_p).value.decode('utf-8')
+            if tmp.startswith(chr(0xFFFF)):
+                return bytes(tmp[1:], 'utf-8')
+            return tmp
 
         inp_arraypos = []
         ret_arraypos = []
@@ -934,39 +1001,46 @@ class callback(typeclass):
             if isinstance(arg, data.Array):
                 inp_arraypos.append(index)
                 inp_types_and_sizes.append((arg.dtype.as_ctypes(), arg.shape))
-                if arg.storage == StorageType.GPU_Global:
-                    inp_converters.append(ptrtocupy)
-                else:
-                    inp_converters.append(ptrtonumpy)
-            elif isinstance(arg, data.Scalar) and isinstance(arg.dtype, string):
+                inp_converters.append(partial(data.make_reference_from_descriptor, arg))
+            elif isinstance(arg, data.Scalar) and arg.dtype == string:
                 inp_arraypos.append(index)
                 inp_types_and_sizes.append((ctypes.c_char_p, []))
-                inp_converters.append(lambda a, *args: ctypes.cast(a, ctypes.c_char_p).value.decode('utf-8'))
+                inp_converters.append(_string_converter)
             elif isinstance(arg, data.Scalar) and isinstance(arg.dtype, pointer):
                 inp_arraypos.append(index)
                 inp_types_and_sizes.append((ctypes.c_void_p, []))
                 inp_converters.append(lambda a, *args: ctypes.cast(a, ctypes.c_void_p).value)
+            elif isinstance(arg, data.Scalar) and isinstance(arg.dtype, pyobject):
+                inp_arraypos.append(index)
+                inp_types_and_sizes.append((ctypes.py_object, []))
+                inp_converters.append(lambda a, *args: a)
             else:
-                inp_converters.append(lambda a: a)
+                inp_converters.append(lambda a, *args: a)
         offset = len(self.input_types)
         for index, arg in enumerate(self.return_types):
             if isinstance(arg, data.Array):
                 ret_arraypos.append(index + offset)
                 ret_types_and_sizes.append((arg.dtype.as_ctypes(), arg.shape))
-                if arg.storage == StorageType.GPU_Global:
-                    ret_converters.append(ptrtocupy)
-                else:
-                    ret_converters.append(ptrtonumpy)
-            elif isinstance(arg, data.Scalar) and isinstance(arg.dtype, string):
+                ret_converters.append(partial(data.make_reference_from_descriptor, arg))
+            elif isinstance(arg, data.Scalar) and arg.dtype == string:
                 ret_arraypos.append(index + offset)
                 ret_types_and_sizes.append((ctypes.c_char_p, []))
                 ret_converters.append(lambda a, *args: ctypes.cast(a, ctypes.c_char_p).value.decode('utf-8'))
             elif isinstance(arg, data.Scalar) and isinstance(arg.dtype, pointer):
-                ret_arraypos.append(index)
+                ret_arraypos.append(index + offset)
                 ret_types_and_sizes.append((ctypes.c_void_p, []))
                 ret_converters.append(lambda a, *args: ctypes.cast(a, ctypes.c_void_p).value)
-            else:
+            elif isinstance(arg, data.Scalar) and isinstance(arg.dtype, pyobject):
+                ret_arraypos.append(index + offset)
+                ret_types_and_sizes.append((ctypes.py_object, []))
                 ret_converters.append(lambda a, *args: a)
+            else:
+                if not self.is_scalar_function():
+                    ret_arraypos.append(index + offset)
+                    ret_types_and_sizes.append((arg.dtype.as_ctypes(), arg.shape))
+                    ret_converters.append(partial(data.make_reference_from_descriptor, arg))
+                else:
+                    ret_converters.append(lambda a, *args: a)
         if len(inp_arraypos) == 0 and len(ret_arraypos) == 0:
             return pyfunc
 
@@ -978,7 +1052,7 @@ class callback(typeclass):
             list_of_other_inputs = list(other_inputs[:last_input])
             list_of_outputs = []
             if ret_indices:
-                list_of_outputs = list(other_inputs[ret_indices[0]:])
+                list_of_outputs = list(other_inputs[last_input:])
             for j, i in enumerate(indices):
                 data_type, size = data_types_and_sizes[j]
                 non_symbolic_sizes = []
@@ -987,23 +1061,34 @@ class callback(typeclass):
                         non_symbolic_sizes.append(other_arguments[str(s)])
                     else:
                         non_symbolic_sizes.append(s)
-                list_of_other_inputs[i] = inp_converters[i](other_inputs[i], data_type, non_symbolic_sizes)
-            for j, i in enumerate(ret_indices):
-                data_type, size = ret_data_types_and_sizes[j]
-                non_symbolic_sizes = []
-                for s in size:
-                    if isinstance(s, symbolic.symbol):
-                        non_symbolic_sizes.append(other_arguments[str(s)])
+                list_of_other_inputs[i] = inp_converters[i](other_inputs[i], other_arguments)
+            if list_of_outputs:
+                for j, i in enumerate(ret_indices):
+                    data_type, size = ret_data_types_and_sizes[j]
+                    non_symbolic_sizes = []
+                    for s in size:
+                        if isinstance(s, symbolic.symbol):
+                            non_symbolic_sizes.append(other_arguments[str(s)])
+                        else:
+                            non_symbolic_sizes.append(s)
+                    outind = i - last_input
+                    if len(other_inputs) > i:
+                        list_of_outputs[outind] = ret_converters[outind](other_inputs[i], other_arguments)
                     else:
-                        non_symbolic_sizes.append(s)
-                list_of_outputs[i - ret_indices[0]] = ret_converters[i - ret_indices[0]](other_inputs[i], data_type,
-                                                                                         non_symbolic_sizes)
+                        list_of_outputs[outind] = None
+
             if ret_indices:
                 ret = orig_function(*list_of_other_inputs)
-                if len(list_of_outputs) == 1:
+                if len(list_of_outputs) == 0:
+                    refs.append(ret)  # Keep reference so that garbage collection does not free object
+                    return ret_converters[0](ret, other_arguments)
+                elif len(list_of_outputs) == 1:
                     ret = [ret]
                 for v, r in zip(list_of_outputs, ret):
-                    v[:] = r
+                    if v is not None:  # Was converted to an assignable pointer
+                        v[:] = r
+
+                    refs.append(r)  # Keep reference so that garbage collection does not free object
                 return
             return orig_function(*list_of_other_inputs)
 
@@ -1084,7 +1169,7 @@ def isconstant(var):
     return type(var) in _CONSTANT_TYPES
 
 
-bool_ = typeclass(numpy.bool_)
+bool_ = typeclass(numpy.bool_, 'bool')
 int8 = typeclass(numpy.int8)
 int16 = typeclass(numpy.int16)
 int32 = typeclass(numpy.int32)
@@ -1098,6 +1183,7 @@ float32 = typeclass(numpy.float32)
 float64 = typeclass(numpy.float64)
 complex64 = typeclass(numpy.complex64)
 complex128 = typeclass(numpy.complex128)
+string = stringtype()
 
 
 @undefined_safe_enum
@@ -1148,7 +1234,7 @@ DTYPE_TO_TYPECLASS = {
 
 # Since this overrides the builtin bool, this should be after the
 # DTYPE_TO_TYPECLASS dictionary
-bool = typeclass(numpy.bool_)
+bool = bool_
 
 TYPECLASS_TO_STRING = {
     bool: "dace::bool",
@@ -1234,6 +1320,7 @@ def isallowed(var, allow_recursive=False):
 class DebugInfo:
     """ Source code location identifier of a node/edge in an SDFG. Used for
         IDE and debugging purposes. """
+
     def __init__(self, start_line, start_column=0, end_line=-1, end_column=0, filename=None):
         self.start_line = start_line
         self.end_line = end_line if end_line >= 0 else start_line
@@ -1277,11 +1364,13 @@ def json_to_typeclass(obj, context=None):
 def paramdec(dec):
     """ Parameterized decorator meta-decorator. Enables using `@decorator`,
         `@decorator()`, and `@decorator(...)` with the same function. """
+
     @wraps(dec)
     def layer(*args, **kwargs):
-
+        from dace import data
         # Allows the use of @decorator, @decorator(), and @decorator(...)
-        if len(kwargs) == 0 and len(args) == 1 and callable(args[0]) and not isinstance(args[0], typeclass):
+        if (len(kwargs) == 0 and len(args) == 1 and callable(args[0])
+                and not isinstance(args[0], (typeclass, data.Data))):
             return dec(*args, **kwargs)
 
         @wraps(dec)
@@ -1301,12 +1390,15 @@ def deduplicate(iterable):
     return type(iterable)([i for i in sorted(set(iterable), key=lambda x: iterable.index(x))])
 
 
+namere = re.compile(r'^[a-zA-Z_][a-zA-Z_0-9]*$')
+
+
 def validate_name(name):
     if not isinstance(name, str) or len(name) == 0:
         return False
     if name in {'True', 'False', 'None'}:
         return False
-    if re.match(r'^[a-zA-Z_][a-zA-Z_0-9]*$', name) is None:
+    if namere.match(name) is None:
         return False
     return True
 
@@ -1396,6 +1488,8 @@ def is_array(obj: Any) -> bool:
     :param obj: The given object.
     :return: True iff the object implements the array interface.
     """
+    if isinstance(obj, type):
+        return False
     try:
         if hasattr(obj, '__cuda_array_interface__'):
             return True
@@ -1403,8 +1497,13 @@ def is_array(obj: Any) -> bool:
         # In PyTorch, accessing this attribute throws a runtime error for
         # variables that require grad, or KeyError when a boolean array is used
         return True
-    if hasattr(obj, 'data_ptr') or hasattr(obj, '__array_interface__'):
-        return hasattr(obj, 'shape') and len(obj.shape) > 0
+    if hasattr(obj, '__array_interface__'):
+        return len(obj.__array_interface__['shape']) > 0  # NumPy scalars contain an empty shape tuple
+    if hasattr(obj, 'data_ptr'):
+        try:
+            return hasattr(obj, 'shape') and len(obj.shape) > 0
+        except TypeError:  # PyTorch scalar objects define an attribute called shape that cannot be used
+            return False
     return False
 
 

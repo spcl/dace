@@ -44,6 +44,35 @@ def test_intersects_constant():
     assert subsets.intersects(rng1, ind3) is False
 
 
+def test_covers_symbolic():
+    N, M = dace.symbol('N', positive=True), dace.symbol('M', positive=True)
+    rng1 = subsets.Range([(0, N - 1, 1), (0, M - 1, 1)])
+    rng2 = subsets.Range([(0, 0, 1), (0, 0, 1)])
+    rng3_1 = subsets.Range([(N, N, 1), (0, 1, 1)])
+    rng3_2 = subsets.Range([(0, 1, 1), (M, M, 1)])
+    rng4 = subsets.Range([(N, N, 1), (M, M, 1)])
+    rng5 = subsets.Range([(0, 0, 1), (M, M, 1)])
+    rng6 = subsets.Range([(0, N, 1), (0, M, 1)])
+    rng7 = subsets.Range([(0, N - 1, 1), (N - 1, N, 1)])
+    ind1 = subsets.Indices([0, 1])
+
+    assert rng1.covers(rng2) is True
+    assert rng1.covers(rng3_1) is False
+    assert rng1.covers(rng3_2) is False
+    assert rng1.covers(rng4) is False
+    assert rng1.covers(rng5) is False
+    assert rng6.covers(rng1) is True
+    assert rng1.covers(rng7) is False
+    assert rng7.covers(rng1) is False
+    assert rng1.covers(ind1) is True
+    assert ind1.covers(rng1) is False
+
+    rng8 = subsets.Range([(0, dace.symbolic.pystr_to_symbolic('int_ceil(M, N)'), 1)])
+
+    assert rng8.covers(rng8) is True
+
+
 if __name__ == '__main__':
     test_intersects_symbolic()
     test_intersects_constant()
+    test_covers_symbolic()

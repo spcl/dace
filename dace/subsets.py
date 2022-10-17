@@ -40,15 +40,21 @@ class Subset(object):
             try:
                 for rb, re, orb, ore in zip(self.min_element_approx(), self.max_element_approx(),
                                             other.min_element_approx(), other.max_element_approx()):
+                    # NOTE: We first test for equality, which always returns True or False. If the equality test returns
+                    # False, then we test for less-equal and greater-equal, which may return an expression, leading to
+                    # TypeError. This is a workaround for the case where two expressions are the same or equal and
+                    # SymPy confirms this but fails to return True when testing less-equal and greater-equal.
 
                     # lower bound: first check whether symbolic positive condition applies
                     if not (len(rb.free_symbols) == 0 and len(orb.free_symbols) == 1):
-                        if not symbolic.simplify_ext(nng(rb)) <= symbolic.simplify_ext(nng(orb)):
+                        if not (symbolic.simplify_ext(nng(rb)) == symbolic.simplify_ext(nng(orb)) or
+                                symbolic.simplify_ext(nng(rb)) <= symbolic.simplify_ext(nng(orb))):
                             return False
 
                     # upper bound: first check whether symbolic positive condition applies
                     if not (len(re.free_symbols) == 1 and len(ore.free_symbols) == 0):
-                        if not symbolic.simplify_ext(nng(re)) >= symbolic.simplify_ext(nng(ore)):
+                        if not (symbolic.simplify_ext(nng(re)) == symbolic.simplify_ext(nng(ore)) or
+                                symbolic.simplify_ext(nng(re)) >= symbolic.simplify_ext(nng(ore))):
                             return False
             except TypeError:
                 return False
@@ -150,9 +156,8 @@ class Range(Subset):
             if isinstance(obj, symbolic.SymExpr):
                 return {'main': str(obj.expr), 'approx': str(obj.approx)}
             else:
-                return str(obj)
+                return _simplified_str(obj)
 
-        # TODO: Check if approximations should also be saved
         for (start, end, step), tile in zip(self.ranges, self.tile_sizes):
             ret.append({'start': a2s(start), 'end': a2s(end), 'step': a2s(step), 'tile': a2s(tile)})
 
@@ -184,7 +189,10 @@ class Range(Subset):
     @staticmethod
     def from_array(array: 'dace.data.Data'):
         """ Constructs a range that covers the full array given as input. """
-        return Range([(0, s - 1, 1) for s in array.shape])
+        result = Range([(0, s - 1, 1) for s in array.shape])
+        if any(o != 0 for o in array.offset):
+            result.offset(array.offset, True)
+        return result
 
     def __hash__(self):
         return hash(tuple(r for r in self.ranges))
@@ -203,8 +211,8 @@ class Range(Subset):
         """ Returns the number of elements in each dimension. """
         offset = [-1 if (s < 0) == True else 1 for _, _, s in self.ranges]
 
-        if for_codegen == True:
-            int_ceil = sp.Function('int_ceil')
+        if for_codegen:
+            int_ceil = symbolic.int_ceil
             return [
                 ts * int_ceil(((iMax.approx if isinstance(iMax, symbolic.SymExpr) else iMax) + off -
                                (iMin.approx if isinstance(iMin, symbolic.SymExpr) else iMin)),
@@ -988,9 +996,9 @@ def bounding_box_union(subset_a: Subset, subset_b: Subset) -> Range:
                 elif len(brb.free_symbols) == 0:
                     minrb = brb
                 else:
-                    raise
+                    minrb = sympy.Min(arb, brb)
             else:
-                raise
+                minrb = sympy.Min(arb, brb)
 
         try:
             maxre = max(are, bre)
@@ -1001,9 +1009,9 @@ def bounding_box_union(subset_a: Subset, subset_b: Subset) -> Range:
                 elif len(bre.free_symbols) == 0:
                     maxre = are
                 else:
-                    raise
+                    maxre = sympy.Max(are, bre)
             else:
-                raise
+                maxre = sympy.Max(are, bre)
 
         result.append((minrb, maxre, 1))
 

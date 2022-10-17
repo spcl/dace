@@ -1,16 +1,16 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace
-import dace.transformation.subgraph.helpers as helpers
-from dace.transformation.subgraph import ReduceExpansion
-from dace.sdfg.graph import SubgraphView
-import dace.sdfg.nodes as nodes
+from typing import List, Union
+
 import numpy as np
-import dace.libraries.standard as stdlib
-
-from typing import Union, List
-from util import expand_reduce, expand_maps, fusion
-
 import pytest
+from util import expand_maps, expand_reduce, fusion
+
+import dace
+import dace.libraries.standard as stdlib
+import dace.sdfg.nodes as nodes
+import dace.transformation.subgraph.helpers as helpers
+from dace.sdfg.graph import SubgraphView
+from dace.transformation.dataflow import ReduceExpansion
 
 M = dace.symbol('M')
 N = dace.symbol('N')
@@ -52,7 +52,8 @@ def test_p1(in_transient, out_transient):
         if isinstance(node, dace.libraries.standard.nodes.Reduce):
             reduce_node = node
 
-    rexp = ReduceExpansion(sdfg, sdfg.sdfg_id, 0, {ReduceExpansion.reduce: state.node_id(reduce_node)}, 0)
+    rexp = ReduceExpansion()
+    rexp.setup_match(sdfg, sdfg.sdfg_id, 0, {ReduceExpansion.reduce: state.node_id(reduce_node)}, 0)
     assert rexp.can_be_applied(state, 0, sdfg) == True
 
     A = np.random.rand(M.get(), N.get()).astype(np.float64)

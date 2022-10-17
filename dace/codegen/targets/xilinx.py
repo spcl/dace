@@ -19,7 +19,7 @@ from dace.codegen.dispatcher import DefinedType
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets.target import make_absolute
 from dace.codegen.targets import cpp, fpga
-from typing import List, Union
+from typing import List, Union, Tuple
 
 from dace.external.rtllib.templates.control import generate_from_config as rtllib_control
 from dace.external.rtllib.templates.package import generate_from_config as rtllib_package
@@ -57,6 +57,7 @@ class XilinxCodeGen(fpga.FPGACodeGen):
         self._external_streams = dict()
         self._defined_external_streams = set()
         self._execution_mode = Config.get("compiler", "xilinx", "mode")
+        self._decouple_array_interfaces = Config.get_bool("compiler", "xilinx", "decouple_array_interfaces")
 
     @staticmethod
     def cmake_options():
@@ -215,34 +216,47 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         Vendor-specific SDFG Preprocessing
         '''
 
-        # Preprocess inter state edge assignments:
-        # - look at every interstate edge
-        # - if any of them accesses an ArrayInterface (Global FPGA memory), qualify its name and replace it
-        #       in the assignment string
+        if self._decouple_array_interfaces:
+            # If array accesses are decoupled, preprocess inter state edge assignments:
+            # - look at every interstate edge
+            # - if any of them accesses an ArrayInterface (Global FPGA memory), qualify its name and replace it
+            #       in the assignment string
 
-        for graph in sdfg.all_sdfgs_recursive():
-            for state in graph.states():
-                out_edges = graph.out_edges(state)
-                for e in out_edges:
-                    if len(e.data.assignments) > 0:
-                        replace_dict = dict()
+            for graph in sdfg.all_sdfgs_recursive():
+                for state in graph.states():
+                    out_edges = graph.out_edges(state)
+                    for e in out_edges:
+                        if len(e.data.assignments) > 0:
+                            replace_dict = dict()
 
-                        for variable, value in e.data.assignments.items():
-                            expr = ast.parse(value)
-                            # walk in the expression, get all array names and check whether we need to qualify them
-                            for node in ast.walk(expr):
-                                if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name):
-                                    arr_name = node.value.id
+                            for variable, value in e.data.assignments.items():
+                                expr = ast.parse(value)
+                                # walk in the expression, get all array names and check whether we need to qualify them
+                                for node in ast.walk(expr):
+                                    if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name):
+                                        arr_name = node.value.id
 
-                                    if arr_name not in replace_dict and arr_name in graph.arrays and graph.arrays[
-                                            arr_name].storage == dace.dtypes.StorageType.FPGA_Global:
-                                        repl = fpga.fpga_ptr(arr_name, graph.arrays[node.value.id], sdfg, None, False,
-                                                             None, None, True)
-                                        replace_dict[arr_name] = repl
+                                        if arr_name not in replace_dict and arr_name in graph.arrays and graph.arrays[
+                                                arr_name].storage == dace.dtypes.StorageType.FPGA_Global:
+                                            repl = fpga.fpga_ptr(
+                                                arr_name,
+                                                graph.arrays[node.value.id],
+                                                sdfg,
+                                                None,
+                                                False,
+                                                None,
+                                                None,
+                                                True,
+                                                decouple_array_interfaces=self._decouple_array_interfaces)
+                                            replace_dict[arr_name] = repl
 
-                        # Perform replacement
-                        for k, v in replace_dict.items():
-                            e.data.replace(k, v)
+                            # Perform replacement and update graph.arrays to allow type inference
+                            # on interstate edges
+                            for k, v in replace_dict.items():
+                                e.data.replace(k, v)
+                                if v not in graph.arrays:
+                                    # Note: this redundancy occurs only during codegen
+                                    graph.arrays[v] = graph.arrays[k]
 
     def define_stream(self, dtype, buffer_size, var_name, array_size, function_stream, kernel_stream, sdfg):
         """
@@ -289,9 +303,19 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                              sdfg: SDFG,
                              is_output: bool,
                              with_vectorization: bool,
-                             interface_id: Union[int, List[int]] = None):
+                             interface_id: Union[int, List[int]] = None,
+                             decouple_array_interfaces=False):
         if isinstance(data, dt.Array):
-            var_name = fpga.fpga_ptr(var_name, data, sdfg, subset_info, is_output, None, None, True, interface_id)
+            var_name = fpga.fpga_ptr(var_name,
+                                     data,
+                                     sdfg,
+                                     subset_info,
+                                     is_output,
+                                     None,
+                                     None,
+                                     True,
+                                     interface_id,
+                                     decouple_array_interfaces=decouple_array_interfaces)
             if with_vectorization:
                 dtype = data.dtype
             else:
@@ -351,10 +375,20 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         ptrname = cpp.ptr(memlet.data, sdfg.arrays[memlet.data], sdfg, self._frame)
         defined_type, _ = self._dispatcher.defined_vars.get(ptrname)
         if isinstance(indices, str):
-            ptr = '%s + %s' % (cpp.cpp_ptr_expr(sdfg, memlet, defined_type, is_write=True,
-                                                codegen=self._frame), indices)
+            ptr = '%s + %s' % (cpp.cpp_ptr_expr(sdfg,
+                                                memlet,
+                                                defined_type,
+                                                is_write=True,
+                                                codegen=self._frame,
+                                                decouple_array_interface=self._decouple_array_interfaces), indices)
         else:
-            ptr = cpp.cpp_ptr_expr(sdfg, memlet, defined_type, indices=indices, is_write=True, codegen=self._frame)
+            ptr = cpp.cpp_ptr_expr(sdfg,
+                                   memlet,
+                                   defined_type,
+                                   indices=indices,
+                                   is_write=True,
+                                   codegen=self._frame,
+                                   decouple_array_interface=self._decouple_array_interfaces)
 
         if isinstance(dtype, dtypes.pointer):
             dtype = dtype.base_type
@@ -368,6 +402,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
             else:
                 credtype = "dace::ReductionType::" + str(redtype)[str(redtype).find(".") + 1:]
                 is_sub = False
+
             if isinstance(dtype, dtypes.vector):
                 return (f'dace::xilinx_wcr_fixed_vec<{credtype}, '
                         f'{dtype.vtype.ctype}, {dtype.veclen}>::reduce('
@@ -453,7 +488,8 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                                  accessed_subset,
                                  True,
                                  self._dispatcher,
-                                 is_array_interface=(defined_type == DefinedType.ArrayInterface))
+                                 is_array_interface=(defined_type == DefinedType.ArrayInterface),
+                                 decouple_array_interfaces=self._decouple_array_interfaces)
         kernel_stream.write("#pragma HLS DEPENDENCE variable={} false".format(var_name), sdfg, state_id, node)
 
     def generate_kernel_boilerplate_pre(self, sdfg, state_id, kernel_name, parameters, bank_assignments, module_stream,
@@ -477,13 +513,27 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                 lowest_bank_index, _ = fpga.get_multibank_ranges_from_subset(memory_bank[1], sdfg)
 
                 for bank, interface_id in fpga.iterate_multibank_interface_ids(data, interface):
-                    kernel_arg = self.make_kernel_argument(data, data_name, bank, sdfg, is_output, True, interface_id)
+                    kernel_arg = self.make_kernel_argument(data,
+                                                           data_name,
+                                                           bank,
+                                                           sdfg,
+                                                           is_output,
+                                                           True,
+                                                           interface_id,
+                                                           decouple_array_interfaces=self._decouple_array_interfaces)
                     if kernel_arg:
                         kernel_args.append(kernel_arg)
                         array_args.append((kernel_arg, data_name))
                         argname_to_bank_assignment[kernel_arg] = (memory_bank[0], lowest_bank_index + bank)
             else:
-                kernel_arg = self.make_kernel_argument(data, data_name, None, None, is_output, True, interface)
+                kernel_arg = self.make_kernel_argument(data,
+                                                       data_name,
+                                                       None,
+                                                       None,
+                                                       is_output,
+                                                       True,
+                                                       interface,
+                                                       decouple_array_interfaces=self._decouple_array_interfaces)
                 if kernel_arg:
                     kernel_args.append(kernel_arg)
                     if isinstance(data, dt.Array):
@@ -492,7 +542,14 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
 
         stream_args = []
         for is_output, data_name, data, interface in external_streams:
-            kernel_arg = self.make_kernel_argument(data, data_name, None, None, is_output, True, interface)
+            kernel_arg = self.make_kernel_argument(data,
+                                                   data_name,
+                                                   None,
+                                                   None,
+                                                   is_output,
+                                                   True,
+                                                   interface,
+                                                   decouple_array_interfaces=self._decouple_array_interfaces)
 
             if kernel_arg:
                 if kernel_arg in stream_args: # TODO sometimes streams are added as an argument twice. In this case it is used by 2 RTL kernels, which means the host shouldn't have them, as there can only be two accessing a stream at one point in time.
@@ -500,12 +557,18 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                 else:
                     stream_args.append(kernel_arg)
 
+        if not self._decouple_array_interfaces:
+            kernel_args = dtypes.deduplicate(kernel_args)
+
         # Write kernel signature
         kernel_stream.write("DACE_EXPORTED void {}({}) {{\n".format(kernel_name, ', '.join(kernel_args + stream_args)),
                             sdfg, state_id)
 
         # Insert interface pragmas
         num_mapped_args = 0
+        if not self._decouple_array_interfaces:
+            array_args = dtypes.deduplicate(array_args)
+
         for arg, data_name in array_args:
             var_name = re.findall(r"\w+", arg)[-1]
             if "*" in arg:
@@ -563,18 +626,32 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         :param instrumentation_stream: Code for profiling kernel execution time.
         '''
 
-        kernel_args = []
+        # Keep track of kernel arguments as (arg, interface_id) pair
+        kernel_args: List[Tuple[str, int]] = []
+
         for _, name, p, interface_ids in parameters:
             if isinstance(p, dt.Array):
-                for bank, _ in fpga.iterate_multibank_interface_ids(p, interface_ids):
-                    kernel_args.append(p.as_arg(False, name=fpga.fpga_ptr(name, p, sdfg, bank)))
+                for bank, interface_id in fpga.iterate_multibank_interface_ids(p, interface_ids):
+                    # Keep track of the interface_id (if any), while creating kernel arguments.
+                    # In Xilinx we may have kernel argument with the same name but we want to keep all of them
+                    # if they have different interface IDs (this could be the case if the same data is accessed
+                    # from different PEs)
+
+                    kernel_args.append(
+                        (p.as_arg(False,
+                                  name=fpga.fpga_ptr(name,
+                                                     p,
+                                                     sdfg,
+                                                     bank,
+                                                     decouple_array_interfaces=self._decouple_array_interfaces)),
+                         interface_id))
             elif isinstance(p, dt.Stream) and name in self._defined_external_streams:
                 if p.is_stream_array():
-                    kernel_args.append(f" hlslib::ocl::SimulationOnly(&{p.as_arg(False, name=name)}[0])")
+                    kernel_args.append((f" hlslib::ocl::SimulationOnly(&{p.as_arg(False, name=name)}[0])", 0))
                 else:
-                    kernel_args.append(f" hlslib::ocl::SimulationOnly({p.as_arg(False, name=name)})")
+                    kernel_args.append((f" hlslib::ocl::SimulationOnly({p.as_arg(False, name=name)})", 0))
             else:
-                kernel_args.append(p.as_arg(False, name=name))
+                kernel_args.append((p.as_arg(False, name=name), 0))
 
         kernel_function_name = kernel_name
         kernel_file_name = "{}.xclbin".format(kernel_name)
@@ -589,10 +666,11 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
             for pred in predecessors:
                 # concatenate events from predecessor kernel
                 kernel_stream.write(f"{kernel_deps_name}.push_back({pred}_event);")
-
+        if not self._decouple_array_interfaces:
+            kernel_args = dtypes.deduplicate(kernel_args)
         # Launch HLS kernel, passing synchronization events (if any)
         kernel_stream.write(
-            f"""auto {kernel_name}_kernel = program.MakeKernel({kernel_function_name}, "{kernel_function_name}", {", ".join(kernel_args)});"""
+            f"""auto {kernel_name}_kernel = program.MakeKernel({kernel_function_name}, "{kernel_function_name}", {", ".join(ka[0] for ka in kernel_args)});"""
         )
 
         kernel_stream.write(
@@ -621,7 +699,13 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         for is_output, pname, p, interface_ids in parameters:
             if isinstance(p, dt.Array):
                 for bank, interface_id in fpga.iterate_multibank_interface_ids(p, interface_ids):
-                    arr_name = fpga.fpga_ptr(pname, p, sdfg, bank, is_output, is_array_interface=True)
+                    arr_name = fpga.fpga_ptr(pname,
+                                             p,
+                                             sdfg,
+                                             bank,
+                                             is_output,
+                                             is_array_interface=True,
+                                             decouple_array_interfaces=self._decouple_array_interfaces)
                     # Add interface ID to called module, but not to the module
                     # arguments
                     argname = fpga.fpga_ptr(pname,
@@ -630,12 +714,19 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                                             bank,
                                             is_output,
                                             is_array_interface=True,
-                                            interface_id=interface_id)
+                                            interface_id=interface_id,
+                                            decouple_array_interfaces=self._decouple_array_interfaces)
 
                     kernel_args_call.append(argname)
                     dtype = p.dtype
-                    kernel_args_module.append("{} {}*{}".format(dtype.ctype, "const " if not is_output else "",
-                                                                arr_name))
+
+                    if self._decouple_array_interfaces:
+                        kernel_args_module.append("{} {}*{}".format(dtype.ctype, "const " if not is_output else "",
+                                                                    arr_name))
+                    else:
+                        # in this case we don't know if this is accessed read-only or not
+                        kernel_args_module.append("{} *{}".format(dtype.ctype, arr_name))
+
             else:
                 if isinstance(p, dt.Stream):
                     # if this is an external stream, its name may have been mangled in the kernel
@@ -1003,6 +1094,8 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                     unrolled_loops += 1
 
         # Generate caller code in top-level function
+        if not self._decouple_array_interfaces:
+            kernel_args_call = dtypes.deduplicate(kernel_args_call)
         entry_stream.write(
             "HLSLIB_DATAFLOW_FUNCTION({}, {});".format(module_function_name, ", ".join(kernel_args_call)), sdfg,
             state_id)
@@ -1017,6 +1110,9 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         self._dispatcher.defined_vars.enter_scope(subgraph)
 
         module_body_stream = CodeIOStream()
+
+        if not self._decouple_array_interfaces:
+            kernel_args_module = dtypes.deduplicate(kernel_args_module)
 
         module_body_stream.write("void {}({}) {{".format(module_function_name, ", ".join(kernel_args_module)), sdfg,
                                  state_id)
@@ -1037,10 +1133,19 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                 if (not (isinstance(arg, dt.Array) and arg.storage == dace.dtypes.StorageType.FPGA_Global)):
                     continue
                 ctype = dtypes.pointer(arg.dtype).ctype
-                ptr_name = fpga.fpga_ptr(argname, arg, sdfg, bank, is_output, None, is_array_interface=True)
-                if not is_output:
+                ptr_name = fpga.fpga_ptr(argname,
+                                         arg,
+                                         sdfg,
+                                         bank,
+                                         is_output,
+                                         None,
+                                         is_array_interface=True,
+                                         decouple_array_interfaces=self._decouple_array_interfaces)
+                if not is_output and self._decouple_array_interfaces:
                     ctype = f"const {ctype}"
-                self._dispatcher.defined_vars.add(ptr_name, DefinedType.Pointer, ctype)
+
+                if self._decouple_array_interfaces:
+                    self._dispatcher.defined_vars.add(ptr_name, DefinedType.Pointer, ctype)
                 if argname in interfaces_added:
                     continue
                 interfaces_added.add(argname)
@@ -1229,11 +1334,21 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                                                                            cpp.sym2cpp(arg.buffer_size), name))
             elif isinstance(arg, dt.Array):
                 for bank, interface_id in fpga.iterate_multibank_interface_ids(arg, interface_ids):
-                    argname = fpga.fpga_ptr(name, arg, sdfg, bank, is_output, None, None, True, interface_id)
+                    argname = fpga.fpga_ptr(name,
+                                            arg,
+                                            sdfg,
+                                            bank,
+                                            is_output,
+                                            None,
+                                            None,
+                                            True,
+                                            interface_id,
+                                            decouple_array_interfaces=self._decouple_array_interfaces)
                     kernel_args.append(arg.as_arg(with_types=True, name=argname))
             else:
                 kernel_args.append(arg.as_arg(with_types=True, name=name))
-
+        if not self._decouple_array_interfaces:
+            kernel_args = dtypes.deduplicate(kernel_args)
         host_code_stream.write(
             """\
 // Signature of kernel function (with raw pointers) for argument matching
@@ -1264,9 +1379,12 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(kernel_f
         for _, _, _, vconn, in_memlet in sorted(state.in_edges(node), key=lambda e: e.dst_conn or ""):
             if in_memlet.data is None:
                 continue
+            if not self._decouple_array_interfaces and vconn in inout:
+                # Only one interface will be generated
+                continue
             ptrname = cpp.ptr(in_memlet.data, sdfg.arrays[in_memlet.data], sdfg, self._frame)
-            is_memory_interface = (self._dispatcher.defined_vars.get(ptrname,
-                                                                     1)[0] == DefinedType.ArrayInterface)
+            is_memory_interface = (self._dispatcher.defined_vars.get(ptrname, 1)[0] == DefinedType.ArrayInterface)
+            desc = sdfg.arrays[in_memlet.data]
             if is_memory_interface:
                 for bank in fpga.iterate_distributed_subset(sdfg.arrays[in_memlet.data], in_memlet, False, sdfg):
                     interface_name = fpga.fpga_ptr(vconn,
@@ -1274,7 +1392,8 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(kernel_f
                                                    sdfg,
                                                    bank,
                                                    False,
-                                                   is_array_interface=True)
+                                                   is_array_interface=True,
+                                                   decouple_array_interfaces=self._decouple_array_interfaces)
                     passed_memlet = copy.deepcopy(in_memlet)
                     passed_memlet.subset = fpga.modify_distributed_subset(passed_memlet.subset, bank)
                     interface_ref = cpp.emit_memlet_reference(self._dispatcher,
@@ -1282,8 +1401,10 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(kernel_f
                                                               passed_memlet,
                                                               interface_name,
                                                               conntype=node.in_connectors[vconn],
-                                                              is_write=False)
+                                                              is_write=False,
+                                                              decouple_array_interfaces=self._decouple_array_interfaces)
                     memlet_references.append(interface_ref)
+
             if vconn in inout:
                 continue
             if fpga.is_multibank_array_with_distributed_index(sdfg.arrays[in_memlet.data]):
@@ -1297,7 +1418,8 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(kernel_f
                                             passed_memlet,
                                             vconn,
                                             conntype=node.in_connectors[vconn],
-                                            is_write=False)
+                                            is_write=False,
+                                            decouple_array_interfaces=self._decouple_array_interfaces)
             if not is_memory_interface:
                 memlet_references.append(ref)
 
@@ -1310,14 +1432,17 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(kernel_f
                                                                       0)  # dummy so it works for HBM
             else:
                 passed_memlet = out_memlet
+            desc = sdfg.arrays[out_memlet.data]
             ref = cpp.emit_memlet_reference(self._dispatcher,
                                             sdfg,
                                             passed_memlet,
                                             uconn,
                                             conntype=node.out_connectors[uconn],
-                                            is_write=True)
+                                            is_write=True,
+                                            decouple_array_interfaces=self._decouple_array_interfaces)
             ptrname = cpp.ptr(out_memlet.data, sdfg.arrays[out_memlet.data], sdfg, self._frame)
             is_memory_interface = (self._dispatcher.defined_vars.get(ptrname, 1)[0] == DefinedType.ArrayInterface)
+
             if is_memory_interface:
                 for bank in fpga.iterate_distributed_subset(sdfg.arrays[out_memlet.data], out_memlet, True, sdfg):
                     interface_name = fpga.fpga_ptr(uconn,
@@ -1325,16 +1450,18 @@ DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(kernel_f
                                                    sdfg,
                                                    bank,
                                                    True,
-                                                   is_array_interface=True)
+                                                   is_array_interface=True,
+                                                   decouple_array_interfaces=self._decouple_array_interfaces)
                     passed_memlet = copy.deepcopy(out_memlet)
                     passed_memlet.subset = fpga.modify_distributed_subset(passed_memlet.subset, bank)
-                    memlet_references.append(
-                        cpp.emit_memlet_reference(self._dispatcher,
-                                                  sdfg,
-                                                  passed_memlet,
-                                                  interface_name,
-                                                  conntype=node.out_connectors[uconn],
-                                                  is_write=True))
+                    interface_ref = cpp.emit_memlet_reference(self._dispatcher,
+                                                              sdfg,
+                                                              passed_memlet,
+                                                              interface_name,
+                                                              conntype=node.out_connectors[uconn],
+                                                              is_write=True,
+                                                              decouple_array_interfaces=self._decouple_array_interfaces)
+                    memlet_references.append(interface_ref)
             else:
                 memlet_references.append(ref)
 

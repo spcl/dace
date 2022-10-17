@@ -2,7 +2,7 @@
 """ Contains class decorators to ease creating classes and enumerations whose
     subclasses and values can be registered externally. """
 
-from aenum import Enum, extend_enum
+import aenum
 from typing import Dict, Type
 
 
@@ -16,6 +16,7 @@ def make_registry(cls: Type):
     registry, and the third method returns a list of currently-registered
     extensions.
     """
+
     def _register(cls: Type, subclass: Type, kwargs: Dict):
         cls._registry_[subclass] = kwargs
 
@@ -59,9 +60,9 @@ def undefined_safe_enum(cls: Type):
     """
     Decorator that adds a value ``Undefined`` to an enumeration.
     """
-    if not issubclass(cls, Enum):
+    if not issubclass(cls, aenum.Enum):
         raise TypeError("Only aenum.Enum subclasses may be used with undefined values")
-    extend_enum(cls, 'Undefined')
+    aenum.extend_enum(cls, 'Undefined')
     return cls
 
 
@@ -74,11 +75,11 @@ def extensible_enum(cls: Type):
     a new name (a value will be auto-assigned), or with additional arguments
     for the value.
     """
-    if not issubclass(cls, Enum):
+    if not issubclass(cls, aenum.Enum):
         raise TypeError("Only aenum.Enum subclasses may be made extensible")
 
     def _extend_enum(cls: Type, name: str, *value):
-        extend_enum(cls, name, *value)
+        aenum.extend_enum(cls, name, *value)
 
     cls.register = lambda name, *args: _extend_enum(cls, name, *args)
     return cls

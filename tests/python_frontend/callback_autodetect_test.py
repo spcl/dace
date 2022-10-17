@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Tests automatic detection and baking of callbacks in the Python frontend. """
+from typing import Dict, Union
 import dace
 import numpy as np
 import pytest
@@ -29,6 +30,7 @@ def scale(C, beta):
 
 
 def test_automatic_callback():
+
     @dace.program
     def autocallback(A: dace.float64[N, N], B: dace.float64[N, N], C: dace.float64[N, N], beta: dace.float64):
         tmp: dace.float64[N, N] = almost_gemm(A, 0.5, B)
@@ -47,6 +49,7 @@ def test_automatic_callback():
 
 
 def test_automatic_callback_2():
+
     @dace.program
     def autocallback(A: dace.float64[N, N], B: dace.float64[N, N], C: dace.float64[N, N], beta: dace.float64):
         tmp: dace.float64[N, N]
@@ -67,6 +70,7 @@ def test_automatic_callback_2():
 
 
 def test_automatic_callback_inference():
+
     @dace.program
     def autocallback_ret(A: dace.float64[N, N], B: dace.float64[N, N], C: dace.float64[N, N], beta: dace.float64):
         tmp = np.ndarray([N, N], dace.float64)
@@ -86,6 +90,7 @@ def test_automatic_callback_inference():
 
 
 def test_automatic_callback_inference_2():
+
     @dace.program
     def autocallback_ret(A: dace.float64[N, N], B: dace.float64[N, N], C: dace.float64[N, N], beta: dace.float64):
         tmp = np.ndarray([N, N], dace.float64)
@@ -106,7 +111,9 @@ def test_automatic_callback_inference_2():
 
 
 def test_automatic_callback_method():
+
     class NotDace:
+
         def __init__(self):
             self.q = np.random.rand()
 
@@ -166,6 +173,7 @@ def test_callback_tasklet():
 
 
 def test_view_callback():
+
     @dace.program
     def autocallback(A: dace.float64[2 * N, N], B: dace.float64[N, N], C: dace.float64[N, N], beta: dace.float64):
         A[N:, :] = almost_gemm(A[:N, :], 0.5, B)
@@ -184,6 +192,7 @@ def test_view_callback():
 
 
 def test_print():
+
     @dace.program
     def printprog(a: dace.float64[2, 2]):
         print(a, 'hello')
@@ -266,6 +275,7 @@ def test_callback_samename():
     should_be_one, should_be_two = 0, 0
 
     def get_func_a():
+
         @dace_inhibitor
         def b():
             nonlocal counter
@@ -279,6 +289,7 @@ def test_callback_samename():
         return call_a
 
     def get_func_b():
+
         @dace_inhibitor
         def b():
             nonlocal counter
@@ -337,6 +348,7 @@ def test_bad_closure():
     Testing functions that should not be in the closure (must be implemented as
     callbacks).
     """
+
     @dace.program
     def timeprog(A: dace.float64[20]):
         # Library function that does not return the same value every time
@@ -360,6 +372,7 @@ def test_object_with_nested_callback():
         c[:] = a + b
 
     class MyObject:
+
         def __call__(self, a, b):
             c = dict(a=a, b=b)
             call_another_function(**c)
@@ -377,6 +390,7 @@ def test_object_with_nested_callback():
 
 
 def test_two_parameters_same_name():
+
     @dace_inhibitor
     def add(a, b):
         return a + b
@@ -392,6 +406,7 @@ def test_two_parameters_same_name():
 
 
 def test_inout_same_name():
+
     @dace_inhibitor
     def add(a, b):
         return a + b
@@ -408,6 +423,7 @@ def test_inout_same_name():
 
 def test_inhibit_state_fusion():
     """ Tests that state fusion is inhibited around callbacks if configured as such. """
+
     @dace_inhibitor
     def add(a, b):
         return a + b
@@ -498,7 +514,9 @@ def test_two_callbacks_different_type():
 
 
 def test_disallowed_keyword():
+
     class Obj:
+
         def hello(a):
             try:
                 return a + 1
@@ -549,6 +567,378 @@ def test_nested_duplicate_callbacks():
     assert called == 6
 
 
+def test_scalar_retval():
+
+    @dace.program
+    def myprogram(a):
+        res: float = time.time()
+        a[0] = res
+
+    old_time = time.time()
+    result = np.random.rand(20)
+    myprogram(result)
+    new_time = time.time()
+    assert result[0] >= old_time and result[0] <= new_time
+
+
+def test_callback_kwargs():
+    called_with = (None, None, None)
+    called_2_with = (None, None, None)
+    called_3_with = None
+
+    @dace_inhibitor
+    def mycb(a, b=1, **kwargs):
+        nonlocal called_with
+        called_with = (a, b, kwargs['c'])
+
+    @dace_inhibitor
+    def mycb2(d, **kwargs):
+        nonlocal called_2_with
+        called_2_with = (d, kwargs['e'], kwargs['f'])
+
+    @dace_inhibitor
+    def mycb3(**kwargs):
+        nonlocal called_3_with
+        called_3_with = kwargs['ghi']
+
+    # Call three callbacks with similar types to ensure trampolines are unique
+    @dace
+    def myprogram():
+        mycb(a=1, b=2, c=3)
+        mycb2(4, f=5, e=6)
+        mycb3(ghi=7)
+
+    myprogram()
+
+    assert called_with == (1, 2, 3)
+    assert called_2_with == (4, 6, 5)
+    assert called_3_with == 7
+
+
+def test_same_callback_kwargs():
+    """ Calls the same callback twice, with different kwargs each time. """
+    called_with = (None, None, None)
+    called_2_with = (None, None, None)
+
+    @dace_inhibitor
+    def mycb(**kwargs):
+        nonlocal called_with
+        nonlocal called_2_with
+        if 'a' in kwargs:
+            called_with = (kwargs['a'], kwargs['b'], kwargs['c'])
+        else:
+            called_2_with = (kwargs['d'], kwargs['e'], kwargs['f'])
+
+    @dace
+    def myprogram():
+        mycb(a=1, b=2, c=3)
+        mycb(d=4, f=5, e=6)
+
+    myprogram()
+
+    assert called_with == (1, 2, 3)
+    assert called_2_with == (4, 6, 5)
+
+
+def test_builtin_callback_kwargs():
+
+    @dace
+    def callprint():
+        print('hi', end=',\n')
+
+    callprint()
+
+
+@pytest.mark.parametrize('as_kwarg', (False, True))
+def test_callback_literal_list(as_kwarg):
+    success = False
+
+    @dace_inhibitor
+    def callback(array, arrlist):
+        nonlocal success
+        if len(arrlist) == 2 and array[0, 0, 0] == arrlist[0][0, 0, 0]:
+            success = True
+
+    if as_kwarg:
+
+        @dace
+        def caller(a, b):
+            callback(arrlist=[a, b], array=a)
+    else:
+
+        @dace
+        def caller(a, b):
+            callback(a, [a, b])
+
+    a = np.zeros((2, 2, 2))
+    b = np.ones((2, 2, 2))
+    caller(a, b)
+    assert success is True
+
+
+@pytest.mark.parametrize('as_kwarg', (False, True))
+def test_callback_literal_dict(as_kwarg):
+    success = False
+
+    @dace_inhibitor
+    def callback(adict1, adict2):
+        nonlocal success
+        if len(adict1) == 3 and len(adict2) == 3:
+            if adict1['b'][0, 0, 0] == 0.0 and adict1['a'][0, 0, 0] == 1.0 and adict1[1][0, 0, 0] == 0.0:
+                if adict2['b'][0, 0, 0] == 1.0 and adict2['a'][0, 0, 0] == 1.0 and adict2[1][0, 0, 0] == 1.0:
+                    success = True
+
+    if as_kwarg:
+
+        @dace
+        def caller(a, b):
+            callback({'b': a, 'a': b, 1: a}, adict2={1: b, 'a': b, 'b': b})
+
+    else:
+
+        @dace
+        def caller(a, b):
+            callback({'b': a, 'a': b, 1: a}, {1: b, 'a': b, 'b': b})
+
+    a = np.zeros((2, 2, 2))
+    b = np.ones((2, 2, 2))
+    caller(a, b)
+    assert success is True
+
+
+def test_unused_callback():
+
+    def deg_to_rad(a):
+        res = np.zeros((2, ))
+
+        res[0] = a[0] * np.pi / 180.0
+        res[1] = a[1] * np.pi / 180.0
+        return res
+
+    @dace.program
+    def mid_rad(a: dace.float64[2], b: dace.float64[2]) -> dace.float64[2]:
+        mid_deg = (a + b) / 2.0
+        mid_rad = deg_to_rad(mid_deg)
+        return mid_rad
+
+    @dace.program
+    def test(point1: dace.float64[2], point2: dace.float64[2]):
+        return mid_rad(point1, point2)
+
+    a = np.array([30.0, 60.0])
+    b = np.array([40.0, 50.0])
+    expected = np.deg2rad((a + b) / 2.0)
+    result = test(a, b)
+    assert np.allclose(result, expected)
+
+
+def test_callback_with_nested_calls():
+    success = False
+
+    @dace_inhibitor
+    def callback(array):
+        nonlocal success
+        if array == 20.0:
+            success = True
+
+    @dace
+    def tester(A: dace.float64[20]):
+        callback(np.sum(A))
+
+    tester(np.ones([20]))
+
+    assert success is True
+
+
+def test_string_callback():
+    result = (None, None)
+
+    @dace_inhibitor
+    def cb(aa, bb):
+        nonlocal result
+        result = aa, bb
+
+    @dace.program
+    def printmystring(a: str):
+        cb('hello', a)
+
+    printmystring('world')
+    assert result == ('hello', 'world')
+
+
+def test_unknown_pyobject():
+    counter = 1334
+    last_seen = counter
+    success_counter = 0
+
+    class MyCustomObject:
+
+        def __init__(self) -> None:
+            nonlocal counter
+            self.q = counter
+            counter += 1
+
+        def __str__(self):
+            return f'MyCustomObject(q={self.q})'
+
+    @dace_inhibitor
+    def checkit(obj: Union[MyCustomObject, Dict[str, Union[int, str]]]):
+        nonlocal last_seen
+        nonlocal success_counter
+        if obj == {'a': 1, 'b': '2'}:
+            success_counter += 1
+        elif isinstance(obj, MyCustomObject) and obj.q == last_seen:
+            success_counter += 1
+            last_seen += 1
+
+    @dace
+    def tester(unused):
+        for _ in dace.unroll(range(10)):
+            a = dict(a=1, b='2')
+            b = MyCustomObject()
+            checkit(a)
+            checkit(b)
+
+    tester(np.random.rand(20))
+    assert success_counter == 20
+
+
+def test_pyobject_return():
+    counter = 1
+
+    class MyCustomObject:
+
+        @dace_inhibitor
+        def __init__(self) -> None:
+            nonlocal counter
+            self.q = counter
+            counter += 1
+
+        def __str__(self):
+            return f'MyCustomObject(q={self.q})'
+
+    @dace
+    def tester():
+        MyCustomObject()
+        return MyCustomObject()
+
+    obj = tester()
+    assert isinstance(obj, MyCustomObject)
+    assert obj.q == 2
+
+
+def test_pyobject_return_tuple():
+    counter = 1
+
+    class MyCustomObject:
+
+        @dace_inhibitor
+        def __init__(self) -> None:
+            nonlocal counter
+            self.q = counter
+            counter += 1
+
+        def __str__(self):
+            return f'MyCustomObject(q={self.q})'
+
+    @dace
+    def tester():
+        MyCustomObject()
+        return MyCustomObject(), MyCustomObject()
+
+    obj, obj2 = tester()
+    assert isinstance(obj, MyCustomObject)
+    assert obj.q == 2
+    assert isinstance(obj2, MyCustomObject)
+    assert obj2.q == 3
+
+
+def test_custom_generator():
+
+    def reverse_range(sz):
+        cur = sz
+        for _ in range(sz):
+            yield cur
+            cur -= 1
+
+    @dace
+    def tester(a: dace.float64[20]):
+        gen = reverse_range(20)
+        for i in range(20):
+            val: int = next(gen)
+            a[i] = val
+
+    aa = np.ones((20, ), np.float64)
+    tester(aa)
+    assert np.allclose(aa, np.arange(20, 0, -1))
+
+
+def test_custom_generator_with_break():
+
+    def reverse_range(sz):
+        cur = sz
+        for _ in range(sz):
+            yield cur
+            cur -= 1
+
+    @dace_inhibitor
+    def my_next(generator):
+        try:
+            return next(generator), False
+        except StopIteration:
+            return None, True
+
+    @dace
+    def tester(a: dace.float64[20]):
+        gen = reverse_range(20)
+        for i in range(21):
+            val: int = 0
+            stop: bool = True
+            val, stop = my_next(gen)
+            if stop:
+                break
+            a[i] = val
+
+    aa = np.ones((21, ), np.float64)
+    expected = np.copy(aa)
+    expected[:20] = np.arange(20, 0, -1)
+
+    tester(aa)
+    assert np.allclose(aa, expected)
+
+
+@pytest.mark.skip
+def test_matplotlib_with_compute():
+    """
+    Stacked bar plot example from Matplotlib using callbacks and pyobjects.
+    https://matplotlib.org/3.1.1/gallery/lines_bars_and_markers/bar_stacked.html#sphx-glr-gallery-lines-bars-and-markers-bar-stacked-py
+    """
+    import matplotlib.pyplot as plt
+
+    menMeans = (20, 35, 30, 35, 27)
+    womenMeans = (25, 32, 34, 20, 25)
+    menStd = (2, 3, 4, 1, 2)
+    womenStd = (3, 5, 2, 3, 3)
+
+    @dace
+    def tester():
+
+        ind = np.arange(5)  # the x locations for the groups
+        width = 0.35  # the width of the bars: can also be len(x) sequence
+
+        p1 = plt.bar(ind, menMeans, width, yerr=menStd)
+        p2 = plt.bar(ind, womenMeans, width, bottom=menMeans, yerr=womenStd)
+
+        plt.ylabel('Scores')
+        plt.title('Scores by group and gender')
+        plt.xticks(ind, ('G1', 'G2', 'G3', 'G4', 'G5'))
+        plt.yticks(np.arange(0, 81, 10))
+        plt.legend((p1[0], p2[0]), ('Men', 'Women'))
+        plt.show()
+
+    tester()
+
+
 if __name__ == '__main__':
     test_automatic_callback()
     test_automatic_callback_2()
@@ -573,3 +963,20 @@ if __name__ == '__main__':
     test_two_callbacks_different_type()
     test_disallowed_keyword()
     test_nested_duplicate_callbacks()
+    test_scalar_retval()
+    test_callback_kwargs()
+    test_same_callback_kwargs()
+    test_builtin_callback_kwargs()
+    test_callback_literal_list(False)
+    test_callback_literal_list(True)
+    test_callback_literal_dict(False)
+    test_callback_literal_dict(True)
+    test_unused_callback()
+    test_callback_with_nested_calls()
+    test_string_callback()
+    test_unknown_pyobject()
+    test_pyobject_return()
+    test_pyobject_return_tuple()
+    test_custom_generator()
+    test_custom_generator_with_break()
+    # test_matplotlib_with_compute()

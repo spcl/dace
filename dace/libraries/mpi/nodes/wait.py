@@ -5,6 +5,7 @@ import dace.sdfg.nodes
 from dace.transformation.transformation import ExpandTransformation
 from .. import environments
 from dace import dtypes
+from dace.libraries.mpi.nodes.node import MPINode
 
 
 @dace.library.expansion
@@ -25,7 +26,8 @@ class ExpandWaitMPI(ExpandTransformation):
                                           node.in_connectors,
                                           node.out_connectors,
                                           code,
-                                          language=dace.dtypes.Language.CPP)
+                                          language=dace.dtypes.Language.CPP,
+                                          side_effects=True)
         conn = tasklet.in_connectors
         conn = {c: (dtypes.pointer(dtypes.opaque("MPI_Request")) if c == '_request' else t) for c, t in conn.items()}
         tasklet.in_connectors = conn
@@ -33,7 +35,7 @@ class ExpandWaitMPI(ExpandTransformation):
 
 
 @dace.library.node
-class Wait(dace.sdfg.nodes.LibraryNode):
+class Wait(MPINode):
 
     # Global properties
     implementations = {
@@ -92,7 +94,8 @@ class ExpandWaitallMPI(ExpandTransformation):
                                           node.in_connectors,
                                           node.out_connectors,
                                           code,
-                                          language=dace.dtypes.Language.CPP)
+                                          language=dace.dtypes.Language.CPP,
+                                          side_effects=True)
         conn = tasklet.in_connectors
         conn = {c: (dtypes.pointer(dtypes.opaque("MPI_Request")) if c == '_request' else t) for c, t in conn.items()}
         tasklet.in_connectors = conn
@@ -100,7 +103,7 @@ class ExpandWaitallMPI(ExpandTransformation):
 
 
 @dace.library.node
-class Waitall(dace.sdfg.nodes.LibraryNode):
+class Waitall(MPINode):
 
     # Global properties
     implementations = {

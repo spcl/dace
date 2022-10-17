@@ -135,6 +135,9 @@ class MapFusion(transformation.SingleStateTransformation):
         # Check that input set of second map is provided by the output set
         # of the first map, or other unrelated maps
         for second_edge in graph.out_edges(second_map_entry):
+            # NOTE: We ignore edges that do not carry data (e.g., connecting a tasklet with no inputs to the MapEntry)
+            if second_edge.data.is_empty():
+                continue
             # Memlets that do not come from one of the intermediate arrays
             if second_edge.data.data not in intermediate_data:
                 # however, if intermediate_data eventually leads to
@@ -184,6 +187,8 @@ class MapFusion(transformation.SingleStateTransformation):
             del first_map_inputnodes[v]
             e = sdutil.get_view_edge(graph, v)
             if e:
+                while not isinstance(e.src, nodes.AccessNode):
+                    e = graph.memlet_path(e)[0]
                 first_map_inputnodes[e.src] = e.src.data
                 viewed_inputnodes[e.src.data] = v
         second_map_outputnodes = {
@@ -199,6 +204,8 @@ class MapFusion(transformation.SingleStateTransformation):
             del second_map_outputnodes[v]
             e = sdutil.get_view_edge(graph, v)
             if e:
+                while not isinstance(e.dst, nodes.AccessNode):
+                    e = graph.memlet_path(e)[-1]
                 second_map_outputnodes[e.dst] = e.dst.data
                 viewed_outputnodes[e.dst.data] = v
         common_data = set(first_map_inputnodes.values()).intersection(set(second_map_outputnodes.values()))
@@ -333,7 +340,7 @@ class MapFusion(transformation.SingleStateTransformation):
                 # Look at the second map entry out-edges to get the new
                 # destinations
                 for e in graph.out_edges(second_entry):
-                    if e.src_conn[4:] == connector:
+                    if e.src_conn and e.src_conn[4:] == connector:
                         new_dsts.append(e)
                 if not new_dsts:  # Access node is not used in the second map
                     nodes_to_remove.add(access_node)
@@ -408,6 +415,12 @@ class MapFusion(transformation.SingleStateTransformation):
                 )
                 graph.remove_edge(out_e)
             first_entry.add_out_connector('OUT_' + conn)
+        
+        # NOTE: Check the second MapEntry for output edges with empty memlets
+        for edge in graph.out_edges(second_entry):
+            if edge.data.is_empty():
+                graph.remove_edge(edge)
+                graph.add_edge(first_entry, edge.src_conn, edge.dst, edge.dst_conn, edge.data)
 
         ###
         # Second node is isolated and can now be safely removed
@@ -442,8 +455,7 @@ class MapFusion(transformation.SingleStateTransformation):
             edge.data.data = local_name
             edge.data.subset = "0"
 
-            # If source of edge leads to multiple destinations,
-            # redirect all through an access node
+            # If source of edge leads to multiple destinations, redirect all through an access node.
             out_edges = list(graph.out_edges_by_connector(edge.src, edge.src_conn))
             if len(out_edges) > 1:
                 local_node = graph.add_access(local_name)
@@ -455,16 +467,30 @@ class MapFusion(transformation.SingleStateTransformation):
                 for other_edge in out_edges:
                     if other_edge is not edge:
                         graph.remove_edge(other_edge)
-                        graph.add_edge(local_node, src_connector, other_edge.dst, other_edge.dst_conn, other_edge.data)
+                        mem = Memlet(data=local_name, other_subset=other_edge.data.dst_subset)
+                        graph.add_edge(local_node, src_connector, other_edge.dst, other_edge.dst_conn, mem)
             else:
                 local_node = edge.src
                 src_connector = edge.src_conn
 
-            # Add edge that leads to the second node
-            graph.add_edge(local_node, src_connector, new_dst, new_dst_conn, dcpy(edge.data))
+            # If destination of edge leads to multiple destinations, redirect all through an access node.
+            if other_edges:
+                # NOTE: If a new local node was already created, reuse it.
+                if local_node == edge.src:
+                    local_node_out = graph.add_access(local_name)
+                    connector_out = None
+                else:
+                    local_node_out = local_node
+                    connector_out = src_connector
+                graph.add_edge(local_node, src_connector, local_node_out, connector_out,
+                               Memlet.from_array(local_name, sdfg.arrays[local_name]))
+                graph.add_edge(local_node_out, connector_out, new_dst, new_dst_conn, dcpy(edge.data))
+                for e in other_edges:
+                    graph.add_edge(local_node_out, connector_out, e.dst, e.dst_conn, dcpy(edge.data))
+            else:
+                # Add edge that leads to the second node
+                graph.add_edge(local_node, src_connector, new_dst, new_dst_conn, dcpy(edge.data))
 
-            for e in other_edges:
-                graph.add_edge(local_node, src_connector, e.dst, e.dst_conn, dcpy(edge.data))
         else:
             local_name, _ = sdfg.add_transient(local_name,
                                                symbolic.overapproximate(edge.data.subset.size()),

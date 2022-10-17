@@ -14,7 +14,7 @@ import copy
 
 import dace
 from dace.codegen.targets import cpp
-from dace import subsets, data as dt, dtypes, memlet, symbolic
+from dace import subsets, data as dt, dtypes, memlet, sdfg as sd, symbolic
 from dace.config import Config
 from dace.frontend import operations
 from dace.sdfg import SDFG, nodes, utils, dynamic_map_inputs
@@ -23,12 +23,13 @@ from dace.codegen import exceptions as cgx
 from dace.codegen.codeobject import CodeObject
 from dace.codegen.dispatcher import DefinedType
 from dace.codegen.prettycode import CodeIOStream
+from dace.codegen.common import update_persistent_desc
 from dace.codegen.targets.target import (TargetCodeGenerator, IllegalCopy, make_absolute)
 from dace.codegen import cppunparse
 from dace.properties import Property, make_properties, indirect_properties
 from dace.sdfg.state import SDFGState
+from dace.sdfg.utils import is_fpga_kernel
 from dace.symbolic import evaluate
-from dace.transformation.dataflow import MapUnroll
 from collections import defaultdict
 
 _CPU_STORAGE_TYPES = {dtypes.StorageType.CPU_Heap, dtypes.StorageType.CPU_ThreadLocal, dtypes.StorageType.CPU_Pinned}
@@ -49,24 +50,6 @@ def vector_element_type_of(dtype):
     elif isinstance(dtype, dace.vector):
         return dtype.base_type
     return dtype
-
-
-def is_fpga_kernel(sdfg, state):
-    """
-    Returns whether the given state is an FPGA kernel and should be dispatched
-    to the FPGA code generator.
-    :return: True if this is an FPGA kernel, False otherwise.
-    """
-    if ("is_FPGA_kernel" in state.location and state.location["is_FPGA_kernel"] == False):
-        return False
-    data_nodes = state.data_nodes()
-    if len(data_nodes) == 0:
-        return False
-    for n in data_nodes:
-        if n.desc(sdfg).storage not in (dtypes.StorageType.FPGA_Global, dtypes.StorageType.FPGA_Local,
-                                        dtypes.StorageType.FPGA_Registers, dtypes.StorageType.FPGA_ShiftRegister):
-            return False
-    return True
 
 
 def is_external_stream(node: dace.sdfg.nodes.Node, subgraph: Union[dace.sdfg.SDFGState, ScopeSubgraphView]):
@@ -109,7 +92,7 @@ def is_multibank_array_with_distributed_index(array: dt.Data):
     if is_multibank_array(array):
         res = parse_location_bank(array)
         low, high = get_multibank_ranges_from_subset(res[1], None)
-        return high - low > 1 or str(array.shape[0]) == "1"
+        return high - low > 1 or (len(array.shape) > 1 and str(array.shape[0]) == "1")
     else:
         return False
 
@@ -224,7 +207,8 @@ def fpga_ptr(name: str,
              dispatcher=None,
              ancestor: int = 0,
              is_array_interface: bool = False,
-             interface_id: int = None):
+             interface_id: int = None,
+             decouple_array_interfaces: bool = False):
     """
     Returns a string that points to the data based on its name, and various other conditions
     that may apply for that data field.
@@ -235,6 +219,8 @@ def fpga_ptr(name: str,
         is_array_interface is True when dispatcher is not None
     :param is_array_interface: Data is pointing to an interface in FPGA-Kernel compilation
     :param interface_id: An optional interface id that will be added to the name (only for array interfaces)
+    :param decouple_array_interfaces: if True it will qualify the name of an array interface, depending whether
+            it is used for reading from or writing to memory
     :return: C-compatible name that can be used to access the data.
     """
     if (desc is not None and is_multibank_array_with_distributed_index(desc)):
@@ -259,30 +245,33 @@ def fpga_ptr(name: str,
 
             subset_info = low  #used for arrayinterface name where it must be int
     if is_array_interface:
-        # qualify the name
-        if is_write is None:
-            raise ValueError("is_write must be set for ArrayInterface.")
-        ptr_in = f"__{name}_in"
-        ptr_out = f"__{name}_out"
-        if dispatcher is not None:
-            # DaCe allows reading from an output connector, even though it
-            # is not an input connector. If this occurs, panic and read
-            # from the output interface instead
-            if is_write or not dispatcher.defined_vars.has(ptr_in, ancestor):
-                # Throw a KeyError if this pointer also doesn't exist
-                dispatcher.defined_vars.get(ptr_out, ancestor)
-                # Otherwise use it
-                name = ptr_out
+
+        if decouple_array_interfaces:
+            # qualify the name
+            if is_write is None:
+                raise ValueError("is_write must be set for ArrayInterface.")
+            ptr_in = f"__{name}_in"
+            ptr_out = f"__{name}_out"
+            if dispatcher is not None:
+                # DaCe allows reading from an output connector, even though it
+                # is not an input connector. If this occurs, panic and read
+                # from the output interface instead
+                if is_write or not dispatcher.defined_vars.has(ptr_in, ancestor):
+                    # Throw a KeyError if this pointer also doesn't exist
+                    dispatcher.defined_vars.get(ptr_out, ancestor)
+                    # Otherwise use it
+                    name = ptr_out
+                else:
+                    name = ptr_in
             else:
-                name = ptr_in
-        else:
-            # We might call this before the variable is even defined (e.g., because
-            # we are about to define it), so if the dispatcher is not passed, just
-            # return the appropriate string
-            name = ptr_out if is_write else ptr_in
+                # We might call this before the variable is even defined (e.g., because
+                # we are about to define it), so if the dispatcher is not passed, just
+                # return the appropriate string
+                name = ptr_out if is_write else ptr_in
         # Append the interface id, if provided
         if interface_id is not None:
             name = f"{name}_{interface_id}"
+
     return name
 
 
@@ -345,6 +334,7 @@ class FPGACodeGen(TargetCodeGenerator):
         # a kernel is instrumented
         self._kernel_instrumentation_index: int = 0
 
+        self._decouple_array_interfaces = False
         # Register additional FPGA dispatchers
         self._dispatcher.register_map_dispatcher(
             [dtypes.ScheduleType.FPGA_Device, dtypes.ScheduleType.FPGA_Double, dtypes.ScheduleType.FPGA_Double_out], self)
@@ -506,6 +496,8 @@ class FPGACodeGen(TargetCodeGenerator):
         state_id = sdfg.node_id(state)
 
         if not self._in_device_code:
+            # Avoid import loop
+            from dace.transformation.dataflow import MapUnroll
 
             # Unroll maps directly in the SDFG so the subgraphs can be
             # recognized as independent processing elements
@@ -529,22 +521,26 @@ class FPGACodeGen(TargetCodeGenerator):
             # Then, try to split these components further
             subgraphs = dace.sdfg.concurrent_subgraphs(state)
 
-            start_kernel = 0
-            for sg in subgraphs:
-                # Determine kernels in state
-                num_kernels, dependencies = self.partition_kernels(sg, default_kernel=start_kernel)
-                if num_kernels > 1:
-                    # For each kernel, derive the corresponding subgraphs
-                    # and keep track of dependencies
-                    kernels.extend(self._kernels_subgraphs(sg, dependencies))
-                    self._kernels_dependencies.update(dependencies)
-                else:
-                    kernels.append((sg, start_kernel))
-                start_kernel = start_kernel + num_kernels
+            if Config.get_bool("compiler", "fpga", "concurrent_kernel_detection"):
+                start_kernel = 0
+                for sg in subgraphs:
+                    # Determine kernels in state
+                    num_kernels, dependencies = self.partition_kernels(sg, default_kernel=start_kernel)
+                    if num_kernels > 1:
+                        # For each kernel, derive the corresponding subgraphs
+                        # and keep track of dependencies
+                        kernels.extend(self._kernels_subgraphs(sg, dependencies))
+                        self._kernels_dependencies.update(dependencies)
+                    else:
+                        kernels.append((sg, start_kernel))
+                    start_kernel = start_kernel + num_kernels
 
-            # There is no need to generate additional kernels if the number of found kernels
-            # is equal to the number of connected components: use PEs instead (only one kernel)
-            if len(subgraphs) == len(kernels):
+                # There is no need to generate additional kernels if the number of found kernels
+                # is equal to the number of connected components: use PEs instead (only one kernel)
+                if len(subgraphs) == len(kernels):
+                    kernels = [(state, 0)]
+            else:
+                # Only one FPGA kernel (possibly with multiple PEs)
                 kernels = [(state, 0)]
 
             self._num_kernels = len(kernels)
@@ -607,7 +603,11 @@ class FPGACodeGen(TargetCodeGenerator):
                 # Streams and Views are not passed as arguments
                 if (isinstance(arg, dt.Array)):
                     for bank, _ in iterate_multibank_interface_ids(arg, interface_id):
-                        current_name = fpga_ptr(arg_name, arg, sdfg, bank)
+                        current_name = fpga_ptr(arg_name,
+                                                arg,
+                                                sdfg,
+                                                bank,
+                                                decouple_array_interfaces=self._decouple_array_interfaces)
                         kernel_args_call_host.append(arg.as_arg(False, name=current_name))
                         kernel_args_opencl.append(FPGACodeGen.make_opencl_parameter(current_name, arg))
                 elif (not isinstance(arg, dt.Stream) and not isinstance(arg, dt.View)):
@@ -747,7 +747,12 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
 
         global_data_parameters = set()
         # Count appearances of each global array to create multiple interfaces
-        global_interfaces: Dict[str, int] = collections.defaultdict(int)
+        if self._decouple_array_interfaces:
+            global_interfaces: Dict[str, int] = collections.defaultdict(int)
+        else:
+            # For Xilinx, even if we are not decoupling array interfaces we need anyway to use different interfaces
+            # if we access the same container from different PEs
+            global_interfaces: Dict[str, (int, int)] = collections.defaultdict(lambda: (0, 0))
 
         top_level_local_data = set()
         subgraph_parameters = collections.OrderedDict()  # {subgraph: [params]}
@@ -785,6 +790,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
         # Sorting by name, then by input/output, then by interface id
         sort_func = lambda t: f"{t[1]}{t[0]}{t[3]}"
 
+        subgraph_counter = 0
         for subgraph in subgraphs:
             data_to_node.update(
                 {node.data: node
@@ -848,10 +854,9 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
             # Find other data nodes that are used internally
             for n, scope in subgraph.all_nodes_recursive():
                 if isinstance(n, dace.sdfg.nodes.AccessNode):
-                    # Add nodes if they are outer-level, or an inner-level
-                    # transient (inner-level inputs/outputs are just connected
-                    # to data in the outer layers, whereas transients can be
-                    # independent).
+                    # Add nodes if they are outer-level, or an inner-level transient
+                    # (inner-level inputs/outputs are just connected to data in the outer layers,
+                    # whereas transients can be independent).
                     # Views are not nested global transients
                     if scope == subgraph or n.desc(scope).transient:
                         desc = n.desc(scope)
@@ -919,22 +924,45 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                             else:
                                 banks_looked_at = array_to_banks_used_in[data_name]
                             for bank in banks_looked_at:
-                                ptr_str = fpga_ptr(
-                                    data_name,
-                                    desc,
-                                    sdfg,
-                                    bank,
-                                )
-                                tmp_interface_id = global_interfaces[ptr_str]
-                                global_interfaces[ptr_str] += 1
+                                ptr_str = fpga_ptr(data_name,
+                                                   desc,
+                                                   sdfg,
+                                                   bank,
+                                                   decouple_array_interfaces=self._decouple_array_interfaces)
+
+                                if self._decouple_array_interfaces:
+                                    tmp_interface_id = global_interfaces[ptr_str]
+                                    global_interfaces[ptr_str] += 1
+                                else:
+                                    if ptr_str not in global_interfaces:
+                                        global_interfaces[ptr_str] = (0, subgraph_counter)
+
+                                    tmp_interface_id, last_used_in = global_interfaces[ptr_str]
+                                    if last_used_in != subgraph_counter:
+                                        # we accessed the same container from a different subgraph/PE: we need
+                                        # to use a different interface
+                                        tmp_interface_id += 1
+                                        global_interfaces[ptr_str] = (tmp_interface_id, subgraph_counter)
+
                                 tmp_interface_ids.append((bank, tmp_interface_id))
                             interface_id = tuple(tmp_interface_ids)
                             if data_name not in multibank_data_to_interface:
                                 multibank_data_to_interface[data_name] = {}
                             multibank_data_to_interface[data_name][is_output] = interface_id
                         else:
-                            interface_id = global_interfaces[data_name]
-                            global_interfaces[data_name] += 1
+                            if self._decouple_array_interfaces:
+                                interface_id = global_interfaces[data_name]
+                                global_interfaces[data_name] += 1
+                            else:
+                                if data_name not in global_interfaces:
+                                    global_interfaces[data_name] = (0, subgraph_counter)
+
+                                interface_id, last_used_in = global_interfaces[data_name]
+                                if last_used_in != subgraph_counter:
+                                    # we accessed the same container from a different data subgraph/PE: we need
+                                    # to use a different interface
+                                    global_interfaces[data_name] = (interface_id + 1, subgraph_counter)
+                                    interface_id += 1
                             data_to_interface[data_name] = interface_id
                     # Collect the memory bank specification, if present, by
                     # traversing outwards to where the data container is
@@ -983,6 +1011,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                     subgraph_parameters[subgraph].add((is_output, data_name, desc, interface_id))
                     # Must be allocated outside PEs and passed to them
                     top_level_local_data.add(data_name)
+
             # Order by name
             subgraph_parameters[subgraph] = list(sorted(subgraph_parameters[subgraph], key=sort_func))
             # Append symbols used in this subgraph
@@ -992,6 +1021,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                     subgraph_parameters[subgraph].append(param)
                     global_symbols.add(param)
 
+            subgraph_counter += 1
         # Order by name
         global_data_parameters = list(sorted(global_data_parameters, key=sort_func))
         global_data_parameters += sorted(global_symbols, key=sort_func)
@@ -1079,6 +1109,12 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
     def allocate_array(self, sdfg, dfg, state_id, node, nodedesc, function_stream, declaration_stream,
                        allocation_stream):
 
+        # NOTE: The code below fixes symbol-related issues with transient data originally defined in a NestedSDFG scope
+        # but promoted to be persistent. These data must have their free symbols replaced with the corresponding
+        # top-level SDFG symbols.
+        if nodedesc.lifetime == dtypes.AllocationLifetime.Persistent:
+            nodedesc = update_persistent_desc(nodedesc, sdfg)
+
         result_decl = StringIO()
         result_alloc = StringIO()
         arrsize = nodedesc.total_size
@@ -1097,6 +1133,9 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
 
         if isinstance(nodedesc, dt.View):
             return self.allocate_view(sdfg, dfg, state_id, node, function_stream, declaration_stream, allocation_stream)
+        elif isinstance(nodedesc, dt.Reference):
+            return self.allocate_reference(sdfg, dfg, state_id, node, function_stream, declaration_stream,
+                                           allocation_stream)
         elif isinstance(nodedesc, dt.Stream):
 
             if not self._in_device_code:
@@ -1160,7 +1199,11 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
 
                     # Define buffer, using proper type
                     for bank_index in range(memory_bank_arg_count):
-                        alloc_name = fpga_ptr(dataname, nodedesc, sdfg, bank_index)
+                        alloc_name = fpga_ptr(dataname,
+                                              nodedesc,
+                                              sdfg,
+                                              bank_index,
+                                              decouple_array_interfaces=self._decouple_array_interfaces)
                         if not declared:
                             result_decl.write("hlslib::ocl::Buffer <{}, hlslib::ocl::Access::readWrite> {};\n".format(
                                 nodedesc.dtype.ctype, alloc_name))
@@ -1523,36 +1566,62 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
             dst_subset = memlet.dst_subset or memlet.subset
             if host_to_device:
 
-                ptr_str = (fpga_ptr(src_node.data, src_nodedesc, sdfg, src_subset) +
+                ptr_str = (fpga_ptr(src_node.data,
+                                    src_nodedesc,
+                                    sdfg,
+                                    src_subset,
+                                    decouple_array_interfaces=self._decouple_array_interfaces) +
                            (" + {}".format(offset_src) if outgoing_memlet and str(offset_src) != "0" else ""))
                 if cast:
                     ptr_str = "reinterpret_cast<{} const *>({})".format(device_dtype.ctype, ptr_str)
 
                 callsite_stream.write(
-                    "{}.CopyFromHost({}, {}, {});".format(fpga_ptr(dst_node.data, dst_nodedesc, sdfg, dst_subset),
-                                                          (offset_dst if not outgoing_memlet else 0), copysize,
-                                                          ptr_str), sdfg, state_id, [src_node, dst_node])
+                    "{}.CopyFromHost({}, {}, {});".format(
+                        fpga_ptr(dst_node.data,
+                                 dst_nodedesc,
+                                 sdfg,
+                                 dst_subset,
+                                 decouple_array_interfaces=self._decouple_array_interfaces),
+                        (offset_dst if not outgoing_memlet else 0), copysize, ptr_str), sdfg, state_id,
+                    [src_node, dst_node])
 
             elif device_to_host:
 
-                ptr_str = (fpga_ptr(dst_node.data, dst_nodedesc, sdfg, dst_subset) +
+                ptr_str = (fpga_ptr(dst_node.data,
+                                    dst_nodedesc,
+                                    sdfg,
+                                    dst_subset,
+                                    decouple_array_interfaces=self._decouple_array_interfaces) +
                            (" + {}".format(offset_dst) if outgoing_memlet and str(offset_dst) != "0" else ""))
                 if cast:
                     ptr_str = "reinterpret_cast<{} *>({})".format(device_dtype.ctype, ptr_str)
 
                 callsite_stream.write(
-                    "{}.CopyToHost({}, {}, {});".format(fpga_ptr(src_node.data, src_nodedesc, sdfg, src_subset),
-                                                        (offset_src if outgoing_memlet else 0), copysize, ptr_str),
-                    sdfg, state_id, [src_node, dst_node])
+                    "{}.CopyToHost({}, {}, {});".format(
+                        fpga_ptr(src_node.data,
+                                 src_nodedesc,
+                                 sdfg,
+                                 src_subset,
+                                 decouple_array_interfaces=self._decouple_array_interfaces),
+                        (offset_src if outgoing_memlet else 0), copysize, ptr_str), sdfg, state_id,
+                    [src_node, dst_node])
 
             elif device_to_device:
 
                 callsite_stream.write(
-                    "{}.CopyToDevice({}, {}, {}, {});".format(fpga_ptr(src_node.data, src_nodedesc, sdfg, src_subset),
-                                                              (offset_src if outgoing_memlet else 0), copysize,
-                                                              fpga_ptr(dst_node.data, dst_nodedesc, sdfg, dst_subset),
-                                                              (offset_dst if not outgoing_memlet else 0)), sdfg,
-                    state_id, [src_node, dst_node])
+                    "{}.CopyToDevice({}, {}, {}, {});".format(
+                        fpga_ptr(src_node.data,
+                                 src_nodedesc,
+                                 sdfg,
+                                 src_subset,
+                                 decouple_array_interfaces=self._decouple_array_interfaces),
+                        (offset_src if outgoing_memlet else 0), copysize,
+                        fpga_ptr(dst_node.data,
+                                 dst_nodedesc,
+                                 sdfg,
+                                 dst_subset,
+                                 decouple_array_interfaces=self._decouple_array_interfaces),
+                        (offset_dst if not outgoing_memlet else 0)), sdfg, state_id, [src_node, dst_node])
 
         # Reject copying to/from local memory from/to outside the FPGA
         elif (data_to_data and
