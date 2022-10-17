@@ -3,8 +3,8 @@
 """
 
 import copy
-import typing
 import warnings
+from typing import Dict, List, Optional, Tuple
 
 import networkx as nx
 from networkx.exception import NetworkXError, NodeNotFound
@@ -22,9 +22,9 @@ from dace.transformation import transformation as pm
 
 
 def _validate_subsets(edge: graph.MultiConnectorEdge,
-                      arrays: typing.Dict[str, data.Data],
+                      arrays: Dict[str, data.Data],
                       src_name: str = None,
-                      dst_name: str = None) -> typing.Tuple[subsets.Subset]:
+                      dst_name: str = None) -> Tuple[subsets.Subset]:
     """ Extracts and validates src and dst subsets from the edge. """
 
     # Find src and dst names
@@ -425,7 +425,7 @@ class RedundantArray(pm.SingleStateTransformation):
         return True
 
     def _make_view(self, sdfg: SDFG, graph: SDFGState, in_array: nodes.AccessNode, out_array: nodes.AccessNode,
-                   e1: graph.MultiConnectorEdge[mm.Memlet], b_subset: subsets.Subset, b_dims_to_pop: typing.List[int]):
+                   e1: graph.MultiConnectorEdge[mm.Memlet], b_subset: subsets.Subset, b_dims_to_pop: List[int]):
         in_desc = sdfg.arrays[in_array.data]
         out_desc = sdfg.arrays[out_array.data]
         # NOTE: We do not want to create another view, if the immediate
@@ -1187,7 +1187,7 @@ def _is_slice(adesc: data.Array, vdesc: data.View) -> bool:
     return True
 
 
-def _sliced_dims(adesc: data.Array, vdesc: data.View) -> typing.List[int]:
+def _sliced_dims(adesc: data.Array, vdesc: data.View) -> List[int]:
     """ Returns the Array dimensions viewed by a slice-View.
         NOTE: This method assumes that `_is_slice(adesc, vdesc) == True`.
     """
@@ -1457,3 +1457,220 @@ class RedundantWriteSlice(pm.SingleStateTransformation):
                 sdfg.remove_data(in_array.data)
             except ValueError:  # Already in use (e.g., with Views)
                 pass
+
+
+class RemoveSliceView(pm.SingleStateTransformation):
+    """ Removes views which can be represented by slicing (e.g., A[i, :, j, None]). """
+
+    view = pm.PatternNode(nodes.AccessNode)
+
+    @classmethod
+    def expressions(cls):
+        return [sdutil.node_path_graph(cls.view)]
+
+    def can_be_applied(self, state: SDFGState, _: int, sdfg: SDFG, permissive=False):
+        desc = self.view.desc(sdfg)
+
+        # Ensure view
+        if not isinstance(desc, data.View):
+            return False
+
+        # Get viewed node and non-viewed edges
+        view_edge = sdutil.get_view_edge(state, self.view)
+        if view_edge is None:
+            return False
+
+        # Gather metadata
+        viewed: nodes.AccessNode
+        non_view_edges: List[graph.MultiConnectorEdge[mm.Memlet]]
+        is_src: bool
+        if view_edge.dst is self.view:
+            viewed = state.memlet_path(view_edge)[0].src
+            non_view_edges = state.out_edges(self.view)
+            is_src = True
+        else:
+            viewed = state.memlet_path(view_edge)[-1].dst
+            non_view_edges = state.in_edges(self.view)
+            is_src = False
+
+        ########################################################
+        # Syntactic feasibility: ensure memlets reach managable node types (access nodes, tasklets, nested SDFGs if
+        # strides match) rather than library nodes, which may behave in a custom manner based on the memlet shape.
+        if not permissive:
+            for e in non_view_edges:
+                for sink in state.memlet_tree(e).leaves():
+                    sink_node = sink.dst if is_src else sink.src
+                    sink_conn = sink.dst_conn if is_src else sink.src_conn
+                    if isinstance(sink_node, nodes.LibraryNode):
+                        return False
+                    if isinstance(sink_node, nodes.NestedSDFG):
+                        if sink_conn in sink_node.sdfg.arrays:
+                            ndesc = sink_node.sdfg.arrays[sink_conn]
+                            if ndesc.strides != desc.strides or ndesc.dtype != desc.dtype:
+                                return False
+
+        ########################################################
+        # Semantic feasibility: ensure memlets can be safely collapsed/modified to match the original access node.
+
+        # If descriptor type changed, bail
+        vdesc = viewed.desc(sdfg)
+        if vdesc.dtype != desc.dtype:
+            return False
+
+        if self.get_matching_dimensions(desc, vdesc) is None:
+            return False
+
+        return True
+
+    @staticmethod
+    def get_matching_dimensions(vdesc: data.View,
+                                adesc: data.Array) -> Optional[Tuple[Dict[int, int], List[int], List[int]]]:
+        """
+        Finds the matching dimensions mapping between a data descriptor and a view reinterpreting it, if and only
+        if the view represents a slice (with potential new, "unsqueezed" axes).
+
+        Views have the following relationship (w.l.o.g.): (array) --subset--> (view). For every memlet that goes
+        out of a view, we need to compose the subset with the new view dimensions and new subset.
+        The precondition to this method is that the array has unique strides (if not, the process fails).
+
+        The process works in three steps, as follows:
+
+            * First, The degenerate (shape=1) dimensions are removed from both the array and the view for consideration.
+            * The mapping between non-degenerate dimensions is done from the view to the array based on the strides.
+              Note that in a slice, the strides can be expanded or squeezed, but never reordered. This fact is used
+              during matching. If any non-degenerate dimension remains in the view, the process fails.
+            * Second, we find the "unsqueezed" dimensions by looking at the remainder of the view dimensions:
+              any dimension that is between the dimensions in the existing mapping is considered for strides. Dimensions
+              that fall before or after the sizes, or between two consecutive dimensions, are considered new axes.
+            * Third, the remainder of the dimensions of the original (non-view) data descriptor are considered
+              "squeezed".
+        
+        For example, a scalar view ``A[i, j] -> v`` would return ``({}, [], [0, 1])``.
+        Example 2: ``A[0:2, 3:5, i, j, 0:N] -> V[0:2, 0, 0:2, 0, 0:N, 0]`` would return 
+        ``({0: 0, 2: 1, 3: 2, 4: 4}, [1, 5], [3])``.
+
+        :param vdesc: The data descriptor of the view.
+        :param adesc: The data descriptor of the viewed data container.
+        :return: A tuple of (mapping of view->array, expanded, squeezed) dimensions, or None if the process failed.
+        """
+
+        # Strides can be squeezed or expanded, but never reordered.
+        # traverse both shapes and strides, ignoring shape-1 dimensions along the way
+        dimension_mapping: Dict[int, int] = {}
+        unsqueezed: List[int] = []
+        squeezed: List[int] = []
+
+        # First, remove shape=1 dimensions (unsqueezed or squeezed)
+        non_squeeze_vdims = [i for i, s in enumerate(vdesc.shape) if s != 1]
+        non_squeeze_adims = [i for i, s in enumerate(adesc.shape) if s != 1]
+        squeeze_adims = [i for i in range(len(adesc.shape)) if i not in non_squeeze_adims]
+        astrides = [adesc.strides[i] for i in non_squeeze_adims]
+
+        # Find matching strides
+        last_adim = 0
+        for i in non_squeeze_vdims:
+            try:
+                last_adim = astrides.index(vdesc.strides[i], last_adim)
+                dimension_mapping[i] = non_squeeze_adims[last_adim]
+            except ValueError:  # Index not found
+                return None
+
+        # Find degenerate dimension mapping (stride-matching and new axes / "unsqueezed")
+        dims_iter = iter(sorted(dimension_mapping.items()))  # Sorted matched dimensions
+        prev_dim = 0
+        next_dim = next(dims_iter, (-1, -1))[1]  # First matched dimension in data container
+        new_dims: Dict[int, int] = {}
+        for i, vstride in enumerate(vdesc.strides):
+            if i not in dimension_mapping:
+                try:
+                    if next_dim < 0:
+                        match = adesc.strides.index(vstride, prev_dim)
+                    else:
+                        match = adesc.strides.index(vstride, prev_dim, next_dim)
+                    new_dims[i] = match
+                except ValueError:  # No match found - new axis
+                    unsqueezed.append(i)
+            else:
+                prev_dim = dimension_mapping[i] + 1
+
+                # If we are out of dimensions, return -1 so that anything further is unsqueezed
+                next_dim = next(dims_iter, (-1, -1))[1]
+
+        # Add new mappings after the loop to avoid interfering with it
+        dimension_mapping.update(new_dims)
+
+        # Find degenerate dimension mapping in remainder of data container (squeezed)
+        inverse_dim_mapping = {v: k for k, v in dimension_mapping.items()}
+        for i in range(len(adesc.shape)):
+            if i not in inverse_dim_mapping:
+                squeezed.append(i)
+
+        return dimension_mapping, unsqueezed, squeezed
+
+    def apply(self, state: SDFGState, sdfg: SDFG):
+        desc = self.view.desc(sdfg)
+
+        # Get viewed node and non-viewed edges
+        view_edge = sdutil.get_view_edge(state, self.view)
+        if view_edge is None:
+            return False
+
+        # Gather metadata
+        viewed: nodes.AccessNode
+        non_view_edges: List[graph.MultiConnectorEdge[mm.Memlet]]
+        subset: subsets.Range
+        is_src: bool
+        if view_edge.dst is self.view:
+            viewed = state.memlet_path(view_edge)[0].src
+            non_view_edges = state.out_edges(self.view)
+            subset = view_edge.data.get_src_subset(view_edge, state)
+            is_src = True
+        else:
+            viewed = state.memlet_path(view_edge)[-1].dst
+            non_view_edges = state.in_edges(self.view)
+            subset = view_edge.data.get_dst_subset(view_edge, state)
+            is_src = False
+
+        mapping, unsqueezed, squeezed = self.get_matching_dimensions(desc, viewed.desc(sdfg))
+
+        # Update edges
+        for edge in non_view_edges:
+            # Update all memlets in tree
+            for e in state.memlet_tree(edge):
+                e.data.data = viewed.data
+
+                # Update subsets with instructions as follows:
+                #   * Dimensions in mapping are offset by view subset, size is taken from view subset
+                #   * Unsqueezed dimensions are ignored (should always be 0)
+                #   * Squeezed dimensions remain as they were in original subset
+                if e.data.subset is not None:
+                    e.data.subset = self._offset_subset(mapping, subset, e.data.subset)
+
+                # The lines below do not make sense (the space of other_subset differ from subset)
+                # if e.data.other_subset is not None:
+                #     e.data.other_subset = self._offset_subset(mapping, subset, e.data.other_subset)
+
+            # Remove edge directly adjacent to view and reconnect
+            state.remove_edge(edge)
+            if is_src:
+                state.add_edge(view_edge.src, view_edge.src_conn, edge.dst, edge.dst_conn, edge.data)
+            else:
+                state.add_edge(edge.src, edge.src_conn, view_edge.dst, view_edge.dst_conn, edge.data)
+
+        # Remove view node
+        state.remove_node(self.view)
+
+    def _offset_subset(self, mapping: Dict[int, int], subset: subsets.Range, edge_subset: subsets.Range):
+        # Get offset and size from the space of the view to compose
+        old_subset = edge_subset.min_element()
+        old_size = edge_subset.size()
+
+        # Create a new subset in the space of the data container from the offsets and sizes
+        new_subset: List[Tuple[int, int, int]] = subset.ndrange()
+        for vdim, adim in mapping.items():
+            rb, re, rs = new_subset[adim]
+            rb += old_subset[vdim]
+            re = rb + old_size[vdim]
+            new_subset[adim] = (rb, re, rs)
+
+        return subsets.Range(new_subset)
