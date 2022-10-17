@@ -1149,10 +1149,11 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
         nsdfg.add_datadesc('_in', input_data)
 
         output_data = dcpy(raw_output_data)
-        output_data.transient = False
-        output_data.shape = schedule.out_shape
-        output_data.strides = schedule.out_strides
-        nsdfg.add_datadesc('_out', output_data)
+        nsdfg.add_array('_out',
+                        schedule.out_shape,
+                        output_data.dtype,
+                        strides=schedule.out_strides,
+                        storage=output_data.storage)
 
         nstate = nsdfg.add_state()
 

@@ -129,15 +129,14 @@ def get_reduction_schedule(in_array: Array,
     schedule.in_shape = shape
     schedule.in_strides = strides
 
-    out_strides = strides
-    for ax in axes:
-        # remove index ax from strides and divide all out_strides[i] by shape[ax] if out_strides[i] > out_strides[ax]
-        sh = shape[ax]
-        st = out_strides[ax]
-        out_strides = [os for i, os in enumerate(out_strides) if i != ax]
+    out_strides = [os for i, os in enumerate(strides) if i not in axes]
+    removed = [(i,os) for i, os in enumerate(strides) if i in axes]
+    for rem in removed:
+        r = rem[1]
+        s = shape[rem[0]]
         for i in range(len(out_strides)):
-            if out_strides[i] > st:
-                out_strides[i] /= sh
+            if out_strides[i] > r:
+                out_strides[i] //= s
 
     schedule.out_strides = out_strides
 
