@@ -6,3 +6,4 @@ from .reduce_expansion import ReduceExpansion
 from .expansion import MultiExpansion
 from .subgraph_fusion import SubgraphFusion
 from .stencil_tiling import StencilTiling
+from .temporal_vectorization import TemporalVectorization

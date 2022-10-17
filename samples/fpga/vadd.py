@@ -1,10 +1,15 @@
+import sys
+sys.path.insert(0, '/home/carljohnsen/git/dace')
+
 import click
 import dace
 import numpy as np
+import dace
 from dace.subsets import Range
-
 from dace.transformation.dataflow import StreamingMemory
 from dace.transformation.interstate import FPGATransformState
+from dace.transformation.subgraph import TemporalVectorization
+
 
 def make_sdfg(N, V, double_pumped):
     sdfg = dace.SDFG(f"vector_addition_{N.get()}_{V.get()}_{'double' if double_pumped else 'single'}")
@@ -39,12 +44,20 @@ def make_sdfg(N, V, double_pumped):
     # transformations
     sdfg.apply_transformations(FPGATransformState)
     sdfg.apply_transformations_repeated(StreamingMemory, dict(storage=dace.StorageType.FPGA_Local, buffer_size=32))
+    sgs = dace.sdfg.concurrent_subgraphs(state)
+    sf = TemporalVectorization(sgs[0])
+    cba = [TemporalVectorization.can_be_applied(sf, sdfg, sg) for sg in sgs]
+    app = [TemporalVectorization.apply_to(sdfg, sg) for i, sg in enumerate(sgs) if cba[i]]
+    sdfg.save('aoeu.sdfg')
+    #quit()
+    #if True in cba:
+     #   TemporalVectorization.apply_to(sdfg, state.nodes())
+        #sdfg.apply_transformations([TemporalVectorization])
+    #quit()
 
-
-    if double_pumped:
-        c_entry.map.range = Range([(0,f'(N//(V//2))-1',1)])
+    #if double_pumped:
+     #   c_entry.map.range = Range([(0,f'(N//(V//2))-1',1)])
         #c_entry.map.range = Range([(0,f'N-1',1)])
-
 
     from dace.codegen.targets.fpga import is_fpga_kernel
     for s in sdfg.states():

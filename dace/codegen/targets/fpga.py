@@ -753,6 +753,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
         subgraph_parameters = collections.OrderedDict()  # {subgraph: [params]}
         nested_global_transients = set()
         # [(Is an output, dataname string, data object, interface)]
+        # TODO rephrase is_output. Currently "Is an output from the main kernel", but there can be more kernels, so make it "is output from current subgraph", but then it needs to map to subgraph??
         external_streams: Set[tuple[bool, str, dt.Data, dict[str, int]]] = set()
 
         # Mapping from global arrays to memory interfaces
@@ -796,11 +797,17 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
             array_to_banks_used_in: Dict[str, Set[int]] = {}
             sources = subgraph.source_nodes()
             # TODO outermost being a map
-            if isinstance(sources[0], dace.nodes.MapEntry):
+            if len(sources) == 1 and isinstance(sources[0], dace.nodes.MapEntry):
                 sources = subgraph.successors(sources[0])
             for n in sources:
                 # Check if the node is connected to an RTL tasklet, in which
                 # case it should be an external stream
+                # TODO is_external_stream guarder imod at A_pipe (internt allokerede) kommer ud i external, hvilket de ikke skal.
+                # Så, streams skal kun tilføjes til external_streams, hvis de faktisk er eksterne.
+                # Men men! Hvis der er en RTL/DP subgraph, så skal de tilføjes. Ellers skal de ikke nødvendigvis, det ville kun være
+                # hvis _num_kernels > 1, og denne subgraph ikke er en RTL/DP !
+                #if is_external_stream(n, subgraph) and self._num_kernels > 1:
+
                 is_external = is_external_subgraph
                 is_output = True
                 if not is_external and self._num_kernels > 1:
@@ -808,19 +815,22 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                         is_external = True
                         is_output = False
 
+                # TODO internally allocated streams are also captured here and below, which they shouldn't. (the A_pipe in the doubled pumped GEMM)
                 if is_external:
-                    external_streams |= {(is_output, e.data.data, subsdfg.arrays[e.data.data], None)
-                                         for e in state.out_edges(n)
-                                         if isinstance(subsdfg.arrays[e.data.data], dt.Stream)}
+                    external_streams.add((is_output, n.data, subsdfg.arrays[n.data], None))
+                    #external_streams |= {(False, e.data.data, subsdfg.arrays[e.data.data], None)
+                    #                     for e in state.out_edges(n)
+                    #                     if isinstance(subsdfg.arrays[e.data.data], dt.Stream)}
                 else:
-                    candidates += [(False, e.data.data, subsdfg.arrays[e.data.data]) for e in state.in_edges(n)]
+                    #candidates += [(False, e.data.data, subsdfg.arrays[e.data.data]) for e in state.in_edges(n)]
+                    candidates.append((False, n.data, subsdfg.arrays[n.data]))
             sinks = subgraph.sink_nodes()
-            if isinstance(sinks[0], dace.nodes.MapExit):
+            if len(sinks) == 1 and isinstance(sinks[0], dace.nodes.MapExit):
                 sinks = subgraph.predecessors(sinks[0])
             for n in sinks:
                 # Check if the node is connected to an RTL tasklet, in which
                 # case it should be an external stream
-                is_external = is_external_subgraph
+                is_external = is_external_subgraph # is_external_stream(n, subgraph)
                 is_output = False
                 if not is_external and self._num_kernels > 1:
                     if is_external_stream(n, subgraph):
@@ -828,11 +838,13 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                         is_output = True
 
                 if is_external:
-                    external_streams |= {(is_output, e.data.data, subsdfg.arrays[e.data.data], None)
-                                         for e in state.in_edges(n)
-                                         if isinstance(subsdfg.arrays[e.data.data], dt.Stream)}
+                    external_streams.add((is_output, n.data, subsdfg.arrays[n.data], None))
+                    #external_streams |= {(True, e.data.data, subsdfg.arrays[e.data.data], None)
+                    #                     for e in state.in_edges(n)
+                    #                     if isinstance(subsdfg.arrays[e.data.data], dt.Stream)}
                 else:
-                    candidates += [(True, e.data.data, subsdfg.arrays[e.data.data]) for e in state.out_edges(n)]
+                    candidates.append((True, n.data, subsdfg.arrays[n.data]))
+                    #candidates += [(True, e.data.data, subsdfg.arrays[e.data.data]) for e in state.out_edges(n)]
             # Find other data nodes that are used internally
             for n, scope in subgraph.all_nodes_recursive():
                 if isinstance(n, dace.sdfg.nodes.AccessNode):
@@ -966,8 +978,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                     subgraph_parameters[subgraph].add((is_output, data_name, desc, interface_id))
                     # Global data is passed from outside the kernel
                     global_data_parameters.add((is_output, data_name, desc, interface_id))
-                # TODO fix hardcoding:
-                elif data_name in shared_data or str(desc.shape[0]) == 'P + 1':
+                elif data_name in shared_data:
                     # Add the data as a parameter to this PE
                     subgraph_parameters[subgraph].add((is_output, data_name, desc, interface_id))
                     # Must be allocated outside PEs and passed to them

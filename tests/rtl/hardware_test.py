@@ -348,7 +348,7 @@ def test_hardware_axpy_double_pump(veclen=2):
         # Grab the double pumped AXPY implementation the samples directory
         spec = importlib.util.spec_from_file_location(
             "axpy",
-            Path(__file__).parent.parent.parent / "samples" / "rtl" / "axpy_double_pump.py")
+            Path(__file__).parent.parent.parent / "samples" / "fpga" / "rtl" / "axpy_double_pump.py")
         axpy = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(axpy)
 

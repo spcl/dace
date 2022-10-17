@@ -602,6 +602,10 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         if state.instrument == dtypes.InstrumentationType.FPGA:
             self.instrument_opencl_kernel(kernel_name, sdfg.node_id(state), sdfg.sdfg_id, instrumentation_stream)
 
+        # TODO make this nicer
+        # Join RTL tasklets
+        #for name in rtl_tasklet_names:
+        #    kernel_stream.write(f"kernel_{name}.wait();\n", sdfg, sdfg.node_id(state))
 
     def generate_module(self, sdfg, state, kernel_name, name, subgraph, parameters, module_stream, entry_stream,
                         host_stream, instrumentation_stream):
@@ -757,9 +761,9 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                 else:
                     acces_nodes_touched = []
 
-                for node in acces_nodes_touched:
-                    node.bytes = int(dace.symbolic.evaluate(node.bytes, sdfg.constants)) >> 1
-                    node.veclen = int(dace.symbolic.evaluate(node.veclen, sdfg.constants)) >> 1
+                #for node in acces_nodes_touched:
+                #    node.bytes = int(dace.symbolic.evaluate(node.bytes, sdfg.constants)) >> 1
+                #    node.veclen = int(dace.symbolic.evaluate(node.veclen, sdfg.constants)) >> 1
 
                 double_kernel_module.write('''#include <dace/fpga_device.h>
 #include <dace/math.h>
@@ -890,9 +894,9 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
 
                 # Increase the vector size, in case some other subgraph uses it.
                 # TODO maybe it shouldn't be every access that is halved? One could have a stream which is rarely consumed from? Should be related to the memlet?
-                for node in acces_nodes_touched:
-                    node.bytes <<= 1
-                    node.veclen <<= 1
+                #for node in acces_nodes_touched:
+                #    node.bytes <<= 1
+                #    node.veclen <<= 1
 
                 self._ip_codes.append((external_name, 'cpp',
                 (double_kernel_module.getvalue() + double_kernel_call.getvalue()) if inward else
@@ -1105,13 +1109,13 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         # We need to pass external streams as parameters to module
         # (unless they are already there. This could be case of inter-PE intra-kernel streams)
         # TODO It doesn't break RTL, but the streams are passed to sub kernels that don't need the streams, in turn relying on Vitis to optimize them away again.
-        for k, v in subgraph_parameters.items():
-            for stream_is_out, stream_name, stream_desc, stream_iid in external_streams:
-                for is_output, data_name, desc, interface_id in v:
-                    if data_name == stream_name and stream_desc == desc:
-                        break
-                else:
-                    v.append((stream_is_out, stream_name, stream_desc, stream_iid))
+        #for k, v in subgraph_parameters.items():
+        #    for stream_is_out, stream_name, stream_desc, stream_iid in external_streams:
+        #        for is_output, data_name, desc, interface_id in v:
+        #            if data_name == stream_name and stream_desc == desc:
+        #                break
+        #        else:
+        #            v.append((stream_is_out, stream_name, stream_desc, stream_iid))
 
         # Xilinx does not like external streams name with leading underscores to be used as port names
         # We remove them, and we check that they are not defined anywhere else
@@ -1166,7 +1170,8 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         #         double_pumped = n
 
         for is_output, name, node, _ in external_streams:
-
+            if not isinstance(node, dt.Stream):
+                continue
             # TODO: deal with veclen if this goes into a double pumped version
             buffer_size = dace.symbolic.evaluate(node.buffer_size, sdfg.constants)
             ctype = "dace::FIFO<{}, {}, {}>".format(node.dtype.base_type.ctype, node.dtype.veclen, buffer_size)
