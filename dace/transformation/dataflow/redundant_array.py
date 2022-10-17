@@ -1670,7 +1670,7 @@ class RemoveSliceView(pm.SingleStateTransformation):
         for vdim, adim in mapping.items():
             rb, re, rs = new_subset[adim]
             rb += old_subset[vdim]
-            re = rb + old_size[vdim]
+            re = rb + old_size[vdim] - 1
             new_subset[adim] = (rb, re, rs)
 
         return subsets.Range(new_subset)

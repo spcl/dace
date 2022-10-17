@@ -127,7 +127,7 @@ class ArrayElimination(ppl.Pass):
         state_id = sdfg.node_id(state)
 
         for nodeset in access_nodes.values():
-            for anode in nodeset:
+            for anode in list(nodeset):
                 for xform in xforms:
                     # Quick path to setup match
                     candidate = {type(xform).view: anode}
@@ -137,6 +137,7 @@ class ArrayElimination(ppl.Pass):
                     if xform.can_be_applied(state, 0, sdfg):
                         xform.apply(state, sdfg)
                         removed_nodes.add(anode)
+                        nodeset.remove(anode)
         return removed_nodes
 
     def remove_redundant_copies(self, sdfg: SDFG, state: SDFGState, removable_data: Set[str],
