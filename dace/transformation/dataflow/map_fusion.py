@@ -135,6 +135,9 @@ class MapFusion(transformation.SingleStateTransformation):
         # Check that input set of second map is provided by the output set
         # of the first map, or other unrelated maps
         for second_edge in graph.out_edges(second_map_entry):
+            # NOTE: We ignore edges that do not carry data (e.g., connecting a tasklet with no inputs to the MapEntry)
+            if second_edge.data.is_empty():
+                continue
             # Memlets that do not come from one of the intermediate arrays
             if second_edge.data.data not in intermediate_data:
                 # however, if intermediate_data eventually leads to
@@ -184,6 +187,8 @@ class MapFusion(transformation.SingleStateTransformation):
             del first_map_inputnodes[v]
             e = sdutil.get_view_edge(graph, v)
             if e:
+                while not isinstance(e.src, nodes.AccessNode):
+                    e = graph.memlet_path(e)[0]
                 first_map_inputnodes[e.src] = e.src.data
                 viewed_inputnodes[e.src.data] = v
         second_map_outputnodes = {
@@ -199,6 +204,8 @@ class MapFusion(transformation.SingleStateTransformation):
             del second_map_outputnodes[v]
             e = sdutil.get_view_edge(graph, v)
             if e:
+                while not isinstance(e.dst, nodes.AccessNode):
+                    e = graph.memlet_path(e)[-1]
                 second_map_outputnodes[e.dst] = e.dst.data
                 viewed_outputnodes[e.dst.data] = v
         common_data = set(first_map_inputnodes.values()).intersection(set(second_map_outputnodes.values()))
@@ -333,7 +340,7 @@ class MapFusion(transformation.SingleStateTransformation):
                 # Look at the second map entry out-edges to get the new
                 # destinations
                 for e in graph.out_edges(second_entry):
-                    if e.src_conn[4:] == connector:
+                    if e.src_conn and e.src_conn[4:] == connector:
                         new_dsts.append(e)
                 if not new_dsts:  # Access node is not used in the second map
                     nodes_to_remove.add(access_node)
@@ -408,6 +415,12 @@ class MapFusion(transformation.SingleStateTransformation):
                 )
                 graph.remove_edge(out_e)
             first_entry.add_out_connector('OUT_' + conn)
+        
+        # NOTE: Check the second MapEntry for output edges with empty memlets
+        for edge in graph.out_edges(second_entry):
+            if edge.data.is_empty():
+                graph.remove_edge(edge)
+                graph.add_edge(first_entry, edge.src_conn, edge.dst, edge.dst_conn, edge.data)
 
         ###
         # Second node is isolated and can now be safely removed

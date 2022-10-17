@@ -4,12 +4,14 @@ import dace
 import numpy as np
 import os
 import tempfile
+from dace.sdfg import nodes
 from dace.transformation.interstate import LoopToMap
 
 
 def make_sdfg(with_wcr, map_in_guard, reverse_loop, use_variable, assign_after, log_path):
 
-    sdfg = dace.SDFG(f"loop_to_map_test_{with_wcr}_{map_in_guard}_" f"{reverse_loop}_{use_variable}_{assign_after}")
+    sdfg = dace.SDFG(f"loop_to_map_test_{with_wcr}_{map_in_guard}_"
+                     f"{reverse_loop}_{use_variable}_{assign_after}")
     sdfg.set_global_code("#include <fstream>\n#include <mutex>")
 
     init = sdfg.add_state("init")
@@ -160,6 +162,7 @@ def test_loop_to_map_variable_reassigned(n=None):
 
 
 def test_output_copy():
+
     @dace.program
     def l2mtest_copy(A: dace.float64[20, 20]):
         for i in range(1, 20):
@@ -179,6 +182,7 @@ def test_output_copy():
 
 
 def test_output_accumulate():
+
     @dace.program
     def l2mtest_accumulate(A: dace.float64[20, 20]):
         for i in range(1, 20):
@@ -235,6 +239,112 @@ def test_specialize():
     assert np.allclose(y, regression)
 
 
+def test_empty_loop():
+
+    @dace.program
+    def empty_loop():
+        for i in range(10):
+            pass
+
+    sdfg = empty_loop.to_sdfg(simplify=False)
+    assert sdfg.apply_transformations(LoopToMap) == 1
+
+    sdfg.validate()
+
+    for node, _ in sdfg.all_nodes_recursive():
+        if isinstance(node, nodes.MapEntry):
+            return
+
+    assert False
+
+
+def test_interstate_dep():
+
+    sdfg = dace.SDFG('intestate_dep')
+    sdfg.add_array('A', (10, ), dtype=np.int32)
+    init = sdfg.add_state('init', is_start_state=True)
+    guard = sdfg.add_state('guard')
+    body0 = sdfg.add_state('body0')
+    body1 = sdfg.add_state('body1')
+    pexit = sdfg.add_state('exit')
+
+    sdfg.add_edge(init, guard, dace.InterstateEdge(assignments={'i': '1'}))
+    sdfg.add_edge(guard, body0, dace.InterstateEdge(condition='i < 9'))
+    sdfg.add_edge(body0, body1, dace.InterstateEdge(assignments={'s': 'A[i-1] + A[i+1]'}))
+    sdfg.add_edge(body1, guard, dace.InterstateEdge(assignments={'i': 'i+1'}))
+    sdfg.add_edge(guard, pexit, dace.InterstateEdge(condition='i >= 9'))
+
+    t = body1.add_tasklet('tasklet', {}, {'__out'}, '__out = s')
+    a = body1.add_access('A')
+    body1.add_edge(t, '__out', a, None, dace.Memlet('A[i]'))
+
+    ref = np.random.randint(0, 10, size=(10, ), dtype=np.int32)
+    val = np.copy(ref)
+    sdfg(A=ref)
+
+    assert sdfg.apply_transformations(LoopToMap) == 0
+    sdfg(A=val)
+
+    assert np.array_equal(val, ref)
+
+
+def test_need_for_tasklet():
+
+    sdfg = dace.SDFG('needs_tasklet')
+    aname, _ = sdfg.add_array('A', (10,), dace.int32)
+    bname, _ = sdfg.add_array('B', (10,), dace.int32)
+    body = sdfg.add_state('body')
+    _, _, _ = sdfg.add_loop(None, body, None, 'i', '0', 'i < 10', 'i + 1', None)
+    anode = body.add_access(aname)
+    bnode = body.add_access(bname)
+    body.add_nedge(anode, bnode, dace.Memlet(data=aname, subset='i', other_subset='9 - i'))
+
+    sdfg.apply_transformations_repeated(LoopToMap)
+    found = False
+    for n, s in sdfg.all_nodes_recursive():
+        if isinstance(n, nodes.Tasklet):
+            found = True
+            break
+    
+    assert found
+
+    A = np.arange(10, dtype=np.int32)
+    B = np.empty((10,), dtype=np.int32)
+    sdfg(A=A, B=B)
+
+    assert np.array_equal(B, np.arange(9, -1, -1, dtype=np.int32))
+
+
+def test_need_for_transient():
+
+    sdfg = dace.SDFG('needs_transient')
+    aname, _ = sdfg.add_array('A', (10, 10), dace.int32)
+    bname, _ = sdfg.add_array('B', (10, 10), dace.int32)
+    body = sdfg.add_state('body')
+    _, _, _ = sdfg.add_loop(None, body, None, 'i', '0', 'i < 10', 'i + 1', None)
+    anode = body.add_access(aname)
+    bnode = body.add_access(bname)
+    body.add_nedge(anode, bnode, dace.Memlet(data=aname, subset='0:10, i', other_subset='0:10, 9 - i'))
+
+    sdfg.apply_transformations_repeated(LoopToMap)
+    found = False
+    for n, s in sdfg.all_nodes_recursive():
+        if isinstance(n, nodes.AccessNode) and n.data not in (aname, bname):
+            found = True
+            break
+    
+    assert found
+
+    A = np.arange(100, dtype=np.int32).reshape(10, 10).copy()
+    B = np.empty((10, 10), dtype=np.int32)
+    sdfg(A=A, B=B)
+
+    for i in range(10):
+        start = i * 10
+        assert np.array_equal(B[i], np.arange(start + 9, start -1, -1, dtype=np.int32))
+
+
+
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
@@ -251,3 +361,7 @@ if __name__ == "__main__":
     test_loop_to_map_variable_reassigned(n)
     test_output_copy()
     test_output_accumulate()
+    test_empty_loop()
+    test_interstate_dep()
+    test_need_for_tasklet()
+    test_need_for_transient()

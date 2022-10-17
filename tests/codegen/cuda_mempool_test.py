@@ -4,6 +4,7 @@ import pytest
 
 CudaArray = dace.data.Array(dace.float64, [20], storage=dace.StorageType.GPU_Global)
 
+
 @pytest.mark.gpu
 def test_memory_pool():
 
@@ -114,7 +115,49 @@ def test_memory_pool_tasklet():
     assert cp.allclose(b, b_expected)
 
 
+@pytest.mark.gpu
+def test_memory_pool_multistate():
+
+    @dace.program
+    def tester(A: CudaArray, B: CudaArray):
+        # Things that can be in the same state
+        pooled = dace.define_local(A.shape, A.dtype)
+
+        for i in range(5):
+            pooled << A
+
+            if i == 1:
+                B += 1
+
+            B[:] = pooled
+
+        return B
+
+    sdfg = tester.to_sdfg(simplify=False)
+    for aname, arr in sdfg.arrays.items():
+        if aname == 'pooled':
+            arr.storage = dace.StorageType.GPU_Global
+            arr.pool = True
+    for me, _ in sdfg.all_nodes_recursive():
+        if isinstance(me, dace.nodes.MapEntry):
+            me.schedule = dace.ScheduleType.GPU_Device
+
+    code = sdfg.generate_code()[0].clean_code
+    assert code.count('cudaMallocAsync') == 1
+    assert code.count('cudaFree(pooled)') == 1
+
+    # Test code
+    import cupy as cp
+    a = cp.random.rand(20)
+    b = cp.random.rand(20)
+    b_expected = cp.copy(a)
+    sdfg(a, b)
+    assert cp.allclose(a, b_expected)
+    assert cp.allclose(b, b_expected)
+
+
 if __name__ == '__main__':
     test_memory_pool()
     test_memory_pool_state()
     test_memory_pool_tasklet()
+    test_memory_pool_multistate()

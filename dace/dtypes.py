@@ -341,7 +341,7 @@ class typeclass(object):
             3. Enabling extensions such as `dace.struct` and `dace.vector`
     """
 
-    def __init__(self, wrapped_type):
+    def __init__(self, wrapped_type, typename=None):
         # Convert python basic types
         if isinstance(wrapped_type, str):
             try:
@@ -371,19 +371,22 @@ class typeclass(object):
                 wrapped_type = numpy.complex64
             else:
                 raise NameError("Unknown configuration for default_data_types: {}".format(config_data_types))
+        elif getattr(wrapped_type, '__name__', '') == 'bool_' and typename is None:
+            typename = 'bool'
 
         self.type = wrapped_type  # Type in Python
         self.ctype = _CTYPES[wrapped_type]  # Type in C
         self.ctype_unaligned = self.ctype  # Type in C (without alignment)
         self.dtype = self  # For compatibility support with numpy
         self.bytes = _BYTES[wrapped_type]  # Number of bytes for this type
+        self.typename = typename
 
     def __hash__(self):
         return hash((self.type, self.ctype))
 
     def to_string(self):
         """ A Numpy-like string-representation of the underlying data type. """
-        return self.type.__name__
+        return self.typename or self.type.__name__
 
     def as_ctypes(self):
         """ Returns the ctypes version of the typeclass. """
@@ -400,7 +403,7 @@ class typeclass(object):
     def to_json(self):
         if self.type is None:
             return None
-        return self.type.__name__
+        return self.typename or self.type.__name__
 
     @staticmethod
     def from_json(json_obj, context=None):
@@ -947,6 +950,12 @@ class callback(typeclass):
         from functools import partial
         from dace import data, symbolic
 
+        def _string_converter(a: str, *args):
+            tmp = ctypes.cast(a, ctypes.c_char_p).value.decode('utf-8')
+            if tmp.startswith(chr(0xFFFF)):
+                return bytes(tmp[1:], 'utf-8')
+            return tmp
+
         inp_arraypos = []
         ret_arraypos = []
         inp_types_and_sizes = []
@@ -961,7 +970,7 @@ class callback(typeclass):
             elif isinstance(arg, data.Scalar) and arg.dtype == string:
                 inp_arraypos.append(index)
                 inp_types_and_sizes.append((ctypes.c_char_p, []))
-                inp_converters.append(lambda a, *args: ctypes.cast(a, ctypes.c_char_p).value.decode('utf-8'))
+                inp_converters.append(_string_converter)
             elif isinstance(arg, data.Scalar) and isinstance(arg.dtype, pointer):
                 inp_arraypos.append(index)
                 inp_types_and_sizes.append((ctypes.c_void_p, []))
@@ -1101,7 +1110,7 @@ def isconstant(var):
     return type(var) in _CONSTANT_TYPES
 
 
-bool_ = typeclass(numpy.bool_)
+bool_ = typeclass(numpy.bool_, 'bool')
 int8 = typeclass(numpy.int8)
 int16 = typeclass(numpy.int16)
 int32 = typeclass(numpy.int32)
@@ -1165,7 +1174,7 @@ DTYPE_TO_TYPECLASS = {
 
 # Since this overrides the builtin bool, this should be after the
 # DTYPE_TO_TYPECLASS dictionary
-bool = typeclass(numpy.bool_)
+bool = bool_
 
 TYPECLASS_TO_STRING = {
     bool: "dace::bool",

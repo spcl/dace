@@ -9,12 +9,353 @@ import dace.subsets as subsets
 from typing import Dict, List, Optional, Tuple, Set, Union
 
 from dace import data, dtypes, symbolic
+from dace.codegen import control_flow as cf
 from dace.sdfg import nodes, utils
 from dace.sdfg.graph import SubgraphView, MultiConnectorEdge
 from dace.sdfg.scope import ScopeSubgraphView, ScopeTree
 from dace.sdfg import SDFG, SDFGState, InterstateEdge
 from dace.sdfg import graph
 from dace.memlet import Memlet
+
+
+def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: Optional[SDFGState] = None) -> SDFGState:
+    """
+    Nests an SDFG subgraph (SDFGStates and InterstateEdges).
+    
+    :param sdfg: The SDFG containing the subgraph.
+    :param subgraph: The SubgraphView description of the subgraph.
+    :param start: The start state of the subgraph.
+    :return: The SDFGState containing the NestedSDFG node (containing the nested SDFG subgraph).
+    """
+
+    # Nest states
+    states = subgraph.nodes()
+    if len(states) > 1:
+
+        if start is not None:
+            source_node = start
+        else:
+            src_nodes = subgraph.source_nodes()
+            if len(src_nodes) != 1:
+                raise ValueError('Ambiguous start state of the SDFG subgraph. '
+                                 'Please provide the start state via the "start" argument.')
+            source_node = src_nodes[0]
+
+        sink_nodes = subgraph.sink_nodes()
+        if len(sink_nodes) != 1:
+            raise NotImplementedError
+        sink_node = sink_nodes[0]
+
+        # Find read/write sets
+        read_set, write_set = set(), set()
+        for state in states:
+            rset, wset = state.read_and_write_sets()
+            read_set |= rset
+            write_set |= wset
+            # Add to write set also scalars between tasklets
+            for src_node in state.nodes():
+                if not isinstance(src_node, nodes.Tasklet):
+                    continue
+                for dst_node in state.nodes():
+                    if src_node is dst_node:
+                        continue
+                    if not isinstance(dst_node, nodes.Tasklet):
+                        continue
+                    for e in state.edges_between(src_node, dst_node):
+                        if e.data.data and e.data.data in sdfg.arrays:
+                            write_set.add(e.data.data)
+        # Add data from edges
+        for src in states:
+            for dst in states:
+                for edge in sdfg.edges_between(src, dst):
+                    for s in edge.data.free_symbols:
+                        if s in sdfg.arrays:
+                            read_set.add(s)
+
+        # Find NestedSDFG's unique data
+        rw_set = read_set | write_set
+        unique_set = set()
+        for name in rw_set:
+            if not sdfg.arrays[name].transient:
+                continue
+            found = False
+            for state in sdfg.states():
+                if state in states:
+                    continue
+                for node in state.nodes():
+                    if (isinstance(node, nodes.AccessNode) and node.data == name):
+                        found = True
+                        break
+            if not found:
+                unique_set.add(name)
+
+        # Find NestedSDFG's connectors
+        read_set = {n for n in read_set if n not in unique_set or not sdfg.arrays[n].transient}
+        write_set = {n for n in write_set if n not in unique_set or not sdfg.arrays[n].transient}
+
+        # Find defined subgraph symbols
+        defined_symbols = set()
+        strictly_defined_symbols = set()
+        for e in subgraph.edges():
+            defined_symbols.update(set(e.data.assignments.keys()))
+            for k, v in e.data.assignments.items():
+                try:
+                    if k not in sdfg.symbols and k not in {str(a) for a in symbolic.pystr_to_symbolic(v).args}:
+                        strictly_defined_symbols.add(k)
+                except AttributeError:
+                    # `symbolic.pystr_to_symbolic` may return bool, which doesn't have attribute `args`
+                    pass
+
+        new_state = sdfg.add_state('nested_sdfg_parent')
+        nsdfg = SDFG("nested_sdfg", constants=sdfg.constants_prop, parent=new_state)
+        nsdfg.add_node(source_node, is_start_state=True)
+        nsdfg.add_nodes_from([s for s in states if s is not source_node])
+        for s in states:
+            s.parent = nsdfg
+        for e in subgraph.edges():
+            nsdfg.add_edge(e.src, e.dst, e.data)
+
+        for e in sdfg.in_edges(source_node):
+            sdfg.add_edge(e.src, new_state, e.data)
+        for e in sdfg.out_edges(sink_node):
+            sdfg.add_edge(new_state, e.dst, e.data)
+
+        sdfg.remove_nodes_from(states)
+
+        # Add NestedSDFG arrays
+        for name in read_set | write_set:
+            nsdfg.arrays[name] = copy.deepcopy(sdfg.arrays[name])
+            nsdfg.arrays[name].transient = False
+        for name in unique_set:
+            nsdfg.arrays[name] = sdfg.arrays[name]
+            del sdfg.arrays[name]
+
+        # If there are symbols (new or not) assigned value in the subgraph, their values will be propagated to the
+        # (outer) SDFG through a symbol-scalar-symbol conversion. This is happening in two parts: (1) inside the nested
+        # SDFG (symbol -> scalar), (2) in the outer SDFG, just after the SDFGState containing the NestedSDFG node
+        # (scalar -> symbol).
+        ndefined_symbols = set()
+        out_mapping = {}
+        out_state = None
+        for e in nsdfg.edges():
+            ndefined_symbols.update(set(e.data.assignments.keys()))
+        if ndefined_symbols:
+            out_state = nsdfg.add_state('symbolic_output')
+            nsdfg.add_edge(sink_node, out_state, InterstateEdge())
+            for s in ndefined_symbols:
+                if s in nsdfg.symbols:
+                    dtype = nsdfg.symbols[s]
+                else:
+                    dtype = sdfg.symbols[s]
+                name, _ = sdfg.add_scalar(f"__sym_out_{s}", dtype, transient=True, find_new_name=True)
+                out_mapping[s] = name
+                nname, ndesc = nsdfg.add_scalar(f"__sym_out_{s}", dtype, find_new_name=True)
+                # Part (1)
+                tasklet = out_state.add_tasklet(f"set_{nname}", {}, {'__out'}, f'__out = {s}')
+                acc = out_state.add_access(nname)
+                out_state.add_edge(tasklet, '__out', acc, None, Memlet.from_array(nname, ndesc))
+                write_set.add(name)
+
+        # Add NestedSDFG node
+        fsymbols = sdfg.symbols.keys() | nsdfg.free_symbols
+        fsymbols.update(defined_symbols - strictly_defined_symbols)
+        mapping = {s: s for s in fsymbols}
+        cnode = new_state.add_nested_sdfg(nsdfg, None, read_set, write_set, mapping)
+        for s in strictly_defined_symbols:
+            if s in sdfg.symbols:
+                sdfg.remove_symbol(s)
+
+        # Connect input/output data of the subgraph to the NestedSDFG node.
+        for name in read_set:
+            r = new_state.add_read(name)
+            new_state.add_edge(r, None, cnode, name, Memlet.from_array(name, sdfg.arrays[name]))
+        for name in write_set:
+            w = new_state.add_write(name)
+            new_state.add_edge(cnode, name, w, None, Memlet.from_array(name, sdfg.arrays[name]))
+
+        # Part (2) 
+        if out_state is not None:
+            extra_state = sdfg.add_state('symbolic_output')
+            for e in sdfg.out_edges(new_state):
+                sdfg.add_edge(extra_state, e.dst, e.data)
+                sdfg.remove_edge(e)
+            sdfg.add_edge(new_state, extra_state, InterstateEdge(assignments=out_mapping))
+            new_state = extra_state
+
+    else:
+        new_state = states[0]
+
+    return new_state
+
+
+def _copy_state(sdfg: SDFG,
+                state: SDFGState,
+                before: bool = True,
+                states: Optional[Set[SDFGState]] = None) -> SDFGState:
+    """
+    Duplicates a state, placing the copy before or after (see param before) the original and redirecting a subset of its
+    edges (see param state). The state is expected to be a scope's source or sink state and this method facilitates the
+    nesting of SDFG subgraphs where the state may be part of multiple scopes.
+    
+    :param state: The SDFGState to copy.
+    :param before: True if the copy should be placed before the original.
+    :param states: A collection of SDFGStates that should be considered for edge redirection.
+    :return: The SDFGState copy.
+    """
+
+    state_copy = copy.deepcopy(state)
+    state_copy._label += '_copy'
+    sdfg.add_node(state_copy)
+
+    in_conditions = []
+    for e in sdfg.in_edges(state):
+        if states and e.src not in states:
+            continue
+        sdfg.add_edge(e.src, state_copy, e.data)
+        sdfg.remove_edge(e)
+        if not e.data.is_unconditional():
+            in_conditions.append(e.data.condition.as_string)
+
+    out_conditions = []
+    for e in sdfg.out_edges(state):
+        if states and e.dst not in states:
+            continue
+        sdfg.add_edge(state_copy, e.dst, e.data)
+        sdfg.remove_edge(e)
+        if not e.data.is_unconditional():
+            out_conditions.append(e.data.condition.as_string)
+
+    if before:
+        condition = None
+        if in_conditions:
+            condition = 'or'.join([f"({c})" for c in in_conditions])
+        sdfg.add_edge(state_copy, state, InterstateEdge(condition=condition))
+    else:
+        condition = None
+        # NOTE: The following should be unecessary for preserving program semantics. Therefore we comment it out to
+        # avoid the overhead of evaluating the condition.
+        # if out_conditions:
+        #     condition = 'or'.join([f"({c})" for c in out_conditions])
+        sdfg.add_edge(state, state_copy, InterstateEdge(condition=condition))
+
+    return state_copy
+
+
+def find_sdfg_control_flow(sdfg: SDFG) -> Dict[SDFGState, Set[SDFGState]]:
+    """
+    Partitions the SDFG to subgraphs that can be nested independently of each other. The method does not nest the
+    subgraphs but alters the SDFG; (1) interstate edges are split, (2) scope source/sink states that belong to multiple
+    scopes are duplicated (see _copy_state).
+    
+    :param sdfg: The SDFG to be partitioned.
+    :return: The found subgraphs in the form of a dictionary where the keys are the start state of the subgraphs and the
+             values are the sets of SDFGStates contained withing each subgraph.
+    """
+
+    split_interstate_edges(sdfg)
+
+    # Create a unique sink state to avoid issues with finding control flow.
+    sink_states = sdfg.sink_nodes()
+    if len(sink_states) > 1:
+        new_sink = sdfg.add_state('common_sink')
+        for s in sink_states:
+            sdfg.add_edge(s, new_sink, InterstateEdge())
+
+    ipostdom = utils.postdominators(sdfg)
+    cft = cf.structured_control_flow_tree(sdfg, None)
+
+    # Iterate over the SDFG's control flow scopes and create for each an SDFG subraph. These subgraphs must be disjoint,
+    # so we duplicate SDFGStates that appear in more than one scopes (guards and exits of loops and conditionals).
+    components = {}
+    visited = {}  # Dict[SDFGState, bool]: True if SDFGState in Scope (non-SingleState)
+    for i, child in enumerate(cft.children):
+        if isinstance(child, cf.SingleState):
+            if child.state in visited:
+                continue
+            components[child.state] = (set([child.state]), child)
+            visited[child.state] = False
+        elif isinstance(child, (cf.ForScope, cf.WhileScope)):
+            guard = child.guard
+            fexit = None
+            condition = child.condition if isinstance(child, cf.ForScope) else child.test
+            for e in sdfg.out_edges(guard):
+                if e.data.condition != condition:
+                    fexit = e.dst
+                    break
+            if fexit is None:
+                raise ValueError("Cannot find for-scope's exit states.")
+
+            states = set(utils.dfs_conditional(sdfg, [guard], lambda p, _: p is not fexit))
+
+            if guard in visited:
+                if visited[guard]:
+                    guard_copy = _copy_state(sdfg, guard, False, states)
+                    guard.remove_nodes_from(guard.nodes())
+                    states.remove(guard)
+                    states.add(guard_copy)
+                    guard = guard_copy
+                else:
+                    del components[guard]
+                    del visited[guard]
+
+            if not (i == len(cft.children) - 2 and isinstance(cft.children[i + 1], cf.SingleState)
+                    and cft.children[i + 1].state is fexit):
+                fexit_copy = _copy_state(sdfg, fexit, True, states)
+                fexit.remove_nodes_from(fexit.nodes())
+                states.remove(fexit)
+                states.add(fexit_copy)
+
+            components[guard] = (states, child)
+            visited.update({s: True for s in states})
+        elif isinstance(child, (cf.IfScope, cf.IfElseChain)):
+            guard = child.branch_state
+            ifexit = ipostdom[guard]
+
+            states = set(utils.dfs_conditional(sdfg, [guard], lambda p, _: p is not ifexit))
+
+            if guard in visited:
+                if visited[guard]:
+                    guard_copy = _copy_state(sdfg, guard, False, states)
+                    guard.remove_nodes_from(guard.nodes())
+                    states.remove(guard)
+                    states.add(guard_copy)
+                    guard = guard_copy
+                else:
+                    del components[guard]
+                    del visited[guard]
+
+            if not (i == len(cft.children) - 2 and isinstance(cft.children[i + 1], cf.SingleState)
+                    and cft.children[i + 1].state is ifexit):
+                ifexit_copy = _copy_state(sdfg, ifexit, True, states)
+                ifexit.remove_nodes_from(ifexit.nodes())
+                states.remove(ifexit)
+                states.add(ifexit_copy)
+
+            components[guard] = (states, child)
+            visited.update({s: True for s in states})
+        else:
+            raise ValueError(f"Unsupported control flow class {type(child)}")
+
+    return components
+
+
+def nest_sdfg_control_flow(sdfg: SDFG, components=None):
+    """
+    Partitions the SDFG to subgraphs and nests them.
+    
+    :param sdfg: The SDFG to be partitioned.
+    :param components: An existing partition of the SDFG.
+    """
+
+    components = components or find_sdfg_control_flow(sdfg)
+
+    num_components = len(components)
+
+    if num_components < 2:
+        return
+
+    for i, (start, (component, _)) in enumerate(components.items()):
+        nest_sdfg_subgraph(sdfg, graph.SubgraphView(sdfg, component), start)
 
 
 def nest_state_subgraph(sdfg: SDFG,
@@ -221,6 +562,7 @@ def nest_state_subgraph(sdfg: SDFG,
             edge.data.data = new_edge.data.data
             if not full_data:
                 edge.data.subset.offset(global_subsets[original_edge.data.data][1], True)
+                edge.data.subset.offset(nsdfg.arrays[edge.data.data].offset, True)
 
     # Add nested SDFG node to the input state
     nested_sdfg = state.add_nested_sdfg(nsdfg, None,

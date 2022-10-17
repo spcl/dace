@@ -106,7 +106,10 @@ class OptionalArrayInference(ppl.Pass):
                 # Conditional code follows, use immediate post-dominator for next unconditional state
                 curstate = ipostdom[curstate]
             # Compute new out degree
-            out_degree = sdfg.out_degree(curstate)
+            if curstate in sdfg.nodes():
+                out_degree = sdfg.out_degree(curstate)
+            else:
+                out_degree = 0
         # Yield final state
         yield curstate
 
