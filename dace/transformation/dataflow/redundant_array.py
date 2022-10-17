@@ -1487,10 +1487,12 @@ class RemoveSliceView(pm.SingleStateTransformation):
         if view_edge.dst is self.view:
             viewed = state.memlet_path(view_edge)[0].src
             non_view_edges = state.out_edges(self.view)
+            subset = view_edge.data.get_src_subset(view_edge, state)
             is_src = True
         else:
             viewed = state.memlet_path(view_edge)[-1].dst
             non_view_edges = state.in_edges(self.view)
+            subset = view_edge.data.get_dst_subset(view_edge, state)
             is_src = False
 
         ########################################################
@@ -1517,14 +1519,14 @@ class RemoveSliceView(pm.SingleStateTransformation):
         if vdesc.dtype != desc.dtype:
             return False
 
-        if self.get_matching_dimensions(desc, vdesc) is None:
+        if self.get_matching_dimensions(desc, vdesc, subset) is None:
             return False
 
         return True
 
     @staticmethod
-    def get_matching_dimensions(vdesc: data.View,
-                                adesc: data.Array) -> Optional[Tuple[Dict[int, int], List[int], List[int]]]:
+    def get_matching_dimensions(vdesc: data.View, adesc: data.Array,
+                                subset: subsets.Range) -> Optional[Tuple[Dict[int, int], List[int], List[int]]]:
         """
         Finds the matching dimensions mapping between a data descriptor and a view reinterpreting it, if and only
         if the view represents a slice (with potential new, "unsqueezed" axes).
@@ -1600,9 +1602,13 @@ class RemoveSliceView(pm.SingleStateTransformation):
         dimension_mapping.update(new_dims)
 
         # Find degenerate dimension mapping in remainder of data container (squeezed)
+        subset_size = subset.size() if subset is not None else None
         inverse_dim_mapping = {v: k for k, v in dimension_mapping.items()}
         for i in range(len(adesc.shape)):
             if i not in inverse_dim_mapping:
+                if subset_size is not None and subset_size[i] != 1:
+                    # A squeezed dimension must have a subset of size = 1 on the source data container
+                    return None
                 squeezed.append(i)
 
         return dimension_mapping, unsqueezed, squeezed
@@ -1631,7 +1637,7 @@ class RemoveSliceView(pm.SingleStateTransformation):
             subset = view_edge.data.get_dst_subset(view_edge, state)
             is_src = False
 
-        mapping, unsqueezed, squeezed = self.get_matching_dimensions(desc, viewed.desc(sdfg))
+        mapping, unsqueezed, squeezed = self.get_matching_dimensions(desc, viewed.desc(sdfg), subset)
 
         # Update edges
         for edge in non_view_edges:

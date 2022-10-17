@@ -1,10 +1,13 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import numpy as np
 import warnings
+
+import numpy as np
+import pytest
 
 import dace
 from dace import data, nodes
 from dace.transformation.dataflow import RedundantReadSlice, RedundantWriteSlice, RemoveSliceView
+from dace.transformation.interstate import InlineMultistateSDFG, InlineSDFG, StateFusion
 
 
 def _count_views(sdfg: dace.SDFG) -> int:
@@ -87,16 +90,24 @@ def test_write_slice2():
     assert (num_views_after == 0)
 
 
-def test_view_slice_detect_simple():
+@pytest.mark.parametrize('with_subset', (False, True))
+def test_view_slice_detect_simple(with_subset):
     adesc = dace.float64[1, 1]
     vdesc = dace.data.View(dace.float64, [1])
-    mapping, unsqueezed, squeezed = RemoveSliceView.get_matching_dimensions(vdesc, adesc)
+
+    if with_subset:
+        subset = dace.Memlet('A[0, 0]').subset
+    else:
+        subset = None
+
+    mapping, unsqueezed, squeezed = RemoveSliceView.get_matching_dimensions(vdesc, adesc, subset)
     assert mapping == {0: 0}
     assert len(unsqueezed) == 0
     assert tuple(squeezed) == (1, )
 
 
-def test_view_slice_detect_complex():
+@pytest.mark.parametrize('with_subset', (False, True))
+def test_view_slice_detect_complex(with_subset):
     M = dace.symbol('M')
     N = dace.symbol('N')
     K = dace.symbol('K')
@@ -104,10 +115,37 @@ def test_view_slice_detect_complex():
     adesc = dace.float64[2, 2, 1, 1, N]
     adesc.strides = [5 * M * N * K, M * N * K, M * N, 1, N]
     vdesc = dace.data.View(dace.float64, [2, 1, 2, 1, N, 1], strides=[5 * M * N * K, M * N * K, M * N * K, M * N, N, N])
-    mapping, unsqueezed, squeezed = RemoveSliceView.get_matching_dimensions(vdesc, adesc)
+
+    if with_subset:
+        subset = dace.Memlet('A[0:2, 3:5, i, j, 0:M]').subset
+    else:
+        subset = None
+
+    mapping, unsqueezed, squeezed = RemoveSliceView.get_matching_dimensions(vdesc, adesc, subset)
     assert mapping == {0: 0, 2: 1, 3: 2, 4: 4}
     assert tuple(unsqueezed) == (1, 5)
     assert tuple(squeezed) == (3, )
+
+
+def test_view_slice_detect_nonslice():
+    # Constant values
+    assert RemoveSliceView.get_matching_dimensions(dace.float64[60], dace.float64[30, 2],
+                                                   dace.subsets.Range([(0, 29, 1), (0, 0, 1)])) is None
+
+    # Symbolic values
+    M, N, K = (dace.symbol(s) for s in 'MNK')
+    assert RemoveSliceView.get_matching_dimensions(dace.float64[M * N], dace.float64[M, N],
+                                                   dace.subsets.Range([(0, M - 1, 1), (0, N - 1, 1)])) is None
+    assert RemoveSliceView.get_matching_dimensions(dace.float64[K], dace.float64[M, N],
+                                                   dace.subsets.Range([(0, M - 1, 1), (0, N - 1, 1)])) is None
+
+    # A[2, 0:K] -> V[0:K]
+    mapping, unsq, sq = RemoveSliceView.get_matching_dimensions(dace.float64[K], dace.float64[M, N],
+                                                   dace.subsets.Range([(2, 2, 1), (0, K - 1, 1)]))
+    assert mapping == {0: 1}
+    assert len(unsq) == 0
+    assert tuple(sq) == (0,)
+
 
 
 if __name__ == '__main__':
@@ -115,5 +153,8 @@ if __name__ == '__main__':
     test_read_slice2()
     test_write_slice()
     test_write_slice2()
-    test_view_slice_detect_simple()
-    test_view_slice_detect_complex()
+    test_view_slice_detect_simple(False)
+    test_view_slice_detect_simple(True)
+    test_view_slice_detect_complex(False)
+    test_view_slice_detect_complex(True)
+    test_view_slice_detect_nonslice()
