@@ -49,8 +49,8 @@ class TemporalVectorization(transformation.SubgraphTransformation):
         # 1. There is at least one map.
         if len(maps) < 1: return False
 
-        # TODO array of streams!
-        # TODO map of computation?? (matmul)
+        # TODO array of streams
+        # TODO map of computation (matmul)
 
         # 2. All of the non- source and sink nodes only resides within this subgraph.
         for sg in dace.sdfg.concurrent_subgraphs(graph):
@@ -103,6 +103,7 @@ class TemporalVectorization(transformation.SubgraphTransformation):
         old_path = state.memlet_path(old_edge)
         for edge in old_path[1:]:
             edge.data = dace.Memlet(f'{name}[0]')
+        old_path[-1].dst.in_connectors[old_path[-1].dst_conn] = dtype
         state.remove_edge(old_edge)
         new_src = state.add_read(name)
         state.add_edge(new_src, old_edge.src_conn, old_edge.dst, old_edge.dst_conn, memlet=dace.Memlet(f'{name}[0]'))
@@ -111,19 +112,6 @@ class TemporalVectorization(transformation.SubgraphTransformation):
         gearbox_src = state.add_write(name)
         state.add_memlet_path(src, gearbox, dst_conn='from_memory', memlet=Memlet(f'{src.data}[0]'))
         state.add_memlet_path(gearbox, gearbox_src, src_conn='to_kernel', memlet=Memlet(f'{name}[0]'))
-        
-        return
-
-        # Build the new subgraph
-        tasklet = state.add_tasklet(f'issue_{src.data}', {'inp'}, {'out'}, '''
-tmp = inp
-out.push(inp[0])
-out.push(inp[1])
-        ''')
-        m_entry, m_exit = state.add_map(f'issue_{src.data}_map', {'i': map.range.ranges[0]}, dace.ScheduleType.FPGA_Device)
-        new_src = state.add_write(name)
-        state.add_memlet_path(src, m_entry, tasklet, memlet=old_edge.data, src_conn=old_edge.src_conn, dst_conn='inp')
-        state.add_memlet_path(tasklet, m_exit, new_src, memlet=dace.Memlet(f'{name}[0]'), src_conn='out', dst_conn=old_edge.dst_conn)
 
     def packer(self, sdfg: SDFG, state: SDFGState, subgraph: SubgraphView, map, dst):
         arr = sdfg.arrays[dst.data]
@@ -137,6 +125,7 @@ out.push(inp[1])
         old_path = state.memlet_path(old_edge)
         for edge in old_path[:-1]:
             edge.data = dace.Memlet(f'{name}[0]')
+        old_path[0].src.out_connectors[old_path[0].src_conn] = dtype
         state.remove_edge(old_edge)
         new_dst = state.add_write(name)
         state.add_edge(old_edge.src, old_edge.src_conn, new_dst, old_edge.dst_conn, memlet=dace.Memlet(f'{name}[0]'))
@@ -145,28 +134,6 @@ out.push(inp[1])
         gearbox_dst = state.add_read(name)
         state.add_memlet_path(gearbox_dst, gearbox, dst_conn='from_memory', memlet=Memlet(f'{name}[0]'))
         state.add_memlet_path(gearbox, dst, src_conn='to_kernel', memlet=Memlet(f'{dst.data}[0]'))
-        
-        return
-
-        # Build the new subgraph
-        # me0 > me1 > tasklet0 > mx1 > tmp > tasklet1 > mx0
-        m_outer_entry, m_outer_exit = state.add_map(f'pack_{dst.data}_map_outer', {'i': map.range.ranges[0]}, dace.ScheduleType.FPGA_Device)
-        m_inner_entry, m_inner_exit = state.add_map(f'pack_{dst.data}_map_inner', {'j': f'0:{self.factor}'}, dace.ScheduleType.FPGA_Device)
-        
-        tasklet_pack = state.add_tasklet(f'pack_{dst.data}_pack', {'inp'}, {'out'}, '''
-out = inp
-        ''')
-        tmp_name = f'pack_{dst.data}_tmp'
-        sdfg.add_array(tmp_name, [self.factor], dtype=arr.dtype.base_type, storage=dtypes.StorageType.FPGA_Registers)
-        tmp = state.add_access(tmp_name)
-        tasklet_send = state.add_tasklet(f'pack_{dst.data}_send', {'inp'}, {'out'}, '''
-out = inp
-        ''')
-        new_dst = state.add_read(name)
-        state.add_memlet_path(dst, m_outer_entry, m_inner_entry, tasklet_pack, memlet=old_edge.data, dst_conn='inp')
-        state.add_memlet_path(tasklet_pack, m_inner_exit, tmp, memlet=dace.Memlet(f'{tmp_name}[j]'), src_conn='out')
-        state.add_edge(tmp, None, tasklet_send, 'inp', memlet=dace.Memlet(f'{tmp_name}[0:{self.factor}]'))
-        state.add_memlet_path(tasklet_send, m_outer_exit, new_dst, memlet=dace.Memlet(f'{name}[0]'), src_conn='out') 
     
     def apply(self, sdfg: SDFG, **kwargs):
         # TODO Only the inwards direction is described here. 
@@ -184,23 +151,6 @@ out = inp
         
         for dst in dst_nodes:
             self.packer(sdfg, graph, subgraph, maps[0], dst)
-        
-        # Insert views after each source node.
-        #for src in []:#src_nodes:
-        #    vw = self.create_intermediate_view(sdfg, graph, src.data)
-        #    # Reconnect the old memlet to the new view
-        #    for edge in subgraph.out_edges(src):
-        #        graph.remove_edge(edge)
-        #        graph.add_edge(src, edge.src_conn, vw, edge.dst_conn, edge.data)
-        #        graph.add_edge(vw, edge.src_conn, edge.dst, edge.dst_conn, edge.data)
-        
-        # Insert views before each sink node
-        #for dst in []:#dst_nodes:
-        #    vw = self.create_intermediate_view(sdfg, graph, dst.data)
-        #    for edge in subgraph.in_edges(dst):
-        #        graph.remove_edge(edge)
-        #        graph.add_edge(edge.src, edge.src_conn, vw, edge.dst_conn, edge.data)
-        #        graph.add_edge(vw, edge.src_conn, dst, edge.dst_conn, edge.data)
 
         # Update the schedule of the map.
         # TODO gør noget smartere. Men hvertfald, burde virke for vadd

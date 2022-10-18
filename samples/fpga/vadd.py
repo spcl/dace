@@ -45,7 +45,7 @@ def make_sdfg(N, V, double_pumped):
     sdfg.apply_transformations(FPGATransformState)
     sdfg.apply_transformations_repeated(StreamingMemory, dict(storage=dace.StorageType.FPGA_Local, buffer_size=32))
     sgs = dace.sdfg.concurrent_subgraphs(state)
-    sf = TemporalVectorization(sgs[0])
+    sf = TemporalVectorization()
     cba = [TemporalVectorization.can_be_applied(sf, sdfg, sg) for sg in sgs]
     app = [TemporalVectorization.apply_to(sdfg, sg) for i, sg in enumerate(sgs) if cba[i]]
     sdfg.save('aoeu.sdfg')

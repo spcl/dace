@@ -208,7 +208,7 @@ class Vectorization(transformation.SingleStateTransformation):
                 else:
                     newlist[contigidx] = (self.vector_len * rb, self.vector_len * rb + self.vector_len - 1, 1)
             edge.data.subset = subsets.Range(newlist)
-            edge.data.volume = vector_size
+            edge.data.volume = 1#vector_size
 
         # Vector length propagation using data descriptors, recursive traversal
         # outwards
