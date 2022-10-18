@@ -1074,6 +1074,190 @@ reduce_out = {reduction_expr}''')
 
         return nsdfg
 
+@dace.library.expansion
+class WarpReductionExpansion_new(pm.ExpandTransformation):
+     
+    environments = [CUDA]
+    
+    @staticmethod
+    def expansion(node: 'Reduce', parent_state: SDFGState, parent_sdfg: SDFG):
+                
+        # ToDo: implement checks (once this thing works when used appropriately)
+        
+        #-----------------------------------------------------------
+        # Grabbing the Data:
+        input_edge_A = parent_state.in_edges(node)[0]
+        in_subset = dcpy(input_edge_A.data.subset)
+        is_q_dim = in_subset.squeeze()
+        in_dim = len(in_subset)
+        
+        output_edge = parent_state.out_edges(node)[0]
+        out_subset = dcpy(output_edge.data.subset)
+        os_q_dim = out_subset.squeeze()
+        out_dim = len(out_subset)
+        
+        input_data_A = parent_sdfg.arrays[input_edge_A.data.data]      # this I believe to be the location of A, (the data)
+        output_data = parent_sdfg.arrays[output_edge.data.data]        # and this the location of Res        
+        
+        #-----------------------------------------------------------
+        # Notes to self:
+        # 
+        # My Sum is actually created on the thread-level
+        # Can I access an access node of the parent sdfg (gpu_sdfg) in this state?
+        # I simply create a new one
+        
+        #-----------------------------------------------------------
+        
+        def Init(state, m):
+            dst_node = state.add_write(m)
+            init_t = state.add_tasklet('init_out', {}, {'__out'}, '__out = 0')
+            
+            state.add_edge (init_t, '__out', dst_node, None, dace.Memlet(data=m))
+        
+        def Tile_and_Load(state, i1, mS):
+
+            init_tasklet = state.add_tasklet('init_sum', {}, {'__out'}, '__out = 0')
+            sum_node = state.add_access(mS)
+            state.add_edge(init_tasklet, '__out', sum_node, None, dace.Memlet.from_array(mS, state.parent.arrays[mS]))
+            
+            src_A = state.add_read(i1)
+            
+            dst_node = state.add_access(mS)
+            
+            me,mx = state.add_map('gridSized_strides_map', dict(tId = 'i*BlockDim+j:N:MaxTs'))
+            tasklet = state.add_tasklet('add', {'in1', '__in3'}, {'out'},  'out = in1 + __in3')
+            
+            state.add_memlet_path(src_A, me, tasklet, dst_conn='in1', memlet=dace.Memlet(data=i1, subset='tId-i*BlockDim - j'))
+            state.add_memlet_path(sum_node, me, tasklet, dst_conn='__in3', memlet=dace.Memlet.from_array(mS, state.parent.arrays[mS]))
+            state.add_memlet_path(tasklet, mx, dst_node, src_conn='out', memlet=dace.Memlet(data=mS, subset='0'))
+        
+        def WriteBackState(state, mS, r):
+    
+            src_node = state.add_read(mS)
+            dst_node = state.add_write(r)
+            
+            state.add_nedge(src_node, dst_node, dace.Memlet(f"{r}", wcr="lambda x, y: x + y"))      
+
+        
+        subSDFG = dace.SDFG('WarpReduction_SDFG')
+        
+        subSDFG.add_array('in_A',
+                          in_subset.size(),
+                          input_data_A.dtype,
+                          strides = [s for i, s in enumerate(input_data_A.strides)if i in is_q_dim],
+                          storage= input_data_A.storage)
+        
+        subSDFG.add_array('out_res',
+                          out_subset.size(),
+                          output_data.dtype,
+                          strides= [s for i, s in enumerate(output_data.strides) if i in os_q_dim],
+                          storage= output_data.storage)
+        
+        #-----------------------------------------------------------
+        # Initialize out to 0 (we might want to consider moving this outside the GPU_maps)
+        init_Res = subSDFG.add_state('Init_Res')
+        Init(init_Res, 'out_res')
+        
+        #-----------------------------------------------------------
+        # Adding the GPU map and connect the Init_res state to it
+        
+        gpuCallState = subSDFG.add_state()
+
+        me, mx = gpuCallState.add_map('GPU_map', {'i': '0:min(int_ceil(N, BlockDim), GridDim)', 'j': '0:BlockDim'})
+        me.map.schedule = dace.dtypes.ScheduleType.GPU_Device
+        
+        subSDFG.add_edge(init_Res, gpuCallState, dace.InterstateEdge())
+        
+        #-----------------------------------------------------------
+        # Creating the SDFG with the actual Reduction Loop
+        
+        gpu_sdfg = dace.SDFG('GPU_SDFG')
+        
+        # How do we pass on Symbols?
+        # For now I have simply used N as well as WarpSize, BlockDim etc...
+        gpu_sdfg.add_array('sA', shape= ['N'], dtype=dace.float64, storage=dace.StorageType.GPU_Global)
+        gpu_sdfg.add_array('sRes', shape=[1], dtype=dace.float64, storage=dace.StorageType.GPU_Global)
+        gpu_sdfg.add_scalar('mySum', dtype=dace.float64, storage=dace.StorageType.Register, transient=True)
+        gpu_sdfg.add_symbol('offset', dace.int32)
+        
+        # entry_state = gpu_sdfg.add_state('Entry_State')
+        
+        #-----------------------------------------------------------
+        # Do grid-sized tiling and loading into mySum
+        tnl_state = gpu_sdfg.add_state('tiling_and_loading')
+        Tile_and_Load(tnl_state, 'sA', 'mySum')
+        
+        #-----------------------------------------------------------
+        #  Creating the Warp-Wise Reduction
+        wwr_state = gpu_sdfg.add_state('WarpWise_Reduction')
+
+        mSum = wwr_state.add_access('mySum')
+        wtasklet = wwr_state.add_tasklet('warpwise_Reduction',
+                                        {}, {'__out'},
+                                        f"__out = __shfl_down_sync(0xFFFFFFFF, {mSum.data}, offset);",
+                                        dace.Language.CPP)
+        wwr_state.add_edge(wtasklet, '__out', mSum , None, dace.Memlet(f"{mSum.data}", wcr="lambda x, y: x + y"))
+
+        #-----------------------------------------------------------
+        # Creating the loop
+        _, _, after_state = gpu_sdfg.add_loop(tnl_state, wwr_state, None, 'offset', '32 / 2', 'offset > 0', 'offset / 2')
+
+        #-----------------------------------------------------------
+        # Write back
+        write_back_state = gpu_sdfg.add_state('Write_Back')
+        WriteBackState(write_back_state, 'mySum', 'sRes')
+
+        random_end_state = gpu_sdfg.add_state('RandomEndState')
+
+        #-----------------------------------------------------------
+        # Adding all the edges
+        # gpu_sdfg.add_edge(entry_state, tnl_state, dace.InterstateEdge('i+j != 0'))
+        # gpu_sdfg.add_edge(entry_state, init_sRes, dace.InterstateEdge('i+j == 0'))
+        # gpu_sdfg.add_edge(init_sRes, tnl_state, dace.InterstateEdge())
+        gpu_sdfg.add_edge(after_state, write_back_state, dace.InterstateEdge('j % WarpSize == 0'))
+        gpu_sdfg.add_edge(after_state, random_end_state, dace.InterstateEdge('j % WarpSize != 0'))
+        gpu_sdfg.add_edge(write_back_state, random_end_state, dace.InterstateEdge())
+        
+        #-----------------------------------------------------------
+        # Make the dataflow between the states happen
+        da_whole_SDFG = gpuCallState.add_nested_sdfg(gpu_sdfg, subSDFG, {'sA'}, {'sRes'})
+
+        Ain = gpuCallState.add_read('in_A')
+        ROut = gpuCallState.add_write('out_res')
+
+        gpuCallState.add_memlet_path(Ain, me, da_whole_SDFG, memlet=dace.Memlet(data='in_A', subset='BlockDim * i + j: (min(int_ceil(N, BlockDim), GridDim) * BlockDim)'), dst_conn='sA')
+        gpuCallState.add_memlet_path(da_whole_SDFG, mx, ROut, memlet=dace.Memlet(data='out_res', subset='0'), src_conn='sRes')
+
+        #-----------------------------------------------------------
+        # Schedule the threadblocks on the GPU
+        from dace.transformation.dataflow import MapExpansion
+        subSDFG.apply_transformations_repeated(MapExpansion)
+
+        for n in gpuCallState.nodes():
+            if isinstance(n, nodes.MapEntry) and "j" in n.map.params:
+                n.map.schedule = dace.dtypes.ScheduleType.GPU_ThreadBlock
+       
+        #-----------------------------------------------------------
+        # Rename outer connectors and add to node (appearently that needs to be done)
+        input_edge_A._dst_conn = 'in_A'
+        output_edge._src_conn = 'out_res'
+        node.add_in_connector('in_A')
+        node.add_out_connector('out_res')
+        
+        # subSDFG.apply_gpu_transformations()
+        # subSDFG.view()
+        
+        # subSDFG.validate()
+         
+        from dace.transformation import helpers
+        helpers.nest_sdfg_control_flow(da_whole_SDFG.sdfg)
+
+        # subSDFG.simplify()
+
+        return subSDFG
+
+
+
 
 @dace.library.expansion
 class WarpReductionExpansion(pm.ExpandTransformation):
@@ -1141,6 +1325,13 @@ class WarpReductionExpansion(pm.ExpandTransformation):
             
             state.add_nedge(src_node, dst_node, dace.Memlet(f"{r}", wcr="lambda x, y: x + y"))      
 
+        #-----------------------------------------------------------
+        
+        default_symbols = {}
+        
+        
+        #-----------------------------------------------------------
+        
         
         subSDFG = dace.SDFG('WarpReduction_SDFG')
         
@@ -1175,6 +1366,8 @@ class WarpReductionExpansion(pm.ExpandTransformation):
         gpu_sdfg.add_array('sA', shape= ['N'], dtype=dace.float64, storage=dace.StorageType.GPU_Global)
         gpu_sdfg.add_array('sRes', shape=[1], dtype=dace.float64, storage=dace.StorageType.GPU_Global)
         gpu_sdfg.add_scalar('mySum', dtype=dace.float64, storage=dace.StorageType.Register, transient=True)
+        
+        gpu_sdfg.add_symbol('offset', dace.int32)
         
         entry_state = gpu_sdfg.add_state('Entry_State')
         
@@ -1220,6 +1413,37 @@ class WarpReductionExpansion(pm.ExpandTransformation):
         gpu_sdfg.add_edge(write_back_state, random_end_state, dace.InterstateEdge())
         
         ###################
+        
+        
+        #-----------------------------------------------------------
+        
+        subSDFG.add_symbol('MaxTs', dace.int32)
+    
+        
+        default_symbols = {'WarpSize': 32, 'BlockDim': 256, 'GridDim': 2048}
+        symbols = {}
+        
+        for symbol in default_symbols:
+            if symbol not in parent_sdfg.symbols:
+                symbols[symbol] = default_symbols[symbol]
+                subSDFG.add_symbol(symbol, dace.int32)
+        
+        sz = in_subset.size()[0]
+        # print(symbols.get('BlockDim'))
+        # print(sz)
+        
+        # mt = min(sz, symbols.get('BlockDim') * symbols.get('GridDim'))
+        # symbols['MaxTs'] = mt
+        symbols['N'] = sz
+            
+        
+        nsdfg = parent_state.add_nested_sdfg(subSDFG, parent_sdfg, {'in_A'}, {'out_res'}, symbol_mapping=symbols)
+        
+        #-----------------------------------------------------------
+        
+        
+        
+        
         # Make the dataflow between the states happen
         da_whole_SDFG = gpuCallState.add_nested_sdfg(gpu_sdfg, subSDFG, {'sA'}, {'sRes'})
 
@@ -1245,8 +1469,11 @@ class WarpReductionExpansion(pm.ExpandTransformation):
         input_edge_A._dst_conn = 'in_A'
         output_edge._src_conn = 'out_res'
         
+        # from dace.transformation import helpers
+        # helpers.nest_sdfg_control_flow(da_whole_SDFG.sdfg)
         
-        return subSDFG
+        
+        return nsdfg
 
 
 
