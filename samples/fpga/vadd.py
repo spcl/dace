@@ -30,7 +30,6 @@ def make_sdfg(N, V, double_pumped):
     b = state.add_read("B")
     c = state.add_write("C")
 
-    # TODO Do the division of the loop bound in codegen, rather in the SDFG. Or maybe in the future, it should actually be through the SDFG as that would be more transparent and less magic?
     c_entry, c_exit = state.add_map("compute_map", dict({'i': f'0:N//V'}),
         schedule=dace.ScheduleType.FPGA_Double if double_pumped else dace.ScheduleType.Default)
     tasklet = state.add_tasklet('vector_add_core', {'a', 'b'}, {'c'}, 'c = a + b')
@@ -47,17 +46,8 @@ def make_sdfg(N, V, double_pumped):
     sgs = dace.sdfg.concurrent_subgraphs(state)
     sf = TemporalVectorization()
     cba = [TemporalVectorization.can_be_applied(sf, sdfg, sg) for sg in sgs]
-    app = [TemporalVectorization.apply_to(sdfg, sg) for i, sg in enumerate(sgs) if cba[i]]
+    [TemporalVectorization.apply_to(sdfg, sg) for i, sg in enumerate(sgs) if cba[i]]
     sdfg.save('aoeu.sdfg')
-    #quit()
-    #if True in cba:
-     #   TemporalVectorization.apply_to(sdfg, state.nodes())
-        #sdfg.apply_transformations([TemporalVectorization])
-    #quit()
-
-    #if double_pumped:
-     #   c_entry.map.range = Range([(0,f'(N//(V//2))-1',1)])
-        #c_entry.map.range = Range([(0,f'N-1',1)])
 
     from dace.codegen.targets.fpga import is_fpga_kernel
     for s in sdfg.states():

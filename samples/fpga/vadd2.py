@@ -20,35 +20,51 @@ def vadd(x: dace.float32[N], y: dace.float32[N]):
               default=False,
               help="Whether to double pump the compute kernel")
 def cli(size_n, veclen, double_pumped):
+    # Generate the test data and expected results
     N.set(size_n)
-
-    A = np.random.rand(N.get()).astype(np.float32)
-    B = np.random.rand(N.get()).astype(np.float32)
-    expected = A + B
+    x = np.random.rand(N.get()).astype(np.float32)
+    y = np.random.rand(N.get()).astype(np.float32)
+    result = np.zeros(N.get(), dtype=np.float32)
+    expected = x + y
     
-    prog = dace.program(vadd)
-    sdfg = prog.to_sdfg()
-    ambles = size_n%veclen!=0
-    #Vectorization.apply_to(sdfg, dict(vector_len=veclen, preamble=ambles, postamble=ambles))
-    #sdfg.apply_transformations_repeated(Vectorization, dict(vector_len=veclen))
-    applied = sdfg.apply_transformations(FPGATransformState); print(applied)
-    me = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry)][0]
+    # Generate the initial SDFG
+    sdfg = dace.program(vadd).to_sdfg()
 
-    applied = sdfg.apply_transformations(Vectorization, dict(vector_len=veclen, preamble=ambles, postamble=ambles, map_entry=me, propagate_parent=True, strided_map=False)); print (applied)
-    applied = sdfg.apply_transformations_repeated(StreamingMemory, dict(storage=dace.StorageType.FPGA_Local, buffer_size=32)); print(applied)
+    # Apply vectorization transformation
+    ambles = size_n % veclen != 0
+    map_entry = [n for n, _ in sdfg.all_nodes_recursive() 
+        if isinstance(n, dace.nodes.MapEntry)][0]
+    applied = sdfg.apply_transformations(Vectorization, {
+        'vector_len': veclen,
+        'preamble': ambles, 'postamble': ambles,
+        'propagate_parent': True, 'strided_map': False,
+        'map_entry': map_entry
+    })
+    assert(applied == 1)
+    
+    # Transform to an FPGA implementation
+    applied = sdfg.apply_transformations(FPGATransformState)
+    assert(applied == 1)
+    
+    # Apply streaming memory transformation
+    applied = sdfg.apply_transformations_repeated(StreamingMemory, {
+        'storage': dace.StorageType.FPGA_Local,
+        'buffer_size': 1
+    })
+    assert (applied == 3)
+    
+    # Apply temporal vectorization transformation
     sgs = dace.sdfg.concurrent_subgraphs(sdfg.states()[0])
     sf = TemporalVectorization()
     cba = [TemporalVectorization.can_be_applied(sf, sdfg, sg) for sg in sgs]
-    app = [TemporalVectorization.apply_to(sdfg, sg) for i, sg in enumerate(sgs) if cba[i]]
-    sdfg.save('aoeu.sdfg')
-    #sdfg.optimize()
-    #sdfg.compile()
-    C = np.zeros_like(A)
+    assert (sum(cba) == 1)
+    [TemporalVectorization.apply_to(sdfg, sg) for i, sg in enumerate(sgs) if cba[i]]
+    
+    sdfg.specialize({'N': N.get()})
+    sdfg(x=x, y=y, __return=result)
 
-    sdfg(x=A, y=B, __return=C, N=N)
-    #C = vadd(x=A, y=B)
-
-    print (np.sum(np.abs(expected-C)))
+    allclose = np.allclose(expected, result)
+    assert(allclose)
 
 if __name__ == '__main__':
     cli()
