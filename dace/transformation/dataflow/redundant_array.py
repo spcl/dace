@@ -1495,6 +1495,10 @@ class RemoveSliceView(pm.SingleStateTransformation):
             subset = view_edge.data.get_dst_subset(view_edge, state)
             is_src = False
 
+        if subset is None:
+            # `subset = None` means the entire viewed data container is used
+            subset = subsets.Range.from_array(viewed.desc(sdfg))
+
         ########################################################
         # Syntactic feasibility: ensure memlets reach managable node types (access nodes, tasklets, nested SDFGs if
         # strides match) rather than library nodes, which may behave in a custom manner based on the memlet shape.
@@ -1636,6 +1640,10 @@ class RemoveSliceView(pm.SingleStateTransformation):
             non_view_edges = state.in_edges(self.view)
             subset = view_edge.data.get_dst_subset(view_edge, state)
             is_src = False
+
+        if subset is None:
+            # `subset = None` means the entire viewed data container is used
+            subset = subsets.Range.from_array(viewed.desc(sdfg))
 
         mapping, unsqueezed, squeezed = self.get_matching_dimensions(desc, viewed.desc(sdfg), subset)
 
