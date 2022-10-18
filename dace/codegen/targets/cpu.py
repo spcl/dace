@@ -674,7 +674,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
             copy_shape, src_strides, dst_strides, src_expr, dst_expr = \
                 cpp.memlet_copy_to_absolute_strides(
-                    self._dispatcher, sdfg, memlet, src_node, dst_node,
+                    self._dispatcher, sdfg, state_dfg, edge, src_node, dst_node,
                     self._packed_types)
 
             # Which numbers to include in the variable argument part

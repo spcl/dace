@@ -12,7 +12,7 @@ import warnings
 
 import sympy as sp
 from six import StringIO
-from typing import IO, List, Optional, Tuple, Union
+from typing import IO, TYPE_CHECKING, List, Optional, Tuple, Union
 
 import dace
 from dace import data, subsets, symbolic, dtypes, memlet as mmlt, nodes
@@ -27,6 +27,9 @@ from dace.sdfg import nodes, graph as gr, utils
 from dace.properties import LambdaProperty
 from dace.sdfg import SDFG, is_devicelevel_gpu, SDFGState
 from dace.codegen.targets import fpga
+
+if TYPE_CHECKING:
+    from dace.codegen.dispatcher import TargetDispatcher
 
 
 def copy_expr(
@@ -117,67 +120,45 @@ def copy_expr(
                                   "for connector type: {}".format(def_type))
 
 
-def memlet_copy_to_absolute_strides(dispatcher, sdfg, memlet, src_node, dst_node, packed_types=False):
-    # TODO: Take both source and destination subset into account for computing
-    # copy shape.
+def memlet_copy_to_absolute_strides(dispatcher: 'TargetDispatcher',
+                                    sdfg: SDFG,
+                                    state: SDFGState,
+                                    edge: gr.MultiConnectorEdge[mmlt.Memlet],
+                                    src_node: nodes.AccessNode,
+                                    dst_node: nodes.AccessNode,
+                                    packed_types: bool = False):
+    memlet = edge.data
     copy_shape = memlet.subset.size_exact()
     src_nodedesc = src_node.desc(sdfg)
     dst_nodedesc = dst_node.desc(sdfg)
     src_expr, dst_expr = None, None
 
-    if memlet.data == src_node.data:
-        if dispatcher is not None:
-            src_expr = copy_expr(dispatcher, sdfg, src_node.data, memlet, is_write=False, packed_types=packed_types)
-        if memlet.other_subset is not None:
-            if dispatcher is not None:
-                dst_expr = copy_expr(dispatcher,
-                                     sdfg,
-                                     dst_node.data,
-                                     memlet,
-                                     is_write=True,
-                                     offset=memlet.other_subset,
-                                     relative_offset=False,
-                                     packed_types=packed_types)
-            dst_subset = memlet.other_subset
-        else:
-            if dispatcher is not None:
-                dst_expr = copy_expr(dispatcher,
-                                     sdfg,
-                                     dst_node.data,
-                                     memlet,
-                                     is_write=True,
-                                     offset=None,
-                                     relative_offset=False,
-                                     packed_types=packed_types)
-            dst_subset = subsets.Range.from_array(dst_nodedesc)
-        src_subset = memlet.subset
+    # Take both source and destination subset into account for computing copy shape.
+    src_subset = memlet.get_src_subset(edge, state)
+    dst_subset = memlet.get_dst_subset(edge, state)
+    is_src_write = not memlet._is_data_src
 
-    else:
-        if dispatcher is not None:
-            dst_expr = copy_expr(dispatcher, sdfg, dst_node.data, memlet, is_write=True, packed_types=packed_types)
-        if memlet.other_subset is not None:
-            if dispatcher is not None:
-                src_expr = copy_expr(dispatcher,
-                                     sdfg,
-                                     src_node.data,
-                                     memlet,
-                                     is_write=False,
-                                     offset=memlet.other_subset,
-                                     relative_offset=False,
-                                     packed_types=packed_types)
-            src_subset = memlet.other_subset
-        else:
-            if dispatcher is not None:
-                src_expr = copy_expr(dispatcher,
-                                     sdfg,
-                                     src_node.data,
-                                     memlet,
-                                     is_write=False,
-                                     offset=None,
-                                     relative_offset=False,
-                                     packed_types=packed_types)
-            src_subset = subsets.Range.from_array(src_nodedesc)
-        dst_subset = memlet.subset
+    if dispatcher is not None:
+        src_expr = copy_expr(dispatcher,
+                             sdfg,
+                             src_node.data,
+                             memlet,
+                             is_write=is_src_write,
+                             offset=src_subset,
+                             relative_offset=False,
+                             packed_types=packed_types)
+        dst_expr = copy_expr(dispatcher,
+                             sdfg,
+                             dst_node.data,
+                             memlet,
+                             is_write=(not is_src_write),
+                             offset=dst_subset,
+                             relative_offset=False,
+                             packed_types=packed_types)
+    if src_subset is None:
+        src_subset = subsets.Range.from_array(src_nodedesc)
+    if dst_subset is None:
+        dst_subset = subsets.Range.from_array(dst_nodedesc)
 
     src_strides = src_subset.absolute_strides(src_nodedesc.strides)
     dst_strides = dst_subset.absolute_strides(dst_nodedesc.strides)

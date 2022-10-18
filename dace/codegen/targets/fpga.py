@@ -1588,8 +1588,9 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                 raise NotImplementedError("Reads from shift registers only supported from tasklets.")
 
             # Try to turn into degenerate/strided ND copies
+            state_dfg = sdfg.nodes()[state_id]
             copy_shape, src_strides, dst_strides, src_expr, dst_expr = (cpp.memlet_copy_to_absolute_strides(
-                self._dispatcher, sdfg, memlet, src_node, dst_node, packed_types=True))
+                self._dispatcher, sdfg, state_dfg, edge, src_node, dst_node, packed_types=True))
 
             dtype = src_node.desc(sdfg).dtype
             ctype = dtype.ctype
