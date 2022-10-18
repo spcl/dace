@@ -1569,7 +1569,6 @@ class RemoveSliceView(pm.SingleStateTransformation):
         # First, remove shape=1 dimensions (unsqueezed or squeezed)
         non_squeeze_vdims = [i for i, s in enumerate(vdesc.shape) if s != 1]
         non_squeeze_adims = [i for i, s in enumerate(adesc.shape) if s != 1]
-        squeeze_adims = [i for i in range(len(adesc.shape)) if i not in non_squeeze_adims]
         astrides = [adesc.strides[i] for i in non_squeeze_adims]
 
         # Find matching strides
@@ -1651,18 +1650,22 @@ class RemoveSliceView(pm.SingleStateTransformation):
         for edge in non_view_edges:
             # Update all memlets in tree
             for e in state.memlet_tree(edge):
-                e.data.data = viewed.data
+                if e.data.data == self.view.data:
+                    e.data.data = viewed.data
 
-                # Update subsets with instructions as follows:
-                #   * Dimensions in mapping are offset by view subset, size is taken from view subset
-                #   * Unsqueezed dimensions are ignored (should always be 0)
-                #   * Squeezed dimensions remain as they were in original subset
-                if e.data.subset is not None:
-                    e.data.subset = self._offset_subset(mapping, subset, e.data.subset)
+                    # Update subsets with instructions as follows:
+                    #   * Dimensions in mapping are offset by view subset, size is taken from view subset
+                    #   * Unsqueezed dimensions are ignored (should always be 0)
+                    #   * Squeezed dimensions remain as they were in original subset
+                    if e.data.subset is not None:
+                        e.data.subset = self._offset_subset(mapping, subset, e.data.subset)
+                else:  # The memlet points to the other side, use ``other_subset``
+                    if e.data.other_subset is not None:
+                        e.data.other_subset = self._offset_subset(mapping, subset, e.data.other_subset)
 
-                # The lines below do not make sense (the space of other_subset differ from subset)
-                # if e.data.other_subset is not None:
-                #     e.data.other_subset = self._offset_subset(mapping, subset, e.data.other_subset)
+                # NOTE: It's only necessary to modify one subset of the memlet, as the space of the other differs from
+                #       the view space.
+
 
             # Remove edge directly adjacent to view and reconnect
             state.remove_edge(edge)
