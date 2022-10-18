@@ -363,7 +363,7 @@ class CPUCodeGen(TargetCodeGenerator):
                                   '%s' % (name, cpp.sym2cpp(arrsize), nodedesc.storage))
                 elif (arrsize_bytes > Config.get("compiler", "max_stack_array_size")) == True:
                     warnings.warn("Array {} with size {} detected and was allocated on heap instead of "
-                                  "{} since it's size is greater than max_stack_array_size ({})".format(
+                                  "{} since its size is greater than max_stack_array_size ({})".format(
                                       name, cpp.sym2cpp(arrsize_bytes), nodedesc.storage,
                                       Config.get("compiler", "max_stack_array_size")))
 
