@@ -1621,8 +1621,6 @@ class RemoveSliceView(pm.SingleStateTransformation):
 
         # Get viewed node and non-viewed edges
         view_edge = sdutil.get_view_edge(state, self.view)
-        if view_edge is None:
-            return False
 
         # Gather metadata
         viewed: nodes.AccessNode
@@ -1659,9 +1657,16 @@ class RemoveSliceView(pm.SingleStateTransformation):
                     #   * Squeezed dimensions remain as they were in original subset
                     if e.data.subset is not None:
                         e.data.subset = self._offset_subset(mapping, subset, e.data.subset)
+                    elif subset is not None:
+                        # Fill in the subset from the original memlet
+                        e.data.subset = copy.deepcopy(subset)
+                        
                 else:  # The memlet points to the other side, use ``other_subset``
                     if e.data.other_subset is not None:
                         e.data.other_subset = self._offset_subset(mapping, subset, e.data.other_subset)
+                    elif subset is not None:
+                        # Fill in the subset from the original memlet
+                        e.data.other_subset = copy.deepcopy(subset)
 
                 # NOTE: It's only necessary to modify one subset of the memlet, as the space of the other differs from
                 #       the view space.
