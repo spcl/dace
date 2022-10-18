@@ -2,8 +2,8 @@
 
 from typing import Set, Type
 
-from ..transformation import PatternTransformation, SubgraphTransformation
-from ..pass_pipeline import Pass
+from ..transformation import PatternTransformation, SubgraphTransformation, TransformationBase
+from ..pass_pipeline import Pass, VisitorPass, StatePass, Pipeline, FixedPointPipeline, ScopePass
 
 
 def _recursive_subclasses(cls) -> Set:
@@ -19,16 +19,20 @@ def _recursive_subclasses(cls) -> Set:
     return result
 
 
-def available_passes(all_passes: bool = True) -> Set[Type['Pass']]:
+def available_passes(all_passes: bool = False) -> Set[Type['Pass']]:
     """
     Returns all available passes and pass pipelines as a set by recursing over Pass subclasses. 
-    :param all_passes: Include all passes, including PatternTransformations and SubgraphTransformations.
+    :param all_passes: Include all passes, e.g., including PatternTransformation and other base passes.
     """
     full_pass_set = _recursive_subclasses(Pass)
+
     if not all_passes:
         reduced_pass_set = set()
         for p in full_pass_set:
-            if not issubclass(p, (PatternTransformation, SubgraphTransformation)):
+            if not issubclass(p, (PatternTransformation, SubgraphTransformation)) and not p in (
+                TransformationBase, VisitorPass, StatePass, Pipeline, FixedPointPipeline, ScopePass
+            ):
                 reduced_pass_set.add(p)
         return reduced_pass_set
+
     return full_pass_set
