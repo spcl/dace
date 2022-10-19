@@ -464,6 +464,7 @@ class ArrayLoopNodeLister(NodeVisitor):
     #TODO This does not check internals of rvals.
     def __init__(self):
         self.nodes: List[Node] = []
+        self.range_nodes: List[Node] = []
 
     def visit_BinOp_Node(self, node: BinOp_Node):
         totransform = False
@@ -471,6 +472,8 @@ class ArrayLoopNodeLister(NodeVisitor):
             current = node.rval
             for i in current.indices:
                 if isinstance(i, ParDecl_Node):
+                    self.range_nodes.append(node)
+                    self.nodes.append(node)
                     return
         if isinstance(node.lval, Array_Subscript_Node):
             current = node.lval
@@ -496,20 +499,19 @@ class ArrayToLoop(NodeTransformer):
             lister = ArrayLoopNodeLister()
             lister.visit(child)
             res = lister.nodes
+            res_range = lister.range_nodes
             if res is not None and len(res) > 0:
-                newbody.append(
-                    Decl_Stmt_Node(vardecl=[
-                        Var_Decl_Node(name="tmp_parfor_" + str(self.count),
-                                      type="INTEGER")
-                    ]))
 
                 current = child.lval
                 val = child.rval
                 ranges = []
                 indices = []
                 rangepos = []
+                rangeposrval = []
+                rangesrval = []
                 currentindex = 0
-                totalindex = 0
+                currentindexrval = 0
+                indicesrval = []
 
                 for i in current.indices:
                     if isinstance(i, ParDecl_Node):
@@ -524,745 +526,92 @@ class ArrayToLoop(NodeTransformer):
                         else:
                             ranges.append(i.range)
                         rangepos.append(currentindex)
+                        newbody.append(
+                            Decl_Stmt_Node(vardecl=[
+                                Var_Decl_Node(name="tmp_parfor_" +
+                                              str(self.count + len(rangepos) -
+                                                  1),
+                                              type="INTEGER",
+                                              sizes=None,
+                                              init=None)
+                            ]))
+                        indices.append(
+                            Name_Node(name="tmp_parfor_" +
+                                      str(self.count + len(rangepos) - 1)))
                     else:
                         indices.append(i)
                     currentindex += 1
-                    totalindex += 1
 
-                first = True
-                name = next
-                #TODO rewrite this to be more readable, no longer uses recursive arrays
-                if len(ranges) == 1:
-                    if len(ranges[0]) == 2:
-                        initrange = ranges[0][0]
-                        finalrange = ranges[0][1]
+                current.indices = indices
 
-                    curindex = 0
-                    if len(indices) == 0:
-                        if rangepos[0] == curindex:
-                            next = ArraySubscriptExpr(name=name.name,
-                                                      indices=[],
-                                                      unprocessed_name=next,
-                                                      index=DeclRefExpr(
-                                                          name="tmp_parfor_" +
-                                                          str(self.count),
-                                                          type=Int(),
-                                                      ))
-
-                    for i in indices:
-                        if rangepos[0] == curindex:
-                            next = ArraySubscriptExpr(name=name.name,
-                                                      indices=[],
-                                                      unprocessed_name=next,
-                                                      index=DeclRefExpr(
-                                                          name="tmp_parfor_" +
-                                                          str(self.count),
-                                                          type=Int(),
-                                                      ))
-                        next = ArraySubscriptExpr(name=name.name,
-                                                  indices=[],
-                                                  unprocessed_name=next,
-                                                  index=i)
-                        curindex = curindex + 1
-                    arr = next
-                    newbody.append(
-                        ForStmt(
-                            init=[
-                                BinOp(lvalue=DeclRefExpr(
-                                    name="tmp_parfor_" + str(self.count),
-                                    type=Int(),
-                                ),
-                                      op="=",
-                                      rvalue=initrange)
-                            ],
-                            cond=[
-                                BinOp(lvalue=DeclRefExpr(
-                                    name="tmp_parfor_" + str(self.count),
-                                    type=Int(),
-                                ),
-                                      op="<=",
-                                      rvalue=finalrange)
-                            ],
-                            iter=[
-                                BinOp(
-                                    lvalue=DeclRefExpr(
-                                        name="tmp_parfor_" + str(self.count),
-                                        type=Int(),
-                                    ),
-                                    op="=",
-                                    rvalue=BinOp(lvalue=DeclRefExpr(
-                                        name="tmp_parfor_" + str(self.count),
-                                        type=Int(),
-                                    ),
-                                                 op="+",
-                                                 rvalue=IntLiteral(value="1")))
-                            ],
-                            body=BasicBlock(
-                                body=[BinOp(lvalue=arr, op="=", rvalue=val)]),
-                        ))
-                else:
-
-                    forloop = None
-                    curindex = 0
-                    if len(indices) == 0:
-                        if rangepos[0] == curindex:
-                            next = ArraySubscriptExpr(name=name.name,
-                                                      indices=[],
-                                                      unprocessed_name=next,
-                                                      index=DeclRefExpr(
-                                                          name="tmp_parfor_" +
-                                                          str(self.count),
-                                                          type=Int(),
-                                                      ))
-                    curindex = 0
-                    indexindex = 0
-                    rangeindex = 0
-                    next = name
-                    for j in range(len(ranges) + len(indices)):
-                        if rangepos[rangeindex] == j:
-                            next = ArraySubscriptExpr(
-                                name=name.name,
-                                indices=[],
-                                unprocessed_name=next,
-                                index=DeclRefExpr(
+                if res_range is not None and len(res_range) > 0:
+                    for i in val.indices:
+                        if isinstance(i, ParDecl_Node):
+                            if i.type == "ALL":
+                                rangesrval.append([
+                                    Int_Literal_Node(value="1"),
+                                    Name_Range_Node(name="f2dace_MAX",
+                                                    type="INTEGER",
+                                                    arrname=current.name,
+                                                    pos=currentindex)
+                                ])
+                            else:
+                                rangesrval.append(i.range)
+                            rangesrval.append(i)
+                            rangeposrval.append(currentindexrval)
+                            indicesrval.append(
+                                Name_Node(
                                     name="tmp_parfor_" +
-                                    str(self.count + rangeindex),
-                                    type=Int(),
-                                ))
-                            rangeindex = rangeindex + 1
+                                    str(self.count + len(rangeposrval) - 1)))
                         else:
-                            next = ArraySubscriptExpr(
-                                name=name.name,
-                                indices=[],
-                                unprocessed_name=next,
-                                index=indices[indexindex])
-                            indexindex = indexindex + 1
+                            indicesrval.append(i)
+                        currentindexrval += 1
+                    val.indices = indicesrval
+                    for i, j in zip(ranges, rangesrval):
+                        if i != j:
+                            raise NotImplementedError(
+                                "Ranges must be identical")
 
-                    arr = next
-                    for i in ranges:
+                range_index = 0
+                body = BinOp_Node(lval=current,
+                                  op="=",
+                                  rval=val,
+                                  line_number=child.line_number)
+                for i in ranges:
+                    initrange = i[0]
+                    finalrange = i[1]
+                    init = BinOp_Node(lval=Name_Node(
+                        name="tmp_parfor_" + str(self.count + range_index)),
+                                      op="=",
+                                      rval=initrange,
+                                      line_number=child.line_number)
+                    cond = BinOp_Node(lval=Name_Node(
+                        name="tmp_parfor_" + str(self.count + range_index)),
+                                      op="<=",
+                                      rval=finalrange,
+                                      line_number=child.line_number)
+                    iter = BinOp_Node(
+                        lval=Name_Node(name="tmp_parfor_" +
+                                       str(self.count + range_index)),
+                        op="=",
+                        rval=BinOp_Node(
+                            lval=Name_Node(name="tmp_parfor_" +
+                                           str(self.count + range_index)),
+                            op="+",
+                            rval=Int_Literal_Node(value="1")),
+                        line_number=child.line_number)
+                    current_for = Map_Stmt_Node(
+                        init=init,
+                        cond=cond,
+                        iter=iter,
+                        body=Execution_Part_Node(execution=[body]),
+                        line_number=child.line_number)
+                    body = current_for
+                    range_index += 1
 
-                        if first:
-                            first = False
+                newbody.append(body)
 
-                        else:
-                            self.count = self.count + 1
-                            newbody.append(
-                                DeclStmt(vardecl=[
-                                    VarDecl(name="tmp_parfor_" +
-                                            str(self.count),
-                                            type=Int())
-                                ]))
-
-                        if len(i) == 2:
-                            initrange = i[0]
-                            finalrange = i[1]
-                        if forloop == None:
-                            forloop = ForStmt(
-                                init=[
-                                    BinOp(lvalue=DeclRefExpr(
-                                        name="tmp_parfor_" + str(self.count),
-                                        type=Int(),
-                                    ),
-                                          op="=",
-                                          rvalue=initrange)
-                                ],
-                                cond=[
-                                    BinOp(lvalue=DeclRefExpr(
-                                        name="tmp_parfor_" + str(self.count),
-                                        type=Int(),
-                                    ),
-                                          op="<=",
-                                          rvalue=finalrange)
-                                ],
-                                iter=[
-                                    BinOp(lvalue=DeclRefExpr(
-                                        name="tmp_parfor_" + str(self.count),
-                                        type=Int(),
-                                    ),
-                                          op="=",
-                                          rvalue=BinOp(
-                                              lvalue=DeclRefExpr(
-                                                  name="tmp_parfor_" +
-                                                  str(self.count),
-                                                  type=Int(),
-                                              ),
-                                              op="+",
-                                              rvalue=IntLiteral(value="1")))
-                                ],
-                                body=BasicBlock(body=[
-                                    BinOp(lvalue=arr, op="=", rvalue=val)
-                                ]),
-                            )
-                        else:
-                            forloop = ForStmt(
-                                init=[
-                                    BinOp(lvalue=DeclRefExpr(
-                                        name="tmp_parfor_" + str(self.count),
-                                        type=Int(),
-                                    ),
-                                          op="=",
-                                          rvalue=initrange)
-                                ],
-                                cond=[
-                                    BinOp(lvalue=DeclRefExpr(
-                                        name="tmp_parfor_" + str(self.count),
-                                        type=Int(),
-                                    ),
-                                          op="<=",
-                                          rvalue=finalrange)
-                                ],
-                                iter=[
-                                    BinOp(lvalue=DeclRefExpr(
-                                        name="tmp_parfor_" + str(self.count),
-                                        type=Int(),
-                                    ),
-                                          op="=",
-                                          rvalue=BinOp(
-                                              lvalue=DeclRefExpr(
-                                                  name="tmp_parfor_" +
-                                                  str(self.count),
-                                                  type=Int(),
-                                              ),
-                                              op="+",
-                                              rvalue=IntLiteral(value="1")))
-                                ],
-                                body=BasicBlock(body=[forloop]),
-                            )
-                    newbody.append(forloop)
-
-                self.count = self.count + 1
+                self.count = self.count + range_index
             else:
                 newbody.append(self.visit(child))
         return Execution_Part_Node(execution=newbody)
-
-
-"""
-class RangeToLoop(NodeTransformer):
-
-    def __init__(self):
-        self.count = 0
-
-    def visit_BinOp(self, node: BinOp):
-        pardecls = [node for node in walk2(node) if isinstance(node, ParDecl)]
-        if len(pardecls) == 0:
-            retnode = self.generic_visit(node)
-            return retnode
-        lval = node.lvalue
-        rval = node.rvalue
-        pardeclslval = [
-            node for node in walk2(lval) if isinstance(node, ParDecl)
-        ]
-        if len(pardeclslval) > 4:
-            raise_exception(
-                NotImplementedError(
-                    "Multiple ranges in pardecl range to loop not supported yet"
-                ))
-        current = lval
-        current2 = rval
-        next = current.unprocessed_name
-        if isinstance(current2, ArraySubscriptExpr):
-            next2 = current2.unprocessed_name
-        else:
-            next2 = None
-        ranges = []
-        indices = []
-        rangepos = []
-        currentindex = 0
-        currentindex2 = 0
-        totalindex = 0
-        totalindex2 = 0
-        if isinstance(current.index, ParDecl):
-            if current.index.type == "ALL":
-                ranges.append([
-                    IntLiteral(value="1"),
-                    DeclRefExprRange(name="f2dace_MAX",
-                                     type=Int(),
-                                     arrname=current.name,
-                                     pos=0)
-                ])
-            else:
-                ranges.append(current.index.range)
-            rangepos.append(currentindex)
-        else:
-            indices.append(current.index)
-
-        while not isinstance(next, DeclRefExpr):
-            current = next
-            current2 = next2
-            next = current.unprocessed_name
-            if isinstance(current2, ArraySubscriptExpr):
-                next2 = current2.unprocessed_name
-            else:
-                next2 = None    
-            currentindex = currentindex + 1
-            currentindex2 = currentindex2 + 1
-            totalindex = totalindex + 1
-            totalindex2 = totalindex2 + 1
-            if isinstance(current.index, ParDecl):
-                if current.index.type == "ALL":
-                    ranges.append([
-                        IntLiteral(value="1"),
-                        DeclRefExprRange(name="f2dace_MAX",
-                                         type=Int(),
-                                         arrname=current.name,
-                                         pos=currentindex)
-                    ])
-                else:
-                    ranges.append(current.index.range)
-                rangepos.append(currentindex)
-            else:
-                indices.append(current.index)
-        first = True
-        name = next
-        name2 = next2
-        if len(ranges) == 1:
-            if len(ranges[0]) == 2:
-                initrange = ranges[0][0]
-                finalrange = ranges[0][1]
-            self.count = self.count + 1
-            new_node = ReplacePardecls(
-                DeclRefExpr(
-                    name="tmp_pfr_" + str(self.count - 1),
-                    type=Int(),
-                )).visit(node)
-
-            return ForStmt(
-                init=[
-                    DeclStmt(vardecl=[
-                        VarDecl(name="tmp_pfr_" + str(self.count - 1),
-                                type=Int(),
-                                init=initrange)
-                    ])
-                ],
-                cond=[
-                    BinOp(lvalue=DeclRefExpr(
-                        name="tmp_pfr_" + str(self.count - 1),
-                        type=Int(),
-                    ),
-                          op="<=",
-                          rvalue=finalrange)
-                ],
-                iter=[
-                    BinOp(lvalue=DeclRefExpr(
-                        name="tmp_pfr_" + str(self.count - 1),
-                        type=Int(),
-                    ),
-                          op="=",
-                          rvalue=BinOp(lvalue=DeclRefExpr(
-                              name="tmp_pfr_" + str(self.count - 1),
-                              type=Int(),
-                          ),
-                                       op="+",
-                                       rvalue=IntLiteral(value="1")))
-                ],
-                body=BasicBlock(body=[new_node]),
-            )
-        elif len(ranges) > 1:
-            forloop = None
-            curindex = 0
-            newbody = []
-            if len(indices) == 0:
-                if rangepos[0] == curindex:
-                    next = ArraySubscriptExpr(name=name.name,
-                                              indices=[],
-                                              unprocessed_name=next,
-                                              index=DeclRefExpr(
-                                                  name="tmp_pfr_" +
-                                                  str(self.count),
-                                                  type=Int(),
-                                              ))
-                    next2 = ArraySubscriptExpr(name=name2.name,
-                                               indices=[],
-                                               unprocessed_name=next2,
-                                               index=DeclRefExpr(
-                                                   name="tmp_pfr_" +
-                                                   str(self.count),
-                                                   type=Int(),
-                                               ))
-            curindex = 0
-            indexindex = 0
-            rangeindex = 0
-            next = name
-            next2 = name2
-            for j in range(len(ranges) + len(indices)):
-                if rangepos[rangeindex] == j:
-                    next = ArraySubscriptExpr(name=name.name,
-                                              indices=[],
-                                              unprocessed_name=next,
-                                              index=DeclRefExpr(
-                                                  name="tmp_pfr_" +
-                                                  str(self.count + rangeindex),
-                                                  type=Int(),
-                                              ))
-                    next2 = ArraySubscriptExpr(
-                        name=name2.name,
-                        indices=[],
-                        unprocessed_name=next2,
-                        index=DeclRefExpr(
-                            name="tmp_pfr_" + str(self.count + rangeindex),
-                            type=Int(),
-                        ))
-                    rangeindex = rangeindex + 1
-                else:
-                    next = ArraySubscriptExpr(name=name.name,
-                                              indices=[],
-                                              unprocessed_name=next,
-                                              index=indices[indexindex])
-                    next2 = ArraySubscriptExpr(name=name2.name,
-                                               indices=[],
-                                               unprocessed_name=next2,
-                                               index=indices[indexindex])
-                    indexindex = indexindex + 1
-            first = True
-            arr = next
-            arr2 = next2
-            for i in ranges:
-
-                if first:
-                    first = False
-
-                else:
-                    self.count = self.count + 1
-                    newbody.append(
-                        DeclStmt(vardecl=[
-                            VarDecl(name="tmp_pfr_" + str(self.count),
-                                    type=Int())
-                        ]))
-
-                if len(i) == 2:
-                    initrange = i[0]
-                    finalrange = i[1]
-                if forloop == None:
-                    forloop = ForStmt(
-                        init=[
-                            BinOp(lvalue=DeclRefExpr(
-                                name="tmp_pfr_" + str(self.count),
-                                type=Int(),
-                            ),
-                                  op="=",
-                                  rvalue=initrange)
-                        ],
-                        cond=[
-                            BinOp(lvalue=DeclRefExpr(
-                                name="tmp_pfr_" + str(self.count),
-                                type=Int(),
-                            ),
-                                  op="<=",
-                                  rvalue=finalrange)
-                        ],
-                        iter=[
-                            BinOp(lvalue=DeclRefExpr(
-                                name="tmp_pfr_" + str(self.count),
-                                type=Int(),
-                            ),
-                                  op="=",
-                                  rvalue=BinOp(lvalue=DeclRefExpr(
-                                      name="tmp_pfr_" + str(self.count),
-                                      type=Int(),
-                                  ),
-                                               op="+",
-                                               rvalue=IntLiteral(value="1")))
-                        ],
-                        body=BasicBlock(
-                            body=[BinOp(lvalue=arr, op="=", rvalue=arr2)]),
-                    )
-                else:
-                    forloop = ForStmt(
-                        init=[
-                            BinOp(lvalue=DeclRefExpr(
-                                name="tmp_pfr_" + str(self.count),
-                                type=Int(),
-                            ),
-                                  op="=",
-                                  rvalue=initrange)
-                        ],
-                        cond=[
-                            BinOp(lvalue=DeclRefExpr(
-                                name="tmp_pfr_" + str(self.count),
-                                type=Int(),
-                            ),
-                                  op="<=",
-                                  rvalue=finalrange)
-                        ],
-                        iter=[
-                            BinOp(lvalue=DeclRefExpr(
-                                name="tmp_pfr_" + str(self.count),
-                                type=Int(),
-                            ),
-                                  op="=",
-                                  rvalue=BinOp(lvalue=DeclRefExpr(
-                                      name="tmp_pfr_" + str(self.count),
-                                      type=Int(),
-                                  ),
-                                               op="+",
-                                               rvalue=IntLiteral(value="1")))
-                        ],
-                        body=BasicBlock(body=[forloop]),
-                    )
-            newbody.append(forloop)
-
-            self.count = self.count + 1
-            return BasicBlock(body=newbody)
-        else:
-            retnode = self.generic_visit(node)
-            return retnode
-
-
-class SumToLoop(NodeTransformer):
-
-    def __init__(self):
-        self.count = 0
-
-    def visit_BinOp(self, node: BinOp):
-        if isinstance(node.rvalue,
-                      CallExpr) and node.rvalue.name == "dace_sum":
-            args = node.rvalue.args
-
-            if len(args) == 1:
-                arr = args[0]
-
-            val = node.lvalue
-            current = arr
-            next = current.unprocessed_name
-            ranges = []
-            indices = []
-            rangepos = []
-            currentindex = 0
-            totalindex = 0
-            if isinstance(current.index, ParDecl):
-                if current.index.type == "ALL":
-                    ranges.append([
-                        IntLiteral(value="1"),
-                        DeclRefExprRange(name="f2dace_MAX",
-                                         type=Int(),
-                                         arrname=current.name,
-                                         pos=0)
-                    ])
-                else:
-                    ranges.append(current.index.range)
-                rangepos.append(currentindex)
-            else:
-                indices.append(current.index)
-
-            while not isinstance(next, DeclRefExpr):
-                current = next
-                next = current.unprocessed_name
-                currentindex = currentindex + 1
-                totalindex = totalindex + 1
-                if isinstance(current.index, ParDecl):
-                    if current.index.type == "ALL":
-                        ranges.insert(0, [
-                            IntLiteral(value="1"),
-                            DeclRefExprRange(name="f2dace_MAX",
-                                             type=Int(),
-                                             arrname=current.name,
-                                             pos=currentindex)
-                        ])
-                    else:
-                        ranges.insert(0, current.index.range)
-                    rangepos.insert(0, currentindex)
-                else:
-                    indices.insert(0, current.index)
-            name = next
-            if len(ranges) == 1:
-                if len(ranges[0]) == 2:
-                    initrange = ranges[0][0]
-                    finalrange = ranges[0][1]
-
-                curindex = 0
-                if len(indices) == 0:
-                    if rangepos[0] == curindex:
-                        next = ArraySubscriptExpr(name=name.name,
-                                                  indices=[],
-                                                  unprocessed_name=next,
-                                                  index=DeclRefExpr(
-                                                      name="tmp_parforsum_" +
-                                                      str(self.count),
-                                                      type=Int(),
-                                                  ))
-
-                for i in indices:
-
-                    next = ArraySubscriptExpr(name=name.name,
-                                              indices=[],
-                                              unprocessed_name=next,
-                                              index=i)
-                    curindex = curindex + 1
-                    if rangepos[0] == totalindex - curindex:
-                        next = ArraySubscriptExpr(name=name.name,
-                                                  indices=[],
-                                                  unprocessed_name=next,
-                                                  index=DeclRefExpr(
-                                                      name="tmp_parforsum_" +
-                                                      str(self.count),
-                                                      type=Int(),
-                                                  ))
-                arr = next
-                self.count = self.count + 1
-                return ForStmt(
-                    init=[
-                        DeclStmt(vardecl=[
-                            VarDecl(name="tmp_parforsum_" +
-                                    str(self.count - 1),
-                                    type=Int(),
-                                    init=initrange)
-                        ])
-                    ],
-                    cond=[
-                        BinOp(lvalue=DeclRefExpr(
-                            name="tmp_parforsum_" + str(self.count - 1),
-                            type=Int(),
-                        ),
-                              op="<=",
-                              rvalue=finalrange)
-                    ],
-                    iter=[
-                        BinOp(lvalue=DeclRefExpr(
-                            name="tmp_parforsum_" + str(self.count - 1),
-                            type=Int(),
-                        ),
-                              op="=",
-                              rvalue=BinOp(lvalue=DeclRefExpr(
-                                  name="tmp_parforsum_" + str(self.count - 1),
-                                  type=Int(),
-                              ),
-                                           op="+",
-                                           rvalue=IntLiteral(value="1")))
-                    ],
-                    body=BasicBlock(body=[
-                        BinOp(lvalue=val,
-                              op="=",
-                              rvalue=BinOp(lvalue=arr, op="+", rvalue=val))
-                    ]),
-                )
-            else:
-
-                forloop = None
-                curindex = 0
-                if len(indices) == 0:
-                    if rangepos[0] == curindex:
-                        next = ArraySubscriptExpr(name=name.name,
-                                                  indices=[],
-                                                  unprocessed_name=next,
-                                                  index=DeclRefExpr(
-                                                      name="tmp_parforsum_" +
-                                                      str(self.count),
-                                                      type=Int(),
-                                                  ))
-                curindex = 0
-                indexindex = 0
-                rangeindex = 0
-                next = name
-                for j in range(len(ranges) + len(indices)):
-                    if rangepos[rangeindex] == j:
-                        next = ArraySubscriptExpr(
-                            name=name.name,
-                            indices=[],
-                            unprocessed_name=next,
-                            index=DeclRefExpr(
-                                name="tmp_parforsum_" +
-                                str(self.count + rangeindex),
-                                type=Int(),
-                            ))
-                        rangeindex = rangeindex + 1
-                    else:
-                        next = ArraySubscriptExpr(name=name.name,
-                                                  indices=[],
-                                                  unprocessed_name=next,
-                                                  index=indices[indexindex])
-                        indexindex = indexindex + 1
-
-                arr = next
-                for i in ranges:
-
-                    if first:
-                        first = False
-
-                    else:
-                        self.count = self.count + 1
-
-                    if len(i) == 2:
-                        initrange = i[0]
-                        finalrange = i[1]
-                    if forloop == None:
-                        forloop = ForStmt(
-                            init=[
-                                DeclStmt(vardecl=[
-                                    VarDecl(name="tmp_parforsum_" +
-                                            str(self.count),
-                                            type=Int(),
-                                            init=initrange)
-                                ])
-                            ],
-                            cond=[
-                                BinOp(lvalue=DeclRefExpr(
-                                    name="tmp_parforsum_" + str(self.count),
-                                    type=Int(),
-                                ),
-                                      op="<=",
-                                      rvalue=finalrange)
-                            ],
-                            iter=[
-                                BinOp(lvalue=DeclRefExpr(
-                                    name="tmp_parforsum_" + str(self.count),
-                                    type=Int(),
-                                ),
-                                      op="=",
-                                      rvalue=BinOp(
-                                          lvalue=DeclRefExpr(
-                                              name="tmp_parforsum_" +
-                                              str(self.count),
-                                              type=Int(),
-                                          ),
-                                          op="+",
-                                          rvalue=IntLiteral(value="1")))
-                            ],
-                            body=BasicBlock(body=[
-                                BinOp(lvalue=val,
-                                      op="=",
-                                      rvalue=BinOp(
-                                          lvalue=arr, op="+", rvalue=val))
-                            ]),
-                        )
-                    else:
-                        forloop = ForStmt(
-                            init=[
-                                DeclStmt(vardecl=[
-                                    VarDecl(name="tmp_parforsum_" +
-                                            str(self.count),
-                                            type=Int(),
-                                            init=initrange)
-                                ])
-                            ],
-                            cond=[
-                                BinOp(lvalue=DeclRefExpr(
-                                    name="tmp_parforsum_" + str(self.count),
-                                    type=Int(),
-                                ),
-                                      op="<=",
-                                      rvalue=finalrange)
-                            ],
-                            iter=[
-                                BinOp(lvalue=DeclRefExpr(
-                                    name="tmp_parforsum_" + str(self.count),
-                                    type=Int(),
-                                ),
-                                      op="=",
-                                      rvalue=BinOp(
-                                          lvalue=DeclRefExpr(
-                                              name="tmp_parforsum_" +
-                                              str(self.count),
-                                              type=Int(),
-                                          ),
-                                          op="+",
-                                          rvalue=IntLiteral(value="1")))
-                            ],
-                            body=BasicBlock(body=[forloop]),
-                        )
-                return forloop
-
-        else:
-            retnode = self.generic_visit(node)
-            return retnode
-
- """

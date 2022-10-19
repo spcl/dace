@@ -107,6 +107,7 @@ class TaskletWriter:
         self.ast_elements = {
             BinOp_Node: self.binop2string,
             Name_Node: self.name2string,
+            Name_Range_Node: self.name2string,
             Int_Literal_Node: self.intlit2string,
             Real_Literal_Node: self.floatlit2string,
             Bool_Literal_Node: self.boollit2string,
@@ -260,6 +261,7 @@ class ProcessedWriter(TaskletWriter):
         self.ast_elements = {
             BinOp_Node: self.binop2string,
             Name_Node: self.name2string,
+            Name_Range_Node: self.namerange2string,
             Int_Literal_Node: self.intlit2string,
             Real_Literal_Node: self.floatlit2string,
             Bool_Literal_Node: self.boollit2string,
@@ -278,6 +280,16 @@ class ProcessedWriter(TaskletWriter):
                 name = i
                 break
         return name
+
+    def namerange2string(self, node: Name_Range_Node):
+        name = node.name
+        if name == "f2dace_MAX":
+            arr = self.sdfg.arrays.get(
+                self.mapping[self.sdfg][node.arrname.name])
+            name = str(arr.shape[node.pos])
+            return name
+        else:
+            return self.name2string(node)
 
 
 class Context:
@@ -343,6 +355,7 @@ class AST_translator:
         self.ast_elements = {
             If_Stmt_Node: self.ifstmt2sdfg,
             For_Stmt_Node: self.forstmt2sdfg,
+            Map_Stmt_Node: self.forstmt2sdfg,
             Execution_Part_Node: self.basicblock2sdfg,
             Subroutine_Subprogram_Node: self.subroutine2sdfg,
             BinOp_Node: self.binop2sdfg,
@@ -1249,8 +1262,8 @@ class AST_translator:
 
 if __name__ == "__main__":
     parser = ParserFactory().create(std="f2008")
-    testname = "arrayrange1"
-    #testname = "cloudscexp2"
+    #testname = "arrayrange1"
+    testname = "cloudscexp2"
     reader = FortranFileReader(
         os.path.realpath("/mnt/c/Users/Alexwork/Desktop/Git/f2dace/tests/" +
                          testname + ".f90"))
