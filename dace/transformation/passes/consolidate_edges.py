@@ -15,6 +15,8 @@ class ConsolidateEdges(ppl.Pass):
     per-tasklet memlets.
     """
 
+    category: ppl.PassCategory = ppl.PassCategory.Simplification
+
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Memlets
 

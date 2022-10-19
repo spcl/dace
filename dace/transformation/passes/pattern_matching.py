@@ -23,6 +23,9 @@ class PatternMatchAndApply(ppl.Pass):
     """
 
     transformations: List[xf.PatternTransformation]  #: The list of transformations to apply
+
+    category: ppl.PassCategory = ppl.PassCategory.Helper
+
     permissive: bool = False  #: Whether to apply in permissive mode, i.e., apply in more cases where it may be unsafe
     validate: bool = True  #: If True, validates the SDFG after all transformations have been applied
     validate_all: bool = False  #: If True, validates the SDFG after each transformation applies
@@ -111,6 +114,9 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
     more transformations match. The order in which the transformations are applied is configurable (through
     ``order_by_transformation``).
     """
+
+    category: ppl.PassCategory = ppl.PassCategory.Helper
+
     order_by_transformation: bool = True
 
     def __init__(self,
@@ -232,6 +238,9 @@ class PatternApplyOnceEverywhere(PatternMatchAndApplyRepeated):
     If match condition becomes False (e.g., as a result of applying a transformation), the transformation is not
     applied on that location.
     """
+
+    category: ppl.PassCategory = ppl.PassCategory.Helper
+
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Dict[str, List[Any]]:
         return self._apply_pass(sdfg, pipeline_results, apply_once=True)
 

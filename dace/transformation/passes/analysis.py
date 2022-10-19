@@ -12,6 +12,8 @@ class StateReachability(ppl.Pass):
     Evaluates state reachability (which other states can be executed after each state).
     """
 
+    category: ppl.PassCategory = ppl.PassCategory.Analysis
+
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Nothing
 
@@ -36,6 +38,8 @@ class AccessSets(ppl.Pass):
     """
     Evaluates memory access sets (which arrays/data descriptors are read/written in each state).
     """
+
+    category: ppl.PassCategory = ppl.PassCategory.Analysis
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Nothing
@@ -77,6 +81,8 @@ class FindAccessNodes(ppl.Pass):
     """
     For each data descriptor, creates a set of states in which access nodes of that data are used.
     """
+
+    category: ppl.PassCategory = ppl.PassCategory.Analysis
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Nothing

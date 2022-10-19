@@ -18,6 +18,9 @@ class RemoveUnusedSymbols(ppl.Pass):
     Prunes unused symbols from the SDFG symbol repository (``sdfg.symbols``).
     Also includes uses in Tasklets of all languages.
     """
+
+    category: ppl.PassCategory = ppl.PassCategory.Simplification
+
     recursive: bool = True
 
     def modifies(self) -> ppl.Modifies:

@@ -581,6 +581,9 @@ def translate_cpp_tasklet_to_python(code: str):
 
 @dataclass(unsafe_hash=True)
 class ScalarToSymbolPromotion(passes.Pass):
+
+    category: passes.PassCategory = passes.PassCategory.Simplification
+
     ignore: Optional[Set[str]] = None
     transients_only: bool = True
     integers_only: bool = True

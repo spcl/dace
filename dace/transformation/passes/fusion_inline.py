@@ -16,6 +16,9 @@ class FuseStates(ppl.Pass):
     """
     Fuses all possible states of an SDFG (and all sub-SDFGs).
     """
+
+    category: ppl.PassCategory = ppl.PassCategory.Simplification
+
     permissive: bool = False  #: If True, ignores some race conditions checks
     progress: Optional[bool] = None  #: Whether to print progress, or None for default (print after 5 seconds)
 
@@ -44,6 +47,9 @@ class InlineSDFGs(ppl.Pass):
     """
     Inlines all possible nested SDFGs (and sub-SDFGs).
     """
+
+    category: ppl.PassCategory = ppl.PassCategory.Simplification
+
     permissive: bool = False  #: If True, ignores some checks on inlining
     progress: Optional[bool] = None  #: Whether to print progress, or None for default (print after 5 seconds)
     multistate: bool = True  #: If True, include multi-state inlining

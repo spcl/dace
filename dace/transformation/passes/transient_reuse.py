@@ -17,6 +17,9 @@ class TransientReuse(ppl.Pass):
     Reduces memory consumption by reusing allocated transient array memory. Only modifies arrays that can safely be
     reused.
     """
+
+    category: ppl.PassCategory = ppl.PassCategory.MemoryFootprintReduction
+
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Descriptors | ppl.Modifies.AccessNodes
 

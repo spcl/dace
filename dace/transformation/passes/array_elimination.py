@@ -18,6 +18,8 @@ class ArrayElimination(ppl.Pass):
     and duplicate access nodes.
     """
 
+    category: ppl.PassCategory = ppl.PassCategory.Simplification
+
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Descriptors | ppl.Modifies.AccessNodes
 

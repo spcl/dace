@@ -36,6 +36,9 @@ _nonrecursive_passes = [
 
 @dataclass(unsafe_hash=True)
 class SimplifyPass(ppl.FixedPointPipeline):
+
+    category: ppl.PassCategory = ppl.PassCategory.Simplification
+
     validate: bool = False  #: Whether to validate the SDFG at the end of the pipeline
     validate_all: bool = False  #: Whether to validate the SDFG after each pass
     skip: Optional[Set[str]] = None  #: Names of passes to skip in this pipeline

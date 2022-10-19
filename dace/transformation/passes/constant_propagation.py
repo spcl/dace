@@ -23,6 +23,8 @@ class ConstantPropagation(ppl.Pass):
     the number of overall symbols.
     """
 
+    category: ppl.PassCategory = ppl.PassCategory.Simplification
+
     recursive: bool = True
     progress: Optional[bool] = None
 

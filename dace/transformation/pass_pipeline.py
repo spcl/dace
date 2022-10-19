@@ -4,7 +4,7 @@ API for SDFG analysis and manipulation Passes, as well as Pipelines that contain
 """
 from dace.sdfg import SDFG, SDFGState, graph as gr, nodes, utils as sdutil
 
-from enum import Flag, auto
+from enum import Enum, Flag, auto
 from typing import Any, Dict, Iterator, List, Optional, Set, Type, Union
 from dataclasses import dataclass
 import networkx as nx
@@ -31,6 +31,16 @@ class Modifies(Flag):
     Everything = Descriptors | Symbols | States | InterstateEdges | Nodes | Memlets  #: Modification to arbitrary parts of SDFGs (nodes, edges, or properties)
 
 
+class PassCategory(Enum):
+    """
+    Specifies the type of Pass/Transformation.
+    """
+    Analysis = auto()  #: Pass only analyzes the SDFG and does not modify it
+    Helper = auto()  #: Pass is a helper for other passes and is not intended to be run on its own
+    Simplification = auto()  #: Pass modifies the SDFG in a way that does not change its semantics
+    MemoryFootprintReduction = auto()  #: Pass modifies the SDFG in a way that reduces its memory footprint
+
+
 class Pass:
     """
     An SDFG analysis or manipulation that registers as part of the SDFG history. Classes that extend ``Pass`` can be
@@ -48,6 +58,9 @@ class Pass:
 
     :seealso: Pipeline
     """
+
+    category: PassCategory
+
     def depends_on(self) -> Set[Union[Type['Pass'], 'Pass']]:
         """
         If in the context of a ``Pipeline``, which other Passes need to run first.
@@ -117,6 +130,9 @@ class VisitorPass(Pass):
         print('SDFG has write-conflicted memlets:', wcr_checker.found_wcr)
         print('Memlets:', memlets_with_wcr)
     """
+
+    category: PassCategory = PassCategory.Helper
+
     def generic_visit(self, element: Any, parent: Any, pipeline_results: Dict[str, Any]) -> Any:
         """
         A default method that is called for elements that do not have a special visitor.
@@ -170,6 +186,9 @@ class StatePass(Pass):
     
     :see: Pass
     """
+
+    category: PassCategory = PassCategory.Helper
+
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[SDFGState, Optional[Any]]]:
         """
         Applies the pass to states of the given SDFG by calling ``apply`` on each state.
@@ -210,6 +229,9 @@ class ScopePass(Pass):
     
     :see: Pass
     """
+
+    category: PassCategory = PassCategory.Helper
+
     def apply_pass(
         self,
         sdfg: SDFG,

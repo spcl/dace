@@ -22,6 +22,9 @@ class DeadDataflowElimination(ppl.Pass):
     Traverses the graph backwards, removing any computations that result in transient descriptors
     that are not used again. Removal propagates through scopes (maps), tasklets, and optionally library nodes.
     """
+
+    category: ppl.PassCategory = ppl.PassCategory.Simplification
+
     skip_library_nodes: bool = False  #: If True, does not remove library nodes if their results are unused. Otherwise removes library nodes without side effects.
     remove_persistent_memory: bool = False  #: If True, marks code with Persistent allocation lifetime as dead
 
