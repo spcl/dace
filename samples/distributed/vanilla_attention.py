@@ -118,8 +118,9 @@ def vanilla_dace(A_rowptr: dace.int32[LArows+1],
     #     finish = A_rowptr[i+1]
     #     for k, j in dace.map[0:LHcols, start:finish]:
     #         values[j] = H1[i,k] * H2[A_colidx[j], k] + values[j]
-    for i, k in dace.map[0:LAnnz, 0:LHcols]:
-        values[i] = H1[A_rowidx[i], k] * H2[A_colidx[i], k] + values[i]
+    # for i, k in dace.map[0:LAnnz, 0:LHcols]:
+    #     values[i] = H1[A_rowidx[i], k] * H2[A_colidx[i], k] + values[i]
+    dace.ahht(A_rowidx, A_colidx, H1, H2, values)
     
     # S x W
     out = np.empty((LArows, LWcols), dtype=nptype)

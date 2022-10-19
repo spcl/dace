@@ -97,6 +97,7 @@ Px, Py = (dace.symbol(s) for s in ('Px', 'Py'))
 
 @dace.program
 def vanilla_dace(A_rowptr: dace.int32[LArows+1],
+                 A_rowidx: dace.int32[LAnnz],
                  A_colidx: dace.int32[LAnnz],
                  A_data: dctype[LAnnz],
                  H1: dctype[LArows, LHcols],
@@ -112,11 +113,12 @@ def vanilla_dace(A_rowptr: dace.int32[LArows+1],
 
     # S = A ⊙ (H x HT)
     values = np.zeros_like(A_data)
-    for i in dace.map[0:LArows]:
-        start = A_rowptr[i]
-        finish = A_rowptr[i+1]
-        for k, j in dace.map[0:LHcols, start:finish]:
-            values[j] = H1[i,k] * H2[A_colidx[j], k] + values[j]
+    # for i in dace.map[0:LArows]:
+    #     start = A_rowptr[i]
+    #     finish = A_rowptr[i+1]
+    #     for k, j in dace.map[0:LHcols, start:finish]:
+    #         values[j] = H1[i,k] * H2[A_colidx[j], k] + values[j]
+    dace.ahht(A_rowidx, A_colidx, H1, H2, values)
     
     # S x W
     out = np.empty((LArows, LWcols), dtype=nptype)
@@ -144,6 +146,19 @@ def vanilla_npsp(A: sparse.csr_matrix,
             A.data[j] = HHT[i, A.indices[j]]
     out = A @ HW
     return np.maximum(out, 0)
+
+
+def csr_to_coo(rowptr: np.ndarray) -> np.ndarray:
+    """ Converts CSR row-pointer representation to COO row-indices. """
+    nnz = rowptr[-1]  # Is this always correct?
+    row_indices = np.empty((nnz,), dtype=rowptr.dtype)
+
+    row = 0
+    for i in range(rowptr.size - 1):
+        row_indices[rowptr[i]:rowptr[i+1]] = row
+        row += 1
+    
+    return row_indices
 
 
 def write_csv(file_name, field_names, values, append=True):
@@ -212,6 +227,7 @@ if __name__ == '__main__':
     tx, ty = NArows // Nx, NArows // Ny
     lA = A[x*tx:(x+1)*tx, y*ty:(y+1)*ty]
     A_rowptr = cupy.asarray(lA.indptr)
+    A_rowidx = cupy.asarray(csr_to_coo(A_rowptr))
     A_colidx = cupy.asarray(lA.indices)
     A_data = cupy.asarray(lA.data)
     H1 = cupy.asarray(H[x*tx:(x+1)*tx, :])
@@ -224,8 +240,9 @@ if __name__ == '__main__':
         print(f"##### Vanilla Attention #####\nGlobal Sizes: {weak_scaling[size]}\nGrid: {grid[size]}""", flush=True)
     
     runtimes = timeit.repeat(
-        """out[:] = func(A_rowptr=A_rowptr, A_colidx=A_colidx, A_data=A_data, H1=H1, H2=H2, W=lW, Px=Nx, Py=Ny,
-                         LArows=tx, LAcols=ty, LAnnz=A_data.size, LHcols=NHcols, LWcols=NWcols); commworld.Barrier()
+        """out[:] = func(A_rowptr=A_rowptr, A_rowidx=A_rowidx, A_colidx=A_colidx, A_data=A_data, H1=H1, H2=H2, W=W,
+                         LArows=tx, LAcols=ty, LAnnz=A_data.size, LHcols=NHcols, LWcols=NWcols,
+                         Px=Nx, Py=Ny); commworld.Barrier()
         """,
         setup="commworld.Barrier()",
         repeat=10,
