@@ -97,6 +97,7 @@ Px, Py = (dace.symbol(s) for s in ('Px', 'Py'))
 
 @dace.program
 def vanilla_dace(A_rowptr: dace.int32[LArows+1],
+                 A_rowidx: dace.int32[LAnnz],
                  A_colidx: dace.int32[LAnnz],
                  A_data: dctype[LAnnz],
                  H1: dctype[LArows, LHcols],
@@ -112,11 +113,13 @@ def vanilla_dace(A_rowptr: dace.int32[LArows+1],
 
     # S = A ⊙ (H x HT)
     values = np.zeros_like(A_data)
-    for i in dace.map[0:LArows]:
-        start = A_rowptr[i]
-        finish = A_rowptr[i+1]
-        for k, j in dace.map[0:LHcols, start:finish]:
-            values[j] = H1[i,k] * H2[A_colidx[j], k] + values[j]
+    # for i in dace.map[0:LArows]:
+    #     start = A_rowptr[i]
+    #     finish = A_rowptr[i+1]
+    #     for k, j in dace.map[0:LHcols, start:finish]:
+    #         values[j] = H1[i,k] * H2[A_colidx[j], k] + values[j]
+    for i, k in dace.map[0:LAnnz, 0:LHcols]:
+        values[i] = H1[A_rowidx[i], k] * H2[A_colidx[i], k] + values[i]
     
     # S x W
     out = np.empty((LArows, LWcols), dtype=nptype)
@@ -144,6 +147,44 @@ def vanilla_npsp(A: sparse.csr_matrix,
             A.data[j] = HHT[i, A.indices[j]]
     out = A @ HW
     return np.maximum(out, 0)
+
+
+def vanilla_npsp2(A: sparse.csr_matrix,
+                  H: np.ndarray,
+                  W: np.ndarray) -> np.ndarray:
+    
+    """ For single-node validation. """
+
+    HW = H @ W
+    HHT = H @ H.T
+    A_coo = A.tocoo()
+    for i, (row, col) in enumerate(zip(A_coo.row, A_coo.col)):
+        A.data[i] = HHT[row, col]
+    out = A @ HW
+    return np.maximum(out, 0)
+
+
+# NOTE: The following should be used only with small sizes
+# def vanilla_npsp(A: sparse.csr_matrix,
+#                  H: np.ndarray,
+#                  W: np.ndarray) -> np.ndarray:
+    
+#     """ For single-node validation. """
+
+#     return np.maximum((A * (H @ H.T)) @ H @ W, 0)
+
+
+def csr_to_coo(rowptr: np.ndarray) -> np.ndarray:
+    """ Converts CSR row-pointer representation to COO row-indices. """
+    nnz = rowptr[-1]  # Is this always correct?
+    row_indices = np.empty((nnz,), dtype=rowptr.dtype)
+
+    row = 0
+    for i in range(rowptr.size - 1):
+        row_indices[rowptr[i]:rowptr[i+1]] = row
+        row += 1
+    
+    return row_indices
 
 
 def write_csv(file_name, field_names, values, append=True):
@@ -205,6 +246,7 @@ if __name__ == '__main__':
     tx, ty = NArows // Nx, NArows // Ny
     lA = A[x*tx:(x+1)*tx, y*ty:(y+1)*ty]
     A_rowptr = lA.indptr.copy()
+    A_rowidx = csr_to_coo(A_rowptr)
     A_colidx = lA.indices.copy()
     A_data = lA.data.copy()
     H1 = H[x*tx:(x+1)*tx, :].copy()
@@ -212,12 +254,17 @@ if __name__ == '__main__':
 
     out = np.ndarray((tx, NWcols), dtype=nptype)
 
+    lA_coo = lA.tocoo()
+    assert(np.allclose(A_rowidx, lA_coo.row))
+    assert(np.allclose(A_colidx, lA_coo.col))
+
     if rank == 0:
         print(f"##### Vanilla Attention #####\nGlobal Sizes: {weak_scaling[size]}\nGrid: {grid[size]}""", flush=True)
     
     runtimes = timeit.repeat(
-        """out[:] = func(A_rowptr=A_rowptr, A_colidx=A_colidx, A_data=A_data, H1=H1, H2=H2, W=W, Px=Nx, Py=Ny,
-                         LArows=tx, LAcols=ty, LAnnz=A_data.size, LHcols=NHcols, LWcols=NWcols); commworld.Barrier()
+        """out[:] = func(A_rowptr=A_rowptr, A_rowidx=A_rowidx, A_colidx=A_colidx, A_data=A_data, H1=H1, H2=H2, W=W,
+                         LArows=tx, LAcols=ty, LAnnz=A_data.size, LHcols=NHcols, LWcols=NWcols,
+                         Px=Nx, Py=Ny); commworld.Barrier()
         """,
         setup="commworld.Barrier()",
         repeat=10,
@@ -229,20 +276,10 @@ if __name__ == '__main__':
         print(f"Median total runtime: {np.median(runtimes)} seconds", flush=True)
         write_time(str(datetime.now()), "vanilla", "dace_cpu", size, weak_scaling[size], runtimes, file_name, field_names, append=True)
 
-        # runtimes = timeit.repeat(
-        #     """func1c(X=lX, JM=lJ, KM=lK, LM=lL, MM=lM,
-        #               S0=SG[0], S1=SG[1], S2=SG[2], S3=SG[3], S4=SG[4], R=SG[5],
-        #               P0=PG[0], P1=PG[1], P2=PG[2], P3=PG[3], P4=PG[4], PR=PG[5])
-        #     """,
-        #     setup="",
-        #     repeat=10,
-        #     number=1,
-        #     globals=locals()
-        # )
-
-        # print(f"Median compute runtime: {np.median(runtimes)} seconds")
-        # write_time(str(datetime.now()),"mttkrp_order_5_mode_0_compute", "dace_cpu", size, (S, S, S, S, S, R), runtimes, file_name, field_names, append=True)
-
-    # ref = vanilla_npsp(A, H, W)
-    # lref = ref[x*tx:(x+1)*tx, :]
-    # assert(np.allclose(out, lref))
+    ref = vanilla_npsp(A, H, W)
+    lref = ref[x*tx:(x+1)*tx, :]
+    ref2 = vanilla_npsp2(A, H, W)
+    lref2 = ref2[x*tx:(x+1)*tx, :]
+    assert(np.allclose(ref2, ref))
+    assert(np.allclose(out, lref2))
+    assert(np.allclose(out, lref))
