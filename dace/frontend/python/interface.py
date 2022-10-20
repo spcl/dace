@@ -115,6 +115,16 @@ def method(f: F,
             self.wrapped[objid] = prog
             return prog
 
+        def __call__(self, *call_args, **call_kwargs):
+            # When called as-is, treat as an unbounded function (dace.program)
+            if None not in self.wrapped:
+                prog = parser.DaceProgram(f, args, kwargs, auto_optimize, device, constant_functions, method=False)
+                self.wrapped[None] = prog
+            else:
+                prog = self.wrapped[None]
+
+            return prog(*call_args, **call_kwargs)
+
     return MethodWrapper()
 
 
@@ -146,6 +156,7 @@ class MapGenerator:
 
     def __iter__(self):
         return ndloop.ndrange(self.rng)
+
 
 class MapMetaclass(type):
     """ Metaclass for map, to enable ``dace.map[0:N]`` syntax. """

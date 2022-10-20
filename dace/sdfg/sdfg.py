@@ -196,15 +196,22 @@ class InterstateEdge(object):
         self._cond_sympy = symbolic.pystr_to_symbolic(self.condition.as_string)
         return self._cond_sympy
 
-    @property
-    def free_symbols(self) -> Set[str]:
-        """ Returns a set of symbols used in this edge's properties. """
+    def read_symbols(self) -> Set[str]:
+        """
+        Returns a set of symbols read in this edge (including symbols in the condition and assignment values).
+        """
         # Symbols in conditions and assignments
         result = set(map(str, dace.symbolic.symbols_in_ast(self.condition.code[0])))
         for assign in self.assignments.values():
             result |= symbolic.free_symbols_and_functions(assign)
 
-        return result - set(self.assignments.keys())
+        return result
+
+    @property
+    def free_symbols(self) -> Set[str]:
+        """ Returns a set of symbols used in this edge's properties. """
+        return self.read_symbols() - set(self.assignments.keys())
+
 
     def replace_dict(self, repl: Dict[str, str], replace_keys=True) -> None:
         """

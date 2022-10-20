@@ -1445,7 +1445,21 @@ class CPUCodeGen(TargetCodeGenerator):
             toplevel_sdfg: SDFG = sdfg.sdfg_list[0]
             arguments.append(f'{toplevel_sdfg.name}_t *__state')
 
-        arguments += [f'{atype} {aname}' for atype, aname, _ in memlet_references]
+        # Add "__restrict__" keywords to arguments that do not alias with others in the context of this SDFG
+        restrict_args = []
+        for atype, aname, _ in memlet_references:
+            def make_restrict(expr: str) -> str:
+                # Check whether "restrict" has already been added before and can be added
+                if expr.strip().endswith('*'):
+                    return '__restrict__'
+                else:
+                    return ''
+            if aname in node.sdfg.arrays and not node.sdfg.arrays[aname].may_alias:
+                restrict_args.append(make_restrict(atype))
+            else:
+                restrict_args.append('')
+
+        arguments += [f'{atype} {restrict} {aname}' for (atype, aname, _), restrict in zip(memlet_references, restrict_args)]
         arguments += [
             f'{node.sdfg.symbols[aname].as_arg(aname)}' for aname in sorted(node.symbol_mapping.keys())
             if aname not in sdfg.constants

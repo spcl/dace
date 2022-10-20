@@ -356,7 +356,7 @@ def test_for_with_external_init_nested():
 
     N = dace.symbol('N')
 
-    sdfg = dace.SDFG('for_with_external_init')
+    sdfg = dace.SDFG('for_with_external_init_nested')
     sdfg.add_array('A', (N, ), dace.int32)
     init = sdfg.add_state('init', is_start_state=True)
     main = sdfg.add_state('main')
@@ -393,6 +393,49 @@ def test_for_with_external_init_nested():
     assert np.allclose(val1, ref)
 
 
+def test_for_with_external_init_nested_start_with_guard():
+    """
+    This test differs from the one above in lacking an initialization SDFGState in the NestedSDFG. Instead, the guard
+    of the nested for-loop is explicitly set as the start-state of the NestedSDFG.
+    """
+
+    N = dace.symbol('N')
+
+    sdfg = dace.SDFG('for_with_external_init_nested_start_with_guard')
+    sdfg.add_array('A', (N, ), dace.int32)
+    init = sdfg.add_state('init', is_start_state=True)
+    main = sdfg.add_state('main')
+    sdfg.add_edge(init, main, dace.InterstateEdge(assignments={'i': '1'}))
+
+    nsdfg = dace.SDFG('nested_sdfg')
+    nsdfg.add_array('inner_A', (N,), dace.int32)
+    nguard = nsdfg.add_state('nested_guard', is_start_state=True)
+    nbody = nsdfg.add_state('nested_body')
+    nexit = nsdfg.add_state('nested_exit')
+    nsdfg.add_edge(nguard, nbody, dace.InterstateEdge(condition='i <= N'))
+    nsdfg.add_edge(nbody, nguard, dace.InterstateEdge(assignments={'i': 'i+1'}))
+    nsdfg.add_edge(nguard, nexit, dace.InterstateEdge(condition='i > N'))
+
+    na = nbody.add_access('inner_A')
+    nt = nbody.add_tasklet('tasklet', {}, {'__out'}, '__out = i-1')
+    nbody.add_edge(nt, '__out', na, None, dace.Memlet('inner_A[i-1]'))
+
+    a = main.add_access('A')
+    t = main.add_nested_sdfg(nsdfg, None, {}, {'inner_A'}, {'N': 'N', 'i': 'i'})
+    main.add_edge(t, 'inner_A', a, None, dace.Memlet.from_array('A', sdfg.arrays['A']))
+
+    sdfg.validate()
+
+    ref = np.arange(10, dtype=np.int32)
+    val0 = np.ndarray((10, ), dtype=np.int32)
+    sdfg(A=val0, N=10)
+    assert np.allclose(val0, ref)
+    ConstantPropagation().apply_pass(sdfg, {})
+    val1 = np.ndarray((10, ), dtype=np.int32)
+    sdfg(A=val1, N=10)
+    assert np.allclose(val1, ref)
+
+
 if __name__ == '__main__':
     test_simple_constants()
     test_nested_constants()
@@ -408,3 +451,4 @@ if __name__ == '__main__':
     test_allocation_varying(True)
     test_for_with_external_init()
     test_for_with_external_init_nested()
+    test_for_with_external_init_nested_start_with_guard()

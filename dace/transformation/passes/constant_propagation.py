@@ -173,15 +173,22 @@ class ConstantPropagation(ppl.Pass):
         # Traverse SDFG topologically
         for state in optional_progressbar(sdfg.topological_sort(start_state), 'Collecting constants',
                                           sdfg.number_of_nodes(), self.progress):
-            if state in result:
+            # NOTE: We must always check the start-state regardless if there are initial symbols. This is necessary
+            # when the start-state is a scope's guard instead of a special initialization state, i.e., when the start-
+            # state has incoming edges that may involve the initial symbols. See also:
+            # `tests.passes.constant_propagation_test.test_for_with_external_init_nested_start_with_guard``
+            if state in result and state is not start_state:
                 continue
 
             # Get predecessors
             in_edges = sdfg.in_edges(state)
             if len(in_edges) == 1:  # Special case, propagate as-is
-                result[state] = {}
+                if state not in result:  # Condition evaluates to False when state is the start-state
+                    result[state] = {}
+                
                 # First the prior state
-                self._propagate(result[state], result[in_edges[0].src])
+                if in_edges[0].src in result:  # Condition evaluates to False when state is the start-state
+                    self._propagate(result[state], result[in_edges[0].src])
 
                 # Then assignments on the incoming edge
                 self._propagate(result[state], self._data_independent_assignments(in_edges[0].data, arrays))
@@ -207,7 +214,8 @@ class ConstantPropagation(ppl.Pass):
                     else:
                         assignments[aname] = aval
 
-            result[state] = {}
+            if state not in result:  # Condition may evaluate to False when state is the start-state
+                result[state] = {}
             self._propagate(result[state], assignments)
 
         return result

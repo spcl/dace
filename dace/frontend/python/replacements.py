@@ -553,8 +553,10 @@ def _arange(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, *args, **kwargs):
 
 @oprepo.replaces('elementwise')
 @oprepo.replaces('dace.elementwise')
-def _elementwise(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, func: str, in_array: str, out_array=None):
-    """Apply a lambda function to each element in the input"""
+def _elementwise(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, func: Union[StringLiteral, str], in_array: str, out_array=None):
+    """
+    Apply a lambda function to each element in the input.
+    """
 
     inparr = sdfg.arrays[in_array]
     restype = sdfg.arrays[in_array].dtype
@@ -564,7 +566,7 @@ def _elementwise(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, func: str, in
     else:
         outarr = sdfg.arrays[out_array]
 
-    func_ast = ast.parse(func)
+    func_ast = ast.parse(func.value if isinstance(func, StringLiteral) else func)
     try:
         lambda_ast = func_ast.body[0].value
         if len(lambda_ast.args.args) != 1:

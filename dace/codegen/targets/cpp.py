@@ -307,7 +307,7 @@ def emit_memlet_reference(dispatcher,
     else:
         datadef = ptr(memlet.data, desc, sdfg, dispatcher.frame)
 
-    def make_const(expr):
+    def make_const(expr: str) -> str:
         # check whether const has already been added before
         if not expr.startswith("const "):
             return "const " + expr
