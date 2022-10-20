@@ -4,13 +4,14 @@ import collections
 import sympy as sp
 from typing import Optional, Set, Tuple, Union
 
-from dace import SDFG, InterstateEdge, SDFGState, symbolic
+from dace import SDFG, InterstateEdge, SDFGState, symbolic, properties
 from dace.properties import CodeBlock
 from dace.sdfg.graph import Edge
 from dace.sdfg.validation import InvalidSDFGInterstateEdgeError
 from dace.transformation import pass_pipeline as ppl
 
 
+@properties.make_properties
 class DeadStateElimination(ppl.Pass):
     """
     Removes all unreachable states (e.g., due to a branch that will never be taken) from an SDFG.

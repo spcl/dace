@@ -580,13 +580,14 @@ def translate_cpp_tasklet_to_python(code: str):
 
 
 @dataclass(unsafe_hash=True)
+@props.make_properties
 class ScalarToSymbolPromotion(passes.Pass):
 
     category: passes.PassCategory = passes.PassCategory.Simplification
 
-    ignore: Optional[Set[str]] = None
-    transients_only: bool = True
-    integers_only: bool = True
+    ignore = props.SetProperty(element_type=str, default=None, optional=True, desc='Fields that should not be promoted.')
+    transients_only = props.Property(dtype=bool, default=True, desc='Promote only transients.')
+    integers_only = props.Property(dtype=bool, default=True, desc='Allow promotion of integer scalars only.')
 
     def modifies(self) -> passes.Modifies:
         return (passes.Modifies.Descriptors | passes.Modifies.Symbols | passes.Modifies.Nodes | passes.Modifies.Edges)

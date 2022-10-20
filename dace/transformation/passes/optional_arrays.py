@@ -2,12 +2,13 @@
 
 from typing import Dict, Iterator, Optional, Set, Tuple
 
-from dace import SDFG, SDFGState, data
+from dace import SDFG, SDFGState, data, properties
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.transformation import pass_pipeline as ppl
 
 
+@properties.make_properties
 class OptionalArrayInference(ppl.Pass):
     """
     Infers the ``optional`` property of arrays, i.e., if they can be given None, throughout the SDFG and all nested

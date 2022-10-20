@@ -2,7 +2,7 @@
 from collections import defaultdict
 from typing import Any, Callable, Dict, List, Optional, Set
 
-from dace import SDFG, SDFGState, data
+from dace import SDFG, SDFGState, data, properties
 from dace.sdfg import nodes
 from dace.sdfg.analysis import cfg
 from dace.transformation import pass_pipeline as ppl
@@ -12,6 +12,7 @@ from dace.transformation.passes import analysis as ap
 from dace.transformation.transformation import SingleStateTransformation
 
 
+@properties.make_properties
 class ArrayElimination(ppl.Pass):
     """
     Merges and removes arrays and their corresponding accesses. This includes redundant array copies, unnecessary views,

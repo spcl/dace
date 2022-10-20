@@ -6,12 +6,13 @@ Contains implementations of SDFG inlining and state fusion passes.
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
-from dace import SDFG
+from dace import SDFG, properties
 from dace.sdfg.utils import fuse_states, inline_sdfgs
 from dace.transformation import pass_pipeline as ppl
 
 
 @dataclass(unsafe_hash=True)
+@properties.make_properties
 class FuseStates(ppl.Pass):
     """
     Fuses all possible states of an SDFG (and all sub-SDFGs).
@@ -19,8 +20,11 @@ class FuseStates(ppl.Pass):
 
     category: ppl.PassCategory = ppl.PassCategory.Simplification
 
-    permissive: bool = False  #: If True, ignores some race conditions checks
-    progress: Optional[bool] = None  #: Whether to print progress, or None for default (print after 5 seconds)
+    permissive = properties.Property(dtype=bool, default=False, desc='If True, ignores some race conditions checks.')
+    progress = properties.Property(dtype=bool,
+                                   default=None,
+                                   optional=True,
+                                   desc='Whether to print progress, or None for default (print after 5 seconds).')
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return modified & (ppl.Modifies.States | ppl.Modifies.InterstateEdges)

@@ -2,6 +2,7 @@
 """
 API for SDFG analysis and manipulation Passes, as well as Pipelines that contain multiple dependent passes.
 """
+from dace import properties
 from dace.sdfg import SDFG, SDFGState, graph as gr, nodes, utils as sdutil
 
 from enum import Enum, Flag, auto
@@ -35,12 +36,13 @@ class PassCategory(Enum):
     """
     Specifies the type of Pass/Transformation.
     """
-    Analysis = auto()  #: Pass only analyzes the SDFG and does not modify it
-    Helper = auto()  #: Pass is a helper for other passes and is not intended to be run on its own
-    Simplification = auto()  #: Pass modifies the SDFG in a way that does not change its semantics
-    MemoryFootprintReduction = auto()  #: Pass modifies the SDFG in a way that reduces its memory footprint
+    Analysis = 'Analysis'  #: Pass only analyzes the SDFG and does not modify it
+    Helper = 'Helper'  #: Pass is a helper for other passes and is not intended to be run on its own
+    Simplification = 'Simplification'  #: Pass modifies the SDFG in a way that does not change its semantics
+    MemoryFootprintReduction = 'Memory Footprint Reduction'  #: Pass modifies the SDFG in a way that reduces its memory footprint
 
 
+@properties.make_properties
 class Pass:
     """
     An SDFG analysis or manipulation that registers as part of the SDFG history. Classes that extend ``Pass`` can be
@@ -103,6 +105,7 @@ class Pass:
         """
         return None
 
+@properties.make_properties
 class VisitorPass(Pass):
     """
     A simple type of Pass that provides a Python visitor object on an SDFG. Used for either analyzing an SDFG or
@@ -179,6 +182,7 @@ class VisitorPass(Pass):
         return results
 
 
+@properties.make_properties
 class StatePass(Pass):
     """
     A specialized Pass type that applies to each SDFG state separately. Such a pass is realized by implementing the
@@ -222,6 +226,7 @@ class StatePass(Pass):
         raise NotImplementedError
 
 
+@properties.make_properties
 class ScopePass(Pass):
     """
     A specialized Pass type that applies to each scope (e.g., Map, Consume, Pipeline) separately. Such a pass is
@@ -272,6 +277,7 @@ class ScopePass(Pass):
 
 
 @dataclass
+@properties.make_properties
 class Pipeline(Pass):
     """
     A pass pipeline contains multiple, potentially dependent Pass objects, and applies them in order. Each contained
@@ -465,6 +471,7 @@ class Pipeline(Pass):
         return None
 
 
+@properties.make_properties
 class FixedPointPipeline(Pipeline):
     """
     A special type of Pipeline that applies its ``Pass``es in repeated succession until they all stop modifying the

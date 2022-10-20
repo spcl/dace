@@ -5,7 +5,7 @@ import re
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, Set, Tuple
 
-from dace import SDFG, dtypes
+from dace import SDFG, dtypes, properties
 from dace.sdfg import nodes
 from dace.transformation import pass_pipeline as ppl
 
@@ -13,6 +13,7 @@ _NAME_TOKENS = re.compile(r'[a-zA-Z_][a-zA-Z_0-9]*')
 
 
 @dataclass(unsafe_hash=True)
+@properties.make_properties
 class RemoveUnusedSymbols(ppl.Pass):
     """
     Prunes unused symbols from the SDFG symbol repository (``sdfg.symbols``).
@@ -21,7 +22,7 @@ class RemoveUnusedSymbols(ppl.Pass):
 
     category: ppl.PassCategory = ppl.PassCategory.Simplification
 
-    recursive: bool = True
+    recursive = properties.Property(dtype=bool, default=True, desc='Prune nested SDFGs recursively')
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Symbols

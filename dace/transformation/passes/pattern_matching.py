@@ -5,6 +5,7 @@ import collections
 from dataclasses import dataclass
 import time
 
+from dace import properties
 from dace.config import Config
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg import graph as gr, nodes as nd
@@ -16,23 +17,41 @@ from dace.transformation import transformation as xf, pass_pipeline as ppl
 
 
 @dataclass
+@properties.make_properties
 class PatternMatchAndApply(ppl.Pass):
     """
     Applies a list of pattern-matching transformations in sequence. For every given transformation, matches the first
     pattern in the SDFG and applies it.
     """
 
-    transformations: List[xf.PatternTransformation]  #: The list of transformations to apply
-
     category: ppl.PassCategory = ppl.PassCategory.Helper
 
-    permissive: bool = False  #: Whether to apply in permissive mode, i.e., apply in more cases where it may be unsafe
-    validate: bool = True  #: If True, validates the SDFG after all transformations have been applied
-    validate_all: bool = False  #: If True, validates the SDFG after each transformation applies
-    states: Optional[List[SDFGState]] = None  #: If not None, only applies transformations to the given states
+    transformation = properties.ListProperty(element_type=xf.PatternTransformation,
+                                             default=[],
+                                             desc='The list of transformations to apply')
 
-    print_report: Optional[bool] = None  #: Whether to show debug prints (or None to use configuration file)
-    progress: Optional[bool] = None  #: Whether to show progress printouts (or None to use configuration file)
+    permissive = properties.Property(dtype=bool,
+                                     default=False,
+                                     desc='Whether to apply in permissive mode, i.e., apply in more cases where it may be unsafe.')
+    validate = properties.Property(dtype=bool,
+                                   default=True,
+                                   desc='If True, validates the SDFG after all transformations have been applied.')
+    validate_all = properties.Property(dtype=bool,
+                                       default=False,
+                                       desc='If True, validates the SDFG after each transformation applies.')
+    states = properties.ListProperty(element_type=SDFGState,
+                                     default=None,
+                                     optional=True,
+                                     desc='If not None, only applies transformations to the given states.')
+
+    print_report = properties.Property(dtype=bool,
+                                       default=None,
+                                       optional=True,
+                                       desc='Whether to show debug prints (or None to use configuration file).')
+    progress = properties.Property(dtype=bool,
+                                   default=None,
+                                   optional=True,
+                                   desc='Whether to show progress printouts (or None to use configuration file).')
 
     def __init__(self,
                  transformations: Union[xf.PatternTransformation, Iterable[xf.PatternTransformation]],
@@ -108,6 +127,7 @@ class PatternMatchAndApply(ppl.Pass):
 
 
 @dataclass
+@properties.make_properties
 class PatternMatchAndApplyRepeated(PatternMatchAndApply):
     """
     A fixed-point pipeline that applies a list of pattern-matching transformations in repeated succession until no
@@ -117,7 +137,9 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
 
     category: ppl.PassCategory = ppl.PassCategory.Helper
 
-    order_by_transformation: bool = True
+    order_by_transformation = properties.Property(dtype=bool,
+                                                  default=True,
+                                                  desc='Whether or not to order by transformation.')
 
     def __init__(self,
                  transformations: Union[xf.PatternTransformation, Iterable[xf.PatternTransformation]],
@@ -232,6 +254,7 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
 
 
 @dataclass
+@properties.make_properties
 class PatternApplyOnceEverywhere(PatternMatchAndApplyRepeated):
     """
     A pass pipeline that applies all given transformations once, in every location that their pattern matched.
