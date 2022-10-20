@@ -1401,16 +1401,16 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
             :return: (map_entry, map_exit) node 2-tuple
         """
         debuginfo = _getdebuginfo(debuginfo or self._default_lineinfo)
-        pipeline = nd.Pipeline(name,
-                               *_make_iterators(ndrange),
-                               init_size=init_size,
-                               init_overlap=init_overlap,
-                               drain_size=drain_size,
-                               drain_overlap=drain_overlap,
-                               additional_iterators=additional_iterators,
-                               schedule=schedule,
-                               debuginfo=debuginfo,
-                               **kwargs)
+        pipeline = nd.PipelineScope(name,
+                                    *_make_iterators(ndrange),
+                                    init_size=init_size,
+                                    init_overlap=init_overlap,
+                                    drain_size=drain_size,
+                                    drain_overlap=drain_overlap,
+                                    additional_iterators=additional_iterators,
+                                    schedule=schedule,
+                                    debuginfo=debuginfo,
+                                    **kwargs)
         pipeline_entry = nd.PipelineEntry(pipeline)
         pipeline_exit = nd.PipelineExit(pipeline)
         self.add_nodes_from([pipeline_entry, pipeline_exit])
