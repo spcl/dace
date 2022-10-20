@@ -93,6 +93,8 @@ GArows, GAnnz, GHcols, GWcols = (dace.symbol(s) for s in ('GArows', 'GAnnz', 'GH
 LArows, LAcols, LAnnz, LHcols, LWcols = (dace.symbol(s) for s in ('LArows', 'LAcols', 'LAnnz', 'LHcols', 'LWcols'))
 # Process grid
 Px, Py = (dace.symbol(s) for s in ('Px', 'Py'))
+# Layer symbols
+num_layers = dace.symbol('num_layers')
 
 
 @dace.program
@@ -101,25 +103,28 @@ def vanilla_dace(A_rowptr: dace.int32[LArows+1],
                  A_colidx: dace.int32[LAnnz],
                  A_data: dctype[LAnnz],
                  H1: dctype[LArows, LHcols],
-                 H2: dctype[LAcols, LHcols],
+                #  H2: dctype[LAcols, LHcols],
                  W: dctype[LHcols, LWcols]) -> dctype[LArows, LWcols]:
     
     # Process grid
-    parent_grid = dace.comm.Cart_create([Px, Py])
-    reduce_grid = dace.comm.Cart_sub(parent_grid, [False, True])
+    parent_grid = dace.comm.Cart_create([Px, Py, 1])
+    reduce_grid = dace.comm.Cart_sub(parent_grid, [False, True, False])
+    h1_grid = dace.comm.Cart_sub(parent_grid, [True, False, True], exact_grid=0)
+    h2_grid = dace.comm.Cart_sub(parent_grid, [False, True, True], exact_grid=0)
+    bcast_grid = dace.comm.Cart_sub(parent_grid, [True, False, False])
+
+    H2 = np.empty((LAcols, LHcols), dtype=H1.dtype)
+
+    arr_h1 = dace.comm.Subarray((GArows, GHcols), H1, process_grid=h1_grid)
+    arr_h2 = dace.comm.Subarray((GArows, GHcols), H2, process_grid=h2_grid)
+    dace.comm.Redistribute(H1, arr_h1, H2, arr_h2)
+    dace.comm.Bcast(H2, grid=bcast_grid)
     
     # HW = H x W
     HW = H2 @ W
 
     # S = A ⊙ (H x HT)
     values = np.zeros_like(A_data)
-    # for i in dace.map[0:LArows]:
-    #     start = A_rowptr[i]
-    #     finish = A_rowptr[i+1]
-    #     for k, j in dace.map[0:LHcols, start:finish]:
-    #         values[j] = H1[i,k] * H2[A_colidx[j], k] + values[j]
-    # for i, k in dace.map[0:LAnnz, 0:LHcols]:
-    #     values[i] = H1[A_rowidx[i], k] * H2[A_colidx[i], k] + values[i]
     dace.ahht(A_rowidx, A_colidx, H1, H2, values)
     
     # S x W
@@ -131,6 +136,66 @@ def vanilla_dace(A_rowptr: dace.int32[LArows+1],
 
     # ReLU
     return np.maximum(out, 0)
+
+
+@dace.program
+def vanilla_dace_loop(A_rowptr: dace.int32[LArows+1],
+                      A_rowidx: dace.int32[LAnnz],
+                      A_colidx: dace.int32[LAnnz],
+                      A_data: dctype[LAnnz],
+                      H1: dctype[LArows, LHcols],
+                      W1: dctype[LHcols, LWcols],
+                      W2: dctype[num_layers, LWcols, LWcols]) -> dctype[LArows, LWcols]:
+
+    # Process grid
+    parent_grid = dace.comm.Cart_create([Px, Py, 1])
+    reduce_grid = dace.comm.Cart_sub(parent_grid, [False, True, False])
+    h1_grid = dace.comm.Cart_sub(parent_grid, [True, False, True], exact_grid=0)
+    h2_grid = dace.comm.Cart_sub(parent_grid, [False, True, True], exact_grid=0)
+    bcast_grid = dace.comm.Cart_sub(parent_grid, [True, False, False])
+
+    H2 = np.empty((LAcols, LHcols), dtype=H1.dtype)
+    arr_h1 = dace.comm.Subarray((GArows, GHcols), H1, process_grid=h1_grid)
+    arr_h2 = dace.comm.Subarray((GArows, GHcols), H2, process_grid=h2_grid)
+    dace.comm.Redistribute(H1, arr_h1, H2, arr_h2)
+    dace.comm.Bcast(H2, grid=bcast_grid)
+    
+    # HW = H x W
+    HW = H2 @ W1
+    # S = A ⊙ (H x HT)
+    values = np.zeros_like(A_data)
+    dace.ahht(A_rowidx, A_colidx, H1, H2, values)
+    # S x W
+    out = np.empty((LArows, LWcols), dtype=nptype)
+    dace.csrmm(A_rowptr, A_colidx, values, HW, out, 1, 0)
+    # Reduce
+    dace.comm.Allreduce(out, 'MPI_SUM', grid=reduce_grid)
+    # ReLU
+    H1_new = np.maximum(out, 0)
+
+    H2_new = np.empty_like(H1_new)
+
+    for i in range(num_layers):
+        arr_h1b = dace.comm.Subarray((GArows, GHcols), H1_new, process_grid=h1_grid)
+        arr_h2b = dace.comm.Subarray((GArows, GHcols), H2_new, process_grid=h2_grid)
+        dace.comm.Redistribute(H1_new, arr_h1b, H2_new, arr_h2b)
+        dace.comm.Bcast(H2_new, grid=bcast_grid)
+
+        # HW = H x W
+        HW_new = H2_new @ W2[i]
+        # S = A ⊙ (H x HT)
+        values = np.zeros_like(A_data)
+        dace.ahht(A_rowidx, A_colidx, H1_new, H2_new, values)
+        # S x W
+        out = np.empty((LArows, LWcols), dtype=nptype)
+        dace.csrmm(A_rowptr, A_colidx, values, HW_new, out, 1, 0)
+        # Reduce
+        dace.comm.Allreduce(out, 'MPI_SUM', grid=reduce_grid)
+        # ReLU
+        H1_new[:] = np.maximum(out, 0)
+    
+    return H1_new
+
 
 
 def vanilla_npsp(A: sparse.csr_matrix,
@@ -148,6 +213,40 @@ def vanilla_npsp(A: sparse.csr_matrix,
             A.data[j] = HHT[i, A.indices[j]]
     out = A @ HW
     return np.maximum(out, 0)
+
+
+def vanilla_npsp_loop(A: sparse.csr_matrix,
+                      H: np.ndarray,
+                      W1: np.ndarray,
+                      W2: np.ndarray,
+                      num_layers: int) -> np.ndarray:
+    
+    """ For single-node validation. """
+
+    HW = H @ W1
+    HHT = H @ H.T
+    for i in range(A.indptr.size - 1):
+        start = A.indptr[i]
+        finish = A.indptr[i+1]
+        for j in range(start, finish):
+            A.data[j] = HHT[i, A.indices[j]]
+    out = A @ HW
+    H_new = np.maximum(out, 0)
+
+    for i in range(num_layers):
+
+        HW = H_new @ W2[i]
+        HHT = H_new @ H_new.T
+        for i in range(A.indptr.size - 1):
+            start = A.indptr[i]
+            finish = A.indptr[i+1]
+            for j in range(start, finish):
+                A.data[j] = HHT[i, A.indices[j]]
+        out = A @ HW
+        H_new = np.maximum(out, 0)
+
+    return H_new
+
 
 
 def vanilla_npsp2(A: sparse.csr_matrix,
@@ -225,7 +324,8 @@ if __name__ == '__main__':
     
     sdfg, sdfgc = (None, ) * 2
     if rank == 0:
-        sdfg = vanilla_dace.to_sdfg(simplify=True)
+        # sdfg = vanilla_dace.to_sdfg(simplify=True)
+        sdfg = vanilla_dace_loop.to_sdfg(simplify=True)
         sdfg = auto_optimize(sdfg, dace.DeviceType.CPU)
     func = utils.distributed_compile(sdfg, commworld)
 
@@ -235,11 +335,14 @@ if __name__ == '__main__':
     Nx, Ny = grid[size]
     NArows, NHcols, NWcols = weak_scaling[size]
     density = 0.01
+    NArows = 2048
+    num_layers = 2
 
     # Global data
     A = sparse.random(NArows, NArows, density=density, format='csr', dtype=nptype, random_state=rng)
     H = rng.random((NArows, NHcols), dtype=nptype)
     W = rng.random((NHcols, NWcols), dtype=nptype)
+    W2 = rng.random((num_layers, NWcols, NWcols), dtype=nptype)
 
     # Local data
     cart_comm = commworld.Create_cart((Nx, Ny))
@@ -255,17 +358,40 @@ if __name__ == '__main__':
 
     out = np.ndarray((tx, NWcols), dtype=nptype)
 
-    lA_coo = lA.tocoo()
-    assert(np.allclose(A_rowidx, lA_coo.row))
-    assert(np.allclose(A_colidx, lA_coo.col))
+    # lA_coo = lA.tocoo()
+    # assert(np.allclose(A_rowidx, lA_coo.row))
+    # assert(np.allclose(A_colidx, lA_coo.col))
 
     if rank == 0:
         print(f"##### Vanilla Attention #####\nGlobal Sizes: {weak_scaling[size]}\nGrid: {grid[size]}""", flush=True)
     
+    # runtimes = timeit.repeat(
+    #     """out[:] = func(A_rowptr=A_rowptr, A_rowidx=A_rowidx, A_colidx=A_colidx, A_data=A_data, H1=H1, H2=H2, W=W,
+    #                      LArows=tx, LAcols=ty, LAnnz=A_data.size, LHcols=NHcols, LWcols=NWcols,
+    #                      Px=Nx, Py=Ny); commworld.Barrier()
+    #     """,
+    #     setup="commworld.Barrier()",
+    #     repeat=10,
+    #     number=1,
+    #     globals=locals()
+    # )
+    # runtimes = timeit.repeat(
+    #     """out[:] = func(A_rowptr=A_rowptr, A_rowidx=A_rowidx, A_colidx=A_colidx, A_data=A_data, H1=H1, W=W,
+    #                      GArows=NArows, GAcols=NArows, GHcols=NHcols,
+    #                      LArows=tx, LAcols=ty, LAnnz=A_data.size, LHcols=NHcols, LWcols=NWcols,
+    #                      Px=Nx, Py=Ny); commworld.Barrier()
+    #     """,
+    #     setup="commworld.Barrier()",
+    #     repeat=10,
+    #     number=1,
+    #     globals=locals()
+    # )
+
     runtimes = timeit.repeat(
-        """out[:] = func(A_rowptr=A_rowptr, A_rowidx=A_rowidx, A_colidx=A_colidx, A_data=A_data, H1=H1, H2=H2, W=W,
+        """out[:] = func(A_rowptr=A_rowptr, A_rowidx=A_rowidx, A_colidx=A_colidx, A_data=A_data, H1=H1, W1=W, W2=W2,
+                         num_layers=num_layers, GArows=NArows, GAcols=NArows, GHcols=NHcols,
                          LArows=tx, LAcols=ty, LAnnz=A_data.size, LHcols=NHcols, LWcols=NWcols,
-                         Px=Nx, Py=Ny); commworld.Barrier()
+                         Px=Nx, Py=Ny, print=print); commworld.Barrier()
         """,
         setup="commworld.Barrier()",
         repeat=10,
@@ -277,10 +403,11 @@ if __name__ == '__main__':
         print(f"Median total runtime: {np.median(runtimes)} seconds", flush=True)
         write_time(str(datetime.now()), "vanilla", "dace_cpu", size, weak_scaling[size], runtimes, file_name, field_names, append=True)
 
-    ref = vanilla_npsp(A, H, W)
+    # ref = vanilla_npsp(A, H, W)
+    ref = vanilla_npsp_loop(A, H, W, W2, num_layers)
     lref = ref[x*tx:(x+1)*tx, :]
-    ref2 = vanilla_npsp2(A, H, W)
-    lref2 = ref2[x*tx:(x+1)*tx, :]
-    assert(np.allclose(ref2, ref))
-    assert(np.allclose(out, lref2))
+    # ref2 = vanilla_npsp2(A, H, W)
+    # lref2 = ref2[x*tx:(x+1)*tx, :]
+    # assert(np.allclose(ref2, ref))
+    # assert(np.allclose(out, lref2))
     assert(np.allclose(out, lref))
