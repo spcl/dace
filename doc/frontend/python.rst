@@ -8,7 +8,10 @@ TODO: Explanation of how the pipeline works (either gif or image, accompanied by
 .. toctree::
     :maxdepth: 1
 
-    preprocessing
     parsing
     pysupport
     npsupport
+
+
+..  preprocessing
+    

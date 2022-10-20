@@ -6,12 +6,12 @@ adding new types of nodes, frontend languages, transformations, and hardware arc
 
 The three key mechanisms of extensibility are class inheritance, :ref:`replacements <replacements>`, and :ref:`enums`.
 
-.. toctree::
-   :maxdepth: 1
+.. .. toctree
+..    :maxdepth: 1
 
-   symbolic
-   libraries
-   frontend
-   sdfgconvertible
-   backend
+..    .. symbolic
+..    .. libraries
+..    .. frontend
+..    .. sdfgconvertible
+..    .. backend
 

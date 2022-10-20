@@ -576,6 +576,9 @@ symbol values across the SDFG state machine, call :func:`~dace.sdfg.propagation.
 SDFG Builder API
 ----------------
 
+Navigation - ``entry/exit_node``
+Beware of a common pitfall: looping over ``nodes`` may not be in topological order, use...
+
 ``add_node`` etc.
 
 ``add_{in,out}_connector`` for nodes, or simply ``add_edge``.

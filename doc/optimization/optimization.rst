@@ -19,9 +19,11 @@ useful to provide a better-performing (but likely not optimal) SDFG.
     
     profiling
     blas
-    interactive
     vscode
-    guidelines
     gpu
     fpga
 
+
+.. interactive
+.. guidelines
+    

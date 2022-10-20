@@ -30,9 +30,9 @@ DaCe is divided into the following subfolders:
         * ``codegen``: :ref:`codegen`
         * ``runtime``: Thin runtime that supports DaCe-generated code. See :ref:`runtime`
         * ``sourcemap.py``: Source mapping capabilities that maps frontend code <--> SDFG <--> generated code
-    * Library nodes and libraries:
-        * ``library.py``: Library interface. See :ref:`libraries`
-        * ``libraries``: Built-in libraries. For more information, see :doc:`../extensions/libraries`
+    * Library nodes and libraries (See :ref:`libraries`):
+        * ``library.py``: Library interface
+        * ``libraries``: Built-in libraries
     * Configuration
         * ``config.py``: Configuration-related classes. See :ref:`config` 
         * ``config_schema.yml``: Configuration specification file (schema) with defaults and documentation
