@@ -163,8 +163,7 @@ def vanilla_dace_loop(A_rowptr: dace.int32[LArows+1],
     dace.comm.Allreduce(out, 'MPI_SUM', grid=reduce_grid)
     # ReLU
     H1_new = np.maximum(out, 0)
-
-    H2_new = np.empty_like(H1_new)
+    H2_new = np.empty((LAcols, LWcols), dtype=nptype)
 
     for i in range(num_layers):
         arr_h1b = dace.comm.Subarray((GArows, GHcols), H1_new, process_grid=h1_grid)
@@ -175,13 +174,67 @@ def vanilla_dace_loop(A_rowptr: dace.int32[LArows+1],
         # HW = H x W
         HW_new = H2_new @ W2[i]
         # S = A ⊙ (H x HT)
-        values = np.empty_like(A_data)
         dace.ahht(A_rowidx, A_colidx, H1_new, H2_new, values)
         # S x W
-        out = np.empty((LArows, LWcols), dtype=nptype)
         dace.csrmm(A_rowptr, A_colidx, values, HW_new, out, 1, 0)
         # Reduce
         dace.comm.Allreduce(out, 'MPI_SUM', grid=reduce_grid)
+        # ReLU
+        H1_new[:] = np.maximum(out, 0)
+    
+    return H1_new
+
+
+@dace.program
+def vanilla_dace_loop_compute(A_rowptr: dace.int32[LArows+1],
+                              A_rowidx: dace.int32[LAnnz],
+                              A_colidx: dace.int32[LAnnz],
+                              A_data: dctype[LAnnz],
+                              H1: dctype[LArows, LHcols],
+                              W1: dctype[LHcols, LWcols],
+                              W2: dctype[num_layers, LWcols, LWcols]) -> dctype[LArows, LWcols]:
+
+    # Process grid
+    # parent_grid = dace.comm.Cart_create([Px, Py, 1])
+    # reduce_grid = dace.comm.Cart_sub(parent_grid, [False, True, False])
+    # h1_grid = dace.comm.Cart_sub(parent_grid, [True, False, True], exact_grid=0)
+    # h2_grid = dace.comm.Cart_sub(parent_grid, [False, True, True], exact_grid=0)
+    # bcast_grid = dace.comm.Cart_sub(parent_grid, [True, False, False])
+
+    H2 = np.empty((LAcols, LHcols), dtype=H1.dtype)
+    # arr_h1 = dace.comm.Subarray((GArows, GHcols), H1, process_grid=h1_grid)
+    # arr_h2 = dace.comm.Subarray((GArows, GHcols), H2, process_grid=h2_grid)
+    # dace.comm.Redistribute(H1, arr_h1, H2, arr_h2)
+    # dace.comm.Bcast(H2, grid=bcast_grid)
+    
+    # HW = H x W
+    HW = H2 @ W1
+    # S = A ⊙ (H x HT)
+    values = np.zeros_like(A_data)
+    dace.ahht(A_rowidx, A_colidx, H1, H2, values)
+    # S x W
+    out = np.empty((LArows, LWcols), dtype=nptype)
+    dace.csrmm(A_rowptr, A_colidx, values, HW, out, 1, 0)
+    # Reduce
+    # dace.comm.Allreduce(out, 'MPI_SUM', grid=reduce_grid)
+    # ReLU
+    H1_new = np.maximum(out, 0)
+    H2_new = np.empty((LAcols, LWcols), dtype=nptype)
+
+    for i in range(num_layers):
+        # arr_h1b = dace.comm.Subarray((GArows, GHcols), H1_new, process_grid=h1_grid)
+        # arr_h2b = dace.comm.Subarray((GArows, GHcols), H2_new, process_grid=h2_grid)
+        # dace.comm.Redistribute(H1_new, arr_h1b, H2_new, arr_h2b)
+        # dace.comm.Bcast(H2_new, grid=bcast_grid)
+
+        # HW = H x W
+        HW_new = H2_new @ W2[i]
+        # S = A ⊙ (H x HT)
+        dace.ahht(A_rowidx, A_colidx, H1_new, H2_new, values)
+        # S x W
+        dace.csrmm(A_rowptr, A_colidx, values, HW_new, out, 1, 0)
+        # Reduce
+        # dace.comm.Allreduce(out, 'MPI_SUM', grid=reduce_grid)
         # ReLU
         H1_new[:] = np.maximum(out, 0)
     
@@ -297,7 +350,9 @@ if __name__ == '__main__':
     sdfg, sdfgc = (None, ) * 2
     if rank == 0:
         sdfg = auto_gpu(vanilla_dace_loop)
+        sdfgc = auto_gpu(vanilla_dace_loop_compute)
     func = utils.distributed_compile(sdfg, commworld)
+    funcc = utils.distributed_compile(sdfgc, commworld)
 
     rng = np.random.default_rng(42)
 
@@ -342,7 +397,7 @@ if __name__ == '__main__':
         """out[:] = func(A_rowptr=A_rowptr, A_rowidx=A_rowidx, A_colidx=A_colidx, A_data=A_data, H1=H1, W1=lW, W2=lW2,
                          num_layers=num_layers, GArows=NArows, GAcols=NArows, GHcols=NHcols,
                          LArows=tx, LAcols=ty, LAnnz=A_data.size, LHcols=NHcols, LWcols=NWcols,
-                         Px=Nx, Py=Ny, print=print); commworld.Barrier()
+                         Px=Nx, Py=Ny); commworld.Barrier()
         """,
         setup="commworld.Barrier()",
         repeat=10,
@@ -352,24 +407,25 @@ if __name__ == '__main__':
     
     if rank == 0:
         print(f"Median total runtime: {np.median(runtimes)} seconds", flush=True)
-        write_time(str(datetime.now()), "vanilla", "dace_cpu", size, weak_scaling[size], runtimes, file_name, field_names, append=True)
+        write_time(str(datetime.now()), "vanilla", "dace_gpu", size, weak_scaling[size], runtimes, file_name, field_names, append=True)
 
-        # runtimes = timeit.repeat(
-        #     """func1c(X=lX, JM=lJ, KM=lK, LM=lL, MM=lM,
-        #               S0=SG[0], S1=SG[1], S2=SG[2], S3=SG[3], S4=SG[4], R=SG[5],
-        #               P0=PG[0], P1=PG[1], P2=PG[2], P3=PG[3], P4=PG[4], PR=PG[5])
-        #     """,
-        #     setup="",
-        #     repeat=10,
-        #     number=1,
-        #     globals=locals()
-        # )
+        runtimes = timeit.repeat(
+            """out[:] = funcc(A_rowptr=A_rowptr, A_rowidx=A_rowidx, A_colidx=A_colidx, A_data=A_data, H1=H1, W1=lW, W2=lW2,
+                              num_layers=num_layers, GArows=NArows, GAcols=NArows, GHcols=NHcols,
+                              LArows=tx, LAcols=ty, LAnnz=A_data.size, LHcols=NHcols, LWcols=NWcols,
+                              Px=Nx, Py=Ny);
+            """,
+            setup="",
+            repeat=10,
+            number=1,
+            globals=locals()
+        )
 
-        # print(f"Median compute runtime: {np.median(runtimes)} seconds")
-        # write_time(str(datetime.now()),"mttkrp_order_5_mode_0_compute", "dace_cpu", size, (S, S, S, S, S, R), runtimes, file_name, field_names, append=True)
+        print(f"Median compute runtime: {np.median(runtimes)} seconds")
+        write_time(str(datetime.now()), "vanilla_compute", "dace_gpu", size, weak_scaling[size], runtimes, file_name, field_names, append=True)
 
-    ref = vanilla_npsp_loop(A, H, W, W2, num_layers)
-    lref = ref[x*tx:(x+1)*tx, :]
-    lout = cupy.asnumpy(out)
-    print(np.linalg.norm(lout-lref)/np.linalg.norm(lref))
-    assert(np.allclose(out, lref))
+    # ref = vanilla_npsp_loop(A, H, W, W2, num_layers)
+    # lref = ref[x*tx:(x+1)*tx, :]
+    # lout = cupy.asnumpy(out)
+    # print(np.linalg.norm(lout-lref)/np.linalg.norm(lref))
+    # assert(np.allclose(out, lref))
