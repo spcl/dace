@@ -54,7 +54,11 @@ The files in ``dace/codegen`` are organized into several categories:
 C++ Runtime Headers
 ===================
 
-The code generator uses a thin C++ runtime for support.
+The code generator uses a thin C++ runtime for support. The folder, which contains header files written for the different platforms, can
+be found in the ``dace/runtime`` folder.
+
+The folder also contains files such as ``{math, os, pi, pyinterop}.h``, which provide interoperability with Python. This is especially useful 
+to generate matching code when calling Python functions such as ``range`` inside Tasklets.
 
 File structure.
 
