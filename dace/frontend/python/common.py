@@ -3,6 +3,7 @@ import ast
 import collections
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple, Union
+
 from dace import data
 from dace.sdfg.sdfg import SDFG
 
@@ -23,11 +24,12 @@ class DaceSyntaxError(Exception):
             line = 0
             col = 0
 
+        col_suffix = f', column {col}' if col > 0 else ''
+
         if self.visitor is not None:
-            return (self.message + "\n  File \"" + str(self.visitor.filename) + "\", line " + str(line) + ", column " +
-                    str(col))
+            return self.message + f'\n  encountered in File "{self.visitor.filename}", line {line}{col_suffix}'
         else:
-            return (self.message + "\n  in line " + str(line) + ":" + str(col))
+            return self.message + f'\n  encountered in line {line}{col_suffix}'
 
 
 def inverse_dict_lookup(dict: Dict[str, Any], value: Any):

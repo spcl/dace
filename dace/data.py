@@ -397,6 +397,10 @@ class Scalar(Data):
     def pool(self) -> bool:
         return False
 
+    @property
+    def may_alias(self) -> bool:
+        return False
+
     def is_equivalent(self, other):
         if not isinstance(other, Scalar):
             return False
@@ -765,6 +769,10 @@ class Stream(Data):
     def optional(self) -> bool:
         return False
 
+    @property
+    def may_alias(self) -> bool:
+        return False
+
     def clone(self):
         return type(self)(self.dtype, self.buffer_size, self.shape, self.transient, self.storage, self.location,
                           self.offset, self.lifetime, self.debuginfo)
@@ -992,6 +1000,8 @@ def make_reference_from_descriptor(descriptor: Array,
     """
     import numpy as np
     symbols = symbols or {}
+
+    original_array: int = ctypes.cast(original_array, ctypes.c_void_p).value
 
     free_syms = set(map(str, descriptor.free_symbols)) - symbols.keys()
     if free_syms:

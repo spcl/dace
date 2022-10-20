@@ -17,7 +17,7 @@ from dace.properties import (EnumProperty, Property, CodeProperty, LambdaPropert
                              ListProperty, SDFGReferenceProperty, DictProperty, LibraryImplementationProperty,
                              CodeBlock)
 from dace.frontend.operations import detect_reduction_type
-from dace.symbolic import pystr_to_symbolic
+from dace.symbolic import issymbolic, pystr_to_symbolic
 from dace import data, subsets as sbs, dtypes
 import pydoc
 import warnings
@@ -573,7 +573,11 @@ class NestedSDFG(CodeNode):
 
     def infer_connector_types(self, sdfg, state):
         # Avoid import loop
-        from dace.sdfg.infer_types import infer_connector_types
+        from dace.sdfg.infer_types import infer_connector_types, infer_aliasing
+
+        # Propagate aliasing information into SDFG
+        infer_aliasing(self, sdfg, state)
+
         # Infer internal connector types
         infer_connector_types(self.sdfg)
 
@@ -1149,7 +1153,7 @@ class Pipeline(Map):
         return "__" + "".join(self.params)
 
     def loop_bound_str(self):
-        from dace.codegen.targets.common import sym2cpp
+        from dace.codegen.common import sym2cpp
         bound = 1
         for begin, end, step in self.range:
             bound *= (step + end - begin) // step
@@ -1307,6 +1311,14 @@ class LibraryNode(CodeNode):
         """Register an implementation to belong to this library node type."""
         cls.implementations[name] = transformation_type
         transformation_type._match_node = cls
+    
+    @property
+    def free_symbols(self) -> Set[str]:
+        fsyms = super(LibraryNode, self).free_symbols
+        for p, v in self.properties():
+            if isinstance(p, SymbolicProperty) and issymbolic(v):
+                fsyms.update((str(s) for s in v.free_symbols))
+        return fsyms
 
 
 class UnregisteredLibraryNode(LibraryNode):

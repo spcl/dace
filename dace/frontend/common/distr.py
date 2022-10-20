@@ -954,6 +954,7 @@ def _bcgather(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, in_buffer: str
     return None
 
 
+@oprepo.replaces('dace.distr.MatMult')
 @oprepo.replaces('distr.MatMult')
 def _distr_matmult(pv: 'ProgramVisitor',
                    sdfg: SDFG,

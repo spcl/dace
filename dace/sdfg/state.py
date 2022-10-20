@@ -1826,9 +1826,10 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
 
                 # Append input connectors and get mapping of connectors to data
                 for edge in self.in_edges(node):
-                    if edge.dst_conn is not None and edge.dst_conn.startswith("IN_"):
-                        conn_to_data[edge.data.data] = edge.dst_conn[3:]
-
+                    if edge.data.data in conn_to_data:
+                        raise NotImplementedError(
+                            f"Cannot fill scope connectors in SDFGState {self.label} because EntryNode {node.label} "
+                            f"has multiple input edges from data {edge.data.data}.")
                     # We're only interested in edges without connectors
                     if edge.dst_conn is not None or edge.data.data is None:
                         continue

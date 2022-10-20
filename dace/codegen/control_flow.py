@@ -63,7 +63,7 @@ from dace.sdfg.sdfg import SDFG, InterstateEdge
 from dace.sdfg.graph import Edge
 from dace.properties import CodeBlock
 from dace.codegen import cppunparse
-from dace.codegen.targets import cpp
+from dace.codegen.common import unparse_interstate_edge, sym2cpp
 
 ###############################################################################
 
@@ -153,14 +153,14 @@ class SingleState(ControlFlow):
         :return: A c++ string representing the state transition code.
         """
         expr = ''
-        condition_string = cpp.unparse_interstate_edge(edge.data.condition.code[0], sdfg, codegen=framecode)
+        condition_string = unparse_interstate_edge(edge.data.condition.code[0], sdfg, codegen=framecode)
 
         if not edge.data.is_unconditional() and not assignments_only:
             expr += f'if ({condition_string}) {{\n'
 
         if len(edge.data.assignments) > 0:
             expr += ';\n'.join([
-                "{} = {}".format(variable, cpp.unparse_interstate_edge(value, sdfg, codegen=framecode))
+                "{} = {}".format(variable, unparse_interstate_edge(value, sdfg, codegen=framecode))
                 for variable, value in edge.data.assignments.items()
             ] + [''])
 
@@ -264,7 +264,7 @@ class IfScope(ControlFlow):
     orelse: Optional[GeneralBlock] = None  #: Optional body of else condition
 
     def as_cpp(self, codegen, symbols) -> str:
-        condition_string = cpp.unparse_interstate_edge(self.condition.code[0], self.sdfg, codegen=codegen)
+        condition_string = unparse_interstate_edge(self.condition.code[0], self.sdfg, codegen=codegen)
         expr = f'if ({condition_string}) {{\n'
         expr += self.body.as_cpp(codegen, symbols)
         expr += '\n}'
@@ -297,7 +297,7 @@ class IfElseChain(ControlFlow):
             # First block in the chain is just "if", rest are "else if"
             prefix = '' if i == 0 else ' else '
 
-            condition_string = cpp.unparse_interstate_edge(condition.code[0], self.sdfg, codegen=codegen)
+            condition_string = unparse_interstate_edge(condition.code[0], self.sdfg, codegen=codegen)
             expr += f'{prefix}if ({condition_string}) {{\n'
             expr += body.as_cpp(codegen, symbols)
             expr += '\n}'
@@ -359,11 +359,11 @@ class ForScope(ControlFlow):
             for edge in self.init_edges:
                 for k, v in edge.data.assignments.items():
                     if k != self.itervar:
-                        cppinit = cpp.unparse_interstate_edge(v, sdfg, codegen=codegen)
+                        cppinit = unparse_interstate_edge(v, sdfg, codegen=codegen)
                         preinit += f'{k} = {cppinit};\n'
 
         if self.condition is not None:
-            cond = cpp.unparse_interstate_edge(self.condition.code[0], sdfg, codegen=codegen)
+            cond = unparse_interstate_edge(self.condition.code[0], sdfg, codegen=codegen)
         else:
             cond = ''
 
@@ -395,7 +395,7 @@ class WhileScope(ControlFlow):
     def as_cpp(self, codegen, symbols) -> str:
         if self.test is not None:
             sdfg = self.guard.parent
-            test = cpp.unparse_interstate_edge(self.test.code[0], sdfg, codegen=codegen)
+            test = unparse_interstate_edge(self.test.code[0], sdfg, codegen=codegen)
         else:
             test = 'true'
 
@@ -422,7 +422,7 @@ class DoWhileScope(ControlFlow):
 
     def as_cpp(self, codegen, symbols) -> str:
         if self.test is not None:
-            test = cpp.unparse_interstate_edge(self.test.code[0], self.sdfg, codegen=codegen)
+            test = unparse_interstate_edge(self.test.code[0], self.sdfg, codegen=codegen)
         else:
             test = 'true'
 
@@ -582,7 +582,7 @@ def _cases_from_branches(
             if not ematch:
                 return None
         # Create mapping to codeblocks
-        result[cpp.sym2cpp(ematch[b])] = cblocks[e]
+        result[sym2cpp(ematch[b])] = cblocks[e]
 
     return switchvar, result
 
