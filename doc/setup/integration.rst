@@ -21,9 +21,11 @@ Mention :func:`~dace.data.make_array_from_descriptor` and :func:`~dace.data.make
 Using GPU Arrays
 ----------------
 
-You can use CuPy arrays and torch arrays, or any array that implements ``__cuda_array_interface__``. In JIT mode
-it will create a ``GPU_Global`` data descriptor.
+You can use GPU arrays in Python directly via `CuPy <https://cupy.dev/>`_ arrays, PyTorch tensors, or any 
+array that implements ``__cuda_array_interface__``. In DaCe, JIT mode will create a ``GPU_Global`` data
+descriptor automatically and use that array on the GPU.
 
+.. _integration_c:
 
 C/C++ and C ABI-Compatible Languages
 ------------------------------------

@@ -1,4 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+
 from six import StringIO
 import collections
 import enum
@@ -396,13 +397,13 @@ class FPGACodeGen(TargetCodeGenerator):
 
     def _kernels_subgraphs(self, graph: Union[dace.sdfg.SDFGState, ScopeSubgraphView], dependencies: dict):
         """
-            Finds subgraphs of an SDFGState or ScopeSubgraphView that correspond to kernels.
-            This is done by looking to which kernel, each node belongs.
+        Finds subgraphs of an SDFGState or ScopeSubgraphView that correspond to kernels.
+        This is done by looking to which kernel, each node belongs.
 
-            :param graph, the state/subgraph to consider
-            :param dependencies: a dictionary containing for each kernel ID, the IDs of the kernels on which it
-                depends on
-            :return a list of tuples (subgraph, kernel ID) topologically ordered according kernel dependencies.
+        :param graph: the state/subgraph to consider
+        :param dependencies: a dictionary containing for each kernel ID, the IDs of the kernels on which it
+            depends on
+        :return: a list of tuples (subgraph, kernel ID) topologically ordered according kernel dependencies.
         """
         from dace.sdfg.scope import ScopeSubgraphView
 
@@ -674,8 +675,10 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
 
     @staticmethod
     def shared_data(subgraphs):
-        """Returns a set of data objects that are shared between two or more of
-           the specified subgraphs."""
+        """
+        Returns a set of data objects that are shared between two or more of
+        the specified subgraphs.
+        """
         shared = set()
         if len(subgraphs) >= 2:
             seen = {}
@@ -1218,13 +1221,14 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
         pass  # Handled by destructor
 
     def partition_kernels(self, state: dace.SDFGState, default_kernel: int = 0):
-        """ Associate node to different kernels.
-            This field is applied to all FPGA maps, tasklets, and library nodes
-            that can be executed in parallel in separate kernels.
+        """
+        Associate node to different kernels.
+        This field is applied to all FPGA maps, tasklets, and library nodes
+        that can be executed in parallel in separate kernels.
 
-            :param state: the state to analyze.
-            :param default_kernel: The Kernel ID to start counting from.
-            :return: a tuple containing the number of kernels and the dependencies among them
+        :param state: the state to analyze.
+        :param default_kernel: The Kernel ID to start counting from.
+        :return: a tuple containing the number of kernels and the dependencies among them
         """
 
         concurrent_kernels = 0  # Max number of kernels
@@ -1355,9 +1359,11 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
         """
         Given an edge, this traverses the edges backwards.
         It can be used either for:
-        - understanding if along the backward path there is some compute node but no local buffers,  or
-        - looking for the kernel_id of a predecessor (look_for_kernel_id must be set to True)
-        :return if look_for_kernel_id is false it returns a boolean indicating if there is a
+
+            - understanding if along the backward path there is some compute node but no local buffers,  or
+            - looking for the kernel_id of a predecessor (look_for_kernel_id must be set to True)
+
+        :return: if look_for_kernel_id is false it returns a boolean indicating if there is a
             compute node on the backward path and no access nodes to local buffers. Otherwise, it returns
             the kernel_id of a predecessor node.
         """
@@ -1395,8 +1401,10 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
         """
         Given an edge, this traverses the edges forward.
         It can be used either for:
-        - understanding if along the forward path there is a local buffer,  and
-        - returning the the kernel_id of a successor if any
+
+            - understanding if along the forward path there is a local buffer,  and
+            - returning the the kernel_id of a successor if any
+
         :return: a tuple containing two booleans indicating if the path contains only global buffers
             and the kernel_id of a successor if any
         """
@@ -2187,7 +2195,9 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
 
     def generate_modules(self, sdfg, state, kernel_name, subgraphs, subgraph_parameters, module_stream, entry_stream,
                          host_stream, instrumentation_stream):
-        """Generate all PEs inside an FPGA Kernel."""
+        """
+        Generate all PEs inside an FPGA Kernel.
+        """
         for subgraph in subgraphs:
             module_name = self._module_name(subgraph, state)
             self.generate_module(sdfg, state, kernel_name, module_name, subgraph, subgraph_parameters[subgraph],

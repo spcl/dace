@@ -3,28 +3,60 @@
 Code Generation
 ===============
 
-
-File structure (framecode etc.)
+The DaCe code generator traverses an SDFG and generates matching code for the different supported platforms. 
+It also contains components that interact with compilers (via `CMake <https://cmake.org/>`_) and invoke the
+compiled dynamic library (.so/.dll/.dylib file) directly from Python.
 
 .. _codegen_how_it_works:
 
 How it Works
 ------------
 
-How it works (accompany gif + links to modules)
-    * preprocess
-    * CFG
-    * framecode
-    * allocation management + decisions regarding AllocationLifetime
-    * defined variables
-    * traversal + delegation (dispatching with example)
-    * concurrency (e.g., OMP sections/tasking, GPU streams)
-
-Link to Tensor Core tutorial
+Given the low-level nature of the SDFG IR, the code generator simply recursively traverses the graph and emits code for each part.
+This is shown in the animation below:
 
 .. image:: codegen.gif
 
-Important features
+
+The main code (called "frame code") is generated in C with externally-callable functions (see :ref:`integration_c`).
+The rest of the backends may use different languages (CUDA, SystemVerilog, OpenCL for FPGA, etc.).
+
+The process starts with inspecting the SDFG to find out which targets are necessary. Then, each target can **preprocess** the graph for its own analysis (which we assume will not be modified during generation).
+After that, the control-flow graph is converted to structured control flow constructs in C (i.e., ``for/while/if/switch`` etc.). Then, the frame code generator (``targets/framecode.py``) **dispatches** the backends as necessary.
+There are many features that are enabled by generating code from SDFGs:
+
+  * Allocation management can be handled based on :class:`~dace.dtypes.AllocationLifetime`
+  * Defined variables can be tracked with types
+  * Concurrency is represented by, e.g., OpenMP parallel sections or GPU streams
+
+
+You can also extend the code generator with new backends externally, see the `Customizing Code Generation tutorial <https://nbviewer.jupyter.org/github/spcl/dace/blob/master/tutorials/codegen.ipynb>`_ 
+and the `Tensor Core sample <https://github.com/spcl/dace/blob/master/samples/codegen/tensor_cores.py>`_ for more information.
+
+
+File Structure
+--------------
+
+The files in ``dace/codegen`` are organized into several categories:
+
+  * The ``targets`` folder contains target-specific backends
+  * ``codegen.py`` controls the code generation API and process, with ``codeobject.py, common.py, dispatcher.py, exceptions.py`` and the ``tools`` subfolder as helpers
+  * ``pretty_code.py`` prints nicely indented C/C++ code
+  * ``control_flow.py`` contains control flow analysis to recover structured control flow (e.g., for loops, if conditions) from SDFG state machines
+  * ``cppunparse.py`` takes (limited) Python codes and outputs matching C++ codes. This is used in Tasklets and inter-state edges
+  * The ``instrumentation`` folder contains implementations of :ref:`SDFG instrumentation <profiling>` providers
+  * ``compiler.py`` and ``CMakeLists.txt`` contain all the utilities necessary to interoperate with the CMake compiler
+  * ``compiled_sdfg.py`` contains interfaces to invoke a compiled SDFG dynamic library
+  * ``dace/runtime`` contains the :ref:`runtime`
+
+.. _runtime:
+
+C++ Runtime Headers
+===================
+
+The code generator uses a thin C++ runtime for support.
+
+File structure.
 
 
 .. _debug_codegen:
@@ -182,8 +214,3 @@ The actual code generation varies between Xilinx and Intel FPGA. In the former c
 
 
 .. TODO: adding figure/example may help understanding what's going on.
-
-.. toctree::
-    :maxdepth: 1
-
-    runtime

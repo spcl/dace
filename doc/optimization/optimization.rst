@@ -1,5 +1,7 @@
-Optimizing Programs in DaCe
-===========================
+.. _optimization:
+
+Optimizing Programs
+===================
 
 TODO: Intro to what transformations are
 

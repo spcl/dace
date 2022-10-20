@@ -18,7 +18,8 @@ however, it requires two more runtime dependencies to be installed and available
  * CMake 3.15 or newer. *Note: if CMake cannot be found or is too old, pip will try to install a version but it sometimes fails.*
 
 
-**GPU**: For NVIDIA GPUs, the CUDA toolkit is also required, and AMD GPUs require HIP.
+**GPU**: For NVIDIA GPUs, the CUDA toolkit is also required, and AMD GPUs require HIP. :ref:`See more information on how to configure DaCe to use AMD GPUs <amd>`.
+You may (optionally) want to install `CuPy <https://cupy.dev/>`_ for easy integration of GPU arrays in Python.
 
 **FPGA**: Xilinx FPGAs require the Vitis suite and Intel FPGAs require the Intel FPGA SDK to be installed.
 

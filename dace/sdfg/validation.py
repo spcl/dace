@@ -9,6 +9,7 @@ from dace import dtypes, data as dt, subsets
 from dace import symbolic
 
 if TYPE_CHECKING:
+    import dace
     from dace.sdfg import SDFG
 
 ###########################################

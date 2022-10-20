@@ -1,10 +1,3 @@
-.. DaCe documentation master file, created by
-   sphinx-quickstart on Sun Nov 24 03:54:36 2019.
-   You can adapt this file completely to your liking, but it should at least
-   contain the root `toctree` directive.
-
-    
-	     
 DaCe: Data-Centric Parallel Programming
 =======================================
 
@@ -16,17 +9,17 @@ programs, which can be optimized to achieve state-of-the-art. Internally, DaCe
 uses the :ref:`sdfg` *data-centric intermediate 
 representation*: A transformable, interactive representation of code based on 
 data movement.
-Since the input code and the SDFG are separate, it is possible to optimize a 
-program without changing its source, so that it stays readable. On the other 
-hand, transformations are customizable and user-extensible, so they can be written 
-once and reused in many applications.
+Since the input code and the SDFG are separate, it is possible to :ref:`optimize a 
+program <optimization>` without changing its source, so that it stays 
+readable. On the other hand, the used optimizations are customizable and user-extensible,
+so they can be written once and reused in many applications.
 With data-centric parallel programming, we enable **direct knowledge transfer** 
 of performance optimization, regardless of the application or the target processor.
 
 DaCe generates high-performance programs for:
 
  * Multi-core CPUs (tested on Intel, IBM POWER9, and ARM with SVE)
- * NVIDIA GPUs and AMD GPUs (with HIP)
+ * NVIDIA GPUs and AMD GPUs (see :ref:`how to use HIP in DaCe <amd>`)
  * Xilinx and Intel FPGAs
 
 
@@ -68,12 +61,12 @@ If you use DaCe, cite us:
 
    general/structure
    general/debugging
-   general/errors
+   extensions/properties
    sdfg/transforming
    frontend/python
    codegen/codegen
-   extensions/properties
    extensions/extensions
+   general/errors
 
 .. toctree::
    :caption: Module Reference

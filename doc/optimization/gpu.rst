@@ -25,3 +25,14 @@ wide loads/stores (verify with ``cuobjdump``)
 syncs at the end of every state and nosync
 
 Using tensor cores - refer to tutorial
+
+
+.. _amd:
+
+Using AMD GPUs
+--------------
+
+TODO: Configure HIP
+install the HIP version of CuPy
+
+if code is misbehaving see how to modify code and rerun in codegen.
