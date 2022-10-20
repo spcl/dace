@@ -2,13 +2,15 @@
 """
 API for SDFG analysis and manipulation Passes, as well as Pipelines that contain multiple dependent passes.
 """
-from dace import properties
+from dace import properties, serialize
 from dace.sdfg import SDFG, SDFGState, graph as gr, nodes, utils as sdutil
 
 from enum import Enum, Flag, auto
 from typing import Any, Dict, Iterator, List, Optional, Set, Type, Union
 from dataclasses import dataclass
 import networkx as nx
+
+from dace.transformation.passes.util import available_passes
 
 
 class Modifies(Flag):
@@ -104,6 +106,22 @@ class Pass:
         :return: A string with the user-readable report, or None if nothing to report.
         """
         return None
+
+    def to_json(self, parent=None) -> Dict[str, Any]:
+        props = serialize.all_properties_to_json(self)
+        return {'type': 'Pass', 'transformation': type(self).__name__, **props}
+
+    @staticmethod
+    def from_json(json_obj: Dict[str, Any], context: Dict[str, Any] = None) -> 'Pass':
+        pss = next(ext for ext in available_passes(True)
+                     if ext.__name__ == json_obj['transformation'])
+
+        # Reconstruct the pass.
+        ret = pss()
+        context = context or {}
+        context['transformation'] = ret
+        serialize.set_properties_from_json(ret, json_obj, context=context, ignore_properties={'transformation', 'type'})
+        return ret
 
 @properties.make_properties
 class VisitorPass(Pass):
@@ -300,7 +318,8 @@ class Pipeline(Pass):
         print('Promoted scalars:', results['ScalarToSymbolPromotion'])
 
     """
-    passes: List[Pass]
+
+    passes = properties.ListProperty(element_type=Pass, desc='List of passes that this pipeline contains')
 
     def __init__(self, passes: List[Pass]):
         self.passes = []
@@ -469,6 +488,10 @@ class Pipeline(Pass):
         if retval:
             return retval
         return None
+
+    def to_json(self, parent=None) -> Dict[str, Any]:
+        props = serialize.all_properties_to_json(self)
+        return {'type': 'Pipeline', 'transformation': type(self).__name__, **props}
 
 
 @properties.make_properties
