@@ -26,9 +26,9 @@ class PatternMatchAndApply(ppl.Pass):
 
     category: ppl.PassCategory = ppl.PassCategory.Helper
 
-    transformation = properties.ListProperty(element_type=xf.PatternTransformation,
-                                             default=[],
-                                             desc='The list of transformations to apply')
+    transformations = properties.ListProperty(element_type=xf.PatternTransformation,
+                                              default=[],
+                                              desc='The list of transformations to apply')
 
     permissive = properties.Property(dtype=bool,
                                      default=False,
@@ -41,15 +41,18 @@ class PatternMatchAndApply(ppl.Pass):
                                        desc='If True, validates the SDFG after each transformation applies.')
     states = properties.ListProperty(element_type=SDFGState,
                                      default=None,
+                                     allow_none=True,
                                      optional=True,
                                      desc='If not None, only applies transformations to the given states.')
 
     print_report = properties.Property(dtype=bool,
                                        default=None,
+                                       allow_none=True,
                                        optional=True,
                                        desc='Whether to show debug prints (or None to use configuration file).')
     progress = properties.Property(dtype=bool,
                                    default=None,
+                                   allow_none=True,
                                    optional=True,
                                    desc='Whether to show progress printouts (or None to use configuration file).')
 
@@ -67,7 +70,7 @@ class PatternMatchAndApply(ppl.Pass):
             self.transformations = list(transformations)
 
         # Precompute metadata on each transformation (how to apply it)
-        self.metadata = get_transformation_metadata(self.transformations)
+        self._metadata = get_transformation_metadata(self.transformations)
 
         self.permissive = permissive
         self.validate = validate
@@ -99,7 +102,7 @@ class PatternMatchAndApply(ppl.Pass):
             # Find only the first match
             try:
                 match = next(m for m in match_patterns(
-                    sdfg, [xform], metadata=self.metadata, permissive=self.permissive, states=self.states))
+                    sdfg, [xform], metadata=self._metadata, permissive=self.permissive, states=self.states))
             except StopIteration:
                 continue
 
@@ -207,7 +210,7 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
                                                     permissive=self.permissive,
                                                     patterns=[xform],
                                                     states=self.states,
-                                                    metadata=self.metadata):
+                                                    metadata=self._metadata):
                             self._apply_and_validate(match, sdfg, start, pipeline_results, applied_transformations)
                             applied = True
                             applied_anything = True
@@ -223,7 +226,7 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
                                             permissive=self.permissive,
                                             patterns=xforms,
                                             states=self.states,
-                                            metadata=self.metadata):
+                                            metadata=self._metadata):
                     self._apply_and_validate(match, sdfg, start, pipeline_results, applied_transformations)
                     applied = True
                     break

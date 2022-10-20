@@ -42,7 +42,9 @@ class SimplifyPass(ppl.FixedPointPipeline):
 
     validate = properties.Property(dtype=bool, default=False, desc='Whether to validate the SDFG at the end of the pipeline.')
     validate_all = properties.Property(dtype=bool, default=False, desc='Whether to validate the SDFG after each pass.')
-    skip = properties.SetProperty(element_type=str, default=None, optional=True, desc='Set of pass names to skip.')
+    skip = properties.SetProperty(element_type=str,
+                                  default=set(),
+                                  desc='Set of pass names to skip.')
     verbose = properties.Property(dtype=bool, default=False, desc='Whether to print reports after every pass.')
 
     def __init__(self,

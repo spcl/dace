@@ -6,25 +6,12 @@ from ..transformation import PatternTransformation, SubgraphTransformation, Tran
 from ..pass_pipeline import Pass, VisitorPass, StatePass, Pipeline, FixedPointPipeline, ScopePass
 
 
-def _recursive_subclasses(cls) -> Set:
-    subclasses = set(cls.__subclasses__())
-    subsubclasses = set()
-    for sc in subclasses:
-        subsubclasses.update(_recursive_subclasses(sc))
-
-    # Ignore abstract classes
-    result = subclasses | subsubclasses
-    result = set(sc for sc in result if not getattr(sc, '__abstractmethods__', False))
-
-    return result
-
-
 def available_passes(all_passes: bool = False) -> Set[Type['Pass']]:
     """
     Returns all available passes and pass pipelines as a set by recursing over Pass subclasses. 
     :param all_passes: Include all passes, e.g., including PatternTransformation and other base passes.
     """
-    full_pass_set = _recursive_subclasses(Pass)
+    full_pass_set = Pass.subclasses_recursive()
 
     if not all_passes:
         reduced_pass_set = set()

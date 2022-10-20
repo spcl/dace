@@ -23,6 +23,7 @@ class FuseStates(ppl.Pass):
     permissive = properties.Property(dtype=bool, default=False, desc='If True, ignores some race conditions checks.')
     progress = properties.Property(dtype=bool,
                                    default=None,
+                                   allow_none=True,
                                    optional=True,
                                    desc='Whether to print progress, or None for default (print after 5 seconds).')
 
@@ -47,6 +48,7 @@ class FuseStates(ppl.Pass):
 
 
 @dataclass(unsafe_hash=True)
+@properties.make_properties
 class InlineSDFGs(ppl.Pass):
     """
     Inlines all possible nested SDFGs (and sub-SDFGs).
@@ -54,9 +56,13 @@ class InlineSDFGs(ppl.Pass):
 
     category: ppl.PassCategory = ppl.PassCategory.Simplification
 
-    permissive: bool = False  #: If True, ignores some checks on inlining
-    progress: Optional[bool] = None  #: Whether to print progress, or None for default (print after 5 seconds)
-    multistate: bool = True  #: If True, include multi-state inlining
+    permissive = properties.Property(dtype=bool, default=False, desc='If True, ignores some checks on inlining.')
+    progress = properties.Property(dtype=bool,
+                                   default=None,
+                                   allow_none=True,
+                                   optional=True,
+                                   desc='Whether to print progress, or None for default (print after 5 seconds).')
+    multistate = properties.Property(dtype=bool, default=True, desc='If True, include multi-state inlining.')
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return modified & (ppl.Modifies.NestedSDFGs | ppl.Modifies.States)

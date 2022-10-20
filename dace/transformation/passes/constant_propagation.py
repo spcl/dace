@@ -27,7 +27,7 @@ class ConstantPropagation(ppl.Pass):
     category: ppl.PassCategory = ppl.PassCategory.Simplification
 
     recursive = properties.Property(dtype=bool, default=True, desc='Propagagte recursively through nested SDFGs')
-    progress = properties.Property(dtype=bool, default=None, optional=True, desc='Show progress')
+    progress = properties.Property(dtype=bool, default=None, allow_none=True, optional=True, desc='Show progress')
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Symbols | ppl.Modifies.Edges | ppl.Modifies.Nodes

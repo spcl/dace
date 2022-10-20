@@ -8,9 +8,6 @@ from dace.sdfg import SDFG, SDFGState, graph as gr, nodes, utils as sdutil
 from enum import Enum, Flag, auto
 from typing import Any, Dict, Iterator, List, Optional, Set, Type, Union
 from dataclasses import dataclass
-import networkx as nx
-
-from dace.transformation.passes.util import available_passes
 
 
 class Modifies(Flag):
@@ -113,7 +110,7 @@ class Pass:
 
     @staticmethod
     def from_json(json_obj: Dict[str, Any], context: Dict[str, Any] = None) -> 'Pass':
-        pss = next(ext for ext in available_passes(True)
+        pss = next(ext for ext in Pass.subclasses_recursive()
                      if ext.__name__ == json_obj['transformation'])
 
         # Reconstruct the pass.
@@ -122,6 +119,22 @@ class Pass:
         context['transformation'] = ret
         serialize.set_properties_from_json(ret, json_obj, context=context, ignore_properties={'transformation', 'type'})
         return ret
+
+    @classmethod
+    def subclasses_recursive(cls) -> Set[Type['Pass']]:
+        """
+        Returns all subclasses of this class, including subclasses of subclasses.
+        """
+        subclasses = set(cls.__subclasses__())
+        subsubclasses = set()
+        for sc in subclasses:
+            subsubclasses.update(sc.subclasses_recursive())
+
+        # Ignore abstract classes.
+        result = subclasses | subsubclasses
+        result = set(sc for sc in result if not getattr(sc, '__abstractmethods__', False))
+
+        return result
 
 @properties.make_properties
 class VisitorPass(Pass):
@@ -319,7 +332,12 @@ class Pipeline(Pass):
 
     """
 
-    passes = properties.ListProperty(element_type=Pass, desc='List of passes that this pipeline contains')
+    passes = properties.ListProperty(element_type=Pass,
+                                     default=[],
+                                     desc='List of passes that this pipeline contains')
+    pass_names = properties.SetProperty(element_type=str,
+                                        default=set(),
+                                        desc='List of passe names that this pipeline contains')
 
     def __init__(self, passes: List[Pass]):
         self.passes = []
