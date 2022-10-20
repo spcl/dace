@@ -37,8 +37,11 @@ _nonrecursive_passes = [
 @dataclass(unsafe_hash=True)
 @properties.make_properties
 class SimplifyPass(ppl.FixedPointPipeline):
+    """
+    A pipeline that simplifies an SDFG by applying a series of simplification passes.
+    """
 
-    category: ppl.PassCategory = ppl.PassCategory.Simplification
+    _category: ppl.PassCategory = ppl.PassCategory.Simplification
 
     validate = properties.Property(dtype=bool, default=False, desc='Whether to validate the SDFG at the end of the pipeline.')
     validate_all = properties.Property(dtype=bool, default=False, desc='Whether to validate the SDFG after each pass.')

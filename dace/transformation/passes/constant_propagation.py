@@ -24,7 +24,7 @@ class ConstantPropagation(ppl.Pass):
     the number of overall symbols.
     """
 
-    category: ppl.PassCategory = ppl.PassCategory.Simplification
+    _category: ppl.PassCategory = ppl.PassCategory.Simplification
 
     recursive = properties.Property(dtype=bool, default=True, desc='Propagagte recursively through nested SDFGs')
     progress = properties.Property(dtype=bool, default=None, allow_none=True, optional=True, desc='Show progress')

@@ -18,7 +18,7 @@ class FuseStates(ppl.Pass):
     Fuses all possible states of an SDFG (and all sub-SDFGs).
     """
 
-    category: ppl.PassCategory = ppl.PassCategory.Simplification
+    _category: ppl.PassCategory = ppl.PassCategory.Simplification
 
     permissive = properties.Property(dtype=bool, default=False, desc='If True, ignores some race conditions checks.')
     progress = properties.Property(dtype=bool,
@@ -54,7 +54,7 @@ class InlineSDFGs(ppl.Pass):
     Inlines all possible nested SDFGs (and sub-SDFGs).
     """
 
-    category: ppl.PassCategory = ppl.PassCategory.Simplification
+    _category: ppl.PassCategory = ppl.PassCategory.Simplification
 
     permissive = properties.Property(dtype=bool, default=False, desc='If True, ignores some checks on inlining.')
     progress = properties.Property(dtype=bool,

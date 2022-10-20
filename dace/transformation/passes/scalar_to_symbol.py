@@ -583,7 +583,7 @@ def translate_cpp_tasklet_to_python(code: str):
 @props.make_properties
 class ScalarToSymbolPromotion(passes.Pass):
 
-    category: passes.PassCategory = passes.PassCategory.Simplification
+    _category: passes.PassCategory = passes.PassCategory.Simplification
 
     ignore = props.SetProperty(element_type=str,
                                default=set(),

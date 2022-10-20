@@ -20,7 +20,7 @@ class RemoveUnusedSymbols(ppl.Pass):
     Also includes uses in Tasklets of all languages.
     """
 
-    category: ppl.PassCategory = ppl.PassCategory.Simplification
+    _category: ppl.PassCategory = ppl.PassCategory.Simplification
 
     recursive = properties.Property(dtype=bool, default=True, desc='Prune nested SDFGs recursively')
 

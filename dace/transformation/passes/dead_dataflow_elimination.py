@@ -24,7 +24,7 @@ class DeadDataflowElimination(ppl.Pass):
     that are not used again. Removal propagates through scopes (maps), tasklets, and optionally library nodes.
     """
 
-    category: ppl.PassCategory = ppl.PassCategory.Simplification
+    _category: ppl.PassCategory = ppl.PassCategory.Simplification
 
     skip_library_nodes = properties.Property(dtype=bool,
                                              default=False,

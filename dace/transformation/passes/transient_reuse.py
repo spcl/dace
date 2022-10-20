@@ -18,7 +18,7 @@ class TransientReuse(ppl.Pass):
     reused.
     """
 
-    category: ppl.PassCategory = ppl.PassCategory.MemoryFootprintReduction
+    _category: ppl.PassCategory = ppl.PassCategory.MemoryFootprintReduction
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Descriptors | ppl.Modifies.AccessNodes

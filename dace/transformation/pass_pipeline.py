@@ -60,7 +60,7 @@ class Pass:
     :seealso: Pipeline
     """
 
-    category: PassCategory
+    _category: PassCategory
 
     def depends_on(self) -> Set[Union[Type['Pass'], 'Pass']]:
         """
@@ -106,12 +106,11 @@ class Pass:
 
     def to_json(self, parent=None) -> Dict[str, Any]:
         props = serialize.all_properties_to_json(self)
-        return {'type': 'Pass', 'transformation': type(self).__name__, **props}
+        return {'type': 'Pass', 'transformation': type(self).__name__, '_category': type(self)._category.value, **props}
 
     @staticmethod
     def from_json(json_obj: Dict[str, Any], context: Dict[str, Any] = None) -> 'Pass':
-        pss = next(ext for ext in Pass.subclasses_recursive()
-                     if ext.__name__ == json_obj['transformation'])
+        pss = next(ext for ext in Pass.subclasses_recursive() if ext.__name__ == json_obj['transformation'])
 
         # Reconstruct the pass.
         ret = pss()
@@ -165,7 +164,7 @@ class VisitorPass(Pass):
         print('Memlets:', memlets_with_wcr)
     """
 
-    category: PassCategory = PassCategory.Helper
+    _category: PassCategory = PassCategory.Helper
 
     def generic_visit(self, element: Any, parent: Any, pipeline_results: Dict[str, Any]) -> Any:
         """
@@ -222,7 +221,7 @@ class StatePass(Pass):
     :see: Pass
     """
 
-    category: PassCategory = PassCategory.Helper
+    _category: PassCategory = PassCategory.Helper
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[SDFGState, Optional[Any]]]:
         """
@@ -266,7 +265,7 @@ class ScopePass(Pass):
     :see: Pass
     """
 
-    category: PassCategory = PassCategory.Helper
+    _category: PassCategory = PassCategory.Helper
 
     def apply_pass(
         self,
@@ -332,17 +331,17 @@ class Pipeline(Pass):
 
     """
 
-    passes = properties.ListProperty(element_type=Pass,
-                                     default=[],
-                                     desc='List of passes that this pipeline contains')
-    pass_names = properties.SetProperty(element_type=str,
-                                        default=set(),
-                                        desc='List of passe names that this pipeline contains')
+    _passes = properties.ListProperty(element_type=Pass,
+                                      default=[],
+                                      desc='List of passes that this pipeline contains')
+    _pass_names = properties.SetProperty(element_type=str,
+                                         default=set(),
+                                         desc='List of passe names that this pipeline contains')
 
     def __init__(self, passes: List[Pass]):
-        self.passes = []
-        self.pass_names = set(type(p).__name__ for p in passes)
-        self.passes.extend(passes)
+        self._passes = []
+        self._pass_names = set(type(p).__name__ for p in passes)
+        self._passes.extend(passes)
 
         # Add missing Pass dependencies
         self._add_dependencies(passes)
@@ -382,13 +381,13 @@ class Pipeline(Pass):
                                 'class instead of an object in the `depends_on` method.')
 
                         check_if_unique.add(type(dep))
-                        self.passes.append(dep)
+                        self._passes.append(dep)
                         new_passes.append(dep)
                     elif isinstance(dep, type):
                         if dep not in check_if_unique:
                             check_if_unique.add(dep)
                             dep_obj = dep()  # Construct Pass object from type
-                            self.passes.append(dep_obj)
+                            self._passes.append(dep_obj)
                             new_passes.append(dep_obj)
                     else:
                         raise TypeError(f'Invalid pass type {type(dep).__name__} given to pipeline')
@@ -401,17 +400,17 @@ class Pipeline(Pass):
         :return: A ``Modifies`` set of flags of modified elements.
         """
         result = Modifies.Nothing
-        for p in self.passes:
+        for p in self._passes:
             result |= p.modifies()
 
         return result
 
     def should_reapply(self, modified: Modifies) -> bool:
-        return any(p.should_reapply(modified) for p in self.passes)
+        return any(p.should_reapply(modified) for p in self._passes)
 
     def depends_on(self) -> Set[Type[Pass]]:
         result = set()
-        for p in self.passes:
+        for p in self._passes:
             result.update(p.depends_on())
         return result
 
@@ -420,13 +419,13 @@ class Pipeline(Pass):
         Makes an ordered dependency graph out of the passes in the pipeline to traverse when applying.
         """
         result = gr.OrderedDiGraph()
-        ptype_to_pass = {type(p): p for p in self.passes}
+        ptype_to_pass = {type(p): p for p in self._passes}
 
-        for p in self.passes:
+        for p in self._passes:
             if p not in result._nodes:
                 result.add_node(p)
             for dep in p.depends_on():
-                # If a type, find it in self.passes
+                # If a type, find it in self._passes
                 if isinstance(dep, type):
                     dep = ptype_to_pass[dep]
                 result.add_edge(dep, p)
@@ -509,7 +508,12 @@ class Pipeline(Pass):
 
     def to_json(self, parent=None) -> Dict[str, Any]:
         props = serialize.all_properties_to_json(self)
-        return {'type': 'Pipeline', 'transformation': type(self).__name__, **props}
+        return {
+            'type': 'Pipeline',
+            'transformation': type(self).__name__,
+            '_category': type(self)._category.value,
+            **props
+        }
 
 
 @properties.make_properties
@@ -537,7 +541,7 @@ class FixedPointPipeline(Pipeline):
             
             # Remove dependencies from pipeline
             if newret:
-                newret = {k: v for k, v in newret.items() if k in self.pass_names}
+                newret = {k: v for k, v in newret.items() if k in self._pass_names}
 
             if not newret:
                 if retval:

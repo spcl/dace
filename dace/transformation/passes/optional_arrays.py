@@ -20,7 +20,7 @@ class OptionalArrayInference(ppl.Pass):
     * it is definitely (unconditionally) read or written in the SDFG.
     """
 
-    category: ppl.PassCategory = ppl.PassCategory.Simplification
+    _category: ppl.PassCategory = ppl.PassCategory.Simplification
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Descriptors
