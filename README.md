@@ -32,7 +32,7 @@ DaCe generates high-performance programs for:
 DaCe can be written inline in Python and transformed in the command-line/Jupyter 
 Notebooks or SDFGs can be interactively modified using our [Visual Studio Code extension](https://marketplace.visualstudio.com/items?itemName=phschaad.sdfv).
 
-[For more information, see our documentation!](https://spcldace.readthedocs.io/en/latest/)
+## [For more information, see our documentation!](https://spcldace.readthedocs.io/en/latest/)
 
 Quick Start
 -----------
