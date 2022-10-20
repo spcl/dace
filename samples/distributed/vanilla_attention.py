@@ -335,7 +335,6 @@ if __name__ == '__main__':
     Nx, Ny = grid[size]
     NArows, NHcols, NWcols = weak_scaling[size]
     density = 0.01
-    NArows = 2048
     num_layers = 2
 
     # Global data

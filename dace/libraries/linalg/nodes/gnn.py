@@ -59,7 +59,7 @@ class ExpandAHHTCUDA(ExpandTransformation):
 #define FULL_MASK_{id} 0xFFFFFFFF
 #define MAX_GRID_Y_{id} 65535
 
-template <typename T> __device__ T sumWarp_{id}(T a) {{
+__device__ {T} sumWarp_{id}({T} a) {{
     a += __shfl_xor_sync(FULL_MASK_{id}, a, 16);
     a += __shfl_xor_sync(FULL_MASK_{id}, a, 8);
     a += __shfl_xor_sync(FULL_MASK_{id}, a, 4);
@@ -67,11 +67,14 @@ template <typename T> __device__ T sumWarp_{id}(T a) {{
     a += __shfl_xor_sync(FULL_MASK_{id}, a, 1);
     return a;
 }}
-template <typename T> __device__ T dotBlock_{id}(T a, T b) {{
-    int idx = threadIdx.x;
-    __shared__ T warp_sums[32];
 
-    T warp_sum = sumWarp_{id}(a * b);
+//__device__ {T} dotBlock_{id}({T} a, {T} b) {{
+__device__ {T} dotBlock_{id}({T} a) {{
+    int idx = threadIdx.x;
+    __shared__ {T} warp_sums[32];
+
+    //{T} warp_sum = sumWarp_{id}(a * b);
+    {T} warp_sum = sumWarp_{id}(a);
     if (idx < 32) {{
         warp_sums[idx] = 0;
     }}
@@ -87,89 +90,221 @@ template <typename T> __device__ T dotBlock_{id}(T a, T b) {{
     }}
     return a;
 }}
-template <typename T>
-__global__ void
-dotKernel2d_coo_{id}(
-        const int *__restrict__ A_rows_coo_d,
-        const int *__restrict__ A_cols_d, const int nnz,
-        const int cols, const T *__restrict__ H_d,
-        const T *__restrict__ HT_d, T *__restrict__ tmp_d) {{
-    // assumes that column fits into blockDim.x
-    const int col = threadIdx.x;
-    const int mat_element = threadIdx.y + blockIdx.y * blockDim.y;
-
-    int idx;
-    for (idx = mat_element; idx < nnz; idx += blockDim.y * gridDim.y) {{
-        T a = H_d[col + A_rows_coo_d[idx] * cols];
-        T b = HT_d[col + A_cols_d[idx] * cols];
-        __syncthreads();
-        a = dotBlock_{id}(a, b);
-        if (threadIdx.x == 0) {{
-        *(tmp_d + idx) = a;
-        }}
-    }}
-
-    // remainder
-    if (col < cols && idx < nnz) {{}
-        T a = H_d[col + A_rows_coo_d[idx] * cols];
-        T b = HT_d[col + A_cols_d[idx] * cols];
-        __syncthreads();
-        a = dotBlock_{id}(a, b);
-        if (threadIdx.x == 0) {{}
-        *(tmp_d + idx) = a;
-        }}
-    }}
-}}
-
-DACE_EXPORTED void __dace_ahht_coo_{id}(
-        const int *__restrict__ A_rows_coo_d,
-        const int *__restrict__ A_cols_d, const int nnz,
-        const int cols, const {T} *__restrict__ H_d,
-        const {T} *__restrict__ HT_d, {T} *__restrict__ res_d) {{
-    const unsigned int numThreads = cols;
-    const unsigned int numBlocks_y = (unsigned int)min(nnz, (size_t)MAX_GRID_Y_{id});
-    dotKernel2d_coo<{T}><<<{1, numBlocks_y}, {numThreads, 1}>>>(
-        A_rows_coo_d, A_cols_d, nnz, cols, H_d, HT_d, res_d);
-}}
             """.format(id=idstr, T=stype)
         )
 
-        sdfg.append_global_code(cuda_globalcode.getvalue(), 'cuda')
+# //__global__ void
+# //dotKernel2d_coo_{id}(
+# //        const int *__restrict__ A_rows_coo_d,
+# //        const int *__restrict__ A_cols_d, const int nnz,
+# //        const int cols, const {T} *__restrict__ H_d,
+# //        const {T} *__restrict__ HT_d, {T} *__restrict__ tmp_d) {{
+# __global__ void
+# dotKernel2d_coo_{id}(
+#         int *A_rows_coo_d,
+#         int *A_cols_d, int nnz,
+#         int cols,  {T} *H_d,
+#         {T} *HT_d, {T} *tmp_d) {{
+#     // assumes that column fits into blockDim.x
+#     const int col = threadIdx.x;
+#     const int mat_element = threadIdx.y + blockIdx.y * blockDim.y;
 
-        host_globalcode = CodeIOStream()
-        host_globalcode.write(
-            """
-DACE_EXPORTED void __dace_ahht_coo_{id}(
-    const int *__restrict__ A_rows_coo_d,
-    const int *__restrict__ A_cols_d, const int nnz,
-    const iny cols, const {T} *__restrict__ H_d,
-    const {T} *__restrict__ HT_d, {T} *__restrict__ res_d
-);
-            """
-        )
+#     int idx;
+#     for (idx = mat_element; idx < nnz; idx += blockDim.y * gridDim.y) {{
+#         int c = A_cols_d[idx];
+#         int r = A_rows_coo_d[idx];
+#         {T} a = H_d[col + r * cols];
+#         {T} b = HT_d[col + c * cols];
+#         //{T} a = H_d[col + A_rows_coo_d[idx] * cols];
+#         //{T} b = HT_d[col + A_cols_d[idx] * cols];
+#         __syncthreads();
+#         a = dotBlock_{id}(a, b);
+#         if (threadIdx.x == 0) {{
+#             *(tmp_d + idx) = a;
+#         }}
+#     }}
 
-        sdfg.append_global_code(host_globalcode.getvalue())
+#     // remainder
+#     if (col < cols && idx < nnz) {{
+#         {T} a = H_d[col + A_rows_coo_d[idx] * cols];
+#         {T} b = HT_d[col + A_cols_d[idx] * cols];
+#         __syncthreads();
+#         a = dotBlock_{id}(a, b);
+#         if (threadIdx.x == 0) {{
+#             *(tmp_d + idx) = a;
+#         }}
+#     }}
+# }}
+
+# //DACE_EXPORTED void __dace_ahht_coo_{id}(
+# //        const int *__restrict__ A_rows_coo_d,
+# //        const int *__restrict__ A_cols_d, const int nnz,
+# //        const int cols, const {T} *__restrict__ H_d,
+# //        const {T} *__restrict__ HT_d, {T} *__restrict__ res_d);
+# //void __dace_ahht_coo_{id}(
+# //        const int *__restrict__ A_rows_coo_d,
+# //        const int *__restrict__ A_cols_d, const int nnz,
+# //        const int cols, const {T} *__restrict__ H_d,
+# //        const {T} *__restrict__ HT_d, {T} *__restrict__ res_d) {{
+# DACE_EXPORTED void __dace_ahht_coo_{id}(
+#         int *A_rows_coo_d,
+#         int *A_cols_d, int nnz,
+#         int cols,  {T} *H_d,
+#         {T} *HT_d, {T} *res_d);
+# void __dace_ahht_coo_{id}(
+#         int *A_rows_coo_d,
+#         int *A_cols_d, int nnz,
+#         int cols,  {T} *H_d,
+#         {T} *HT_d, {T} *res_d) {{
+
+#     const unsigned int numThreads = cols;
+#     const unsigned int numBlocks_y = (unsigned int)min(nnz, (size_t)MAX_GRID_Y_{id});
+
+#     //void *dotKernel2d_coo_{id}_args[] = {{ (void *)&A_rows_coo_d, (void *)&A_cols_d, (void *)&nnz, (void *)&cols, (void *)&H_d, (void *)& HT_d, (void *)&res_d }};
+#     //cudaLaunchKernel((void *)dotKernel2d_coo_{id}, dim3(1, numBlocks_y, 1), dim3(numThreads, 1, 1), dotKernel2d_coo_{id}_args, 0);
+
+#     // void  *_numpy_full__map_0_0_5_args[] = {{ (void *)&values, (void *)&LAnnz }};
+#     // cudaLaunchKernel((void*)_numpy_full__map_0_0_5, dim3(int_ceil(int_ceil(LAnnz, 1), 32), 1, 1), dim3(32, 1, 1), _numpy_full__map_0_0_5_args, 0, __state->gpu_context->streams[0]);
+#     dotKernel2d_coo_{id}<<<{{1, numBlocks_y}}, {{numThreads, 1}}>>>(
+#         A_rows_coo_d, A_cols_d, nnz, cols, H_d, HT_d, res_d);
+# }}
+#             """.format(id=idstr, T=stype)
+#         )
+
+        # sdfg.append_global_code(cuda_globalcode.getvalue(), 'cuda')
+
+#         host_globalcode = CodeIOStream()
+#         host_globalcode.write(
+#             """
+# //DACE_EXPORTED void __dace_ahht_coo_{id}(
+# //    const int *__restrict__ A_rows_coo_d,
+# //    const int *__restrict__ A_cols_d, const int nnz,
+# //    const int cols, const {T} *__restrict__ H_d,
+# //    const {T} *__restrict__ HT_d, {T} *__restrict__ res_d
+# //);
+# DACE_EXPORTED void __dace_ahht_coo_{id}(
+#     int *A_rows_coo_d,
+#     int *A_cols_d, int nnz,
+#     int cols, {T} *H_d,
+#     {T} *HT_d, {T} *res_d
+# );
+#             """.format(id=idstr, T=stype.ctype)
+#         )
+
+        # sdfg.append_global_code(host_globalcode.getvalue())
 
         nsdfg = SDFG('nested_sdfg')
         nstate = nsdfg.add_state('nested_state')
-        tasklet = nstate.add_tasklet(f"__dace_ahht_coo_{idstr}(_a_row, _a_col, {nnz}, {hcols}, _h1, _h2, _s_data);")
+
+        tasklet_code = """
+for (int idx = i; idx < {nnz}; idx += gridDim.x) {{
+    if (j == 0) {{
+        __s_data[idx] = 0;
+    }}
+    __syncthreads();
+    int r = __a_row[idx];
+    int c = __a_col[idx];
+    {T} sum = {T}(0);
+    for (int k = j; k < {cols}; k += blockDim.x) {{
+        {T} a = __h1[r * {cols} + k];
+        {T} b = __h2[c * {cols} + k];
+        sum += a * b;
+    }}
+    for (int offset = warpSize/2; offset > 0; offset /= 2) {{
+        sum += __shfl_down_sync(0xFFFFFFFF, sum, offset);
+    }}
+    if (j % warpSize == 0) {{
+        atomicAdd(__s_data + idx, sum);
+    }}
+}}
+    """.format(nnz=nnz, cols=hcols, id=idstr, T=stype)
+    # int idx;
+    # for (idx = mat_element; idx < nnz; idx += blockDim.y * gridDim.y) {{
+    #     int c = A_cols_d[idx];
+    #     int r = A_rows_coo_d[idx];
+    #     {T} a = H_d[col + r * cols];
+    #     {T} b = HT_d[col + c * cols];
+    #     //{T} a = H_d[col + A_rows_coo_d[idx] * cols];
+    #     //{T} b = HT_d[col + A_cols_d[idx] * cols];
+    #     __syncthreads();
+    #     a = dotBlock_{id}(a, b);
+    #     if (threadIdx.x == 0) {{
+    #         *(tmp_d + idx) = a;
+    #     }}
+    # }}
+
+    # // remainder
+    # if (col < cols && idx < nnz) {{
+    #     {T} a = H_d[col + A_rows_coo_d[idx] * cols];
+    #     {T} b = HT_d[col + A_cols_d[idx] * cols];
+    #     __syncthreads();
+    #     a = dotBlock_{id}(a, b);
+    #     if (threadIdx.x == 0) {{
+    #         *(tmp_d + idx) = a;
+    #     }}
+    # }}
+    # """
+
+        # tasklet = nstate.add_tasklet('tasklet', {'_a_row', '_a_col', '_h1', '_h2'}, {'_s_data'},
+        #                              f"__dace_ahht_coo_{idstr}(_a_row, _a_col, {nnz}, {hcols}, _h1, _h2, _s_data);")
+
+        datadict = {}
+
         for e in state.all_edges(node):
+            if e.src is node:
+                cname = e.src_conn
+            else:
+                cname = e.dst_conn
             desc = sdfg.arrays[e.data.data]
-            nname, ndesc = sdfg.add_array(e.data.data, desc.shape, desc.dtype)
+            nname, ndesc = nsdfg.add_array(cname, desc.shape, desc.dtype)
             nnode = nstate.add_access(nname)
+            datadict[cname] = nnode
             if desc.storage not in (dtypes.StorageType.GPU_Global, dtypes.StorageType.CPU_Pinned):
-                nname, ndesc = sdfg.add_array(nname, desc.shape, desc.dtype, storage=dtypes.StorageType.GPU_Global,
-                                              find_new_name=True)
+                nname, ndesc = nsdfg.add_array(nname, desc.shape, desc.dtype, storage=dtypes.StorageType.GPU_Global,
+                                               find_new_name=True)
                 gnode = nstate.add_access(nname)
-                if e.data.data == '_s_data':
+                datadict[cname] = gnode
+                if cname == '_s_data':
                     nstate.add_nedge(gnode, nnode)
                 else:
                     nstate.add_nedge(nnode, gnode)
-                nnode = gnode
-            if e.data.data == '_s_data':
-                nstate.add_edge(tasklet, '_s_data', nnode, None, dace.Memlet.from_array(nname, ndesc))
+                # nnode = gnode
+            # if cname == '_s_data':
+            #     nstate.add_edge(tasklet, '_s_data', nnode, None, dace.Memlet.from_array(nname, ndesc))
+            # else:
+            #     nstate.add_edge(nnode, None, tasklet, cname, dace.Memlet.from_array(nname, ndesc))
+
+        tasklet, me, mx = nstate.add_mapped_tasklet(
+            name='callingKernel',
+            map_ranges={'i': f'0:min({nnz}, 65536)', 'j': f'0:64'},
+            inputs={
+                '__a_row': dace.Memlet(f'{datadict["_a_row"].data}[0:{nnz}]'),
+                '__a_col': dace.Memlet(f'{datadict["_a_col"].data}[0:{nnz}]'),
+                '__h1': dace.Memlet(f'{datadict["_h1"].data}[0:{arows}, 0:{hcols}]'),
+                '__h2': dace.Memlet(f'{datadict["_h2"].data}[0:{acols}, 0:{hcols}]')},
+            outputs={'__s_data': dace.Memlet(f'{datadict["_s_data"].data}[0:{nnz}]')},
+            code=tasklet_code,
+            language=dace.dtypes.Language.CPP,
+            external_edges=False
+        )
+
+        for k, v in datadict.items():
+            if k == '_s_data':
+                nstate.add_nedge(mx, v, dace.Memlet.from_array(v.data, nsdfg.arrays[v.data]))
             else:
-                nstate.add_edge(nnode, None, tasklet, e.data.data, dace.Memlet.from_array(nname, ndesc))
+                nstate.add_nedge(v, me, dace.Memlet.from_array(v.data, nsdfg.arrays[v.data]))
+        nstate.fill_scope_connectors()
+
+        me.map.schedule = dace.dtypes.ScheduleType.GPU_Device
+
+        from dace.transformation.dataflow import MapExpansion
+        from dace.sdfg import nodes
+        nsdfg.apply_transformations_repeated(MapExpansion)
+        for n in nstate.nodes():
+            if isinstance(n, nodes.MapEntry) and "j" in n.map.params:
+                n.map.schedule = dace.dtypes.ScheduleType.GPU_ThreadBlock
+
+        nsdfg.save('test.sdfg')
         
         return nsdfg
 
