@@ -83,11 +83,10 @@ Example of an SDFG **with** a GPU thread-block map and its generated code:
 
         // j defines the thread index
         int j = threadIdx.x;
-            double a = gpu_A[((32 * i) + j)];
-            double b;
-            b = (a + 1);  // <-- Tasklet code
-            gpu_B[((32 * i) + j)] = b;
-        }
+        double a = gpu_A[((32 * i) + j)];
+        double b;
+        b = (a + 1);  // <-- Tasklet code
+        gpu_B[((32 * i) + j)] = b;
     }
     // ...
     cudaLaunchKernel((void*)example, 
@@ -159,7 +158,8 @@ Optimizing GPU SDFGs
 --------------------
 
 When optimizing GPU SDFGs, there are a few things to keep in mind. Below is a non-exhaustive list of common GPU optimization
-practices and how DaCe helps achieve them:
+practices and how DaCe helps achieve them. To see some of these optimizations in action, check out the ``optimize_for_gpu``
+function in the `Matrix Multiplication optimization example <https://github.com/spcl/dace/blob/master/samples/optimization/matmul.py>`_.
 
     * **Minimize host<->GPU transfers**: It is important to keep as much data as possible on the GPU across the application.
       This is especially true for data that is accessed frequently, such as data that is used in a loop.
