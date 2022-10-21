@@ -50,14 +50,14 @@ def csrmm_libnode(pv: 'ProgramVisitor',
 
 @oprepo.replaces('dace.ahht')
 @oprepo.replaces('dace.AHHT')
-def csrmm_libnode(pv: 'ProgramVisitor',
-                  sdfg: SDFG,
-                  state: SDFGState,
-                  A_row,
-                  A_col,
-                  H1,
-                  H2,
-                  S_data):
+def ahht_libnode(pv: 'ProgramVisitor',
+                 sdfg: SDFG,
+                 state: SDFGState,
+                 A_row,
+                 A_col,
+                 H1,
+                 H2,
+                 S_data):
     # Add nodes
     A_row_in, A_col_in, H1_in, H2_in, S_data_out = (state.add_access(name) for name in (A_row, A_col, H1, H2, S_data))
     
@@ -70,6 +70,38 @@ def csrmm_libnode(pv: 'ProgramVisitor',
     state.add_edge(A_col_in, None, libnode, '_a_col', Memlet(A_col))
     state.add_edge(H1_in, None, libnode, '_h1', Memlet(H1))
     state.add_edge(H2_in, None, libnode, '_h2', Memlet(H2))
+    state.add_edge(libnode, '_s_data', S_data_out, None, Memlet(S_data))
+
+    return []
+
+
+@oprepo.replaces('dace.ahhtnorm')
+@oprepo.replaces('dace.AHHTNorm')
+def ahhtnrom_libnode(pv: 'ProgramVisitor',
+                     sdfg: SDFG,
+                     state: SDFGState,
+                     A_row,
+                     A_col,
+                     H1,
+                     H2,
+                     H1_norm,
+                     H2_norm,
+                     S_data):
+    # Add nodes
+    A_row_in, A_col_in, H1_in, H2_in, H1_norm_in, H2_norm_in, S_data_out = (
+        state.add_access(name) for name in (A_row, A_col, H1, H2, H1_norm, H2_norm, S_data))
+    
+    from dace.libraries.linalg import AHHTNorm
+    libnode = AHHTNorm('ahhtnorm')
+    state.add_node(libnode)
+
+    # Connect nodes
+    state.add_edge(A_row_in, None, libnode, '_a_row', Memlet(A_row))
+    state.add_edge(A_col_in, None, libnode, '_a_col', Memlet(A_col))
+    state.add_edge(H1_in, None, libnode, '_h1', Memlet(H1))
+    state.add_edge(H2_in, None, libnode, '_h2', Memlet(H2))
+    state.add_edge(H1_norm_in, None, libnode, '_h1_norm', Memlet(H1_norm))
+    state.add_edge(H2_norm_in, None, libnode, '_h2_norm', Memlet(H2_norm))
     state.add_edge(libnode, '_s_data', S_data_out, None, Memlet(S_data))
 
     return []
