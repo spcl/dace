@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 from dace.frontend.python.common import DaceSyntaxError, SDFGConvertible
+from dace.transformation.pass_pipeline import FixedPointPipeline
 
 
 def test_kwargs():
@@ -542,7 +543,9 @@ def test_constant_propagation():
     sdfg = conditional_val.to_sdfg(val=3, simplify=True)
     from dace.transformation.passes.dead_state_elimination import DeadStateElimination
     from dace.transformation.passes.constant_propagation import ConstantPropagation
-    sdfg.apply_transformations_repeated([ConstantPropagation, DeadStateElimination])
+    simp_pipeline = FixedPointPipeline([ConstantPropagation(), DeadStateElimination()])
+    res = dict()
+    simp_pipeline.apply_pass(sdfg, res)
     sdfg.simplify()
     assert sdfg.number_of_nodes() == 1
 

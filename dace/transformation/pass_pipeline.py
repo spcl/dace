@@ -2,6 +2,8 @@
 """
 API for SDFG analysis and manipulation Passes, as well as Pipelines that contain multiple dependent passes.
 """
+from sre_constants import CATEGORY
+from sre_parse import CATEGORIES
 from dace import properties, serialize
 from dace.sdfg import SDFG, SDFGState, graph as gr, nodes, utils as sdutil
 
@@ -31,16 +33,6 @@ class Modifies(Flag):
     Everything = Descriptors | Symbols | States | InterstateEdges | Nodes | Memlets  #: Modification to arbitrary parts of SDFGs (nodes, edges, or properties)
 
 
-class PassCategory(Enum):
-    """
-    Specifies the type of Pass/Transformation.
-    """
-    Analysis = 'Analysis'  #: Pass only analyzes the SDFG and does not modify it
-    Helper = 'Helper'  #: Pass is a helper for other passes and is not intended to be run on its own
-    Simplification = 'Simplification'  #: Pass modifies the SDFG in a way that does not change its semantics
-    MemoryFootprintReduction = 'Memory Footprint Reduction'  #: Pass modifies the SDFG in a way that reduces its memory footprint
-
-
 @properties.make_properties
 class Pass:
     """
@@ -60,7 +52,7 @@ class Pass:
     :seealso: Pipeline
     """
 
-    _category: PassCategory
+    CATEGORY: str = 'Helper'
 
     def depends_on(self) -> Set[Union[Type['Pass'], 'Pass']]:
         """
@@ -106,7 +98,7 @@ class Pass:
 
     def to_json(self, parent=None) -> Dict[str, Any]:
         props = serialize.all_properties_to_json(self)
-        return {'type': 'Pass', 'transformation': type(self).__name__, '_category': type(self)._category.value, **props}
+        return {'type': 'Pass', 'transformation': type(self).__name__, 'CATEGORY': type(self).CATEGORY, **props}
 
     @staticmethod
     def from_json(json_obj: Dict[str, Any], context: Dict[str, Any] = None) -> 'Pass':
@@ -164,7 +156,7 @@ class VisitorPass(Pass):
         print('Memlets:', memlets_with_wcr)
     """
 
-    _category: PassCategory = PassCategory.Helper
+    CATEGORY: str = 'Helper'
 
     def generic_visit(self, element: Any, parent: Any, pipeline_results: Dict[str, Any]) -> Any:
         """
@@ -221,7 +213,7 @@ class StatePass(Pass):
     :see: Pass
     """
 
-    _category: PassCategory = PassCategory.Helper
+    CATEGORY: str = 'Helper'
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[SDFGState, Optional[Any]]]:
         """
@@ -265,7 +257,7 @@ class ScopePass(Pass):
     :see: Pass
     """
 
-    _category: PassCategory = PassCategory.Helper
+    CATEGORY: str = 'Helper'
 
     def apply_pass(
         self,
@@ -511,7 +503,7 @@ class Pipeline(Pass):
         return {
             'type': 'Pipeline',
             'transformation': type(self).__name__,
-            '_category': type(self)._category.value,
+            'CATEGORY': type(self).CATEGORY,
             **props
         }
 

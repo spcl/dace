@@ -41,7 +41,7 @@ class SimplifyPass(ppl.FixedPointPipeline):
     A pipeline that simplifies an SDFG by applying a series of simplification passes.
     """
 
-    _category: ppl.PassCategory = ppl.PassCategory.Simplification
+    CATEGORY: str = 'Simplification'
 
     validate = properties.Property(dtype=bool, default=False, desc='Whether to validate the SDFG at the end of the pipeline.')
     validate_all = properties.Property(dtype=bool, default=False, desc='Whether to validate the SDFG after each pass.')

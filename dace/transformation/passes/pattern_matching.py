@@ -24,7 +24,7 @@ class PatternMatchAndApply(ppl.Pass):
     pattern in the SDFG and applies it.
     """
 
-    _category: ppl.PassCategory = ppl.PassCategory.Helper
+    CATEGORY: str = 'Helper'
 
     transformations = properties.ListProperty(element_type=xf.PatternTransformation,
                                               default=[],
@@ -138,7 +138,7 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
     ``order_by_transformation``).
     """
 
-    _category: ppl.PassCategory = ppl.PassCategory.Helper
+    CATEGORY: str = 'Helper'
 
     order_by_transformation = properties.Property(dtype=bool,
                                                   default=True,
@@ -265,7 +265,7 @@ class PatternApplyOnceEverywhere(PatternMatchAndApplyRepeated):
     applied on that location.
     """
 
-    _category: ppl.PassCategory = ppl.PassCategory.Helper
+    CATEGORY: str = 'Helper'
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Dict[str, List[Any]]:
         return self._apply_pass(sdfg, pipeline_results, apply_once=True)

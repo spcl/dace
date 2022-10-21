@@ -17,7 +17,7 @@ class DeadStateElimination(ppl.Pass):
     Removes all unreachable states (e.g., due to a branch that will never be taken) from an SDFG.
     """
 
-    _category: ppl.PassCategory = ppl.PassCategory.Simplification
+    CATEGORY: str = 'Simplification'
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.States
