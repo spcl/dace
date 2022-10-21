@@ -124,6 +124,14 @@ dace.transformation.dataflow.mpi module
    :undoc-members:
    :show-inheritance:
 
+dace.transformation.dataflow.otf_map_fusion module
+--------------------------------------------------
+
+.. automodule:: dace.transformation.dataflow.otf_map_fusion
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 dace.transformation.dataflow.reduce\_expansion module
 -----------------------------------------------------
 
@@ -184,6 +192,14 @@ dace.transformation.dataflow.vectorization module
 -------------------------------------------------
 
 .. automodule:: dace.transformation.dataflow.vectorization
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+dace.transformation.dataflow.warp_tiling module
+-----------------------------------------------
+
+.. automodule:: dace.transformation.dataflow.warp_tiling
    :members:
    :undoc-members:
    :show-inheritance:
