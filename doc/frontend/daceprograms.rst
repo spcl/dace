@@ -236,6 +236,8 @@ have hints have to be given explicitly, as keyword arguments. For example:
 Typeclasses
 ~~~~~~~~~~~
 
+.. _typeclasses:
+
 The typeclasses that can be used as element types for data containers are versatile, and can be used for performance
 and compatibility with other codes:
 

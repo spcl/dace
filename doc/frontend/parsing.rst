@@ -5,6 +5,7 @@ Prerequisites
 -------------
 
 - :doc:`daceprograms`
+- :ref:`python-frontend`
 
 Scope
 -----
