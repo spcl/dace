@@ -420,13 +420,13 @@ and a write-conflicted memlet:
                 # One output, at index "i,j", write-conflict resolution is summation
                 c >> C(1, lambda a, b: a + b)[i, j]
 
+.. _calling_sdfgs:
 
 Calling SDFGs Directly
 ----------------------
 
 If you want to call SDFGs from a ``@dace.program`` you can do so directly. This is useful when you have a custom implementation
-or when you want to use another frontend (for example, in a domain-specific language, more details about how it exactly
-works can be found in :ref:`dsl`). Example:
+or when you want to use another frontend (for example, in a :ref:`domain-specific language <dsl>`). Example:
 
 .. code-block:: python
 
@@ -438,3 +438,7 @@ works can be found in :ref:`dsl`). Example:
     @dace.program
     def function(a, b, c):
         mysdfg(A=a, B=c)
+
+
+Note that keyword arguments do not have to be used if the :attr:`~dace.sdfg.sdfg.SDFG.arg_names` property of the SDFG is
+set correctly.
