@@ -11,6 +11,7 @@ Subpackages
    dace.frontend
    dace.sdfg
    dace.transformation
+   dace.optimization
 
 
 Submodules

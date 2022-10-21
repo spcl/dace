@@ -53,6 +53,19 @@ dace.codegen.instrumentation.timer module
    :undoc-members:
    :show-inheritance:
 
+dace.codegen.instrumentation.data module
+-----------------------------------------
+
+.. automodule:: dace.codegen.instrumentation.data.data_dump
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: dace.codegen.instrumentation.data.data_report
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 
 Module contents
 ---------------
