@@ -105,6 +105,7 @@ symbol names to symbolic expressions based on external values. Symbols cannot be
 this breaks the assumptions behind symbol values, see :ref:`sdfg-symbol` for more information).
 
 .. figure:: images/scope.svg
+  :name: scopefig
   :figwidth: 30%
   :width: 100%
   :align: right
@@ -372,21 +373,42 @@ be read in the range ``0:20``, but we do not know which one it is going to be.
 
   Memlet paths and trees.
 
-**Memlet paths**: when using scopes
+**Memlet paths**: When using scopes, such as maps, we can have multiple memlets connected to the same connector, and
+through multiple levels of scopes. In order to trace and distinguish between them, we use *memlet paths* (green highlighted
+edges in the figure to the right). A memlet path is a sequence of memlets that connect between two view connectors. 
+We can obtain a memlet path by calling the :func:`~dace.sdfg.state.StateGraphView.memlet_path` on an SDFG state with the
+edge. 
 
-, memlet trees, and how to get them with the API
-Mention *memlet paths* and the general *memlet tree* that can go through arbitrary scopes
+The memlet path is actually part of a **memlet tree** (highlighted in orange), since in each scope a memlet
+can split into multiple memlets. To obtain the tree, use :func:`~dace.sdfg.state.StateGraphView.memlet_tree`. Its *root*
+is the highest-scope memlet (bottom or top, depending on the direction of the path), and its *leaves* are the lowest-scope
+memlets (connected to the tasklet in the figure). Changing a data descriptor often requires changing the data names on every
+memlet in the memlet tree.
 
-TODO: Empty memlets
+In code generation, memlets emit reference/copy code at the memlet tree leaf level (i.e., in the innermost scope), 
+because of the parametric replication aspect (in the "expanded" graph, every memlet path is a single edge connecting to 
+a copy of the internal node).
 
-In code generation, memlets create references/copies in the innermost scope (because of the replicated definition)
+**Empty memlets** are memlets that carry no data. They are used to lock a node into a scope, without actually moving
+data into or out of it. For example, when zeroing an array, the tasklet ``a = 0`` has no inputs, but has to be inside a map.
+It is thus connected to the map entry node with an empty memlet. You can check if a memlet is empty using the :func:`~dace.memlet.Memlet.is_empty`
+method.
 
-WCR - how the expression is symbolically analyzed (with sympy) and replaced with a built-in operator (``a + b`` becomes
+In **write-conflict resolution (WCR) memlets**, the WCR function itself may have properties (such as commutativity).
+The WCR expression is symbolically analyzed (using SymPy) to determine such properties, and even finds common reduction
+functions (such as summation or product), replacing it with a built-in operator (e.g., ``a + b`` becomes
 :class:`dace.dtypes.ReductionType.Sum`). If it can detect a :class:`~dace.dtypes.ReductionType`, it knows more properties
-such as commutativity and associativity.
-Updates can be implemented in a platform-dependent way, for example atomic operations, or different kinds of accumulators on FPGAs. 
-No WCR for streams.
-WCR goes all the way in the memlet path (even through nested SDFGs), only applied in the innermost scope though.
+about the function and can use fast version in libraries (for example, ``MPI_SUM`` in MPI). Note that Streams cannot use
+WCR.
+
+WCR updates can be implemented in a platform-dependent way, for example using atomic operations, one-sided communication, 
+or different kinds of accumulators on FPGAs. It is thus important to differentiate updates from a simple read+write, since
+it can yield faster, more analyzable code. 
+
+Like copies, WCR memlets are applied on the innermost scope of the memlet tree. This requires to exercise caution when
+using such memlets, as they can lead to excessive atomic operations or critical sections. There are, however, transformations
+that can be applied on the SDFG to change the schedule and, for example, add a buffer to accumulate locally and save on
+expensive update operations (see :class:`~dace.transformation.dataflow.stream_transient.AccumulateTransient`).
 
 
 .. _sdfg-map:
@@ -394,8 +416,34 @@ WCR goes all the way in the memlet path (even through nested SDFGs), only applie
 Parametric Parallelism
 ~~~~~~~~~~~~~~~~~~~~~~
 
-Map consume
-schedule types
+DaCe supports parametric parallelism, which is a form of parallelism that is defined by symbolic expressions. 
+To represent parallel sections, we use graph scopes, which are defined by *Entry* and *Exit* nodes (as shown in 
+:numref:`scopefig`). The parametric ranges themselves are represented by symbolic integer sets (using the 
+same :class:`~dace.subsets.Subset` class used for memlets). There are several scopes provided in DaCe, the most common one 
+being :class:`~dace.sdfg.nodes.Map` and the second is :class:`~dace.sdfg.nodes.Consume`.
+
+**Maps** represent a simple form of replication, where the scope is replicated for each value in the range. For example, 
+``dace.map[0:N, 1:M-N+1]`` is a parametrically-parallel scope with two dimensions, the first ranging from ``0`` to ``N-1``,
+and the second ranging from ``1`` to ``M-N`` (inclusive). This means that the scope subgraph will be replicated for this
+number of times. The ``params`` property of the map specifies the names that parameterize the map range, and must match
+the given ``range`` property.
+
+Maps can be *scheduled* to have their contents executed in different locations. For example, a map can be
+scheduled to run on a multi-core CPU (with :class:`~dace.dtypes.ScheduleType.CPU_Multicore`), which will generate a
+``for`` loop for each instance of the subgraph, using OpenMP to control parallelism. Maps can also be scheduled to run 
+on a GPU (with :class:`~dace.dtypes.ScheduleType.GPU_Device`), or other devices, see :class:`~dace.dtypes.ScheduleType`
+for all built-in types. The default schedule is :class:`~dace.dtypes.ScheduleType.Default`, which means that the
+scheduler will decide the schedule for the map based on its context. For example, if the map is already situated inside
+another multi-core map, the map will be scheduled to a single core using :class:`~dace.dtypes.ScheduleType.Sequential`.
+
+Maps have other properties that further control their behavior. For example, their exact schedule 
+(unrolling, loop collapsing) can be controlled with certain attributes, such as ``unroll`` and ``gpu_block_size``.
+
+**Consume** scopes are similar to maps, but are used to consume data from a stream. Their processing elements (``num_pes``)
+is a symbolic expression that governs the degree of parallelism during the scope. ``pe_index`` acts as a "thread index"
+variable. The quiescence ``condition`` property can be used to control when to end the scope's execution (by default,
+if ``condition`` is not given, the scope will run until the stream is empty). The ``chunksize`` property specifies
+the granularity of the stream consumption (how many elements to consume at once).
 
 
 .. figure:: images/scope-tree.svg
@@ -406,23 +454,17 @@ schedule types
 
   SDFG scopes in :numref:`memtree`.
 
-Scopes form a tree
+**Navigating in scopes**: Like memlets, scopes in an SDFG state form a tree. The root of the tree is the top-level scope,
+i.e., the one that is not contained in any other scope. You can navigate the scope tree as a whole using the
+:func:`~dace.sdfg.state.StateGraphView.scope_tree` method. You can also navigate the scope tree of a specific node
+by using the :func:`~dace.sdfg.state.StateGraphView.scope_children` method to get the child nodes of the specified
+scope, or :func:`~dace.sdfg.state.StateGraphView.scope_dict` to get the parent-pointing dictionary of each node to its
+parent. This is visualized in the figure on the right.
 
-empty memlets and how they can be used.
-
-text
-
-text
-
-text
-
-text
-
-text
-
-text
-
-text
+To easily get the scope of a node, you can use the :func:`~dace.sdfg.state.StateGraphView.scope_subgraph` method,
+which will return the subgraph of only the nodes contained in the requested scope. To jump to the entry node of the current
+scope, use the :func:`~dace.sdfg.state.StateGraphView.entry_node` method. Similarly, to get the exit node of the 
+current entry node, use the :func:`~dace.sdfg.state.StateGraphView.exit_node` method.
 
 **Dynamic Map Ranges**: Such ranges can use memlets to define the map ranges directly from data containers, while 
 still retaining the dataflow of a single state. As they are fed into a view connector on the map entry node, their value
@@ -528,13 +570,24 @@ Library Nodes
 ~~~~~~~~~~~~~
 
 For certain functions and methods, there are high-performance or platform-specific versions that can be beneficial.
-For example, calling \texttt{numpy.dot} or the \texttt{@} operator translates to a fast library call during compilation
-(e.g., MKL/OpenBLAS on CPUs, CUBLAS/rocBLAS on GPUs). Specialization is performed via a user-extensible
-\texttt{replacement} mechanism that developers can define externally to DaCe. In the internal representation,
-\textit{Library Nodes} are spawned that can be used for optimizations based on their semantics (e.g., fusing a
-multiplication with a transposition).
+For example, the ``numpy.dot`` function can be implemented using a matrix multiplication, which in turn can be implemented
+by a fast Basic Linear Algebra Subprogram (BLAS) libraries, such as MKL or CUBLAS.
 
-During compilation, or optimization, a library node will be expanded using the ``expand`` method of the chosen implementation.
+DaCe provides the capability to use such libraries by using *Library Nodes*, which can be used for different purposes:
+
+  * **Specialization**: A library node can be used to specialize a generic node to a specific implementation.
+  * **Coarse-grained transformations**: A library node can be used to implement a transformation that is not possible
+    with the generic node, i.e., relying on the semantics of the node. For example, fusing a matrix multiplication with
+    a transposition operation.
+
+Specializing library nodes to a specific implementation is called **expansion**. Expansions are user-extensible and can
+be added to a DaCe library or to a specific SDFG. Built-in expansions and library nodes are defined in the ``dace.libraries``
+module, and are automatically loaded when the library is imported.
+
+Library-specific transformations also exist in the standard set of transformations, for example 
+:class:`~dace.transformation.dataflow.matrix_product_transpose.MatrixProductTranspose`.
+
+During compilation or optimization, a library node will be expanded using the ``expand`` method of the chosen implementation.
 If no implementation is chosen, the ``default_implementation`` field of the library node class will be chosen. One can
 override default implementations for a library node type, or for an entire library. This can be used, for example, to set
 :ref:`BLAS <blas>` to default to a certain library:
@@ -556,19 +609,83 @@ override default implementations for a library node type, or for an entire libra
     return a @ b
 
   mult2(a, b)  # will use Intel MKL
-  
+
+
+Internally, an expansion is a subclass of :class:`~dace.transformation.transformation.ExpandTransformation`. It is
+responsible for creating a new SDFG that implements the library node, and for connecting the inputs and outputs of the
+library node to the new SDFG. An example of such an expansion is Einstein summation specialization 
+(`see full file <https://github.com/spcl/dace/blob/master/dace/libraries/blas/nodes/einsum.py>`_):
+
+.. code-block:: python
+
+  from dace import SDFG, SDFGState, library, nodes, properties
+  from dace import transformation as xf
+
+  # Define the library node itself
+  @library.node
+  class Einsum(nodes.LibraryNode):
+      # Set the default expansion of the node to 'specialize' (registered below)
+      implementations = { ... }
+      default_implementation = 'specialize'
+
+      # Configurable properties of the einsum node go here
+      ...
+
+  ...
+
+  # Define the expansion, which specializes the einsum by lowering it to either 
+  # a BLAS operation or a direct contraction
+  @library.register_expansion(Einsum, 'specialize')
+  class SpecializeEinsum(xf.ExpandTransformation):
+      # Define environments necessary for this expansion (optional, can be an empty list)
+      environments = []
+
+      # The following method returns the SDFG that results from expanding the library node.
+      # Upon expansion, DaCe will insert the returned SDFG into the graph as a nested SDFG
+      # node (which can be inlined).
+      @staticmethod
+      def expansion(node: Einsum, parent_state: SDFGState, parent_sdfg: SDFG) -> SDFG:
+          # Make an SDFG for the expansion
+          sdfg = SDFG('einsum')
+          ...
+          return sdfg
+
 
 .. _memprop:
 
 Memlet Propagation
 ------------------
 
+In order to perform transformations, DaCe needs to know the shape and type of memlets at all scopes. For example,
+if only a single column of a matrix is accessed in a map, this could be used to optimize memory transfers. Therefore,
+DaCe performs *memlet propagation* to infer the shape and type of memlets at all scopes. It is a process that starts
+from the memlets on the innermost scopes, and propagates outwards through scope entry/exit nodes.
 
+Formally, the memlet that goes into a scope contains the union of the subsets of all the internal memlets, and its volume
+is the sum of the volumes of all the internal memlets. This means that we must project the space of the parametric scope
+onto the internal, parametric memlet. For example, the memlet ``A[i, j:j+10:2]`` inside a map ranged ``[i=1:N, j=0:25]``
+would be propagated to ``A[1:N, 0:35:2]``, and the memlet ``B[2*i + 1]`` would be propagated to ``B[3:2*N:2]`` within
+the same map.
 
+Memlet propagation also works through nested SDFGs, by propagating the potential value ranges each symbol may take. 
+Such propagation is the equivalent of scope propagation for ``for`` loops and general symbolic values. The following
+figure shows an example of this:
+
+.. figure:: images/memprop.png
+   :align: center
+   :width: 70%
+
+   Memlet propagation through a nested SDFG with a loop.
+
+DaCe uses the SymPy symbolic engine to perform this projection, as well as to union
+multiple internal memlets for propagation. The projection is performed in the :mod:`~dace.sdfg.propagation` module, using
+pattern matching on symbolic expressions. The :class:`~dace.sdfg.propagation.MemletPattern` class is used to define
+such patterns, and the function :func:`~dace.sdfg.propagation.propagate_subset` performs the propagation itself.
 
 The process is triggered automatically by the Python frontend. If you want to trigger it manually on an entire SDFG, call
-:func:`~dace.sdfg.propagation.propagate_memlets_sdfg`. For a local scope, use :func:`~dace.sdfg.propagation.propagate_memlets_scope`,
-and for a single memlet use :func:`~dace.sdfg.propagation.propagate_memlet`. If you only want to trigger the part that propagates
+:func:`~dace.sdfg.propagation.propagate_memlets_sdfg`. Note, however, that this may be a slow process depending on the 
+size of the SDFG. To propagate a single memlet, use :func:`~dace.sdfg.propagation.propagate_memlet`, and for a single scope
+use :func:`~dace.sdfg.propagation.propagate_memlets_scope`. If you only want to trigger the part that propagates
 symbol values across the SDFG state machine, call :func:`~dace.sdfg.propagation.propagate_states`.
 
 .. _sdfg-api:
@@ -576,29 +693,69 @@ symbol values across the SDFG state machine, call :func:`~dace.sdfg.propagation.
 SDFG Builder API
 ----------------
 
-Navigation - ``entry/exit_node``
-Beware of a common pitfall: looping over ``nodes`` may not be in topological order, use...
+When writing frontends for DaCe and when transforming SDFGs, it is necessary to interact with the SDFG directly.
+The SDFG builder API provides a set of functions that allow the user to create SDFGs programmatically. The API is
+similar to graph manipulation APIs, such as `NetworkX <https://networkx.org/>`_ (in fact, the SDFG is internally 
+represented as an ordered NetworkX graph).
 
-``add_node`` etc.
+The entire API is organized around methods of the :class:`~dace.sdfg.sdfg.SDFG` and :class:`~dace.sdfg.state.SDFGState`
+classes. Additionally, helper functions in :mod:`dace.sdfg.utils` and :mod:`dace.transformation.helpers` can be used
+to perform common operations, such as traversal, querying, analysis, graph nesting, and many others.
 
-``add_{in,out}_connector`` for nodes, or simply ``add_edge``.
+**Adding/removing elements**: The two classes contain ``add_*`` methods for adding nodes and edges, and ``remove_*`` methods for
+removing them. Examples include :meth:`~dace.sdfg.state.SDFGState.add_tasklet` and :meth:`~dace.sdfg.sdfg.SDFG.add_edge`.
+Other helper methods can compose these operations, such as :meth:`~dace.sdfg.state.SDFGState.add_mapped_tasklet`, which adds
+a tasklet inside a map; and :meth:`~dace.sdfg.state.SDFGState.add_memlet_path` which adds a path of memlets between an 
+arbitrary number of scopes, :ref:`propagating <memprop>` them along the way.
 
-``add_nedge`` as a shorthand for no-connector edge.
+**Connectors and edges**: The methods ``add_{in,out}_connector`` on subclasses of :class:`~dace.sdfg.nodes.Node` add
+appropriate connectors (view or passthrough) to the node. The :meth:`~dace.sdfg.state.SDFGState.add_edge` method of 
+:class:`~dace.sdfg.state.SDFGState` receives two nodes and two connector names, and creates an edge between them. 
+:meth:`~dace.sdfg.graph.OrderedMultiDiConnectorGraph.add_nedge` (no-connector edge) acts as a shorthand for edges with 
+``None`` connectors on either side.
 
-The methods of :class:`~dace.sdfg.sdfg.SDFG` and :class:`~dace.sdfg.state.SDFGState`, specifically ``add_*`` and
-``remove_*``.
+**Enumeration**: The API can enumerate the specific nodes and edges of a graph via the ``nodes()`` and ``edges()`` methods.
+The interface also contains methods for querying the graph, such as :meth:`~dace.sdfg.sdfg.SDFG.all_nodes_recursive`, which is
+useful to obtain all nodes, including states and nodes of nested SDFGs (similarly, :meth:`~dace.sdfg.sdfg.SDFG.all_edges_recursive`
+and :meth:`~dace.sdfg.sdfg.SDFG.all_sdfgs_recursive` query edges and SDFGs, respectively). Navigating within states can
+be performed using the :ref:`scope methods <sdfg-map>`.
+
+**Subgraphs**: The API allows the user to obtain subgraphs of the SDFG, such as the :meth:`~dace.sdfg.state.StateGraphView.scope_subgraph`
+method, which returns a subgraph of the state that contains all nodes within a given scope. In general, the 
+:class:`~dace.sdfg.graph.SubgraphView` class can be used to obtain a view of a subgraph. It filters out nodes and edges 
+that are not part of the subgraph, and can be used to perform operations on the subgraph, such as traversing it.
+
+**Data descriptors**: Methods such as :meth:`~dace.sdfg.sdfg.SDFG.add_array` and :meth:`~dace.sdfg.sdfg.SDFG.add_stream`
+can be used to add data descriptors to the SDFG. Any subclass of the :class:`~dace.data.Data` base class 
+can be added to the SDFG using the :meth:`~dace.sdfg.sdfg.SDFG.add_datadesc` method.
+
+**Traversal**: Since nodes and edges are stored in arbitrary order, the API provides methods for traversing the graph
+by topological order. The method :func:`~dace.sdfg.utils.dfs_topological_sort` returns a list of nodes in a state, and 
+:func:`~dace.sdfg.analysis.cfg.stateorder_topological_sort` traverses the state machine in approximate order of execution
+(i.e., preserving order and entering if/for scopes before continuing).
+
 
 What to Avoid
 -------------
 
-SDFGs are Turing complete. However, not everything can be represented concisely.
+While SDFGs are Turing complete, they are not meant to be used to represent any program concisely.
 
-Parametric-depth recursion for example (could potentially make a stack, but will be slow)
+Concepts such as parametric-depth recursion are control-centric (and not very portable). In order to represent them,
+a stack would need to be simulated in the representation, which will be slow. The frontends avoid parametric-depth
+recursion by creating a callback to the original runtime (e.g., the Python interpreter) instead of parsing it into an
+SDFG.
 
-References with different sizes (dynamic pointers etc.)
+Another example is dynamic memory. Dynamically-allocated arrays are supported, so long as their sizes can be expressed
+as symbolic expressions. However, this would create another state in the state machine (see the example in :ref:`sdfg-symbol`),
+which might hamper dataflow analysis. In general, it is better to use constant or symbolically-sized memory allocation.
 
-DaCe Frontends try to encapsulate those away
+Lastly, complex pointer arithmetic and referencing different types of arrays with the same Reference are not supported.
+Frontends will try to mitigate this by creating multiple Reference data descriptors, but references in general
+inhibit provenance tracking of arrays, and many optimizations would not apply.
 
+In many of the above cases, the frontends will emit a warning to the user, and unsupported behavior will be encapsulated
+as callbacks. It is important to pay attention to these warnings, as they might contribute to performance issues
+later on.
 
 .. _format:
 
