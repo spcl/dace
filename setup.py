@@ -75,10 +75,10 @@ setup(name='dace',
       install_requires=[
           'numpy', 'networkx >= 2.5', 'astunparse', 'sympy<=1.9', 'pyyaml', 'ply', 'websockets', 'requests', 'flask',
           'aenum >= 3.1', 'dataclasses; python_version < "3.7"', 'dill', 'pyreadline;platform_system=="Windows"',
-          'typing-compat; python_version < "3.8"'
+          'typing-compat; python_version < "3.8"', 'opt_einsum'
       ] + cmake_requires,
       extras_require={
-          'testing': ['coverage', 'pytest-cov', 'scipy', 'absl-py', 'opt_einsum', 'pymlir', 'click'],
+          'testing': ['coverage', 'pytest-cov', 'scipy', 'absl-py', 'pymlir', 'click'],
           'docs': ['jinja2<3.1.0']
       },
       entry_points={

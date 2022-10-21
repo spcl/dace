@@ -187,5 +187,7 @@ _build/
 .DS_STORE
 .DS_Store
 
-
 .*cache/
+
+# SOAP
+solver_cache

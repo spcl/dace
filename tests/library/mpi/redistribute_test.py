@@ -244,8 +244,86 @@ def test_redistribute_vector_2d_2d():
             assert (np.array_equal(lB, np.zeros_like(lB)))
 
 
+@pytest.mark.mpi
+def test_transpose_square_matrix_2d_2d():
+    """
+    Transposes a (mul*P) x (mul*P) square matrix.
+    """
+
+    Px = dace.symbol('Px', dace.int32)
+    Py = dace.symbol('Py', dace.int32)
+    mul = dace.symbol('mul', dace.int32)
+
+    grids = {
+        1: [(1, 1)],
+        2: [(1, 2), (2, 1)],
+        4: [(1, 4), (2, 2), (4, 1)],
+        6: [(1, 6), (2, 3), (3, 2), (6, 1)],
+        8: [(1, 8), (2, 4), (4, 2), (8, 1)],
+    }
+
+    @dace.program
+    def transpose_square_matrix(A: dace.int32[mul*Py, mul*Px]):
+
+        a_grid = dace.comm.Cart_create([Px, Py])
+        b_grid = dace.comm.Cart_create([Py, Px])
+        c_grid = dace.comm.Cart_create([Px, Py])
+
+        B = np.empty((A.shape[1], A.shape[0]), A.dtype)
+        a_arr = dace.comm.Subarray((Px*Py, Px*Py), A, process_grid=a_grid)
+        b_arr = dace.comm.Subarray((Px*Py, Px*Py), B, process_grid=b_grid)
+        rdistr = dace.comm.Redistribute(A, a_arr, B, b_arr)
+
+        C = np.empty_like(B)
+        c_arr = dace.comm.Subarray((Px*Py, Px*Py), C, process_grid=c_grid, correspondence=(1, 0))
+        rdistr2 = dace.comm.Redistribute(B, b_arr, C, c_arr)
+    
+        return np.transpose(C)
+        # return B
+
+    from mpi4py import MPI
+    commworld = MPI.COMM_WORLD
+    rank = commworld.Get_rank()
+    size = commworld.Get_size()
+
+    if size not in grids:
+        raise ValueError("Please run this test with {1, 2, 4, 6, 8} MPI processes.")
+
+    sdfg = None
+    if rank == 0:
+        sdfg = transpose_square_matrix.to_sdfg()
+    # func = utils.distributed_compile(sdfg, commworld)
+
+    mul = 1
+
+    A = np.arange(size * size * mul * mul, dtype=np.int32).reshape(size * mul, size * mul)
+
+    for Px, Py in grids[size]:
+        x, y = rank // Py, rank % Py
+        tx, ty = mul*Py, mul*Px
+        lA = A[x*tx:(x+1)*tx, y*ty:(y+1)*ty].copy()
+        lB = A.T[x*tx:(x+1)*tx, y*ty:(y+1)*ty].copy()
+
+        func = utils.distributed_compile(sdfg, commworld)
+        B = func(A=lA, Px=Px, Py=Py, mul=mul)
+        # else:
+        #     B = func(A=np.zeros((1, ), dtype=np.int32), P=even_size, mul=mul)
+
+        # for i in range(size):
+        #     if i == rank:
+        #         print(f"rank: {rank}", flush=True)
+        #         print(f"{x}, {y}", flush=True)
+        #         print(lA, flush=True)
+        #         print(lB, flush=True)
+        #         print(B, flush=True)
+        #     commworld.Barrier()
+
+        # assert (np.array_equal(B, lB))
+
+
 if __name__ == "__main__":
-    test_redistribute_matrix_2d_2d()
-    test_redistribute_matrix_2d_2d_2()
-    test_redistribute_matrix_2d_2d_3()
-    test_redistribute_vector_2d_2d()
+    # test_redistribute_matrix_2d_2d()
+    # test_redistribute_matrix_2d_2d_2()
+    # test_redistribute_matrix_2d_2d_3()
+    # test_redistribute_vector_2d_2d()
+    test_transpose_square_matrix_2d_2d()

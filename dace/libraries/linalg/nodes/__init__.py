@@ -2,3 +2,6 @@
 from .inv import Inv
 from .solve import Solve
 from .cholesky import Cholesky
+from .tensordot import TensorDot
+
+from .gnn import AHHT, AHHTNorm

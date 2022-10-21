@@ -24,8 +24,10 @@ class ExpandReduceMPI(ExpandTransformation):
         comm = "MPI_COMM_WORLD"
         if node.grid:
             comm = f"__state->{node.grid}_comm"
-
-        code = ""
+            code = f"if (__state->{node.grid}_size > 1) {{"
+        else:
+            code = ""
+        
         if in_place:
             if comm == "MPI_COMM_WORLD":
                 code += """
@@ -42,8 +44,12 @@ class ExpandReduceMPI(ExpandTransformation):
                 }} else {{            
             """
         code += f"MPI_Reduce(_inbuffer, _outbuffer, {count_str}, {mpi_dtype_str}, {node.op}, _root, {comm});"
-        if in_place:
+        
+        if inbuffer == outbuffer:
+            code += "}" 
+        if node.grid:
             code += "}"
+
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,
                                           node.out_connectors,

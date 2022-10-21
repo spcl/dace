@@ -689,6 +689,184 @@ required:
                 description: Prints the runtime of instrumented FPGA kernel states to standard output.
 
     #############################################
+    # SOAP I/O analysis settings
+
+    soap:
+        type: dict
+        title: SOAP
+        description: SOAP configuration parameters
+        required:
+            analysis:
+                type: dict
+                title: Analysis
+                description: SOAP analysis parameters
+                required:         
+                    io_analysis:
+                        type: bool
+                        title: Perform I/O analysis
+                        default: true
+                        description: >
+                            Specifies whether the I/O analysis on the SDFG shall be performed
+
+                    wd_analysis:
+                        type: bool
+                        title: Perform work/depth analysis
+                        default: false
+                        description: >
+                            Specifies whether the work-depth analysis on the SDFG shall be performed
+
+                    all_injective:
+                        type: bool
+                        title: Projection of non-SOAP accesses
+                        default: true 
+                        description: >
+                            If access function vectors are not SOAP (e.g., A[i,k] and A[k,j]), should it
+                            be assumed that they never overlap and analyze them as separate logical arrays.
+                    
+            decomposition:
+                type: dict
+                title: Decomposition
+                description: Parallel decomposition and schedule generation
+                required:
+                    chosen_par_setup:
+                        type: int
+                        title: Choose between memory-dependent and memory-independent prarallel schedule
+                        default: 0
+                        description: >
+                            0: memory-dependent
+                            1: memory-independent
+
+                    decomposition_params:
+                        type: list
+                        title: Numerical values of input parameters (list of tuples)
+                        description: >
+                            Should SOAP generate distribute data decomposition, numerical values
+                            of input parameters are required: number of processors P, size of fast memory Ss,
+                            and dimension sizes. E.g.,: [("p", 8), ("Ss", 32*1024), ("S0", 512), ("S1", 512), ("S2", 512)]
+
+            solver:
+                type: dict
+                title: Solver
+                description: Symbolic solver parameters
+                required:
+                    db_path:
+                        type: string
+                        title: Solver's database path
+                        default: ""
+                        description: >
+                            Path to the json file that holds already solved problems that
+                            can be reused if the Matlab solver is not available. 
+
+                    local_solver_path:
+                        type: string
+                        title: Local matlab solver
+                        default: ""
+                        description: >
+                            Path to local Matlab solver's launch file.
+
+                    remote_solver_address:
+                        type: string
+                        title: Remote matlab solver
+                        default: ""
+                        description: >
+                            Address of the remote Matlab server.
+
+                    only_db:
+                        type: bool
+                        title: Turns off Matlab solver. Relying only on precomputed solutions
+                        default: true
+                        description: >
+                            If only_db is specified, only the problems already analyzed in the
+                            solver's database can be processed. If new problems are encountered,
+                            the solver throws an error.
+
+                    remote_matlab:
+                        type: bool
+                        title: Using remote matlab solver
+                        default: true
+                        description: >
+                            If not relying on the solver's database (solver_only_database),
+                            it specifies whether one uses the local or remote Matlab server
+
+                    caching_solver_solutions:
+                        type: bool
+                        title: Caching newly computed solver results
+                        default: true
+                        description: >
+                            If matlab solver is used and problems that are not in the solver's database 
+                            are encountered, it updates the database with the new solutions.
+
+
+            # output generation
+            output:
+                type: dict
+                title: Output
+                descripion: Output format parameters
+                required:
+                    latex:
+                        type: bool
+                        title: Output in a latex format
+                        default: false
+                        description: >
+                            The I/O analysis output can be formatted as a latex table
+
+                    only_leading_term:
+                        type: bool
+                        title: Output only asymptotically leading monomial
+                        default: false
+                        description: >
+                            Output only asymptotically leading monomial
+
+                    all_params_equal:
+                        type: bool
+                        title: Simplified output result
+                        default: false
+                        description: >
+                            To simplify the output, all params can be assumed equal (e.g., N^3 instead of N*M*K)
+
+
+            # tests 
+            tests:
+                type: dict
+                title: Tests
+                decription: SOAP tests parameters
+                required:
+                    abs_test_path:
+                        type : str
+                        title : Path to the directory with "sample_sdfgs" folder
+                        default: none
+
+                    suite_name:
+                        type: str
+                        title : Name of the analyzed test suite
+                        default: ""
+                    
+                    only_selected_tests:
+                        type: list
+                        title: For a test suite, process only selected kernels
+                        default: none
+                        description: >
+                            When a specified test suite contains multiple SDFGs to analyze,
+                            (e.g., the entire Polybench), this list specifies the subset of kernels
+                            to be analyzed. If empty, all SDFGs are processed.
+                    
+                    excluded_tests:
+                        type: list
+                        title: For a test suite, omit selected kernels
+                        default: none
+                        description: >
+                            When a specified test suite contains multiple SDFGs to analyze,
+                            (e.g., the entire Polybench), this list specifies the subset of kernels
+                            to skip. If empty, all SDFGs are processed.
+
+                    einsum_string:
+                        type: str
+                        title: Einsum string for tensor contractions
+                        default: none
+                        description: >
+                            Einsum string to be parsed for the tensor contraction analysis
+
+    #############################################
     # Python frontend settings
 
     frontend:
@@ -955,6 +1133,15 @@ required:
                         description: >
                             Force the default implementation, even if an
                             implementation has been explicitly set on a node.
+            ttranspose:
+                type: dict
+                title: ttranspose
+                description: Built-in Tensor-Transpose DaCe library.
+                required:
+                    default_implementation:
+                        type: str
+                        default: pure
+                        description: Default implementation of Tensor-Transpose library nodes.
             pblas:
                 type: dict
                 title: PBLAS

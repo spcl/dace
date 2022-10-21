@@ -10,7 +10,6 @@ from functools import reduce
 from numbers import Number, Integral
 from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple, Union
 
-import dace
 from dace.codegen.tools import type_inference
 from dace.config import Config
 from dace import data, dtypes, subsets, symbolic, sdfg as sd
@@ -768,18 +767,18 @@ def _transpose(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, inpname: str,
         acc1 = state.add_read(inpname)
         acc2 = state.add_write(outname)
         import dace.libraries.blas  # Avoid import loop
-        tasklet = dace.libraries.blas.Transpose('_Transpose_', restype)
+        tasklet = dace.libraries.blas.Transpose('_MatrixTranspose_', restype)
         state.add_node(tasklet)
         state.add_edge(acc1, None, tasklet, '_inp', Memlet.from_array(inpname, arr1))
         state.add_edge(tasklet, '_out', acc2, None, Memlet.from_array(outname, arr2))
     else:
-        state.add_mapped_tasklet(
-            "_transpose_", {"_i{}".format(i): "0:{}".format(s)
-                            for i, s in enumerate(arr1.shape)},
-            dict(_in=Memlet.simple(inpname, ", ".join("_i{}".format(i) for i, _ in enumerate(arr1.shape)))),
-            "_out = _in",
-            dict(_out=Memlet.simple(outname, ", ".join("_i{}".format(axes[i]) for i, _ in enumerate(arr1.shape)))),
-            external_edges=True)
+        read = state.add_read(inpname)
+        write = state.add_write(outname)
+        from dace.libraries.ttranspose import TensorTranspose
+        tasklet = TensorTranspose('_TensorTranspose', axes or list(range(len(arr1.shape))))
+        state.add_node(tasklet)
+        state.add_edge(read, None, tasklet, '_inp_tensor', Memlet.from_array(inpname, arr1))
+        state.add_edge(tasklet, '_out_tensor', write, None, Memlet.from_array(outname, arr2))
 
     return outname
 
@@ -4511,6 +4510,64 @@ def _inv(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, inp_op: str):
     state.add_memlet_path(chlsky_node, out, src_conn="_b", memlet=Memlet.from_array(*out_arr))
 
     return out_arr[0]
+
+
+@oprepo.replaces('dace.tensordot')
+@oprepo.replaces('numpy.tensordot')
+def _tensordot(pv: 'ProgramVisitor',
+               sdfg: SDFG,
+               state: SDFGState,
+               op_a: str,
+               op_b: str,
+               axes: Union[int, Sequence[int]] = 2,
+               out_axes: Sequence[int] = None):
+    
+    # NOTE: `out_axes` is a non-standard extension to `numpy.tensordot`, allowing trasposition of the output
+
+    for op in (op_a, op_b):
+        if not isinstance(op, str) or not op in sdfg.arrays.keys():
+            raise SyntaxError()
+
+    arr_a = sdfg.arrays[op_a]
+    arr_b = sdfg.arrays[op_b]
+
+    if isinstance(axes, Integral):
+        left_axes = list(range(len(arr_a.shape) - axes, len(arr_a.shape)))
+        right_axes = list(range(0, axes))
+    else:
+        left_axes = axes[0]
+        right_axes = axes[1]
+
+    # Some validation (more detailed validation is done inside the TensorDot library node)
+    if any(a >= len(arr_a.shape) or a < 0 for a in left_axes):
+        raise ValueError("Axes for left tensor are out-of-bounds.")
+    if any(a >= len(arr_b.shape) or a < 0 for a in right_axes):
+        raise ValueError("Axes for right tensor are out-of-bounds.")
+    if len(left_axes) != len(right_axes):
+        raise ValueError("The input tensors must have the same number of contracting modes.")
+    if any(arr_a.shape[l] != arr_b.shape[r] for l, r in zip(left_axes, right_axes)):
+        raise ValueError("The input tensors' contracting modes must have the same length.")
+
+    dot_shape = [s for i, s in enumerate(arr_a.shape) if i not in left_axes]
+    dot_shape.extend([s for i, s in enumerate(arr_b.shape) if i not in right_axes])
+
+    if out_axes:
+        if list(sorted(out_axes)) != list(range(len(dot_shape))):
+            raise ValueError("Output axes is not a permutation of the output's modes.")
+        dot_shape = [dot_shape[i] for i in out_axes]
+
+    op_c, arr_c = sdfg.add_temp_transient(dot_shape, arr_a.dtype, storage=arr_a.storage)
+
+    from dace.libraries.linalg import TensorDot
+    a = state.add_read(op_a)
+    b = state.add_read(op_b)
+    c = state.add_write(op_c)
+    tasklet = TensorDot("_TensorDot_", left_axes, right_axes, out_axes)
+    state.add_edge(a, None, tasklet, '_left_tensor', Memlet.from_array(op_a, arr_a))
+    state.add_edge(b, None, tasklet, '_right_tensor', Memlet.from_array(op_b, arr_b))
+    state.add_edge(tasklet, '_out_tensor', c, None, Memlet.from_array(op_c, arr_c))
+
+    return op_c
 
 
 # CuPy replacements

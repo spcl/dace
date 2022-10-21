@@ -126,6 +126,8 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                                "(comma-separated)",
                                dtype=str,
                                default='')
+    
+    cuda_aware = Property(desc="If True, assumes use of CUDA-aware MPI", dtype=bool, default=True)
 
     @staticmethod
     def annotates_memlets():
@@ -155,6 +157,29 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
 
     def apply(self, _, sdfg: sd.SDFG):
 
+        import dace.libraries.mpi.nodes as mpi_nodes
+        mpinodes = tuple({n for n in mpi_nodes.__dict__.values() if isinstance(n, type)})
+
+        def src_is_mpi(state, node):
+            for e in state.in_edges(node):
+                src = state.memlet_path(e)[0].src
+                if isinstance(src, nodes.AccessNode):
+                    if src_is_mpi(state, src):
+                        return True
+                if isinstance(src, mpinodes):
+                    return True
+            return False
+        
+        def dst_is_mpi(state, node):
+            for e in state.out_edges(node):
+                dst = state.memlet_path(e)[-1].dst
+                if isinstance(dst, nodes.AccessNode):
+                    if dst_is_mpi(state, dst):
+                        return True
+                if isinstance(dst, mpinodes):
+                    return True
+            return False
+
         #######################################################
         # Step 0: SDFG metadata
 
@@ -170,6 +195,8 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                     if (state.out_degree(node) > 0 and node.data not in input_nodes):
                         # Special case: nodes that lead to top-level dynamic
                         # map ranges must stay on host
+                        if not self.cuda_aware and dst_is_mpi(state, node):
+                            continue
                         for e in state.out_edges(node):
                             last_edge = state.memlet_path(e)[-1]
                             if (isinstance(last_edge.dst, nodes.EntryNode) and last_edge.dst_conn
@@ -178,6 +205,9 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                         else:
                             input_nodes.append((node.data, node.desc(sdfg)))
                     if (state.in_degree(node) > 0 and node.data not in output_nodes):
+                        # Special case: nodes that have as source MPI Library nodes must stay on host
+                        if not self.cuda_aware and src_is_mpi(state, node):
+                            continue
                         output_nodes.append((node.data, node.desc(sdfg)))
 
             # Input nodes may also be nodes with WCR memlets and no identity
@@ -268,7 +298,9 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
         for state in sdfg.nodes():
             sdict = state.scope_dict()
             for node in state.nodes():
-                if sdict[node] is None:
+                if isinstance(node, mpi_nodes.Dummy) or (not self.cuda_aware and isinstance(node, mpinodes)):
+                    node.schedule = dtypes.ScheduleType.CPU_Multicore
+                elif sdict[node] is None:
                     if isinstance(node, (nodes.LibraryNode, nodes.NestedSDFG)):
                         node.schedule = dtypes.ScheduleType.GPU_Default
                         gpu_nodes.add((state, node))
@@ -373,6 +405,23 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                     # Special case: nodes that lead to dynamic map ranges must stay on host
                     if any(isinstance(state.memlet_path(e)[-1].dst, nodes.EntryNode) for e in state.out_edges(node)):
                         continue
+                        for e in state.all_edges(node):
+                            for node in (e.src, e.dst):
+                                if isinstance(node, nodes.Tasklet):
+                                    if (state.entry_node(node) is None and not scope.is_devicelevel_gpu(
+                                            state.parent, state, node, with_gpu_default=True)):
+                                        global_code_nodes[state].append(node)
+
+                    # Special case: nodes that connect to MPI Library nodes must stay on host
+                    if not self.cuda_aware:
+                        if any(isinstance(state.memlet_path(e)[0].src, mpinodes) for e in state.in_edges(node)):
+                            continue
+                        if any(isinstance(state.memlet_path(e)[-1].dst, mpinodes) for e in state.out_edges(node)):
+                            continue
+                    if any(isinstance(state.memlet_path(e)[0].src, mpi_nodes.Dummy) for e in state.in_edges(node)):
+                            continue
+                    if any(isinstance(state.memlet_path(e)[-1].dst, mpi_nodes.Dummy) for e in state.out_edges(node)):
+                            continue
 
                     if sdict[node] is None and nodedesc.storage not in gpu_storage:
 
