@@ -21,6 +21,7 @@ def _dataview(data: Data, memlet: Memlet) -> Data:
 def _get_inputs_and_outputs(sdfg: SDFG, state: SDFGState, node: Node) -> Tuple[Dict[str, Data], Dict[str, Data]]:
     """ Returns two dictionaries that map from input/output connectors to data 
         descriptors. 
+        
         :return: Tuple of (input memlet mapping, output memlet mapping).
     """
     inputs: Dict[str, Data] = {}
@@ -54,6 +55,7 @@ class CodeLibraryNode(LibraryNode):
     def generate_code(self, inputs: Dict[str, Data], outputs: Dict[str, Data]) -> str:
         """ Method that is responsible for generating the code related to
             this node.
+
             :param inputs: A dictionary mapping input names (on node connectors)
                            to data descriptors based on incoming memlets.
             :param outputs: A dictionary mapping output names (on node connectors)

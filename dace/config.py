@@ -10,14 +10,15 @@ import warnings
 
 @contextlib.contextmanager
 def set_temporary(*path, value):
-    """ Temporarily set configuration value at ``path`` to value, and reset it after the context manager exits.
+    """
+    Temporarily set configuration value at ``path`` to value, and reset it after the context manager exits.
 
-        :Example:
+    Example::
 
+        print(Config.get("compiler", "build_type")
+        with set_temporary("compiler", "build_type", value="Debug"):
             print(Config.get("compiler", "build_type")
-            with set_temporary("compiler", "build_type", value="Debug"):
-                print(Config.get("compiler", "build_type")
-            print(Config.get("compiler", "build_type")
+        print(Config.get("compiler", "build_type")
 
     """
     old_value = Config.get(*path)
@@ -31,10 +32,12 @@ def temporary_config():
     """
     Creates a context where all configuration options changed will be reset when the context exits.
 
-    with temporary_config():
-        Config.set("testing", "serialization", value=True)
-        Config.set("optimizer", "autooptimize", value=True)
-        foo()
+    Example::
+    
+        with temporary_config():
+            Config.set("testing", "serialization", value=True)
+            Config.set("optimizer", "autooptimize", value=True)
+            foo()
     """
     with tempfile.NamedTemporaryFile() as fp:
         Config.save(fp.name)
@@ -43,16 +46,19 @@ def temporary_config():
 
 
 def _env2bool(envval):
-    """ Converts an arbitrary value to boolean.
-        :param envval: Arbitrary value.
-        :return: True if the input value matches a valid TRUE
-                  value, or False otherwise.
+    """
+    Converts an arbitrary value to boolean.
+
+    :param envval: Arbitrary value.
+    :return: True if the input value matches a valid TRUE
+             value, or False otherwise.
     """
     return str(envval).lower() in ['true', '1', 'y', 'yes', 'on', 'verbose']
 
 
 def _add_defaults(config, metadata):
     """ Add defaults to configuration from metadata.
+
         :return: True if configuration was modified, False otherwise.
     """
     osname = platform.system()
@@ -83,7 +89,9 @@ def _add_defaults(config, metadata):
 
 
 class Config(object):
-    """ Interface to the DaCe hierarchical configuration file. """
+    """
+    Interface to the DaCe hierarchical configuration file. 
+    """
 
     default_filename = '.dace.conf'
     _config = {}
@@ -94,7 +102,9 @@ class Config(object):
 
     @staticmethod
     def cfg_filename():
-        """ Returns the current configuration file path. """
+        """
+        Returns the current configuration file path. 
+        """
 
         return Config._cfg_filename
 
@@ -148,9 +158,11 @@ class Config(object):
 
     @staticmethod
     def load(filename=None):
-        """ Loads a configuration from an existing file.
-            :param filename: The file to load. If unspecified,
-                             uses default configuration file.
+        """
+        Loads a configuration from an existing file.
+        
+        :param filename: The file to load. If unspecified,
+                         uses default configuration file.
         """
         if filename is None:
             filename = Config._cfg_filename
@@ -167,9 +179,11 @@ class Config(object):
 
     @staticmethod
     def load_schema(filename=None):
-        """ Loads a configuration schema from an existing file.
-            :param filename: The file to load. If unspecified,
-                             uses default schema file.
+        """
+        Loads a configuration schema from an existing file.
+        
+        :param filename: The file to load. If unspecified,
+                         uses default schema file.
         """
         if filename is None:
             filename = Config._metadata_filename
@@ -210,6 +224,7 @@ class Config(object):
     def get_metadata(*key_hierarchy):
         """ Returns the configuration specification of a given entry
             from the schema.
+
             :param key_hierarchy: A tuple of strings leading to the
                                   configuration entry.
                                   For example: ('a', 'b', 'c') would be
@@ -231,6 +246,7 @@ class Config(object):
     def get_default(*key_hierarchy):
         """ Returns the default value of a given configuration entry.
             Takes into accound current operating system.
+
             :param key_hierarchy: A tuple of strings leading to the
                                   configuration entry.
                                   For example: ('a', 'b', 'c') would be
@@ -252,13 +268,15 @@ class Config(object):
 
     @staticmethod
     def get(*key_hierarchy):
-        """ Returns the current value of a given configuration entry.
-            :param key_hierarchy: A tuple of strings leading to the
-                                  configuration entry.
-                                  For example: ('a', 'b', 'c') would be
-                                  configuration entry c which is in the
-                                  path a->b.
-            :return: Configuration entry value.
+        """
+        Returns the current value of a given configuration entry.
+
+        :param key_hierarchy: A tuple of strings leading to the
+                                configuration entry.
+                                For example: ('a', 'b', 'c') would be
+                                configuration entry c which is in the
+                                path a->b.
+        :return: Configuration entry value.
         """
         # Support for "a.b.c" in calls
         if len(key_hierarchy) == 1 and '.' in key_hierarchy[0]:
@@ -282,6 +300,7 @@ class Config(object):
         """ Returns the current value of a given boolean configuration entry.
             This specialization allows more string types to be converted to
             boolean, e.g., due to environment variable overrides.
+            
             :param key_hierarchy: A tuple of strings leading to the
                                   configuration entry.
                                   For example: ('a', 'b', 'c') would be
@@ -296,18 +315,23 @@ class Config(object):
 
     @staticmethod
     def append(*key_hierarchy, value=None, autosave=False):
-        """ Appends to the current value of a given configuration entry
-            and sets it. Example usage:
-            `Config.append('compiler', 'cpu', 'args', value='-fPIC')`
-            :param key_hierarchy: A tuple of strings leading to the
-                                  configuration entry.
-                                  For example: ('a', 'b', 'c') would be
-                                  configuration entry c which is in the
-                                  path a->b.
-            :param value: The value to append.
-            :param autosave: If True, saves the configuration to the file
-                             after modification.
-            :return: Current configuration entry value.
+        """ 
+        Appends to the current value of a given configuration entry
+        and sets it.
+
+        :param key_hierarchy: A tuple of strings leading to the
+                                configuration entry.
+                                For example: ('a', 'b', 'c') would be
+                                configuration entry c which is in the
+                                path a->b.
+        :param value: The value to append.
+        :param autosave: If True, saves the configuration to the file
+                            after modification.
+        :return: Current configuration entry value.
+
+        Examples::
+
+            Config.append('compiler', 'cpu', 'args', value='-fPIC')
         """
         # Support for "a.b.c" in calls
         if len(key_hierarchy) == 1 and '.' in key_hierarchy[0]:
@@ -326,17 +350,21 @@ class Config(object):
 
     @staticmethod
     def set(*key_hierarchy, value=None, autosave=False):
-        """ Sets the current value of a given configuration entry.
-            Example usage:
-            `Config.set('profiling', value=True)`
-            :param key_hierarchy: A tuple of strings leading to the
-                                  configuration entry.
-                                  For example: ('a', 'b', 'c') would be
-                                  configuration entry c which is in the
-                                  path a->b.
-            :param value: The value to set.
-            :param autosave: If True, saves the configuration to the file
-                             after modification.
+        """
+        Sets the current value of a given configuration entry.
+            
+        :param key_hierarchy: A tuple of strings leading to the
+                              configuration entry.
+                              For example: ('a', 'b', 'c') would be
+                              configuration entry c which is in the
+                              path a->b.
+        :param value: The value to set.
+        :param autosave: If True, saves the configuration to the file
+                         after modification.
+        
+        Examples::
+
+            Config.set('profiling', value=True)
         """
         # Support for "a.b.c" in calls
         if len(key_hierarchy) == 1 and '.' in key_hierarchy[0]:

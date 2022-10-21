@@ -66,7 +66,7 @@ class SDFGConvertible(object):
     def __sdfg__(self, *args, **kwargs) -> SDFG:
         """
         Returns an SDFG representation of this object.
-        :param args: Arguments or argument types (given as DaCe data
+        :param args: Arguments or argument types (given as DaCe data 
                      descriptors) that can be used for compilation.
         :param kwargs: Keyword arguments or argument types (given as DaCe data
                        descriptors) that can be used for compilation.
@@ -78,6 +78,7 @@ class SDFGConvertible(object):
         """
         Returns the closure arrays of the SDFG represented by this object
         as a mapping between array name and the corresponding value.
+
         :param reevaluate: If given, re-evaluates closure elements based on the
                            input mapping (keys: array names, values: expressions
                            to evaluate). Otherwise, re-evaluates default
@@ -94,6 +95,7 @@ class SDFGConvertible(object):
         (i.e., including regular and constant arguments, but excluding "self"
         for bound methods) and a sequence of the constant argument names from
         the first sequence.
+        
         :return: A 2-tuple of (all arguments, constant arguments).
         """
         raise NotImplementedError
@@ -105,6 +107,7 @@ class SDFGConvertible(object):
         """
         Returns an SDFGClosure object representing the closure of the
         object to be converted to an SDFG.
+
         :param constant_args: Arguments whose values are already resolved to
                               compile-time values.
         :param given_args: Arguments that were given at call-time (used for
