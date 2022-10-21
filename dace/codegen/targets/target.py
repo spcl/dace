@@ -15,16 +15,28 @@ from dace.codegen.codeobject import CodeObject
 
 @make_registry
 class TargetCodeGenerator(object):
-    """ Interface dictating functions that generate code for:
-          * Array allocation/deallocation/initialization/copying
-          * Scope (map, consume) code generation
     """
+    Interface dictating functions that generate code for:
+          
+        * Array allocation/deallocation/initialization/copying
+        * Scope (map, consume) code generation
+    """
+
     def get_generated_codeobjects(self) -> List[CodeObject]:
-        """ Returns a list of generated `CodeObject` classes corresponding
-            to files with generated code. If an empty list is returned
-            (default) then this code generator does not create new files.
+        """ 
+        Returns a list of generated ``CodeObject`` classes corresponding
+        to files with generated code. If an empty list is returned
+        (default) then this code generator does not create new files.
             
-            :see: CodeObject
+        :see: CodeObject
+        """
+        return []
+
+    @staticmethod
+    def cmake_options() -> List[str]:
+        """
+        Returns a list of CMake options that this target needs
+        to be passed into the ``cmake`` command during configuration. 
         """
         return []
 

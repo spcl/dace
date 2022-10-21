@@ -53,6 +53,9 @@ In-depth instrumentation and types
 
 The file can be found in ...
 
+Instrumentation can also collect performance counters on CPUs and GPUs using `LIKWID <https://github.com/RRZE-HPC/likwid>`_.
+Example use can be found in LIKWID sample
+
 Data Instrumentation
 ~~~~~~~~~~~~~~~~~~~~
 

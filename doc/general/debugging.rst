@@ -36,12 +36,63 @@ On validation failure, (unless specified) a copy of the failing SDFG will be sav
 under ``_dacegraphs/invalid.sdfg``, which includes the source of the error. Opening it in the Visual Studio Code 
 extension even zooms in on the issue automatically!
 
+.. _recompilation:
 
-Crashes and Compiled Programs
------------------------------
+Debugging and Recompiling Generated Code
+----------------------------------------
 
 .. note::
-    For debugging the code generation process itself, see :ref:`debug_codegen`.
+    For debugging the code generators and the generation process itself, see :ref:`debug_codegen`.
+
+If issues arise during compilation of the generated code, or the code is somehow incorrect, it can be useful to inspect
+and modify it. 
+
+The generated code of an SDFG is saved in the ``.dacecache`` directory, under the name of the SDFG (which corresponds
+to the function's name in Python). You can inspect and modify the code by opening the file in your favorite text editor:
+
+.. code-block:: bash
+
+    $ python my_program.py
+    -- [Some failure happens] --
+    $ cd .dacecache/myprogram/src
+    $ ls
+    cpu cuda
+    $ code cpu/myprogram.cpp
+
+The generated code is organized in subdirectories for each target based on its code generator name, and in the above 
+case there is both CPU and GPU code.
+
+However, rerunning ``python my_program.py`` will overwrite the generated code, so it is important to change the configuration
+entry :envvar:`compiler.use_cache` to ``1`` to prevent this from happening. This will also prevent the code from being
+recompiled, so you will need to manually go into the build directory and run ``make`` to recompile the code:
+
+.. code-block:: bash
+
+    $ cd .dacecache/myprogram/build
+    $ make
+    $ cd ../..
+    $ DACE_compiler_use_cache=1 python my_program.py 
+    # Program will not be regenerated nor recompiled
+
+
+If there are issues with the :ref:`runtime`, you can find their location and edit them manually:
+
+.. code-block:: bash
+
+    # Print out the runtime folder
+    $ python -c 'import dace; print(dace.__file__)'
+    /home/user/.local/lib/python3.8/site-packages/dace/__init__.py
+
+    # The files are in include/dace/*.h
+    $ cd /home/user/.local/lib/python3.8/site-packages/dace/runtime
+    
+
+It is, however, recommended to :ref:`install DaCe in development mode <fromsource>`, so that you can edit the files
+directly in the source folder.
+
+
+Crashes in Compiled Programs
+----------------------------
 
 Compiled programs are compiled to a shared object (``.so`` / ``.dll`` file) that is linked to the host process. If using
 a DaCe program within Python, debugging it requires simply calling any debugger (such as ``gdb``) on the Python process
