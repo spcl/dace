@@ -12,18 +12,46 @@ dace.sdfg.graph module
    :undoc-members:
    :show-inheritance:
 
-dace.sdfg.infer_types module
-----------------------------
-
-.. automodule:: dace.sdfg.infer_types
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
 dace.sdfg.nodes module
 ----------------------
 
 .. automodule:: dace.sdfg.nodes
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+dace.sdfg.analysis module
+-------------------------
+
+Control-Flow Graph Analysis
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. automodule:: dace.sdfg.analysis.cfg
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+Graph Cutouts
+~~~~~~~~~~~~~
+
+.. automodule:: dace.sdfg.analysis.cutout
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+Vector-Type Inference
+~~~~~~~~~~~~~~~~~~~~~
+
+.. automodule:: dace.sdfg.analysis.vector_inference
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+
+dace.sdfg.infer_types module
+----------------------------
+
+.. automodule:: dace.sdfg.infer_types
    :members:
    :undoc-members:
    :show-inheritance:

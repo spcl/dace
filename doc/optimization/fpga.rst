@@ -1,5 +1,11 @@
 FPGA Optimization Best Practices
 ================================
+
+.. note::
+
+   This document is a work in progress. Feel free to make any contributions or suggestions via Pull Requests.
+
+
 This section provides guidance on leveraging DaCe functionalities to optimize DaCe programs targeting FPGAs.
 Once the user program is parsed into an SDFG, we can optimize (transform) it to improve performance. In the case of FPGA programs, 
 the user can apply transformations or follow best practices to reduce data movements, specialize operations implementation, and
@@ -13,7 +19,7 @@ library node implementation. Finally we show how to control various low-level as
 Transformations for FPGA programs
 ---------------------------------
 
-.. TODO: Structure this slightly differently (the user knows nothing). Show an example of apply_fpga_transformation, 
+.. TODO: Structure this slightly differently (don't assume the user knows anything). Show an example of apply_fpga_transformation, 
 .. and dedicate subsubsections for transformation types (streaming transformations, memory layout transformations) instead of just simple bullet points. 
 
 Existing SDFGs can be transformed from a generic to an FPGA implementation using graph transformations. 
@@ -51,26 +57,26 @@ Available FPGA expansions
 ^^^^^^^^^^^^^^^^^^^^^^^^^
 DaCe provides FPGA-specific expansions for the principal numerical linear algebra or common operations:
 
-* vector dot product (``dot``) can be specialized for FPGA using two expansions:  `FPGA_Accumulate` and `FPGA_PartialSums`. The former assumes that 
+* vector dot product (``dot``) can be specialized for FPGA using two expansions:  ``FPGA_Accumulate`` and ``FPGA_PartialSums``. The former assumes that 
   native single clock cycle accumulation of the data type is possible on the target architecture (e.g., 32-bit floating 
   point on Intel Stratix 10). The latter does not assume that native accumulation of the data type is possible. 
   Both expansions achieve an Initiation Interval of 1.
 * matrix-vector multiplication (``gemv``) is available in two versions:
   
-  * `FPGA_Accumulate`: this FPGA-oriented expansion iterates over the input matrix in simple row-major order, with optional 
+  * ``FPGA_Accumulate``: this FPGA-oriented expansion iterates over the input matrix in simple row-major order, with optional 
     tiling in both dimensions, where the tiles are also traversed in simple row-major order.
-  * `FPGA_TilesByColumn`: this expansion reads the input matrix in column-major order, such that consecutive values are accumulated into different
+  * ``FPGA_TilesByColumn``: this expansion reads the input matrix in column-major order, such that consecutive values are accumulated into different
     registers. The matrix can optionally be tiled, where the tiles will be traversed in row-major order.
 
   These two expansions complement each other as they can be used to favor composability (pipeline-ability) with the rest of the computation.
   For example, if another library node produces the input matrix by row, it makes sense to use the first expansion so that the matrix values 
   can be streamed directly.
-* outer product (``ger``) can be expanded for FPGA using the `FPGA` expansion. Input vectors can be optionally tiled.
-* matrix-matrix multiplication(``gemm``) FPGA specialization is implemented by the `FPGA1DSystolic` expansion. This implements the matrix-matrix
+* outer product (``ger``) can be expanded for FPGA using the ``FPGA`` expansion. Input vectors can be optionally tiled.
+* matrix-matrix multiplication(``gemm``) FPGA specialization is implemented by the ``FPGA1DSystolic`` expansion. This implements the matrix-matrix
   multiplication (with accumulation) using a 1D systolic array. The matrices can optionally be tiled along the result columns. 
   The user can specify the number of used processing elements and tile size according to her needs.
 * Reduction library nodes can be inserted by the frontend. They "reduce" an array according to a binary operation (e.g., sum, max), starting 
-  with initial value identity, over the given axis. Reductions can be specialized for FPGAs using the `FPGAPartialReduction` expansion.
+  with initial value identity, over the given axis. Reductions can be specialized for FPGAs using the ``FPGAPartialReduction`` expansion.
 
 
 How to specialized library node expansions for FPGA
@@ -88,10 +94,11 @@ To do this programmatically, the user has two options:
     # Get the library node that we want to expand, e.g., a gemv node
     gemv_node = ... 
 
-    # set the desired expansion, e.g., "FPGA_Accumulate"
+    # Set the desired expansion, e.g., "FPGA_Accumulate"
     gemv_node.implementation = "FPGA_Accumulate"
 
-    # expand it by passing the sdfg and state that contains it together with expansion arguments if any.
+    # Expand it by passing the SDFG and state that contains it together
+    # with expansion arguments (if any).
     # For example, in this case we specify a tile size of 1024 x 1024 elements
     expansion_args = {
       "tile_size_x": 1024,
@@ -143,7 +150,7 @@ or through the VSCode plugin. We can distinguish between:
   as register (LUT), allowing parallel read/write to the container. This can be useful in the presence of unrolled maps.
 
 
-.. TODO: introduce also Shift Register
+.. TODO: also introduce Shift Register
 
 .. _fpga_streams:
 
