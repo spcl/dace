@@ -181,6 +181,8 @@ class TaskletWriter:
         return "(" + self.write_code(node.expr) + ")"
 
     def call2string(self, node: Call_Expr_Node):
+        if node.name.name == "dace_epsilon":
+            return str(sys.float_info.min)
         return_str = self.write_code(node.name) + "(" + self.write_code(
             node.args[0])
         for i in node.args[1:]:
@@ -1175,7 +1177,7 @@ class AST_translator:
             substate = add_simple_state_to_sdfg(
                 self, sdfg, "_state" + str(node.line_number[0]))
 
-            tasklet = add_tasklet(substate, str(node.line_number), {
+            tasklet = add_tasklet(substate, str(node.line_number[0]), {
                 **input_names_tasklet,
                 **special_list_in
             }, output_names_changed + special_list_out, "text",
@@ -1262,8 +1264,8 @@ class AST_translator:
 
 if __name__ == "__main__":
     parser = ParserFactory().create(std="f2008")
-    #testname = "arrayrange1"
-    testname = "cloudscexp2"
+    testname = "simple_array_range"
+    #testname = "cloudscexp2"
     reader = FortranFileReader(
         os.path.realpath("/mnt/c/Users/Alexwork/Desktop/Git/f2dace/tests/" +
                          testname + ".f90"))
@@ -1282,6 +1284,7 @@ if __name__ == "__main__":
     program = CallExtractor().visit(program)
     program = SignToIf().visit(program)
     program = ArrayToLoop().visit(program)
+    program = SumToLoop().visit(program)
     ast2sdfg = AST_translator(
         own_ast,
         "/mnt/c/Users/Alexwork/Desktop/Git/f2dace/tests/" + testname + ".f90")
@@ -1291,6 +1294,15 @@ if __name__ == "__main__":
     ast2sdfg.translate(program, sdfg)
 
     sdfg.validate()
+    sdfg.save("/mnt/c/Users/Alexwork/Desktop/Git/f2dace/tests/" + testname +
+              "_initial.sdfg")
+    sdfg.simplify(verbose=True)
+    sdfg.save("/mnt/c/Users/Alexwork/Desktop/Git/f2dace/tests/" + testname +
+              "_simplify.sdfg")
+    from dace.transformation.auto import auto_optimize as aopt
+    aopt.auto_optimize(sdfg, dace.DeviceType.CPU)
+    sdfg.save("/mnt/c/Users/Alexwork/Desktop/Git/f2dace/tests/" + testname +
+              "_optimized.sdfg")
     sdfg.compile()
     # node_list = walk(ast)
     # node_types = []

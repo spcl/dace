@@ -150,7 +150,7 @@ class CallToArray(NodeTransformer):
         self.funcs = funcs
         self.excepted_funcs = [
             "malloc", "exp", "pow", "sqrt", "cbrt", "max", "abs", "min",
-            "dace_sum", "dace_sign", "tanh"
+            "dace_sum", "dace_sign", "tanh","dace_epsilon"
         ]
 
     def visit_Call_Expr_Node(self, node: Call_Expr_Node):
@@ -461,32 +461,91 @@ def localFunctionStatementEliminator(node):
 
 
 class ArrayLoopNodeLister(NodeVisitor):
-    #TODO This does not check internals of rvals.
     def __init__(self):
         self.nodes: List[Node] = []
         self.range_nodes: List[Node] = []
 
     def visit_BinOp_Node(self, node: BinOp_Node):
-        totransform = False
-        if isinstance(node.rval, Array_Subscript_Node):
-            current = node.rval
-            for i in current.indices:
-                if isinstance(i, ParDecl_Node):
-                    self.range_nodes.append(node)
-                    self.nodes.append(node)
-                    return
-        if isinstance(node.lval, Array_Subscript_Node):
-            current = node.lval
+        rval_pardecls = [
+            i for i in mywalk(node.rval) if isinstance(i, ParDecl_Node)
+        ]
+        lval_pardecls = [
+            i for i in mywalk(node.lval) if isinstance(i, ParDecl_Node)
+        ]
+        if len(lval_pardecls) > 0:
+            if len(rval_pardecls) == 1:
+                self.range_nodes.append(node)
+                self.nodes.append(node)
+                return
+            elif len(rval_pardecls) > 1:
+                for i in rval_pardecls:
+                    if i != rval_pardecls[0]:
+                        raise NotImplementedError(
+                            "Only supporting one range in right expression")
 
-            for i in current.indices:
-                if isinstance(i, ParDecl_Node):
-                    totransform = True
-
-        if totransform is True:
-            self.nodes.append(node)
+                self.range_nodes.append(node)
+                self.nodes.append(node)
+                return
+            else:
+                self.nodes.append(node)
+                return
 
     def visit_Execution_Part_Node(self, node: Execution_Part_Node):
         return
+
+
+class SumLoopNodeLister(NodeVisitor):
+    def __init__(self):
+        self.nodes: List[Node] = []
+
+    def visit_BinOp_Node(self, node: BinOp_Node):
+
+        if isinstance(node.rval, Call_Expr_Node):
+            if node.rval.name.name == "dace_sum":
+                self.nodes.append(node)
+
+    def visit_Execution_Part_Node(self, node: Execution_Part_Node):
+        return
+
+
+def par_Decl_Range_Finder(node: Array_Subscript_Node,
+                          ranges: list,
+                          rangepos: list,
+                          count: int,
+                          newbody: list,
+                          declaration=True):
+
+    currentindex = 0
+    indices = []
+    for i in node.indices:
+        if isinstance(i, ParDecl_Node):
+            if i.type == "ALL":
+                ranges.append([
+                    Int_Literal_Node(value="1"),
+                    Name_Range_Node(name="f2dace_MAX",
+                                    type="INTEGER",
+                                    arrname=node.name,
+                                    pos=currentindex)
+                ])
+            else:
+                ranges.append(i.range)
+            rangepos.append(currentindex)
+            if declaration:
+                newbody.append(
+                    Decl_Stmt_Node(vardecl=[
+                        Var_Decl_Node(name="tmp_parfor_" +
+                                      str(count + len(rangepos) - 1),
+                                      type="INTEGER",
+                                      sizes=None,
+                                      init=None)
+                    ]))
+            indices.append(
+                Name_Node(name="tmp_parfor_" + str(count + len(rangepos) - 1)))
+        else:
+            indices.append(i)
+        currentindex += 1
+
+    node.indices = indices
 
 
 class ArrayToLoop(NodeTransformer):
@@ -505,72 +564,26 @@ class ArrayToLoop(NodeTransformer):
                 current = child.lval
                 val = child.rval
                 ranges = []
-                indices = []
                 rangepos = []
-                rangeposrval = []
-                rangesrval = []
-                currentindex = 0
-                currentindexrval = 0
-                indicesrval = []
-
-                for i in current.indices:
-                    if isinstance(i, ParDecl_Node):
-                        if i.type == "ALL":
-                            ranges.append([
-                                Int_Literal_Node(value="1"),
-                                Name_Range_Node(name="f2dace_MAX",
-                                                type="INTEGER",
-                                                arrname=current.name,
-                                                pos=currentindex)
-                            ])
-                        else:
-                            ranges.append(i.range)
-                        rangepos.append(currentindex)
-                        newbody.append(
-                            Decl_Stmt_Node(vardecl=[
-                                Var_Decl_Node(name="tmp_parfor_" +
-                                              str(self.count + len(rangepos) -
-                                                  1),
-                                              type="INTEGER",
-                                              sizes=None,
-                                              init=None)
-                            ]))
-                        indices.append(
-                            Name_Node(name="tmp_parfor_" +
-                                      str(self.count + len(rangepos) - 1)))
-                    else:
-                        indices.append(i)
-                    currentindex += 1
-
-                current.indices = indices
+                par_Decl_Range_Finder(current, ranges, rangepos, self.count,
+                                      newbody, True)
 
                 if res_range is not None and len(res_range) > 0:
-                    for i in val.indices:
-                        if isinstance(i, ParDecl_Node):
-                            if i.type == "ALL":
-                                rangesrval.append([
-                                    Int_Literal_Node(value="1"),
-                                    Name_Range_Node(name="f2dace_MAX",
-                                                    type="INTEGER",
-                                                    arrname=current.name,
-                                                    pos=currentindex)
-                                ])
-                            else:
-                                rangesrval.append(i.range)
-                            rangesrval.append(i)
-                            rangeposrval.append(currentindexrval)
-                            indicesrval.append(
-                                Name_Node(
-                                    name="tmp_parfor_" +
-                                    str(self.count + len(rangeposrval) - 1)))
-                        else:
-                            indicesrval.append(i)
-                        currentindexrval += 1
-                    val.indices = indicesrval
-                    for i, j in zip(ranges, rangesrval):
-                        if i != j:
-                            raise NotImplementedError(
-                                "Ranges must be identical")
+                    rvals = [
+                        i for i in mywalk(val)
+                        if isinstance(i, Array_Subscript_Node)
+                    ]
+                    for i in rvals:
+                        rangeposrval = []
+                        rangesrval = []
+
+                        par_Decl_Range_Finder(i, rangesrval, rangeposrval,
+                                              self.count, newbody, False)
+
+                        for i, j in zip(ranges, rangesrval):
+                            if i != j:
+                                raise NotImplementedError(
+                                    "Ranges must be identical")
 
                 range_index = 0
                 body = BinOp_Node(lval=current,
@@ -578,6 +591,98 @@ class ArrayToLoop(NodeTransformer):
                                   rval=val,
                                   line_number=child.line_number)
                 for i in ranges:
+                    initrange = i[0]
+                    finalrange = i[1]
+                    init = BinOp_Node(lval=Name_Node(
+                        name="tmp_parfor_" + str(self.count + range_index)),
+                                      op="=",
+                                      rval=initrange,
+                                      line_number=child.line_number)
+                    cond = BinOp_Node(lval=Name_Node(
+                        name="tmp_parfor_" + str(self.count + range_index)),
+                                      op="<=",
+                                      rval=finalrange,
+                                      line_number=child.line_number)
+                    iter = BinOp_Node(
+                        lval=Name_Node(name="tmp_parfor_" +
+                                       str(self.count + range_index)),
+                        op="=",
+                        rval=BinOp_Node(
+                            lval=Name_Node(name="tmp_parfor_" +
+                                           str(self.count + range_index)),
+                            op="+",
+                            rval=Int_Literal_Node(value="1")),
+                        line_number=child.line_number)
+                    current_for = Map_Stmt_Node(
+                        init=init,
+                        cond=cond,
+                        iter=iter,
+                        body=Execution_Part_Node(execution=[body]),
+                        line_number=child.line_number)
+                    body = current_for
+                    range_index += 1
+
+                newbody.append(body)
+
+                self.count = self.count + range_index
+            else:
+                newbody.append(self.visit(child))
+        return Execution_Part_Node(execution=newbody)
+
+
+def mywalk(node):
+    """
+    Recursively yield all descendant nodes in the tree starting at *node*
+    (including *node* itself), in no specified order.  This is useful if you
+    only want to modify nodes in place and don't care about the context.
+    """
+    from collections import deque
+    #print("HERE")
+    todo = deque([node])
+    while todo:
+        node = todo.popleft()
+        #print(node.__class__.__name__)
+        todo.extend(iter_child_nodes(node))
+        yield node
+
+
+class SumToLoop(NodeTransformer):
+    def __init__(self):
+        self.count = 0
+
+    def visit_Execution_Part_Node(self, node: Execution_Part_Node):
+        newbody = []
+        for child in node.execution:
+            lister = SumLoopNodeLister()
+            lister.visit(child)
+            res = lister.nodes
+            if res is not None and len(res) > 0:
+
+                current = child.lval
+                val = child.rval
+                rvals = [
+                    i for i in mywalk(val)
+                    if isinstance(i, Array_Subscript_Node)
+                ]
+                if len(rvals) != 1:
+                    raise NotImplementedError("Only one array can be summed")
+                val = rvals[0]
+                rangeposrval = []
+                rangesrval = []
+
+                par_Decl_Range_Finder(val, rangesrval, rangeposrval,
+                                      self.count, newbody, False)
+
+                range_index = 0
+                body = BinOp_Node(lval=current,
+                                  op="=",
+                                  rval=BinOp_Node(
+                                      lval=current,
+                                      op="+",
+                                      rval=val,
+                                      line_number=child.line_number),
+                                  line_number=child.line_number)
+                for i in rangesrval:
                     initrange = i[0]
                     finalrange = i[1]
                     init = BinOp_Node(lval=Name_Node(
