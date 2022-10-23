@@ -19,6 +19,7 @@ class PythonConnectorRenamer(ast.NodeTransformer):
     """
     def __init__(self, repl_dict: Dict[str, str]) -> None:
         """ Initializes AST transformer.
+        
             :param repl_dict: Replacement dictionary.
         """
         self.repl_dict = repl_dict

@@ -28,6 +28,7 @@ import sympy as sp
 
 Size = Union[int, dace.symbolic.symbol]
 Shape = Sequence[Size]
+ProgramVisitor = 'dace.frontend.python.newast.ProgramVisitor'
 
 
 def normalize_axes(axes: Tuple[int], max_dim: int) -> List[int]:
@@ -48,7 +49,7 @@ def normalize_axes(axes: Tuple[int], max_dim: int) -> List[int]:
 
 @oprepo.replaces('dace.define_local')
 @oprepo.replaces('dace.ndarray')
-def _define_local_ex(pv: 'ProgramVisitor',
+def _define_local_ex(pv: ProgramVisitor,
                      sdfg: SDFG,
                      state: SDFGState,
                      shape: Shape,
@@ -63,13 +64,13 @@ def _define_local_ex(pv: 'ProgramVisitor',
 
 
 @oprepo.replaces('numpy.ndarray')
-def _define_local(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, shape: Shape, dtype: dace.typeclass):
+def _define_local(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, shape: Shape, dtype: dace.typeclass):
     """ Defines a local array in a DaCe program. """
     return _define_local_ex(pv, sdfg, state, shape, dtype)
 
 
 @oprepo.replaces('dace.define_local_scalar')
-def _define_local_scalar(pv: 'ProgramVisitor',
+def _define_local_scalar(pv: ProgramVisitor,
                          sdfg: SDFG,
                          state: SDFGState,
                          dtype: dace.typeclass,
@@ -83,7 +84,7 @@ def _define_local_scalar(pv: 'ProgramVisitor',
 
 
 @oprepo.replaces('dace.define_stream')
-def _define_stream(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, dtype: dace.typeclass, buffer_size: Size = 1):
+def _define_stream(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, dtype: dace.typeclass, buffer_size: Size = 1):
     """ Defines a local stream array in a DaCe program. """
     name = sdfg.temp_data_name()
     sdfg.add_stream(name, dtype, buffer_size=buffer_size, transient=True)
@@ -92,7 +93,7 @@ def _define_stream(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, dtype: da
 
 @oprepo.replaces('dace.define_streamarray')
 @oprepo.replaces('dace.stream')
-def _define_streamarray(pv: 'ProgramVisitor',
+def _define_streamarray(pv: ProgramVisitor,
                         sdfg: SDFG,
                         state: SDFGState,
                         shape: Shape,
@@ -106,7 +107,7 @@ def _define_streamarray(pv: 'ProgramVisitor',
 
 @oprepo.replaces('numpy.array')
 @oprepo.replaces('dace.array')
-def _define_literal_ex(pv: 'ProgramVisitor',
+def _define_literal_ex(pv: ProgramVisitor,
                        sdfg: SDFG,
                        state: SDFGState,
                        obj: Any,
@@ -162,7 +163,7 @@ def _define_literal_ex(pv: 'ProgramVisitor',
 
 
 @oprepo.replaces('dace.reduce')
-def _reduce(pv: 'ProgramVisitor',
+def _reduce(pv: ProgramVisitor,
             sdfg: SDFG,
             state: SDFGState,
             redfunction: Callable[[Any, Any], Any],
@@ -232,7 +233,7 @@ def _reduce(pv: 'ProgramVisitor',
 
 
 @oprepo.replaces('numpy.eye')
-def eye(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, N, M=None, k=0, dtype=dace.float64):
+def eye(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, N, M=None, k=0, dtype=dace.float64):
     M = M or N
     name, _ = sdfg.add_temp_transient([N, M], dtype)
 
@@ -246,13 +247,13 @@ def eye(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, N, M=None, k=0, dtyp
 
 
 @oprepo.replaces('numpy.empty')
-def _numpy_empty(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, shape: Shape, dtype: dace.typeclass):
+def _numpy_empty(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, shape: Shape, dtype: dace.typeclass):
     """ Creates an unitialized array of the specificied shape and dtype. """
     return _define_local(pv, sdfg, state, shape, dtype)
 
 
 @oprepo.replaces('numpy.empty_like')
-def _numpy_empty_like(pv: 'ProgramVisitor',
+def _numpy_empty_like(pv: ProgramVisitor,
                       sdfg: SDFG,
                       state: SDFGState,
                       prototype: str,
@@ -271,13 +272,13 @@ def _numpy_empty_like(pv: 'ProgramVisitor',
 
 
 @oprepo.replaces('numpy.identity')
-def _numpy_identity(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, n, dtype=dace.float64):
+def _numpy_identity(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, n, dtype=dace.float64):
     """ Generates the nxn identity matrix. """
     return eye(pv, sdfg, state, n, dtype=dtype)
 
 
 @oprepo.replaces('numpy.full')
-def _numpy_full(pv: 'ProgramVisitor',
+def _numpy_full(pv: ProgramVisitor,
                 sdfg: SDFG,
                 state: SDFGState,
                 shape: Shape,
@@ -306,7 +307,7 @@ def _numpy_full(pv: 'ProgramVisitor',
 
 
 @oprepo.replaces('numpy.full_like')
-def _numpy_full_like(pv: 'ProgramVisitor',
+def _numpy_full_like(pv: ProgramVisitor,
                      sdfg: SDFG,
                      state: SDFGState,
                      a: str,
@@ -325,14 +326,14 @@ def _numpy_full_like(pv: 'ProgramVisitor',
 
 
 @oprepo.replaces('numpy.ones')
-def _numpy_ones(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, shape: Shape, dtype: dace.typeclass = dace.float64):
+def _numpy_ones(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, shape: Shape, dtype: dace.typeclass = dace.float64):
     """ Creates and array of the specified shape and initializes it with ones.
     """
     return _numpy_full(pv, sdfg, state, shape, 1.0, dtype)
 
 
 @oprepo.replaces('numpy.ones_like')
-def _numpy_ones_like(pv: 'ProgramVisitor',
+def _numpy_ones_like(pv: ProgramVisitor,
                      sdfg: SDFG,
                      state: SDFGState,
                      a: str,
@@ -345,18 +346,14 @@ def _numpy_ones_like(pv: 'ProgramVisitor',
 
 
 @oprepo.replaces('numpy.zeros')
-def _numpy_zeros(pv: 'ProgramVisitor',
-                 sdfg: SDFG,
-                 state: SDFGState,
-                 shape: Shape,
-                 dtype: dace.typeclass = dace.float64):
+def _numpy_zeros(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, shape: Shape, dtype: dace.typeclass = dace.float64):
     """ Creates and array of the specified shape and initializes it with zeros.
     """
     return _numpy_full(pv, sdfg, state, shape, 0.0, dtype)
 
 
 @oprepo.replaces('numpy.zeros_like')
-def _numpy_zeros_like(pv: 'ProgramVisitor',
+def _numpy_zeros_like(pv: ProgramVisitor,
                       sdfg: SDFG,
                       state: SDFGState,
                       a: str,
@@ -369,7 +366,7 @@ def _numpy_zeros_like(pv: 'ProgramVisitor',
 
 
 @oprepo.replaces('numpy.copy')
-def _numpy_copy(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a: str):
+def _numpy_copy(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str):
     """ Creates a copy of array a.
     """
     if a not in sdfg.arrays.keys():
@@ -384,7 +381,7 @@ def _numpy_copy(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a: str):
 
 
 @oprepo.replaces('numpy.flip')
-def _numpy_flip(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str, axis=None):
+def _numpy_flip(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, axis=None):
     """ Reverse the order of elements in an array along the given axis.
         The shape of the array is preserved, but the elements are reordered.
     """
@@ -432,7 +429,7 @@ def _numpy_flip(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str, ax
 
 
 @oprepo.replaces('numpy.rot90')
-def _numpy_rot90(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str, k=1, axes=(0, 1)):
+def _numpy_rot90(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, k=1, axes=(0, 1)):
     """ Rotate an array by 90 degrees in the plane specified by axes.
         Rotation direction is from the first towards the second axis.
     """
@@ -504,7 +501,7 @@ def _numpy_rot90(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str, k
 
 @oprepo.replaces('numpy.arange')
 @oprepo.replaces('dace.arange')
-def _arange(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, *args, **kwargs):
+def _arange(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, *args, **kwargs):
     """ Implementes numpy.arange """
 
     start = 0
@@ -557,7 +554,9 @@ def _arange(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, *args, **kwargs)
 @oprepo.replaces('elementwise')
 @oprepo.replaces('dace.elementwise')
 def _elementwise(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, func: Union[StringLiteral, str], in_array: str, out_array=None):
-    """Apply a lambda function to each element in the input"""
+    """
+    Apply a lambda function to each element in the input.
+    """
 
     inparr = sdfg.arrays[in_array]
     restype = sdfg.arrays[in_array].dtype
@@ -652,7 +651,7 @@ def _complex_to_scalar(complex_type: dace.typeclass):
 @oprepo.replaces('dace.exp')
 @oprepo.replaces('numpy.exp')
 @oprepo.replaces('math.exp')
-def _exp(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, input: str):
+def _exp(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, input: str):
     return _simple_call(sdfg, state, input, 'exp')
 
 
@@ -660,7 +659,7 @@ def _exp(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, input: str):
 @oprepo.replaces('dace.sin')
 @oprepo.replaces('numpy.sin')
 @oprepo.replaces('math.sin')
-def _sin(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, input: str):
+def _sin(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, input: str):
     return _simple_call(sdfg, state, input, 'sin')
 
 
@@ -668,7 +667,7 @@ def _sin(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, input: str):
 @oprepo.replaces('dace.cos')
 @oprepo.replaces('numpy.cos')
 @oprepo.replaces('math.cos')
-def _cos(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, input: str):
+def _cos(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, input: str):
     return _simple_call(sdfg, state, input, 'cos')
 
 
@@ -676,7 +675,7 @@ def _cos(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, input: str):
 @oprepo.replaces('dace.sqrt')
 @oprepo.replaces('numpy.sqrt')
 @oprepo.replaces('math.sqrt')
-def _sqrt(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, input: str):
+def _sqrt(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, input: str):
     return _simple_call(sdfg, state, input, 'sqrt')
 
 
@@ -684,31 +683,31 @@ def _sqrt(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, input: str):
 @oprepo.replaces('dace.log')
 @oprepo.replaces('numpy.log')
 @oprepo.replaces('math.log')
-def _log(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, input: str):
+def _log(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, input: str):
     return _simple_call(sdfg, state, input, 'log')
 
 
 @oprepo.replaces('math.floor')
-def _floor(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, input: str):
+def _floor(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, input: str):
     return _simple_call(sdfg, state, input, 'floor', restype=dtypes.typeclass(int))
 
 
 @oprepo.replaces('math.ceil')
-def _ceil(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, input: str):
+def _ceil(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, input: str):
     return _simple_call(sdfg, state, input, 'ceil', restype=dtypes.typeclass(int))
 
 
 @oprepo.replaces('conj')
 @oprepo.replaces('dace.conj')
 @oprepo.replaces('numpy.conj')
-def _conj(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, input: str):
+def _conj(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, input: str):
     return _simple_call(sdfg, state, input, 'conj')
 
 
 @oprepo.replaces('real')
 @oprepo.replaces('dace.real')
 @oprepo.replaces('numpy.real')
-def _real(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, input: str):
+def _real(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, input: str):
     inptype = sdfg.arrays[input].dtype
     return _simple_call(sdfg, state, input, 'real', _complex_to_scalar(inptype))
 
@@ -716,18 +715,18 @@ def _real(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, input: str):
 @oprepo.replaces('imag')
 @oprepo.replaces('dace.imag')
 @oprepo.replaces('numpy.imag')
-def _imag(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, input: str):
+def _imag(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, input: str):
     inptype = sdfg.arrays[input].dtype
     return _simple_call(sdfg, state, input, 'imag', _complex_to_scalar(inptype))
 
 
 @oprepo.replaces('abs')
-def _abs(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, input: Union[str, Number, symbolic.symbol]):
+def _abs(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, input: Union[str, Number, symbolic.symbol]):
     return _simple_call(sdfg, state, input, 'abs')
 
 
 @oprepo.replaces('round')
-def _round(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, input: Union[str, Number, symbolic.symbol]):
+def _round(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, input: Union[str, Number, symbolic.symbol]):
     return _simple_call(sdfg, state, input, 'round', dtypes.typeclass(int))
 
 
@@ -745,7 +744,7 @@ def _len_array(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a: str):
 @oprepo.replaces('transpose')
 @oprepo.replaces('dace.transpose')
 @oprepo.replaces('numpy.transpose')
-def _transpose(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, inpname: str, axes=None):
+def _transpose(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, inpname: str, axes=None):
 
     arr1 = sdfg.arrays[inpname]
 
@@ -785,7 +784,7 @@ def _transpose(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, inpname: str,
 
 
 @oprepo.replaces('numpy.sum')
-def _sum(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a: str, axis=None):
+def _sum(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, axis=None):
     return _reduce(pv, sdfg, state, "lambda x, y: x + y", a, axis=axis, identity=0)
 
 
@@ -796,7 +795,7 @@ def _sum_array(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a: str):
 
 
 @oprepo.replaces('numpy.mean')
-def _mean(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a: str, axis=None):
+def _mean(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, axis=None):
 
     nest = NestedCall(pv, sdfg, state)
 
@@ -816,7 +815,7 @@ def _mean(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a: str, axis=None)
 
 @oprepo.replaces('numpy.max')
 @oprepo.replaces('numpy.amax')
-def _max(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a: str, axis=None):
+def _max(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, axis=None):
     return _reduce(pv,
                    sdfg,
                    state,
@@ -828,7 +827,7 @@ def _max(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a: str, axis=None):
 
 @oprepo.replaces('numpy.min')
 @oprepo.replaces('numpy.amin')
-def _min(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a: str, axis=None):
+def _min(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, axis=None):
     return _reduce(pv,
                    sdfg,
                    state,
@@ -838,7 +837,7 @@ def _min(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a: str, axis=None):
                    identity=dtypes.max_value(sdfg.arrays[a].dtype))
 
 
-def _minmax2(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a: str, b: str, ismin=True):
+def _minmax2(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, b: str, ismin=True):
     """ Implements the min or max function with 2 scalar arguments. """
 
     in_conn = set()
@@ -889,7 +888,7 @@ def _minmax2(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a: str, b: str,
 # NOTE: We support only the version of Python max that takes scalar arguments.
 # For iterable arguments one must use the equivalent NumPy methods.
 @oprepo.replaces('max')
-def _pymax(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a: Union[str, Number, symbolic.symbol], *args):
+def _pymax(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: Union[str, Number, symbolic.symbol], *args):
     left_arg = a
     current_state = state
     for i, b in enumerate(args):
@@ -904,7 +903,7 @@ def _pymax(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a: Union[str, Num
 # NOTE: We support only the version of Python min that takes scalar arguments.
 # For iterable arguments one must use the equivalent NumPy methods.
 @oprepo.replaces('min')
-def _pymin(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a: Union[str, Number, symbolic.symbol], *args):
+def _pymin(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: Union[str, Number, symbolic.symbol], *args):
     left_arg = a
     current_state = state
     for i, b in enumerate(args):
@@ -917,21 +916,21 @@ def _pymin(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a: Union[str, Num
 
 
 @oprepo.replaces('slice')
-def _slice(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, *args, **kwargs):
+def _slice(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, *args, **kwargs):
     return (slice(*args, **kwargs), )
 
 
 @oprepo.replaces('numpy.argmax')
-def _argmax(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a: str, axis, result_type=dace.int32):
+def _argmax(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, axis, result_type=dace.int32):
     return _argminmax(pv, sdfg, state, a, axis, func="max", result_type=result_type)
 
 
 @oprepo.replaces('numpy.argmin')
-def _argmin(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a: str, axis, result_type=dace.int32):
+def _argmin(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str, axis, result_type=dace.int32):
     return _argminmax(pv, sdfg, state, a, axis, func="min", result_type=result_type)
 
 
-def _argminmax(pv: 'ProgramVisitor',
+def _argminmax(pv: ProgramVisitor,
                sdfg: SDFG,
                state: SDFGState,
                a: str,
@@ -1020,7 +1019,7 @@ def _argminmax(pv: 'ProgramVisitor',
 
 
 @oprepo.replaces('numpy.where')
-def _array_array_where(visitor: 'ProgramVisitor',
+def _array_array_where(visitor: ProgramVisitor,
                        sdfg: SDFG,
                        state: SDFGState,
                        cond_operand: str,
@@ -1226,15 +1225,15 @@ def _binop(sdfg: SDFG, state: SDFGState, op1: str, op2: str, opcode: str, opname
 def _makeunop(op, opcode):
 
     @oprepo.replaces_operator('Array', op)
-    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str, op2=None):
+    def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2=None):
         return _unop(sdfg, state, op1, opcode, op)
 
     @oprepo.replaces_operator('View', op)
-    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str, op2=None):
+    def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2=None):
         return _unop(sdfg, state, op1, opcode, op)
 
     @oprepo.replaces_operator('Scalar', op)
-    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str, op2=None):
+    def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2=None):
         scalar1 = sdfg.arrays[op1]
         restype, _ = _result_type([scalar1], op)
         op2 = sdfg.temp_data_name()
@@ -1247,19 +1246,19 @@ def _makeunop(op, opcode):
         return op2
 
     @oprepo.replaces_operator('NumConstant', op)
-    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: Number, op2=None):
+    def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: Number, op2=None):
         expr = '{o}(op1)'.format(o=opcode)
         vars = {'op1': op1}
         return eval(expr, vars)
 
     @oprepo.replaces_operator('BoolConstant', op)
-    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: Number, op2=None):
+    def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: Number, op2=None):
         expr = '{o}(op1)'.format(o=opcode)
         vars = {'op1': op1}
         return eval(expr, vars)
 
     @oprepo.replaces_operator('symbol', op)
-    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: 'symbol', op2=None):
+    def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: 'symbol', op2=None):
         if opcode in _pyop2symtype.keys():
             try:
                 return _pyop2symtype[opcode](op1)
@@ -1554,9 +1553,11 @@ def _result_type(arguments: Sequence[Union[str, Number, symbolic.symbol, sp.Basi
     return result_type, casting
 
 
-def _array_array_binop(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, left_operand: str, right_operand: str,
+def _array_array_binop(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, left_operand: str, right_operand: str,
                        operator: str, opcode: str):
-    '''Both operands are Arrays (or Data in general)'''
+    """
+    Both operands are Arrays (or Data in general)
+    """
 
     left_arr = sdfg.arrays[left_operand]
     right_arr = sdfg.arrays[right_operand]
@@ -1611,9 +1612,11 @@ def _array_array_binop(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, 
     return out_operand
 
 
-def _array_const_binop(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, left_operand: str, right_operand: str,
+def _array_const_binop(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, left_operand: str, right_operand: str,
                        operator: str, opcode: str):
-    '''Operands are an Array and a Constant'''
+    """
+    Operands are an Array and a Constant
+    """
 
     if left_operand in sdfg.arrays:
         left_arr = sdfg.arrays[left_operand]
@@ -1679,9 +1682,11 @@ def _array_const_binop(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, 
     return out_operand
 
 
-def _array_sym_binop(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, left_operand: str, right_operand: str,
+def _array_sym_binop(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, left_operand: str, right_operand: str,
                      operator: str, opcode: str):
-    '''Operands are an Array and a Symbol'''
+    """
+    Operands are an Array and a Symbol
+    """
 
     if left_operand in sdfg.arrays:
         left_arr = sdfg.arrays[left_operand]
@@ -1747,9 +1752,11 @@ def _array_sym_binop(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, le
     return out_operand
 
 
-def _scalar_scalar_binop(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, left_operand: str, right_operand: str,
+def _scalar_scalar_binop(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, left_operand: str, right_operand: str,
                          operator: str, opcode: str):
-    '''Both operands are Scalars'''
+    """
+    Both operands are Scalars
+    """
 
     left_scal = sdfg.arrays[left_operand]
     right_scal = sdfg.arrays[right_operand]
@@ -1784,9 +1791,11 @@ def _scalar_scalar_binop(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState
     return out_operand
 
 
-def _scalar_const_binop(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, left_operand: str, right_operand: str,
+def _scalar_const_binop(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, left_operand: str, right_operand: str,
                         operator: str, opcode: str):
-    '''Operands are a Scalar and a Constant'''
+    """
+    Operands are a Scalar and a Constant
+    """
 
     if left_operand in sdfg.arrays:
         left_scal = sdfg.arrays[left_operand]
@@ -1831,9 +1840,11 @@ def _scalar_const_binop(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState,
     return out_operand
 
 
-def _scalar_sym_binop(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, left_operand: str, right_operand: str,
+def _scalar_sym_binop(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, left_operand: str, right_operand: str,
                       operator: str, opcode: str):
-    '''Operands are a Scalar and a Symbol'''
+    """
+    Operands are a Scalar and a Symbol
+    """
 
     if left_operand in sdfg.arrays:
         left_scal = sdfg.arrays[left_operand]
@@ -1897,9 +1908,11 @@ _pyop2symtype = {
 }
 
 
-def _const_const_binop(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, left_operand: str, right_operand: str,
+def _const_const_binop(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, left_operand: str, right_operand: str,
                        operator: str, opcode: str):
-    '''Both operands are Constants or Symbols'''
+    """
+    Both operands are Constants or Symbols
+    """
 
     _, casting = _result_type([left_operand, right_operand], operator)
     left_cast = casting[0]
@@ -1935,147 +1948,147 @@ def _const_const_binop(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, 
 def _makebinop(op, opcode):
 
     @oprepo.replaces_operator('Array', op, otherclass='Array')
-    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str, op2: str):
+    def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _array_array_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('Array', op, otherclass='View')
-    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str, op2: str):
+    def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _array_array_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('Array', op, otherclass='Scalar')
-    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str, op2: str):
+    def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _array_array_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('Array', op, otherclass='NumConstant')
-    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str, op2: str):
+    def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _array_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('Array', op, otherclass='BoolConstant')
-    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str, op2: str):
+    def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _array_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('Array', op, otherclass='symbol')
-    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str, op2: str):
+    def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _array_sym_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('View', op, otherclass='View')
-    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str, op2: str):
+    def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _array_array_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('View', op, otherclass='Array')
-    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str, op2: str):
+    def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _array_array_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('View', op, otherclass='Scalar')
-    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str, op2: str):
+    def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _array_array_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('View', op, otherclass='NumConstant')
-    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str, op2: str):
+    def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _array_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('View', op, otherclass='BoolConstant')
-    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str, op2: str):
+    def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _array_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('View', op, otherclass='symbol')
-    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str, op2: str):
+    def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _array_sym_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('Scalar', op, otherclass='Array')
-    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str, op2: str):
+    def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _array_array_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('Scalar', op, otherclass='View')
-    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str, op2: str):
+    def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _array_array_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('Scalar', op, otherclass='Scalar')
-    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str, op2: str):
+    def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _scalar_scalar_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('Scalar', op, otherclass='NumConstant')
-    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str, op2: str):
+    def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _scalar_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('Scalar', op, otherclass='BoolConstant')
-    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str, op2: str):
+    def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _scalar_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('Scalar', op, otherclass='symbol')
-    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str, op2: str):
+    def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _scalar_sym_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('NumConstant', op, otherclass='Array')
-    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str, op2: str):
+    def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _array_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('NumConstant', op, otherclass='View')
-    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str, op2: str):
+    def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _array_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('NumConstant', op, otherclass='Scalar')
-    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str, op2: str):
+    def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _scalar_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('NumConstant', op, otherclass='NumConstant')
-    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str, op2: str):
+    def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _const_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('NumConstant', op, otherclass='BoolConstant')
-    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str, op2: str):
+    def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _const_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('NumConstant', op, otherclass='symbol')
-    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str, op2: str):
+    def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _const_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('BoolConstant', op, otherclass='Array')
-    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str, op2: str):
+    def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _array_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('BoolConstant', op, otherclass='View')
-    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str, op2: str):
+    def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _array_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('BoolConstant', op, otherclass='Scalar')
-    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str, op2: str):
+    def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _scalar_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('BoolConstant', op, otherclass='NumConstant')
-    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str, op2: str):
+    def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _const_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('BoolConstant', op, otherclass='BoolConstant')
-    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str, op2: str):
+    def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _const_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('BoolConstant', op, otherclass='symbol')
-    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str, op2: str):
+    def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _const_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('symbol', op, otherclass='Array')
-    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str, op2: str):
+    def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _array_sym_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('symbol', op, otherclass='View')
-    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str, op2: str):
+    def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _array_sym_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('symbol', op, otherclass='Scalar')
-    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str, op2: str):
+    def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _scalar_sym_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('symbol', op, otherclass='NumConstant')
-    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str, op2: str):
+    def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _const_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('symbol', op, otherclass='BoolConstant')
-    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str, op2: str):
+    def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _const_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('symbol', op, otherclass='symbol')
-    def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str, op2: str):
+    def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _const_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
 
@@ -2096,7 +2109,7 @@ for op, opcode in [('Add', '+'), ('Sub', '-'), ('Mult', '*'), ('Div', '/'), ('Fl
 @oprepo.replaces_operator('View', 'MatMult')
 @oprepo.replaces_operator('Array', 'MatMult', 'View')
 @oprepo.replaces_operator('View', 'MatMult', 'Array')
-def _matmult(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: str, op2: str):
+def _matmult(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
 
     from dace.libraries.blas.nodes.matmul import MatMul  # Avoid import loop
 
@@ -2799,7 +2812,7 @@ ufuncs = dict(
 )
 
 
-def _get_ufunc_impl(visitor: 'ProgramVisitor', ast_node: ast.Call, ufunc_name: str) -> Dict[str, Any]:
+def _get_ufunc_impl(visitor: ProgramVisitor, ast_node: ast.Call, ufunc_name: str) -> Dict[str, Any]:
     """ Retrieves the implementation details for a NumPy ufunc call.
 
         :param visitor: ProgramVisitor object handling the ufunc call
@@ -2816,7 +2829,7 @@ def _get_ufunc_impl(visitor: 'ProgramVisitor', ast_node: ast.Call, ufunc_name: s
                                          "Missing implementation for NumPy ufunc {f}.".format(f=ufunc_name))
 
 
-def _validate_ufunc_num_arguments(visitor: 'ProgramVisitor', ast_node: ast.Call, ufunc_name: str, num_inputs: int,
+def _validate_ufunc_num_arguments(visitor: ProgramVisitor, ast_node: ast.Call, ufunc_name: str, num_inputs: int,
                                   num_outputs: int, num_args: int):
     """ Validates the number of positional arguments in a NumPy ufunc call.
 
@@ -2837,7 +2850,7 @@ def _validate_ufunc_num_arguments(visitor: 'ProgramVisitor', ast_node: ast.Call,
             "but a total of {a} arguments were given).".format(f=ufunc_name, i=num_inputs, o=num_outputs, a=num_args))
 
 
-def _validate_ufunc_inputs(visitor: 'ProgramVisitor', ast_node: ast.Call, sdfg: SDFG, ufunc_name: str, num_inputs: int,
+def _validate_ufunc_inputs(visitor: ProgramVisitor, ast_node: ast.Call, sdfg: SDFG, ufunc_name: str, num_inputs: int,
                            num_args: int, args: Sequence[UfuncInput]) -> List[UfuncInput]:
     """ Validates the number of type of inputs in a NumPy ufunc call.
 
@@ -2850,7 +2863,7 @@ def _validate_ufunc_inputs(visitor: 'ProgramVisitor', ast_node: ast.Call, sdfg: 
 
         :raises DaCeSyntaxError: When validation fails
 
-        :returns: List of input datanames and constants
+        :return: List of input datanames and constants
     """
 
     # Validate number of inputs
@@ -2882,7 +2895,7 @@ def _validate_ufunc_inputs(visitor: 'ProgramVisitor', ast_node: ast.Call, sdfg: 
     return inputs
 
 
-def _validate_ufunc_outputs(visitor: 'ProgramVisitor', ast_node: ast.Call, sdfg: SDFG, ufunc_name: str, num_inputs: int,
+def _validate_ufunc_outputs(visitor: ProgramVisitor, ast_node: ast.Call, sdfg: SDFG, ufunc_name: str, num_inputs: int,
                             num_outputs: int, num_args: int, args: Sequence[UfuncInput],
                             kwargs: Dict[str, Any]) -> List[UfuncOutput]:
     """ Validates the number of type of outputs in a NumPy ufunc call.
@@ -2898,7 +2911,7 @@ def _validate_ufunc_outputs(visitor: 'ProgramVisitor', ast_node: ast.Call, sdfg:
 
         :raises DaCeSyntaxError: When validation fails
 
-        :returns: List of output datanames and None
+        :return: List of output datanames and None
     """
 
     # Validate number of outputs
@@ -2946,7 +2959,7 @@ def _validate_ufunc_outputs(visitor: 'ProgramVisitor', ast_node: ast.Call, sdfg:
     return outputs
 
 
-def _validate_where_kword(visitor: 'ProgramVisitor', ast_node: ast.Call, sdfg: SDFG, ufunc_name: str,
+def _validate_where_kword(visitor: ProgramVisitor, ast_node: ast.Call, sdfg: SDFG, ufunc_name: str,
                           kwargs: Dict[str, Any]) -> Tuple[bool, Union[str, bool]]:
     """ Validates the 'where' keyword argument passed to a NumPy ufunc call.
 
@@ -2958,8 +2971,8 @@ def _validate_where_kword(visitor: 'ProgramVisitor', ast_node: ast.Call, sdfg: S
 
         :raises DaceSyntaxError: When validation fails
 
-        :returns: Tuple of a boolean value indicating whether the 'where'
-        keyword is defined, and the validated 'where' value
+        :return: Tuple of a boolean value indicating whether the 'where'
+                 keyword is defined, and the validated 'where' value
     """
 
     has_where = False
@@ -2982,8 +2995,7 @@ def _validate_where_kword(visitor: 'ProgramVisitor', ast_node: ast.Call, sdfg: S
     return has_where, where
 
 
-def _validate_shapes(visitor: 'ProgramVisitor', ast_node: ast.Call, sdfg: SDFG, ufunc_name: str,
-                     inputs: List[UfuncInput],
+def _validate_shapes(visitor: ProgramVisitor, ast_node: ast.Call, sdfg: SDFG, ufunc_name: str, inputs: List[UfuncInput],
                      outputs: List[UfuncOutput]) -> Tuple[Shape, Tuple[Tuple[str, str], ...], str, List[str]]:
     """ Validates the data shapes of inputs and outputs to a NumPy ufunc call.
 
@@ -2996,7 +3008,7 @@ def _validate_shapes(visitor: 'ProgramVisitor', ast_node: ast.Call, sdfg: SDFG, 
 
         :raises DaCeSyntaxError: When validation fails
 
-        :returns: Tuple with the output shape, the map, output and input indices
+        :return: Tuple with the output shape, the map, output and input indices
     """
 
     shapes = []
@@ -3023,7 +3035,7 @@ def _broadcast(shapes: Sequence[Shape]) -> Tuple[Shape, Tuple[Tuple[str, str], .
 
         :raises SyntaxError: When broadcasting fails
 
-        :returns: Tuple with the output shape, the map, output and input indices
+        :return: Tuple with the output shape, the map, output and input indices
     """
 
     map_lengths = dict()
@@ -3112,9 +3124,8 @@ def _create_output(sdfg: SDFG,
         :param output_dtype: Datatype of the output data
         :param storage: Storage type of the output data
         :param force_scalar: If True and output shape is (1,) then output
-        becomes a dace.data.Scalar, regardless of the data-type of the inputs
-
-        :returns: New outputs of the ufunc call
+                             becomes a ``dace.data.Scalar``, regardless of the data-type of the inputs
+        :return: New outputs of the ufunc call
     """
 
     # Check if the result is scalar
@@ -3166,8 +3177,8 @@ def _set_tasklet_params(ufunc_impl: Dict[str, Any],
         :param ufunc_impl: Information on how the ufunc must be implemented
         :param inputs: Inputs of the ufunc call
 
-        :returns: Dictionary with the (1) tasklet name, (2) input connectors,
-                  (3) output connectors, and (4) tasklet code
+        :return: Dictionary with the (1) tasklet name, (2) input connectors,
+                 (3) output connectors, and (4) tasklet code
     """
 
     # (Deep) copy default tasklet parameters from the ufunc_impl dictionary
@@ -3191,7 +3202,7 @@ def _set_tasklet_params(ufunc_impl: Dict[str, Any],
     return dict(name=name, inputs=inp_connectors, outputs=out_connectors, code=code)
 
 
-def _create_subgraph(visitor: 'ProgramVisitor',
+def _create_subgraph(visitor: ProgramVisitor,
                      sdfg: SDFG,
                      state: SDFGState,
                      inputs: List[UfuncInput],
@@ -3393,7 +3404,7 @@ def _flatten_args(args: Sequence[UfuncInput]) -> Sequence[UfuncInput]:
 
 
 @oprepo.replaces_ufunc('ufunc')
-def implement_ufunc(visitor: 'ProgramVisitor', ast_node: ast.Call, sdfg: SDFG, state: SDFGState, ufunc_name: str,
+def implement_ufunc(visitor: ProgramVisitor, ast_node: ast.Call, sdfg: SDFG, state: SDFGState, ufunc_name: str,
                     args: Sequence[UfuncInput], kwargs: Dict[str, Any]) -> List[UfuncOutput]:
     """ Implements a NumPy ufunc.
 
@@ -3407,7 +3418,7 @@ def implement_ufunc(visitor: 'ProgramVisitor', ast_node: ast.Call, sdfg: SDFG, s
 
         :raises DaCeSyntaxError: When validation fails
 
-        :returns: List of output datanames
+        :return: List of output datanames
     """
 
     # Flatten arguments
@@ -3467,8 +3478,8 @@ def implement_ufunc(visitor: 'ProgramVisitor', ast_node: ast.Call, sdfg: SDFG, s
     return outputs
 
 
-def _validate_keepdims_kword(visitor: 'ProgramVisitor', ast_node: ast.Call, ufunc_name: str, kwargs: Dict[str,
-                                                                                                          Any]) -> bool:
+def _validate_keepdims_kword(visitor: ProgramVisitor, ast_node: ast.Call, ufunc_name: str, kwargs: Dict[str,
+                                                                                                        Any]) -> bool:
     """ Validates the 'keepdims' keyword argument of a NumPy ufunc call.
 
         :param visitor: ProgramVisitor object handling the ufunc call
@@ -3478,7 +3489,7 @@ def _validate_keepdims_kword(visitor: 'ProgramVisitor', ast_node: ast.Call, ufun
 
         :raises DaCeSyntaxError: When validation fails
 
-        :returns: Boolean value of the 'keepdims' keyword argument
+        :return: Boolean value of the 'keepdims' keyword argument
     """
 
     keepdims = False
@@ -3494,7 +3505,7 @@ def _validate_keepdims_kword(visitor: 'ProgramVisitor', ast_node: ast.Call, ufun
     return keepdims
 
 
-def _validate_axis_kword(visitor: 'ProgramVisitor', ast_node: ast.Call, sdfg: SDFG, inputs: List[UfuncInput],
+def _validate_axis_kword(visitor: ProgramVisitor, ast_node: ast.Call, sdfg: SDFG, inputs: List[UfuncInput],
                          kwargs: Dict[str, Any], keepdims: bool) -> Tuple[Tuple[int, ...], Union[Shape, None], Shape]:
     """ Validates the 'axis' keyword argument of a NumPy ufunc call.
 
@@ -3507,8 +3518,8 @@ def _validate_axis_kword(visitor: 'ProgramVisitor', ast_node: ast.Call, sdfg: SD
 
         :raises DaCeSyntaxError: When validation fails
 
-        :returns: The value of the 'axis' keyword argument, the intermediate
-        data shape (if needed), and the expected output shape
+        :return: The value of the 'axis' keyword argument, the intermediate
+                 data shape (if needed), and the expected output shape
     """
 
     # Validate 'axis' keyword
@@ -3555,7 +3566,7 @@ def _validate_axis_kword(visitor: 'ProgramVisitor', ast_node: ast.Call, sdfg: SD
 
 
 @oprepo.replaces_ufunc('reduce')
-def implement_ufunc_reduce(visitor: 'ProgramVisitor', ast_node: ast.Call, sdfg: SDFG, state: SDFGState, ufunc_name: str,
+def implement_ufunc_reduce(visitor: ProgramVisitor, ast_node: ast.Call, sdfg: SDFG, state: SDFGState, ufunc_name: str,
                            args: Sequence[UfuncInput], kwargs: Dict[str, Any]) -> List[UfuncOutput]:
     """ Implements the 'reduce' method of a NumPy ufunc.
 
@@ -3569,7 +3580,7 @@ def implement_ufunc_reduce(visitor: 'ProgramVisitor', ast_node: ast.Call, sdfg: 
 
         :raises DaCeSyntaxError: When validation fails
 
-        :returns: List of output datanames
+        :return: List of output datanames
     """
 
     # Flatten arguments
@@ -3726,7 +3737,7 @@ def implement_ufunc_reduce(visitor: 'ProgramVisitor', ast_node: ast.Call, sdfg: 
 
 
 @oprepo.replaces_ufunc('accumulate')
-def implement_ufunc_accumulate(visitor: 'ProgramVisitor', ast_node: ast.Call, sdfg: SDFG, state: SDFGState,
+def implement_ufunc_accumulate(visitor: ProgramVisitor, ast_node: ast.Call, sdfg: SDFG, state: SDFGState,
                                ufunc_name: str, args: Sequence[UfuncInput], kwargs: Dict[str,
                                                                                          Any]) -> List[UfuncOutput]:
     """ Implements the 'accumulate' method of a NumPy ufunc.
@@ -3741,7 +3752,7 @@ def implement_ufunc_accumulate(visitor: 'ProgramVisitor', ast_node: ast.Call, sd
 
         :raises DaCeSyntaxError: When validation fails
 
-        :returns: List of output datanames
+        :return: List of output datanames
     """
 
     # Flatten arguments
@@ -3852,7 +3863,7 @@ def implement_ufunc_accumulate(visitor: 'ProgramVisitor', ast_node: ast.Call, sd
 
 
 @oprepo.replaces_ufunc('outer')
-def implement_ufunc_outer(visitor: 'ProgramVisitor', ast_node: ast.Call, sdfg: SDFG, state: SDFGState, ufunc_name: str,
+def implement_ufunc_outer(visitor: ProgramVisitor, ast_node: ast.Call, sdfg: SDFG, state: SDFGState, ufunc_name: str,
                           args: Sequence[UfuncInput], kwargs: Dict[str, Any]) -> List[UfuncOutput]:
     """ Implements the 'outer' method of a NumPy ufunc.
 
@@ -3866,7 +3877,7 @@ def implement_ufunc_outer(visitor: 'ProgramVisitor', ast_node: ast.Call, sdfg: S
 
         :raises DaCeSyntaxError: When validation fails
 
-        :returns: List of output datanames
+        :return: List of output datanames
     """
 
     # Flatten arguments
@@ -3970,7 +3981,7 @@ def implement_ufunc_outer(visitor: 'ProgramVisitor', ast_node: ast.Call, sdfg: S
 
 @oprepo.replaces('numpy.reshape')
 def reshape(
-    pv: 'ProgramVisitor',
+    pv: ProgramVisitor,
     sdfg: SDFG,
     state: SDFGState,
     arr: str,
@@ -4017,7 +4028,7 @@ def reshape(
 @oprepo.replaces_method('Array', 'view')
 @oprepo.replaces_method('Scalar', 'view')
 @oprepo.replaces_method('View', 'view')
-def view(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str, dtype, type=None) -> str:
+def view(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, dtype, type=None) -> str:
     if type is not None:
         raise ValueError('View to numpy types is not supported')
 
@@ -4063,7 +4074,7 @@ def view(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str, dtype, ty
 @oprepo.replaces_attribute('Array', 'size')
 @oprepo.replaces_attribute('Scalar', 'size')
 @oprepo.replaces_attribute('View', 'size')
-def size(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str) -> Size:
+def size(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str) -> Size:
     desc = sdfg.arrays[arr]
     totalsize = data._prod(desc.shape)
     return totalsize
@@ -4072,8 +4083,7 @@ def size(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str) -> Size:
 @oprepo.replaces_attribute('Array', 'flat')
 @oprepo.replaces_attribute('Scalar', 'flat')
 @oprepo.replaces_attribute('View', 'flat')
-def flat(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str,
-         order: StringLiteral = StringLiteral('C')) -> str:
+def flat(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, order: StringLiteral = StringLiteral('C')) -> str:
     desc = sdfg.arrays[arr]
     order = str(order)
     totalsize = data._prod(desc.shape)
@@ -4128,35 +4138,35 @@ def flat(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str,
 
 @oprepo.replaces_attribute('Array', 'T')
 @oprepo.replaces_attribute('View', 'T')
-def _ndarray_T(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str) -> str:
+def _ndarray_T(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str) -> str:
     return _transpose(pv, sdfg, state, arr)
 
 
 @oprepo.replaces_attribute('Array', 'real')
 @oprepo.replaces_attribute('Scalar', 'real')
 @oprepo.replaces_attribute('View', 'real')
-def _ndarray_real(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str) -> str:
+def _ndarray_real(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str) -> str:
     return _real(pv, sdfg, state, arr)
 
 
 @oprepo.replaces_attribute('Array', 'imag')
 @oprepo.replaces_attribute('Scalar', 'imag')
 @oprepo.replaces_attribute('View', 'imag')
-def _ndarray_imag(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str) -> str:
+def _ndarray_imag(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str) -> str:
     return _imag(pv, sdfg, state, arr)
 
 
 @oprepo.replaces_method('Array', 'copy')
 @oprepo.replaces_method('Scalar', 'copy')
 @oprepo.replaces_method('View', 'copy')
-def _ndarray_copy(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str) -> str:
+def _ndarray_copy(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str) -> str:
     return _numpy_copy(pv, sdfg, state, arr)
 
 
 @oprepo.replaces_method('Array', 'fill')
 @oprepo.replaces_method('Scalar', 'fill')
 @oprepo.replaces_method('View', 'fill')
-def _ndarray_fill(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str, value: Number) -> str:
+def _ndarray_fill(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, value: Number) -> str:
     if not isinstance(value, (Number, np.bool_)):
         raise mem_parser.DaceSyntaxError(pv, None, "Fill value {f} must be a number!".format(f=value))
     return _elementwise(pv, sdfg, state, "lambda x: {}".format(value), arr, arr)
@@ -4165,7 +4175,7 @@ def _ndarray_fill(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str, 
 @oprepo.replaces_method('Array', 'reshape')
 @oprepo.replaces_method('View', 'reshape')
 def _ndarray_reshape(
-    pv: 'ProgramVisitor',
+    pv: ProgramVisitor,
     sdfg: SDFG,
     state: SDFGState,
     arr: str,
@@ -4177,7 +4187,7 @@ def _ndarray_reshape(
 
 @oprepo.replaces_method('Array', 'transpose')
 @oprepo.replaces_method('View', 'transpose')
-def _ndarray_transpose(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str, *axes) -> str:
+def _ndarray_transpose(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, *axes) -> str:
     if len(axes) == 0:
         axes = None
     elif len(axes) == 1:
@@ -4188,7 +4198,7 @@ def _ndarray_transpose(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: 
 @oprepo.replaces_method('Array', 'flatten')
 @oprepo.replaces_method('Scalar', 'flatten')
 @oprepo.replaces_method('View', 'flatten')
-def _ndarray_flatten(pv: 'ProgramVisitor',
+def _ndarray_flatten(pv: ProgramVisitor,
                      sdfg: SDFG,
                      state: SDFGState,
                      arr: str,
@@ -4203,7 +4213,7 @@ def _ndarray_flatten(pv: 'ProgramVisitor',
 @oprepo.replaces_method('Array', 'ravel')
 @oprepo.replaces_method('Scalar', 'ravel')
 @oprepo.replaces_method('View', 'ravel')
-def _ndarray_ravel(pv: 'ProgramVisitor',
+def _ndarray_ravel(pv: ProgramVisitor,
                    sdfg: SDFG,
                    state: SDFGState,
                    arr: str,
@@ -4215,7 +4225,7 @@ def _ndarray_ravel(pv: 'ProgramVisitor',
 @oprepo.replaces_method('Array', 'max')
 @oprepo.replaces_method('Scalar', 'max')
 @oprepo.replaces_method('View', 'max')
-def _ndarray_max(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str, kwargs: Dict[str, Any] = None) -> str:
+def _ndarray_max(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, kwargs: Dict[str, Any] = None) -> str:
     kwargs = kwargs or dict(axis=None)
     return implement_ufunc_reduce(pv, None, sdfg, state, 'maximum', [arr], kwargs)[0]
 
@@ -4223,7 +4233,7 @@ def _ndarray_max(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str, k
 @oprepo.replaces_method('Array', 'min')
 @oprepo.replaces_method('Scalar', 'min')
 @oprepo.replaces_method('View', 'min')
-def _ndarray_min(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str, kwargs: Dict[str, Any] = None) -> str:
+def _ndarray_min(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, kwargs: Dict[str, Any] = None) -> str:
     kwargs = kwargs or dict(axis=None)
     return implement_ufunc_reduce(pv, None, sdfg, state, 'minimum', [arr], kwargs)[0]
 
@@ -4232,7 +4242,7 @@ def _ndarray_min(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str, k
 # @oprepo.replaces_method('Array', 'argmax')
 # @oprepo.replaces_method('Scalar', 'argmax')
 # @oprepo.replaces_method('View', 'argmax')
-# def _ndarray_argmax(pv: 'ProgramVisitor',
+# def _ndarray_argmax(pv: ProgramVisitor,
 #                  sdfg: SDFG,
 #                  state: SDFGState,
 #                  arr: str,
@@ -4252,14 +4262,14 @@ def _ndarray_min(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str, k
 @oprepo.replaces_method('Array', 'conj')
 @oprepo.replaces_method('Scalar', 'conj')
 @oprepo.replaces_method('View', 'conj')
-def _ndarray_conj(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str) -> str:
+def _ndarray_conj(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str) -> str:
     return implement_ufunc(pv, None, sdfg, state, 'conj', [arr], {})[0]
 
 
 @oprepo.replaces_method('Array', 'sum')
 @oprepo.replaces_method('Scalar', 'sum')
 @oprepo.replaces_method('View', 'sum')
-def _ndarray_sum(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str, kwargs: Dict[str, Any] = None) -> str:
+def _ndarray_sum(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, kwargs: Dict[str, Any] = None) -> str:
     kwargs = kwargs or dict(axis=None)
     return implement_ufunc_reduce(pv, None, sdfg, state, 'add', [arr], kwargs)[0]
 
@@ -4267,7 +4277,7 @@ def _ndarray_sum(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str, k
 @oprepo.replaces_method('Array', 'mean')
 @oprepo.replaces_method('Scalar', 'mean')
 @oprepo.replaces_method('View', 'mean')
-def _ndarray_mean(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str, kwargs: Dict[str, Any] = None) -> str:
+def _ndarray_mean(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, kwargs: Dict[str, Any] = None) -> str:
     nest = NestedCall(pv, sdfg, state)
     kwargs = kwargs or dict(axis=None)
     sumarr = implement_ufunc_reduce(pv, None, sdfg, nest.add_state(), 'add', [arr], kwargs)[0]
@@ -4279,7 +4289,7 @@ def _ndarray_mean(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str, 
 @oprepo.replaces_method('Array', 'prod')
 @oprepo.replaces_method('Scalar', 'prod')
 @oprepo.replaces_method('View', 'prod')
-def _ndarray_prod(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str, kwargs: Dict[str, Any] = None) -> str:
+def _ndarray_prod(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, kwargs: Dict[str, Any] = None) -> str:
     kwargs = kwargs or dict(axis=None)
     return implement_ufunc_reduce(pv, None, sdfg, state, 'multiply', [arr], kwargs)[0]
 
@@ -4287,7 +4297,7 @@ def _ndarray_prod(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str, 
 @oprepo.replaces_method('Array', 'all')
 @oprepo.replaces_method('Scalar', 'all')
 @oprepo.replaces_method('View', 'all')
-def _ndarray_all(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str, kwargs: Dict[str, Any] = None) -> str:
+def _ndarray_all(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, kwargs: Dict[str, Any] = None) -> str:
     kwargs = kwargs or dict(axis=None)
     return implement_ufunc_reduce(pv, None, sdfg, state, 'logical_and', [arr], kwargs)[0]
 
@@ -4295,7 +4305,7 @@ def _ndarray_all(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str, k
 @oprepo.replaces_method('Array', 'any')
 @oprepo.replaces_method('Scalar', 'any')
 @oprepo.replaces_method('View', 'any')
-def _ndarray_any(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str, kwargs: Dict[str, Any] = None) -> str:
+def _ndarray_any(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, kwargs: Dict[str, Any] = None) -> str:
     kwargs = kwargs or dict(axis=None)
     return implement_ufunc_reduce(pv, None, sdfg, state, 'logical_or', [arr], kwargs)[0]
 
@@ -4314,7 +4324,7 @@ def _make_datatype_converter(typeclass: str):
     @oprepo.replaces(typeclass)
     @oprepo.replaces("dace.{}".format(typeclass))
     @oprepo.replaces("numpy.{}".format(typeclass))
-    def _converter(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arg: UfuncInput):
+    def _converter(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arg: UfuncInput):
         return _datatype_converter(sdfg, state, arg, dtype=dtype)
 
 
@@ -4330,7 +4340,7 @@ def _datatype_converter(sdfg: SDFG, state: SDFGState, arg: UfuncInput, dtype: dt
         :param arg: Input argument
         :param dtype: Datatype to convert input argument into
 
-        :returns: dace.data.Array of same size as input or dace.data.Scalar
+        :return: ``dace.data.Array`` of same size as input or ``dace.data.Scalar``
     """
 
     # Get shape and indices
@@ -4367,7 +4377,7 @@ def _datatype_converter(sdfg: SDFG, state: SDFGState, arg: UfuncInput, dtype: dt
 @oprepo.replaces_method('Array', 'astype')
 @oprepo.replaces_method('Scalar', 'astype')
 @oprepo.replaces_method('View', 'astype')
-def _ndarray_astype(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str, dtype: dace.typeclass) -> str:
+def _ndarray_astype(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, dtype: dace.typeclass) -> str:
     if isinstance(dtype, type) and dtype in dtypes._CONSTANT_TYPES[:-1]:
         dtype = dtypes.typeclass(dtype)
     return _datatype_converter(sdfg, state, arr, dtype)[0]
@@ -4379,7 +4389,7 @@ def _ndarray_astype(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str
 
 @oprepo.replaces('dace.dot')
 @oprepo.replaces('numpy.dot')
-def dot(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op_a: str, op_b: str, op_out=None):
+def dot(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, op_a: str, op_b: str, op_out=None):
 
     # TODO: Add support for dot(N-D, 1-D) and dot(N-D, M-D) cases.
     # See https://numpy.org/doc/stable/reference/generated/numpy.dot.html
@@ -4445,7 +4455,7 @@ def dot(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op_a: str, op_b: str
 
 @oprepo.replaces('dace.linalg.inv')
 @oprepo.replaces('numpy.linalg.inv')
-def _inv(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, inp_op: str):
+def _inv(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, inp_op: str):
 
     if not isinstance(inp_op, str) or not inp_op in sdfg.arrays.keys():
         raise SyntaxError()
@@ -4467,7 +4477,7 @@ def _inv(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, inp_op: str):
 
 @oprepo.replaces('dace.linalg.solve')
 @oprepo.replaces('numpy.linalg.solve')
-def _solve(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op_a: str, op_b: str):
+def _solve(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, op_a: str, op_b: str):
 
     for op in (op_a, op_b):
         if not isinstance(op, str) or not op in sdfg.arrays.keys():
@@ -4493,7 +4503,7 @@ def _solve(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op_a: str, op_b: 
 
 @oprepo.replaces('dace.linalg.cholesky')
 @oprepo.replaces('numpy.linalg.cholesky')
-def _inv(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, inp_op: str):
+def _inv(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, inp_op: str):
 
     if not isinstance(inp_op, str) or not inp_op in sdfg.arrays.keys():
         raise SyntaxError()
@@ -4533,7 +4543,7 @@ def _define_cupy_local(
 
 
 @oprepo.replaces('cupy.full')
-def _cupy_full(pv: 'ProgramVisitor',
+def _cupy_full(pv: ProgramVisitor,
                sdfg: SDFG,
                state: SDFGState,
                shape: Shape,
@@ -4562,14 +4572,14 @@ def _cupy_full(pv: 'ProgramVisitor',
 
 
 @oprepo.replaces('cupy.zeros')
-def _cupy_zeros(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, shape: Shape, dtype: dace.typeclass = dace.float64):
+def _cupy_zeros(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, shape: Shape, dtype: dace.typeclass = dace.float64):
     """ Creates and array of the specified shape and initializes it with zeros.
     """
     return _cupy_full(pv, sdfg, state, shape, 0.0, dtype)
 
 
 @oprepo.replaces('cupy.empty_like')
-def _cupy_empty_like(pv: 'ProgramVisitor',
+def _cupy_empty_like(pv: ProgramVisitor,
                      sdfg: SDFG,
                      state: SDFGState,
                      prototype: str,
@@ -4588,7 +4598,7 @@ def _cupy_empty_like(pv: 'ProgramVisitor',
 
 @oprepo.replaces('cupy.empty')
 @oprepo.replaces('cupy_empty')
-def _cupy_empty(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, shape: Shape, dtype: dace.typeclass):
+def _cupy_empty(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, shape: Shape, dtype: dace.typeclass):
     """ Creates an unitialized array of the specificied shape and dtype. """
     return _define_cupy_local(pv, sdfg, state, shape, dtype)
 

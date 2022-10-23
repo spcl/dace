@@ -311,6 +311,7 @@ def collapse_multigraph_to_nx(graph: Union[gr.MultiDiGraph, gr.OrderedMultiDiGra
 
 def type_match(graph_node, pattern_node):
     """ Checks whether the node types of the inputs match.
+    
         :param graph_node: First node (in matched graph).
         :param pattern_node: Second node (in pattern subgraph).
         :return: True if the object types of the nodes match, False otherwise.
@@ -407,6 +408,7 @@ def get_transformation_metadata(patterns: List[Type[xf.PatternTransformation]],
     """
     Collect all transformation expressions and metadata once, for use when
     applying transformations repeatedly.
+
     :param patterns: PatternTransformation type (or list thereof) to compute.
     :param options: An optional list of transformation parameter dictionaries.
     :return: A tuple of inter-state and single-state pattern matching
@@ -486,6 +488,7 @@ def match_patterns(sdfg: SDFG,
                    options: Optional[List[Dict[str, Any]]] = None):
     """ Returns a generator of Transformations that match the input SDFG. 
         Ordered by SDFG ID.
+
         :param sdfg: The SDFG to match in.
         :param patterns: PatternTransformation type (or list thereof) to match.
         :param node_match: Function for checking whether two nodes match.
@@ -555,6 +558,7 @@ def enumerate_matches(sdfg: SDFG,
                       edge_match=None) -> Iterator[gr.SubgraphView]:
     """
     Returns a generator of subgraphs that match the given subgraph pattern.
+
     :param sdfg: The SDFG to search in.
     :param pattern: A subgraph to look for.
     :param node_match: An optional function to use for matching nodes.

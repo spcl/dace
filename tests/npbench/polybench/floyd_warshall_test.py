@@ -47,10 +47,11 @@ def ground_truth(path, N):
 
 
 def run_floyd_warshall(device_type: dace.dtypes.DeviceType):
-    '''
+    """
     Runs Floyd Warshall for the given device
+
     :return: the SDFG
-    '''
+    """
 
     # Initialize data (polybench mini size)
     N = sizes["mini"]

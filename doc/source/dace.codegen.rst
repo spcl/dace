@@ -28,6 +28,14 @@ dace.codegen.codeobject module
    :undoc-members:
    :show-inheritance:
 
+dace.codegen.compiled\_sdfg module
+----------------------------------
+
+.. automodule:: dace.codegen.compiled_sdfg
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 dace.codegen.compiler module
 ----------------------------
 
@@ -36,10 +44,34 @@ dace.codegen.compiler module
    :undoc-members:
    :show-inheritance:
 
+dace.codegen.control\_flow module
+---------------------------------
+
+.. automodule:: dace.codegen.control_flow
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 dace.codegen.cppunparse module
 ------------------------------
 
 .. automodule:: dace.codegen.cppunparse
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+dace.codegen.dispatcher module
+------------------------------
+
+.. automodule:: dace.codegen.dispatcher
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+dace.codegen.exceptions module
+------------------------------
+
+.. automodule:: dace.codegen.exceptions
    :members:
    :undoc-members:
    :show-inheritance:

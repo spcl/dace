@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Generator: Adobe Illustrator 26.4.1, SVG Export Plug-In . SVG Version: 6.00 Build 0)  -->
+<svg version="1.1" baseProfile="basic" id="Layer_1"
+	 xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" x="0px" y="0px" width="109.33px"
+	 height="182.44px" viewBox="0 0 109.33 182.44" xml:space="preserve">
+<rect x="30.67" y="45.46" fill="#DEEBF7" width="48.37" height="134.22"/>
+<ellipse fill="none" stroke="#000000" stroke-width="3" stroke-miterlimit="10" cx="55.36" cy="61.14" rx="13.33" ry="10"/>
+<ellipse fill="#FFFFFF" cx="55.36" cy="61.14" rx="13.33" ry="10"/>
+<text transform="matrix(1 0 0 1 52.021 65.1926)" font-family="'Arial'" font-size="10px">A</text>
+<ellipse fill="none" stroke="#000000" stroke-miterlimit="10" cx="55.36" cy="111.14" rx="13.61" ry="10"/>
+<ellipse fill="#FFFFFF" cx="55.36" cy="111.14" rx="13.61" ry="10"/>
+<text transform="matrix(1 0 0 1 51.746 115.1926)" font-family="'Arial'" font-size="10px">C</text>
+<ellipse fill="none" stroke="#000000" stroke-width="3" stroke-miterlimit="10" cx="55.36" cy="161.14" rx="13.33" ry="10"/>
+<ellipse fill="#FFFFFF" cx="55.36" cy="161.14" rx="13.33" ry="10"/>
+<text transform="matrix(1 0 0 1 52.021 165.1926)" font-family="'Arial'" font-size="10px">B</text>
+<path fill="none" stroke="#000000" stroke-miterlimit="10" d="M55.36,121.14v30 M55.36,71.14v30"/>
+<polygon points="55.36,101.14 58.36,95.14 52.36,95.14 "/>
+<polygon points="55.36,151.14 58.36,145.14 52.36,145.14 "/>
+<text transform="matrix(1 0 0 1 5.8349 8.7829)" fill="#0000FF" font-family="'Courier New'" font-size="9px">def </text>
+<text transform="matrix(1 0 0 1 27.4349 8.7829)" font-family="'Courier New'" font-size="9px">example(A, B):</text>
+<text transform="matrix(1 0 0 1 27.8163 19.5829)" font-family="'Courier New'" font-size="9px">C =</text>
+<text transform="matrix(1 0 0 1 49.5219 19.5829)" fill="#9900FF" font-family="'Courier New'" font-size="9px">np.copy</text>
+<text transform="matrix(1 0 0 1 86.8449 19.5829)" font-family="'Courier New'" font-size="9px">(A)</text>
+<text transform="matrix(1 0 0 1 28.0017 30.3829)" font-family="'Courier New'" font-size="9px">B[:] = C</text>
+<text transform="matrix(1 0 0 1 1.678467e-04 86.1374)" fill="#6A6A6A" font-family="'Arial'" font-size="9px">T</text>
+<text transform="matrix(1 0 0 1 5.1602 86.1374)" fill="#6A6A6A" font-family="'Arial'" font-size="9px">ransient</text>
+<line fill="none" stroke="#6A6A6A" stroke-miterlimit="10" x1="26.22" y1="89.56" x2="41.75" y2="104.67"/>
+<text transform="matrix(1 0 0 1 81.465 65.1927)" fill="#6A6A6A" font-family="'Arial'" font-size="9px">Global</text>
+<line fill="none" stroke="#6A6A6A" stroke-miterlimit="10" x1="71.33" y1="61.83" x2="80" y2="61.83"/>
+<line fill="none" stroke="#6A6A6A" stroke-miterlimit="10" x1="93.67" y1="68.83" x2="67.33" y2="150"/>
+</svg>

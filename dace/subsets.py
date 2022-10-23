@@ -362,6 +362,7 @@ class Range(Subset):
 
     def reorder(self, order):
         """ Re-orders the dimensions in-place according to a permutation list.
+
             :param order: List or tuple of integers from 0 to self.dims() - 1,
                           indicating the desired order of the dimensions.
         """
@@ -817,6 +818,7 @@ class Indices(Subset):
         """ Returns the offseted coordinates of this subset at
             the given index tuple.
             For example, the range [2:10:2] at index 2 would return 6 (2+2*2).
+
             :param i: A tuple of the same dimensionality as subset.dims().
             :return: Absolute coordinates for index i.
         """
@@ -832,6 +834,7 @@ class Indices(Subset):
         """ Returns the absolute index (1D memory layout) of this subset at
             the given index tuple.
             For example, the range [2:10::2] at index 2 would return 6 (2+2*2).
+
             :param i: A tuple of the same dimensionality as subset.dims().
             :param strides: The strides of the array we are subsetting.
             :return: Absolute 1D index at coordinate i.
@@ -879,6 +882,7 @@ class Indices(Subset):
 
     def reorder(self, order):
         """ Re-orders the dimensions in-place according to a permutation list.
+
             :param order: List or tuple of integers from 0 to self.dims() - 1,
                           indicating the desired order of the dimensions.
         """
@@ -1022,6 +1026,7 @@ def union(subset_a: Subset, subset_b: Subset) -> Subset:
     """ Compute the union of two Subset objects.
         If the subsets are not of the same type, degenerates to bounding-box
         union.
+        
         :param subset_a: The first subset.
         :param subset_b: The second subset.
         :return: A Subset object whose size is at least the union of the two

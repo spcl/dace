@@ -92,6 +92,7 @@ class Replacements(object):
 @paramdec
 def replaces(func: Callable[..., Tuple[str]], name: str):
     """ Registers a replacement sub-SDFG generator for a function.
+
         :param func: A function that receives an SDFG, SDFGState, and the original function
                      arguments, returning a tuple of array names to connect to the outputs.
         :param name: Full name (pydoc-compliant, including package) of function to replace.
@@ -106,6 +107,7 @@ def replaces_operator(func: Callable[[Any, Any, str, str], Tuple[str]],
                       optype: str,
                       otherclass: str = None):
     """ Registers a replacement sub-SDFG generator for an operator.
+
         :param func: A function that receives an SDFG, SDFGState, and the two operand array names,
                      returning a tuple of array names to connect to the outputs.
         :param classname: The name of the class to implement the operator for (extends dace.Data).
@@ -139,6 +141,7 @@ def replaces_ufunc(func: Callable[..., Tuple[str]], name: str):
 def replaces_method(func: Callable[..., Tuple[str]], classname: str, method_name: str):
     """ 
     Registers a replacement sub-SDFG generator for methods on objects.
+
     :param func: A function that receives an SDFG, SDFGState, and the original
                  function arguments, returning a tuple of array names to 
                  connect to the outputs.
@@ -154,6 +157,7 @@ def replaces_method(func: Callable[..., Tuple[str]], classname: str, method_name
 def replaces_attribute(func: Callable[..., Tuple[str]], classname: str, attr_name: str):
     """ 
     Registers a replacement sub-SDFG generator for object attributes.
+    
     :param func: A function that receives an SDFG, SDFGState, and the original
                  function arguments, returning a tuple of array names to 
                  connect to the outputs.

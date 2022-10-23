@@ -27,6 +27,7 @@ class ConsolidateEdges(ppl.Pass):
     def apply_pass(self, sdfg: SDFG, _) -> Optional[int]:
         """
         Consolidates edges on the given SDFG.
+        
         :param sdfg: The SDFG to modify.
         :param pipeline_results: If in the context of a ``Pipeline``, a dictionary that is populated with prior Pass
                                  results as ``{Pass subclass name: returned object from pass}``. If not run in a
