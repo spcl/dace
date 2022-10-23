@@ -339,7 +339,7 @@ class Pipeline(Pass):
                                       desc='List of passes that this pipeline contains')
     _pass_names = properties.SetProperty(element_type=str,
                                          default=set(),
-                                         desc='List of passe names that this pipeline contains')
+                                         desc='List of pass names that this pipeline contains')
 
     def __init__(self, passes: List[Pass]):
         self._passes = []
