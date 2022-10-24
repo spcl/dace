@@ -5,7 +5,7 @@ import ast
 import collections
 import re
 from dataclasses import dataclass
-from typing import Any, DefaultDict, Dict, List, Optional, Set, Tuple, Union
+from typing import Any, DefaultDict, Dict, Set, Tuple
 
 import dace
 from dace import data as dt
@@ -584,10 +584,16 @@ def translate_cpp_tasklet_to_python(code: str):
 
 
 @dataclass(unsafe_hash=True)
+@props.make_properties
 class ScalarToSymbolPromotion(passes.Pass):
-    ignore: Optional[Set[str]] = None
-    transients_only: bool = True
-    integers_only: bool = True
+
+    CATEGORY: str = 'Simplification'
+
+    ignore = props.SetProperty(element_type=str,
+                               default=set(),
+                               desc='Fields that should not be promoted.')
+    transients_only = props.Property(dtype=bool, default=True, desc='Promote only transients.')
+    integers_only = props.Property(dtype=bool, default=True, desc='Allow promotion of integer scalars only.')
 
     def modifies(self) -> passes.Modifies:
         return (passes.Modifies.Descriptors | passes.Modifies.Symbols | passes.Modifies.Nodes | passes.Modifies.Edges)
@@ -723,26 +729,3 @@ class ScalarToSymbolPromotion(passes.Pass):
 
     def report(self, pass_retval: Set[str]) -> str:
         return f'Promoted {len(pass_retval)} scalars to symbols.'
-
-
-def promote_scalars_to_symbols(sdfg: sd.SDFG,
-                               ignore: Optional[Set[str]] = None,
-                               transients_only: bool = True,
-                               integers_only: bool = True) -> Set[str]:
-    """
-    DEPRECATED. Use pass directly instead.
-    Promotes all matching transient scalars to SDFG symbols, changing all
-    tasklets to inter-state assignments. This enables the transformed symbols
-    to be used within states as part of memlets, and allows further
-    transformations (such as loop detection) to use the information for
-    optimization.
-
-    :param sdfg: The SDFG to run the pass on.
-    :param ignore: An optional set of strings of scalars to ignore.
-    :param transients_only: If False, also considers global data descriptors (e.g., arguments).
-    :param integers_only: If False, also considers non-integral descriptors for promotion.
-    :return: Set of promoted scalars.
-    :note: Operates in-place.
-    """
-    s2s = ScalarToSymbolPromotion(ignore=ignore, transients_only=transients_only, integers_only=integers_only)
-    return s2s.apply_pass(sdfg, {})

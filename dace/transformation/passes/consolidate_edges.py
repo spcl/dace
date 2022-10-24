@@ -2,10 +2,11 @@
 
 from dace.transformation import pass_pipeline as ppl
 from dace.sdfg import utils as sdutil
-from dace import SDFG
+from dace import SDFG, properties
 from typing import Optional
 
 
+@properties.make_properties
 class ConsolidateEdges(ppl.Pass):
     """
     Removes extraneous edges with memlets that refer to the same data containers within the same scope.
@@ -14,6 +15,8 @@ class ConsolidateEdges(ppl.Pass):
     transformations to be performed, at the cost of losing the individual
     per-tasklet memlets.
     """
+
+    CATEGORY: str = 'Simplification'
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Memlets

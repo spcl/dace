@@ -7,7 +7,7 @@ from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg import nodes, utils as sdutil
 from dace.transformation import pass_pipeline as ppl
 from dace.cli.progress import optional_progressbar
-from dace import SDFG, SDFGState, dtypes, symbolic
+from dace import SDFG, SDFGState, dtypes, symbolic, properties
 from typing import Any, Dict, Set, Optional, Tuple
 
 
@@ -17,14 +17,17 @@ class _UnknownValue:
 
 
 @dataclass(unsafe_hash=True)
+@properties.make_properties
 class ConstantPropagation(ppl.Pass):
     """
     Propagates constants and symbols that were assigned to one value forward through the SDFG, reducing
     the number of overall symbols.
     """
 
-    recursive: bool = True
-    progress: Optional[bool] = None
+    CATEGORY: str = 'Simplification'
+
+    recursive = properties.Property(dtype=bool, default=True, desc='Propagagte recursively through nested SDFGs')
+    progress = properties.Property(dtype=bool, default=None, allow_none=True, desc='Show progress')
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Symbols | ppl.Modifies.Edges | ppl.Modifies.Nodes
