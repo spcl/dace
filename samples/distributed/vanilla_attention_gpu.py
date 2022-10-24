@@ -51,8 +51,8 @@ Computation:
 - Total (taking into account Arows >> Hcols ≈ Wcols) is O(nnz + Arows).
 """
 
-dctype = dace.float64
-nptype = np.float64
+dctype = dace.float32
+nptype = np.float32
 
 
 grid = {
@@ -72,18 +72,32 @@ grid = {
 
 # Each node does 28.2 GFLOPs.
 # Scaling formula is for A rows is ceiling(base * sqrt(nodes) / nodes) * nodes
+# weak_scaling = {
+#     #:   ( Arows, Hcols, Wcols)
+#     1:   ( 20480,   128,   128),
+#     2:   ( 28964,   128,   128),
+#     4:   ( 40960,   128,   128),
+#     8:   ( 57928,   128,   128),
+#     16:  ( 81920,   128,   128),
+#     32:  (115872,   128,   128),
+#     64:  (163840,   128,   128),
+#     128: (231808,   128,   128),
+#     256: (327680,   128,   128),
+#     512: (463872,   128,   128),
+# }
+
 weak_scaling = {
     #:   ( Arows, Hcols, Wcols)
-    1:   ( 20480,   128,   128),
-    2:   ( 28964,   128,   128),
-    4:   ( 40960,   128,   128),
-    8:   ( 57928,   128,   128),
-    16:  ( 81920,   128,   128),
-    32:  (115872,   128,   128),
-    64:  (163840,   128,   128),
-    128: (231808,   128,   128),
-    256: (327680,   128,   128),
-    512: (463872,   128,   128),
+    1:   ( 131072,   128,   128),
+    2:   ( 185364,   128,   128),
+    4:   ( 262144,   128,   128),
+    8:   ( 370728,   128,   128),
+    16:  ( 524288,   128,   128),
+    32:  ( 115872,   128,   128),
+    64:  ( 163840,   128,   128),
+    128: (1483008,   128,   128),
+    256: ( 327680,   128,   128),
+    512: ( 463872,   128,   128),
 }
 
 
@@ -363,10 +377,10 @@ if __name__ == '__main__':
     num_layers = 2
 
     # Global data
-    A = sparse.random(NArows, NArows, density=density, format='csr', dtype=nptype, random_state=rng)
-    H = rng.random((NArows, NHcols), dtype=nptype)
-    W = rng.random((NHcols, NWcols), dtype=nptype)
-    W2 = rng.random((num_layers, NWcols, NWcols), dtype=nptype)
+    # A = sparse.random(NArows, NArows, density=density, format='csr', dtype=nptype, random_state=rng)
+    # H = rng.random((NArows, NHcols), dtype=nptype)
+    # W = rng.random((NHcols, NWcols), dtype=nptype)
+    # W2 = rng.random((num_layers, NWcols, NWcols), dtype=nptype)
 
     # H /= np.linalg.norm(H)
     # W /= np.linalg.norm(W)
@@ -378,13 +392,21 @@ if __name__ == '__main__':
     cart_comm = commworld.Create_cart((Nx, Ny))
     x, y = cart_comm.Get_coords(rank)
     tx, ty = NArows // Nx, NArows // Ny
-    lA = A[x*tx:(x+1)*tx, y*ty:(y+1)*ty]
+
+    lA = sparse.random(tx, ty, density=density, format='csr', dtype=nptype, random_state=rng)
+    H = rng.random((tx, NHcols), dtype=nptype)
+    W = rng.random((NHcols, NWcols), dtype=nptype)
+    W2 = rng.random((num_layers, NWcols, NWcols), dtype=nptype)
+
+
+    # lA = A[x*tx:(x+1)*tx, y*ty:(y+1)*ty]
     A_rowptr = cupy.asarray(lA.indptr)
     A_rowidx = cupy.asarray(csr_to_coo(lA.indptr))
     A_colidx = cupy.asarray(lA.indices)
     A_data = cupy.asarray(lA.data)
-    H1 = cupy.asarray(H[x*tx:(x+1)*tx, :])
-    H2 = cupy.asarray(H[y*ty:(y+1)*ty, :])
+    # H1 = cupy.asarray(H[x*tx:(x+1)*tx, :])
+    # H2 = cupy.asarray(H[y*ty:(y+1)*ty, :])
+    H1 = cupy.asarray(H)
     lW = cupy.asarray(W)
     lW2 = cupy.asarray(W2)
 

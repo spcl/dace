@@ -174,8 +174,6 @@ for (int idx = i; idx < {nnz}; idx += gridDim.x) {{
         for n in nstate.nodes():
             if isinstance(n, nodes.MapEntry) and "j" in n.map.params:
                 n.map.schedule = dace.dtypes.ScheduleType.GPU_ThreadBlock
-
-        nsdfg.save('test.sdfg')
         
         return nsdfg
 
@@ -400,8 +398,6 @@ for (int idx = i; idx < {nnz}; idx += gridDim.x) {{
         for n in nstate.nodes():
             if isinstance(n, nodes.MapEntry) and "j" in n.map.params:
                 n.map.schedule = dace.dtypes.ScheduleType.GPU_ThreadBlock
-
-        nsdfg.save('test.sdfg')
         
         return nsdfg
 
@@ -464,3 +460,157 @@ class AHHTNorm(dace.sdfg.nodes.LibraryNode):
         hcols = size2[1]
 
         return nnz, arows, acols, hcols
+
+
+@dace.library.expansion
+class ExpandA_exp_relu_CPure(ExpandTransformation):
+    environments = []
+
+    @staticmethod
+    def expansion(node, state: SDFGState, sdfg: SDFG):
+        nnz, arows, acols = node.validate(sdfg, state)
+        vname = list(state.in_edges_by_connector(node, '_vl'))[0].data.data
+        vtype = sdfg.arrays[vname].dtype
+        sname = state.out_edges(node)[0].data.data
+        stype = sdfg.arrays[sname].dtype
+
+        @dace.program
+        def ahht_pure(_a_row: dace.int32[nnz], _a_col: dace.int32[nnz],
+                      _vl: vtype[arows], _vr: vtype[acols], _s_data: stype[nnz]):
+            for i in dace.map[0:nnz]:
+                _s_data[i] = np.exp(np.max(_vl[_a_row[i]] + _vr[_a_col[i]]), 0)
+        
+        return ahht_pure.to_sdfg()
+
+
+@dace.library.expansion
+class ExpandA_exp_relu_CCUDA(ExpandTransformation):
+    from dace.libraries.standard.environments import CUDA
+    environments = [CUDA]
+
+    @staticmethod
+    def expansion(node, state: SDFGState, sdfg: SDFG):
+        nnz, arows, acols = node.validate(sdfg, state)
+        sname = state.out_edges(node)[0].data.data
+        stype = sdfg.arrays[sname].dtype
+        node_id = state.node_id(node)
+        state_id = sdfg.node_id(state)
+
+        nsdfg = SDFG('nested_sdfg')
+        nstate = nsdfg.add_state('nested_state')
+
+        tasklet_code = """
+for (int idx = i; idx < {nnz}; idx += gridDim.x) {{
+    int r = __a_row[idx];
+    int c = __a_col[idx];
+    __s_data[idx] = exp(max(__vl[r] + __vr[c], 0.0));
+}}
+    """.format(nnz=nnz, T=stype)
+    
+        datadict = {}
+
+        for e in state.all_edges(node):
+            if e.src is node:
+                cname = e.src_conn
+            else:
+                cname = e.dst_conn
+            desc = sdfg.arrays[e.data.data]
+            nname, ndesc = nsdfg.add_array(cname, desc.shape, desc.dtype)
+            nnode = nstate.add_access(nname)
+            datadict[cname] = nnode
+            if desc.storage not in (dtypes.StorageType.GPU_Global, dtypes.StorageType.CPU_Pinned):
+                nname, ndesc = nsdfg.add_array(nname, desc.shape, desc.dtype, storage=dtypes.StorageType.GPU_Global,
+                                               find_new_name=True)
+                gnode = nstate.add_access(nname)
+                datadict[cname] = gnode
+                if cname == '_s_data':
+                    nstate.add_nedge(gnode, nnode)
+                else:
+                    nstate.add_nedge(nnode, gnode)
+                # nnode = gnode
+            # if cname == '_s_data':
+            #     nstate.add_edge(tasklet, '_s_data', nnode, None, dace.Memlet.from_array(nname, ndesc))
+            # else:
+            #     nstate.add_edge(nnode, None, tasklet, cname, dace.Memlet.from_array(nname, ndesc))
+
+        tasklet, me, mx = nstate.add_mapped_tasklet(
+            name='callingKernel',
+            map_ranges={'i': f'0:int_ceil({nnz}, 512)', 'j': f'0:512'},
+            inputs={
+                '__a_row': dace.Memlet(f'{datadict["_a_row"].data}[0:{nnz}]'),
+                '__a_col': dace.Memlet(f'{datadict["_a_col"].data}[0:{nnz}]'),
+                '__vl': dace.Memlet(f'{datadict["_h1"].data}[0:{arows}]'),
+                '__vr': dace.Memlet(f'{datadict["_h2"].data}[0:{acols}]')},
+            outputs={'__s_data': dace.Memlet(f'{datadict["_s_data"].data}[0:{nnz}]')},
+            code=tasklet_code,
+            language=dace.dtypes.Language.CPP,
+            external_edges=False
+        )
+
+        for k, v in datadict.items():
+            if k == '_s_data':
+                nstate.add_nedge(mx, v, dace.Memlet.from_array(v.data, nsdfg.arrays[v.data]))
+            else:
+                nstate.add_nedge(v, me, dace.Memlet.from_array(v.data, nsdfg.arrays[v.data]))
+        nstate.fill_scope_connectors()
+
+        me.map.schedule = dace.dtypes.ScheduleType.GPU_Device
+
+        from dace.transformation.dataflow import MapExpansion
+        from dace.sdfg import nodes
+        nsdfg.apply_transformations_repeated(MapExpansion)
+        for n in nstate.nodes():
+            if isinstance(n, nodes.MapEntry) and "j" in n.map.params:
+                n.map.schedule = dace.dtypes.ScheduleType.GPU_ThreadBlock
+        
+        return nsdfg
+
+
+@dace.library.node
+class A_exp_relu_C(dace.sdfg.nodes.LibraryNode):
+    """
+    Executes A ⊙ (H x HT). A is a sparse adjacency matrix in COO format, while H is dense.
+    """
+
+    # Global properties
+    implementations = {
+        "pure": ExpandA_exp_relu_CPure,
+        "CUDA": ExpandA_exp_relu_CCUDA
+    }
+    default_implementation = None
+
+    def __init__(self, name, location=None):
+        super().__init__(name,
+                         location=location,
+                         inputs=({"_a_row", "_a_col", "_vl", "_vr"}),
+                         outputs={"_s_data"})
+
+    def validate(self, sdfg, state):
+        in_edges = state.in_edges(self)
+        if len(in_edges) != 6:
+            raise ValueError("Expected 4 inputs to AHHT")
+        for _, _, _, dst_conn, memlet in state.in_edges(self):
+            if dst_conn == '_a_row':
+                subset = dc(memlet.subset)
+                subset.squeeze()
+                size0 = subset.size()
+            if dst_conn == '_a_col':
+                subset = dc(memlet.subset)
+                subset.squeeze()
+                size1 = subset.size()
+            if dst_conn == '_vl':
+                subset = dc(memlet.subset)
+                subset.squeeze()
+                size2 = subset.size()
+            if dst_conn == '_vr':
+                subset = dc(memlet.subset)
+                subset.squeeze()
+                size3 = subset.size()
+
+        assert size0[0] == size1[0]
+        
+        nnz = size0[0]
+        arows = size2[0]
+        acols = size3[0]
+
+        return nnz, arows, acols
