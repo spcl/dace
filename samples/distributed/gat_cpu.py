@@ -149,7 +149,7 @@ def GAT_dace(A_rowptr: dace.int32[LArows+1],
     #C: (1L x HWL.t) + (HWR x 1R)
     values = np.zeros_like(A_data)
     for i in dace.map[0:LAnnz]:
-        values[j] = np.exp(np.maximum(HWL[A_rowidx[i]] + HWR[A_colidx[i]]), 0)
+        values[i] = np.exp(np.maximum(HWL[A_rowidx[i]] + HWR[A_colidx[i]], 0))
     # for i in dace.map[0:LArows]:
     #     start = A_rowptr[i]
     #     finish = A_rowptr[i+1]
@@ -164,6 +164,7 @@ def GAT_dace(A_rowptr: dace.int32[LArows+1],
         finish = A_rowptr[i+1]
         row_degree[i] += np.sum(values[start:finish])
 
+    # Maybe bcast_grid here?
     dace.comm.Allreduce(row_degree, 'MPI_SUM', grid=reduce_grid)
 
         # divide each element by degree
@@ -351,7 +352,8 @@ def csr_to_coo(rowptr: np.ndarray) -> np.ndarray:
     for i in range(rowptr.size - 1):
         row_indices[rowptr[i]:rowptr[i+1]] = row
         row += 1
-    return 
+    
+    return row_indices
 
 
 def normalize_mat(X):
@@ -393,7 +395,9 @@ if __name__ == '__main__':
     # Global data
     A = sparse.random(NArows, NArows, density=density, format='csr', dtype=nptype, random_state=rng)
     H = normalize_mat(rng.random((NArows, NHcols), dtype=nptype))
-    W = normalize_mat(rng.random((num_layers, NHcols, NWcols), dtype=nptype))
+    # W = normalize_mat(rng.random((num_layers, NHcols, NWcols), dtype=nptype))
+
+    W = normalize_mat(rng.random((NHcols, NWcols), dtype=nptype))
 
 
     
@@ -406,6 +410,7 @@ if __name__ == '__main__':
     tx, ty = NArows // Nx, NArows // Ny
     lA = A[x*tx:(x+1)*tx, y*ty:(y+1)*ty]
     A_rowptr = lA.indptr.copy()
+    A_rowidx = csr_to_coo(A_rowptr)
     A_colidx = lA.indices.copy()
     A_data = lA.data.copy()
     H1 = H[x*tx:(x+1)*tx, :].copy()
@@ -428,7 +433,12 @@ if __name__ == '__main__':
 
 
     runtimes = timeit.repeat(
-        """out[:] = func(A_rowptr=A_rowptr, A_rowidx=A_rowidx, A_colidx=A_colidx, A_data=A_data, H1=H1, W1=W, W2=W2, aL=aL, aR=aR
+        # """out[:] = func(A_rowptr=A_rowptr, A_rowidx=A_rowidx, A_colidx=A_colidx, A_data=A_data, H1=H1, W1=W, W2=W2, aL=aL, aR=aR,
+        #                  num_layers=num_layers, GArows=NArows, GAcols=NArows, GHcols=NHcols,
+        #                  LArows=tx, LAcols=ty, LAnnz=A_data.size, LHcols=NHcols, LWcols=NWcols,
+        #                  Px=Nx, Py=Ny); commworld.Barrier()
+        # """,
+        """out[:] = func(A_rowptr=A_rowptr, A_rowidx=A_rowidx, A_colidx=A_colidx, A_data=A_data, H1=H1, W=W, aL=aL, aR=aR,
                          num_layers=num_layers, GArows=NArows, GAcols=NArows, GHcols=NHcols,
                          LArows=tx, LAcols=ty, LAnnz=A_data.size, LHcols=NHcols, LWcols=NWcols,
                          Px=Nx, Py=Ny); commworld.Barrier()
@@ -442,3 +452,7 @@ if __name__ == '__main__':
     if rank == 0:
         print(f"Median total runtime: {np.median(runtimes)} seconds", flush=True)
         write_time(str(datetime.now()), "GAT", "dace_cpu", size, weak_scaling[size], runtimes, file_name, field_names, append=True)
+
+    ref = GAT_npsn(A, H, W, aL, aR)
+    lref = ref[x*tx:(x+1)*tx, :]
+    assert np.allclose(out, lref)
