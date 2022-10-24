@@ -225,8 +225,8 @@ class DeadDataflowElimination(ppl.Pass):
                     if _has_side_effects(l.src, sdfg):
                         return False
 
-                    # If data is connected to a nested SDFG as an input/output, do not remove
-                    if (isinstance(l.src, nodes.NestedSDFG)
+                    # If data is connected to a nested SDFG or library node as an input/output, do not remove
+                    if (isinstance(l.src, (nodes.NestedSDFG, nodes.LibraryNode))
                             and any(ie.data.data == node.data for ie in state.in_edges(l.src))):
                         return False
 
