@@ -16,9 +16,7 @@ def available_passes(all_passes: bool = False) -> Set[Type['Pass']]:
     if not all_passes:
         reduced_pass_set = set()
         for p in full_pass_set:
-            if not issubclass(p, (PatternTransformation, SubgraphTransformation)) and not p in (
-                TransformationBase, VisitorPass, StatePass, Pipeline, FixedPointPipeline, ScopePass
-            ):
+            if not issubclass(p, TransformationBase) and not p.CATEGORY == 'Helper':
                 reduced_pass_set.add(p)
         return reduced_pass_set
 

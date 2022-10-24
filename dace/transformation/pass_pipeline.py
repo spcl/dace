@@ -323,6 +323,8 @@ class Pipeline(Pass):
 
     """
 
+    CATEGORY: str = 'Helper'
+
     _passes = properties.ListProperty(element_type=Pass,
                                       default=[],
                                       desc='List of passes that this pipeline contains')
@@ -516,6 +518,9 @@ class FixedPointPipeline(Pipeline):
     
     :see: Pipeline
     """
+
+    CATEGORY: str = 'Helper'
+
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """
         Applies the pipeline to the SDFG in repeated succession until the SDFG is no longer modified.
