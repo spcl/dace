@@ -61,7 +61,7 @@ class StencilTiling(transformation.SubgraphTransformation):
 
     @staticmethod
     def coverage_dicts(sdfg, graph, map_entry, outer_range=True):
-        '''
+        """
         returns a tuple of two dicts:
         the first dict has as a key all data entering the map
         and its associated access range
@@ -69,7 +69,7 @@ class StencilTiling(transformation.SubgraphTransformation):
         and its associated access range
         if outer_range = True, substitutes outer ranges
         into min/max of inner access range
-        '''
+        """
         map_exit = graph.exit_node(map_entry)
         map = map_entry.map
 

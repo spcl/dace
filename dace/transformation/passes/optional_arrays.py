@@ -35,6 +35,7 @@ class OptionalArrayInference(ppl.Pass):
                    parent_arrays: Optional[Dict[str, bool]] = None) -> Optional[Set[Tuple[int, str]]]:
         """
         Infers the ``optional`` property of arrays in the SDFG and its nested SDFGs.
+        
         :param sdfg: The SDFG to modify.
         :param pipeline_results: If in the context of a ``Pipeline``, a dictionary that is populated with prior Pass
                                  results as ``{Pass subclass name: returned object from pass}``. If not run in a

@@ -55,12 +55,13 @@ class MapFusion(transformation.SingleStateTransformation):
     @staticmethod
     def find_permutation(first_map: nodes.Map, second_map: nodes.Map) -> Union[List[int], None]:
         """ Find permutation between two map ranges.
+
             :param first_map: First map.
             :param second_map: Second map.
             :return: None if no such permutation exists, otherwise a list of
                      indices L such that L[x]'th parameter of second map has the same range as x'th
                      parameter of the first map.
-            """
+        """
         result = []
 
         if len(first_map.range) != len(second_map.range):

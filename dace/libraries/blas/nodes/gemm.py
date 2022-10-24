@@ -446,7 +446,7 @@ class ExpandGemmFPGA1DSystolic(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, num_pes=32, tile_size_m=None):
-        '''
+        """
         GEMM node expansion.
 
         :param node: Node to expand.
@@ -459,7 +459,7 @@ class ExpandGemmFPGA1DSystolic(ExpandTransformation):
                             If set to None, no tiling is used, corresponding to setting the tile size
                             equal to the number of columns of B/C.
         :return:
-        '''
+        """
 
         ((edge_a, outer_array_a, shape_a, strides_a), (edge_b, outer_array_b, shape_b, strides_b),
          (edge_c, outer_array_c, shape_c, strides_c)) = _get_matmul_operands(node, parent_state, parent_sdfg)

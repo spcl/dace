@@ -17,6 +17,7 @@ def cutout_state(state: SDFGState, *nodes: nd.Node, make_copy: bool = True) -> S
     The subgraph defined by the list of nodes will be extended to include access nodes of data containers necessary
     to run the graph separately. In addition, all transient data containers created outside the cut out graph will
     become global.
+    
     :param state: The SDFG state in which the subgraph resides.
     :param nodes: The nodes in the subgraph to cut out.
     :param make_copy: If True, deep-copies every SDFG element in the copy. Otherwise, original references are kept.
