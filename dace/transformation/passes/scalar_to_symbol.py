@@ -5,7 +5,7 @@ import ast
 import collections
 import re
 from dataclasses import dataclass
-from typing import Any, DefaultDict, Dict, List, Optional, Set, Tuple, Union
+from typing import Any, DefaultDict, Dict, Set, Tuple
 
 import dace
 from dace import data as dt

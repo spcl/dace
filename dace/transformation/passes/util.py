@@ -2,8 +2,8 @@
 
 from typing import Set, Type
 
-from ..transformation import PatternTransformation, SubgraphTransformation, TransformationBase
-from ..pass_pipeline import Pass, VisitorPass, StatePass, Pipeline, FixedPointPipeline, ScopePass
+from ..transformation import TransformationBase
+from ..pass_pipeline import Pass
 
 
 def available_passes(all_passes: bool = False) -> Set[Type['Pass']]:

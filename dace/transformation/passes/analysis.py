@@ -3,7 +3,7 @@
 from collections import defaultdict
 from dace.transformation import pass_pipeline as ppl
 from dace import SDFG, SDFGState, properties
-from typing import Any, Dict, Set, Tuple, Optional
+from typing import Dict, Set, Tuple
 import networkx as nx
 
 

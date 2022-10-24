@@ -3,7 +3,7 @@
 import itertools
 import re
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Set, Tuple
+from typing import Optional, Set, Tuple
 
 from dace import SDFG, dtypes, properties
 from dace.sdfg import nodes

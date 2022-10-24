@@ -24,7 +24,6 @@ class FuseStates(ppl.Pass):
     progress = properties.Property(dtype=bool,
                                    default=None,
                                    allow_none=True,
-                                   optional=True,
                                    desc='Whether to print progress, or None for default (print after 5 seconds).')
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
@@ -61,7 +60,6 @@ class InlineSDFGs(ppl.Pass):
     progress = properties.Property(dtype=bool,
                                    default=None,
                                    allow_none=True,
-                                   optional=True,
                                    desc='Whether to print progress, or None for default (print after 5 seconds).')
     multistate = properties.Property(dtype=bool, default=True, desc='If True, include multi-state inlining.')
 

@@ -1,7 +1,6 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
-from copy import copy
 from dataclasses import dataclass
-from typing import Any, Dict, Iterator, Optional, Set
+from typing import Any, Dict, Optional, Set
 
 from dace import SDFG, config, properties
 from dace.transformation import helpers as xfh

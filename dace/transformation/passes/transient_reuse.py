@@ -1,14 +1,11 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
-from typing import Dict, Iterator, Optional, Set, Tuple
+from typing import Optional, Set
 
 import networkx as nx
 
-from dace import SDFG, SDFGState, data, properties
-from dace import sdfg as sd
+from dace import SDFG, properties
 from dace.sdfg import nodes
-from dace.sdfg import utils as sdutil
 from dace.transformation import pass_pipeline as ppl
-from dace.transformation import transformation
 
 
 @properties.make_properties

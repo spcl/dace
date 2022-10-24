@@ -2,12 +2,10 @@
 """
 API for SDFG analysis and manipulation Passes, as well as Pipelines that contain multiple dependent passes.
 """
-from sre_constants import CATEGORY
-from sre_parse import CATEGORIES
 from dace import properties, serialize
 from dace.sdfg import SDFG, SDFGState, graph as gr, nodes, utils as sdutil
 
-from enum import Enum, Flag, auto
+from enum import Flag, auto
 from typing import Any, Dict, Iterator, List, Optional, Set, Type, Union
 from dataclasses import dataclass
 
@@ -336,17 +334,15 @@ class Pipeline(Pass):
 
     CATEGORY: str = 'Helper'
 
-    _passes = properties.ListProperty(element_type=Pass,
-                                      default=[],
-                                      desc='List of passes that this pipeline contains')
-    _pass_names = properties.SetProperty(element_type=str,
-                                         default=set(),
-                                         desc='List of pass names that this pipeline contains')
+    passes = properties.ListProperty(element_type=Pass,
+                                     default=[],
+                                     category='(Debug)',
+                                     desc='List of passes that this pipeline contains')
 
     def __init__(self, passes: List[Pass]):
-        self._passes = []
+        self.passes = []
         self._pass_names = set(type(p).__name__ for p in passes)
-        self._passes.extend(passes)
+        self.passes.extend(passes)
 
         # Add missing Pass dependencies
         self._add_dependencies(passes)
@@ -387,13 +383,13 @@ class Pipeline(Pass):
                                 'class instead of an object in the `depends_on` method.')
 
                         check_if_unique.add(type(dep))
-                        self._passes.append(dep)
+                        self.passes.append(dep)
                         new_passes.append(dep)
                     elif isinstance(dep, type):
                         if dep not in check_if_unique:
                             check_if_unique.add(dep)
                             dep_obj = dep()  # Construct Pass object from type
-                            self._passes.append(dep_obj)
+                            self.passes.append(dep_obj)
                             new_passes.append(dep_obj)
                     else:
                         raise TypeError(f'Invalid pass type {type(dep).__name__} given to pipeline')
@@ -407,17 +403,17 @@ class Pipeline(Pass):
         :return: A ``Modifies`` set of flags of modified elements.
         """
         result = Modifies.Nothing
-        for p in self._passes:
+        for p in self.passes:
             result |= p.modifies()
 
         return result
 
     def should_reapply(self, modified: Modifies) -> bool:
-        return any(p.should_reapply(modified) for p in self._passes)
+        return any(p.should_reapply(modified) for p in self.passes)
 
     def depends_on(self) -> Set[Type[Pass]]:
         result = set()
-        for p in self._passes:
+        for p in self.passes:
             result.update(p.depends_on())
         return result
 
@@ -426,9 +422,9 @@ class Pipeline(Pass):
         Makes an ordered dependency graph out of the passes in the pipeline to traverse when applying.
         """
         result = gr.OrderedDiGraph()
-        ptype_to_pass = {type(p): p for p in self._passes}
+        ptype_to_pass = {type(p): p for p in self.passes}
 
-        for p in self._passes:
+        for p in self.passes:
             if p not in result._nodes:
                 result.add_node(p)
             for dep in p.depends_on():

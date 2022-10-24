@@ -42,18 +42,15 @@ class PatternMatchAndApply(ppl.Pass):
     states = properties.ListProperty(element_type=SDFGState,
                                      default=None,
                                      allow_none=True,
-                                     optional=True,
                                      desc='If not None, only applies transformations to the given states.')
 
     print_report = properties.Property(dtype=bool,
                                        default=None,
                                        allow_none=True,
-                                       optional=True,
                                        desc='Whether to show debug prints (or None to use configuration file).')
     progress = properties.Property(dtype=bool,
                                    default=None,
                                    allow_none=True,
-                                   optional=True,
                                    desc='Whether to show progress printouts (or None to use configuration file).')
 
     def __init__(self,
