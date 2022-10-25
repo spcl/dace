@@ -13,10 +13,6 @@ from dace.fpga_testing import fpga_test
 
 
 def make_vecAdd_sdfg(sdfg_name: str, dtype=dace.float32):
-    '''
-    :param sdfg_name: Name of the created SDFG
-    :param dtype:
-    '''
     vecWidth = 4
     n = dace.symbol("size")
     vecAdd_sdfg = dace.SDFG(sdfg_name)
@@ -120,10 +116,11 @@ def make_vecAdd_sdfg(sdfg_name: str, dtype=dace.float32):
 
 
 def make_nested_sdfg_fpga(unique_names):
-    '''
+    """
     Build an SDFG with two nested SDFGs, each one a different state
-    :param unique_names use unique names for all the Nested SDFGs
-    '''
+
+    :param unique_names: use unique names for all the Nested SDFGs
+    """
     n = dace.symbol("n")
     m = dace.symbol("m")
 

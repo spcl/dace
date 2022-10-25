@@ -364,6 +364,7 @@ def nest_state_subgraph(sdfg: SDFG,
                         name: Optional[str] = None,
                         full_data: bool = False) -> nodes.NestedSDFG:
     """ Turns a state subgraph into a nested SDFG. Operates in-place.
+
         :param sdfg: The SDFG containing the state subgraph.
         :param state: The state containing the subgraph.
         :param subgraph: Subgraph to nest.
@@ -646,12 +647,13 @@ def nest_state_subgraph(sdfg: SDFG,
 
 
 def state_fission(sdfg: SDFG, subgraph: graph.SubgraphView, label: Optional[str] = None) -> SDFGState:
-    '''
+    """
     Given a subgraph, adds a new SDFG state before the state that contains it,
     removes the subgraph from the original state, and connects the two states.
+
     :param subgraph: the subgraph to remove.
     :return: the newly created SDFG state.
-    '''
+    """
 
     state: SDFGState = subgraph.graph
     newstate = sdfg.add_state_before(state, label=label)
@@ -708,6 +710,7 @@ def unsqueeze_memlet(internal_memlet: Memlet,
                      use_dst_subset: bool = False) -> Memlet:
     """ Unsqueezes and offsets a memlet, as per the semantics of nested
         SDFGs.
+
         :param internal_memlet: The internal memlet (inside nested SDFG)
                                 before modification.
         :param external_memlet: The external memlet before modification.
@@ -776,6 +779,7 @@ def replicate_scope(sdfg: SDFG, state: SDFGState, scope: ScopeSubgraphView) -> S
     """
     Replicates a scope subgraph view within a state, reconnecting all external
     edges to the same nodes.
+
     :param sdfg: The SDFG in which the subgraph scope resides.
     :param state: The SDFG state in which the subgraph scope resides.
     :param scope: The scope subgraph to replicate.
@@ -835,6 +839,7 @@ def offset_map(sdfg: SDFG,
                negative: bool = True):
     """
     Offsets a map parameter and its contents by a value.
+
     :param sdfg: The SDFG in which the map resides.
     :param state: The state in which the map resides.
     :param entry: The map entry node.
@@ -856,6 +861,7 @@ def split_interstate_edges(sdfg: SDFG) -> None:
     """
     Splits all inter-state edges into edges with conditions and edges with
     assignments. This procedure helps in nested loop detection.
+
     :param sdfg: The SDFG to split
     :note: Operates in-place on the SDFG.
     """
@@ -870,6 +876,7 @@ def split_interstate_edges(sdfg: SDFG) -> None:
 def is_symbol_unused(sdfg: SDFG, sym: str) -> bool:
     """
     Checks for uses of symbol in an SDFG, and if there are none returns False.
+
     :param sdfg: The SDFG to search.
     :param sym: The symbol to test.
     :return: True if the symbol can be removed, False otherwise.
@@ -925,6 +932,7 @@ def are_subsets_contiguous(subset_a: subsets.Subset, subset_b: subsets.Subset, d
 def find_contiguous_subsets(subset_list: List[subsets.Subset], dim: int = None) -> Set[subsets.Subset]:
     """ 
     Finds the set of largest contiguous subsets in a list of subsets. 
+
     :param subsets: Iterable of subset objects.
     :param dim: Check for contiguity only for the specified dimension.
     :return: A list of contiguous subsets.
@@ -956,6 +964,7 @@ def constant_symbols(sdfg: SDFG) -> Set[str]:
     Returns a set of symbols that will never change values throughout the course
     of the given SDFG. Specifically, these are the input symbols (i.e., not
     defined in a particular scope) that are never set by interstate edges.
+
     :param sdfg: The input SDFG.
     :return: A set of symbol names that remain constant throughout the SDFG.
     """
@@ -969,6 +978,7 @@ def simplify_state(state: SDFGState, remove_views: bool = False) -> MultiDiGraph
     and corresponding edges of an SDFG state. The removed code nodes and map
     scopes are replaced by edges that connect their ancestor and succesor access
     nodes.
+
     :param state: The input SDFG state.
     :return: The MultiDiGraph object.
     """
@@ -1013,6 +1023,7 @@ def tile(sdfg: SDFG, map_entry: nodes.MapEntry, divides_evenly: bool, skew: bool
     """ 
     Helper function that tiles a Map scope by the given sizes, in the 
     given order.
+
     :param sdfg: The SDFG where the map resides.
     :param map_entry: The map entry node to tile.
     :param divides_evenly: If True, skips pre/postamble for cases
@@ -1045,6 +1056,7 @@ def permute_map(map_entry: nodes.MapEntry, perm: List[int]):
 def extract_map_dims(sdfg: SDFG, map_entry: nodes.MapEntry, dims: List[int]) -> Tuple[nodes.MapEntry, nodes.MapEntry]:
     """ 
     Helper function that extracts specific map dimensions into an outer map.
+
     :param sdfg: The SDFG where the map resides.
     :param map_entry: Map entry node to extract.
     :param dims: A list of dimension indices to extract.
@@ -1088,6 +1100,7 @@ def extract_map_dims(sdfg: SDFG, map_entry: nodes.MapEntry, dims: List[int]) -> 
 def scope_tree_recursive(state: SDFGState, entry: Optional[nodes.EntryNode] = None) -> ScopeTree:
     """ 
     Returns a scope tree that includes scopes from nested SDFGs. 
+
     :param state: The state that contains the root of the scope tree.
     :param entry: A scope entry node to set as root, otherwise the state is 
                   the root if None is given.
@@ -1117,6 +1130,7 @@ def get_internal_scopes(state: SDFGState,
     """ 
     Returns all internal scopes within a given scope, including if they 
     reside in nested SDFGs.
+
     :param state: State in which entry node resides.
     :param entry: The entry node to start from.
     :param immediate: If True, only returns the scopes that are immediately
@@ -1159,6 +1173,7 @@ def reconnect_edge_through_map(
     """
     Reconnects an edge through a map scope, removes old edge, and returns the 
     two new edges.
+
     :param state: The state in which the edge and map reside.
     :param edge: The edge to reconnect and remove.
     :param new_node: The scope (map) entry or exit to reconnect through.
@@ -1210,6 +1225,7 @@ def get_parent_map(state: SDFGState, node: Optional[nodes.Node] = None) -> Optio
     """
     Returns the map in which the state (and node) are contained in, or None if
     it is free.
+
     :param state: The state to test or parent of the node to test.
     :param node: The node to test (optional).
     :return: A tuple of (entry node, state) or None.
@@ -1239,6 +1255,7 @@ def redirect_edge(state: SDFGState,
     """
     Redirects an edge in a state. Choose which elements to override by setting
     the keyword arguments.
+    
     :param state: The SDFG state in which the edge resides.
     :param edge: The edge to redirect.
     :param new_src: If provided, redirects the source of the new edge.

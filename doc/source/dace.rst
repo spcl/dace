@@ -1,5 +1,5 @@
-dace package
-============
+``dace`` package
+================
 
 Subpackages
 -----------
@@ -7,10 +7,12 @@ Subpackages
 .. toctree::
 
    dace.codegen
+   dace.cli
    dace.frontend
-   dace.graph
    dace.sdfg
    dace.transformation
+   dace.optimization
+
 
 Submodules
 ----------
@@ -47,6 +49,14 @@ dace.jupyter module
    :undoc-members:
    :show-inheritance:
 
+dace.library module
+-------------------
+
+.. automodule:: dace.library
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 dace.memlet module
 ------------------
 
@@ -71,10 +81,10 @@ dace.serialize module
    :undoc-members:
    :show-inheritance:
 
-dace.sdfg module
+dace.sourcemap module
 ---------------------
 
-.. automodule:: dace.sdfg
+.. automodule:: dace.sourcemap
    :members:
    :undoc-members:
    :show-inheritance:

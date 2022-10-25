@@ -26,6 +26,7 @@ def to_blastype(dtype):
 def cublas_type_metadata(dtype: dtypes.typeclass) -> Tuple[str, str, str]:
     """ 
     Returns type metadata on a given dace dtype. 
+    
     :return: A 3 tuple of (BLAS letter, CUDA C type, Name in dace runtime).
     """
 
@@ -86,6 +87,7 @@ def get_gemm_opts(a_strides, b_strides, c_strides) -> Dict[str, Any]:
     """
     Returns GEMM argument order, transposition, and leading dimensions
     based on column-major storage from dace arrays.
+
     :param a: Data descriptor for the first matrix.
     :param b: Data descriptor for the second matrix.
     :param c: Data descriptor for the output matrix.

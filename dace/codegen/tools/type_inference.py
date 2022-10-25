@@ -22,7 +22,8 @@ from typing import Union
 
 def infer_types(code, symbols=None):
     """
-    Perform type inference on the given code
+    Perform type inference on the given code.
+
     :param code: a string, AST, or symbolic expression
     :param symbols: optional,  already known symbols with their types. This is a dictionary "symbol name" -> dytpes.typeclass:
     :return: a dictionary "symbol name" -> dtypes.typeclass of inferred symbols
@@ -48,7 +49,8 @@ def infer_types(code, symbols=None):
 
 def infer_expr_type(code, symbols=None):
     """
-    Return inferred type of a given expression
+    Return inferred type of a given expression.
+    
     :param code: code string (an expression) or symbolic expression
     :param symbols: already defined symbols (if any) in a dictionary "symbol name" -> dytpes.typeclass:
     :return: inferred type

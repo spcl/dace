@@ -38,6 +38,7 @@ class CutoutTuner(auto_tuner.AutoTuner):
     def __init__(self, task: str, sdfg: SDFG) -> None:
         """
         Creates a cutout tuner.
+        
         :param task: Name of tuning task (for filename labeling).
         :param sdfg: The SDFG to tune.
         """

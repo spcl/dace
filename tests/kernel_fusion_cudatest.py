@@ -8,6 +8,7 @@ import sympy as sp
 def _construct_graph(tbsize_1=None, tbsize_2=None) -> dace.SDFG:
     """
     Construct a graph for the tests.
+    
     :param tbsize_1: The dimensions of the thread-block map in the first
                         map, or None for no thread-block map.
     :param tbsize_2: The dimensions of the thread-block map in the second

@@ -147,10 +147,12 @@ def _get_codegen_targets(sdfg: SDFG, frame: framecode.DaCeCodeGenerator):
 
 
 def generate_code(sdfg, validate=True) -> List[CodeObject]:
-    """ Generates code as a list of code objects for a given SDFG.
-        :param sdfg: The SDFG to use
-        :param validate: If True, validates the SDFG before generating the code.
-        :return: List of code objects that correspond to files to compile.
+    """
+    Generates code as a list of code objects for a given SDFG.
+
+    :param sdfg: The SDFG to use
+    :param validate: If True, validates the SDFG before generating the code.
+    :return: List of code objects that correspond to files to compile.
     """
     from dace.codegen.targets.target import TargetCodeGenerator  # Avoid import loop
 
