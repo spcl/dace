@@ -1,4 +1,5 @@
 import csv
+import cupy
 from enum import auto
 import dace
 import numpy as np
@@ -288,7 +289,7 @@ def GAT_dace_loop_compute(A_rowptr: dace.int32[LArows+1],
         start = A_rowptr[i]
         finish = A_rowptr[i+1]
         for j in dace.map[start:finish]:
-            values[j] = values[j] / row_degree[i]
+            values[j] = row_degree[i] / values[j]
     # S x W
     out = np.empty((LArows, LWcols), dtype=nptype)
     dace.csrmm(A_rowptr, A_colidx, values, HW, out, 1, 0)
@@ -316,7 +317,7 @@ def GAT_dace_loop_compute(A_rowptr: dace.int32[LArows+1],
             start = A_rowptr[i]
             finish = A_rowptr[i+1]
             for j in dace.map[start:finish]:
-                values[j] = values[j] / row_degree[i]
+                values[j] = row_degree[i] / values[j]
         # S x W
         dace.csrmm(A_rowptr, A_colidx, values, HW, out, 1, 0)
         for i in dace.map[0:LArows]:
@@ -483,16 +484,21 @@ if __name__ == '__main__':
     if size not in grid:
         raise ValueError("Selected number of MPI processes is not supported.")
 
-    file_name = "dace_cpu_{n}_nodes.csv".format(n=size)
+    file_name = "dace_gpu_{n}_nodes.csv".format(n=size)
     field_names = ["datetime", "benchmark", "framework", "nodes", "sizes", "time"]
     
+    def auto_gpu(dcprog):
+        sdfg = dcprog.to_sdfg(simplify=True)
+        sdfg.name = f"{sdfg.name}_cupy"
+        for _, arr in sdfg.arrays.items():
+            if not arr.transient:
+                arr.storage = dace.StorageType.GPU_Global
+        return auto_optimize(sdfg, device=dace.DeviceType.GPU)
+
     sdfg, sdfgc = (None, ) * 2
     if rank == 0:
-        sdfg = GAT_dace_loop.to_sdfg(simplify=True)
-        # sdfg = GAT_dace.to_sdfg(simplify=True)
-        sdfg = auto_optimize(sdfg, dace.DeviceType.CPU)
-        sdfgc = GAT_dace_loop_compute.to_sdfg(simplify=True)
-        sdfgc = auto_optimize(sdfgc, dace.DeviceType.CPU)
+        sdfg = auto_gpu(GAT_dace_loop)
+        sdfgc = auto_gpu(GAT_dace_loop_compute)
     func = utils.distributed_compile(sdfg, commworld)
     funcc = utils.distributed_compile(sdfgc, commworld)
 
@@ -531,18 +537,26 @@ if __name__ == '__main__':
     # x, y = cart_comm.Get_coords(rank)
     # tx, ty = NArows // Nx, NArows // Ny
     # lA = A[x*tx:(x+1)*tx, y*ty:(y+1)*ty]
-    A_rowptr = lA.indptr.copy()
-    A_rowidx = csr_to_coo(A_rowptr)
-    A_colidx = lA.indices.copy()
-    A_data = lA.data.copy()
+    A_rowptr = cupy.asarray(lA.indptr)
+    A_rowidx = cupy.asarray(csr_to_coo(lA.indptr))
+    A_colidx = cupy.asarray(lA.indices)
+    A_data = cupy.asarray(lA.data)
+    # H1 = cupy.asarray(H[x*tx:(x+1)*tx, :])
+    H1 = cupy.asarray(H)
 
-    out = np.ndarray((tx, NWcols), dtype=nptype)
+    lW1 = cupy.asarray(W1)
+    lW2 = cupy.asarray(W2)
+    laR = cupy.asarray(aR)
+    laL = cupy.asarray(aL)
+    
+
+    out = cupy.asarray(np.ndarray((tx, NWcols), dtype=nptype))
 
     if rank == 0:
         print(f"##### GAT #####\nGlobal Sizes: {weak_scaling[size]}\nGrid: {grid[size]}""", flush=True)
     
     runtimes = timeit.repeat(
-        """out[:] = func(A_rowptr=A_rowptr, A_rowidx=A_rowidx, A_colidx=A_colidx, A_data=A_data, H1=H, W1=W1, W2=W2, aL=aL, aR=aR,
+        """out[:] = func(A_rowptr=A_rowptr, A_rowidx=A_rowidx, A_colidx=A_colidx, A_data=A_data, H1=H1, W1=lW1, W2=lW2, aL=laL, aR=laR,
                          num_layers=num_layers, GArows=NArows, GAcols=NArows, GHcols=NHcols,
                          LArows=tx, LAcols=ty, LAnnz=A_data.size, LHcols=NHcols, LWcols=NWcols,
                          Px=Nx, Py=Ny); commworld.Barrier()
@@ -555,10 +569,10 @@ if __name__ == '__main__':
 
     if rank == 0:
         print(f"Median total runtime: {np.median(runtimes)} seconds", flush=True)
-        write_time(str(datetime.now()), "GAT", "dace_cpu", size, weak_scaling[size], runtimes, file_name, field_names, append=True)
+        write_time(str(datetime.now()), "GAT", "dace_gpu", size, weak_scaling[size], runtimes, file_name, field_names, append=True)
 
         runtimes = timeit.repeat(
-            """funcc(A_rowptr=A_rowptr, A_rowidx=A_rowidx, A_colidx=A_colidx, A_data=A_data, H1=H, W1=W1, W2=W2, aL=aL, aR=aR,
+            """funcc(A_rowptr=A_rowptr, A_rowidx=A_rowidx, A_colidx=A_colidx, A_data=A_data, H1=H1, W1=lW1, W2=lW2, aL=laL, aR=laR,
                      num_layers=num_layers, GArows=NArows, GAcols=NArows, GHcols=NHcols,
                      LArows=tx, LAcols=ty, LAnnz=A_data.size, LHcols=NHcols, LWcols=NWcols,
                      Px=Nx, Py=Ny)
@@ -570,10 +584,11 @@ if __name__ == '__main__':
         )
 
         print(f"Median compute runtime: {np.median(runtimes)} seconds", flush=True)
-        write_time(str(datetime.now()), "GAT_compute", "dace_cpu", size, weak_scaling[size], runtimes, file_name, field_names, append=True)
+        write_time(str(datetime.now()), "GAT_compute", "dace_gpu", size, weak_scaling[size], runtimes, file_name, field_names, append=True)
 
     # # ref = GAT_npsn(A, H, W[0], aL, aR)
     # ref = GAT_npsn_loop(A, H, W1, W2, aL, aR, num_layers)
     # lref = ref[x*tx:(x+1)*tx, :]
-    # print(np.linalg.norm(out - lref)/np.linalg.norm(lref))
+    # lout = cupy.asnumpy(out)
+    # print(np.linalg.norm(lout - lref)/np.linalg.norm(lref))
     # assert np.allclose(out, lref)
