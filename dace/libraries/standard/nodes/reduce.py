@@ -1325,13 +1325,6 @@ class WarpReductionExpansion(pm.ExpandTransformation):
             
             state.add_nedge(src_node, dst_node, dace.Memlet(f"{r}", wcr="lambda x, y: x + y"))      
 
-        #-----------------------------------------------------------
-        
-        default_symbols = {}
-        
-        
-        #-----------------------------------------------------------
-        
         
         subSDFG = dace.SDFG('WarpReduction_SDFG')
         
@@ -1417,10 +1410,11 @@ class WarpReductionExpansion(pm.ExpandTransformation):
         
         #-----------------------------------------------------------
         
-        subSDFG.add_symbol('MaxTs', dace.int32)
+        # subSDFG.add_symbol('MaxTs', dace.int32)
     
         
-        default_symbols = {'WarpSize': 32, 'BlockDim': 256, 'GridDim': 2048}
+        sz = in_subset.size()[0]
+        default_symbols = {'WarpSize': 32, 'BlockDim': 256, 'GridDim': 2048, 'N': sz, 'MaxTs': 256 * 2048}
         symbols = {}
         
         for symbol in default_symbols:
@@ -1428,21 +1422,9 @@ class WarpReductionExpansion(pm.ExpandTransformation):
                 symbols[symbol] = default_symbols[symbol]
                 subSDFG.add_symbol(symbol, dace.int32)
         
-        sz = in_subset.size()[0]
-        # print(symbols.get('BlockDim'))
-        # print(sz)
-        
-        # mt = min(sz, symbols.get('BlockDim') * symbols.get('GridDim'))
-        # symbols['MaxTs'] = mt
-        symbols['N'] = sz
-            
-        
         nsdfg = parent_state.add_nested_sdfg(subSDFG, parent_sdfg, {'in_A'}, {'out_res'}, symbol_mapping=symbols)
         
         #-----------------------------------------------------------
-        
-        
-        
         
         # Make the dataflow between the states happen
         da_whole_SDFG = gpuCallState.add_nested_sdfg(gpu_sdfg, subSDFG, {'sA'}, {'sRes'})
@@ -1469,8 +1451,8 @@ class WarpReductionExpansion(pm.ExpandTransformation):
         input_edge_A._dst_conn = 'in_A'
         output_edge._src_conn = 'out_res'
         
-        # from dace.transformation import helpers
-        # helpers.nest_sdfg_control_flow(da_whole_SDFG.sdfg)
+        from dace.transformation import helpers
+        helpers.nest_sdfg_control_flow(da_whole_SDFG.sdfg)
         
         
         return nsdfg
