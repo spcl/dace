@@ -17,6 +17,7 @@ from dace.config import Config
 def timethis(sdfg, title, flop_count, f, *args, **kwargs):
     """ Runs a function multiple (`DACE_treps`) times, logs the running times 
         to a file, and prints the median time (with FLOPs if given).
+
         :param sdfg: The SDFG belonging to the measurement.
         :param title: A title of the measurement.
         :param flop_count: Number of floating point operations in `program`.
@@ -137,6 +138,7 @@ def detect_reduction_type(wcr_str, openmp=False):
 def is_op_commutative(wcr_str):
     """ Inspects a custom lambda function and tries to determine whether
         it is symbolically commutative (disregarding data type).
+
         :param wcr_str: A string in Python representing a lambda function.
         :return: True if commutative, False if not, None if cannot be
                  determined.
@@ -162,6 +164,7 @@ def is_op_commutative(wcr_str):
 def is_op_associative(wcr_str):
     """ Inspects a custom lambda function and tries to determine whether
         it is symbolically associative (disregarding data type).
+
         :param wcr_str: A string in Python representing a lambda function.
         :return: True if associative, False if not, None if cannot be
                  determined.
@@ -204,6 +207,7 @@ def reduce(op, in_array, out_array=None, axis=None, identity=None):
 
 def elementwise(func, in_array, out_array=None):
     """ Applies a function to each element of the array
+    
         :param in_array: array to apply to.
         :param out_array: output array to write the result to. If `None`, a new array will be returned
         :param func: lambda function to apply to each element.

@@ -46,6 +46,7 @@ def _get_batchmm_opts(a_shape, a_strides, b_shape, b_strides, c_shape, c_strides
     Detects whether a matrix multiplication is a batched matrix multiplication
     and returns its parameters (strides, batch size), or an empty dictionary if
     batched multiplication is not detected.
+    
     :param a: Data descriptor for the first tensor.
     :param b: Data descriptor for the second tensor.
     :param c: Data descriptor for the output tensor (optional).

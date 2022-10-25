@@ -50,6 +50,7 @@ class InstrumentedDataReport:
     def __init__(self, sdfg: SDFG, folder: str) -> None:
         """
         Loads a data instrumentation report of an SDFG from the specified folder.
+
         :param sdfg: SDFG from which the report was created.
         :param folder: Root folder of the report.
         """
@@ -78,7 +79,8 @@ class InstrumentedDataReport:
     def _read_file(self, filename: str, npdtype: np.dtype) -> Tuple[ArrayLike, ArrayLike]:
         """
         Reads a formatted instrumented data file. 
-        :returns: A 2-tuple of (original buffer, array view)
+
+        :return: A 2-tuple of (original buffer, array view)
         """
         with open(filename, 'rb') as fp:
             # Recreate runtime shape and strides from buffer
@@ -96,6 +98,7 @@ class InstrumentedDataReport:
     def __getitem__(self, item: str) -> Union[ArrayLike, List[ArrayLike]]:
         """
         Returns the instrumented (saved) data from the report according to the data descriptor (array) name. 
+
         :param item: Name of the array to read.
         :return: An array (if a single entry in the report is given) or a list of versions of the array across
                  the report.
@@ -119,6 +122,7 @@ class InstrumentedDataReport:
         """
         Returns the first version of the instrumented (saved) data from the report according to the data descriptor
         (array) name.
+
         :param item: Name of the array to read.
         :return: The array from the report.
         """
@@ -136,6 +140,7 @@ class InstrumentedDataReport:
         """
         Stores the retrieved arrays from the report back to the files. Can be used to modify data that will be loaded
         when restoring a data instrumentation report.
+        
         :see: dace.dtypes.DataInstrumentationType.Restore
         """
         for (k, i), loaded in self.loaded_arrays.items():

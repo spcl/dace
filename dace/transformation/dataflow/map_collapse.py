@@ -91,6 +91,7 @@ class MapCollapse(transformation.SingleStateTransformation):
     def apply(self, graph: SDFGState, sdfg: SDFG) -> Tuple[nodes.MapEntry, nodes.MapExit]:
         """
         Collapses two maps into one.
+        
         :param sdfg: The SDFG to apply the transformation to.
         :return: A 2-tuple of the new map entry and exit nodes.
         """

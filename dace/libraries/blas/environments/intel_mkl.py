@@ -87,4 +87,4 @@ class IntelMKL:
 
     @staticmethod
     def is_installed():
-        return IntelMKL.cmake_libraries() and IntelMKL.cmake_includes()
+        return len(IntelMKL.cmake_libraries()) > 0 and len(IntelMKL.cmake_includes()) > 0

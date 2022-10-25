@@ -17,11 +17,11 @@ import itertools
 
 @make_properties
 class ConnectedEnumerator(MapScoringEnumerator):
-    '''
+    """
     Enumerates all fusible subgraphs based on their outermost scoped maps.
     If maps are neighbors, meaning that they access common (access) data nodes,
     backtracking occurs over this link.
-    '''
+    """
 
     prune = Property(desc="Perform pruning during enumeration", default=True, dtype=bool)
 
@@ -80,8 +80,8 @@ class ConnectedEnumerator(MapScoringEnumerator):
                 forbidden_current.add(child)
 
     def iterator(self):
-        '''
+        """
         returns an iterator that iterates over
         search space yielding tuples (subgraph, score)
-        '''
+        """
         yield from self.traverse([], set())

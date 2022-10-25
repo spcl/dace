@@ -32,10 +32,11 @@ def init_data(N):
 
 
 def run_jacobi_2d(device_type: dace.dtypes.DeviceType):
-    '''
+    """
     Runs jacobi_2d for the given device
+
     :return: the SDFG
-    '''
+    """
 
     # Initialize data (polybench mini size)
     TSTEPS, N = (20, 30)

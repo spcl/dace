@@ -22,7 +22,7 @@ from dace import registry, subsets
 import pydoc
 import warnings
 from dace.sdfg import nodes
-from dace.transformation import transformation as pm
+from dace.transformation import transformation as pm, helpers
 from dace.symbolic import symstr, issymbolic
 from dace.libraries.standard.environments.cuda import CUDA
 
@@ -891,7 +891,7 @@ class ExpandReduceFPGAPartialReduction(pm.ExpandTransformation):
 
     @staticmethod
     def expansion(node: 'Reduce', state: SDFGState, sdfg: SDFG, partial_width=16):
-        '''
+        """
 
         :param node: the node to expand
         :param state: the state in which the node is in
@@ -899,7 +899,7 @@ class ExpandReduceFPGAPartialReduction(pm.ExpandTransformation):
         :param partial_width: Width of the inner reduction buffer. Must be
                               larger than the latency of the reduction operation on the given
                               data type
-        '''
+        """
         node.validate(sdfg, state)
         inedge: graph.MultiConnectorEdge = state.in_edges(node)[0]
         outedge: graph.MultiConnectorEdge = state.out_edges(node)[0]
@@ -1124,7 +1124,7 @@ class WarpReductionExpansion_new(pm.ExpandTransformation):
             
             dst_node = state.add_access(mS)
             
-            me,mx = state.add_map('gridSized_strides_map', dict(tId = 'i*BlockDim+j:N:MaxTs'))
+            me,mx = state.add_map('gridSized_strides_map', dict(tId = 'i*BlockDim+j:N:BlockDim*MaxTs'))
             tasklet = state.add_tasklet('add', {'in1', '__in3'}, {'out'},  'out = in1 + __in3')
             
             state.add_memlet_path(src_A, me, tasklet, dst_conn='in1', memlet=dace.Memlet(data=i1, subset='tId-i*BlockDim - j'))
@@ -1311,7 +1311,7 @@ class WarpReductionExpansion(pm.ExpandTransformation):
             
             dst_node = state.add_access(mS)
             
-            me,mx = state.add_map('gridSized_strides_map', dict(tId = 'i*BlockDim+j:N:MaxTs'))
+            me,mx = state.add_map('gridSized_strides_map', dict(tId = 'i*BlockDim+j:N:BlockDim*GridDim'))
             tasklet = state.add_tasklet('add', {'in1', '__in3'}, {'out'},  'out = in1 + __in3')
             
             state.add_memlet_path(src_A, me, tasklet, dst_conn='in1', memlet=dace.Memlet(data=i1, subset='tId-i*BlockDim - j'))
@@ -1387,7 +1387,13 @@ class WarpReductionExpansion(pm.ExpandTransformation):
 
         ###################
         # Creating the loop
-        _, _, after_state = gpu_sdfg.add_loop(tnl_state, wwr_state, None, 'offset', '32 / 2', 'offset > 0', 'offset / 2')
+        # _, _, after_state = gpu_sdfg.add_loop(tnl_state, wwr_state, None, 'offset', '32 / 2', 'offset > 0', 'offset / 2')
+        sync_state = gpu_sdfg.add_state('sync_state')
+        sname, sdesc = gpu_sdfg.add_scalar('sync', dace.int32, transient=True, find_new_name=True)
+        a = sync_state.add_access(sname)
+        t = sync_state.add_tasklet('sync', {}, {'__out'}, '__syncthreads();', dace.Language.CPP, side_effects=True)
+        sync_state.add_edge(t, '__out', a, None, dace.Memlet.from_array(sname, sdesc))
+        _, guard_state, after_state = gpu_sdfg.add_loop(sync_state, wwr_state, None, 'offset', '32 / 2', 'offset > 0', 'offset / 2')
 
         ###################
         # Write back
@@ -1398,13 +1404,29 @@ class WarpReductionExpansion(pm.ExpandTransformation):
 
         ###################
         # Adding all the edges
-        gpu_sdfg.add_edge(entry_state, tnl_state, dace.InterstateEdge('i+j != 0'))
-        gpu_sdfg.add_edge(entry_state, init_sRes, dace.InterstateEdge('i+j == 0'))
-        gpu_sdfg.add_edge(init_sRes, tnl_state, dace.InterstateEdge())
+        # gpu_sdfg.add_edge(entry_state, tnl_state, dace.InterstateEdge('i+j != 0'))
+        # gpu_sdfg.add_edge(entry_state, init_sRes, dace.InterstateEdge('i+j == 0'))
+        # gpu_sdfg.add_edge(init_sRes, tnl_state, dace.InterstateEdge())
+        dummy_state = gpu_sdfg.add_state('dummy_state')
+        gpu_sdfg.add_edge(entry_state, tnl_state, dace.InterstateEdge())
+        gpu_sdfg.add_edge(tnl_state, dummy_state, dace.InterstateEdge())
+        gpu_sdfg.add_edge(dummy_state, init_sRes, dace.InterstateEdge('i+j == 0'))
+        gpu_sdfg.add_edge(dummy_state, sync_state, dace.InterstateEdge('i+j != 0'))
+        gpu_sdfg.add_edge(init_sRes, sync_state, dace.InterstateEdge())
         gpu_sdfg.add_edge(after_state, write_back_state, dace.InterstateEdge('j % WarpSize == 0'))
         gpu_sdfg.add_edge(after_state, random_end_state, dace.InterstateEdge('j % WarpSize != 0'))
         gpu_sdfg.add_edge(write_back_state, random_end_state, dace.InterstateEdge())
-        
+
+        state_subgraph = graph.SubgraphView(gpu_sdfg, [dummy_state, init_sRes, sync_state, guard_state, wwr_state, after_state, write_back_state, random_end_state])
+        helpers.nest_sdfg_subgraph(gpu_sdfg, state_subgraph, dummy_state)
+        from dace.transformation.interstate import StateFusion
+        gpu_sdfg.apply_transformations_repeated(StateFusion)
+        from dace.transformation.interstate import EndStateElimination
+        from dace.transformation.dataflow import PruneSymbols, PruneConnectors
+        gpu_sdfg.apply_transformations_repeated([EndStateElimination, PruneConnectors, PruneSymbols])
+        gpu_sdfg.simplify()
+
+        # gpu_sdfg.view()
         ###################
         
         
@@ -1422,7 +1444,16 @@ class WarpReductionExpansion(pm.ExpandTransformation):
                 symbols[symbol] = default_symbols[symbol]
                 subSDFG.add_symbol(symbol, dace.int32)
         
-        nsdfg = parent_state.add_nested_sdfg(subSDFG, parent_sdfg, {'in_A'}, {'out_res'}, symbol_mapping=symbols)
+        sz = in_subset.size()[0]
+        # print(symbols.get('BlockDim'))
+        # print(sz)
+        
+        # mt = min(sz, symbols.get('BlockDim') * symbols.get('GridDim'))
+        # symbols['MaxTs'] = mt
+        symbols['N'] = sz
+            
+        
+        # nsdfg = parent_state.add_nested_sdfg(subSDFG, parent_sdfg, {'in_A'}, {'out_res'}, symbol_mapping=symbols)
         
         #-----------------------------------------------------------
         
@@ -1455,7 +1486,8 @@ class WarpReductionExpansion(pm.ExpandTransformation):
         helpers.nest_sdfg_control_flow(da_whole_SDFG.sdfg)
         
         
-        return nsdfg
+        # return nsdfg
+        return subSDFG
 
 
 
