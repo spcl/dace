@@ -63,8 +63,8 @@ Computation:
 
 """
 
-dctype = dace.float64
-nptype = np.float64
+dctype = dace.float32
+nptype = np.float32
 
 
 grid = {
@@ -86,16 +86,16 @@ grid = {
 # Scaling formula is for A rows is ceiling(base * sqrt(nodes) / nodes) * nodes
 weak_scaling = {
     #:   ( Arows, Hcols, Wcols)
-    1:   ( 20480,   128,   128),
-    2:   ( 28964,   128,   128),
-    4:   ( 40960,   128,   128),
-    8:   ( 57928,   128,   128),
-    16:  ( 81920,   128,   128),
-    32:  (115872,   128,   128),
-    64:  (163840,   128,   128),
-    128: (231808,   128,   128),
-    256: (327680,   128,   128),
-    512: (463872,   128,   128),
+    1:   ( 131072,   128,   128),									
+    2:   ( 185364,   128,   128),
+    4:   ( 262144,   128,   128),
+    8:   ( 370728,   128,   128),
+    16:  ( 524288,   128,   128),
+    32:  ( 741472,   128,   128),
+    64:  (1048576,   128,   128),
+    128: (1483008,   128,   128),
+    256: (2097152,   128,   128),
+    512: (2966016,   128,   128),
 }
 
 
@@ -121,7 +121,6 @@ def GAT_dace(A_rowptr: dace.int32[LArows+1],
                  W: dctype[LHcols, LWcols]) -> dctype[LArows, LWcols]:
     
     # Process grid
-    # Process grid
     parent_grid = dace.comm.Cart_create([Px, Py, 1])
     reduce_grid = dace.comm.Cart_sub(parent_grid, [False, True, False])
     h1_grid = dace.comm.Cart_sub(parent_grid, [True, False, True], exact_grid=0)
@@ -139,25 +138,13 @@ def GAT_dace(A_rowptr: dace.int32[LArows+1],
     HWL = H1 @ (W @ aL)
     HWR = HW @ aR
 
-    def relu(x):
-        return np.maximum(x,0)
-
-    def exp_relu(x):
-        return np.exp(relu(x))
-
-
     #C: (1L x HWL.t) + (HWR x 1R)
     values = np.zeros_like(A_data)
     for i in dace.map[0:LAnnz]:
         values[i] = np.exp(np.maximum(HWL[A_rowidx[i]] + HWR[A_colidx[i]], 0))
-    # for i in dace.map[0:LArows]:
-    #     start = A_rowptr[i]
-    #     finish = A_rowptr[i+1]
-    #     for j in dace.map[start:finish]:
-    #         values[j] = exp_relu(HWL[i] + HWR[A_colidx[j]])
     
     #S = T // (T × 1L x 1R)
-        # find degree
+    # find degree
     row_degree = np.zeros(LArows)
     for i in dace.map[0:LArows]:
         start = A_rowptr[i]
@@ -167,7 +154,7 @@ def GAT_dace(A_rowptr: dace.int32[LArows+1],
     # Maybe bcast_grid here?
     dace.comm.Allreduce(row_degree, 'MPI_SUM', grid=reduce_grid)
 
-        # divide each element by degree
+    # divide each element by degree
     for i in dace.map[0:LArows]:
         start = A_rowptr[i]
         finish = A_rowptr[i+1]
@@ -190,15 +177,13 @@ def GAT_dace(A_rowptr: dace.int32[LArows+1],
 #TODO normalize H after each loop
 @dace.program
 def GAT_dace_loop(A_rowptr: dace.int32[LArows+1],
-                 A_colidx: dace.int32[LAnnz],
-                 A_data: dctype[LAnnz],
-                 aR: dctype[LWcols],
-                 aL: dctype[LWcols],
-                 H1: dctype[LArows, LHcols],
-                 #H2: dctype[LAcols, LHcols],
-                 W: dctype[num_layers,LHcols, LWcols]) -> dctype[num_layers,LArows, LWcols]:
+                  A_colidx: dace.int32[LAnnz],
+                  A_data: dctype[LAnnz],
+                  aR: dctype[LWcols],
+                  aL: dctype[LWcols],
+                  H1: dctype[LArows, LHcols],
+                  W: dctype[num_layers, LHcols, LWcols]) -> dctype[LArows, LWcols]:
     
-    # Process grid
     # Process grid
     parent_grid = dace.comm.Cart_create([Px, Py, 1])
     reduce_grid = dace.comm.Cart_sub(parent_grid, [False, True, False])
@@ -207,14 +192,9 @@ def GAT_dace_loop(A_rowptr: dace.int32[LArows+1],
     bcast_grid = dace.comm.Cart_sub(parent_grid, [True, False, False])
 
     H2 = np.empty((LAcols, LHcols), dtype=H1.dtype)
+    values = np.empty_like(A_data)
+    row_degree = np.empty((LArows, ), dtype=nptype)
     out = np.empty((LArows, LWcols), dtype=nptype)
-
-
-    def relu(x):
-        return np.maximum(x,0)
-
-    def exp_relu(x):
-        return np.exp(relu(x))
 
     for i in range(num_layers):
 
@@ -224,21 +204,17 @@ def GAT_dace_loop(A_rowptr: dace.int32[LArows+1],
         dace.comm.Bcast(H2, grid=bcast_grid)
 
         # HW = H x W  
-        HW = H2 @ W
-        HWL = H1 @ (W @ aL)
+        HW = H2 @ W[i]
+        HWL = H1 @ (W[i] @ aL)
         HWR = HW @ aR
 
         #C: (1L x HWL.t) + (HWR x 1R)
-        values = np.zeros_like(A_data)
-        for i in dace.map[0:LArows]:
-            start = A_rowptr[i]
-            finish = A_rowptr[i+1]
-            for j in dace.map[start:finish]:
-                values[j] = exp_relu(HWL[i] + HWR[A_colidx[j]])
+        for i in dace.map[0:LAnnz]:
+            values[i] = np.exp(np.maximum(HWL[A_rowidx[i]] + HWR[A_colidx[i]], 0))
         
         #S = T // (T × 1L x 1R)
         # find degree
-        row_degree = np.zeros(LArows)
+        row_degree[:] = 0
         for i in dace.map[0:LArows]:
             start = A_rowptr[i]
             finish = A_rowptr[i+1]
@@ -246,7 +222,7 @@ def GAT_dace_loop(A_rowptr: dace.int32[LArows+1],
 
         dace.comm.Allreduce(row_degree, 'MPI_SUM', grid=reduce_grid)
 
-            # divide each element by degree
+        # divide each element by degree
         for i in dace.map[0:LArows]:
             start = A_rowptr[i]
             finish = A_rowptr[i+1]
@@ -260,12 +236,62 @@ def GAT_dace_loop(A_rowptr: dace.int32[LArows+1],
 
         # Reduce
         dace.comm.Allreduce(out, 'MPI_SUM', grid=reduce_grid)
-        H1 = relu(out)
+        H1[:] = np.maximum(out, 0)
 
     #END LAYERS LOOP
-    return H
+    return H1
 
 
+#TODO normalize H after each loop
+@dace.program
+def GAT_dace_loop_compute(A_rowptr: dace.int32[LArows+1],
+                          A_colidx: dace.int32[LAnnz],
+                          A_data: dctype[LAnnz],
+                          aR: dctype[LWcols],
+                          aL: dctype[LWcols],
+                          H1: dctype[LArows, LHcols],
+                          W: dctype[num_layers, LHcols, LWcols]) -> dctype[LArows, LWcols]:
+
+    H2 = np.empty((LAcols, LHcols), dtype=H1.dtype)
+    values = np.empty_like(A_data)
+    row_degree = np.empty((LArows, ), dtype=nptype)
+    out = np.empty((LArows, LWcols), dtype=nptype)
+
+    for i in range(num_layers):
+
+        # HW = H x W  
+        HW = H2 @ W[i]
+        HWL = H1 @ (W[i] @ aL)
+        HWR = HW @ aR
+
+        #C: (1L x HWL.t) + (HWR x 1R)
+        for i in dace.map[0:LAnnz]:
+            values[i] = np.exp(np.maximum(HWL[A_rowidx[i]] + HWR[A_colidx[i]], 0))
+        
+        #S = T // (T × 1L x 1R)
+        # find degree
+        row_degree[:] = 0
+        for i in dace.map[0:LArows]:
+            start = A_rowptr[i]
+            finish = A_rowptr[i+1]
+            row_degree[i] += np.sum(values[start:finish])
+
+        # divide each element by degree
+        for i in dace.map[0:LArows]:
+            start = A_rowptr[i]
+            finish = A_rowptr[i+1]
+            for j in dace.map[start:finish]:
+                values[j] /= row_degree[i]
+
+
+        # S x W
+        dace.csrmm(A_rowptr, A_colidx, values, HW, out, 1, 0)
+
+        # Reduce
+        H1[:] = np.maximum(out, 0)
+
+    #END LAYERS LOOP
+    return H1
 
 
 def GAT_npsn(A: sparse.csr_matrix,
@@ -291,6 +317,35 @@ def GAT_npsn(A: sparse.csr_matrix,
 
     out = A @ HW
     return np.maximum(out, 0)
+
+
+def GAT_npsn_loop(A: sparse.csr_matrix,
+                  H: np.ndarray,
+                  W: np.ndarray,
+                  aL: np.ndarray,
+                  aR: np.ndarray,
+                  num_layers: 3) -> np.ndarray:
+    
+    for i in range(num_layers):
+        HW = H @ W[i]
+        HWL = HW @ aL
+        HWR = HW @ aR
+        for i in range(A.indptr.size - 1):
+            start = A.indptr[i]
+            finish = A.indptr[i+1]
+            for j in range(start, finish):
+                A.data[j] = np.exp(np.maximum(HWL[i] + HWR[A.indices[j]],0))
+
+        for i in range(A.indptr.size - 1):
+            start = A.indptr[i]
+            finish = A.indptr[i+1]
+            degree = np.sum(A.data[start:finish])
+            A.data[start:finish] /= degree
+
+        out = A @ HW
+        H[:] = np.maximum(out, 0)
+    
+    return H
 
 
 def GAT_dense(A: sparse.csr_matrix,
@@ -379,9 +434,12 @@ if __name__ == '__main__':
     
     sdfg, sdfgc = (None, ) * 2
     if rank == 0:
-        sdfg = GAT_dace.to_sdfg(simplify=True)
+        sdfg = GAT_dace_loop.to_sdfg(simplify=True)
         sdfg = auto_optimize(sdfg, dace.DeviceType.CPU)
+        sdfgc = GAT_dace_loop_compute.to_sdfg(simplify=True)
+        sdfgc = auto_optimize(sdfgc, dace.DeviceType.CPU)
     func = utils.distributed_compile(sdfg, commworld)
+    funcc = utils.distributed_compile(sdfgc, commworld)
 
     rng = np.random.default_rng(42)
 
@@ -390,6 +448,7 @@ if __name__ == '__main__':
     NArows, NHcols, NWcols = weak_scaling[size]
     density = 0.01
     num_layers = 3
+    NArows = 2048
 
 
     # Global data
@@ -453,6 +512,21 @@ if __name__ == '__main__':
         print(f"Median total runtime: {np.median(runtimes)} seconds", flush=True)
         write_time(str(datetime.now()), "GAT", "dace_cpu", size, weak_scaling[size], runtimes, file_name, field_names, append=True)
 
-    ref = GAT_npsn(A, H, W, aL, aR)
+        runtimes = timeit.repeat(
+            """out[:] = funcc(A_rowptr=A_rowptr, A_rowidx=A_rowidx, A_colidx=A_colidx, A_data=A_data, H1=H1, W=W, aL=aL, aR=aR,
+                              num_layers=num_layers, GArows=NArows, GAcols=NArows, GHcols=NHcols,
+                              LArows=tx, LAcols=ty, LAnnz=A_data.size, LHcols=NHcols, LWcols=NWcols,
+                              Px=Nx, Py=Ny); commworld.Barrier()
+            """,
+            setup="commworld.Barrier()",
+            repeat=10,
+            number=1,
+            globals=locals()
+        )
+
+        print(f"Median compute runtime: {np.median(runtimes)} seconds", flush=True)
+        write_time(str(datetime.now()), "GAT_compute", "dace_cpu", size, weak_scaling[size], runtimes, file_name, field_names, append=True)
+
+    ref = GAT_npsn_loop(A, H, W, aL, aR, num_layers)
     lref = ref[x*tx:(x+1)*tx, :]
     assert np.allclose(out, lref)
