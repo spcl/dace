@@ -86,6 +86,7 @@ class ExpandCSRMMMKL(ExpandTransformation):
         avals = operands['_a_vals'][1]
         bdesc = operands['_b'][1]
 
+        nnz = avals.shape[0]
         dtype = avals.dtype.base_type
         func = f"mkl_sparse_{to_blastype(dtype.type).lower()}"
         alpha = f'{dtype.ctype}({node.alpha})'
@@ -135,16 +136,19 @@ class ExpandCSRMMMKL(ExpandTransformation):
         
         opt['ldb'] = opt['ncols']
         opt['ldc'] = opt['ncols']
+        opt['nnz'] = nnz
         
         code += """
-            sparse_matrix_t __csrA;
-            {func}_create_csr(&__csrA, SPARSE_INDEX_BASE_ZERO, {arows}, {acols}, _a_rows, _a_rows + 1, _a_cols, _a_vals);
-            struct matrix_descr __descrA;
-            __descrA.type = SPARSE_MATRIX_TYPE_GENERAL;
-            __descrA.mode = SPARSE_FILL_MODE_UPPER;
-            __descrA.diag = SPARSE_DIAG_NON_UNIT;
+            if (({nnz}) > 0) {{
+                sparse_matrix_t __csrA;
+                {func}_create_csr(&__csrA, SPARSE_INDEX_BASE_ZERO, {arows}, {acols}, _a_rows, _a_rows + 1, _a_cols, _a_vals);
+                struct matrix_descr __descrA;
+                __descrA.type = SPARSE_MATRIX_TYPE_GENERAL;
+                __descrA.mode = SPARSE_FILL_MODE_UPPER;
+                __descrA.diag = SPARSE_DIAG_NON_UNIT;
 
-            {func}_mm({opA}, {alpha}, __csrA, __descrA, {layout}, _b, {ncols}, {ldb}, {beta}, _c, {ldc});
+                {func}_mm({opA}, {alpha}, __csrA, __descrA, {layout}, _b, {ncols}, {ldb}, {beta}, _c, {ldc});
+            }}
         """.format_map(opt)
 
         tasklet = dace.sdfg.nodes.Tasklet(
@@ -177,6 +181,7 @@ class ExpandCSRCuSPARSE(ExpandTransformation):
         needs_copy = any(desc.storage not in (dace.StorageType.GPU_Global, dace.StorageType.CPU_Pinned)
                          for desc in (arows, acols, avals, bdesc, cdesc))
 
+        nnz = avals.shape[0]
         dtype = avals.dtype.base_type
         func = "cusparseSpMM"
         if dtype == dace.float16:
@@ -270,44 +275,47 @@ class ExpandCSRCuSPARSE(ExpandTransformation):
         
         opt['ldb'] = opt['ncols']
         opt['ldc'] = opt['ncols']
+        opt['nnz'] = nnz
 
         call = """
-            cusparseSpMatDescr_t matA;
-            cusparseDnMatDescr_t matB, matC;
-            void*                dBuffer    = NULL;
-            size_t               bufferSize = 0;
-            // Create sparse matrix A in CSR format
-            dace::sparse::CheckCusparseError( cusparseCreateCsr(&matA, {arows}, {acols}, {annz},
-                                                {arr_prefix}_a_rows, {arr_prefix}_a_cols, {arr_prefix}_a_vals,
-                                                CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
-                                                CUSPARSE_INDEX_BASE_ZERO, {compute}) );
-            // Create dense matrix B
-            dace::sparse::CheckCusparseError( cusparseCreateDnMat(&matB, {acols}, {bcols}, {ldb}, {arr_prefix}_b,
-                                                {compute}, {layout}) );
-            // Create dense matrix C
-            dace::sparse::CheckCusparseError( cusparseCreateDnMat(&matC, {arows}, {bcols}, {ldc}, {arr_prefix}_c,
-                                                {compute}, {layout}) );
-            // allocate an external buffer if needed
-            dace::sparse::CheckCusparseError( cusparseSpMM_bufferSize(
-                                            {handle},
-                                            {opA},
-                                            {opB},
-                                            {alpha}, matA, matB, {beta}, matC, {compute},
-                                            CUSPARSE_SPMM_ALG_DEFAULT, &bufferSize) );
-            cudaMalloc(&dBuffer, bufferSize);
+            if (({nnz}) > 0) {{
+                cusparseSpMatDescr_t matA;
+                cusparseDnMatDescr_t matB, matC;
+                void*                dBuffer    = NULL;
+                size_t               bufferSize = 0;
+                // Create sparse matrix A in CSR format
+                dace::sparse::CheckCusparseError( cusparseCreateCsr(&matA, {arows}, {acols}, {annz},
+                                                    {arr_prefix}_a_rows, {arr_prefix}_a_cols, {arr_prefix}_a_vals,
+                                                    CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
+                                                    CUSPARSE_INDEX_BASE_ZERO, {compute}) );
+                // Create dense matrix B
+                dace::sparse::CheckCusparseError( cusparseCreateDnMat(&matB, {acols}, {bcols}, {ldb}, {arr_prefix}_b,
+                                                    {compute}, {layout}) );
+                // Create dense matrix C
+                dace::sparse::CheckCusparseError( cusparseCreateDnMat(&matC, {arows}, {bcols}, {ldc}, {arr_prefix}_c,
+                                                    {compute}, {layout}) );
+                // allocate an external buffer if needed
+                dace::sparse::CheckCusparseError( cusparseSpMM_bufferSize(
+                                                {handle},
+                                                {opA},
+                                                {opB},
+                                                {alpha}, matA, matB, {beta}, matC, {compute},
+                                                CUSPARSE_SPMM_ALG_DEFAULT, &bufferSize) );
+                cudaMalloc(&dBuffer, bufferSize);
 
-            // execute SpMM
-            dace::sparse::CheckCusparseError( cusparseSpMM({handle},
-                                            {opA},
-                                            {opB},
-                                            {alpha}, matA, matB, {beta}, matC, {compute},
-                                            CUSPARSE_SPMM_ALG_DEFAULT, dBuffer) );
+                // execute SpMM
+                dace::sparse::CheckCusparseError( cusparseSpMM({handle},
+                                                {opA},
+                                                {opB},
+                                                {alpha}, matA, matB, {beta}, matC, {compute},
+                                                CUSPARSE_SPMM_ALG_DEFAULT, dBuffer) );
 
-            // destroy matrix/vector descriptors
-            dace::sparse::CheckCusparseError( cusparseDestroySpMat(matA) );
-            dace::sparse::CheckCusparseError( cusparseDestroyDnMat(matB) );
-            dace::sparse::CheckCusparseError( cusparseDestroyDnMat(matC) );
-            cudaFree(dBuffer);
+                // destroy matrix/vector descriptors
+                dace::sparse::CheckCusparseError( cusparseDestroySpMat(matA) );
+                dace::sparse::CheckCusparseError( cusparseDestroyDnMat(matB) );
+                dace::sparse::CheckCusparseError( cusparseDestroyDnMat(matC) );
+                cudaFree(dBuffer);
+            }}
         """.format_map(opt)
 
         # # Matrix multiplication
