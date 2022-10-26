@@ -747,7 +747,7 @@ def _block_gather(pv: 'ProgramVisitor',
 
 @oprepo.replaces('dace.comm.Redistribute')
 def _redistribute(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, in_buffer: str, in_subarray: str, out_buffer: str,
-                  out_subarray: str):
+                  out_subarray: str, contiguous: bool=False):
     """ Redistributes an Array using process-grids, sub-arrays, and the Redistribute library node.
         :param in_buffer: Name of the (local) input Array descriptor.
         :param in_subarray: Input sub-array descriptor.
@@ -758,7 +758,7 @@ def _redistribute(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, in_buffer:
     in_desc = sdfg.arrays[in_buffer]
     out_desc = sdfg.arrays[out_buffer]
 
-    rdistrarray_name = sdfg.add_rdistrarray(in_subarray, out_subarray)
+    rdistrarray_name = sdfg.add_rdistrarray(in_subarray, out_subarray, contiguous=contiguous)
 
     from dace.libraries.mpi import Dummy, Redistribute
     tasklet = Dummy(rdistrarray_name, [
@@ -787,7 +787,7 @@ def _redistribute(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, in_buffer:
     wnode = state.add_write(rdistrarray_name)
     state.add_edge(tasklet, '__out', wnode, None, Memlet.from_array(rdistrarray_name, scal))
 
-    libnode = Redistribute('_Redistribute_', rdistrarray_name)
+    libnode = Redistribute('_Redistribute_', rdistrarray_name, contiguous=contiguous)
 
     inbuf_range = None
     if isinstance(in_buffer, tuple):

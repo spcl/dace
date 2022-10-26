@@ -360,11 +360,13 @@ class RedistrArray(object):
     name = Property(dtype=str, desc="The redistribution's name.")
     array_a = Property(dtype=str, allow_none=True, default=None, desc="Sub-array that will be redistributed.")
     array_b = Property(dtype=str, allow_none=True, default=None, desc="Output sub-array.")
+    contiguous = Property(dtype=bool, default=False, desc="Optimization for contiguous blocks.")
 
-    def __init__(self, name: str, array_a: str, array_b: str):
+    def __init__(self, name: str, array_a: str, array_b: str, contiguous: bool=False):
         self.name = name
         self.array_a = array_a
         self.array_b = array_b
+        self.contiguous = bool(contiguous)
         self._validate()
 
     def validate(self):

@@ -1978,7 +1978,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
 
         return subarray_name
 
-    def add_rdistrarray(self, array_a: str, array_b: str):
+    def add_rdistrarray(self, array_a: str, array_b: str, contiguous: bool=False):
         """ Adds a sub-array redistribution to the sub-array redistribution descriptor store.
             For more details on redistributions, please read the documentation of the RedistrArray class.
             :param array_a: Input sub-array descriptor.
@@ -1987,7 +1987,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         """
 
         rdistrarray_name = self._find_new_name('__rdistrarray')
-        self._rdistrarrays[rdistrarray_name] = RedistrArray(rdistrarray_name, array_a, array_b)
+        self._rdistrarrays[rdistrarray_name] = RedistrArray(rdistrarray_name, array_a, array_b, contiguous=contiguous)
         self.append_init_code(self._rdistrarrays[rdistrarray_name].init_code(self))
         self.append_exit_code(self._rdistrarrays[rdistrarray_name].exit_code(self))
         return rdistrarray_name

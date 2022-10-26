@@ -238,56 +238,97 @@ class ExpandRedistribute(ExpandTransformation):
                 for i in range(len(inp_buffer.shape) - 2):
                     copy_code += "}\n"
             # copy_code += f"cudaStreamSynchronize(__dace_current_stream);"
+        
+        if node.contiguous:
+            code = f"""
+                if (__state->{array_a.pgrid}_valid) {{
+                    for (auto __idx = 0; __idx < __state->{node._redistr}_sends; ++__idx) {{
+                        // printf("({redistr.array_a} -> {redistr.array_b}) I am rank %d and I send to %d\\n", myrank, __state->{node._redistr}_dst_ranks[__idx]);
+                        // fflush(stdout);
+                        __state->{node._redistr}_total_send_size += __state->{node._redistr}_send_sizes[__idx];
+                        // MPI_Isend(_inp_buffer, 1, __state->{node._redistr}_send_types[__idx], __state->{node._redistr}_dst_ranks[__idx], 0, MPI_COMM_WORLD, &__state->{node._redistr}_send_req[__idx]);
+                        {send_repl}
+                        MPI_Isend(_inp_buffer + {inp_offset}, __state->{node._redistr}_send_sizes[__idx], {utils.MPI_DDT(array_a.dtype.base_type)}, __state->{node._redistr}_dst_ranks[__idx], 0, MPI_COMM_WORLD, &__state->{node._redistr}_send_req[__idx]);
+                    }}
+                }}
+                if (__state->{array_b.pgrid}_valid) {{
+                    for (auto __idx = 0; __idx < __state->{node._redistr}_recvs; ++__idx) {{
+                        // printf("({redistr.array_a} -> {redistr.array_b}) I am rank %d and I receive from %d\\n", myrank, __state->{node._redistr}_src_ranks[__idx]);
+                        // fflush(stdout);
+                        // MPI_Recv(_out_buffer, 1, __state->{node._redistr}_recv_types[__idx], __state->{node._redistr}_src_ranks[__idx], 0, MPI_COMM_WORLD, &recv_status);
+                        // MPI_Irecv(_out_buffer, 1, __state->{node._redistr}_recv_types[__idx], __state->{node._redistr}_src_ranks[__idx], 0, MPI_COMM_WORLD, &__state->{node._redistr}_recv_req[__idx]);
+                        {recv_repl}
+                        {recv_len}
+                        MPI_Irecv(_out_buffer + {out_offset}, __recv_len, {utils.MPI_DDT(array_b.dtype.base_type)}, __state->{node._redistr}_src_ranks[__idx], 0, MPI_COMM_WORLD, &__state->{node._redistr}_recv_req[__idx]);
+                    }}
+                    for (auto __idx = 0; __idx < __state->{node._redistr}_self_copies; ++__idx) {{
+                        // printf("({redistr.array_a} -> {redistr.array_b}) I am rank %d and I self-copy\\n", myrank);
+                        // fflush(stdout);
+                        {inp_repl}
+                        {out_repl}
+                        __state->{node._redistr}_total_copy_size += {copy_size};
+                        {copy_code}
+                    }}
+                    MPI_Waitall(__state->{node._redistr}_recvs, __state->{node._redistr}_recv_req, __state->{node._redistr}_recv_status);
+                }}
+                if (__state->{array_a.pgrid}_valid) {{
+                    MPI_Waitall(__state->{node._redistr}_sends, __state->{node._redistr}_send_req, __state->{node._redistr}_send_status);
+                }}
+                {"cudaStreamSynchronize(__dace_current_stream);" if inp_buffer.storage == dtypes.StorageType.GPU_Global else ""}
+                // printf("I am rank %d and I finished the redistribution {redistr.array_a} -> {redistr.array_b}\\n", myrank);
+                // fflush(stdout);
+                
+            """
+        else:
+            code = f"""
+                // int myrank;
+                // MPI_Comm_rank(MPI_COMM_WORLD, &myrank);
+                // MPI_Status recv_status;
+                if (__state->{array_a.pgrid}_valid) {{
+                    for (auto __idx = 0; __idx < __state->{node._redistr}_sends; ++__idx) {{
+                        // printf("({redistr.array_a} -> {redistr.array_b}) I am rank %d and I send to %d\\n", myrank, __state->{node._redistr}_dst_ranks[__idx]);
+                        // fflush(stdout);
+                        __state->{node._redistr}_total_send_size += __state->{node._redistr}_send_sizes[__idx];
+                        // MPI_Isend(_inp_buffer, 1, __state->{node._redistr}_send_types[__idx], __state->{node._redistr}_dst_ranks[__idx], 0, MPI_COMM_WORLD, &__state->{node._redistr}_send_req[__idx]);
+                        {send_repl}
+                        {send_strides}
+                        {send_code}
+                        MPI_Isend(__state->{node.redistr}_send_buffers[__idx], __state->{node._redistr}_send_sizes[__idx], {utils.MPI_DDT(array_a.dtype.base_type)}, __state->{node._redistr}_dst_ranks[__idx], 0, MPI_COMM_WORLD, &__state->{node._redistr}_send_req[__idx]);
+                    }}
+                }}
+                if (__state->{array_b.pgrid}_valid) {{
+                    for (auto __idx = 0; __idx < __state->{node._redistr}_recvs; ++__idx) {{
+                        // printf("({redistr.array_a} -> {redistr.array_b}) I am rank %d and I receive from %d\\n", myrank, __state->{node._redistr}_src_ranks[__idx]);
+                        // fflush(stdout);
+                        // MPI_Recv(_out_buffer, 1, __state->{node._redistr}_recv_types[__idx], __state->{node._redistr}_src_ranks[__idx], 0, MPI_COMM_WORLD, &recv_status);
+                        // MPI_Irecv(_out_buffer, 1, __state->{node._redistr}_recv_types[__idx], __state->{node._redistr}_src_ranks[__idx], 0, MPI_COMM_WORLD, &__state->{node._redistr}_recv_req[__idx]);
+                        {recv_len}
+                        MPI_Irecv(__state->{node.redistr}_recv_buffers[__idx], __recv_len, {utils.MPI_DDT(array_b.dtype.base_type)}, __state->{node._redistr}_src_ranks[__idx], 0, MPI_COMM_WORLD, &__state->{node._redistr}_recv_req[__idx]);
+                    }}
+                    for (auto __idx = 0; __idx < __state->{node._redistr}_self_copies; ++__idx) {{
+                        // printf("({redistr.array_a} -> {redistr.array_b}) I am rank %d and I self-copy\\n", myrank);
+                        // fflush(stdout);
+                        {inp_repl}
+                        {out_repl}
+                        __state->{node._redistr}_total_copy_size += {copy_size};
+                        {copy_code}
+                    }}
+                    MPI_Waitall(__state->{node._redistr}_recvs, __state->{node._redistr}_recv_req, __state->{node._redistr}_recv_status);
+                    for (auto __idx = 0; __idx < __state->{node._redistr}_recvs; ++__idx) {{
+                        {recv_repl}
+                        {recv_strides}
+                        {recv_code}
+                    }}
 
-        code = f"""
-            // int myrank;
-            // MPI_Comm_rank(MPI_COMM_WORLD, &myrank);
-            // MPI_Status recv_status;
-            if (__state->{array_a.pgrid}_valid) {{
-                for (auto __idx = 0; __idx < __state->{node._redistr}_sends; ++__idx) {{
-                    // printf("({redistr.array_a} -> {redistr.array_b}) I am rank %d and I send to %d\\n", myrank, __state->{node._redistr}_dst_ranks[__idx]);
-                    // fflush(stdout);
-                    __state->{node._redistr}_total_send_size += __state->{node._redistr}_send_sizes[__idx];
-                    // MPI_Isend(_inp_buffer, 1, __state->{node._redistr}_send_types[__idx], __state->{node._redistr}_dst_ranks[__idx], 0, MPI_COMM_WORLD, &__state->{node._redistr}_send_req[__idx]);
-                    {send_repl}
-                    {send_strides}
-                    {send_code}
-                    MPI_Isend(__state->{node.redistr}_send_buffers[__idx], __state->{node._redistr}_send_sizes[__idx], {utils.MPI_DDT(array_a.dtype.base_type)}, __state->{node._redistr}_dst_ranks[__idx], 0, MPI_COMM_WORLD, &__state->{node._redistr}_send_req[__idx]);
                 }}
-            }}
-            if (__state->{array_b.pgrid}_valid) {{
-                for (auto __idx = 0; __idx < __state->{node._redistr}_recvs; ++__idx) {{
-                    // printf("({redistr.array_a} -> {redistr.array_b}) I am rank %d and I receive from %d\\n", myrank, __state->{node._redistr}_src_ranks[__idx]);
-                    // fflush(stdout);
-                    // MPI_Recv(_out_buffer, 1, __state->{node._redistr}_recv_types[__idx], __state->{node._redistr}_src_ranks[__idx], 0, MPI_COMM_WORLD, &recv_status);
-                    // MPI_Irecv(_out_buffer, 1, __state->{node._redistr}_recv_types[__idx], __state->{node._redistr}_src_ranks[__idx], 0, MPI_COMM_WORLD, &__state->{node._redistr}_recv_req[__idx]);
-                    {recv_len}
-                    MPI_Irecv(__state->{node.redistr}_recv_buffers[__idx], __recv_len, {utils.MPI_DDT(array_b.dtype.base_type)}, __state->{node._redistr}_src_ranks[__idx], 0, MPI_COMM_WORLD, &__state->{node._redistr}_recv_req[__idx]);
+                if (__state->{array_a.pgrid}_valid) {{
+                    MPI_Waitall(__state->{node._redistr}_sends, __state->{node._redistr}_send_req, __state->{node._redistr}_send_status);
                 }}
-                for (auto __idx = 0; __idx < __state->{node._redistr}_self_copies; ++__idx) {{
-                    // printf("({redistr.array_a} -> {redistr.array_b}) I am rank %d and I self-copy\\n", myrank);
-                    // fflush(stdout);
-                    {inp_repl}
-                    {out_repl}
-                    __state->{node._redistr}_total_copy_size += {copy_size};
-                    {copy_code}
-                }}
-                MPI_Waitall(__state->{node._redistr}_recvs, __state->{node._redistr}_recv_req, __state->{node._redistr}_recv_status);
-                for (auto __idx = 0; __idx < __state->{node._redistr}_recvs; ++__idx) {{
-                    {recv_repl}
-                    {recv_strides}
-                    {recv_code}
-                }}
-
-            }}
-            if (__state->{array_a.pgrid}_valid) {{
-                MPI_Waitall(__state->{node._redistr}_sends, __state->{node._redistr}_send_req, __state->{node._redistr}_send_status);
-            }}
-            {"cudaStreamSynchronize(__dace_current_stream);" if inp_buffer.storage == dtypes.StorageType.GPU_Global else ""}
-            // printf("I am rank %d and I finished the redistribution {redistr.array_a} -> {redistr.array_b}\\n", myrank);
-            // fflush(stdout);
-            
-        """
+                {"cudaStreamSynchronize(__dace_current_stream);" if inp_buffer.storage == dtypes.StorageType.GPU_Global else ""}
+                // printf("I am rank %d and I finished the redistribution {redistr.array_a} -> {redistr.array_b}\\n", myrank);
+                // fflush(stdout);
+                
+            """
 
         tasklet = nodes.Tasklet(node.name, node.in_connectors, node.out_connectors, code, language=dtypes.Language.CPP)
         return tasklet
@@ -303,10 +344,12 @@ class Redistribute(MPINode):
     default_implementation = "MPI"
 
     redistr = properties.Property(dtype=str, default='tmp')
+    contiguous = properties.Property(dtype=bool, default=False)
 
-    def __init__(self, name, redistr='tmp', *args, **kwargs):
+    def __init__(self, name, redistr='tmp', contiguous=False, *args, **kwargs):
         super().__init__(name, *args, inputs={"_inp_buffer"}, outputs={"_out_buffer"}, **kwargs)
         self.redistr = redistr
+        self.contiguous = bool(contiguous)
 
     def validate(self, sdfg, state):
         """
