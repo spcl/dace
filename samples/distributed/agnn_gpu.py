@@ -74,16 +74,16 @@ grid = {
 # Scaling formula is for A rows is ceiling(base * sqrt(nodes) / nodes) * nodes
 weak_scaling = {
     #:   ( Arows, Hcols, Wcols)
-    1:   ( 20480,   128,   128),
-    2:   ( 28964,   128,   128),
-    4:   ( 40960,   128,   128),
-    8:   ( 57928,   128,   128),
-    16:  ( 81920,   128,   128),
-    32:  (115872,   128,   128),
-    64:  (163840,   128,   128),
-    128: (231808,   128,   128),
-    256: (327680,   128,   128),
-    512: (463872,   128,   128),
+    1:   ( 131072,   128,   128),
+    2:   ( 185364,   128,   128),
+    4:   ( 262144,   128,   128),
+    8:   ( 370728,   128,   128),
+    16:  ( 524288,   128,   128),
+    32:  ( 741472,   128,   128),
+    64:  ( 1048576,  128,   128),
+    128: ( 1483008,  128,   128),
+    256: ( 2097152,  128,   128),
+    512: ( 2966016,  128,   128),
 }
 
 
@@ -369,7 +369,7 @@ if __name__ == '__main__':
     if size not in grid:
         raise ValueError("Selected number of MPI processes is not supported.")
 
-    file_name = "dace_cpu_{n}_nodes.csv".format(n=size)
+    file_name = "dace_gpu_{n}_nodes.csv".format(n=size)
     field_names = ["datetime", "benchmark", "framework", "nodes", "sizes", "time"]
     
     def auto_gpu(dcprog):
@@ -383,7 +383,9 @@ if __name__ == '__main__':
     sdfg, sdfgc = (None, ) * 2
     if rank == 0:
         sdfg = auto_gpu(agnn_dace_loop)
+        sdfgc = auto_gpu(agnn_dace_loop_compute)
     func = utils.distributed_compile(sdfg, commworld)
+    funcc = utils.distributed_compile(sdfgc, commworld)
 
     rng = np.random.default_rng(42)
 
@@ -409,7 +411,7 @@ if __name__ == '__main__':
     A_colidx = cupy.asarray(lA.indices)
     A_data = cupy.asarray(lA.data)
     H1 = cupy.asarray(H[x*tx:(x+1)*tx, :])
-    H2 = cupy.asarray(H[y*ty:(y+1)*ty, :])
+    # H2 = cupy.asarray(H[y*ty:(y+1)*ty, :])
     lW = cupy.asarray(W)
     lW2 = cupy.asarray(W2)
 
@@ -433,6 +435,21 @@ if __name__ == '__main__':
     if rank == 0:
         print(f"Median total runtime: {np.median(runtimes)} seconds", flush=True)
         write_time(str(datetime.now()), "vanilla", "dace_gpu", size, weak_scaling[size], runtimes, file_name, field_names, append=True)
+
+        runtimes = timeit.repeat(
+            """funcc(A_rowptr=A_rowptr, A_rowidx=A_rowidx, A_colidx=A_colidx, A_data=A_data, H1=H1, W1=lW, W2=lW2,
+                     num_layers=num_layers, GArows=NArows, GAcols=NArows, GHcols=NHcols,
+                     LArows=tx, LAcols=ty, LAnnz=A_data.size, LHcols=NHcols, LWcols=NWcols,
+                     Px=Nx, Py=Ny); commworld.Barrier()
+            """,
+            setup="commworld.Barrier()",
+            repeat=10,
+            number=1,
+            globals=locals()
+        )
+    
+        print(f"Median compute runtime: {np.median(runtimes)} seconds", flush=True)
+        write_time(str(datetime.now()), "vanilla_compute", "dace_gpu", size, weak_scaling[size], runtimes, file_name, field_names, append=True)
 
     # # # ref = vanilla_npsp(A, H, W)
     # ref = agnn_npsp_loop(A, H, W, W2, num_layers)
