@@ -1,7 +1,7 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 """ Explicit distributed vanilla attention sample programs. """
 import csv
-import cupy
+from enum import auto
 import dace
 import numpy as np
 import timeit
@@ -67,23 +67,25 @@ grid = {
     128:  [ 8, 16],
     256:  [16, 16],
     512:  [16, 32],
+    1024: [32, 32]
 }
 
 
 # Each node does 28.2 GFLOPs.
 # Scaling formula is for A rows is ceiling(base * sqrt(nodes) / nodes) * nodes
 weak_scaling = {
-    #:   ( Arows, Hcols, Wcols)
-    1:   ( 20480,   128,   128),
-    2:   ( 28964,   128,   128),
-    4:   ( 40960,   128,   128),
-    8:   ( 57928,   128,   128),
-    16:  ( 81920,   128,   128),
-    32:  (115872,   128,   128),
-    64:  (163840,   128,   128),
-    128: (231808,   128,   128),
-    256: (327680,   128,   128),
-    512: (463872,   128,   128),
+    #:    ( Arows, Hcols, Wcols)
+    1:    ( 131072,   128,   128),
+    2:    ( 185364,   128,   128),
+    4:    ( 262144,   128,   128),
+    8:    ( 370728,   128,   128),
+    16:   ( 524288,   128,   128),
+    32:   ( 741472,   128,   128),
+    64:   (1048576,   128,   128),
+    128:  (1483008,   128,   128),
+    256:  (2097152,   128,   128),
+    512:  (2966016,   128,   128),
+    1024: (4194304,   128,   128)
 }
 
 
@@ -139,11 +141,11 @@ def vanilla_dace(A_rowptr: dace.int32[LArows+1],
 
 
 @dace.program
-def agnn_dace_loop(A_rowptr: dace.int32[LArows+1],
+def cgnn_dace_loop(A_rowptr: dace.int32[LArows+1],
                    A_rowidx: dace.int32[LAnnz],
                    A_colidx: dace.int32[LAnnz],
                    A_data: dctype[LAnnz],
-                   H1: dctype[LArows, LHcols],
+                   H2: dctype[LAcols, LHcols],
                    W1: dctype[LHcols, LWcols],
                    W2: dctype[num_layers, LWcols, LWcols]) -> dctype[LArows, LWcols]:
 
@@ -153,24 +155,12 @@ def agnn_dace_loop(A_rowptr: dace.int32[LArows+1],
     h1_grid = dace.comm.Cart_sub(parent_grid, [True, False, True], exact_grid=0)
     h2_grid = dace.comm.Cart_sub(parent_grid, [False, True, True], exact_grid=0)
     bcast_grid = dace.comm.Cart_sub(parent_grid, [True, False, False])
-
-    H2 = np.empty((LAcols, LHcols), dtype=H1.dtype)
-    arr_h1 = dace.comm.Subarray((GArows, GHcols), H1, process_grid=h1_grid)
-    arr_h2 = dace.comm.Subarray((GArows, GHcols), H2, process_grid=h2_grid)
-    dace.comm.Redistribute(H1, arr_h1, H2, arr_h2)
-    dace.comm.Bcast(H2, grid=bcast_grid)
     
     # HW = H x W
     HW = H2 @ W1
-    # Norms
-    H1_norm = np.sqrt(np.add.reduce(H1 * H1, axis=1))
-    H2_norm = np.sqrt(np.add.reduce(H2 * H2, axis=1))
-    # S = A ⊙ (H x HT)
-    values = np.empty_like(A_data)
-    dace.ahhtnorm(A_rowidx, A_colidx, H1, H2, H1_norm, H2_norm, values)
-    # S x HW
+    # A x HW
     out = np.empty((LArows, LWcols), dtype=nptype)
-    dace.csrmm(A_rowptr, A_colidx, values, HW, out, 1, 0)
+    dace.csrmm(A_rowptr, A_colidx, A_data, HW, out, 1, 0)
     # Reduce
     dace.comm.Allreduce(out, 'MPI_SUM', grid=reduce_grid)
     # ReLU
@@ -185,58 +175,10 @@ def agnn_dace_loop(A_rowptr: dace.int32[LArows+1],
 
         # HW = H x W
         HW_new = H2_new @ W2[i]
-        # Norms
-        H1_norm[:] = np.sqrt(np.add.reduce(H1_new * H1_new, axis=1))
-        H2_norm[:] = np.sqrt(np.add.reduce(H2_new * H2_new, axis=1))
-        # S = A ⊙ (H x HT)
-        dace.ahhtnorm(A_rowidx, A_colidx, H1_new, H2_new, H1_norm, H2_norm, values)
-        # S x HW
-        dace.csrmm(A_rowptr, A_colidx, values, HW_new, out, 1, 0)
+        # A x HW
+        dace.csrmm(A_rowptr, A_colidx, A_data, HW_new, out, 1, 0)
         # Reduce
         dace.comm.Allreduce(out, 'MPI_SUM', grid=reduce_grid)
-        # ReLU
-        H1_new[:] = np.maximum(out, 0)
-    
-    return H1_new
-
-
-@dace.program
-def agnn_dace_loop_compute(A_rowptr: dace.int32[LArows+1],
-                           A_rowidx: dace.int32[LAnnz],
-                           A_colidx: dace.int32[LAnnz],
-                           A_data: dctype[LAnnz],
-                           H1: dctype[LArows, LHcols],
-                           W1: dctype[LHcols, LWcols],
-                           W2: dctype[num_layers, LWcols, LWcols]) -> dctype[LArows, LWcols]:
-
-    H2 = np.empty((LAcols, LHcols), dtype=H1.dtype)
-    
-    # HW = H x W
-    HW = H2 @ W1
-    # Norms
-    H1_norm = np.sqrt(np.add.reduce(H1 * H1, axis=1))
-    H2_norm = np.sqrt(np.add.reduce(H2 * H2, axis=1))
-    # S = A ⊙ (H x HT)
-    values = np.empty_like(A_data)
-    dace.ahhtnorm(A_rowidx, A_colidx, H1, H2, H1_norm, H2_norm, values)
-    # S x HW
-    out = np.empty((LArows, LWcols), dtype=nptype)
-    dace.csrmm(A_rowptr, A_colidx, values, HW, out, 1, 0)
-    # ReLU
-    H1_new = np.maximum(out, 0)
-    H2_new = np.empty((LAcols, LWcols), dtype=nptype)
-
-    for i in range(num_layers):
-
-        # HW = H x W
-        HW_new = H2_new @ W2[i]
-        # Norms
-        H1_norm[:] = np.sqrt(np.add.reduce(H1_new * H1_new, axis=1))
-        H2_norm[:] = np.sqrt(np.add.reduce(H2_new * H2_new, axis=1))
-        # S = A ⊙ (H x HT)
-        dace.ahhtnorm(A_rowidx, A_colidx, H1_new, H2_new, H1_norm, H2_norm, values)
-        # S x HW
-        dace.csrmm(A_rowptr, A_colidx, values, HW_new, out, 1, 0)
         # ReLU
         H1_new[:] = np.maximum(out, 0)
     
@@ -261,23 +203,21 @@ def vanilla_npsp(A: sparse.csr_matrix,
     return np.maximum(out, 0)
 
 
-def agnn_npsp_loop(A: sparse.csr_matrix,
-                   H: np.ndarray,
-                   W1: np.ndarray,
-                   W2: np.ndarray,
-                   num_layers: int) -> np.ndarray:
+def vanilla_npsp_loop(A: sparse.csr_matrix,
+                      H: np.ndarray,
+                      W1: np.ndarray,
+                      W2: np.ndarray,
+                      num_layers: int) -> np.ndarray:
     
     """ For single-node validation. """
 
     HW = H @ W1
     HHT = H @ H.T
-    H_norm = np.sqrt(np.add.reduce(H*H, axis=1))
-    HHT_norm = np.outer(H_norm, H_norm)
     for i in range(A.indptr.size - 1):
         start = A.indptr[i]
         finish = A.indptr[i+1]
         for j in range(start, finish):
-            A.data[j] = HHT[i, A.indices[j]] / HHT_norm[i, A.indices[j]]
+            A.data[j] = HHT[i, A.indices[j]]
     out = A @ HW
     H_new = np.maximum(out, 0)
 
@@ -285,13 +225,11 @@ def agnn_npsp_loop(A: sparse.csr_matrix,
 
         HW = H_new @ W2[i]
         HHT = H_new @ H_new.T
-        H_norm = np.sqrt(np.add.reduce(H_new*H_new, axis=1))
-        HHT_norm = np.outer(H_norm, H_norm)
         for i in range(A.indptr.size - 1):
             start = A.indptr[i]
             finish = A.indptr[i+1]
             for j in range(start, finish):
-                A.data[j] = HHT[i, A.indices[j]] / HHT_norm[i, A.indices[j]]
+                A.data[j] = HHT[i, A.indices[j]]
         out = A @ HW
         H_new = np.maximum(out, 0)
 
@@ -372,17 +310,11 @@ if __name__ == '__main__':
     file_name = "dace_cpu_{n}_nodes.csv".format(n=size)
     field_names = ["datetime", "benchmark", "framework", "nodes", "sizes", "time"]
     
-    def auto_gpu(dcprog):
-        sdfg = dcprog.to_sdfg(simplify=True)
-        sdfg.name = f"{sdfg.name}_cupy"
-        for _, arr in sdfg.arrays.items():
-            if not arr.transient:
-                arr.storage = dace.StorageType.GPU_Global
-        return auto_optimize(sdfg, device=dace.DeviceType.GPU)
-
     sdfg, sdfgc = (None, ) * 2
     if rank == 0:
-        sdfg = auto_gpu(agnn_dace_loop)
+        # sdfg = vanilla_dace.to_sdfg(simplify=True)
+        sdfg = cgnn_dace_loop.to_sdfg(simplify=True)
+        sdfg = auto_optimize(sdfg, dace.DeviceType.CPU)
     func = utils.distributed_compile(sdfg, commworld)
 
     rng = np.random.default_rng(42)
@@ -394,35 +326,42 @@ if __name__ == '__main__':
     num_layers = 2
 
     # Global data
-    A = sparse.random(NArows, NArows, density=density, format='csr', dtype=nptype, random_state=rng)
-    H = rng.random((NArows, NHcols), dtype=nptype)
-    W = rng.random((NHcols, NWcols), dtype=nptype)
-    W2 = rng.random((num_layers, NWcols, NWcols), dtype=nptype)
+    #A = sparse.random(NArows, NArows, density=density,        format='csr', dtype=nptype, random_state=rng)
+    #H = rng.random((NArows, NHcols), dtype=nptype)
+    #W = rng.random((NHcols, NWcols), dtype=nptype)
+    #W2 = rng.random((num_layers, NWcols, NWcols), dtype=nptype)
 
     # Local data
     cart_comm = commworld.Create_cart((Nx, Ny))
     x, y = cart_comm.Get_coords(rank)
     tx, ty = NArows // Nx, NArows // Ny
-    lA = A[x*tx:(x+1)*tx, y*ty:(y+1)*ty]
-    A_rowptr = cupy.asarray(lA.indptr)
-    A_rowidx = cupy.asarray(csr_to_coo(lA.indptr))
-    A_colidx = cupy.asarray(lA.indices)
-    A_data = cupy.asarray(lA.data)
-    H1 = cupy.asarray(H[x*tx:(x+1)*tx, :])
-    H2 = cupy.asarray(H[y*ty:(y+1)*ty, :])
-    lW = cupy.asarray(W)
-    lW2 = cupy.asarray(W2)
+    
+    lA = sparse.random(tx, ty, density=density, format='csr', dtype=nptype, random_state=rng)
+    lA.data[:] = 1
+    A_rowptr = lA.indptr.copy()
+    A_rowidx = csr_to_coo(A_rowptr)
+    A_colidx = lA.indices.copy()
+    A_data = lA.data.copy()
 
-    out = cupy.asarray(np.ndarray((tx, NWcols), dtype=nptype))
+    # H = rng.random((tx, NHcols), dtype=nptype)
+    H = rng.random((ty, NHcols), dtype=nptype)
+    W = rng.random((NHcols, NWcols), dtype=nptype)
+    W2 = rng.random((num_layers, NWcols, NWcols), dtype=nptype)
+
+    out = np.ndarray((tx, NWcols), dtype=nptype)
+
+    # lA_coo = lA.tocoo()
+    # assert(np.allclose(A_rowidx, lA_coo.row))
+    # assert(np.allclose(A_colidx, lA_coo.col))
 
     if rank == 0:
-        print(f"##### AGNN #####\nGlobal Sizes: {weak_scaling[size]}\nGrid: {grid[size]}""", flush=True)
+        print(f"##### CGNN #####\nGlobal Sizes: {weak_scaling[size]}\nGrid: {grid[size]}""", flush=True)
 
     runtimes = timeit.repeat(
-        """out[:] = func(A_rowptr=A_rowptr, A_rowidx=A_rowidx, A_colidx=A_colidx, A_data=A_data, H1=H1, W1=lW, W2=lW2,
+        """out[:] = func(A_rowptr=A_rowptr, A_rowidx=A_rowidx, A_colidx=A_colidx, A_data=A_data, H2=H, W1=W, W2=W2,
                          num_layers=num_layers, GArows=NArows, GAcols=NArows, GHcols=NHcols,
                          LArows=tx, LAcols=ty, LAnnz=A_data.size, LHcols=NHcols, LWcols=NWcols,
-                         Px=Nx, Py=Ny); commworld.Barrier()
+                         Px=Nx, Py=Ny, print=print); commworld.Barrier()
         """,
         setup="commworld.Barrier()",
         repeat=10,
@@ -432,13 +371,13 @@ if __name__ == '__main__':
     
     if rank == 0:
         print(f"Median total runtime: {np.median(runtimes)} seconds", flush=True)
-        write_time(str(datetime.now()), "vanilla", "dace_gpu", size, weak_scaling[size], runtimes, file_name, field_names, append=True)
+        write_time(str(datetime.now()), "cgnn", "dace_cpu", size, weak_scaling[size], runtimes, file_name, field_names, append=True)
 
-    # # # ref = vanilla_npsp(A, H, W)
-    # ref = agnn_npsp_loop(A, H, W, W2, num_layers)
+    # # ref = vanilla_npsp(A, H, W)
+    # ref = vanilla_npsp_loop(A, H, W, W2, num_layers)
     # lref = ref[x*tx:(x+1)*tx, :]
-    # # # ref2 = vanilla_npsp2(A, H, W)
-    # # # lref2 = ref2[x*tx:(x+1)*tx, :]
-    # # # assert(np.allclose(ref2, ref))
-    # # # assert(np.allclose(out, lref2))
+    # # ref2 = vanilla_npsp2(A, H, W)
+    # # lref2 = ref2[x*tx:(x+1)*tx, :]
+    # # assert(np.allclose(ref2, ref))
+    # # assert(np.allclose(out, lref2))
     # assert(np.allclose(out, lref))
