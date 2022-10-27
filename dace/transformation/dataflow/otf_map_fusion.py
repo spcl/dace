@@ -140,23 +140,15 @@ class OTFMapFusion(transformation.SingleStateTransformation):
         # c. Add edges for in access nodes of first map to second map
         connector_mapping = {}
         for edge in graph.in_edges(first_map_entry):
-            old_in_connector = edge.dst_conn
-            if not edge.data is None and not edge.data.data is None:
-                suffix = edge.data.data
-            else:
-                suffix = "OTF"
-
-            new_in_connector = "IN_" + suffix
+            new_in_connector = self.second_map_entry.next_connector(edge.dst_conn[3:])
+            new_in_connector = "IN_" + new_in_connector
             if not self.second_map_entry.add_in_connector(new_in_connector):
-                for n in range(2, 65536):
-                    new_in_connector = "IN_" + suffix + "_" + str(n)
-                    if self.second_map_entry.add_in_connector(new_in_connector):
-                        break
+                raise ValueError("Failed to add new in connector")
 
             memlet = copy.deepcopy(edge.data)
             graph.add_edge(edge.src, edge.src_conn, self.second_map_entry, new_in_connector, memlet)
 
-            connector_mapping[old_in_connector] = new_in_connector
+            connector_mapping[edge.dst_conn] = new_in_connector
 
         # Phase 2: Memlet matching
         # Collect memlet-array map
