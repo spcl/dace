@@ -1,7 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
 import dace
-import sympy
 
 from scipy.signal import convolve2d
 
@@ -218,6 +217,32 @@ def fusion_tree(A: dace.float64[10, 20], B: dace.float64[10, 20], C: dace.float6
             c >> C[i, j]
 
             c = a + 4
+
+
+@dace.program
+def hdiff(in_field: dace.float32[128 + 4, 128 + 4, 64],
+          out_field: dace.float32[128, 128, 64], coeff: dace.float32[128, 128, 64]):
+    lap_field = 4.0 * in_field[1:128 + 3, 1:128 + 3, :] - (
+        in_field[2:128 + 4, 1:128 + 3, :] + in_field[0:128 + 2, 1:128 + 3, :] +
+        in_field[1:128 + 3, 2:128 + 4, :] + in_field[1:128 + 3, 0:128 + 2, :])
+
+    res1 = lap_field[1:, 1:128 + 1, :] - lap_field[:128 + 1, 1:128 + 1, :]
+    flx_field = np.where(
+        (res1 *
+         (in_field[2:128 + 3, 2:128 + 2, :] - in_field[1:128 + 2, 2:128 + 2, :])) > 0,
+        0,
+        res1,
+    )
+    res2 = lap_field[1:128 + 1, 1:, :] - lap_field[1:128 + 1, :128 + 1, :]
+    fly_field = np.where(
+        (res2 *
+         (in_field[2:128 + 2, 2:128 + 3, :] - in_field[2:128 + 2, 1:128 + 2, :])) > 0,
+        0,
+        res2,
+    )
+    out_field[:, :, :] = in_field[2:128 + 2, 2:128 + 2, :] - coeff[:, :, :] * (
+        flx_field[1:, :, :] - flx_field[:-1, :, :] + fly_field[:, 1:, :] -
+        fly_field[:, :-1, :])
 
 
 def test_memlet_equation():
@@ -465,6 +490,17 @@ def test_fusion_tree():
     diff = np.linalg.norm(c_target - C)
     assert diff <= 1e-12
 
+def test_connector_collision():
+    sdfg = hdiff.to_sdfg()
+    sdfg.simplify()
+
+    assert count_maps(sdfg) == 20
+
+    sdfg.apply_transformations_repeated(OTFMapFusion)
+    assert count_maps(sdfg) == 1
+
+    sdfg.validate()
+
 
 if __name__ == '__main__':
     test_fusion_chain()
@@ -475,3 +511,4 @@ if __name__ == '__main__':
     test_fusion_convolve_overlap()
     test_fusion_convolve_transposed()
     test_fusion_tree()
+    test_connector_collision()
