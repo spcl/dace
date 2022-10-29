@@ -6,6 +6,7 @@ import functools
 import itertools
 import re
 import warnings
+from dace.frontend.python import interface
 from dace.frontend.python.newast import Shape
 import sympy as sp
 import numpy as np
@@ -27,6 +28,7 @@ from dace.codegen.common import update_persistent_desc
 from dace.codegen.targets.target import (TargetCodeGenerator, IllegalCopy, make_absolute)
 from dace.codegen import cppunparse
 from dace.properties import Property, make_properties, indirect_properties
+from dace.sdfg.graph import SubgraphView
 from dace.sdfg.state import SDFGState
 from dace.sdfg.utils import is_fpga_kernel
 from dace.symbolic import evaluate
@@ -384,6 +386,7 @@ class FPGACodeGen(TargetCodeGenerator):
         return False
 
     def is_double_pumped(self, subgraph):
+        return None
         for n in subgraph.nodes():
             if isinstance(n, dace.nodes.MapEntry) and ((n.schedule == dace.ScheduleType.FPGA_Double) or (n.schedule == dace.ScheduleType.FPGA_Double_out)):
                 return n.schedule
@@ -408,11 +411,25 @@ class FPGACodeGen(TargetCodeGenerator):
                         return True
             elif any([
                 isinstance(n, dace.nodes.Tasklet) and n.language == dace.dtypes.Language.SystemVerilog,
-                isinstance(n, dace.nodes.MapEntry) and (
-                    (n.schedule == dace.ScheduleType.FPGA_Double) or (n.schedule == dace.ScheduleType.FPGA_Double_out)
-                )]):
+                #isinstance(n, dace.nodes.MapEntry) and (
+                #    (n.schedule == dace.ScheduleType.FPGA_Double) or (n.schedule == dace.ScheduleType.FPGA_Double_out)
+                #)
+                ]):
                 return True
         return False
+    
+    def is_multi_pumped_subgraph(self, subgraph):
+        for n in subgraph.nodes():
+            if isinstance(n, dace.nodes.NestedSDFG):
+                for sg in dace.sdfg.concurrent_subgraphs(n.sdfg.start_state):
+                    if self.is_multi_pumped_subgraph(sg):
+                        return True
+            elif isinstance(n, dace.nodes.MapEntry) and (
+                    (n.schedule == dace.ScheduleType.FPGA_Double) or (n.schedule == dace.ScheduleType.FPGA_Double_out)
+                ):
+                return True
+        return False
+            
 
     def preprocess(self, sdfg: SDFG) -> None:
         # Right before finalizing code, write FPGA context to state structure
@@ -557,6 +574,13 @@ class FPGACodeGen(TargetCodeGenerator):
             for kern, kern_id in kernels:
                 # Generate all kernels in this state
                 subgraphs = dace.sdfg.concurrent_subgraphs(kern)
+                single_sgs = []
+                multi_sgs = []
+                for sg in subgraphs:
+                    if self.is_multi_pumped_subgraph(sg):
+                        multi_sgs.append(sg)
+                    else:
+                        single_sgs.append(sg)
                 shared_transients = set(sdfg.shared_transients())
 
                 # Allocate global memory transients, unless they are shared with
@@ -587,10 +611,19 @@ class FPGACodeGen(TargetCodeGenerator):
 
                 self._kernels_names_to_id[kernel_name] = kern_id
 
+                if len(multi_sgs) != 0:
+                    self._num_kernels += 1
+
                 # Generate kernel code
-                self.generate_kernel(sdfg, state, kernel_name, subgraphs, function_stream, callsite_stream,
+                self.generate_kernel(sdfg, state, kernel_name, single_sgs, function_stream, callsite_stream,
                                      state_host_header_stream, state_host_body_stream, instrumentation_stream,
                                      state_parameters, kern_id)
+                func_stream = CodeIOStream()
+                call_stream = CodeIOStream()
+                a0 = CodeIOStream()
+                a1 = CodeIOStream()
+                a2 = CodeIOStream()
+                self.generate_kernel(sdfg, state, 'dp_kernel', multi_sgs, func_stream, call_stream, a0, a1, a2, state_parameters, 42)
 
             kernel_args_call_host = []
             kernel_args_opencl = []
@@ -739,10 +772,18 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
         shared_data = self.shared_data(subgraphs)
         # Transients that are accessed in other states in this SDFG
         used_outside = sdfg.shared_transients()
+        transients = [t for t in sdfg.transients() if t not in used_outside]
+        datanodes = set()
+        for sg in subgraphs:
+            for n in sg.data_nodes():
+                datanodes.add(n.data)
+        used_inside = [dn for dn in datanodes if dn in transients]
+        #used_outside.extend([dn for dn in datanodes if dn in transients])
 
         # Build a dictionary of arrays to arbitrary data nodes referring to
         # them, needed to trace memory bank assignments and to pass to the array
         # allocator
+        aoeu: SubgraphView = subgraphs[0]
         data_to_node: Dict[str, dace.nodes.Node] = {}
 
         global_data_parameters = set()
@@ -796,6 +837,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                 {node.data: node
                  for node in subgraph.nodes() if isinstance(node, dace.sdfg.nodes.AccessNode)})
             is_external_subgraph = self.is_external_subgraph(subgraph)
+            is_multi_subgraph = self.is_multi_pumped_subgraph(subgraph)
             subsdfg = subgraph.parent
             candidates = []  # type: List[Tuple[bool,str,Data]]
             # [(is an output, dataname string, data object)]
@@ -815,9 +857,17 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                 #if is_external_stream(n, subgraph) and self._num_kernels > 1:
 
                 is_external = is_external_subgraph
+                is_multi = is_multi_subgraph
                 is_output = True
-                if not is_external and self._num_kernels > 1:
+                if not is_external and not is_multi and self._num_kernels > 1:
                     if is_external_stream(n, subgraph):
+                        is_external = True
+                        is_output = False
+                
+                if is_multi:
+                    if n.data in shared_data:
+                        is_external = False
+                    elif is_external_stream(n, subgraph):
                         is_external = True
                         is_output = False
 
@@ -837,9 +887,17 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                 # Check if the node is connected to an RTL tasklet, in which
                 # case it should be an external stream
                 is_external = is_external_subgraph # is_external_stream(n, subgraph)
+                is_multi = is_multi_subgraph
                 is_output = False
-                if not is_external and self._num_kernels > 1:
+                if not is_external and not is_multi and self._num_kernels > 1:
                     if is_external_stream(n, subgraph):
+                        is_external = True
+                        is_output = True
+                
+                if is_multi:
+                    if n.data in shared_data:
+                        is_external = False
+                    elif is_external_stream(n, subgraph):
                         is_external = True
                         is_output = True
 
@@ -1011,6 +1069,9 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                     subgraph_parameters[subgraph].add((is_output, data_name, desc, interface_id))
                     # Must be allocated outside PEs and passed to them
                     top_level_local_data.add(data_name)
+                elif data_name in used_inside:
+                    subgraph_parameters[subgraph].add((is_output, data_name, desc, interface_id))
+                    # TODO hvis de krydser henover single/double, så er det en global data parameter. Ellers, så skal den i top_level_local_data! Det kan gøres ved at tjekke om alle subgraphs der rør den er multi pumped (Eller om alle sammen IKKE er, for den sags skyld.). 
 
             # Order by name
             subgraph_parameters[subgraph] = list(sorted(subgraph_parameters[subgraph], key=sort_func))
