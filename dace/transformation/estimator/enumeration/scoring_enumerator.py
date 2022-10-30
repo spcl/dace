@@ -17,10 +17,10 @@ import warnings
 
 @make_properties
 class MapScoringEnumerator(Enumerator):
-    '''
+    """
     Abstract Enumerator class that is used by enumerators 
     which rely on a scoring function 
-    '''
+    """
 
     mode = Property(desc="Data type the Iterator should return. "
                     "Choice between Subgraph and List of Map Entries.",

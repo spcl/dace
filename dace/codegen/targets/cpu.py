@@ -990,6 +990,7 @@ class CPUCodeGen(TargetCodeGenerator):
         """
         Write source to destination, where the source is a scalar, and the
         destination is a pointer.
+        
         :return: String of C++ performing the write.
         """
         codegen = codegen or self
@@ -2019,6 +2020,7 @@ class CPUCodeGen(TargetCodeGenerator):
         """
         Generates code for the beginning of an SDFG scope, outputting it to
         the given code streams.
+
         :param sdfg: The SDFG to generate code from.
         :param dfg_scope: The `ScopeSubgraphView` to generate code from.
         :param state_id: The node ID of the state in the given SDFG.
@@ -2038,6 +2040,7 @@ class CPUCodeGen(TargetCodeGenerator):
         """
         Generates code for the end of an SDFG scope, outputting it to
         the given code streams.
+
         :param sdfg: The SDFG to generate code from.
         :param dfg_scope: The `ScopeSubgraphView` to generate code from.
         :param state_id: The node ID of the state in the given SDFG.
@@ -2059,6 +2062,7 @@ class CPUCodeGen(TargetCodeGenerator):
         """
         Generates code for the beginning of a tasklet. This method is
         intended to be overloaded by subclasses.
+
         :param sdfg: The SDFG to generate code from.
         :param dfg_scope: The `ScopeSubgraphView` to generate code from.
         :param state_id: The node ID of the state in the given SDFG.
@@ -2078,6 +2082,7 @@ class CPUCodeGen(TargetCodeGenerator):
         """
         Generates code for the end of a tasklet. This method is intended to be
         overloaded by subclasses.
+
         :param sdfg: The SDFG to generate code from.
         :param dfg_scope: The `ScopeSubgraphView` to generate code from.
         :param state_id: The node ID of the state in the given SDFG.

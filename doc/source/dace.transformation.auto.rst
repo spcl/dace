@@ -21,3 +21,12 @@ Module contents
    :members:
    :undoc-members:
    :show-inheritance:
+
+
+dace.transformation.auto.fpga module
+------------------------------------
+
+.. automodule:: dace.transformation.auto.fpga
+   :members:
+   :undoc-members:
+   :show-inheritance:

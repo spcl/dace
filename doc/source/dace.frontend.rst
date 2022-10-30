@@ -9,7 +9,6 @@ Subpackages
    dace.frontend.common
    dace.frontend.octave
    dace.frontend.python
-   dace.frontend.tensorflow
 
 Submodules
 ----------

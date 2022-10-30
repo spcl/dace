@@ -605,11 +605,12 @@ class StreamingComposition(xf.SingleStateTransformation):
 
     def can_be_applied(self, graph: SDFGState, expr_index: int, sdfg: SDFG, permissive: bool = False) -> bool:
         access = self.access
+        # import pdb
+        # pdb.set_trace()
         # Make sure the access node is only accessed once (read or write),
         # and not at the same time
         if graph.in_degree(access) > 1 or graph.out_degree(access) > 1:
             return False
-
         # If already a stream, skip
         desc = sdfg.arrays[access.data]
         if isinstance(desc, data.Stream):
