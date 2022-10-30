@@ -1256,7 +1256,8 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
 
             self._dispatcher.defined_vars.add_global(name, DefinedType.Stream, ctype)
             num_streams = dace.symbolic.evaluate(node.shape[0], sdfg.constants)
-            self._dispatcher.defined_vars.add_global(name, DefinedType.Stream, node.ctype)
+            # TODO breaks nested SDFG typing
+            #self._dispatcher.defined_vars.add_global(name, DefinedType.Stream, node.ctype)
             key = 0 if is_output else 1
 
             # Define here external streams

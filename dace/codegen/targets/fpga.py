@@ -370,6 +370,7 @@ class FPGACodeGen(TargetCodeGenerator):
                     # register this as copy dispatcher only if the destination is scheduled on FPGA
                     self._dispatcher.register_copy_dispatcher(storage_from, storage_to, dtypes.ScheduleType.FPGA_Device,
                                                               self)
+                    self._dispatcher.register_copy_dispatcher(storage_from, storage_to, dtypes.ScheduleType.FPGA_Double, self)
                 else:
                     self._dispatcher.register_copy_dispatcher(storage_from, storage_to, None, self)
         self._dispatcher.register_copy_dispatcher(dtypes.StorageType.FPGA_Global, dtypes.StorageType.CPU_Heap, None,
@@ -582,8 +583,8 @@ class FPGACodeGen(TargetCodeGenerator):
             for kern, kern_id in kernels:
                 # Generate all kernels in this state
                 subgraphs = dace.sdfg.concurrent_subgraphs(kern)
-                single_sgs = []
-                multi_sgs = []
+                single_sgs: list(ScopeSubgraphView) = []
+                multi_sgs: list(ScopeSubgraphView) = []
                 for sg in subgraphs:
                     if self.is_multi_pumped_subgraph(sg):
                         multi_sgs.append(sg)
@@ -608,7 +609,6 @@ class FPGACodeGen(TargetCodeGenerator):
                 # If this kernels comes from a Nested SDFG, use that name also
                 if sdfg.parent_nsdfg_node is not None:
                     kernel_name = f"{sdfg.parent_nsdfg_node.label}_{state.label}_{kern_id}_{sdfg.sdfg_id}"
-
                 else:
                     kernel_name = f"{state.label}_{kern_id}_{sdfg.sdfg_id}"
 
@@ -626,13 +626,15 @@ class FPGACodeGen(TargetCodeGenerator):
                 self.generate_kernel(sdfg, state, kernel_name, single_sgs, function_stream, callsite_stream,
                                      state_host_header_stream, state_host_body_stream, instrumentation_stream,
                                      state_parameters, kern_id)
-                func_stream = CodeIOStream()
-                call_stream = CodeIOStream()
-                ignore = CodeIOStream()
-                # TODO should be able to generate multiple 'pumps'. e.g. pump b and d in 
-                # a > b > c > d > e
-                # Currently, it would only work if directly chained subgraphs are pumped?
-                self.generate_kernel(sdfg, state, f'{kernel_name}_pumped', multi_sgs, func_stream, call_stream, state_host_header_stream, state_host_body_stream, ignore, state_parameters, 42)
+                
+                if len(multi_sgs) != 0:
+                    func_stream = CodeIOStream()
+                    call_stream = CodeIOStream()
+                    ignore = CodeIOStream()
+                    # TODO should be able to generate multiple 'pumps'. e.g. pump b and d in 
+                    # a > b > c > d > e
+                    # Currently, it would only work if directly chained subgraphs are pumped?
+                    self.generate_kernel(sdfg, state, f'{kernel_name}_pumped', multi_sgs, func_stream, call_stream, state_host_header_stream, state_host_body_stream, ignore, state_parameters, 42)
 
             kernel_args_call_host = []
             kernel_args_opencl = []
@@ -795,7 +797,6 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
         # Build a dictionary of arrays to arbitrary data nodes referring to
         # them, needed to trace memory bank assignments and to pass to the array
         # allocator
-        aoeu: SubgraphView = subgraphs[0]
         data_to_node: Dict[str, dace.nodes.Node] = {}
 
         global_data_parameters = set()
