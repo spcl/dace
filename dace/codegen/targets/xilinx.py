@@ -499,7 +499,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         kernel_stream.write("#pragma HLS DEPENDENCE variable={} false".format(var_name), sdfg, state_id, node)
 
     def generate_kernel_boilerplate_pre(self, sdfg, state_id, kernel_name, parameters, bank_assignments, module_stream,
-                                        kernel_stream, external_streams):
+                                        kernel_stream, external_streams, multi_pumped):
 
         # Write header
         module_stream.write("""#include <dace/fpga_device.h>
@@ -556,13 +556,10 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                                                    True,
                                                    interface,
                                                    decouple_array_interfaces=self._decouple_array_interfaces)
+            stream_args.append(kernel_arg)
 
-            if kernel_arg:
-                #stream_args.append(kernel_arg)
-                if kernel_arg in stream_args: # TODO sometimes streams are added as an argument twice. In this case it is used by 2 RTL kernels, which means the host shouldn't have them, as there can only be two accessing a stream at one point in time.
-                    stream_args.remove(kernel_arg)
-                else:
-                    stream_args.append(kernel_arg)
+        # TODO sometimes streams are added as an argument twice. In this case it is used by 2 RTL kernels, which means the host shouldn't have them, as there can only be two accessing a stream at one point in time.
+        stream_args = dtypes.deduplicate(stream_args)
 
         if not self._decouple_array_interfaces:
             kernel_args = dtypes.deduplicate(kernel_args)
@@ -589,25 +586,24 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                 self._bank_assignments[(kernel_name, interface_name)] = memory_bank
                 num_mapped_args += 1
 
-        for arg in kernel_args + ["return"]:
-            var_name = re.findall(r"\w+", arg)[-1]
-            kernel_stream.write("#pragma HLS INTERFACE s_axilite port={} bundle=control".format(var_name))
 
-        # TODO same comment as with the stream_args above; they are added double, when they shouldn't be.
+        if multi_pumped:
+            kernel_stream.write('#pragma HLS INTERFACE ap_ctrl_none port=return')
+        else:
+            for arg in kernel_args + ["return"]:
+                var_name = re.findall(r"\w+", arg)[-1]
+                kernel_stream.write("#pragma HLS INTERFACE s_axilite port={} bundle=control".format(var_name))
+
         axis_pragmas = []
         for _, var_name, node, _ in external_streams:
             arr_len = dace.symbolic.evaluate(node.shape[0], sdfg.constants)
             if arr_len > 1:
                 partition_pragma = f"#pragma HLS ARRAY_PARTITION variable={var_name} dim=1 complete"
-                if partition_pragma in axis_pragmas:
-                    axis_pragmas.remove(partition_pragma)
-                else:
-                    axis_pragmas.append(partition_pragma)
+                axis_pragmas.append(partition_pragma)
             port_pragma = f"#pragma HLS INTERFACE axis port={var_name}"
-            if port_pragma in axis_pragmas:
-                axis_pragmas.remove(port_pragma)
-            else:
-                axis_pragmas.append(port_pragma)
+            axis_pragmas.append(port_pragma)
+        # TODO same comment as with the stream_args above; they are added double, when they shouldn't be.
+        axis_pragmas = dtypes.deduplicate(axis_pragmas)
         for axis_pragma in axis_pragmas:
             kernel_stream.write(axis_pragma)
 
@@ -1238,15 +1234,15 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
 
         state_id = sdfg.node_id(state)
 
+        multi_pumped = all([self.is_multi_pumped_subgraph(sg) for sg in subgraphs])
+
         self.generate_kernel_boilerplate_pre(sdfg, state_id, kernel_name, global_data_parameters, bank_assignments,
-                                             module_stream, entry_stream, external_streams)
+                                             module_stream, entry_stream, external_streams, multi_pumped)
 
         # Emit allocations
         for node in top_level_local_data:
             self._dispatcher.dispatch_allocate(sdfg, state, state_id, node, node.desc(sdfg), module_stream,
                                                entry_stream)
-
-        multi_pumped = all([self.is_multi_pumped_subgraph(sg) for sg in subgraphs])
 
         for is_output, name, node, _ in external_streams:
             if not isinstance(node, dt.Stream):

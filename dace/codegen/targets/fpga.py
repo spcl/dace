@@ -619,13 +619,11 @@ class FPGACodeGen(TargetCodeGenerator):
                                      state_parameters, kern_id)
                 func_stream = CodeIOStream()
                 call_stream = CodeIOStream()
-                a0 = CodeIOStream()
-                a1 = CodeIOStream()
-                a2 = CodeIOStream()
+                ignore = CodeIOStream()
                 # TODO should be able to generate multiple 'pumps'. e.g. pump b and d in 
                 # a > b > c > d > e
                 # Currently, it would only work if directly chained subgraphs are pumped?
-                self.generate_kernel(sdfg, state, f'{kernel_name}_pumped', multi_sgs, func_stream, call_stream, a0, a1, a2, state_parameters, 42)
+                self.generate_kernel(sdfg, state, f'{kernel_name}_pumped', multi_sgs, func_stream, call_stream, state_host_header_stream, state_host_body_stream, ignore, state_parameters, 42)
 
             kernel_args_call_host = []
             kernel_args_opencl = []
