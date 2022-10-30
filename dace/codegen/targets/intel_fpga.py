@@ -168,7 +168,7 @@ DACE_EXPORTED void __dace_exit_intel_fpga({sdfg.name}_t *__state) {{
 
         kernel_code_objs = [
             CodeObject(kernel_name, code, "cl", IntelFPGACodeGen, "Intel FPGA", target_type="device")
-            for (kernel_name, code) in self._kernel_codes
+            for (kernel_name, code, _) in self._kernel_codes
         ]
         # add the util header if present
         other_code_objs = [

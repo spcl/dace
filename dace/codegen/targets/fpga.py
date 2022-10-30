@@ -386,7 +386,6 @@ class FPGACodeGen(TargetCodeGenerator):
         return False
 
     def is_double_pumped(self, subgraph):
-        return None
         for n in subgraph.nodes():
             if isinstance(n, dace.nodes.MapEntry) and ((n.schedule == dace.ScheduleType.FPGA_Double) or (n.schedule == dace.ScheduleType.FPGA_Double_out)):
                 return n.schedule
@@ -623,7 +622,10 @@ class FPGACodeGen(TargetCodeGenerator):
                 a0 = CodeIOStream()
                 a1 = CodeIOStream()
                 a2 = CodeIOStream()
-                self.generate_kernel(sdfg, state, 'dp_kernel', multi_sgs, func_stream, call_stream, a0, a1, a2, state_parameters, 42)
+                # TODO should be able to generate multiple 'pumps'. e.g. pump b and d in 
+                # a > b > c > d > e
+                # Currently, it would only work if directly chained subgraphs are pumped?
+                self.generate_kernel(sdfg, state, f'{kernel_name}_pumped', multi_sgs, func_stream, call_stream, a0, a1, a2, state_parameters, 42)
 
             kernel_args_call_host = []
             kernel_args_opencl = []
@@ -2253,9 +2255,12 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
         self._kernel_count = self._kernel_count + 1
         self._in_device_code = False
         self._cpu_codegen._packed_types = False
+        
+        # Check if this is a multi pumped kernel
+        is_multi_pumped = all([self.is_multi_pumped_subgraph(sg) for sg in subgraphs])
 
         # Store code strings to be passed to compilation phase
-        self._kernel_codes.append((kernel_name, kernel_stream.getvalue()))
+        self._kernel_codes.append((kernel_name, kernel_stream.getvalue(), is_multi_pumped))
 
         self._allocated_global_arrays = set()
 

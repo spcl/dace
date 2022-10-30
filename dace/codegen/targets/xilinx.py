@@ -175,13 +175,13 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                                    target_type="host")
 
         ip_objs = [
-            CodeObject(kernel_name, code, ext, XilinxCodeGen, "ip", target_type="ip")
+            CodeObject(kernel_name, code, ext, XilinxCodeGen, "Xilinx", target_type="device")
             for (kernel_name, ext, code) in self._ip_codes
         ]
 
         kernel_code_objs = [
-            CodeObject(kernel_name, code, "cpp", XilinxCodeGen, "Xilinx", target_type="device")
-            for (kernel_name, code) in self._kernel_codes
+            CodeObject(kernel_name, code, f"{'ip.' if is_multipumped else ''}cpp", XilinxCodeGen, "Xilinx", target_type="device")
+            for (kernel_name, code, is_multipumped) in self._kernel_codes
         ]
 
         # Memory bank and streaming interfaces connectivity configuration file
@@ -203,7 +203,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
             elif src.replace('m_axis', 's_axis') != dst:
                 link_cfg.write(f"stream_connect={src}:{dst}")
 
-        for kernel_name, _ in self._kernel_codes:
+        for kernel_name, _, _ in self._kernel_codes:
             link_cfg.write(f'slr={kernel_name}_1:SLR0')
         for kernel_name, _, _ in self._ip_codes:
             if kernel_name.endswith('_top'):
@@ -753,7 +753,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         # Check if we are generating an RTL module, in which case only the
         # accesses to the streams should be handled
         rtl_tasklet = self.is_rtl_tasklet(subgraph)
-        double_pumped = self.is_double_pumped(subgraph)
+        double_pumped = False #self.is_double_pumped(subgraph)
 
         if rtl_tasklet or double_pumped:
             label = 'RTL' if rtl_tasklet else 'Double pumped'
@@ -845,7 +845,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
             #double_kernel_call = CodeIOStream()
             #double_kernel_module = CodeIOStream()
 
-            if double_pumped:
+            if False:#double_pumped:
                 if self.double_modules is None:
                     self.double_modules = CodeIOStream()
                     self.double_modules.write('''#include <dace/fpga_device.h>
@@ -959,7 +959,8 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                     wtf_kernel_module = CodeIOStream()
                     wtf_kernel_call.write("void {}({}) {{".format(name, ", ".join(kernel_args_module_double)))
 
-            self._dispatcher.dispatch_subgraph(sdfg,
+            if False:
+                self._dispatcher.dispatch_subgraph(sdfg,
                                             subgraph,
                                             state_id,
                                             double_kernel_call, # if inward else wtf_kernel_module,
@@ -968,10 +969,10 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                                             skip_exit_node=top_unrolled)
 
             if double_pumped:
-                double_kernel_module.write('}')
+                #double_kernel_module.write('}')
 
-                self._ip_codes.append((external_name, 'cpp',
-                (double_kernel_module.getvalue() + double_kernel_call.getvalue())))
+                #self._ip_codes.append((external_name, 'cpp',
+                #(double_kernel_module.getvalue() + double_kernel_call.getvalue())))
 
                 # Generate all of the RTL files
                 rtllib_config = {
@@ -1245,14 +1246,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
             self._dispatcher.dispatch_allocate(sdfg, state, state_id, node, node.desc(sdfg), module_stream,
                                                entry_stream)
 
-        # double_pumped = None
-        # for n in state.nodes():
-        #     if (isinstance(n, dace.nodes.Tasklet)
-        #             and n.language == dace.dtypes.Language.SystemVerilog):
-        #         rtl_tasklet = n
-        #         break
-        #     if isinstance(n, dace.nodes.MapEntry) and ((n.schedule == dace.ScheduleType.FPGA_Double) or (n.schedule == dace.ScheduleType.FPGA_Double_out)):
-        #         double_pumped = n
+        multi_pumped = all([self.is_multi_pumped_subgraph(sg) for sg in subgraphs])
 
         for is_output, name, node, _ in external_streams:
             if not isinstance(node, dt.Stream):
@@ -1285,6 +1279,55 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
 
         self.generate_modules(sdfg, state, kernel_name, subgraphs, subgraph_parameters, module_stream, entry_stream,
                               state_host_body_stream, instrumentation_stream)
+
+        if multi_pumped:
+            rtllib_config = {
+                "name": kernel_name,
+                "buses": { # TODO unroll factor
+                    pname: ('m_axis' if is_output or pname.endswith('_out') else 's_axis', p.veclen)
+                    for is_output, pname, p, _ in external_streams
+                },
+                "params": {
+                    "scalars": {
+                        #name: total_size
+                        #for name, (_, total_size) in scalars.items()
+                    },
+                    "memory": {}
+                },
+                #"unroll": True,
+                "double_pump": True,
+                "ip_cores": {
+                    # TODO Maybe with some help from rtllib
+                },
+                #"version": 20211,
+                "clocks": 2 # TODO make this "trickle" down to here. Maybe add speeds as well? Might be usefull when packaging
+            }
+            rtllib_config['ip_cores'][f'{kernel_name}_0'] = {
+                'name': f'{kernel_name}',
+                'vendor': 'xilinx.com',
+                'library': 'hls',
+                'version': '1.0',
+                'params': {}
+            }
+            for _, pname, p, _ in external_streams:
+                rtllib_config['ip_cores'][f'clock_sync_{pname}'] = {
+                    'name': 'axis_clock_converter',
+                    'vendor': 'xilinx.com',
+                    'library': 'ip',
+                    'version': '1.1',
+                    'params': {
+                        'CONFIG.TDATA_NUM_BYTES': p.dtype.bytes,
+                        'CONFIG.SYNCHRONIZATION_STAGES': 8,
+                    }
+                }
+
+            self._ip_codes.append((f"{kernel_name}_control", 'v', rtllib_control(rtllib_config)))
+
+            self._ip_codes.append((f'{kernel_name}_top', 'v', rtllib_top(rtllib_config)))
+
+            self._ip_codes.append((f'{kernel_name}_package', 'tcl', rtllib_package(rtllib_config)))
+
+            self._ip_codes.append((f'{kernel_name}_synth', 'tcl', rtllib_synth(rtllib_config)))
 
         self.generate_host_function_body(sdfg, state, kernel_name, predecessors,
                                          global_data_parameters + external_streams, rtl_tasklet_names,
