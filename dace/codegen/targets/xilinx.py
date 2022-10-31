@@ -617,7 +617,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
 
     def generate_host_function_body(self, sdfg: dace.SDFG, state: dace.SDFGState, kernel_name: str, predecessors: list,
                                     parameters: list, rtl_tasklet_names: list, kernel_stream: CodeIOStream,
-                                    instrumentation_stream: CodeIOStream):
+                                    instrumentation_stream: CodeIOStream, multi_pumped: bool):
         """
         Generate the host-specific code for spawning and synchronizing the given kernel.
 
@@ -628,6 +628,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         :param rtl_tasklet_names: A list of RTL tasklet names.
         :param kernel_stream: Device-specific code stream.
         :param instrumentation_stream: Code for profiling kernel execution time.
+        :param multi_pumped: Whether the kernel is multi pumped
         """
 
         # Keep track of kernel arguments as (arg, interface_id) pair
@@ -673,9 +674,14 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         if not self._decouple_array_interfaces:
             kernel_args = dtypes.deduplicate(kernel_args)
         # Launch HLS kernel, passing synchronization events (if any)
-        kernel_stream.write(
-            f"""auto {kernel_name}_kernel = program.MakeKernel({kernel_function_name}, "{kernel_function_name}", {", ".join(ka[0] for ka in kernel_args)});"""
-        )
+        if multi_pumped:
+            kernel_stream.write(
+                f"""auto {kernel_name}_kernel = program.MakeKernel("{kernel_function_name}_top", {", ".join(ka[0] for ka in kernel_args)});"""
+            )
+        else:
+            kernel_stream.write(
+                f"""auto {kernel_name}_kernel = program.MakeKernel({kernel_function_name}, "{kernel_function_name}", {", ".join(ka[0] for ka in kernel_args)});"""
+            )
 
         kernel_stream.write(
             f"""\
@@ -1225,9 +1231,11 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
             self.rtl_tasklet_name(nd, state, sdfg) for nd in state.nodes() if isinstance(nd, nodes.RTLTasklet)
         ]
 
+        multi_pumped = all([self.is_multi_pumped_subgraph(sg) for sg in subgraphs])
+
         # Generate host code
         self.generate_host_header(sdfg, kernel_name, global_data_parameters + external_streams,
-                                  state_host_header_stream)
+                                  state_host_header_stream, multi_pumped)
         self.generate_host_function_boilerplate(sdfg, state, nested_global_transients, state_host_body_stream)
 
         # Now we write the device code
@@ -1235,8 +1243,6 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         entry_stream = CodeIOStream()
 
         state_id = sdfg.node_id(state)
-
-        multi_pumped = all([self.is_multi_pumped_subgraph(sg) for sg in subgraphs])
 
         self.generate_kernel_boilerplate_pre(sdfg, state_id, kernel_name, global_data_parameters, bank_assignments,
                                              module_stream, entry_stream, external_streams, multi_pumped)
@@ -1333,7 +1339,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
 
         self.generate_host_function_body(sdfg, state, kernel_name, predecessors,
                                          global_data_parameters + external_streams, rtl_tasklet_names,
-                                         state_host_body_stream, instrumentation_stream)
+                                         state_host_body_stream, instrumentation_stream, multi_pumped)
 
         # Store code to be passed to compilation phase
         # self._host_codes.append((kernel_name, host_code_stream.getvalue()))
@@ -1342,7 +1348,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
 
         self.generate_kernel_boilerplate_post(kernel_stream, sdfg, state_id)
 
-    def generate_host_header(self, sdfg, kernel_function_name, parameters, host_code_stream):
+    def generate_host_header(self, sdfg, kernel_function_name, parameters, host_code_stream, multi_pumped):
 
         kernel_args = []
         for is_output, name, arg, interface_ids in parameters:
@@ -1374,11 +1380,12 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                 kernel_args.append(arg.as_arg(with_types=True, name=name))
         if not self._decouple_array_interfaces:
             kernel_args = dtypes.deduplicate(kernel_args)
+        ignore_signature = '//' if multi_pumped else ''
         host_code_stream.write(
             """\
 // Signature of kernel function (with raw pointers) for argument matching
-DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(kernel_function_name=kernel_function_name,
-                                                                        kernel_args=", ".join(kernel_args)), sdfg)
+{ignore_signature}DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(kernel_function_name=kernel_function_name,
+                                                                        ignore_signature=ignore_signature,kernel_args=", ".join(kernel_args)), sdfg)
 
     def generate_memlet_definition(self, sdfg, dfg, state_id, src_node, dst_node, edge, callsite_stream):
         memlet = edge.data
