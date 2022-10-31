@@ -29,6 +29,12 @@ def cli(size_n, veclen, double_pumped):
     
     # Generate the initial SDFG
     sdfg = dace.program(vadd).to_sdfg()
+    
+    # Remove underscores as Xilinx does not like them
+    for dn in sdfg.nodes()[0].data_nodes():
+        if '__' in dn.data:
+            new_name = dn.data.replace('__', '')
+            sdfg.replace(dn.data, new_name)
 
     # Apply vectorization transformation
     ambles = size_n % veclen != 0
