@@ -8,6 +8,9 @@ from dace.sdfg.state import SDFGState
 from dace.transformation import transformation
 from dace.transformation.subgraph import helpers
 
+dp = True
+sched = dtypes.ScheduleType.FPGA_Double if dp else dtypes.ScheduleType.FPGA_Device
+
 @properties.make_properties
 class TemporalVectorization(transformation.SubgraphTransformation):
     '''
@@ -96,7 +99,7 @@ class TemporalVectorization(transformation.SubgraphTransformation):
         innermost_map = [n.src.map for n in old_path if isinstance(n.src, nodes.MapEntry)][-1]
 
         # Insert gearboxing for converting stream widths
-        gearbox = Gearbox(innermost_map.range.ranges[0][1]+1, schedule=dace.ScheduleType.FPGA_Double)
+        gearbox = Gearbox(innermost_map.range.ranges[0][1]+1, schedule=sched)
         gearbox_src = state.add_write(name)
         state.add_memlet_path(src, gearbox, dst_conn='from_memory', memlet=Memlet(f'{src.data}[0]'))
         state.add_memlet_path(gearbox, gearbox_src, src_conn='to_kernel', memlet=Memlet(f'{name}[0]'))
@@ -121,7 +124,7 @@ class TemporalVectorization(transformation.SubgraphTransformation):
         innermost_map = [n.dst.map for n in old_path if isinstance(n.dst, nodes.MapExit)][0]
         
         # Insert gearbox for converting stream widths.
-        gearbox = Gearbox(innermost_map.range.ranges[0][1]+1, schedule=dace.ScheduleType.FPGA_Double)
+        gearbox = Gearbox(innermost_map.range.ranges[0][1]+1, schedule=sched)
         gearbox_dst = state.add_read(name)
         state.add_memlet_path(gearbox_dst, gearbox, dst_conn='from_memory', memlet=Memlet(f'{name}[0]'))
         state.add_memlet_path(gearbox, dst, src_conn='to_kernel', memlet=Memlet(f'{dst.data}[0]'))
@@ -148,4 +151,4 @@ class TemporalVectorization(transformation.SubgraphTransformation):
             rng = list(map.range.ranges[0])
             rng[1] = ((rng[1] + 1) * 2) - 1
             map.range.ranges[0] = rng
-            map.schedule = dace.ScheduleType.FPGA_Double
+            map.schedule = sched

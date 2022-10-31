@@ -1,6 +1,3 @@
-import sys
-sys.path.insert(0, '/home/carljohnsen/git/dace')
-
 import click
 import dace
 import numpy as np

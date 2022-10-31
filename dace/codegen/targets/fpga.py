@@ -7,8 +7,6 @@ import functools
 import itertools
 import re
 import warnings
-from dace.frontend.python import interface
-from dace.frontend.python.newast import Shape
 import sympy as sp
 import numpy as np
 from typing import Dict, Iterable, List, Set, Tuple, Union
@@ -29,7 +27,6 @@ from dace.codegen.common import update_persistent_desc
 from dace.codegen.targets.target import (TargetCodeGenerator, IllegalCopy, make_absolute)
 from dace.codegen import cppunparse
 from dace.properties import Property, make_properties, indirect_properties
-from dace.sdfg.graph import SubgraphView
 from dace.sdfg.state import SDFGState
 from dace.sdfg.utils import is_fpga_kernel
 from dace.symbolic import evaluate
@@ -107,6 +104,7 @@ def is_fpga_array(array: dt.Data):
     :return: True if this array is placed on FPGA memory
     """
     return isinstance(array, dt.Array) and array.storage in _FPGA_STORAGE_TYPES
+
 
 def iterate_multibank_interface_ids(array: dt.Array, interface_ids: Union[int, List[Tuple[int, int]]]):
     """
@@ -345,8 +343,7 @@ class FPGACodeGen(TargetCodeGenerator):
 
         self._decouple_array_interfaces = False
         # Register additional FPGA dispatchers
-        self._dispatcher.register_map_dispatcher(
-            [dtypes.ScheduleType.FPGA_Device, dtypes.ScheduleType.FPGA_Double, dtypes.ScheduleType.FPGA_Double_out], self)
+        self._dispatcher.register_map_dispatcher([dtypes.ScheduleType.FPGA_Device, dtypes.ScheduleType.FPGA_Double], self)
 
         self._dispatcher.register_state_dispatcher(self, predicate=is_fpga_kernel)
 
@@ -393,17 +390,6 @@ class FPGACodeGen(TargetCodeGenerator):
     def has_finalizer(self):
         return False
 
-    def is_double_pumped(self, subgraph):
-        for n in subgraph.nodes():
-            if isinstance(n, dace.nodes.MapEntry) and ((n.schedule == dace.ScheduleType.FPGA_Double) or (n.schedule == dace.ScheduleType.FPGA_Double_out)):
-                return n.schedule
-            if isinstance(n, dace.nodes.NestedSDFG):
-                for sg in dace.sdfg.concurrent_subgraphs(n.sdfg.start_state):
-                    nested_double = self.is_double_pumped(sg)
-                    if nested_double:
-                        return nested_double
-        return None
-
     def is_rtl_tasklet(self, subgraph):
         for n in subgraph.nodes():
             if (isinstance(n, dace.nodes.Tasklet) and n.language == dace.dtypes.Language.SystemVerilog):
@@ -417,11 +403,7 @@ class FPGACodeGen(TargetCodeGenerator):
                     if self.is_external_subgraph(sg):
                         return True
             elif any([
-                isinstance(n, dace.nodes.Tasklet) and n.language == dace.dtypes.Language.SystemVerilog,
-                #isinstance(n, dace.nodes.MapEntry) and (
-                #    (n.schedule == dace.ScheduleType.FPGA_Double) or (n.schedule == dace.ScheduleType.FPGA_Double_out)
-                #)
-                ]):
+                isinstance(n, dace.nodes.Tasklet) and n.language == dace.dtypes.Language.SystemVerilog]):
                 return True
         return False
     
@@ -431,9 +413,7 @@ class FPGACodeGen(TargetCodeGenerator):
                 for sg in dace.sdfg.concurrent_subgraphs(n.sdfg.start_state):
                     if self.is_multi_pumped_subgraph(sg):
                         return True
-            elif isinstance(n, dace.nodes.MapEntry) and (
-                    (n.schedule == dace.ScheduleType.FPGA_Double) or (n.schedule == dace.ScheduleType.FPGA_Double_out)
-                ):
+            elif isinstance(n, dace.nodes.MapEntry) and n.schedule == dace.ScheduleType.FPGA_Double:
                 return True
         return False
             
@@ -633,7 +613,7 @@ class FPGACodeGen(TargetCodeGenerator):
                     ignore = CodeIOStream()
                     # TODO should be able to generate multiple 'pumps'. e.g. pump b and d in 
                     # a > b > c > d > e
-                    # Currently, it would only work if directly chained subgraphs are pumped?
+                    # Currently, it only works if the subgraphs are directly chained
                     self.generate_kernel(sdfg, state, f'{kernel_name}_pumped', multi_sgs, func_stream, call_stream, state_host_header_stream, state_host_body_stream, ignore, state_parameters, 42)
 
             kernel_args_call_host = []
@@ -792,7 +772,6 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
             for n in sg.data_nodes():
                 datanodes.add(n.data)
         used_inside = [dn for dn in datanodes if dn in transients]
-        #used_outside.extend([dn for dn in datanodes if dn in transients])
 
         # Build a dictionary of arrays to arbitrary data nodes referring to
         # them, needed to trace memory bank assignments and to pass to the array
@@ -812,7 +791,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
         subgraph_parameters = collections.OrderedDict()  # {subgraph: [params]}
         nested_global_transients = set()
         # [(Is an output, dataname string, data object, interface)]
-        # TODO rephrase is_output. Currently "Is an output from the main kernel", but there can be more kernels, so make it "is output from current subgraph", but then it needs to map to subgraph??
+        # TODO rephrase is_output. Currently it is "Is an output from the main kernel", but in the future there can be more kernels, so make it "is output from current subgraph", but then it needs to map to each subgraph.
         external_streams: Set[tuple[bool, str, dt.Data, dict[str, int]]] = set()
 
         # Mapping from global arrays to memory interfaces
@@ -857,18 +836,12 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
             array_to_banks_used_out: Dict[str, Set[int]] = {}
             array_to_banks_used_in: Dict[str, Set[int]] = {}
             sources = subgraph.source_nodes()
-            # TODO outermost being a map
+            # Handle the case where the outermost node in the subgraph is a map
             if len(sources) == 1 and isinstance(sources[0], dace.nodes.MapEntry):
                 sources = subgraph.successors(sources[0])
             for n in sources:
                 # Check if the node is connected to an RTL tasklet, in which
                 # case it should be an external stream
-                # TODO is_external_stream guarder imod at A_pipe (internt allokerede) kommer ud i external, hvilket de ikke skal.
-                # Så, streams skal kun tilføjes til external_streams, hvis de faktisk er eksterne.
-                # Men men! Hvis der er en RTL/DP subgraph, så skal de tilføjes. Ellers skal de ikke nødvendigvis, det ville kun være
-                # hvis _num_kernels > 1, og denne subgraph ikke er en RTL/DP !
-                #if is_external_stream(n, subgraph) and self._num_kernels > 1:
-
                 is_external = is_external_subgraph
                 is_multi = is_multi_subgraph
                 is_output = True
@@ -884,22 +857,19 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                         is_external = True
                         is_output = False
 
-                # TODO internally allocated streams are also captured here and below, which they shouldn't. (the A_pipe in the doubled pumped GEMM)
                 if is_external:
                     external_streams.add((is_output, n.data, subsdfg.arrays[n.data], None))
-                    #external_streams |= {(False, e.data.data, subsdfg.arrays[e.data.data], None)
-                    #                     for e in state.out_edges(n)
-                    #                     if isinstance(subsdfg.arrays[e.data.data], dt.Stream)}
                 else:
-                    #candidates += [(False, e.data.data, subsdfg.arrays[e.data.data]) for e in state.in_edges(n)]
                     candidates.append((False, n.data, subsdfg.arrays[n.data]))
+                    
             sinks = subgraph.sink_nodes()
+            # Handle the case where the outermost node is a map
             if len(sinks) == 1 and isinstance(sinks[0], dace.nodes.MapExit):
                 sinks = subgraph.predecessors(sinks[0])
             for n in sinks:
                 # Check if the node is connected to an RTL tasklet, in which
                 # case it should be an external stream
-                is_external = is_external_subgraph # is_external_stream(n, subgraph)
+                is_external = is_external_subgraph
                 is_multi = is_multi_subgraph
                 is_output = False
                 if not is_external and not is_multi and self._num_kernels > 1:
@@ -916,12 +886,8 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
 
                 if is_external:
                     external_streams.add((is_output, n.data, subsdfg.arrays[n.data], None))
-                    #external_streams |= {(True, e.data.data, subsdfg.arrays[e.data.data], None)
-                    #                     for e in state.in_edges(n)
-                    #                     if isinstance(subsdfg.arrays[e.data.data], dt.Stream)}
                 else:
                     candidates.append((True, n.data, subsdfg.arrays[n.data]))
-                    #candidates += [(True, e.data.data, subsdfg.arrays[e.data.data]) for e in state.out_edges(n)]
             # Find other data nodes that are used internally
             for n, scope in subgraph.all_nodes_recursive():
                 if isinstance(n, dace.sdfg.nodes.AccessNode):
@@ -974,9 +940,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                 # Ignore views, as these never need to be explicitly passed
                 if isinstance(desc, dt.View):
                     continue
-                # Only distinguish between inputs and outputs for arrays # TODO why? Because otherwise the same one gets defined multiple times. Is this a problem?
-                # TODO check if it isn't an array, it might be a stream inside shared_data, which could be used by a double pumped kernel, in which case it should have is_output set correctly!
-                if not isinstance(desc, dt.Array):# and not data_name in shared_data:
+                if not isinstance(desc, dt.Array):
                     is_output = None
                 # If this is a global array, assign the correct interface ID and
                 # memory interface (e.g., DDR or HBM bank)
@@ -1084,7 +1048,6 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                     top_level_local_data.add(data_name)
                 elif data_name in used_inside:
                     subgraph_parameters[subgraph].add((is_output, data_name, desc, interface_id))
-                    # TODO hvis de krydser henover single/double, så er det en global data parameter. Ellers, så skal den i top_level_local_data! Det kan gøres ved at tjekke om alle subgraphs der rør den er multi pumped (Eller om alle sammen IKKE er, for den sags skyld.). 
 
             # Order by name
             subgraph_parameters[subgraph] = list(sorted(subgraph_parameters[subgraph], key=sort_func))
@@ -1871,7 +1834,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
         if hasattr(self, method_name):
 
             if hasattr(node, "schedule") and node.schedule not in [
-                    dtypes.ScheduleType.Default, dtypes.ScheduleType.FPGA_Device, dtypes.ScheduleType.FPGA_Double, dtypes.ScheduleType.FPGA_Double_out
+                    dtypes.ScheduleType.Default, dtypes.ScheduleType.FPGA_Device, dtypes.ScheduleType.FPGA_Double
             ]:
                 warnings.warn("Found schedule {} on {} node in FPGA code. "
                               "Ignoring.".format(node.schedule,
@@ -2167,8 +2130,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
 
         # Emit internal transient array allocation
         to_allocate = dace.sdfg.local_transients(sdfg, sdfg.node(state_id), node)
-        # TODO hardcoded
-        allocated = set(['A_pipe', 'B_pipe', 'C_pipe'])
+        allocated = set()
         for child in dfg.scope_children()[node]:
             if not isinstance(child, dace.sdfg.nodes.AccessNode):
                 continue

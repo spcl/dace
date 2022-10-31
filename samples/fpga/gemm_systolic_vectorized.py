@@ -78,7 +78,6 @@ def make_copy_to_fpga_state(sdfg, vtype):
                        "bank": 1
                    },
                    storage=dace.dtypes.StorageType.FPGA_Global)
-
     A_device = state.add_write("A_device")
     B_device = state.add_write("B_device")
     C_device = state.add_write("C_device")
@@ -179,6 +178,7 @@ def make_read_A(sdfg, state, vtype):
                           dst_conn="from_transpose",
                           memlet=dace.Memlet(f"transpose[k1]"))
     state.add_memlet_path(tasklet, transpose_exit, pipe_out, src_conn="to_kernel", memlet=dace.Memlet("A_pipe[0]"))
+
 
 def make_read_B(sdfg, state, vtype):
 
@@ -347,6 +347,7 @@ def make_write_C(sdfg, state, vtype):
 
 
 def make_compute(sdfg, state, vtype):
+
     dtype = vtype.base_type
 
     # Pipes connecting the systolic array
@@ -460,7 +461,6 @@ c_out = c_val + a_in * b_in""")
                           k_entry,
                           inner_entry,
                           compute_tasklet,
-
                           dst_conn="b_in",
                           memlet=dace.Memlet("B_pipe[p]"))
     state.add_memlet_path(C_buffer_read,
@@ -478,7 +478,6 @@ c_out = c_val + a_in * b_in""")
                           src_conn="b_out",
                           memlet=dace.Memlet("B_pipe[p + 1]", dynamic=True))
     state.add_memlet_path(compute_tasklet,
-
                           inner_exit,
                           k_exit,
                           C_buffer_write,
@@ -587,24 +586,6 @@ def make_fpga_state(sdfg, vtype):
 
     state = sdfg.add_state("gemm")
 
-    sdfg.add_stream("A_pipe_in",
-                    dace.float32,
-                    transient=True,
-                    shape=(1, ),
-                    storage=dace.dtypes.StorageType.FPGA_Local,
-                    buffer_size="P")
-    sdfg.add_stream("B_pipe_in",
-                    vec_type,
-                    transient=True,
-                    shape=(1, ),
-                    storage=dace.dtypes.StorageType.FPGA_Local,
-                    buffer_size=2)
-    sdfg.add_stream("C_pipe_out",
-                    vec_type,
-                    transient=True,
-                    shape=(1, ),
-                    storage=dace.dtypes.StorageType.FPGA_Local,
-                    buffer_size=2)
     sdfg.add_stream("A_pipe",
                     vtype.base_type,
                     transient=True,

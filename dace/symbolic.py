@@ -904,7 +904,7 @@ def evaluate_optional_arrays(expr, sdfg):
 
 
 class SympyBooleanConverter(ast.NodeTransformer):
-    """
+    """ 
     Replaces boolean operations with the appropriate SymPy functions to avoid
     non-symbolic evaluation.
     """
@@ -1153,7 +1153,7 @@ def symstr(sym, arrayexprs: Optional[Set[str]] = None) -> str:
     Convert a symbolic expression to a C++ compilable expression. 
 
     :param sym: Symbolic expression to convert.
-    :param arrayexprs: Set of names of arrays, used to convert SymPy
+    :param arrayexprs: Set of names of arrays, used to convert SymPy 
                        user-functions back to array expressions.
     :return: C++-compilable expression.
     """
@@ -1189,9 +1189,9 @@ def safe_replace(mapping: Dict[Union[SymbolicType, str], Union[SymbolicType, str
 
     :param mapping: The replacement dictionary.
     :param replace_callback: A callable function that receives a replacement
-                             dictionary and performs the replacement (can be
+                             dictionary and performs the replacement (can be 
                              unsafe).
-    :param value_as_string: Replacement values are replaced as strings rather
+    :param value_as_string: Replacement values are replaced as strings rather 
                             than symbols.
     """
     # First, filter out direct (to constants) and degenerate (N -> N) replacements
