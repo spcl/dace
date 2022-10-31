@@ -203,11 +203,10 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
             elif src.replace('m_axis', 's_axis') != dst:
                 link_cfg.write(f"stream_connect={src}:{dst}")
 
+        ip_names = [ip_name for ip_name, _, _ in self._ip_codes]
         for kernel_name, _, _ in self._kernel_codes:
-            link_cfg.write(f'slr={kernel_name}_1:SLR0')
-        for kernel_name, _, _ in self._ip_codes:
-            if kernel_name.endswith('_top'):
-                link_cfg.write(f'slr={kernel_name}_1:SLR0')
+            postfix = '_top_1' if f'{kernel_name}_top' in ip_names else '_1'
+            link_cfg.write(f'slr={kernel_name}{postfix}:SLR0')
 
         other_objs = []
         for name, code in self._other_codes.items():
@@ -1274,7 +1273,8 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
             for stream in streams:
                 if stream not in self._stream_connections:
                     self._stream_connections[stream] = [None, None]
-                val = '{}_1.{}'.format(kernel_name, stream)
+                postfix = '_top_1' if multi_pumped else '_1'
+                val = '{}{}.{}'.format(kernel_name, postfix, stream)
                 self._stream_connections[stream][key] = val
 
         self.generate_modules(sdfg, state, kernel_name, subgraphs, subgraph_parameters, module_stream, entry_stream,
