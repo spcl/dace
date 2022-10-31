@@ -783,11 +783,16 @@ __kernel void \\
                 # then we have to pass it by value, as references do not exist in C99
                 typedef = defined_ctype
                 if defined_type is not DefinedType.Pointer:
-                    typedef = typedef + "*"
-
-                memlet_references.append(
-                    (typedef, vconn, cpp.cpp_ptr_expr(sdfg, in_memlet, defined_type, codegen=self._frame)))
-                self._dispatcher.defined_vars.add(vconn, DefinedType.Pointer, typedef, allow_shadowing=True)
+                    # typedef = typedef + "*"
+                    ref = (typedef, vconn, ptrname)
+                else:
+                    ref = (typedef, vconn, cpp.cpp_ptr_expr(sdfg, in_memlet, defined_type, codegen=self._frame))
+                    if defined_type is not DefinedType.Pointer:
+                        self._dispatcher.defined_vars.add(vconn, DefinedType.Pointer, typedef, allow_shadowing=True)
+                import pdb
+                pdb.set_trace()
+                memlet_references.append(ref)
+                
             else:
                 # all the other cases
                 memlet_references.append(
