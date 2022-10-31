@@ -1984,6 +1984,13 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                         # This could occur, for example, if they are defined in terms of other symbols, which
                         # is the case in a tiled map
                         pass
+                    
+                    # To enforce opencl type long instead of c type long long for intel fpga
+                    v = dace.config.Config.get("compiler", "fpga", "vendor")
+                    if v.casefold() == 'intel_fpga'.casefold():
+                        if loop_var_type.__contains__("long long"):
+                            loop_var_type = loop_var_type.replace("long long", "long")
+
 
                     if is_degenerate[i]:
                         result.write("{{\nconst {} {} = {}; // Degenerate loop".format(

@@ -557,7 +557,8 @@ required:
 
                     board:
                         type: str
-                        default: a10gx
+                        #default: a10gx
+                        default: p520_max_sg280l
                         title: Target FPGA board
 
                     enable_debugging:

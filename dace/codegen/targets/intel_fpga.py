@@ -557,6 +557,11 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
             if isinstance(p, dace.data.View):
                 continue
             arg = self.make_kernel_argument(p, pname, is_output, True)
+            
+            #TODO: check this! might no longer need other replacements?
+            if arg.__contains__("long long"):
+                arg = arg.replace("long long", "long")
+
             if arg is not None:
                 kernel_args_opencl.append(arg)
                 kernel_args_host.append(p.as_arg(True, name=pname))
@@ -748,7 +753,11 @@ __kernel void \\
                 continue
             desc = sdfg.arrays[in_memlet.data]
             ptrname = cpp.ptr(in_memlet.data, desc, sdfg, self._frame)
-            defined_type, defined_ctype = self._dispatcher.defined_vars.get(ptrname, 1)
+            defined_type, defined_ctype = self._dispatcher.defined_vars.get(ptrname, 1) #Ctype -> dacetype
+
+            #TODO:definately double check this!
+            if defined_ctype.__contains__("long long"):
+                defined_ctype = defined_ctype.replace("long long", "long")
 
             if isinstance(desc, dace.data.Array) and (desc.storage == dtypes.StorageType.FPGA_Global
                                                       or desc.storage == dtypes.StorageType.FPGA_Local):
@@ -776,7 +785,7 @@ __kernel void \\
             elif isinstance(desc, dace.data.Scalar):
                 # if this is a scalar and the argument passed is also a scalar
                 # then we have to pass it by value, as references do not exist in C99
-                typedef = defined_ctype
+                typedef = defined_ctype #TODO: check if change here would help
                 if defined_type is not DefinedType.Pointer:
                     typedef = typedef + "*"
 
@@ -797,6 +806,10 @@ __kernel void \\
                 desc = sdfg.arrays[out_memlet.data]
                 ptrname = cpp.ptr(out_memlet.data, desc, sdfg, self._frame)
                 defined_type, defined_ctype = self._dispatcher.defined_vars.get(ptrname, 1)
+
+                #TODO:definately double check this!
+                if defined_ctype.__contains__("long long"):
+                    defined_ctype = defined_ctype.replace("long long", "long")
 
                 if isinstance(desc, dace.data.Array) and (desc.storage == dtypes.StorageType.FPGA_Global
                                                           or desc.storage == dtypes.StorageType.FPGA_Local):
