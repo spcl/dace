@@ -123,7 +123,7 @@ def iterate_distributed_subset(desc: dt.Array, access_memlet: memlet.Memlet, is_
     """
     :param desc: The array accessed by the memlet
     :param access_memlet: The memlet
-    :param is_write: If we care about the write or read direction. is_write means we write to desc, 
+    :param is_write: If we care about the write or read direction. is_write means we write to desc,
         not is_write means we read from it
     :return: if access_memlet contains a distributed subset the method will count from the lower to the upper
         end of it. Otherwise returns 0 once.
@@ -406,7 +406,7 @@ class FPGACodeGen(TargetCodeGenerator):
                 isinstance(n, dace.nodes.Tasklet) and n.language == dace.dtypes.Language.SystemVerilog]):
                 return True
         return False
-    
+
     def is_multi_pumped_subgraph(self, subgraph):
         for n in subgraph.nodes():
             if isinstance(n, dace.nodes.NestedSDFG):
@@ -416,7 +416,7 @@ class FPGACodeGen(TargetCodeGenerator):
             elif isinstance(n, dace.nodes.MapEntry) and n.schedule == dace.ScheduleType.FPGA_Double:
                 return True
         return False
-            
+
 
     def preprocess(self, sdfg: SDFG) -> None:
         # Right before finalizing code, write FPGA context to state structure
@@ -606,12 +606,12 @@ class FPGACodeGen(TargetCodeGenerator):
                 self.generate_kernel(sdfg, state, kernel_name, single_sgs, function_stream, callsite_stream,
                                      state_host_header_stream, state_host_body_stream, instrumentation_stream,
                                      state_parameters, kern_id)
-                
+
                 if len(multi_sgs) != 0:
                     func_stream = CodeIOStream()
                     call_stream = CodeIOStream()
                     ignore = CodeIOStream()
-                    # TODO should be able to generate multiple 'pumps'. e.g. pump b and d in 
+                    # TODO should be able to generate multiple 'pumps'. e.g. pump b and d in
                     # a > b > c > d > e
                     # Currently, it only works if the subgraphs are directly chained
                     self.generate_kernel(sdfg, state, f'{kernel_name}_pumped', multi_sgs, func_stream, call_stream, state_host_header_stream, state_host_body_stream, ignore, state_parameters, 42)
@@ -744,7 +744,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
         """
         Determines the parameters that must be passed to the passed list of
         subgraphs, as well as to the global kernel.
-        
+
         :return: A tuple with the following six entries:
             - Data container parameters that should be passed from the
             host to the FPGA kernel.
@@ -836,9 +836,6 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
             array_to_banks_used_out: Dict[str, Set[int]] = {}
             array_to_banks_used_in: Dict[str, Set[int]] = {}
             sources = subgraph.source_nodes()
-            # Handle the case where the outermost node in the subgraph is a map
-            if len(sources) == 1 and isinstance(sources[0], dace.nodes.MapEntry):
-                sources = subgraph.successors(sources[0])
             for n in sources:
                 # Check if the node is connected to an RTL tasklet, in which
                 # case it should be an external stream
@@ -849,7 +846,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                     if is_external_stream(n, subgraph):
                         is_external = True
                         is_output = False
-                
+
                 if is_multi:
                     if n.data in shared_data:
                         is_external = False
@@ -860,12 +857,9 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                 if is_external:
                     external_streams.add((is_output, n.data, subsdfg.arrays[n.data], None))
                 else:
-                    candidates.append((False, n.data, subsdfg.arrays[n.data]))
-                    
+                    candidates += [(False, e.data.data, subsdfg.arrays[e.data.data]) for e in state.in_edges(n)]
+
             sinks = subgraph.sink_nodes()
-            # Handle the case where the outermost node is a map
-            if len(sinks) == 1 and isinstance(sinks[0], dace.nodes.MapExit):
-                sinks = subgraph.predecessors(sinks[0])
             for n in sinks:
                 # Check if the node is connected to an RTL tasklet, in which
                 # case it should be an external stream
@@ -876,7 +870,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                     if is_external_stream(n, subgraph):
                         is_external = True
                         is_output = True
-                
+
                 if is_multi:
                     if n.data in shared_data:
                         is_external = False
@@ -887,7 +881,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                 if is_external:
                     external_streams.add((is_output, n.data, subsdfg.arrays[n.data], None))
                 else:
-                    candidates.append((True, n.data, subsdfg.arrays[n.data]))
+                    candidates += [(True, e.data.data, subsdfg.arrays[e.data.data]) for e in state.out_edges(n)]
             # Find other data nodes that are used internally
             for n, scope in subgraph.all_nodes_recursive():
                 if isinstance(n, dace.sdfg.nodes.AccessNode):
@@ -1046,8 +1040,6 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                     subgraph_parameters[subgraph].add((is_output, data_name, desc, interface_id))
                     # Must be allocated outside PEs and passed to them
                     top_level_local_data.add(data_name)
-                elif data_name in used_inside:
-                    subgraph_parameters[subgraph].add((is_output, data_name, desc, interface_id))
 
             # Order by name
             subgraph_parameters[subgraph] = list(sorted(subgraph_parameters[subgraph], key=sort_func))
@@ -2234,7 +2226,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
         self._kernel_count = self._kernel_count + 1
         self._in_device_code = False
         self._cpu_codegen._packed_types = False
-        
+
         # Check if this is a multi pumped kernel
         is_multi_pumped = all([self.is_multi_pumped_subgraph(sg) for sg in subgraphs])
 

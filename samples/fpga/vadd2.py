@@ -23,19 +23,19 @@ def cli(size_n, veclen, double_pumped):
     y = np.random.rand(N.get()).astype(np.float32)
     result = np.zeros(N.get(), dtype=np.float32)
     expected = x + y
-    
+
     # Generate the initial SDFG
     sdfg = dace.program(vadd).to_sdfg()
-    
+
     # Remove underscores as Xilinx does not like them
     for dn in sdfg.nodes()[0].data_nodes():
         if '__' in dn.data:
-            new_name = dn.data.replace('__', '')
+            new_name = dn.data.replace('__', '') + 'new'
             sdfg.replace(dn.data, new_name)
 
     # Apply vectorization transformation
     ambles = size_n % veclen != 0
-    map_entry = [n for n, _ in sdfg.all_nodes_recursive() 
+    map_entry = [n for n, _ in sdfg.all_nodes_recursive()
         if isinstance(n, dace.nodes.MapEntry)][0]
     applied = sdfg.apply_transformations(Vectorization, {
         'vector_len': veclen,
@@ -44,27 +44,27 @@ def cli(size_n, veclen, double_pumped):
         'map_entry': map_entry
     })
     assert(applied == 1)
-    
+
     # Transform to an FPGA implementation
     applied = sdfg.apply_transformations(FPGATransformState)
     assert(applied == 1)
-    
+
     # Apply streaming memory transformation
     applied = sdfg.apply_transformations_repeated(StreamingMemory, {
         'storage': dace.StorageType.FPGA_Local,
         'buffer_size': 1
     })
     assert (applied == 3)
-    
+
     # Apply temporal vectorization transformation
     sgs = dace.sdfg.concurrent_subgraphs(sdfg.states()[0])
     sf = TemporalVectorization()
     cba = [TemporalVectorization.can_be_applied(sf, sdfg, sg) for sg in sgs]
     assert (sum(cba) == 1)
     [TemporalVectorization.apply_to(sdfg, sg) for i, sg in enumerate(sgs) if cba[i]]
-    
+
     sdfg.specialize({'N': N.get()})
-    sdfg(x=x, y=y, __return=result)
+    sdfg(x=x, y=y, returnnew=result)
 
     allclose = np.allclose(expected, result)
     assert(allclose)

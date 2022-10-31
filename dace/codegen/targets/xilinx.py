@@ -982,13 +982,13 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         # We need to pass external streams as parameters to module
         # (unless they are already there. This could be case of inter-PE intra-kernel streams)
         # TODO It doesn't break RTL, but the streams are passed to sub kernels that don't need the streams, in turn relying on Vitis to optimize them away again.
-        #for k, v in subgraph_parameters.items():
-        #    for stream_is_out, stream_name, stream_desc, stream_iid in external_streams:
-        #        for is_output, data_name, desc, interface_id in v:
-        #            if data_name == stream_name and stream_desc == desc:
-        #                break
-        #        else:
-        #            v.append((stream_is_out, stream_name, stream_desc, stream_iid))
+        for k, v in subgraph_parameters.items():
+            for stream_is_out, stream_name, stream_desc, stream_iid in external_streams:
+                for is_output, data_name, desc, interface_id in v:
+                    if data_name == stream_name and stream_desc == desc:
+                        break
+                else:
+                    v.append((stream_is_out, stream_name, stream_desc, stream_iid))
 
         # Xilinx does not like external streams name with leading underscores to be used as port names
         # We remove them, and we check that they are not defined anywhere else
