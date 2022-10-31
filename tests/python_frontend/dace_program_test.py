@@ -8,11 +8,16 @@ import shutil
 
 
 def _program_name(function) -> str:
-    """ Replicates the behavior of DaCe in determining the SDFG label."""
+    """ Replicates the behavior of DaCe in determining the SDFG label. """
     result = ''
     if function.__module__ is not None and function.__module__ != '__main__':
         result += function.__module__.replace('.', '_') + '_'
     return result + function.__name__
+
+
+def _build_folder(name: str) -> str:
+    """ Replicates the behavior of DaCe in determining the build folder. """
+    return dace.SDFG(name).build_folder
 
 
 def test_recreate_sdfg():
@@ -21,8 +26,7 @@ def test_recreate_sdfg():
         pass
 
     program_name = _program_name(very_unique_program_321)
-
-    build_folder = os.path.join(dace.config.Config.get('default_build_folder'), program_name)
+    build_folder = _build_folder(program_name)
 
     # Ensure that the build folder is empty
     if os.path.exists(build_folder):
@@ -60,8 +64,7 @@ def test_regenerate_code():
         pass
 
     program_name = _program_name(very_unique_program_432)
-
-    build_folder = os.path.join(dace.config.Config.get('default_build_folder'), program_name)
+    build_folder = _build_folder(program_name)
 
     # Ensure that the build folder is empty
     if os.path.exists(build_folder):
