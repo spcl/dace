@@ -1273,8 +1273,10 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
             for stream in streams:
                 if stream not in self._stream_connections:
                     self._stream_connections[stream] = [None, None]
-                postfix = '_top_1' if multi_pumped else '_1'
-                val = '{}{}.{}'.format(kernel_name, postfix, stream)
+                stream_prefix = 'm_axis_' if is_output else 's_axis_'
+                stream_prefix = stream_prefix if multi_pumped else ''
+                kernel_postfix = '_top_1' if multi_pumped else '_1'
+                val = '{}{}.{}{}'.format(kernel_name, kernel_postfix, stream_prefix, stream)
                 self._stream_connections[stream][key] = val
 
         self.generate_modules(sdfg, state, kernel_name, subgraphs, subgraph_parameters, module_stream, entry_stream,
