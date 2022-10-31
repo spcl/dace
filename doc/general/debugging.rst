@@ -62,18 +62,39 @@ to the function's name in Python). You can inspect and modify the code by openin
 The generated code is organized in subdirectories for each target based on its code generator name, and in the above 
 case there is both CPU and GPU code.
 
-However, rerunning ``python my_program.py`` will overwrite the generated code, so it is important to change the configuration
-entry :envvar:`compiler.use_cache` to ``1`` to prevent this from happening. This will also prevent the code from being
-recompiled, so you will need to manually go into the build directory and run ``make`` to recompile the code:
+However, rerunning ``python my_program.py`` will overwrite the generated code.
+There are two ways to avoid this overwriting. The first is to set the ``regenerate_code`` flag on the DaCe program to
+``False``::
+
+    @dace.program(regenerate_code=False)
+    def myprogram(...):
+        ...
+
+
+This will prevent the code from being regenerated, but it will cause DaCe to recompile the code. If you want to compile
+the code yourself, you can set the ``recompile`` flag to ``False``::
+
+    @dace.program(recompile=False)
+    def myprogram(...):
+        ...
+
+
+or set the configuration entry :envvar:`compiler.use_cache` to ``1`` to achieve the same effect globally (on each program).
+Since this will prevent the code from being recompiled, you will need to manually go into the build directory and run 
+``make`` to recompile the code:
 
 .. code-block:: bash
 
     $ cd .dacecache/myprogram/build
     $ make
-    $ cd ../..
+    $ cd ../../..
+    # If recompile=False is used, the below environment variable is not necessary.
     $ DACE_compiler_use_cache=1 python my_program.py 
-    # Program will not be regenerated nor recompiled
+    # Program will not be regenerated nor recompiled.
 
+
+Runtime compilation issues
+~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 If there are issues with the :ref:`runtime`, you can find their location and edit them manually:
 

@@ -26,6 +26,9 @@ def program(f: F) -> parser.DaceProgram:
 def program(*args,
             auto_optimize=False,
             device=dtypes.DeviceType.CPU,
+            recreate_sdfg: bool = True,
+            regenerate_code: bool = True,
+            recompile: bool = True,
             constant_functions=False,
             **kwargs) -> Callable[..., parser.DaceProgram]:
     ...
@@ -36,6 +39,9 @@ def program(f: F,
             *args,
             auto_optimize=False,
             device=dtypes.DeviceType.CPU,
+            recreate_sdfg: bool = True,
+            regenerate_code: bool = True,
+            recompile: bool = True,
             constant_functions=False,
             **kwargs) -> Callable[..., parser.DaceProgram]:
     """
@@ -46,6 +52,14 @@ def program(f: F,
     :param auto_optimize: If True, applies automatic optimization heuristics
                           on the generated DaCe program during compilation.
     :param device: Transform the function to run on the target device.
+    :param recreate_sdfg: Whether to recreate the SDFG from the Python code. If False, the SDFG will be loaded from the
+                          cache (``<build folder>/<program name>/program.sdfg``) if it exists.
+                          Use this if you want to modify the SDFG after the first call to the function.
+    :param regenerate_code: Whether to regenerate the code from the SDFG. If False, the code in the build folder will be
+                            used if it exists. Use this if you want to modify the generated code without DaCe overriding
+                            it.
+    :param recompile: Whether to recompile the code. If False, the library in the build folder will be used if it exists,
+                      without recompiling it.
     :param constant_functions: If True, assumes all external functions that do
                                not depend on internal variables are constant.
                                This will hardcode their return values into the
@@ -56,7 +70,15 @@ def program(f: F,
 
     # Parses a python @dace.program function and returns an object that can
     # be translated
-    return parser.DaceProgram(f, args, kwargs, auto_optimize, device, constant_functions)
+    return parser.DaceProgram(f,
+                              args,
+                              kwargs,
+                              auto_optimize,
+                              device,
+                              constant_functions,
+                              recreate_sdfg=recreate_sdfg,
+                              regenerate_code=regenerate_code,
+                              recompile=recompile)
 
 
 function = program
@@ -81,6 +103,9 @@ def method(f: F,
            *args,
            auto_optimize=False,
            device=dtypes.DeviceType.CPU,
+           recreate_sdfg: bool = True,
+           regenerate_code: bool = True,
+           recompile: bool = True,
            constant_functions=False,
            **kwargs) -> parser.DaceProgram:
     """ 
@@ -90,6 +115,14 @@ def method(f: F,
     :param auto_optimize: If True, applies automatic optimization heuristics
                           on the generated DaCe program during compilation.
     :param device: Transform the function to run on the target device.
+    :param recreate_sdfg: Whether to recreate the SDFG from the Python code. If False, the SDFG will be loaded from the
+                          cache (``<build folder>/<program name>/program.sdfg``) if it exists.
+                          Use this if you want to modify the SDFG after the first call to the function.
+    :param regenerate_code: Whether to regenerate the code from the SDFG. If False, the code in the build folder will be
+                            used if it exists. Use this if you want to modify the generated code without DaCe overriding
+                            it.
+    :param recompile: Whether to recompile the code. If False, the library in the build folder will be used if it exists,
+                      without recompiling it.
     :param constant_functions: If True, assumes all external functions that do
                                not depend on internal variables are constant.
                                This will hardcode their return values into the
@@ -110,7 +143,16 @@ def method(f: F,
             objid = id(obj)
             if objid in self.wrapped:
                 return self.wrapped[objid]
-            prog = parser.DaceProgram(f, args, kwargs, auto_optimize, device, constant_functions, method=True)
+            prog = parser.DaceProgram(f,
+                                      args,
+                                      kwargs,
+                                      auto_optimize,
+                                      device,
+                                      constant_functions,
+                                      recreate_sdfg=recreate_sdfg,
+                                      regenerate_code=regenerate_code,
+                                      recompile=recompile,
+                                      method=True)
             prog.methodobj = obj
             self.wrapped[objid] = prog
             return prog
@@ -118,7 +160,16 @@ def method(f: F,
         def __call__(self, *call_args, **call_kwargs):
             # When called as-is, treat as an unbounded function (dace.program)
             if None not in self.wrapped:
-                prog = parser.DaceProgram(f, args, kwargs, auto_optimize, device, constant_functions, method=False)
+                prog = parser.DaceProgram(f,
+                                          args,
+                                          kwargs,
+                                          auto_optimize,
+                                          device,
+                                          constant_functions,
+                                          recreate_sdfg=recreate_sdfg,
+                                          regenerate_code=regenerate_code,
+                                          recompile=recompile,
+                                          method=False)
                 self.wrapped[None] = prog
             else:
                 prog = self.wrapped[None]
