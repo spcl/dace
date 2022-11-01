@@ -15,21 +15,19 @@ def test():
             out >> B[i]
             out = bla
 
-    W.set(5)
+    w = 5
 
-    A = dp.ndarray([W * W])
-    B = dp.ndarray([W])
-    x = dp.ndarray([W], dtype=dp.uint32)
+    A = np.ndarray([w * w])
+    B = np.ndarray([w])
+    x = np.ndarray([w], dtype=np.uint32)
 
-    A[:] = np.arange(10, 10 + W.get() * W.get())
-    B[:] = dp.float32(0)
-    x[:] = np.random.randint(0, W.get() * W.get(), W.get())
+    A[:] = np.arange(10, 10 + w * w)
+    B[:] = 0
+    x[:] = np.random.randint(0, w * w, w)
 
-    indirection(A, x, B, W=W)
+    indirection(A, x, B, W=w)
 
-    print(x)
-    print(B)
-    B_ref = np.array([A[x[i]] for i in range(W.get())], dtype=B.dtype)
+    B_ref = np.array([A[x[i]] for i in range(w)], dtype=B.dtype)
     diff = np.linalg.norm(B - B_ref)
     assert diff == 0
 
@@ -48,18 +46,15 @@ def test_two_nested_levels_indirection():
                 out >> B[i]
                 out = bla
 
-    W.set(5)
-    H.set(5)
+    w = h = 5
 
-    A = np.arange(10, 10 + W.get() * W.get(), dtype=np.float64)
-    B = np.zeros((W.get(), ), dtype=np.float64)
-    x = np.random.randint(0, W.get() * W.get(), W.get(), dtype=np.uint32)
+    A = np.arange(10, 10 + w * w, dtype=np.float64)
+    B = np.zeros((w, ), dtype=np.float64)
+    x = np.random.randint(0, w * w, w, dtype=np.uint32)
 
-    indirection(A, x, B, W=W, H=H)
+    indirection(A, x, B, W=w, H=h)
 
-    print(x)
-    print(B)
-    B_ref = np.array([A[x[i]] for i in range(W.get())], dtype=B.dtype)
+    B_ref = np.array([A[x[i]] for i in range(w)], dtype=B.dtype)
     diff = np.linalg.norm(B - B_ref)
     assert diff == 0
 
@@ -78,24 +73,21 @@ def test_multi_dimensional_indirection():
                 out >> B[i, j]
                 out = bla
 
-    W.set(5)
-    H.set(5)
+    w = h = 5
+                
+    A = np.ndarray([w * w])
+    B = np.ndarray([w, h])
+    x = np.ndarray([w, h], dtype=np.uint32)
 
-    A = dp.ndarray([W * W])
-    B = dp.ndarray([W, H])
-    x = dp.ndarray([W, H], dtype=dp.uint32)
+    A[:] = np.arange(10, 10 + w * w)
+    B[:] = 0
+    x[:] = np.random.randint(0, w * w, size=(w, h))
 
-    A[:] = np.arange(10, 10 + W.get() * W.get())
-    B[:] = dp.float32(0)
-    x[:] = np.random.randint(0, W.get() * W.get(), size=(W.get(), H.get()))
+    indirection(A, x, B, W=w, H=h)
 
-    indirection(A, x, B, W=W, H=H)
-
-    print(x)
-    print(B)
-    B_ref = np.ndarray((W.get(), H.get()), dtype=B.dtype)
-    for i in range(W.get()):
-        for j in range(H.get()):
+    B_ref = np.ndarray((w, h), dtype=B.dtype)
+    for i in range(w):
+        for j in range(h):
             B_ref[i, j] = A[x[i, j]]
     diff = np.linalg.norm(B - B_ref)
     assert diff == 0
