@@ -779,19 +779,17 @@ __kernel void \\
                 # streams are defined as global variables
                 continue
             elif isinstance(desc, dace.data.Scalar):
-                # if this is a scalar and the argument passed is also a scalar
-                # then we have to pass it by value, as references do not exist in C99
                 typedef = defined_ctype
-                if defined_type is not DefinedType.Pointer:
-                    # typedef = typedef + "*"
+                if defined_type is DefinedType.Scalar:
+                    # if this is a scalar and the argument passed is also a scalar
+                    # then we have to pass it by value
                     ref = (typedef, vconn, ptrname)
                     self._dispatcher.defined_vars.add(vconn, defined_type, typedef, allow_shadowing=True)
                 else:
+                    # otherwise, pass it as a pointer (references do not exist in C99)
                     ref = (typedef, vconn, cpp.cpp_ptr_expr(sdfg, in_memlet, defined_type, codegen=self._frame))
-                    # if defined_type is DefinedType.Pointer:
-                    self._dispatcher.defined_vars.add(vconn, DefinedType.Pointer, typedef, allow_shadowing=True)
+                self._dispatcher.defined_vars.add(vconn, defined_type, typedef, allow_shadowing=True)
                 memlet_references.append(ref)
-
             else:
                 # all the other cases
                 memlet_references.append(
