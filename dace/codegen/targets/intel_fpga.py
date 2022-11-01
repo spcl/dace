@@ -785,14 +785,13 @@ __kernel void \\
                 if defined_type is not DefinedType.Pointer:
                     # typedef = typedef + "*"
                     ref = (typedef, vconn, ptrname)
+                    self._dispatcher.defined_vars.add(vconn, defined_type, typedef, allow_shadowing=True)
                 else:
                     ref = (typedef, vconn, cpp.cpp_ptr_expr(sdfg, in_memlet, defined_type, codegen=self._frame))
-                    if defined_type is not DefinedType.Pointer:
-                        self._dispatcher.defined_vars.add(vconn, DefinedType.Pointer, typedef, allow_shadowing=True)
-                import pdb
-                pdb.set_trace()
+                    # if defined_type is DefinedType.Pointer:
+                    self._dispatcher.defined_vars.add(vconn, DefinedType.Pointer, typedef, allow_shadowing=True)
                 memlet_references.append(ref)
-                
+
             else:
                 # all the other cases
                 memlet_references.append(
