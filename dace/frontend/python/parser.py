@@ -856,8 +856,8 @@ class DaceProgram(pycommon.SDFGConvertible):
 
         # If recreate flag is False, check and load from cache
         if not self.recreate_sdfg:
-            build_folder = Config.get('default_build_folder')
-            sdfg, _ = self.load_sdfg(os.path.join(build_folder, self.name, 'program.sdfg'), *args, **kwargs)
+            build_folder = SDFG(self.name).build_folder
+            sdfg, _ = self.load_sdfg(os.path.join(build_folder, 'program.sdfg'), *args, **kwargs)
             if sdfg is not None:
                 return sdfg, True
 

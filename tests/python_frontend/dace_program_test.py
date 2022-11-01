@@ -5,6 +5,7 @@ import numpy as np
 import re
 import os
 import shutil
+import time
 
 
 def _program_name(function) -> str:
@@ -85,6 +86,9 @@ def test_regenerate_code():
     with open(source_filename, 'r') as f:
         source = f.read()
         source = re.sub(r'\b3\b', '4', source)
+
+    # Make sure file sets to be "changed on disk"
+    time.sleep(2)
 
     with open(source_filename, 'w') as f:
         f.write(source)
