@@ -854,7 +854,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                         is_external = True
                         is_output = False
 
-                if is_external:
+                if is_external and isinstance(subsdfg.arrays[n.data], dt.Stream):
                     external_streams.add((is_output, n.data, subsdfg.arrays[n.data], None))
                 else:
                     candidates += [(False, e.data.data, subsdfg.arrays[e.data.data]) for e in state.in_edges(n)]
@@ -878,7 +878,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                         is_external = True
                         is_output = True
 
-                if is_external:
+                if is_external and isinstance(subsdfg.arrays[n.data], dt.Stream):
                     external_streams.add((is_output, n.data, subsdfg.arrays[n.data], None))
                 else:
                     candidates += [(True, e.data.data, subsdfg.arrays[e.data.data]) for e in state.out_edges(n)]
