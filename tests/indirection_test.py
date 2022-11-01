@@ -2,20 +2,19 @@
 import dace as dp
 import numpy as np
 
-W = dp.symbol('W')
-H = dp.symbol('H')
-
-
-@dp.program
-def indirection(A, x, B):
-    @dp.map(_[0:W])
-    def ind(i):
-        bla << A[x[i]]
-        out >> B[i]
-        out = bla
-
 
 def test():
+    W = dp.symbol('W')
+
+    @dp.program
+    def indirection(A, x, B):
+
+        @dp.map(_[0:W])
+        def ind(i):
+            bla << A[x[i]]
+            out >> B[i]
+            out = bla
+
     W.set(5)
 
     A = dp.ndarray([W * W])
@@ -36,16 +35,18 @@ def test():
 
 
 def test_two_nested_levels_indirection():
+    W = dp.symbol('W')
+    H = dp.symbol('H')
 
     @dp.program
     def indirection(A, x, B):
         for j in dp.map[0:H]:
+
             @dp.map(_[0:W])
             def ind(i):
                 bla << A[x[i]]
                 out >> B[i]
                 out = bla
-    
 
     W.set(5)
     H.set(5)
@@ -64,16 +65,18 @@ def test_two_nested_levels_indirection():
 
 
 def test_multi_dimensional_indirection():
+    W = dp.symbol('W')
+    H = dp.symbol('H')
 
     @dp.program
     def indirection(A, x, B):
         for j in dp.map[0:H]:
+
             @dp.map(_[0:W])
             def ind(i):
                 bla << A[x[i, j]]
                 out >> B[i, j]
                 out = bla
-    
 
     W.set(5)
     H.set(5)
