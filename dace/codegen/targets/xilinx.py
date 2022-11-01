@@ -684,10 +684,6 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         if state.instrument == dtypes.InstrumentationType.FPGA:
             self.instrument_opencl_kernel(kernel_name, sdfg.node_id(state), sdfg.sdfg_id, instrumentation_stream)
 
-        # Join RTL tasklets
-        for name in rtl_tasklet_names:
-            kernel_stream.write(f"kernel_{name}.wait();\n", sdfg, sdfg.node_id(state))
-
     def generate_module(self, sdfg, state, kernel_name, name, subgraph, parameters, module_stream, entry_stream,
                         host_stream, instrumentation_stream):
         """Generates a module that will run as a dataflow function in the FPGA
