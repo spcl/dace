@@ -426,6 +426,10 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         # Counter to make it easy to create temp transients
         self._temp_transients = 0
 
+        # Helper fields to avoid code generation and compilation
+        self._regenerate_code = True
+        self._recompile = True
+
         # Grid-distribution-related fields
         self._pgrids = {}
         self._subarrays = {}
@@ -2203,7 +2207,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         # Compute build folder path before running codegen
         build_folder = self.build_folder
 
-        if Config.get_bool('compiler', 'use_cache'):
+        if not self._recompile or Config.get_bool('compiler', 'use_cache'):
             # Try to see if a cached version of the binary exists
             binary_filename = compiler.get_binary_name(build_folder, self.name)
             if os.path.isfile(binary_filename):
@@ -2212,33 +2216,38 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         ############################
         # DaCe Compilation Process #
 
-        # Clone SDFG as the other modules may modify its contents
-        sdfg = copy.deepcopy(self)
-        # Fix the build folder name on the copied SDFG to avoid it changing
-        # if the codegen modifies the SDFG (thereby changing its hash)
-        sdfg.build_folder = build_folder
+        if self._regenerate_code or not os.path.isdir(build_folder):
+            # Clone SDFG as the other modules may modify its contents
+            sdfg = copy.deepcopy(self)
+            # Fix the build folder name on the copied SDFG to avoid it changing
+            # if the codegen modifies the SDFG (thereby changing its hash)
+            sdfg.build_folder = build_folder
 
-        # Rename SDFG to avoid runtime issues with clashing names
-        index = 0
-        while sdfg.is_loaded():
-            sdfg._name = f'{self._name}_{index}'
-            index += 1
-        if self.name != sdfg.name:
-            warnings.warn('SDFG "%s" is already loaded by another object, '
-                          'recompiling under a different name.' % self.name)
+            # Rename SDFG to avoid runtime issues with clashing names
+            index = 0
+            while sdfg.is_loaded():
+                sdfg._name = f'{self._name}_{index}'
+                index += 1
+            if self.name != sdfg.name:
+                warnings.warn('SDFG "%s" is already loaded by another object, '
+                            'recompiling under a different name.' % self.name)
 
-        try:
-            # Fill in scope entry/exit connectors
-            sdfg.fill_scope_connectors()
+            try:
+                # Fill in scope entry/exit connectors
+                sdfg.fill_scope_connectors()
 
-            # Generate code for the program by traversing the SDFG state by state
-            program_objects = codegen.generate_code(sdfg, validate=validate)
-        except Exception:
-            self.save(os.path.join('_dacegraphs', 'failing.sdfg'))
-            raise
+                # Generate code for the program by traversing the SDFG state by state
+                program_objects = codegen.generate_code(sdfg, validate=validate)
+            except Exception:
+                self.save(os.path.join('_dacegraphs', 'failing.sdfg'))
+                raise
 
-        # Generate the program folder and write the source files
-        program_folder = compiler.generate_program_folder(sdfg, program_objects, build_folder)
+            # Generate the program folder and write the source files
+            program_folder = compiler.generate_program_folder(sdfg, program_objects, build_folder)
+        else:
+            # The code was already generated, just load the program folder
+            program_folder = build_folder
+            sdfg = self
 
         # Compile the code and get the shared library path
         shared_library = compiler.configure_and_compile(program_folder, sdfg.name)
@@ -2248,18 +2257,6 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             if os.path.isdir(output_file):
                 output_file = os.path.join(output_file, os.path.basename(shared_library))
             shutil.copyfile(shared_library, output_file)
-
-        # Ensure that an SDFG link file is created along with the SDFG, linking
-        # it to the generating code and storing command line arguments that
-        # were provided.
-        if sys.argv is not None and len(sys.argv) > 0:
-            os.makedirs(build_folder, exist_ok=True)
-            with open(os.path.join(build_folder, 'program.sdfgl'), 'w') as launchfiles_file:
-                launchfiles_file.write('name,SDFG_intermediate,SDFG,source,' +
-                                       ','.join(['argv_' + str(i) for i in range(len(sys.argv))]) + '\n')
-                launchfiles_file.write(sdfg.name + ',' + os.path.abspath(os.path.join(build_folder, 'program.sdfg')) +
-                                       ',' + os.path.abspath(os.path.join('_dacegraphs', 'program.sdfg')) + ',' +
-                                       os.path.abspath(sys.argv[0]) + ',' + ','.join([str(el) for el in sys.argv]))
 
         # Get the function handle
         return compiler.get_program_handle(shared_library, sdfg)
