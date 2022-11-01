@@ -425,8 +425,9 @@ def test_hardware_vadd_sdfgapi_temporal_vectorization():
         c = state.add_write("C")
 
         # Add the map and tasklet
-        c_entry, c_exit = state.add_map("compute_map", dict({'i': f'0:N//V'}),
-            schedule=dace.ScheduleType.FPGA_Multi_Pumped)
+        c_entry, c_exit = state.add_map("compute_map",
+                                        dict({'i': f'0:N//V'}),
+                                        schedule=dace.ScheduleType.FPGA_Multi_Pumped)
         tasklet = state.add_tasklet('vector_add_core', {'a', 'b'}, {'c'}, 'c = a + b')
 
         # Add the connections between the nodes in the graph
@@ -448,15 +449,15 @@ def test_hardware_vadd_sdfgapi_temporal_vectorization():
         for s in sdfg.states():
             if is_fpga_kernel(sdfg, s):
                 s.instrument = dace.InstrumentationType.FPGA
-        
+
         # Run the program and verify the results
         sdfg.specialize(dict(N=N, V=V))
         sdfg(A=A, B=B, C=C)
-        assert(np.allclose(expected, C))
+        assert (np.allclose(expected, C))
 
 
 @rtl_test()
-def test_hardware_vadd_transformed_temporal_vectorization():    
+def test_hardware_vadd_transformed_temporal_vectorization():
     with dace.config.set_temporary('compiler', 'xilinx', 'frequency', value='"0:300\\|1:600"'):
         # Generate the test data and expected results
         size_n = 1024
@@ -471,6 +472,7 @@ def test_hardware_vadd_transformed_temporal_vectorization():
         # Generate the initial SDFG
         def np_vadd(x: dace.float32[N], y: dace.float32[N]):
             return x + y
+
         sdfg = dace.program(np_vadd).to_sdfg()
 
         # Remove underscores as Xilinx does not like them
@@ -481,19 +483,21 @@ def test_hardware_vadd_transformed_temporal_vectorization():
 
         # Apply vectorization transformation
         ambles = size_n % veclen != 0
-        map_entry = [n for n, _ in sdfg.all_nodes_recursive()
-            if isinstance(n, dace.nodes.MapEntry)][0]
-        applied = sdfg.apply_transformations(Vectorization, {
-            'vector_len': veclen,
-            'preamble': ambles, 'postamble': ambles,
-            'propagate_parent': True, 'strided_map': False,
-            'map_entry': map_entry
-        })
-        assert(applied == 1)
+        map_entry = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry)][0]
+        applied = sdfg.apply_transformations(
+            Vectorization, {
+                'vector_len': veclen,
+                'preamble': ambles,
+                'postamble': ambles,
+                'propagate_parent': True,
+                'strided_map': False,
+                'map_entry': map_entry
+            })
+        assert (applied == 1)
 
         # Transform to an FPGA implementation
         applied = sdfg.apply_transformations(FPGATransformState)
-        assert(applied == 1)
+        assert (applied == 1)
 
         # Apply streaming memory transformation
         applied = sdfg.apply_transformations_repeated(StreamingMemory, {
@@ -512,7 +516,7 @@ def test_hardware_vadd_transformed_temporal_vectorization():
         # Run the program and verify the results
         sdfg.specialize({'N': N.get()})
         sdfg(x=x, y=y, returnnew=result)
-        assert(np.allclose(expected, result))
+        assert (np.allclose(expected, result))
 
 
 # TODO disabled due to problem with array of streams in Vitis 2021.1

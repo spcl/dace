@@ -343,7 +343,8 @@ class FPGACodeGen(TargetCodeGenerator):
 
         self._decouple_array_interfaces = False
         # Register additional FPGA dispatchers
-        self._dispatcher.register_map_dispatcher([dtypes.ScheduleType.FPGA_Device, dtypes.ScheduleType.FPGA_Multi_Pumped], self)
+        self._dispatcher.register_map_dispatcher(
+            [dtypes.ScheduleType.FPGA_Device, dtypes.ScheduleType.FPGA_Multi_Pumped], self)
 
         self._dispatcher.register_state_dispatcher(self, predicate=is_fpga_kernel)
 
@@ -367,7 +368,8 @@ class FPGACodeGen(TargetCodeGenerator):
                     # register this as copy dispatcher only if the destination is scheduled on FPGA
                     self._dispatcher.register_copy_dispatcher(storage_from, storage_to, dtypes.ScheduleType.FPGA_Device,
                                                               self)
-                    self._dispatcher.register_copy_dispatcher(storage_from, storage_to, dtypes.ScheduleType.FPGA_Multi_Pumped, self)
+                    self._dispatcher.register_copy_dispatcher(storage_from, storage_to,
+                                                              dtypes.ScheduleType.FPGA_Multi_Pumped, self)
                 else:
                     self._dispatcher.register_copy_dispatcher(storage_from, storage_to, None, self)
         self._dispatcher.register_copy_dispatcher(dtypes.StorageType.FPGA_Global, dtypes.StorageType.CPU_Heap, None,
@@ -422,7 +424,6 @@ class FPGACodeGen(TargetCodeGenerator):
             elif isinstance(n, dace.nodes.MapEntry) and n.schedule == dace.ScheduleType.FPGA_Multi_Pumped:
                 return True
         return False
-
 
     def preprocess(self, sdfg: SDFG) -> None:
         # Right before finalizing code, write FPGA context to state structure
@@ -620,7 +621,8 @@ class FPGACodeGen(TargetCodeGenerator):
                     # TODO should be able to generate multiple 'pumps'. e.g. pump b and d in
                     # a > b > c > d > e
                     # Currently, it only works if the subgraphs are directly chained
-                    self.generate_kernel(sdfg, state, f'{kernel_name}_pumped', multi_sgs, func_stream, call_stream, state_host_header_stream, state_host_body_stream, ignore, state_parameters, 42)
+                    self.generate_kernel(sdfg, state, f'{kernel_name}_pumped', multi_sgs, func_stream, call_stream,
+                                         state_host_header_stream, state_host_body_stream, ignore, state_parameters, 42)
 
             kernel_args_call_host = []
             kernel_args_opencl = []
@@ -1014,7 +1016,8 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                             trace_type, trace_bank = parse_location_bank(trace_desc)
                             if (bank is not None and bank_type is not None
                                     and (bank != trace_bank or bank_type != trace_type)):
-                                raise cgx.CodegenError("Found inconsistent memory bank " f"specifier for {trace_name}.")
+                                raise cgx.CodegenError("Found inconsistent memory bank "
+                                                       f"specifier for {trace_name}.")
                             bank = trace_bank
                             bank_type = trace_type
 
@@ -1564,7 +1567,8 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
 
             if (not sum(copy_shape) == 1 and
                 (not isinstance(memlet.subset, subsets.Range) or any([step != 1 for _, _, step in memlet.subset]))):
-                raise NotImplementedError("Only contiguous copies currently " "supported for FPGA codegen.")
+                raise NotImplementedError("Only contiguous copies currently "
+                                          "supported for FPGA codegen.")
 
             if host_to_device or device_to_device:
                 host_dtype = sdfg.data(src_node.data).dtype
@@ -1812,7 +1816,8 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
     @staticmethod
     def make_opencl_parameter(name, desc):
         if isinstance(desc, dt.Array):
-            return (f"hlslib::ocl::Buffer<{desc.dtype.ctype}, " f"hlslib::ocl::Access::readWrite> &{name}")
+            return (f"hlslib::ocl::Buffer<{desc.dtype.ctype}, "
+                    f"hlslib::ocl::Access::readWrite> &{name}")
         else:
             return (desc.as_arg(with_types=True, name=name))
 
@@ -2072,7 +2077,8 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                                 elif np.issubdtype(np.dtype(end_type.dtype.type), np.unsignedinteger):
                                     loop_var_type = "size_t"
                     except (UnboundLocalError):
-                        raise UnboundLocalError('Pipeline scopes require ' 'specialized bound values')
+                        raise UnboundLocalError('Pipeline scopes require '
+                                                'specialized bound values')
                     except (TypeError):
                         # Raised when the evaluation of begin or skip fails.
                         # This could occur, for example, if they are defined in terms of other symbols, which

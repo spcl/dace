@@ -42,7 +42,7 @@ class XilinxCodeGen(fpga.FPGACodeGen):
     target_name = 'xilinx'
     title = 'Xilinx'
     language = 'hls'
-    
+
     def __init__(self, *args, **kwargs):
         fpga_vendor = Config.get("compiler", "fpga", "vendor")
         if fpga_vendor.lower() != "xilinx":
@@ -72,12 +72,10 @@ class XilinxCodeGen(fpga.FPGACodeGen):
         options = [
             "-DDACE_XILINX_HOST_FLAGS=\"{}\"".format(host_flags),
             "-DDACE_XILINX_SYNTHESIS_FLAGS=\"{}\"".format(synthesis_flags),
-            "-DDACE_XILINX_BUILD_FLAGS=\"{}\"".format(build_flags),
-            "-DDACE_XILINX_MODE={}".format(mode),
+            "-DDACE_XILINX_BUILD_FLAGS=\"{}\"".format(build_flags), "-DDACE_XILINX_MODE={}".format(mode),
             "-DDACE_XILINX_TARGET_PLATFORM=\"{}\"".format(target_platform),
             "-DDACE_XILINX_ENABLE_DEBUGGING={}".format(enable_debugging),
-            "-DDACE_FPGA_AUTOBUILD_BITSTREAM={}".format(autobuild),
-            "-DDACE_XILINX_TARGET_CLOCK={}".format(frequency)
+            "-DDACE_FPGA_AUTOBUILD_BITSTREAM={}".format(autobuild), "-DDACE_XILINX_TARGET_CLOCK={}".format(frequency)
         ]
         # Override Vitis/SDx/SDAccel installation directory
         if Config.get("compiler", "xilinx", "path"):
@@ -174,8 +172,12 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         ]
 
         kernel_code_objs = [
-            CodeObject(kernel_name, code, f"{'ip.' if is_multipumped else ''}cpp", XilinxCodeGen, "Xilinx", target_type="device")
-            for (kernel_name, code, is_multipumped) in self._kernel_codes
+            CodeObject(kernel_name,
+                       code,
+                       f"{'ip.' if is_multipumped else ''}cpp",
+                       XilinxCodeGen,
+                       "Xilinx",
+                       target_type="device") for (kernel_name, code, is_multipumped) in self._kernel_codes
         ]
 
         # Memory bank and streaming interfaces connectivity configuration file
@@ -282,7 +284,8 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         dtype = desc.dtype
         kernel_stream.write("{} {}[{}];\n".format(dtype.ctype, var_name, cpp.sym2cpp(array_size)))
         if desc.storage == dace.dtypes.StorageType.FPGA_Registers:
-            kernel_stream.write("#pragma HLS ARRAY_PARTITION variable={} " "complete\n".format(var_name))
+            kernel_stream.write("#pragma HLS ARRAY_PARTITION variable={} "
+                                "complete\n".format(var_name))
         elif desc.storage == dace.dtypes.StorageType.FPGA_Local:
             pass
         else:
@@ -581,7 +584,6 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                 self._bank_assignments[(kernel_name, interface_name)] = memory_bank
                 num_mapped_args += 1
 
-
         if multi_pumped:
             kernel_stream.write('#pragma HLS INTERFACE ap_ctrl_none port=return')
         else:
@@ -746,12 +748,8 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         rtl_tasklet = self.is_rtl_subgraph(subgraph)
         if rtl_tasklet:
             # Write placeholders in the original kernel.
-            entry_stream.write(
-                f'// [RTL] HLSLIB_DATAFLOW_FUNCTION({name}, {", ".join(kernel_args_call)});'
-            )
-            module_stream.write(
-                f'// [RTL] void {name}({", ".join(kernel_args_module)});\n\n'
-            )
+            entry_stream.write(f'// [RTL] HLSLIB_DATAFLOW_FUNCTION({name}, {", ".join(kernel_args_call)});')
+            module_stream.write(f'// [RTL] void {name}({", ".join(kernel_args_module)});\n\n')
 
             rtl_name = self.rtl_tasklet_name(rtl_tasklet, state, sdfg)
 
@@ -811,9 +809,8 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                             self._stream_connections[elem] = [None, None]
                         for edge in state.in_edges(node):
                             rtl_src = subgraph.memlet_path(edge)[0].src_conn
-                            self._stream_connections[elem][
-                                0] = '{}_top_1.m_axis_{}{}'.format(
-                                    rtl_name, rtl_src, postfix)
+                            self._stream_connections[elem][0] = '{}_top_1.m_axis_{}{}'.format(
+                                rtl_name, rtl_src, postfix)
 
             # Make the dispatcher trigger generation of the RTL module, but
             # ignore the generated code, as the RTL codegen will generate the
@@ -1068,12 +1065,12 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         if multi_pumped:
             # We have to generate the rest of the RTL files for multi-pumping. In particular:
             # - The tcl script for configuring the C++ kernel and data plumbing IP cores.
-            # - The top-level file for instantiating the C++ kernel and data plumbing IP cores. 
+            # - The top-level file for instantiating the C++ kernel and data plumbing IP cores.
             # - The Verilog controller for communicating with the host program.
             # - A tcl script for synthesizing the multi-pumped kernel for a faster development cycle.
             rtllib_config = {
                 "name": kernel_name,
-                "buses": { # TODO unroll factor
+                "buses": {  # TODO unroll factor
                     pname: ('m_axis' if is_output or pname.endswith('_out') else 's_axis', p.veclen)
                     for is_output, pname, p, _ in external_streams
                 },
@@ -1090,7 +1087,8 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                     # TODO Maybe with some help from rtllib
                 },
                 #"version": 20211,
-                "clocks": 2 # TODO make this "trickle" down here. Maybe add speeds as well? Might be usefull when packaging
+                "clocks":
+                2  # TODO make this "trickle" down here. Maybe add speeds as well? Might be usefull when packaging
             }
             # Add the emitted C++ kernel as an IP core
             rtllib_config['ip_cores'][f'{kernel_name}_0'] = {
@@ -1166,8 +1164,10 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         host_code_stream.write(
             """\
 // Signature of kernel function (with raw pointers) for argument matching
-{ignore_signature}DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(kernel_function_name=kernel_function_name,
-                                                                        ignore_signature=ignore_signature,kernel_args=", ".join(kernel_args)), sdfg)
+{ignore_signature}DACE_EXPORTED void {kernel_function_name}({kernel_args});\n\n""".format(
+                kernel_function_name=kernel_function_name,
+                ignore_signature=ignore_signature,
+                kernel_args=", ".join(kernel_args)), sdfg)
 
     def generate_memlet_definition(self, sdfg, dfg, state_id, src_node, dst_node, edge, callsite_stream):
         memlet = edge.data
