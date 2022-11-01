@@ -8,20 +8,18 @@ from dace.sdfg.state import SDFGState
 from dace.transformation import transformation
 from dace.transformation.subgraph import helpers
 
-dp = True
-sched = dtypes.ScheduleType.FPGA_Double if dp else dtypes.ScheduleType.FPGA_Device
-
 @properties.make_properties
 class TemporalVectorization(transformation.SubgraphTransformation):
     '''
     This transformation applies the multi-pumping optimization to a subgraph targeting FPGAs, in turn packing more computations temporally rather than spatially as is done in traditional vectorization.
 
     Currently, it can only be applied to applications targeting Xilinx FPGAs, and to subgraphs that purely communicate through streams. It can be applied in two ways:
-    1. Inwards - where the internal widths of the subgraph are narrowed. This gives the benefit of a reduced critical-resource footprint at the same throughput.
-    2. Outwards - where the external widths of the streams are widened. This gives the benefit of increased throughput at the same critical-resource footprint. 
+    1. Where the widths of the internal paths remain unchanged while the external paths are widened by the multi-pumping factor. This gives the benefit of increased throughput at the same critical-resource footprint.
+    2. Where the widths of the internal paths are divided by the multi-pumping factor, while the widths of the external paths remain unchanged. This gives the benefit of a reduced critical-resource footprint at the same throughput. 
     '''
+    # TODO 3rd approach: where the subgraph is just clocked faster without introducing gearboxing. This could help designs where the subgraph reaches II=2, then by clocking it two times faster, it essentially behaves as II=1 from the slow clock domain. 
     factor = properties.Property(dtype=int, default=2, desc='The multi-pumping factor. E.g. double-pumping is a factor of 2.')
-    inwards = properties.Property(dtype=bool, default=True, desc='Flag for whether the optimization should be applied inwards (reduced resources, locked throughput).')
+    approach = properties.Property(dtype=int, default=2, desc='Which approach to use. Can be 1 (increased throughput, same resources) or 2 (same throughput, reduced resourced).')
 
     def can_be_applied(self, sdfg: SDFG, subgraph: SubgraphView) -> bool:
         '''
@@ -29,11 +27,11 @@ class TemporalVectorization(transformation.SubgraphTransformation):
         1. There is one outermost map in the subgraph. 
         2. All of the non- source and sink nodes are only accessed within this subgraph. 
         3. All of the source and sink nodes are either streams or scalars. 
-        4. If the direction is inwards, all the elemental types of the streams must be a vector type that is integer divisable by the multi-pumping factor.
-        5. If the direction is outwards, then either:
+        4. If the direction is 1, then either:
             - The elemental type of the streams must be a vector type.
             - The elemental type must be convertible to a vector type. 
             - Data packers/issuers are allowed to be inserted at the cost of performance through additional data plumbing overhead.
+        5. If the direction is 2, all the elemental types of the streams must be a vector type that is integer divisable by the multi-pumping factor.
         '''
         # Extract all of the relevant components of the subgraph
         graph = subgraph.graph
@@ -66,16 +64,19 @@ class TemporalVectorization(transformation.SubgraphTransformation):
             if not (isinstance(arr, data.Stream) or isinstance(arr, data.Scalar)):
                 return False
 
-        # 4. If the direction is inwards, then all the elemental datatype of the streams must be a vector type.
-        if self.inwards:
+        # 4. If the approach is 1, then either the dataype must be a vector type or must be convertible to a vector type.
+        if self.approach == 1:
+            # TODO not implemented yet.
+            return False
+
+        # 5. If the approach is 2, then all the elemental datatype of the streams must be a vector type.
+        elif self.approach == 2:
             for arr in srcdst_arrays:
                 if (isinstance(arr, data.Stream) and not isinstance(arr.dtype, dtypes.vector)) or arr.veclen % self.factor != 0:
                     return False
-                    
-
-        # 5. If the direction is outwards, then either the dataype must be a vector type or must be convertible to a vector type.
+        
+        # If the approach is wrong, then it should not be applied.
         else:
-            # TODO not implemented yet.
             return False
 
         return True
@@ -99,7 +100,7 @@ class TemporalVectorization(transformation.SubgraphTransformation):
         innermost_map = [n.src.map for n in old_path if isinstance(n.src, nodes.MapEntry)][-1]
 
         # Insert gearboxing for converting stream widths
-        gearbox = Gearbox(innermost_map.range.ranges[0][1]+1, schedule=sched)
+        gearbox = Gearbox(innermost_map.range.ranges[0][1]+1, schedule=dtypes.ScheduleType.FPGA_Multi_Pumped)
         gearbox_src = state.add_write(name)
         state.add_memlet_path(src, gearbox, dst_conn='from_memory', memlet=Memlet(f'{src.data}[0]'))
         state.add_memlet_path(gearbox, gearbox_src, src_conn='to_kernel', memlet=Memlet(f'{name}[0]'))
@@ -124,7 +125,7 @@ class TemporalVectorization(transformation.SubgraphTransformation):
         innermost_map = [n.dst.map for n in old_path if isinstance(n.dst, nodes.MapExit)][0]
         
         # Insert gearbox for converting stream widths.
-        gearbox = Gearbox(innermost_map.range.ranges[0][1]+1, schedule=sched)
+        gearbox = Gearbox(innermost_map.range.ranges[0][1]+1, schedule=dtypes.ScheduleType.FPGA_Multi_Pumped)
         gearbox_dst = state.add_read(name)
         state.add_memlet_path(gearbox_dst, gearbox, dst_conn='from_memory', memlet=Memlet(f'{name}[0]'))
         state.add_memlet_path(gearbox, dst, src_conn='to_kernel', memlet=Memlet(f'{dst.data}[0]'))
@@ -151,4 +152,4 @@ class TemporalVectorization(transformation.SubgraphTransformation):
             rng = list(map.range.ranges[0])
             rng[1] = ((rng[1] + 1) * 2) - 1
             map.range.ranges[0] = rng
-            map.schedule = sched
+            map.schedule = dtypes.ScheduleType.FPGA_Multi_Pumped

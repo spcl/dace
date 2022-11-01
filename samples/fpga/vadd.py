@@ -28,7 +28,7 @@ def make_sdfg(N, V, double_pumped):
     c = state.add_write("C")
 
     c_entry, c_exit = state.add_map("compute_map", dict({'i': f'0:N//V'}),
-        schedule=dace.ScheduleType.FPGA_Double if double_pumped else dace.ScheduleType.Default)
+        schedule=dace.ScheduleType.FPGA_Multi_Pumped if double_pumped else dace.ScheduleType.Default)
     tasklet = state.add_tasklet('vector_add_core', {'a', 'b'}, {'c'}, 'c = a + b')
 
     state.add_memlet_path(a, c_entry, tasklet, memlet=dace.Memlet("A[i]"), dst_conn='a')

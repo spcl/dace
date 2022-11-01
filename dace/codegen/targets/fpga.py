@@ -343,7 +343,7 @@ class FPGACodeGen(TargetCodeGenerator):
 
         self._decouple_array_interfaces = False
         # Register additional FPGA dispatchers
-        self._dispatcher.register_map_dispatcher([dtypes.ScheduleType.FPGA_Device, dtypes.ScheduleType.FPGA_Double], self)
+        self._dispatcher.register_map_dispatcher([dtypes.ScheduleType.FPGA_Device, dtypes.ScheduleType.FPGA_Multi_Pumped], self)
 
         self._dispatcher.register_state_dispatcher(self, predicate=is_fpga_kernel)
 
@@ -367,7 +367,7 @@ class FPGACodeGen(TargetCodeGenerator):
                     # register this as copy dispatcher only if the destination is scheduled on FPGA
                     self._dispatcher.register_copy_dispatcher(storage_from, storage_to, dtypes.ScheduleType.FPGA_Device,
                                                               self)
-                    self._dispatcher.register_copy_dispatcher(storage_from, storage_to, dtypes.ScheduleType.FPGA_Double, self)
+                    self._dispatcher.register_copy_dispatcher(storage_from, storage_to, dtypes.ScheduleType.FPGA_Multi_Pumped, self)
                 else:
                     self._dispatcher.register_copy_dispatcher(storage_from, storage_to, None, self)
         self._dispatcher.register_copy_dispatcher(dtypes.StorageType.FPGA_Global, dtypes.StorageType.CPU_Heap, None,
@@ -390,30 +390,36 @@ class FPGACodeGen(TargetCodeGenerator):
     def has_finalizer(self):
         return False
 
-    def is_rtl_tasklet(self, subgraph):
-        for n in subgraph.nodes():
-            if (isinstance(n, dace.nodes.Tasklet) and n.language == dace.dtypes.Language.SystemVerilog):
-                return n
-        return None
+    def is_rtl_subgraph(self, subgraph: ScopeSubgraphView):
+        '''
+        Checks whether the given subgraph is an RTL subgraph, as in: does it contain a SystemVerilog tasklet.
 
-    def is_external_subgraph(self, subgraph):
+        :param subgraph: The subgraph to check. 
+        :return: The tasklet node if one exists, None otherwise. 
+        '''
         for n in subgraph.nodes():
             if isinstance(n, dace.nodes.NestedSDFG):
                 for sg in dace.sdfg.concurrent_subgraphs(n.sdfg.start_state):
-                    if self.is_external_subgraph(sg):
-                        return True
-            elif any([
-                isinstance(n, dace.nodes.Tasklet) and n.language == dace.dtypes.Language.SystemVerilog]):
-                return True
-        return False
+                    node = self.is_rtl_subgraph(sg)
+                    if node:
+                        return node
+            elif isinstance(n, dace.nodes.Tasklet) and n.language == dace.dtypes.Language.SystemVerilog:
+                return n
+        return None
 
-    def is_multi_pumped_subgraph(self, subgraph):
+    def is_multi_pumped_subgraph(self, subgraph: ScopeSubgraphView):
+        '''
+        Checks whether the given subgraph is a multi-pumped subgraph, as in: does it contain a map whose schedule is set to multi-pumped.
+
+        :param subgraph: The subgraph to check.
+        :return: True if the given subgraph is a multi-pumped subgraph.
+        '''
         for n in subgraph.nodes():
             if isinstance(n, dace.nodes.NestedSDFG):
                 for sg in dace.sdfg.concurrent_subgraphs(n.sdfg.start_state):
                     if self.is_multi_pumped_subgraph(sg):
                         return True
-            elif isinstance(n, dace.nodes.MapEntry) and n.schedule == dace.ScheduleType.FPGA_Double:
+            elif isinstance(n, dace.nodes.MapEntry) and n.schedule == dace.ScheduleType.FPGA_Multi_Pumped:
                 return True
         return False
 
@@ -828,7 +834,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
             data_to_node.update(
                 {node.data: node
                  for node in subgraph.nodes() if isinstance(node, dace.sdfg.nodes.AccessNode)})
-            is_external_subgraph = self.is_external_subgraph(subgraph)
+            is_rtl_subgraph = self.is_rtl_subgraph(subgraph)
             is_multi_subgraph = self.is_multi_pumped_subgraph(subgraph)
             subsdfg = subgraph.parent
             candidates = []  # type: List[Tuple[bool,str,Data]]
@@ -839,7 +845,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
             for n in sources:
                 # Check if the node is connected to an RTL tasklet, in which
                 # case it should be an external stream
-                is_external = is_external_subgraph
+                is_external = is_rtl_subgraph
                 is_multi = is_multi_subgraph
                 is_output = True
                 if not is_external and not is_multi and self._num_kernels > 1:
@@ -863,7 +869,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
             for n in sinks:
                 # Check if the node is connected to an RTL tasklet, in which
                 # case it should be an external stream
-                is_external = is_external_subgraph
+                is_external = is_rtl_subgraph
                 is_multi = is_multi_subgraph
                 is_output = False
                 if not is_external and not is_multi and self._num_kernels > 1:
@@ -1826,7 +1832,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
         if hasattr(self, method_name):
 
             if hasattr(node, "schedule") and node.schedule not in [
-                    dtypes.ScheduleType.Default, dtypes.ScheduleType.FPGA_Device, dtypes.ScheduleType.FPGA_Double
+                    dtypes.ScheduleType.Default, dtypes.ScheduleType.FPGA_Device, dtypes.ScheduleType.FPGA_Multi_Pumped
             ]:
                 warnings.warn("Found schedule {} on {} node in FPGA code. "
                               "Ignoring.".format(node.schedule,

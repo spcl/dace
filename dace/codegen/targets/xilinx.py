@@ -743,7 +743,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
 
         # Check if we are generating an RTL module, in which case only the
         # accesses to the streams should be handled
-        rtl_tasklet = self.is_rtl_tasklet(subgraph)
+        rtl_tasklet = self.is_rtl_subgraph(subgraph)
         if rtl_tasklet:
             # Write placeholders in the original kernel.
             entry_stream.write(
@@ -1066,6 +1066,11 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                               state_host_body_stream, instrumentation_stream)
 
         if multi_pumped:
+            # We have to generate the rest of the RTL files for multi-pumping. In particular:
+            # - The tcl script for configuring the C++ kernel and data plumbing IP cores.
+            # - The top-level file for instantiating the C++ kernel and data plumbing IP cores. 
+            # - The Verilog controller for communicating with the host program.
+            # - A tcl script for synthesizing the multi-pumped kernel for a faster development cycle.
             rtllib_config = {
                 "name": kernel_name,
                 "buses": { # TODO unroll factor
@@ -1085,8 +1090,9 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                     # TODO Maybe with some help from rtllib
                 },
                 #"version": 20211,
-                "clocks": 2 # TODO make this "trickle" down to here. Maybe add speeds as well? Might be usefull when packaging
+                "clocks": 2 # TODO make this "trickle" down here. Maybe add speeds as well? Might be usefull when packaging
             }
+            # Add the emitted C++ kernel as an IP core
             rtllib_config['ip_cores'][f'{kernel_name}_0'] = {
                 'name': f'{kernel_name}',
                 'vendor': 'xilinx.com',
@@ -1094,6 +1100,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                 'version': '1.0',
                 'params': {}
             }
+            # Add the IP cores for clock synchronization
             for _, pname, p, _ in external_streams:
                 rtllib_config['ip_cores'][f'clock_sync_{pname}'] = {
                     'name': 'axis_clock_converter',
@@ -1106,12 +1113,10 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                     }
                 }
 
+            # Trigger the generation
             self._ip_codes.append((f"{kernel_name}_control", 'v', rtllib_control(rtllib_config)))
-
             self._ip_codes.append((f'{kernel_name}_top', 'v', rtllib_top(rtllib_config)))
-
             self._ip_codes.append((f'{kernel_name}_package', 'tcl', rtllib_package(rtllib_config)))
-
             self._ip_codes.append((f'{kernel_name}_synth', 'tcl', rtllib_synth(rtllib_config)))
 
         self.generate_host_function_body(sdfg, state, kernel_name, predecessors,
