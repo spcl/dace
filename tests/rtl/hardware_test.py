@@ -5,6 +5,9 @@ import numpy as np
 import importlib.util
 from pathlib import Path
 import pytest
+from dace.transformation.dataflow import StreamingMemory, Vectorization
+from dace.transformation.interstate import FPGATransformState
+from dace.transformation.subgraph import TemporalVectorization
 
 
 def make_vadd_sdfg(N, veclen=8):
@@ -385,6 +388,133 @@ def test_hardware_axpy_double_pump_vec4():
     return test_hardware_axpy_double_pump(veclen=4)
 
 
+@rtl_test()
+def test_hardware_vadd_sdfgapi_temporal_vectorization():
+    with dace.config.set_temporary('compiler', 'xilinx', 'frequency', value='"0:300\\|1:600"'):
+        # Generate the test data and expected results
+        size_n = 1024
+        veclen = 4
+        N = dace.symbol("N")
+        V = dace.symbol("V")
+        N.set(size_n)
+        V.set(veclen)
+        A = np.random.rand(N.get()).astype(np.float32)
+        B = np.random.rand(N.get()).astype(np.float32)
+        C = np.zeros(N.get()).astype(np.float32)
+        expected = A + B
+
+        # Start building the SDFG
+        sdfg = dace.SDFG(f"vector_addition_{N.get()}_{V.get()}_double_pumped")
+
+        # Define the arrays
+        vec_type = dace.vector(dace.float32, V.get())
+        _, arr_a = sdfg.add_array("A", [N / V], vec_type)
+        arr_a.location['bank'] = '0'
+        arr_a.location["memorytype"] = 'hbm'
+        _, arr_b = sdfg.add_array("B", [N / V], vec_type)
+        arr_b.location['bank'] = '16'
+        arr_b.location["memorytype"] = 'hbm'
+        _, arr_c = sdfg.add_array("C", [N / V], vec_type)
+        arr_c.location['bank'] = '28'
+        arr_c.location["memorytype"] = 'hbm'
+
+        # Add the access nodes
+        state = sdfg.add_state()
+        a = state.add_read("A")
+        b = state.add_read("B")
+        c = state.add_write("C")
+
+        # Add the map and tasklet
+        c_entry, c_exit = state.add_map("compute_map", dict({'i': f'0:N//V'}),
+            schedule=dace.ScheduleType.FPGA_Multi_Pumped)
+        tasklet = state.add_tasklet('vector_add_core', {'a', 'b'}, {'c'}, 'c = a + b')
+
+        # Add the connections between the nodes in the graph
+        state.add_memlet_path(a, c_entry, tasklet, memlet=dace.Memlet("A[i]"), dst_conn='a')
+        state.add_memlet_path(b, c_entry, tasklet, memlet=dace.Memlet("B[i]"), dst_conn='b')
+        state.add_memlet_path(tasklet, c_exit, c, memlet=dace.Memlet("C[i]"), src_conn='c')
+
+        # Apply the transformations
+        sdfg.apply_transformations(FPGATransformState)
+        sdfg.apply_transformations_repeated(StreamingMemory, dict(storage=dace.StorageType.FPGA_Local, buffer_size=32))
+        sgs = dace.sdfg.concurrent_subgraphs(state)
+        sf = TemporalVectorization()
+        cba = [TemporalVectorization.can_be_applied(sf, sdfg, sg) for sg in sgs]
+        [TemporalVectorization.apply_to(sdfg, sg) for i, sg in enumerate(sgs) if cba[i]]
+        sdfg.save('aoeu.sdfg')
+
+        # Add instrumentation
+        from dace.codegen.targets.fpga import is_fpga_kernel
+        for s in sdfg.states():
+            if is_fpga_kernel(sdfg, s):
+                s.instrument = dace.InstrumentationType.FPGA
+        
+        # Run the program and verify the results
+        sdfg.specialize(dict(N=N, V=V))
+        sdfg(A=A, B=B, C=C)
+        assert(np.allclose(expected, C))
+
+
+@rtl_test()
+def test_hardware_vadd_transformed_temporal_vectorization():    
+    with dace.config.set_temporary('compiler', 'xilinx', 'frequency', value='"0:300\\|1:600"'):
+        # Generate the test data and expected results
+        size_n = 1024
+        veclen = 4
+        N = dace.symbol('N')
+        N.set(size_n)
+        x = np.random.rand(N.get()).astype(np.float32)
+        y = np.random.rand(N.get()).astype(np.float32)
+        result = np.zeros(N.get(), dtype=np.float32)
+        expected = x + y
+
+        # Generate the initial SDFG
+        def np_vadd(x: dace.float32[N], y: dace.float32[N]):
+            return x + y
+        sdfg = dace.program(np_vadd).to_sdfg()
+
+        # Remove underscores as Xilinx does not like them
+        for dn in sdfg.nodes()[0].data_nodes():
+            if '__' in dn.data:
+                new_name = dn.data.replace('__', '') + 'new'
+                sdfg.replace(dn.data, new_name)
+
+        # Apply vectorization transformation
+        ambles = size_n % veclen != 0
+        map_entry = [n for n, _ in sdfg.all_nodes_recursive()
+            if isinstance(n, dace.nodes.MapEntry)][0]
+        applied = sdfg.apply_transformations(Vectorization, {
+            'vector_len': veclen,
+            'preamble': ambles, 'postamble': ambles,
+            'propagate_parent': True, 'strided_map': False,
+            'map_entry': map_entry
+        })
+        assert(applied == 1)
+
+        # Transform to an FPGA implementation
+        applied = sdfg.apply_transformations(FPGATransformState)
+        assert(applied == 1)
+
+        # Apply streaming memory transformation
+        applied = sdfg.apply_transformations_repeated(StreamingMemory, {
+            'storage': dace.StorageType.FPGA_Local,
+            'buffer_size': 1
+        })
+        assert (applied == 3)
+
+        # Apply temporal vectorization transformation
+        sgs = dace.sdfg.concurrent_subgraphs(sdfg.states()[0])
+        sf = TemporalVectorization()
+        cba = [TemporalVectorization.can_be_applied(sf, sdfg, sg) for sg in sgs]
+        assert (sum(cba) == 1)
+        [TemporalVectorization.apply_to(sdfg, sg) for i, sg in enumerate(sgs) if cba[i]]
+
+        # Run the program and verify the results
+        sdfg.specialize({'N': N.get()})
+        sdfg(x=x, y=y, returnnew=result)
+        assert(np.allclose(expected, result))
+
+
 # TODO disabled due to problem with array of streams in Vitis 2021.1
 #rtl_test()
 #def test_hardware_add42_multi():
@@ -412,6 +542,7 @@ if __name__ == '__main__':
     # These tests should only be run in hardware* mode
     with dace.config.set_temporary('compiler', 'xilinx', 'mode', value='hardware_emulation'):
         test_hardware_vadd(None)
+        test_hardware_vadd_transformed_temporal_vectorization(None)
         test_hardware_add42_single(None)
         # TODO disabled due to problem with array of streams in Vitis 2021.1
         #test_hardware_add42_multi(None)
