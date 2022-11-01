@@ -607,6 +607,9 @@ class FPGACodeGen(TargetCodeGenerator):
                 self._kernels_names_to_id[kernel_name] = kern_id
 
                 if len(multi_sgs) != 0:
+                    # Currently, there is only added one additional multi pumped per state. In the future, when we can
+                    # emit multi-pumped kernels that to not consist of directly connected subgraphs, more than 1 should
+                    # be added.
                     self._num_kernels += 1
 
                 # Generate kernel code
@@ -799,7 +802,8 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
         subgraph_parameters = collections.OrderedDict()  # {subgraph: [params]}
         nested_global_transients = set()
         # [(Is an output, dataname string, data object, interface)]
-        # TODO rephrase is_output. Currently it is "Is an output from the main kernel", but in the future there can be more kernels, so make it "is output from current subgraph", but then it needs to map to each subgraph.
+        # TODO rephrase is_output. Currently it is "Is an output from the main kernel", but in the future there can be
+        # more kernels, so make it "is output from current subgraph", but then it needs to map to each subgraph.
         external_streams: Set[tuple[bool, str, dt.Data, dict[str, int]]] = set()
 
         # Mapping from global arrays to memory interfaces
