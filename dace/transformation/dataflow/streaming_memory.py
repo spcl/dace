@@ -175,8 +175,10 @@ class StreamingMemory(xf.SingleStateTransformation):
             # The innermost end of the path must have a clearly defined memory
             # access pattern
             innermost_edge = mpath[-1] if expr_index == 0 else mpath[0]
+            dtype = sdfg.arrays[innermost_edge.data.data].dtype
             if (innermost_edge.data.subset.num_elements() != 1 or innermost_edge.data.dynamic
-                    or innermost_edge.data.volume != 1):
+                    or (innermost_edge.data.volume != 1
+                        and not (isinstance(dtype, dtypes.vector) and innermost_edge.data.volume == dtype.veclen))):
                 return False
 
             # Check if any of the maps has a dynamic range

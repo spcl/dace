@@ -14,7 +14,7 @@ import itertools
 class Vectorization(transformation.SingleStateTransformation):
     """ Implements the vectorization transformation.
 
-        Vectorization matches when all the input and output memlets of a 
+        Vectorization matches when all the input and output memlets of a
         tasklet inside a map access the inner-most loop variable in their last
         dimension. The transformation changes the step of the inner-most loop
         to be equal to the length of the vector and vectorizes the memlets.
@@ -208,7 +208,7 @@ class Vectorization(transformation.SingleStateTransformation):
                 else:
                     newlist[contigidx] = (self.vector_len * rb, self.vector_len * rb + self.vector_len - 1, 1)
             edge.data.subset = subsets.Range(newlist)
-            edge.data.volume = 1#vector_size
+            edge.data.volume = vector_size
 
         # Vector length propagation using data descriptors, recursive traversal
         # outwards
