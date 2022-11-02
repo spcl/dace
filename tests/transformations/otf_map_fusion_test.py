@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
 import dace
+import math
 
 from scipy.signal import convolve2d
 
@@ -220,29 +221,60 @@ def fusion_tree(A: dace.float64[10, 20], B: dace.float64[10, 20], C: dace.float6
 
 
 @dace.program
-def hdiff(in_field: dace.float32[128 + 4, 128 + 4, 64],
-          out_field: dace.float32[128, 128, 64], coeff: dace.float32[128, 128, 64]):
+def hdiff(in_field: dace.float32[128 + 4, 128 + 4, 64], out_field: dace.float32[128, 128, 64],
+          coeff: dace.float32[128, 128, 64]):
     lap_field = 4.0 * in_field[1:128 + 3, 1:128 + 3, :] - (
-        in_field[2:128 + 4, 1:128 + 3, :] + in_field[0:128 + 2, 1:128 + 3, :] +
-        in_field[1:128 + 3, 2:128 + 4, :] + in_field[1:128 + 3, 0:128 + 2, :])
+        in_field[2:128 + 4, 1:128 + 3, :] + in_field[0:128 + 2, 1:128 + 3, :] + in_field[1:128 + 3, 2:128 + 4, :] +
+        in_field[1:128 + 3, 0:128 + 2, :])
 
     res1 = lap_field[1:, 1:128 + 1, :] - lap_field[:128 + 1, 1:128 + 1, :]
     flx_field = np.where(
-        (res1 *
-         (in_field[2:128 + 3, 2:128 + 2, :] - in_field[1:128 + 2, 2:128 + 2, :])) > 0,
+        (res1 * (in_field[2:128 + 3, 2:128 + 2, :] - in_field[1:128 + 2, 2:128 + 2, :])) > 0,
         0,
         res1,
     )
     res2 = lap_field[1:128 + 1, 1:, :] - lap_field[1:128 + 1, :128 + 1, :]
     fly_field = np.where(
-        (res2 *
-         (in_field[2:128 + 2, 2:128 + 3, :] - in_field[2:128 + 2, 1:128 + 2, :])) > 0,
+        (res2 * (in_field[2:128 + 2, 2:128 + 3, :] - in_field[2:128 + 2, 1:128 + 2, :])) > 0,
         0,
         res2,
     )
     out_field[:, :, :] = in_field[2:128 + 2, 2:128 + 2, :] - coeff[:, :, :] * (
-        flx_field[1:, :, :] - flx_field[:-1, :, :] + fly_field[:, 1:, :] -
-        fly_field[:, :-1, :])
+        flx_field[1:, :, :] - flx_field[:-1, :, :] + fly_field[:, 1:, :] - fly_field[:, :-1, :])
+
+
+@dace.program
+def prime_fusion(A: dace.int64[128], B: dace.int64[128]):
+    tmp = dace.define_local([128], dtype=dace.bool)
+    for i in dace.map[0:128]:
+        num = A[i]
+
+        stop = int(math.ceil(math.sqrt(num)))
+        is_prime = True
+
+        j = 2
+        while j <= stop:
+            if num % j == 0:
+                is_prime = False
+                break
+
+            j = j + 1
+
+        tmp[i] = is_prime
+
+    for j in dace.map[0:128]:
+        num = A[j]
+        is_prime = tmp[j]
+
+        if not is_prime:
+            B[j] = 0
+        else:
+            i = 1
+            while i < 3:
+                num = num + i
+                i = i + 1
+
+            B[j] = num
 
 
 def test_memlet_equation():
@@ -490,6 +522,7 @@ def test_fusion_tree():
     diff = np.linalg.norm(c_target - C)
     assert diff <= 1e-12
 
+
 def test_connector_collision():
     sdfg = hdiff.to_sdfg()
     sdfg.simplify()
@@ -502,6 +535,24 @@ def test_connector_collision():
     sdfg.validate()
 
 
+def test_prime_fusion():
+    sdfg = prime_fusion.to_sdfg()
+    sdfg.simplify()
+
+    assert count_maps(sdfg) == 2
+
+    nums = np.arange(2, 130, 1, dtype=np.int64)
+    res = np.zeros((128, ), dtype=np.int64)
+    sdfg(A=nums, B=res)
+
+    sdfg.apply_transformations(OTFMapFusion)
+    assert count_maps(sdfg) == 1
+
+    res_fused = np.zeros((128, ), dtype=np.int64)
+    sdfg(A=nums, B=res_fused)
+    assert (res == res_fused).all()
+
+
 if __name__ == '__main__':
     test_fusion_chain()
     test_fusion_chain_renamed()
@@ -512,3 +563,4 @@ if __name__ == '__main__':
     test_fusion_convolve_transposed()
     test_fusion_tree()
     test_connector_collision()
+    test_prime_fusion()
