@@ -207,11 +207,11 @@ def _stateorder_topological_sort(sdfg: SDFG,
                                  visited: Set[SDFGState] = None) -> Iterator[SDFGState]:
     """ 
     Helper function for ``stateorder_topological_sort``. 
+
     :param sdfg: SDFG.
     :param start: Starting state for traversal.
     :param ptree: State parent tree (computed from ``state_parent_tree``).
-    :param branch_merges: Dictionary mapping from branch state to its merge
-                          state.
+    :param branch_merges: Dictionary mapping from branch state to its merge state.
     :param stop: Stopping state to not traverse through (merge state of a 
                  branch or guard state of a loop).
     :return: Generator that yields states in state-order from ``start`` to 
@@ -219,14 +219,13 @@ def _stateorder_topological_sort(sdfg: SDFG,
     """
     # Traverse states in custom order
     visited = visited or set()
-    if stop is not None:
-        visited.add(stop)
     stack = [start]
     while stack:
         node = stack.pop()
-        if node in visited:
+        if node in visited or node is stop:
             continue
         yield node
+        visited.add(node)
 
         oe = sdfg.out_edges(node)
         if len(oe) == 0:  # End state
@@ -265,6 +264,9 @@ def _stateorder_topological_sort(sdfg: SDFG,
                 mergestate = stop
 
         for branch in oe:
+            if branch.dst is mergestate:
+                # If we hit the merge state (if without else), defer to end of branch traversal
+                continue
             for s in _stateorder_topological_sort(sdfg,
                                                   branch.dst,
                                                   ptree,
@@ -273,8 +275,7 @@ def _stateorder_topological_sort(sdfg: SDFG,
                                                   visited=visited):
                 yield s
                 visited.add(s)
-        if mergestate != stop:
-            stack.append(mergestate)
+        stack.append(mergestate)
 
 
 def stateorder_topological_sort(sdfg: SDFG) -> Iterator[SDFGState]:
@@ -282,6 +283,7 @@ def stateorder_topological_sort(sdfg: SDFG) -> Iterator[SDFGState]:
     Returns a generator that produces states in the order that they will be
     executed, disregarding multiple loop iterations and employing topological
     sort for branches.
+
     :param sdfg: The SDFG to iterate over.
     :return: Generator that yields states in state-order.
     """

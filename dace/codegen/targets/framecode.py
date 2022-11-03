@@ -14,8 +14,7 @@ from dace.cli import progress
 from dace.codegen import control_flow as cflow
 from dace.codegen import dispatcher as disp
 from dace.codegen.prettycode import CodeIOStream
-from dace.codegen.targets.common import codeblock_to_cpp, sym2cpp
-from dace.codegen.targets.cpp import unparse_interstate_edge
+from dace.codegen.common import codeblock_to_cpp, sym2cpp, unparse_interstate_edge
 from dace.codegen.targets.target import TargetCodeGenerator
 from dace.frontend.python import wrappers
 from dace.sdfg import SDFG, ScopeSubgraphView, SDFGState, nodes
@@ -101,6 +100,7 @@ class DaCeCodeGenerator(object):
     def preprocess(self, sdfg: SDFG) -> None:
         """
         Called before code generation. Used for making modifications on the SDFG prior to code generation.
+        
         :note: Post-conditions assume that the SDFG will NOT be changed after this point.
         :param sdfg: The SDFG to modify in-place.
         """
@@ -124,6 +124,7 @@ class DaCeCodeGenerator(object):
     def generate_fileheader(self, sdfg: SDFG, global_stream: CodeIOStream, backend: str = 'frame'):
         """ Generate a header in every output file that includes custom types
             and constants.
+
             :param sdfg: The input SDFG.
             :param global_stream: Stream to write to (global).
             :param backend: Whose backend this header belongs to.
@@ -185,6 +186,7 @@ struct {sdfg.name}_t {{
     def generate_header(self, sdfg: SDFG, global_stream: CodeIOStream, callsite_stream: CodeIOStream):
         """ Generate the header of the frame-code. Code exists in a separate
             function for overriding purposes.
+
             :param sdfg: The input SDFG.
             :param global_stream: Stream to write to (global).
             :param callsite_stream: Stream to write to (at call site).
@@ -208,6 +210,7 @@ struct {sdfg.name}_t {{
     def generate_footer(self, sdfg: SDFG, global_stream: CodeIOStream, callsite_stream: CodeIOStream):
         """ Generate the footer of the frame-code. Code exists in a separate
             function for overriding purposes.
+
             :param sdfg: The input SDFG.
             :param global_stream: Stream to write to (global).
             :param callsite_stream: Stream to write to (at call site).
@@ -450,6 +453,7 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
         """
         Determines where (at which scope/state/SDFG) each data descriptor
         will be allocated/deallocated.
+
         :param top_sdfg: The top-level SDFG to determine for.
         """
         # Gather shared transients, free symbols, and first/last appearance
@@ -738,6 +742,7 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                       sdfg_id: str = "") -> Tuple[str, str, Set[TargetCodeGenerator], Set[str]]:
         """ Generate frame code for a given SDFG, calling registered targets'
             code generation callbacks for them to generate their own code.
+
             :param sdfg: The SDFG to generate code for.
             :param schedule: The schedule the SDFG is currently located, or
                              None if the SDFG is top-level.
@@ -802,6 +807,11 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
             if isvarType is None:
                 raise TypeError(f'Type inference failed for symbol {isvarName}')
 
+            # NOTE: NestedSDFGs frequently contain tautologies in their symbol mapping, e.g., `'i': i`. Do not
+            # redefine the symbols in such cases.
+            if (not is_top_level and isvarName in sdfg.parent_nsdfg_node.symbol_mapping.keys() and
+                    str(sdfg.parent_nsdfg_node.symbol_mapping[isvarName] == isvarName)):
+                continue
             isvar = data.Scalar(isvarType)
             callsite_stream.write('%s;\n' % (isvar.as_arg(with_types=True, name=isvarName)), sdfg)
             self.dispatcher.defined_vars.add(isvarName, disp.DefinedType.Scalar, isvarType.ctype)

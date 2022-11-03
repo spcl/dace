@@ -177,7 +177,7 @@ class RedundantArray(pm.SingleStateTransformation):
     def expressions(cls):
         return [sdutil.node_path_graph(cls.in_array, cls.out_array)]
 
-    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
+    def can_be_applied(self, graph: SDFGState, expr_index, sdfg, permissive=False):
         in_array = self.in_array
         out_array = self.out_array
 
@@ -401,6 +401,27 @@ class RedundantArray(pm.SingleStateTransformation):
                         warnings.warn(f'validate_subsets failed: {ex}')
                         return False
 
+            # 2-d. If array is connected to a nested SDFG or view and strides are unequal, skip
+            if in_desc.strides != out_desc.strides:
+                sources = []
+                if path.downwards:
+                    sources = [path.root().edge]
+                else:
+                    sources = [e for e in path.leaves()]
+                for source_edge in sources:
+                    if isinstance(source_edge.src, nodes.AccessNode):
+                        if isinstance(source_edge.src.desc(sdfg), data.View):
+                            if not permissive:
+                                return False
+                    elif isinstance(source_edge.src, nodes.NestedSDFG):
+                        if not permissive:
+                            return False
+                        conn = source_edge.src_conn
+                        inner_desc = source_edge.src.sdfg.arrays[conn]
+                        if inner_desc.strides != in_desc.strides:
+                            # Cannot safely remove node without modifying strides and correctness
+                            return False
+
         return True
 
     def _make_view(self, sdfg: SDFG, graph: SDFGState, in_array: nodes.AccessNode, out_array: nodes.AccessNode,
@@ -492,13 +513,15 @@ class RedundantArray(pm.SingleStateTransformation):
         from dace.libraries.standard import Reduce
         reduction = False
         for e in graph.in_edges(in_array):
-            if isinstance(e.src, Reduce):
+            if isinstance(e.src, Reduce) or (isinstance(e.src, nodes.NestedSDFG)
+                                             and len(in_desc.shape) != len(out_desc.shape)):
                 reduction = True
 
         # If:
-        # 1. A reduce node is involved;
-        # 2. The memlet does not cover the removed array; or
-        # 3. Dimensions are mismatching (all dimensions are popped);
+        # 1. A reduce node is involved; or
+        # 2. A NestedSDFG node is involved and the arrays have different dimensionality; or
+        # 3. The memlet does not cover the removed array; or
+        # 4. Dimensions are mismatching (all dimensions are popped);
         # create a view.
         if reduction or len(a_dims_to_pop) == len(in_desc.shape) or any(
                 m != a for m, a in zip(a1_subset.size(), in_desc.shape)):
@@ -574,6 +597,20 @@ class RedundantArray(pm.SingleStateTransformation):
             e2.data.wcr = wcr
             e2.data.wcr_nonatomic = wcr_nonatomic
             graph.add_edge(e2.src, e2.src_conn, out_array, e2.dst_conn, e2.data)
+
+            # 2-d. Fix strides in nested SDFGs
+            if in_desc.strides != out_desc.strides:
+                sources = []
+                if path.downwards:
+                    sources = [path.root().edge]
+                else:
+                    sources = [e for e in path.leaves()]
+                for source_edge in sources:
+                    if not isinstance(source_edge.src, nodes.NestedSDFG):
+                        continue
+                    conn = source_edge.src_conn
+                    inner_desc = source_edge.src.sdfg.arrays[conn]
+                    inner_desc.strides = out_desc.strides
 
         # Finally, remove in_array node
         graph.remove_node(in_array)
@@ -811,6 +848,27 @@ class RedundantSecondArray(pm.SingleStateTransformation):
                         warnings.warn(f'validate_subsets failed: {ex}')
                         return False
 
+            # 2-d. If array is connected to a nested SDFG or view and strides are unequal, skip
+            if in_desc.strides != out_desc.strides:
+                sources = []
+                if not path.downwards:
+                    sources = [path.root().edge]
+                else:
+                    sources = [e for e in path.leaves()]
+                for source_edge in sources:
+                    if isinstance(source_edge.dst, nodes.AccessNode):
+                        if isinstance(source_edge.dst.desc(sdfg), data.View):
+                            if not permissive:
+                                return False
+                    elif isinstance(source_edge.dst, nodes.NestedSDFG):
+                        if not permissive:
+                            return False
+                        conn = source_edge.dst_conn
+                        inner_desc = source_edge.dst.sdfg.arrays[conn]
+                        if inner_desc.strides != in_desc.strides:
+                            # Cannot safely remove node without modifying strides and correctness
+                            return False
+
         return True
 
     def apply(self, graph: SDFGState, sdfg: SDFG):
@@ -915,6 +973,20 @@ class RedundantSecondArray(pm.SingleStateTransformation):
             e2.data.wcr = wcr
             e2.data.wcr_nonatomic = wcr_nonatomic
             graph.add_edge(in_array, e2.src_conn, e2.dst, e2.dst_conn, e2.data)
+
+            # 2-d. Fix strides in nested SDFGs
+            if in_desc.strides != out_desc.strides:
+                sources = []
+                if not path.downwards:
+                    sources = [path.root().edge]
+                else:
+                    sources = [e for e in path.leaves()]
+                for source_edge in sources:
+                    if not isinstance(source_edge.dst, nodes.NestedSDFG):
+                        continue
+                    conn = source_edge.dst_conn
+                    inner_desc = source_edge.dst.sdfg.arrays[conn]
+                    inner_desc.strides = out_desc.strides
 
         # Finally, remove out_array node
         graph.remove_node(out_array)

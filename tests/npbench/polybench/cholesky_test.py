@@ -54,10 +54,11 @@ def ground_truth(N, A):
 
 
 def run_cholesky(device_type: dace.dtypes.DeviceType):
-    '''
+    """
     Runs Cholesky for the given device
+
     :return: the SDFG
-    '''
+    """
 
     # Initialize data (polybench mini size)
     N = sizes["mini"]

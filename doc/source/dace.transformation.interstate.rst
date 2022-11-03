@@ -77,7 +77,7 @@ dace.transformation.interstate.sdfg\_nesting module
    :show-inheritance:
 
 dace.transformation.interstate.state\_elimination module
----------------------------------------------------
+--------------------------------------------------------
 
 .. automodule:: dace.transformation.interstate.state_elimination
    :members:
@@ -88,14 +88,6 @@ dace.transformation.interstate.state\_fusion module
 ---------------------------------------------------
 
 .. automodule:: dace.transformation.interstate.state_fusion
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
-dace.transformation.interstate.transient\_reuse module
----------------------------------------------------
-
-.. automodule:: dace.transformation.interstate.transient_reuse
    :members:
    :undoc-members:
    :show-inheritance:

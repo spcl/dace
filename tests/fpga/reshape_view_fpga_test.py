@@ -12,10 +12,9 @@ N = dace.symbol('N')
 
 @fpga_test()
 def test_view_fpga_sdfg():
-    '''
+    """
     Manually built FPGA-SDFG with a view: Array -> view -> Array
-    :return:
-    '''
+    """
 
     sdfg = dace.SDFG("view_fpga")
 
@@ -85,10 +84,9 @@ def test_view_fpga_sdfg():
 
 @fpga_test()
 def test_reshape_np():
-    '''
+    """
     Dace program with numpy reshape, transformed for FPGA
-    :return:
-    '''
+    """
     @dace.program
     def reshp_np(A: dace.float32[3, 4], B: dace.float32[2, 6]):
         B[:] = np.reshape(A, [2, 6])

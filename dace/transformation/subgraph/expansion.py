@@ -40,14 +40,14 @@ def offset_map(state, map_entry):
 
 @make_properties
 class MultiExpansion(transformation.SubgraphTransformation):
-    ''' 
+    """ 
     Implements the MultiExpansion transformation.
     Takes all the lowest scope maps in a given subgraph,
     for each of these maps splits it into an outer and inner map,
     where the outer map contains the common ranges of all maps,
     and the inner map the rest.
     Map access variables and memlets are changed accordingly
-    '''
+    """
 
     debug = Property(dtype=bool, desc="Debug Mode", default=False)
     sequential_innermaps = Property(dtype=bool,
@@ -129,6 +129,7 @@ class MultiExpansion(transformation.SubgraphTransformation):
         The resulting outer maps all have same range and indices, corresponding
         variables and memlets get changed accordingly. The inner map contains
         the leftover dimensions
+        
         :param sdfg: Underlying SDFG
         :param graph: Graph in which we expand
         :param map_entries: List of Map Entries(Type MapEntry) that we want to expand

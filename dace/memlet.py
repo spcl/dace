@@ -3,7 +3,7 @@ import ast
 from copy import deepcopy as dcpy, copy
 from functools import reduce
 import operator
-from typing import List, Optional, Set, Union
+from typing import TYPE_CHECKING, List, Optional, Set, Union
 import warnings
 
 import dace
@@ -14,6 +14,8 @@ from dace.frontend.python.astutils import unparse
 from dace.properties import (Property, make_properties, DataProperty, SubsetProperty, SymbolicProperty,
                              DebugInfoProperty, LambdaProperty)
 
+if TYPE_CHECKING:
+    import dace.sdfg.graph
 
 @make_properties
 class Memlet(object):
@@ -52,24 +54,25 @@ class Memlet(object):
     allow_oob = Property(dtype=bool, default=False, desc='Bypass out-of-bounds validation')
 
     def __init__(self,
-                 expr: str = None,
-                 data: str = None,
-                 subset: Union[str, subsets.Subset] = None,
-                 other_subset: Union[str, subsets.Subset] = None,
-                 volume: Union[int, str, symbolic.SymbolicType] = None,
+                 expr: Optional[str] = None,
+                 data: Optional[str] = None,
+                 subset: Union[str, subsets.Subset, None] = None,
+                 other_subset: Union[str, subsets.Subset, None] = None,
+                 volume: Union[int, str, symbolic.SymbolicType, None] = None,
                  dynamic: bool = False,
-                 wcr: Union[str, ast.AST] = None,
-                 debuginfo: dtypes.DebugInfo = None,
+                 wcr: Union[str, ast.AST, None] = None,
+                 debuginfo: Optional[dtypes.DebugInfo] = None,
                  wcr_nonatomic: bool = False,
                  allow_oob: bool = False):
         """ 
         Constructs a Memlet.
+        
         :param expr: A string expression of the this memlet, given as an ease
                      of use API. Must follow one of the following forms:
                      1. ``ARRAY``,
                      2. ``ARRAY[SUBSET]``,
                      3. ``ARRAY[SUBSET] -> OTHER_SUBSET``.
-        :param data: (DEPRECATED) Data descriptor name attached to this memlet.
+        :param data: Data descriptor name attached to this memlet.
         :param subset: The subset to take from the data attached to the edge,
                        represented either as a string or a Subset object.
         :param other_subset: The subset to offset into the other side of the
@@ -231,33 +234,33 @@ class Memlet(object):
                num_accesses=None,
                debuginfo=None,
                dynamic=False):
-        """ DEPRECATED: Constructs a Memlet from string-based expressions.
-            :param data: The data object or name to access. 
-            :type data: Either a string of the data descriptor name or an
-                        AccessNode.
-            :param subset_str: The subset of `data` that is going to
-                               be accessed in string format. Example: '0:N'.
-            :param wcr_str: A lambda function (as a string) specifying
-                            how write-conflicts are resolved. The syntax
-                            of the lambda function receives two elements:
-                            `current` value and `new` value,
-                            and returns the value after resolution. For
-                            example, summation is
-                            `'lambda cur, new: cur + new'`.
-            :param other_subset_str: The reindexing of `subset` on the other
-                                     connected data (as a string).
-            :param wcr_conflict: If False, forces non-locked conflict
-                                 resolution when generating code. The default
-                                 is to let the code generator infer this
-                                 information from the SDFG.
-            :param num_accesses: The number of times that the moved data
-                                 will be subsequently accessed. If
-                                 -1, designates that the number of accesses is
-                                 unknown at compile time.
-            :param debuginfo: Source-code information (e.g., line, file)
-                              used for debugging.
-            :param dynamic: If True, the number of elements moved in this memlet
-                            is defined dynamically at runtime.
+        """
+        DEPRECATED: Constructs a Memlet from string-based expressions.
+
+        :param data: The data object or name to access. 
+        :param subset_str: The subset of `data` that is going to
+                            be accessed in string format. Example: '0:N'.
+        :param wcr_str: A lambda function (as a string) specifying
+                        how write-conflicts are resolved. The syntax
+                        of the lambda function receives two elements:
+                        `current` value and `new` value,
+                        and returns the value after resolution. For
+                        example, summation is
+                        `'lambda cur, new: cur + new'`.
+        :param other_subset_str: The reindexing of `subset` on the other
+                                    connected data (as a string).
+        :param wcr_conflict: If False, forces non-locked conflict
+                                resolution when generating code. The default
+                                is to let the code generator infer this
+                                information from the SDFG.
+        :param num_accesses: The number of times that the moved data
+                                will be subsequently accessed. If
+                                -1, designates that the number of accesses is
+                                unknown at compile time.
+        :param debuginfo: Source-code information (e.g., line, file)
+                            used for debugging.
+        :param dynamic: If True, the number of elements moved in this memlet
+                        is defined dynamically at runtime.
         """
         # warnings.warn(
         #     'This function is deprecated, please use the Memlet '
@@ -321,6 +324,7 @@ class Memlet(object):
         """
         Parses a memlet and fills in either the src_subset,dst_subset fields
         or the _data,_subset fields.
+
         :param expr: A string expression of the this memlet, given as an ease
                 of use API. Must follow one of the following forms:
                 1. ``ARRAY``,
@@ -396,11 +400,13 @@ class Memlet(object):
 
     @staticmethod
     def from_array(dataname, datadesc, wcr=None):
-        """ Constructs a Memlet that transfers an entire array's contents.
-            :param dataname: The name of the data descriptor in the SDFG.
-            :param datadesc: The data descriptor object.
-            :param wcr: The conflict resolution lambda.
-            :type datadesc: Data
+        """ 
+        Constructs a Memlet that transfers an entire array's contents.
+
+        :param dataname: The name of the data descriptor in the SDFG.
+        :param datadesc: The data descriptor object.
+        :param wcr: The conflict resolution lambda.
+        :type datadesc: Data
         """
         rng = subsets.Range.from_array(datadesc)
         return Memlet.simple(dataname, rng, wcr_str=wcr)
@@ -415,9 +421,11 @@ class Memlet(object):
         ])
 
     def replace(self, repl_dict):
-        """ Substitute a given set of symbols with a different set of symbols.
-            :param repl_dict: A dict of string symbol names to symbols with
-                              which to replace them.
+        """
+        Substitute a given set of symbols with a different set of symbols.
+        
+        :param repl_dict: A dict of string symbol names to symbols with
+                          which to replace them.
         """
         repl_to_intermediate = {}
         repl_to_final = {}

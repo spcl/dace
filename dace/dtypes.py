@@ -423,8 +423,9 @@ class typeclass(object):
 
     def __getitem__(self, s):
         """ This is syntactic sugar that allows us to define an array type
-            with the following syntax: dace.uint32[N,M]
-            :return: A data.Array data descriptor.
+            with the following syntax: ``dace.uint32[N,M]``
+
+            :return: A ``data.Array`` data descriptor.
         """
         from dace import data
 
@@ -481,6 +482,7 @@ def reduction_identity(dtype: typeclass, red: ReductionType) -> Any:
     """
     Returns known identity values (which we can safely reset transients to)
     for built-in reduction types.
+
     :param dtype: Input type.
     :param red: Reduction type.
     :return: Identity value in input type, or None if not found.
@@ -611,7 +613,7 @@ class pointer(typeclass):
     def __init__(self, wrapped_typeclass):
         self._typeclass = wrapped_typeclass
         self.type = wrapped_typeclass.type
-        self.bytes = int64.bytes
+        self.bytes = ctypes.sizeof(ctypes.c_void_p)
         self.ctype = wrapped_typeclass.ctype + "*"
         self.ctype_unaligned = wrapped_typeclass.ctype_unaligned + "*"
         self.dtype = self
@@ -816,6 +818,28 @@ class struct(typeclass):
         )
 
 
+class pyobject(opaque):
+    """
+    A generic data type for Python objects in un-annotated callbacks.
+    It cannot be used inside a DaCe program, but can be passed back to other Python callbacks.
+    Use with caution, and ensure the value is not removed by the garbage collector or the program will crash.
+    """
+
+    def __init__(self):
+        super().__init__('pyobject')
+        self.bytes = ctypes.sizeof(ctypes.c_void_p)
+        self.type = numpy.object_
+
+    def as_ctypes(self):
+        return ctypes.py_object
+
+    def as_numpy_dtype(self):
+        return numpy.dtype(numpy.object_)
+
+    def to_python(self, obj_id: int):
+        return ctypes.cast(obj_id, ctypes.py_object).value
+
+
 class compiletime:
     """
     Data descriptor type hint signalling that argument evaluation is
@@ -854,7 +878,9 @@ def ptrtocupy(ptr, inner_ctype, shape):
 
 
 class callback(typeclass):
-    """ Looks like dace.callback([None, <some_native_type>], *types)"""
+    """
+    Looks like ``dace.callback([None, <some_native_type>], *types)``
+    """
 
     def __init__(self, return_types, *variadic_args):
         from dace import data
@@ -886,34 +912,39 @@ class callback(typeclass):
         return_ctype = self.cfunc_return_type().as_ctypes()
         input_ctypes = []
 
-        if self.is_scalar_function():
-            args = self.input_types
-        else:
-            args = itertools.chain(self.input_types, self.return_types)
-
-        for some_arg in args:
+        for some_arg in self.input_types:
             if isinstance(some_arg, data.Array):
                 input_ctypes.append(ctypes.c_void_p)
             else:
                 input_ctypes.append(some_arg.dtype.as_ctypes() if some_arg is not None else None)
+
+        if not self.is_scalar_function():
+            for some_arg in self.return_types:
+                if isinstance(some_arg, data.Array):
+                    input_ctypes.append(ctypes.c_void_p)
+                else:
+                    input_ctypes.append(pointer(some_arg.dtype).as_ctypes() if some_arg is not None else None)
+
         if input_ctypes == [None]:
             input_ctypes = []
         cf_object = ctypes.CFUNCTYPE(return_ctype, *input_ctypes)
         return cf_object
 
     def is_scalar_function(self) -> bool:
-        '''
+        """
         Returns True if the callback is a function that returns a scalar
         value (or nothing). Scalar functions are the only ones that can be 
         used within a `dace.tasklet` explicitly.
-        '''
+        """
         from dace import data
         if len(self.return_types) == 0 or self.return_types == [None]:
             return True
         return (len(self.return_types) == 1 and isinstance(self.return_types[0], (typeclass, data.Scalar)))
 
     def cfunc_return_type(self) -> typeclass:
-        ''' Returns the typeclass of the return value of the function call. '''
+        """
+        Returns the typeclass of the return value of the function call.
+        """
         if len(self.return_types) == 0 or self.return_types == [None]:
             return typeclass(None)
         if not self.is_scalar_function():
@@ -929,12 +960,7 @@ class callback(typeclass):
 
         input_type_cstring = []
 
-        if self.is_scalar_function():
-            args = self.input_types
-        else:
-            args = itertools.chain(self.input_types, self.return_types)
-
-        for arg in args:
+        for arg in self.input_types:
             if arg is None:
                 continue
             if isinstance(arg, data.Array):
@@ -943,10 +969,21 @@ class callback(typeclass):
             else:
                 input_type_cstring.append(arg.ctype)
 
+        if not self.is_scalar_function():
+            for arg in self.return_types:
+                if arg is None:
+                    continue
+                if isinstance(arg, data.Array):
+                    # const hack needed to prevent error in casting const int* to int*
+                    input_type_cstring.append(arg.dtype.ctype + " const *")
+                else:
+                    input_type_cstring.append(pointer(arg.dtype).ctype)
+
+
         retval = self.cfunc_return_type()
         return f'{retval} (*{name})({", ".join(input_type_cstring)})'
 
-    def get_trampoline(self, pyfunc, other_arguments):
+    def get_trampoline(self, pyfunc, other_arguments, refs):
         from functools import partial
         from dace import data, symbolic
 
@@ -975,8 +1012,12 @@ class callback(typeclass):
                 inp_arraypos.append(index)
                 inp_types_and_sizes.append((ctypes.c_void_p, []))
                 inp_converters.append(lambda a, *args: ctypes.cast(a, ctypes.c_void_p).value)
+            elif isinstance(arg, data.Scalar) and isinstance(arg.dtype, pyobject):
+                inp_arraypos.append(index)
+                inp_types_and_sizes.append((ctypes.py_object, []))
+                inp_converters.append(lambda a, *args: a)
             else:
-                inp_converters.append(lambda a: a)
+                inp_converters.append(lambda a, *args: a)
         offset = len(self.input_types)
         for index, arg in enumerate(self.return_types):
             if isinstance(arg, data.Array):
@@ -988,11 +1029,20 @@ class callback(typeclass):
                 ret_types_and_sizes.append((ctypes.c_char_p, []))
                 ret_converters.append(lambda a, *args: ctypes.cast(a, ctypes.c_char_p).value.decode('utf-8'))
             elif isinstance(arg, data.Scalar) and isinstance(arg.dtype, pointer):
-                ret_arraypos.append(index)
+                ret_arraypos.append(index + offset)
                 ret_types_and_sizes.append((ctypes.c_void_p, []))
                 ret_converters.append(lambda a, *args: ctypes.cast(a, ctypes.c_void_p).value)
-            else:
+            elif isinstance(arg, data.Scalar) and isinstance(arg.dtype, pyobject):
+                ret_arraypos.append(index + offset)
+                ret_types_and_sizes.append((ctypes.py_object, []))
                 ret_converters.append(lambda a, *args: a)
+            else:
+                if not self.is_scalar_function():
+                    ret_arraypos.append(index + offset)
+                    ret_types_and_sizes.append((arg.dtype.as_ctypes(), arg.shape))
+                    ret_converters.append(partial(data.make_reference_from_descriptor, arg))
+                else:
+                    ret_converters.append(lambda a, *args: a)
         if len(inp_arraypos) == 0 and len(ret_arraypos) == 0:
             return pyfunc
 
@@ -1004,7 +1054,7 @@ class callback(typeclass):
             list_of_other_inputs = list(other_inputs[:last_input])
             list_of_outputs = []
             if ret_indices:
-                list_of_outputs = list(other_inputs[ret_indices[0]:])
+                list_of_outputs = list(other_inputs[last_input:])
             for j, i in enumerate(indices):
                 data_type, size = data_types_and_sizes[j]
                 non_symbolic_sizes = []
@@ -1014,22 +1064,33 @@ class callback(typeclass):
                     else:
                         non_symbolic_sizes.append(s)
                 list_of_other_inputs[i] = inp_converters[i](other_inputs[i], other_arguments)
-            for j, i in enumerate(ret_indices):
-                data_type, size = ret_data_types_and_sizes[j]
-                non_symbolic_sizes = []
-                for s in size:
-                    if isinstance(s, symbolic.symbol):
-                        non_symbolic_sizes.append(other_arguments[str(s)])
+            if list_of_outputs:
+                for j, i in enumerate(ret_indices):
+                    data_type, size = ret_data_types_and_sizes[j]
+                    non_symbolic_sizes = []
+                    for s in size:
+                        if isinstance(s, symbolic.symbol):
+                            non_symbolic_sizes.append(other_arguments[str(s)])
+                        else:
+                            non_symbolic_sizes.append(s)
+                    outind = i - last_input
+                    if len(other_inputs) > i:
+                        list_of_outputs[outind] = ret_converters[outind](other_inputs[i], other_arguments)
                     else:
-                        non_symbolic_sizes.append(s)
-                list_of_outputs[i - ret_indices[0]] = ret_converters[i - ret_indices[0]](other_inputs[i],
-                                                                                         other_arguments)
+                        list_of_outputs[outind] = None
+
             if ret_indices:
                 ret = orig_function(*list_of_other_inputs)
-                if len(list_of_outputs) == 1:
+                if len(list_of_outputs) == 0:
+                    refs.append(ret)  # Keep reference so that garbage collection does not free object
+                    return ret_converters[0](ret, other_arguments)
+                elif len(list_of_outputs) == 1:
                     ret = [ret]
                 for v, r in zip(list_of_outputs, ret):
-                    v[:] = r
+                    if v is not None:  # Was converted to an assignable pointer
+                        v[:] = r
+
+                    refs.append(r)  # Keep reference so that garbage collection does not free object
                 return
             return orig_function(*list_of_other_inputs)
 
@@ -1125,6 +1186,7 @@ float64 = typeclass(numpy.float64)
 complex64 = typeclass(numpy.complex64)
 complex128 = typeclass(numpy.complex128)
 string = stringtype()
+
 
 @undefined_safe_enum
 @extensible_enum

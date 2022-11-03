@@ -29,6 +29,7 @@ def test_autodetect_function():
     """ 
     Tests auto-detection of parsable free functions in the Python frontend.
     """
+
     @dace
     def adf(A):
         return freefunction(A)
@@ -63,6 +64,7 @@ def test_autodetect_callable_object():
 
 
 def test_nested_function_method():
+
     @dataclass
     class TestClass:
         some_field: int
@@ -86,16 +88,20 @@ def test_nested_function_method():
 
 
 def test_function_that_needs_replacement():
+
     @dace
     def notworking(a: dace.float64[20]):
         return np.allclose(a, a)
 
     A = np.random.rand(20)
-    with pytest.raises(DaceSyntaxError):
-        notworking(A)
+    with dace.config.set_temporary('frontend', 'typed_callbacks_only', value=True):
+        with pytest.raises(DaceSyntaxError):
+            notworking(A)
 
 
-def test_nested_autoparse_fail():
+@pytest.mark.parametrize('typed_callbacks', (False, True))
+def test_nested_autoparse(typed_callbacks):
+
     def notworking_nested(a):
         return np.allclose(a, a)
 
@@ -104,12 +110,22 @@ def test_nested_autoparse_fail():
         return notworking_nested(a)
 
     A = np.random.rand(20)
-    with pytest.raises(DaceSyntaxError, match='numpy.allclose'):
-        notworking2(A)
+
+    with dace.config.set_temporary('frontend', 'typed_callbacks_only', value=typed_callbacks):
+        if typed_callbacks:
+            with pytest.raises(DaceSyntaxError, match='numpy.allclose'):
+                notworking2(A)
+        else:
+            result = notworking2(A)
+            assert result is True
 
 
 def test_nested_recursion_fail():
+
     def nested_a(a):
+        if a[0] < -2.0:
+            return a[0]
+        a[0] -= 1.0
         return nested_a(a)
 
     @dace
@@ -117,15 +133,20 @@ def test_nested_recursion_fail():
         return nested_a(a)
 
     A = np.random.rand(20)
-    with pytest.raises(DaceSyntaxError, match='nested_a'):
-        recursive_autoparse(A)
+    with dace.config.set_temporary('frontend', 'typed_callbacks_only', value=True):
+        with pytest.raises(DaceSyntaxError, match='nested_a'):
+            recursive_autoparse(A)
 
 
 def test_nested_recursion2_fail():
+
     def nested_a(a):
+        a[0] -= 1.0
         return nested_b(a)
 
     def nested_b(a):
+        if a[0] < -2.0:
+            return a[0]
         return nested_a(a)
 
     @dace
@@ -133,11 +154,13 @@ def test_nested_recursion2_fail():
         return nested_a(a)
 
     A = np.random.rand(20)
-    with pytest.raises(DaceSyntaxError, match='nested_'):
-        recursive_autoparse(A)
+    with dace.config.set_temporary('frontend', 'typed_callbacks_only', value=True):
+        with pytest.raises(DaceSyntaxError, match='nested_'):
+            recursive_autoparse(A)
 
 
 def test_nested_autoparse_dec_fail():
+
     def some_decorator(f):
         return f
 
@@ -150,8 +173,9 @@ def test_nested_autoparse_dec_fail():
         return notworking_nested(a)
 
     A = np.random.rand(20)
-    with pytest.raises(DaceSyntaxError, match='notworking_nested'):
-        notworking3(A)
+    with dace.config.set_temporary('frontend', 'typed_callbacks_only', value=True):
+        with pytest.raises(DaceSyntaxError, match='notworking_nested'):
+            notworking3(A)
 
 
 def freefunction2(A):
@@ -162,6 +186,7 @@ def test_autodetect_function_in_for():
     """ 
     Tests auto-detection of parsable free functions in a for loop.
     """
+
     @dace
     def adff(A):
         for _ in range(5):
@@ -174,7 +199,9 @@ def test_autodetect_function_in_for():
 
 
 def test_error_handling():
+
     class NotConvertible(SDFGConvertible):
+
         def __call__(self, a):
             import numpy as np
             print('A very pythonic method', a)
@@ -198,8 +225,11 @@ def test_error_handling():
 
 
 def test_nested_class_error_handling():
+
     def not_convertible(f):
+
         class NotConvertibleMethod(SDFGConvertible):
+
             def __sdfg__(self, *args, **kwargs):
                 # Raise a special type of error that does not naturally occur in dace
                 raise NotADirectoryError('I am not really convertible')
@@ -210,6 +240,7 @@ def test_nested_class_error_handling():
         return NotConvertibleMethod()
 
     class MaybeConvertible:
+
         @not_convertible
         def __call__(self, a):
             import numpy as np
@@ -227,6 +258,7 @@ def test_nested_class_error_handling():
 
 
 def test_loop_unrolling():
+
     @dace.program
     def called(A):
         A += 1
@@ -250,7 +282,8 @@ if __name__ == '__main__':
     test_autodetect_callable_object()
     test_nested_function_method()
     test_function_that_needs_replacement()
-    test_nested_autoparse_fail()
+    test_nested_autoparse(False)
+    test_nested_autoparse(True)
     test_nested_recursion_fail()
     test_nested_recursion2_fail()
     test_nested_autoparse_dec_fail()

@@ -160,7 +160,7 @@ def test_augassign_wcr4():
     with dace.config.set_temporary('frontend', 'avoid_wcr', value=False):
         val = augassign_wcr4()
         ref = augassign_wcr4.f()
-        assert(np.allclose(val, ref))
+        assert np.allclose(val, ref)
 
 
 if __name__ == "__main__":

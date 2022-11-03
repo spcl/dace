@@ -40,6 +40,7 @@ def _get_batchmm_opts(a_shape, a_strides, b_shape, b_strides, c_shape, c_strides
     Detects whether a matrix multiplication is a batched matrix multiplication
     and returns its parameters (strides, batch size), or an empty dictionary if
     batched multiplication is not detected.
+    
     :param a: Data descriptor for the first tensor.
     :param b: Data descriptor for the second tensor.
     :param c: Data descriptor for the output tensor (optional).
@@ -76,7 +77,7 @@ def _get_batchmm_opts(a_shape, a_strides, b_shape, b_strides, c_shape, c_strides
 def _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, alpha, beta, cdtype, func) -> Dict[str, Any]:
     """ Get option map for GEMM code generation (with column-major order). """
     # Avoid import loops
-    from dace.codegen.targets.common import sym2cpp
+    from dace.codegen.common import sym2cpp
     from dace.libraries.blas.blas_helpers import get_gemm_opts
 
     (_, _, ashape, astride), (_, _, bshape, bstride), (_, _, cshape, cstride) = _get_matmul_operands(node, state, sdfg)

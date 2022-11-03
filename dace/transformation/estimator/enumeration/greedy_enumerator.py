@@ -19,6 +19,7 @@ import heapq
 
 
 class QueuedEntry:
+
     def __init__(self, map_entry, index, reverse=False):
         self.map_entry = map_entry
         self.index = index
@@ -33,10 +34,10 @@ class QueuedEntry:
 
 @make_properties
 class GreedyEnumerator(Enumerator):
-    '''
+    """
     Enumerates all maximally fusible subgraphs in a greedy manner, 
     each of the corresponding map sets from an iteration being disjoint
-    '''
+    """
 
     mode = Property(desc="Data type the Iterator should return. "
                     "Choice between Subgraph and List of Map Entries.",

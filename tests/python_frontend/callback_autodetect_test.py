@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Tests automatic detection and baking of callbacks in the Python frontend. """
+from typing import Dict, Union
 import dace
 import numpy as np
 import pytest
@@ -765,6 +766,179 @@ def test_string_callback():
     assert result == ('hello', 'world')
 
 
+def test_unknown_pyobject():
+    counter = 1334
+    last_seen = counter
+    success_counter = 0
+
+    class MyCustomObject:
+
+        def __init__(self) -> None:
+            nonlocal counter
+            self.q = counter
+            counter += 1
+
+        def __str__(self):
+            return f'MyCustomObject(q={self.q})'
+
+    @dace_inhibitor
+    def checkit(obj: Union[MyCustomObject, Dict[str, Union[int, str]]]):
+        nonlocal last_seen
+        nonlocal success_counter
+        if obj == {'a': 1, 'b': '2'}:
+            success_counter += 1
+        elif isinstance(obj, MyCustomObject) and obj.q == last_seen:
+            success_counter += 1
+            last_seen += 1
+
+    @dace
+    def tester(unused):
+        for _ in dace.unroll(range(10)):
+            a = dict(a=1, b='2')
+            b = MyCustomObject()
+            checkit(a)
+            checkit(b)
+
+    tester(np.random.rand(20))
+    assert success_counter == 20
+
+
+def test_pyobject_return():
+    counter = 1
+
+    class MyCustomObject:
+
+        @dace_inhibitor
+        def __init__(self) -> None:
+            nonlocal counter
+            self.q = counter
+            counter += 1
+
+        def __str__(self):
+            return f'MyCustomObject(q={self.q})'
+
+    @dace
+    def tester():
+        MyCustomObject()
+        return MyCustomObject()
+
+    obj = tester()
+    assert isinstance(obj, MyCustomObject)
+    assert obj.q == 2
+
+
+def test_pyobject_return_tuple():
+    counter = 1
+
+    class MyCustomObject:
+
+        @dace_inhibitor
+        def __init__(self) -> None:
+            nonlocal counter
+            self.q = counter
+            counter += 1
+
+        def __str__(self):
+            return f'MyCustomObject(q={self.q})'
+
+    @dace
+    def tester():
+        MyCustomObject()
+        return MyCustomObject(), MyCustomObject()
+
+    obj, obj2 = tester()
+    assert isinstance(obj, MyCustomObject)
+    assert obj.q == 2
+    assert isinstance(obj2, MyCustomObject)
+    assert obj2.q == 3
+
+
+def test_custom_generator():
+
+    def reverse_range(sz):
+        cur = sz
+        for _ in range(sz):
+            yield cur
+            cur -= 1
+
+    @dace
+    def tester(a: dace.float64[20]):
+        gen = reverse_range(20)
+        for i in range(20):
+            val: int = next(gen)
+            a[i] = val
+
+    aa = np.ones((20, ), np.float64)
+    tester(aa)
+    assert np.allclose(aa, np.arange(20, 0, -1))
+
+
+def test_custom_generator_with_break():
+
+    def reverse_range(sz):
+        cur = sz
+        for _ in range(sz):
+            yield cur
+            cur -= 1
+
+    @dace_inhibitor
+    def my_next(generator):
+        try:
+            return next(generator), False
+        except StopIteration:
+            return None, True
+
+    @dace
+    def tester(a: dace.float64[20]):
+        gen = reverse_range(20)
+        for i in range(21):
+            val: int = 0
+            stop: bool = True
+            val, stop = my_next(gen)
+            if stop:
+                break
+            a[i] = val
+
+    aa = np.ones((21, ), np.float64)
+    expected = np.copy(aa)
+    expected[:20] = np.arange(20, 0, -1)
+
+    tester(aa)
+    assert np.allclose(aa, expected)
+
+
+@pytest.mark.skip
+def test_matplotlib_with_compute():
+    """
+    Stacked bar plot example from Matplotlib using callbacks and pyobjects.
+    https://matplotlib.org/3.1.1/gallery/lines_bars_and_markers/bar_stacked.html#sphx-glr-gallery-lines-bars-and-markers-bar-stacked-py
+    """
+    import matplotlib.pyplot as plt
+
+    menMeans = (20, 35, 30, 35, 27)
+    womenMeans = (25, 32, 34, 20, 25)
+    menStd = (2, 3, 4, 1, 2)
+    womenStd = (3, 5, 2, 3, 3)
+
+    @dace
+    def tester():
+
+        ind = np.arange(5)  # the x locations for the groups
+        width = 0.35  # the width of the bars: can also be len(x) sequence
+
+        p1 = plt.bar(ind, menMeans, width, yerr=menStd)
+        p2 = plt.bar(ind, womenMeans, width, bottom=menMeans, yerr=womenStd)
+
+        plt.ylabel('Scores')
+        plt.title('Scores by group and gender')
+        plt.xticks(ind, ('G1', 'G2', 'G3', 'G4', 'G5'))
+        plt.yticks(np.arange(0, 81, 10))
+        plt.legend((p1[0], p2[0]), ('Men', 'Women'))
+        plt.show()
+
+    tester()
+
+
 if __name__ == '__main__':
     test_automatic_callback()
     test_automatic_callback_2()
@@ -795,9 +969,14 @@ if __name__ == '__main__':
     test_builtin_callback_kwargs()
     test_callback_literal_list(False)
     test_callback_literal_list(True)
-    test_callback_literal_dict()
     test_callback_literal_dict(False)
     test_callback_literal_dict(True)
     test_unused_callback()
     test_callback_with_nested_calls()
     test_string_callback()
+    test_unknown_pyobject()
+    test_pyobject_return()
+    test_pyobject_return_tuple()
+    test_custom_generator()
+    test_custom_generator_with_break()
+    # test_matplotlib_with_compute()

@@ -13,7 +13,7 @@ from dace.sdfg import state
 import dace.subsets
 import dace.sdfg
 from dace.sdfg import nodes as nd
-import dace.codegen.targets.common
+import dace.codegen.common
 from dace import dtypes, data as dt
 
 
@@ -89,7 +89,7 @@ class UnrollCodeGen(TargetCodeGenerator):
                     self.nsdfg_prepare_unroll(scope, str(param), str(index))
                 callsite_stream.write(
                     f"constexpr {mapsymboltypes[param]} {param} = "
-                    f"{dace.codegen.targets.common.sym2cpp(index)};\n", sdfg)
+                    f"{dace.codegen.common.sym2cpp(index)};\n", sdfg)
                 sdfg.add_constant(param, int(index))
 
             callsite_stream.write('{')

@@ -60,9 +60,9 @@ def make_vecAdd_sdfg(symbol_name: str, sdfg_name: str, access_nodes_dict: dict, 
 
 
 def make_nested_sdfg_cpu():
-    '''
+    """
     Build an SDFG with two nested SDFGs
-    '''
+    """
 
     n = dace.symbol("n")
     m = dace.symbol("m")
@@ -110,11 +110,10 @@ def make_nested_sdfg_cpu():
 
 
 def test_state_fission():
-    '''
+    """
     Tests state fission. The starting point is a stae SDFG with two
     Nested SDFGs. The state is splitted into two
-    :return:
-    '''
+    """
 
     size_n = 16
     size_m = 32

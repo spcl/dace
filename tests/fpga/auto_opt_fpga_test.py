@@ -13,10 +13,9 @@ N = dace.symbol('N')
 
 @fpga_test()
 def test_global_to_local():
-    '''
+    """
     Tests global_to_local optimization
-    :return:
-    '''
+    """
     @dace.program
     def global_to_local(alpha: dace.float32, B: dace.float32[N]):
         tmp = alpha / 2
@@ -61,9 +60,9 @@ def test_global_to_local():
 
 @fpga_test()
 def test_rr_interleave():
-    '''
+    """
         Tests RR interleaving of containers to memory banks
-    '''
+    """
     @dace.program
     def rr_interleave(A: dace.float32[8], B: dace.float32[8], C: dace.float32[8]):
         return A + B + C

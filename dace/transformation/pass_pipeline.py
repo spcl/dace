@@ -2,12 +2,12 @@
 """
 API for SDFG analysis and manipulation Passes, as well as Pipelines that contain multiple dependent passes.
 """
+from dace import properties, serialize
 from dace.sdfg import SDFG, SDFGState, graph as gr, nodes, utils as sdutil
 
 from enum import Flag, auto
 from typing import Any, Dict, Iterator, List, Optional, Set, Type, Union
 from dataclasses import dataclass
-import networkx as nx
 
 
 class Modifies(Flag):
@@ -31,6 +31,7 @@ class Modifies(Flag):
     Everything = Descriptors | Symbols | States | InterstateEdges | Nodes | Memlets  #: Modification to arbitrary parts of SDFGs (nodes, edges, or properties)
 
 
+@properties.make_properties
 class Pass:
     """
     An SDFG analysis or manipulation that registers as part of the SDFG history. Classes that extend ``Pass`` can be
@@ -48,9 +49,13 @@ class Pass:
 
     :seealso: Pipeline
     """
+
+    CATEGORY: str = 'Helper'
+
     def depends_on(self) -> Set[Union[Type['Pass'], 'Pass']]:
         """
         If in the context of a ``Pipeline``, which other Passes need to run first.
+
         :return: A set of Pass subclasses or objects that need to run prior to this Pass.
         """
         return set()
@@ -58,6 +63,7 @@ class Pass:
     def modifies(self) -> Modifies:
         """
         Which elements of the SDFG (e.g., memlets, state structure) are modified by this pass, if run successfully.
+
         :return: A ``Modifies`` set of flags of modified elements.
         """
         raise NotImplementedError
@@ -66,6 +72,7 @@ class Pass:
         """
         In the context of a ``Pipeline``, queries whether this Pass should be rerun after other passes have run
         and modified the SDFG.
+
         :param modified: Flags specifying which elements of the SDFG were modified.
         :return: True if this Pass should be rerun when the given elements are modified.
         """
@@ -74,6 +81,7 @@ class Pass:
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Any]:
         """
         Applies the pass to the given SDFG.
+
         :param sdfg: The SDFG to apply the pass to.
         :param pipeline_results: If in the context of a ``Pipeline``, a dictionary that is populated with prior Pass
                                  results as ``{Pass subclass name: returned object from pass}``. If not run in a
@@ -85,11 +93,44 @@ class Pass:
     def report(self, pass_retval: Any) -> Optional[str]:
         """
         Returns a user-readable string report based on the results of this pass.
+
         :param pass_retval: The return value from applying this pass.
         :return: A string with the user-readable report, or None if nothing to report.
         """
         return None
 
+    def to_json(self, parent=None) -> Dict[str, Any]:
+        props = serialize.all_properties_to_json(self)
+        return {'type': 'Pass', 'transformation': type(self).__name__, 'CATEGORY': type(self).CATEGORY, **props}
+
+    @staticmethod
+    def from_json(json_obj: Dict[str, Any], context: Dict[str, Any] = None) -> 'Pass':
+        pss = next(ext for ext in Pass.subclasses_recursive() if ext.__name__ == json_obj['transformation'])
+
+        # Reconstruct the pass.
+        ret = pss()
+        context = context or {}
+        context['transformation'] = ret
+        serialize.set_properties_from_json(ret, json_obj, context=context, ignore_properties={'transformation', 'type'})
+        return ret
+
+    @classmethod
+    def subclasses_recursive(cls) -> Set[Type['Pass']]:
+        """
+        Returns all subclasses of this class, including subclasses of subclasses.
+        """
+        subclasses = set(cls.__subclasses__())
+        subsubclasses = set()
+        for sc in subclasses:
+            subsubclasses.update(sc.subclasses_recursive())
+
+        # Ignore abstract classes.
+        result = subclasses | subsubclasses
+        result = set(sc for sc in result if not getattr(sc, '__abstractmethods__', False))
+
+        return result
+
+@properties.make_properties
 class VisitorPass(Pass):
     """
     A simple type of Pass that provides a Python visitor object on an SDFG. Used for either analyzing an SDFG or
@@ -117,9 +158,13 @@ class VisitorPass(Pass):
         print('SDFG has write-conflicted memlets:', wcr_checker.found_wcr)
         print('Memlets:', memlets_with_wcr)
     """
+
+    CATEGORY: str = 'Helper'
+
     def generic_visit(self, element: Any, parent: Any, pipeline_results: Dict[str, Any]) -> Any:
         """
         A default method that is called for elements that do not have a special visitor.
+
         :param element: The element to visit.
         :param parent: The parent of the visited element (e.g., SDFGState for dataflow elements, SDFG for SDFGStates).
         :param pipeline_results: If in the context of a ``Pipeline``, a dictionary that is populated with prior Pass
@@ -131,6 +176,7 @@ class VisitorPass(Pass):
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[Any, Any]]:
         """
         Visits the given SDFG recursively, calling defined ``visit_*`` methods for each element.
+
         :param sdfg: The SDFG to recursively visit.
         :param pipeline_results: If in the context of a ``Pipeline``, a dictionary that is populated with prior Pass
                                  results as ``{Pass subclass name: returned object from pass}``. If not run in a
@@ -163,6 +209,7 @@ class VisitorPass(Pass):
         return results
 
 
+@properties.make_properties
 class StatePass(Pass):
     """
     A specialized Pass type that applies to each SDFG state separately. Such a pass is realized by implementing the
@@ -170,9 +217,13 @@ class StatePass(Pass):
     
     :see: Pass
     """
+
+    CATEGORY: str = 'Helper'
+
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[SDFGState, Optional[Any]]]:
         """
         Applies the pass to states of the given SDFG by calling ``apply`` on each state.
+
         :param sdfg: The SDFG to apply the pass to.
         :param pipeline_results: If in the context of a ``Pipeline``, a dictionary that is populated with prior Pass
                                  results as ``{Pass subclass name: returned object from pass}``. If not run in a
@@ -194,6 +245,7 @@ class StatePass(Pass):
     def apply(self, state: SDFGState, pipeline_results: Dict[str, Any]) -> Optional[Any]:
         """
         Applies this pass on the given state.
+
         :param state: The SDFG state to apply the pass to.
         :param pipeline_results: If in the context of a ``Pipeline``, a dictionary that is populated with prior Pass
                                  results as ``{Pass subclass name: returned object from pass}``. If not run in a
@@ -203,6 +255,7 @@ class StatePass(Pass):
         raise NotImplementedError
 
 
+@properties.make_properties
 class ScopePass(Pass):
     """
     A specialized Pass type that applies to each scope (e.g., Map, Consume, Pipeline) separately. Such a pass is
@@ -210,6 +263,9 @@ class ScopePass(Pass):
     
     :see: Pass
     """
+
+    CATEGORY: str = 'Helper'
+
     def apply_pass(
         self,
         sdfg: SDFG,
@@ -217,6 +273,7 @@ class ScopePass(Pass):
     ) -> Optional[Dict[nodes.EntryNode, Optional[Any]]]:
         """
         Applies the pass to the scopes of the given SDFG by calling ``apply`` on each scope entry node.
+
         :param sdfg: The SDFG to apply the pass to.
         :param pipeline_results: If in the context of a ``Pipeline``, a dictionary that is populated with prior Pass
                                  results as ``{Pass subclass name: returned object from pass}``. If not run in a
@@ -239,6 +296,7 @@ class ScopePass(Pass):
     def apply(self, scope: nodes.EntryNode, state: SDFGState, pipeline_results: Dict[str, Any]) -> Optional[Any]:
         """
         Applies this pass on the given scope.
+
         :param scope: The entry node of the scope to apply the pass to.
         :param state: The parent SDFG state of the given scope.
         :param pipeline_results: If in the context of a ``Pipeline``, a dictionary that is populated with prior Pass
@@ -250,6 +308,7 @@ class ScopePass(Pass):
 
 
 @dataclass
+@properties.make_properties
 class Pipeline(Pass):
     """
     A pass pipeline contains multiple, potentially dependent Pass objects, and applies them in order. Each contained
@@ -272,11 +331,17 @@ class Pipeline(Pass):
         print('Promoted scalars:', results['ScalarToSymbolPromotion'])
 
     """
-    passes: List[Pass]
+
+    CATEGORY: str = 'Helper'
+
+    passes = properties.ListProperty(element_type=Pass,
+                                     default=[],
+                                     category='(Debug)',
+                                     desc='List of passes that this pipeline contains')
 
     def __init__(self, passes: List[Pass]):
         self.passes = []
-        self.pass_names = set(type(p).__name__ for p in passes)
+        self._pass_names = set(type(p).__name__ for p in passes)
         self.passes.extend(passes)
 
         # Add missing Pass dependencies
@@ -290,6 +355,7 @@ class Pipeline(Pass):
     def _add_dependencies(self, passes: List[Pass]):
         """
         Verifies pass uniqueness in pipeline and adds missing dependencies from ``depends_on`` of each pass. 
+
         :param passes: The passes to add dependencies for.
         """
         unique_pass_types = set(type(p) for p in passes)
@@ -333,6 +399,7 @@ class Pipeline(Pass):
         """
         Which elements of the SDFG (e.g., memlets, state structure) are modified by this pipeline, if run successfully.
         Computed as the union of all modified elements of each pass in the pipeline.
+        
         :return: A ``Modifies`` set of flags of modified elements.
         """
         result = Modifies.Nothing
@@ -361,7 +428,7 @@ class Pipeline(Pass):
             if p not in result._nodes:
                 result.add_node(p)
             for dep in p.depends_on():
-                # If a type, find it in self.passes
+                # If a type, find it in self._passes
                 if isinstance(dep, type):
                     dep = ptype_to_pass[dep]
                 result.add_edge(dep, p)
@@ -442,17 +509,31 @@ class Pipeline(Pass):
             return retval
         return None
 
+    def to_json(self, parent=None) -> Dict[str, Any]:
+        props = serialize.all_properties_to_json(self)
+        return {
+            'type': 'Pipeline',
+            'transformation': type(self).__name__,
+            'CATEGORY': type(self).CATEGORY,
+            **props
+        }
 
+
+@properties.make_properties
 class FixedPointPipeline(Pipeline):
     """
-    A special type of Pipeline that applies its ``Pass``es in repeated succession until they all stop modifying the
-    SDFG (i.e., by returning None).
+    A special type of Pipeline that applies its ``Pass`` objects in repeated succession until they all stop modifying
+    the SDFG (i.e., by returning None).
     
     :see: Pipeline
     """
+
+    CATEGORY: str = 'Helper'
+
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """
         Applies the pipeline to the SDFG in repeated succession until the SDFG is no longer modified.
+
         :param sdfg: The SDFG to apply the pass to.
         :param pipeline_results: If in the context of a ``Pipeline``, a dictionary that is populated with prior Pass
                                  results as ``{Pass subclass name: returned object from pass}``. If not run in a
@@ -467,7 +548,7 @@ class FixedPointPipeline(Pipeline):
             
             # Remove dependencies from pipeline
             if newret:
-                newret = {k: v for k, v in newret.items() if k in self.pass_names}
+                newret = {k: v for k, v in newret.items() if k in self._pass_names}
 
             if not newret:
                 if retval:

@@ -1,4 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+
 from six import StringIO
 import collections
 import enum
@@ -22,14 +23,13 @@ from dace.codegen import exceptions as cgx
 from dace.codegen.codeobject import CodeObject
 from dace.codegen.dispatcher import DefinedType
 from dace.codegen.prettycode import CodeIOStream
-from dace.codegen.targets.common import update_persistent_desc
+from dace.codegen.common import update_persistent_desc
 from dace.codegen.targets.target import (TargetCodeGenerator, IllegalCopy, make_absolute)
 from dace.codegen import cppunparse
 from dace.properties import Property, make_properties, indirect_properties
 from dace.sdfg.state import SDFGState
 from dace.sdfg.utils import is_fpga_kernel
 from dace.symbolic import evaluate
-from dace.transformation.dataflow import MapUnroll
 from collections import defaultdict
 
 _CPU_STORAGE_TYPES = {dtypes.StorageType.CPU_Heap, dtypes.StorageType.CPU_ThreadLocal, dtypes.StorageType.CPU_Pinned}
@@ -53,11 +53,12 @@ def vector_element_type_of(dtype):
 
 
 def is_external_stream(node: dace.sdfg.nodes.Node, subgraph: Union[dace.sdfg.SDFGState, ScopeSubgraphView]):
-    '''
+    """
     Given a node and a subgraph, returns whether this is an external stream (the other endpoint is in
     another FPGA Kernel) or not.
+
     :return: True if node represent an external stream, False otherwise
-    '''
+    """
 
     external = False
 
@@ -85,9 +86,10 @@ def is_multibank_array(array: dt.Data):
 
 def is_multibank_array_with_distributed_index(array: dt.Data):
     """
+    :param array: access node to be checked
     :return: True if this array is placed on HBM/DDR and has an extra first
-    dimension equal to the number of banks is placed on. For HBM/DDR arrays
-    spanning across multiple banks this is always true.
+        dimension equal to the number of banks is placed on. For HBM/DDR arrays
+        spanning across multiple banks this is always true.
     """
     if is_multibank_array(array):
         res = parse_location_bank(array)
@@ -121,10 +123,10 @@ def iterate_distributed_subset(desc: dt.Array, access_memlet: memlet.Memlet, is_
     """
     :param desc: The array accessed by the memlet
     :param access_memlet: The memlet
-    :param is_write: If we care about the write or read direction. is_write means we write to desc,
+    :param is_write: If we care about the write or read direction. is_write means we write to desc, 
         not is_write means we read from it
     :return: if access_memlet contains a distributed subset the method will count from the lower to the upper
-    end of it. Otherwise returns 0 once.
+        end of it. Otherwise returns 0 once.
     """
     if is_multibank_array_with_distributed_index(desc):
         if is_write:
@@ -146,6 +148,7 @@ def iterate_distributed_subset(desc: dt.Array, access_memlet: memlet.Memlet, is_
 def modify_distributed_subset(subset: subsets.Subset, change: int):
     """
     Modifies the first index of :param subset: (the one used for distributed subsets).
+
     :param subset: is deepcopied before any modification to it is done.
     :param change: the first index is set to this value, unless it's (-1) in which case
         the first index is completly removed
@@ -162,7 +165,8 @@ def get_multibank_ranges_from_subset(subset: Union[subsets.Subset, str], sdfg: S
     """
     Returns the upper and lower end of the accessed multibank-range, evaluated using the
     constants on the SDFG.
-    :returns: (low, high) where low = the lowest accessed bank and high the
+
+    :return: (low, high) where low = the lowest accessed bank and high the
         highest accessed bank + 1.
     """
     if isinstance(subset, str):
@@ -213,6 +217,7 @@ def fpga_ptr(name: str,
     """
     Returns a string that points to the data based on its name, and various other conditions
     that may apply for that data field.
+
     :param name: Data name.
     :param desc: Data descriptor.
     :param subset_info: Any additional information about the accessed subset.
@@ -277,11 +282,12 @@ def fpga_ptr(name: str,
 
 
 def unqualify_fpga_array_name(sdfg: dace.SDFG, arr_name: str):
-    '''
+    """
     Returns the unqualified array name if it refers to an array interface.
     Otherwise return it as it is.
+
     :param name: array name to unqualify
-    '''
+    """
 
     if arr_name not in sdfg.arrays and (arr_name.endswith('_in')
                                         or arr_name.endswith('out')) and arr_name.startswith('__'):
@@ -390,14 +396,15 @@ class FPGACodeGen(TargetCodeGenerator):
         self._internal_preprocess(sdfg)
 
     def _kernels_subgraphs(self, graph: Union[dace.sdfg.SDFGState, ScopeSubgraphView], dependencies: dict):
-        '''
-            Finds subgraphs of an SDFGState or ScopeSubgraphView that correspond to kernels.
-            This is done by looking to which kernel, each node belongs.
-            :param graph, the state/subgraph to consider
-            :param dependencies: a dictionary containing for each kernel ID, the IDs of the kernels on which it
-                depends on
-            :return a list of tuples (subgraph, kernel ID) topologically ordered according kernel dependencies.
-        '''
+        """
+        Finds subgraphs of an SDFGState or ScopeSubgraphView that correspond to kernels.
+        This is done by looking to which kernel, each node belongs.
+
+        :param graph: the state/subgraph to consider
+        :param dependencies: a dictionary containing for each kernel ID, the IDs of the kernels on which it
+            depends on
+        :return: a list of tuples (subgraph, kernel ID) topologically ordered according kernel dependencies.
+        """
         from dace.sdfg.scope import ScopeSubgraphView
 
         if not isinstance(graph, (dace.sdfg.SDFGState, ScopeSubgraphView)):
@@ -452,18 +459,21 @@ class FPGACodeGen(TargetCodeGenerator):
 
     def generate_state(self, sdfg: dace.SDFG, state: dace.SDFGState, function_stream: CodeIOStream,
                        callsite_stream: CodeIOStream):
-        '''
+        """
         Generate an FPGA State, possibly comprising multiple Kernels and/or PEs.
+
         :param sdfg:
         :param state:
         :param function_stream: CPU code stream: contains global declarations (e.g. exported forward declaration of
             device specific host functions).
         :param callsite_stream: CPU code stream, contains the actual code (for creating global buffers, invoking
             device host functions, and so on).
-        '''
+        """
         state_id = sdfg.node_id(state)
 
         if not self._in_device_code:
+            # Avoid import loop
+            from dace.transformation.dataflow import MapUnroll
 
             # Unroll maps directly in the SDFG so the subgraphs can be
             # recognized as independent processing elements
@@ -665,8 +675,10 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
 
     @staticmethod
     def shared_data(subgraphs):
-        """Returns a set of data objects that are shared between two or more of
-           the specified subgraphs."""
+        """
+        Returns a set of data objects that are shared between two or more of
+        the specified subgraphs.
+        """
         shared = set()
         if len(subgraphs) >= 2:
             seen = {}
@@ -684,21 +696,22 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
         """
         Determines the parameters that must be passed to the passed list of
         subgraphs, as well as to the global kernel.
+        
         :return: A tuple with the following six entries:
-                 - Data container parameters that should be passed from the
-                   host to the FPGA kernel.
-                 - Data containers that are local to the kernel, but must be
-                   allocated by the host prior to invoking the kernel.
-                 - A dictionary mapping from each processing element subgraph
-                   to which parameters it needs (from the total list of
-                   parameters).
-                 - Parameters that must be passed to the kernel from the host,
-                   but that do not exist before the CPU calls the kernel
-                   wrapper.
-                 - A dictionary of which memory interfaces should be assigned to
-                   which memory banks.
-                 - External streams that connect different FPGA kernels, and
-                   must be defined during the compilation flow.
+            - Data container parameters that should be passed from the
+            host to the FPGA kernel.
+            - Data containers that are local to the kernel, but must be
+            allocated by the host prior to invoking the kernel.
+            - A dictionary mapping from each processing element subgraph
+            to which parameters it needs (from the total list of
+            parameters).
+            - Parameters that must be passed to the kernel from the host,
+            but that do not exist before the CPU calls the kernel
+            wrapper.
+            - A dictionary of which memory interfaces should be assigned to
+            which memory banks.
+            - External streams that connect different FPGA kernels, and
+            must be defined during the compilation flow.
         """
 
         # Get a set of data nodes that are shared across subgraphs
@@ -1208,13 +1221,14 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
         pass  # Handled by destructor
 
     def partition_kernels(self, state: dace.SDFGState, default_kernel: int = 0):
-        """ Associate node to different kernels.
-            This field is applied to all FPGA maps, tasklets, and library nodes
-            that can be executed in parallel in separate kernels.
+        """
+        Associate node to different kernels.
+        This field is applied to all FPGA maps, tasklets, and library nodes
+        that can be executed in parallel in separate kernels.
 
-            :param state: the state to analyze.
-            :param default_kernel: The Kernel ID to start counting from.
-            :return: a tuple containing the number of kernels and the dependencies among them
+        :param state: the state to analyze.
+        :param default_kernel: The Kernel ID to start counting from.
+        :return: a tuple containing the number of kernels and the dependencies among them
         """
 
         concurrent_kernels = 0  # Max number of kernels
@@ -1342,15 +1356,17 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                          edge: dace.sdfg.sdfg.Edge,
                          state: dace.SDFGState,
                          look_for_kernel_id: bool = False) -> Union[bool, int]:
-        '''
+        """
         Given an edge, this traverses the edges backwards.
         It can be used either for:
-        - understanding if along the backward path there is some compute node but no local buffers,  or
-        - looking for the kernel_id of a predecessor (look_for_kernel_id must be set to True)
-        :return if look_for_kernel_id is false it returns a boolean indicating if there is a
+
+            - understanding if along the backward path there is some compute node but no local buffers,  or
+            - looking for the kernel_id of a predecessor (look_for_kernel_id must be set to True)
+
+        :return: if look_for_kernel_id is false it returns a boolean indicating if there is a
             compute node on the backward path and no access nodes to local buffers. Otherwise, it returns
             the kernel_id of a predecessor node.
-        '''
+        """
 
         curedge = edge
         source_nodes = state.source_nodes()
@@ -1382,14 +1398,16 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
             return self._node_to_kernel[src_repr] if src_repr in self._node_to_kernel else None
 
     def _trace_forward_edge(self, edge: dace.sdfg.sdfg.Edge, state: dace.SDFGState) -> Tuple[bool, int]:
-        '''
-        Given ad edge, this traverses the edges forward.
+        """
+        Given an edge, this traverses the edges forward.
         It can be used either for:
-        - understanding if along the forward path there is a local buffer,  and
-        - returning the the kernel_id of a successor if any
+
+            - understanding if along the forward path there is a local buffer,  and
+            - returning the the kernel_id of a successor if any
+
         :return: a tuple containing two booleans indicating if the path contains only global buffers
             and the kernel_id of a successor if any
-        '''
+        """
 
         curedge = edge
         sink_nodes = state.sink_nodes()
@@ -2099,8 +2117,9 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                         instrumentation_stream: CodeIOStream,
                         state_parameters: list,
                         kernel_id: int = None):
-        '''
+        """
         Entry point for generating an FPGA Kernel out of the given subgraphs.
+
         :param sdfg:
         :param state:
         :param kernel_name: the generated kernel name.
@@ -2115,7 +2134,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
         :param state_parameters: a list of parameters that must be passed to the state. It will get populated
             considering all the parameters needed by the kernels in this state.
         :param kernel_id: Unique ID of this kernels as computed in the generate_state function
-        '''
+        """
 
         if self._in_device_code:
             raise cgx.CodegenError("Tried to generate kernel from device code")
@@ -2183,7 +2202,9 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
 
     def generate_modules(self, sdfg, state, kernel_name, subgraphs, subgraph_parameters, module_stream, entry_stream,
                          host_stream, instrumentation_stream):
-        """Generate all PEs inside an FPGA Kernel."""
+        """
+        Generate all PEs inside an FPGA Kernel.
+        """
         for subgraph in subgraphs:
             module_name = self._module_name(subgraph, state)
             self.generate_module(sdfg, state, kernel_name, module_name, subgraph, subgraph_parameters[subgraph],
@@ -2210,9 +2231,9 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
         return self._cpu_codegen.generate_nsdfg_arguments(sdfg, state, dfg, node)
 
     def generate_host_function_boilerplate(self, sdfg, state, nested_global_transients, host_code_stream):
-        '''
+        """
         Generates global transients that must be passed to the state (required by a kernel)
-        '''
+        """
 
         # Any extra transients stored in global memory on the FPGA must now be
         # allocated and passed to the kernel

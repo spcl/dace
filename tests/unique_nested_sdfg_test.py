@@ -15,12 +15,13 @@ size_m = 64
 
 
 def make_vecAdd_sdfg(sdfg_name: str, dtype=dace.float32):
-    '''
+    """
     Builds an SDFG for vector addition
+
     :param sdfg_name: name to give to the sdfg
     :param dtype: used data type
     :return: an SDFG
-    '''
+    """
     n = dace.symbol("size")
     vecAdd_sdfg = dace.SDFG(sdfg_name)
     vecAdd_state = vecAdd_sdfg.add_state("vecAdd_nested")
@@ -70,13 +71,14 @@ def make_vecAdd_sdfg(sdfg_name: str, dtype=dace.float32):
 
 
 def make_nested_vecAdd_sdfg(sdfg_name: str, dtype=dace.float32):
-    '''
+    """
     Builds an SDFG for vector addition. Internally has a nested SDFG in charge of actually
     performing the computation.
+
     :param sdfg_name: name to give to the sdfg
     :param dtype: used data type
     :return: an SDFG
-    '''
+    """
     n = dace.symbol("size")
     vecAdd_parent_sdfg = dace.SDFG(sdfg_name)
     vecAdd_parent_state = vecAdd_parent_sdfg.add_state("vecAdd_parent")
@@ -124,9 +126,9 @@ def make_nested_vecAdd_sdfg(sdfg_name: str, dtype=dace.float32):
 
 
 def make_nested_sdfg_cpu_single_state():
-    '''
+    """
     Builds an SDFG with two identical nested SDFGs
-    '''
+    """
 
     n = dace.symbol("n")
     m = dace.symbol("m")
@@ -173,9 +175,9 @@ def make_nested_sdfg_cpu_single_state():
 
 
 def make_nested_sdfg_cpu_two_states():
-    '''
+    """
     Builds an SDFG with two nested SDFGs, one per state
-    '''
+    """
 
     n = dace.symbol("n")
     m = dace.symbol("m")
@@ -224,9 +226,9 @@ def make_nested_sdfg_cpu_two_states():
 
 
 def make_nested_nested_sdfg_cpu():
-    '''
+    """
     Builds an SDFG with two nested SDFGs, each of them has internally another Nested SDFG
-    '''
+    """
 
     n = dace.symbol("n")
     m = dace.symbol("m")

@@ -1,9 +1,9 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-'''
+"""
     Tests over-approximation of transient shapes.
     In the computation, the result produced by the inner loop
     is stored in a transient container, whose shape should be correctly overapproximated.
-'''
+"""
 
 import numpy as np
 import dace
