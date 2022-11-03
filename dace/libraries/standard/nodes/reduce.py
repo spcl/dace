@@ -22,7 +22,7 @@ from dace import registry, subsets
 import pydoc
 import warnings
 from dace.sdfg import nodes
-from dace.transformation import transformation as pm, helpers
+from dace.transformation import transformation as pm
 from dace.symbolic import symstr, issymbolic
 from dace.libraries.standard.environments.cuda import CUDA
 from dace.sdfg.propagation import propagate_memlets_state
@@ -1442,6 +1442,7 @@ class WarpReductionExpansion(pm.ExpandTransformation):
         gpu_sdfg.add_edge(write_back_state, random_end_state, dace.InterstateEdge())
 
         state_subgraph = graph.SubgraphView(gpu_sdfg, [dummy_state, init_sRes, sync_state, guard_state, wwr_state, after_state, write_back_state, random_end_state])
+        from dace.transformation import helpers
         helpers.nest_sdfg_subgraph(gpu_sdfg, state_subgraph, dummy_state)
         from dace.transformation.interstate import StateFusion
         gpu_sdfg.apply_transformations_repeated(StateFusion)
