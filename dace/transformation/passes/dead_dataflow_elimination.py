@@ -4,7 +4,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Set, Tuple, Type
 
-from dace import SDFG, Memlet, SDFGState, data, dtypes
+from dace import SDFG, Memlet, SDFGState, data, dtypes, properties
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.analysis import cfg
@@ -16,14 +16,23 @@ PROTECTED_NAMES = {'__pystate'}  #: A set of names that are not allowed to be er
 
 
 @dataclass(unsafe_hash=True)
+@properties.make_properties
 class DeadDataflowElimination(ppl.Pass):
     """
     Removes unused computations from SDFG states.
     Traverses the graph backwards, removing any computations that result in transient descriptors
     that are not used again. Removal propagates through scopes (maps), tasklets, and optionally library nodes.
     """
-    skip_library_nodes: bool = False  #: If True, does not remove library nodes if their results are unused. Otherwise removes library nodes without side effects.
-    remove_persistent_memory: bool = False  #: If True, marks code with Persistent allocation lifetime as dead
+
+    CATEGORY: str = 'Simplification'
+
+    skip_library_nodes = properties.Property(dtype=bool,
+                                             default=False,
+                                             desc='If True, does not remove library nodes if their results are unused. '
+                                             'Otherwise removes library nodes without side effects.')
+    remove_persistent_memory = properties.Property(dtype=bool,
+                                                   default=False,
+                                                   desc='If True, marks code with Persistent allocation lifetime as dead')
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Nodes | ppl.Modifies.Edges | ppl.Modifies.Descriptors
@@ -38,6 +47,7 @@ class DeadDataflowElimination(ppl.Pass):
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[SDFGState, Set[str]]]:
         """
         Removes unreachable dataflow throughout SDFG states.
+        
         :param sdfg: The SDFG to modify.
         :param pipeline_results: If in the context of a ``Pipeline``, a dictionary that is populated with prior Pass
                                  results as ``{Pass subclass name: returned object from pass}``. If not run in a

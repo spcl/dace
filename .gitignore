@@ -189,3 +189,4 @@ _build/
 
 
 .*cache/
+/doc/source/config_schema.rst

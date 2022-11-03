@@ -41,6 +41,7 @@ def _sym2cpp(s, arrayexprs):
 def sym2cpp(s, arrayexprs: Optional[Set[str]] = None) -> Union[str, List[str]]:
     """ 
     Converts an array of symbolic variables (or one) to C++ strings. 
+    
     :param s: Symbolic expression to convert.
     :param arrayexprs: Set of names of arrays, used to convert SymPy 
                        user-functions back to array expressions.

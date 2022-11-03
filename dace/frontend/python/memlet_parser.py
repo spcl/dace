@@ -51,6 +51,7 @@ def inner_eval_ast(defined, node, additional_syms=None):
 def pyexpr_to_symbolic(defined_arrays_and_symbols: Dict[str, Any], expr_ast: ast.AST):
     """ Converts a Python AST expression to a DaCe symbolic expression
         with error checks (raises `SyntaxError` on failure).
+
         :param defined_arrays_and_symbols: Defined arrays and symbols
                in the context of this expression.
         :param expr_ast: The Python AST expression to convert.
@@ -203,6 +204,7 @@ def parse_memlet_subset(array: data.Data,
     """ 
     Parses an AST subset and returns access range, as well as new dimensions to
     add.
+    
     :param array: Accessed data descriptor (used for filling in missing data, 
                   e.g., negative indices or empty shapes).
     :param node: AST node representing whole array or subset thereof.

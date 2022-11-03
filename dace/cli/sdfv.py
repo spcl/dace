@@ -24,13 +24,15 @@ def partialclass(cls, *args, **kwds):
 
 
 def view(sdfg: dace.SDFG, filename: Optional[Union[str, int]] = None):
-    """View an sdfg in the system's HTML viewer
-       :param sdfg: the sdfg to view, either as `dace.SDFG` object or a json string
-       :param filename: the filename to write the HTML to. If `None`, a
-                        temporary file will be created. If an integer,
-                        the generated HTML and related sources will be
-                        served using a basic web server on that port,
-                        blocking the current thread.
+    """
+    View an sdfg in the system's HTML viewer
+
+    :param sdfg: the sdfg to view, either as `dace.SDFG` object or a json string
+    :param filename: the filename to write the HTML to. If `None`, a
+                    temporary file will be created. If an integer,
+                    the generated HTML and related sources will be
+                    served using a basic web server on that port,
+                    blocking the current thread.
     """
     # If vscode is open, try to open it inside vscode
     if filename is None:

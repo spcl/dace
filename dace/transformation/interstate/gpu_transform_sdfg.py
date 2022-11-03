@@ -86,17 +86,16 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
     """ Implements the GPUTransformSDFG transformation.
 
         Transforms a whole SDFG to run on the GPU:
-        Steps of the full GPU transform
-          0. Acquire metadata about SDFG and arrays
-          1. Replace all non-transients with their GPU counterparts
-          2. Copy-in state from host to GPU
-          3. Copy-out state from GPU to host
-          4. Re-store Default-top/CPU_Heap transients as GPU_Global
-          5. Global tasklets are wrapped with a map of size 1
-          6. Global Maps are re-scheduled to use the GPU
-          7. Make data ready for interstate edges that use them
-          8. Re-apply simplification to get rid of extra states and
-             transients
+
+            1. Acquire metadata about SDFG and arrays
+            2. Replace all non-transients with their GPU counterparts
+            3. Copy-in state from host to GPU
+            4. Copy-out state from GPU to host
+            5. Re-store Default-top/CPU_Heap transients as GPU_Global
+            6. Global tasklets are wrapped with a map of size 1
+            7. Global Maps are re-scheduled to use the GPU
+            8. Make data ready for interstate edges that use them
+            9. Re-apply simplification to get rid of extra states and transients
     """
 
     toplevel_trans = Property(desc="Make all GPU transients top-level", dtype=bool, default=True)

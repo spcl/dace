@@ -23,12 +23,13 @@ class MapFission(transformation.SingleStateTransformation):
         semantics after fission.
 
         There are two cases that match map fission:
-        1. A map with an arbitrary subgraph with more than one computational
-           (i.e., non-access) node. The use of arrays connecting the
-           computational nodes must be limited to the subgraph, and non
-           transient arrays may not be used as "border" arrays.
-        2. A map with one internal node that is a nested SDFG, in which
-           each state matches the conditions of case (1).
+        
+            1. A map with an arbitrary subgraph with more than one computational
+               (i.e., non-access) node. The use of arrays connecting the
+               computational nodes must be limited to the subgraph, and non
+               transient arrays may not be used as "border" arrays.
+            2. A map with one internal node that is a nested SDFG, in which
+               each state matches the conditions of case (1).
 
         If a map has nested SDFGs in its subgraph, they are not considered in
         the case (1) above, and MapFission must be invoked again on the maps
