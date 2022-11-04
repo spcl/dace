@@ -171,17 +171,17 @@ def test_fusion_with_inverted_indices():
         for i in dace.map[0:10]:
             B[i] = i
         for i in dace.map[0:10]:
-            A[9-i] = B[9-i] + 5
-    
+            A[9 - i] = B[9 - i] + 5
+
     ref = np.arange(5, 15, dtype=np.int32)
 
     sdfg = inverted_maps.to_sdfg(simplify=True)
-    val0 = np.ndarray((10,), dtype=np.int32)
+    val0 = np.ndarray((10, ), dtype=np.int32)
     sdfg(A=val0)
     assert np.array_equal(val0, ref)
 
     sdfg.apply_transformations(MapFusion)
-    val1 = np.ndarray((10,), dtype=np.int32)
+    val1 = np.ndarray((10, ), dtype=np.int32)
     sdfg(A=val1)
     assert np.array_equal(val1, ref)
 
@@ -195,23 +195,40 @@ def test_fusion_with_empty_memlet():
         tmp = np.empty_like(A)
         for i in dace.map[0:N:128]:
             for j in dace.map[0:128]:
-                tmp[i+j] = A[i+j] * B[i+j]
+                tmp[i + j] = A[i + j] * B[i + j]
         for i in dace.map[0:N:128]:
             lsum = dace.float32(0)
             for j in dace.map[0:128]:
-                lsum = lsum + tmp[i+j]
+                lsum = lsum + tmp[i + j]
             out[0] += lsum
-    
+
     sdfg = inner_product.to_sdfg(simplify=True)
     count = sdfg.apply_transformations_repeated(MapFusion)
     assert count == 2
 
     A = np.arange(1024, dtype=np.float32)
     B = np.arange(1024, dtype=np.float32)
-    val = np.zeros((1,), dtype=np.float32)
+    val = np.zeros((1, ), dtype=np.float32)
     sdfg(A=A, B=B, out=val, N=1024)
     ref = A @ B
     assert np.allclose(val[0], ref)
+
+
+def test_fusion_inout():
+
+    @dace.program
+    def prog(a: dace.float64[20], b: dace.float64[20]):
+        b[:] = a + 1
+        b += a
+
+    sdfg = prog.to_sdfg()
+    sdfg.simplify()
+    assert sdfg.apply_transformations_repeated(MapFusion) == 1
+    sdfg.validate()
+    a = np.random.rand(20)
+    b = np.random.rand(20)
+    sdfg(a, b)
+    assert np.allclose(b, 2 * a + 1)
 
 
 if __name__ == '__main__':
@@ -221,3 +238,4 @@ if __name__ == '__main__':
     test_fusion_with_transient()
     test_fusion_with_inverted_indices()
     test_fusion_with_empty_memlet()
+    test_fusion_inout()
