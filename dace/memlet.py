@@ -394,7 +394,7 @@ class Memlet(object):
         other_data = None
         if self._is_data_src and isinstance(path[-1].dst, nodes.AccessNode):
             other_data = path[-1].dst.data
-        elif isinstance(path[0].src, nodes.AccessNode):
+        elif not self._is_data_src and isinstance(path[0].src, nodes.AccessNode):
             other_data = path[0].src.data
         # If other_subset is None, fill in with entire array
         if self.data is not None and other_data is not None and self.data != other_data and self.other_subset is None:
