@@ -887,7 +887,7 @@ class ConsumeEntry(EntryNode):
         :see: Consume
     """
 
-    def __init__(self, consume, dynamic_inputs=None):
+    def __init__(self, consume: 'Consume', dynamic_inputs=None):
         super(ConsumeEntry, self).__init__(dynamic_inputs or set())
         if consume is None:
             raise ValueError("Consume for ConsumeEntry can not be None.")
@@ -966,7 +966,7 @@ class ConsumeExit(ExitNode):
         :see: Consume
     """
 
-    def __init__(self, consume):
+    def __init__(self, consume: 'Consume'):
         super(ConsumeExit, self).__init__()
         if consume is None:
             raise ValueError("Consume for ConsumeExit can not be None.")
