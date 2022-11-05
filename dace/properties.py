@@ -373,6 +373,7 @@ def make_properties(cls):
     # Set the property name to its field name in the class
     for name, prop in properties.items():
         prop.attr_name = name
+        prop.owner = cls
     # Grab properties from baseclass(es)
     own_properties = copy.copy(properties)
     for base in cls.__bases__:
