@@ -19,7 +19,7 @@ from dace.sdfg import nodes as nd, graph as gr
 from dace import config, data as dt, dtypes, memlet as mm, subsets as sbs, symbolic
 from dace.cli.progress import optional_progressbar
 from string import ascii_uppercase
-from typing import Any, Callable, Dict, Generator, List, Optional, Set, Tuple, Union
+from typing import Any, Callable, Dict, Generator, List, Optional, Set, Sequence, Tuple, Union
 
 
 def node_path_graph(*args) -> gr.OrderedDiGraph:
@@ -252,6 +252,89 @@ def dfs_conditional(G, sources=None, condition=None, reverse=False, yield_parent
                             pass
             except StopIteration:
                 stack.pop()
+
+
+def scope_aware_topological_sort(G: SDFGState,
+                                 sources: Optional[Sequence[Node]] = None,
+                                 condition: Optional[Callable[[Node, Node], bool]] = None,
+                                 reverse: bool = False,
+                                 visited: Optional[Set[Node]] = None):
+    """
+    Traverses an SDFG state in topological order, yielding one node at a time, with the requirement that every scope
+    (e.g., map) is traversed continuously. This means that the sort will start on the outer nodes, and as it
+    encounters an entry node it will traverse the scope completely, without skipping out of it,
+    until all nodes in the scope (and sub-scopes) have been visited.
+
+    :param G: The state to traverse.
+    :param sources: An optional sequence of nodes to start traversal from. If not given, all source
+                    (or sink) nodes will be used.
+    :param condition: An optional callable that receives (current node, child node), and upon returning
+                      False, will stop traversal of the child node and its descendants.
+    :param reverse: If True, the graph will be traversed in reverse order (entering scopes via their exit node)
+    :param visited: An optional set that will be filled with the visited nodes.
+    """
+    if reverse:
+        source_nodes = 'sink_nodes'
+        predecessors = G.successors
+        neighbors = G.predecessors
+    else:
+        source_nodes = 'source_nodes'
+        predecessors = G.predecessors
+        neighbors = G.successors
+
+    if sources is None:
+        # produce edges for all components
+        src_nodes = getattr(G, source_nodes, lambda: G)
+        nodes = list(src_nodes())
+        if len(nodes) == 0:
+            nodes = G
+    else:
+        # produce edges for components with source
+        try:
+            nodes = iter(sources)
+        except TypeError:
+            nodes = [sources]
+
+    visited = visited if visited is not None else set()
+    for start in nodes:
+        if start in visited:
+            continue
+        yield start
+        visited.add(start)
+        stack = [(start, iter(neighbors(start)))]
+        while stack:
+            parent, children = stack[-1]
+            try:
+                child = next(children)
+                if child not in visited:
+                    # Make sure that all predecessors have been visited
+                    skip = False
+                    for pred in predecessors(child):
+                        if pred not in visited:
+                            skip = True
+                            break
+                    if skip:
+                        continue
+
+                    visited.add(child)
+                    if ((reverse and isinstance(child, dace.nodes.ExitNode))
+                            or (not reverse and isinstance(child, dace.nodes.EntryNode))):
+                        if reverse:
+                            entry = G.entry_node(child)
+                            scope_subgraph = G.scope_subgraph(entry)
+                        else:
+                            scope_subgraph = G.scope_subgraph(child)
+                        yield from scope_aware_topological_sort(scope_subgraph,
+                                                                sources=[child],
+                                                                condition=condition,
+                                                                reverse=reverse,
+                                                                visited=visited)
+                    if condition is None or condition(parent, child):
+                        yield child
+                        stack.append((child, iter(neighbors(child))))
+            except StopIteration:
+                stack.pop()
+    return visited
 
 
 def nodes_in_all_simple_paths(G, source, target, condition: Callable[[Any], bool] = None) -> Set[Any]:
