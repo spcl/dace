@@ -87,7 +87,6 @@ def test_cpu():
     run_correlation(dace.dtypes.DeviceType.CPU)
 
 
-@pytest.mark.skip(reason="GPU Error")
 @pytest.mark.gpu
 def test_gpu():
     run_correlation(dace.dtypes.DeviceType.GPU)

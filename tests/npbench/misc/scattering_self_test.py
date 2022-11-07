@@ -116,7 +116,6 @@ def test_cpu():
     run_scattering_self_test(dace.dtypes.DeviceType.CPU)
 
 
-@pytest.mark.skip(reason="Compiler error")
 @pytest.mark.gpu
 def test_gpu():
     run_scattering_self_test(dace.dtypes.DeviceType.GPU)
