@@ -66,7 +66,7 @@ class OTFMapFusion(transformation.SingleStateTransformation):
                 return False
 
             # In general, WCR requires initialization of the data with the identity of the reduction. In the special case of "0"-identity, we don't need to explicitly initialize but can set the "setzero" flag at creation of the data. This avoids adding states.
-            if not memlet.wcr is None:
+            if memlet.wcr is not None:
                 red_type = detect_reduction_type(memlet.wcr)
                 if red_type == dtypes.ReductionType.Custom:
                     return False
@@ -90,7 +90,7 @@ class OTFMapFusion(transformation.SingleStateTransformation):
         for edge in graph.out_edges(self.second_map_entry):
             memlet = edge.data
 
-            if not memlet.data in first_memlets:
+            if memlet.data not in first_memlets:
                 continue
 
             # Only fuse scalars
@@ -235,14 +235,14 @@ class OTFMapFusion(transformation.SingleStateTransformation):
                         graph.remove_edge(edge)
                         tmp_memlet = Memlet(tmp_name)
                         tmp_memlet.wcr = edge.data.wcr
-                        if not tmp_memlet.wcr is None:
+                        if tmp_memlet.wcr is not None:
                             tmp_memlet.src_subset = Range([(0, 0, 1)])
                         graph.add_edge(edge.src, edge.src_conn, tmp_access, None, tmp_memlet)
 
                     # Connect new OTF nodes to second map entry for read
                     for edge in graph.edges_between(first_map_entry, node):
                         memlet = copy.deepcopy(edge.data)
-                        if not memlet.wcr is None and memlet.data == self.array.data:
+                        if memlet.wcr is not None and memlet.data == self.array.data:
                             memlet.data = tmp_name
 
                         in_connector = edge.src_conn.replace("OUT", "IN")
