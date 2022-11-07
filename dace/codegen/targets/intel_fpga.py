@@ -64,8 +64,13 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
     language = 'hls'
 
     def __init__(self, *args, **kwargs):
-        fpga_vendor = Config.get("compiler", "fpga", "vendor")
-        if fpga_vendor.lower() != "intel_fpga":
+        self.fpga_vendor = Config.get("compiler", "fpga", "vendor")
+
+        if self.fpga_vendor.lower() not in self.supported_vendors:
+            raise cgx.CompilerConfigurationError(
+                f"FPGA vendor {self.fpga_vendor} is not supported. The supported vendors are {self.supported_vendors}.")
+
+        if self.fpga_vendor.lower() != "intel_fpga":
             # Don't register this code generator
             return
         # Keep track of generated converters to avoid multiple definition
@@ -412,8 +417,7 @@ DACE_EXPORTED void __dace_exit_intel_fpga({sdfg.name}_t *__state) {{
     def make_shift_register_write(self, defined_type, dtype, var_name, write_expr, index, read_expr, wcr, is_unpack,
                                   packing_factor, sdfg):
         if defined_type != DefinedType.Pointer:
-            raise TypeError("Intel shift register must be an array: "
-                            "{} is {}".format(var_name, defined_type))
+            raise TypeError("Intel shift register must be an array: " "{} is {}".format(var_name, defined_type))
         # Shift array
         arr_size = functools.reduce(lambda a, b: a * b, sdfg.data(var_name).shape, 1)
         res = """

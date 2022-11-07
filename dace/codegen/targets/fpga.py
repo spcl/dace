@@ -304,6 +304,9 @@ class FPGACodeGen(TargetCodeGenerator):
     title = None
     language = None
 
+    # List of supported vendors
+    supported_vendors = {"intel_fpga", "xilinx"}
+
     def __init__(self, frame_codegen, sdfg: SDFG):
 
         # The inheriting class must set target_name, title and language.
