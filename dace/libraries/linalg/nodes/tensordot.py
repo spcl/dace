@@ -102,6 +102,9 @@ class ExpandTTGT(ExpandTransformation):
             transB = True
         else:
             transB = False
+
+        # Disable transpose support for now
+        # transA, transB = False, False
         
         if transA:
             left_tt = "_left_tensor"

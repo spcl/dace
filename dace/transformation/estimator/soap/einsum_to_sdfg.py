@@ -7,6 +7,7 @@ import re
 from dace.dtypes import DTYPE_TO_TYPECLASS as dt
 from dace import subsets
 from typing import Dict, List, Tuple, Union
+from warnings import warn
 
 
 def sdfg_gen(subscripts: str, arrays: List[np.ndarray] = None, inp_dim: int = 10) -> dace.SDFG:
@@ -83,23 +84,23 @@ def sdfg_gen(subscripts: str, arrays: List[np.ndarray] = None, inp_dim: int = 10
     # )
     # return sdfg
 
-    sdfg.add_array('out', [symbols['i'], symbols['l']], dt[arr.dtype.type])
+    # sdfg.add_array('out', [symbols['i'], symbols['l']], dt[arr.dtype.type])
     
-    state = sdfg.add_state("contraction")
-    state.add_mapped_tasklet(
-        state.label,
-        {idx: (0, symbols[idx]-1, 1) for idx in 'ijkla'},
-        {
-           '__in0': dace.Memlet(f"{array_names[0]}[i,j,k]"),
-           '__in1': dace.Memlet(f"{array_names[1]}[j,a]"),
-           '__in2': dace.Memlet(f"{array_names[2]}[k,a]"),
-           '__in3': dace.Memlet(f"{array_names[3]}[a,l]")                
-        }, 
-        '__out = __in0 * __in1 * __in2 * __in3',
-        {'__out': dace.Memlet(f"out[i,l]", wcr='lambda a, b: a + b')},
-        external_edges=True
-    )
-    return sdfg, None
+    # state = sdfg.add_state("contraction")
+    # state.add_mapped_tasklet(
+    #     state.label,
+    #     {idx: (0, symbols[idx]-1, 1) for idx in 'ijkla'},
+    #     {
+    #        '__in0': dace.Memlet(f"{array_names[0]}[i,j,k]"),
+    #        '__in1': dace.Memlet(f"{array_names[1]}[j,a]"),
+    #        '__in2': dace.Memlet(f"{array_names[2]}[k,a]"),
+    #        '__in3': dace.Memlet(f"{array_names[3]}[a,l]")                
+    #     }, 
+    #     '__out = __in0 * __in1 * __in2 * __in3',
+    #     {'__out': dace.Memlet(f"out[i,l]", wcr='lambda a, b: a + b')},
+    #     external_edges=True
+    # )
+    # return sdfg, None
     
     counter = 0
     state = None
@@ -138,12 +139,35 @@ def sdfg_gen(subscripts: str, arrays: List[np.ndarray] = None, inp_dim: int = 10
     #     # ((2, 1), None, 'ijcde,jd->ijcde'),
     #     # ((1, 0), None, 'ijcde,jb->ibcde'),
     # ]
-    for contraction in path_info[1].contraction_list:
+    repl = dict()
+    for cidx, contraction in enumerate(path_info[1].contraction_list):
     # for contraction in contractions:
 
         print(contraction)
-
         tokens = re.split(',|->', contraction[2])
+
+        # Rearrange tokens to match previous "corrected" output
+        if tokens[0] in repl:
+            tokens[0] = repl[tokens[0]]
+        if tokens[1] in repl:
+            tokens[1] = repl[tokens[1]]
+
+        fixed_order = contraction[0]
+        if contraction[4] in ('GEMM', 'TDOT'):
+            if tokens[0][0] != tokens[2][0]:
+                if tokens[0][-1] == tokens[2][0]:
+                    tokens[0], tokens[1] = tokens[1], tokens[0]
+                    fixed_order = contraction[0][::-1]
+                    repl[tokens[2]] = tokens[2][::-1]
+                    tokens[2] = tokens[2][::-1]
+                # elif tokens[1][0] == tokens[2][0]:
+                elif tokens[2][0] in tokens[1]:
+                    tokens[0], tokens[1] = tokens[1], tokens[0]
+                    fixed_order = contraction[0][::-1]
+        fixed_contraction = f'{tokens[0]},{tokens[1]}->{tokens[2]}'
+        contraction = (fixed_order, contraction[1], fixed_contraction, contraction[3], contraction[4])
+        path_info[1].contraction_list[cidx] = contraction
+        print(contraction)
         assert(len(tokens) == 3)
 
         first_idx, second_idx = contraction[0]
