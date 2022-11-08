@@ -298,6 +298,27 @@ def unqualify_fpga_array_name(sdfg: dace.SDFG, arr_name: str):
         return arr_name
 
 
+def is_vendor_supported(fpga_vendor: str) -> bool:
+    """
+    Returns wheter the given vendor is supported or not, by looking
+    among the registered FPGA code-generators.
+
+    :param fpga_vendor: the fpga vendor 
+    """
+    
+    registered_codegens = dace.codegen.targets.target.TargetCodeGenerator._registry_
+    supported_vendors = set()
+    for cl, attr in registered_codegens.items():
+        if issubclass(cl, dace.codegen.targets.fpga.FPGACodeGen):
+            if attr["name"] == fpga_vendor.lower():
+                break
+            else:
+                supported_vendors.add(attr["name"])
+    else:
+        raise cgx.CompilerConfigurationError(
+            f"FPGA vendor {fpga_vendor} is not supported. The supported vendors are {supported_vendors}.")
+
+
 class FPGACodeGen(TargetCodeGenerator):
     # Set by deriving class
     target_name = None
@@ -941,7 +962,8 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                             trace_type, trace_bank = parse_location_bank(trace_desc)
                             if (bank is not None and bank_type is not None
                                     and (bank != trace_bank or bank_type != trace_type)):
-                                raise cgx.CodegenError("Found inconsistent memory bank " f"specifier for {trace_name}.")
+                                raise cgx.CodegenError("Found inconsistent memory bank "
+                                                       f"specifier for {trace_name}.")
                             bank = trace_bank
                             bank_type = trace_type
 
@@ -1491,7 +1513,8 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
 
             if (not sum(copy_shape) == 1 and
                 (not isinstance(memlet.subset, subsets.Range) or any([step != 1 for _, _, step in memlet.subset]))):
-                raise NotImplementedError("Only contiguous copies currently " "supported for FPGA codegen.")
+                raise NotImplementedError("Only contiguous copies currently "
+                                          "supported for FPGA codegen.")
 
             if host_to_device or device_to_device:
                 host_dtype = sdfg.data(src_node.data).dtype
@@ -1739,7 +1762,8 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
     @staticmethod
     def make_opencl_parameter(name, desc):
         if isinstance(desc, dt.Array):
-            return (f"hlslib::ocl::Buffer<{desc.dtype.ctype}, " f"hlslib::ocl::Access::readWrite> &{name}")
+            return (f"hlslib::ocl::Buffer<{desc.dtype.ctype}, "
+                    f"hlslib::ocl::Access::readWrite> &{name}")
         else:
             return (desc.as_arg(with_types=True, name=name))
 
@@ -1999,7 +2023,8 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                                 elif np.issubdtype(np.dtype(end_type.dtype.type), np.unsignedinteger):
                                     loop_var_type = "size_t"
                     except (UnboundLocalError):
-                        raise UnboundLocalError('Pipeline scopes require ' 'specialized bound values')
+                        raise UnboundLocalError('Pipeline scopes require '
+                                                'specialized bound values')
                     except (TypeError):
                         # Raised when the evaluation of begin or skip fails.
                         # This could occur, for example, if they are defined in terms of other symbols, which

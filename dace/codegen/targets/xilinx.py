@@ -41,9 +41,8 @@ class XilinxCodeGen(fpga.FPGACodeGen):
     def __init__(self, *args, **kwargs):
         self.fpga_vendor = Config.get("compiler", "fpga", "vendor")
 
-        if self.fpga_vendor.lower() not in self.supported_vendors:
-            raise cgx.CompilerConfigurationError(
-                f"FPGA vendor {self.fpga_vendor} is not supported. The supported vendors are {self.supported_vendors}.")
+        # Check that the given vendor is supported
+        fpga.is_vendor_supported(self.fpga_vendor)
 
         if self.fpga_vendor.lower() != "xilinx":
             # Don't register this code generator
@@ -268,7 +267,8 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
         dtype = desc.dtype
         kernel_stream.write("{} {}[{}];\n".format(dtype.ctype, var_name, cpp.sym2cpp(array_size)))
         if desc.storage == dace.dtypes.StorageType.FPGA_Registers:
-            kernel_stream.write("#pragma HLS ARRAY_PARTITION variable={} " "complete\n".format(var_name))
+            kernel_stream.write("#pragma HLS ARRAY_PARTITION variable={} "
+                                "complete\n".format(var_name))
         elif desc.storage == dace.dtypes.StorageType.FPGA_Local:
             pass
         else:
