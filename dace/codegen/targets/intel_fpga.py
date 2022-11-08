@@ -416,8 +416,7 @@ DACE_EXPORTED void __dace_exit_intel_fpga({sdfg.name}_t *__state) {{
     def make_shift_register_write(self, defined_type, dtype, var_name, write_expr, index, read_expr, wcr, is_unpack,
                                   packing_factor, sdfg):
         if defined_type != DefinedType.Pointer:
-            raise TypeError("Intel shift register must be an array: "
-                            "{} is {}".format(var_name, defined_type))
+            raise TypeError("Intel shift register must be an array: " "{} is {}".format(var_name, defined_type))
         # Shift array
         arr_size = functools.reduce(lambda a, b: a * b, sdfg.data(var_name).shape, 1)
         res = """
