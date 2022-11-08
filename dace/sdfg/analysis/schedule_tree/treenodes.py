@@ -269,7 +269,7 @@ class ViewNode(ScheduleTreeNode):
     view_desc: data.Data
 
     def as_string(self, indent: int = 0):
-        return indent * INDENTATION + f'{self.target} = view {self.source}[{self.memlet}] as {self.view_desc}'
+        return indent * INDENTATION + f'{self.target} = view {self.memlet} as {self.view_desc.shape}'
 
 
 @dataclass
@@ -278,7 +278,7 @@ class NView(ViewNode):
     Nested SDFG view node. Subclass of a view that specializes in nested SDFG boundaries.
     """
     def as_string(self, indent: int = 0):
-        return indent * INDENTATION + f'{self.target} = nview {self.source}[{self.memlet}] as {self.view_desc}'
+        return indent * INDENTATION + f'{self.target} = nview {self.memlet} as {self.view_desc.shape}'
 
 
 @dataclass

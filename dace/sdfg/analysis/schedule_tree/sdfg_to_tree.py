@@ -24,6 +24,7 @@ def state_schedule_tree(state: SDFGState, array_mapping: Dict[str, dace.Memlet])
         dace.nodes.PipelineEntry: tn.PipelineScope,
     }
     sdfg = state.parent
+    edges_to_skip = set()
 
     scopes: List[List[tn.ScheduleTreeNode]] = []
     for node in sdutil.scope_aware_topological_sort(state):
@@ -84,10 +85,14 @@ def state_schedule_tree(state: SDFGState, array_mapping: Dict[str, dace.Memlet])
             if isinstance(desc, dace.data.View):
                 vedge = sdutil.get_view_edge(state, node)
 
-            # Access nodes are only printed with corresponding memlets
+            # Access nodes are only generated with corresponding memlets
             for e in state.all_edges(node):
                 if e.data.is_empty():
                     continue
+                if e in edges_to_skip:
+                    continue
+                edges_to_skip.add(e) # Only process each edge once
+
                 conn = e.dst_conn if e.dst is node else e.src_conn
 
                 # Reference + "set" connector
@@ -98,17 +103,25 @@ def state_schedule_tree(state: SDFGState, array_mapping: Dict[str, dace.Memlet])
                                       src_desc=sdfg.arrays[e.data.data],
                                       ref_desc=sdfg.arrays[node.data]))
                     continue
+                if e.src is node:
+                    last_edge = state.memlet_path(e)[-1]
+                    if isinstance(last_edge.dst, dace.nodes.AccessNode) and last_edge.dst_conn == 'set':
+                        # Skip this edge, it is handled by the Reference node
+                        edges_to_skip.remove(e)
+                        continue
+
+
                 # View edge
                 if e is vedge:
                     subset = e.data.get_src_subset(e, state) if e.dst is node else e.data.get_dst_subset(e, state)
                     vnode = sdutil.get_view_node(state, node)
                     new_memlet = copy.deepcopy(e.data)
-                    new_memlet.data = node.data
+                    new_memlet.data = vnode.data
                     new_memlet.subset = subset
                     new_memlet.other_subset = None
                     result.append(
-                        tn.ViewNode(target=vnode.data,
-                                    source=node.data,
+                        tn.ViewNode(target=node.data,
+                                    source=vnode.data,
                                     memlet=new_memlet,
                                     src_desc=sdfg.arrays[vnode.data],
                                     view_desc=sdfg.arrays[node.data]))
@@ -124,12 +137,30 @@ def state_schedule_tree(state: SDFGState, array_mapping: Dict[str, dace.Memlet])
                     other = mpath[0].src
                     if not isinstance(other, dace.nodes.AccessNode):
                         continue
+
+                    # Check if the other node is a view, and skip the view edge (handled by the view node)
+                    other_desc = other.desc(sdfg)
+                    if isinstance(other_desc, dace.data.View):
+                        other_vedge = sdutil.get_view_edge(state, other)
+                        if other_vedge is e:
+                            edges_to_skip.remove(e)
+                            continue
+                    
                     result.append(tn.CopyNode(target=node.data, memlet=e.data))
                     continue
                 if e.src is node and mpath[0] is e:
                     other = mpath[-1].dst
                     if not isinstance(other, dace.nodes.AccessNode):
                         continue
+                    
+                    # Check if the other node is a view, and skip the view edge (handled by the view node)
+                    other_desc = other.desc(sdfg)
+                    if isinstance(other_desc, dace.data.View):
+                        other_vedge = sdutil.get_view_edge(state, other)
+                        if other_vedge is e:
+                            edges_to_skip.remove(e)
+                            continue
+                    
                     result.append(tn.CopyNode(target=other.data, memlet=e.data))
                     continue
 
