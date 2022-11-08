@@ -7,7 +7,7 @@ import copy
 import inspect
 import itertools
 import warnings
-from typing import Any, AnyStr, Dict, Iterable, Iterator, List, Optional, Set, Tuple, Union, overload
+from typing import TYPE_CHECKING, Any, AnyStr, Dict, Iterable, Iterator, List, Optional, Set, Tuple, Union, overload
 
 import dace
 from dace import data as dt
@@ -24,6 +24,8 @@ from dace.sdfg.propagation import propagate_memlet
 from dace.sdfg.validation import validate_state
 from dace.subsets import Range, Subset
 
+if TYPE_CHECKING:
+    import dace.sdfg.scope
 
 def _getdebuginfo(old_dinfo=None) -> dtypes.DebugInfo:
     """ Returns a DebugInfo object for the position that called this function.
