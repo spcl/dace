@@ -563,7 +563,7 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
                 continue
             arg = self.make_kernel_argument(p, pname, is_output, True)
             
-            #TODO: check this! might no longer need other replacements?
+            #change c type long long to opencl type long
             if arg.__contains__("long long"):
                 arg = arg.replace("long long", "long")
 
@@ -760,7 +760,7 @@ __kernel void \\
             ptrname = cpp.ptr(in_memlet.data, desc, sdfg, self._frame)
             defined_type, defined_ctype = self._dispatcher.defined_vars.get(ptrname, 1) #Ctype -> dacetype
 
-            #TODO:definately double check this!
+            #change c type long long to opencl type long
             if defined_ctype.__contains__("long long"):
                 defined_ctype = defined_ctype.replace("long long", "long")
 
@@ -814,7 +814,7 @@ __kernel void \\
                 ptrname = cpp.ptr(out_memlet.data, desc, sdfg, self._frame)
                 defined_type, defined_ctype = self._dispatcher.defined_vars.get(ptrname, 1)
 
-                #TODO:definately double check this!
+                #change c type long long to opencl type long
                 if defined_ctype.__contains__("long long"):
                     defined_ctype = defined_ctype.replace("long long", "long")
 

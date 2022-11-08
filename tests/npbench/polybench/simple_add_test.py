@@ -61,11 +61,11 @@ def run_simple_add(device_type: dace.dtypes.DeviceType):
         sdfg.expand_library_nodes()
         sdfg.apply_transformations_repeated([InlineSDFG], print_report=True)
         sdfg.specialize(dict(N=N))
-        sdfg(A, B)
+        sdfg(A=A, B=B)
 
     # Compute ground truth and validate
     ground_truth(A_ref, B_ref)
-    assert np.allclose(A, A_ref)
+    assert np.allclose(B, B_ref)
     return sdfg
 
 
@@ -78,7 +78,7 @@ def test_gpu():
     run_simple_add(dace.dtypes.DeviceType.GPU)
 
 
-@pytest.mark.skip(reason="Intel FPGA missing support for long long")
+
 @fpga_test(assert_ii_1=False)
 def test_fpga():
     return run_simple_add(dace.dtypes.DeviceType.FPGA)
