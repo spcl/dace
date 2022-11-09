@@ -1,9 +1,8 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
-from copy import copy
 from dataclasses import dataclass
-from typing import Any, Dict, Iterator, Optional, Set
+from typing import Any, Dict, Optional, Set
 
-from dace import SDFG, config
+from dace import SDFG, config, properties
 from dace.transformation import helpers as xfh
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.array_elimination import ArrayElimination
@@ -35,11 +34,20 @@ _nonrecursive_passes = [
 
 
 @dataclass(unsafe_hash=True)
+@properties.make_properties
 class SimplifyPass(ppl.FixedPointPipeline):
-    validate: bool = False  #: Whether to validate the SDFG at the end of the pipeline
-    validate_all: bool = False  #: Whether to validate the SDFG after each pass
-    skip: Optional[Set[str]] = None  #: Names of passes to skip in this pipeline
-    verbose: bool = False  #: Whether to print reports after every pass
+    """
+    A pipeline that simplifies an SDFG by applying a series of simplification passes.
+    """
+
+    CATEGORY: str = 'Simplification'
+
+    validate = properties.Property(dtype=bool, default=False, desc='Whether to validate the SDFG at the end of the pipeline.')
+    validate_all = properties.Property(dtype=bool, default=False, desc='Whether to validate the SDFG after each pass.')
+    skip = properties.SetProperty(element_type=str,
+                                  default=set(),
+                                  desc='Set of pass names to skip.')
+    verbose = properties.Property(dtype=bool, default=False, desc='Whether to print reports after every pass.')
 
     def __init__(self,
                  validate: bool = False,

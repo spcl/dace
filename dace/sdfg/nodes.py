@@ -887,7 +887,7 @@ class ConsumeEntry(EntryNode):
         :see: Consume
     """
 
-    def __init__(self, consume, dynamic_inputs=None):
+    def __init__(self, consume: 'Consume', dynamic_inputs=None):
         super(ConsumeEntry, self).__init__(dynamic_inputs or set())
         if consume is None:
             raise ValueError("Consume for ConsumeEntry can not be None.")
@@ -966,7 +966,7 @@ class ConsumeExit(ExitNode):
         :see: Consume
     """
 
-    def __init__(self, consume):
+    def __init__(self, consume: 'Consume'):
         super(ConsumeExit, self).__init__()
         if consume is None:
             raise ValueError("Consume for ConsumeExit can not be None.")
@@ -1080,7 +1080,7 @@ class PipelineEntry(MapEntry):
 
     @staticmethod
     def map_type():
-        return Pipeline
+        return PipelineScope
 
     @property
     def pipeline(self):
@@ -1113,7 +1113,7 @@ class PipelineExit(MapExit):
 
     @staticmethod
     def map_type():
-        return Pipeline
+        return PipelineScope
 
     @property
     def pipeline(self):
@@ -1125,7 +1125,7 @@ class PipelineExit(MapExit):
 
 
 @make_properties
-class Pipeline(Map):
+class PipelineScope(Map):
     """ This a convenience-subclass of Map that allows easier implementation of
         loop nests (using regular Map indices) that need a constant-sized
         initialization and drain phase (e.g., N*M + c iterations), which would
@@ -1149,7 +1149,7 @@ class Pipeline(Map):
                  drain_overlap=False,
                  additional_iterators={},
                  **kwargs):
-        super(Pipeline, self).__init__(*args, **kwargs)
+        super(PipelineScope, self).__init__(*args, **kwargs)
         self.init_size = init_size
         self.init_overlap = init_overlap
         self.drain_size = drain_size
@@ -1184,7 +1184,7 @@ class Pipeline(Map):
         return self.iterator_str() + "_drain"
 
 
-PipelineEntry = indirect_properties(Pipeline, lambda obj: obj.map)(PipelineEntry)
+PipelineEntry = indirect_properties(PipelineScope, lambda obj: obj.map)(PipelineEntry)
 
 # ------------------------------------------------------------------------------
 

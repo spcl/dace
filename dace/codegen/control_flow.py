@@ -208,6 +208,9 @@ class GeneralBlock(ControlFlow):
     # List or set of edges to not generate inter-state assignments for.
     assignments_to_ignore: Sequence[Edge[InterstateEdge]]
 
+    # True if control flow is sequential between elements, or False if contains irreducible control flow
+    sequential: bool
+
     def as_cpp(self, codegen, symbols) -> str:
         expr = ''
         for i, elem in enumerate(self.elements):
@@ -481,7 +484,7 @@ def _loop_from_structure(sdfg: SDFG, guard: SDFGState, enter_edge: Edge[Intersta
     set of states. Can construct for or while loops.
     """
 
-    body = GeneralBlock(dispatch_state, [], [], [], [], [])
+    body = GeneralBlock(dispatch_state, [], [], [], [], [], True)
 
     guard_inedges = sdfg.in_edges(guard)
     increment_edges = [e for e in guard_inedges if e in back_edges]
@@ -622,7 +625,8 @@ def _structured_control_flow_traversal(sdfg: SDFG,
                                        dispatch_state: Callable[[SDFGState], str],
                                        parent_block: GeneralBlock,
                                        stop: SDFGState = None,
-                                       generate_children_of: SDFGState = None) -> Set[SDFGState]:
+                                       generate_children_of: SDFGState = None,
+                                       visited: Set[SDFGState] = None):
     """ 
     Helper function for ``structured_control_flow_tree``. 
 
@@ -639,16 +643,18 @@ def _structured_control_flow_traversal(sdfg: SDFG,
     :return: Generator that yields states in state-order from ``start`` to 
              ``stop``.
     """
+
+    def make_empty_block():
+        return GeneralBlock(dispatch_state, [], [], [], [], [], True)
+
     # Traverse states in custom order
-    visited = set()
-    if stop is not None:
-        visited.add(stop)
+    visited = set() if visited is None else visited
     stack = [start]
     while stack:
         node = stack.pop()
         if (generate_children_of is not None and not _child_of(node, generate_children_of, ptree)):
             continue
-        if node in visited:
+        if node in visited or node is stop:
             continue
         visited.add(node)
         stateblock = SingleState(dispatch_state, node)
@@ -679,16 +685,20 @@ def _structured_control_flow_traversal(sdfg: SDFG,
             # Parse all outgoing edges recursively first
             cblocks: Dict[Edge[InterstateEdge], GeneralBlock] = {}
             for branch in oe:
-                cblocks[branch] = GeneralBlock(dispatch_state, [], [], [], [], [])
-                visited |= _structured_control_flow_traversal(sdfg,
-                                                              branch.dst,
-                                                              ptree,
-                                                              branch_merges,
-                                                              back_edges,
-                                                              dispatch_state,
-                                                              cblocks[branch],
-                                                              stop=mergestate,
-                                                              generate_children_of=node)
+                if branch.dst is mergestate:
+                    # If we hit the merge state (if without else), defer to end of branch traversal
+                    continue
+                cblocks[branch] = make_empty_block()
+                _structured_control_flow_traversal(sdfg,
+                                                   branch.dst,
+                                                   ptree,
+                                                   branch_merges,
+                                                   back_edges,
+                                                   dispatch_state,
+                                                   cblocks[branch],
+                                                   stop=mergestate,
+                                                   generate_children_of=node,
+                                                   visited=visited)
 
             # Classify branch type:
             branch_block = None
@@ -714,7 +724,9 @@ def _structured_control_flow_traversal(sdfg: SDFG,
                     branch_block = SwitchCaseScope(dispatch_state, sdfg, node, switch[0], switch[1])
                 else:
                     # Otherwise, create if/else if/.../else goto exit chain
-                    branch_block = IfElseChain(dispatch_state, sdfg, node, [(e.data.condition, cblocks[e]) for e in oe])
+                    branch_block = IfElseChain(dispatch_state, sdfg, node,
+                                               [(e.data.condition, cblocks[e] if e in cblocks else make_empty_block())
+                                                for e in oe])
             # End of branch classification
             parent_block.elements.append(branch_block)
             if mergestate != stop:
@@ -744,7 +756,8 @@ def _structured_control_flow_traversal(sdfg: SDFG,
                                                               dispatch_state,
                                                               scope.body,
                                                               stop=node,
-                                                              generate_children_of=node)
+                                                              generate_children_of=node,
+                                                              visited=visited)
 
                 # Add branching node and ignore outgoing edges
                 parent_block.elements.append(stateblock)
@@ -764,9 +777,11 @@ def _structured_control_flow_traversal(sdfg: SDFG,
                 continue
 
             # No proper loop detected: Unstructured control flow
+            parent_block.sequential = False
             parent_block.elements.append(stateblock)
             stack.extend([e.dst for e in oe])
         else:  # No merge state: Unstructured control flow
+            parent_block.sequential = False
             parent_block.elements.append(stateblock)
             stack.extend([e.dst for e in oe])
 
@@ -802,6 +817,16 @@ def structured_control_flow_tree(sdfg: SDFG, dispatch_state: Callable[[SDFGState
                                  (ptree[oedges[1].dst] == state and ptree[oedges[0].dst] != state)):
             continue
 
+        # If branch without else (adf of one successor is equal to the other)
+        if len(oedges) == 2:
+            if {oedges[0].dst} & adf[oedges[1].dst]:
+                branch_merges[state] = oedges[0].dst
+                continue
+            elif {oedges[1].dst} & adf[oedges[0].dst]:
+                branch_merges[state] = oedges[1].dst
+                continue
+
+        # Try to obtain common DF to find merge state
         common_frontier = set()
         for oedge in oedges:
             frontier = adf[oedge.dst]
@@ -811,7 +836,7 @@ def structured_control_flow_tree(sdfg: SDFG, dispatch_state: Callable[[SDFGState
         if len(common_frontier) == 1:
             branch_merges[state] = next(iter(common_frontier))
 
-    root_block = GeneralBlock(dispatch_state, [], [], [], [], [])
+    root_block = GeneralBlock(dispatch_state, [], [], [], [], [], True)
     _structured_control_flow_traversal(sdfg, sdfg.start_state, ptree, branch_merges, back_edges, dispatch_state,
                                        root_block)
     return root_block
