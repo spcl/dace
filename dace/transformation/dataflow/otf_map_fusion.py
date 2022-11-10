@@ -5,20 +5,24 @@ This module contains classes that implement the OTF map fusion transformation.
 import copy
 import sympy
 
+from typing import List, Tuple
+
 from dace.sdfg.sdfg import SDFG
 from dace.sdfg.state import SDFGState, StateSubgraphView
 from dace.sdfg import nodes as nds
 from dace.memlet import Memlet
 from dace.sdfg import utils as sdutil
-from dace.subsets import Range
 from dace.transformation import transformation
 from dace import data as dt
 from dace import dtypes
 from dace import symbolic, nodes
+from dace.properties import SymbolicProperty, make_properties, Property
 
-from dace.frontend.operations import detect_reduction_type
+from dace.transformation.dataflow.stream_transient import AccumulateTransient
+from dace.transformation.dataflow.local_storage import OutLocalStorage, InLocalStorage
 
 
+@make_properties
 class OTFMapFusion(transformation.SingleStateTransformation):
     """
     Performs fusion of two maps by replicating the contents of the first into the second map
@@ -28,98 +32,99 @@ class OTFMapFusion(transformation.SingleStateTransformation):
     array = transformation.PatternNode(nds.AccessNode)
     second_map_entry = transformation.PatternNode(nds.EntryNode)
 
+    identity = SymbolicProperty(desc="Identity value to set", default=None, allow_none=True)
+
     @classmethod
     def expressions(cls):
         return [sdutil.node_path_graph(cls.first_map_exit, cls.array, cls.second_map_entry)]
 
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
-        # Check intermediate nodes between both maps.
-        for _, _, node, _, _ in graph.out_edges(self.first_map_exit):
-            # Only map -> array -> map
-            if not isinstance(node, nds.AccessNode):
+        # General conditions
+        if not sdfg.arrays[self.array.data].transient:
+            return False
+        if graph.out_degree(self.first_map_exit) > 1:
+            return False
+        if graph.in_degree(self.array) > 1:
+            return False
+
+        # Condition: Consumed is covered by produced data
+        produce_edge = next(graph.edges_between(self.first_map_exit, self.array).__iter__())
+        consume_edges = graph.edges_between(self.array, self.second_map_entry)
+        for edge in consume_edges:
+            read_memlet = edge.data
+            write_memlet = produce_edge.data
+            if not write_memlet.subset.covers(read_memlet.subset):
                 return False
 
-            # Non-transient blocks removal of first map
-            if not sdfg.arrays[node.data].transient:
-                return False
-
-            # Check that array is not co-produced by other parent map.
-            producers = set(map(lambda edge: edge.src, graph.in_edges(node)))
-            for prod in producers:
-                if prod != self.first_map_exit:
-                    return False
-
-        # Equation Solvability: First map must induce a non-ambiguous set of writes for all possible reads of second map.
-
-        # dims(first map) <= dims(second map)
+        # Condition: Equations solvable (dims(first map) <= dims(second map))
         first_map_entry = graph.entry_node(self.first_map_exit)
         if len(first_map_entry.map.params) > len(self.second_map_entry.map.params):
             return False
 
-        # Write memlets are unique
-        first_memlets = {}
+        # First memlets
+        first_map_dims = set(self.first_map_exit.map.params)
+        produce_memlets = {}
         for edge in graph.in_edges(self.first_map_exit):
             memlet = edge.data
-
-            # Limitation: Only scalars for now
-            if memlet.num_elements() > 1:
+            # Unique
+            if memlet.data in produce_memlets:
                 return False
 
-            # In general, WCR requires initialization of the data with the identity of the reduction. In the special case of "0"-identity, we don't need to explicitly initialize but can set the "setzero" flag at creation of the data. This avoids adding states.
+            # Condition: Consecutive produce
+            for access in memlet.subset:
+                _, _, step = access
+                # If we skip, we get undefined points in array
+                if step != 1:
+                    return False
+
+            # Condition: Constant num_elements
+            for dim_num_elements in memlet.subset.size_exact():
+                syms = set(map(str, dim_num_elements.free_symbols))
+                if len(syms.intersection(first_map_dims)) > 0:
+                    return False
+
+            # WCR
             if memlet.wcr is not None:
-                red_type = detect_reduction_type(memlet.wcr)
-                if red_type == dtypes.ReductionType.Custom:
+                # Condition: Real dimensions only
+                real_dimensions = set()
+                for access in memlet.subset:
+                    start, _, _ = access
+                    for sym in start.free_symbols:
+                        real_dimensions.add(str(sym))
+
+                # Map defines more dimensions than WCR memlet has
+                if len(real_dimensions) == 0 or len(first_map_dims.difference(real_dimensions)) > 0:
                     return False
 
-                dtype = sdfg.arrays[memlet.data].dtype
-                identity = dtypes.reduction_identity(dtype, red_type)
-                if identity != 0:
-                    return False
+            produce_memlets[memlet.data] = memlet
 
-                # We require that the parallel dims are separate from the reduce dims
-                dims = len(first_map_entry.map.params)
-                if len(memlet.subset) != dims:
-                    return False
-
-            # Unique choice which write memlet to pick for each read
-            if memlet.data in first_memlets:
-                return False
-            first_memlets[memlet.data] = memlet
-
-        second_memlets = {}
+        second_map_dims = set(self.second_map_entry.map.params)
         for edge in graph.out_edges(self.second_map_entry):
             memlet = edge.data
-
-            if memlet.data not in first_memlets:
+            if memlet.data not in produce_memlets:
                 continue
 
-            # Only fuse scalars
-            if memlet.num_elements() > 1:
-                return False
-
-            if memlet.data not in second_memlets:
-                second_memlets[memlet.data] = {}
-
-            accesses = tuple(memlet.subset.ranges)
-            if accesses not in second_memlets[memlet.data]:
-                second_memlets[memlet.data][accesses] = []
-
-            second_memlets[memlet.data][accesses].append(edge)
-
-        for array in second_memlets:
-            out_memlet = first_memlets[array]
-            out_accesses = tuple(out_memlet.subset.ranges)
-            for in_accesses in second_memlets[array]:
-                param_mapping = OTFMapFusion.solve(first_map_entry.map.params, out_accesses,
-                                                   self.second_map_entry.map.params, in_accesses)
-                if param_mapping is None:
+            # Condition: Constant num_elements
+            for dim_num_elements in memlet.subset.size_exact():
+                if len(set(map(str, dim_num_elements.free_symbols)).intersection(second_map_dims)) > 0:
+                    # Num elements in dimension depends on map
                     return False
 
-        # Success
+            consume_subset = tuple(memlet.subset.ranges)
+
+            produce_memlet = produce_memlets[memlet.data]
+            produce_subset = tuple(produce_memlet.subset.ranges)
+            param_mapping = OTFMapFusion.solve(first_map_entry.map.params, produce_subset,
+                                               self.second_map_entry.map.params, consume_subset)
+
+            if param_mapping is None:
+                return False
+
         return True
 
     def apply(self, graph: SDFGState, sdfg: SDFG):
-        first_map_entry = graph.entry_node(self.first_map_exit)
+        first_map_exit = self.first_map_exit
+        first_map_entry = graph.entry_node(first_map_exit)
 
         # Prepare: Make first and second map parameters disjoint
         # This avoids mutual matching: i -> j, j -> i
@@ -139,22 +144,69 @@ class OTFMapFusion(transformation.SingleStateTransformation):
             new_param = param + "_local"
             advanced_replace(subgraph, param, new_param)
 
-        # Phase 1: Re-connect access nodes
-        # a. Collect out access nodes of first map
-        intermediate_dnodes = set()
-        for edge in graph.out_edges(self.first_map_exit):
-            node = edge.dst
-            if not isinstance(node, nds.AccessNode):
+        # Add local buffers for array-like OTFs
+        for edge in graph.out_edges(self.second_map_entry):
+            if edge.data is None or edge.data.data != self.array.data:
                 continue
 
-            intermediate_dnodes.add(node)
+            xform = InLocalStorage()
+            xform._sdfg = sdfg
+            xform.state_id = sdfg.node_id(graph)
+            xform.node_a = edge.src
+            xform.node_b = edge.dst
+            xform.array = self.array.data
+            if xform.can_be_applied(graph, expr_index=0, sdfg=sdfg):
+                InLocalStorage.apply_to(sdfg=sdfg,
+                                        node_a=edge.src,
+                                        node_b=edge.dst,
+                                        options={"array": self.array.data},
+                                        verify=True,
+                                        save=False)
 
-        # b. Remove edges of these nodes to second map
-        for dnode in intermediate_dnodes:
-            for edge in graph.edges_between(dnode, self.second_map_entry):
-                graph.remove_edge_and_connectors(edge)
+        for edge in graph.in_edges(first_map_exit):
+            if edge.data is None or edge.data.data != self.array.data:
+                continue
 
-        # c. Add edges for in access nodes of first map to second map
+            if edge.data.wcr is None:
+                xform = OutLocalStorage()
+                xform._sdfg = sdfg
+                xform.state_id = sdfg.node_id(graph)
+                xform.node_a = edge.src
+                xform.node_b = edge.dst
+                xform.array = self.array.data
+                if xform.can_be_applied(graph, expr_index=0, sdfg=sdfg):
+                    OutLocalStorage.apply_to(sdfg=sdfg,
+                                             node_a=edge.src,
+                                             node_b=edge.dst,
+                                             options={
+                                                 "array": self.array.data,
+                                             },
+                                             verify=True,
+                                             save=False)
+            else:
+                xform = AccumulateTransient()
+                xform._sdfg = sdfg
+                xform.state_id = sdfg.node_id(graph)
+                xform.map_exit = edge.src
+                xform.outer_map_exit = edge.dst
+                xform.array = self.array.data
+                xform.identity = self.identity
+                if xform.can_be_applied(graph, expr_index=0, sdfg=sdfg):
+                    AccumulateTransient.apply_to(sdfg=sdfg,
+                                                 map_exit=edge.src,
+                                                 outer_map_exit=edge.dst,
+                                                 array=self.array.data,
+                                                 options={
+                                                     "array": self.array.data,
+                                                     "identity": self.identity
+                                                 },
+                                                 verify=True,
+                                                 save=False)
+
+        # Phase 1: Add new access nodes to second map
+        for edge in graph.edges_between(self.array, self.second_map_entry):
+            graph.remove_edge_and_connectors(edge)
+
         connector_mapping = {}
         for edge in graph.in_edges(first_map_entry):
             new_in_connector = self.second_map_entry.next_connector(edge.dst_conn[3:])
@@ -167,83 +219,71 @@ class OTFMapFusion(transformation.SingleStateTransformation):
 
             connector_mapping[edge.dst_conn] = new_in_connector
 
-        # Phase 2: Collect relevant memlets in maps and match by data
-        first_memlets = {}
-        for edge in graph.in_edges(self.first_map_exit):
+        # Phase 2: Match relevant memlets
+        produce_memlets = {}
+        for edge in graph.in_edges(first_map_exit):
             memlet = edge.data
-            first_memlets[memlet.data] = memlet
+            produce_memlets[memlet.data] = memlet
 
         # Group by same access scheme
-        second_memlets = {}
+        consume_memlets = {}
         for edge in graph.out_edges(self.second_map_entry):
             memlet = edge.data
-            if memlet.data not in first_memlets:
+            if memlet.data not in produce_memlets:
                 continue
 
-            if memlet.data not in second_memlets:
-                second_memlets[memlet.data] = {}
+            if memlet.data not in consume_memlets:
+                consume_memlets[memlet.data] = {}
 
             accesses = tuple(memlet.subset.ranges)
-            if accesses not in second_memlets[memlet.data]:
-                second_memlets[memlet.data][accesses] = []
+            if accesses not in consume_memlets[memlet.data]:
+                consume_memlets[memlet.data][accesses] = []
 
-            second_memlets[memlet.data][accesses].append(edge)
+            consume_memlets[memlet.data][accesses].append(edge)
 
             # And remove from second map
             self.second_map_entry.remove_out_connector(edge.src_conn)
             graph.remove_edge(edge)
 
         # Phase 3: OTF - copy content of first map for each memlet of second according to matches
-        for array in second_memlets:
-            first_memlet = first_memlets[array]
+        for array in consume_memlets:
+            first_memlet = produce_memlets[array]
             first_accesses = tuple(first_memlet.subset.ranges)
-            for second_accesses in second_memlets[array]:
+            for second_accesses in consume_memlets[array]:
                 # Step 1: Infer index access of second map to new inputs with respect to original first map
                 mapping = OTFMapFusion.solve(first_map_entry.map.params, first_accesses,
                                              self.second_map_entry.map.params, second_accesses)
 
                 # Step 2: Add Temporary buffer
                 tmp_name = "__otf"
-                tmp_name, _ = sdfg.add_scalar(tmp_name,
-                                              sdfg.arrays[array].dtype,
-                                              transient=True,
-                                              find_new_name=True,
-                                              lifetime=dtypes.AllocationLifetime.Scope)
+                shape = first_memlet.subset.size_exact()
+                tmp_name, tmp_desc = sdfg.add_array(tmp_name,
+                                                    shape=shape,
+                                                    dtype=sdfg.arrays[array].dtype,
+                                                    transient=True,
+                                                    find_new_name=True,
+                                                    lifetime=dtypes.AllocationLifetime.Scope)
                 tmp_access = graph.add_access(tmp_name)
-                tmp_access.setzero = True
 
                 # Add edges from temporary buffer to second map's content
-                for edge in second_memlets[array][second_accesses]:
-                    graph.add_edge(tmp_access, None, edge.dst, edge.dst_conn, Memlet(tmp_name))
+                for edge in consume_memlets[array][second_accesses]:
+                    otf_memlet = Memlet.from_array(dataname=tmp_name, datadesc=tmp_desc, wcr=None)
+                    graph.add_edge(tmp_access, None, edge.dst, edge.dst_conn, otf_memlet)
 
                 # Step 3: Copy content of first map into second map
-                otf_nodes = self._copy_first_map_contents(sdfg, graph, first_map_entry)
+                otf_nodes = self._copy_first_map_contents(sdfg, graph, first_map_entry, first_map_exit)
 
                 # Connect the nodes to the otf_scalar and second map entry
                 for node in otf_nodes:
-                    for edge in graph.out_edges(node):
-                        memlet = edge.data
-                        if memlet.wcr is not None and memlet.data == self.array.data:
-                            tmp_memlet = Memlet(tmp_name)
-                            tmp_memlet.wcr = memlet.wcr
-                            tmp_memlet.src_subset = Range([(0, 0, 1)])
-
-                            edge.data = tmp_memlet
-
                     # Connect new OTF nodes to tmp_access for write
-                    for edge in graph.edges_between(node, self.first_map_exit):
+                    for edge in graph.edges_between(node, first_map_exit):
+                        otf_memlet = Memlet.from_array(dataname=tmp_name, datadesc=tmp_desc, wcr=first_memlet.wcr)
+                        graph.add_edge(edge.src, edge.src_conn, tmp_access, None, otf_memlet)
                         graph.remove_edge(edge)
-                        tmp_memlet = Memlet(tmp_name)
-                        tmp_memlet.wcr = edge.data.wcr
-                        if tmp_memlet.wcr is not None:
-                            tmp_memlet.src_subset = Range([(0, 0, 1)])
-                        graph.add_edge(edge.src, edge.src_conn, tmp_access, None, tmp_memlet)
 
                     # Connect new OTF nodes to second map entry for read
                     for edge in graph.edges_between(first_map_entry, node):
                         memlet = copy.deepcopy(edge.data)
-                        if memlet.wcr is not None and memlet.data == self.array.data:
-                            memlet.data = tmp_name
 
                         in_connector = edge.src_conn.replace("OUT", "IN")
                         if in_connector in connector_mapping:
@@ -261,30 +301,21 @@ class OTFMapFusion(transformation.SingleStateTransformation):
                 otf_nodes.append(self.second_map_entry)
                 otf_subgraph = StateSubgraphView(graph, otf_nodes)
                 for param in mapping:
+                    if isinstance(param, Tuple):
+                        # Constant intervals
+                        continue
+
                     advanced_replace(otf_subgraph, str(param), str(mapping[param]))
 
         # Check if first_map is still consumed by some node
-        remove_first_map = True
-        for dnode in intermediate_dnodes:
-            if graph.out_degree(dnode) > 0:
-                remove_first_map = False
-                break
+        if graph.out_degree(self.array) == 0:
+            graph.remove_node(self.array)
+            obsolete_nodes = graph.all_nodes_between(first_map_entry,
+                                                     first_map_exit) | {first_map_entry, first_map_exit}
+            graph.remove_nodes_from(obsolete_nodes)
 
-        # Remove if not
-        if remove_first_map:
-            graph.remove_nodes_from(
-                graph.all_nodes_between(first_map_entry, self.first_map_exit) | {first_map_entry, self.first_map_exit})
-
-        # Remove isolated nodes. Find elegant solution
-        for node in graph.nodes():
-            if not isinstance(node, nds.AccessNode):
-                continue
-
-            if graph.in_degree(node) == 0 and graph.out_degree(node) == 0:
-                graph.remove_node(node)
-
-    def _copy_first_map_contents(self, sdfg, graph, first_map_entry):
-        inter_nodes = list(graph.all_nodes_between(first_map_entry, self.first_map_exit) - {first_map_entry})
+    def _copy_first_map_contents(self, sdfg, graph, first_map_entry, first_map_exit):
+        inter_nodes = list(graph.all_nodes_between(first_map_entry, first_map_exit) - {first_map_entry})
         new_inter_nodes = [copy.deepcopy(node) for node in inter_nodes]
         tmp_map = dict()
         for node in new_inter_nodes:
@@ -316,7 +347,7 @@ class OTFMapFusion(transformation.SingleStateTransformation):
         return new_inter_nodes
 
     @staticmethod
-    def solve(first_params, write_accesses, second_params, read_accesses):
+    def solve(first_params: List[str], write_accesses: Tuple, second_params: List[str], read_accesses: Tuple):
         """
         Infers the memory access for the write memlet given the
         location/parameters of the read access.
@@ -374,15 +405,17 @@ class OTFMapFusion(transformation.SingleStateTransformation):
                 e1 = e1.subs(param, second_params_subs[param])
                 s1 = s1.subs(param, second_params_subs[param])
 
-            # Step is constant
-            assert (s0 - s1) == 0
-            if (b0 - b1) == 0 and (e0 - e1) == 0:
-                if b0 in mapping:
-                    return None
+            # Condition: num elements must match
+            # Note: we already assumed that num elements is constant
+            if (b0 - e0) != (b1 - e1):
+                return None
 
-                # Trivial case
-                mapping[b0] = b1
-            else:
+            params_0 = b0.free_symbols.intersection(first_params_subs.values())
+            params_1 = b1.free_symbols.intersection(second_params_subs.values())
+            if len(params_0) == 0 and len(params_1) == 0:
+                # Constants
+                mapping[(b0, e0)] = (b1, e1)
+            elif len(params_0) == 1 and len(params_1) <= 1:
                 b_eq = sympy.Eq(b0, b1)
                 e_eq = sympy.Eq(e0, e1)
                 params = b0.free_symbols.union(e0.free_symbols)
@@ -396,16 +429,19 @@ class OTFMapFusion(transformation.SingleStateTransformation):
                         return None
 
                     mapping[param] = sub
+            else:
+                return None
 
         # Translate back to original symbols
         solution = {}
         for param, sub in mapping.items():
-            for param_, sub_ in second_params_subs.items():
-                sub = sub.subs(sub_, param_)
+            if isinstance(param, Tuple):
+                solution[param] = sub
+            else:
+                for param_, sub_ in second_params_subs.items():
+                    sub = sub.subs(sub_, param_)
 
-            solution[first_params_subs_[param]] = sub
-
-        solution = {symbolic.pystr_to_symbolic(k): v for k, v in solution.items()}
+                solution[symbolic.pystr_to_symbolic(first_params_subs_[param])] = sub
         return solution
 
 
