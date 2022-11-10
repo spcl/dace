@@ -158,9 +158,10 @@ def sdfg_gen(subscripts: str, arrays: List[np.ndarray] = None, inp_dim: int = 10
                 if tokens[0][-1] == tokens[2][0]:
                     tokens[0], tokens[1] = tokens[1], tokens[0]
                     fixed_order = contraction[0][::-1]
-                    repl[tokens[2]] = tokens[2][::-1]
-                    tokens[2] = tokens[2][::-1]
-                # elif tokens[1][0] == tokens[2][0]:
+                    if cidx < len(path_info[1].contraction_list) -1:
+                        # We cannot permute the final output
+                        repl[tokens[2]] = tokens[2][::-1]
+                        tokens[2] = tokens[2][::-1]
                 elif tokens[2][0] in tokens[1]:
                     tokens[0], tokens[1] = tokens[1], tokens[0]
                     fixed_order = contraction[0][::-1]
