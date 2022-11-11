@@ -8,7 +8,7 @@ from dace.sdfg.sdfg import SDFG
 from dace.sdfg.state import SDFGState
 from dace.sdfg import utils as sdutil, graph as gr
 from dace.frontend.python.astutils import negate_expr
-from dace.sdfg.analysis.schedule_tree import treenodes as tn
+from dace.sdfg.analysis.schedule_tree import treenodes as tn, passes as stpasses
 from dace.properties import CodeBlock
 from dace.memlet import Memlet
 
@@ -407,39 +407,9 @@ def as_schedule_tree(sdfg: SDFG, in_place: bool = False, toplevel: bool = True) 
     result = tn.ScheduleTreeScope(children=totree(cfg))
 
     # Clean up tree
-    remove_unused_and_duplicate_labels(result)
+    stpasses.remove_unused_and_duplicate_labels(result)
 
     return result
-
-
-def remove_unused_and_duplicate_labels(stree: tn.ScheduleTreeScope):
-
-    class FindGotos(tn.ScheduleNodeVisitor):
-
-        def __init__(self):
-            self.gotos: Set[str] = set()
-
-        def visit_GotoNode(self, node: tn.GotoNode):
-            if node.target is not None:
-                self.gotos.add(node.target)
-
-    class RemoveLabels(tn.ScheduleNodeTransformer):
-
-        def __init__(self, labels_to_keep: Set[str]) -> None:
-            self.labels_to_keep = labels_to_keep
-            self.labels_seen = set()
-
-        def visit_StateLabel(self, node: tn.StateLabel):
-            if node.state.name not in self.labels_to_keep:
-                return None
-            if node.state.name in self.labels_seen:
-                return None
-            self.labels_seen.add(node.state.name)
-            return node
-
-    fg = FindGotos()
-    fg.visit(stree)
-    return RemoveLabels(fg.gotos).visit(stree)
 
 
 if __name__ == '__main__':
@@ -449,5 +419,6 @@ if __name__ == '__main__':
     s = time.time()
     stree = as_schedule_tree(sdfg, in_place=True)
     print('Created schedule tree in', time.time() - s, 'seconds')
+
     with open('output_stree.txt', 'w') as fp:
         fp.write(stree.as_string(-1) + '\n')
