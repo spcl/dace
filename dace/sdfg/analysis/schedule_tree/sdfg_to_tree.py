@@ -271,13 +271,15 @@ def as_schedule_tree(sdfg: SDFG, array_mapping: Dict[str, dace.Memlet] = None) -
     result = tn.ScheduleTreeScope(children=totree(cfg))
 
     # Clean up tree
-    remove_unused_labels(result)
+    remove_unused_and_duplicate_labels(result)
 
     return result
 
 
-def remove_unused_labels(stree: tn.ScheduleTreeScope):
+def remove_unused_and_duplicate_labels(stree: tn.ScheduleTreeScope):
+
     class FindGotos(tn.ScheduleNodeVisitor):
+
         def __init__(self):
             self.gotos: Set[str] = set()
 
@@ -286,12 +288,17 @@ def remove_unused_labels(stree: tn.ScheduleTreeScope):
                 self.gotos.add(node.target)
 
     class RemoveLabels(tn.ScheduleNodeTransformer):
+
         def __init__(self, labels_to_keep: Set[str]) -> None:
             self.labels_to_keep = labels_to_keep
+            self.labels_seen = set()
 
         def visit_StateLabel(self, node: tn.StateLabel):
             if node.state.name not in self.labels_to_keep:
                 return None
+            if node.state.name in self.labels_seen:
+                return None
+            self.labels_seen.add(node.state.name)
             return node
 
     fg = FindGotos()
