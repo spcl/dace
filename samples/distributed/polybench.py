@@ -10,6 +10,7 @@ import timeit
 from mpi4py import MPI
 from dace.transformation.auto.auto_optimize import auto_optimize
 from dace.sdfg import utils
+from datetime import datetime
 from typing import Union
 
 # Symbols
@@ -56,7 +57,7 @@ def adjust_size(size, scal_func, comm_size, divisor):
 
 
 file_name = "dace_cpu_{n}_processes.csv".format(n=MPI.COMM_WORLD.Get_size())
-field_names = ["benchmark", "framework", "processes", "sizes", "time"]
+field_names = ["datetime", "benchmark", "framework", "processes", "sizes", "time"]
 
 
 def write_csv(file_name, field_names, values, append=True):
@@ -71,11 +72,11 @@ def write_csv(file_name, field_names, values, append=True):
             writer.writerow(entry)
 
 
-def write_time(bench, sz, time_list, append=True):
+def write_time(dtime, bench, sz, time_list, append=True):
     entries = []
-    processes = MPI.COMM_WORLD.Get_size()
+    procs = MPI.COMM_WORLD.Get_size()
     for t in time_list:
-        entries.append(dict(benchmark=bench, framework="dace_cpu", processes=processes, sizes=sz, time=t))
+        entries.append(dict(datetime=dtime, benchmark=bench, framework="dace_cpu", processes=procs, sizes=sz, time=t))
     write_csv(file_name, field_names, entries, append=append)
 
 
@@ -171,7 +172,7 @@ def run_atax(validate=False):
     if rank == 0:
         ms_time = time_to_ms(raw_time)
         print("Median is {}ms".format(ms_time), flush=True)
-        write_time("atax", (M, N), raw_time_list)
+        write_time(str(datetime.now()), "atax", (M, N), raw_time_list)
 
     if validate and rank == 0:
         Aref, xref, yref = atax_shmem_init(M, N, np.float64)
@@ -256,7 +257,7 @@ def run_bicg(validate=False):
     if rank == 0:
         ms_time = time_to_ms(raw_time)
         print("Median is {}ms".format(ms_time), flush=True)
-        write_time("bicg", (M, N), raw_time_list)
+        write_time(str(datetime.now()), "bicg", (M, N), raw_time_list)
 
     if validate and rank == 0:
         Aref, pref, rref, o1ref, o2ref = bicg_shmem_init(M, N, np.float64)
@@ -342,7 +343,7 @@ def run_doitgen(validate=False):
     if rank == 0:
         ms_time = time_to_ms(raw_time)
         print("Median is {}ms".format(ms_time), flush=True)
-        write_time("doitgen", (K, M, N), raw_time_list)
+        write_time(str(datetime.now()), "doitgen", (K, M, N), raw_time_list)
 
     if validate:
         Aref, C4ref = doitgen_shmem_init(K, M, N, np.float64)
@@ -440,7 +441,7 @@ def run_gemm(validate=False):
     if rank == 0:
         ms_time = time_to_ms(raw_time)
         print("Median is {}ms".format(ms_time), flush=True)
-        write_time("gemm", (M, N, K), raw_time_list)
+        write_time(str(datetime.now()), "gemm", (M, N, K), raw_time_list)
 
     if validate:
         alpha, beta, Cref, Aref, Bref = gemm_shmem_init(M, N, K, np.float64)
@@ -565,7 +566,7 @@ def run_gemver(validate=False):
     if rank == 0:
         ms_time = time_to_ms(raw_time)
         print("Median is {}ms".format(ms_time), flush=True)
-        write_time("gemver", (N, ), raw_time_list)
+        write_time(str(datetime.now()), "gemver", (N, ), raw_time_list)
 
     if validate and rank == 0:
         alpha, beta, A, u1, u2, v1, v2, wref, xref, yref, zref = gemver_shmem_init(N, np.float64)
@@ -661,7 +662,7 @@ def run_gesummv(validate=False):
     if rank == 0:
         ms_time = time_to_ms(raw_time)
         print("Median is {}ms".format(ms_time), flush=True)
-        write_time("gesummv", (N, ), raw_time_list)
+        write_time(str(datetime.now()), "gesummv", (N, ), raw_time_list)
 
     if validate and rank == 0:
         alpha, beta, A, B, xref, yref = gesummv_shmem_init(N, np.float64)
@@ -780,7 +781,7 @@ def run_k2mm(validate=False):
     if rank == 0:
         ms_time = time_to_ms(raw_time)
         print("Median is {}ms".format(ms_time), flush=True)
-        write_time("k2mm", (M, N, K), raw_time_list)
+        write_time(str(datetime.now()), "k2mm", (M, N, K), raw_time_list)
 
     if validate:
         alpha, beta, Aref, Bref, Cref, Dref = k2mm_shmem_init(M, N, K, R, np.float64)
@@ -900,7 +901,7 @@ def run_k3mm(validate=False):
     if rank == 0:
         ms_time = time_to_ms(raw_time)
         print("Median is {}ms".format(ms_time), flush=True)
-        write_time("k3mm", (M, N, K), raw_time_list)
+        write_time(str(datetime.now()), "k3mm", (M, N, K), raw_time_list)
 
     if validate:
         Aref, Bref, Cref, Dref, Eref = k3mm_shmem_init(M, N, K, R, S, np.float64)
@@ -992,7 +993,7 @@ def run_mvt(validate=False):
     if rank == 0:
         ms_time = time_to_ms(raw_time)
         print("Median is {}ms".format(ms_time), flush=True)
-        write_time("mvt", (N, ), raw_time_list)
+        write_time(str(datetime.now()), "mvt", (N, ), raw_time_list)
 
     if validate and rank == 0:
         x1ref, x2ref, y_1ref, y_2ref, A = mvt_shmem_init(N, np.float64)
@@ -1097,7 +1098,7 @@ def run_jacobi_1d(validate=False):
     if rank == 0:
         ms_time = time_to_ms(raw_time)
         print("Median is {}ms".format(ms_time), flush=True)
-        write_time("jacobi_1d", (TSTEPS, N), raw_time_list)
+        write_time(str(datetime.now()), "jacobi_1d", (TSTEPS, N), raw_time_list)
 
     if validate:
         Aref, Bref = jacobi_1d_shmem_init(N, np.float64)
@@ -1250,7 +1251,7 @@ def run_jacobi_2d(validate=False):
     if rank == 0:
         ms_time = time_to_ms(raw_time)
         print("Median is {}ms".format(ms_time), flush=True)
-        write_time("jacobi_2d", (TSTEPS, N), raw_time_list)
+        write_time(str(datetime.now()), "jacobi_2d", (TSTEPS, N), raw_time_list)
 
     if validate:
         Aref, Bref = jacobi_2d_shmem_init(N, np.float64)
