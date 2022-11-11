@@ -257,7 +257,16 @@ class CopyNode(ScheduleTreeNode):
     memlet: Memlet
 
     def as_string(self, indent: int = 0):
-        return indent * INDENTATION + f'{self.target} = copy {self.memlet}'
+        if any(s != 0 for s in self.memlet.other_subset.min_element()):
+            offset = f'[{self.memlet.other_subset}]'
+        else:
+            offset = ''
+        if self.memlet.wcr is not None:
+            wcr = f' with {self.memlet.wcr}'
+        else:
+            wcr = ''
+            
+        return indent * INDENTATION + f'{self.target}{offset} = copy {self.memlet.data}[{self.memlet.subset}]{wcr}'
 
 
 @dataclass

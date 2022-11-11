@@ -212,7 +212,6 @@ class InterstateEdge(object):
         """ Returns a set of symbols used in this edge's properties. """
         return self.read_symbols() - set(self.assignments.keys())
 
-
     def replace_dict(self, repl: Dict[str, str], replace_keys=True) -> None:
         """
         Replaces all given keys with their corresponding values.
@@ -1261,6 +1260,26 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         # Subtract symbols defined in inter-state edges and constants
         return free_syms - defined_syms
 
+    def get_all_symbols(self) -> Set[str]:
+        """
+        Returns a set of all symbol names that are used by the SDFG.
+        """
+        # Exclude constants and data descriptor names
+        exclude = set(self.arrays.keys()) | set(self.constants_prop.keys())
+
+        syms = set()
+
+        # Start with the set of SDFG free symbols
+        syms |= set(self.symbols.keys())
+
+        # Add inter-state symbols
+        for e in self.edges():
+            syms |= set(e.data.assignments.keys())
+            syms |= e.data.free_symbols
+
+        # Subtract exluded symbols
+        return syms - exclude
+
     def read_and_write_sets(self) -> Tuple[Set[AnyStr], Set[AnyStr]]:
         """
         Determines what data containers are read and written in this SDFG. Does
@@ -2230,7 +2249,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                 index += 1
             if self.name != sdfg.name:
                 warnings.warn('SDFG "%s" is already loaded by another object, '
-                            'recompiling under a different name.' % self.name)
+                              'recompiling under a different name.' % self.name)
 
             try:
                 # Fill in scope entry/exit connectors

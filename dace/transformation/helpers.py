@@ -1286,3 +1286,20 @@ def redirect_edge(state: SDFGState,
     new_edge = state.add_edge(new_src or edge.src, new_src_conn or edge.src_conn, new_dst or edge.dst, new_dst_conn
                               or edge.dst_conn, memlet)
     return new_edge
+
+
+def replace_code_to_code_edges(sdfg: SDFG):
+    """
+    Adds access nodes between all code->code edges in each state.
+
+    :param sdfg: The SDFG to process.
+    """
+    for state in sdfg.nodes():
+        for edge in state.edges():
+            if not isinstance(edge.src, nodes.CodeNode) or not isinstance(edge.dst, nodes.CodeNode):
+                continue
+            # Add access nodes
+            aname = state.add_access(edge.data.data)
+            state.add_edge(edge.src, edge.src_conn, aname, None, edge.data)
+            state.add_edge(aname, None, edge.dst, edge.dst_conn, copy.deepcopy(edge.data))
+            state.remove_edge(edge)
