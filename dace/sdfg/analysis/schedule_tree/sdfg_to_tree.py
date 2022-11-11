@@ -186,7 +186,7 @@ def prepare_schedule_tree_edges(state: SDFGState) -> Dict[gr.MultiConnectorEdge[
             dst = mpath[-1].dst
             if not isinstance(src, dace.nodes.AccessNode):
                 continue
-            if not isinstance(dst, dace.nodes.AccessNode):
+            if not isinstance(dst, (dace.nodes.AccessNode, dace.nodes.EntryNode)):
                 continue
 
             # If the edge destination is the innermost node, it is a downward-pointing path
@@ -200,8 +200,15 @@ def prepare_schedule_tree_edges(state: SDFGState) -> Dict[gr.MultiConnectorEdge[
                 outermost_node = src
                 innermost_node = dst
 
-            new_memlet = normalize_memlet(sdfg, state, e, outermost_node.data)
-            result[e] = tn.CopyNode(target=innermost_node.data, memlet=new_memlet)
+            if isinstance(dst, dace.nodes.EntryNode):
+                # Special case: dynamic map range has no data
+                target_name = e.dst_conn
+                new_memlet = e.data
+            else:
+                target_name = innermost_node.data
+                new_memlet = normalize_memlet(sdfg, state, e, outermost_node.data)
+
+            result[e] = tn.CopyNode(target=target_name, memlet=new_memlet)
 
     return result
 
@@ -227,6 +234,15 @@ def state_schedule_tree(state: SDFGState) -> List[tn.ScheduleTreeNode]:
     scopes: List[List[tn.ScheduleTreeNode]] = []
     for node in sdutil.scope_aware_topological_sort(state):
         if isinstance(node, dace.nodes.EntryNode):
+            # Handle dynamic scope inputs
+            for e in state.in_edges(node):
+                if e in edges_to_ignore:
+                    continue
+                if e in edge_to_stree:
+                    result.append(edge_to_stree[e])
+                    edges_to_ignore.add(e)
+
+            # Create scope node and add to stack
             scopes.append(result)
             subnodes = []
             result.append(NODE_TO_SCOPE_TYPE[type(node)](node=node, children=subnodes))
