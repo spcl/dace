@@ -233,7 +233,7 @@ def as_schedule_tree(sdfg: SDFG, array_mapping: Dict[str, dace.Memlet] = None) -
                             # Conditional state in sequential block! Add "if not condition goto exit"
                             result.append(
                                 tn.StateIfScope(condition=CodeBlock(negate_expr(e.data.condition)),
-                                                children=tn.GotoNode(target=None)))
+                                                children=[tn.GotoNode(target=None)]))
                             result.extend(edge_body)
                         else:
                             # Add "if condition" with the body above
@@ -245,6 +245,8 @@ def as_schedule_tree(sdfg: SDFG, array_mapping: Dict[str, dace.Memlet] = None) -
             result.append(tn.ForScope(header=node, children=totree(node.body)))
         elif isinstance(node, cf.IfScope):
             result.append(tn.IfScope(condition=node.condition, children=totree(node.body)))
+            if node.orelse is not None:
+                result.append(tn.ElseScope(children=totree(node.orelse)))
         elif isinstance(node, cf.IfElseChain):
             # Add "if" for the first condition, "elif"s for the rest
             result.append(tn.IfScope(condition=node.body[0][0], children=totree(node.body[0][1])))
@@ -298,6 +300,11 @@ def remove_unused_labels(stree: tn.ScheduleTreeScope):
 
 
 if __name__ == '__main__':
-    stree = as_schedule_tree(sdfg)
+    s = time.time()
+    sdfg = SDFG.from_file(sys.argv[1])
+    print('Loaded SDFG in', time.time() - s, 'seconds')
+    s = time.time()
+    stree = as_schedule_tree(sdfg, in_place=True)
+    print('Created schedule tree in', time.time() - s, 'seconds')
     with open('output_stree.txt', 'w') as fp:
-        fp.write(stree.as_string(-1))
+        fp.write(stree.as_string(-1) + '\n')
