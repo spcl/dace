@@ -521,7 +521,9 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
                     continue
 
                 definition = desc.as_arg(name=f'__{sdfg.sdfg_id}_{name}') + ';'
-                self.statestruct.append(definition)
+
+                if desc.storage != dtypes.StorageType.CPU_ThreadLocal:  # If thread-local, skip struct entry
+                    self.statestruct.append(definition)
 
                 self.to_allocate[top_sdfg].append((sdfg, first_state_instance, first_node_instance, True, True, True))
                 self.where_allocated[(sdfg, name)] = top_sdfg
@@ -809,8 +811,8 @@ DACE_EXPORTED void __dace_exit_{sdfg.name}({sdfg.name}_t *__state)
 
             # NOTE: NestedSDFGs frequently contain tautologies in their symbol mapping, e.g., `'i': i`. Do not
             # redefine the symbols in such cases.
-            if (not is_top_level and isvarName in sdfg.parent_nsdfg_node.symbol_mapping.keys() and
-                    str(sdfg.parent_nsdfg_node.symbol_mapping[isvarName] == isvarName)):
+            if (not is_top_level and isvarName in sdfg.parent_nsdfg_node.symbol_mapping.keys()
+                    and str(sdfg.parent_nsdfg_node.symbol_mapping[isvarName] == isvarName)):
                 continue
             isvar = data.Scalar(isvarType)
             callsite_stream.write('%s;\n' % (isvar.as_arg(with_types=True, name=isvarName)), sdfg)
