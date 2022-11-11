@@ -17,6 +17,7 @@ class UnsupportedScopeException(Exception):
 
 @dataclass
 class ScheduleTreeNode:
+
     def as_string(self, indent: int = 0):
         return indent * INDENTATION + 'UNSUPPORTED'
 
@@ -51,6 +52,7 @@ class GBlock(ControlFlowScope):
     that can run in arbitrary order based on edges (gotos).
     Normally contains irreducible control flow.
     """
+
     def as_string(self, indent: int = 0):
         result = indent * INDENTATION + 'gblock:\n'
         return result + super().as_string(indent)
@@ -144,6 +146,7 @@ class StateIfScope(IfScope):
     """
     A special class of an if scope in general blocks for if statements that are part of a state transition.
     """
+
     def as_string(self, indent: int = 0):
         result = indent * INDENTATION + f'stateif {self.condition.as_string}:\n'
         return result + super().as_string(indent)
@@ -154,6 +157,7 @@ class BreakNode(ScheduleTreeNode):
     """
     Represents a break statement.
     """
+
     def as_string(self, indent: int = 0):
         return indent * INDENTATION + 'break'
 
@@ -163,6 +167,7 @@ class ContinueNode(ScheduleTreeNode):
     """
     Represents a continue statement.
     """
+
     def as_string(self, indent: int = 0):
         return indent * INDENTATION + 'continue'
 
@@ -184,6 +189,7 @@ class ElseScope(ControlFlowScope):
     """
     Else branch scope.
     """
+
     def as_string(self, indent: int = 0):
         result = indent * INDENTATION + 'else:\n'
         return result + super().as_string(indent)
@@ -194,6 +200,7 @@ class MapScope(DataflowScope):
     """
     Map scope.
     """
+
     def as_string(self, indent: int = 0):
         rangestr = ', '.join(subsets.Range.dim_to_string(d) for d in self.node.map.range)
         result = indent * INDENTATION + f'map {", ".join(self.node.map.params)} in [{rangestr}]:\n'
@@ -205,6 +212,7 @@ class ConsumeScope(DataflowScope):
     """
     Consume scope.
     """
+
     def as_string(self, indent: int = 0):
         node: nodes.ConsumeEntry = self.node
         cond = 'stream not empty' if node.consume.condition is None else node.consume.condition.as_string
@@ -217,6 +225,7 @@ class PipelineScope(DataflowScope):
     """
     Pipeline scope.
     """
+
     def as_string(self, indent: int = 0):
         rangestr = ', '.join(subsets.Range.dim_to_string(d) for d in self.node.map.range)
         result = indent * INDENTATION + f'pipeline {", ".join(self.node.map.params)} in [{rangestr}]:\n'
@@ -270,6 +279,18 @@ class CopyNode(ScheduleTreeNode):
 
 
 @dataclass
+class DynScopeCopyNode(ScheduleTreeNode):
+    """
+    A special case of a copy node that is used in dynamic scope inputs (e.g., dynamic map ranges).
+    """
+    target: str
+    memlet: Memlet
+
+    def as_string(self, indent: int = 0):
+        return indent * INDENTATION + f'{self.target} = dscopy {self.memlet.data}[{self.memlet.subset}]'
+
+
+@dataclass
 class ViewNode(ScheduleTreeNode):
     target: str  #: View name
     source: str  #: Viewed container name
@@ -286,6 +307,7 @@ class NView(ViewNode):
     """
     Nested SDFG view node. Subclass of a view that specializes in nested SDFG boundaries.
     """
+
     def as_string(self, indent: int = 0):
         return indent * INDENTATION + f'{self.target} = nview {self.memlet} as {self.view_desc.shape}'
 
@@ -306,6 +328,7 @@ class RefSetNode(ScheduleTreeNode):
 
 # Classes based on Python's AST NodeVisitor/NodeTransformer for schedule tree nodes
 class ScheduleNodeVisitor:
+
     def visit(self, node: ScheduleTreeNode):
         """Visit a node."""
         if isinstance(node, list):
@@ -322,6 +345,7 @@ class ScheduleNodeVisitor:
 
 
 class ScheduleNodeTransformer(ScheduleNodeVisitor):
+
     def visit(self, node: ScheduleTreeNode):
         if isinstance(node, list):
             result = []

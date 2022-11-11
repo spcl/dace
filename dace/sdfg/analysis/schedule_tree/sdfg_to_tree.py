@@ -202,13 +202,11 @@ def prepare_schedule_tree_edges(state: SDFGState) -> Dict[gr.MultiConnectorEdge[
 
             if isinstance(dst, dace.nodes.EntryNode):
                 # Special case: dynamic map range has no data
-                target_name = e.dst_conn
-                new_memlet = e.data
+                result[e] = tn.DynScopeCopyNode(target=e.dst_conn, memlet=e.data)
             else:
                 target_name = innermost_node.data
                 new_memlet = normalize_memlet(sdfg, state, e, outermost_node.data)
-
-            result[e] = tn.CopyNode(target=target_name, memlet=new_memlet)
+                result[e] = tn.CopyNode(target=target_name, memlet=new_memlet)
 
     return result
 
@@ -280,7 +278,6 @@ def state_schedule_tree(state: SDFGState) -> List[tn.ScheduleTreeNode]:
                                  memlet=e.data,
                                  src_desc=sdfg.arrays[e.data.data],
                                  view_desc=node.sdfg.arrays[conn]))
-
 
             # Insert the nested SDFG flattened
             nested_stree = as_schedule_tree(node.sdfg, in_place=True, toplevel=False)
