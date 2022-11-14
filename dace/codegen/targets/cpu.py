@@ -450,7 +450,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
         if self._dispatcher.declared_arrays.has(alloc_name):
             is_global = nodedesc.lifetime in (dtypes.AllocationLifetime.Global, dtypes.AllocationLifetime.Persistent)
-            self._dispatcher.declared_arrays.remove(node.data, is_global=is_global)
+            self._dispatcher.declared_arrays.remove(alloc_name, is_global=is_global)
 
         if isinstance(nodedesc, (data.Scalar, data.View, data.Stream, data.Reference)):
             return
