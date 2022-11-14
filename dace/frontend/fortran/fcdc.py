@@ -444,7 +444,7 @@ class AST_translator:
             self.translate(i, sdfg)
 
     def write2sdfg(self, node: Write_Stmt_Node, sdfg: SDFG):
-        
+
         print(node)
 
     def ifstmt2sdfg(self, node: If_Stmt_Node, sdfg: SDFG):
@@ -1057,11 +1057,10 @@ class AST_translator:
             self, sdfg, "_state_l" + str(node.line_number[0]) + "_c" +
             str(node.line_number[1]))
 
-        output_names_changed = [o_t + "_out" for o_t in output_names_tasklet]
-
+        #output_names_changed = [o_t + "_out" for o_t in output_names_tasklet]
+        output_names_changed = [o_t for o_t in output_names_tasklet]
         #output_names_dict = {on: dace.pointer(dace.int32) for on in output_names_changed}
-
-        tasklet = add_tasklet(
+        """ tasklet = add_tasklet(
             substate,
             "_l" + str(node.line_number[0]) + "_c" + str(node.line_number[1]),
             input_names_tasklet, output_names_changed, "text",
@@ -1075,9 +1074,22 @@ class AST_translator:
                            output_names_changed):
 
             memlet_range = self.get_memlet_range(sdfg, output_vars, i, j)
-            add_memlet_write(substate, i, tasklet, k, memlet_range)
+            add_memlet_write(substate, i, tasklet, k, memlet_range) """
+        tasklet = add_tasklet(
+            substate,
+            "_l" + str(node.line_number[0]) + "_c" + str(node.line_number[1]),
+            input_names, output_names, "text", node.line_number,
+            self.file_name)
 
-        tw = TaskletWriter(output_names_tasklet, output_names_changed)
+        for i, j in zip(input_names, input_names):
+            memlet_range = self.get_memlet_range(sdfg, input_vars, i, j)
+            add_memlet_read(substate, i, tasklet, j, memlet_range)
+
+        for i, j, k in zip(output_names, output_names, output_names):
+
+            memlet_range = self.get_memlet_range(sdfg, output_vars, i, j)
+            add_memlet_write(substate, i, tasklet, k, memlet_range)
+        tw = ProcessedWriter(sdfg, self.name_mapping)
         # print("BINOP:",output_names,output_names_tasklet,output_names_changed)
         text = tw.write_code(node)
         # print("BINOPTASKLET:",text)
@@ -1224,7 +1236,8 @@ class AST_translator:
 
     def vardecl2sdfg(self, node: Var_Decl_Node, sdfg: SDFG):
         #if the sdfg is the toplevel-sdfg, the variable is a global variable
-        transient = sdfg is not self.globalsdfg
+        transient = True
+        #transient = sdfg is not self.globalsdfg
         # find the type
         datatype = self.get_dace_type(node.type)
         # get the dimensions
@@ -1267,6 +1280,46 @@ class AST_translator:
             self.contexts[sdfg.name] = Context(name=sdfg.name)
         if node.name not in self.contexts[sdfg.name].containers:
             self.contexts[sdfg.name].containers.append(node.name)
+
+
+def create_sdfg_from_string(
+    source_string: str,
+    sdfg_name: str,
+):
+    parser = ParserFactory().create(std="f2008")
+    reader = FortranStringReader(source_string)
+    ast = parser(reader)
+    tables = SYMBOL_TABLES
+    own_ast = InternalFortranAst(ast, tables)
+    program = own_ast.create_ast(ast)
+    functions_and_subroutines_builder = FindFunctionAndSubroutines()
+    functions_and_subroutines_builder.visit(program)
+    own_ast.functions_and_subroutines = functions_and_subroutines_builder.nodes
+    program = functionStatementEliminator(program)
+    program = CallToArray(
+        functions_and_subroutines_builder.nodes).visit(program)
+    program = CallExtractor().visit(program)
+    program = SignToIf().visit(program)
+    program = ArrayToLoop().visit(program)
+    program = SumToLoop().visit(program)
+    program = ForDeclarer().visit(program)
+    program = IndexExtractor().visit(program)
+    ast2sdfg = AST_translator(own_ast, __file__)
+    sdfg = SDFG(sdfg_name)
+    ast2sdfg.top_level = program
+    ast2sdfg.globalsdfg = sdfg
+    ast2sdfg.translate(program, sdfg)
+
+    for node, parent in sdfg.all_nodes_recursive():
+        if isinstance(node, dace.nodes.NestedSDFG):
+            if 'test_function' in node.sdfg.name:
+                sdfg = node.sdfg
+                break
+    sdfg.parent = None
+    sdfg.parent_sdfg = None
+    sdfg.parent_nsdfg_node = None
+    sdfg.reset_sdfg_list()
+    return sdfg
 
 
 if __name__ == "__main__":

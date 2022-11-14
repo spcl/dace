@@ -47,14 +47,14 @@ class Subset(object):
 
                     # lower bound: first check whether symbolic positive condition applies
                     if not (len(rb.free_symbols) == 0 and len(orb.free_symbols) == 1):
-                        if not (symbolic.simplify_ext(nng(rb)) == symbolic.simplify_ext(nng(orb)) or
-                                symbolic.simplify_ext(nng(rb)) <= symbolic.simplify_ext(nng(orb))):
+                        if not (symbolic.simplify_ext(nng(rb)) == symbolic.simplify_ext(nng(orb))
+                                or symbolic.simplify_ext(nng(rb)) <= symbolic.simplify_ext(nng(orb))):
                             return False
 
                     # upper bound: first check whether symbolic positive condition applies
                     if not (len(re.free_symbols) == 1 and len(ore.free_symbols) == 0):
-                        if not (symbolic.simplify_ext(nng(re)) == symbolic.simplify_ext(nng(ore)) or
-                                symbolic.simplify_ext(nng(re)) >= symbolic.simplify_ext(nng(ore))):
+                        if not (symbolic.simplify_ext(nng(re)) == symbolic.simplify_ext(nng(ore))
+                                or symbolic.simplify_ext(nng(re)) >= symbolic.simplify_ext(nng(ore))):
                             return False
             except TypeError:
                 return False
@@ -316,7 +316,13 @@ class Range(Subset):
         off = other.min_element()
         for i in indices:
             rb, re, rs = self.ranges[i]
-            self.ranges[i] = (rb + mult * off[i], re + mult * off[i], rs)
+            if rb == re and rb != 0:
+                rbmult = 0
+                remult = 0
+            else:
+                rbmult = 1
+                remult = 1
+            self.ranges[i] = (rb + rbmult * mult * off[i], re + remult * mult * off[i], rs)
 
     def offset_new(self, other, negative, indices=None):
         if not isinstance(other, Subset):

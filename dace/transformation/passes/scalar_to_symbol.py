@@ -29,7 +29,6 @@ class AttributedCallDetector(ast.NodeVisitor):
     """
     Detects calls to functions that are attributes.
     """
-
     def __init__(self):
         self.detected = False
 
@@ -49,7 +48,6 @@ class RemoveConstantAttributes(ast.NodeTransformer):
     """
     Removes calls to functions that are attributes, if they point to a constant value for a cast.
     """
-
     def visit_Call(self, node: ast.Call) -> Any:
         # Assuming AttributedCallDetector already filtered relevant cases
         if isinstance(node.func, ast.Attribute):
@@ -243,7 +241,6 @@ class TaskletPromoter(ast.NodeTransformer):
     If connector name is used in tasklet as subscript, modifies to symbol name.
     If connector is used as a standard name, modify tasklet code to use symbol.
     """
-
     def __init__(self, connector: str, symbol: str) -> None:
         """
         Initializes AST transformer.
@@ -274,7 +271,6 @@ class TaskletPromoterDict(ast.NodeTransformer):
     If connector name is used in tasklet as subscript, modifies to symbol name.
     If connector is used as a standard name, modify tasklet code to use symbol.
     """
-
     def __init__(self, conn_to_sym: Dict[str, str]) -> None:
         """
         Initializes AST transformer.
@@ -304,7 +300,6 @@ class TaskletIndirectionPromoter(ast.NodeTransformer):
     After visiting an AST, self.{in,out}_mapping will be filled with mappings
     from unique new connector names to sets of individual memlets.
     """
-
     def __init__(self, in_edges: Dict[str, mm.Memlet], out_edges: Dict[str, mm.Memlet], sdfg: sd.SDFG,
                  defined_syms: Set[str]) -> None:
         """
@@ -327,7 +322,19 @@ class TaskletIndirectionPromoter(ast.NodeTransformer):
             self.latest[node_name] += 1
             new_name = f'{node_name}_{self.latest[node_name]}'
             orig_subset = self.in_edges[node_name].subset
-            subset = orig_subset.compose(subsets.Range(astutils.subscript_to_slice(node, self.sdfg.arrays)[1]))
+            desc = self.sdfg.arrays[self.in_edges[node_name].data]
+            try:
+                first_nonscalar_dim = next(i for i, s in enumerate(orig_subset.size()) if s != 1)
+            except StopIteration:
+                first_nonscalar_dim = 0
+            import copy
+            offset_tuple = copy.deepcopy(desc.offset)
+            offset = list(offset_tuple)
+            for i in range(first_nonscalar_dim):
+                offset[i] = 0
+            offset_tuple = tuple(offset)
+            subset = orig_subset.compose(subsets.Range(astutils.subscript_to_slice(
+                node, self.sdfg.arrays)[1])).offset_new(offset_tuple, negative=False)
             # Check if range can be collapsed
             if _range_is_promotable(subset, self.defined):
                 self.in_mapping[new_name] = (node_name, subset)
@@ -338,7 +345,20 @@ class TaskletIndirectionPromoter(ast.NodeTransformer):
             self.latest[node_name] += 1
             new_name = f'{node_name}_{self.latest[node_name]}'
             orig_subset = self.out_edges[node_name].subset
-            subset = orig_subset.compose(subsets.Range(astutils.subscript_to_slice(node, self.sdfg.arrays)[1]))
+            #Trying to extract offset information and apply it when composing a range with a scalar.
+            desc = self.sdfg.arrays[self.out_edges[node_name].data]
+            try:
+                first_nonscalar_dim = next(i for i, s in enumerate(orig_subset.size()) if s != 1)
+            except StopIteration:
+                first_nonscalar_dim = 0
+            import copy
+            offset_tuple = copy.deepcopy(desc.offset)
+            offset = list(offset_tuple)
+            for i in range(first_nonscalar_dim):
+                offset[i] = 0
+            offset_tuple = tuple(offset)
+            subset = orig_subset.compose(subsets.Range(astutils.subscript_to_slice(
+                node, self.sdfg.arrays)[1])).offset_new(offset_tuple, negative=False)
             # Check if range can be collapsed
             if _range_is_promotable(subset, self.defined):
                 self.out_mapping[new_name] = (node_name, subset)
@@ -589,9 +609,7 @@ class ScalarToSymbolPromotion(passes.Pass):
 
     CATEGORY: str = 'Simplification'
 
-    ignore = props.SetProperty(element_type=str,
-                               default=set(),
-                               desc='Fields that should not be promoted.')
+    ignore = props.SetProperty(element_type=str, default=set(), desc='Fields that should not be promoted.')
     transients_only = props.Property(dtype=bool, default=True, desc='Promote only transients.')
     integers_only = props.Property(dtype=bool, default=True, desc='Allow promotion of integer scalars only.')
 
