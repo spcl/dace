@@ -2006,8 +2006,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                     # To enforce opencl type long instead of c type long long for intel fpga
                     v = dace.config.Config.get("compiler", "fpga", "vendor")
                     if v.casefold() == 'intel_fpga'.casefold():
-                        if loop_var_type.__contains__("long long"):
-                            loop_var_type = loop_var_type.replace("long long", "long")
+                        loop_var_type = loop_var_type.replace("long long", "long")
 
 
                     if is_degenerate[i]:

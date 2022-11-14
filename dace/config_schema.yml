@@ -557,8 +557,7 @@ required:
 
                     board:
                         type: str
-                        #default: a10gx
-                        default: p520_max_sg280l
+                        default: a10gx
                         title: Target FPGA board
                         description: FPGA board to compile for, obtain list by running ``aoc --list-boards``.
 

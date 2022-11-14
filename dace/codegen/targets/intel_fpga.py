@@ -562,12 +562,11 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
             if isinstance(p, dace.data.View):
                 continue
             arg = self.make_kernel_argument(p, pname, is_output, True)
-            
-            #change c type long long to opencl type long
-            if arg.__contains__("long long"):
-                arg = arg.replace("long long", "long")
 
             if arg is not None:
+                #change c type long long to opencl type long
+                arg = arg.replace("long long", "long")
+                
                 kernel_args_opencl.append(arg)
                 kernel_args_host.append(p.as_arg(True, name=pname))
                 kernel_args_call.append(pname)
@@ -758,11 +757,10 @@ __kernel void \\
                 continue
             desc = sdfg.arrays[in_memlet.data]
             ptrname = cpp.ptr(in_memlet.data, desc, sdfg, self._frame)
-            defined_type, defined_ctype = self._dispatcher.defined_vars.get(ptrname, 1) #Ctype -> dacetype
+            defined_type, defined_ctype = self._dispatcher.defined_vars.get(ptrname, 1)
 
             #change c type long long to opencl type long
-            if defined_ctype.__contains__("long long"):
-                defined_ctype = defined_ctype.replace("long long", "long")
+            defined_ctype = defined_ctype.replace("long long", "long")
 
             if isinstance(desc, dace.data.Array) and (desc.storage == dtypes.StorageType.FPGA_Global
                                                       or desc.storage == dtypes.StorageType.FPGA_Local):

@@ -1,19 +1,13 @@
-## copied jacobi 1d and simplified the kernel
+## simple test case to check that for the intel fpga the openCL type long gets used instead of C type long long
 
 import dace.dtypes
 import numpy as np
 import dace as dc
-import pytest
 import argparse
-from dace.fpga_testing import fpga_test
+from dace.fpga_testing import intel_fpga_test
 from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
-from dace.transformation.dataflow import StreamingMemory, StreamingComposition
-from dace.transformation.auto.auto_optimize import auto_optimize
-from dace.config import set_temporary
 
-# Dataset sizes
-# TSTEPS, N
-sizes = {"mini": (30), "small": (120), "medium": (400), "large": (2000), "extra-large": (4000)}
+#N
 N = dc.symbol('N', dtype=dc.int64)
 
 
@@ -39,17 +33,13 @@ def run_simple_add(device_type: dace.dtypes.DeviceType):
     '''
 
     # Initialize data (polybench small size)
-    N = sizes["small"]
+    N = 120
     A, B = initialize(N)
     A_ref = np.copy(A)
     B_ref = np.copy(B)
 
-    if device_type in {dace.dtypes.DeviceType.CPU, dace.dtypes.DeviceType.GPU}:
-        # Parse the SDFG and apply auto-opt
-        sdfg = simple_add_kernel.to_sdfg()
-        sdfg = auto_optimize(sdfg, device_type)
-        sdfg(A, B, N=N)
-    elif device_type == dace.dtypes.DeviceType.FPGA:
+
+    if device_type == dace.dtypes.DeviceType.FPGA:
         # Parse SDFG and apply FPGA friendly optimization
         sdfg = simple_add_kernel.to_sdfg(simplify=True)
         applied = sdfg.apply_transformations([FPGATransformSDFG])
@@ -69,17 +59,8 @@ def run_simple_add(device_type: dace.dtypes.DeviceType):
     return sdfg
 
 
-def test_cpu():
-    run_simple_add(dace.dtypes.DeviceType.CPU)
-
-
-@pytest.mark.gpu
-def test_gpu():
-    run_simple_add(dace.dtypes.DeviceType.GPU)
-
-
-
-@fpga_test(assert_ii_1=False)
+#@fpga_test(assert_ii_1=False)
+@intel_fpga_test(assert_ii_1=False)
 def test_fpga():
     return run_simple_add(dace.dtypes.DeviceType.FPGA)
 
@@ -92,9 +73,5 @@ if __name__ == "__main__":
     args = vars(parser.parse_args())
     target = args["target"]
 
-    if target == "cpu":
-        run_simple_add(dace.dtypes.DeviceType.CPU)
-    elif target == "gpu":
-        run_simple_add(dace.dtypes.DeviceType.GPU)
-    elif target == "fpga":
+    if target == "fpga":
         run_simple_add(dace.dtypes.DeviceType.FPGA)

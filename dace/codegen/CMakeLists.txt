@@ -26,8 +26,7 @@ set(DACE_XILINX_ENABLE_DEBUGGING OFF CACHE STRING "Inject debugging cores to ker
 set(DACE_INTELFPGA_MODE "simulation" CACHE STRING "Type of compilation/execution [emulator/simulator/hardare].")
 set(DACE_INTELFPGA_HOST_FLAGS "" CACHE STRING "Extra flags to host compiler.")
 set(DACE_INTELFPGA_KERNEL_FLAGS "" CACHE STRING "Extra flags to kernel compiler.")
-#set(DACE_INTELFPGA_TARGET_BOARD "a10gx" CACHE STRING "Target FPGA board.")
-set(DACE_INTELFPGA_TARGET_BOARD "p520_max_sg280l" CACHE STRING "Target FPGA board.")
+set(DACE_INTELFPGA_TARGET_BOARD "a10gx" CACHE STRING "Target FPGA board.")
 set(DACE_INTELFPGA_ENABLE_DEBUGGING OFF CACHE STRING "Enable debugging.")
 
 # Target detection
