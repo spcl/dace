@@ -100,9 +100,15 @@ def get_name(node: Node):
 
 
 class TaskletWriter:
-    def __init__(self, outputs: List[str], outputs_changes: List[str]):
+    def __init__(self,
+                 outputs: List[str],
+                 outputs_changes: List[str],
+                 sdfg: SDFG = None,
+                 name_mapping=None):
         self.outputs = outputs
         self.outputs_changes = outputs_changes
+        self.sdfg = sdfg
+        self.mapping = name_mapping
 
         self.ast_elements = {
             BinOp_Node: self.binop2string,
@@ -148,16 +154,22 @@ class TaskletWriter:
             return node
 
         return_value = node.name
+        name = node.name
+        for i in self.sdfg.arrays:
+            sdfg_name = self.mapping.get(self.sdfg).get(name)
+            if sdfg_name == i:
+                name = i
+                break
 
         if len(self.outputs) > 0:
             #print("TASK WRITER:",node.name,self.outputs[0],self.outputs_changes[0])
-            if node.name == self.outputs[0]:
+            if name == self.outputs[0]:
                 if self.outputs[0] != self.outputs_changes[0]:
-                    return_value = self.outputs_changes[0]
+                    name = self.outputs_changes[0]
                 self.outputs.pop(0)
                 self.outputs_changes.pop(0)
             #print("RETURN VALUE:",return_value)
-        return str(return_value)
+        return name
 
     def intlit2string(self, node: Int_Literal_Node):
 
@@ -241,7 +253,7 @@ def generate_memlet(op, top_sdfg, state):
     indices = []
     if isinstance(op, Array_Subscript_Node):
         for i in op.indices:
-            tw = TaskletWriter([], [])
+            tw = TaskletWriter([], [],sdfg,state.name_mapping)
             text = tw.write_code(i)
             #This might need to be replaced with the name in the context of the top/current sdfg
             indices.append(dace.symbolic.pystr_to_symbolic(text))
@@ -560,7 +572,8 @@ class AST_translator:
                 self.last_sdfg_states[sdfg] = bstate
             if node.init is not None:
                 substate = sdfg.add_state("Dummystate_" + node.name)
-                increment = TaskletWriter([], []).write_code(node.init)
+                increment = TaskletWriter(
+                    [], [], sdfg, self.name_mapping).write_code(node.init)
 
                 entry = {node.name: increment}
                 sdfg.add_edge(self.last_sdfg_states[sdfg], substate,
@@ -1057,8 +1070,8 @@ class AST_translator:
             self, sdfg, "_state_l" + str(node.line_number[0]) + "_c" +
             str(node.line_number[1]))
 
-        #output_names_changed = [o_t + "_out" for o_t in output_names_tasklet]
-        output_names_changed = [o_t for o_t in output_names_tasklet]
+        output_names_changed = [o_t + "_out" for o_t in output_names]
+        #output_names_changed = [o_t for o_t in output_names_tasklet]
         #output_names_dict = {on: dace.pointer(dace.int32) for on in output_names_changed}
         """ tasklet = add_tasklet(
             substate,
@@ -1078,18 +1091,20 @@ class AST_translator:
         tasklet = add_tasklet(
             substate,
             "_l" + str(node.line_number[0]) + "_c" + str(node.line_number[1]),
-            input_names, output_names, "text", node.line_number,
+            input_names, output_names_changed, "text", node.line_number,
             self.file_name)
 
         for i, j in zip(input_names, input_names):
             memlet_range = self.get_memlet_range(sdfg, input_vars, i, j)
             add_memlet_read(substate, i, tasklet, j, memlet_range)
 
-        for i, j, k in zip(output_names, output_names, output_names):
+        for i, j, k in zip(output_names, output_names_tasklet,
+                           output_names_changed):
 
             memlet_range = self.get_memlet_range(sdfg, output_vars, i, j)
             add_memlet_write(substate, i, tasklet, k, memlet_range)
-        tw = ProcessedWriter(sdfg, self.name_mapping)
+        tw = TaskletWriter(output_names, output_names_changed, sdfg,
+                           self.name_mapping)
         # print("BINOP:",output_names,output_names_tasklet,output_names_changed)
         text = tw.write_code(node)
         # print("BINOPTASKLET:",text)
@@ -1179,7 +1194,8 @@ class AST_translator:
                 output_names_changed.append(o_t + "_out")
 
             tw = TaskletWriter(output_names_tasklet.copy(),
-                               output_names_changed.copy())
+                               output_names_changed.copy(), sdfg,
+                               self.name_mapping)
             if not isinstance(rettype, Void) and hasret:
                 special_list_in[retval.name] = dace.pointer(
                     self.get_dace_type(rettype))
@@ -1246,7 +1262,7 @@ class AST_translator:
             offset = []
             offset_value = -1
             for i in node.sizes:
-                tw = TaskletWriter([], [])
+                tw = TaskletWriter([], [], sdfg, self.name_mapping)
                 text = tw.write_code(i)
                 sizes.append(dace.symbolic.pystr_to_symbolic(text))
                 offset.append(offset_value)
