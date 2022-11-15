@@ -992,12 +992,14 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
 
             if new_name != es[1]:
                 clashes = [param for param in global_data_parameters if param[1] == new_name]
-                clashes.extend([param for param in top_level_local_data if param[1] == new_name])
-                clashes.extend([param for param in subgraph_parameters.values() if param[1] == new_name])
-                clashes.extend([param for param in nested_global_transients if param[1] == new_name])
+                clashes.extend([param for param in top_level_local_data if param.data == new_name])
+                clashes.extend(
+                    [param for params in subgraph_parameters.values() for param in params if param[1] == new_name])
+                clashes.extend([param for param in nested_global_transients if param.data == new_name])
                 if len(clashes) > 0:
                     raise cgx.CodegenError(
-                        f"External stream sanitized name {new_name} clashes with other paramters: {clashes}")
+                        f"External stream {es[1]} with sanitized name {new_name} clashes with other paramters {len(clashes)} times."
+                    )
                 else:
                     external_streams.remove(es)
                     external_streams.append((es[0], new_name, es[2], es[3]))
