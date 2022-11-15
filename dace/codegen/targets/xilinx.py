@@ -983,11 +983,12 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                 else:
                     v.append((stream_is_out, stream_name, stream_desc, stream_iid))
 
-        # Xilinx does not like external streams name with leading underscores to be used as port names
-        # We remove them, and we check that they are not defined anywhere else
+        # Xilinx does not like external streams name with leading underscores or multiple underscores in a row to be
+        # used as port names. We remove them, and we check that they are not defined anywhere else.
         for es in external_streams:
 
-            new_name = es[1].strip("_")
+            new_name = re.sub('_+', '_', es[1])
+            new_name = new_name.strip("_")
             self._external_streams[es[1]] = new_name
 
             if new_name != es[1]:
@@ -1001,6 +1002,31 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
                         f"External stream {es[1]} with sanitized name {new_name} clashes with other paramters {len(clashes)} times."
                     )
                 else:
+                    # Update the sdfg
+                    sdfg.replace(es[1], new_name)
+
+                    # Update the global data parameters
+                    for i, p in enumerate(global_data_parameters):
+                        if p[1] == es[1]:
+                            global_data_parameters[i] = (p[1], new_name, p[2], p[3])
+
+                    # Update the top level local data
+                    for p in top_level_local_data:
+                        if p.data == es[1]:
+                            p.data = new_name
+
+                    # Update the subgraph parameters
+                    for v in subgraph_parameters.values():
+                        for i, p in enumerate(v):
+                            if p[1] == es[1]:
+                                v[i] = (p[0], new_name, p[2], p[3])
+
+                    # Update the nested global transients
+                    for p in nested_global_transients:
+                        if p.data == es[1]:
+                            p.data = new_name
+
+                    # Update the external streams
                     external_streams.remove(es)
                     external_streams.append((es[0], new_name, es[2], es[3]))
 

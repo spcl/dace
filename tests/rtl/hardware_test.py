@@ -447,12 +447,6 @@ def test_hardware_vadd_temporal_vectorization():
 
         sdfg = dace.program(np_vadd).to_sdfg()
 
-        # Remove underscores as Xilinx does not like them
-        for dn in sdfg.nodes()[0].data_nodes():
-            if '__' in dn.data:
-                new_name = dn.data.replace('__', '') + 'new'
-                sdfg.replace(dn.data, new_name)
-
         # Apply vectorization transformation
         ambles = size_n % veclen != 0
         map_entry = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.MapEntry)][0]
@@ -487,9 +481,9 @@ def test_hardware_vadd_temporal_vectorization():
 
         # Run the program and verify the results
         sdfg.specialize({'N': N.get()})
-        sdfg(x=x, y=y, returnnew=result)
+        sdfg(x=x, y=y, __return=result)
         assert (np.allclose(expected, result))
-        
+
         return sdfg
 
 
