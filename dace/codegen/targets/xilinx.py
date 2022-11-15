@@ -745,7 +745,7 @@ DACE_EXPORTED void __dace_exit_xilinx({sdfg.name}_t *__state) {{
 
         # Check if we are generating an RTL module, in which case only the
         # accesses to the streams should be handled
-        rtl_tasklet = self.is_rtl_subgraph(subgraph)
+        rtl_tasklet = self.find_rtl_tasklet(subgraph)
         if rtl_tasklet:
             # Write placeholders in the original kernel.
             entry_stream.write(f'// [RTL] HLSLIB_DATAFLOW_FUNCTION({name}, {", ".join(kernel_args_call)});')

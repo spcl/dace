@@ -392,9 +392,9 @@ class FPGACodeGen(TargetCodeGenerator):
     def has_finalizer(self):
         return False
 
-    def is_rtl_subgraph(self, subgraph: ScopeSubgraphView):
+    def find_rtl_tasklet(self, subgraph: ScopeSubgraphView):
         '''
-        Checks whether the given subgraph is an RTL subgraph, as in: does it contain a SystemVerilog tasklet.
+        Finds a tasklet with SystemVerilog as its language, within the given subgraph, if it contains one.
 
         :param subgraph: The subgraph to check. 
         :return: The tasklet node if one exists, None otherwise. 
@@ -402,7 +402,7 @@ class FPGACodeGen(TargetCodeGenerator):
         for n in subgraph.nodes():
             if isinstance(n, dace.nodes.NestedSDFG):
                 for sg in dace.sdfg.concurrent_subgraphs(n.sdfg.start_state):
-                    node = self.is_rtl_subgraph(sg)
+                    node = self.find_rtl_tasklet(sg)
                     if node:
                         return node
             elif isinstance(n, dace.nodes.Tasklet) and n.language == dace.dtypes.Language.SystemVerilog:
@@ -411,7 +411,7 @@ class FPGACodeGen(TargetCodeGenerator):
 
     def is_multi_pumped_subgraph(self, subgraph: ScopeSubgraphView):
         '''
-        Checks whether the given subgraph is a multi-pumped subgraph, as in: does it contain a map whose schedule is set to multi-pumped.
+        Checks whether the given subgraph is a multi-pumped subgraph. A subgraph is multi-pumped if it contains a map whose schedule is set to multi-pumped.
 
         :param subgraph: The subgraph to check.
         :return: True if the given subgraph is a multi-pumped subgraph.
@@ -840,7 +840,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
             data_to_node.update(
                 {node.data: node
                  for node in subgraph.nodes() if isinstance(node, dace.sdfg.nodes.AccessNode)})
-            is_rtl_subgraph = self.is_rtl_subgraph(subgraph)
+            is_rtl_subgraph = self.find_rtl_tasklet(subgraph)
             is_multi_subgraph = self.is_multi_pumped_subgraph(subgraph)
             subsdfg = subgraph.parent
             candidates = []  # type: List[Tuple[bool,str,Data]]

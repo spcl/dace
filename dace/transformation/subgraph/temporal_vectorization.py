@@ -35,11 +35,11 @@ class TemporalVectorization(transformation.SubgraphTransformation):
         1. There is one outermost map in the subgraph. 
         2. All of the non- source and sink nodes are only accessed within this subgraph. 
         3. All of the source and sink nodes are either streams or scalars. 
-        4. If the direction is 1, then either:
+        4. If the approach is 1, then either:
             - The elemental type of the streams must be a vector type.
             - The elemental type must be convertible to a vector type. 
             - Data packers/issuers are allowed to be inserted at the cost of performance through additional data plumbing overhead.
-        5. If the direction is 2, all the elemental types of the streams must be a vector type that is integer divisable by the multi-pumping factor.
+        5. If the approach is 2, all the elemental types of the streams must be a vector type that is integer divisable by the multi-pumping factor.
         '''
         # Extract all of the relevant components of the subgraph
         graph = subgraph.graph
