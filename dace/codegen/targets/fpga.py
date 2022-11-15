@@ -298,6 +298,27 @@ def unqualify_fpga_array_name(sdfg: dace.SDFG, arr_name: str):
         return arr_name
 
 
+def is_vendor_supported(fpga_vendor: str) -> bool:
+    """
+    Returns wheter the given vendor is supported or not, by looking
+    among the registered FPGA code-generators.
+
+    :param fpga_vendor: the fpga vendor 
+    """
+
+    registered_codegens = dace.codegen.targets.target.TargetCodeGenerator._registry_
+    supported_vendors = set()
+    for cl, attr in registered_codegens.items():
+        if issubclass(cl, dace.codegen.targets.fpga.FPGACodeGen):
+            if attr["name"] == fpga_vendor.lower():
+                break
+            else:
+                supported_vendors.add(attr["name"])
+    else:
+        raise cgx.CompilerConfigurationError(
+            f"FPGA vendor {fpga_vendor} is not supported. The supported vendors are {supported_vendors}.")
+
+
 class FPGACodeGen(TargetCodeGenerator):
     # Set by deriving class
     target_name = None

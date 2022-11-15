@@ -44,8 +44,12 @@ class XilinxCodeGen(fpga.FPGACodeGen):
     language = 'hls'
 
     def __init__(self, *args, **kwargs):
-        fpga_vendor = Config.get("compiler", "fpga", "vendor")
-        if fpga_vendor.lower() != "xilinx":
+        self.fpga_vendor = Config.get("compiler", "fpga", "vendor")
+
+        # Check that the given vendor is supported
+        fpga.is_vendor_supported(self.fpga_vendor)
+
+        if self.fpga_vendor.lower() != "xilinx":
             # Don't register this code generator
             return
         super().__init__(*args, **kwargs)

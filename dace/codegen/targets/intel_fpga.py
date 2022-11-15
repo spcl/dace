@@ -64,8 +64,12 @@ class IntelFPGACodeGen(fpga.FPGACodeGen):
     language = 'hls'
 
     def __init__(self, *args, **kwargs):
-        fpga_vendor = Config.get("compiler", "fpga", "vendor")
-        if fpga_vendor.lower() != "intel_fpga":
+        self.fpga_vendor = Config.get("compiler", "fpga", "vendor")
+
+        # Check that the given vendor is supported
+        fpga.is_vendor_supported(self.fpga_vendor)
+
+        if self.fpga_vendor.lower() != "intel_fpga":
             # Don't register this code generator
             return
         # Keep track of generated converters to avoid multiple definition
@@ -412,8 +416,7 @@ DACE_EXPORTED void __dace_exit_intel_fpga({sdfg.name}_t *__state) {{
     def make_shift_register_write(self, defined_type, dtype, var_name, write_expr, index, read_expr, wcr, is_unpack,
                                   packing_factor, sdfg):
         if defined_type != DefinedType.Pointer:
-            raise TypeError("Intel shift register must be an array: "
-                            "{} is {}".format(var_name, defined_type))
+            raise TypeError("Intel shift register must be an array: " "{} is {}".format(var_name, defined_type))
         # Shift array
         arr_size = functools.reduce(lambda a, b: a * b, sdfg.data(var_name).shape, 1)
         res = """
@@ -779,15 +782,17 @@ __kernel void \\
                 # streams are defined as global variables
                 continue
             elif isinstance(desc, dace.data.Scalar):
-                # if this is a scalar and the argument passed is also a scalar
-                # then we have to pass it by value, as references do not exist in C99
                 typedef = defined_ctype
-                if defined_type is not DefinedType.Pointer:
-                    typedef = typedef + "*"
-
-                memlet_references.append(
-                    (typedef, vconn, cpp.cpp_ptr_expr(sdfg, in_memlet, defined_type, codegen=self._frame)))
-                self._dispatcher.defined_vars.add(vconn, DefinedType.Pointer, typedef, allow_shadowing=True)
+                if defined_type is DefinedType.Scalar:
+                    # if this is a scalar and the argument passed is also a scalar
+                    # then we have to pass it by value
+                    ref = (typedef, vconn, ptrname)
+                    self._dispatcher.defined_vars.add(vconn, defined_type, typedef, allow_shadowing=True)
+                else:
+                    # otherwise, pass it as a pointer (references do not exist in C99)
+                    ref = (typedef, vconn, cpp.cpp_ptr_expr(sdfg, in_memlet, defined_type, codegen=self._frame))
+                self._dispatcher.defined_vars.add(vconn, defined_type, typedef, allow_shadowing=True)
+                memlet_references.append(ref)
             else:
                 # all the other cases
                 memlet_references.append(
