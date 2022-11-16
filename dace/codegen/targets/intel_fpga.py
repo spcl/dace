@@ -416,7 +416,8 @@ DACE_EXPORTED void __dace_exit_intel_fpga({sdfg.name}_t *__state) {{
     def make_shift_register_write(self, defined_type, dtype, var_name, write_expr, index, read_expr, wcr, is_unpack,
                                   packing_factor, sdfg):
         if defined_type != DefinedType.Pointer:
-            raise TypeError("Intel shift register must be an array: " "{} is {}".format(var_name, defined_type))
+            raise TypeError("Intel shift register must be an array: "
+                            "{} is {}".format(var_name, defined_type))
         # Shift array
         arr_size = functools.reduce(lambda a, b: a * b, sdfg.data(var_name).shape, 1)
         res = """
@@ -569,7 +570,7 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
             if arg is not None:
                 #change c type long long to opencl type long
                 arg = arg.replace("long long", "long")
-                
+
                 kernel_args_opencl.append(arg)
                 kernel_args_host.append(p.as_arg(True, name=pname))
                 kernel_args_call.append(pname)

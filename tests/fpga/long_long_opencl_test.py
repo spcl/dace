@@ -1,4 +1,4 @@
-## simple test case to check that for the intel fpga the openCL type long gets used instead of C type long long
+# Simple test case to check that for the intel fpga the openCL type long gets used instead of C type long long
 
 import dace.dtypes
 import numpy as np
@@ -7,7 +7,6 @@ import argparse
 from dace.fpga_testing import intel_fpga_test
 from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
 
-#N
 N = dc.symbol('N', dtype=dc.int64)
 
 
@@ -38,20 +37,18 @@ def run_simple_add(device_type: dace.dtypes.DeviceType):
     A_ref = np.copy(A)
     B_ref = np.copy(B)
 
+    # Parse SDFG and apply FPGA friendly optimization
+    sdfg = simple_add_kernel.to_sdfg(simplify=True)
+    applied = sdfg.apply_transformations([FPGATransformSDFG])
+    assert applied == 1
 
-    if device_type == dace.dtypes.DeviceType.FPGA:
-        # Parse SDFG and apply FPGA friendly optimization
-        sdfg = simple_add_kernel.to_sdfg(simplify=True)
-        applied = sdfg.apply_transformations([FPGATransformSDFG])
-        assert applied == 1
-
-        # Use FPGA Expansion for lib nodes, and expand them to enable further optimizations
-        from dace.libraries.blas import Dot
-        Dot.default_implementation = "FPGA_PartialSums"
-        sdfg.expand_library_nodes()
-        sdfg.apply_transformations_repeated([InlineSDFG], print_report=True)
-        sdfg.specialize(dict(N=N))
-        sdfg(A=A, B=B)
+    # Use FPGA Expansion for lib nodes, and expand them to enable further optimizations
+    from dace.libraries.blas import Dot
+    Dot.default_implementation = "FPGA_PartialSums"
+    sdfg.expand_library_nodes()
+    sdfg.apply_transformations_repeated([InlineSDFG], print_report=True)
+    sdfg.specialize(dict(N=N))
+    sdfg(A=A, B=B)
 
     # Compute ground truth and validate
     ground_truth(A_ref, B_ref)
@@ -59,7 +56,6 @@ def run_simple_add(device_type: dace.dtypes.DeviceType):
     return sdfg
 
 
-#@fpga_test(assert_ii_1=False)
 @intel_fpga_test(assert_ii_1=False)
 def test_fpga():
     return run_simple_add(dace.dtypes.DeviceType.FPGA)
