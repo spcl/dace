@@ -356,6 +356,7 @@ class AST_translator:
         self.functions_and_subroutines = ast.functions_and_subroutines
         self.name_mapping = NameMap()
         self.contexts = {}
+        self.views = 0
         self.libstates = []
         self.file_name = source
         self.all_array_names = []
@@ -732,7 +733,7 @@ class AST_translator:
                     else:
                         if not isinstance(variable_in_call, Name_Node):
                             viewname, view = sdfg.add_view(
-                                array_name + "_view_" + str(len(views)),
+                                array_name + "_view_" + str(self.views),
                                 shape,
                                 array.dtype,
                                 storage=array.storage,
@@ -761,7 +762,7 @@ class AST_translator:
                                               copy.deepcopy(memlet))
                             substate.add_edge(rv, 'views2', w, None,
                                               copy.deepcopy(memlet2))
-
+                            self.views = self.views + 1
                             views.append([array_name, wv, rv])
 
                         new_sdfg.add_array(

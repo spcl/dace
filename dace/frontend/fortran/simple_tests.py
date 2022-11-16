@@ -118,9 +118,61 @@ END SUBROUTINE viewlens
     assert (b[0, 0, 0] == 4620)
 
 
+def test_fortran_frontend_view_test_2():
+    test_name = "view_test2"
+    test_string = """
+                    PROGRAM """ + test_name + """_program
+implicit none
+double precision a(10,11,12),b(10,11,12),c(10,11,12)
+
+CALL """ + test_name + """_function(a,b,c)
+
+end
+
+SUBROUTINE """ + test_name + """_function(aa,bb,cc)
+
+double precision aa(10,11,12),bb(10,11,12),cc(10,11,12)
+integer j,k
+
+j=1
+    call viewlens(aa(:,:,j),bb(:,:,j),cc(:,:,j))
+k=2
+    call viewlens(aa(:,:,k),bb(:,:,k),cc(:,:,k))
+
+end SUBROUTINE """ + test_name + """_function
+
+SUBROUTINE viewlens(aa,bb,cc)
+
+IMPLICIT NONE
+
+double precision  :: aa(10,11),bb(10,11),cc(10,11) 
+
+INTEGER ::  JK, JL
+
+DO JK=1,10
+  DO JL=1,11
+    cc(JK,JL)=bb(JK,JL)+aa(JK,JL)
+  ENDDO
+ENDDO
+
+END SUBROUTINE viewlens
+                    """
+    sdfg = create_sdfg_from_string(test_string, test_name)
+    sdfg.simplify(verbose=True)
+    a = np.full([10, 11, 12], 42, order="F", dtype=np.float64)
+    b = np.full([10, 11, 12], 42, order="F", dtype=np.float64)
+    c = np.full([10, 11, 12], 42, order="F", dtype=np.float64)
+
+    b[0, 0, 0] = 1
+    sdfg(aa_0=a, bb_0=b, cc_0=c)
+    assert (c[0, 0, 0] == 43)
+    assert (c[1, 1, 1] == 82)
+
+
 if __name__ == "__main__":
 
-    test_fortran_frontend_simplify()
-    test_fortran_frontend_input_output_connector()
-    test_fortran_frontend_view_test()
+    #test_fortran_frontend_simplify()
+    #test_fortran_frontend_input_output_connector()
+    #test_fortran_frontend_view_test()
+    test_fortran_frontend_view_test_2()
     print("All tests passed")
