@@ -282,6 +282,9 @@ class IndexExtractorNodeLister(NodeVisitor):
     def __init__(self):
         self.nodes: List[Array_Subscript_Node] = []
 
+    def visit_Call_Expr_Node(self, node: Call_Expr_Node):
+        return
+
     def visit_Array_Subscript_Node(self, node: Array_Subscript_Node):
         self.nodes.append(node)
 
@@ -293,13 +296,19 @@ class IndexExtractor(NodeTransformer):
     def __init__(self, count=0):
         self.count = count
 
+    def visit_Call_Expr_Node(self, node: Call_Expr_Node):
+        return node
+
     def visit_Array_Subscript_Node(self, node: Array_Subscript_Node):
 
         tmp = self.count
         new_indices = []
         for i in node.indices:
-            new_indices.append(Name_Node(name="tmp_index_" + str(tmp)))
-            tmp = tmp + 1
+            if isinstance(i, ParDecl_Node):
+                new_indices.append(i)
+            else:
+                new_indices.append(Name_Node(name="tmp_index_" + str(tmp)))
+                tmp = tmp + 1
         self.count = tmp
         return Array_Subscript_Node(
             name=node.name,
@@ -317,21 +326,25 @@ class IndexExtractor(NodeTransformer):
             if res is not None:
                 for j in res:
                     for i in j.indices:
-                        tmp_name = "tmp_index_" + str(temp)
-                        temp = temp + 1
-                        newbody.append(
-                            Decl_Stmt_Node(vardecl=[
-                                Var_Decl_Node(name=tmp_name,
-                                              type="INTEGER",
-                                              sizes=None,
-                                              line_number=child.line_number)
-                            ],
+                        if isinstance(i, ParDecl_Node):
+                            continue
+                        else:
+                            tmp_name = "tmp_index_" + str(temp)
+                            temp = temp + 1
+                            newbody.append(
+                                Decl_Stmt_Node(vardecl=[
+                                    Var_Decl_Node(
+                                        name=tmp_name,
+                                        type="INTEGER",
+                                        sizes=None,
+                                        line_number=child.line_number)
+                                ],
+                                               line_number=child.line_number))
+                            newbody.append(
+                                BinOp_Node(op="=",
+                                           lval=Name_Node(name=tmp_name),
+                                           rval=i,
                                            line_number=child.line_number))
-                        newbody.append(
-                            BinOp_Node(op="=",
-                                       lval=Name_Node(name=tmp_name),
-                                       rval=i,
-                                       line_number=child.line_number))
             newbody.append(self.visit(child))
         return Execution_Part_Node(execution=newbody)
 

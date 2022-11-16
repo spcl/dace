@@ -253,7 +253,7 @@ def generate_memlet(op, top_sdfg, state):
     indices = []
     if isinstance(op, Array_Subscript_Node):
         for i in op.indices:
-            tw = TaskletWriter([], [],sdfg,state.name_mapping)
+            tw = TaskletWriter([], [], top_sdfg, state.name_mapping)
             text = tw.write_code(i)
             #This might need to be replaced with the name in the context of the top/current sdfg
             indices.append(dace.symbolic.pystr_to_symbolic(text))
@@ -701,7 +701,9 @@ class AST_translator:
                     strides = list(array.strides)
                     offsets = list(array.offset)
                     mysize = 1
+
                     if isinstance(variable_in_call, Array_Subscript_Node):
+                        changed_indices = 0
                         for i in variable_in_call.indices:
                             if isinstance(i, ParDecl_Node):
                                 if i.type == "ALL":
@@ -715,8 +717,9 @@ class AST_translator:
                                     sdfg, self.name_mapping).write_code(i)
                                 index_list.append(
                                     dace.symbolic.pystr_to_symbolic(text))
-                                strides.pop(indices)
-                                offsets.pop(indices)
+                                strides.pop(indices - changed_indices)
+                                offsets.pop(indices - changed_indices)
+                                changed_indices += 1
                             indices = indices + 1
 
                     if isinstance(variable_in_call, Name_Node):
@@ -737,8 +740,8 @@ class AST_translator:
                                 offset=offsets)
                             from dace import subsets
 
-                            all_indices = index_list + [None] * (
-                                len(array.shape) - len(index_list))
+                            all_indices = [None] * (len(
+                                array.shape) - len(index_list)) + index_list
                             subset = subsets.Range([
                                 (i, i, 1) if i is not None else (1, s, 1)
                                 for i, s in zip(all_indices, array.shape)
@@ -1364,6 +1367,7 @@ if __name__ == "__main__":
     program = ArrayToLoop().visit(program)
     program = SumToLoop().visit(program)
     program = ForDeclarer().visit(program)
+    program = IndexExtractor().visit(program)
     ast2sdfg = AST_translator(
         own_ast,
         "/mnt/c/Users/Alexwork/Desktop/Git/f2dace/tests/" + testname + ".f90")
