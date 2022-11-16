@@ -85,7 +85,6 @@ def test_gpu():
     run_jacobi_1d(dace.dtypes.DeviceType.GPU)
 
 
-#@pytest.mark.skip(reason="Intel FPGA missing support for long long")
 @fpga_test(assert_ii_1=False)
 def test_fpga():
     return run_jacobi_1d(dace.dtypes.DeviceType.FPGA)
