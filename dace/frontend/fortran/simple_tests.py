@@ -19,7 +19,7 @@ def test_fortran_frontend_simplify():
                     end
 
                     SUBROUTINE symbol_test_function(d)
-                    real d(2,3)
+                    double precision d(2,3)
                     integer a,b
 
                     a=1
@@ -47,7 +47,7 @@ def test_fortran_frontend_input_output_connector():
                     end
 
                     SUBROUTINE ioc_test_function(d)
-                    real d(2,3)
+                    double precision d(2,3)
                     integer a,b
 
                     a=1
@@ -119,7 +119,7 @@ END SUBROUTINE viewlens
 
 
 def test_fortran_frontend_view_test_2():
-    test_name = "view_test2"
+    test_name = "view2_test"
     test_string = """
                     PROGRAM """ + test_name + """_program
 implicit none
@@ -166,13 +166,109 @@ END SUBROUTINE viewlens
     b[0, 0, 0] = 1
     sdfg(aa_0=a, bb_0=b, cc_0=c)
     assert (c[0, 0, 0] == 43)
-    assert (c[1, 1, 1] == 82)
+    assert (c[1, 1, 1] == 84)
+
+
+def test_fortran_frontend_array_access():
+    test_string = """
+                    PROGRAM access_test
+                    implicit none
+                    double precision d(4)
+                    CALL array_access_test_function(d)
+                    end
+
+                    SUBROUTINE array_access_test_function(d)
+                    double precision d(4)
+
+                    d(2)=5.5
+                    
+                    END SUBROUTINE array_access_test_function
+                    """
+    sdfg = create_sdfg_from_string(test_string, "array_access_test")
+    sdfg.simplify(verbose=True)
+    a = np.full([4], 42, order="F", dtype=np.float64)
+    sdfg(d_0=a)
+    assert (a[0] == 42)
+    assert (a[1] == 5.5)
+
+
+def test_fortran_frontend_array_ranges():
+    test_string = """
+                    PROGRAM ranges_test
+                    implicit none
+                    double precision d(3,4,5)
+                    CALL array_ranges_test_function(d)
+                    end
+
+                    SUBROUTINE array_ranges_test_function(d)
+                    double precision d(3,4,5),e(3,4,5),f(3,4,5)
+
+                    e(:,:,:)=1.0
+                    !f(:,:,:)=2.0
+                    !f(:,2:4,:)=3.0
+                    !f(1,1,:)=4.0
+                    !d(:,:,:)=e(:,:,:)+f(:,:,:)
+                    !d(1,2:4,1)=e(1,2:4,1)*10.0
+                    d(1,1,1)=SUM(e(:,1,:))
+                    
+                    END SUBROUTINE array_ranges_test_function
+                    """
+    sdfg = create_sdfg_from_string(test_string, "array_access_test")
+    sdfg.simplify(verbose=True)
+    d = np.full([3, 4, 5], 42, order="F", dtype=np.float64)
+    sdfg(d_0=d)
+    assert (d[0, 0, 0] == 15)
+    assert (d[0, 1, 0] == 10)
+    assert (d[1, 0, 0] == 3)
+    assert (d[1, 1, 0] == 4)
+    assert (d[0, 0, 2] == 5)
+
+
+def test_fortran_frontend_if1():
+    test_string = """
+                    PROGRAM if1_test
+                    implicit none
+                    double precision d(3,4,5)
+                    CALL if1_test_function(d)
+                    end
+
+                    SUBROUTINE if1_test_function(d)
+                    double precision d(3,4,5),ZFAC(10)
+                    integer JK,JL,RTT,NSSOPT
+                    integer ZTP1(10,10)
+                    JL=1
+                    JK=1
+                    ZTP1(JL,JK)=1.0
+                    RTT=2
+                    NSSOPT=1
+
+                    IF (ZTP1(JL,JK)>=RTT .OR. NSSOPT==0) THEN
+                      ZFAC(1)  = 1.0
+                    ELSE
+                      ZFAC(1)  = 2.0
+                    ENDIF
+                    d(1,1,1)=ZFAC(1)
+                                    
+                    END SUBROUTINE if1_test_function
+                    """
+    sdfg = create_sdfg_from_string(test_string, "if1_test")
+    sdfg.simplify(verbose=True)
+    d = np.full([3, 4, 5], 42, order="F", dtype=np.float64)
+    sdfg(d_0=d)
+    assert (d[0, 0, 0] == 2)
 
 
 if __name__ == "__main__":
 
+    #test_fortran_frontend_array_access()
     #test_fortran_frontend_simplify()
     #test_fortran_frontend_input_output_connector()
+    #Breaks due to codegen if scalars are used for res instead an array
     #test_fortran_frontend_view_test()
-    test_fortran_frontend_view_test_2()
+    #test_fortran_frontend_view_test_2()
+    #break due to codegen if scalars are used (redefined scalar in tasklet -> unitialised)
+    #test_fortran_frontend_array_ranges()
+    #breaks if array has exactly one element or scalars are used.
+    test_fortran_frontend_if1()
+
     print("All tests passed")

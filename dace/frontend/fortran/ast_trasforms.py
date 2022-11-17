@@ -230,10 +230,10 @@ class CallExtractor(NodeTransformer):
                 for i in range(0, len(res)):
                     print("CALL:", res[i].name)
 
-                    if (res[i].name == "dace_sum"):
+                    if (res[i].name.name == "dace_sum"):
                         newbody.append(
                             Decl_Stmt_Node(vardecl=[
-                                Constant_Decl_Node(
+                                Var_Decl_Node(
                                     name="tmp_call_" + str(temp),
                                     type=res[i].type,
                                     sizes=None,
@@ -653,8 +653,24 @@ class ArrayToLoop(NodeTransformer):
 
                         for i, j in zip(ranges, rangesrval):
                             if i != j:
-                                raise NotImplementedError(
-                                    "Ranges must be identical")
+                                if isinstance(i, list) and isinstance(
+                                        j, list) and len(i) == len(j):
+                                    for k, l in zip(i, j):
+                                        if k != l:
+                                            if isinstance(k, Name_Range_Node
+                                                          ) and isinstance(
+                                                              l,
+                                                              Name_Range_Node):
+                                                if k.name != l.name:
+                                                    raise NotImplementedError(
+                                                        "Ranges must be the same"
+                                                    )
+                                            else:
+                                                raise NotImplementedError(
+                                                    "Ranges must be the same")
+                                else:
+                                    raise NotImplementedError(
+                                        "Ranges must be identical")
 
                 range_index = 0
                 body = BinOp_Node(lval=current,
