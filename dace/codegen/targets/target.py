@@ -1,14 +1,12 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 import os
 import shutil  # which
-from typing import Dict, List, Tuple
+from typing import List
 import warnings
 
-from dace import dtypes, memlet as mm, data as dt
+from dace import memlet as mm, data as dt
 from dace.sdfg import nodes, SDFG, SDFGState, ScopeSubgraphView, graph as gr
-from dace.sdfg.utils import dfs_topological_sort
-from dace.codegen.instrumentation.provider import InstrumentationProvider
-from dace.registry import extensible_enum, make_registry
+from dace.registry import make_registry
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.codeobject import CodeObject
 
