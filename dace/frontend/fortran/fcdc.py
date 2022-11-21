@@ -1347,7 +1347,9 @@ if __name__ == "__main__":
     #testname = "int_assign"
 
     #testname = "arrayrange1"
-    testname = "cloudscexp2"
+    #testname = "cloudsc2ad"
+    testname = "cloudsc2nl"
+    #testname = "cloudscexp2"
     reader = FortranFileReader(
         os.path.realpath("/mnt/c/Users/Alexwork/Desktop/Git/f2dace/tests/" +
                          testname + ".f90"))
