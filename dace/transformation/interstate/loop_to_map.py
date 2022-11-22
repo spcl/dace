@@ -286,35 +286,9 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
 
         return True
 
-    def _fix_memlet_data(self, state: SDFGState, e: gr.MultiConnectorEdge[memlet.Memlet], dst: bool) -> memlet.Memlet:
-        is_src = e.data._is_data_src
-        # Memlet is already aligned
-        if is_src is None or (is_src and not dst) or (not is_src and dst):
-            return e.data
-
-        # Code->Code memlets always have one data container
-        mpath = state.memlet_path(e)
-        if isinstance(mpath[0].src, nodes.CodeNode) and isinstance(mpath[-1].dst, nodes.CodeNode):
-            return e.data
-
-        # Otherwise, find other data container
-        result = copy.deepcopy(e.data)
-        if dst:
-            node = mpath[-1].dst
-        else:
-            node = mpath[0].src
-
-        if not isinstance(node, nodes.AccessNode):
-            raise ValueError('Malformed memlet path - access node must exist on the other end')
-
-        # Fix memlet fields
-        result.data = node.data
-        result.subset = e.data.other_subset
-        result.other_subset = e.data.subset
-        result._is_data_src = not is_src
-        return result
-
     def apply(self, _, sdfg: sd.SDFG):
+        from dace.sdfg.propagation import align_memlet
+
         # Obtain loop information
         guard: sd.SDFGState = self.loop_guard
         body: sd.SDFGState = self.loop_begin
@@ -523,7 +497,7 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
             if isinstance(n, nodes.AccessNode):
                 for e in body.out_edges(n):
                     # Fix memlet to contain outer data as subset
-                    new_memlet = self._fix_memlet_data(body, e, dst=False)
+                    new_memlet = align_memlet(body, e, dst=False)
 
                     body.remove_edge(e)
                     body.add_edge_pair(entry, e.dst, n, new_memlet, internal_connector=e.dst_conn)
@@ -533,7 +507,7 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
             if isinstance(n, nodes.AccessNode):
                 for e in body.in_edges(n):
                     # Fix memlet to contain outer data as subset
-                    new_memlet = self._fix_memlet_data(body, e, dst=True)
+                    new_memlet = align_memlet(body, e, dst=True)
 
                     body.remove_edge(e)
                     body.add_edge_pair(exit, e.src, n, new_memlet, internal_connector=e.src_conn)
