@@ -10,11 +10,6 @@ from dace.codegen import codeobject, dispatcher, prettycode
 from dace.codegen.targets import target, framecode
 from dace.codegen.common import sym2cpp
 
-from dace.external.rtllib.templates.control import generate_from_config as rtllib_control
-from dace.external.rtllib.templates.package import generate_from_config as rtllib_package
-from dace.external.rtllib.templates.synth import generate_from_config as rtllib_synth
-from dace.external.rtllib.templates.top import generate_from_config as rtllib_top
-
 
 @registry.autoregister_params(name='rtl')
 class RTLCodeGen(target.TargetCodeGenerator):
@@ -566,6 +561,12 @@ model->s_axis_{name}_tdata = {name}[0];'''
 
         if self.hardware_target:
             if self.vendor == 'xilinx':
+                # Avoid importing submodule if not necessary
+                from dace.external.rtllib.templates.control import generate_from_config as rtllib_control
+                from dace.external.rtllib.templates.package import generate_from_config as rtllib_package
+                from dace.external.rtllib.templates.synth import generate_from_config as rtllib_synth
+                from dace.external.rtllib.templates.top import generate_from_config as rtllib_top
+
                 rtllib_config = {
                     "name": unique_name,
                     "buses": {

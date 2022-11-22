@@ -16,10 +16,10 @@ import warnings
 
 @make_properties
 class Enumerator:
-    '''
+    """
     An abstract enumerator interface that is able to enumerate subgraphs 
     based on custom rules and criteria.
-    '''
+    """
     debug = Property(desc="Debug mode", default=False, dtype=bool)
 
     def __init__(self,
@@ -42,9 +42,9 @@ class Enumerator:
         self._max_length = len(self._map_entries)
 
     def iterator(self):
-        '''
+        """
         iterator interface to implement
-        '''
+        """
         # Interface to implement
         raise NotImplementedError
 
@@ -55,11 +55,12 @@ class Enumerator:
         yield from self.iterator()
 
     def calculate_topology(self, subgraph):
-        ''' Calculates topology information of the graph 
+        """
+        Calculates topology information of the graph.
         self._adjacency_list: neighbors dict of outermost scope maps  
         self._source_maps: outermost scope maps that have in_degree 0 in the subgraph / graph 
         self._labels: assigns index according to topological ordering (1) + node ID (2) with priorities (1) and (2)
-        '''
+        """
         sdfg = self._sdfg
         graph = self._graph
 

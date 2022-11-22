@@ -1,0 +1,105 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Generator: Adobe Illustrator 26.4.1, SVG Export Plug-In . SVG Version: 6.00 Build 0)  -->
+<svg version="1.1" baseProfile="basic" id="Layer_1"
+	 xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" x="0px" y="0px" width="251.87px"
+	 height="274.33px" viewBox="0 0 251.87 274.33" xml:space="preserve">
+<rect fill="#DEEBF7" width="251.87" height="274.33"/>
+<polygon fill="none" stroke="#000000" stroke-miterlimit="10" points="15.87,87.76 236.76,87.76 202.48,53.48 50.16,53.48 "/>
+<polygon fill="#FFFFFF" points="15.79,87.75 236.69,87.75 202.4,53.47 50.08,53.47 "/>
+<text transform="matrix(1 0 0 1 100.395 73.8097)" font-family="'Arial'" font-size="12px">[i=0:N / 2]</text>
+<circle fill="none" stroke="#000000" stroke-width="0.4" stroke-miterlimit="10" cx="126.65" cy="53.48" r="5"/>
+<circle opacity="0.46" fill="#C1DFE6" cx="126.65" cy="53.48" r="5"/>
+<g>
+	<circle fill="none" stroke="#000000" stroke-width="0.4" stroke-miterlimit="10" cx="126.5" cy="87.76" r="5"/>
+	<circle opacity="0.46" fill="#C1DFE6" cx="126.5" cy="87.76" r="5"/>
+</g>
+<polygon fill="none" stroke="#000000" stroke-miterlimit="10" points="15.87,187.05 236.76,187.05 202.48,221.33 50.16,221.33 "/>
+<polygon fill="#FFFFFF" points="15.87,187.05 236.76,187.05 202.48,221.33 50.16,221.33 "/>
+<ellipse fill="none" stroke="#000000" stroke-width="3" stroke-miterlimit="10" cx="126.65" cy="13.48" rx="13.33" ry="10"/>
+<ellipse fill="#FFFFFF" cx="126.65" cy="13.48" rx="13.33" ry="10"/>
+<text transform="matrix(1 0 0 1 123.314 17.5311)" font-family="'Arial'" font-size="10px">A</text>
+<ellipse fill="none" stroke="#000000" stroke-width="3" stroke-miterlimit="10" cx="126.5" cy="261.48" rx="13.33" ry="10"/>
+<ellipse fill="#FFFFFF" cx="126.5" cy="261.48" rx="13.33" ry="10"/>
+<text transform="matrix(1 0 0 1 123.1664 265.5311)" font-family="'Arial'" font-size="10px">B</text>
+<polygon fill="#FFFFFF" stroke="#000000" stroke-width="0.5" stroke-miterlimit="10" points="31.36,131.49 42.78,120.06 
+	102.24,120.06 113.67,131.49 113.67,142.92 102.24,154.35 42.78,154.35 31.36,142.92 "/>
+<text transform="matrix(1 0 0 1 57.5091 139.2788)" font-family="'Courier New'" font-size="10px">b = a</text>
+<g>
+	<circle fill="#F0FDFF" cx="72.51" cy="120.06" r="5.25"/>
+	<path d="M72.51,115.06c2.76,0,5,2.24,5,5c0,2.76-2.24,5-5,5c-2.76,0-5-2.24-5-5C67.51,117.3,69.75,115.06,72.51,115.06
+		 M72.51,114.56c-3.03,0-5.5,2.47-5.5,5.5s2.47,5.5,5.5,5.5c3.03,0,5.5-2.47,5.5-5.5S75.54,114.56,72.51,114.56L72.51,114.56z"/>
+</g>
+<g>
+	<circle fill="#F0FDFF" cx="72.51" cy="154.35" r="5.25"/>
+	<path d="M72.51,149.35c2.76,0,5,2.24,5,5c0,2.76-2.24,5-5,5c-2.76,0-5-2.24-5-5C67.51,151.59,69.75,149.35,72.51,149.35
+		 M72.51,148.85c-3.03,0-5.5,2.47-5.5,5.5s2.47,5.5,5.5,5.5c3.03,0,5.5-2.47,5.5-5.5S75.54,148.85,72.51,148.85L72.51,148.85z"/>
+</g>
+<g>
+	<path fill="none" stroke="#006633" stroke-width="1" stroke-miterlimit="10" d="M126.65,24.89c0,0-0.24,8.08-0.11,18.2"/>
+	<g>
+		<polygon fill="#006633" points="122.86,42.03 126.65,48.48 130.34,41.97 		"/>
+	</g>
+</g>
+<g>
+	<path fill="none" stroke="#FFA500" stroke-width="1" stroke-miterlimit="10" d="M126.65,226.43c0,0-0.24,8.08-0.11,18.2"/>
+	<g>
+		<polygon fill="#FFA500" points="122.86,243.57 126.65,250.02 130.34,243.51 		"/>
+	</g>
+</g>
+<g>
+	<path fill="none" stroke="#006633" stroke-width="1" stroke-miterlimit="10" d="M126.5,92.76c0,0-28.05,6.28-46.29,19.84"/>
+	<g>
+		<polygon fill="#006633" points="78.79,109.04 76.04,116 83.44,114.9 		"/>
+	</g>
+</g>
+<text transform="matrix(1 0 0 1 70.711 121.6248)" font-family="'Courier New'" font-size="6px">a</text>
+<text transform="matrix(1 0 0 1 70.7111 155.6516)" font-family="'Courier New'" font-size="6px">b</text>
+<polygon fill="#FFFFFF" stroke="#000000" stroke-width="0.5" stroke-miterlimit="10" points="140.13,131.49 151.56,120.06 
+	211.01,120.06 222.44,131.49 222.44,142.92 211.01,154.35 151.56,154.35 140.13,142.92 "/>
+<text transform="matrix(1 0 0 1 163.285 139.2788)" font-family="'Courier New'" font-size="10px">b = -a</text>
+<g>
+	<circle fill="#F0FDFF" cx="181.29" cy="120.06" r="5.25"/>
+	<path d="M181.29,115.06c2.76,0,5,2.24,5,5c0,2.76-2.24,5-5,5s-5-2.24-5-5C176.29,117.3,178.53,115.06,181.29,115.06 M181.29,114.56
+		c-3.03,0-5.5,2.47-5.5,5.5s2.47,5.5,5.5,5.5s5.5-2.47,5.5-5.5S184.32,114.56,181.29,114.56L181.29,114.56z"/>
+</g>
+<g>
+	<circle fill="#F0FDFF" cx="181.29" cy="154.35" r="5.25"/>
+	<path d="M181.29,149.35c2.76,0,5,2.24,5,5c0,2.76-2.24,5-5,5s-5-2.24-5-5C176.29,151.59,178.53,149.35,181.29,149.35
+		 M181.29,148.85c-3.03,0-5.5,2.47-5.5,5.5s2.47,5.5,5.5,5.5s5.5-2.47,5.5-5.5S184.32,148.85,181.29,148.85L181.29,148.85z"/>
+</g>
+<text transform="matrix(1 0 0 1 179.4874 121.6248)" font-family="'Courier New'" font-size="6px">a</text>
+<text transform="matrix(1 0 0 1 179.4875 155.6516)" font-family="'Courier New'" font-size="6px">b</text>
+<text transform="matrix(1 0 0 1 2.1625 106.3285)" fill="#006633" font-family="'Arial'" font-weight="bold" font-size="12px">Memlet Path</text>
+<text transform="matrix(1 0 0 1 3.0623 177.0807)"><tspan x="0" y="0" fill="#FFA500" font-family="'Arial'" font-weight="bold" font-size="12px">Memlet </tspan><tspan x="44.68" y="0" fill="#FFA500" font-family="'Arial'" font-weight="bold" font-size="12px">T</tspan><tspan x="51.35" y="0" fill="#FFA500" font-family="'Arial'" font-weight="bold" font-size="12px">ree</tspan></text>
+<text transform="matrix(1 0 0 1 37.6728 245.059)" fill="#FFA500" font-family="'Arial'" font-size="10px">Root</text>
+<g>
+	<circle fill="none" stroke="#000000" stroke-width="0.4" stroke-miterlimit="10" cx="126.5" cy="221.43" r="5"/>
+	<circle opacity="0.46" fill="#C1DFE6" cx="126.5" cy="221.43" r="5"/>
+</g>
+<g>
+	<circle fill="none" stroke="#000000" stroke-width="0.4" stroke-miterlimit="10" cx="126.5" cy="187.05" r="5"/>
+	<circle opacity="0.46" fill="#C1DFE6" cx="126.5" cy="187.05" r="5"/>
+</g>
+<g>
+	<path fill="none" stroke="#000000" stroke-width="1" stroke-miterlimit="10" d="M126.5,92.76c0,0,32.83,8.7,47.07,19.79"/>
+	<g>
+		<polygon points="170.19,114.67 177.5,116.25 175.21,109.13 		"/>
+	</g>
+</g>
+<g>
+	<path fill="none" stroke="#FFA500" stroke-width="1" stroke-miterlimit="10" d="M116.21,182.86c-12.7-2.55-43.85-10.13-43.7-23.01"
+		/>
+	<g>
+		<polygon fill="#FFA500" points="115.85,178.94 121.5,183.83 114.44,186.29 		"/>
+	</g>
+</g>
+<g>
+	<path fill="none" stroke="#FFA500" stroke-width="1" stroke-miterlimit="10" d="M135.95,182.65c13-3.09,45.62-11.94,45.32-22.77"/>
+	<g>
+		<polygon fill="#FFA500" points="137.86,186.02 130.7,183.83 136.17,178.73 		"/>
+	</g>
+</g>
+<text transform="matrix(1 0 0 1 100.395 209.8097)" font-family="'Arial'" font-size="12px">[i=0:N / 2]</text>
+<line fill="none" stroke="#FFA500" stroke-width="0.5" stroke-miterlimit="10" x1="68.92" y1="240.98" x2="116.5" y2="235.68"/>
+<text transform="matrix(1 0 0 1 206.7763 85.1111)"><tspan x="0" y="0" font-family="'Arial'" font-weight="bold" font-size="6px">OMP</tspan></text>
+</svg>

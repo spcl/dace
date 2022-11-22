@@ -45,6 +45,7 @@ def test_dse_unconditional():
 
 
 def test_dde_simple():
+
     @dace.program
     def dde_tester(a: dace.float64[20], b: dace.float64[20]):
         c = a + b
@@ -59,6 +60,7 @@ def test_dde_simple():
 
 
 def test_dde_libnode():
+
     @dace.program
     def dde_tester(a: dace.float64[20], b: dace.float64[20]):
         c = a @ b
@@ -102,6 +104,7 @@ def test_dde_access_node_in_scope(second_tasklet):
 
 def test_dde_connectors():
     """ Tests removal of connectors on tasklets and nested SDFGs. """
+
     @dace.program
     def dde_conntest(a: dace.float64[20], b: dace.float64[20]):
         c = dace.ndarray([20], dace.float64)
@@ -122,13 +125,13 @@ def test_dde_connectors():
 
 
 def test_dde_scope_reconnect():
-    '''
+    """
     Corner case:
     map {
         tasklet(callback()) -> tasklet(do nothing)
     }
     expected map to stay connected
-    '''
+    """
     sdfg = dace.SDFG('dde_scope_tester')
     sdfg.add_symbol('cb', dace.callback(dace.float64))
     sdfg.add_scalar('s', dace.float64, transient=True)
@@ -145,6 +148,44 @@ def test_dde_scope_reconnect():
 
     Pipeline([DeadDataflowElimination()]).apply_pass(sdfg, {})
     assert set(state.nodes()) == {me, t1, mx}
+    sdfg.validate()
+
+
+@pytest.mark.parametrize('libnode', (False, True))
+def test_dde_inout(libnode):
+    """ Tests nested SDFG with the same array as input and output. """
+    sdfg = dace.SDFG('dde_inout')
+    sdfg.add_array('a', [20], dace.float64)
+    sdfg.add_transient('b', [20], dace.float64)
+    state = sdfg.add_state()
+
+    if not libnode:
+
+        @dace.program
+        def nested(a: dace.float64[20], b: dace.float64[20]):
+            for i in range(1, 20):
+                b[i] = a[i - 1] + 1
+            for i in range(19):
+                a[i] = b[i + 1] + 1
+
+        nsdfg = nested.to_sdfg(simplify=False)
+        node = state.add_nested_sdfg(nsdfg, None, {'b'}, {'a', 'b'})
+        outconn = 'b'
+    else:
+        node = dace.nodes.LibraryNode('tester')  # Library node without side effects
+        node.add_in_connector('b')
+        node.add_out_connector('a')
+        node.add_out_connector('bout')
+        state.add_node(node)
+        outconn = 'bout'  # Library node has different output connector name
+
+    state.add_edge(node, 'a', state.add_write('a'), None, dace.Memlet('a'))
+    state.add_edge(state.add_read('b'), None, node, 'b', dace.Memlet('b'))
+    state.add_edge(node, outconn, state.add_write('b'), None, dace.Memlet('b'))
+
+    assert sorted([n.data for n in state.data_nodes()]) == ['a', 'b', 'b']
+    Pipeline([DeadDataflowElimination()]).apply_pass(sdfg, {})
+    assert sorted([n.data for n in state.data_nodes()]) == ['a', 'b', 'b']
     sdfg.validate()
 
 
@@ -176,6 +217,7 @@ def test_dce():
 
 
 def test_dce_callback():
+
     def dace_inhibitor(f):
         return f
 
@@ -220,6 +262,8 @@ if __name__ == '__main__':
     test_dde_access_node_in_scope(True)
     test_dde_connectors()
     test_dde_scope_reconnect()
+    test_dde_inout(False)
+    test_dde_inout(True)
     test_dce()
     test_dce_callback()
     test_dce_callback_manual()

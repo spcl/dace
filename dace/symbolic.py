@@ -338,6 +338,7 @@ def evaluate(expr: Union[sympy.Basic, int, float],
     """
     Evaluates an expression to a constant based on a mapping from symbols
     to values.
+
     :param expr: The expression to evaluate.
     :param symbols: A mapping of symbols to their values.
     :return: A constant value based on ``expr`` and ``symbols``.
@@ -430,6 +431,7 @@ def resolve_symbol_to_constant(symb, start_sdfg):
     """
     Tries to resolve a symbol to constant, by looking up into SDFG's constants,
     following nested SDFGs hierarchy if necessary.
+
     :param symb: symbol to resolve to constant
     :param start_sdfg: starting SDFG
     :return: the constant value if the symbol is resolved, None otherwise
@@ -581,6 +583,13 @@ class int_floor(sympy.Function):
 
     @classmethod
     def eval(cls, x, y):
+        """
+        Evaluates integer floor division (``floor(x / y)``).
+
+        :param x: Numerator.
+        :param y: Denominator.
+        :return: Return value (literal or symbolic).
+        """
         if x.is_Number and y.is_Number:
             return x // y
 
@@ -592,6 +601,13 @@ class int_ceil(sympy.Function):
 
     @classmethod
     def eval(cls, x, y):
+        """
+        Evaluates integer ceiling division (``ceil(x / y)``).
+
+        :param x: Numerator.
+        :param y: Denominator.
+        :return: Return value (literal or symbolic).
+        """
         if x.is_Number and y.is_Number:
             return sympy.ceiling(x / y)
 
@@ -603,6 +619,13 @@ class OR(sympy.Function):
 
     @classmethod
     def eval(cls, x, y):
+        """
+        Evaluates logical or.
+
+        :param x: First operand.
+        :param y: Second operand.
+        :return: Return value (literal or symbolic).
+        """
         if x.is_Boolean and y.is_Boolean:
             return x or y
 
@@ -614,6 +637,13 @@ class AND(sympy.Function):
 
     @classmethod
     def eval(cls, x, y):
+        """
+        Evaluates logical and.
+
+        :param x: First operand.
+        :param y: Second operand.
+        :return: Return value (literal or symbolic).
+        """
         if x.is_Boolean and y.is_Boolean:
             return x and y
 
@@ -649,6 +679,12 @@ class ROUND(sympy.Function):
 
     @classmethod
     def eval(cls, x):
+        """
+        Evaluates rounding to integer.
+
+        :param x: Value to round.
+        :return: Return value (literal or symbolic).
+        """
         if x.is_Number:
             return round(x)
 
@@ -782,6 +818,7 @@ def sympy_divide_fix(expr):
 def simplify_ext(expr):
     """
     An extended version of simplification with expression fixes for sympy.
+
     :param expr: A sympy expression.
     :return: Simplified version of the expression.
     """
@@ -1114,6 +1151,7 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
 def symstr(sym, arrayexprs: Optional[Set[str]] = None) -> str:
     """ 
     Convert a symbolic expression to a C++ compilable expression. 
+
     :param sym: Symbolic expression to convert.
     :param arrayexprs: Set of names of arrays, used to convert SymPy 
                        user-functions back to array expressions.
@@ -1148,6 +1186,7 @@ def safe_replace(mapping: Dict[Union[SymbolicType, str], Union[SymbolicType, str
     two-step replacement. For example, the mapping ``{M: N, N: M}`` would be
     translated to replacing ``{N, M} -> __dacesym_{N, M}`` followed by
     ``__dacesym{N, M} -> {M, N}``.
+
     :param mapping: The replacement dictionary.
     :param replace_callback: A callable function that receives a replacement
                              dictionary and performs the replacement (can be 
