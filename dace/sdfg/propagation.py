@@ -1272,6 +1272,14 @@ def propagate_memlet(dfg_state,
     if arr is None:
         if memlet.data not in sdfg.arrays:
             raise KeyError('Data descriptor (Array, Stream) "%s" not defined ' 'in SDFG.' % memlet.data)
+        
+        # If the data container is not specified on the memlet, use other data
+        if memlet._is_data_src is not None:
+            if use_dst and memlet._is_data_src:
+                raise ValueError('Cannot propagate memlet - source data container given but destination is necessary')
+            elif not use_dst and not memlet._is_data_src:
+                raise ValueError('Cannot propagate memlet - destination data container given but source is necessary')
+        
         arr = sdfg.arrays[memlet.data]
 
     # Propagate subset
