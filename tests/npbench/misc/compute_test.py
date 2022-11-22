@@ -80,7 +80,7 @@ def test_gpu():
     run_compute(dace.dtypes.DeviceType.GPU)
 
 
-@pytest.mark.skip(reason="Intel FPGA missing long long")
+@pytest.mark.skip(reason="Compiler error")
 @fpga_test(assert_ii_1=False)
 def test_fpga():
     run_compute(dace.dtypes.DeviceType.FPGA)
