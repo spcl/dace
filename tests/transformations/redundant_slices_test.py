@@ -8,6 +8,7 @@ import dace
 from dace import data, nodes
 from dace.transformation.dataflow import RedundantReadSlice, RedundantWriteSlice, RemoveSliceView
 from dace.transformation.interstate import InlineMultistateSDFG, InlineSDFG, StateFusion
+from dace.sdfg import utils as sdutil
 
 
 def _count_views(sdfg: dace.SDFG) -> int:
@@ -100,7 +101,7 @@ def test_view_slice_detect_simple(with_subset):
     else:
         subset = None
 
-    mapping, unsqueezed, squeezed = RemoveSliceView.get_matching_dimensions(vdesc, adesc, subset)
+    mapping, unsqueezed, squeezed = sdutil.map_view_to_array(vdesc, adesc, subset)
     assert mapping == {0: 0}
     assert len(unsqueezed) == 0
     assert tuple(squeezed) == (1, )
@@ -121,7 +122,7 @@ def test_view_slice_detect_complex(with_subset):
     else:
         subset = None
 
-    mapping, unsqueezed, squeezed = RemoveSliceView.get_matching_dimensions(vdesc, adesc, subset)
+    mapping, unsqueezed, squeezed = sdutil.map_view_to_array(vdesc, adesc, subset)
     assert mapping == {0: 0, 2: 1, 3: 2, 4: 4}
     assert tuple(unsqueezed) == (1, 5)
     assert tuple(squeezed) == (3, )
@@ -129,23 +130,22 @@ def test_view_slice_detect_complex(with_subset):
 
 def test_view_slice_detect_nonslice():
     # Constant values
-    assert RemoveSliceView.get_matching_dimensions(dace.float64[60], dace.float64[30, 2],
-                                                   dace.subsets.Range([(0, 29, 1), (0, 0, 1)])) is None
+    assert sdutil.map_view_to_array(dace.float64[60], dace.float64[30, 2], dace.subsets.Range([(0, 29, 1),
+                                                                                               (0, 0, 1)])) is None
 
     # Symbolic values
     M, N, K = (dace.symbol(s) for s in 'MNK')
-    assert RemoveSliceView.get_matching_dimensions(dace.float64[M * N], dace.float64[M, N],
-                                                   dace.subsets.Range([(0, M - 1, 1), (0, N - 1, 1)])) is None
-    assert RemoveSliceView.get_matching_dimensions(dace.float64[K], dace.float64[M, N],
-                                                   dace.subsets.Range([(0, M - 1, 1), (0, N - 1, 1)])) is None
+    assert sdutil.map_view_to_array(dace.float64[M * N], dace.float64[M, N],
+                                    dace.subsets.Range([(0, M - 1, 1), (0, N - 1, 1)])) is None
+    assert sdutil.map_view_to_array(dace.float64[K], dace.float64[M, N],
+                                    dace.subsets.Range([(0, M - 1, 1), (0, N - 1, 1)])) is None
 
     # A[2, 0:K] -> V[0:K]
-    mapping, unsq, sq = RemoveSliceView.get_matching_dimensions(dace.float64[K], dace.float64[M, N],
-                                                   dace.subsets.Range([(2, 2, 1), (0, K - 1, 1)]))
+    mapping, unsq, sq = sdutil.map_view_to_array(dace.float64[K], dace.float64[M, N],
+                                                 dace.subsets.Range([(2, 2, 1), (0, K - 1, 1)]))
     assert mapping == {0: 1}
     assert len(unsq) == 0
-    assert tuple(sq) == (0,)
-
+    assert tuple(sq) == (0, )
 
 
 if __name__ == '__main__':
