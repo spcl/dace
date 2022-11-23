@@ -1228,7 +1228,7 @@ def align_memlet(state, e: gr.MultiConnectorEdge[Memlet], dst: bool) -> Memlet:
 
     # Data<->Code memlets always have one data container
     mpath = state.memlet_path(e)
-    if isinstance(mpath[0].src, nodes.CodeNode) or isinstance(mpath[-1].dst, nodes.CodeNode):
+    if not isinstance(mpath[0].src, nodes.AccessNode) or not isinstance(mpath[-1].dst, nodes.AccessNode):
         return e.data
 
     # Otherwise, find other data container
@@ -1237,9 +1237,6 @@ def align_memlet(state, e: gr.MultiConnectorEdge[Memlet], dst: bool) -> Memlet:
         node = mpath[-1].dst
     else:
         node = mpath[0].src
-
-    if not isinstance(node, nodes.AccessNode):
-        raise ValueError('Malformed memlet path - access node must exist on the other end')
 
     # Fix memlet fields
     result.data = node.data
