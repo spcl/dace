@@ -196,8 +196,8 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
                         # If the same container is both read and written, only match if
                         # it read and written at locations that will not create data races
                         src_subset = e.data.get_src_subset(e, state)
-                        if not self.test_read_memlet(sdfg, itersym, itervar, start, end, step, write_memlets, e.data,
-                                                     src_subset):
+                        if not self.test_read_memlet(sdfg, state, e, itersym, itervar, start, end, step, write_memlets,
+                                                     e.data, src_subset):
                             return False
 
         # Consider reads in inter-state edges (could be in assignments or in condition)
@@ -207,7 +207,7 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
                 isread_set |= set(e.data.get_read_memlets(sdfg.arrays))
         for mmlt in isread_set:
             if mmlt.data in write_memlets:
-                if not self.test_read_memlet(sdfg, itersym, itervar, start, end, step, write_memlets, mmlt,
+                if not self.test_read_memlet(sdfg, None, None, itersym, itervar, start, end, step, write_memlets, mmlt,
                                              mmlt.subset):
                     return False
 
@@ -241,11 +241,12 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
 
         return True
 
-    def test_read_memlet(self, sdfg: SDFG, itersym: symbolic.SymbolicType, itervar: str, start: symbolic.SymbolicType,
+    def test_read_memlet(self, sdfg: SDFG, state: SDFGState, edge: gr.MultiConnectorEdge[memlet.Memlet],
+                         itersym: symbolic.SymbolicType, itervar: str, start: symbolic.SymbolicType,
                          end: symbolic.SymbolicType, step: symbolic.SymbolicType,
                          write_memlets: Dict[str, List[memlet.Memlet]], mmlt: memlet.Memlet, src_subset: subsets.Range):
         # Import as necessary
-        from dace.sdfg.propagation import propagate_subset
+        from dace.sdfg.propagation import propagate_subset, align_memlet
 
         a = sp.Wild('a', exclude=[itersym])
         b = sp.Wild('b', exclude=[itersym])
@@ -256,6 +257,11 @@ class LoopToMap(DetectLoop, xf.MultiStateTransformation):
             return False
         if not _check_range(src_subset, a, itersym, b, step):
             return False
+
+        # Always use the source data container for the memlet test
+        if state is not None and edge is not None:
+            mmlt = align_memlet(state, edge, dst=False)
+            data = mmlt.data
 
         pread = propagate_subset([mmlt], sdfg.arrays[data], [itervar], subsets.Range([(start, end, step)]))
         for candidate in write_memlets[data]:
