@@ -1202,13 +1202,13 @@ def _propagate_node(dfg_state, node):
         external_edges = [e for e in dfg_state.in_edges(node) if e.dst_conn and e.dst_conn.startswith('IN_')]
         geticonn = lambda e: e.src_conn[4:]
         geteconn = lambda e: e.dst_conn[3:]
-        use_dst = True
+        use_dst = False
     else:
         internal_edges = [e for e in dfg_state.in_edges(node) if e.dst_conn and e.dst_conn.startswith('IN_')]
         external_edges = [e for e in dfg_state.out_edges(node) if e.src_conn and e.src_conn.startswith('OUT_')]
         geticonn = lambda e: e.dst_conn[3:]
         geteconn = lambda e: e.src_conn[4:]
-        use_dst = False
+        use_dst = True
 
     for edge in external_edges:
         if edge.data.is_empty():
