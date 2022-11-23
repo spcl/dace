@@ -1468,9 +1468,20 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
 
     def visit_BinOp(self, node):
         if node.op.__class__.__name__ == 'Pow':
+            #TODO: make a difference between integer and double exponent
+            #isthistype = node.right.type_comment
+
+            infered_type = infer_expr_type(unparse(node.right), self.dtypes)
+            print(infered_type)
+
             # Special case for integer power: do not generate dace namespaces (dace::math) but just call pow
             if not (isinstance(node.right,
                                (ast.Num, ast.Constant)) and int(node.right.n) == node.right.n and node.right.n >= 0):
+                
+                # if (int(node.right.n) == node.rigth.n) : #no attribute right.n
+                #     left_value = cppunparse.cppunparse(self.visit(node.left), expr_semicolon=False)
+                #     updated = ast.Name(id="pwon({},{})".format(left_value, right_value))
+
                 left_value = cppunparse.cppunparse(self.visit(node.left), expr_semicolon=False)
                 right_value = cppunparse.cppunparse(self.visit(node.right), expr_semicolon=False)
                 updated = ast.Name(id="pow({},{})".format(left_value, right_value))
