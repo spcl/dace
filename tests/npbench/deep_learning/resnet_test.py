@@ -207,6 +207,7 @@ def test_cpu():
     run_resnet(dace.dtypes.DeviceType.CPU)
 
 
+@pytest.mark.skip(reason="Dynamic memory allocation")
 @pytest.mark.gpu
 def test_gpu():
     run_resnet(dace.dtypes.DeviceType.GPU)
