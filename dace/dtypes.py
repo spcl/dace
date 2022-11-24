@@ -178,6 +178,13 @@ class TilingType(aenum.AutoNumberEnum):
     CeilRange = ()
     NumberOfTiles = ()
 
+@undefined_safe_enum
+@extensible_enum
+class DataFormatType(aenum.AutoNumberEnum):
+    """ Available map schedule types in the SDFG. """
+    Dense = ()
+    CSR = ()
+
 
 # Maps from ScheduleType to default StorageType
 SCOPEDEFAULT_STORAGE = {

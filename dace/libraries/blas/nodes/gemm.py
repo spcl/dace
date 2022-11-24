@@ -1,10 +1,12 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+from __future__ import annotations
+
 from copy import deepcopy as dc
 from typing import Any, Dict, Optional
-from dace import dtypes, memlet as mm, properties, data as dt
+from dace import dtypes, memlet as mm, properties, data as dt, propagate_memlets_sdfg
 from dace.symbolic import symstr
 import dace.library
-from dace import SDFG, SDFGState
+from dace import SDFG, SDFGState, symbolic
 from dace.frontend.common import op_repository as oprepo
 import dace.sdfg.nodes
 from dace.transformation.transformation import ExpandTransformation
@@ -45,7 +47,7 @@ class ExpandGemmPure(ExpandTransformation):
     environments = []
 
     @staticmethod
-    def make_sdfg(node, parent_state, parent_sdfg):
+    def make_sdfg_dense(node, parent_state, parent_sdfg):
         sdfg = dace.SDFG(node.label + "_sdfg")
 
         ((edge_a, outer_array_a, shape_a, strides_a), (edge_b, outer_array_b, shape_b, strides_b),
@@ -141,10 +143,229 @@ class ExpandGemmPure(ExpandTransformation):
         return sdfg
 
     @staticmethod
-    def expansion(node, state, sdfg):
-        node.validate(sdfg, state)
-        return ExpandGemmPure.make_sdfg(node, state, sdfg)
+    def make_sdfg_csr(node: Gemm, parent_state: SDFGState, parent_sdfg: SDFG):
+        sdfg = dace.SDFG(node.label + "_sdfg")
 
+        ((edge_a, outer_array_a, shape_a, strides_a), (edge_b, outer_array_b, shape_b, strides_b),
+         cdata) = _get_matmul_operands(node, parent_state, parent_sdfg)
+        name_a = edge_a.data.data
+
+        # Can only convert array safely to CSR if certain conditions hold
+        if outer_array_a.transient:
+           raise ValueError(f"{outer_array_a} must be non-transient") 
+        if parent_state.in_degree(edge_a.src) > 0:
+            raise ValueError(f"{edge_a.src} is not a source node")
+        if node.transA or node.transB:
+            raise NotImplementedError
+
+        # Replace A by CSR-A
+        parent_sdfg.add_symbol(name_a + "_nnz", dtypes.int64)
+        a_nnz = symbolic.symbol(name_a + "_nnz", dtype=dtypes.int64)
+        a_val, a_val_desc = parent_sdfg.add_array(name_a + "_val", shape=(a_nnz,), dtype=outer_array_a.dtype, transient=False, storage=outer_array_a.storage)
+        a_col, a_col_desc = parent_sdfg.add_array(name_a + "_col", shape=(a_nnz,), dtype=dtypes.int32, transient=False, storage=outer_array_a.storage)
+        a_row, a_row_desc = parent_sdfg.add_array(name_a + "_row", shape=(shape_a[0] + 1,), dtype=dtypes.int32, transient=False, storage=outer_array_a.storage)
+
+        parent_sdfg.arg_names.append(name_a + "_val")
+        parent_sdfg.arg_names.append(name_a + "_col")
+        parent_sdfg.arg_names.append(name_a + "_row")
+
+        a_val_node = parent_state.add_access(a_val)
+        a_row_node = parent_state.add_access(a_row)
+        a_col_node = parent_state.add_access(a_col)
+        node.add_in_connector("_a_val")
+        node.add_in_connector("_a_col")
+        node.add_in_connector("_a_row")
+        parent_state.add_edge(a_val_node, None, node, "_a_val", mm.Memlet.from_array(a_val, a_val_desc))
+        parent_state.add_edge(a_row_node, None, node, "_a_row", mm.Memlet.from_array(a_row, a_row_desc))
+        parent_state.add_edge(a_col_node, None, node, "_a_col", mm.Memlet.from_array(a_col, a_col_desc))
+        parent_state.remove_edge_and_connectors(edge_a)
+        parent_state.remove_node(edge_a.src)        
+
+        # Remove A if not needed anymore
+        remove_A = True
+        for nsdfg in parent_sdfg.all_sdfgs_recursive():
+            for nstate in nsdfg.states():
+                for dnode in nstate.data_nodes():
+                    if dnode.data == name_a:
+                        remove_A = False
+                        break
+
+        if remove_A:
+            parent_sdfg.remove_data(name_a)
+            parent_sdfg.arg_names.remove(name_a)
+
+        dtype_a = outer_array_a.dtype.type
+        dtype_b = outer_array_b.dtype.type
+        dtype_c = dace.DTYPE_TO_TYPECLASS[np.result_type(dtype_a, dtype_b).type]
+
+        trans_shape_a = shape_a
+        trans_shape_b = shape_b
+        if (len(trans_shape_a) != 2 or len(trans_shape_b) != 2 or trans_shape_a[1] != trans_shape_b[0]):
+            raise SyntaxError("Matrix sizes must match")
+        M, K, N = trans_shape_a[0], trans_shape_a[1], trans_shape_b[1]
+        shape_c = (M, N)
+
+        _, array_a_val = sdfg.add_array("_a_val", a_val_desc.shape, a_val_desc.dtype, storage=a_val_desc.storage)
+        _, array_a_col = sdfg.add_array("_a_col", a_col_desc.shape, a_col_desc.dtype, storage=a_col_desc.storage)
+        _, array_a_row = sdfg.add_array("_a_row", a_row_desc.shape, a_row_desc.dtype, storage=a_row_desc.storage)
+        _, array_b = sdfg.add_array("_b", shape_b, dtype_b, strides=strides_b, storage=outer_array_b.storage)
+        _, array_c = sdfg.add_array("_c", shape_c, dtype_c, strides=cdata[-1], storage=cdata[1].storage)
+
+        if node.beta == 1:
+            state: SDFGState = sdfg.add_state(node.label + "_state")
+        else:
+            init_state = sdfg.add_state(node.label + "_initstate")
+            state: SDFGState = sdfg.add_state_after(init_state, node.label + "_state")
+
+        if node.beta != 0:
+            sdfg.add_array("_cin", shape_c, dtype_c, strides=cdata[-1], storage=cdata[1].storage)
+
+        mul_out, mul_out_array = "_c", array_c
+        output_nodes = None
+
+        # Initialization / beta map
+        if node.beta == 0:
+            init_state.add_mapped_tasklet(
+                'gemm_init', {'_o%d' % i: '0:%s' % symstr(d)
+                              for i, d in enumerate(shape_c)}, {},
+                'out = 0', {'out': dace.Memlet.simple(mul_out, ','.join(['_o%d' % i for i in range(len(shape_c))]))},
+                external_edges=True)
+        elif node.beta == 1:
+            # Do nothing for initialization, only update the values
+            pass
+        else:
+            # Beta map
+            add_program = "__y = ({} * __c)".format(_cast_to_dtype_str(node.beta, dtype_a))
+
+            # manually broadcasting C to [M, N]
+            if list(shape_c) == [M, N]:
+                memlet_idx = '__i0, __i1'
+            elif list(shape_c) == [1, N]:
+                memlet_idx = '0, __i1'
+            elif list(shape_c) == [M, 1]:
+                memlet_idx = '__i0, 0'
+            elif list(shape_c) == [N]:
+                memlet_idx = '__i1'
+            else:
+                raise ValueError("Could not broadcast input _c to ({}, {})".format(M, N))
+
+            init_state.add_mapped_tasklet("gemm_init", {"__i%d" % i: "0:%s" % s
+                                                        for i, s in enumerate([M, N])}, {
+                                                            "__c": dace.Memlet.simple("_cin", memlet_idx),
+                                                        },
+                                          add_program, {"__y": dace.Memlet.simple("_c", "__i0, __i1")},
+                                          external_edges=True)
+
+        # Multiplication map
+        state_a_val_node = state.add_access("_a_val")
+        state_a_col_node = state.add_access("_a_col")
+        state_a_row_node = state.add_access("_a_row")
+        state_b_node = state.add_access("_b")
+        state_c_node = state.add_access("_c")
+
+        outer_map_entry, outer_map_exit = state.add_map("spmm_1", dict(i='0:' + str(outer_array_a.shape[0])))
+        outer_map_entry.add_in_connector("IN__a_val")
+        outer_map_entry.add_in_connector("IN__a_col")
+        outer_map_entry.add_in_connector("IN__a_row")
+        outer_map_entry.add_in_connector("IN__b")
+        outer_map_exit.add_out_connector("OUT__c")
+
+        state.add_edge(state_a_val_node, None, outer_map_entry, "IN__a_val", mm.Memlet.from_array("_a_val", array_a_val))
+        state.add_edge(state_a_col_node, None, outer_map_entry, "IN__a_col", mm.Memlet.from_array("_a_col", array_a_col))
+        state.add_edge(state_a_row_node, None, outer_map_entry, "IN__a_row", mm.Memlet.from_array("_a_row", array_a_row))
+        state.add_edge(state_b_node, None, outer_map_entry, "IN__b", mm.Memlet.from_array("_b", array_b))
+        state.add_edge(outer_map_exit, "OUT__c", state_c_node, None, mm.Memlet.from_array("_c", array_c))
+
+        outer_map_entry.add_out_connector("OUT__a_val")
+        outer_map_entry.add_out_connector("OUT__a_col")
+        outer_map_entry.add_out_connector("OUT__a_row")
+        outer_map_entry.add_out_connector("OUT__b")
+
+        inner_map_entry, inner_map_exit = state.add_map("spmm_2", dict(j="__map_19_b0:__map_19_e1"))
+
+        inner_map_entry.add_in_connector("__map_19_b0")
+        inner_map_entry.add_in_connector("__map_19_e1")
+        state.add_edge(outer_map_entry, "OUT__a_row", inner_map_entry, "__map_19_b0", mm.Memlet("_a_row[i]", data="_a_row"))
+        state.add_edge(outer_map_entry, "OUT__a_row", inner_map_entry, "__map_19_e1", mm.Memlet("_a_row[i + 1]", data="_a_row"))
+
+        inner_map_entry.add_in_connector("IN_tmp_a_val")
+        state.add_edge(outer_map_entry, "OUT__a_val", inner_map_entry, "IN_tmp_a_val", mm.Memlet.from_array("_a_val", array_a_val))
+
+        inner_map_entry.add_in_connector("IN_tmp_a_col")
+        state.add_edge(outer_map_entry, "OUT__a_col", inner_map_entry, "IN_tmp_a_col", mm.Memlet.from_array("_a_col", array_a_col))
+
+        inner_map_entry.add_in_connector("IN_tmp_b")
+        state.add_edge(outer_map_entry, "OUT__b", inner_map_entry, "IN_tmp_b", mm.Memlet.from_array("_b", array_b))        
+
+        inner_map_exit.add_out_connector("OUT__c_1")
+        outer_map_exit.add_in_connector("IN__c")
+        state.add_edge(inner_map_exit, "OUT__c_1", outer_map_exit, "IN__c", mm.Memlet(expr=f"_c[i, 0:{str(array_c.shape[1])}]"))
+        
+        inner_map_entry.add_out_connector("OUT_tmp_a_val")
+        inner_map_entry.add_out_connector("OUT_tmp_a_col")
+        inner_map_entry.add_out_connector("OUT_tmp_b")
+
+        k_map_entry, k_map_exit = state.add_map("spmm_3", dict(k=f"0:{str(array_b.shape[1])}"))
+        k_map_entry.add_in_connector("IN_tmp_a_val_1")
+        state.add_edge(inner_map_entry, "OUT_tmp_a_val", k_map_entry, "IN_tmp_a_val_1", mm.Memlet.simple("_a_val", "j"))
+
+        k_map_entry.add_in_connector("IN_tmp_a_col_1")
+        state.add_edge(inner_map_entry, "OUT_tmp_a_col", k_map_entry, "IN_tmp_a_col_1", mm.Memlet.simple("_a_col", "j"))
+
+        k_map_entry.add_in_connector("IN_tmp_b_1")
+        state.add_edge(inner_map_entry, "OUT_tmp_b", k_map_entry, "IN_tmp_b_1", mm.Memlet.from_array("_b", array_b))        
+
+        k_map_exit.add_out_connector("OUT__c_1")
+        inner_map_exit.add_in_connector("IN__c_1")
+        state.add_edge(k_map_exit, "OUT__c_1", inner_map_exit, "IN__c_1", mm.Memlet(expr=f"_c[i, 0:{str(array_c.shape[1])}]"))
+        
+        k_map_entry.add_out_connector("OUT_tmp_a_col_1")
+        k_map_entry.add_out_connector("OUT_tmp_a_val_1")
+        k_map_entry.add_out_connector("OUT_tmp_b_1")
+
+        tasklet_ind = state.add_tasklet("Indirection", inputs={
+                "__ind_b": None,
+                "index_a_col_0": None
+            },
+            outputs={'lookup': None},
+            code="lookup = __ind_b[index_a_col_0]"
+        )
+        sdfg.add_scalar("_b_value", dtype=array_b.dtype, transient=True)
+        state.add_edge(k_map_entry, "OUT_tmp_a_col_1", tasklet_ind, "index_a_col_0", mm.Memlet.simple("_a_col", "j"))
+        state.add_edge(k_map_entry, "OUT_tmp_b_1", tasklet_ind, "__ind_b", mm.Memlet.simple("_b", f"0:{array_b.shape[0]}, k"))
+        
+        tasklet_mult = state.add_tasklet(
+            "spmm",
+            {
+                "__a": None,
+                "__b": None
+            },
+            {
+                "__o": None
+            },
+            code="__o = __a * __b"
+        )
+        state.add_edge(k_map_entry, "OUT_tmp_a_val_1", tasklet_mult, "__a", mm.Memlet.simple("_a_val", "j"))
+        state.add_edge(tasklet_ind, "lookup", tasklet_mult, "__b", mm.Memlet.simple("_b_value", "0"))
+
+        k_map_exit.add_in_connector("IN__c_1")
+        edge = state.add_edge(tasklet_mult, "__o", k_map_exit, "IN__c_1", mm.Memlet.simple("_c", subset_str="i, k", wcr_str="lambda x, y: (x + y)"))
+        
+        sdfg.validate()
+        propagate_memlets_sdfg(sdfg)
+
+        return sdfg
+
+
+    @staticmethod
+    def expansion(node: Gemm, state: SDFGState, sdfg: SDFG):
+        node.validate(sdfg, state)
+        if node.data_format_type == dtypes.DataFormatType.Dense:
+            return ExpandGemmPure.make_sdfg_dense(node, state, sdfg)
+        elif node.data_format_type == dtypes.DataFormatType.CSR:
+            return ExpandGemmPure.make_sdfg_csr(node, state, sdfg)
+        else:
+            raise ValueError("Unsupported data format for expansion of GEMM")
 
 @dace.library.expansion
 class ExpandGemmOpenBLAS(ExpandTransformation):
@@ -941,6 +1162,12 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
                                        allow_none=True,
                                        desc="If applicable, overrides computation type (CUBLAS-specific, see "
                                        "``cublasComputeType_t``)")
+    data_format_type = properties.EnumProperty(
+        dtype=dtypes.DataFormatType,
+        default=dtypes.DataFormatType.Dense,
+        desc="Data format of the LHS matrix",
+    )
+    
 
     def __init__(self, name, location=None, transA=False, transB=False, alpha=1, beta=0, cin=True):
         super().__init__(name,
