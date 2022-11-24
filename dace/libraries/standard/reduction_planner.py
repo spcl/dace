@@ -27,6 +27,7 @@ def combine(shape, strides, dims):
 
     return combined_shape, combined_strides
 
+
 def simplify_input(shape, strides, axes):
     # simplifies the input tensor by combining neighboring reduced axes and neighboring non-reduced axes
     # returns new shape, new strides, new axes and also output shape and output strides
@@ -71,7 +72,7 @@ def simplify_input(shape, strides, axes):
         if ax - prev_axis > 2:
             dimensions_to_combine.append(list(range(prev_axis + 1, ax)))
         prev_axis = ax
-    
+
     if len(shape) - axes[-1] > 2:
         dimensions_to_combine.append(list(range(axes[-1] + 1, len(shape))))
 
@@ -93,14 +94,14 @@ def simplify_input(shape, strides, axes):
         out_shape = [1]
 
     out_strides = [os for i, os in enumerate(strides) if i not in axes]
-    removed = [(i,os) for i, os in enumerate(strides) if i in axes]
+    removed = [(i, os) for i, os in enumerate(strides) if i in axes]
     for rem in removed:
         r = rem[1]
         s = shape[rem[0]]
         for i in range(len(out_strides)):
             if out_strides[i] > r:
                 out_strides[i] //= s
-            
+
     return shape, strides, axes, out_shape, out_strides
 
 
@@ -124,13 +125,13 @@ def get_reduction_schedule(in_array: Array,
     :return: ReductionSchedule object that descibes the GPU schedule used to perform the reduction
     """
 
-
     @dataclasses.dataclass
     class ReductionSchedule:
         grid: List[Size]  #: dimension of the grid
         block: List[Size]  #: dimension of the thread blocks
-        sequential: List[Size]  #: number of sequentially summed elements. If len(sequential) == 3, then this list is of the form [start, end, stride]
-        shared_mem_size: int #: number of shared memory expansion has to allocate
+        sequential: List[Size]  #: number of sequentially summed elements.
+        # If len(sequential) == 3, then this list is of the form [start, end, stride]
+        shared_mem_size: int  #: number of shared memory expansion has to allocate
 
         in_shape: List[Size]  #: input tensor shape
         in_strides: List[Size]  #: input tensor strides
@@ -143,18 +144,19 @@ def get_reduction_schedule(in_array: Array,
         vec_len: int  #: size of vectors
         mini_warps: bool  #: whether mini_warps optimization will be used or not
         num_mini_warps: int  #: number of mini_warps
-        one_d_reduction: bool #: True, if we have a 1D reduction (i.e. sum up all input elements to one output element)
+        one_d_reduction: bool  #: True, if we have a 1D reduction (i.e. sum up all input elements to one output element)
 
-        multi_axes: bool #: True, if the reduction reduces multiple axes
-        additional_grid: List[Size] #: For multi-axes reduction, we have additional grid dimensions
-        changed_in_shape: List[Size] #: The input shape of the single axis reduction inside a multi-axes reduction
-        changed_in_strides: List[Size] #: The input strides of the single axis reduction inside a multi-axes reduction
-        changed_axes: List[int] #: The axis to reduce of the single axis reduction inside a multi-axes reduction
+        multi_axes: bool  #: True, if the reduction reduces multiple axes
+        additional_grid: List[Size]  #: For multi-axes reduction, we have additional grid dimensions
+        changed_in_shape: List[Size]  #: The input shape of the single axis reduction inside a multi-axes reduction
+        changed_in_strides: List[Size]  #: The input strides of the single axis reduction inside a multi-axes reduction
+        changed_axes: List[int]  #: The axis to reduce of the single axis reduction inside a multi-axes reduction
 
         error: str  #: if not "", error contains the error reason as warning
 
     # initialize empty schedule
-    schedule = ReductionSchedule([], [], [], 0, [], [], [], [], [], False, False, 1, False, 1, False, False, [], [], [], [], '')
+    schedule = ReductionSchedule([], [], [], 0, [], [], [], [], [], False, False, 1, False, 1, False, False, [], [], [],
+                                 [], '')
 
     initial_shape = in_array.shape
     initial_strides = in_array.strides
@@ -183,7 +185,6 @@ def get_reduction_schedule(in_array: Array,
             if axes[j] > i:
                 axes[j] -= 1
 
-    
     # simplify the input
     shape, strides, axes, out_shape, out_strides = simplify_input(shape, strides, axes)
 
@@ -193,7 +194,6 @@ def get_reduction_schedule(in_array: Array,
     schedule.out_shape = out_shape
     schedule.out_strides = out_strides
 
-    
     for i, s in enumerate(strides):
         if s == 1:
             contiguous_dimension = i
@@ -202,23 +202,25 @@ def get_reduction_schedule(in_array: Array,
         # we need to compute a multi-axes reduction
         schedule.multi_axes = True
         schedule.additional_grid = [shape[i] for i in axes[:-1]]
+
+        # input shape and axes to reduce of the "inner" single axis reduction
         schedule.changed_in_shape = [s for i, s in enumerate(schedule.in_shape) if i not in axes[:-1]]
         schedule.changed_axes = [axes[-1] - len(axes) + 1]
 
-
+        # compute strides of this input shape
         removed_shapes = [s for i, s in enumerate(schedule.in_shape) if i in axes[:-1]]
         removed_strides = [s for i, s in enumerate(schedule.in_strides) if i in axes[:-1]]
         schedule.changed_in_strides = [s for i, s in enumerate(schedule.in_strides) if i not in axes[:-1]]
         for i in range(len(schedule.changed_in_strides)):
             for r in range(len(removed_strides)):
-                schedule.changed_in_strides[i] = schedule.changed_in_strides[i] if schedule.changed_in_strides[i] < removed_strides[r] else schedule.changed_in_strides[i] // removed_shapes[r]
-        
+                schedule.changed_in_strides[i] = schedule.changed_in_strides[i] if schedule.changed_in_strides[
+                    i] < removed_strides[r] else schedule.changed_in_strides[i] // removed_shapes[r]
+
         axes = schedule.changed_axes
         shape = schedule.changed_in_shape
         for i, s in enumerate(schedule.changed_in_strides):
             if s == 1:
                 contiguous_dimension = i
-        
 
     # now compute the schedule depending on contiguous or strided reduction
     if contiguous_dimension in axes:
@@ -227,7 +229,7 @@ def get_reduction_schedule(in_array: Array,
 
         # TODO: Fix vectorization for non-exact-fitting sizes
         if (shape[contiguous_dimension] > 32) == True and (shape[contiguous_dimension] % num_loaded_elements
-                                                        == 0) == True and use_vectorization:
+                                                           == 0) == True and use_vectorization:
             schedule.vectorize = True
 
         # all non-reduced dimensions in grid
@@ -245,25 +247,25 @@ def get_reduction_schedule(in_array: Array,
         schedule.block = [threads_per_block]
 
         stride = warp_size * num_loaded_elements if schedule.vectorize else warp_size
-        # 1 thread block sums up the shape[contiguous_dimension] elements with a stride 
+        # 1 thread block sums up the shape[contiguous_dimension] elements with a stride
         schedule.sequential.append([0, shape[contiguous_dimension], stride])
 
         # check if we have 1D reduction
         if len(schedule.in_shape) == 1 and schedule.out_shape == [1]:
             schedule.one_d_reduction = True
             # increase schedule.grid to appropriate value --> each block sums up 1024 values
-            schedule.grid = [(schedule.in_shape[0] + 1024 -1) // 1024]
+            schedule.grid = [(schedule.in_shape[0] + 1024 - 1) // 1024]
 
     else:
         # we are reducing a non-contiguous dimension
 
-        schedule.grid = shape[:axes[0]]   # add all leading dimensions into the grid
-        schedule.grid.append(shape[contiguous_dimension] / 32) # each block computes 32 output values
+        schedule.grid = shape[:axes[0]]  # add all leading dimensions into the grid
+        schedule.grid.append(shape[contiguous_dimension] / 32)  # each block computes 32 output values
 
-        schedule.block = [16, 32]   # we use 16 threads per output value (could be any value in {1, ... , 32})
+        schedule.block = [16, 32]  # we use 16 threads per output value (could be any value in {1, ... , 32})
 
-        schedule.shared_mem_size = 32 # each block uses 32 shared memory locations
-        schedule.sequential = [shape[axes[0]]] # the 16 threads sum up the whole axis
+        schedule.shared_mem_size = 32  # each block uses 32 shared memory locations
+        schedule.sequential = [shape[axes[0]]]  # the 16 threads sum up the whole axis
 
         if use_mini_warps and shape[contiguous_dimension] <= 16:
             # we turn on mini_warps
@@ -273,9 +275,7 @@ def get_reduction_schedule(in_array: Array,
             schedule.block = [16, shape[contiguous_dimension]]
             schedule.shared_mem_size = shape[contiguous_dimension]
 
-
     # basic validity checks for computed schedule
-    # maybe these checks could be done in the CUDA code generator for all generated CUDA code?
     num_threads = 1
     for t in schedule.block:
         num_threads *= t
@@ -291,4 +291,3 @@ def get_reduction_schedule(in_array: Array,
         schedule.error = 'Schedule is invalid (some grid dimension too large). Falling back to pure expansion.'
 
     return schedule
-
