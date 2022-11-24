@@ -68,7 +68,7 @@ def run_jacobi_1d(device_type: dace.dtypes.DeviceType):
         sdfg.expand_library_nodes()
         sdfg.apply_transformations_repeated([InlineSDFG], print_report=True)
         sdfg.specialize(dict(N=N))
-        sdfg(TSTEPS, A, B)
+        sdfg(TSTEPS=TSTEPS, A=A, B=B)
 
     # Compute ground truth and validate
     ground_truth(TSTEPS, A_ref, B_ref)
@@ -85,7 +85,6 @@ def test_gpu():
     run_jacobi_1d(dace.dtypes.DeviceType.GPU)
 
 
-@pytest.mark.skip(reason="Intel FPGA missing support for long long")
 @fpga_test(assert_ii_1=False)
 def test_fpga():
     return run_jacobi_1d(dace.dtypes.DeviceType.FPGA)

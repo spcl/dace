@@ -24,7 +24,8 @@ from dace.properties import (CodeProperty, DebugInfoProperty, DictProperty, Enum
 
 def create_datadescriptor(obj, no_custom_desc=False):
     """ Creates a data descriptor from various types of objects.
-        @see: dace.data.Data
+        
+        :see: dace.data.Data
     """
     from dace import dtypes  # Avoiding import loops
     if isinstance(obj, Data):
@@ -131,6 +132,7 @@ def find_new_name(name: str, existing_names: Sequence[str]) -> str:
     already exist in the given existing name set. The behavior is typically
     to append an underscore followed by a unique (increasing) number. If the
     name does not already exist in the set, it is returned as-is.
+
     :param name: The given name to find.
     :param existing_names: The set of existing names.
     :return: A new name that is not in existing_names.
@@ -155,6 +157,7 @@ def find_new_name(name: str, existing_names: Sequence[str]) -> str:
     already exist in the given existing name set. The behavior is typically
     to append an underscore followed by a unique (increasing) number. If the
     name does not already exist in the set, it is returned as-is.
+
     :param name: The given name to find.
     :param existing_names: The set of existing names.
     :return: A new name that is not in existing_names.
@@ -269,6 +272,7 @@ class Data:
         """
         Returns the absolute strides and total size of this data descriptor,
         according to the given dimension ordering and alignment.
+
         :param dimensions: A sequence of integers representing a permutation
                            of the descriptor's dimensions.
         :param alignment: Padding (in elements) at the end, ensuring stride
@@ -306,6 +310,7 @@ class Data:
         """
         Sets the absolute strides and total size of this data descriptor,
         according to the given dimension ordering and alignment.
+
         :param dimensions: A sequence of integers representing a permutation
                            of the descriptor's dimensions.
         :param alignment: Padding (in elements) at the end, ensuring stride
@@ -397,6 +402,10 @@ class Scalar(Data):
     def pool(self) -> bool:
         return False
 
+    @property
+    def may_alias(self) -> bool:
+        return False
+
     def is_equivalent(self, other):
         if not isinstance(other, Scalar):
             return False
@@ -441,6 +450,7 @@ class Array(Data):
     The array definition is flexible in terms of data allocation, it allows arbitrary multidimensional, potentially
     symbolic shapes (e.g., an array with size ``N+1 x M`` will have ``shape=(N+1, M)``), of arbitrary data 
     typeclasses (``dtype``). The physical data layout of the array is controlled by several properties:
+
        * The ``strides`` property determines the ordering and layout of the dimensions --- it specifies how many
          elements in memory are skipped whenever one element in that dimension is advanced. For example, the contiguous
          dimension always has a stride of ``1``; a C-style MxN array will have strides ``(N, 1)``, whereas a 
@@ -765,6 +775,10 @@ class Stream(Data):
     def optional(self) -> bool:
         return False
 
+    @property
+    def may_alias(self) -> bool:
+        return False
+
     def clone(self):
         return type(self)(self.dtype, self.buffer_size, self.shape, self.transient, self.storage, self.location,
                           self.offset, self.lifetime, self.debuginfo)
@@ -862,6 +876,7 @@ class View(Array):
     To use a View, it needs to be referenced in an access node that is directly
     connected to another access node. The rules for deciding which access node
     is viewed are:
+
       * If there is one edge (in/out) that leads (via memlet path) to an access
         node, and the other side (out/in) has a different number of edges.
       * If there is one incoming and one outgoing edge, and one leads to a code
@@ -898,6 +913,7 @@ class Reference(Array):
     Data descriptor that acts as a dynamic reference of another array. It can be used just like a regular array,
     except that it could be set to an arbitrary array or sub-array at runtime. To set a reference, connect another
     access node to it and use the "set" connector.
+    
     In order to enable data-centric analysis and optimizations, avoid using References as much as possible.
     """
 
@@ -992,6 +1008,8 @@ def make_reference_from_descriptor(descriptor: Array,
     """
     import numpy as np
     symbols = symbols or {}
+
+    original_array: int = ctypes.cast(original_array, ctypes.c_void_p).value
 
     free_syms = set(map(str, descriptor.free_symbols)) - symbols.keys()
     if free_syms:

@@ -6,18 +6,25 @@ Contains implementations of SDFG inlining and state fusion passes.
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
-from dace import SDFG
+from dace import SDFG, properties
 from dace.sdfg.utils import fuse_states, inline_sdfgs
 from dace.transformation import pass_pipeline as ppl
 
 
 @dataclass(unsafe_hash=True)
+@properties.make_properties
 class FuseStates(ppl.Pass):
     """
     Fuses all possible states of an SDFG (and all sub-SDFGs).
     """
-    permissive: bool = False  #: If True, ignores some race conditions checks
-    progress: Optional[bool] = None  #: Whether to print progress, or None for default (print after 5 seconds)
+
+    CATEGORY: str = 'Simplification'
+
+    permissive = properties.Property(dtype=bool, default=False, desc='If True, ignores some race conditions checks.')
+    progress = properties.Property(dtype=bool,
+                                   default=None,
+                                   allow_none=True,
+                                   desc='Whether to print progress, or None for default (print after 5 seconds).')
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return modified & (ppl.Modifies.States | ppl.Modifies.InterstateEdges)
@@ -28,6 +35,7 @@ class FuseStates(ppl.Pass):
     def apply_pass(self, sdfg: SDFG, _: Dict[str, Any]) -> Optional[int]:
         """
         Fuses all possible states of an SDFG (and all sub-SDFGs).
+
         :param sdfg: The SDFG to transform.
     
         :return: The total number of states fused, or None if did not apply.
@@ -40,13 +48,20 @@ class FuseStates(ppl.Pass):
 
 
 @dataclass(unsafe_hash=True)
+@properties.make_properties
 class InlineSDFGs(ppl.Pass):
     """
     Inlines all possible nested SDFGs (and sub-SDFGs).
     """
-    permissive: bool = False  #: If True, ignores some checks on inlining
-    progress: Optional[bool] = None  #: Whether to print progress, or None for default (print after 5 seconds)
-    multistate: bool = True  #: If True, include multi-state inlining
+
+    CATEGORY: str = 'Simplification'
+
+    permissive = properties.Property(dtype=bool, default=False, desc='If True, ignores some checks on inlining.')
+    progress = properties.Property(dtype=bool,
+                                   default=None,
+                                   allow_none=True,
+                                   desc='Whether to print progress, or None for default (print after 5 seconds).')
+    multistate = properties.Property(dtype=bool, default=True, desc='If True, include multi-state inlining.')
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return modified & (ppl.Modifies.NestedSDFGs | ppl.Modifies.States)
@@ -56,7 +71,8 @@ class InlineSDFGs(ppl.Pass):
 
     def apply_pass(self, sdfg: SDFG, _: Dict[str, Any]) -> Optional[int]:
         """
-        Fuses all possible states of an SDFG (and all sub-SDFGs).
+        Inlines all possible nested SDFGs (and all sub-SDFGs).
+        
         :param sdfg: The SDFG to transform.
     
         :return: The total number of states fused, or None if did not apply.

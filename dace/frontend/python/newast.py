@@ -61,6 +61,7 @@ def until(val, substr):
         return val
     return val[:val.find(substr)]
 
+
 # Array names that sympy and other python dependencies cannot accept
 FORBIDDEN_ARRAY_NAMES = set(symbolic._sympy_clash.keys())
 
@@ -157,17 +158,19 @@ def parse_dace_program(name: str,
                        simplify: Optional[bool] = None,
                        save: bool = True,
                        progress: Optional[bool] = None) -> SDFG:
-    """ Parses a `@dace.program` function into an SDFG.
-        :param src_ast: The AST of the Python program to parse.
-        :param visitor: A ProgramVisitor object returned from 
-                        ``preprocess_dace_program``.
-        :param closure: An object that contains the @dace.program closure.
-        :param simplify: If True, simplification pass will be performed.
-        :param save: If True, saves source mapping data for this SDFG.
-        :param progress: If True, prints a progress bar of the parsing process. 
-                         If None (default), prints after 5 seconds of parsing. 
-                         If False, never prints progress.
-        :return: A 2-tuple of SDFG and its reduced (used) closure.
+    """
+    Parses a ``@dace.program`` function into an SDFG.
+
+    :param src_ast: The AST of the Python program to parse.
+    :param visitor: A ProgramVisitor object returned from 
+                    ``preprocess_dace_program``.
+    :param closure: An object that contains the @dace.program closure.
+    :param simplify: If True, simplification pass will be performed.
+    :param save: If True, saves source mapping data for this SDFG.
+    :param progress: If True, prints a progress bar of the parsing process. 
+                        If None (default), prints after 5 seconds of parsing. 
+                        If False, never prints progress.
+    :return: A 2-tuple of SDFG and its reduced (used) closure.
     """
     # Progress bar handling (pre-parse)
     teardown_progress = False
@@ -246,6 +249,18 @@ def parse_dace_program(name: str,
             initial, total = ProgramVisitor.progress_bar
             ProgramVisitor.progress_bar = tqdm(total=total, initial=initial, desc='Parsing Python program')
         ProgramVisitor.increment_progress()
+    except SkipCall:
+        raise
+    except Exception:
+        # Print the offending line causing the exception
+        li = visitor.current_lineinfo
+        print('Exception raised while parsing DaCe program:\n'
+              f'  in File "{li.filename}", line {li.start_line}')
+        lines = preprocessed_ast.src.split('\n')
+        lineid = li.start_line - preprocessed_ast.src_line - 1
+        if lineid >= 0 and lineid < len(lines):
+            print(f'    {lines[lineid].strip()}')
+        raise
     finally:
         if teardown_progress:
             if not isinstance(ProgramVisitor.progress_bar, tuple):
@@ -264,8 +279,8 @@ DISALLOWED_STMTS = [
 ]
 # Extra AST node types that are disallowed after preprocessing
 _DISALLOWED_STMTS = DISALLOWED_STMTS + [
-    'Global', 'Assert', 'Print', 'Nonlocal', 'Raise', 'Starred', 'AsyncFor', 'ListComp', 'GeneratorExp',
-    'SetComp', 'DictComp', 'comprehension'
+    'Global', 'Assert', 'Print', 'Nonlocal', 'Raise', 'Starred', 'AsyncFor', 'ListComp', 'GeneratorExp', 'SetComp',
+    'DictComp', 'comprehension'
 ]
 
 TaskletType = Union[ast.FunctionDef, ast.With, ast.For]
@@ -601,6 +616,7 @@ class TaskletTransformer(ExtNodeTransformer):
                  accesses: Dict[Tuple[str, dace.subsets.Subset, str], str] = dict(),
                  symbols: Dict[str, "dace.symbol"] = dict()):
         """ Creates an AST parser for tasklets.
+
             :param sdfg: The SDFG to add the tasklet in (used for defined arrays and symbols).
             :param state: The SDFG state to add the tasklet to.
         """
@@ -640,11 +656,12 @@ class TaskletTransformer(ExtNodeTransformer):
             setattr(self, 'visit_' + stmt, lambda n: _disallow_stmt(self, n))
 
     def parse_tasklet(self, tasklet_ast: TaskletType, name: Optional[str] = None):
-        """ Parses the AST of a tasklet and returns the tasklet node, as well as input and output memlets.
-            :param tasklet_ast: The Tasklet's Python AST to parse.
-            :param name: Optional name to use as prefix for tasklet.
-            :return: 3-tuple of (Tasklet node, input memlets, output memlets).
-            @rtype: Tuple[Tasklet, Dict[str, Memlet], Dict[str, Memlet]]
+        """
+        Parses the AST of a tasklet and returns the tasklet node, as well as input and output memlets.
+
+        :param tasklet_ast: The Tasklet's Python AST to parse.
+        :param name: Optional name to use as prefix for tasklet.
+        :return: 3-tuple of (Tasklet node, input memlets, output memlets).
         """
         # Should return a tasklet object (with connectors)
         self.visit(tasklet_ast)
@@ -1308,6 +1325,7 @@ class ProgramVisitor(ExtNodeVisitor):
         """ Returns a list of parameters, either from the function parameters
             and decorator arguments or parameters and their annotations (type
             hints).
+
             :param node: The given function definition node.
             :return: A list of 2-tuples (name, value).
         """
@@ -1604,6 +1622,7 @@ class ProgramVisitor(ExtNodeVisitor):
     def _parse_index_as_range(self, node: Union[ast.Index, ast.Tuple]):
         """
         Parses an index as range
+
         :param node: Index node
         :return: Range in (from, to, step) format
         """
@@ -1728,6 +1747,7 @@ class ProgramVisitor(ExtNodeVisitor):
                           node: ast.AST) -> Tuple[Dict[str, str], Dict[str, Memlet]]:
         """ Parse map parameters for data-dependent inputs, modifying the
             parameter dictionary and returning relevant memlets.
+
             :return: A 2-tuple of (parameter dictionary, mapping from connector
                      name to memlet).
         """
@@ -1792,6 +1812,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
     def _parse_consume_inputs(self, node: ast.FunctionDef) -> Tuple[str, str, Tuple[str, str], str, str]:
         """ Parse consume parameters from AST.
+        
             :return: A 5-tuple of Stream name, internal stream name,
                      (PE index, number of PEs), condition, chunk size.
         """
@@ -2082,7 +2103,12 @@ class ProgramVisitor(ExtNodeVisitor):
                     elif sym.name in self.closure.callbacks:
                         self.sdfg.add_symbol(sym.name, nsdfg_node.sdfg.symbols[sym.name])
 
-    def _recursive_visit(self, body: List[ast.AST], name: str, lineno: int, last_state=True, extra_symbols=None) -> Tuple[SDFGState, SDFGState, SDFGState, bool]:
+    def _recursive_visit(self,
+                         body: List[ast.AST],
+                         name: str,
+                         lineno: int,
+                         last_state=True,
+                         extra_symbols=None) -> Tuple[SDFGState, SDFGState, SDFGState, bool]:
         """ Visits a subtree of the AST, creating special states before and after the visit. Returns the previous state,
             and the first and last internal states of the recursive visit. Also returns a boolean value indicating
             whether a return statement was met or not. This value can be used by other visitor methods, e.g., visit_If,
@@ -2415,6 +2441,7 @@ class ProgramVisitor(ExtNodeVisitor):
     def visit_If(self, node: ast.If):
         # Add a guard state
         self._add_state('if_guard')
+        self.last_state.debuginfo = self.current_lineinfo
 
         # Generate conditions
         cond, cond_else = self._visit_test(node.test)
@@ -3087,9 +3114,17 @@ class ProgramVisitor(ExtNodeVisitor):
                     # Skip error if the arrays are defined exactly in the same way.
                     # Change target to a full-range subscript.
                     target = ast.parse(f"{name}[:]").body[0].value
+                    target = ast.copy_location(target, node_target)
                     assert isinstance(target, ast.Subscript)
                 else:
                     raise DaceSyntaxError(self, target, 'Cannot reassign value to variable "{}"'.format(name))
+
+                # If the target is a view, we can't assign two different arrays to it
+                if isinstance(result, str) and true_name in self.views and self.views[true_name][0] != result:
+                    raise DaceSyntaxError(
+                        self, target,
+                        f'Cannot assign array "{result}" to view "{name}" because it is already assigned to array "{self.views[true_name][0]}".'
+                    )
 
             if is_return and true_name:
                 if (isinstance(result, str) and result in self.sdfg.arrays
@@ -3460,6 +3495,7 @@ class ProgramVisitor(ExtNodeVisitor):
     def _assert_arg_constant(self, node: ast.Call, aname: str, aval: Union[ast.AST, Any], parsed: Tuple[str, Any]):
         """
         Checks if given argument is constant. If not, raises a DaceSyntaxError exception.
+
         :param node: AST node of the call (used for exception).
         :param aname: Argument name.
         :param aval: AST (or visited) value of the argument.
@@ -3904,13 +3940,17 @@ class ProgramVisitor(ExtNodeVisitor):
         func: Callable[..., Any]
         _, func, _ = self.closure.callbacks[funcname]
 
+        skip_args = getattr(node, 'skip_args', [])
+        skip_kwargs = getattr(node, 'skip_keywords', [])
+
         # Infer the type of the function arguments and return value
         argtypes = []
         args = []
         outargs = []
         allargs = []
-        kwargs = [kw.value for kw in node.keywords]
-        for arg in itertools.chain(node.args, kwargs):
+        nodeargs = [a for i, a in enumerate(node.args) if i not in skip_args]
+        kwargs = [kw.value for i, kw in enumerate(node.keywords) if i not in skip_kwargs]
+        for arg in itertools.chain(nodeargs, kwargs):
             parsed_args = self._parse_function_arg(arg)
 
             # Flatten literal arguments in call (will be unflattened in callback,
@@ -3968,6 +4008,14 @@ class ProgramVisitor(ExtNodeVisitor):
                         parent = anode
                         parent_is_toplevel = getattr(anode, 'toplevel', False)
                         break
+                if hasattr(child, 'elts'):  # Tuples, e.g., in multiple return values
+                    for subchild in child.elts:
+                        if subchild is node:
+                            parent = anode
+                            parent_is_toplevel = getattr(anode, 'toplevel', False)
+                            break
+                    if parent is not None:
+                        break
         if parent is None:
             raise DaceSyntaxError(self, node, f'Cannot obtain parent AST node for callback "{funcname}"')
 
@@ -3989,7 +4037,20 @@ class ProgramVisitor(ExtNodeVisitor):
             outargs.extend(return_names)
             allargs.extend([f'__out_{n}' for n in return_names])
 
-        elif isinstance(parent, (ast.Assign, ast.AugAssign)):
+        elif isinstance(parent, (ast.Assign, ast.AugAssign, ast.Return)):
+            if isinstance(parent, (ast.Assign, ast.AugAssign)):
+                targets = parent.targets
+            elif isinstance(parent, ast.Return):
+                if isinstance(parent.value, (ast.Tuple, ast.List)):
+                    # If part of a return tuple, find proper index
+                    index = next(i for i, n in enumerate(parent.value.elts) if n is node)
+                    targets = [f'__return_{index}']
+                else:
+                    # One return value
+                    targets = ['__return']
+            else:
+                targets = []
+
             defined_vars = {**self.variables, **self.scope_vars}
             defined_arrays = {**self.sdfg.arrays, **self.scope_arrays}
 
@@ -4006,7 +4067,7 @@ class ProgramVisitor(ExtNodeVisitor):
                         n, arr = self.sdfg.add_temp_transient(shape, dtype)
                     else:
                         if isinstance(tarr, data.Scalar):
-                            n, arr = self.sdfg.add_temp_transient((1, ), tarr.dtype)
+                            n, arr = self.sdfg.add_scalar(self.sdfg.temp_data_name(), tarr.dtype, transient=True)
                         else:
                             n, arr = self.sdfg.add_temp_transient_like(tarr)
                 elif name in self.annotated_types:
@@ -4016,25 +4077,19 @@ class ProgramVisitor(ExtNodeVisitor):
                     elif isinstance(dtype, dtypes.typeclass):
                         n, arr = self.sdfg.add_temp_transient((1, ), dtype)
                     else:
-                        n, arr = None, None
+                        n, arr = self.sdfg.add_scalar(name, dtypes.pyobject(), transient=True, find_new_name=True)
                 else:
-                    n, arr = None, None
+                    n, arr = self.sdfg.add_scalar(name, dtypes.pyobject(), transient=True, find_new_name=True)
                 return n, arr
 
-            for target in parent.targets:
+            for target in targets:
                 if isinstance(target, ast.Tuple):
                     for actual_target in target.elts:
                         n, arr = parse_target(actual_target)
-                        if not arr:
-                            return_type = None
-                            break
                         return_names.append(n)
                         return_type.append(arr)
                 else:
                     n, arr = parse_target(target)
-                    if not arr:
-                        return_type = None
-                        break
                     return_names.append(n)
                     return_type.append(arr)
 
@@ -4046,15 +4101,18 @@ class ProgramVisitor(ExtNodeVisitor):
 
         # If not annotated, nor the array didn't exist,
         # raise a syntax error with an example of how to do it
-        if return_type is None:
-            raise DaceSyntaxError(
-                self, node, f'Cannot infer return type of function call "{funcname}". '
-                'To ensure that the return types can be inferred, try to '
-                'extract the call to a separate statement and annotate the '
-                'return values. For example:\n'
-                '  a: dace.int32\n'
-                '  b: dace.float64[N]\n'
-                '  a, b = call(c, d)')
+        if isinstance(return_type, list) and any(isinstance(r.dtype, dtypes.pyobject) for r in return_type):
+            error_text = (f'Cannot infer return type of function call "{funcname}":\n'
+                          f'  in File "{self.filename}", line {node.lineno}\n'
+                          'To ensure that the return types can be inferred, try to '
+                          'extract the call to a separate statement and annotate the '
+                          'return values. For example: a: dace.int32 = call(b, c).\n'
+                          'To enforce only callbacks with explicit return types, set '
+                          'the `frontend.typed_callbacks_only` configuration entry to True.')
+            if Config.get_bool('frontend', 'typed_callbacks_only'):
+                raise DaceSyntaxError(self, node, error_text)
+            else:
+                warnings.warn(error_text)
 
         # Create a matching callback symbol from function type
         if (not isinstance(return_type, (list, tuple)) and return_type == dtypes.typeclass(None)):
@@ -4086,7 +4144,7 @@ class ProgramVisitor(ExtNodeVisitor):
                                                                               for name in args} | {'__istate'},
                                                   {f'__out_{name}'
                                                    for name in outargs} | {'__ostate'},
-                                                  f'__out_{outargs[0]} = {funcname}({call_args})',
+                                                  f'__out_{return_names[0]} = {funcname}({call_args})',
                                                   side_effects=True)
         else:
             call_args = ', '.join(str(s) for s in allargs)
@@ -4125,10 +4183,10 @@ class ProgramVisitor(ExtNodeVisitor):
                          inp_conn: str = '__pystate',
                          out_conn: str = '__pystate',
                          arr_name: str = '__pystate'):
-        '''
+        """
         Create and connect a __pystate variable that blocks reordering
         optimizations to a given tasklet.
-        '''
+        """
         if arr_name not in self.sdfg.arrays:
             self.sdfg.add_scalar(arr_name, dace.int32, transient=True)
         rs = state.add_read(arr_name)
@@ -4580,6 +4638,18 @@ class ProgramVisitor(ExtNodeVisitor):
             operand2, op2type = op2_parsed[0]
         else:
             operand2, op2type = None, None
+
+        # Type-check operands in order to provide a clear error message
+        if (isinstance(operand1, str) and operand1 in self.defined
+                and isinstance(self.defined[operand1].dtype, dtypes.pyobject)):
+            raise DaceSyntaxError(
+                self, op1, 'Trying to operate on a callback return value with an undefined type. '
+                f'Please add a type hint to "{operand1}" to enable using it within the program.')
+        if (isinstance(operand2, str) and operand2 in self.defined
+                and isinstance(self.defined[operand2].dtype, dtypes.pyobject)):
+            raise DaceSyntaxError(
+                self, op2, 'Trying to operate on a callback return value with an undefined type. '
+                f'Please add a type hint to "{operand2}" to enable using it within the program.')
 
         func = oprepo.Replacements.getop(op1type, opname, otherclass=op2type)
         if func is None:

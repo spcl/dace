@@ -227,6 +227,7 @@ def memlet_copy_to_absolute_strides(dispatcher, sdfg, memlet, src_node, dst_node
 def ptr(name: str, desc: data.Data, sdfg: SDFG = None, framecode=None) -> str:
     """
     Returns a string that points to the data based on its name and descriptor.
+
     :param name: Data name.
     :param desc: Data descriptor.
     :return: C-compatible name that can be used to access the data.
@@ -236,17 +237,19 @@ def ptr(name: str, desc: data.Data, sdfg: SDFG = None, framecode=None) -> str:
 
     # Special case: If memory is persistent and defined in this SDFG, add state
     # struct to name
-    if desc.storage != dtypes.StorageType.CPU_ThreadLocal:
-        if (desc.transient and desc.lifetime is dtypes.AllocationLifetime.Persistent):
-            from dace.codegen.targets.cuda import CUDACodeGen  # Avoid import loop
-            if not CUDACodeGen._in_device_code:  # GPU kernels cannot access state
-                return f'__state->__{sdfg.sdfg_id}_{name}'
-            elif (sdfg, name) in framecode.where_allocated and framecode.where_allocated[(sdfg, name)] is not sdfg:
-                return f'__{sdfg.sdfg_id}_{name}'
-        elif (desc.transient and sdfg is not None and framecode is not None
-              and (sdfg, name) in framecode.where_allocated and framecode.where_allocated[(sdfg, name)] is not sdfg):
-            # Array allocated for another SDFG, use unambiguous name
+    if (desc.transient and desc.lifetime is dtypes.AllocationLifetime.Persistent):
+        from dace.codegen.targets.cuda import CUDACodeGen  # Avoid import loop
+
+        if desc.storage == dtypes.StorageType.CPU_ThreadLocal:  # Use unambiguous name for thread-local arrays
             return f'__{sdfg.sdfg_id}_{name}'
+        elif not CUDACodeGen._in_device_code:  # GPU kernels cannot access state
+            return f'__state->__{sdfg.sdfg_id}_{name}'
+        elif (sdfg, name) in framecode.where_allocated and framecode.where_allocated[(sdfg, name)] is not sdfg:
+            return f'__{sdfg.sdfg_id}_{name}'
+    elif (desc.transient and sdfg is not None and framecode is not None and (sdfg, name) in framecode.where_allocated
+          and framecode.where_allocated[(sdfg, name)] is not sdfg):
+        # Array allocated for another SDFG, use unambiguous name
+        return f'__{sdfg.sdfg_id}_{name}'
 
     return name
 
@@ -263,6 +266,7 @@ def emit_memlet_reference(dispatcher,
     """
     Returns a tuple of three strings with a definition of a reference to an
     existing memlet. Used in nested SDFG arguments.
+
     :param device_code: boolean flag indicating whether we are in the process of generating FPGA device code
     :param decouple_array_interfaces: boolean flag, used for Xilinx FPGA code generation. It indicates whether or not
         we are generating code by decoupling reads/write from memory.
@@ -305,7 +309,7 @@ def emit_memlet_reference(dispatcher,
     else:
         datadef = ptr(memlet.data, desc, sdfg, dispatcher.frame)
 
-    def make_const(expr):
+    def make_const(expr: str) -> str:
         # check whether const has already been added before
         if not expr.startswith("const "):
             return "const " + expr
@@ -518,6 +522,7 @@ def ndcopy_to_strided_copy(
 def cpp_offset_expr(d: data.Data, subset_in: subsets.Subset, offset=None, packed_veclen=1, indices=None):
     """ Creates a C++ expression that can be added to a pointer in order
         to offset it to the beginning of the given subset and offset.
+
         :param d: The data structure to use for sizes/strides.
         :param subset_in: The subset to offset by.
         :param offset: An additional list of offsets or a Subset object
@@ -704,6 +709,7 @@ def is_write_conflicted_with_reason(dfg, edge, datanode=None, sdfg_schedule=None
     Detects whether a write-conflict-resolving edge can be emitted without
     using atomics or critical sections, returning the node or SDFG that caused
     the decision.
+    
     :return: None if the conflict is nonatomic, otherwise returns the scope entry
              node or SDFG that caused the decision to be made.
     """

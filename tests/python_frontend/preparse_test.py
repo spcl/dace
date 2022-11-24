@@ -7,7 +7,9 @@ import tempfile
 
 
 def test_nested_objects_same_name():
+
     class ObjA:
+
         def __init__(self, q) -> None:
             self.q = np.full([20], q)
 
@@ -16,6 +18,7 @@ def test_nested_objects_same_name():
             return A + self.q
 
     class ObjB:
+
         def __init__(self, q) -> None:
             self.q = np.full([20], q)
             self.obja = ObjA(q * 2)
@@ -62,7 +65,9 @@ def test_nested_objects_same_name():
 
 
 def test_calltree():
+
     class ObjA:
+
         def __init__(self, q) -> None:
             self.q = np.full([20], q)
 
@@ -71,6 +76,7 @@ def test_calltree():
             return A + self.q
 
     class ObjB:
+
         def __init__(self, q) -> None:
             self.q = np.full([20], q)
             self.obja = ObjA(q * 2)
@@ -112,7 +118,18 @@ def test_same_function_different_closure():
     assert len(mainprog.resolver.closure_arrays) == 2
 
 
+def test_program_kwargs():
+    kwargs = dict(auto_optimize=False)
+
+    @dace.program(**kwargs)
+    def tester():
+        pass
+
+    tester.to_sdfg()
+
+
 if __name__ == '__main__':
     test_nested_objects_same_name()
     test_calltree()
     test_same_function_different_closure()
+    test_program_kwargs()

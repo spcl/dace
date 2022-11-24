@@ -893,7 +893,7 @@ class ExpandReduceFPGAPartialReduction(pm.ExpandTransformation):
 
     @staticmethod
     def expansion(node: 'Reduce', state: SDFGState, sdfg: SDFG, partial_width=16):
-        '''
+        """
 
         :param node: the node to expand
         :param state: the state in which the node is in
@@ -901,7 +901,7 @@ class ExpandReduceFPGAPartialReduction(pm.ExpandTransformation):
         :param partial_width: Width of the inner reduction buffer. Must be
                               larger than the latency of the reduction operation on the given
                               data type
-        '''
+        """
         node.validate(sdfg, state)
         inedge: graph.MultiConnectorEdge = state.in_edges(node)[0]
         outedge: graph.MultiConnectorEdge = state.out_edges(node)[0]

@@ -392,8 +392,9 @@ class Graph(Generic[NodeT, EdgeT]):
                          dest_node: NodeT,
                          as_edges: bool = False) -> Iterable[Sequence[Union[Edge[EdgeT], NodeT]]]:
         """ 
-        Finds all simple paths (with no repeating nodes) from source_node
-        to dest_node.
+        Finds all simple paths (with no repeating nodes) from ``source_node``
+        to ``dest_node``.
+
         :param source_node: Node to start from.
         :param dest_node: Node to end at.
         :param as_edges: If True, returns list of edges instead of nodes.

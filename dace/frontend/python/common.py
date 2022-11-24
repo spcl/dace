@@ -3,6 +3,7 @@ import ast
 import collections
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple, Union
+
 from dace import data
 from dace.sdfg.sdfg import SDFG
 
@@ -23,11 +24,12 @@ class DaceSyntaxError(Exception):
             line = 0
             col = 0
 
+        col_suffix = f', column {col}' if col > 0 else ''
+
         if self.visitor is not None:
-            return (self.message + "\n  File \"" + str(self.visitor.filename) + "\", line " + str(line) + ", column " +
-                    str(col))
+            return self.message + f'\n  encountered in File "{self.visitor.filename}", line {line}{col_suffix}'
         else:
-            return (self.message + "\n  in line " + str(line) + ":" + str(col))
+            return self.message + f'\n  encountered in line {line}{col_suffix}'
 
 
 def inverse_dict_lookup(dict: Dict[str, Any], value: Any):
@@ -64,7 +66,7 @@ class SDFGConvertible(object):
     def __sdfg__(self, *args, **kwargs) -> SDFG:
         """
         Returns an SDFG representation of this object.
-        :param args: Arguments or argument types (given as DaCe data
+        :param args: Arguments or argument types (given as DaCe data 
                      descriptors) that can be used for compilation.
         :param kwargs: Keyword arguments or argument types (given as DaCe data
                        descriptors) that can be used for compilation.
@@ -76,6 +78,7 @@ class SDFGConvertible(object):
         """
         Returns the closure arrays of the SDFG represented by this object
         as a mapping between array name and the corresponding value.
+
         :param reevaluate: If given, re-evaluates closure elements based on the
                            input mapping (keys: array names, values: expressions
                            to evaluate). Otherwise, re-evaluates default
@@ -92,6 +95,7 @@ class SDFGConvertible(object):
         (i.e., including regular and constant arguments, but excluding "self"
         for bound methods) and a sequence of the constant argument names from
         the first sequence.
+        
         :return: A 2-tuple of (all arguments, constant arguments).
         """
         raise NotImplementedError
@@ -103,6 +107,7 @@ class SDFGConvertible(object):
         """
         Returns an SDFGClosure object representing the closure of the
         object to be converted to an SDFG.
+
         :param constant_args: Arguments whose values are already resolved to
                               compile-time values.
         :param given_args: Arguments that were given at call-time (used for

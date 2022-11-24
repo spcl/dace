@@ -2,15 +2,18 @@
 
 from collections import defaultdict
 from dace.transformation import pass_pipeline as ppl
-from dace import SDFG, SDFGState
-from typing import Any, Dict, Set, Tuple, Optional
+from dace import SDFG, SDFGState, properties
+from typing import Dict, Set, Tuple
 import networkx as nx
 
 
+@properties.make_properties
 class StateReachability(ppl.Pass):
     """
     Evaluates state reachability (which other states can be executed after each state).
     """
+
+    CATEGORY: str = 'Analysis'
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Nothing
@@ -32,10 +35,13 @@ class StateReachability(ppl.Pass):
         return reachable
 
 
+@properties.make_properties
 class AccessSets(ppl.Pass):
     """
     Evaluates memory access sets (which arrays/data descriptors are read/written in each state).
     """
+
+    CATEGORY: str = 'Analysis'
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Nothing
@@ -73,10 +79,13 @@ class AccessSets(ppl.Pass):
         return top_result
 
 
+@properties.make_properties
 class FindAccessNodes(ppl.Pass):
     """
     For each data descriptor, creates a set of states in which access nodes of that data are used.
     """
+
+    CATEGORY: str = 'Analysis'
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Nothing

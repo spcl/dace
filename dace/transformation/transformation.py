@@ -3,11 +3,15 @@
 This file contains classes that describe data-centric transformations.
 
 All transformations extend the ``TransformationBase`` class. There are three built-in types of transformations in DaCe:
+
   * Pattern-matching Transformations (extending ``PatternTransformation``): Transformations
     that require a certain subgraph structure to match. Within this abstract class, there are two sub-classes:
+
     * ``SingleStateTransformation``: Patterns are limited to a single SDFG state.
     * ``MultiStateTransformation``: Patterns are given on a subgraph of an SDFG state machine.
+
     A pattern-matching must extend at least one of those two classes.
+
   * Subgraph Transformations (extending SubgraphTransformation): Transformations that can operate on arbitrary
     subgraphs.
   * Library node expansions (extending ExpandTransformation): An internal class used for tracking how library nodes
@@ -67,7 +71,8 @@ class PatternTransformation(TransformationBase):
     @classmethod
     def subclasses_recursive(cls, all_subclasses: bool = False) -> Set[Type['PatternTransformation']]:
         """
-        Returns all subclasses of this class, including subclasses of subclasses. 
+        Returns all subclasses of this class, including subclasses of subclasses.
+
         :param all_subclasses: Include all subclasses (e.g., including ``ExpandTransformation``).
         """
         if not all_subclasses and cls is PatternTransformation:
@@ -97,6 +102,7 @@ class PatternTransformation(TransformationBase):
         """ Returns a list of Graph objects that will be matched in the
             subgraph isomorphism phase. Used as a pre-pass before calling
             `can_be_applied`.
+
             :see: PatternTransformation.can_be_applied
         """
         raise NotImplementedError
@@ -108,6 +114,7 @@ class PatternTransformation(TransformationBase):
                        permissive: bool = False) -> bool:
         """ Returns True if this transformation can be applied on the candidate
             matched subgraph.
+
             :param graph: SDFGState object if this transformation is
                           single-state, or SDFG object otherwise.
             :param expr_index: The list index from `PatternTransformation.expressions`
@@ -122,6 +129,7 @@ class PatternTransformation(TransformationBase):
     def apply(self, graph: Union[SDFG, SDFGState], sdfg: SDFG) -> Union[Any, None]:
         """
         Applies this transformation instance on the matched pattern graph.
+
         :param sdfg: The SDFG to apply the transformation to.
         :return: A transformation-defined return value, which could be used
                  to pass analysis data out, or nothing.
@@ -206,6 +214,7 @@ class PatternTransformation(TransformationBase):
         Applies this transformation on the given SDFG, using the transformation
         instance to find the right SDFG object (based on SDFG ID), and applying
         memlet propagation as necessary.
+
         :param sdfg: The SDFG (or an SDFG in the same hierarchy) to apply the
                      transformation to.
         :param append: If True, appends the transformation to the SDFG
@@ -265,6 +274,7 @@ class PatternTransformation(TransformationBase):
         """
         Returns a dictionary of pattern-matching node in this transformation
         subclass. Used internally for pattern-matching.
+
         :return: A dictionary mapping between pattern-node name and its type.
         """
         return {
@@ -399,30 +409,28 @@ class SingleStateTransformation(PatternTransformation, abc.ABC):
     Base class for pattern-matching transformations that find matches within a single SDFG state.
     New transformations that extend this class must contain static ``PatternNode`` fields that represent the
     nodes in the pattern graph, and use them to implement at least three methods:
-        * ``expressions``: A method that returns a list of graph
-                           patterns (SDFGState objects) that match this
-                           transformation.
-        * ``can_be_applied``: A method that, given a subgraph candidate,
-                              checks for additional conditions whether it can
-                              be transformed.
-        * ``apply``: A method that applies the transformation
-                     on the given SDFG.
+
+        * ``expressions``: A method that returns a list of graph patterns (SDFGState objects) that match this transformation.
+        * ``can_be_applied``: A method that, given a subgraph candidate, checks for additional conditions whether it can be transformed.
+        * ``apply``: A method that applies the transformation on the given SDFG.
 
     For example:
-    ```
-    class MyTransformation(SingleStateTransformation):
-        node_a = PatternNode(nodes.AccessNode)
-        node_b = PatternNode(nodes.MapEntry)
+    
+    .. code-block:: python
 
-        @classmethod
-        def expressions(cls):
-            return [node_path_graph(cls.node_a, cls.node_b)]
-    ```
+        class MyTransformation(SingleStateTransformation):
+            node_a = PatternNode(nodes.AccessNode)
+            node_b = PatternNode(nodes.MapEntry)
+
+            @classmethod
+            def expressions(cls):
+                return [node_path_graph(cls.node_a, cls.node_b)]
+
 
     For more information and optimization opportunities, see the respective
     methods' documentation.
 
-    :seealso: PatternNode
+    :see: PatternNode
     """
 
     @classmethod
@@ -437,6 +445,7 @@ class SingleStateTransformation(PatternTransformation, abc.ABC):
     @abc.abstractmethod
     def can_be_applied(self, graph: SDFGState, expr_index: int, sdfg: SDFG, permissive: bool = False) -> bool:
         """ Returns True if this transformation can be applied on the candidate matched subgraph.
+
             :param graph: SDFGState object in which the match was found.
             :param candidate: A mapping between node IDs returned from
                               ``PatternTransformation.expressions`` and the nodes in
@@ -456,30 +465,28 @@ class MultiStateTransformation(PatternTransformation, abc.ABC):
     Base class for pattern-matching transformations that find matches within an SDFG state machine.
     New transformations that extend this class must contain static ``PatternNode``-annotated fields that represent the
     nodes in the pattern graph, and use them to implement at least three methods:
-        * ``expressions``: A method that returns a list of graph
-                           patterns (SDFG objects) that match this
-                           transformation.
-        * ``can_be_applied``: A method that, given a subgraph candidate,
-                              checks for additional conditions whether it can
-                              be transformed.
-        * ``apply``: A method that applies the transformation
-                     on the given SDFG.
+
+        * ``expressions``: A method that returns a list of graph patterns (SDFG objects) that match this transformation.
+        * ``can_be_applied``: A method that, given a subgraph candidate, checks for additional conditions whether it can be transformed.
+        * ``apply``: A method that applies the transformation on the given SDFG.
 
     For example:
-    ```
-    class MyTransformation(MultiStateTransformation):
-        state_a = PatternNode(SDFGState)
-        state_b = PatternNode(SDFGState)
 
-        @classmethod
-        def expressions(cls):
-            return [node_path_graph(cls.state_a, cls.state_b)]
-    ```
+    .. code-block:: python
+
+        class MyTransformation(MultiStateTransformation):
+            state_a = PatternNode(SDFGState)
+            state_b = PatternNode(SDFGState)
+
+            @classmethod
+            def expressions(cls):
+                return [node_path_graph(cls.state_a, cls.state_b)]
+
 
     For more information and optimization opportunities, see the respective
     methods' documentation.
 
-    :seealso: PatternNode
+    :see: PatternNode
     """
 
     @classmethod
@@ -494,6 +501,7 @@ class MultiStateTransformation(PatternTransformation, abc.ABC):
     @abc.abstractmethod
     def can_be_applied(self, graph: SDFG, expr_index: int, sdfg: SDFG, permissive: bool = False) -> bool:
         """ Returns True if this transformation can be applied on the candidate matched subgraph.
+
             :param graph: SDFG object in which the match was found.
             :param candidate: A mapping between node IDs returned from
                               ``PatternTransformation.expressions`` and the nodes in
@@ -517,11 +525,13 @@ class PatternNode(Generic[T]):
     ``PatternTransformation`` to represent the subgraph patterns.
 
     Example use:
-    ```
-    class MyTransformation(SingleStateTransformation):
-        some_map_node = PatternNode(nodes.MapEntry)
-        array = PatternNode(nodes.AccessNode)
-    ```
+
+    .. code-block:: python
+    
+        class MyTransformation(SingleStateTransformation):
+            some_map_node = PatternNode(nodes.MapEntry)
+            array = PatternNode(nodes.AccessNode)
+
 
     The two nodes can then be used in the transformation static methods (e.g.,
     ``expressions``, ``can_be_applied``) to represent the nodes, and in the instance
@@ -531,6 +541,7 @@ class PatternNode(Generic[T]):
     def __init__(self, nodeclass: Type[T]) -> None:
         """
         Initializes a pattern-matching node.
+
         :param nodeclass: The class of the node to match (can either be a state
                           or a node type in a state).
         """
@@ -662,7 +673,7 @@ class SubgraphTransformation(TransformationBase):
     Base class for transformations that apply on arbitrary subgraphs, rather
     than matching a specific pattern.
 
-    Subclasses need to implement the `can_be_applied` and `apply` operations,
+    Subclasses need to implement the ``can_be_applied`` and ``apply`` operations,
     as well as registered with the subclass registry. See the ``PatternTransformation``
     class docstring for more information.
     """
@@ -720,6 +731,7 @@ class SubgraphTransformation(TransformationBase):
     def subclasses_recursive(cls) -> Set[Type['PatternTransformation']]:
         """
         Returns all subclasses of this class, including subclasses of subclasses. 
+
         :param all_subclasses: Include all subclasses (e.g., including ``ExpandTransformation``).
         """
         subclasses = set(cls.__subclasses__())
@@ -742,7 +754,8 @@ class SubgraphTransformation(TransformationBase):
     def can_be_applied(self, sdfg: SDFG, subgraph: gr.SubgraphView) -> bool:
         """
         Tries to match the transformation on a given subgraph, returning
-        True if this transformation can be applied.
+        ``True`` if this transformation can be applied.
+
         :param sdfg: The SDFG that includes the subgraph.
         :param subgraph: The SDFG or state subgraph to try to apply the
                          transformation on.
@@ -753,6 +766,7 @@ class SubgraphTransformation(TransformationBase):
     def apply(self, sdfg: SDFG):
         """
         Applies the transformation on the given subgraph.
+
         :param sdfg: The SDFG that includes the subgraph.
         """
         pass
@@ -772,26 +786,27 @@ class SubgraphTransformation(TransformationBase):
         nodes. Raises an error if arguments are invalid or transformation is
         not applicable.
 
-        To apply the transformation on a specific subgraph, the `where`
-        parameter can be used either on a subgraph object (`SubgraphView`), or
-        on directly on a list of subgraph nodes, given as `Node` or `SDFGState`
+        To apply the transformation on a specific subgraph, the ``where``
+        parameter can be used either on a subgraph object (``SubgraphView``), or
+        on directly on a list of subgraph nodes, given as ``Node`` or ``SDFGState``
         objects. Transformation properties can then be given as keyword
-        arguments. For example, applying `SubgraphFusion` on a subgraph of three
+        arguments. For example, applying ``SubgraphFusion`` on a subgraph of three
         nodes can be called in one of two ways:
-        ```
-        # Subgraph
-        SubgraphFusion.apply_to(
-            sdfg, SubgraphView(state, [node_a, node_b, node_c]))
+        
+        .. code-block:: python
 
-        # Simplified API: list of nodes
-        SubgraphFusion.apply_to(sdfg, node_a, node_b, node_c)
-        ```
+            # Subgraph
+            SubgraphFusion.apply_to(
+                sdfg, SubgraphView(state, [node_a, node_b, node_c]))
+
+            # Simplified API: list of nodes
+            SubgraphFusion.apply_to(sdfg, node_a, node_b, node_c)
+        
 
         :param sdfg: The SDFG to apply the transformation to.
         :param where: A set of nodes in the SDFG/state, or a subgraph thereof.
-        :param verify: Check that `can_be_applied` returns True before applying.
-        :param options: A set of parameters to use for applying the
-                        transformation.
+        :param verify: Check that ``can_be_applied`` returns True before applying.
+        :param options: A set of parameters to use for applying the transformation.
         """
         subgraph = None
         if len(where) == 1:

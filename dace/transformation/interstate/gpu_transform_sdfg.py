@@ -32,7 +32,7 @@ def _recursive_out_check(node, state, gpu_scalars):
                 scalset = scalset.union(sset)
                 scalout = scalout and ssout
                 continue
-            if desc.shape == (1,):  # Pseudo-scalar
+            if desc.shape == (1, ):  # Pseudo-scalar
                 scalout = False
                 sset, ssout = _recursive_out_check(last_edge.dst, state, gpu_scalars)
                 scalset = scalset.union(sset)
@@ -66,7 +66,7 @@ def _recursive_in_check(node, state, gpu_scalars):
                 scalset = scalset.union(sset)
                 scalout = scalout and ssout
                 continue
-            if desc.shape == (1,):  # Pseudo-scalar
+            if desc.shape == (1, ):  # Pseudo-scalar
                 scalout = False
                 sset, ssout = _recursive_in_check(last_edge.src, state, gpu_scalars)
                 scalset = scalset.union(sset)
@@ -81,26 +81,21 @@ def _recursive_in_check(node, state, gpu_scalars):
     return scalset, scalout
 
 
-def _codenode_condition(node):
-    return isinstance(node, (nodes.LibraryNode, nodes.NestedSDFG)) and node.schedule == dtypes.ScheduleType.GPU_Default
-
-
 @make_properties
 class GPUTransformSDFG(transformation.MultiStateTransformation):
     """ Implements the GPUTransformSDFG transformation.
 
         Transforms a whole SDFG to run on the GPU:
-        Steps of the full GPU transform
-          0. Acquire metadata about SDFG and arrays
-          1. Replace all non-transients with their GPU counterparts
-          2. Copy-in state from host to GPU
-          3. Copy-out state from GPU to host
-          4. Re-store Default-top/CPU_Heap transients as GPU_Global
-          5. Global tasklets are wrapped with a map of size 1
-          6. Global Maps are re-scheduled to use the GPU
-          7. Make data ready for interstate edges that use them
-          8. Re-apply simplification to get rid of extra states and
-             transients
+
+            1. Acquire metadata about SDFG and arrays
+            2. Replace all non-transients with their GPU counterparts
+            3. Copy-in state from host to GPU
+            4. Copy-out state from GPU to host
+            5. Re-store Default-top/CPU_Heap transients as GPU_Global
+            6. Global tasklets are wrapped with a map of size 1
+            7. Global Maps are re-scheduled to use the GPU
+            8. Make data ready for interstate edges that use them
+            9. Re-apply simplification to get rid of extra states and transients
     """
 
     toplevel_trans = Property(desc="Make all GPU transients top-level", dtype=bool, default=True)
@@ -305,33 +300,63 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
 
         #######################################################
         # Step 5: Collect free tasklets and check for scalars that have to be moved to the GPU
+        # Also recursively call GPUTransformSDFG on NestedSDFGs that have GPU device schedule but are not actually
+        # inside a GPU kernel.
 
         gpu_scalars = {}
+        nsdfgs = []
         changed = True
         # Iterates over Tasklets that not inside a GPU kernel. Such Tasklets must be moved inside a GPU kernel only
         # if they write to GPU memory. The check takes into account the fact that GPU kernels can read host-based
         # Scalars, but cannot write to them.
         while changed:
             changed = False
-            for node, state in sdfg.all_nodes_recursive():
-                if isinstance(node, nodes.Tasklet):
-                    if node in global_code_nodes[state]:
-                        continue
-                    if state.entry_node(node) is None and not scope.is_devicelevel_gpu_kernel(
-                            state.parent, state, node):
-                        scalars, scalar_output = _recursive_out_check(node, state, gpu_scalars)
-                        sset, ssout = _recursive_in_check(node, state, gpu_scalars)
-                        scalars = scalars.union(sset)
-                        scalar_output = scalar_output and ssout
-                        csdfg = state.parent
-                        # If the tasklet is not adjacent only to scalars or it is in a GPU scope.
-                        # The latter includes NestedSDFGs that have a GPU-Device schedule but are not in a GPU kernel.
-                        if (not scalar_output
-                                or (csdfg.parent is not None
-                                    and csdfg.parent_nsdfg_node.schedule == dtypes.ScheduleType.GPU_Default)):
-                            global_code_nodes[state].append(node)
-                            gpu_scalars.update({k: None for k in scalars})
-                            changed = True
+            for state in sdfg.states():
+                for node in state.nodes():
+                    # Handle NestedSDFGs later.
+                    if isinstance(node, nodes.NestedSDFG):
+                        if state.entry_node(node) is None and not scope.is_devicelevel_gpu_kernel(
+                                state.parent, state, node):
+                            nsdfgs.append((node, state))
+                    elif isinstance(node, nodes.Tasklet):
+                        if node in global_code_nodes[state]:
+                            continue
+                        if state.entry_node(node) is None and not scope.is_devicelevel_gpu_kernel(
+                                state.parent, state, node):
+                            scalars, scalar_output = _recursive_out_check(node, state, gpu_scalars)
+                            sset, ssout = _recursive_in_check(node, state, gpu_scalars)
+                            scalars = scalars.union(sset)
+                            scalar_output = scalar_output and ssout
+                            csdfg = state.parent
+                            # If the tasklet is not adjacent only to scalars or it is in a GPU scope.
+                            # The latter includes NestedSDFGs that have a GPU-Device schedule but are not in a GPU kernel.
+                            if (not scalar_output
+                                    or (csdfg.parent is not None
+                                        and csdfg.parent_nsdfg_node.schedule == dtypes.ScheduleType.GPU_Default)):
+                                global_code_nodes[state].append(node)
+                                gpu_scalars.update({k: None for k in scalars})
+                                changed = True
+
+        # Apply GPUTransformSDFG recursively to NestedSDFGs.
+        for node, state in nsdfgs:
+            excl_copyin = set()
+            for e in state.in_edges(node):
+                src = state.memlet_path(e)[0].src
+                if isinstance(src, nodes.AccessNode) and sdfg.arrays[src.data].storage in gpu_storage:
+                    excl_copyin.add(e.dst_conn)
+                    node.sdfg.arrays[e.dst_conn].storage = sdfg.arrays[src.data].storage
+            excl_copyout = set()
+            for e in state.out_edges(node):
+                dst = state.memlet_path(e)[-1].dst
+                if isinstance(dst, nodes.AccessNode) and sdfg.arrays[dst.data].storage in gpu_storage:
+                    excl_copyout.add(e.src_conn)
+                    node.sdfg.arrays[e.src_conn].storage = sdfg.arrays[dst.data].storage
+            # TODO: Do we want to copy here the options from the top-level SDFG?
+            node.sdfg.apply_transformations(
+                GPUTransformSDFG, {
+                    'exclude_copyin': ','.join([str(n) for n in excl_copyin]),
+                    'exclude_copyout': ','.join([str(n) for n in excl_copyout])
+                })
 
         #######################################################
         # Step 6: Modify transient data storage
@@ -350,26 +375,9 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
 
                     if sdict[node] is None and nodedesc.storage not in gpu_storage:
 
-                        # Ensure that scalars not already GPU-marked are actually used in a GPU scope.
+                        # Scalars were already checked.
                         if isinstance(nodedesc, data.Scalar) and not node.data in gpu_scalars:
-                            used_in_gpu_scope = False
-                            for e in state.in_edges(node):
-                                if _codenode_condition(state.memlet_path(e)[0].src):
-                                    used_in_gpu_scope = True
-                                    break
-                            if not used_in_gpu_scope:
-                                for e in state.out_edges(node):
-                                    if _codenode_condition(state.memlet_path(e)[-1].dst):
-                                        used_in_gpu_scope = True
-                                        break
-                            if not used_in_gpu_scope:
-                                continue
-                            for e in state.all_edges(node):
-                                for node in (e.src, e.dst):
-                                    if isinstance(node, nodes.Tasklet):
-                                        if (state.entry_node(node) is None and not scope.is_devicelevel_gpu(
-                                                state.parent, state, node, with_gpu_default=True)):
-                                            global_code_nodes[state].append(node)
+                            continue
 
                         # NOTE: the cloned arrays match too but it's the same storage so we don't care
                         nodedesc.storage = dtypes.StorageType.GPU_Global
@@ -470,5 +478,5 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
         # Step 9: Simplify
         if not self.simplify:
             return
-        
+
         sdfg.simplify()

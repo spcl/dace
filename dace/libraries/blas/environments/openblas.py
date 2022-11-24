@@ -1,6 +1,7 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import dace.library
+# Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 import ctypes.util
+
+import dace.library
 
 
 @dace.library.environment

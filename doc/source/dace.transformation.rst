@@ -43,10 +43,10 @@ dace.transformation.helpers module
    :show-inheritance:
 
 
-dace.transformation.pattern\_matching module
---------------------------------------------
+dace.transformation.passes.pattern\_matching module
+---------------------------------------------------
 
-.. automodule:: dace.transformation.pattern_matching
+.. automodule:: dace.transformation.passes.pattern_matching
    :members:
    :undoc-members:
    :show-inheritance:

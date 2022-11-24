@@ -450,7 +450,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
         if self._dispatcher.declared_arrays.has(alloc_name):
             is_global = nodedesc.lifetime in (dtypes.AllocationLifetime.Global, dtypes.AllocationLifetime.Persistent)
-            self._dispatcher.declared_arrays.remove(node.data, is_global=is_global)
+            self._dispatcher.declared_arrays.remove(alloc_name, is_global=is_global)
 
         if isinstance(nodedesc, (data.Scalar, data.View, data.Stream, data.Reference)):
             return
@@ -990,6 +990,7 @@ class CPUCodeGen(TargetCodeGenerator):
         """
         Write source to destination, where the source is a scalar, and the
         destination is a pointer.
+        
         :return: String of C++ performing the write.
         """
         codegen = codegen or self
@@ -1444,7 +1445,21 @@ class CPUCodeGen(TargetCodeGenerator):
             toplevel_sdfg: SDFG = sdfg.sdfg_list[0]
             arguments.append(f'{toplevel_sdfg.name}_t *__state')
 
-        arguments += [f'{atype} {aname}' for atype, aname, _ in memlet_references]
+        # Add "__restrict__" keywords to arguments that do not alias with others in the context of this SDFG
+        restrict_args = []
+        for atype, aname, _ in memlet_references:
+            def make_restrict(expr: str) -> str:
+                # Check whether "restrict" has already been added before and can be added
+                if expr.strip().endswith('*'):
+                    return '__restrict__'
+                else:
+                    return ''
+            if aname in node.sdfg.arrays and not node.sdfg.arrays[aname].may_alias:
+                restrict_args.append(make_restrict(atype))
+            else:
+                restrict_args.append('')
+
+        arguments += [f'{atype} {restrict} {aname}' for (atype, aname, _), restrict in zip(memlet_references, restrict_args)]
         arguments += [
             f'{node.sdfg.symbols[aname].as_arg(aname)}' for aname in sorted(node.symbol_mapping.keys())
             if aname not in sdfg.constants
@@ -2005,6 +2020,7 @@ class CPUCodeGen(TargetCodeGenerator):
         """
         Generates code for the beginning of an SDFG scope, outputting it to
         the given code streams.
+
         :param sdfg: The SDFG to generate code from.
         :param dfg_scope: The `ScopeSubgraphView` to generate code from.
         :param state_id: The node ID of the state in the given SDFG.
@@ -2024,6 +2040,7 @@ class CPUCodeGen(TargetCodeGenerator):
         """
         Generates code for the end of an SDFG scope, outputting it to
         the given code streams.
+
         :param sdfg: The SDFG to generate code from.
         :param dfg_scope: The `ScopeSubgraphView` to generate code from.
         :param state_id: The node ID of the state in the given SDFG.
@@ -2045,6 +2062,7 @@ class CPUCodeGen(TargetCodeGenerator):
         """
         Generates code for the beginning of a tasklet. This method is
         intended to be overloaded by subclasses.
+
         :param sdfg: The SDFG to generate code from.
         :param dfg_scope: The `ScopeSubgraphView` to generate code from.
         :param state_id: The node ID of the state in the given SDFG.
@@ -2064,6 +2082,7 @@ class CPUCodeGen(TargetCodeGenerator):
         """
         Generates code for the end of a tasklet. This method is intended to be
         overloaded by subclasses.
+
         :param sdfg: The SDFG to generate code from.
         :param dfg_scope: The `ScopeSubgraphView` to generate code from.
         :param state_id: The node ID of the state in the given SDFG.
