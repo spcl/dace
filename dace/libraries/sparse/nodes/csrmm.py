@@ -1,7 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from copy import deepcopy as dc
-from typing import Any, Dict, Optional
-from dace import dtypes, memlet as mm, properties, data as dt
+from dace import dtypes, memlet as mm, properties, data as dt, propagate_memlets_sdfg
 from dace.symbolic import symstr
 import dace.library
 from dace import SDFG, SDFGState
@@ -10,10 +9,8 @@ import dace.sdfg.nodes
 from dace.transformation.transformation import ExpandTransformation
 from dace.libraries.blas.blas_helpers import (to_blastype, get_gemm_opts, check_access, dtype_to_cudadatatype,
                                               to_cublas_computetype)
-from dace.libraries.blas.nodes.matmul import _get_codegen_gemm_opts
-from .. import environments
+from dace.libraries.sparse import environments
 import numpy as np
-from numbers import Number
 
 
 def _is_complex(dtype):
@@ -77,6 +74,175 @@ def _get_csrmm_operands(node,
             raise ValueError("Matrix multiplication connector "
                              "\"{}\" not found.".format(name))
     return result
+
+
+@dace.library.expansion
+class ExpandCSRMMPure(ExpandTransformation):
+    environments = []
+
+    @staticmethod
+    def expansion(node, state: SDFGState, sdfg: SDFG):
+        if node.opA != 0:
+            raise NotImplementedError
+
+        nsdfg = SDFG(node.label + "_nsdfg")
+
+        operands = _get_csrmm_operands(node, state, sdfg)
+        nstate = nsdfg.add_state("state", is_start_state=True)
+        for name, desc in operands.items():
+            desc = desc[1]
+
+            if isinstance(desc, dt.View):
+                ndesc = desc.as_array()
+            else:
+                ndesc = dc(desc)
+            ndesc.lifetime = dtypes.AllocationLifetime.Scope
+            ndesc.transient = False
+            nsdfg.add_datadesc(name, ndesc)
+
+        array_a_vals = nsdfg.arrays['_a_vals']
+        array_a_rows = nsdfg.arrays['_a_rows']
+        array_a_cols = nsdfg.arrays['_a_cols']
+        array_b = nsdfg.arrays['_b']
+        array_c = nsdfg.arrays['_c']
+
+        a_val_node = nstate.add_access('_a_vals')
+        a_row_node = nstate.add_access('_a_rows')
+        a_col_node = nstate.add_access('_a_cols')
+        b_node = nstate.add_access('_b')
+        c_node = nstate.add_access('_c')
+
+        if node.beta == 0.0:
+            shape_c = operands['_c'][1].shape
+
+            init_state = nsdfg.add_state_before(nstate, node.label + "_initstate")
+            init_state.add_mapped_tasklet(
+                'csrmm_init', {'_o%d' % i: '0:%s' % symstr(d)
+                               for i, d in enumerate(shape_c)}, {},
+                'out = 0', {'out': dace.Memlet.simple('_c', ','.join(['_o%d' % i for i in range(len(shape_c))]))},
+                external_edges=True)
+        elif node.beta == 1.0:
+            # Simplify computation
+            edges = state.edges_by_connector(node, "_cin")
+            for edge in edges:
+                state.remove_edge(edge)
+
+                if state.in_degree(edge.src) == 0 and state.out_degree(edge.src) == 0:
+                    state.remove_node(edge.src)
+
+            node.remove_in_connector("_cin")
+        else:
+            init_state = nsdfg.add_state_before(nstate, node.label + "_initstate")
+
+            cdesc = operands['_c'][1]
+            cin_desc = dc(cdesc)
+            nsdfg.add_datadesc('_cin', cin_desc)
+
+            init_state.add_mapped_tasklet(
+                'csrmm_init', {'_o%d' % i: '0:%s' % symstr(d)
+                               for i, d in enumerate(cdesc.shape)},
+                {'_in': dace.Memlet.simple('_cin', ','.join(['_o%d' % i for i in range(len(cdesc.shape))]))},
+                f'_out = {node.beta} * _in',
+                {'_out': dace.Memlet.simple('_c', ','.join(['_o%d' % i for i in range(len(cdesc.shape))]))},
+                external_edges=True)
+
+        # Multiplication map
+        outer_map_entry, outer_map_exit = nstate.add_map("spmm_1", dict(i='0:' + str(array_a_rows.shape[0] - 1)))
+        outer_map_entry.add_in_connector("IN__a_vals")
+        outer_map_entry.add_in_connector("IN__a_cols")
+        outer_map_entry.add_in_connector("IN__a_rows")
+        outer_map_entry.add_in_connector("IN__b")
+        outer_map_exit.add_out_connector("OUT__c")
+
+        nstate.add_edge(a_val_node, None, outer_map_entry, "IN__a_vals", mm.Memlet.from_array("_a_vals", array_a_vals))
+        nstate.add_edge(a_col_node, None, outer_map_entry, "IN__a_cols", mm.Memlet.from_array("_a_cols", array_a_cols))
+        nstate.add_edge(a_row_node, None, outer_map_entry, "IN__a_rows", mm.Memlet.from_array("_a_rows", array_a_rows))
+        nstate.add_edge(b_node, None, outer_map_entry, "IN__b", mm.Memlet.from_array("_b", array_b))
+        nstate.add_edge(outer_map_exit, "OUT__c", c_node, None, mm.Memlet.from_array("_c", array_c))
+
+        outer_map_entry.add_out_connector("OUT__a_vals")
+        outer_map_entry.add_out_connector("OUT__a_cols")
+        outer_map_entry.add_out_connector("OUT__a_rows")
+        outer_map_entry.add_out_connector("OUT__b")
+
+        inner_map_entry, inner_map_exit = nstate.add_map("spmm_2", dict(j="__map_19_b0:__map_19_e1"))
+        inner_map_entry.add_in_connector("__map_19_b0")
+        inner_map_entry.add_in_connector("__map_19_e1")
+        nstate.add_edge(outer_map_entry, "OUT__a_rows", inner_map_entry, "__map_19_b0",
+                        mm.Memlet("_a_rows[i]", data="_a_rows"))
+        nstate.add_edge(outer_map_entry, "OUT__a_rows", inner_map_entry, "__map_19_e1",
+                        mm.Memlet("_a_rows[i + 1]", data="_a_rows"))
+
+        inner_map_entry.add_in_connector("IN_tmp_a_vals")
+        nstate.add_edge(outer_map_entry, "OUT__a_vals", inner_map_entry, "IN_tmp_a_vals",
+                        mm.Memlet.from_array("_a_vals", array_a_vals))
+
+        inner_map_entry.add_in_connector("IN_tmp_a_cols")
+        nstate.add_edge(outer_map_entry, "OUT__a_cols", inner_map_entry, "IN_tmp_a_cols",
+                        mm.Memlet.from_array("_a_cols", array_a_cols))
+
+        inner_map_entry.add_in_connector("IN_tmp_b")
+        nstate.add_edge(outer_map_entry, "OUT__b", inner_map_entry, "IN_tmp_b", mm.Memlet.from_array("_b", array_b))
+
+        inner_map_exit.add_out_connector("OUT__c_1")
+        outer_map_exit.add_in_connector("IN__c")
+        nstate.add_edge(inner_map_exit, "OUT__c_1", outer_map_exit, "IN__c",
+                        mm.Memlet(expr=f"_c[i, 0:{str(array_c.shape[1])}]"))
+
+        inner_map_entry.add_out_connector("OUT_tmp_a_vals")
+        inner_map_entry.add_out_connector("OUT_tmp_a_cols")
+        inner_map_entry.add_out_connector("OUT_tmp_b")
+
+        k_map_entry, k_map_exit = nstate.add_map("spmm_3", dict(k=f"0:{str(array_b.shape[1])}"))
+        k_map_entry.add_in_connector("IN_tmp_a_vals_1")
+        nstate.add_edge(inner_map_entry, "OUT_tmp_a_vals", k_map_entry, "IN_tmp_a_vals_1",
+                        mm.Memlet.simple("_a_vals", "j"))
+
+        k_map_entry.add_in_connector("IN_tmp_a_cols_1")
+        nstate.add_edge(inner_map_entry, "OUT_tmp_a_cols", k_map_entry, "IN_tmp_a_cols_1",
+                        mm.Memlet.simple("_a_cols", "j"))
+
+        k_map_entry.add_in_connector("IN_tmp_b_1")
+        nstate.add_edge(inner_map_entry, "OUT_tmp_b", k_map_entry, "IN_tmp_b_1", mm.Memlet.from_array("_b", array_b))
+
+        k_map_exit.add_out_connector("OUT__c_1")
+        inner_map_exit.add_in_connector("IN__c_1")
+        nstate.add_edge(k_map_exit, "OUT__c_1", inner_map_exit, "IN__c_1",
+                        mm.Memlet(expr=f"_c[i, 0:{str(array_c.shape[1])}]"))
+
+        k_map_entry.add_out_connector("OUT_tmp_a_cols_1")
+        k_map_entry.add_out_connector("OUT_tmp_a_vals_1")
+        k_map_entry.add_out_connector("OUT_tmp_b_1")
+
+        tasklet_ind = nstate.add_tasklet("Indirection",
+                                         inputs={
+                                             "__ind_b": None,
+                                             "index_a_cols_0": None
+                                         },
+                                         outputs={'lookup': None},
+                                         code="lookup = __ind_b[index_a_cols_0]")
+        nsdfg.add_scalar("_b_value", dtype=array_b.dtype, transient=True)
+        nstate.add_edge(k_map_entry, "OUT_tmp_a_cols_1", tasklet_ind, "index_a_cols_0",
+                        mm.Memlet.simple("_a_cols", "j"))
+        nstate.add_edge(k_map_entry, "OUT_tmp_b_1", tasklet_ind, "__ind_b",
+                        mm.Memlet.simple("_b", f"0:{array_b.shape[0]}, k"))
+
+        tasklet_mult = nstate.add_tasklet("spmm", {
+            "__a": None,
+            "__b": None
+        }, {"__o": None},
+                                          code=f"__o = {node.alpha} * (__a * __b)")
+        nstate.add_edge(k_map_entry, "OUT_tmp_a_vals_1", tasklet_mult, "__a", mm.Memlet.simple("_a_vals", "j"))
+        nstate.add_edge(tasklet_ind, "lookup", tasklet_mult, "__b", mm.Memlet.simple("_b_value", "0"))
+
+        k_map_exit.add_in_connector("IN__c_1")
+        nstate.add_edge(tasklet_mult, "__o", k_map_exit, "IN__c_1",
+                        mm.Memlet.simple("_c", subset_str="i, k", wcr_str="lambda x, y: (x + y)"))
+
+        nsdfg.validate()
+        propagate_memlets_sdfg(nsdfg)
+
+        return nsdfg
 
 
 @dace.library.expansion
@@ -433,7 +599,7 @@ class CSRMM(dace.sdfg.nodes.LibraryNode):
     """
 
     # Global properties
-    implementations = {"MKL": ExpandCSRMMMKL, "cuSPARSE": ExpandCSRMMCuSPARSE}
+    implementations = {"pure": ExpandCSRMMPure, "MKL": ExpandCSRMMMKL, "cuSPARSE": ExpandCSRMMCuSPARSE}
     default_implementation = None
 
     # Object fields
