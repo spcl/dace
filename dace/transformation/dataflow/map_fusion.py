@@ -140,7 +140,7 @@ class MapFusion(transformation.SingleStateTransformation):
             if second_edge.data.is_empty():
                 continue
             # Memlets that do not come from one of the intermediate arrays
-            if second_edge.data.data not in intermediate_data:
+            if second_edge.data.data and second_edge.data.data not in intermediate_data:
                 # however, if intermediate_data eventually leads to
                 # second_memlet.data, need to fail.
                 for _n in intermediate_nodes:

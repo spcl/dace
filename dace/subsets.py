@@ -57,7 +57,10 @@ class Subset(object):
                                 symbolic.simplify_ext(nng(re)) >= symbolic.simplify_ext(nng(ore))):
                             return False
             except TypeError:
-                return False
+                if not symbolic.simplify_ext(nng(rb)) == symbolic.simplify_ext(nng(orb)):
+                    return False
+                if not symbolic.simplify_ext(nng(re)) == symbolic.simplify_ext(nng(ore)):
+                    return False
 
             return True
 

@@ -171,8 +171,32 @@ def test_library_gemm(implementation):
                       "misconfigured, skipping test for {}.".format(implementation))
 
 
+@pytest.mark.parametrize(('implementation', ), [('pure', ), ('MKL', ), pytest.param('cuBLAS', marks=pytest.mark.gpu)])
+def test_gemm_dim1(implementation):
+
+    @dace.program
+    def tester(A: dace.float64[1, 128], B: dace.float64[128, 128], C: dace.float64[1, 128]):
+        dace.libraries.blas.gemm(A, B, C, 1.0, 0.0)
+
+    a = np.random.rand(1, 128)
+    b = np.random.rand(128, 128)
+    c = np.random.rand(1, 128)
+    sdfg = tester.to_sdfg()
+
+    # Switch implementation
+    for node, _ in sdfg.all_nodes_recursive():
+        if isinstance(node, Gemm):
+            node.implementation = implementation
+
+    sdfg(a, b, c)
+
+    assert np.allclose(c, a @ b)
+
+
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == 'gpu':
         test_library_gemm('cuBLAS')
     test_library_gemm('pure')
     test_library_gemm('MKL')
+    test_gemm_dim1('pure')
+    test_gemm_dim1('MKL')
