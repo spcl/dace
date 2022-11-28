@@ -142,6 +142,7 @@ def test_persistent_gpu_copy_regression():
 
 @pytest.mark.gpu
 def test_persistent_gpu_transpose_regression():
+
     @dace.program
     def test_persistent_transpose(A: dace.float64[5, 3]):
         return np.transpose(A)
@@ -162,6 +163,7 @@ def test_persistent_gpu_transpose_regression():
 
 def test_alloc_persistent_register():
     """ Tries to allocate persistent register array. Should fail. """
+
     @dace.program
     def lifetimetest(input: dace.float64[N]):
         tmp = dace.ndarray([1], input.dtype)
@@ -179,6 +181,7 @@ def test_alloc_persistent_register():
 
 
 def test_alloc_persistent():
+
     @dace.program
     def persistentmem(output: dace.int32[1]):
         tmp = dace.ndarray([1], output.dtype, lifetime=dace.AllocationLifetime.Persistent)
@@ -204,6 +207,7 @@ def test_alloc_persistent():
 
 
 def test_alloc_persistent_threadlocal():
+
     @dace.program
     def persistentmem(output: dace.int32[2]):
         tmp = dace.ndarray([2],
@@ -237,6 +241,42 @@ def test_alloc_persistent_threadlocal():
     del csdfg
 
 
+def test_alloc_persistent_threadlocal_naming():
+
+    @dace.program
+    def nested1(A: dace.float64[2, 2], output: dace.float64[2, 2]):
+        B = dace.ndarray([2, 2],
+                         A.dtype,
+                         storage=dace.StorageType.CPU_ThreadLocal,
+                         lifetime=dace.AllocationLifetime.Persistent)
+        B[:] = A
+        output[:] = B
+
+    def nested2(A: dace.float64[2, 2], output: dace.float64[2, 2]):
+        B = dace.ndarray([2, 2],
+                         A.dtype,
+                         storage=dace.StorageType.CPU_ThreadLocal,
+                         lifetime=dace.AllocationLifetime.Persistent)
+        B[:] = A + 1
+        output[:] = B
+
+    @dace.program
+    def persistent_names(A: dace.float64[2, 2], output: dace.float64[4, 2]):
+        nested2(A, output[2:])
+        nested1(A, output[:2])
+
+    # Repeatedly invoke program. Since memory is persistent, output is expected
+    # to increase with each call
+    sdfg = persistent_names.to_sdfg(simplify=False)
+
+    a = np.random.rand(2, 2)
+    output = np.zeros((4, 2))
+    sdfg(a, output)
+
+    assert np.allclose(output[:2], a)
+    assert np.allclose(output[2:], a + 1)
+
+
 def test_alloc_multistate():
     i = dace.symbol('i')
     sdfg = dace.SDFG('multistate')
@@ -266,6 +306,7 @@ def test_alloc_multistate():
 
 
 def test_nested_view_samename():
+
     @dace.program
     def incall(a, b):
         tmp = a.reshape([10, 2])
@@ -286,6 +327,7 @@ def test_nested_view_samename():
 
 
 def test_nested_persistent():
+
     @dace.program
     def nestpers(a):
         tmp = np.ndarray([20], np.float64)
@@ -307,6 +349,7 @@ def test_nested_persistent():
 
 
 def test_persistent_scalar():
+
     @dace.program
     def perscal(a: dace.float64[20]):
         tmp = dace.define_local_scalar(dace.float64, lifetime=dace.AllocationLifetime.Persistent)
@@ -319,6 +362,7 @@ def test_persistent_scalar():
 
 
 def test_persistent_scalar_in_map():
+
     @dace.program
     def perscal(a: dace.float64[20, 20]):
         tmp = dace.define_local_scalar(dace.int32, lifetime=dace.AllocationLifetime.Persistent)
@@ -337,6 +381,7 @@ def test_persistent_scalar_in_map():
 
 
 def test_persistent_array_access():
+
     @dace.program
     def perscal(a: dace.float64[20]):
         tmp = dace.define_local_scalar(dace.int32, lifetime=dace.AllocationLifetime.Persistent)
@@ -434,6 +479,7 @@ def test_branched_allocation(mode):
 
     sdfg.compile()
 
+
 @pytest.mark.skip
 def test_scope_multisize():
     """ An array that needs to be allocated multiple times with different sizes. """
@@ -523,6 +569,7 @@ if __name__ == '__main__':
     test_alloc_persistent_register()
     test_alloc_persistent()
     test_alloc_persistent_threadlocal()
+    test_alloc_persistent_threadlocal_naming()
     test_alloc_multistate()
     test_nested_view_samename()
     test_nested_persistent()

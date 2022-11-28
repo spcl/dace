@@ -363,7 +363,7 @@ class CPUCodeGen(TargetCodeGenerator):
                                   '%s' % (name, cpp.sym2cpp(arrsize), nodedesc.storage))
                 elif (arrsize_bytes > Config.get("compiler", "max_stack_array_size")) == True:
                     warnings.warn("Array {} with size {} detected and was allocated on heap instead of "
-                                  "{} since it's size is greater than max_stack_array_size ({})".format(
+                                  "{} since its size is greater than max_stack_array_size ({})".format(
                                       name, cpp.sym2cpp(arrsize_bytes), nodedesc.storage,
                                       Config.get("compiler", "max_stack_array_size")))
 
@@ -450,7 +450,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
         if self._dispatcher.declared_arrays.has(alloc_name):
             is_global = nodedesc.lifetime in (dtypes.AllocationLifetime.Global, dtypes.AllocationLifetime.Persistent)
-            self._dispatcher.declared_arrays.remove(node.data, is_global=is_global)
+            self._dispatcher.declared_arrays.remove(alloc_name, is_global=is_global)
 
         if isinstance(nodedesc, (data.Scalar, data.View, data.Stream, data.Reference)):
             return
@@ -674,7 +674,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
             copy_shape, src_strides, dst_strides, src_expr, dst_expr = \
                 cpp.memlet_copy_to_absolute_strides(
-                    self._dispatcher, sdfg, memlet, src_node, dst_node,
+                    self._dispatcher, sdfg, state_dfg, edge, src_node, dst_node,
                     self._packed_types)
 
             # Which numbers to include in the variable argument part
@@ -990,6 +990,7 @@ class CPUCodeGen(TargetCodeGenerator):
         """
         Write source to destination, where the source is a scalar, and the
         destination is a pointer.
+        
         :return: String of C++ performing the write.
         """
         codegen = codegen or self
@@ -2019,6 +2020,7 @@ class CPUCodeGen(TargetCodeGenerator):
         """
         Generates code for the beginning of an SDFG scope, outputting it to
         the given code streams.
+
         :param sdfg: The SDFG to generate code from.
         :param dfg_scope: The `ScopeSubgraphView` to generate code from.
         :param state_id: The node ID of the state in the given SDFG.
@@ -2038,6 +2040,7 @@ class CPUCodeGen(TargetCodeGenerator):
         """
         Generates code for the end of an SDFG scope, outputting it to
         the given code streams.
+
         :param sdfg: The SDFG to generate code from.
         :param dfg_scope: The `ScopeSubgraphView` to generate code from.
         :param state_id: The node ID of the state in the given SDFG.
@@ -2059,6 +2062,7 @@ class CPUCodeGen(TargetCodeGenerator):
         """
         Generates code for the beginning of a tasklet. This method is
         intended to be overloaded by subclasses.
+
         :param sdfg: The SDFG to generate code from.
         :param dfg_scope: The `ScopeSubgraphView` to generate code from.
         :param state_id: The node ID of the state in the given SDFG.
@@ -2078,6 +2082,7 @@ class CPUCodeGen(TargetCodeGenerator):
         """
         Generates code for the end of a tasklet. This method is intended to be
         overloaded by subclasses.
+
         :param sdfg: The SDFG to generate code from.
         :param dfg_scope: The `ScopeSubgraphView` to generate code from.
         :param state_id: The node ID of the state in the given SDFG.

@@ -13,6 +13,30 @@ We follow the [Google Python Style Guide](https://google.github.io/styleguide/py
 * **Type Hints**: New functions must include proper Python [typing information](https://docs.python.org/3/library/typing.html), in order to support type checking and smoother development.
 * **Importing classes and functions directly**: This is disallowed, with the exception of directly importing the following main graph components (which are heavily reused throughout the framework): `SDFG, SDFGState, Memlet, InterstateEdge`.
 * **Inline imports**: Imports usually go at the top of a Python file, after the copyright statement and the file docstring. If you must place an `import` statement anywhere else, indicate the reason with an adjacent comment (e.g., `# Avoid import loop`).
+* **docstrings**: We use [Sphinx](https://www.sphinx-doc.org/) for documentation. Use type hints as much as possible (this will be automatically integrated into the documentation) and the following format:
+
+```python
+def example_function(param_a: str, *args: Optional[SDFG]) -> bool:
+    """
+    Explain what the function does. Note the double line break below, after
+    description and before parameter declaration! Without it Sphinx does not work.
+
+    :param param_a: What ``param_a`` does. Double backticks indicate code format in Sphinx.
+    :param args: Variable-length arguments are documented just like standard parameters.
+    :return: True if example, False otherwise.
+    :note: Some notes can be used here. See Sphinx for the full list of available annotations.
+    :note: Numbered and itemized lists must also have a blank line and must be indented.
+
+    If you want to include a code sample, use:
+
+    .. code-block:: python
+
+        # Note the empty line above
+        example_use = example_function('hello', None, None, SDFG('world'))
+    """
+    ...
+```
+
 
 For automatic styling, we use the [yapf](https://github.com/google/yapf) file formatter.
 **Please run `yapf` before making your pull request ready for review.**

@@ -153,7 +153,8 @@ class InstrumentationType(aenum.AutoNumberEnum):
     No_Instrumentation = ()
     Timer = ()
     PAPI_Counters = ()
-    LIKWID_Counters = ()
+    LIKWID_CPU = ()
+    LIKWID_GPU = ()
     GPU_Events = ()
     FPGA = ()
 
@@ -250,11 +251,11 @@ _OCL_TYPES = {
     numpy.int16: "short",
     numpy.int32: "int",
     numpy.intc: "int",
-    numpy.int64: "long long",
+    numpy.int64: "long",
     numpy.uint8: "unsigned char",
     numpy.uint16: "unsigned short",
     numpy.uint32: "unsigned int",
-    numpy.uint64: "unsigned long long",
+    numpy.uint64: "unsigned long",
     numpy.uintc: "unsigned int",
     numpy.float32: "float",
     numpy.float64: "double",
@@ -423,8 +424,9 @@ class typeclass(object):
 
     def __getitem__(self, s):
         """ This is syntactic sugar that allows us to define an array type
-            with the following syntax: dace.uint32[N,M]
-            :return: A data.Array data descriptor.
+            with the following syntax: ``dace.uint32[N,M]``
+
+            :return: A ``data.Array`` data descriptor.
         """
         from dace import data
 
@@ -481,6 +483,7 @@ def reduction_identity(dtype: typeclass, red: ReductionType) -> Any:
     """
     Returns known identity values (which we can safely reset transients to)
     for built-in reduction types.
+
     :param dtype: Input type.
     :param red: Reduction type.
     :return: Identity value in input type, or None if not found.
@@ -876,7 +879,9 @@ def ptrtocupy(ptr, inner_ctype, shape):
 
 
 class callback(typeclass):
-    """ Looks like dace.callback([None, <some_native_type>], *types)"""
+    """
+    Looks like ``dace.callback([None, <some_native_type>], *types)``
+    """
 
     def __init__(self, return_types, *variadic_args):
         from dace import data
@@ -927,18 +932,20 @@ class callback(typeclass):
         return cf_object
 
     def is_scalar_function(self) -> bool:
-        '''
+        """
         Returns True if the callback is a function that returns a scalar
         value (or nothing). Scalar functions are the only ones that can be 
         used within a `dace.tasklet` explicitly.
-        '''
+        """
         from dace import data
         if len(self.return_types) == 0 or self.return_types == [None]:
             return True
         return (len(self.return_types) == 1 and isinstance(self.return_types[0], (typeclass, data.Scalar)))
 
     def cfunc_return_type(self) -> typeclass:
-        ''' Returns the typeclass of the return value of the function call. '''
+        """
+        Returns the typeclass of the return value of the function call.
+        """
         if len(self.return_types) == 0 or self.return_types == [None]:
             return typeclass(None)
         if not self.is_scalar_function():

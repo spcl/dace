@@ -84,10 +84,11 @@ def init_data(N):
 
 
 def run_nussinov(device_type: dace.dtypes.DeviceType):
-    '''
+    """
     Runs Nussinov for the given device
+
     :return: the SDFG
-    '''
+    """
 
     # Initialize data (polybench mini size)
     N = 60

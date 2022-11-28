@@ -13,7 +13,7 @@ dace.transformation.dataflow.copy\_to\_device module
    :show-inheritance:
 
 dace.transformation.dataflow.double\_buffering module
-----------------------------------------------------
+-----------------------------------------------------
 
 .. automodule:: dace.transformation.dataflow.double_buffering
    :members:
@@ -37,7 +37,7 @@ dace.transformation.dataflow.gpu\_transform\_local\_storage module
    :show-inheritance:
 
 dace.transformation.dataflow.local\_storage module
--------------------------------------------------
+--------------------------------------------------
 
 .. automodule:: dace.transformation.dataflow.local_storage
    :members:
@@ -61,7 +61,7 @@ dace.transformation.dataflow.map\_expansion module
    :show-inheritance:
 
 dace.transformation.dataflow.map\_fission module
------------------------------------------------
+------------------------------------------------
 
 .. automodule:: dace.transformation.dataflow.map_fission
    :members:
@@ -101,7 +101,7 @@ dace.transformation.dataflow.mapreduce module
    :show-inheritance:
 
 dace.transformation.dataflow.matrix\_product\_transpose module
--------------------------------------------------
+--------------------------------------------------------------
 
 .. automodule:: dace.transformation.dataflow.matrix_product_transpose
    :members:
@@ -124,6 +124,22 @@ dace.transformation.dataflow.mpi module
    :undoc-members:
    :show-inheritance:
 
+dace.transformation.dataflow.otf_map_fusion module
+--------------------------------------------------
+
+.. automodule:: dace.transformation.dataflow.otf_map_fusion
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+dace.transformation.dataflow.reduce\_expansion module
+-----------------------------------------------------
+
+.. automodule:: dace.transformation.dataflow.reduce_expansion
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 dace.transformation.dataflow.redundant\_array module
 ----------------------------------------------------
 
@@ -136,6 +152,14 @@ dace.transformation.dataflow.redundant\_array\_copying module
 -------------------------------------------------------------
 
 .. automodule:: dace.transformation.dataflow.redundant_array_copying
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+dace.transformation.dataflow.streaming\_memory module
+-----------------------------------------------------
+
+.. automodule:: dace.transformation.dataflow.streaming_memory
    :members:
    :undoc-members:
    :show-inheritance:
@@ -168,6 +192,14 @@ dace.transformation.dataflow.vectorization module
 -------------------------------------------------
 
 .. automodule:: dace.transformation.dataflow.vectorization
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+dace.transformation.dataflow.warp_tiling module
+-----------------------------------------------
+
+.. automodule:: dace.transformation.dataflow.warp_tiling
    :members:
    :undoc-members:
    :show-inheritance:

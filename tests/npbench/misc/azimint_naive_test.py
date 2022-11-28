@@ -93,10 +93,7 @@ def run_azimint_naive(device_type: dace.dtypes.DeviceType):
 def test_cpu():
     run_azimint_naive(dace.dtypes.DeviceType.CPU)
 
-
-# NOTE: Doesn't work yet with GPU-auto-optimize
-# @pytest.mark.gpu
-@pytest.mark.skip
+@pytest.mark.gpu
 def test_gpu():
     run_azimint_naive(dace.dtypes.DeviceType.GPU)
 

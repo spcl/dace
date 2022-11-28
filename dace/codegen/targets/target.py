@@ -1,29 +1,40 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 import os
 import shutil  # which
-from typing import Dict, List, Tuple
+from typing import List
 import warnings
 
-from dace import dtypes, memlet as mm, data as dt
+from dace import memlet as mm, data as dt
 from dace.sdfg import nodes, SDFG, SDFGState, ScopeSubgraphView, graph as gr
-from dace.sdfg.utils import dfs_topological_sort
-from dace.codegen.instrumentation.provider import InstrumentationProvider
-from dace.registry import extensible_enum, make_registry
+from dace.registry import make_registry
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.codeobject import CodeObject
 
 
 @make_registry
 class TargetCodeGenerator(object):
-    """ Interface dictating functions that generate code for:
-          * Array allocation/deallocation/initialization/copying
-          * Scope (map, consume) code generation
     """
+    Interface dictating functions that generate code for:
+          
+        * Array allocation/deallocation/initialization/copying
+        * Scope (map, consume) code generation
+    """
+
     def get_generated_codeobjects(self) -> List[CodeObject]:
-        """ Returns a list of generated `CodeObject` classes corresponding
-            to files with generated code. If an empty list is returned
-            (default) then this code generator does not create new files.
-            @see: CodeObject
+        """ 
+        Returns a list of generated ``CodeObject`` classes corresponding
+        to files with generated code. If an empty list is returned
+        (default) then this code generator does not create new files.
+            
+        :see: CodeObject
+        """
+        return []
+
+    @staticmethod
+    def cmake_options() -> List[str]:
+        """
+        Returns a list of CMake options that this target needs
+        to be passed into the ``cmake`` command during configuration. 
         """
         return []
 
@@ -31,6 +42,7 @@ class TargetCodeGenerator(object):
         """
         Called before code generation on any target that will be dispatched.
         Used for making modifications on the SDFG prior to code generation.
+
         :note: Post-conditions assume that the SDFG will NOT be changed after
                this point.
         :param sdfg: The SDFG to modify in-place.
@@ -53,6 +65,7 @@ class TargetCodeGenerator(object):
                        callsite_stream: CodeIOStream) -> None:
         """ Generates code for an SDFG state, outputting it to the given
             code streams.
+
             :param sdfg: The SDFG to generate code from.
             :param state: The SDFGState to generate code from.
             :param function_stream: A `CodeIOStream` object that will be
@@ -69,6 +82,7 @@ class TargetCodeGenerator(object):
         """ Generates code for an SDFG state scope (from a scope-entry node
             to its corresponding scope-exit node), outputting it to the given
             code streams.
+
             :param sdfg: The SDFG to generate code from.
             :param dfg_scope: The `ScopeSubgraphView` to generate code from.
             :param state_id: The node ID of the state in the given SDFG.
@@ -85,6 +99,7 @@ class TargetCodeGenerator(object):
                       callsite_stream: CodeIOStream) -> None:
         """ Generates code for a single node, outputting it to the given
             code streams.
+
             :param sdfg: The SDFG to generate code from.
             :param dfg: The SDFG state to generate code from.
             :param state_id: The node ID of the state in the given SDFG.
@@ -102,6 +117,7 @@ class TargetCodeGenerator(object):
                       global_stream: CodeIOStream, declaration_stream: CodeIOStream) -> None:
         """ Generates code for declaring an array without allocating it,
             outputting to the given code streams.
+
             :param sdfg: The SDFG to generate code from.
             :param dfg: The SDFG state to generate code from.
             :param state_id: The node ID of the state in the given SDFG.
@@ -120,6 +136,7 @@ class TargetCodeGenerator(object):
                        allocation_stream: CodeIOStream) -> None:
         """ Generates code for allocating an array, outputting to the given
             code streams.
+
             :param sdfg: The SDFG to generate code from.
             :param dfg: The SDFG state to generate code from.
             :param state_id: The node ID of the state in the given SDFG.
@@ -139,6 +156,7 @@ class TargetCodeGenerator(object):
                          function_stream: CodeIOStream, callsite_stream: CodeIOStream) -> None:
         """ Generates code for deallocating an array, outputting to the given
             code streams.
+
             :param sdfg: The SDFG to generate code from.
             :param dfg: The SDFG state to generate code from.
             :param state_id: The node ID of the state in the given SDFG.
@@ -159,6 +177,7 @@ class TargetCodeGenerator(object):
         """ Generates code for copying memory, either from a data access
             node (array/stream) to another, a code node (tasklet/nested
             SDFG) to another, or a combination of the two.
+
             :param sdfg: The SDFG to generate code from.
             :param dfg: The SDFG state to generate code from.
             :param state_id: The node ID of the state in the given SDFG.
@@ -188,6 +207,7 @@ def make_absolute(path: str) -> str:
     """ 
     Finds an executable and returns an absolute path out of it. Used when
     finding compiler executables.
+
     :param path: Executable name, relative path, or absolute path.
     :return: Absolute path pointing to the same file as ``path``.
     """

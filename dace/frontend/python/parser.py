@@ -60,12 +60,13 @@ def _get_locals_and_globals(f):
     return result
 
 
-def infer_symbols_from_datadescriptor(sdfg: SDFG, args: Dict[str, Any],
-                                      exclude: Optional[Set[str]] = None) -> \
-        Dict[str, Any]:
+def infer_symbols_from_datadescriptor(sdfg: SDFG,
+                                      args: Dict[str, Any],
+                                      exclude: Optional[Set[str]] = None) -> Dict[str, Any]:
     """
     Infers the values of SDFG symbols (not given as arguments) from the shapes
     and strides of input arguments (e.g., arrays).
+
     :param sdfg: The SDFG that is being called.
     :param args: A dictionary mapping from current argument names to their
                  values. This may also include symbols.
@@ -135,7 +136,17 @@ class DaceProgram(pycommon.SDFGConvertible):
     """ A data-centric program object, obtained by decorating a function with
         ``@dace.program``. """
 
-    def __init__(self, f, args, kwargs, auto_optimize, device, constant_functions=False, method=False):
+    def __init__(self,
+                 f,
+                 args,
+                 kwargs,
+                 auto_optimize,
+                 device,
+                 constant_functions=False,
+                 recreate_sdfg: bool = True,
+                 regenerate_code: bool = True,
+                 recompile: bool = True,
+                 method: bool = False):
         from dace.codegen import compiled_sdfg  # Avoid import loops
 
         self.f = f
@@ -148,10 +159,13 @@ class DaceProgram(pycommon.SDFGConvertible):
             self.argnames = self.argnames[1:]
         else:
             self.objname = None
-        self.auto_optimize = auto_optimize
+        self.autoopt = auto_optimize
         self.device = device
         self._methodobj: Any = None  #: Object whose method this program is
         self.validate: bool = True  #: Whether to validate on code generation
+        self.recreate_sdfg = recreate_sdfg
+        self.regenerate_code = regenerate_code
+        self.recompile = recompile
 
         self.global_vars = _get_locals_and_globals(f)
         self.signature = inspect.signature(f)
@@ -199,7 +213,7 @@ class DaceProgram(pycommon.SDFGConvertible):
                 setattr(result, k, copy.deepcopy(v, memo))
         return result
 
-    def _auto_optimize(self, sdfg: SDFG, symbols: Dict[str, int] = None) -> SDFG:
+    def auto_optimize(self, sdfg: SDFG, symbols: Dict[str, int] = None) -> SDFG:
         """ Invoke automatic optimization heuristics on internal program. """
         # Avoid import loop
         from dace.transformation.auto import auto_optimize as autoopt
@@ -255,10 +269,11 @@ class DaceProgram(pycommon.SDFGConvertible):
         """ Convenience function that parses and compiles a DaCe program. """
         sdfg = self._parse(args, kwargs, simplify=simplify, save=save)
 
-        # Invoke auto-optimization as necessary
-        if Config.get_bool('optimizer', 'autooptimize') or self.auto_optimize:
-            sdfg = self._auto_optimize(sdfg)
-            sdfg.simplify()
+        if self.recreate_sdfg:
+            # Invoke auto-optimization as necessary
+            if Config.get_bool('optimizer', 'autooptimize') or self.autoopt:
+                sdfg = self.auto_optimize(sdfg)
+                sdfg.simplify()
 
         return sdfg.compile(validate=self.validate)
 
@@ -287,6 +302,7 @@ class DaceProgram(pycommon.SDFGConvertible):
         """ 
         Returns the closure arrays of the SDFG represented by the dace 
         program as a mapping between array name and the corresponding value.
+
         :param reevaluate: If given, re-evaluates closure elements based on the
                            input mapping (keys: array names, values: expressions
                            to evaluate). Otherwise, re-evaluates 
@@ -409,14 +425,15 @@ class DaceProgram(pycommon.SDFGConvertible):
         kwargs.update(arg_mapping)
         sdfg_args = self._create_sdfg_args(sdfg, args, kwargs)
 
-        # Allow CLI to prompt for optimizations
-        if Config.get_bool('optimizer', 'transform_on_call'):
-            sdfg = sdfg.optimize()
+        if self.recreate_sdfg:
+            # Allow CLI to prompt for optimizations
+            if Config.get_bool('optimizer', 'transform_on_call'):
+                sdfg = sdfg.optimize()
 
-        # Invoke auto-optimization as necessary
-        if Config.get_bool('optimizer', 'autooptimize') or self.auto_optimize:
-            sdfg = self._auto_optimize(sdfg, symbols=sdfg_args)
-            sdfg.simplify()
+            # Invoke auto-optimization as necessary
+            if Config.get_bool('optimizer', 'autooptimize') or self.autoopt:
+                sdfg = self.auto_optimize(sdfg, symbols=sdfg_args)
+                sdfg.simplify()
 
         # Compile SDFG (note: this is done after symbol inference due to shape
         # altering transformations such as Vectorization)
@@ -436,6 +453,7 @@ class DaceProgram(pycommon.SDFGConvertible):
         """ 
         Try to parse a DaceProgram object and return the `dace.SDFG` object
         that corresponds to it.
+
         :param function: DaceProgram object (obtained from the ``@dace.program``
                         decorator).
         :param args: The given arguments to the function.
@@ -484,6 +502,7 @@ class DaceProgram(pycommon.SDFGConvertible):
             given_kwargs: Dict[str, Any]) -> Tuple[ArgTypes, Dict[str, Any], Dict[str, Any], Set[str]]:
         """ 
         Obtains types from decorator and/or from type annotations in a function.
+
         :param given_args: The call-site arguments to the dace.program.
         :param given_kwargs: The call-site keyword arguments to the program.
         :return: A 4-tuple containing (argument type mapping, extra argument 
@@ -664,6 +683,7 @@ class DaceProgram(pycommon.SDFGConvertible):
         """
         (Internal API)
         Loads an external SDFG that will be used when the function is called.
+
         :param path: Path to SDFG file.
         :param args: Optional compile-time arguments.
         :param kwargs: Optional compile-time keyword arguments.
@@ -671,7 +691,10 @@ class DaceProgram(pycommon.SDFGConvertible):
         """
         # Read SDFG
         if path is not None:
-            sdfg = SDFG.from_file(path)
+            try:
+                sdfg = SDFG.from_file(path)
+            except FileNotFoundError:
+                return None, None
         else:
             sdfg = None
 
@@ -701,12 +724,18 @@ class DaceProgram(pycommon.SDFGConvertible):
         self.closure_constant_keys = set(closure.closure_constants.keys()) - removed_args
         self.resolver = closure
 
+        if sdfg is not None:
+            # Set regenerate and recompile flags
+            sdfg._regenerate_code = self.regenerate_code
+            sdfg._recompile = self.recompile
+
         return sdfg, self._cache.make_key(argtypes, given_args, self.closure_array_keys, self.closure_constant_keys,
                                           constant_args)
 
     def load_sdfg(self, path: str, *args, **kwargs):
         """
         Loads an external SDFG that will be used when the function is called.
+
         :param path: Path to SDFG file.
         :param args: Optional compile-time arguments.
         :param kwargs: Optional compile-time keyword arguments.
@@ -722,6 +751,7 @@ class DaceProgram(pycommon.SDFGConvertible):
         """
         Loads an external compiled SDFG object that will be invoked when the 
         function is called.
+
         :param path: Path to SDFG build folder (e.g., ".dacecache/program").
                      Path has to include ``program.sdfg`` and the binary shared
                      object under the ``build`` folder.
@@ -740,6 +770,7 @@ class DaceProgram(pycommon.SDFGConvertible):
     def get_program_hash(self, *args, **kwargs) -> cached_program.ProgramCacheKey:
         """
         Returns the program's hash (cache key) given the arguments and the program's closure.
+
         :param args: Arguments that the SDFG will be called with.
         :param kwargs: Keyword arguments that the SDFG will be called with.
         :return: A hashable program cache key object.
@@ -749,6 +780,7 @@ class DaceProgram(pycommon.SDFGConvertible):
 
     def _generate_pdp(self, args: Tuple[Any], kwargs: Dict[str, Any], simplify: Optional[bool] = None) -> SDFG:
         """ Generates the parsed AST representation of a DaCe program.
+        
             :param args: The given arguments to the program.
             :param kwargs: The given keyword arguments to the program.
             :param simplify: Whether to apply simplification pass when parsing 
@@ -822,6 +854,13 @@ class DaceProgram(pycommon.SDFGConvertible):
         self.closure_constant_keys = set(closure.closure_constants.keys()) - removed_args
         self.resolver = closure
 
+        # If recreate flag is False, check and load from cache
+        if not self.recreate_sdfg:
+            build_folder = SDFG(self.name).build_folder
+            sdfg, _ = self.load_sdfg(os.path.join(build_folder, 'program.sdfg'), *args, **kwargs)
+            if sdfg is not None:
+                return sdfg, True
+
         # If parsed SDFG is already cached, use it
         cachekey = self._cache.make_key(argtypes, specified, self.closure_array_keys, self.closure_constant_keys, gvars)
         if self._cache.has(cachekey):
@@ -852,5 +891,10 @@ class DaceProgram(pycommon.SDFGConvertible):
             sdfg.arg_names = [a for a in self.argnames if a in argtypes]
 
             # TODO: Add to parsed SDFG cache
+
+            # Set regenerate and recompile flags
+            sdfg._regenerate_code = self.regenerate_code
+            sdfg._recompile = self.recompile
+
 
         return sdfg, cached

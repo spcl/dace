@@ -157,7 +157,7 @@ class CUDACodeGen(TargetCodeGenerator):
                 if (e.src.desc(nsdfg).storage == dtypes.StorageType.GPU_Global
                         and e.dst.desc(nsdfg).storage == dtypes.StorageType.GPU_Global):
                     copy_shape, src_strides, dst_strides, _, _ = memlet_copy_to_absolute_strides(
-                        None, nsdfg, e.data, e.src, e.dst)
+                        None, nsdfg, state, e, e.src, e.dst)
                     dims = len(copy_shape)
 
                     # Skip supported copy types
@@ -713,6 +713,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         """ Annotates an SDFG (and all nested ones) to include a `_cuda_stream`
             field. This field is applied to all GPU maps, tasklets, and copies
             that can be executed in parallel.
+            
             :param sdfg: The sdfg to modify.
             :param default_stream: The stream ID to start counting from (used
                                    in recursion to nested SDFGs).
@@ -926,7 +927,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
             # Obtain copy information
             copy_shape, src_strides, dst_strides, src_expr, dst_expr = (memlet_copy_to_absolute_strides(
-                self._dispatcher, sdfg, memlet, src_node, dst_node, self._cpu_codegen._packed_types))
+                self._dispatcher, sdfg, state_dfg, edge, src_node, dst_node, self._cpu_codegen._packed_types))
             dims = len(copy_shape)
 
             dtype = dst_node.desc(sdfg).dtype
@@ -1078,7 +1079,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
             if inner_schedule == dtypes.ScheduleType.GPU_Device:
                 # Obtain copy information
                 copy_shape, src_strides, dst_strides, src_expr, dst_expr = (memlet_copy_to_absolute_strides(
-                    self._dispatcher, sdfg, memlet, src_node, dst_node, self._cpu_codegen._packed_types))
+                    self._dispatcher, sdfg, state, edge, src_node, dst_node, self._cpu_codegen._packed_types))
 
                 dims = len(copy_shape)
 
@@ -1626,27 +1627,28 @@ void  *{kname}_args[] = {{ {kargs} }};
         return res
 
     def get_kernel_dimensions(self, dfg_scope):
-        """ Determines a GPU kernel's grid/block dimensions from map
-            scopes.
+        """
+        Determines a GPU kernel's grid/block dimensions from map scopes.
 
-            Ruleset for kernel dimensions:
-                1. If only one map (device-level) exists, of an integer set S,
-                   the block size is 32x1x1 and grid size is ceil(|S|/32) in
-                   1st dimension.
-                2. If nested thread-block maps exist (T_1,...,T_n), grid
-                   size is |S| and block size is max(|T_1|,...,|T_n|) with
-                   block specialization.
-                3. If block size can be overapproximated, it is (for
-                   dynamically-sized blocks that are bounded by a
-                   predefined size).
-                4. If nested device maps exist, they generate extra grid dimensions (block size 1)
-                   as the sum of all their sizes (|T_1| + ... + |T_n|)
+        Ruleset for kernel dimensions:
 
-            :note: Kernel dimensions are separate from the map
-                   variables, and they should be treated as such.
-            :note: To make use of the grid/block 3D registers, we use multi-
-                   dimensional kernels up to 3 dimensions, and flatten the
-                   rest into the third dimension.
+            1. If only one map (device-level) exists, of an integer set ``S``,
+                the block size is ``32x1x1`` and grid size is ``ceil(|S|/32)`` in
+                1st dimension.
+            2. If nested thread-block maps exist ``(T_1,...,T_n)``, grid
+                size is ``|S|`` and block size is ``max(|T_1|,...,|T_n|)`` with
+                block specialization.
+            3. If block size can be overapproximated, it is (for
+                dynamically-sized blocks that are bounded by a
+                predefined size).
+            4. If nested device maps exist, they generate extra grid dimensions (block size 1)
+                as the sum of all their sizes ``(|T_1| + ... + |T_n|)``
+
+        :note: Kernel dimensions are separate from the map
+                variables, and they should be treated as such.
+        :note: To make use of the grid/block 3D registers, we use multi-
+                dimensional kernels up to 3 dimensions, and flatten the
+                rest into the third dimension.
         """
 
         kernelmap_entry: nodes.MapEntry = dfg_scope.source_nodes()[0]

@@ -1,6 +1,8 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-""" Functionality relating to Memlet propagation (deducing external memlets
-    from internal memory accesses and scope ranges). """
+"""
+Functionality relating to Memlet propagation (deducing external memlets
+from internal memory accesses and scope ranges).
+"""
 
 from collections import deque
 import copy
@@ -549,13 +551,13 @@ class ConstantRangeMemlet(MemletPattern):
 
 
 def _annotate_loop_ranges(sdfg, unannotated_cycle_states):
-    '''
+    """
     Annotate each valid for loop construct with its loop variable ranges.
 
     :param sdfg: The SDFG in which to look.
     :param unannotated_cycle_states: List of states in cycles without valid
                                      for loop ranges.
-    '''
+    """
 
     # We import here to avoid cyclic imports.
     from dace.transformation.interstate.loop_detection import find_for_loop
@@ -671,45 +673,50 @@ def propagate_states(sdfg) -> None:
     Annotate the states of an SDFG with the number of executions.
 
     Algorithm:
-    1. Clean up the state machine by splitting condition and assignment edges
-       into separate edes with a dummy state in between.
-    2. Detect and annotate any for-loop constructs with their corresponding loop
-       variable ranges.
-    3. Start traversing the state machine from the start state (start state
-       gets executed once by default). At every state, check the following:
-        a) The state was already visited -> in this case it can either be the
-           guard of a loop we're returning to - in which case the number of
-           executions is additively combined - or it is a state that can be
-           reached through multiple paths (e.g. if/else branches), in which case
-           the number of executions is equal to the maximum number of executions
-           for each incoming path (in case this fully merges a previously
-           branched out tree again, the number of executions isn't dynamic
-           anymore). In both cases we override the calculated number of
-           executions if we're propagating dynamic unbounded. This DFS traversal
-           is complete and we continue with the next unvisited state.
-        b) We're propagating dynamic unbounded -> this overrides every
-           calculated number of executions, so this gets unconditionally
-           propagated to all child states.
-        c) None of the above, the next regular traversal step is executed:
-            3.1: If there is no further outgoing edge, this DFS traversal is
-                 done and we continue with the next unvisited state.
-            3.2: If there is one outgoing edge, we continue propagating the
-                 same number of executions to the child state. If the transition
-                 to the child state is conditional, the current state might be
-                 an implicit exit state, in which case we mark the next state as
-                 dynamic to signal that it's an upper bound.
-            3.3: If there is more than one outgoing edge we:
-                3.3.1: Check if it's an annotated loop guard with a range. If
+    
+        1. Clean up the state machine by splitting condition and assignment edges
+           into separate edes with a dummy state in between.
+        2. Detect and annotate any for-loop constructs with their corresponding loop
+           variable ranges.
+        3. Start traversing the state machine from the start state (start state
+           gets executed once by default). At every state, check the following:
+
+            a. The state was already visited -> in this case it can either be the
+               guard of a loop we're returning to - in which case the number of
+               executions is additively combined - or it is a state that can be
+               reached through multiple paths (e.g. if/else branches), in which case
+               the number of executions is equal to the maximum number of executions
+               for each incoming path (in case this fully merges a previously
+               branched out tree again, the number of executions isn't dynamic
+               anymore). In both cases we override the calculated number of
+               executions if we're propagating dynamic unbounded. This DFS traversal
+               is complete and we continue with the next unvisited state.
+            b. We're propagating dynamic unbounded -> this overrides every
+               calculated number of executions, so this gets unconditionally
+               propagated to all child states.
+            c. None of the above, the next regular traversal step is executed:
+
+                1. If there is no further outgoing edge, this DFS traversal is done and we continue with the next
+                   unvisited state.
+                2. If there is one outgoing edge, we continue propagating the
+                   same number of executions to the child state. If the transition
+                   to the child state is conditional, the current state might be
+                   an implicit exit state, in which case we mark the next state as
+                   dynamic to signal that it's an upper bound.
+                3. If there is more than one outgoing edge we:
+
+                    a. Check if it's an annotated loop guard with a range. If
                        so, we calculate the number of executions for the loop
                        and propagate this down the loop.
-                3.3.2: Check if it's a loop that hasn't been unannotated, which
+                    b. Check if it's a loop that hasn't been unannotated, which
                        means it's unbounded. In this case we propagate dynamic
                        unbounded down the loop.
-                3.3.3: Otherwise this must be a conditional branch, so this
+                    c. Otherwise this must be a conditional branch, so this
                        state's number of executions is given to all child states
                        as an upper bound.
-    4. The traversal ends when all reachable states have been visited at least
-       once.
+
+        4. The traversal ends when all reachable states have been visited at least
+           once.
 
     :param sdfg: The SDFG to annotate.
     :note: This operates on the SDFG in-place.
@@ -900,14 +907,14 @@ def propagate_states(sdfg) -> None:
 
 
 def propagate_memlets_nested_sdfg(parent_sdfg, parent_state, nsdfg_node):
-    '''
+    """
     Propagate memlets out of a nested sdfg.
 
     :param parent_sdfg: The parent SDFG this nested SDFG is in.
     :param parent_state: The state containing this nested SDFG.
     :param nsdfg_node: The NSDFG node containing this nested SDFG.
     :note: This operates in-place on the parent SDFG.
-    '''
+    """
     # We import late to avoid cyclic imports here.
     from dace.transformation.helpers import unsqueeze_memlet
 
@@ -1078,6 +1085,7 @@ def propagate_memlets_nested_sdfg(parent_sdfg, parent_state, nsdfg_node):
 
 def reset_state_annotations(sdfg):
     """ Resets the state (loop-related) annotations of an SDFG.
+
         :note: This operation is shallow (does not go into nested SDFGs).
     """
     for state in sdfg.nodes():
@@ -1091,6 +1099,7 @@ def reset_state_annotations(sdfg):
 
 def propagate_memlets_sdfg(sdfg):
     """ Propagates memlets throughout an entire given SDFG. 
+    
         :note: This is an in-place operation on the SDFG.
     """
     # Reset previous annotations first
@@ -1104,6 +1113,7 @@ def propagate_memlets_sdfg(sdfg):
 
 def propagate_memlets_state(sdfg, state):
     """ Propagates memlets throughout one SDFG state.
+
         :param sdfg: The SDFG in which the state is situated.
         :param state: The state to propagate in.
         :note: This is an in-place operation on the SDFG state.
@@ -1192,19 +1202,48 @@ def _propagate_node(dfg_state, node):
         external_edges = [e for e in dfg_state.in_edges(node) if e.dst_conn and e.dst_conn.startswith('IN_')]
         geticonn = lambda e: e.src_conn[4:]
         geteconn = lambda e: e.dst_conn[3:]
+        use_dst = False
     else:
         internal_edges = [e for e in dfg_state.in_edges(node) if e.dst_conn and e.dst_conn.startswith('IN_')]
         external_edges = [e for e in dfg_state.out_edges(node) if e.src_conn and e.src_conn.startswith('OUT_')]
         geticonn = lambda e: e.dst_conn[3:]
         geteconn = lambda e: e.src_conn[4:]
+        use_dst = True
 
     for edge in external_edges:
         if edge.data.is_empty():
             new_memlet = Memlet()
         else:
             internal_edge = next(e for e in internal_edges if geticonn(e) == geteconn(edge))
-            new_memlet = propagate_memlet(dfg_state, internal_edge.data, node, True, connector=geteconn(edge))
+            aligned_memlet = align_memlet(dfg_state, internal_edge, dst=use_dst)
+            new_memlet = propagate_memlet(dfg_state, aligned_memlet, node, True, connector=geteconn(edge))
         edge.data = new_memlet
+
+
+def align_memlet(state, e: gr.MultiConnectorEdge[Memlet], dst: bool) -> Memlet:
+    is_src = e.data._is_data_src
+    # Memlet is already aligned
+    if is_src is None or (is_src and not dst) or (not is_src and dst):
+        return e.data
+
+    # Data<->Code memlets always have one data container
+    mpath = state.memlet_path(e)
+    if not isinstance(mpath[0].src, nodes.AccessNode) or not isinstance(mpath[-1].dst, nodes.AccessNode):
+        return e.data
+
+    # Otherwise, find other data container
+    result = copy.deepcopy(e.data)
+    if dst:
+        node = mpath[-1].dst
+    else:
+        node = mpath[0].src
+
+    # Fix memlet fields
+    result.data = node.data
+    result.subset = e.data.other_subset
+    result.other_subset = e.data.subset
+    result._is_data_src = not is_src
+    return result
 
 
 # External API
@@ -1217,6 +1256,7 @@ def propagate_memlet(dfg_state,
     """ Tries to propagate a memlet through a scope (computes the image of 
         the memlet function applied on an integer set of, e.g., a map range) 
         and returns a new memlet object.
+
         :param dfg_state: An SDFGState object representing the graph.
         :param memlet: The memlet adjacent to the scope node from the inside.
         :param scope_node: A scope entry or exit node.
@@ -1261,6 +1301,16 @@ def propagate_memlet(dfg_state,
     if arr is None:
         if memlet.data not in sdfg.arrays:
             raise KeyError('Data descriptor (Array, Stream) "%s" not defined ' 'in SDFG.' % memlet.data)
+
+        # FIXME: A memlet alone (without an edge) cannot figure out whether it is data<->data or data<->code
+        #        so this test cannot be used
+        # If the data container is not specified on the memlet, use other data
+        # if memlet._is_data_src is not None:
+        #     if use_dst and memlet._is_data_src:
+        #         raise ValueError('Cannot propagate memlet - source data container given but destination is necessary')
+        #     elif not use_dst and not memlet._is_data_src:
+        #         raise ValueError('Cannot propagate memlet - destination data container given but source is necessary')
+
         arr = sdfg.arrays[memlet.data]
 
     # Propagate subset
@@ -1290,6 +1340,7 @@ def propagate_subset(memlets: List[Memlet],
     """ Tries to propagate a list of memlets through a range (computes the 
         image of the memlet function applied on an integer set of, e.g., a 
         map range) and returns a new memlet object.
+
         :param memlets: The memlets to propagate.
         :param arr: Array descriptor for memlet (used for obtaining extents).
         :param params: A list of variable names.

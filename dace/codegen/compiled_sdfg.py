@@ -18,14 +18,17 @@ from dace.frontend import operations
 
 
 class ReloadableDLL(object):
-    """ A reloadable shared object (or dynamically linked library), which
-        bypasses Python's dynamic library reloading issues. """
-
+    """
+    A reloadable shared object (or dynamically linked library), which
+    bypasses Python's dynamic library reloading issues.
+    """
     def __init__(self, library_filename, program_name):
-        """ Creates a new reloadable shared object.
-            :param library_filename: Path to library file.
-            :param program_name: Name of the DaCe program (for use in finding
-                                 the stub library loader).
+        """
+        Creates a new reloadable shared object.
+        
+        :param library_filename: Path to library file.
+        :param program_name: Name of the DaCe program (for use in finding
+                             the stub library loader).
         """
         self._stub_filename = os.path.join(
             os.path.dirname(os.path.realpath(library_filename)),
@@ -145,6 +148,7 @@ def _array_interface_ptr(array: Any, array_type: dt.Array) -> int:
     If the given array implements ``__array_interface__`` (see
     ``dtypes.is_array``), returns the base host or device pointer to the
     array's allocated memory.
+
     :param array: Array object that implements NumPy's array interface.
     :param array_type: Data descriptor of the array (used to get storage
                        location to determine whether it's a host or GPU device
@@ -192,6 +196,7 @@ class CompiledSDFG(object):
         """
         Tries to find a symbol by name in the compiled SDFG, and convert it to a callable function
         with the (optionally) given return type (void by default). If no such function exists, returns None.
+
         :param name: Name of the function to query.
         :return: Callable to the function, or None if doesn't exist.
         """
@@ -205,7 +210,8 @@ class CompiledSDFG(object):
             consecutive entries in the struct that are pointers. As soon as a non-pointer or other unparseable field is
             encountered, the method exits early. All fields defined until then will nevertheless be available in the
             structure.
-            :returns: the ctypes.Structure representation of the state struct.
+            
+            :return: the ctypes.Structure representation of the state struct.
         """
 
         return ctypes.cast(self._libhandle, ctypes.POINTER(self._try_parse_state_struct())).contents
@@ -265,6 +271,7 @@ class CompiledSDFG(object):
     def initialize(self, *args, **kwargs):
         """
         Initializes the compiled SDFG without invoking it. 
+
         :param args: Arguments to call SDFG with.
         :param kwargs: Keyword arguments to call SDFG with.
         :return: If successful, returns the library handle (as a ctypes pointer).

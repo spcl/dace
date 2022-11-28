@@ -93,12 +93,10 @@ def run_crc16(device_type: dace.dtypes.DeviceType):
     return sdfg
 
 
-@pytest.mark.skip(reason="Validation error")
 def test_cpu():
     run_crc16(dace.dtypes.DeviceType.CPU)
 
 
-@pytest.mark.skip(reason="Validation error")
 @pytest.mark.gpu
 def test_gpu():
     run_crc16(dace.dtypes.DeviceType.GPU)

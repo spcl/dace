@@ -1,12 +1,10 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 """ Tests related to scopes and variable lifetime. """
 
-import re
 import dace
 import numpy as np
-
-from tests.python_frontend.string_test import test_bytes_literal
-
+import pytest
+from dace.frontend.python.common import DaceSyntaxError
 
 rng = np.random.default_rng(42)
 
@@ -18,7 +16,7 @@ def test_reassignment_simple():
         out = a + b
         out = a - b
         return out
-    
+
     A = rng.random((3, 3))
     B = rng.random((3, 3))
     ref = reassignment_simple.f(A, B)
@@ -41,7 +39,7 @@ def test_reassignment_if():
         else:
             out = a - b
         return out
-    
+
     A = rng.random((3, 3))
     B = rng.random((3, 3))
     ref0 = reassignment_if.f(A, B, 2)
@@ -68,7 +66,7 @@ def test_reassignment_for():
         for _ in range(10):
             out = out - b
         return out
-    
+
     A = rng.random((3, 3))
     B = rng.random((3, 3))
     ref = reassignment_for.f(A, B)
@@ -79,7 +77,6 @@ def test_reassignment_for():
     assert np.allclose(val, ref)
 
     sdfg = reassignment_for.to_sdfg(simplify=True)
-    sdfg.view()
     func = sdfg.compile()
     val = func(a=A, b=B)
     assert np.allclose(val, ref)
@@ -98,7 +95,7 @@ def test_reassignment_while():
             out = out - b
             i += 1
         return out
-    
+
     A = rng.random((3, 3))
     B = rng.random((3, 3))
     ref = reassignment_while.f(A, B)
@@ -111,6 +108,37 @@ def test_reassignment_while():
     val = reassignment_while(A, B)
     assert np.allclose(val, ref)
 
+def test_reassignment_view():
+    """
+    Tests the disallowed behavior of reassigning to a view
+    """
+    anarray = np.ones((3, ))
+    anotherarray = np.ones((3, ))
+
+    @dace.program
+    def func(new_sym):
+        new_sym[...] = 7.0
+
+    func = func.to_sdfg(new_sym=dace.data.Array(shape=(3, ), dtype=dace.float64))
+
+    @dace.program
+    def testf(maybe_none=None):
+        if maybe_none is None:
+            new_sym = anotherarray
+        else:
+            new_sym = anarray
+        func(new_sym)
+
+    with pytest.raises(DaceSyntaxError):
+        testf(maybe_none=1.0)
+
+    # assert np.allclose(anarray, 7.0)
+    # assert np.allclose(anotherarray, 1.0)
+
+    # Compile-time None can still be used (removed during preprocessing)
+    testf()
+    assert np.allclose(anotherarray, 7.0)
+
 
 if __name__ == "__main__":
 
@@ -118,3 +146,4 @@ if __name__ == "__main__":
     test_reassignment_if()
     test_reassignment_for()
     test_reassignment_while()
+    test_reassignment_view()

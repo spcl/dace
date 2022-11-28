@@ -6,6 +6,7 @@ from copy import deepcopy as dcpy
 import dace
 import itertools
 import functools
+import platform
 import dace.serialize
 import dace.library
 from typing import Any, Dict, Set
@@ -296,6 +297,11 @@ class ExpandReduceOpenMP(pm.ExpandTransformation):
         output_dims = len(outedge.data.subset)
         input_data = sdfg.arrays[inedge.data.data]
         output_data = sdfg.arrays[outedge.data.data]
+
+        # Visual C++ compiler not always supported
+        if platform.system() == 'Windows':
+            warnings.warn('OpenMP reduction expansion not supported on Visual C++')
+            return ExpandReducePure.expansion(node, state, sdfg)
 
         # Get reduction type for OpenMP
         redtype = detect_reduction_type(node.wcr, openmp=True)
@@ -891,7 +897,7 @@ class ExpandReduceFPGAPartialReduction(pm.ExpandTransformation):
 
     @staticmethod
     def expansion(node: 'Reduce', state: SDFGState, sdfg: SDFG, partial_width=16):
-        '''
+        """
 
         :param node: the node to expand
         :param state: the state in which the node is in
@@ -899,7 +905,7 @@ class ExpandReduceFPGAPartialReduction(pm.ExpandTransformation):
         :param partial_width: Width of the inner reduction buffer. Must be
                               larger than the latency of the reduction operation on the given
                               data type
-        '''
+        """
         node.validate(sdfg, state)
         inedge: graph.MultiConnectorEdge = state.in_edges(node)[0]
         outedge: graph.MultiConnectorEdge = state.out_edges(node)[0]
