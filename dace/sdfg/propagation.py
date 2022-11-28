@@ -1202,19 +1202,48 @@ def _propagate_node(dfg_state, node):
         external_edges = [e for e in dfg_state.in_edges(node) if e.dst_conn and e.dst_conn.startswith('IN_')]
         geticonn = lambda e: e.src_conn[4:]
         geteconn = lambda e: e.dst_conn[3:]
+        use_dst = False
     else:
         internal_edges = [e for e in dfg_state.in_edges(node) if e.dst_conn and e.dst_conn.startswith('IN_')]
         external_edges = [e for e in dfg_state.out_edges(node) if e.src_conn and e.src_conn.startswith('OUT_')]
         geticonn = lambda e: e.dst_conn[3:]
         geteconn = lambda e: e.src_conn[4:]
+        use_dst = True
 
     for edge in external_edges:
         if edge.data.is_empty():
             new_memlet = Memlet()
         else:
             internal_edge = next(e for e in internal_edges if geticonn(e) == geteconn(edge))
-            new_memlet = propagate_memlet(dfg_state, internal_edge.data, node, True, connector=geteconn(edge))
+            aligned_memlet = align_memlet(dfg_state, internal_edge, dst=use_dst)
+            new_memlet = propagate_memlet(dfg_state, aligned_memlet, node, True, connector=geteconn(edge))
         edge.data = new_memlet
+
+
+def align_memlet(state, e: gr.MultiConnectorEdge[Memlet], dst: bool) -> Memlet:
+    is_src = e.data._is_data_src
+    # Memlet is already aligned
+    if is_src is None or (is_src and not dst) or (not is_src and dst):
+        return e.data
+
+    # Data<->Code memlets always have one data container
+    mpath = state.memlet_path(e)
+    if not isinstance(mpath[0].src, nodes.AccessNode) or not isinstance(mpath[-1].dst, nodes.AccessNode):
+        return e.data
+
+    # Otherwise, find other data container
+    result = copy.deepcopy(e.data)
+    if dst:
+        node = mpath[-1].dst
+    else:
+        node = mpath[0].src
+
+    # Fix memlet fields
+    result.data = node.data
+    result.subset = e.data.other_subset
+    result.other_subset = e.data.subset
+    result._is_data_src = not is_src
+    return result
 
 
 # External API
@@ -1272,6 +1301,16 @@ def propagate_memlet(dfg_state,
     if arr is None:
         if memlet.data not in sdfg.arrays:
             raise KeyError('Data descriptor (Array, Stream) "%s" not defined ' 'in SDFG.' % memlet.data)
+
+        # FIXME: A memlet alone (without an edge) cannot figure out whether it is data<->data or data<->code
+        #        so this test cannot be used
+        # If the data container is not specified on the memlet, use other data
+        # if memlet._is_data_src is not None:
+        #     if use_dst and memlet._is_data_src:
+        #         raise ValueError('Cannot propagate memlet - source data container given but destination is necessary')
+        #     elif not use_dst and not memlet._is_data_src:
+        #         raise ValueError('Cannot propagate memlet - destination data container given but source is necessary')
+
         arr = sdfg.arrays[memlet.data]
 
     # Propagate subset

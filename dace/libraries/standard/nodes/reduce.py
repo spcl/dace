@@ -6,6 +6,7 @@ from copy import deepcopy as dcpy
 import dace
 import itertools
 import functools
+import platform
 import dace.serialize
 import dace.library
 from typing import Any, Dict, Set
@@ -296,6 +297,11 @@ class ExpandReduceOpenMP(pm.ExpandTransformation):
         output_dims = len(outedge.data.subset)
         input_data = sdfg.arrays[inedge.data.data]
         output_data = sdfg.arrays[outedge.data.data]
+
+        # Visual C++ compiler not always supported
+        if platform.system() == 'Windows':
+            warnings.warn('OpenMP reduction expansion not supported on Visual C++')
+            return ExpandReducePure.expansion(node, state, sdfg)
 
         # Get reduction type for OpenMP
         redtype = detect_reduction_type(node.wcr, openmp=True)

@@ -4,11 +4,12 @@ import pytest
 import itertools
 
 import dace
-from dace import nodes, data
-from dace.transformation.dataflow.redundant_array import RedundantArray, UnsqueezeViewRemove
+from dace import data
+from dace.transformation.dataflow.redundant_array import RedundantArray, RemoveSliceView, UnsqueezeViewRemove
 
 
 def test_redundant_array_removal():
+
     @dace.program
     def reshape(data: dace.float64[9], reshaped: dace.float64[3, 3]):
         reshaped[:] = np.reshape(data, [3, 3])
@@ -34,6 +35,7 @@ def test_redundant_array_removal():
 
 @pytest.mark.gpu
 def test_libnode_expansion():
+
     @dace.program
     def test_broken_matmul(A: dace.float64[8, 2, 4], B: dace.float64[4, 3]):
         return np.einsum("aik,kj->aij", A, B)
@@ -140,6 +142,32 @@ def test_unsqueeze_view_removal():
     assert np.allclose(O, 1)
 
 
+def test_view_offset_removal():
+    sdfg = dace.SDFG("testing")
+    state = sdfg.add_state()
+
+    i = dace.symbol('i')
+    sdfg.add_array('inout', [20, 20], dtype=dace.float64, transient=False)
+    sdfg.add_transient('tmp', [20 - i], dtype=dace.float64)
+    sdfg.add_view('view', [20 - i], dtype=dace.float64)
+
+    r = state.add_read('inout')
+    w = state.add_write('inout')
+    t = state.add_access('tmp')
+    v = state.add_access('view')
+    state.add_edge(r, None, v, 'views', dace.Memlet('inout[1, i:20]'))
+    state.add_edge(v, None, t, None, dace.Memlet('tmp[0:20-i]'))
+    state.add_edge(t, None, w, None, dace.Memlet('inout[2, i:20]'))
+
+    assert sdfg.apply_transformations_repeated(RemoveSliceView) == 1
+
+    inout = np.random.rand(20, 20)
+
+    sdfg(inout=inout, i=1)
+
+    assert np.allclose(inout[1, 1:], inout[2, 1:])
+
+    
 if __name__ == '__main__':
     test_redundant_array_removal()
     test_redundant_array_1_into_2_dims("O", False)
@@ -151,3 +179,4 @@ if __name__ == '__main__':
     test_redundant_array_2_into_1_dim("O", True)
     test_redundant_array_2_into_1_dim("T", True)
     test_unsqueeze_view_removal()
+    test_view_offset_removal()
