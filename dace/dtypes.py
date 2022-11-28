@@ -153,7 +153,8 @@ class InstrumentationType(aenum.AutoNumberEnum):
     No_Instrumentation = ()
     Timer = ()
     PAPI_Counters = ()
-    LIKWID_Counters = ()
+    LIKWID_CPU = ()
+    LIKWID_GPU = ()
     GPU_Events = ()
     FPGA = ()
 
@@ -250,11 +251,11 @@ _OCL_TYPES = {
     numpy.int16: "short",
     numpy.int32: "int",
     numpy.intc: "int",
-    numpy.int64: "long long",
+    numpy.int64: "long",
     numpy.uint8: "unsigned char",
     numpy.uint16: "unsigned short",
     numpy.uint32: "unsigned int",
-    numpy.uint64: "unsigned long long",
+    numpy.uint64: "unsigned long",
     numpy.uintc: "unsigned int",
     numpy.float32: "float",
     numpy.float64: "double",
