@@ -1,5 +1,4 @@
-from calendar import c
-from fileinput import lineno
+# Copyright 2022 ETH Zurich and the DaCe authors. All rights reserved.
 from symbol import func_type
 from fparser.two.Fortran2008 import *
 from fparser.two.Fortran2003 import *

@@ -1,3 +1,5 @@
+# Copyright 2022 ETH Zurich and the DaCe authors. All rights reserved.
+
 from fparser.common.readfortran import FortranStringReader
 from fparser.two.parser import *
 import sys, os
@@ -147,15 +149,17 @@ def test_fortran_frontend_view_test_2():
     test_string = """
                     PROGRAM """ + test_name + """_program
 implicit none
-double precision a(10,11,12),b(10,11,12),c(10,11,12)
+integer, parameter :: n=10
+double precision a(n,11,12),b(n,11,12),c(n,11,12)
 
-CALL """ + test_name + """_function(a,b,c)
+CALL """ + test_name + """_function(a,b,c,n)
 
 end
 
-SUBROUTINE """ + test_name + """_function(aa,bb,cc)
+SUBROUTINE """ + test_name + """_function(aa,bb,cc,n)
 
-double precision aa(10,11,12),bb(10,11,12),cc(10,11,12)
+integer, parameter :: n=10
+double precision a(n,11,12),b(n,11,12),c(n,11,12)
 integer j,k
 
 j=1
@@ -188,7 +192,7 @@ END SUBROUTINE viewlens
     c = np.full([10, 11, 12], 42, order="F", dtype=np.float64)
 
     b[0, 0, 0] = 1
-    sdfg(aa_0=a, bb_0=b, cc_0=c)
+    sdfg(aa_0=a, bb_0=b, cc_0=c, n=10)
     assert (c[0, 0, 0] == 43)
     assert (c[1, 1, 1] == 84)
 
@@ -431,18 +435,18 @@ def test_fortran_frontend_sign1():
 
 if __name__ == "__main__":
 
-    test_fortran_frontend_array_access()
-    test_fortran_frontend_simplify()
-    test_fortran_frontend_input_output_connector()
-    test_fortran_frontend_view_test()
+    # test_fortran_frontend_array_access()
+    # test_fortran_frontend_simplify()
+    # test_fortran_frontend_input_output_connector()
+    # test_fortran_frontend_view_test()
     test_fortran_frontend_view_test_2()
-    test_fortran_frontend_array_ranges()
-    test_fortran_frontend_if1()
-    test_fortran_frontend_loop1()
-    test_fortran_frontend_function_statement1()
+    # test_fortran_frontend_array_ranges()
+    # test_fortran_frontend_if1()
+    # test_fortran_frontend_loop1()
+    # test_fortran_frontend_function_statement1()
 
-    test_fortran_frontend_pow1()
-    test_fortran_frontend_pow2()
-    test_fortran_frontend_sign1()
-    test_fortran_frontend_scalar()
+    # test_fortran_frontend_pow1()
+    # test_fortran_frontend_pow2()
+    # test_fortran_frontend_sign1()
+    # test_fortran_frontend_scalar()
     print("All tests passed")

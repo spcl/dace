@@ -1,5 +1,5 @@
-#fparser imports
-from dataclasses import astuple
+# Copyright 2022 ETH Zurich and the DaCe authors. All rights reserved.
+
 
 from venv import create
 from fparser.api import parse
@@ -1368,8 +1368,8 @@ if __name__ == "__main__":
 
     #testname = "arrayrange1"
     #testname = "cloudsc2ad"
-    #testname = "cloudsc2nl"
-    testname = "cloudscexp2"
+    testname = "cloudsc2nl"
+    #testname = "cloudscexp2"
     reader = FortranFileReader(
         os.path.realpath("/mnt/c/Users/Alexwork/Desktop/Git/f2dace/tests/" +
                          testname + ".f90"))
