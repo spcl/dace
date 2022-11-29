@@ -1088,6 +1088,7 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
     def expansion(node: 'Reduce', state: SDFGState, sdfg: SDFG):
         """
         Expands the Reduce node.
+
         :param node: the node to expand
         :param state: the state in which the node is in
         :param sdfg: the SDFG in which the node is in
