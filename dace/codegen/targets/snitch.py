@@ -584,7 +584,7 @@ class SnitchCodeGen(TargetCodeGenerator):
 
             copy_shape, src_strides, dst_strides, src_expr, dst_expr = \
                 cpp.memlet_copy_to_absolute_strides(
-                    self.dispatcher, sdfg, memlet, src_node, dst_node,
+                    self.dispatcher, sdfg, state_dfg, edge, src_node, dst_node,
                     self.packed_types)
             dbg(f'  copy_shape = "{copy_shape}", src_strides = "{src_strides}", dst_strides = "{dst_strides}", src_expr = "{src_expr}", dst_expr = "{dst_expr}"'
                 )
