@@ -47,6 +47,17 @@ class OTFMapFusion(transformation.SingleStateTransformation):
         if graph.in_degree(self.array) > 1:
             return False
 
+        # No non-transients in scope of first map
+        first_map_entry = graph.entry_node(self.first_map_exit)
+        subgraph = graph.scope_subgraph(first_map_entry, include_entry=True, include_exit=True)
+        for dnode in subgraph.data_nodes():
+            if not sdfg.arrays[dnode.data].transient:
+                return False
+
+        # Condition: Equations solvable (dims(first map) <= dims(second map))
+        if len(first_map_entry.map.params) > len(self.second_map_entry.map.params):
+            return False
+
         # Condition: Consumed is covered by produced data
         produce_edge = next(graph.edges_between(self.first_map_exit, self.array).__iter__())
         consume_edges = graph.edges_between(self.array, self.second_map_entry)
@@ -55,11 +66,6 @@ class OTFMapFusion(transformation.SingleStateTransformation):
             write_memlet = produce_edge.data
             if not write_memlet.subset.covers(read_memlet.subset):
                 return False
-
-        # Condition: Equations solvable (dims(first map) <= dims(second map))
-        first_map_entry = graph.entry_node(self.first_map_exit)
-        if len(first_map_entry.map.params) > len(self.second_map_entry.map.params):
-            return False
 
         # First memlets
         first_map_dims = set(self.first_map_exit.map.params)
@@ -123,6 +129,7 @@ class OTFMapFusion(transformation.SingleStateTransformation):
         return True
 
     def apply(self, graph: SDFGState, sdfg: SDFG):
+        intermediate_access_node = self.array
         first_map_exit = self.first_map_exit
         first_map_entry = graph.entry_node(first_map_exit)
 
@@ -146,7 +153,7 @@ class OTFMapFusion(transformation.SingleStateTransformation):
 
         # Add local buffers for array-like OTFs
         for edge in graph.out_edges(self.second_map_entry):
-            if edge.data is None or edge.data.data != self.array.data:
+            if edge.data is None or edge.data.data != intermediate_access_node.data:
                 continue
 
             xform = InLocalStorage()
@@ -154,17 +161,17 @@ class OTFMapFusion(transformation.SingleStateTransformation):
             xform.state_id = sdfg.node_id(graph)
             xform.node_a = edge.src
             xform.node_b = edge.dst
-            xform.array = self.array.data
+            xform.array = intermediate_access_node.data
             if xform.can_be_applied(graph, expr_index=0, sdfg=sdfg):
                 InLocalStorage.apply_to(sdfg=sdfg,
                                         node_a=edge.src,
                                         node_b=edge.dst,
-                                        options={"array": self.array.data},
+                                        options={"array": intermediate_access_node.data},
                                         verify=True,
                                         save=False)
 
         for edge in graph.in_edges(first_map_exit):
-            if edge.data is None or edge.data.data != self.array.data:
+            if edge.data is None or edge.data.data != intermediate_access_node.data:
                 continue
 
             if edge.data.wcr is None:
@@ -173,13 +180,13 @@ class OTFMapFusion(transformation.SingleStateTransformation):
                 xform.state_id = sdfg.node_id(graph)
                 xform.node_a = edge.src
                 xform.node_b = edge.dst
-                xform.array = self.array.data
+                xform.array = intermediate_access_node.data
                 if xform.can_be_applied(graph, expr_index=0, sdfg=sdfg):
                     OutLocalStorage.apply_to(sdfg=sdfg,
                                              node_a=edge.src,
                                              node_b=edge.dst,
                                              options={
-                                                 "array": self.array.data,
+                                                 "array": intermediate_access_node.data,
                                              },
                                              verify=True,
                                              save=False)
@@ -189,22 +196,22 @@ class OTFMapFusion(transformation.SingleStateTransformation):
                 xform.state_id = sdfg.node_id(graph)
                 xform.map_exit = edge.src
                 xform.outer_map_exit = edge.dst
-                xform.array = self.array.data
+                xform.array = intermediate_access_node.data
                 xform.identity = self.identity
                 if xform.can_be_applied(graph, expr_index=0, sdfg=sdfg):
                     AccumulateTransient.apply_to(sdfg=sdfg,
                                                  map_exit=edge.src,
                                                  outer_map_exit=edge.dst,
-                                                 array=self.array.data,
+                                                 array=intermediate_access_node.data,
                                                  options={
-                                                     "array": self.array.data,
+                                                     "array": intermediate_access_node.data,
                                                      "identity": self.identity
                                                  },
                                                  verify=True,
                                                  save=False)
 
         # Phase 1: Add new access nodes to second map
-        for edge in graph.edges_between(self.array, self.second_map_entry):
+        for edge in graph.edges_between(intermediate_access_node, self.second_map_entry):
             graph.remove_edge_and_connectors(edge)
 
         connector_mapping = {}
@@ -255,7 +262,7 @@ class OTFMapFusion(transformation.SingleStateTransformation):
                                              self.second_map_entry.map.params, second_accesses)
 
                 # Step 2: Add Temporary buffer
-                tmp_name = "__otf"
+                tmp_name = sdfg.temp_data_name()
                 shape = first_memlet.subset.size_exact()
                 tmp_name, tmp_desc = sdfg.add_array(tmp_name,
                                                     shape=shape,
@@ -308,26 +315,45 @@ class OTFMapFusion(transformation.SingleStateTransformation):
                     advanced_replace(otf_subgraph, str(param), str(mapping[param]))
 
         # Check if first_map is still consumed by some node
-        if graph.out_degree(self.array) == 0:
-            graph.remove_node(self.array)
+        if graph.out_degree(intermediate_access_node) == 0:
+            del sdfg.arrays[intermediate_access_node.data]
+            graph.remove_node(intermediate_access_node)
+
+            subgraph = graph.scope_subgraph(first_map_entry, include_entry=True, include_exit=True)
+            for dnode in subgraph.data_nodes():
+                if dnode.data in sdfg.arrays:
+                    del sdfg.arrays[dnode.data]
+
             obsolete_nodes = graph.all_nodes_between(first_map_entry,
                                                      first_map_exit) | {first_map_entry, first_map_exit}
             graph.remove_nodes_from(obsolete_nodes)
 
-    def _copy_first_map_contents(self, sdfg, graph, first_map_entry, first_map_exit):
+    def _copy_first_map_contents(self, sdfg: SDFG, graph: SDFGState, first_map_entry: nodes.MapEntry,
+                                 first_map_exit: nodes.MapExit):
         inter_nodes = list(graph.all_nodes_between(first_map_entry, first_map_exit) - {first_map_entry})
+
+        # Add new nodes
         new_inter_nodes = [copy.deepcopy(node) for node in inter_nodes]
-        tmp_map = dict()
         for node in new_inter_nodes:
-            if isinstance(node, nds.AccessNode):
-                data = sdfg.arrays[node.data]
-                if isinstance(data, dt.Scalar) and data.transient:
-                    tmp_name = sdfg.temp_data_name()
-                    sdfg.add_scalar(tmp_name, data.dtype, transient=True)
-                    tmp_map[node.data] = tmp_name
-                    node.data = tmp_name
             graph.add_node(node)
+
         id_map = {graph.node_id(old): graph.node_id(new) for old, new in zip(inter_nodes, new_inter_nodes)}
+
+        # Rename transients
+        tmp_map = {}
+        for node in new_inter_nodes:
+            if not isinstance(node, nodes.AccessNode) or node.data in tmp_map:
+                continue
+
+            new_name = sdfg.temp_data_name()
+            desc = sdfg.arrays[node.data]
+            sdfg.arrays[new_name] = copy.deepcopy(desc)
+            tmp_map[node.data] = new_name
+
+        for node in new_inter_nodes:
+            if not isinstance(node, nodes.AccessNode) or node.data not in tmp_map:
+                continue
+            node.data = tmp_map[node.data]
 
         def map_node(node):
             return graph.node(id_map[graph.node_id(node)])

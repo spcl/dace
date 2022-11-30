@@ -5,7 +5,7 @@ import math
 
 from scipy.signal import convolve2d
 
-from dace.transformation.dataflow import OTFMapFusion, MapExpansion, MapCollapse, RedundantArray
+from dace.transformation.dataflow import OTFMapFusion, MapExpansion, MapCollapse
 
 N = dace.symbol("N")
 M = dace.symbol("M")
@@ -645,8 +645,8 @@ def test_matmuls():
 
 
 @dace.program
-def hdiff(in_field: dace.float32[128 + 4, 128 + 4, 64], out_field: dace.float32[128, 128, 64],
-          coeff: dace.float32[128, 128, 64]):
+def hdiff(in_field: dace.float64[128 + 4, 128 + 4, 64], out_field: dace.float64[128, 128, 64],
+          coeff: dace.float64[128, 128, 64]):
     lap_field = 4.0 * in_field[1:128 + 3, 1:128 + 3, :] - (
         in_field[2:128 + 4, 1:128 + 3, :] + in_field[0:128 + 2, 1:128 + 3, :] + in_field[1:128 + 3, 2:128 + 4, :] +
         in_field[1:128 + 3, 0:128 + 2, :])
@@ -672,20 +672,20 @@ def test_hdiff():
     sdfg.simplify()
     assert count_maps(sdfg) == 20
 
-    in_field = np.random.random((132, 132, 64)).astype(np.float32)
-    coeff = np.random.random((128, 128, 64)).astype(np.float32)
+    in_field = np.random.uniform(low=1.0, high=2.0, size=(132, 132, 64)).astype(np.float64)
+    coeff = np.random.random((128, 128, 64)).astype(np.float64)
 
     out_field = np.zeros_like(coeff)
     sdfg(in_field=in_field, coeff=coeff, out_field=out_field)
 
-    sdfg.apply_transformations_repeated(OTFMapFusion)
+    sdfg.apply_transformations_repeated(OTFMapFusion, validate_all=True)
     assert count_maps(sdfg) == 1
-    
+    sdfg.validate()
+
     out_field_ = np.zeros_like(coeff)
     sdfg(in_field=in_field, coeff=coeff, out_field=out_field_)
 
-    # TODO: Numerically instable?
-    # assert np.allclose(out_field, out_field_)
+    assert np.allclose(out_field, out_field_)
 
 
 if __name__ == '__main__':
@@ -719,6 +719,4 @@ if __name__ == '__main__':
 
     # Applications
     test_matmuls()
-
-    # TODO: Numerically instable?
-    # test_hdiff()
+    test_hdiff()
