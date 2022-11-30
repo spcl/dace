@@ -167,7 +167,6 @@ class OTFMapFusion(transformation.SingleStateTransformation):
                                         node_a=edge.src,
                                         node_b=edge.dst,
                                         options={"array": intermediate_access_node.data},
-                                        verify=True,
                                         save=False)
 
         for edge in graph.in_edges(first_map_exit):
@@ -188,7 +187,6 @@ class OTFMapFusion(transformation.SingleStateTransformation):
                                              options={
                                                  "array": intermediate_access_node.data,
                                              },
-                                             verify=True,
                                              save=False)
             else:
                 xform = AccumulateTransient()
@@ -207,7 +205,6 @@ class OTFMapFusion(transformation.SingleStateTransformation):
                                                      "array": intermediate_access_node.data,
                                                      "identity": self.identity
                                                  },
-                                                 verify=True,
                                                  save=False)
 
         # Phase 1: Add new access nodes to second map
@@ -308,7 +305,7 @@ class OTFMapFusion(transformation.SingleStateTransformation):
                 otf_nodes.append(self.second_map_entry)
                 otf_subgraph = StateSubgraphView(graph, otf_nodes)
                 for param in mapping:
-                    if isinstance(param, Tuple):
+                    if isinstance(param, tuple):
                         # Constant intervals
                         continue
 
@@ -461,7 +458,7 @@ class OTFMapFusion(transformation.SingleStateTransformation):
         # Translate back to original symbols
         solution = {}
         for param, sub in mapping.items():
-            if isinstance(param, Tuple):
+            if isinstance(param, tuple):
                 solution[param] = sub
             else:
                 for param_, sub_ in second_params_subs.items():
