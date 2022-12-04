@@ -48,28 +48,26 @@ def make_sdfg(alpha: float, beta: float, implementation: str, dtype) -> dace.SDF
     return sdfg
 
 
-@pytest.mark.parametrize(
-    "alpha, beta, implementation, dtype",
-    [
-        pytest.param(1.0, 0.0, "pure", dace.float32),
-        pytest.param(1.0, 0.0, "pure", dace.float64),
-        pytest.param(1.0, 1.0, "pure", dace.float32),
-        pytest.param(1.0, 1.0, "pure", dace.float64),
-        pytest.param(2.0, 2.0, "pure", dace.float32),
-        pytest.param(2.0, 2.0, "pure", dace.float64),
-        pytest.param(1.0, 0.0, "MKL", dace.float32, marks=pytest.mark.mkl),
-        pytest.param(1.0, 0.0, "MKL", dace.float64, marks=pytest.mark.mkl),
-        pytest.param(1.0, 1.0, "MKL", dace.float32, marks=pytest.mark.mkl),
-        pytest.param(1.0, 1.0, "MKL", dace.float64, marks=pytest.mark.mkl),
-        pytest.param(2.0, 1.0, "MKL", dace.float32, marks=pytest.mark.mkl),
-        pytest.param(2.0, 1.0, "MKL", dace.float64, marks=pytest.mark.mkl),
-        pytest.param(1.0, 0.0, "cuSPARSE", dace.float32, marks=pytest.mark.gpu),
-        pytest.param(1.0, 0.0, "cuSPARSE", dace.float64, marks=pytest.mark.gpu),
-        #pytest.param(1.0, 1.0, "cuSPARSE", dace.float32, marks=pytest.mark.gpu),
-        #pytest.param(1.0, 1.0, "cuSPARSE", dace.float64, marks=pytest.mark.gpu),
-        #pytest.param(2.0, 1.0, "cuSPARSE", dace.float32, marks=pytest.mark.gpu),
-        #pytest.param(2.0, 1.0, "cuSPARSE", dace.float64, marks=pytest.mark.gpu),
-    ])
+@pytest.mark.parametrize("alpha, beta, implementation, dtype", [
+    pytest.param(1.0, 0.0, "pure", dace.float32),
+    pytest.param(1.0, 0.0, "pure", dace.float64),
+    pytest.param(1.0, 1.0, "pure", dace.float32),
+    pytest.param(1.0, 1.0, "pure", dace.float64),
+    pytest.param(2.0, 2.0, "pure", dace.float32),
+    pytest.param(2.0, 2.0, "pure", dace.float64),
+    pytest.param(1.0, 0.0, "MKL", dace.float32, marks=pytest.mark.mkl),
+    pytest.param(1.0, 0.0, "MKL", dace.float64, marks=pytest.mark.mkl),
+    pytest.param(1.0, 1.0, "MKL", dace.float32, marks=pytest.mark.mkl),
+    pytest.param(1.0, 1.0, "MKL", dace.float64, marks=pytest.mark.mkl),
+    pytest.param(2.0, 1.0, "MKL", dace.float32, marks=pytest.mark.mkl),
+    pytest.param(2.0, 1.0, "MKL", dace.float64, marks=pytest.mark.mkl),
+    pytest.param(1.0, 0.0, "cuSPARSE", dace.float32, marks=pytest.mark.gpu),
+    pytest.param(1.0, 0.0, "cuSPARSE", dace.float64, marks=pytest.mark.gpu),
+    pytest.param(1.0, 1.0, "cuSPARSE", dace.float32, marks=pytest.mark.gpu),
+    pytest.param(1.0, 1.0, "cuSPARSE", dace.float64, marks=pytest.mark.gpu),
+    pytest.param(2.0, 1.0, "cuSPARSE", dace.float32, marks=pytest.mark.gpu),
+    pytest.param(2.0, 1.0, "cuSPARSE", dace.float64, marks=pytest.mark.gpu),
+])
 def test_csrmm(alpha, beta, implementation, dtype):
     sdfg = make_sdfg(alpha, beta, implementation, dtype)
 
@@ -111,7 +109,7 @@ if __name__ == "__main__":
     test_csrmm(2.0, 2.0, "MKL", dace.float64)
     test_csrmm(1.0, 0.0, "cuSPARSE", dace.float32)
     test_csrmm(1.0, 0.0, "cuSPARSE", dace.float64)
-    #test_csrmm(1.0, 1.0, "cuSPARSE", dace.float32)
-    #test_csrmm(1.0, 1.0, "cuSPARSE", dace.float64)
-    #test_csrmm(2.0, 2.0, "cuSPARSE", dace.float32)
-    #test_csrmm(2.0, 2.0, "cuSPARSE", dace.float64)
+    test_csrmm(1.0, 1.0, "cuSPARSE", dace.float32)
+    test_csrmm(1.0, 1.0, "cuSPARSE", dace.float64)
+    test_csrmm(2.0, 2.0, "cuSPARSE", dace.float32)
+    test_csrmm(2.0, 2.0, "cuSPARSE", dace.float64)

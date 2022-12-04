@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 from copy import deepcopy as dc
 from dace import dtypes, memlet as mm, properties, data as dt, propagate_memlets_sdfg
 from dace.symbolic import symstr
@@ -123,7 +123,7 @@ class ExpandCSRMMPure(ExpandTransformation):
                 external_edges=True)
         elif node.beta == 1.0:
             # Simplify computation
-            edges = state.edges_by_connector(node, "_cin")
+            edges = state.in_edges_by_connector(node, "_cin")
             for edge in edges:
                 state.remove_edge(edge)
 
@@ -372,36 +372,24 @@ class ExpandCSRMMCuSPARSE(ExpandTransformation):
         call_prefix = environments.cuSPARSE.handle_setup_code(node)
         call_suffix = ''
 
-        # Handle alpha / beta
-        # TODO: Maybe fix this later
-        # constants = {
-        #     1.0: f"__state->cublas_handle.Constants(__dace_cuda_device).{factort}Pone()",
-        #     #-1.0: f"__state->cublas_handle.Constants(__dace_cuda_device).{factort}Mone()",
-        #     0.0: f"__state->cublas_handle.Constants(__dace_cuda_device).{factort}Zero()",
-        # }
-        # if node.alpha not in constants or node.beta not in constants:
-        if True:
-            # Deal with complex input constants
-            if isinstance(node.alpha, complex):
-                alpha = f'{dtype.ctype}({node.alpha.real}, {node.alpha.imag})'
-            else:
-                alpha = f'{dtype.ctype}({node.alpha})'
-            if isinstance(node.beta, complex):
-                beta = f'{dtype.ctype}({node.beta.real}, {node.beta.imag})'
-            else:
-                beta = f'{dtype.ctype}({node.beta})'
-
-            # Set pointer mode to host
-            call_prefix += f'''cusparseSetPointerMode(__dace_cusparse_handle, CUSPARSE_POINTER_MODE_HOST);
-            {dtype.ctype} alpha = {alpha};
-            {dtype.ctype} beta = {beta};
-            '''
-            call_suffix += '''cusparseSetPointerMode(__dace_cusparse_handle, CUSPARSE_POINTER_MODE_DEVICE);'''
-            alpha = f'({cdtype} *)&alpha'
-            beta = f'({cdtype} *)&beta'
+        # Deal with complex input constants
+        if isinstance(node.alpha, complex):
+            alpha = f'{dtype.ctype}({node.alpha.real}, {node.alpha.imag})'
         else:
-            alpha = constants[node.alpha]
-            beta = constants[node.beta]
+            alpha = f'{dtype.ctype}({node.alpha})'
+        if isinstance(node.beta, complex):
+            beta = f'{dtype.ctype}({node.beta.real}, {node.beta.imag})'
+        else:
+            beta = f'{dtype.ctype}({node.beta})'
+
+        # Set pointer mode to host
+        call_prefix += f'''cusparseSetPointerMode(__dace_cusparse_handle, CUSPARSE_POINTER_MODE_HOST);
+        {dtype.ctype} alpha = {alpha};
+        {dtype.ctype} beta = {beta};
+        '''
+        call_suffix += '''cusparseSetPointerMode(__dace_cusparse_handle, CUSPARSE_POINTER_MODE_DEVICE);'''
+        alpha = f'({cdtype} *)&alpha'
+        beta = f'({cdtype} *)&beta'
 
         # Set up options for code formatting
         # opt = _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, alpha, beta, cdtype, func)
@@ -482,48 +470,6 @@ class ExpandCSRMMCuSPARSE(ExpandTransformation):
             cudaFree(dBuffer);
         """.format_map(opt)
 
-        # # Matrix multiplication
-        # if (node.compute_type is None and node.accumulator_type is None and node.algorithm is None):
-        #     call = '''cublas{func}(__dace_cublas_handle,
-        #         CUBLAS_OP_{ta}, CUBLAS_OP_{tb},
-        #         {M}, {N}, {K},
-        #         {alpha},
-        #         ({dtype}*){arr_prefix}{x}, {lda},
-        #         ({dtype}*){arr_prefix}{y}, {ldb},
-        #         {beta},
-        #         ({dtype}*){arr_prefix}_c, {ldc});'''.format_map(opt)
-        # else:
-        #     if node.compute_type is not None:
-        #         acctype = node.compute_type
-        #     elif node.accumulator_type is not None:
-        #         acc_dtype: dtypes.typeclass = node.accumulator_type
-        #         acctype = f'CUBLAS_COMPUTE_{to_cublas_computetype(acc_dtype)}'
-        #     else:
-        #         acctype = f'CUBLAS_COMPUTE_{to_cublas_computetype(dtype)}'
-
-        #     algorithm = 'CUBLAS_GEMM_DEFAULT_TENSOR_OP'
-        #     if node.algorithm is not None:
-        #         algorithm = node.algorithm
-
-        #     call = f'''
-        #     cublasGemmEx(__dace_cublas_handle,
-        #         CUBLAS_OP_{opt['ta']}, CUBLAS_OP_{opt['tb']},
-        #         {opt['M']}, {opt['N']}, {opt['K']},
-        #         {alpha},
-        #         {arr_prefix}{opt['x']},
-        #         {dtype_to_cudadatatype(opt['xdtype'])},
-        #         {opt['lda']},
-        #         {arr_prefix}{opt['y']},
-        #         {dtype_to_cudadatatype(opt['ydtype'])},
-        #         {opt['ldb']},
-        #         {beta},
-        #         {arr_prefix}_c,
-        #         {dtype_to_cudadatatype(opt['cdtype'])},
-        #         {opt['ldc']},
-        #         {acctype},
-        #         {algorithm});
-        #     '''
-
         code = (call_prefix + call + call_suffix)
         tasklet = dace.sdfg.nodes.Tasklet(
             node.name,
@@ -579,11 +525,11 @@ class ExpandCSRMMCuSPARSE(ExpandTransformation):
             nstate.add_nedge(gc, c, dace.Memlet.from_array('_c', cdesc))
 
             if node.beta != 0.0:
-                rc = nstate.add_read('_c')
-                rgc = nstate.add_access('_c_gpu')
-                tasklet.add_in_connector('_conn_cin')
-                nstate.add_nedge(rc, rgc, dace.Memlet('_c'))
-                nstate.add_edge(rgc, None, tasklet, '_conn_cin', dace.Memlet('_c_gpu'))
+                rc = nstate.add_read('_cin')
+                rgc = nstate.add_access('_cin_gpu')
+                tasklet.add_in_connector('_conn_c')
+                nstate.add_nedge(rc, rgc, dace.Memlet('_cin'))
+                nstate.add_edge(rgc, None, tasklet, '_conn_c', dace.Memlet('_cin_gpu'))
 
             return nsdfg
         # End of copy to GPU
@@ -610,28 +556,16 @@ class CSRMM(dace.sdfg.nodes.LibraryNode):
     beta = properties.Property(allow_none=False,
                                default=0,
                                desc="A scalar which will be multiplied with C before adding C")
-    cin = properties.Property(dtype=bool, default=True, desc="Whether to have a _cin connector when beta != 0")
-    algorithm = properties.Property(dtype=str,
-                                    allow_none=True,
-                                    default=None,
-                                    desc="If applicable, chooses the vendor-provided implementation "
-                                    "(algorithm) for the multiplication")
-    compute_type = properties.Property(default=None,
-                                       dtype=str,
-                                       allow_none=True,
-                                       desc="If applicable, overrides computation type (CUBLAS-specific, see "
-                                       "``cublasComputeType_t``)")
 
-    def __init__(self, name, location=None, opA=0, alpha=1, beta=0, cin=True):
+    def __init__(self, name, location=None, opA=0, alpha=1, beta=0):
         super().__init__(name,
                          location=location,
                          inputs=({"_a_rows", "_a_cols", "_a_vals", "_b", "_cin"}
-                                 if beta != 0 and cin else {"_a_rows", "_a_cols", "_a_vals", "_b"}),
+                                 if beta != 0 else {"_a_rows", "_a_cols", "_a_vals", "_b"}),
                          outputs={"_c"})
         self.opA = opA
         self.alpha = alpha
         self.beta = beta
-        self.cin = cin
 
     def validate(self, sdfg, state):
         in_edges = state.in_edges(self)
