@@ -5,12 +5,11 @@ import copy
 import itertools
 import os
 import re
-import math
 from six import StringIO
 import numpy as np
 
 import dace
-from dace import registry, subsets, dtypes, symbolic
+from dace import registry, subsets, dtypes
 from dace.codegen import cppunparse
 from dace.config import Config
 from dace.codegen import exceptions as cgx
@@ -1473,7 +1472,6 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
             # Special case for integer power: do not generate dace namespaces (dace::math) but just call pow
             if not (isinstance(node.right,
                                (ast.Num, ast.Constant)) and int(node.right.n) == node.right.n and node.right.n >= 0):
-                
 
                 left_value = cppunparse.cppunparse(self.visit(node.left), expr_semicolon=False)
                 right_value = cppunparse.cppunparse(self.visit(node.right), expr_semicolon=False)
