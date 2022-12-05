@@ -197,6 +197,56 @@ END SUBROUTINE viewlens
     assert (c[1, 1, 1] == 84)
 
 
+def test_fortran_frontend_view_test_3():
+    test_name = "view3_test"
+    test_string = """
+                    PROGRAM """ + test_name + """_program
+implicit none
+integer, parameter :: n=10
+double precision a(n,n+1,12),b(n,n+1,12)
+
+CALL """ + test_name + """_function(a,b,n)
+
+end
+
+SUBROUTINE """ + test_name + """_function(aa,bb,n)
+
+integer, parameter :: n=10
+double precision a(n,n+1,12),b(n,n+1,12)
+integer j,k
+
+j=1
+    call viewlens(aa(:,:,j),bb(:,:,j),bb(:,:,j+1))
+
+end SUBROUTINE """ + test_name + """_function
+
+SUBROUTINE viewlens(aa,bb,cc)
+
+IMPLICIT NONE
+
+double precision  :: aa(10,11),bb(10,11),cc(10,11) 
+
+INTEGER ::  JK, JL
+
+DO JK=1,10
+  DO JL=1,11
+    cc(JK,JL)=bb(JK,JL)+aa(JK,JL)
+  ENDDO
+ENDDO
+
+END SUBROUTINE viewlens
+                    """
+    sdfg = create_sdfg_from_string(test_string, test_name)
+    sdfg.simplify(verbose=True)
+    a = np.full([10, 11, 12], 42, order="F", dtype=np.float64)
+    b = np.full([10, 11, 12], 42, order="F", dtype=np.float64)
+
+    b[0, 0, 0] = 1
+    sdfg(aa_0=a, bb_0=b, n=10)
+    assert (b[0, 0, 0] == 1)
+    assert (b[0, 0, 1] == 43)
+
+
 def test_fortran_frontend_array_access():
     test_string = """
                     PROGRAM access_test
@@ -435,18 +485,19 @@ def test_fortran_frontend_sign1():
 
 if __name__ == "__main__":
 
-    test_fortran_frontend_array_access()
-    test_fortran_frontend_simplify()
-    test_fortran_frontend_input_output_connector()
-    test_fortran_frontend_view_test()
-    test_fortran_frontend_view_test_2()
-    test_fortran_frontend_array_ranges()
-    test_fortran_frontend_if1()
-    test_fortran_frontend_loop1()
-    test_fortran_frontend_function_statement1()
+    # test_fortran_frontend_array_access()
+    # test_fortran_frontend_simplify()
+    # test_fortran_frontend_input_output_connector()
+    # test_fortran_frontend_view_test()
+    # test_fortran_frontend_view_test_2()
+    test_fortran_frontend_view_test_3()
+    # test_fortran_frontend_array_ranges()
+    # test_fortran_frontend_if1()
+    # test_fortran_frontend_loop1()
+    # test_fortran_frontend_function_statement1()
 
-    test_fortran_frontend_pow1()
-    test_fortran_frontend_pow2()
-    test_fortran_frontend_sign1()
+    # test_fortran_frontend_pow1()
+    # test_fortran_frontend_pow2()
+    # test_fortran_frontend_sign1()
     # test_fortran_frontend_scalar()
     print("All tests passed")

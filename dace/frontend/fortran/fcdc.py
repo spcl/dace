@@ -393,22 +393,25 @@ class AST_translator:
                             array.dtype, array.storage)
                     else:
                         if not isinstance(variable_in_call, Name_Node):
+                            offsets_zero = []
+                            for index in offsets:
+                                offsets_zero.append(0)
                             viewname, view = sdfg.add_view(
                                 array_name + "_view_" + str(self.views),
                                 shape,
                                 array.dtype,
                                 storage=array.storage,
                                 strides=strides,
-                                offset=offsets)
+                                offset=offsets_zero)
                             from dace import subsets
 
                             all_indices = [None] * (len(
                                 array.shape) - len(index_list)) + index_list
                             subset = subsets.Range([
-                                (i, i, 1) if i is not None else (0, s, 1)
+                                (i, i, 1) if i is not None else (1, s, 1)
                                 for i, s in zip(all_indices, array.shape)
                             ])
-                            smallsubset = subsets.Range([(0, s, 1)
+                            smallsubset = subsets.Range([(0, s - 1, 1)
                                                          for s in shape])
 
                             memlet = dace.Memlet(
@@ -424,7 +427,10 @@ class AST_translator:
                             substate.add_edge(rv, 'views2', w, None,
                                               copy.deepcopy(memlet2))
                             self.views = self.views + 1
-                            views.append([array_name, wv, rv])
+                            views.append([
+                                array_name, wv, rv,
+                                variables_in_call.index(variable_in_call)
+                            ])
 
                         new_sdfg.add_array(
                             self.name_mapping[new_sdfg][local_name.name],
@@ -619,10 +625,11 @@ class AST_translator:
             # print("MEMLET: "+memlet)
             found = False
             for elem in views:
-                if mapped_name == elem[0]:
+                if mapped_name == elem[0] and elem[
+                        3] == variables_in_call.index(i):
                     found = True
                     memlet = subsets.Range([
-                        (1, s, 1) for s in sdfg.arrays[elem[1].label].shape
+                        (0, s - 1, 1) for s in sdfg.arrays[elem[1].label].shape
                     ])
                     substate.add_memlet_path(
                         internal_sdfg,
@@ -1024,7 +1031,7 @@ if __name__ == "__main__":
 
     #testname = "arrayrange1"
     #testname = "cloudsc2ad"
-    testname = "cloudsc2nl"
+    testname = "cloudsc2nl-minimal"
     #testname = "cloudscexp2"
     reader = FortranFileReader(
         os.path.realpath("/mnt/c/Users/Alexwork/Desktop/Git/f2dace/tests/" +
@@ -1054,6 +1061,16 @@ if __name__ == "__main__":
     ast2sdfg.top_level = program
     ast2sdfg.globalsdfg = sdfg
     ast2sdfg.translate(program, sdfg)
+
+    for node, parent in sdfg.all_nodes_recursive():
+        if isinstance(node, dace.nodes.NestedSDFG):
+            if 'CLOUDSCOUTER' in node.sdfg.name:
+                sdfg = node.sdfg
+                break
+    sdfg.parent = None
+    sdfg.parent_sdfg = None
+    sdfg.parent_nsdfg_node = None
+    sdfg.reset_sdfg_list()
 
     sdfg.validate()
     sdfg.save("/mnt/c/Users/Alexwork/Desktop/Git/f2dace/tests/" + testname +
