@@ -47,7 +47,7 @@ For automatic styling, we use the [yapf](https://github.com/google/yapf) file fo
 We use [pytest](https://www.pytest.org/) for our testing infrastructure. All tests under the `tests/` folder 
 (and any subfolders within) are automatically read and run. The files must be under the right subfolder
 based on the component being tested (e.g., `tests/sdfg/` for IR-related tests), and must have the right
-suffix: either `*_test.py` or `*_cudatest.py`. See [pytest.ini](https://github.com/spcl/dace/blob/master/pytest.ini))
+suffix: either `*_test.py` or `*_cudatest.py`. See [pytest.ini](https://github.com/spcl/dace/blob/master/pytest.ini)
 for more information, and for the markers we use to specify software/hardware requirements.
 
 The structure of the test file must follow `pytest` standards (i.e., free functions called `test_*`), and
