@@ -334,7 +334,7 @@ class InternalFortranAst:
         return Only_List_Node(names=names)
 
     def function_subprogram(self, node):
-        return node
+        raise NotImplementedError("Function subprograms are not supported yet")
 
     def subroutine_stmt(self, node):
         children = self.create_children(node)
@@ -428,7 +428,7 @@ class InternalFortranAst:
                               line_number=line)
 
     def function_stmt(self, node):
-        return node
+        raise NotImplementedError("Function statements are not supported yet")
 
     def end_subroutine_stmt(self, node):
         return node
@@ -484,12 +484,15 @@ class InternalFortranAst:
         return node
 
     def implicit_part_stmt(self, node):
+
         return node
 
     def declaration_construct(self, node):
+        raise NotImplementedError("Declaration constructs are not supported yet")
         return node
 
     def declaration_type_spec(self, node):
+        raise NotImplementedError("Declaration type spec is not supported yet")
         return node
 
     def type_declaration_stmt(self, node):
@@ -605,9 +608,10 @@ class InternalFortranAst:
         return Decl_Stmt_Node(vardecl=vardecls, line_number=node.item.span)
 
     def entity_decl(self, node):
-        return node
+        raise NotImplementedError("Entity decl is not supported yet")
 
     def array_spec(self, node):
+        raise NotImplementedError("Array spec is not supported yet")
         return node
 
     def explicit_shape_spec_list(self, node):
@@ -623,30 +627,39 @@ class InternalFortranAst:
         return node
 
     def intent_spec(self, node):
+        raise   NotImplementedError("Intent spec is not supported yet")
         return node
 
     def access_spec(self, node):
+        raise NotImplementedError("Access spec is not supported yet")
         return node
 
     def allocatable_stmt(self, node):
+        raise NotImplementedError("Allocatable stmt is not supported yet")
         return node
 
     def asynchronous_stmt(self, node):
+        raise NotImplementedError("Asynchronous stmt is not supported yet")
         return node
 
     def bind_stmt(self, node):
+        raise NotImplementedError("Bind stmt is not supported yet")
         return node
 
     def common_stmt(self, node):
+        raise NotImplementedError("Common stmt is not supported yet")
         return node
 
     def data_stmt(self, node):
+        raise NotImplementedError("Data stmt is not supported yet")
         return node
 
     def dimension_stmt(self, node):
+        raise NotImplementedError("Dimension stmt is not supported yet")
         return node
 
     def external_stmt(self, node):
+        raise NotImplementedError("External stmt is not supported yet")
         return node
 
     def intent_stmt(self, node):
