@@ -871,6 +871,7 @@ class ForDeclarer(NodeTransformer):
                 self.count += 1
                 newfor = self.visit(newfor)
                 newbody.append(newfor)
+                # Only needed if we require iterator to have the final value when the loop ends
                 #newbody.append(final_assign)
 
             else:
