@@ -153,9 +153,12 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None):
                 invalid = next(s for s in issyms if not dtypes.validate_name(s))
                 eid = sdfg.edge_id(edge)
                 raise InvalidSDFGInterstateEdgeError("Invalid interstate symbol name %s" % invalid, sdfg, eid)
-
-            # Add edge symbols into defined symbols
-            symbols.update(issyms)
+            if any(s not in symbols for s in issyms):
+                invalid = {s for s in issyms if s not in symbols}
+                eid = sdfg.edge_id(edge)
+                raise InvalidSDFGInterstateEdgeError(
+                    f'Symbols {invalid} are set by an inter-state edge, but are not '
+                    'defined in `sdfg.symbols`. Add those with `sdfg.add_symbol()`', sdfg, eid)
 
             ##########################################
             # Destination

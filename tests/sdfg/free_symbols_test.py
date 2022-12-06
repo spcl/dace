@@ -1,6 +1,7 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import math
+import pytest
 
 N, M, K, L, unused = (dace.symbol(s) for s in 'NMKLU')
 
@@ -71,9 +72,22 @@ def test_constants():
         assert (state.free_symbols == {'k', 'N', 'M'} or state.free_symbols == set())
     assert sdfg.free_symbols == {'M', 'N'}
 
+def test_undefined_symbol():
+    sdfg = dace.SDFG('undefined_symbol')
+    state = sdfg.add_state()
+    state2 = sdfg.add_state()
+    sdfg.add_loop(state, state2, None, 'i', '0', 'i < 20', 'i + 1')
+
+    assert len(sdfg.symbols) == 0
+    assert len(sdfg.free_symbols) == 0
+
+    with pytest.raises(dace.sdfg.InvalidSDFGInterstateEdgeError):
+        sdfg.validate()
+
 
 if __name__ == '__main__':
     test_single_state()
     test_state_subgraph()
     test_sdfg()
     test_constants()
+    test_undefined_symbol()
