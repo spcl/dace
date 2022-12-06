@@ -2052,6 +2052,9 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         Helper function that adds a looping state machine around a
         given state (or sequence of states).
 
+        This call does **not** add the loop variable to the symbol registry.
+        You should add that yourself via ``add_symbol``.
+
         :param before_state: The state after which the loop should
                              begin, or None if the loop is the first
                              state (creates an empty state).
