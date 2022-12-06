@@ -189,6 +189,11 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None):
             if any(not dtypes.validate_name(s) for s in issyms):
                 invalid = next(s for s in issyms if not dtypes.validate_name(s))
                 raise InvalidSDFGInterstateEdgeError("Invalid interstate symbol name %s" % invalid, sdfg, eid)
+            if any(s not in symbols for s in issyms):
+                invalid = {s for s in issyms if s not in symbols}
+                raise InvalidSDFGInterstateEdgeError(
+                    f'Symbols {invalid} are used by inter-state edges, but are not '
+                    'defined in `sdfg.symbols`', sdfg, eid)
 
     except InvalidSDFGError as ex:
         # If the SDFG is invalid, save it
@@ -235,7 +240,8 @@ def validate_state(state: 'dace.sdfg.SDFGState',
         raise InvalidSDFGError("Invalid state name", sdfg, state_id)
 
     if state._parent != sdfg:
-        raise InvalidSDFGError("State does not point to the correct " "parent", sdfg, state_id)
+        raise InvalidSDFGError("State does not point to the correct "
+                               "parent", sdfg, state_id)
 
     # Unreachable
     ########################################
@@ -621,6 +627,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
 
 class InvalidSDFGError(Exception):
     """ A class of exceptions thrown when SDFG validation fails. """
+
     def __init__(self, message: str, sdfg: 'SDFG', state_id: int):
         self.message = message
         self.sdfg = sdfg
@@ -643,7 +650,8 @@ class InvalidSDFGError(Exception):
 
         if lineinfo.start_line >= 0:
             if lineinfo.start_column > 0:
-                return (f'File "{lineinfo.filename}", line {lineinfo.start_line}, ' f'column {lineinfo.start_column}')
+                return (f'File "{lineinfo.filename}", line {lineinfo.start_line}, '
+                        f'column {lineinfo.start_column}')
             return f'File "{lineinfo.filename}", line {lineinfo.start_line}'
 
         return f'File "{lineinfo.filename}"'
@@ -671,6 +679,7 @@ class InvalidSDFGError(Exception):
 
 class InvalidSDFGInterstateEdgeError(InvalidSDFGError):
     """ Exceptions of invalid inter-state edges in an SDFG. """
+
     def __init__(self, message: str, sdfg: 'SDFG', edge_id: int):
         self.message = message
         self.sdfg = sdfg
@@ -712,6 +721,7 @@ class InvalidSDFGInterstateEdgeError(InvalidSDFGError):
 
 class InvalidSDFGNodeError(InvalidSDFGError):
     """ Exceptions of invalid nodes in an SDFG state. """
+
     def __init__(self, message: str, sdfg: 'SDFG', state_id: int, node_id: int):
         self.message = message
         self.sdfg = sdfg
@@ -745,12 +755,14 @@ class NodeNotExpandedError(InvalidSDFGNodeError):
     Exception that is raised whenever a library node was not expanded
     before code generation.
     """
+
     def __init__(self, sdfg: 'SDFG', state_id: int, node_id: int):
         super().__init__('Library node not expanded', sdfg, state_id, node_id)
 
 
 class InvalidSDFGEdgeError(InvalidSDFGError):
     """ Exceptions of invalid edges in an SDFG state. """
+
     def __init__(self, message: str, sdfg: 'SDFG', state_id: int, edge_id: int):
         self.message = message
         self.sdfg = sdfg
