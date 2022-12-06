@@ -35,14 +35,18 @@ def cutout_state(state: SDFGState, *nodes: nd.Node, make_copy: bool = True) -> S
     for sym in freesyms:
         new_sdfg.add_symbol(sym, defined_syms[sym])
 
-    for dnode in subgraph.data_nodes():
-        if dnode.data in new_sdfg.arrays:
+    for edge in subgraph.edges():
+        if edge.data is None:
             continue
-        new_desc = sdfg.arrays[dnode.data].clone()
+
+        memlet = edge.data
+        if memlet.data in new_sdfg.arrays:
+            continue
+        new_desc = sdfg.arrays[memlet.data].clone()
         # If transient is defined outside, it becomes a global
-        if dnode.data in other_arrays:
+        if memlet.data in other_arrays:
             new_desc.transient = False
-        new_sdfg.add_datadesc(dnode.data, new_desc)
+        new_sdfg.add_datadesc(memlet.data, new_desc)
 
     # Add a single state with the extended subgraph
     new_state = new_sdfg.add_state(state.label, is_start_state=True)
