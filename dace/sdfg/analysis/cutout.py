@@ -36,7 +36,7 @@ def cutout_state(state: SDFGState, *nodes: nd.Node, make_copy: bool = True) -> S
         new_sdfg.add_symbol(sym, defined_syms[sym])
 
     for edge in subgraph.edges():
-        if edge.data is None:
+        if edge.data is None or edge.data.data is None:
             continue
 
         memlet = edge.data
