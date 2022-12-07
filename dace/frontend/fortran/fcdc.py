@@ -10,7 +10,14 @@ from typing import List, Tuple, Set
 
 
 class AST_translator:
-    def __init__(self, ast: InternalFortranAst, source):
+    '''
+    This class is responsible for translating the internal AST into a SDFG.
+    '''
+    def __init__(self, ast: InternalFortranAst, source: str):
+        '''
+        :ast: The internal fortran AST to be used for translation
+        :source: The source file name from which the AST was generated
+        '''
         self.tables = ast.tables
         self.top_level = None
         self.globalsdfg = None
@@ -81,6 +88,14 @@ class AST_translator:
                 return generate_memlet(o_v, sdfg, self)
 
     def translate(self, node: Node, sdfg: SDFG):
+        '''
+        This function is responsible for translating the AST into a SDFG.
+        :param node: The node to be translated
+        :param sdfg: The SDFG to which the node should be translated
+        :note: This function is recursive and will call itself for all child nodes
+        :note: This function will call the appropriate function for the node type
+        :note: The dictionary ast_elements, part of the class itself contains all functions that are called for the different node types
+        '''
         if node.__class__ in self.ast_elements:
             self.ast_elements[node.__class__](node, sdfg)
         elif isinstance(node, list):
@@ -118,7 +133,7 @@ class AST_translator:
             self.translate(i, sdfg)
 
     def write2sdfg(self, node: Write_Stmt_Node, sdfg: SDFG):
-
+        #TODO implement
         print(node)
 
     def ifstmt2sdfg(self, node: If_Stmt_Node, sdfg: SDFG):
@@ -961,6 +976,13 @@ def create_sdfg_from_string(
     source_string: str,
     sdfg_name: str,
 ):
+    '''
+    Creates an SDFG from a fortran file
+    :param source_string: The fortran file name
+    :param sdfg_name: The name to be given to the resulting SDFG
+    :return: The resulting SDFG
+    
+    '''
     parser = ParserFactory().create(std="f2008")
     reader = FortranStringReader(source_string)
     ast = parser(reader)
@@ -998,6 +1020,12 @@ def create_sdfg_from_string(
 
 
 def create_sdfg_from_fortran_file(source_string: str):
+    '''
+    Creates an SDFG from a fortran file
+    :param source_string: The fortran file name
+    :return: The resulting SDFG
+
+    '''
     parser = ParserFactory().create(std="f2008")
     reader = FortranFileReader(source_string)
     ast = parser(reader)

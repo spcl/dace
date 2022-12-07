@@ -94,6 +94,16 @@ def get_name(node: Node):
 
 
 class TaskletWriter:
+    '''
+    Class that writes a python tasklet from a node
+    :param outputs: list of output variables
+    :param outputs_changes: list of names output variables should be changed to
+    :param input: list of input variables
+    :param input_changes: list of names input variables should be changed to
+    :param sdfg: sdfg the tasklet will be part of
+    :param name_mapping: mapping of names in the code to names in the sdfg
+    :return: python code for a tasklet, as a string
+    '''
     def __init__(self,
                  outputs: List[str],
                  outputs_changes: List[str],
@@ -126,6 +136,16 @@ class TaskletWriter:
         return "ERROR" + node.type
 
     def write_code(self, node: Node):
+        '''
+        :param node: node to write code for
+        :return: python code for the node, as a string
+        :note Main function of the class, writes the code for a node
+        :note If the node is a string, it is returned as is
+        :note If the node is not a string, it is checked if it is in the ast_elements dictionary
+        :note If it is, the appropriate function is called with the node as an argument, leading to a recursive traversal of the tree spanned by the node
+        :note If it not, an error is raised
+
+        '''
         if node.__class__ in self.ast_elements:
             text = self.ast_elements[node.__class__](node)
             if text is None:
@@ -274,6 +294,10 @@ def generate_memlet(op, top_sdfg, state):
 
 
 class ProcessedWriter(TaskletWriter):
+    '''
+    This class is derived from the TaskletWriter class and is used to write the code of a tasklet that's on an interstate edge rather than a computational tasklet.
+    :note The only differences are in that the names for the sdfg mapping are used, and that the indices are considered to be one-bases rather than zero-based. 
+    '''
     def __init__(self, sdfg: SDFG, mapping):
         self.sdfg = sdfg
         self.mapping = mapping
