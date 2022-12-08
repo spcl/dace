@@ -82,30 +82,15 @@ setenv("LIKWID_EVENTS", "{self._default_events}", 0);
 std::string execpid = std::to_string(getpid());
 setenv("LIKWID_PERF_PID", execpid.c_str(), 1);
 
-int num_threads = 1;
-int num_procs = 1;
-#pragma omp parallel
-{{
-    #pragma omp single
-    {{
-        num_threads = omp_get_num_threads();
-        num_procs = omp_get_num_procs();
-    }}
-}}
-
-if (num_threads > num_procs)
-{{
-    printf("ERROR: Number of threads larger than number of processors.\\n");
-    exit(1);
-}}
+int num_threads = atoi(getenv("LIKWID_NUM_THREADS"));
+omp_set_num_threads(num_threads);
 
 std::string thread_pinning = "0";
 for (int i = 1; i < num_threads; i++)
 {{
     thread_pinning += "," + std::to_string(i);
 }}
-const char* thread_pinning_c = thread_pinning.c_str();
-setenv("LIKWID_THREADS", thread_pinning_c, 1);
+setenv("LIKWID_THREADS", thread_pinning.c_str(), 1);
 
 LIKWID_MARKER_INIT;
 
@@ -113,7 +98,6 @@ LIKWID_MARKER_INIT;
 {{
     int thread_id = omp_get_thread_num();
     likwid_pinThread(thread_id);
-    LIKWID_MARKER_THREADINIT;
 }}
 '''
         codegen._initcode.write(init_code)

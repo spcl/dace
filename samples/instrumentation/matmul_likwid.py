@@ -26,10 +26,10 @@ def matmul(A: dace.float32[M, K], B: dace.float32[K, N], C: dace.float32[M, N]):
 # This sample demonstrates the likwid instrumentation in DaCe.
 #
 # In order to run the sample, specific environment variables must be set
-# - OMP_NUM_THREADS: number of threads [1, num procs]
+# - LIKWID_NUM_THREADS: number of threads [1, num procs]
 # - LIKWID_EVENTS: set of counters to be measured [FLOPS_SP, CACHE, MEM, ...]
 #
-# Example: 'OMP_NUM_THREADS=2 LIKWID_EVENTS="FLOPS_SP" python matmul_likwid.py'
+# Example: 'LIKWID_NUM_THREADS=2 LIKWID_EVENTS="FLOPS_SP" python matmul_likwid.py'
 #
 # The available event set for your architecture can be found in the likwid
 # groups folder: https://github.com/RRZE-HPC/likwid/tree/master/groups
@@ -57,9 +57,6 @@ C = np.zeros((m, n), dtype=np.float32)
 for nsdfg in sdfg.all_sdfgs_recursive():
     for state in nsdfg.nodes():
         state.instrument = dace.InstrumentationType.LIKWID_CPU
-        for node in state.nodes():
-            if isinstance(node, dace.nodes.MapEntry) and xfh.get_parent_map(state, node) is None:
-                node.instrument = dace.InstrumentationType.LIKWID_CPU
 
 ## 3. Compile and execute
 # During execution, the counters for different parts of the SDFG and different
