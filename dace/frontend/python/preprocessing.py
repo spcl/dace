@@ -1,8 +1,10 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
+import collections
 import copy
 from dataclasses import dataclass
 import inspect
+import numbers
 import numpy
 import re
 import sympy
@@ -15,7 +17,7 @@ from dace import data, dtypes, subsets, symbolic, sdfg as sd
 from dace.config import Config
 from dace.sdfg import SDFG
 from dace.frontend.python import astutils
-from dace.frontend.python.common import (DaceSyntaxError, SDFGConvertible, SDFGClosure)
+from dace.frontend.python.common import (DaceSyntaxError, SDFGConvertible, SDFGClosure, StringLiteral)
 
 
 class DaceRecursionError(Exception):
@@ -24,11 +26,12 @@ class DaceRecursionError(Exception):
     The exception includes the id of the topmost function as a stopping
     condition for parsing.
     """
+
     def __init__(self, fid: int):
         self.fid = fid
 
     def __str__(self) -> str:
-        return ('Non-analyzable recursion detected, function cannot be parsed ' 'as data-centric')
+        return ('Non-analyzable recursion detected, function cannot be parsed as data-centric')
 
 
 @dataclass
@@ -45,8 +48,10 @@ class PreprocessedAST:
 
 
 class StructTransformer(ast.NodeTransformer):
-    """ A Python AST transformer that replaces `Call`s to create structs with
-        the custom StructInitializer AST node. """
+    """
+    A Python AST transformer that replaces ``Call`` nodes to create structs with
+    the custom ``StructInitializer`` AST node.
+    """
     def __init__(self, gvars):
         super().__init__()
         self._structs = {k: v for k, v in gvars.items() if isinstance(v, dtypes.struct)}
@@ -75,6 +80,7 @@ class StructTransformer(ast.NodeTransformer):
 
 # Replaces instances of modules Y imported with "import X as Y" by X
 class ModuleResolver(ast.NodeTransformer):
+
     def __init__(self, modules: Dict[str, str], always_replace=False):
         self.modules = modules
         self.should_replace = False
@@ -107,6 +113,7 @@ class RewriteSympyEquality(ast.NodeTransformer):
     This is done because a test ``if x == 0`` where ``x`` is a symbol would
     result in False, even in indeterminate cases.
     """
+
     def __init__(self, globals: Dict[str, Any]) -> None:
         super().__init__()
         self.globals = globals
@@ -127,7 +134,7 @@ class RewriteSympyEquality(ast.NodeTransformer):
         if isinstance(node.value, numpy.bool_):
             node.value = bool(node.value)
         elif isinstance(node.value, numpy.number):
-            node.value = numpy.asscalar(node.value)
+            node.value = node.value.item()
         return self.generic_visit(node)
 
     # Compatibility for Python 3.7
@@ -135,7 +142,7 @@ class RewriteSympyEquality(ast.NodeTransformer):
         if isinstance(node.n, numpy.bool_):
             node.n = bool(node.n)
         elif isinstance(node.n, numpy.number):
-            node.n = numpy.asscalar(node.n)
+            node.n = node.n.item()
         return self.generic_visit(node)
 
 
@@ -143,6 +150,7 @@ class ConditionalCodeResolver(ast.NodeTransformer):
     """ 
     Replaces if conditions by their bodies if can be evaluated at compile time.
     """
+
     def __init__(self, globals: Dict[str, Any]):
         super().__init__()
         self.globals_and_locals = copy.copy(globals)
@@ -192,6 +200,7 @@ class _FindBreakContinueStmts(ast.NodeVisitor):
     Find control statements in the given loop (break / continue), without
     traversing into nested loops.
     """
+
     def __init__(self) -> None:
         super().__init__()
         self.has_cflow = False
@@ -217,168 +226,9 @@ class _FindBreakContinueStmts(ast.NodeVisitor):
         return self.generic_visit(node)
 
 
-class LoopUnroller(ast.NodeTransformer):
-    """ 
-    Replaces loops by their unrolled bodies if generator can be evaluated at
-    compile time and one of the following conditions apply:
-        1. `dace.unroll` was explicitly called
-        2. looping over compile-time constant tuples/lists/dictionaries
-        3. generator is one of the predetermined "stateless generators"
-        4. any generator with compile-time size that is lower than the "unroll_threshold" configuration
-    """
-    STATELESS_GENERATORS = [
-        enumerate,
-        zip,
-        reversed,
-        dict.values,
-        dict.keys,
-        dict.items,
-    ]
-
-    THRESHOLD_GENERATORS = [
-        range,
-    ]
-
-    def __init__(self, globals: Dict[str, Any], filename: str):
-        super().__init__()
-        self.globals = globals
-        self.filename = filename
-        self.threshold = int(Config.get('frontend', 'unroll_threshold'))
-
-    def visit_For(self, node: ast.For) -> Any:
-        # Avoid import loops
-        EXPLICIT_GENERATORS = [
-            range,  # Handled in ProgramVisitor
-            dace.map,
-            dace.consume,
-        ]
-
-        node = self.generic_visit(node)
-
-        # First, skip loops that contain break/continue that is part of this
-        # for loop (rather than nested ones)
-        cannot_unroll = False
-        cflow_finder = _FindBreakContinueStmts()
-        for stmt in node.body:
-            cflow_finder.visit(stmt)
-        if cflow_finder.has_cflow or node.orelse:
-            cannot_unroll = True
-
-        niter = node.iter
-
-        # Find out if loop was explicitly requested to be unrolled with unroll,
-        # and whether it should be done implicitly
-        explicitly_requested = False
-        if isinstance(niter, ast.Call):
-            # Avoid import loop
-            from dace.frontend.python.interface import unroll
-
-            try:
-                genfunc = astutils.evalnode(niter.func, self.globals)
-            except SyntaxError:
-                genfunc = None
-
-            if genfunc is unroll:
-                explicitly_requested = True
-                niter = niter.args[0]
-
-        if explicitly_requested and cannot_unroll:
-            raise DaceSyntaxError(None, node, 'Cannot unroll loop due to ' '"break", "continue", or "else" statements.')
-
-        # Find out if unrolling should be done implicitly
-        implicit = True
-        # Anything not a call is implicitly allowed
-        if isinstance(niter, (ast.Call, ast.Subscript)):
-            if isinstance(niter, ast.Subscript):
-                nfunc = niter.value
-            else:
-                nfunc = niter.func
-
-            implicit = False
-            # Try to see if it's one of the allowed stateless generators
-            try:
-                genfunc = astutils.evalnode(nfunc, self.globals)
-
-                # If genfunc is a bound method, try to extract function from type
-                if hasattr(genfunc, '__self__'):
-                    genfunc = getattr(type(genfunc.__self__), genfunc.__name__, False)
-
-                if (self.threshold >= 0
-                        and (genfunc not in EXPLICIT_GENERATORS or genfunc in LoopUnroller.THRESHOLD_GENERATORS)):
-                    implicit = True
-                elif genfunc in LoopUnroller.STATELESS_GENERATORS:
-                    implicit = True
-                elif genfunc in EXPLICIT_GENERATORS:
-                    implicit = False
-
-            except SyntaxError:
-                pass
-
-        # Loop will not be unrolled
-        if not implicit and not explicitly_requested:
-            return node
-
-        # Check if loop target is supported
-        if isinstance(node.target, ast.Tuple):
-            to_replace = node.target.elts
-        elif isinstance(node.target, ast.Name):
-            to_replace = [node.target]
-        else:
-            # Unsupported loop target
-            return node
-
-        if isinstance(niter, (ast.Tuple, ast.List, ast.Set)):
-            # Check if a literal tuple/list/set
-            generator = niter.elts
-        elif isinstance(niter, ast.Dict):
-            # If dict, take keys (Python compatible)
-            generator = niter.keys
-        # elif isinstance(iter, (ast.ListComp, ast.DictComp, ast.SetComp, ast.GeneratorExp)):
-        #     # Check if a comprehension or generator expression
-        #     pass
-        else:
-            # Check if the generator is compile-time constant
-            try:
-                generator = astutils.evalnode(niter, self.globals)
-            except SyntaxError:
-                # Cannot evaluate generator at compile time
-                return node
-
-        if self.threshold == 0:  # Unroll any loop
-            explicitly_requested = True
-        elif self.threshold > 0:
-            generator = list(generator)
-            if len(generator) > self.threshold:
-                return node
-            explicitly_requested = True
-
-        # Too verbose?
-        if implicit and not explicitly_requested:
-            warnings.warn(f'Loop at {self.filename}:{node.lineno} will be ' 'implicitly unrolled.')
-
-        ##########################################
-        # Unroll loop
-        new_body = []
-        for elem in generator:
-            # Paste loop body with replaced elements
-            try:
-                iter(elem)
-            except (TypeError, ValueError):
-                elem = [elem]
-
-            elembody = copy.deepcopy(node.body)
-            replace = astutils.ASTFindReplace({k: v for k, v in zip(to_replace, elem)})
-            for stmt in elembody:
-                new_body.append(replace.visit(stmt))
-
-        return new_body
-
-    def visit_AsyncFor(self, node) -> Any:
-        return self.visit_For(node)
-
-
 class DeadCodeEliminator(ast.NodeTransformer):
     """ Removes any code within scope after return/break/continue/raise. """
+
     def generic_visit(self, node: ast.AST):
         for field, old_value in ast.iter_fields(node):
             if isinstance(old_value, list):
@@ -460,15 +310,148 @@ def has_replacement(callobj: Callable, parent_object: Optional[Any] = None, node
     return oprepo.Replacements.get(astutils.rname(node)) is not None
 
 
-class GlobalResolver(ast.NodeTransformer):
+def _create_unflatten_instruction(arg: ast.AST, global_vars: Dict[str, Any]) -> Tuple[Callable, int]:
+    """
+    Creates a lambda function for recreating the original Python object and returns the number of 
+    arguments to increment.
+    """
+    try:
+        # Constant-valued arguments stay as-is
+        val = astutils.evalnode(arg, global_vars)
+        if not symbolic.issymbolic(val):
+            return (lambda *args: val), 0, True
+    except SyntaxError:
+        pass
+
+    if isinstance(arg, ast.List):
+        return (list, len(arg.elts), False)
+    elif isinstance(arg, ast.Tuple):
+        return (tuple, len(arg.elts), False)
+    elif isinstance(arg, ast.Set):
+        return (set, len(arg.elts), False)
+    elif isinstance(arg, ast.Dict):
+        # Use two levels of functions to preserve keyword names
+        def make_remake(kwnames):
+
+            def remake_dict(args):
+                return {k: a for k, a in zip(kwnames, args)}
+
+            return remake_dict
+
+        # Remake keyword argument names from AST
+        kwarg_names = []
+        for kw in arg.keys:
+            if isinstance(kw, ast.Num):
+                kwarg_names.append(kw.n)
+            elif isinstance(kw, (ast.Str, ast.Bytes)):
+                kwarg_names.append(kw.s)
+            elif isinstance(kw, ast.NameConstant):
+                kwarg_names.append(kw.value)
+            elif sys.version_info >= (3, 8) and isinstance(kw, ast.Constant):
+                kwarg_names.append(kw.value)
+            else:
+                raise NotImplementedError(f'Key type {type(kw).__name__} is not supported')
+
+        return (make_remake(kwarg_names), len(arg.keys), False)
+    return (None, 1, False)
+
+
+def flatten_callback(func: Callable, node: ast.Call, global_vars: Dict[str, Any]):
+    """
+    Creates a version of the function that has only marshallable arguments and no keyword arguments.
+    Arguments in callback matches the number of arguments used exactly.
+    Used for creating callbacks from C to Python with keyword arguments or other Pythonic structures 
+    (such as literal lists).
+    """
+
+    # Find out if any Python arguments should be flattened
+    unflatten_instructions: List[Tuple[int, Callable, int, bool]] = []
+    curarg = 0
+    instructions_exist = False
+
+    # Constant [keyword] arguments to remove
+    args_to_remove = []
+    kwargs_to_remove = []
+
+    for i, arg in enumerate(node.args):
+        call, inc, constant = _create_unflatten_instruction(arg, global_vars)
+        if call is not None:
+            instructions_exist = True
+        else:
+            call = lambda x: x[0]
+        if constant:
+            args_to_remove.append(i)
+        unflatten_instructions.append((curarg, call, inc, constant))
+        curarg += inc
+    for i, kw in enumerate(node.keywords):
+        call, inc, constant = _create_unflatten_instruction(kw.value, global_vars)
+        if call is not None:
+            instructions_exist = True
+        else:
+            call = lambda x: x[0]
+        if constant:
+            kwargs_to_remove.append(i)
+        unflatten_instructions.append((curarg, call, inc, constant))
+        curarg += inc
+
+    # Filter arguments from AST
+    poscount = len(node.args)
+
+    # Nothing to do, early exit
+    if not node.keywords and not instructions_exist:
+        return func
+
+    keywords = [kw.arg for kw in node.keywords]
+
+    # Annotate that these arguments should not be visited during callback generation
+    node.skip_args = args_to_remove
+    node.skip_keywords = kwargs_to_remove
+
+    # Using two levels of functions to ensure keywords are stored with the callback
+    if instructions_exist:
+        # If unflattening is necessary, have one version of the callback
+        def make_cb(keywords, poscount, instructions):
+
+            def cb_func(*all_args):
+                # Create an unflattened version of the original arguments
+                unflattened = []
+                for i, unflatten, skip, constant in instructions:
+                    if constant:
+                        unflattened.append(unflatten())
+                    else:
+                        unflattened.append(unflatten(all_args[i:i + skip]))
+
+                args = unflattened[:poscount]
+                kwargs = {kw: arg for kw, arg in zip(keywords, unflattened[poscount:])}
+                return func(*args, **kwargs)
+
+            return cb_func
+    else:
+
+        def make_cb(keywords, poscount, _):
+
+            def cb_func(*all_args):
+                args = all_args[:poscount]
+                kwargs = {kw: arg for kw, arg in zip(keywords, all_args[poscount:])}
+                return func(*args, **kwargs)
+
+            return cb_func
+
+    return make_cb(keywords, poscount, unflatten_instructions)
+
+
+class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
     """ Resolves global constants and lambda expressions if not
         already defined in the given scope. """
-    def __init__(self, globals: Dict[str, Any], resolve_functions: bool = False):
+
+    def __init__(self, globals: Dict[str, Any], resolve_functions: bool = False, default_args: Set[str] = None):
         self._globals = globals
         self.resolve_functions = resolve_functions
+        self.default_args = default_args or set()
         self.current_scope = set()
         self.toplevel_function = True
         self.do_not_detect_callables = False
+        self.ignore_node_ctx = False
 
         self.closure = SDFGClosure()
 
@@ -496,7 +479,13 @@ class GlobalResolver(ast.NodeTransformer):
                             'properly during parsing. Please report this issue.')
         return f"{prefix}{sanitized}"
 
-    def global_value_to_node(self, value, parent_node, qualname, recurse=False, detect_callables=False):
+    def global_value_to_node(self,
+                             value,
+                             parent_node,
+                             qualname,
+                             recurse=False,
+                             detect_callables=False,
+                             keep_object=False):
         # if recurse is false, we don't allow recursion into lists
         # this should not happen anyway; the globals dict should only contain
         # single "level" lists
@@ -523,10 +512,14 @@ class GlobalResolver(ast.NodeTransformer):
         elif isinstance(value, symbolic.symbol):
             # Symbols resolve to the symbol name
             newnode = ast.Name(id=value.name, ctx=ast.Load())
-        elif (dtypes.isconstant(value) or isinstance(value, SDFG) or hasattr(value, '__sdfg__')):
+        elif isinstance(value, ast.Name):
+            newnode = ast.Name(id=value.id, ctx=ast.Load())
+        elif (dtypes.isconstant(value) or isinstance(value, (StringLiteral, SDFG)) or hasattr(value, '__sdfg__')):
             # Could be a constant, an SDFG, or SDFG-convertible object
             if isinstance(value, SDFG) or hasattr(value, '__sdfg__'):
                 self.closure.closure_sdfgs[id(value)] = (qualname, value)
+            elif isinstance(value, StringLiteral):
+                value = value.value
             else:
                 # If this is a function call to a None function, do not add its result to the closure
                 if isinstance(parent_node, ast.Call):
@@ -539,28 +532,22 @@ class GlobalResolver(ast.NodeTransformer):
                 self.closure.closure_constants[qualname] = value
 
             # Compatibility check since Python changed their AST nodes
-            if sys.version_info >= (3, 8):
-                newnode = ast.Constant(value=value, kind='')
-            else:
-                if value is None:
-                    newnode = ast.NameConstant(value=None)
-                elif isinstance(value, str):
-                    newnode = ast.Str(s=value)
-                else:
-                    newnode = ast.Num(n=value)
-
+            newnode = astutils.create_constant(value)
             newnode.qualname = qualname
 
         elif detect_callables and hasattr(value, '__call__') and hasattr(value.__call__, '__sdfg__'):
             return self.global_value_to_node(value.__call__, parent_node, qualname, recurse, detect_callables)
-        elif isinstance(value, numpy.ndarray):
+        elif dtypes.is_array(value):
             # Arrays need to be stored as a new name and fed as an argument
             if id(value) in self.closure.array_mapping:
                 arrname = self.closure.array_mapping[id(value)]
             else:
                 arrname = self._qualname_to_array_name(qualname)
                 desc = data.create_datadescriptor(value)
-                self.closure.closure_arrays[arrname] = (qualname, desc, lambda: eval(qualname, self.globals), False)
+                if keep_object:
+                    self.closure.closure_arrays[arrname] = (qualname, desc, lambda: value, False)
+                else:
+                    self.closure.closure_arrays[arrname] = (qualname, desc, lambda: eval(qualname, self.globals), False)
                 self.closure.array_mapping[id(value)] = arrname
 
             newnode = ast.Name(id=arrname, ctx=ast.Load())
@@ -589,11 +576,24 @@ class GlobalResolver(ast.NodeTransformer):
 
                 # Store the handle to the original callable, in case parsing fails
                 if isinstance(parent_node, ast.Call):
+                    if hasattr(parent_node, 'qualname') and parent_node.qualname in self.closure.callbacks:
+                        # Already parsed
+                        return None
+
                     cbqualname = astutils.unparse(parent_node.func)
                 else:
                     cbqualname = astutils.rname(parent_node)
                 cbname = self._qualname_to_array_name(cbqualname, prefix='')
-                self.closure.callbacks[cbname] = (cbqualname, value, False)
+
+                # Make a version of the callback without keyword arguments or Python literal objects (list, tuple, ...)
+                cb_func = flatten_callback(value, parent_node, self.globals)
+
+                # If the callback already exists, and the details differ (e.g., different kwarg names), make new
+                if cbname in self.closure.callbacks and cb_func is not self.closure.callbacks[cbname][1]:
+                    cbname = data.find_new_name(cbname, self.closure.callbacks)
+
+                self.closure.callbacks[cbname] = (cbqualname, cb_func, False)
+                parent_node.qualname = cbname
 
                 # From this point on, any failure will result in a callback
                 newnode = ast.Name(id=cbname, ctx=ast.Load())
@@ -601,6 +601,8 @@ class GlobalResolver(ast.NodeTransformer):
                 # Decorated or functions with missing source code
                 sast, _, _, _ = astutils.function_to_ast(value)
                 if len(sast.body[0].decorator_list) > 0:
+                    return newnode
+                if find_disallowed_statements(sast):
                     return newnode
 
                 parsed = parser.DaceProgram(value, [], {}, False, dtypes.DeviceType.CPU)
@@ -612,13 +614,20 @@ class GlobalResolver(ast.NodeTransformer):
 
                 res = self.global_value_to_node(parsed, parent_node, qualname, recurse, detect_callables)
 
-                res.oldnode = copy.deepcopy(parent_node)
+                res.oldnode = astutils.copy_tree(parent_node)
+                res.cbname = cbname
 
                 # Keep callback in callbacks in case of parsing failure
                 # del self.closure.callbacks[cbname]
                 return res
             except Exception:  # Parsing failed (almost any exception can occur)
                 return newnode
+        elif keep_object:
+            # General object, keep in globals and give a unique name
+            objname = self._qualname_to_array_name(qualname, prefix='')
+            objname = data.find_new_name(objname, self._globals.keys())
+            self._globals[objname] = value
+            newnode = ast.Name(id=objname, ctx=ast.Load())
         else:
             return None
 
@@ -636,14 +645,41 @@ class GlobalResolver(ast.NodeTransformer):
 
         for arg in ast.walk(node.args):
             if isinstance(arg, ast.arg):
-                self.current_scope.add(arg.arg)
+                # Skip unspecified default arguments
+                if arg.arg in self.default_args:
+                    continue
+
+                # Skip ``dace.compiletime``-annotated arguments
+                is_constant = False
+                if arg.annotation is not None:
+                    try:
+                        ann = astutils.evalnode(arg.annotation, self.globals)
+                        if ann is dace.compiletime:
+                            is_constant = True
+                    except SyntaxError:
+                        pass
+                if not is_constant:
+                    self.current_scope.add(arg.arg)
         return self.generic_visit(node)
 
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> Any:
         return self.visit_FunctionDef(node)
 
+    def visit_Lambda(self, node: ast.Lambda) -> Any:
+        return self.visit_FunctionDef(node)
+
+    def visit_AugAssign(self, node: ast.AugAssign):
+        # Node target in augassign is ast.Store, even though it is updating an existing value
+        oldvalue = self.ignore_node_ctx
+        self.ignore_node_ctx = True
+        node.target = self.visit(node.target)
+        self.ignore_node_ctx = oldvalue
+
+        # Parse the rest of the fields
+        return self.generic_visit_filtered(node, {'target'})
+
     def visit_Name(self, node: ast.Name):
-        if isinstance(node.ctx, (ast.Store, ast.AugStore)):
+        if not self.ignore_node_ctx and isinstance(node.ctx, ast.Store):
             self.current_scope.add(node.id)
         else:
             if node.id in self.current_scope:
@@ -661,7 +697,7 @@ class GlobalResolver(ast.NodeTransformer):
             node.arg = self.globals[node.arg].name
         return self.generic_visit(node)
 
-    def visit_Attribute(self, node: ast.Attribute) -> Any:
+    def _visit_potential_constant(self, node: ast.AST, recurse_on_fail: bool) -> Optional[ast.AST]:
         # Try to evaluate the expression with only the globals
         try:
             global_val = astutils.evalnode(node, self.globals)
@@ -675,7 +711,15 @@ class GlobalResolver(ast.NodeTransformer):
                                                 recurse=True)
             if newnode is not None:
                 return newnode
-        return self.generic_visit(node)
+
+        # Failure
+        if recurse_on_fail:
+            return self.generic_visit(node)
+        return node
+
+    def visit_Attribute(self, node: ast.Attribute) -> Any:
+        # Do not visit node recursilve on fail, it may modify the attribute value too soon
+        return self._visit_potential_constant(node, False)
 
     def visit_Subscript(self, node: ast.Subscript) -> Any:
         # First visit the subscripted value alone, then the whole subscript
@@ -697,19 +741,26 @@ class GlobalResolver(ast.NodeTransformer):
                     except SyntaxError:
                         continue
                     if gkey == gslice:
-                        return self.visit_Attribute(v)
+                        return self._visit_potential_constant(v, True)
             else:  # List or Tuple
-                return self.visit_Attribute(node.value.elts[gslice])
+                return self._visit_potential_constant(node.value.elts[gslice], True)
 
-        return self.visit_Attribute(node)
+        return self._visit_potential_constant(node, True)
 
     def visit_Call(self, node: ast.Call) -> Any:
+        from dace.frontend.python.interface import in_program  # Avoid import loop
+
         if hasattr(node.func, 'n') and isinstance(node.func.n, SDFGConvertible):
             # Skip already-parsed calls
             return self.generic_visit(node)
 
         try:
             global_func = astutils.evalnode(node.func, self.globals)
+
+            # Built-in functions are resolved directly
+            if global_func is in_program:
+                return self.global_value_to_node(True, parent_node=node, qualname=astutils.unparse(node), recurse=True)
+
             if self.resolve_functions:
                 global_val = astutils.evalnode(node, self.globals)
             else:
@@ -739,32 +790,6 @@ class GlobalResolver(ast.NodeTransformer):
                 return self.generic_visit(node)
         return self.generic_visit(node)
 
-    def generic_visit_field(self, node: ast.AST, field: str) -> ast.AST:
-        """
-        Modification of ast.NodeTransformer.generic_visit that only visits one
-        field.
-        """
-        old_value = getattr(node, field)
-        if isinstance(old_value, list):
-            new_values = []
-            for value in old_value:
-                if isinstance(value, ast.AST):
-                    value = self.visit(value)
-                    if value is None:
-                        continue
-                    elif not isinstance(value, ast.AST):
-                        new_values.extend(value)
-                        continue
-                new_values.append(value)
-            old_value[:] = new_values
-        elif isinstance(old_value, ast.AST):
-            new_node = self.visit(old_value)
-            if new_node is None:
-                delattr(node, field)
-            else:
-                setattr(node, field, new_node)
-        return node
-
     def visit_For(self, node: ast.For):
         # Special case: for loop generators cannot be dace programs
         oldval = self.do_not_detect_callables
@@ -775,6 +800,15 @@ class GlobalResolver(ast.NodeTransformer):
         self.generic_visit_field(node, 'body')
         self.generic_visit_field(node, 'orelse')
         return node
+
+    def visit_TopLevelExpr(self, node: ast.Expr):
+        # Ignore memlet targets in tasklets
+        if isinstance(node.value, ast.BinOp):
+            if isinstance(node.value.op, (ast.LShift, ast.RShift)):
+                # Do not visit node.value.left
+                node.value.right = self.visit(node.value.right)
+                return node
+        return self.generic_visit(node)
 
     def visit_Assert(self, node: ast.Assert) -> Any:
         # Try to evaluate assertion statically
@@ -821,7 +855,359 @@ class GlobalResolver(ast.NodeTransformer):
                 node)
 
 
+class ContextManagerInliner(ast.NodeTransformer, astutils.ASTHelperMixin):
+    """
+    Since exceptions are disabled in dace programs, AST with ``with`` statements
+    can be replaced with appropriate calls to the ``__enter__``/``__exit__`` calls
+    in the right places, i.e., at the end of the body or when the context is left due to
+    a return statement, or top-level break/continue statements.
+    """
+
+    def __init__(self, globals: Dict[str, Any], filename: str, closure_resolver: GlobalResolver) -> None:
+        super().__init__()
+        self.with_statements: List[ast.With] = []
+        self.context_managers: Dict[ast.With, List[Tuple[str, Any]]] = {}
+        self.globals: Dict[str, Any] = globals
+        self.filename = filename
+        self.resolver = closure_resolver
+
+    def _visit_node_with_body(self, node):
+        node = self.generic_visit_filtered(node, {'body'})
+        self.with_statements.append(node)
+        node = self.generic_visit_field(node, 'body')
+        self.with_statements.pop()
+        return node
+
+    def _register_callback(self, node: ast.AST, callable: Callable[..., Any]):
+        # Store the handle to the original callable, in case parsing fails
+        if isinstance(node, ast.Call):
+            cbqualname = astutils.unparse(node.func)
+        else:
+            cbqualname = astutils.rname(node)
+        newnode = self.resolver.global_value_to_node(callable, node, cbqualname, detect_callables=True)
+        if isinstance(node, ast.Call):
+            node.func = newnode
+            return node
+        return newnode
+
+    def _add_exits(self, until_loop_end: bool, only_one: bool = False) -> List[ast.AST]:
+        result = []
+        if len(self.with_statements) == 0:
+            return result
+        for stmt in reversed(self.with_statements):
+            if until_loop_end and not isinstance(stmt, (ast.With, ast.AsyncWith)):
+                break
+            for mgrname, mgr in reversed(self.context_managers[stmt]):
+                # Call __exit__ (without exception management all three arguments are set to None)
+                exit_call = ast.copy_location(ast.parse(f'{mgrname}.__exit__(None, None, None)').body[0], stmt)
+                exit_call.value = self._register_callback(exit_call.value, mgr.__exit__)
+                result.append(exit_call)
+            if only_one:
+                break
+
+        return result
+
+    def _add_entries(self, node: ast.With) -> List[ast.AST]:
+        result = []
+        ctx_mgr_names = []
+        for i, item in enumerate(node.items):
+            # Check if manager is parse-time evaluatable
+            try:
+                if isinstance(item.context_expr, ast.Call) and isinstance(item.context_expr.func, ast.Name):
+                    fname = item.context_expr.func.id
+                    if fname in self.resolver.closure.callbacks:
+                        newglobals = copy.copy(self.globals)
+                        newglobals[fname] = self.resolver.closure.callbacks[fname][1]
+                        ctxmgr = astutils.evalnode(item.context_expr, newglobals)
+                    else:
+                        ctxmgr = astutils.evalnode(item.context_expr, self.globals)
+                else:
+                    ctxmgr = astutils.evalnode(item.context_expr, self.globals)
+            except SyntaxError:
+                raise ValueError(f'Cannot create context manager at {self.filename}:{node.lineno} - only compile-time '
+                                 'evaluatable context managers are supported.')
+
+            # Create manager as part of closure
+            mgr_name = f'__with_{node.lineno}_{i}' if len(node.items) > 1 else f'__with_{node.lineno}'
+            mgr = self.resolver.global_value_to_node(ctxmgr, node, mgr_name, keep_object=True)
+            ctx_mgr_names.append((mgr.id, ctxmgr))
+
+            # Call __enter__
+            enter_call = ast.copy_location(ast.parse(f'{mgr.id}.__enter__()').body[0], node)
+            enter_call.value = self._register_callback(enter_call.value, ctxmgr.__enter__)
+            if item.optional_vars is not None:
+                enter_call = ast.copy_location(
+                    ast.Assign(targets=[item.optional_vars], value=enter_call.value, type_comment=None), node)
+            result.append(enter_call)
+
+        self.context_managers[node] = ctx_mgr_names
+
+        return result
+
+    def visit_With(self, node: ast.With):
+        # Avoid parsing "with dace.tasklet"
+        try:
+            evald = astutils.evalnode(node.items[0].context_expr, self.globals)
+            if evald is dace.tasklet or isinstance(evald, dace.tasklet):
+                return self.generic_visit(node)
+        except SyntaxError:
+            pass
+
+        # Beginning and end of body adds __enter__, __exit__ calls for each item
+        self.with_statements.append(node)
+
+        # Make empty block
+        ifnode: ast.If = ast.parse('if True: pass').body[0]
+        ifnode = ast.copy_location(ifnode, node)
+
+        # Make enter calls
+        entries = self._add_entries(node)
+        ifnode.body = entries
+
+        # Visit body
+        node = self.generic_visit_field(node, 'body')
+        ifnode.body += node.body
+
+        # Make exit calls
+        ifnode.body += self._add_exits(True, True)
+
+        # Pop context manager information
+        self.with_statements.pop()
+        del self.context_managers[node]
+        return ifnode
+
+    def visit_AsyncWith(self, node):
+        return self.visit_With(node)
+
+    def visit_For(self, node):
+        return self._visit_node_with_body(node)
+
+    def visit_AsyncFor(self, node):
+        return self._visit_node_with_body(node)
+
+    def visit_While(self, node):
+        return self._visit_node_with_body(node)
+
+    def visit_Break(self, node):
+        node = self.generic_visit(node)
+        return self._add_exits(True) + [node]
+
+    def visit_Continue(self, node):
+        node = self.generic_visit(node)
+        return self._add_exits(True) + [node]
+
+    def visit_Return(self, node):
+        node = self.generic_visit(node)
+        return self._add_exits(False) + [node]
+
+
+class LoopUnroller(ast.NodeTransformer):
+    """ 
+    Replaces loops by their unrolled bodies if generator can be evaluated at
+    compile time and one of the following conditions apply:
+
+        1. `dace.unroll` was explicitly called
+        2. looping over compile-time constant tuples/lists/dictionaries
+        3. generator is one of the predetermined "stateless generators"
+        4. any generator with compile-time size that is lower than the "unroll_threshold" configuration
+    """
+    STATELESS_GENERATORS = [
+        enumerate,
+        zip,
+        reversed,
+        dict.values,
+        dict.keys,
+        dict.items,
+    ]
+
+    THRESHOLD_GENERATORS = [
+        range,
+    ]
+
+    def __init__(self, globals: Dict[str, Any], filename: str, closure_resolver: GlobalResolver):
+        super().__init__()
+        self.globals = globals
+        self.filename = filename
+        self.threshold = int(Config.get('frontend', 'unroll_threshold'))
+        self.resolver = closure_resolver
+
+    def visit_For(self, node: ast.For) -> Any:
+        # Avoid import loops
+        from dace.frontend.python.interface import MapGenerator
+
+        EXPLICIT_GENERATORS = [
+            range,  # Handled in ProgramVisitor
+            dace.map,
+            dace.consume,
+            MapGenerator
+        ]
+
+        node = self.generic_visit(node)
+
+        # If this node was already designated as a no-unroll node, continue
+        if getattr(node, 'nounroll', False):
+            return node
+
+        # First, skip loops that contain break/continue that is part of this
+        # for loop (rather than nested ones)
+        cannot_unroll = False
+        cflow_finder = _FindBreakContinueStmts()
+        for stmt in node.body:
+            cflow_finder.visit(stmt)
+        if cflow_finder.has_cflow or node.orelse:
+            cannot_unroll = True
+
+        niter = node.iter
+
+        # Find out if loop was explicitly requested to be unrolled with unroll,
+        # and whether it should be done implicitly
+        explicitly_requested = False
+        if isinstance(niter, ast.Call):
+            # Avoid import loop
+            from dace.frontend.python.interface import nounroll, unroll
+
+            try:
+                genfunc = astutils.evalnode(niter.func, self.globals)
+            except SyntaxError:
+                genfunc = None
+
+            if genfunc is unroll:
+                explicitly_requested = True
+                niter = niter.args[0]
+            elif genfunc is nounroll:
+                # Return the contents of the nounroll call
+                node.nounroll = True
+                node.iter = niter.args[0]
+                return node
+
+        if explicitly_requested and cannot_unroll:
+            raise DaceSyntaxError(None, node, 'Cannot unroll loop due to "break", "continue", or "else" statements.')
+
+        # Find out if unrolling should be done implicitly
+        implicit = True
+
+        # Special case for map with @ operator
+        if isinstance(niter, ast.BinOp) and isinstance(niter.op, ast.MatMult):
+            try:
+                geniter = astutils.evalnode(niter.left, self.globals)
+                if isinstance(geniter, MapGenerator):
+                    niter = niter.left
+            except SyntaxError:
+                pass
+        # End of special case
+
+        # Anything not a call is implicitly allowed
+        if isinstance(niter, (ast.Call, ast.Subscript)):
+            if isinstance(niter, ast.Subscript):
+                nfunc = niter.value
+            else:
+                nfunc = niter.func
+
+            implicit = False
+            # Try to see if it's one of the allowed stateless generators
+            try:
+                genfunc = astutils.evalnode(nfunc, self.globals)
+
+                # If genfunc is a bound method, try to extract function from type
+                if hasattr(genfunc, '__self__'):
+                    genfunc = getattr(type(genfunc.__self__), genfunc.__name__, False)
+
+                if (self.threshold >= 0
+                        and (genfunc not in EXPLICIT_GENERATORS or genfunc in LoopUnroller.THRESHOLD_GENERATORS)):
+                    implicit = True
+                elif genfunc in LoopUnroller.STATELESS_GENERATORS:
+                    implicit = True
+                elif genfunc in EXPLICIT_GENERATORS:
+                    implicit = False
+
+            except SyntaxError:
+                pass
+
+        # Loop will not be unrolled
+        if not implicit and not explicitly_requested:
+            return node
+
+        # Check if loop target is supported
+        if isinstance(node.target, ast.Tuple):
+            to_replace = node.target.elts
+        elif isinstance(node.target, ast.Name):
+            to_replace = [node.target]
+        else:
+            # Unsupported loop target
+            return node
+
+        if isinstance(niter, (ast.Tuple, ast.List, ast.Set)):
+            # Check if a literal tuple/list/set
+            generator = niter.elts
+        elif isinstance(niter, ast.Dict):
+            # If dict, take keys (Python compatible)
+            generator = niter.keys
+        # elif isinstance(iter, (ast.ListComp, ast.DictComp, ast.SetComp, ast.GeneratorExp)):
+        #     # Check if a comprehension or generator expression
+        #     pass
+        else:
+            # Check if the generator is compile-time constant
+            try:
+                generator = astutils.evalnode(niter, self.globals)
+            except SyntaxError:
+                # Cannot evaluate generator at compile time
+                return node
+
+        if self.threshold == 0:  # Unroll any loop
+            explicitly_requested = True
+        elif self.threshold > 0:
+            generator = list(generator)
+            if len(generator) > self.threshold:
+                return node
+            explicitly_requested = True
+
+        # Too verbose?
+        if implicit and not explicitly_requested:
+            warnings.warn(f'Loop at {self.filename}:{node.lineno} will be implicitly unrolled.')
+
+        ##########################################
+        # Unroll loop
+        new_body = []
+        for eid, elem in enumerate(generator):
+            # Paste loop body with replaced elements
+            if not isinstance(elem, (list, tuple, set)):
+                elem = [elem]
+            else:
+                elem = list(elem)
+
+            # If an unknown/mutable object, add to closure
+            for i, e in enumerate(elem):
+                # Already AST
+                if isinstance(e, ast.AST):
+                    continue
+                if isinstance(e, (numbers.Number, str)):
+                    # Compatibility check since Python changed their AST nodes
+                    newnode = astutils.create_constant(e)
+                    elem[i] = newnode
+                else:
+                    # Augment closure with new value
+                    eid_str = f'{eid}'
+                    if len(elem) > 1:
+                        eid_str = f'{eid}_{i}'
+                    elem[i] = self.resolver.global_value_to_node(e,
+                                                                 node,
+                                                                 f'gen{node.lineno}_{eid_str}',
+                                                                 True,
+                                                                 keep_object=True)
+
+            elembody = [astutils.copy_tree(stmt) for stmt in node.body]
+            replace = astutils.ASTFindReplace({k: v for k, v in zip(to_replace, elem)})
+            for stmt in elembody:
+                new_body.append(replace.visit(stmt))
+
+        return new_body
+
+    def visit_AsyncFor(self, node) -> Any:
+        return self.visit_For(node)
+
+
 class CallTreeResolver(ast.NodeVisitor):
+
     def __init__(self, closure: SDFGClosure, globals: Dict[str, Any]) -> None:
         self.closure = closure
         self.seen_calls: Set[str] = set()
@@ -849,6 +1235,58 @@ class CallTreeResolver(ast.NodeVisitor):
                 pass
 
         return res
+
+    def _get_given_args(self, node: ast.Call, function: 'DaceProgram') -> Set[str]:
+        """ Returns a set of names of the given arguments from the positional and keyword arguments """
+        from dace.frontend.python.parser import DaceProgram  # Avoid import loop
+
+        posargs = node.args
+        kwargs = [kwarg.arg for kwarg in node.keywords]
+        result = set()
+
+        if not isinstance(function, DaceProgram):
+            # Make set of parameters from __sdfg_signature__
+            parameters = [(name, inspect.Parameter.POSITIONAL_OR_KEYWORD) for name in function.__sdfg_signature__()[0]]
+        else:
+            parameters = [(aname, arg.kind) for aname, arg in function.signature.parameters.items()]
+
+        # Handle "self" argument
+        objname = getattr(function, 'objname', False)
+
+        nargs = len(posargs)
+        arg_ind = 0
+        # Track both positional arguments and function signature together
+        for aname, sig_kind in parameters:
+            if aname == objname:
+                # Skip "self" argument
+                continue
+
+            # Variable-length arguments: obtain from the remainder of given_*
+            if sig_kind is inspect.Parameter.VAR_POSITIONAL:
+                vargs = posargs[arg_ind:]
+                result.update({f'__arg{j}' for j, _ in enumerate(vargs)})
+                # Shift arg_ind to the end
+                arg_ind = len(posargs)
+            elif sig_kind is inspect.Parameter.VAR_KEYWORD:
+                vargs = {k for k in kwargs.keys() if k not in result}
+                result.update({f'__kwarg_{k}' for k in vargs.keys()})
+            # END OF VARIABLE-LENGTH ARGUMENTS
+            elif sig_kind is inspect.Parameter.POSITIONAL_ONLY:
+                if arg_ind < nargs:
+                    result.add(aname)
+                    arg_ind += 1
+            elif sig_kind is inspect.Parameter.POSITIONAL_OR_KEYWORD:
+                if arg_ind >= nargs:
+                    if aname in kwargs:
+                        result.add(aname)
+                else:
+                    result.add(aname)
+                    arg_ind += 1
+            elif sig_kind is inspect.Parameter.KEYWORD_ONLY:
+                if aname in kwargs:
+                    result.add(aname)
+
+        return result
 
     def visit_Call(self, node: ast.Call):
         # Only parse calls to parsed SDFGConvertibles
@@ -879,7 +1317,11 @@ class CallTreeResolver(ast.NodeVisitor):
                 qualname = node.func.qualname
             self.seen_calls.add(qualname)
             if hasattr(value, 'closure_resolver'):
-                self.closure.nested_closures.append((qualname, value.closure_resolver(constant_args, self.closure)))
+                # Get given arguments from signature and args/kwargs
+                given_args = self._get_given_args(node, value)
+
+                self.closure.nested_closures.append(
+                    (qualname, value.closure_resolver(constant_args, given_args, self.closure)))
             else:
                 self.closure.nested_closures.append((qualname, SDFGClosure()))
         except DaceRecursionError:  # Parsing failed in a nested context, raise
@@ -897,12 +1339,21 @@ class CallTreeResolver(ast.NodeVisitor):
             # Return old call AST instead
             if not hasattr(node.func, 'oldnode'):
                 raise
-            node.func = node.func.oldnode.func
+
+            # If callback exists, use callback name
+            if hasattr(node.func, 'cbname'):
+                newnode = ast.Name(id=node.func.cbname, ctx=ast.Load())
+                newnode.oldnode = node.func.oldnode
+                node.func = ast.copy_location(newnode, node.func)
+            else:
+                # Revert to old call AST
+                node.func = node.func.oldnode.func
 
             return self.generic_visit(node)
 
 
 class ArrayClosureResolver(ast.NodeVisitor):
+
     def __init__(self, closure: SDFGClosure):
         self.closure = closure
         self.arrays: Set[str] = set()
@@ -913,7 +1364,49 @@ class ArrayClosureResolver(ast.NodeVisitor):
         self.generic_visit(node)
 
 
+class DisallowedAssignmentChecker(ast.NodeVisitor):
+    """
+    Tests a pre-processed program for disallowed assignments to compile-time constants, and raises a 
+    ``DaceSyntaxError`` exception if one is found.
+    """
+
+    def __init__(self, filename: str) -> None:
+        super().__init__()
+        self.visitor = collections.namedtuple('Visitor', 'filename')
+        self.visitor.filename = filename
+
+    def _check_assignment_target(self, node: ast.expr, parent_node: ast.AST):
+        if hasattr(node, 'qualname'):
+            raise DaceSyntaxError(
+                self.visitor, parent_node, f'Trying to assign to a compile-time constant "{node.qualname}", which is '
+                'disallowed. Refer to the Frequently Asked Questions in the documentation on how to avoid this issue.')
+
+    def visit_Assign(self, node: ast.Assign):
+        for target in node.targets:
+            self._check_assignment_target(target, node)
+        self.generic_visit(node)
+
+    def visit_AugAssign(self, node: ast.AugAssign):
+        self._check_assignment_target(node.target, node)
+        self.generic_visit(node)
+
+    def visit_AnnAssign(self, node: ast.AnnAssign):
+        self._check_assignment_target(node.target, node)
+        self.generic_visit(node)
+
+    def visit_NamedExpr(self, node):
+        self._check_assignment_target(node.target, node)
+        self.generic_visit(node)
+
+    def visit_Call(self, node: ast.Call):
+        if any(k.arg is None for k in node.keywords):
+            raise DaceSyntaxError(
+                self.visitor, node, 'Double-starred (dictionary unpacking, e.g., `**a`) arguments are '
+                'currently unsupported.')
+
+
 class AugAssignExpander(ast.NodeTransformer):
+
     def visit_AugAssign(self, node: ast.AugAssign) -> ast.Assign:
         target = self.generic_visit(node.target)
         value = self.generic_visit(node.value)
@@ -921,21 +1414,44 @@ class AugAssignExpander(ast.NodeTransformer):
         return ast.copy_location(ast.Assign(targets=[target], value=newvalue), node)
 
 
+def find_disallowed_statements(node: ast.AST):
+    from dace.frontend.python.newast import DISALLOWED_STMTS  # Avoid import loop
+    # Skip everything until the function contents (in case there are disallowed statements in a decorator)
+    if isinstance(node, ast.Module) and isinstance(node.body[0], ast.FunctionDef):
+        nodes = node.body[0].body
+    else:
+        nodes = [node]
+
+    for topnode in nodes:
+        for subnode in ast.walk(topnode):
+            # Found disallowed statement
+            if type(subnode).__name__ in DISALLOWED_STMTS:
+                return type(subnode).__name__
+
+            # Calls with double-starred arguments (**args)
+            if isinstance(subnode, ast.Call):
+                if any(k.arg is None for k in subnode.keywords):
+                    return type(subnode).__name__
+    return None
+
+
 def preprocess_dace_program(f: Callable[..., Any],
                             argtypes: Dict[str, data.Data],
                             global_vars: Dict[str, Any],
                             modules: Dict[str, Any],
                             resolve_functions: bool = False,
-                            parent_closure: Optional[SDFGClosure] = None) -> Tuple[PreprocessedAST, SDFGClosure]:
+                            parent_closure: Optional[SDFGClosure] = None,
+                            default_args: Optional[Set[str]] = None) -> Tuple[PreprocessedAST, SDFGClosure]:
     """
     Preprocesses a ``@dace.program`` and all its nested functions, returning
     a preprocessed AST object and the closure of the resulting SDFG.
+
     :param f: A Python function to parse.
     :param argtypes: An dictionary of (name, type) for the given
                         function's arguments, which may pertain to data
                         nodes or symbols (scalars).
     :param global_vars: A dictionary of global variables in the closure
-                        of `f`.
+                        of ``f``.
     :param modules: A dictionary from an imported module name to the
                     module itself.
     :param constants: A dictionary from a name to a constant value.
@@ -944,6 +1460,7 @@ def preprocess_dace_program(f: Callable[..., Any],
                                 values.
     :param parent_closure: If not None, represents the closure of the parent of
                            the currently processed function.
+    :param default_args: If not None, defines a list of unspecified default arguments.
     :return: A 2-tuple of the AST and its reduced (used) closure.
     """
     src_ast, src_file, src_line, src = astutils.function_to_ast(f)
@@ -962,8 +1479,8 @@ def preprocess_dace_program(f: Callable[..., Any],
 
     # Resolve constants to their values (if they are not already defined in this scope)
     # and symbols to their names
-    resolved = {k: v for k, v in global_vars.items() if k not in argtypes and k != '_'}
-    closure_resolver = GlobalResolver(resolved, resolve_functions)
+    resolved = {k: v for k, v in global_vars.items() if k not in (argtypes.keys() - default_args) and k != '_'}
+    closure_resolver = GlobalResolver(resolved, resolve_functions, default_args=default_args)
 
     # Append element to call stack and handle max recursion depth
     if parent_closure is not None:
@@ -977,6 +1494,12 @@ def preprocess_dace_program(f: Callable[..., Any],
                             '`frontend.implicit_recursion_depth` in .dace.conf')
 
         closure_resolver.closure.callstack = parent_closure.callstack + [fid]
+
+    # Find disallowed AST nodes
+    disallowed = find_disallowed_statements(src_ast)
+    if disallowed:
+        raise TypeError(f'Converting function "{f.__name__}" ({src_file}:{src_line}) to callback due to disallowed '
+                        f'keyword: {disallowed}')
 
     passes = int(Config.get('frontend', 'preprocessing_passes'))
     if passes >= 0:
@@ -998,8 +1521,11 @@ def preprocess_dace_program(f: Callable[..., Any],
 
     for pass_num in gen:
         try:
+            closure_resolver.toplevel_function = True
             src_ast = closure_resolver.visit(src_ast)
-            src_ast = LoopUnroller(resolved, src_file).visit(src_ast)
+            DisallowedAssignmentChecker(src_file).visit(src_ast)
+            src_ast = LoopUnroller(resolved, src_file, closure_resolver).visit(src_ast)
+            src_ast = ContextManagerInliner(resolved, src_file, closure_resolver).visit(src_ast)
             src_ast = ConditionalCodeResolver(resolved).visit(src_ast)
             src_ast = DeadCodeEliminator().visit(src_ast)
         except Exception:
@@ -1013,7 +1539,7 @@ def preprocess_dace_program(f: Callable[..., Any],
         ctr.visit(src_ast)
     except DaceRecursionError as ex:
         if id(f) == ex.fid:
-            raise TypeError('Parsing failed due to recursion in a data-centric ' 'context called from this function')
+            raise TypeError('Parsing failed due to recursion in a data-centric context called from this function')
         else:
             raise ex
     used_arrays = ArrayClosureResolver(closure_resolver.closure)

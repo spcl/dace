@@ -14,7 +14,7 @@ from dace import memlet, registry, sdfg as sd, Memlet, symbolic, dtypes, subsets
 from dace.frontend.python import astutils
 from dace.sdfg import nodes, propagation
 from dace.sdfg.graph import MultiConnectorEdge, SubgraphView
-from dace.sdfg import SDFG, SDFGState
+from dace.sdfg import InterstateEdge, SDFG, SDFGState
 from dace.sdfg import utils as sdutil, infer_types, propagation
 from dace.sdfg.replace import replace_datadesc_names
 from dace.transformation import transformation, helpers
@@ -23,7 +23,7 @@ from dace import data
 
 
 @make_properties
-class InlineMultistateSDFG(transformation.SingleStateTransformation, transformation.SimplifyPass):
+class InlineMultistateSDFG(transformation.SingleStateTransformation):
     """
     Inlines a multi-state nested SDFG into a top-level SDFG. This only happens
     if the state has the nested SDFG node isolated (i.e., only containing it
@@ -47,6 +47,7 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation, transformat
         Returns True if the strides of the inner array can be matched
         to the strides of the outer array upon inlining. Takes into
         consideration memlet (un)squeeze and nested SDFG symbol mapping.
+        
         :param inner_strides: The strides of the array inside the nested SDFG.
         :param outer_strides: The strides of the array in the external SDFG.
         :param nested_sdfg: Nested SDFG node with symbol mapping.
@@ -81,6 +82,8 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation, transformat
         nested_sdfg = self.nested_sdfg
         if nested_sdfg.no_inline:
             return False
+        if nested_sdfg.schedule == dtypes.ScheduleType.FPGA_Device:
+            return False
 
         # Ensure the state only contains a nested SDFG and input/output access
         # nodes
@@ -102,11 +105,12 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation, transformat
                     # Only accept full ranges for now. TODO(later): Improve
                     if e.data.subset != subsets.Range.from_array(sdfg.arrays[node.data]):
                         return False
-                    # Do not accept views. TODO(later): Improve
-                    outer_desc = sdfg.arrays[node.data]
-                    inner_desc = nested_sdfg.sdfg.arrays[e.dst_conn]
-                    if (outer_desc.shape != inner_desc.shape or outer_desc.strides != inner_desc.strides):
-                        return False
+                    if e.dst_conn in nested_sdfg.sdfg.arrays:
+                        # Do not accept views. TODO(later): Improve
+                        outer_desc = sdfg.arrays[node.data]
+                        inner_desc = nested_sdfg.sdfg.arrays[e.dst_conn]
+                        if (outer_desc.shape != inner_desc.shape or outer_desc.strides != inner_desc.strides):
+                            return False
                     found = True
 
                 for e in state.in_edges(node):
@@ -117,11 +121,12 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation, transformat
                     # Only accept full ranges for now. TODO(later): Improve
                     if e.data.subset != subsets.Range.from_array(sdfg.arrays[node.data]):
                         return False
-                    # Do not accept views. TODO(later): Improve
-                    outer_desc = sdfg.arrays[node.data]
-                    inner_desc = nested_sdfg.sdfg.arrays[e.src_conn]
-                    if (outer_desc.shape != inner_desc.shape or outer_desc.strides != inner_desc.strides):
-                        return False
+                    if e.src_conn in nested_sdfg.sdfg.arrays:
+                        # Do not accept views. TODO(later): Improve
+                        outer_desc = sdfg.arrays[node.data]
+                        inner_desc = nested_sdfg.sdfg.arrays[e.src_conn]
+                        if (outer_desc.shape != inner_desc.shape or outer_desc.strides != inner_desc.strides):
+                            return False
                     found = True
 
                 # elif nested_sdfg in state.successors(nested_sdfg):
@@ -179,6 +184,30 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation, transformat
         # Replace symbols using invocation symbol mapping
         # Two-step replacement (N -> __dacesym_N --> map[N]) to avoid clashes
         symbolic.safe_replace(nsdfg_node.symbol_mapping, nsdfg.replace_dict)
+
+        #######################################################
+        # Collect and modify interstate edges as necessary
+
+        outer_assignments = set()
+        for e in sdfg.edges():
+            outer_assignments |= e.data.assignments.keys()
+
+        inner_assignments = set()
+        for e in nsdfg.edges():
+            inner_assignments |= e.data.assignments.keys()
+
+        allnames = set(outer_symbols.keys()) | set(sdfg.arrays.keys())
+        assignments_to_replace = inner_assignments & (outer_assignments | allnames)
+        sym_replacements: Dict[str, str] = {}
+        for assign in assignments_to_replace:
+            newname = data.find_new_name(assign, allnames)
+            allnames.add(newname)
+            outer_symbols[newname] = nsdfg.symbols.get(assign, None)
+            sym_replacements[assign] = newname
+        nsdfg.replace_dict(sym_replacements)
+
+        #######################################################
+        # Collect and modify access nodes as necessary
 
         # Access nodes that need to be reshaped
         # reshapes: Set(str) = set()
@@ -308,26 +337,6 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation, transformat
                 nstate.set_label(newname)
 
         #######################################################
-        # Collect and modify interstate edges as necessary
-
-        outer_assignments = set()
-        for e in sdfg.edges():
-            outer_assignments |= e.data.assignments.keys()
-
-        inner_assignments = set()
-        for e in nsdfg.edges():
-            inner_assignments |= e.data.assignments.keys()
-
-        assignments_to_replace = inner_assignments & outer_assignments
-        sym_replacements: Dict[str, str] = {}
-        allnames = set(outer_symbols.keys()) | set(sdfg.arrays.keys())
-        for assign in assignments_to_replace:
-            newname = data.find_new_name(assign, allnames)
-            allnames.add(newname)
-            sym_replacements[assign] = newname
-        nsdfg.replace_dict(sym_replacements)
-
-        #######################################################
         # Add nested SDFG states into top-level SDFG
 
         outer_start_state = sdfg.start_state
@@ -347,7 +356,11 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation, transformat
             sdfg.add_edge(e.src, source, e.data)
         for e in sdfg.out_edges(outer_state):
             for sink in sinks:
-                sdfg.add_edge(sink, e.dst, e.data)
+                sdfg.add_edge(sink, e.dst, dc(e.data))
+                # Redirect sink incoming edges with a `False` condition to e.dst (return statements)
+                for e2 in sdfg.in_edges(sink):
+                    if e2.data.condition_sympy() == False:
+                        sdfg.add_edge(e2.src, e.dst, InterstateEdge())
 
         # Modify start state as necessary
         if outer_start_state is outer_state:

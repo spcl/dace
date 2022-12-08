@@ -125,6 +125,7 @@ _atomic_count = _atomic_counter_generator()
 class TFSession:
     def __init__(self, name: str = "tfsession", seed: int = None, config=None):
         """ Creates a DaCe Tensorflow session.
+
             :param name: (optional) The name of the resulting SDFG.
             :param seed: (optional) Fix random seed.
         """
@@ -347,7 +348,8 @@ class TFSession:
 
     def compile(self, nodes, gpu, name=None, patterns=[], validate=False, permissive=False):
         """ Compiles a subgraph into a callable function, which is equivalent 
-            to calling `run()`. 
+            to calling ``run()``. 
+
             :param nodes: Node or an iterable (e.g. list) of nodes to evaluate.
             :param name: Name of the SDFG to create, or None for a unique name.
             :param gpu: set this boolean to True if compilation has to be done for GPU.
@@ -527,13 +529,14 @@ class TFSession:
     ):
         """ Evaluates a subgraph and returns a tuple of the evaluated nodes
             (behaves similarly to sess.run).
+
             :param nodes: Node or an iterable (e.g. list) of nodes to evaluate.
             :param feed_dict: Dictionary representing input values and arrays
                               to feed in to the evaluator.
             :param name: Name of the SDFG to create, or None for a unique name.
             :param gpu: This boolean should be set if the session is to be run on a GPU.
             :param patterns: A list of list of Transformation(s) that should be applied. the outer
-            list is just in-case you want the transformations in a certain sequence.
+                             list is just in-case you want the transformations in a certain sequence.
             :param validate: Boolean that decides if validation will take place after
                              transformations.
             :return: Tuple or dictionary of values in the same order as `nodes`.
@@ -551,6 +554,7 @@ class TFSession:
 
     def dfs_nodes(self, source):
         """ Produce nodes in a depth-first-search (DFS) on a TensorFlow graph.
+
             :param source: The source node to start from.
             :return: A generator of nodes in the depth-first-search.
             :note: Based on http://www.ics.uci.edu/~eppstein/PADS/DFS.py
@@ -3383,6 +3387,7 @@ class TFSession:
     def add_in_memlets(self, inputList, otherNode, tasklet, inputDims, inputParams, identifier="j"):
         """ Convenience function that adds two memlets for each input of the 
             node: external and internal to a given map.
+
             :param inputList: list of inputNodes (DaCe access node)
             :param otherNode: DaCe node (mostly map_entry)
             :param tasklet: Normally a tasklet node, but it can also be another
@@ -3425,6 +3430,7 @@ class TFSession:
     ):
         """ Convenience function that adds two memlets for each output of the 
             node: external and internal to a given map.
+
             :param outputList: list of outputNodes (DaCe access node)
             :param otherNode: DaCe node (mostly map_entry)
             :param tasklet: Normally a tasklet node, but it can also be another
@@ -3483,6 +3489,7 @@ class TFSession:
         """ Creates a DaCe access node for each input of `inp`, adds it to the 
             state, and returns it.
             If the node already exists, returns the pre-existing node.
+
             :param inp: tf.Operation
             :return: A 3-tuple of (input DaCe access node,
                                    list of parameter strings,
@@ -3521,6 +3528,7 @@ class TFSession:
         """ Creates a DaCe access node for each output of `node`, adds it to 
             the state, and returns it.
             If the node already exists, returns the pre-existing node.
+
             :param node: tf.Operation
             :return: List of DaCe access node.
         """
@@ -3545,6 +3553,7 @@ class TFSession:
 
     def add_init(self, arrname: str, value: Any):
         """ Adds an initialization map for a tensor in the init state.
+
             :param arrname: The tensor name to initialize.
             :param dims: The range (as a string) to use for initialization.
             :param value: A value to set it to (converted to C++ string).
@@ -3566,6 +3575,7 @@ class TFSession:
     def reinitCR(self, inp: dace.nodes.AccessNode, params, dims, identity):
         """ Adds a reinitialization map to a `reinit` state, setting inputs
             to their initial values. Only used in training mode.
+
             :param inp: DaCe access node.
             :param params: List of string parameters to `inp`.
             :param dims: List of strings dimensions of `inp`.
@@ -3577,6 +3587,7 @@ class TFSession:
         """ Zero-pads the input to fit the outputSize.
             WARNING: This function assumes the height and width of the output is the
             same (which is reasonable for deep learning).
+
             :param node: tf.Operation
             :param inpnode: DaCe access node to pad
             :param inp: input node descriptor
@@ -3646,6 +3657,7 @@ class TFSession:
     def get_default_params(self, tensor, start=0, identifier="i"):
         """ Returns the default parameters of a tensor starting at `start`,
             e.g., ["i0","i1",...].
+
             :param tensor: tf.Tensor.
             :param start: Starting position for the iteration.
             :param identifier: The base identifier for the parameters. Default is 'i'
@@ -3661,6 +3673,7 @@ class TFSession:
 
     def get_default_dims(self, tensor):
         """ Returns the default dimensions of a tensor e.g., ["0:N","0:M"]
+        
             :param tensor: tf.Tensor.
             :return: List of dimensions as strings ["0:N","0:M"]
         """

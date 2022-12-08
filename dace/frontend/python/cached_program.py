@@ -2,15 +2,19 @@
 """ Precompiled DaCe program/method cache. """
 
 from collections import OrderedDict
-from dace import config, data as dt
-from dace.sdfg.sdfg import SDFG
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Optional, Set, Tuple
+
+import dace
+from dace import config
+from dace import data as dt
+from dace.sdfg.sdfg import SDFG
 
 # Type hints
 ArgTypes = Dict[str, dt.Data]
 ConstantTypes = Dict[str, Any]
 EvalCallback = Callable[[str], Any]
+SpecifiedArgs = Set[str]
 
 
 # Adapted from https://stackoverflow.com/a/2437645/6489142
@@ -37,6 +41,12 @@ def _make_hashable(obj):
     except TypeError:
         return repr(obj)
 
+def _make_sortable(obj):
+    try:
+        obj < obj
+        return obj
+    except TypeError:
+        return repr(obj)
 
 @dataclass
 class ProgramCacheKey:
@@ -44,16 +54,20 @@ class ProgramCacheKey:
     arg_types: ArgTypes
     closure_types: ArgTypes
     closure_constants: ConstantTypes
+    specified_args: SpecifiedArgs
 
-    def __init__(self, arg_types: ArgTypes, closure_types: ArgTypes, closure_constants: ConstantTypes) -> None:
+    def __init__(self, arg_types: ArgTypes, closure_types: ArgTypes, closure_constants: ConstantTypes,
+                 specified_args: SpecifiedArgs) -> None:
         self.arg_types = arg_types
         self.closure_types = closure_types
         self.closure_constants = closure_constants
+        self.specified_args = specified_args
         # Freeze entry
         self._tuple = (
             tuple((k, str(v.to_json())) for k, v in sorted(arg_types.items())),
             tuple((k, str(v.to_json())) for k, v in sorted(closure_types.items())),
             tuple((k, _make_hashable(v)) for k, v in sorted(closure_constants.items())),
+            tuple(sorted(_make_sortable(a) for a in specified_args)),
         )
 
     def __hash__(self) -> int:
@@ -77,6 +91,7 @@ class DaceProgramCache:
     def __init__(self, evaluate: EvalCallback, size: Optional[int] = None) -> None:
         """ 
         Initializes a DaCe program cache.
+        
         :param evaluate: A callback that can evaluate constants at call time.
         :param size: The cache size (if not given, uses the default value from
                      the configuration).
@@ -99,13 +114,16 @@ class DaceProgramCache:
 
     def make_key(self,
                  argtypes: ArgTypes,
+                 specified_args: Set[str],
                  closure_types: Set[str],
                  closure_constants: Set[str],
                  extra_constants: Dict[str, Any] = None) -> ProgramCacheKey:
         """ Creates a program cache key from the given arguments. """
         adescs = self._evaluate_descriptors(closure_types, extra_constants)
         cvals = self._evaluate_constants(closure_constants, extra_constants)
-        key = ProgramCacheKey(argtypes, adescs, cvals)
+        # Filter out default arguments that were unspecified (for unique cache keys)
+        argtypes = {k: v for k, v in argtypes.items() if k in specified_args}
+        key = ProgramCacheKey(argtypes, adescs, cvals, specified_args)
         return key
 
     def add(self, key: ProgramCacheKey, sdfg: SDFG, compiled_sdfg: 'dace.codegen.compiled_sdfg.CompiledSDFG') -> None:

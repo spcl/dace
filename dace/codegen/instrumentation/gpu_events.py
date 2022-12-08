@@ -11,7 +11,7 @@ class GPUEventProvider(InstrumentationProvider):
         self.backend = config.Config.get('compiler', 'cuda', 'backend')
         super().__init__()
 
-    def on_sdfg_begin(self, sdfg, local_stream, global_stream):
+    def on_sdfg_begin(self, sdfg, local_stream, global_stream, codegen):
         if self.backend == 'cuda':
             header_name = 'cuda_runtime.h'
         elif self.backend == 'hip':

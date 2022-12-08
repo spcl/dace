@@ -21,6 +21,7 @@ from dace.frontend.python.parser import DaceProgram
 def get_tasklet_ast(stack_depth=2, frame=None) -> ast.With:
     """
     Returns the AST of the contents of the statement that called this function.
+
     :param stack_depth: If ``frame`` is None, how many levels up to go in the 
                         stack, default: 2 
                         (with statement->``__enter__``->``get_tasklet_ast``).
@@ -31,7 +32,7 @@ def get_tasklet_ast(stack_depth=2, frame=None) -> ast.With:
     """
     if frame is None:
         frame = inspect.stack()[stack_depth][0]
-    caller = inspect.getframeinfo(frame)
+    caller = inspect.getframeinfo(frame, context=0)
     try:
         with open(caller.filename, 'r') as fp:
             pysrc = fp.read()
@@ -103,7 +104,8 @@ class TaskletRewriter(astutils.ExtNodeTransformer):
     def _analyze_call(self, node: ast.Call) -> Tuple[bool, Optional[ast.Lambda]]:
         """ 
         Analyze memlet expression if a function call (e.g.
-        "A(1, lambda a,b: a+b)[:]").
+        ``A(1, lambda a,b: a+b)[:]``).
+
         :param node: The AST node representing the call.
         :return: A 2-tuple of (is memlet dynamic, write conflict resolution)
         """
@@ -225,6 +227,7 @@ def run_tasklet(tasklet_ast: ast.With, filename: str, gvars: Dict[str, Any], lva
     """
     Transforms and runs a tasklet given by its AST, filename, global, and local
     variables.
+    
     :param tasklet_ast: AST of the "with dace.tasklet" statement.
     :param filename: A string representing the originating filename or code
                      snippet (IPython, Jupyter) of the tasklet, used for

@@ -137,8 +137,8 @@ class MapReduceFusion(pm.SingleStateTransformation):
             init_state.add_mapped_tasklet(
                 'freduce_init',
                 [('o%d' % i, '%s:%s:%s' % (r[0], r[1] + 1, r[2])) for i, r in enumerate(array_edge.data.subset)], {},
-                'out = %s' % reduce_node.identity, {
-                    'out':
+                '__out = %s' % reduce_node.identity, {
+                    '__out':
                     Memlet.simple(array_edge.data.data, ','.join(
                         ['o%d' % i for i in range(len(array_edge.data.subset))]))
                 },
@@ -207,14 +207,16 @@ class MapWCRFusion(pm.SingleStateTransformation):
 
     def apply(self, graph: SDFGState, sdfg: SDFG):
         # To apply, collapse the second map and then fuse the two resulting maps
-        map_collapse = MapCollapse(
+        map_collapse = MapCollapse()
+        map_collapse.setup_match(
             sdfg, self.sdfg_id, self.state_id, {
                 MapCollapse.outer_map_entry: graph.node_id(self.rmap_out_entry),
                 MapCollapse.inner_map_entry: graph.node_id(self.rmap_in_entry),
             }, 0)
         map_entry, _ = map_collapse.apply(graph, sdfg)
 
-        map_fusion = MapFusion(sdfg, self.sdfg_id, self.state_id, {
+        map_fusion = MapFusion()
+        map_fusion.setup_match(sdfg, self.sdfg_id, self.state_id, {
             MapFusion.first_map_exit: graph.node_id(self.tmap_exit),
             MapFusion.second_map_entry: graph.node_id(map_entry),
         }, 0)

@@ -1,9 +1,9 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-'''
+"""
 Helps extracting the relevant information from MLIR for CodeGen of an MLIR tasklet
 Can handle MLIR in generic form or in the supported dialect of pyMLIR
 Requires pyMLIR to run
-'''
+"""
 try:
     import mlir
 except (ModuleNotFoundError, NameError, ImportError):

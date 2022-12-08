@@ -13,23 +13,26 @@
 import os
 import sys
 
+sys.path.insert(0, os.path.abspath('.'))
 sys.path.insert(0, os.path.abspath('..'))
+from dace import __version__
+from schema_generator import generate_docs
 
 # -- Project information -----------------------------------------------------
 
 project = 'DaCe'
-copyright = '2019-2021, Scalable Parallel Computing Laboratory, ETH Zurich'
+copyright = '2019-2022, Scalable Parallel Computing Laboratory, ETH Zurich'
 author = 'Scalable Parallel Computing Laboratory, ETH Zurich and the DaCe authors'
 
 # The full version, including alpha/beta/rc tags
-release = '0.10.0a'
+release = __version__
 
 # -- General configuration ---------------------------------------------------
 
 # Add any Sphinx extension module names here, as strings. They can be
 # extensions coming with Sphinx (named 'sphinx.ext.*') or your custom
 # ones.
-extensions = ['sphinx.ext.autodoc', 'sphinx.ext.mathjax']
+extensions = ['sphinx.ext.autodoc', 'sphinx_autodoc_typehints', 'sphinx.ext.mathjax', 'sphinx_rtd_theme']
 
 # Add any paths that contain templates here, relative to this directory.
 templates_path = ['_templates']
@@ -52,3 +55,21 @@ html_theme = 'sphinx_rtd_theme'
 html_static_path = ['_static']
 
 master_doc = 'index'
+
+# Enable numbered figures
+numfig = True
+
+# Add inline python code as prologue to every .rst file
+rst_prolog = '''
+.. role:: pycode(code)
+  :language: python
+  :class: code-literal
+
+'''
+
+html_css_files = [
+    'css/custom.css',
+]
+
+# Generate docs for config schema
+generate_docs()

@@ -33,7 +33,8 @@ class FPGATransformSDFG(transformation.MultiStateTransformation):
 
         # Condition match depends on matching FPGATransformState for each state
         for state_id, state in enumerate(sdfg.nodes()):
-            fps = FPGATransformState(sdfg, graph.sdfg_id, -1, {FPGATransformState.state: state_id}, 0)
+            fps = FPGATransformState()
+            fps.setup_match(sdfg, graph.sdfg_id, -1, {FPGATransformState.state: state_id}, 0)
             if not fps.can_be_applied(sdfg, expr_index, sdfg):
                 return False
 
@@ -45,10 +46,12 @@ class FPGATransformSDFG(transformation.MultiStateTransformation):
         from dace.transformation.interstate import FPGATransformState
 
         sdfg_id = sdfg.sdfg_id
-        nesting = NestSDFG(sdfg, sdfg_id, -1, {}, self.expr_index)
+        nesting = NestSDFG()
+        nesting.setup_match(sdfg, sdfg_id, -1, {}, self.expr_index)
         nesting.promote_global_trans = self.promote_global_trans
         nesting.apply(sdfg, sdfg)
 
         # The state ID is zero since we applied NestSDFG and have only one state in the new SDFG
-        fpga_transform = FPGATransformState(sdfg, sdfg_id, -1, {FPGATransformState.state: 0}, self.expr_index)
+        fpga_transform = FPGATransformState()
+        fpga_transform.setup_match(sdfg, sdfg_id, -1, {FPGATransformState.state: 0}, self.expr_index)
         fpga_transform.apply(sdfg, sdfg)

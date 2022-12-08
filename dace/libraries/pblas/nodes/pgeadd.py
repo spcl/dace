@@ -10,7 +10,7 @@ from dace import dtypes
 @dace.library.expansion
 class ExpandBlockCyclicScatterMKL(ExpandTransformation):
 
-    environments = [environments.intel_mkl.IntelMKLScaLAPACK]
+    environments = [environments.intel_mkl_mpich.IntelMKLScaLAPACKMPICH]
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
@@ -114,7 +114,7 @@ class ExpandBlockCyclicGatherPure(ExpandTransformation):
 @dace.library.expansion
 class ExpandBlockCyclicGatherMKL(ExpandTransformation):
 
-    environments = [environments.intel_mkl.IntelMKLScaLAPACK]
+    environments = [environments.intel_mkl_mpich.IntelMKLScaLAPACKMPICH]
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):

@@ -1,4 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+
 from six import StringIO
 import collections
 import enum
@@ -13,7 +14,7 @@ import copy
 
 import dace
 from dace.codegen.targets import cpp
-from dace import subsets, data as dt, dtypes, memlet, symbolic
+from dace import subsets, data as dt, dtypes, memlet, sdfg as sd, symbolic
 from dace.config import Config
 from dace.frontend import operations
 from dace.sdfg import SDFG, nodes, utils, dynamic_map_inputs
@@ -22,11 +23,13 @@ from dace.codegen import exceptions as cgx
 from dace.codegen.codeobject import CodeObject
 from dace.codegen.dispatcher import DefinedType
 from dace.codegen.prettycode import CodeIOStream
+from dace.codegen.common import update_persistent_desc
 from dace.codegen.targets.target import (TargetCodeGenerator, IllegalCopy, make_absolute)
 from dace.codegen import cppunparse
 from dace.properties import Property, make_properties, indirect_properties
+from dace.sdfg.state import SDFGState
+from dace.sdfg.utils import is_fpga_kernel
 from dace.symbolic import evaluate
-from dace.transformation.dataflow import MapUnroll
 from collections import defaultdict
 
 _CPU_STORAGE_TYPES = {dtypes.StorageType.CPU_Heap, dtypes.StorageType.CPU_ThreadLocal, dtypes.StorageType.CPU_Pinned}
@@ -49,30 +52,13 @@ def vector_element_type_of(dtype):
     return dtype
 
 
-def is_fpga_kernel(sdfg, state):
-    """
-    Returns whether the given state is an FPGA kernel and should be dispatched
-    to the FPGA code generator.
-    :return: True if this is an FPGA kernel, False otherwise.
-    """
-    if ("is_FPGA_kernel" in state.location and state.location["is_FPGA_kernel"] == False):
-        return False
-    data_nodes = state.data_nodes()
-    if len(data_nodes) == 0:
-        return False
-    for n in data_nodes:
-        if n.desc(sdfg).storage not in (dtypes.StorageType.FPGA_Global, dtypes.StorageType.FPGA_Local,
-                                        dtypes.StorageType.FPGA_Registers, dtypes.StorageType.FPGA_ShiftRegister):
-            return False
-    return True
-
-
 def is_external_stream(node: dace.sdfg.nodes.Node, subgraph: Union[dace.sdfg.SDFGState, ScopeSubgraphView]):
-    '''
+    """
     Given a node and a subgraph, returns whether this is an external stream (the other endpoint is in
     another FPGA Kernel) or not.
+
     :return: True if node represent an external stream, False otherwise
-    '''
+    """
 
     external = False
 
@@ -100,14 +86,15 @@ def is_multibank_array(array: dt.Data):
 
 def is_multibank_array_with_distributed_index(array: dt.Data):
     """
+    :param array: access node to be checked
     :return: True if this array is placed on HBM/DDR and has an extra first
-    dimension equal to the number of banks is placed on. For HBM/DDR arrays
-    spanning across multiple banks this is always true.
+        dimension equal to the number of banks is placed on. For HBM/DDR arrays
+        spanning across multiple banks this is always true.
     """
     if is_multibank_array(array):
         res = parse_location_bank(array)
         low, high = get_multibank_ranges_from_subset(res[1], None)
-        return high - low > 1 or str(array.shape[0]) == "1"
+        return high - low > 1 or (len(array.shape) > 1 and str(array.shape[0]) == "1")
     else:
         return False
 
@@ -136,10 +123,10 @@ def iterate_distributed_subset(desc: dt.Array, access_memlet: memlet.Memlet, is_
     """
     :param desc: The array accessed by the memlet
     :param access_memlet: The memlet
-    :param is_write: If we care about the write or read direction. is_write means we write to desc,
+    :param is_write: If we care about the write or read direction. is_write means we write to desc, 
         not is_write means we read from it
     :return: if access_memlet contains a distributed subset the method will count from the lower to the upper
-    end of it. Otherwise returns 0 once.
+        end of it. Otherwise returns 0 once.
     """
     if is_multibank_array_with_distributed_index(desc):
         if is_write:
@@ -161,6 +148,7 @@ def iterate_distributed_subset(desc: dt.Array, access_memlet: memlet.Memlet, is_
 def modify_distributed_subset(subset: subsets.Subset, change: int):
     """
     Modifies the first index of :param subset: (the one used for distributed subsets).
+
     :param subset: is deepcopied before any modification to it is done.
     :param change: the first index is set to this value, unless it's (-1) in which case
         the first index is completly removed
@@ -177,7 +165,8 @@ def get_multibank_ranges_from_subset(subset: Union[subsets.Subset, str], sdfg: S
     """
     Returns the upper and lower end of the accessed multibank-range, evaluated using the
     constants on the SDFG.
-    :returns: (low, high) where low = the lowest accessed bank and high the
+
+    :return: (low, high) where low = the lowest accessed bank and high the
         highest accessed bank + 1.
     """
     if isinstance(subset, str):
@@ -223,10 +212,12 @@ def fpga_ptr(name: str,
              dispatcher=None,
              ancestor: int = 0,
              is_array_interface: bool = False,
-             interface_id: int = None):
+             interface_id: int = None,
+             decouple_array_interfaces: bool = False):
     """
     Returns a string that points to the data based on its name, and various other conditions
     that may apply for that data field.
+
     :param name: Data name.
     :param desc: Data descriptor.
     :param subset_info: Any additional information about the accessed subset.
@@ -234,6 +225,8 @@ def fpga_ptr(name: str,
         is_array_interface is True when dispatcher is not None
     :param is_array_interface: Data is pointing to an interface in FPGA-Kernel compilation
     :param interface_id: An optional interface id that will be added to the name (only for array interfaces)
+    :param decouple_array_interfaces: if True it will qualify the name of an array interface, depending whether
+            it is used for reading from or writing to memory
     :return: C-compatible name that can be used to access the data.
     """
     if (desc is not None and is_multibank_array_with_distributed_index(desc)):
@@ -258,46 +251,72 @@ def fpga_ptr(name: str,
 
             subset_info = low  #used for arrayinterface name where it must be int
     if is_array_interface:
-        # qualify the name
-        if is_write is None:
-            raise ValueError("is_write must be set for ArrayInterface.")
-        ptr_in = f"__{name}_in"
-        ptr_out = f"__{name}_out"
-        if dispatcher is not None:
-            # DaCe allows reading from an output connector, even though it
-            # is not an input connector. If this occurs, panic and read
-            # from the output interface instead
-            if is_write or not dispatcher.defined_vars.has(ptr_in, ancestor):
-                # Throw a KeyError if this pointer also doesn't exist
-                dispatcher.defined_vars.get(ptr_out, ancestor)
-                # Otherwise use it
-                name = ptr_out
+
+        if decouple_array_interfaces:
+            # qualify the name
+            if is_write is None:
+                raise ValueError("is_write must be set for ArrayInterface.")
+            ptr_in = f"__{name}_in"
+            ptr_out = f"__{name}_out"
+            if dispatcher is not None:
+                # DaCe allows reading from an output connector, even though it
+                # is not an input connector. If this occurs, panic and read
+                # from the output interface instead
+                if is_write or not dispatcher.defined_vars.has(ptr_in, ancestor):
+                    # Throw a KeyError if this pointer also doesn't exist
+                    dispatcher.defined_vars.get(ptr_out, ancestor)
+                    # Otherwise use it
+                    name = ptr_out
+                else:
+                    name = ptr_in
             else:
-                name = ptr_in
-        else:
-            # We might call this before the variable is even defined (e.g., because
-            # we are about to define it), so if the dispatcher is not passed, just
-            # return the appropriate string
-            name = ptr_out if is_write else ptr_in
+                # We might call this before the variable is even defined (e.g., because
+                # we are about to define it), so if the dispatcher is not passed, just
+                # return the appropriate string
+                name = ptr_out if is_write else ptr_in
         # Append the interface id, if provided
         if interface_id is not None:
             name = f"{name}_{interface_id}"
+
     return name
 
 
 def unqualify_fpga_array_name(sdfg: dace.SDFG, arr_name: str):
-    '''
+    """
     Returns the unqualified array name if it refers to an array interface.
     Otherwise return it as it is.
-    :param name: array name to unqualify
-    '''
 
-    if arr_name not in sdfg.arrays and (arr_name.endswith('_in') or arr_name.endswith('out')) and arr_name.startswith('__'):
+    :param name: array name to unqualify
+    """
+
+    if arr_name not in sdfg.arrays and (arr_name.endswith('_in')
+                                        or arr_name.endswith('out')) and arr_name.startswith('__'):
         unqualified = re.sub('_in$|_out$', '', arr_name)
         unqualified = re.sub('^__', '', unqualified)
         return unqualified
     else:
         return arr_name
+
+
+def is_vendor_supported(fpga_vendor: str) -> bool:
+    """
+    Returns wheter the given vendor is supported or not, by looking
+    among the registered FPGA code-generators.
+
+    :param fpga_vendor: the fpga vendor 
+    """
+
+    registered_codegens = dace.codegen.targets.target.TargetCodeGenerator._registry_
+    supported_vendors = set()
+    for cl, attr in registered_codegens.items():
+        if issubclass(cl, dace.codegen.targets.fpga.FPGACodeGen):
+            if attr["name"] == fpga_vendor.lower():
+                break
+            else:
+                supported_vendors.add(attr["name"])
+    else:
+        raise cgx.CompilerConfigurationError(
+            f"FPGA vendor {fpga_vendor} is not supported. The supported vendors are {supported_vendors}.")
 
 
 class FPGACodeGen(TargetCodeGenerator):
@@ -342,6 +361,7 @@ class FPGACodeGen(TargetCodeGenerator):
         # a kernel is instrumented
         self._kernel_instrumentation_index: int = 0
 
+        self._decouple_array_interfaces = False
         # Register additional FPGA dispatchers
         self._dispatcher.register_map_dispatcher([dtypes.ScheduleType.FPGA_Device], self)
 
@@ -397,14 +417,15 @@ class FPGACodeGen(TargetCodeGenerator):
         self._internal_preprocess(sdfg)
 
     def _kernels_subgraphs(self, graph: Union[dace.sdfg.SDFGState, ScopeSubgraphView], dependencies: dict):
-        '''
-            Finds subgraphs of an SDFGState or ScopeSubgraphView that correspond to kernels.
-            This is done by looking to which kernel, each node belongs.
-            :param graph, the state/subgraph to consider
-            :param dependencies: a dictionary containing for each kernel ID, the IDs of the kernels on which it
-                depends on
-            :return a list of tuples (subgraph, kernel ID) topologically ordered according kernel dependencies.
-        '''
+        """
+        Finds subgraphs of an SDFGState or ScopeSubgraphView that correspond to kernels.
+        This is done by looking to which kernel, each node belongs.
+
+        :param graph: the state/subgraph to consider
+        :param dependencies: a dictionary containing for each kernel ID, the IDs of the kernels on which it
+            depends on
+        :return: a list of tuples (subgraph, kernel ID) topologically ordered according kernel dependencies.
+        """
         from dace.sdfg.scope import ScopeSubgraphView
 
         if not isinstance(graph, (dace.sdfg.SDFGState, ScopeSubgraphView)):
@@ -459,18 +480,21 @@ class FPGACodeGen(TargetCodeGenerator):
 
     def generate_state(self, sdfg: dace.SDFG, state: dace.SDFGState, function_stream: CodeIOStream,
                        callsite_stream: CodeIOStream):
-        '''
+        """
         Generate an FPGA State, possibly comprising multiple Kernels and/or PEs.
+
         :param sdfg:
         :param state:
         :param function_stream: CPU code stream: contains global declarations (e.g. exported forward declaration of
             device specific host functions).
         :param callsite_stream: CPU code stream, contains the actual code (for creating global buffers, invoking
             device host functions, and so on).
-        '''
+        """
         state_id = sdfg.node_id(state)
 
         if not self._in_device_code:
+            # Avoid import loop
+            from dace.transformation.dataflow import MapUnroll
 
             # Unroll maps directly in the SDFG so the subgraphs can be
             # recognized as independent processing elements
@@ -494,22 +518,26 @@ class FPGACodeGen(TargetCodeGenerator):
             # Then, try to split these components further
             subgraphs = dace.sdfg.concurrent_subgraphs(state)
 
-            start_kernel = 0
-            for sg in subgraphs:
-                # Determine kernels in state
-                num_kernels, dependencies = self.partition_kernels(sg, default_kernel=start_kernel)
-                if num_kernels > 1:
-                    # For each kernel, derive the corresponding subgraphs
-                    # and keep track of dependencies
-                    kernels.extend(self._kernels_subgraphs(sg, dependencies))
-                    self._kernels_dependencies.update(dependencies)
-                else:
-                    kernels.append((sg, start_kernel))
-                start_kernel = start_kernel + num_kernels
+            if Config.get_bool("compiler", "fpga", "concurrent_kernel_detection"):
+                start_kernel = 0
+                for sg in subgraphs:
+                    # Determine kernels in state
+                    num_kernels, dependencies = self.partition_kernels(sg, default_kernel=start_kernel)
+                    if num_kernels > 1:
+                        # For each kernel, derive the corresponding subgraphs
+                        # and keep track of dependencies
+                        kernels.extend(self._kernels_subgraphs(sg, dependencies))
+                        self._kernels_dependencies.update(dependencies)
+                    else:
+                        kernels.append((sg, start_kernel))
+                    start_kernel = start_kernel + num_kernels
 
-            # There is no need to generate additional kernels if the number of found kernels
-            # is equal to the number of connected components: use PEs instead (only one kernel)
-            if len(subgraphs) == len(kernels):
+                # There is no need to generate additional kernels if the number of found kernels
+                # is equal to the number of connected components: use PEs instead (only one kernel)
+                if len(subgraphs) == len(kernels):
+                    kernels = [(state, 0)]
+            else:
+                # Only one FPGA kernel (possibly with multiple PEs)
                 kernels = [(state, 0)]
 
             self._num_kernels = len(kernels)
@@ -572,7 +600,11 @@ class FPGACodeGen(TargetCodeGenerator):
                 # Streams and Views are not passed as arguments
                 if (isinstance(arg, dt.Array)):
                     for bank, _ in iterate_multibank_interface_ids(arg, interface_id):
-                        current_name = fpga_ptr(arg_name, arg, sdfg, bank)
+                        current_name = fpga_ptr(arg_name,
+                                                arg,
+                                                sdfg,
+                                                bank,
+                                                decouple_array_interfaces=self._decouple_array_interfaces)
                         kernel_args_call_host.append(arg.as_arg(False, name=current_name))
                         kernel_args_opencl.append(FPGACodeGen.make_opencl_parameter(current_name, arg))
                 elif (not isinstance(arg, dt.Stream) and not isinstance(arg, dt.View)):
@@ -664,8 +696,10 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
 
     @staticmethod
     def shared_data(subgraphs):
-        """Returns a set of data objects that are shared between two or more of
-           the specified subgraphs."""
+        """
+        Returns a set of data objects that are shared between two or more of
+        the specified subgraphs.
+        """
         shared = set()
         if len(subgraphs) >= 2:
             seen = {}
@@ -679,25 +713,26 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                             seen[node.data] = sg
         return shared
 
-    def make_parameters(self, sdfg, state, subgraphs):
+    def make_parameters(self, sdfg: SDFG, state: SDFGState, subgraphs):
         """
         Determines the parameters that must be passed to the passed list of
         subgraphs, as well as to the global kernel.
+        
         :return: A tuple with the following six entries:
-                 - Data container parameters that should be passed from the
-                   host to the FPGA kernel.
-                 - Data containers that are local to the kernel, but must be
-                   allocated by the host prior to invoking the kernel.
-                 - A dictionary mapping from each processing element subgraph
-                   to which parameters it needs (from the total list of
-                   parameters).
-                 - Parameters that must be passed to the kernel from the host,
-                   but that do not exist before the CPU calls the kernel
-                   wrapper.
-                 - A dictionary of which memory interfaces should be assigned to
-                   which memory banks.
-                 - External streams that connect different FPGA kernels, and
-                   must be defined during the compilation flow.
+            - Data container parameters that should be passed from the
+            host to the FPGA kernel.
+            - Data containers that are local to the kernel, but must be
+            allocated by the host prior to invoking the kernel.
+            - A dictionary mapping from each processing element subgraph
+            to which parameters it needs (from the total list of
+            parameters).
+            - Parameters that must be passed to the kernel from the host,
+            but that do not exist before the CPU calls the kernel
+            wrapper.
+            - A dictionary of which memory interfaces should be assigned to
+            which memory banks.
+            - External streams that connect different FPGA kernels, and
+            must be defined during the compilation flow.
         """
 
         # Get a set of data nodes that are shared across subgraphs
@@ -712,25 +747,49 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
 
         global_data_parameters = set()
         # Count appearances of each global array to create multiple interfaces
-        global_interfaces: Dict[str, int] = collections.defaultdict(int)
+        if self._decouple_array_interfaces:
+            global_interfaces: Dict[str, int] = collections.defaultdict(int)
+        else:
+            # For Xilinx, even if we are not decoupling array interfaces we need anyway to use different interfaces
+            # if we access the same container from different PEs
+            global_interfaces: Dict[str, (int, int)] = collections.defaultdict(lambda: (0, 0))
 
         top_level_local_data = set()
         subgraph_parameters = collections.OrderedDict()  # {subgraph: [params]}
         nested_global_transients = set()
         # [(Is an output, dataname string, data object, interface)]
-        external_streams: Set[tuple[bool, str, dt, dict[str, int]]] = set()
+        external_streams: Set[tuple[bool, str, dt.Data, dict[str, int]]] = set()
 
         # Mapping from global arrays to memory interfaces
         bank_assignments: Dict[str, Tuple[str, Union[int, subsets.Range]]] = {}
 
         # Mapping from symbol to a unique parameter tuple
         all_symbols = {k: (False, k, dt.Scalar(v), None) for k, v in sdfg.symbols.items() if k not in sdfg.constants}
+
+        # Add symbols from inter-state edges
+        global_symbols = copy.deepcopy(sdfg.symbols)
+        interstate_symbols = {}
+        for e in sdfg.dfs_edges(sdfg.start_state):
+            symbols = e.data.new_symbols(sdfg, global_symbols)
+            # Inferred symbols only take precedence if global symbol not defined or None
+            symbols = {
+                k: v if (k not in global_symbols or global_symbols[k] is None) else global_symbols[k]
+                for k, v in symbols.items()
+            }
+            interstate_symbols.update(symbols)
+            global_symbols.update(symbols)
+        all_symbols.update({
+            k: (False, k, dt.Scalar(v), None)
+            for k, v in interstate_symbols.items() if k not in all_symbols and k not in sdfg.constants
+        })
+
         # Symbols that will be passed as parameters to the top-level kernel
         global_symbols = set()
 
         # Sorting by name, then by input/output, then by interface id
         sort_func = lambda t: f"{t[1]}{t[0]}{t[3]}"
 
+        subgraph_counter = 0
         for subgraph in subgraphs:
             data_to_node.update(
                 {node.data: node
@@ -776,10 +835,9 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
             # Find other data nodes that are used internally
             for n, scope in subgraph.all_nodes_recursive():
                 if isinstance(n, dace.sdfg.nodes.AccessNode):
-                    # Add nodes if they are outer-level, or an inner-level
-                    # transient (inner-level inputs/outputs are just connected
-                    # to data in the outer layers, whereas transients can be
-                    # independent).
+                    # Add nodes if they are outer-level, or an inner-level transient
+                    # (inner-level inputs/outputs are just connected to data in the outer layers,
+                    # whereas transients can be independent).
                     # Views are not nested global transients
                     if scope == subgraph or n.desc(scope).transient:
                         desc = n.desc(scope)
@@ -846,22 +904,45 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                             else:
                                 banks_looked_at = array_to_banks_used_in[data_name]
                             for bank in banks_looked_at:
-                                ptr_str = fpga_ptr(
-                                    data_name,
-                                    desc,
-                                    sdfg,
-                                    bank,
-                                )
-                                tmp_interface_id = global_interfaces[ptr_str]
-                                global_interfaces[ptr_str] += 1
+                                ptr_str = fpga_ptr(data_name,
+                                                   desc,
+                                                   sdfg,
+                                                   bank,
+                                                   decouple_array_interfaces=self._decouple_array_interfaces)
+
+                                if self._decouple_array_interfaces:
+                                    tmp_interface_id = global_interfaces[ptr_str]
+                                    global_interfaces[ptr_str] += 1
+                                else:
+                                    if ptr_str not in global_interfaces:
+                                        global_interfaces[ptr_str] = (0, subgraph_counter)
+
+                                    tmp_interface_id, last_used_in = global_interfaces[ptr_str]
+                                    if last_used_in != subgraph_counter:
+                                        # we accessed the same container from a different subgraph/PE: we need
+                                        # to use a different interface
+                                        tmp_interface_id += 1
+                                        global_interfaces[ptr_str] = (tmp_interface_id, subgraph_counter)
+
                                 tmp_interface_ids.append((bank, tmp_interface_id))
                             interface_id = tuple(tmp_interface_ids)
                             if data_name not in multibank_data_to_interface:
                                 multibank_data_to_interface[data_name] = {}
                             multibank_data_to_interface[data_name][is_output] = interface_id
                         else:
-                            interface_id = global_interfaces[data_name]
-                            global_interfaces[data_name] += 1
+                            if self._decouple_array_interfaces:
+                                interface_id = global_interfaces[data_name]
+                                global_interfaces[data_name] += 1
+                            else:
+                                if data_name not in global_interfaces:
+                                    global_interfaces[data_name] = (0, subgraph_counter)
+
+                                interface_id, last_used_in = global_interfaces[data_name]
+                                if last_used_in != subgraph_counter:
+                                    # we accessed the same container from a different data subgraph/PE: we need
+                                    # to use a different interface
+                                    global_interfaces[data_name] = (interface_id + 1, subgraph_counter)
+                                    interface_id += 1
                             data_to_interface[data_name] = interface_id
                     # Collect the memory bank specification, if present, by
                     # traversing outwards to where the data container is
@@ -911,6 +992,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                     subgraph_parameters[subgraph].add((is_output, data_name, desc, interface_id))
                     # Must be allocated outside PEs and passed to them
                     top_level_local_data.add(data_name)
+
             # Order by name
             subgraph_parameters[subgraph] = list(sorted(subgraph_parameters[subgraph], key=sort_func))
             # Append symbols used in this subgraph
@@ -920,6 +1002,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                     subgraph_parameters[subgraph].append(param)
                     global_symbols.add(param)
 
+            subgraph_counter += 1
         # Order by name
         global_data_parameters = list(sorted(global_data_parameters, key=sort_func))
         global_data_parameters += sorted(global_symbols, key=sort_func)
@@ -971,9 +1054,10 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
         result_decl = StringIO()
         arrsize = nodedesc.total_size
         dataname = node.data
+        ptrname = cpp.ptr(dataname, nodedesc, sdfg, self._frame)
 
         # Check if array is already declared
-        if self._dispatcher.declared_arrays.has(dataname):
+        if self._dispatcher.declared_arrays.has(ptrname):
             return
 
         if nodedesc.storage == dtypes.StorageType.FPGA_Global:
@@ -988,9 +1072,9 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                 # TODO: Distinguish between read, write, and read+write
                 # Define buffer, using proper type
                 result_decl.write("hlslib::ocl::Buffer <{}, hlslib::ocl::Access::readWrite> {};".format(
-                    nodedesc.dtype.ctype, dataname))
+                    nodedesc.dtype.ctype, ptrname))
                 self._dispatcher.declared_arrays.add(
-                    dataname, DefinedType.Pointer,
+                    ptrname, DefinedType.Pointer,
                     'hlslib::ocl::Buffer <{}, hlslib::ocl::Access::readWrite>'.format(nodedesc.dtype.ctype))
         elif (nodedesc.storage in (dtypes.StorageType.FPGA_Local, dtypes.StorageType.FPGA_Registers,
                                    dtypes.StorageType.FPGA_ShiftRegister)):
@@ -1006,11 +1090,17 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
     def allocate_array(self, sdfg, dfg, state_id, node, nodedesc, function_stream, declaration_stream,
                        allocation_stream):
 
+        # NOTE: The code below fixes symbol-related issues with transient data originally defined in a NestedSDFG scope
+        # but promoted to be persistent. These data must have their free symbols replaced with the corresponding
+        # top-level SDFG symbols.
+        if nodedesc.lifetime == dtypes.AllocationLifetime.Persistent:
+            nodedesc = update_persistent_desc(nodedesc, sdfg)
+
         result_decl = StringIO()
         result_alloc = StringIO()
         arrsize = nodedesc.total_size
         is_dynamically_sized = dace.symbolic.issymbolic(arrsize, sdfg.constants)
-        dataname = node.data
+        dataname = cpp.ptr(node.data, nodedesc, sdfg, self._frame)
 
         if not isinstance(nodedesc, dt.Stream):
             # Unless this is a Stream, if the variable has been already defined we can return
@@ -1024,6 +1114,9 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
 
         if isinstance(nodedesc, dt.View):
             return self.allocate_view(sdfg, dfg, state_id, node, function_stream, declaration_stream, allocation_stream)
+        elif isinstance(nodedesc, dt.Reference):
+            return self.allocate_reference(sdfg, dfg, state_id, node, function_stream, declaration_stream,
+                                           allocation_stream)
         elif isinstance(nodedesc, dt.Stream):
 
             if not self._in_device_code:
@@ -1087,7 +1180,11 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
 
                     # Define buffer, using proper type
                     for bank_index in range(memory_bank_arg_count):
-                        alloc_name = fpga_ptr(dataname, nodedesc, sdfg, bank_index)
+                        alloc_name = fpga_ptr(dataname,
+                                              nodedesc,
+                                              sdfg,
+                                              bank_index,
+                                              decouple_array_interfaces=self._decouple_array_interfaces)
                         if not declared:
                             result_decl.write("hlslib::ocl::Buffer <{}, hlslib::ocl::Access::readWrite> {};\n".format(
                                 nodedesc.dtype.ctype, alloc_name))
@@ -1146,13 +1243,14 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
         pass  # Handled by destructor
 
     def partition_kernels(self, state: dace.SDFGState, default_kernel: int = 0):
-        """ Associate node to different kernels.
-            This field is applied to all FPGA maps, tasklets, and library nodes
-            that can be executed in parallel in separate kernels.
+        """
+        Associate node to different kernels.
+        This field is applied to all FPGA maps, tasklets, and library nodes
+        that can be executed in parallel in separate kernels.
 
-            :param state: the state to analyze.
-            :param default_kernel: The Kernel ID to start counting from.
-            :return: a tuple containing the number of kernels and the dependencies among them
+        :param state: the state to analyze.
+        :param default_kernel: The Kernel ID to start counting from.
+        :return: a tuple containing the number of kernels and the dependencies among them
         """
 
         concurrent_kernels = 0  # Max number of kernels
@@ -1280,15 +1378,17 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                          edge: dace.sdfg.sdfg.Edge,
                          state: dace.SDFGState,
                          look_for_kernel_id: bool = False) -> Union[bool, int]:
-        '''
+        """
         Given an edge, this traverses the edges backwards.
         It can be used either for:
-        - understanding if along the backward path there is some compute node but no local buffers,  or
-        - looking for the kernel_id of a predecessor (look_for_kernel_id must be set to True)
-        :return if look_for_kernel_id is false it returns a boolean indicating if there is a
+
+            - understanding if along the backward path there is some compute node but no local buffers,  or
+            - looking for the kernel_id of a predecessor (look_for_kernel_id must be set to True)
+
+        :return: if look_for_kernel_id is false it returns a boolean indicating if there is a
             compute node on the backward path and no access nodes to local buffers. Otherwise, it returns
             the kernel_id of a predecessor node.
-        '''
+        """
 
         curedge = edge
         source_nodes = state.source_nodes()
@@ -1320,14 +1420,16 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
             return self._node_to_kernel[src_repr] if src_repr in self._node_to_kernel else None
 
     def _trace_forward_edge(self, edge: dace.sdfg.sdfg.Edge, state: dace.SDFGState) -> Tuple[bool, int]:
-        '''
-        Given ad edge, this traverses the edges forward.
+        """
+        Given an edge, this traverses the edges forward.
         It can be used either for:
-        - understanding if along the forward path there is a local buffer,  and
-        - returning the the kernel_id of a successor if any
+
+            - understanding if along the forward path there is a local buffer,  and
+            - returning the the kernel_id of a successor if any
+
         :return: a tuple containing two booleans indicating if the path contains only global buffers
             and the kernel_id of a successor if any
-        '''
+        """
 
         curedge = edge
         sink_nodes = state.sink_nodes()
@@ -1396,13 +1498,15 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                                                 with_brackets=False,
                                                 referenced_array=src_nodedesc,
                                                 use_other_subset=(not src_is_subset
-                                                                  and memlet.other_subset is not None))
+                                                                  and memlet.other_subset is not None),
+                                                codegen=self._frame)
             if memlet.dst_subset is not None:
                 offset_dst = cpp.cpp_array_expr(sdfg,
                                                 memlet,
                                                 with_brackets=False,
                                                 referenced_array=dst_nodedesc,
-                                                use_other_subset=(src_is_subset and memlet.other_subset is not None))
+                                                use_other_subset=(src_is_subset and memlet.other_subset is not None),
+                                                codegen=self._frame)
 
             if (not sum(copy_shape) == 1 and
                 (not isinstance(memlet.subset, subsets.Range) or any([step != 1 for _, _, step in memlet.subset]))):
@@ -1449,36 +1553,62 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
             dst_subset = memlet.dst_subset or memlet.subset
             if host_to_device:
 
-                ptr_str = (fpga_ptr(src_node.data, src_nodedesc, sdfg, src_subset) +
+                ptr_str = (fpga_ptr(src_node.data,
+                                    src_nodedesc,
+                                    sdfg,
+                                    src_subset,
+                                    decouple_array_interfaces=self._decouple_array_interfaces) +
                            (" + {}".format(offset_src) if outgoing_memlet and str(offset_src) != "0" else ""))
                 if cast:
                     ptr_str = "reinterpret_cast<{} const *>({})".format(device_dtype.ctype, ptr_str)
 
                 callsite_stream.write(
-                    "{}.CopyFromHost({}, {}, {});".format(fpga_ptr(dst_node.data, dst_nodedesc, sdfg, dst_subset),
-                                                          (offset_dst if not outgoing_memlet else 0), copysize,
-                                                          ptr_str), sdfg, state_id, [src_node, dst_node])
+                    "{}.CopyFromHost({}, {}, {});".format(
+                        fpga_ptr(dst_node.data,
+                                 dst_nodedesc,
+                                 sdfg,
+                                 dst_subset,
+                                 decouple_array_interfaces=self._decouple_array_interfaces),
+                        (offset_dst if not outgoing_memlet else 0), copysize, ptr_str), sdfg, state_id,
+                    [src_node, dst_node])
 
             elif device_to_host:
 
-                ptr_str = (fpga_ptr(dst_node.data, dst_nodedesc, sdfg, dst_subset) +
+                ptr_str = (fpga_ptr(dst_node.data,
+                                    dst_nodedesc,
+                                    sdfg,
+                                    dst_subset,
+                                    decouple_array_interfaces=self._decouple_array_interfaces) +
                            (" + {}".format(offset_dst) if outgoing_memlet and str(offset_dst) != "0" else ""))
                 if cast:
                     ptr_str = "reinterpret_cast<{} *>({})".format(device_dtype.ctype, ptr_str)
 
                 callsite_stream.write(
-                    "{}.CopyToHost({}, {}, {});".format(fpga_ptr(src_node.data, src_nodedesc, sdfg, src_subset),
-                                                        (offset_src if outgoing_memlet else 0), copysize, ptr_str),
-                    sdfg, state_id, [src_node, dst_node])
+                    "{}.CopyToHost({}, {}, {});".format(
+                        fpga_ptr(src_node.data,
+                                 src_nodedesc,
+                                 sdfg,
+                                 src_subset,
+                                 decouple_array_interfaces=self._decouple_array_interfaces),
+                        (offset_src if outgoing_memlet else 0), copysize, ptr_str), sdfg, state_id,
+                    [src_node, dst_node])
 
             elif device_to_device:
 
                 callsite_stream.write(
-                    "{}.CopyToDevice({}, {}, {}, {});".format(fpga_ptr(src_node.data, src_nodedesc, sdfg, src_subset),
-                                                              (offset_src if outgoing_memlet else 0), copysize,
-                                                              fpga_ptr(dst_node.data, dst_nodedesc, sdfg, dst_subset),
-                                                              (offset_dst if not outgoing_memlet else 0)), sdfg,
-                    state_id, [src_node, dst_node])
+                    "{}.CopyToDevice({}, {}, {}, {});".format(
+                        fpga_ptr(src_node.data,
+                                 src_nodedesc,
+                                 sdfg,
+                                 src_subset,
+                                 decouple_array_interfaces=self._decouple_array_interfaces),
+                        (offset_src if outgoing_memlet else 0), copysize,
+                        fpga_ptr(dst_node.data,
+                                 dst_nodedesc,
+                                 sdfg,
+                                 dst_subset,
+                                 decouple_array_interfaces=self._decouple_array_interfaces),
+                        (offset_dst if not outgoing_memlet else 0)), sdfg, state_id, [src_node, dst_node])
 
         # Reject copying to/from local memory from/to outside the FPGA
         elif (data_to_data and
@@ -1498,8 +1628,9 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                 raise NotImplementedError("Reads from shift registers only supported from tasklets.")
 
             # Try to turn into degenerate/strided ND copies
+            state_dfg = sdfg.nodes()[state_id]
             copy_shape, src_strides, dst_strides, src_expr, dst_expr = (cpp.memlet_copy_to_absolute_strides(
-                self._dispatcher, sdfg, memlet, src_node, dst_node, packed_types=True))
+                self._dispatcher, sdfg, state_dfg, edge, src_node, dst_node, packed_types=True))
 
             dtype = src_node.desc(sdfg).dtype
             ctype = dtype.ctype
@@ -1584,8 +1715,10 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                 for node in dependency_pragma_nodes:
                     self.generate_no_dependence_post(callsite_stream, sdfg, state_id, dst_node, node.data)
 
-            src_def_type, _ = self._dispatcher.defined_vars.get(src_node.data)
-            dst_def_type, _ = self._dispatcher.defined_vars.get(dst_node.data)
+            src_name = cpp.ptr(src_node.data, src_node.desc(sdfg), sdfg, self._frame)
+            dst_name = cpp.ptr(dst_node.data, dst_node.desc(sdfg), sdfg, self._frame)
+            src_def_type, _ = self._dispatcher.defined_vars.get(src_name)
+            dst_def_type, _ = self._dispatcher.defined_vars.get(dst_name)
 
             # Construct indices (if the length of the stride array is zero,
             # resolves to an empty string)
@@ -1896,6 +2029,11 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                         # is the case in a tiled map
                         pass
 
+                    # To enforce opencl type long instead of c type long long for intel fpga
+                    v = dace.config.Config.get("compiler", "fpga", "vendor")
+                    if v.casefold() == 'intel_fpga'.casefold():
+                        loop_var_type = loop_var_type.replace("long long", "long")
+
                     if is_degenerate[i]:
                         result.write("{{\nconst {} {} = {}; // Degenerate loop".format(
                             loop_var_type, var, degenerate_values[i]))
@@ -2003,8 +2141,9 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                         instrumentation_stream: CodeIOStream,
                         state_parameters: list,
                         kernel_id: int = None):
-        '''
+        """
         Entry point for generating an FPGA Kernel out of the given subgraphs.
+
         :param sdfg:
         :param state:
         :param kernel_name: the generated kernel name.
@@ -2019,7 +2158,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
         :param state_parameters: a list of parameters that must be passed to the state. It will get populated
             considering all the parameters needed by the kernels in this state.
         :param kernel_id: Unique ID of this kernels as computed in the generate_state function
-        '''
+        """
 
         if self._in_device_code:
             raise cgx.CodegenError("Tried to generate kernel from device code")
@@ -2087,7 +2226,9 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
 
     def generate_modules(self, sdfg, state, kernel_name, subgraphs, subgraph_parameters, module_stream, entry_stream,
                          host_stream, instrumentation_stream):
-        """Generate all PEs inside an FPGA Kernel."""
+        """
+        Generate all PEs inside an FPGA Kernel.
+        """
         for subgraph in subgraphs:
             module_name = self._module_name(subgraph, state)
             self.generate_module(sdfg, state, kernel_name, module_name, subgraph, subgraph_parameters[subgraph],
@@ -2114,9 +2255,9 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
         return self._cpu_codegen.generate_nsdfg_arguments(sdfg, state, dfg, node)
 
     def generate_host_function_boilerplate(self, sdfg, state, nested_global_transients, host_code_stream):
-        '''
+        """
         Generates global transients that must be passed to the state (required by a kernel)
-        '''
+        """
 
         # Any extra transients stored in global memory on the FPGA must now be
         # allocated and passed to the kernel

@@ -40,5 +40,51 @@ def test():
     assert diff <= 1e-5
 
 
+def test_strided_view():
+
+    @dace.program
+    def padding(a, c):
+        b = np.zeros_like(a)
+        b[:, 1:-1, 1:-1, :] = c
+        return b
+
+    a = np.random.rand(2, 3, 4, 5)
+    c = np.random.rand(2, 1, 2, 5)
+    result = padding(a, c)
+    expected = padding.f(a, c)
+
+    assert np.allclose(result, expected)
+
+
+def test_strided_view_retval():
+    S0, S1, S2, S3 = (dace.symbol(s) for s in ('S0', 'S1', 'S2', 'S3'))
+
+    @dace.program
+    def fancy_copy(input: dace.float64[S0, S1, S2, S3]):
+        output = np.ndarray((S0, S1, S2, S3), dtype=np.float64)
+
+        for i in range(S1):
+            for j in range(S2):
+                output[:, i, j, :] = input[:, i, j, :]
+
+        return output
+
+    @dace.program
+    def padding(a):
+        b = np.zeros((a.shape[0], a.shape[1] + 2, a.shape[2] + 2, a.shape[3]))
+        b[:, 1:-1, 1:-1, :] = fancy_copy(a)
+        return b
+
+    a = np.random.rand(2, 3, 4, 5)
+    result = padding(a)
+
+    expected = np.zeros((2, 5, 6, 5))
+    expected[:, 1:-1, 1:-1, :] = a
+
+    assert np.allclose(result, expected)
+
+
 if __name__ == "__main__":
     test()
+    test_strided_view()
+    test_strided_view_retval()

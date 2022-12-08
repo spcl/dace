@@ -152,7 +152,7 @@ def test_object_newfield():
 
 def test_object_constant():
     class MyObject:
-        q: dace.constant
+        q: dace.compiletime
 
         def __init__(self) -> None:
             self.q = 5
@@ -534,7 +534,7 @@ def test_allconstants():
     A = np.zeros((10, ))
 
     @dace.program
-    def func(ns: dace.constant):
+    def func(ns: dace.compiletime):
         A[...] = ns.A
 
     func(some_namespace)
@@ -551,7 +551,7 @@ def test_method_allconstants():
 
     class Example:
         @dace.method
-        def __call__(self, ns: dace.constant):
+        def __call__(self, ns: dace.compiletime):
             inner(ns.A)
 
     obj = Example()

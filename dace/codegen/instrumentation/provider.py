@@ -1,7 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-from dace.dtypes import InstrumentationType
+from dace.dtypes import DataInstrumentationType, InstrumentationType
 from dace.registry import make_registry
-from typing import Dict, Type
+from typing import Dict, Type, Union
 
 
 @make_registry
@@ -9,13 +9,14 @@ class InstrumentationProvider(object):
     """ Instrumentation provider for SDFGs, states, scopes, and memlets. Emits
         code on event. """
     @staticmethod
-    def get_provider_mapping() -> Dict[InstrumentationType, Type['InstrumentationProvider']]:
+    def get_provider_mapping(
+    ) -> Dict[Union[InstrumentationType, DataInstrumentationType], Type['InstrumentationProvider']]:
         """
         Returns a dictionary that maps instrumentation types to provider
         class types, given the currently-registered extensions of this class.
         """
         # Special case for no instrumentation
-        result = {InstrumentationType.No_Instrumentation: None}
+        result = {InstrumentationType.No_Instrumentation: None, DataInstrumentationType.No_Instrumentation: None}
 
         # Create providers for extensions
         for provider, params in InstrumentationProvider.extensions().items():
@@ -33,16 +34,19 @@ class InstrumentationProvider(object):
                 result += '_' + str(state.node_id(node))
         return result
 
-    def on_sdfg_begin(self, sdfg, local_stream, global_stream):
+    def on_sdfg_begin(self, sdfg, local_stream, global_stream, codegen):
         """ Event called at the beginning of SDFG code generation.
+
             :param sdfg: The generated SDFG object.
             :param local_stream: Code generator for the in-function code.
             :param global_stream: Code generator for global (external) code.
+            :param codegen: An instance of the code generator.
         """
         pass
 
     def on_sdfg_end(self, sdfg, local_stream, global_stream):
         """ Event called at the end of SDFG code generation.
+
             :param sdfg: The generated SDFG object.
             :param local_stream: Code generator for the in-function code.
             :param global_stream: Code generator for global (external) code.
@@ -51,6 +55,7 @@ class InstrumentationProvider(object):
 
     def on_state_begin(self, sdfg, state, local_stream, global_stream):
         """ Event called at the beginning of SDFG state code generation.
+
             :param sdfg: The generated SDFG object.
             :param state: The generated SDFGState object.
             :param local_stream: Code generator for the in-function code.
@@ -60,6 +65,7 @@ class InstrumentationProvider(object):
 
     def on_state_end(self, sdfg, state, local_stream, global_stream):
         """ Event called at the end of SDFG state code generation.
+
             :param sdfg: The generated SDFG object.
             :param state: The generated SDFGState object.
             :param local_stream: Code generator for the in-function code.
@@ -70,6 +76,7 @@ class InstrumentationProvider(object):
     def on_scope_entry(self, sdfg, state, node, outer_stream, inner_stream, global_stream):
         """ Event called at the beginning of a scope (on generating an
             EntryNode).
+
             :param sdfg: The generated SDFG object.
             :param state: The generated SDFGState object.
             :param node: The EntryNode object from which code is generated.
@@ -83,6 +90,7 @@ class InstrumentationProvider(object):
 
     def on_scope_exit(self, sdfg, state, node, outer_stream, inner_stream, global_stream):
         """ Event called at the end of a scope (on generating an ExitNode).
+
             :param sdfg: The generated SDFG object.
             :param state: The generated SDFGState object.
             :param node: The ExitNode object from which code is generated.
@@ -97,6 +105,7 @@ class InstrumentationProvider(object):
     def on_copy_begin(self, sdfg, state, src_node, dst_node, edge, local_stream, global_stream, copy_shape, src_strides,
                       dst_strides):
         """ Event called at the beginning of generating a copy operation.
+
             :param sdfg: The generated SDFG object.
             :param state: The generated SDFGState object.
             :param src_node: The source node of the copy.
@@ -112,6 +121,7 @@ class InstrumentationProvider(object):
 
     def on_copy_end(self, sdfg, state, src_node, dst_node, edge, local_stream, global_stream):
         """ Event called at the end of generating a copy operation.
+
             :param sdfg: The generated SDFG object.
             :param state: The generated SDFGState object.
             :param src_node: The source node of the copy.
@@ -124,6 +134,7 @@ class InstrumentationProvider(object):
 
     def on_node_begin(self, sdfg, state, node, outer_stream, inner_stream, global_stream):
         """ Event called at the beginning of generating a node.
+
             :param sdfg: The generated SDFG object.
             :param state: The generated SDFGState object.
             :param node: The generated node.
@@ -137,6 +148,7 @@ class InstrumentationProvider(object):
 
     def on_node_end(self, sdfg, state, node, outer_stream, inner_stream, global_stream):
         """ Event called at the end of generating a node.
+        
             :param sdfg: The generated SDFG object.
             :param state: The generated SDFGState object.
             :param node: The generated node.

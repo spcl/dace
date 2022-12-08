@@ -12,7 +12,7 @@ import dace
 from dace.config import Config
 from dace.sdfg import propagation
 from dace.sdfg.graph import SubgraphView
-from dace.transformation import pattern_matching
+from dace.transformation.passes import pattern_matching
 from dace.transformation.transformation import PatternTransformation
 
 # This import is necessary since it registers all the patterns
@@ -26,6 +26,7 @@ class Optimizer(object):
     """
     def __init__(self, sdfg, inplace=True):
         """ Constructs an SDFG optimizer.
+
             :param sdfg: The SDFG to transform.
             :param inplace: If True, performs transformations on the given SDFG
                             in-place. Uses a copy of the SDFG otherwise, and
@@ -60,6 +61,7 @@ class Optimizer(object):
                             sdfg=None,
                             options=None) -> Iterator[PatternTransformation]:
         """ Returns all possible transformations for the current SDFG.
+
             :param permissive: Consider transformations in permissive mode.
             :param states: An iterable of SDFG states to consider when pattern
                            matching. If None, considers all.
@@ -121,12 +123,14 @@ class Optimizer(object):
 def _parse_cli_input(line):
     """ Parses a command line input, which may include a transformation name
         (optional), its occurrence ID, and its parameters (optional).
+
         Syntax Examples:
-            * 5                  - Chooses the fifth transformation
-            * MapReduceFusion$0  - First occurrence of MapReduceFusion
-            * 4(array='A')       - Transformation number 4 with one parameter
-            * StripMining$1(param='i', tile_size=64) - Strip mining #2 with
-                                                       parameters
+            * ``5``                  - Chooses the fifth transformation
+            * ``MapReduceFusion$0``  - First occurrence of MapReduceFusion
+            * ``4(array='A')``       - Transformation number 4 with one parameter
+            * ``StripMining$1(param='i', tile_size=64)`` - Strip mining #2 with
+                                                           parameters
+
         :param line: Input line string
         :return: A tuple with (transformation name or None if not given,
                                       occurrence or -1 if not given,
@@ -176,6 +180,7 @@ def _parse_cli_input(line):
 class SDFGOptimizer(Optimizer):
     def optimize(self):
         """ A command-line UI for applying patterns on the SDFG.
+        
             :return: An optimized SDFG object
         """
         sdfg_file = self.sdfg.name + '.sdfg'

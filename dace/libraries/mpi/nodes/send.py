@@ -4,6 +4,7 @@ import dace.properties
 import dace.sdfg.nodes
 from dace.transformation.transformation import ExpandTransformation
 from .. import environments
+from dace.libraries.mpi.nodes.node import MPINode
 
 
 @dace.library.expansion
@@ -42,12 +43,13 @@ class ExpandSendMPI(ExpandTransformation):
                                           node.in_connectors,
                                           node.out_connectors,
                                           code,
-                                          language=dace.dtypes.Language.CPP)
+                                          language=dace.dtypes.Language.CPP,
+                                          side_effects=True)
         return tasklet
 
 
 @dace.library.node
-class Send(dace.sdfg.nodes.LibraryNode):
+class Send(MPINode):
 
     # Global properties
     implementations = {

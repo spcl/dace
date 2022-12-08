@@ -51,12 +51,14 @@ class CompositeFusion(transformation.SubgraphTransformation):
     def can_be_applied(self, sdfg: SDFG, subgraph: SubgraphView) -> bool:
         graph = subgraph.graph
         if self.allow_expansion == True:
-            subgraph_fusion = SubgraphFusion(subgraph)
+            subgraph_fusion = SubgraphFusion()
+            subgraph_fusion.setup_match(subgraph)
             if subgraph_fusion.can_be_applied(sdfg, subgraph):
                 # try w/o copy first
                 return True
 
-            expansion = MultiExpansion(subgraph)
+            expansion = MultiExpansion()
+            expansion.setup_match(subgraph)
             expansion.permutation_only = not self.expansion_split
             if expansion.can_be_applied(sdfg, subgraph):
                 # deepcopy
@@ -67,24 +69,29 @@ class CompositeFusion(transformation.SubgraphTransformation):
                 expansion.sdfg_id = sdfg_copy.sdfg_id
 
                 ##sdfg_copy.apply_transformations(MultiExpansion, states=[graph])
-                #expansion = MultiExpansion(subgraph_copy)
+                #expansion = MultiExpansion()
+                #expansion.setup_match(subgraph_copy)
                 expansion.apply(sdfg_copy)
 
-                subgraph_fusion = SubgraphFusion(subgraph_copy)
+                subgraph_fusion = SubgraphFusion()
+                subgraph_fusion.setup_match(subgraph_copy)
                 if subgraph_fusion.can_be_applied(sdfg_copy, subgraph_copy):
                     return True
 
-                stencil_tiling = StencilTiling(subgraph_copy)
+                stencil_tiling = StencilTiling()
+                stencil_tiling.setup_match(subgraph_copy)
                 if self.allow_tiling and stencil_tiling.can_be_applied(sdfg_copy, subgraph_copy):
                     return True
 
         else:
-            subgraph_fusion = SubgraphFusion(subgraph)
+            subgraph_fusion = SubgraphFusion()
+            subgraph_fusion.setup_match(subgraph)
             if subgraph_fusion.can_be_applied(sdfg, subgraph):
                 return True
 
         if self.allow_tiling == True:
-            stencil_tiling = StencilTiling(subgraph)
+            stencil_tiling = StencilTiling()
+            stencil_tiling.setup_match(subgraph)
             if stencil_tiling.can_be_applied(sdfg, subgraph):
                 return True
 
@@ -98,12 +105,14 @@ class CompositeFusion(transformation.SubgraphTransformation):
         first_entry = next(iter(map_entries))
 
         if self.allow_expansion:
-            expansion = MultiExpansion(subgraph, self.sdfg_id, self.state_id)
+            expansion = MultiExpansion()
+            expansion.setup_match(subgraph, self.sdfg_id, self.state_id)
             expansion.permutation_only = not self.expansion_split
             if expansion.can_be_applied(sdfg, subgraph):
                 expansion.apply(sdfg)
 
-        sf = SubgraphFusion(subgraph, self.sdfg_id, self.state_id)
+        sf = SubgraphFusion()
+        sf.setup_match(subgraph, self.sdfg_id, self.state_id)
         if sf.can_be_applied(sdfg, self.subgraph_view(sdfg)):
             # set SubgraphFusion properties
             sf.debug = self.debug
@@ -114,17 +123,19 @@ class CompositeFusion(transformation.SubgraphTransformation):
             return
 
         elif self.allow_tiling == True:
-            st = StencilTiling(subgraph, self.sdfg_id, self.state_id)
+            st = StencilTiling()
+            st.setup_match(subgraph, self.sdfg_id, self.state_id)
             if st.can_be_applied(sdfg, self.subgraph_view(sdfg)):
                 # set StencilTiling properties
                 st.debug = self.debug
                 st.unroll_loops = self.stencil_unroll_loops
                 st.strides = self.stencil_strides
-                st.apply(graph, sdfg)
+                st.apply(sdfg)
                 # StencilTiling: update nodes
                 new_entries = st._outer_entries
                 subgraph = helpers.subgraph_from_maps(sdfg, graph, new_entries)
-                sf = SubgraphFusion(subgraph, self.sdfg_id, self.state_id)
+                sf = SubgraphFusion()
+                sf.setup_match(subgraph, self.sdfg_id, self.state_id)
                 # set SubgraphFusion properties
                 sf.debug = self.debug
                 sf.transient_allocation = self.transient_allocation

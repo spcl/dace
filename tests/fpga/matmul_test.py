@@ -1,10 +1,11 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
-from dace.fpga_testing import fpga_test, import_sample
+from dace.fpga_testing import fpga_test, import_sample, xilinx_test
 import dace.libraries.blas as blas
 from dace.transformation.interstate import FPGATransformSDFG, InlineSDFG
 import numpy as np
 from pathlib import Path
+from dace.config import set_temporary
 
 
 def create_gemm_sdfg(sdfg_name,
@@ -18,10 +19,10 @@ def create_gemm_sdfg(sdfg_name,
                      transB=False,
                      vec_width=1,
                      expansion_args=None):
-    '''
+    """
     Build an SDFG that perform the given GEMM operation along the given axis
     Input data A, B, and C is not vectorized
-    '''
+    """
     sdfg = dace.SDFG(sdfg_name)
 
     ###########################################################################
@@ -114,7 +115,7 @@ def create_gemm_sdfg(sdfg_name,
 
 @fpga_test(assert_ii_1=False)
 def test_naive_matmul_fpga():
-    matmul = import_sample(Path("simple") / "matmul.py")
+    matmul = import_sample(Path("optimization") / "matmul.py")
     sdfg = matmul.matmul.to_sdfg()
     sdfg.apply_transformations(FPGATransformSDFG)
 
@@ -140,9 +141,10 @@ def test_systolic_matmul_fpga():
     return matmul.run_matmul_systolic(128, 32, 64, 4, False)
 
 
-@fpga_test()
+@fpga_test(assert_ii_1=False)
 def test_gemm_vectorized():
     # Test with vectorization
+    # To achieve II=1 with Xilinx, we need to decouple reads/writes from memory
     A = np.random.rand(128, 128).astype(np.float32)
     B = np.random.rand(128, 128).astype(np.float32)
     C = np.random.rand(128, 128).astype(np.float32)
@@ -159,7 +161,27 @@ def test_gemm_vectorized():
     return sdfg
 
 
-@fpga_test()
+@xilinx_test(assert_ii_1=True)
+def test_gemm_vectorized_decoupled():
+    # Test with vectorization
+    A = np.random.rand(128, 128).astype(np.float32)
+    B = np.random.rand(128, 128).astype(np.float32)
+    C = np.random.rand(128, 128).astype(np.float32)
+    alpha = 2.1
+    beta = 1.5
+    vec_width = 4
+    sdfg = create_gemm_sdfg("gemm_vectorized", alpha, beta, A, B, C, dace.float32, vec_width=vec_width)
+    sdfg.expand_library_nodes()
+    sdfg.apply_transformations_repeated([InlineSDFG])
+    # Compute ground truth
+    C_regression = alpha * (A @ B) + beta * C
+    with set_temporary("compiler", "xilinx", "decouple_array_interfaces", value=True):
+        sdfg(A=A, B=B, C=C)
+    assert np.allclose(C, C_regression, atol=1e-6)
+    return sdfg
+
+
+@fpga_test(assert_ii_1=False)
 def test_gemm_size_not_multiples_of():
 
     # Test with matrix sizes that are not a multiple of #PEs and Tile sizes
@@ -173,6 +195,25 @@ def test_gemm_size_not_multiples_of():
     # compute ground truth
     C_regression = A @ B + C
     sdfg(A=A, B=B, C=C)
+    assert np.allclose(C, C_regression, atol=1e-6)
+    return sdfg
+
+
+@xilinx_test()
+def test_gemm_size_not_multiples_of_decoupled():
+    # Test with matrix sizes that are not a multiple of #PEs and Tile sizes
+    # To achieve II=1 with Xilinx, we need to decouple reads/writes from memory
+    A = np.random.rand(120, 128).astype(np.float32)
+    B = np.random.rand(128, 128).astype(np.float32)
+    C = np.random.rand(120, 128).astype(np.float32)
+    expansion_args = {"tile_size_m": 50, "num_pes": 7}
+    sdfg = create_gemm_sdfg("gemm_not_multiple_of", 1, 1, A, B, C, dace.float32, expansion_args=expansion_args)
+    sdfg.expand_library_nodes()
+    sdfg.apply_transformations_repeated([InlineSDFG])
+    # compute ground truth
+    C_regression = A @ B + C
+    with set_temporary("compiler", "xilinx", "decouple_array_interfaces", value=True):
+        sdfg(A=A, B=B, C=C)
     assert np.allclose(C, C_regression, atol=1e-6)
     return sdfg
 

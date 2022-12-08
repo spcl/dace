@@ -22,7 +22,8 @@ from typing import Union
 
 def infer_types(code, symbols=None):
     """
-    Perform type inference on the given code
+    Perform type inference on the given code.
+
     :param code: a string, AST, or symbolic expression
     :param symbols: optional,  already known symbols with their types. This is a dictionary "symbol name" -> dytpes.typeclass:
     :return: a dictionary "symbol name" -> dtypes.typeclass of inferred symbols
@@ -48,7 +49,8 @@ def infer_types(code, symbols=None):
 
 def infer_expr_type(code, symbols=None):
     """
-    Return inferred type of a given expression
+    Return inferred type of a given expression.
+    
     :param code: code string (an expression) or symbolic expression
     :param symbols: already defined symbols (if any) in a dictionary "symbol name" -> dytpes.typeclass:
     :return: inferred type
@@ -421,7 +423,11 @@ def _Call(t, symbols, inferred_symbols):
 
     # In case of a typeless math function, determine the return type based on the arguments
     name = dace.frontend.python.astutils.rname(t)
-    module = name[:name.rfind('.')]
+    idx = name.rfind('.')
+    if idx > -1:
+        module = name[:name.rfind('.')]
+    else:
+        module = ''
     if module == 'math':
         return dtypes.result_type_of(arg_types[0], *arg_types)
 
@@ -431,6 +437,10 @@ def _Call(t, symbols, inferred_symbols):
 
     if name in ('abs', 'log'):
         return arg_types[0]
+    if name in ('min', 'max'): # binary math operations that do not exist in the math module
+        return dtypes.result_type_of(arg_types[0], *arg_types)
+    if name in ('round', ):
+        return dtypes.typeclass(int)   
 
     # dtypes (dace.int32, np.float64) can be used as functions
     inf_type = _infer_dtype(t)

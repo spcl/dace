@@ -5,7 +5,7 @@
 import dace
 from dace import dtypes, registry, symbolic
 from dace.codegen.instrumentation.provider import InstrumentationProvider
-from dace.codegen.targets.common import sym2cpp
+from dace.codegen.common import sym2cpp
 from dace.config import Config
 from dace.sdfg import nodes
 from dace.sdfg.nodes import EntryNode, MapEntry, MapExit, Tasklet
@@ -80,7 +80,7 @@ class PAPIInstrumentation(InstrumentationProvider):
 
         self._papi_used = True
 
-    def on_sdfg_begin(self, sdfg, local_stream, global_stream):
+    def on_sdfg_begin(self, sdfg, local_stream, global_stream, codegen):
         if sdfg.parent is None and PAPIUtils.is_papi_used(sdfg):
             # Configure CMake project and counters
             self.configure_papi()
@@ -448,7 +448,8 @@ class PAPIUtils(object):
     def available_counters() -> Dict[str, int]:
         """
         Returns the available PAPI counters on this machine. Only works on
-        *nix based systems with ``grep`` and ``papi-tools`` installed.
+        \*nix based systems with ``grep`` and ``papi-tools`` installed.
+        
         :return: A set of available PAPI counters in the form of a dictionary
                  mapping from counter name to the number of native hardware
                  events.
@@ -527,7 +528,7 @@ class PAPIUtils(object):
                 for k, v in retparams.items():
                     newv = symbolic.pystr_to_symbolic(str(v))
 
-                    tarsyms = symbolic.symbols_in_sympy_expr(target).keys()
+                    tarsyms = symbolic.symlist(target).keys()
                     if x in tarsyms:
                         continue
 
@@ -593,6 +594,7 @@ class PAPIUtils(object):
     def get_memlet_byte_size(sdfg: dace.SDFG, memlet: Memlet):
         """
         Returns the memlet size in bytes, depending on its data type.
+        
         :param sdfg: The SDFG in which the memlet resides.
         :param memlet: Memlet to return size in bytes.
         :return: The size as a symbolic expression.
@@ -736,5 +738,7 @@ class PAPIUtils(object):
             elif isinstance(node, Tasklet):
                 return itcount * symbolic.pystr_to_symbolic(
                     PAPIUtils.get_tasklet_byte_accesses(node, dfg, sdfg, state_id))
+            elif isinstance(node, nodes.AccessNode):
+                return 0
             else:
                 raise NotImplementedError

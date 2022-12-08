@@ -5,7 +5,7 @@ import os
 import re
 import shutil
 import subprocess
-from typing import Any, Dict, List, Tuple, Optional, Type
+from typing import Any, Callable, Dict, List, Tuple, Optional, Type
 import warnings
 
 import numpy as np
@@ -18,13 +18,17 @@ from dace.frontend import operations
 
 
 class ReloadableDLL(object):
-    """ A reloadable shared object (or dynamically linked library), which
-        bypasses Python's dynamic library reloading issues. """
+    """
+    A reloadable shared object (or dynamically linked library), which
+    bypasses Python's dynamic library reloading issues.
+    """
     def __init__(self, library_filename, program_name):
-        """ Creates a new reloadable shared object.
-            :param library_filename: Path to library file.
-            :param program_name: Name of the DaCe program (for use in finding
-                                 the stub library loader).
+        """
+        Creates a new reloadable shared object.
+        
+        :param library_filename: Path to library file.
+        :param program_name: Name of the DaCe program (for use in finding
+                             the stub library loader).
         """
         self._stub_filename = os.path.join(
             os.path.dirname(os.path.realpath(library_filename)),
@@ -144,6 +148,7 @@ def _array_interface_ptr(array: Any, array_type: dt.Array) -> int:
     If the given array implements ``__array_interface__`` (see
     ``dtypes.is_array``), returns the base host or device pointer to the
     array's allocated memory.
+
     :param array: Array object that implements NumPy's array interface.
     :param array_type: Data descriptor of the array (used to get storage
                        location to determine whether it's a host or GPU device
@@ -159,6 +164,7 @@ def _array_interface_ptr(array: Any, array_type: dt.Array) -> int:
 
 class CompiledSDFG(object):
     """ A compiled SDFG object that can be called through Python. """
+
     def __init__(self, sdfg, lib: ReloadableDLL, argnames: List[str] = None):
         self._sdfg = sdfg
         self._lib = lib
@@ -176,19 +182,36 @@ class CompiledSDFG(object):
         self._create_new_arrays: bool = True
         self._return_syms: Dict[str, Any] = None
         self._retarray_shapes: List[Tuple[str, np.dtype, dtypes.StorageType, Tuple[int], Tuple[int], int]] = []
+        self._retarray_is_scalar: List[bool] = []
         self._return_arrays: List[np.ndarray] = []
+        self._callback_retval_references: List[Any] = []  # Avoids garbage-collecting callback return values
 
         # Cache SDFG argument properties
         self._typedict = self._sdfg.arglist()
         self._sig = self._sdfg.signature_arglist(with_types=False, arglist=self._typedict)
+        self._free_symbols = self._sdfg.free_symbols
         self.argnames = argnames
+
+    def get_exported_function(self, name: str, restype=None) -> Optional[Callable[..., Any]]:
+        """
+        Tries to find a symbol by name in the compiled SDFG, and convert it to a callable function
+        with the (optionally) given return type (void by default). If no such function exists, returns None.
+
+        :param name: Name of the function to query.
+        :return: Callable to the function, or None if doesn't exist.
+        """
+        try:
+            return self._lib.get_symbol(name, restype=restype)
+        except KeyError:  # Function not found
+            return None
 
     def get_state_struct(self) -> ctypes.Structure:
         """ Attempt to parse the SDFG source code and extract the state struct. This method will parse the first
             consecutive entries in the struct that are pointers. As soon as a non-pointer or other unparseable field is
             encountered, the method exits early. All fields defined until then will nevertheless be available in the
             structure.
-            :returns: the ctypes.Structure representation of the state struct.
+            
+            :return: the ctypes.Structure representation of the state struct.
         """
 
         return ctypes.cast(self._libhandle, ctypes.POINTER(self._try_parse_state_struct())).contents
@@ -236,7 +259,7 @@ class CompiledSDFG(object):
     def sdfg(self):
         return self._sdfg
 
-    def initialize(self, *argtuple):
+    def _initialize(self, argtuple):
         if self._init is not None:
             res = ctypes.c_void_p(self._init(*argtuple))
             if res == ctypes.c_void_p(0):
@@ -245,9 +268,30 @@ class CompiledSDFG(object):
             self._libhandle = res
             self._initialized = True
 
+    def initialize(self, *args, **kwargs):
+        """
+        Initializes the compiled SDFG without invoking it. 
+
+        :param args: Arguments to call SDFG with.
+        :param kwargs: Keyword arguments to call SDFG with.
+        :return: If successful, returns the library handle (as a ctypes pointer).
+        :note: This call requires the same arguments as it would when normally calling the program.
+        """
+        if self._initialized:
+            return
+
+        if len(args) > 0 and self.argnames is not None:
+            kwargs.update({aname: arg for aname, arg in zip(self.argnames, args)})
+
+        # Construct arguments in the exported C function order
+        _, initargtuple = self._construct_args(kwargs)
+        self._initialize(initargtuple)
+        return self._libhandle
+
     def finalize(self):
         if self._exit is not None:
             self._exit(self._libhandle)
+            self._initialized = False
 
     def __call__(self, *args, **kwargs):
         # Update arguments from ordered list
@@ -260,14 +304,14 @@ class CompiledSDFG(object):
             # Call initializer function if necessary, then SDFG
             if self._initialized is False:
                 self._lib.load()
-                self.initialize(*initargtuple)
+                self._initialize(initargtuple)
             # PROFILING
             if Config.get_bool('profiling'):
                 operations.timethis(self._sdfg, 'DaCe', 0, self._cfunc, self._libhandle, *argtuple)
             else:
                 self._cfunc(self._libhandle, *argtuple)
 
-            return self._return_arrays
+            return self._convert_return_values()
         except (RuntimeError, TypeError, UnboundLocalError, KeyError, cgx.DuplicateDLLError, ReferenceError):
             self._lib.unload()
             raise
@@ -288,12 +332,8 @@ class CompiledSDFG(object):
         """
         # Return value initialization (for values that have not been given)
         self._initialize_return_values(kwargs)
-        if self._return_arrays is not None:
-            if len(self._retarray_shapes) == 1:
-                kwargs[self._retarray_shapes[0][0]] = self._return_arrays
-            else:
-                for desc, arr in zip(self._retarray_shapes, self._return_arrays):
-                    kwargs[desc[0]] = arr
+        for desc, arr in zip(self._retarray_shapes, self._return_arrays):
+            kwargs[desc[0]] = arr
 
         # Argument construction
         sig = self._sig
@@ -316,13 +356,14 @@ class CompiledSDFG(object):
             argnames = []
             sig = []
         # Type checking
-        for a, arg, atype in zip(argnames, arglist, argtypes):
+        for i, (a, arg, atype) in enumerate(zip(argnames, arglist, argtypes)):
             if not dtypes.is_array(arg) and isinstance(atype, dt.Array):
                 if isinstance(arg, list):
                     print('WARNING: Casting list argument "%s" to ndarray' % a)
                 elif arg is None:
-                    # None values are passed as null pointers
-                    pass
+                    if atype.optional is False:  # If array cannot be None
+                        raise TypeError(f'Passing a None value to a non-optional array in argument "{a}"')
+                    # Otherwise, None values are passed as null pointers below
                 else:
                     raise TypeError('Passing an object (type %s) to an array in argument "%s"' %
                                     (type(arg).__name__, a))
@@ -341,9 +382,15 @@ class CompiledSDFG(object):
                     pass
                 elif (isinstance(arg, int) and atype.dtype.type == np.uint32 and arg >= 0 and arg <= (1 << 32) - 1):
                     pass
+                elif (isinstance(arg, str) or arg is None) and atype.dtype == dtypes.string:
+                    if arg is None:
+                        arglist[i] = ctypes.c_char_p(None)
+                    else:
+                        # Cast to bytes
+                        arglist[i] = ctypes.c_char_p(arg.encode('utf-8'))
                 else:
-                    print('WARNING: Casting scalar argument "%s" from %s to %s' %
-                          (a, type(arg).__name__, atype.dtype.type))
+                    warnings.warn(f'Casting scalar argument "{a}" from {type(arg).__name__} to {atype.dtype.type}')
+                    arglist[i] = atype.dtype.type(arg)
             elif (isinstance(atype, dt.Array) and isinstance(arg, np.ndarray)
                   and atype.dtype.as_numpy_dtype() != arg.dtype):
                 # Make exception for vector types
@@ -354,7 +401,7 @@ class CompiledSDFG(object):
                           (arg.dtype, a, atype.dtype.type.__name__))
             elif (isinstance(atype, dt.Array) and isinstance(arg, np.ndarray) and arg.base is not None
                   and not '__return' in a and not Config.get_bool('compiler', 'allow_view_arguments')):
-                raise TypeError('Passing a numpy view (e.g., sub-array or "A.T") to DaCe '
+                raise TypeError(f'Passing a numpy view (e.g., sub-array or "A.T") "{a}" to DaCe '
                                 'programs is not allowed in order to retain analyzability. '
                                 'Please make a copy with "numpy.copy(...)". If you know what '
                                 'you are doing, you can override this error in the '
@@ -365,7 +412,7 @@ class CompiledSDFG(object):
         for index, (arg, argtype) in enumerate(zip(arglist, argtypes)):
             # Call a wrapper function to make NumPy arrays from pointers.
             if isinstance(argtype.dtype, dtypes.callback):
-                arglist[index] = argtype.dtype.get_trampoline(arg, kwargs)
+                arglist[index] = argtype.dtype.get_trampoline(arg, kwargs, self._callback_retval_references)
             # List to array
             elif isinstance(arg, list) and isinstance(argtype, dt.Array):
                 arglist[index] = np.array(arg, dtype=argtype.dtype.type)
@@ -382,25 +429,36 @@ class CompiledSDFG(object):
         constants = sdfg.constants
 
         # Remove symbolic constants from arguments
-        callparams = tuple((arg, actype, atype) for arg, actype, atype in zip(arglist, arg_ctypes, argtypes)
+        callparams = tuple((arg, actype, atype, aname)
+                           for arg, actype, atype, aname in zip(arglist, arg_ctypes, argtypes, argnames)
                            if not symbolic.issymbolic(arg) or (hasattr(arg, 'name') and arg.name not in constants))
 
         # Replace symbols with their values
-        callparams = tuple(
-            (actype(arg.get()), actype, atype) if isinstance(arg, symbolic.symbol) else (arg, actype, atype)
-            for arg, actype, atype in callparams)
+        callparams = tuple((actype(arg.get()) if isinstance(arg, symbolic.symbol) else arg, actype, atype, aname)
+                           for arg, actype, atype, aname in callparams)
+
+        # Construct init args, which only consist of the symbols
+        symbols = self._free_symbols
+        initargs = tuple(
+            actype(arg) if (not isinstance(arg, ctypes._SimpleCData)) else arg
+            for arg, actype, atype, aname in callparams if aname in symbols)
 
         # Replace arrays with their base host/device pointers
         newargs = tuple((ctypes.c_void_p(_array_interface_ptr(arg, atype)), actype,
-                         atype) if dtypes.is_array(arg) else (arg, actype, atype) for arg, actype, atype in callparams)
+                         atype) if dtypes.is_array(arg) else (arg, actype, atype)
+                        for arg, actype, atype, _ in callparams)
 
-        initargs = tuple(atup for atup in callparams if not dtypes.is_array(atup[0]))
-
-        newargs = tuple(
-            actype(arg) if (not isinstance(arg, ctypes._SimpleCData)) else arg for arg, actype, atype in newargs)
-
-        initargs = tuple(
-            actype(arg) if (not isinstance(arg, ctypes._SimpleCData)) else arg for arg, actype, atype in initargs)
+        try:
+            newargs = tuple(
+                actype(arg) if (not isinstance(arg, ctypes._SimpleCData)) else arg for arg, actype, atype in newargs)
+        except TypeError:
+            # Pinpoint bad argument
+            for i, (arg, actype, _) in enumerate(newargs):
+                try:
+                    if not isinstance(arg, ctypes._SimpleCData):
+                        actype(arg)
+                except TypeError as ex:
+                    raise TypeError(f'Invalid type for scalar argument "{callparams[i][3]}": {ex}')
 
         self._lastargs = newargs, initargs
         return self._lastargs
@@ -425,7 +483,7 @@ class CompiledSDFG(object):
 
                 zeros = cupy.empty
             except (ImportError, ModuleNotFoundError):
-                raise NotImplementedError('GPU return values are ' 'unsupported if cupy is not ' 'installed')
+                raise NotImplementedError('GPU return values are unsupported if cupy is not installed')
         if storage is dtypes.StorageType.FPGA_Global:
             raise NotImplementedError('FPGA return values are unsupported')
 
@@ -438,6 +496,9 @@ class CompiledSDFG(object):
         syms.update({k: v for k, v in kwargs.items() if k not in self.sdfg.arrays})
         syms.update(self.sdfg.constants)
 
+        # Clear references from last call (allow garbage collection)
+        self._callback_retval_references.clear()
+
         if self._initialized:
             if self._return_syms == syms:
                 if not self._create_new_arrays:
@@ -445,17 +506,9 @@ class CompiledSDFG(object):
                 else:
                     self._create_new_arrays = False
                     # Use stored sizes to recreate arrays (fast path)
-                    if self._return_arrays is None:
-                        return
-                    elif isinstance(self._return_arrays, tuple):
-                        self._return_arrays = tuple(kwargs[desc[0]] if desc[0] in kwargs else self._create_array(*desc)
-                                                    for desc in self._retarray_shapes)
-                        return
-                    else:  # Single array return value
-                        desc = self._retarray_shapes[0]
-                        arr = (kwargs[desc[0]] if desc[0] in kwargs else self._create_array(*desc))
-                        self._return_arrays = arr
-                        return
+                    self._return_arrays = tuple(kwargs[desc[0]] if desc[0] in kwargs else self._create_array(*desc)
+                                                for desc in self._retarray_shapes)
+                    return
 
         self._return_syms = syms
         self._create_new_arrays = False
@@ -467,6 +520,7 @@ class CompiledSDFG(object):
             if arrname.startswith('__return') and not arr.transient:
                 if arrname in kwargs:
                     self._return_arrays.append(kwargs[arrname])
+                    self._retarray_is_scalar.append(isinstance(arr, dt.Scalar))
                     self._retarray_shapes.append((arrname, ))
                     continue
 
@@ -478,16 +532,19 @@ class CompiledSDFG(object):
                 total_size = int(symbolic.evaluate(arr.total_size, syms))
                 strides = tuple(symbolic.evaluate(s, syms) * arr.dtype.bytes for s in arr.strides)
                 shape_desc = (arrname, dtype, arr.storage, shape, strides, total_size)
+                self._retarray_is_scalar.append(isinstance(arr, dt.Scalar) or isinstance(arr.dtype, dtypes.pyobject))
                 self._retarray_shapes.append(shape_desc)
 
                 # Create an array with the properties of the SDFG array
                 arr = self._create_array(*shape_desc)
                 self._return_arrays.append(arr)
 
-        # Set up return_arrays field
-        if len(self._return_arrays) == 0:
-            self._return_arrays = None
+
+    def _convert_return_values(self):
+        # Return the values as they would be from a Python function
+        if self._return_arrays is None or len(self._return_arrays) == 0:
+            return None
         elif len(self._return_arrays) == 1:
-            self._return_arrays = self._return_arrays[0]
+            return self._return_arrays[0].item() if self._retarray_is_scalar[0] else self._return_arrays[0]
         else:
-            self._return_arrays = tuple(self._return_arrays)
+            return tuple(r.item() if scalar else r for r, scalar in zip(self._return_arrays, self._retarray_is_scalar))

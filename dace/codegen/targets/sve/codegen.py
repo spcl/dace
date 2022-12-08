@@ -56,7 +56,7 @@ class SVECodeGen(TargetCodeGenerator):
         self.dispatcher = frame_codegen._dispatcher
         self.dispatcher.register_map_dispatcher(dace.ScheduleType.SVE_Map, self)
         self.dispatcher.register_node_dispatcher(
-            self, lambda state, sdfg, node: is_in_scope(state, sdfg, node, [dace.ScheduleType.SVE_Map]))
+            self, lambda sdfg, state, node: is_in_scope(sdfg, state, node, [dace.ScheduleType.SVE_Map]))
 
         cpu_storage = [
             dtypes.StorageType.CPU_Heap, dtypes.StorageType.CPU_ThreadLocal, dtypes.StorageType.Register,
@@ -179,7 +179,8 @@ class SVECodeGen(TargetCodeGenerator):
                 if util.is_pointer(dst_type):
                     ##################
                     # Pointer reference
-                    code.write(f'{dst_type} {dst_name} = {cpp.cpp_ptr_expr(sdfg, edge.data, None)};')
+                    code.write(
+                        f'{dst_type} {dst_name} = {cpp.cpp_ptr_expr(sdfg, edge.data, None, codegen=self.frame)};')
                 elif util.is_vector(dst_type):
                     ##################
                     # Vector load
@@ -197,8 +198,9 @@ class SVECodeGen(TargetCodeGenerator):
                         ptr_cast = '(uint64_t*) '
 
                     # Regular load and gather share the first arguments
-                    load_args = '{}, {}'.format(util.get_loop_predicate(sdfg, state, edge.dst),
-                                                ptr_cast + cpp.cpp_ptr_expr(sdfg, edge.data, DefinedType.Pointer))
+                    load_args = '{}, {}'.format(
+                        util.get_loop_predicate(sdfg, state, edge.dst),
+                        ptr_cast + cpp.cpp_ptr_expr(sdfg, edge.data, DefinedType.Pointer, codegen=self.frame))
 
                     if stride == 1:
                         code.write('{} = svld1({});'.format(load_lhs, load_args))
@@ -209,7 +211,7 @@ class SVECodeGen(TargetCodeGenerator):
                 else:
                     ##################
                     # Scalar read from array
-                    code.write(f'{dst_type} {dst_name} = {cpp.cpp_array_expr(sdfg, edge.data)};')
+                    code.write(f'{dst_type} {dst_name} = {cpp.cpp_array_expr(sdfg, edge.data, codegen=self.frame)};')
             elif isinstance(desc, data.Scalar):
                 # Refer to shared variable
                 src_type = desc.dtype
@@ -325,7 +327,7 @@ class SVECodeGen(TargetCodeGenerator):
 
                     store_args = '{}, {}'.format(
                         util.get_loop_predicate(sdfg, state, edge.src),
-                        ptr_cast + cpp.cpp_ptr_expr(sdfg, edge.data, DefinedType.Pointer),
+                        ptr_cast + cpp.cpp_ptr_expr(sdfg, edge.data, DefinedType.Pointer, codegen=self.frame),
                     )
 
                     if stride == 1:
@@ -337,7 +339,7 @@ class SVECodeGen(TargetCodeGenerator):
                 else:
                     ##################
                     # Scalar write into array
-                    code.write(f'{cpp.cpp_array_expr(sdfg, edge.data)} = {src_name};')
+                    code.write(f'{cpp.cpp_array_expr(sdfg, edge.data, codegen=self.frame)} = {src_name};')
             elif isinstance(desc, data.Scalar):
                 ##################
                 # Write into Scalar
@@ -379,10 +381,11 @@ class SVECodeGen(TargetCodeGenerator):
                 nodedesc.dtype, dtypes.vector):
             # Special allocation if vector Code->Code register in SVE scope
             # We prevent dace::vec<>'s and allocate SVE registers instead
-            if self.dispatcher.defined_vars.has(node.data):
+            ptrname = cpp.ptr(node.data, nodedesc, sdfg, self.frame)
+            if self.dispatcher.defined_vars.has(ptrname):
                 sve_type = util.TYPE_TO_SVE[nodedesc.dtype.vtype]
-                self.dispatcher.defined_vars.add(node.data, DefinedType.Scalar, sve_type)
-                declaration_stream.write(f'{sve_type} {node.data};')
+                self.dispatcher.defined_vars.add(ptrname, DefinedType.Scalar, sve_type)
+                declaration_stream.write(f'{sve_type} {ptrname};')
             return
 
         self.cpu_codegen.allocate_array(sdfg, dfg, state_id, node, nodedesc, global_stream, declaration_stream,

@@ -97,9 +97,9 @@ def make_vec_mul_sdfg(dtype=dace.float32):
 
 
 def make_fpga_sdfg():
-    '''
+    """
     Build an SDFG with two nested SDFGs in a single FPGA state
-    '''
+    """
 
     n = dace.symbol("n")
     vecWidth = 4
@@ -182,6 +182,12 @@ def make_fpga_sdfg():
     non_fpga_state.location["is_FPGA_kernel"] = False
     # Build the vec addition SDFG and nest it
 
+    in_device_x = non_fpga_state.add_read("device_x")
+    in_device_y = non_fpga_state.add_read("device_y")
+    in_device_v = non_fpga_state.add_read("device_v")
+    out_device_z = non_fpga_state.add_write("device_z")
+    out_device_u = non_fpga_state.add_write("device_u")
+
     to_nest = make_vec_add_sdfg()
     # add nested sdfg with symbol mapping
     nested_sdfg = non_fpga_state.add_nested_sdfg(to_nest, sdfg, {"_device_x", "_device_y"}, {"_device_z"},
@@ -231,9 +237,9 @@ def make_fpga_sdfg():
 
 
 def make_fpga_sdfg_independent():
-    '''
+    """
     Build an SDFG with two nested SDFGs in a single FPGA state
-    '''
+    """
 
     n = dace.symbol("n")
     vecWidth = 4
@@ -323,6 +329,13 @@ def make_fpga_sdfg_independent():
 
     non_fpga_state = sdfg.add_state("I_do_not_want_to_be_fpga_kernel")
     non_fpga_state.location["is_FPGA_kernel"] = False
+
+    in_device_x = non_fpga_state.add_read("device_x")
+    in_device_y = non_fpga_state.add_read("device_y")
+    in_device_v = non_fpga_state.add_read("device_v")
+    in_device_w = non_fpga_state.add_read("device_w")
+    out_device_z = non_fpga_state.add_write("device_z")
+    out_device_u = non_fpga_state.add_write("device_u")
 
     # Build the vec addition SDFG and nest it
 

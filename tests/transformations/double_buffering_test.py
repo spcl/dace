@@ -3,7 +3,7 @@
 import dace
 import numpy as np
 
-from dace.transformation.pattern_matching import match_patterns
+from dace.transformation.passes.pattern_matching import match_patterns
 from dace.transformation.dataflow import DoubleBuffering, InLocalStorage
 
 

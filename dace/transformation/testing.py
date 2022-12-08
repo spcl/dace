@@ -22,6 +22,7 @@ class TransformationTester(Optimizer):
                  halt_on_exception=False):
         """ Creates a new Transformation tester, which brute-forces applying the
             available transformations up to a certain level.
+            
             :param sdfg: The SDFG to transform.
             :param depth: The number of levels to run transformations. For
                           instance, depth=1 means to only run immediate
@@ -72,8 +73,6 @@ class TransformationTester(Optimizer):
                 match._sdfg = tsdfg
                 match.apply(tgraph, tsdfg)
 
-                sdfg.save(os.path.join('_dacegraphs', 'program.sdfg'))
-
                 # Validate
                 if self.validate:
                     new_sdfg.validate()
@@ -93,7 +92,7 @@ class TransformationTester(Optimizer):
                 self.passed_tests += 1
 
                 # Recursively optimize as necessary
-                self._optimize_recursive(sdfg, depth + 1)
+                self._optimize_recursive(new_sdfg, depth + 1)
 
             except:  # Literally anything can happen here
                 print('FAIL', file=self.stdout)

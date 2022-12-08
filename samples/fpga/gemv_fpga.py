@@ -203,8 +203,8 @@ def run_gemv(n: int, m: int, specialize: bool):
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("N", type=int)
-    parser.add_argument("M", type=int)
+    parser.add_argument("n", type=int)
+    parser.add_argument("m", type=int)
     parser.add_argument("-specialize", default=False, action="store_true", help="Also fix M in hardware")
     args = parser.parse_args()
 

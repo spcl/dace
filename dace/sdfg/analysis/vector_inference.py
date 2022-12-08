@@ -209,8 +209,9 @@ class VectorInferenceGraph(DiGraph):
         """
             Computes for each output connector the set of input connectors for which
             if at least one of them is a vector, the output becomes a vector.
+
             :param node: The Tasklet to infer
-            :returns: A dictionary for output connector -> set of inputs.
+            :return: A dictionary for output connector -> set of inputs.
         """
         non_pointer_in_conns = [
             conn for conn in node.in_connectors if not isinstance(self.inf[(node, conn, True)], dtypes.pointer)
@@ -499,7 +500,7 @@ def infer_vectors(sdfg: SDFG,
                                     or an `AccessNode` to either `InferenceNode.Scalar` or `InferenceNode.Vector`.
         :param flags: Additional flags to limit the vectorization (e. g. allow stride loads).
         :param apply: Whether to apply the vectorization or not.
-        :returns: The inference graph for analysis.
+        :return: The inference graph for analysis.
     """
     graph = VectorInferenceGraph(sdfg, state, map_entry, vec_len, initial_constraints, flags)
     graph.infer()

@@ -109,19 +109,33 @@ def find_for_loop(
         List[sd.SDFGState], sd.SDFGState]]]:
     """
     Finds loop range from state machine.
+    
     :param guard: State from which the outgoing edges detect whether to exit
                   the loop or not.
     :param entry: First state in the loop "body".
     :return: (iteration variable, (start, end, stride),
-              (start_states[], last_loop_state)), or None if proper
+             (start_states, last_loop_state)), or None if proper
              for-loop was not detected. ``end`` is inclusive.
     """
 
     # Extract state transition edge information
     guard_inedges = sdfg.in_edges(guard)
     condition_edge = sdfg.edges_between(guard, entry)[0]
+    
+    # All incoming edges to the guard must set the same variable
     if itervar is None:
-        itervar = list(guard_inedges[0].data.assignments.keys())[0]
+        itervars = None
+        for iedge in guard_inedges:
+            if itervars is None:
+                itervars = set(iedge.data.assignments.keys())
+            else:
+                itervars &= iedge.data.assignments.keys()
+        if itervars and len(itervars) == 1:
+            itervar = next(iter(itervars))
+        else:
+            # Ambiguous or no iteration variable
+            return None
+    
     condition = condition_edge.data.condition_sympy()
 
     # Find the stride edge. All in-edges to the guard except for the stride edge

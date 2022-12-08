@@ -4,6 +4,7 @@ import dace
 import numpy as np
 from dace.subsets import Range
 from dace.transformation.dataflow import DeduplicateAccess
+from dace.transformation.passes.consolidate_edges import ConsolidateEdges
 import dace.transformation.helpers as helpers
 
 N = dace.symbol('N')
@@ -53,6 +54,7 @@ def test_dedup_access_simple():
     """ 
     Simple duplicate access.
     """
+
     @dace.program
     def datest(A: dace.float64[N, N], B: dace.float64[N, N]):
         for i, j in dace.map[0:N, 0:N]:
@@ -85,6 +87,7 @@ def test_dedup_access_plus():
     A test where there is no gain by applying DeduplicateAccess, and so it 
     should not be applied.
     """
+
     @dace.program
     def datest(A: dace.float64[N, N], B: dace.float64[N, N]):
         for i, j in dace.map[1:N - 1, 1:N - 1]:
@@ -115,6 +118,7 @@ def test_dedup_access_plus():
                 B[i, j] = inp[0] + inp[1] + inp[2] + inp[3] + inp[4]
 
     sdfg: dace.SDFG = datest.to_sdfg(simplify=True)
+    ConsolidateEdges().apply_pass(sdfg, {})
     assert sdfg.apply_transformations(DeduplicateAccess) == 1
 
 
@@ -122,6 +126,7 @@ def test_dedup_access_square():
     """ 
     A test where a one square load can be performed once.
     """
+
     @dace.program
     def datest(A: dace.float64[N, N], B: dace.float64[N, N]):
         for i, j in dace.map[3:N - 3, 3:N - 3]:
@@ -144,6 +149,8 @@ def test_dedup_access_square():
                 B[i, j] = (inp[0] + inp[1] + inp[2]) / 12.0
 
     sdfg: dace.SDFG = datest.to_sdfg(simplify=True)
+    ConsolidateEdges().apply_pass(sdfg, {})
+
     nodes_before = sdfg.node(0).number_of_nodes()
     assert sdfg.apply_transformations(DeduplicateAccess) == 1
     # Check that the subset is contiguous by checking how many nodes are added
@@ -166,6 +173,7 @@ def test_dedup_access_contiguous():
          |_____|     2
     A square of size 5x5, with two 4x3 squares on each side
     """
+
     @dace.program
     def datest(A: dace.float64[N, N], B: dace.float64[N, N]):
         for i, j in dace.map[6:N - 6, 6:N - 6]:
@@ -189,6 +197,8 @@ def test_dedup_access_contiguous():
 
     # j contiguous dimension
     sdfg: dace.SDFG = datest.to_sdfg(simplify=True)
+    ConsolidateEdges().apply_pass(sdfg, {})
+
     nodes_before = sdfg.node(0).number_of_nodes()
     assert sdfg.apply_transformations(DeduplicateAccess) == 1
     nodes_after = sdfg.node(0).number_of_nodes()
@@ -196,6 +206,8 @@ def test_dedup_access_contiguous():
 
     # i contiguous dimension
     sdfg: dace.SDFG = datest.to_sdfg(simplify=True)
+    ConsolidateEdges().apply_pass(sdfg, {})
+
     sdfg.arrays['A'].strides = [1, N]
     nodes_before = sdfg.node(0).number_of_nodes()
     assert sdfg.apply_transformations(DeduplicateAccess) == 1

@@ -8,6 +8,7 @@ on:
 
 jobs:
   test:
+    if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -41,6 +42,7 @@ jobs:
       run: |
         export NOSTATUSBAR=1
         export DACE_testing_serialization=1
+        export DACE_testing_deserialize_exception=1
         export DACE_cache=unique
         export DACE_optimizer_interface=" "
         if [ "${{ matrix.simplify }}" = "autoopt" ]; then
@@ -50,13 +52,14 @@ jobs:
         else
             export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
         fi
-        pytest -n auto --cov-report=xml --cov=dace --tb=short -m "not gpu and not verilator and not tensorflow and not mkl and not sve and not papi and not mlir and not lapack and not fpga and not mpi"
+        pytest -n auto --cov-report=xml --cov=dace --tb=short -m "not gpu and not verilator and not tensorflow and not mkl and not sve and not papi and not mlir and not lapack and not fpga and not mpi and not rtl_hardware and not scalapack"
         codecov
 
     - name: Test OpenBLAS LAPACK
       run: |
         export NOSTATUSBAR=1
         export DACE_testing_serialization=1
+        export DACE_testing_deserialize_exception=1
         export DACE_cache=unique
         export DACE_optimizer_interface=" "
         if [ "${{ matrix.simplify }}" = "autoopt" ]; then
@@ -73,6 +76,7 @@ jobs:
       run: |
         export NOSTATUSBAR=1
         export DACE_testing_serialization=1
+        export DACE_testing_deserialize_exception=1
         export DACE_cache=single
         export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
         export PYTHON_BINARY="coverage run --source=dace --parallel-mode"

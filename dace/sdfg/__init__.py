@@ -1,5 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-from dace.sdfg.sdfg import SDFG, InterstateEdge
+from dace.sdfg.sdfg import SDFG, InterstateEdge, LogicalGroup
 
 from dace.sdfg.state import SDFGState
 

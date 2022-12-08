@@ -8,12 +8,7 @@ from dace import dtypes, config, registry, symbolic, nodes, sdfg, data
 from dace.sdfg import graph, state, find_input_arraynode, find_output_arraynode
 from dace.codegen import codeobject, dispatcher, prettycode
 from dace.codegen.targets import target, framecode
-from dace.codegen.targets.common import sym2cpp
-
-from dace.external.rtllib.templates.control import generate_from_config as rtllib_control
-from dace.external.rtllib.templates.package import generate_from_config as rtllib_package
-from dace.external.rtllib.templates.synth import generate_from_config as rtllib_synth
-from dace.external.rtllib.templates.top import generate_from_config as rtllib_top
+from dace.codegen.common import sym2cpp
 
 
 @registry.autoregister_params(name='rtl')
@@ -49,6 +44,7 @@ class RTLCodeGen(target.TargetCodeGenerator):
         self.cpp_general_header_added: bool = False
         self.vendor: str = config.Config.get("compiler", "fpga", "vendor")
         self.hardware_target: bool = config.Config.get("compiler", "xilinx", "mode").startswith("hardware")
+        self.frequencies: str = config.Config.get("compiler", "xilinx", "frequency")
 
     def generate_node(self, sdfg: sdfg.SDFG, dfg: state.StateSubgraphView, state_id: int, node: nodes.Node,
                       function_stream: prettycode.CodeIOStream, callsite_stream: prettycode.CodeIOStream):
@@ -224,8 +220,10 @@ class RTLCodeGen(target.TargetCodeGenerator):
         """
         inputs = []
         outputs = []
-        for scalar, (is_output, total_size) in scalars.items():
-            inputs += [f', {"output" if is_output else "input"} [{(total_size*8)-1}:0] {scalar}']
+        if scalars:
+            inputs += [', input scalars_valid']
+            for scalar, (is_output, total_size) in scalars.items():
+                inputs += [f', {"output" if is_output else "input"} [{(total_size*8)-1}:0] {scalar}']
 
         for bus, (_, is_output, total_size, vec_len, volume) in buses.items():
             if is_output:
@@ -234,6 +232,33 @@ class RTLCodeGen(target.TargetCodeGenerator):
                 outputs += self.generate_padded_axis(False, bus, total_size, vec_len)
 
         return inputs, outputs
+
+    def generate_clk_from_cfg(self):
+        """
+        Generate the clock handling initialization expressions.
+        """
+        if self.frequencies == '':  # Default case: no frequency specified, set to 300.
+            freqs = ['0:300']
+        elif ':' not in self.frequencies:  # Case of a single number without id.
+            freqs = [f'0:{self.frequencies}']
+        else:  # Multiple clocks specified in the format "0:freq_0\|1:freq_1"
+            freqs = self.frequencies.strip('"').split('\\|')
+
+        prm_clk_format = \
+            '''input  ap_aclk     // convention: ap_aclk clocks the design, specifically the external ports
+, input  ap_areset   // convention: ap_areset resets the design'''
+        scd_clk_format = \
+            ''', input  ap_aclk_{id}   // convention: ap_aclk_{id} is a secondary clock, which can be used inside
+, input  ap_areset_{id} // convention: ap_areset_{id} resets the components clocked by ap_aclk_{id}'''
+
+        nclks = len(freqs)
+        ports = [prm_clk_format] + [scd_clk_format.format(id=i + 2) for i in range(nclks - 1)]
+        clks = ['&(model->ap_aclk)'] + [f'&(model->ap_aclk_{i+2})' for i in range(nclks - 1)]
+        freqs = f'{{ {", ".join([freq.split(":")[1] for freq in freqs])} }}'
+        nclks = str(nclks)
+        clks = f'{{ {", ".join(clks)} }}'
+        ports = '\n'.join(ports)
+        return nclks, freqs, clks, ports
 
     def generate_cpp_zero_inits(self, buses, scalars):
         """
@@ -515,24 +540,33 @@ model->s_axis_{name}_tdata = {name}[0];'''
         # generate system verilog module components
         parameter_string: str = self.generate_rtl_parameters(sdfg.constants)
         inputs, outputs = self.generate_rtl_inputs_outputs(buses, scalars)
+        nclks, freqs, clks, ports = self.generate_clk_from_cfg()
 
         # create rtl code object (that is later written to file)
         self.code_objects.append(
-            codeobject.CodeObject(
-                name="{}".format(unique_name),
-                code=RTLCodeGen.RTL_HEADER.format(
-                    name=unique_name, parameters=parameter_string, inputs="\n".join(inputs), outputs="\n".join(outputs))
-                + tasklet.code.code + RTLCodeGen.RTL_FOOTER,
-                language="sv",
-                target=RTLCodeGen,
-                title="rtl",
-                target_type="{}".format(unique_name),
-                additional_compiler_kwargs="",
-                linkable=True,
-                environments=None))
+            codeobject.CodeObject(name="{}".format(unique_name),
+                                  code=RTLCodeGen.RTL_HEADER.format(name=unique_name,
+                                                                    parameters=parameter_string,
+                                                                    inputs="\n".join(inputs),
+                                                                    outputs="\n".join(outputs),
+                                                                    clk_rst_ports=ports) + tasklet.code.code +
+                                  RTLCodeGen.RTL_FOOTER,
+                                  language="sv",
+                                  target=RTLCodeGen,
+                                  title="rtl",
+                                  target_type="{}".format(unique_name),
+                                  additional_compiler_kwargs="",
+                                  linkable=True,
+                                  environments=None))
 
         if self.hardware_target:
             if self.vendor == 'xilinx':
+                # Avoid importing submodule if not necessary
+                from dace.external.rtllib.templates.control import generate_from_config as rtllib_control
+                from dace.external.rtllib.templates.package import generate_from_config as rtllib_package
+                from dace.external.rtllib.templates.synth import generate_from_config as rtllib_synth
+                from dace.external.rtllib.templates.top import generate_from_config as rtllib_top
+
                 rtllib_config = {
                     "name": unique_name,
                     "buses": {
@@ -548,6 +582,7 @@ model->s_axis_{name}_tdata = {name}[0];'''
                     },
                     "unroll": self.n_unrolled[unique_name] if unique_name in self.n_unrolled else 1,
                     "ip_cores": tasklet.ip_cores if isinstance(tasklet, nodes.RTLTasklet) else {},
+                    "clocks": int(nclks)
                 }
 
                 self.code_objects.append(
@@ -638,6 +673,9 @@ model->s_axis_{name}_tdata = {name}[0];'''
                 hs_flags=str.join('\n', hs_flags),
                 input_hs_toggle=str.join('\n', input_hs_toggle),
                 output_hs_toggle=str.join('\n', output_hs_toggle),
+                nclks=nclks,
+                freqs=freqs,
+                clks=clks,
                 running_condition=running_condition,
                 internal_state_str=internal_state_str,
                 internal_state_var=internal_state_var,
@@ -673,9 +711,47 @@ vluint64_t main_time = 0;
 // instantiate model(s)
 V{name}* model = new V{name};
 
+// instantiate clock handling
+int nclks = {nclks};
+int freqs[nclks] = {freqs};
+CData* clks[nclks] = {clks};
+double periods[nclks];
+for (int i = 0; i < nclks; i++) {{
+    periods[i] = (1000.0 / freqs[i]);
+}}
+double ttf[nclks]; // time to flip
+auto tick = [&]() {{
+    // Lambda function for driving all of the clock signals of the model, until the first clock signal have had a full in-between-rising-edge cycle
+    bool first_rised = *(clks[0]);
+    while (true) {{
+        int next = 0;
+        for (int i = 1; i < nclks; i++) {{
+            if (ttf[i] < ttf[next]) {{
+                next = i;
+            }}
+        }}
+        double time = ttf[next];
+        for (int i = 0; i < nclks; i++) {{
+            if (i == next) {{
+                ttf[i] = periods[i] / 2;
+                *(clks[i]) = !*(clks[i]);
+            }} else {{
+                ttf[i] -= time;
+            }}
+        }}
+        main_time += time;
+        model->eval();
+        if (next == 0 && *(clks[0]) == 1) {{
+            if (first_rised)
+                break;
+            else
+                first_rised = true;
+        }}
+    }}
+}};
+
 // apply initial input values
 model->ap_areset = 0;  // no reset
-model->ap_aclk = 0; // neg clock
 {valid_zeros}
 {ready_zeros}
 {scalar_zeros}
@@ -687,15 +763,9 @@ model->eval();
 
 // reset design
 model->ap_areset = 1;
-model->ap_aclk = 1; // rising
-model->eval();
-model->ap_aclk = 0; // falling
-model->eval();
+tick();
 model->ap_areset = 0;
-model->ap_aclk = 1; // rising
-model->eval();
-model->ap_aclk = 0; // falling
-model->eval();
+tick();
 
 // simulate until in_handshakes = out_handshakes = num_elements
 {hs_flags}
@@ -717,20 +787,13 @@ while ({running_condition}) {{
     // check if valid and ready have been asserted at the rising clock edge -> output write handshake
 {write_output_hs}
 
-    // positive clock edge
-    model->ap_aclk = !(model->ap_aclk);
-
-    model->eval(); {debug_internal_state}
+    tick(); {debug_internal_state}
 
     // check if valid and ready has been asserted for each input at the rising clock edge
 {input_hs_toggle}
 
     // check if valid and ready haæ been asserted for each output at the rising clock edge
 {output_hs_toggle}
-
-    // negative clock edge
-    model->ap_aclk = !(model->ap_aclk);
-    model->eval();
 }} {debug_internal_state}
 
 // final model cleanup
@@ -744,10 +807,9 @@ model = NULL;
     RTL_HEADER = """\
 module {name}
 {parameters}
-( input  ap_aclk   // convention: ap_aclk clocks the design
-, input  ap_areset // convention: ap_areset resets the design
-, input  ap_start  // convention: ap_start indicates a start from host
-, output ap_done   // convention: ap_done tells the host that the kernel has finished
+( {clk_rst_ports}
+, input  ap_start    // convention: ap_start indicates a start from host
+, output ap_done     // convention: ap_done tells the host that the kernel has finished
 
 {inputs}
 

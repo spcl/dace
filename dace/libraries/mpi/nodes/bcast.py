@@ -2,9 +2,11 @@
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
+from dace import dtypes
 from dace.symbolic import symstr
 from dace.transformation.transformation import ExpandTransformation
 from .. import environments
+from dace.libraries.mpi.nodes.node import MPINode
 
 
 @dace.library.expansion
@@ -17,42 +19,46 @@ class ExpandBcastMPI(ExpandTransformation):
         (buffer, count_str), root = node.validate(parent_sdfg, parent_state)
         dtype = buffer.dtype.base_type
         mpi_dtype_str = "MPI_BYTE"
-        if dtype == dace.dtypes.float32:
+        if dtype == dtypes.float32:
             mpi_dtype_str = "MPI_FLOAT"
-        elif dtype == dace.dtypes.float64:
+        elif dtype == dtypes.float64:
             mpi_dtype_str = "MPI_DOUBLE"
-        elif dtype == dace.dtypes.complex64:
+        elif dtype == dtypes.complex64:
             mpi_dtype_str = "MPI_COMPLEX"
-        elif dtype == dace.dtypes.complex128:
+        elif dtype == dtypes.complex128:
             mpi_dtype_str = "MPI_COMPLEX_DOUBLE"
-        elif dtype == dace.dtypes.int32:
+        elif dtype == dtypes.int32:
             mpi_dtype_str = "MPI_INT"
-
+        elif dtype == dtypes.int64:
+            mpi_dtype_str = "MPI_LONG_LONG"
         else:
-            print("The datatype " + str(dtype) + " is not supported!")
-            raise (NotImplementedError)
+            raise NotImplementedError("The datatype " + str(dtype) + " is not supported!")
         if buffer.dtype.veclen > 1:
-            raise (NotImplementedError)
-        if root.dtype.base_type != dace.dtypes.int32:
+            raise NotImplementedError
+        if root.dtype.base_type != dtypes.int32 and root.dtype.base_type != dtypes.int64:
             raise ValueError("Bcast root must be an integer!")
 
         ref = ""
         if isinstance(buffer, dace.data.Scalar):
             ref = "&"
 
+        comm = "MPI_COMM_WORLD"
+        if node.grid:
+            comm = f"__state->{node.grid}_comm"
+
         code = f"""
-            MPI_Bcast({ref}_inbuffer, {count_str}, {mpi_dtype_str}, _root, MPI_COMM_WORLD);
+            MPI_Bcast({ref}_inbuffer, {count_str}, {mpi_dtype_str}, _root, {comm});
             _outbuffer = _inbuffer;"""
         tasklet = dace.sdfg.nodes.Tasklet(node.name,
                                           node.in_connectors,
                                           node.out_connectors,
                                           code,
-                                          language=dace.dtypes.Language.CPP)
+                                          language=dtypes.Language.CPP)
         return tasklet
 
 
 @dace.library.node
-class Bcast(dace.sdfg.nodes.LibraryNode):
+class Bcast(MPINode):
 
     # Global properties
     implementations = {
@@ -60,8 +66,11 @@ class Bcast(dace.sdfg.nodes.LibraryNode):
     }
     default_implementation = "MPI"
 
-    def __init__(self, name, *args, **kwargs):
+    grid = dace.properties.Property(dtype=str, allow_none=True, default=None)
+
+    def __init__(self, name, grid=None, *args, **kwargs):
         super().__init__(name, *args, inputs={"_inbuffer", "_root"}, outputs={"_outbuffer"}, **kwargs)
+        self.grid = grid
 
     def validate(self, sdfg, state):
         """
@@ -80,9 +89,9 @@ class Bcast(dace.sdfg.nodes.LibraryNode):
                 root = sdfg.arrays[e.data.data]
 
         if inbuffer != outbuffer:
-            raise (ValueError("Bcast input and output buffer must be the same!"))
-        if root.dtype.base_type != dace.dtypes.int32:
-            raise (ValueError("Bcast root must be an integer!"))
+            raise ValueError("Bcast input and output buffer must be the same!")
+        if root.dtype.base_type != dtypes.int32 and root.dtype.base_type != dtypes.int64:
+            raise ValueError("Bcast root must be an integer!")
 
         count_str = "XXX"
         for _, src_conn, _, _, data in state.out_edges(self):

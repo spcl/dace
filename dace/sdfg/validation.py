@@ -1,12 +1,16 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Exception classes and methods for validation of SDFGs. """
 import copy
-from dace.dtypes import StorageType
+from dace.dtypes import DebugInfo, StorageType
 import os
-from typing import Dict, Set, Tuple, Union
+from typing import TYPE_CHECKING, Dict, Set, Tuple, Union
 import warnings
 from dace import dtypes, data as dt, subsets
 from dace import symbolic
+
+if TYPE_CHECKING:
+    import dace
+    from dace.sdfg import SDFG
 
 ###########################################
 # Validation
@@ -21,15 +25,27 @@ def validate(graph: 'dace.sdfg.graph.SubgraphView'):
         validate_state(graph)
 
 
-def validate_sdfg(sdfg: 'dace.sdfg.SDFG'):
+def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None):
     """ Verifies the correctness of an SDFG by applying multiple tests.
+    
         :param sdfg: The SDFG to verify.
+        :param references: An optional set keeping seen IDs for object
+                           miscopy validation.
 
         Raises an InvalidSDFGError with the erroneous node/edge
         on failure.
     """
     # Avoid import loop
     from dace.codegen.targets import fpga
+
+    references = references or set()
+
+    # Reference check
+    if id(sdfg) in references:
+        raise InvalidSDFGError(
+            f'Duplicate SDFG detected: "{sdfg.name}". Please copy objects '
+            'rather than using multiple references to the same one', sdfg, None)
+    references.add(id(sdfg))
 
     try:
         # SDFG-level checks
@@ -44,6 +60,12 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG'):
 
         # Validate data descriptors
         for name, desc in sdfg._arrays.items():
+            if id(desc) in references:
+                raise InvalidSDFGError(
+                    f'Duplicate data descriptor object detected: "{name}". Please copy objects '
+                    'rather than using multiple references to the same one', sdfg, None)
+            references.add(id(desc))
+
             # Validate array names
             if name is not None and not dtypes.validate_name(name):
                 raise InvalidSDFGError("Invalid array name %s" % name, sdfg, None)
@@ -97,10 +119,23 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG'):
             # Source -> inter-state definition -> Destination
             ##########################################
             visited_edges.add(edge)
+
+            # Reference check
+            if id(edge) in references:
+                raise InvalidSDFGInterstateEdgeError(
+                    f'Duplicate inter-state edge object detected: "{edge}". Please '
+                    'copy objects rather than using multiple references to the same one', sdfg, sdfg.edge_id(edge))
+            references.add(id(edge))
+            if id(edge.data) in references:
+                raise InvalidSDFGInterstateEdgeError(
+                    f'Duplicate inter-state edge object detected: "{edge}". Please '
+                    'copy objects rather than using multiple references to the same one', sdfg, sdfg.edge_id(edge))
+            references.add(id(edge.data))
+
             # Source
             if edge.src not in visited:
                 visited.add(edge.src)
-                validate_state(edge.src, sdfg.node_id(edge.src), sdfg, symbols, initialized_transients)
+                validate_state(edge.src, sdfg.node_id(edge.src), sdfg, symbols, initialized_transients, references)
 
             ##########################################
             # Edge
@@ -108,7 +143,9 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG'):
             undef_syms = set(edge.data.free_symbols) - set(symbols.keys())
             if len(undef_syms) > 0:
                 eid = sdfg.edge_id(edge)
-                raise InvalidSDFGInterstateEdgeError("Undefined symbols in edge: %s" % undef_syms, sdfg, eid)
+                raise InvalidSDFGInterstateEdgeError(
+                    f'Undefined symbols in edge: {undef_syms}. Add those with '
+                    '`sdfg.add_symbol()` or define outside with `dace.symbol()`', sdfg, eid)
 
             # Validate inter-state edge names
             issyms = edge.data.new_symbols(sdfg, symbols)
@@ -124,17 +161,30 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG'):
             # Destination
             if edge.dst not in visited:
                 visited.add(edge.dst)
-                validate_state(edge.dst, sdfg.node_id(edge.dst), sdfg, symbols, initialized_transients)
+                validate_state(edge.dst, sdfg.node_id(edge.dst), sdfg, symbols, initialized_transients, references)
         # End of state DFS
 
         # If there is only one state, the DFS will miss it
         if start_state not in visited:
-            validate_state(start_state, sdfg.node_id(start_state), sdfg, symbols, initialized_transients)
+            validate_state(start_state, sdfg.node_id(start_state), sdfg, symbols, initialized_transients, references)
 
         # Validate all inter-state edges (including self-loops not found by DFS)
         for eid, edge in enumerate(sdfg.edges()):
             if edge in visited_edges:
                 continue
+
+            # Reference check
+            if id(edge) in references:
+                raise InvalidSDFGInterstateEdgeError(
+                    f'Duplicate inter-state edge object detected: "{edge}". Please '
+                    'copy objects rather than using multiple references to the same one', sdfg, eid)
+            references.add(id(edge))
+            if id(edge.data) in references:
+                raise InvalidSDFGInterstateEdgeError(
+                    f'Duplicate inter-state edge object detected: "{edge}". Please '
+                    'copy objects rather than using multiple references to the same one', sdfg, eid)
+            references.add(id(edge.data))
+
             issyms = edge.data.assignments.keys()
             if any(not dtypes.validate_name(s) for s in issyms):
                 invalid = next(s for s in issyms if not dtypes.validate_name(s))
@@ -150,27 +200,36 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                    state_id: int = None,
                    sdfg: 'dace.sdfg.SDFG' = None,
                    symbols: Dict[str, dtypes.typeclass] = None,
-                   initialized_transients: Set[str] = None):
+                   initialized_transients: Set[str] = None,
+                   references: Set[int] = None):
     """ Verifies the correctness of an SDFG state by applying multiple
         tests. Raises an InvalidSDFGError with the erroneous node on
         failure.
     """
     # Avoid import loops
-    from dace.sdfg import SDFG
-    from dace.config import Config
-    from dace.sdfg import nodes as nd
-    from dace.sdfg.scope import scope_contains_scope
     from dace import data as dt
     from dace import subsets as sbs
-    from dace.sdfg import utils as sdutil
     from dace.codegen.targets import fpga
+    from dace.config import Config
+    from dace.sdfg import SDFG
+    from dace.sdfg import nodes as nd
+    from dace.sdfg import utils as sdutil
+    from dace.sdfg.scope import scope_contains_scope
 
     sdfg = sdfg or state.parent
     state_id = state_id or sdfg.node_id(state)
     symbols = symbols or {}
     initialized_transients = (initialized_transients if initialized_transients is not None else {'__pystate'})
+    references = references or set()
     scope_local_constants: dict[nd.MapEntry, list[str]] = dict()
     scope = state.scope_dict()
+
+    # Reference check
+    if id(state) in references:
+        raise InvalidSDFGError(
+            f'Duplicate SDFG state detected: "{state.label}". Please copy objects '
+            'rather than using multiple references to the same one', sdfg, state_id)
+    references.add(id(state))
 
     if not dtypes.validate_name(state._label):
         raise InvalidSDFGError("Invalid state name", sdfg, state_id)
@@ -183,10 +242,23 @@ def validate_state(state: 'dace.sdfg.SDFGState',
     if (sdfg.number_of_nodes() > 1 and sdfg.in_degree(state) == 0 and sdfg.out_degree(state) == 0):
         raise InvalidSDFGError("Unreachable state", sdfg, state_id)
 
+    if state.has_cycles():
+        raise InvalidSDFGError('State should be acyclic but contains cycles', sdfg, state_id)
+
     for nid, node in enumerate(state.nodes()):
+        # Reference check
+        if id(node) in references:
+            raise InvalidSDFGNodeError(
+                f'Duplicate node detected: "{node}". Please copy objects '
+                'rather than using multiple references to the same one', sdfg, state_id, nid)
+        references.add(id(node))
+
         # Node validation
         try:
-            node.validate(sdfg, state)
+            if isinstance(node, nd.NestedSDFG):
+                node.validate(sdfg, state, references)
+            else:
+                node.validate(sdfg, state)
         except InvalidSDFGError:
             raise
         except Exception as ex:
@@ -266,11 +338,18 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                 if arr.transient and state.in_degree(node) > 0:
                     initialized_transients.add(node.data)
 
-            # Find writes to input-only arrays
-            only_empty_inputs = all(e.data.is_empty() for e in state.in_edges(node))
-            if (not arr.transient) and (not only_empty_inputs):
-                nsdfg_node = sdfg.parent_nsdfg_node
-                if nsdfg_node is not None:
+            nsdfg_node = sdfg.parent_nsdfg_node
+            if nsdfg_node is not None:
+                # Find unassociated non-transients access nodes
+                if (not arr.transient and node.data not in nsdfg_node.in_connectors
+                        and node.data not in nsdfg_node.out_connectors):
+                    raise InvalidSDFGNodeError(
+                        f'Data descriptor "{node.data}" is not transient and used in a nested SDFG, '
+                        'but does not have a matching connector on the outer SDFG node.', sdfg, state_id, nid)
+
+                # Find writes to input-only arrays
+                only_empty_inputs = all(e.data.is_empty() for e in state.in_edges(node))
+                if (not arr.transient) and (not only_empty_inputs):
                     if node.data not in nsdfg_node.out_connectors:
                         raise InvalidSDFGNodeError(
                             'Data descriptor %s is '
@@ -305,17 +384,6 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                 and not isinstance(node, (nd.NestedSDFG, nd.LibraryNode))):
             dups = node.in_connectors.keys() & node.out_connectors.keys()
             raise InvalidSDFGNodeError("Duplicate connectors: " + str(dups), sdfg, state_id, nid)
-
-        # Check for connectors that are also array/symbol names
-        if isinstance(node, nd.Tasklet):
-            for conn in node.in_connectors.keys():
-                if conn in sdfg.arrays or conn in symbols:
-                    raise InvalidSDFGNodeError(f"Input connector {conn} already "
-                                               "defined as array or symbol", sdfg, state_id, nid)
-            for conn in node.out_connectors.keys():
-                if conn in sdfg.arrays or conn in symbols:
-                    raise InvalidSDFGNodeError(f"Output connector {conn} already "
-                                               "defined as array or symbol", sdfg, state_id, nid)
 
         # Check for dangling connectors (incoming)
         for conn in node.in_connectors:
@@ -382,6 +450,18 @@ def validate_state(state: 'dace.sdfg.SDFGState',
 
     # Memlet checks
     for eid, e in enumerate(state.edges()):
+        # Reference check
+        if id(e) in references:
+            raise InvalidSDFGEdgeError(
+                f'Duplicate memlet detected: "{e}". Please copy objects '
+                'rather than using multiple references to the same one', sdfg, state_id, eid)
+        references.add(id(e))
+        if id(e.data) in references:
+            raise InvalidSDFGEdgeError(
+                f'Duplicate memlet detected: "{e.data}". Please copy objects '
+                'rather than using multiple references to the same one', sdfg, state_id, eid)
+        references.add(id(e.data))
+
         # Edge validation
         try:
             e.data.validate(sdfg, state)
@@ -428,10 +508,17 @@ def validate_state(state: 'dace.sdfg.SDFGState',
 
                 # Bounds
                 if any(((minel + off) < 0) == True for minel, off in zip(e.data.subset.min_element(), arr.offset)):
-                    raise InvalidSDFGEdgeError("Memlet subset negative out-of-bounds", sdfg, state_id, eid)
+                    # In case of dynamic memlet, only output a warning
+                    if e.data.dynamic:
+                        warnings.warn(f'Potential negative out-of-bounds memlet subset: {e}')
+                    else:
+                        raise InvalidSDFGEdgeError("Memlet subset negative out-of-bounds", sdfg, state_id, eid)
                 if any(((maxel + off) >= s) == True
                        for maxel, s, off in zip(e.data.subset.max_element(), arr.shape, arr.offset)):
-                    raise InvalidSDFGEdgeError("Memlet subset out-of-bounds", sdfg, state_id, eid)
+                    if e.data.dynamic:
+                        warnings.warn(f'Potential out-of-bounds memlet subset: {e}')
+                    else:
+                        raise InvalidSDFGEdgeError("Memlet subset out-of-bounds", sdfg, state_id, eid)
             # Test other_subset as well
             if e.data.other_subset is not None and isinstance(other_subset_node, nd.AccessNode):
                 arr = sdfg.arrays[other_subset_node.data]
@@ -534,25 +621,57 @@ def validate_state(state: 'dace.sdfg.SDFGState',
 
 class InvalidSDFGError(Exception):
     """ A class of exceptions thrown when SDFG validation fails. """
-    def __init__(self, message: str, sdfg, state_id):
+    def __init__(self, message: str, sdfg: 'SDFG', state_id: int):
         self.message = message
         self.sdfg = sdfg
         self.state_id = state_id
+
+    def _getlineinfo(self, obj) -> str:
+        """
+        Tries to retrieve the source line information of an entity, if exists.
+
+        :param obj: The entity to retrieve.
+        :return: A string that contains the file and line of the issue, or an empty string if
+                 cannot be evaluated.
+        """
+        if not hasattr(obj, 'debuginfo'):
+            return ''
+
+        lineinfo: DebugInfo = obj.debuginfo
+        if lineinfo is None or not lineinfo.filename:
+            return ''
+
+        if lineinfo.start_line >= 0:
+            if lineinfo.start_column > 0:
+                return (f'File "{lineinfo.filename}", line {lineinfo.start_line}, ' f'column {lineinfo.start_column}')
+            return f'File "{lineinfo.filename}", line {lineinfo.start_line}'
+
+        return f'File "{lineinfo.filename}"'
 
     def to_json(self):
         return dict(message=self.message, sdfg_id=self.sdfg.sdfg_id, state_id=self.state_id)
 
     def __str__(self):
         if self.state_id is not None:
-            state = self.sdfg.nodes()[self.state_id]
-            return "%s (at state %s)" % (self.message, str(state.label))
+            state = self.sdfg.node(self.state_id)
+            locinfo = self._getlineinfo(state)
+            suffix = f' (at state {state.label})'
         else:
-            return "%s" % self.message
+            suffix = ''
+            if self.sdfg.number_of_nodes() >= 1:
+                locinfo = self._getlineinfo(self.sdfg.node(0))
+            else:
+                locinfo = ''
+
+        if locinfo:
+            locinfo = '\nOriginating from source code at ' + locinfo
+
+        return f'{self.message}{suffix}{locinfo}'
 
 
 class InvalidSDFGInterstateEdgeError(InvalidSDFGError):
     """ Exceptions of invalid inter-state edges in an SDFG. """
-    def __init__(self, message: str, sdfg, edge_id):
+    def __init__(self, message: str, sdfg: 'SDFG', edge_id: int):
         self.message = message
         self.sdfg = sdfg
         self.edge_id = edge_id
@@ -568,15 +687,32 @@ class InvalidSDFGInterstateEdgeError(InvalidSDFGError):
                 str(e.src),
                 str(e.dst),
             )
+            locinfo_src = self._getlineinfo(e.src)
+            locinfo_dst = self._getlineinfo(e.dst)
         else:
-            edgestr = ""
+            edgestr = ''
+            locinfo_src = locinfo_dst = ''
 
-        return "%s%s" % (self.message, edgestr)
+        if locinfo_src or locinfo_dst:
+            if locinfo_src == locinfo_dst:
+                locinfo = f'at {locinfo_src}'
+            elif locinfo_src and not locinfo_dst:
+                locinfo = f'at {locinfo_src}'
+            elif locinfo_dst and not locinfo_src:
+                locinfo = f'at {locinfo_src}'
+            else:
+                locinfo = f'between\n {locinfo_src}\n and\n {locinfo_dst}'
+
+            locinfo = f'\nOriginating from source code {locinfo}'
+        else:
+            locinfo = ''
+
+        return f'{self.message}{edgestr}{locinfo}'
 
 
 class InvalidSDFGNodeError(InvalidSDFGError):
     """ Exceptions of invalid nodes in an SDFG state. """
-    def __init__(self, message: str, sdfg, state_id, node_id):
+    def __init__(self, message: str, sdfg: 'SDFG', state_id: int, node_id: int):
         self.message = message
         self.sdfg = sdfg
         self.state_id = state_id
@@ -586,15 +722,22 @@ class InvalidSDFGNodeError(InvalidSDFGError):
         return dict(message=self.message, sdfg_id=self.sdfg.sdfg_id, state_id=self.state_id, node_id=self.node_id)
 
     def __str__(self):
-        state = self.sdfg.nodes()[self.state_id]
+        state = self.sdfg.node(self.state_id)
+        locinfo = ''
 
         if self.node_id is not None:
-            node = state.nodes()[self.node_id]
-            nodestr = ", node %s" % str(node)
+            from dace.sdfg.nodes import Node
+            node: Node = state.node(self.node_id)
+            nodestr = f', node {node}'
+            locinfo = self._getlineinfo(node)
         else:
-            nodestr = ""
+            nodestr = ''
+            locinfo = self._getlineinfo(state)
 
-        return "%s (at state %s%s)" % (self.message, str(state.label), nodestr)
+        if locinfo:
+            locinfo = '\nOriginating from source code at ' + locinfo
+
+        return f'{self.message} (at state {state.label}{nodestr}){locinfo}'
 
 
 class NodeNotExpandedError(InvalidSDFGNodeError):
@@ -602,13 +745,13 @@ class NodeNotExpandedError(InvalidSDFGNodeError):
     Exception that is raised whenever a library node was not expanded
     before code generation.
     """
-    def __init__(self, sdfg: 'dace.sdfg.SDFG', state_id: int, node_id: int):
+    def __init__(self, sdfg: 'SDFG', state_id: int, node_id: int):
         super().__init__('Library node not expanded', sdfg, state_id, node_id)
 
 
 class InvalidSDFGEdgeError(InvalidSDFGError):
     """ Exceptions of invalid edges in an SDFG state. """
-    def __init__(self, message: str, sdfg, state_id, edge_id):
+    def __init__(self, message: str, sdfg: 'SDFG', state_id: int, edge_id: int):
         self.message = message
         self.sdfg = sdfg
         self.state_id = state_id
@@ -618,7 +761,7 @@ class InvalidSDFGEdgeError(InvalidSDFGError):
         return dict(message=self.message, sdfg_id=self.sdfg.sdfg_id, state_id=self.state_id, edge_id=self.edge_id)
 
     def __str__(self):
-        state = self.sdfg.nodes()[self.state_id]
+        state = self.sdfg.node(self.state_id)
 
         if self.edge_id is not None:
             e = state.edges()[self.edge_id]
@@ -629,7 +772,12 @@ class InvalidSDFGEdgeError(InvalidSDFGError):
                 str(e.dst),
                 e.dst_conn,
             )
+            locinfo = self._getlineinfo(e.data)
         else:
-            edgestr = ""
+            edgestr = ''
+            locinfo = self._getlineinfo(state)
 
-        return "%s (at state %s%s)" % (self.message, str(state.label), edgestr)
+        if locinfo:
+            locinfo = '\nOriginating from source code at ' + locinfo
+
+        return f'{self.message} (at state {state.label}{edgestr}){locinfo}'

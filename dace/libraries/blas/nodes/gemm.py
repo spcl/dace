@@ -429,7 +429,7 @@ class ExpandGemmPBLAS(ExpandTransformation):
             lB = np.empty((K // Px, N // Py), dtype=_b.dtype)
             dace.comm.BCScatter(_a, lA, (M // Px, K // Py))
             dace.comm.BCScatter(_b, lB, (K // Px, N // Py))
-            lC = distr.MatMult(_a, _b, lA, lB, (M // Px, K // Py), (K // Px, N // Py))
+            lC = distr.MatMult(lA, lB, (M, N, K))
             dace.comm.BCGather(lC, _c, (M // Px, N // Py))
 
         return _gemm_pblas.to_sdfg()
@@ -446,7 +446,7 @@ class ExpandGemmFPGA1DSystolic(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, num_pes=32, tile_size_m=None):
-        '''
+        """
         GEMM node expansion.
 
         :param node: Node to expand.
@@ -459,7 +459,7 @@ class ExpandGemmFPGA1DSystolic(ExpandTransformation):
                             If set to None, no tiling is used, corresponding to setting the tile size
                             equal to the number of columns of B/C.
         :return:
-        '''
+        """
 
         ((edge_a, outer_array_a, shape_a, strides_a), (edge_b, outer_array_b, shape_b, strides_b),
          (edge_c, outer_array_c, shape_c, strides_c)) = _get_matmul_operands(node, parent_state, parent_sdfg)
