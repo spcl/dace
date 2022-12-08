@@ -26,10 +26,12 @@ class ExpandStencilCPU(dace.library.ExpandTransformation):
         # Tasklet code generation
         #######################################################################
 
-        code = node.code.as_string
+        # code = node.code.as_string
 
         # Replace relative indices with memlet names
-        code, field_accesses = parse_accesses(code, outputs)
+        # code, field_accesses = parse_accesses(code, outputs)
+        code, field_accesses, scalar_data = parse_accesses(
+            parent_sdfg, parent_state, node, outputs)
         iterator_mapping = make_iterator_mapping(node, field_accesses, shape)
         validate_vector_lengths(vector_lengths, iterator_mapping)
 
@@ -56,8 +58,8 @@ class ExpandStencilCPU(dace.library.ExpandTransformation):
         input_connectors = sum(
             [
                 [f"_{c}" for c in field_accesses[k].values()] for k in inputs
-                # Don't include scalar variables
-                if sum(iterator_mapping[k], 0) > 0
+                # Don't include scalar symbols but include scalar data
+                if sum(iterator_mapping[k], 0) > 0 or k in scalar_data
             ],
             [])
         output_connectors = sum([[f"_{c}" for c in field_accesses[k].values()] for k in outputs], [])
@@ -89,11 +91,14 @@ class ExpandStencilCPU(dace.library.ExpandTransformation):
             read_node = state.add_read(field)
             input_dims = iterator_mapping[field]
             input_shape = tuple(s for s, v in zip(shape, input_dims) if v)
-            data = sdfg.add_array(field, input_shape, dtype)
+            field, data = sdfg.add_array(field, input_shape, dtype)
             field_parameters = tuple(p for p, v in zip(parameters, input_dims) if v)
             for indices, connector in field_accesses[field].items():
                 access_str = ", ".join(f"{p} + ({i})" for p, i in zip(field_parameters, indices))
-                memlet = dace.Memlet(f"{field}[{access_str}]", dynamic=True)
+                if access_str:
+                    memlet = dace.Memlet(f"{field}[{access_str}]", dynamic=True)
+                else:
+                    memlet = dace.Memlet.from_array(field, data)
                 memlet.allow_oob = True
                 state.add_memlet_path(read_node, entry, tasklet, dst_conn=f"_{connector}", memlet=memlet)
 
@@ -113,7 +118,7 @@ class ExpandStencilCPU(dace.library.ExpandTransformation):
 
         # Add scalars as symbols
         for field_name, mapping in iterator_mapping.items():
-            if not any(mapping):
+            if field_name not in scalar_data and not any(mapping):
                 sdfg.add_symbol(field_name, parent_sdfg.symbols[field_name])
 
         #######################################################################

@@ -83,7 +83,8 @@ def parse_connectors(node, state, sdfg):
         field_to_desc[field] = desc
         field_to_edge[field] = e
         vector_lengths[field] = desc.veclen
-        shape = check_stencil_shape(shape, desc.shape)
+        if not isinstance(desc, dace.data.Scalar):
+            shape = check_stencil_shape(shape, desc.shape)
     for e in state.out_edges(node):
         field = e.src_conn
         outputs.append(field)
@@ -100,7 +101,8 @@ def parse_connectors(node, state, sdfg):
     return (inputs, outputs, shape, field_to_data, field_to_desc, field_to_edge, vector_lengths)
 
 
-def parse_accesses(code, outputs: List[str]):
+# def parse_accesses(code, outputs: List[str]):
+def parse_accesses(sdfg, state, node, outputs: List[str]):
     """
     Runs the subscript converter to extract accesses of the format a[0, -1] into
     their accesses tuple (0, -1) and a generated memlet name a_0_m1.
@@ -110,6 +112,7 @@ def parse_accesses(code, outputs: List[str]):
 
     # Run subscript converter
     converter = SubscriptConverter()
+    code = node.code.as_string
     new_ast = converter.visit(ast.parse(code))
     field_accesses: Dict[str, List[Tuple[int]]] = converter.mapping
 
@@ -132,7 +135,18 @@ def parse_accesses(code, outputs: List[str]):
         field_accesses = converter.mapping
     new_code = astutils.unparse(new_ast)
 
-    return new_code, field_accesses
+    # Add scalar data accesses (NOTE: supporting only scalar input)
+    scalar_data = set()
+    for c in node.in_connectors:
+        if c not in field_accesses:
+            e = list(state.in_edges_by_connector(node, c))[0]
+            name = dace.sdfg.find_input_arraynode(state, e).data
+            desc = sdfg.data(name)
+            if isinstance(desc, dace.data.Scalar):
+                field_accesses[c] = {tuple(): c}
+                scalar_data.add(c)
+
+    return new_code, field_accesses, scalar_data
 
 
 def make_iterator_mapping(node, field_accesses, shape) -> Dict[str, Tuple[int]]:
@@ -146,7 +160,11 @@ def make_iterator_mapping(node, field_accesses, shape) -> Dict[str, Tuple[int]]:
         if field_name in node.iterator_mapping:
             iterators = node.iterator_mapping[field_name]
         else:
-            iterators = tuple(True for _ in range(len(shape)))
+            # Scalar data access
+            if len(accesses) == 1 and list(accesses.keys())[0] == tuple():
+                iterators = tuple(False for _ in range(len(shape)))
+            else:
+                iterators = tuple(True for _ in range(len(shape)))
         iterator_mapping[field_name] = iterators
         num_dims = sum(iterators, 0)
         if num_dims == 0:

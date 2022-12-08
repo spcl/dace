@@ -42,7 +42,9 @@ class ExpandStencilIntelFPGA(dace.library.ExpandTransformation):
                 converter.convert(field, center_index)
 
         # Replace accesses in the code
-        code, field_accesses = parse_accesses(node.code.as_string, outputs)
+        # code, field_accesses = parse_accesses(node.code.as_string, outputs)
+        code, field_accesses, scalar_data = parse_accesses(
+            parent_sdfg, parent_state, node, outputs)
 
         iterator_mapping = make_iterator_mapping(node, field_accesses, shape)
         vector_length = validate_vector_lengths(vector_lengths, iterator_mapping)
@@ -55,7 +57,7 @@ class ExpandStencilIntelFPGA(dace.library.ExpandTransformation):
         for field_name in inputs:
             relative = field_accesses[field_name]
             dim_mask = iterator_mapping[field_name]
-            if not any(dim_mask):
+            if not any(dim_mask) and not field_name in scalar_data:
                 # This is a scalar, no buffer needed. Instead, the SDFG must
                 # take this as a symbol
                 scalars[field_name] = parent_sdfg.symbols[field_name]
@@ -203,7 +205,7 @@ class ExpandStencilIntelFPGA(dace.library.ExpandTransformation):
             sdfg.add_datadesc(data_name_outer, desc_outer)
 
             mapping = iterator_mapping[field_name]
-            is_array = not isinstance(desc_outer, dt.Stream)
+            is_array = not isinstance(desc_outer, (dt.Scalar, dt.Stream))
 
             # If this array is part of the initialization phase, it needs its
             # own iterator, which we need to instantiate and increment in the

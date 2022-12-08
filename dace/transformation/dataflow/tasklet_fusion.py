@@ -141,6 +141,7 @@ class TaskletFusion(pm.SingleStateTransformation):
     t1 = pm.PatternNode(nodes.Tasklet)
     data = pm.PatternNode(nodes.AccessNode)
     t2 = pm.PatternNode(nodes.Tasklet)
+    acc = pm.PatternNode(nodes.AccessNode)
 
     @classmethod
     def expressions(cls):

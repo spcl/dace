@@ -1,12 +1,14 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Transformation helper API. """
+import ast
 import copy
 import itertools
+import re
 from networkx import MultiDiGraph
 
 from dace.subsets import Range, Subset, union
 import dace.subsets as subsets
-from typing import Dict, List, Optional, Tuple, Set, Union
+from typing import Any, Dict, List, Optional, Tuple, Set, Union
 
 from dace import data, dtypes, symbolic
 from dace.codegen import control_flow as cf
@@ -1286,3 +1288,34 @@ def redirect_edge(state: SDFGState,
     new_edge = state.add_edge(new_src or edge.src, new_src_conn or edge.src_conn, new_dst or edge.dst, new_dst_conn
                               or edge.dst_conn, memlet)
     return new_edge
+
+
+class ConnectorRenamer(ast.NodeTransformer):
+    """ Renames connector names in Tasklet code.
+    """
+    def __init__(self, repl_dict: Dict[str, str]) -> None:
+        """ Initializes AST transformer.
+            :param repl_dict: Replacement dictionary.
+        """
+        self.repl_dict = repl_dict
+
+    def visit_Name(self, node: ast.Name) -> Any:
+        # Rename connector
+        if node.id in self.repl_dict:
+            node.id = self.repl_dict[node.id]
+        return self.generic_visit(node)
+
+
+def rename_connectors(tasklet, repl_dict):
+    """ Renames connectors based on the input replacement dictionary.
+    """
+    if tasklet.language is dtypes.Language.Python:
+        repl = ConnectorRenamer(repl_dict)
+        for stmt in tasklet.code.code:
+            repl.visit(stmt)
+    elif tasklet.language is dtypes.Language.CPP:
+        for old, new in repl_dict.items():
+            tasklet.code.code = re.sub(r'\b%s\b' % re.escape(old), new,
+                                        tasklet.code.as_string)
+    else:
+        raise NotImplementedError(f'{tasklet.language} is unsupported.')
