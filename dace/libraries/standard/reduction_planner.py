@@ -19,7 +19,8 @@ def combine(shape, strides, dims):
 
     new_stride_element = strides[dims[0]]
     for d in dims[0:]:
-        new_stride_element = min(new_stride_element, strides[d])
+        if (strides[d] < new_stride_element) == True:
+            new_stride_element = strides[d]
 
     combined_strides = strides[0:dims[0]]
     combined_strides.append(new_stride_element)
@@ -99,7 +100,7 @@ def simplify_input(shape, strides, axes):
         r = rem[1]
         s = shape[rem[0]]
         for i in range(len(out_strides)):
-            if out_strides[i] > r:
+            if (out_strides[i] > r) == True:
                 out_strides[i] //= s
 
     return shape, strides, axes, out_shape, out_strides
@@ -267,7 +268,7 @@ def get_reduction_schedule(in_array: Array,
         schedule.shared_mem_size = 32  # each block uses 32 shared memory locations
         schedule.sequential = [shape[axes[0]]]  # the 16 threads sum up the whole axis
 
-        if use_mini_warps and shape[contiguous_dimension] <= 16:
+        if use_mini_warps and (shape[contiguous_dimension] <= 16) == True:
             # we turn on mini_warps
             schedule.mini_warps = True
             schedule.num_mini_warps = warp_size // shape[contiguous_dimension]
@@ -279,14 +280,15 @@ def get_reduction_schedule(in_array: Array,
     num_threads = 1
     for t in schedule.block:
         num_threads *= t
-    if num_threads > 1024:
+    if (num_threads > 1024) == True:
         # too many threads per block
         schedule.error = 'Schedule is invalid (more than 1024 threads per block). Falling back to pure expansion.'
     whole_grid = schedule.additional_grid + schedule.grid
     last_grid_dim = 1
     for b in whole_grid[:-2]:
         last_grid_dim *= b
-    if whole_grid[-1] > 2147483647 or (len(whole_grid) > 1 and whole_grid[-2] > 65535) or last_grid_dim > 65535:
+    if (whole_grid[-1] > 2147483647) == True or (len(whole_grid) > 1
+                                                 and whole_grid[-2] > 65535) == True or (last_grid_dim > 65535) == True:
         # grid dimension must not exceed 2147483647, resp . 65535
         schedule.error = 'Schedule is invalid (some grid dimension too large). Falling back to pure expansion.'
 
