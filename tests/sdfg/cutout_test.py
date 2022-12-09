@@ -150,9 +150,22 @@ def test_cutout_implicit_array():
     c.validate()
 
 
+def test_cutout_init_map():
+    N = dace.symbol("N")
+
+    @dace.program
+    def init(A: dace.int32[N]):
+        A[:] = 0
+
+    sdfg = init.to_sdfg()
+    c = cutout.cutout_state(sdfg.start_state, *sdfg.start_state.nodes())
+    c.validate()
+
+
 if __name__ == '__main__':
     test_cutout_onenode()
     test_cutout_multinode()
     test_cutout_complex_case()
     test_cutout_scope_fail()
     test_cutout_implicit_array()
+    test_cutout_init_map()
