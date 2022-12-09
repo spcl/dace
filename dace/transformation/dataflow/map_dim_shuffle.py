@@ -6,7 +6,7 @@ from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.state import SDFGState
 from dace.transformation import transformation
-from dace.properties import make_properties, ShapeProperty
+from dace.properties import make_properties, ListProperty
 
 
 @make_properties
@@ -20,7 +20,7 @@ class MapDimShuffle(transformation.SingleStateTransformation):
     map_entry = transformation.PatternNode(nodes.MapEntry)
 
     # Properties
-    parameters = ShapeProperty(dtype=list, default=None, desc="Desired order of map parameters")
+    parameters = ListProperty(element_type=str, default=None, desc="Desired order of map parameters")
 
     @classmethod
     def expressions(cls):
@@ -31,6 +31,8 @@ class MapDimShuffle(transformation.SingleStateTransformation):
 
     def apply(self, graph: SDFGState, sdfg: SDFG):
         map_entry = self.map_entry
+        if self.parameters is None:
+            return
 
         if set(self.parameters) != set(map_entry.map.params):
             return

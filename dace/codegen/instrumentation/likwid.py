@@ -60,22 +60,27 @@ class LIKWIDInstrumentationCPU(InstrumentationProvider):
 
 #include <unistd.h>
 #include <string>
+#include <sys/types.h>
 
-#define MAX_NUM_EVENTS 20
+#define MAX_NUM_EVENTS 64
 '''
         global_stream.write(header_code, sdfg)
 
         init_code = f'''
 if(getenv("LIKWID_PIN"))
 {{
-    printf("ERROR: Instrumentation must not be wrapped by likwid-perfctr.\\n");
-    exit(1);
+    printf("Instrumentation must not be wrapped by likwid-perfctr. Results may be incorrect.\\n");
 }}
 
 setenv("LIKWID_FILEPATH", "{likwid_marker_file.absolute()}", 0);
-setenv("LIKWID_MODE", "1", 0);
-setenv("LIKWID_FORCE", "1", 1);
+// Mode = "0" (direct), "1" (accessdaemon), "2" (perf_event)
+setenv("LIKWID_MODE", "2", 0);
+setenv("LIKWID_FORCE", "1", 0);
 setenv("LIKWID_EVENTS", "{self._default_events}", 0);
+
+// Set pid for perf_event backend
+std::string execpid = std::to_string(getpid());
+setenv("LIKWID_PERF_PID", execpid.c_str(), 1);
 
 int num_threads = 1;
 int num_procs = 1;
