@@ -12,13 +12,16 @@ K = dace.symbol("K")
 NNZ = dace.symbol("NNZ")
 
 
-def make_sdfg(alpha: float, beta: float, implementation: str, dtype) -> dace.SDFG:
+def make_sdfg(transB: bool, alpha: float, beta: float, implementation: str, dtype) -> dace.SDFG:
     sdfg = dace.SDFG(name="CSRMM")
     sdfg.add_array("A_val", shape=(NNZ, ), dtype=dtype, transient=False)
     sdfg.add_array("A_row", shape=(N + 1, ), dtype=dace.int32, transient=False)
     sdfg.add_array("A_col", shape=(NNZ, ), dtype=dace.int32, transient=False)
-    sdfg.add_array("B", shape=(M, K), dtype=dtype, transient=False)
     sdfg.add_array("C", shape=(N, K), dtype=dtype, transient=False)
+    if transB:
+        sdfg.add_array("B", shape=(K, M), dtype=dtype, transient=False)
+    else:
+        sdfg.add_array("B", shape=(M, K), dtype=dtype, transient=False)
 
     state = sdfg.add_state("state", is_start_state=True)
     a_row_node = state.add_access("A_row")
@@ -27,7 +30,7 @@ def make_sdfg(alpha: float, beta: float, implementation: str, dtype) -> dace.SDF
     B_node = state.add_access("B")
     C_node = state.add_access("C")
 
-    library_node = CSRMM("csrmm", alpha=alpha, beta=beta)
+    library_node = CSRMM("csrmm", transB=transB, alpha=alpha, beta=beta)
     library_node.implementation = implementation
 
     state.add_node(library_node)
@@ -48,35 +51,50 @@ def make_sdfg(alpha: float, beta: float, implementation: str, dtype) -> dace.SDF
     return sdfg
 
 
-@pytest.mark.parametrize("alpha, beta, implementation, dtype", [
-    pytest.param(1.0, 0.0, "pure", dace.float32),
-    pytest.param(1.0, 0.0, "pure", dace.float64),
-    pytest.param(1.0, 1.0, "pure", dace.float32),
-    pytest.param(1.0, 1.0, "pure", dace.float64),
-    pytest.param(2.0, 2.0, "pure", dace.float32),
-    pytest.param(2.0, 2.0, "pure", dace.float64),
-    pytest.param(1.0, 0.0, "MKL", dace.float32, marks=pytest.mark.mkl),
-    pytest.param(1.0, 0.0, "MKL", dace.float64, marks=pytest.mark.mkl),
-    pytest.param(1.0, 1.0, "MKL", dace.float32, marks=pytest.mark.mkl),
-    pytest.param(1.0, 1.0, "MKL", dace.float64, marks=pytest.mark.mkl),
-    pytest.param(2.0, 1.0, "MKL", dace.float32, marks=pytest.mark.mkl),
-    pytest.param(2.0, 1.0, "MKL", dace.float64, marks=pytest.mark.mkl),
-    pytest.param(1.0, 0.0, "cuSPARSE", dace.float32, marks=pytest.mark.gpu),
-    pytest.param(1.0, 0.0, "cuSPARSE", dace.float64, marks=pytest.mark.gpu),
-    pytest.param(1.0, 1.0, "cuSPARSE", dace.float32, marks=pytest.mark.gpu),
-    pytest.param(1.0, 1.0, "cuSPARSE", dace.float64, marks=pytest.mark.gpu),
-    pytest.param(2.0, 1.0, "cuSPARSE", dace.float32, marks=pytest.mark.gpu),
-    pytest.param(2.0, 1.0, "cuSPARSE", dace.float64, marks=pytest.mark.gpu),
+@pytest.mark.parametrize("transB, alpha, beta, implementation, dtype", [
+    pytest.param(False, 1.0, 0.0, "pure", dace.float32),
+    pytest.param(False, 1.0, 0.0, "pure", dace.float64),
+    pytest.param(False, 1.0, 1.0, "pure", dace.float32),
+    pytest.param(False, 1.0, 1.0, "pure", dace.float64),
+    pytest.param(False, 2.0, 2.0, "pure", dace.float32),
+    pytest.param(False, 2.0, 2.0, "pure", dace.float64),
+    pytest.param(True, 1.0, 0.0, "pure", dace.float32),
+    pytest.param(True, 1.0, 0.0, "pure", dace.float64),
+    pytest.param(True, 1.0, 1.0, "pure", dace.float32),
+    pytest.param(True, 1.0, 1.0, "pure", dace.float64),
+    pytest.param(True, 2.0, 2.0, "pure", dace.float32),
+    pytest.param(True, 2.0, 2.0, "pure", dace.float64),
+    pytest.param(False, 1.0, 0.0, "MKL", dace.float32, marks=pytest.mark.mkl),
+    pytest.param(False, 1.0, 0.0, "MKL", dace.float64, marks=pytest.mark.mkl),
+    pytest.param(False, 1.0, 1.0, "MKL", dace.float32, marks=pytest.mark.mkl),
+    pytest.param(False, 1.0, 1.0, "MKL", dace.float64, marks=pytest.mark.mkl),
+    pytest.param(False, 2.0, 1.0, "MKL", dace.float32, marks=pytest.mark.mkl),
+    pytest.param(False, 2.0, 1.0, "MKL", dace.float64, marks=pytest.mark.mkl),
+    pytest.param(False, 1.0, 0.0, "cuSPARSE", dace.float32, marks=pytest.mark.gpu),
+    pytest.param(False, 1.0, 0.0, "cuSPARSE", dace.float64, marks=pytest.mark.gpu),
+    pytest.param(False, 1.0, 1.0, "cuSPARSE", dace.float32, marks=pytest.mark.gpu),
+    pytest.param(False, 1.0, 1.0, "cuSPARSE", dace.float64, marks=pytest.mark.gpu),
+    pytest.param(False, 2.0, 1.0, "cuSPARSE", dace.float32, marks=pytest.mark.gpu),
+    pytest.param(False, 2.0, 1.0, "cuSPARSE", dace.float64, marks=pytest.mark.gpu),
+    pytest.param(True, 1.0, 0.0, "cuSPARSE", dace.float32, marks=pytest.mark.gpu),
+    pytest.param(True, 1.0, 0.0, "cuSPARSE", dace.float64, marks=pytest.mark.gpu),
+    pytest.param(True, 1.0, 1.0, "cuSPARSE", dace.float32, marks=pytest.mark.gpu),
+    pytest.param(True, 1.0, 1.0, "cuSPARSE", dace.float64, marks=pytest.mark.gpu),
+    pytest.param(True, 2.0, 1.0, "cuSPARSE", dace.float32, marks=pytest.mark.gpu),
+    pytest.param(True, 2.0, 1.0, "cuSPARSE", dace.float64, marks=pytest.mark.gpu),
 ])
-def test_csrmm(alpha, beta, implementation, dtype):
-    sdfg = make_sdfg(alpha, beta, implementation, dtype)
+def test_csrmm(transB, alpha, beta, implementation, dtype):
+    sdfg = make_sdfg(transB, alpha, beta, implementation, dtype)
 
     n = 16
     m = 8
     k = 4
 
     A = np.random.random((n, m)).astype(dtype.as_numpy_dtype())
-    B = np.random.random((m, k)).astype(dtype.as_numpy_dtype())
+    if transB:
+        B = np.random.random((k, m)).astype(dtype.as_numpy_dtype())
+    else:
+        B = np.random.random((m, k)).astype(dtype.as_numpy_dtype())
     C = np.random.random((n, k)).astype(dtype.as_numpy_dtype())
     C_ = copy.deepcopy(C)
 
@@ -90,26 +108,42 @@ def test_csrmm(alpha, beta, implementation, dtype):
 
     sdfg(A_row=A_row, A_val=A_val, A_col=A_col, B=B, C=C, N=n, M=m, K=k, NNZ=nnz)
 
-    ref = alpha * (A_csr @ B) + beta * C_
+    if transB:
+        ref = alpha * (A_csr @ B.T) + beta * C_
+    else:
+        ref = alpha * (A_csr @ B) + beta * C_
+
     assert np.allclose(ref, C)
 
 
 if __name__ == "__main__":
-    test_csrmm(1.0, 0.0, "pure", dace.float32)
-    test_csrmm(1.0, 0.0, "pure", dace.float64)
-    test_csrmm(1.0, 1.0, "pure", dace.float32)
-    test_csrmm(1.0, 1.0, "pure", dace.float64)
-    test_csrmm(2.0, 2.0, "pure", dace.float32)
-    test_csrmm(2.0, 2.0, "pure", dace.float64)
-    test_csrmm(1.0, 0.0, "MKL", dace.float32)
-    test_csrmm(1.0, 0.0, "MKL", dace.float64)
-    test_csrmm(1.0, 1.0, "MKL", dace.float32)
-    test_csrmm(1.0, 1.0, "MKL", dace.float64)
-    test_csrmm(2.0, 2.0, "MKL", dace.float32)
-    test_csrmm(2.0, 2.0, "MKL", dace.float64)
-    test_csrmm(1.0, 0.0, "cuSPARSE", dace.float32)
-    test_csrmm(1.0, 0.0, "cuSPARSE", dace.float64)
-    test_csrmm(1.0, 1.0, "cuSPARSE", dace.float32)
-    test_csrmm(1.0, 1.0, "cuSPARSE", dace.float64)
-    test_csrmm(2.0, 2.0, "cuSPARSE", dace.float32)
-    test_csrmm(2.0, 2.0, "cuSPARSE", dace.float64)
+    test_csrmm(False, 1.0, 0.0, "pure", dace.float32)
+    test_csrmm(False, 1.0, 0.0, "pure", dace.float64)
+    test_csrmm(False, 1.0, 1.0, "pure", dace.float32)
+    test_csrmm(False, 1.0, 1.0, "pure", dace.float64)
+    test_csrmm(False, 2.0, 2.0, "pure", dace.float32)
+    test_csrmm(False, 2.0, 2.0, "pure", dace.float64)
+    test_csrmm(True, 1.0, 0.0, "pure", dace.float32)
+    test_csrmm(True, 1.0, 0.0, "pure", dace.float64)
+    test_csrmm(True, 1.0, 1.0, "pure", dace.float32)
+    test_csrmm(True, 1.0, 1.0, "pure", dace.float64)
+    test_csrmm(True, 2.0, 2.0, "pure", dace.float32)
+    test_csrmm(True, 2.0, 2.0, "pure", dace.float64)
+    test_csrmm(False, 1.0, 0.0, "MKL", dace.float32)
+    test_csrmm(False, 1.0, 0.0, "MKL", dace.float64)
+    test_csrmm(False, 1.0, 1.0, "MKL", dace.float32)
+    test_csrmm(False, 1.0, 1.0, "MKL", dace.float64)
+    test_csrmm(False, 2.0, 2.0, "MKL", dace.float32)
+    test_csrmm(False, 2.0, 2.0, "MKL", dace.float64)
+    test_csrmm(False, 1.0, 0.0, "cuSPARSE", dace.float32)
+    test_csrmm(False, 1.0, 0.0, "cuSPARSE", dace.float64)
+    test_csrmm(False, 1.0, 1.0, "cuSPARSE", dace.float32)
+    test_csrmm(False, 1.0, 1.0, "cuSPARSE", dace.float64)
+    test_csrmm(False, 2.0, 2.0, "cuSPARSE", dace.float32)
+    test_csrmm(False, 2.0, 2.0, "cuSPARSE", dace.float64)
+    test_csrmm(True, 1.0, 0.0, "cuSPARSE", dace.float32)
+    test_csrmm(True, 1.0, 0.0, "cuSPARSE", dace.float64)
+    test_csrmm(True, 1.0, 1.0, "cuSPARSE", dace.float32)
+    test_csrmm(True, 1.0, 1.0, "cuSPARSE", dace.float64)
+    test_csrmm(True, 2.0, 2.0, "cuSPARSE", dace.float32)
+    test_csrmm(True, 2.0, 2.0, "cuSPARSE", dace.float64)

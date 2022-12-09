@@ -190,7 +190,14 @@ class ExpandCSRMMPure(ExpandTransformation):
         inner_map_entry.add_out_connector("OUT_tmp_a_cols")
         inner_map_entry.add_out_connector("OUT_tmp_b")
 
-        k_map_entry, k_map_exit = nstate.add_map("spmm_3", dict(k=f"0:{str(array_b.shape[1])}"))
+        if node.transB:
+            B_rows = array_b.shape[1]
+            B_cols = array_b.shape[0]
+        else:
+            B_rows = array_b.shape[0]
+            B_cols = array_b.shape[1]
+
+        k_map_entry, k_map_exit = nstate.add_map("spmm_3", dict(k=f"0:{str(B_cols)}"))
         k_map_entry.add_in_connector("IN_tmp_a_vals_1")
         nstate.add_edge(inner_map_entry, "OUT_tmp_a_vals", k_map_entry, "IN_tmp_a_vals_1",
                         mm.Memlet.simple("_a_vals", "j"))
@@ -222,7 +229,7 @@ class ExpandCSRMMPure(ExpandTransformation):
         nstate.add_edge(k_map_entry, "OUT_tmp_a_cols_1", tasklet_ind, "index_a_cols_0",
                         mm.Memlet.simple("_a_cols", "j"))
         nstate.add_edge(k_map_entry, "OUT_tmp_b_1", tasklet_ind, "__ind_b",
-                        mm.Memlet.simple("_b", f"0:{array_b.shape[0]}, k"))
+                        mm.Memlet.simple("_b", f"k, 0:{B_rows}" if node.transB else f"0:{B_rows}, k"))
 
         tasklet_mult = nstate.add_tasklet("spmm", {
             "__a": None,
@@ -248,6 +255,9 @@ class ExpandCSRMMMKL(ExpandTransformation):
 
     @staticmethod
     def expansion(node, state, sdfg):
+        if node.transB:
+            raise NotImplementedError
+
         node.validate(sdfg, state)
         operands = _get_csrmm_operands(node, state, sdfg)
         arows = operands['_a_rows'][1]
@@ -393,7 +403,11 @@ class ExpandCSRMMCuSPARSE(ExpandTransformation):
         opt['func'] = func
 
         opt['opA'] = 'CUSPARSE_OPERATION_NON_TRANSPOSE'
-        opt['opB'] = 'CUSPARSE_OPERATION_NON_TRANSPOSE'
+
+        if node.transB:
+            opt['opB'] = 'CUSPARSE_OPERATION_TRANSPOSE'
+        else:
+            opt['opB'] = 'CUSPARSE_OPERATION_NON_TRANSPOSE'
 
         opt['layout'] = 'CUSPARSE_ORDER_ROW'
 
@@ -405,13 +419,19 @@ class ExpandCSRMMCuSPARSE(ExpandTransformation):
 
         opt['nrows'] = cdesc.shape[0]
         opt['ncols'] = cdesc.shape[1]
-        opt['arows'] = cdesc.shape[0]
-        opt['acols'] = bdesc.shape[0]
-        opt['bcols'] = bdesc.shape[1]
-        opt['annz'] = avals.shape[0]
-
-        opt['ldb'] = opt['ncols']
         opt['ldc'] = opt['ncols']
+
+        opt['brows'] = bdesc.shape[0]
+        opt['bcols'] = bdesc.shape[1]
+        opt['ldb'] = opt['bcols']
+
+        opt['arows'] = cdesc.shape[0]
+        if node.transB:
+            opt['acols'] = bdesc.shape[1]
+        else:
+            opt['acols'] = bdesc.shape[0]
+
+        opt['annz'] = avals.shape[0]
 
         call = """
             cusparseSpMatDescr_t matA;
@@ -424,10 +444,10 @@ class ExpandCSRMMCuSPARSE(ExpandTransformation):
                                                 CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
                                                 CUSPARSE_INDEX_BASE_ZERO, {compute}) );
             // Create dense matrix B
-            dace::sparse::CheckCusparseError( cusparseCreateDnMat(&matB, {acols}, {bcols}, {ldb}, {arr_prefix}_b,
+            dace::sparse::CheckCusparseError( cusparseCreateDnMat(&matB, {brows}, {bcols}, {ldb}, {arr_prefix}_b,
                                                 {compute}, {layout}) );
             // Create dense matrix C
-            dace::sparse::CheckCusparseError( cusparseCreateDnMat(&matC, {arows}, {bcols}, {ldc}, {arr_prefix}_c,
+            dace::sparse::CheckCusparseError( cusparseCreateDnMat(&matC, {nrows}, {ncols}, {ldc}, {arr_prefix}_c,
                                                 {compute}, {layout}) );
             // allocate an external buffer if needed
             dace::sparse::CheckCusparseError( cusparseSpMM_bufferSize(
@@ -463,9 +483,16 @@ class ExpandCSRMMCuSPARSE(ExpandTransformation):
 
         # If buffers are not on the GPU, copy them
         if needs_copy:
+            if node.beta != 0.0:
+                from dace.transformation.interstate import GPUTransformSDFG
+
+                nsdfg: dace.SDFG = ExpandCSRMMPure.expansion(node, state, sdfg)
+                nsdfg.apply_transformations(GPUTransformSDFG)
+                return nsdfg
+
             nsdfg = dace.SDFG('nested_gemm')
-            for name, desc in [('_a_rows', arows), ('_a_cols', acols), ('_a_vals', avals), ('_b', bdesc),
-                               ('_c', cdesc)]:
+            copies = [('_a_rows', arows), ('_a_cols', acols), ('_a_vals', avals), ('_b', bdesc), ('_c', cdesc)]
+            for name, desc in copies:
                 if isinstance(desc, dt.View):
                     dcopy = desc.as_array()
                 else:
@@ -506,13 +533,6 @@ class ExpandCSRMMCuSPARSE(ExpandTransformation):
             nstate.add_edge(tasklet, '_conn_c', gc, None, dace.Memlet.from_array('_c_gpu', cdesc))
             nstate.add_nedge(gc, c, dace.Memlet.from_array('_c', cdesc))
 
-            if node.beta != 0.0:
-                rc = nstate.add_read('_cin')
-                rgc = nstate.add_access('_cin_gpu')
-                tasklet.add_in_connector('_conn_c')
-                nstate.add_nedge(rc, rgc, dace.Memlet('_cin'))
-                nstate.add_edge(rgc, None, tasklet, '_conn_c', dace.Memlet('_cin_gpu'))
-
             return nsdfg
         # End of copy to GPU
 
@@ -531,6 +551,7 @@ class CSRMM(dace.sdfg.nodes.LibraryNode):
     default_implementation = None
 
     # Object fields
+    transB = properties.Property(dtype=bool, desc="Whether to transpose B before multiplying")
     alpha = properties.Property(allow_none=False,
                                 default=1,
                                 desc="A scalar which will be multiplied with A @ B before adding C")
@@ -538,12 +559,13 @@ class CSRMM(dace.sdfg.nodes.LibraryNode):
                                default=0,
                                desc="A scalar which will be multiplied with C before adding C")
 
-    def __init__(self, name, location=None, alpha=1, beta=0):
+    def __init__(self, name, location=None, transB=False, alpha=1, beta=0):
         super().__init__(name,
                          location=location,
                          inputs=({"_a_rows", "_a_cols", "_a_vals", "_b", "_cin"}
                                  if beta != 0 else {"_a_rows", "_a_cols", "_a_vals", "_b"}),
                          outputs={"_c"})
+        self.transB = transB
         self.alpha = alpha
         self.beta = beta
 
@@ -583,7 +605,10 @@ class CSRMM(dace.sdfg.nodes.LibraryNode):
             raise ValueError("matrix-matrix product only supported on matrices")
 
         A_rows = size0[0] - 1
-        B_cols = size3[1]
+        if self.transB:
+            B_cols = size3[0]
+        else:
+            B_cols = size3[1]
 
         # if size0[1] != size1[0]:
         #     raise ValueError("Inputs to matrix-matrix product " "must agree in the k-dimension")
