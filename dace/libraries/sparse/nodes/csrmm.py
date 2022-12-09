@@ -82,9 +82,6 @@ class ExpandCSRMMPure(ExpandTransformation):
 
     @staticmethod
     def expansion(node, state: SDFGState, sdfg: SDFG):
-        if node.opA != 0:
-            raise NotImplementedError
-
         nsdfg = SDFG(node.label + "_nsdfg")
 
         operands = _get_csrmm_operands(node, state, sdfg)
@@ -277,12 +274,7 @@ class ExpandCSRMMMKL(ExpandTransformation):
 
         opt['func'] = func
 
-        if node.opA == 1:
-            opt['opA'] = 'SPARSE_OPERATION_TRANSPOSE'
-        elif node.opA == 2:
-            opt['opA'] = 'SPARSE_OPERATION_CONJUGATE_TRANSPOSE'
-        else:
-            opt['opA'] = 'SPARSE_OPERATION_NON_TRANSPOSE'
+        opt['opA'] = 'SPARSE_OPERATION_NON_TRANSPOSE'
 
         opt['layout'] = 'SPARSE_LAYOUT_ROW_MAJOR'
 
@@ -302,8 +294,6 @@ class ExpandCSRMMMKL(ExpandTransformation):
         opt['ncols'] = cdesc.shape[1]
         opt['arows'] = cdesc.shape[0]
         opt['acols'] = bdesc.shape[0]
-        if node.opA != 0:
-            opt['arows'], opt['acols'] = opt['acols'], opt['arows']
 
         opt['ldb'] = opt['ncols']
         opt['ldc'] = opt['ncols']
@@ -402,13 +392,7 @@ class ExpandCSRMMCuSPARSE(ExpandTransformation):
 
         opt['func'] = func
 
-        if node.opA == 1:
-            opt['opA'] = 'CUSPARSE_OPERATION_TRANSPOSE'
-        elif node.opA == 2:
-            opt['opA'] = 'CUSPARSE_OPERATION_CONJUGATE_TRANSPOSE'
-        else:
-            opt['opA'] = 'CUSPARSE_OPERATION_NON_TRANSPOSE'
-
+        opt['opA'] = 'CUSPARSE_OPERATION_NON_TRANSPOSE'
         opt['opB'] = 'CUSPARSE_OPERATION_NON_TRANSPOSE'
 
         opt['layout'] = 'CUSPARSE_ORDER_ROW'
@@ -425,8 +409,6 @@ class ExpandCSRMMCuSPARSE(ExpandTransformation):
         opt['acols'] = bdesc.shape[0]
         opt['bcols'] = bdesc.shape[1]
         opt['annz'] = avals.shape[0]
-        if node.opA != 0:
-            opt['arows'], opt['acols'] = opt['acols'], opt['arows']
 
         opt['ldb'] = opt['ncols']
         opt['ldc'] = opt['ncols']
@@ -549,7 +531,6 @@ class CSRMM(dace.sdfg.nodes.LibraryNode):
     default_implementation = None
 
     # Object fields
-    opA = properties.Property(dtype=int, default=0, desc="0: non-transpose, 1: trasponse, 2: conjugate transpose")
     alpha = properties.Property(allow_none=False,
                                 default=1,
                                 desc="A scalar which will be multiplied with A @ B before adding C")
@@ -557,13 +538,12 @@ class CSRMM(dace.sdfg.nodes.LibraryNode):
                                default=0,
                                desc="A scalar which will be multiplied with C before adding C")
 
-    def __init__(self, name, location=None, opA=0, alpha=1, beta=0):
+    def __init__(self, name, location=None, alpha=1, beta=0):
         super().__init__(name,
                          location=location,
                          inputs=({"_a_rows", "_a_cols", "_a_vals", "_b", "_cin"}
                                  if beta != 0 else {"_a_rows", "_a_cols", "_a_vals", "_b"}),
                          outputs={"_c"})
-        self.opA = opA
         self.alpha = alpha
         self.beta = beta
 
@@ -603,9 +583,6 @@ class CSRMM(dace.sdfg.nodes.LibraryNode):
             raise ValueError("matrix-matrix product only supported on matrices")
 
         A_rows = size0[0] - 1
-        A_cols = size3[0]
-        if self.opA != 0:
-            A_rows, A_cols = A_cols, A_rows
         B_cols = size3[1]
 
         # if size0[1] != size1[0]:
