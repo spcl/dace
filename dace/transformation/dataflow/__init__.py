@@ -21,9 +21,7 @@ from .tiling import MapTiling
 from .tiling_with_overlap import MapTilingWithOverlap
 from .buffer_tiling import BufferTiling
 from .vectorization import Vectorization
-from .hbm_transform import HbmTransform
 from .copy_to_map import CopyToMap
-
 
 # Data-related
 from .stream_transient import StreamTransient, AccumulateTransient
@@ -51,6 +49,7 @@ from .gpu_transform_local_storage import GPUTransformLocalStorage
 from .mpi import MPITransformMap
 from .warp_tiling import WarpTiling
 from .bank_split import BankSplit
+from .hbm_transform import HbmTransform
 
 # Algorithmic
 from .matrix_product_transpose import MatrixProductTranspose
