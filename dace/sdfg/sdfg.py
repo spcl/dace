@@ -27,7 +27,6 @@ from dace.sdfg.scope import ScopeTree
 from dace.sdfg.replace import replace, replace_properties, replace_properties_dict
 from dace.sdfg.validation import (InvalidSDFGError, validate_sdfg)
 from dace.config import Config
-from dace.data import find_new_name
 from dace.frontend.python import astutils, wrappers
 from dace.sdfg import nodes as nd
 from dace.sdfg.graph import OrderedDiGraph, Edge, SubgraphView
@@ -1601,7 +1600,7 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         
         names = (self._arrays.keys() | self.constants_prop.keys() | self._pgrids.keys() | self._subarrays.keys()
                  | self._rdistrarrays.keys())
-        return find_new_name(name,names)
+        return dt.find_new_name(name,names)
                  
         
     def find_new_constant(self, name: str):
