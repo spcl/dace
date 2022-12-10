@@ -26,10 +26,10 @@ def matmul(A: dace.float32[M, K], B: dace.float32[K, N], C: dace.float32[M, N]):
 # This sample demonstrates the likwid instrumentation in DaCe.
 #
 # In order to run the sample, specific environment variables must be set
-# - LIKWID_NUM_THREADS: number of threads [1, num procs]
+# - OMP_NUM_THREADS: number of threads [1, num procs]
 # - LIKWID_EVENTS: set of counters to be measured [FLOPS_SP, CACHE, MEM, ...]
 #
-# Example: 'LIKWID_NUM_THREADS=2 LIKWID_EVENTS="FLOPS_SP" python matmul_likwid.py'
+# Example: 'OMP_NUM_THREADS=2 LIKWID_EVENTS="FLOPS_SP" python matmul_likwid.py'
 #
 # The available event set for your architecture can be found in the likwid
 # groups folder: https://github.com/RRZE-HPC/likwid/tree/master/groups

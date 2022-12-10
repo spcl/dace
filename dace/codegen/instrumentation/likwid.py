@@ -82,7 +82,13 @@ setenv("LIKWID_EVENTS", "{self._default_events}", 0);
 std::string execpid = std::to_string(getpid());
 setenv("LIKWID_PERF_PID", execpid.c_str(), 1);
 
-int num_threads = atoi(getenv("LIKWID_NUM_THREADS"));
+int num_threads = 0;
+if (getenv("OMP_NUM_THREADS") != NULL) {{
+    num_threads = atoi(getenv("OMP_NUM_THREADS"));
+}}
+else {{
+    num_threads = omp_get_num_procs();
+}}
 omp_set_num_threads(num_threads);
 
 std::string thread_pinning = "0";
