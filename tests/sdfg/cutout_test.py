@@ -7,6 +7,7 @@ import pytest
 
 def test_cutout_onenode():
     """ Tests cutout on a single node in a state. """
+
     @dace.program
     def simple_matmul(A: dace.float64[20, 20], B: dace.float64[20, 20]):
         return A @ B + 5
@@ -26,6 +27,7 @@ def test_cutout_onenode():
 
 def test_cutout_multinode():
     """ Tests cutout on multiple nodes in a state. """
+
     @dace.program
     def simple_matmul(A: dace.float64[20, 20], B: dace.float64[20, 20]):
         return A @ B + 5
@@ -117,8 +119,53 @@ def test_cutout_scope_fail():
         cutout.cutout_state(state, t)
 
 
+def test_cutout_implicit_array():
+    N = dace.symbol("N")
+    C = dace.symbol("C")
+    nnz = dace.symbol("nnz")
+
+    @dace.program
+    def spmm(
+        A_row: dace.int32[C + 1],
+        A_col: dace.int32[nnz],
+        A_val: dace.float32[nnz],
+        B: dace.float32[C, N],
+    ):
+        out = dace.define_local((C, N), dtype=B.dtype)
+
+        for i in dace.map[0:C]:
+            for j in dace.map[A_row[i]:A_row[i + 1]]:
+                for k in dace.map[0:N]:
+                    b_col = B[:, k]
+                    with dace.tasklet:
+                        w << A_val[j]
+                        b << b_col[A_col[j]]
+                        o >> out(0, lambda x, y: x + y)[i, k]
+                        o = w * b
+
+        return out
+
+    sdfg = spmm.to_sdfg()
+    c = cutout.cutout_state(sdfg.start_state, *sdfg.start_state.nodes())
+    c.validate()
+
+
+def test_cutout_init_map():
+    N = dace.symbol("N")
+
+    @dace.program
+    def init(A: dace.int32[N]):
+        A[:] = 0
+
+    sdfg = init.to_sdfg()
+    c = cutout.cutout_state(sdfg.start_state, *sdfg.start_state.nodes())
+    c.validate()
+
+
 if __name__ == '__main__':
     test_cutout_onenode()
     test_cutout_multinode()
     test_cutout_complex_case()
     test_cutout_scope_fail()
+    test_cutout_implicit_array()
+    test_cutout_init_map()

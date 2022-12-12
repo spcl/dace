@@ -318,7 +318,8 @@ def _create_unflatten_instruction(arg: ast.AST, global_vars: Dict[str, Any]) -> 
     try:
         # Constant-valued arguments stay as-is
         val = astutils.evalnode(arg, global_vars)
-        return (lambda *args: val), 0, True
+        if not symbolic.issymbolic(val):
+            return (lambda *args: val), 0, True
     except SyntaxError:
         pass
 

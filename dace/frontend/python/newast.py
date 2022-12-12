@@ -1375,7 +1375,14 @@ class ProgramVisitor(ExtNodeVisitor):
                             nested=True,
                             tmp_idx=self.sdfg._temp_transients + 1)
 
-        return pv.parse_program(node, is_tasklet)
+        try:
+            return pv.parse_program(node, is_tasklet)
+        except SkipCall:
+            raise
+        except Exception:
+            # Propagate line information upwards (for reporting) in case of exception
+            self.current_lineinfo = pv.current_lineinfo
+            raise
 
     def _symbols_from_params(self, params: List[Tuple[str, Union[str, dtypes.typeclass]]],
                              memlet_inputs: Dict[str, Memlet]) -> Dict[str, symbolic.symbol]:

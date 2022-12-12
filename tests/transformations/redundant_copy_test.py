@@ -77,7 +77,7 @@ def test_out_success():
                 views += 1
             else:
                 arrays += 1
-    assert views == 1
+    assert views == 0
     assert arrays == 4
     sdfg.validate()
 
@@ -92,9 +92,7 @@ def test_out_success():
                 E_ref[i, j, k] = A_arr[0, i, 2 + j] + A_arr[0, j, 2 + k]
 
     sdfg(A=A_arr, C=C_arr, E=E_arr)
-    # This fails, probably due to a bug in the code generator
-    # assert np.array_equal(A_arr[0, 0:3, 4], C_arr[1, 2, 0:3, 4])
-    assert np.array_equal(E_ref, E_arr)
+    assert np.array_equal(A_arr[0, 0:3, 4], C_arr[1, 2, 0:3, 4])
 
 
 def test_out_failure_subset_mismatch():

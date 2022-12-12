@@ -310,7 +310,7 @@ def test_gpu():
     run_nbody(dace.dtypes.DeviceType.GPU)
 
 
-@pytest.mark.skip(reason="Intel FPGA missing support for long long")
+@pytest.mark.skip(reason="Xilinx validation error, Intel argument overflow")
 @fpga_test(assert_ii_1=False)
 def test_fpga():
     return run_nbody(dace.dtypes.DeviceType.FPGA)

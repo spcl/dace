@@ -959,7 +959,8 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                             trace_type, trace_bank = parse_location_bank(trace_desc)
                             if (bank is not None and bank_type is not None
                                     and (bank != trace_bank or bank_type != trace_type)):
-                                raise cgx.CodegenError("Found inconsistent memory bank " f"specifier for {trace_name}.")
+                                raise cgx.CodegenError("Found inconsistent memory bank "
+                                                       f"specifier for {trace_name}.")
                             bank = trace_bank
                             bank_type = trace_type
 
@@ -1509,7 +1510,8 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
 
             if (not sum(copy_shape) == 1 and
                 (not isinstance(memlet.subset, subsets.Range) or any([step != 1 for _, _, step in memlet.subset]))):
-                raise NotImplementedError("Only contiguous copies currently " "supported for FPGA codegen.")
+                raise NotImplementedError("Only contiguous copies currently "
+                                          "supported for FPGA codegen.")
 
             if host_to_device or device_to_device:
                 host_dtype = sdfg.data(src_node.data).dtype
@@ -1626,8 +1628,9 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                 raise NotImplementedError("Reads from shift registers only supported from tasklets.")
 
             # Try to turn into degenerate/strided ND copies
+            state_dfg = sdfg.nodes()[state_id]
             copy_shape, src_strides, dst_strides, src_expr, dst_expr = (cpp.memlet_copy_to_absolute_strides(
-                self._dispatcher, sdfg, memlet, src_node, dst_node, packed_types=True))
+                self._dispatcher, sdfg, state_dfg, edge, src_node, dst_node, packed_types=True))
 
             dtype = src_node.desc(sdfg).dtype
             ctype = dtype.ctype
@@ -1757,7 +1760,8 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
     @staticmethod
     def make_opencl_parameter(name, desc):
         if isinstance(desc, dt.Array):
-            return (f"hlslib::ocl::Buffer<{desc.dtype.ctype}, " f"hlslib::ocl::Access::readWrite> &{name}")
+            return (f"hlslib::ocl::Buffer<{desc.dtype.ctype}, "
+                    f"hlslib::ocl::Access::readWrite> &{name}")
         else:
             return (desc.as_arg(with_types=True, name=name))
 
@@ -2017,12 +2021,18 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                                 elif np.issubdtype(np.dtype(end_type.dtype.type), np.unsignedinteger):
                                     loop_var_type = "size_t"
                     except (UnboundLocalError):
-                        raise UnboundLocalError('Pipeline scopes require ' 'specialized bound values')
+                        raise UnboundLocalError('Pipeline scopes require '
+                                                'specialized bound values')
                     except (TypeError):
                         # Raised when the evaluation of begin or skip fails.
                         # This could occur, for example, if they are defined in terms of other symbols, which
                         # is the case in a tiled map
                         pass
+
+                    # To enforce opencl type long instead of c type long long for intel fpga
+                    v = dace.config.Config.get("compiler", "fpga", "vendor")
+                    if v.casefold() == 'intel_fpga'.casefold():
+                        loop_var_type = loop_var_type.replace("long long", "long")
 
                     if is_degenerate[i]:
                         result.write("{{\nconst {} {} = {}; // Degenerate loop".format(

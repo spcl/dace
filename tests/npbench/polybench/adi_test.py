@@ -165,7 +165,7 @@ def test_gpu():
     run_adi(dace.dtypes.DeviceType.GPU)
 
 
-@pytest.mark.skip(reason="Intel FPGA missing support for long long")
+@pytest.mark.skip(reason="Intel FPGA argument overflow")
 @fpga_test(assert_ii_1=False)
 def test_fpga():
     return run_adi(dace.dtypes.DeviceType.FPGA)
