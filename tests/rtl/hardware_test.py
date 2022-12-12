@@ -428,8 +428,10 @@ def test_hardware_vadd_temporal_vectorization():
     '''
     Tests whether the multi-pumping optimization can be applied automatically by applying the temporal vectorization transformation. It starts from a numpy vector addition for generating the SDFG. This SDFG is then optimized by applying the vectorization, streaming memory, fpga and temporal vectorization transformations in that order.
     '''
-    # TODO !!!!! THIS TEST STALLS WITH VITIS 2021.2 !!!!!
-    # But it works fine for 2020.2
+    # TODO !!!!! THIS TEST STALLS IN HARDWARE EMULATION WITH VITIS 2021.2 !!!!!
+    # But it works fine for 2020.2 and 2022.2. It seems like everything but the
+    # last transaction correctly goes through just fine. The last transaction
+    # is never output by the floating point adder, but the inputs are consumed. 
     with dace.config.set_temporary('compiler', 'xilinx', 'frequency', value='"0:300\\|1:600"'):
         # Generate the test data and expected results
         size_n = 1024
