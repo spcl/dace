@@ -5,12 +5,14 @@ from dace.sdfg.analysis.schedule_tree import treenodes as tnodes
 from dace.sdfg.graph import NodeNotFoundError
 from typing import Tuple
 
-
 __df_nodes = (
     # tnodes.ViewNode, tnodes.RefSetNode,
     # tnodes.CopyNode, tnodes.DynScopeCopyNode,
-    tnodes.TaskletNode, tnodes.LibraryCall,
-    tnodes.MapScope, tnodes.ConsumeScope, tnodes.PipelineScope)
+    tnodes.TaskletNode,
+    tnodes.LibraryCall,
+    tnodes.MapScope,
+    tnodes.ConsumeScope,
+    tnodes.PipelineScope)
 
 
 def find_tnode_in_sdfg(tnode: tnodes.ScheduleTreeNode, top_level_sdfg: SDFG) -> Tuple[snodes.Node, SDFGState, SDFG]:
@@ -22,7 +24,8 @@ def find_tnode_in_sdfg(tnode: tnodes.ScheduleTreeNode, top_level_sdfg: SDFG) -> 
     raise NodeNotFoundError(f"Node {tnode} not found in SDFG.")
 
 
-def find_snode_in_tree(snode: snodes.Node, tree: tnodes.ScheduleTreeNode) -> Tuple[tnodes.ScheduleTreeScope, tnodes.ScheduleTreeNode]:
+def find_snode_in_tree(snode: snodes.Node,
+                       tree: tnodes.ScheduleTreeNode) -> Tuple[tnodes.ScheduleTreeScope, tnodes.ScheduleTreeNode]:
     pnode = None
     cnode = None
     frontier = [(tree, child) for child in tree.children]
