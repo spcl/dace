@@ -60,47 +60,43 @@ class LIKWIDInstrumentationCPU(InstrumentationProvider):
 
 #include <unistd.h>
 #include <string>
+#include <sys/types.h>
 
-#define MAX_NUM_EVENTS 20
+#define MAX_NUM_EVENTS 64
 '''
         global_stream.write(header_code, sdfg)
 
         init_code = f'''
 if(getenv("LIKWID_PIN"))
 {{
-    printf("ERROR: Instrumentation must not be wrapped by likwid-perfctr.\\n");
-    exit(1);
+    printf("Instrumentation must not be wrapped by likwid-perfctr. Results may be incorrect.\\n");
 }}
 
 setenv("LIKWID_FILEPATH", "{likwid_marker_file.absolute()}", 0);
-setenv("LIKWID_MODE", "1", 0);
-setenv("LIKWID_FORCE", "1", 1);
+// Mode = "0" (direct), "1" (accessdaemon), "2" (perf_event)
+setenv("LIKWID_MODE", "2", 0);
+setenv("LIKWID_FORCE", "1", 0);
 setenv("LIKWID_EVENTS", "{self._default_events}", 0);
 
-int num_threads = 1;
-int num_procs = 1;
-#pragma omp parallel
-{{
-    #pragma omp single
-    {{
-        num_threads = omp_get_num_threads();
-        num_procs = omp_get_num_procs();
-    }}
-}}
+// Set pid for perf_event backend
+std::string execpid = std::to_string(getpid());
+setenv("LIKWID_PERF_PID", execpid.c_str(), 1);
 
-if (num_threads > num_procs)
-{{
-    printf("ERROR: Number of threads larger than number of processors.\\n");
-    exit(1);
+int num_threads = 0;
+if (getenv("OMP_NUM_THREADS") != NULL) {{
+    num_threads = atoi(getenv("OMP_NUM_THREADS"));
 }}
+else {{
+    num_threads = omp_get_num_procs();
+}}
+omp_set_num_threads(num_threads);
 
 std::string thread_pinning = "0";
 for (int i = 1; i < num_threads; i++)
 {{
     thread_pinning += "," + std::to_string(i);
 }}
-const char* thread_pinning_c = thread_pinning.c_str();
-setenv("LIKWID_THREADS", thread_pinning_c, 1);
+setenv("LIKWID_THREADS", thread_pinning.c_str(), 1);
 
 LIKWID_MARKER_INIT;
 
@@ -108,7 +104,6 @@ LIKWID_MARKER_INIT;
 {{
     int thread_id = omp_get_thread_num();
     likwid_pinThread(thread_id);
-    LIKWID_MARKER_THREADINIT;
 }}
 '''
         codegen._initcode.write(init_code)

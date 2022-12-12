@@ -199,16 +199,15 @@ def run_resnet(device_type: dace.dtypes.DeviceType):
 
     # Compute ground truth and validate
     out_ref = resnet_basicblock_np(input, conv1, conv2, conv3)
-    assert np.allclose(out, out_ref)
+    assert np.allclose(out, out_ref, rtol=1e-4, atol=1e-5)
     return sdfg
 
 
-@pytest.mark.skip(reason="Validation")
 def test_cpu():
     run_resnet(dace.dtypes.DeviceType.CPU)
 
 
-@pytest.mark.skip(reason="Validation")
+@pytest.mark.skip(reason="Dynamic memory allocation")
 @pytest.mark.gpu
 def test_gpu():
     run_resnet(dace.dtypes.DeviceType.GPU)

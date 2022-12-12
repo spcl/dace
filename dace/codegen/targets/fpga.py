@@ -1710,8 +1710,9 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                 raise NotImplementedError("Reads from shift registers only supported from tasklets.")
 
             # Try to turn into degenerate/strided ND copies
+            state_dfg = sdfg.nodes()[state_id]
             copy_shape, src_strides, dst_strides, src_expr, dst_expr = (cpp.memlet_copy_to_absolute_strides(
-                self._dispatcher, sdfg, memlet, src_node, dst_node, packed_types=True))
+                self._dispatcher, sdfg, state_dfg, edge, src_node, dst_node, packed_types=True))
 
             dtype = src_node.desc(sdfg).dtype
             ctype = dtype.ctype
@@ -2109,6 +2110,11 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                         # This could occur, for example, if they are defined in terms of other symbols, which
                         # is the case in a tiled map
                         pass
+
+                    # To enforce opencl type long instead of c type long long for intel fpga
+                    v = dace.config.Config.get("compiler", "fpga", "vendor")
+                    if v.casefold() == 'intel_fpga'.casefold():
+                        loop_var_type = loop_var_type.replace("long long", "long")
 
                     if is_degenerate[i]:
                         result.write("{{\nconst {} {} = {}; // Degenerate loop".format(

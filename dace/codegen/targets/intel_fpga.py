@@ -416,7 +416,8 @@ DACE_EXPORTED void __dace_exit_intel_fpga({sdfg.name}_t *__state) {{
     def make_shift_register_write(self, defined_type, dtype, var_name, write_expr, index, read_expr, wcr, is_unpack,
                                   packing_factor, sdfg):
         if defined_type != DefinedType.Pointer:
-            raise TypeError("Intel shift register must be an array: " "{} is {}".format(var_name, defined_type))
+            raise TypeError("Intel shift register must be an array: "
+                            "{} is {}".format(var_name, defined_type))
         # Shift array
         arr_size = functools.reduce(lambda a, b: a * b, sdfg.data(var_name).shape, 1)
         res = """
@@ -565,7 +566,11 @@ for (int u_{name} = 0; u_{name} < {size} - {veclen}; ++u_{name}) {{
             if isinstance(p, dace.data.View):
                 continue
             arg = self.make_kernel_argument(p, pname, is_output, True)
+
             if arg is not None:
+                #change c type long long to opencl type long
+                arg = arg.replace("long long", "long")
+
                 kernel_args_opencl.append(arg)
                 kernel_args_host.append(p.as_arg(True, name=pname))
                 kernel_args_call.append(pname)
@@ -758,6 +763,9 @@ __kernel void \\
             ptrname = cpp.ptr(in_memlet.data, desc, sdfg, self._frame)
             defined_type, defined_ctype = self._dispatcher.defined_vars.get(ptrname, 1)
 
+            #change c type long long to opencl type long
+            defined_ctype = defined_ctype.replace("long long", "long")
+
             if isinstance(desc, dace.data.Array) and (desc.storage == dtypes.StorageType.FPGA_Global
                                                       or desc.storage == dtypes.StorageType.FPGA_Local):
                 # special case: in intel FPGA this must be handled properly to guarantee OpenCL compatibility
@@ -807,6 +815,10 @@ __kernel void \\
                 desc = sdfg.arrays[out_memlet.data]
                 ptrname = cpp.ptr(out_memlet.data, desc, sdfg, self._frame)
                 defined_type, defined_ctype = self._dispatcher.defined_vars.get(ptrname, 1)
+
+                #change c type long long to opencl type long
+                if defined_ctype.__contains__("long long"):
+                    defined_ctype = defined_ctype.replace("long long", "long")
 
                 if isinstance(desc, dace.data.Array) and (desc.storage == dtypes.StorageType.FPGA_Global
                                                           or desc.storage == dtypes.StorageType.FPGA_Local):
