@@ -74,6 +74,7 @@ class ScheduleType(aenum.AutoNumberEnum):
     FPGA_Device = ()
     Snitch = ()
     Snitch_Multicore = ()
+    FPGA_Multi_Pumped = () #: Used for double pumping
 
 
 # A subset of GPU schedule types
@@ -210,6 +211,7 @@ SCOPEDEFAULT_SCHEDULE = {
     ScheduleType.GPU_ThreadBlock: ScheduleType.Sequential,
     ScheduleType.GPU_ThreadBlock_Dynamic: ScheduleType.Sequential,
     ScheduleType.FPGA_Device: ScheduleType.FPGA_Device,
+    ScheduleType.FPGA_Multi_Pumped: ScheduleType.FPGA_Device,
     ScheduleType.SVE_Map: ScheduleType.Sequential,
     ScheduleType.Snitch: ScheduleType.Snitch,
     ScheduleType.Snitch_Multicore: ScheduleType.Snitch_Multicore
