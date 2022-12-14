@@ -3,9 +3,7 @@ from copy import deepcopy
 from dace import data as dt, Memlet, SDFG
 from dace.sdfg.analysis.schedule_tree import treenodes as tnodes
 from dace.sdfg.analysis.schedule_tree import utils as tutils
-from dace.sdfg.graph import NodeNotFoundError
 from typing import Dict
-from warnings import warn
 
 
 _dataflow_nodes = (tnodes.ViewNode, tnodes.RefSetNode, tnodes.CopyNode, tnodes.DynScopeCopyNode, tnodes.TaskletNode, tnodes.LibraryCall)
@@ -30,9 +28,10 @@ def _augment_data(data: Dict[str, dt.Data], map_scope: tnodes.MapScope, tree: tn
 
     # Augment data descriptors
     replace = dict()
-    for name, desc in data.items():
+    for name, nsdfg in data.items():
+        desc = nsdfg.arrays[name]
         if isinstance(desc, dt.Scalar):
-            sdfg.arrays[name] = dt.Array(desc.dtype, size, True, storage=desc.storage)
+            nsdfg.arrays[name] = dt.Array(desc.dtype, size, True, storage=desc.storage)
             replace[name] = True
         else:
             mult = desc.shape[0]
@@ -40,6 +39,13 @@ def _augment_data(data: Dict[str, dt.Data], map_scope: tnodes.MapScope, tree: tn
             new_strides = [s * mult for s in strides]
             desc.strides = (*new_strides, *desc.strides)
             replace[name] = False
+        if sdfg.parent:
+            nsdfg_node = nsdfg.parent_nsdfg_node
+            nsdfg_state = nsdfg.parent
+            nsdfg_node.out_connectors = {**nsdfg_node.out_connectors, name: None}
+            sdfg.arrays[name] = deepcopy(nsdfg.arrays[name])
+            access = nsdfg_state.add_access(name)
+            nsdfg_state.add_edge(nsdfg_node, name, access, None, Memlet.from_array(name, sdfg.arrays[name]))
     
     # Update memlets
     frontier = list(tree.children)
@@ -50,21 +56,22 @@ def _augment_data(data: Dict[str, dt.Data], map_scope: tnodes.MapScope, tree: tn
                 _update_memlets(data, node.in_memlets, index, replace)
                 _update_memlets(data, node.out_memlets, index, replace)
             except AttributeError:
-                subset = index if replace[node.target] else f"{index}, {node.memlet.subset}"
-                node.memlet = Memlet(data=node.target, subset=subset)
+                subset = index if replace[node.memlet.data] else f"{index}, {node.memlet.subset}"
+                node.memlet = Memlet(data=node.memlet.data, subset=subset)
         if hasattr(node, 'children'):
             frontier.extend(node.children)
 
 
-def map_fission(map_scope: tnodes.MapScope, tree: tnodes.ScheduleTreeNode, sdfg: SDFG) -> bool:
+def map_fission(map_scope: tnodes.MapScope, tree: tnodes.ScheduleTreeNode) -> bool:
     """
     Applies the MapFission transformation to the input MapScope.
 
     :param map_scope: The MapScope.
     :param tree: The ScheduleTree.
-    :param sdfg: The (top-level) SDFG.
     :return: True if the transformation applies successfully, otherwise False.
     """
+
+    sdfg = map_scope.sdfg
 
     ####################################
     # Check if MapFission can be applied
@@ -98,26 +105,20 @@ def map_fission(map_scope: tnodes.MapScope, tree: tnodes.ScheduleTreeNode, sdfg:
             #         if any(p in e.data.free_symbols for p in map.params):
             #             return False
     
-    data_to_augment = dict() 
-    for scope in partition:
+    data_to_augment = dict()
+    frontier = list(partition)
+    while len(frontier) > 0:
+        scope = frontier.pop()
         if isinstance(scope, _dataflow_nodes):
             try:
-                _, _, sd = tutils.find_tnode_in_sdfg(scope, sdfg)
                 for _, memlet in scope.out_memlets.items():
-                    data_to_augment[memlet.data] = sd.arrays[memlet.data]
-            except NodeNotFoundError:
-                warn(f"Tree node {scope} not found in SDFG {sdfg}. Switching to unsafe data lookup.")
-                for _, memlet in scope.out_memlets.items():
-                    for sd in sdfg.all_sdfgs_recursive():
-                        if memlet.data in sd.arrays:
-                            data_to_augment[memlet.data] = sd.arrays[memlet.data]
-                            break
-            except NotImplementedError:
-                warn(f"Tree node {scope} is unsupported. Switching to unsafe data lookup.")
-                for sd in sdfg.all_sdfgs_recursive():
-                    if scope.target in sd.arrays:
-                        data_to_augment[scope.target] = sd.arrays[scope.target]
-                        break
+                    if scope.sdfg.arrays[memlet.data].transient:
+                        data_to_augment[memlet.data] = scope.sdfg
+            except AttributeError:
+                if scope.target in scope.sdfg.arrays and scope.sdfg.arrays[scope.target].transient:
+                    data_to_augment[scope.target] = scope.sdfg
+        if hasattr(scope, 'children'):
+            frontier.extend(scope.children)
     _augment_data(data_to_augment, map_scope, tree, sdfg)
     
     parent_scope = tutils.find_parent(map_scope, tree)
@@ -127,5 +128,5 @@ def map_fission(map_scope: tnodes.MapScope, tree: tnodes.ScheduleTreeNode, sdfg:
         child_scope = partition.pop()
         if not isinstance(child_scope, list):
             child_scope = [child_scope]
-        scope = tnodes.MapScope(child_scope, deepcopy(map_scope.node))
+        scope = tnodes.MapScope(sdfg, False, child_scope, deepcopy(map_scope.node))
         parent_scope.children.insert(idx, scope)
