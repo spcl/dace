@@ -4619,3 +4619,69 @@ def _makeboolop(op: str, method: str):
 
 for op, method in _boolop_to_method.items():
     _makeboolop(op, method)
+
+
+# ScheduleTree-related replacements ###################################################################################
+
+
+@oprepo.replaces('dace.tree.tasklet')
+def _tasklet(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, label: StringLiteral, inputs: Dict[StringLiteral, str], outputs: Dict[StringLiteral, str], code: StringLiteral, language: dtypes.Language):
+    label = label.value
+    inputs = {k.value: v for k, v in inputs.items()}
+    outputs = {k.value: v for k, v in outputs.items()}
+    code = code.value
+    tasklet = state.add_tasklet(label, inputs.keys(), outputs.keys(), code, language)
+    for conn, name in inputs.items():
+        access = state.add_access(name)
+        state.add_edge(access, None, tasklet, conn, Memlet.from_array(name, sdfg.arrays[name]))
+    for conn, name in outputs.items():
+        access = state.add_access(name)
+        state.add_edge(tasklet, conn, access, None, Memlet.from_array(name, sdfg.arrays[name]))
+
+    # Handle scope output
+    for out in outputs.values():
+        for (outer_var, outer_rng, _), (var, rng) in pv.accesses.items():
+            if out == var:
+                if not (outer_var, outer_rng, 'w') in pv.accesses:
+                    pv.accesses[(outer_var, outer_rng, 'w')] = (out, rng)
+                pv.outputs[out] = (state, Memlet(data=outer_var, subset=outer_rng), [])
+                break
+
+
+@oprepo.replaces('dace.tree.library')
+def _library(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, ltype: type, label: StringLiteral, inputs: Dict[StringLiteral, str], outputs: Dict[StringLiteral, str], **kwargs):
+    label = label.value
+    inputs = {k.value: v for k, v in inputs.items()}
+    outputs = {k.value: v for k, v in outputs.items()}
+    tasklet = ltype(label, **kwargs)
+    state.add_node(tasklet)
+    for conn, name in inputs.items():
+        access = state.add_access(name)
+        state.add_edge(access, None, tasklet, conn, Memlet.from_array(name, sdfg.arrays[name]))
+    for conn, name in outputs.items():
+        access = state.add_access(name)
+        memlet = Memlet.from_array(name, sdfg.arrays[name])
+        state.add_edge(tasklet, conn, access, None, memlet)
+    
+    # Handle scope output
+    for out in outputs.values():
+        for (outer_var, outer_rng, _), (var, rng) in pv.accesses.items():
+            if out == var:
+                if not (outer_var, outer_rng, 'w') in pv.accesses:
+                    pv.accesses[(outer_var, outer_rng, 'w')] = (out, rng)
+                pv.outputs[out] = (state, Memlet(data=outer_var, subset=outer_rng), [])
+                break
+
+
+@oprepo.replaces('dace.tree.copy')
+def _tasklet(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, src: str, dst: str, wcr: str = None):
+    src_access = state.add_access(src)
+    dst_access = state.add_access(dst)
+    state.add_nedge(src_access, dst_access, Memlet.from_array(dst, sdfg.arrays[dst], wcr=None))
+
+    for (outer_var, outer_rng, _), (var, rng) in pv.accesses.items():
+        if dst == var:
+            if not (outer_var, outer_rng, 'w') in pv.accesses:
+                pv.accesses[(outer_var, outer_rng, 'w')] = (dst, rng)
+            pv.outputs[dst] = (state, Memlet(data=outer_var, subset=outer_rng), [])
+            break
