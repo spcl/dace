@@ -1499,13 +1499,13 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
                 except(TypeError, AttributeError, NameError, KeyError, ValueError, SyntaxError):
                      #use pown for integer exponent and usual pow for double exponent
                     right_value = cppunparse.cppunparse(self.visit(node.right), expr_semicolon=False)
-                    if "(double)" in right_value:
-                        right_value = right_value.replace("(double)", "")
-                        updated = ast.Name(id="pown({},{})".format(left_value, right_value))
-                        print("pown with exception")
-                    else:
-                        updated = ast.Name(id="pow({},{})".format(left_value, right_value))
-                        print("pow with exception")
+                    # if "(double)" in right_value:
+                    #     #right_value = right_value.replace("(double)", "")
+                    #     updated = ast.Name(id="pow({},{})".format(left_value, right_value))
+                    #     print("pown with exception")
+                    # else:
+                    updated = ast.Name(id="pow({},{})".format(left_value, right_value))
+                    print("pow with exception")
 
                 return ast.copy_location(updated, node)
                 
