@@ -460,6 +460,35 @@ def as_schedule_tree(sdfg: SDFG, in_place: bool = False, toplevel: bool = True) 
     return result
 
 
+def as_sdfg(tree: tn.ScheduleTreeScope) -> SDFG:
+    """
+    Converts a ScheduleTree to its SDFG representation.
+
+    :param tree: The ScheduleTree
+    :return: The ScheduleTree's SDFG representation
+    """
+
+    # Write tree as DaCe Python code.
+    code, _ = tree.as_python()
+
+    # Save DaCe Python code to temporary file.
+    import tempfile
+    tmp = tempfile.NamedTemporaryFile(suffix='.py', delete=False)
+    tmp.write(b'import dace\n')
+    tmp.write(b'import numpy\n')
+    tmp.write(bytes(code, encoding='utf-8'))
+    tmp.close()
+
+    # Load DaCe Python program from temporary file.
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(tmp.name.split('/')[-1][:-3], tmp.name)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    prog = eval(f"mod.{tree.sdfg.label}")
+
+    return prog.to_sdfg()
+
+
 if __name__ == '__main__':
     s = time.time()
     sdfg = SDFG.from_file(sys.argv[1])

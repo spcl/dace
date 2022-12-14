@@ -130,3 +130,5 @@ def map_fission(map_scope: tnodes.MapScope, tree: tnodes.ScheduleTreeNode) -> bo
             child_scope = [child_scope]
         scope = tnodes.MapScope(sdfg, False, child_scope, deepcopy(map_scope.node))
         parent_scope.children.insert(idx, scope)
+    
+    return True
