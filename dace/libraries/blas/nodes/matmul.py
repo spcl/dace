@@ -210,5 +210,7 @@ class MatMul(dace.sdfg.nodes.LibraryNode):
                                default=0,
                                desc="A scalar which will be multiplied with C before adding C")
 
-    def __init__(self, name, location=None):
+    def __init__(self, name, location=None, alpha=1, beta=0):
+        self.alpha = alpha
+        self.beta = beta
         super().__init__(name, location=location, inputs={"_a", "_b"}, outputs={"_c"})
