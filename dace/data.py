@@ -242,6 +242,10 @@ class Data:
     def as_arg(self, with_types=True, for_call=False, name=None):
         """Returns a string for a C++ function signature (e.g., `int *A`). """
         raise NotImplementedError
+    
+    def as_python_arg(self, with_types=True, for_call=False, name=None):
+        """Returns a string for a Data-Centric Python function signature (e.g., `A: dace.int32[M]`). """
+        raise NotImplementedError
 
     @property
     def free_symbols(self) -> Set[symbolic.SymbolicType]:
@@ -419,6 +423,13 @@ class Scalar(Data):
         if not with_types or for_call:
             return name
         return self.dtype.as_arg(name)
+    
+    def as_python_arg(self, with_types=True, for_call=False, name=None):
+        if self.storage is dtypes.StorageType.GPU_Global:
+            return Array(self.dtype, [1]).as_python_arg(with_types, for_call, name)
+        if not with_types or for_call:
+            return name
+        return f"{name}: {dtypes.TYPECLASS_TO_STRING[self.dtype].replace('::', '.')}"
 
     def sizes(self):
         return None
@@ -689,6 +700,13 @@ class Array(Data):
         if self.may_alias:
             return str(self.dtype.ctype) + ' *' + arrname
         return str(self.dtype.ctype) + ' * __restrict__ ' + arrname
+    
+    def as_python_arg(self, with_types=True, for_call=False, name=None):
+        arrname = name
+
+        if not with_types or for_call:
+            return arrname
+        return f"{arrname}: {dtypes.TYPECLASS_TO_STRING[self.dtype].replace('::', '.')}{list(self.shape)}"
 
     def sizes(self):
         return [d.name if isinstance(d, symbolic.symbol) else str(d) for d in self.shape]
