@@ -597,6 +597,14 @@ namespace dace {
                 v = _wcr_fixed<REDTYPE, T>()(v, __shfl_xor_sync(0xffffffff, v, i));
             return v;
         }
+
+        template<int NUM_MW>
+        static DACE_DFI T mini_reduce(T v)
+        {
+            for (int i = 1; i < NUM_MW; i = i * 2)
+                v = _wcr_fixed<REDTYPE, T>()(v, __shfl_xor_sync(0xffffffff, v, i));
+            return v;
+        }
     };
 #endif
 

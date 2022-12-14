@@ -123,7 +123,7 @@ def iterate_distributed_subset(desc: dt.Array, access_memlet: memlet.Memlet, is_
     """
     :param desc: The array accessed by the memlet
     :param access_memlet: The memlet
-    :param is_write: If we care about the write or read direction. is_write means we write to desc, 
+    :param is_write: If we care about the write or read direction. is_write means we write to desc,
         not is_write means we read from it
     :return: if access_memlet contains a distributed subset the method will count from the lower to the upper
         end of it. Otherwise returns 0 once.
@@ -352,6 +352,7 @@ class FPGACodeGen(TargetCodeGenerator):
         self._cpu_codegen = self._dispatcher.get_generic_node_dispatcher()
 
         self._host_codes = []
+        self._ip_codes = []
         self._kernel_codes = []
         # any other kind of generated file if any (name, code object)
         self._other_codes = {}
@@ -363,7 +364,8 @@ class FPGACodeGen(TargetCodeGenerator):
 
         self._decouple_array_interfaces = False
         # Register additional FPGA dispatchers
-        self._dispatcher.register_map_dispatcher([dtypes.ScheduleType.FPGA_Device], self)
+        self._dispatcher.register_map_dispatcher(
+            [dtypes.ScheduleType.FPGA_Device, dtypes.ScheduleType.FPGA_Multi_Pumped], self)
 
         self._dispatcher.register_state_dispatcher(self, predicate=is_fpga_kernel)
 
@@ -387,6 +389,8 @@ class FPGACodeGen(TargetCodeGenerator):
                     # register this as copy dispatcher only if the destination is scheduled on FPGA
                     self._dispatcher.register_copy_dispatcher(storage_from, storage_to, dtypes.ScheduleType.FPGA_Device,
                                                               self)
+                    self._dispatcher.register_copy_dispatcher(storage_from, storage_to,
+                                                              dtypes.ScheduleType.FPGA_Multi_Pumped, self)
                 else:
                     self._dispatcher.register_copy_dispatcher(storage_from, storage_to, None, self)
         self._dispatcher.register_copy_dispatcher(dtypes.StorageType.FPGA_Global, dtypes.StorageType.CPU_Heap, None,
@@ -407,6 +411,39 @@ class FPGACodeGen(TargetCodeGenerator):
 
     @property
     def has_finalizer(self):
+        return False
+
+    def find_rtl_tasklet(self, subgraph: ScopeSubgraphView):
+        '''
+        Finds a tasklet with SystemVerilog as its language, within the given subgraph, if it contains one.
+
+        :param subgraph: The subgraph to check. 
+        :return: The tasklet node if one exists, None otherwise. 
+        '''
+        for n in subgraph.nodes():
+            if isinstance(n, dace.nodes.NestedSDFG):
+                for sg in dace.sdfg.concurrent_subgraphs(n.sdfg.start_state):
+                    node = self.find_rtl_tasklet(sg)
+                    if node:
+                        return node
+            elif isinstance(n, dace.nodes.Tasklet) and n.language == dace.dtypes.Language.SystemVerilog:
+                return n
+        return None
+
+    def is_multi_pumped_subgraph(self, subgraph: ScopeSubgraphView):
+        '''
+        Checks whether the given subgraph is a multi-pumped subgraph. A subgraph is multi-pumped if it contains a map whose schedule is set to multi-pumped.
+
+        :param subgraph: The subgraph to check.
+        :return: True if the given subgraph is a multi-pumped subgraph.
+        '''
+        for n in subgraph.nodes():
+            if isinstance(n, dace.nodes.NestedSDFG):
+                for sg in dace.sdfg.concurrent_subgraphs(n.sdfg.start_state):
+                    if self.is_multi_pumped_subgraph(sg):
+                        return True
+            elif isinstance(n, dace.nodes.MapEntry) and n.schedule == dace.ScheduleType.FPGA_Multi_Pumped:
+                return True
         return False
 
     def preprocess(self, sdfg: SDFG) -> None:
@@ -554,6 +591,13 @@ class FPGACodeGen(TargetCodeGenerator):
             for kern, kern_id in kernels:
                 # Generate all kernels in this state
                 subgraphs = dace.sdfg.concurrent_subgraphs(kern)
+                single_sgs: list(ScopeSubgraphView) = []
+                multi_sgs: list(ScopeSubgraphView) = []
+                for sg in subgraphs:
+                    if self.is_multi_pumped_subgraph(sg):
+                        multi_sgs.append(sg)
+                    else:
+                        single_sgs.append(sg)
                 shared_transients = set(sdfg.shared_transients())
 
                 # Allocate global memory transients, unless they are shared with
@@ -573,7 +617,6 @@ class FPGACodeGen(TargetCodeGenerator):
                 # If this kernels comes from a Nested SDFG, use that name also
                 if sdfg.parent_nsdfg_node is not None:
                     kernel_name = f"{sdfg.parent_nsdfg_node.label}_{state.label}_{kern_id}_{sdfg.sdfg_id}"
-
                 else:
                     kernel_name = f"{state.label}_{kern_id}_{sdfg.sdfg_id}"
 
@@ -584,10 +627,26 @@ class FPGACodeGen(TargetCodeGenerator):
 
                 self._kernels_names_to_id[kernel_name] = kern_id
 
+                if len(multi_sgs) != 0:
+                    # Currently, there is only added one additional multi pumped per state. In the future, when we can
+                    # emit multi-pumped kernels that to not consist of directly connected subgraphs, more than 1 should
+                    # be added.
+                    self._num_kernels += 1
+
                 # Generate kernel code
-                self.generate_kernel(sdfg, state, kernel_name, subgraphs, function_stream, callsite_stream,
+                self.generate_kernel(sdfg, state, kernel_name, single_sgs, function_stream, callsite_stream,
                                      state_host_header_stream, state_host_body_stream, instrumentation_stream,
                                      state_parameters, kern_id)
+
+                if len(multi_sgs) != 0:
+                    func_stream = CodeIOStream()
+                    call_stream = CodeIOStream()
+                    ignore = CodeIOStream()
+                    # TODO should be able to generate multiple 'pumps'. e.g. pump b and d in
+                    # a > b > c > d > e
+                    # Currently, it only works if the subgraphs are directly chained
+                    self.generate_kernel(sdfg, state, f'{kernel_name}_pumped', multi_sgs, func_stream, call_stream,
+                                         state_host_header_stream, state_host_body_stream, ignore, state_parameters, 42)
 
             kernel_args_call_host = []
             kernel_args_opencl = []
@@ -717,7 +776,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
         """
         Determines the parameters that must be passed to the passed list of
         subgraphs, as well as to the global kernel.
-        
+
         :return: A tuple with the following six entries:
             - Data container parameters that should be passed from the
             host to the FPGA kernel.
@@ -739,6 +798,12 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
         shared_data = self.shared_data(subgraphs)
         # Transients that are accessed in other states in this SDFG
         used_outside = sdfg.shared_transients()
+        transients = [t for t in sdfg.transients() if t not in used_outside]
+        datanodes = set()
+        for sg in subgraphs:
+            for n in sg.data_nodes():
+                datanodes.add(n.data)
+        used_inside = [dn for dn in datanodes if dn in transients]
 
         # Build a dictionary of arrays to arbitrary data nodes referring to
         # them, needed to trace memory bank assignments and to pass to the array
@@ -758,6 +823,8 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
         subgraph_parameters = collections.OrderedDict()  # {subgraph: [params]}
         nested_global_transients = set()
         # [(Is an output, dataname string, data object, interface)]
+        # TODO rephrase is_output. Currently it is "Is an output from the main kernel", but in the future there can be
+        # more kernels, so make it "is output from current subgraph", but then it needs to map to each subgraph.
         external_streams: Set[tuple[bool, str, dt.Data, dict[str, int]]] = set()
 
         # Mapping from global arrays to memory interfaces
@@ -794,42 +861,58 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
             data_to_node.update(
                 {node.data: node
                  for node in subgraph.nodes() if isinstance(node, dace.sdfg.nodes.AccessNode)})
-            is_rtl_subgraph = any([isinstance(node, nodes.RTLTasklet) for node in subgraph.nodes()])
+            is_rtl_subgraph = self.find_rtl_tasklet(subgraph)
+            is_multi_subgraph = self.is_multi_pumped_subgraph(subgraph)
             subsdfg = subgraph.parent
             candidates = []  # type: List[Tuple[bool,str,Data]]
             # [(is an output, dataname string, data object)]
             array_to_banks_used_out: Dict[str, Set[int]] = {}
             array_to_banks_used_in: Dict[str, Set[int]] = {}
-            for n in subgraph.source_nodes():
+            sources = subgraph.source_nodes()
+            for n in sources:
                 # Check if the node is connected to an RTL tasklet, in which
                 # case it should be an external stream
                 is_external = is_rtl_subgraph
+                is_multi = is_multi_subgraph
                 is_output = True
-                if not is_external and self._num_kernels > 1:
+                if not is_external and not is_multi and self._num_kernels > 1:
                     if is_external_stream(n, subgraph):
                         is_external = True
                         is_output = False
 
-                if is_external:
-                    external_streams |= {(is_output, e.data.data, subsdfg.arrays[e.data.data], None)
-                                         for e in state.out_edges(n)
-                                         if isinstance(subsdfg.arrays[e.data.data], dt.Stream)}
+                if is_multi:
+                    if n.data in shared_data:
+                        is_external = False
+                    elif is_external_stream(n, subgraph):
+                        is_external = True
+                        is_output = False
+
+                if is_external and isinstance(subsdfg.arrays[n.data], dt.Stream):
+                    external_streams.add((is_output, n.data, subsdfg.arrays[n.data], None))
                 else:
                     candidates += [(False, e.data.data, subsdfg.arrays[e.data.data]) for e in state.in_edges(n)]
-            for n in subgraph.sink_nodes():
+
+            sinks = subgraph.sink_nodes()
+            for n in sinks:
                 # Check if the node is connected to an RTL tasklet, in which
                 # case it should be an external stream
                 is_external = is_rtl_subgraph
+                is_multi = is_multi_subgraph
                 is_output = False
-                if not is_external and self._num_kernels > 1:
+                if not is_external and not is_multi and self._num_kernels > 1:
                     if is_external_stream(n, subgraph):
                         is_external = True
                         is_output = True
 
-                if is_external:
-                    external_streams |= {(is_output, e.data.data, subsdfg.arrays[e.data.data], None)
-                                         for e in state.in_edges(n)
-                                         if isinstance(subsdfg.arrays[e.data.data], dt.Stream)}
+                if is_multi:
+                    if n.data in shared_data:
+                        is_external = False
+                    elif is_external_stream(n, subgraph):
+                        is_external = True
+                        is_output = True
+
+                if is_external and isinstance(subsdfg.arrays[n.data], dt.Stream):
+                    external_streams.add((is_output, n.data, subsdfg.arrays[n.data], None))
                 else:
                     candidates += [(True, e.data.data, subsdfg.arrays[e.data.data]) for e in state.out_edges(n)]
             # Find other data nodes that are used internally
@@ -884,7 +967,6 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                 # Ignore views, as these never need to be explicitly passed
                 if isinstance(desc, dt.View):
                     continue
-                # Only distinguish between inputs and outputs for arrays
                 if not isinstance(desc, dt.Array):
                     is_output = None
                 # If this is a global array, assign the correct interface ID and
@@ -1628,8 +1710,9 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
                 raise NotImplementedError("Reads from shift registers only supported from tasklets.")
 
             # Try to turn into degenerate/strided ND copies
+            state_dfg = sdfg.nodes()[state_id]
             copy_shape, src_strides, dst_strides, src_expr, dst_expr = (cpp.memlet_copy_to_absolute_strides(
-                self._dispatcher, sdfg, memlet, src_node, dst_node, packed_types=True))
+                self._dispatcher, sdfg, state_dfg, edge, src_node, dst_node, packed_types=True))
 
             dtype = src_node.desc(sdfg).dtype
             ctype = dtype.ctype
@@ -1780,7 +1863,7 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
         if hasattr(self, method_name):
 
             if hasattr(node, "schedule") and node.schedule not in [
-                    dtypes.ScheduleType.Default, dtypes.ScheduleType.FPGA_Device
+                    dtypes.ScheduleType.Default, dtypes.ScheduleType.FPGA_Device, dtypes.ScheduleType.FPGA_Multi_Pumped
             ]:
                 warnings.warn("Found schedule {} on {} node in FPGA code. "
                               "Ignoring.".format(node.schedule,
@@ -2187,8 +2270,11 @@ std::cout << "FPGA program \\"{state.label}\\" executed in " << elapsed << " sec
         self._in_device_code = False
         self._cpu_codegen._packed_types = False
 
+        # Check if this is a multi pumped kernel
+        is_multi_pumped = all([self.is_multi_pumped_subgraph(sg) for sg in subgraphs])
+
         # Store code strings to be passed to compilation phase
-        self._kernel_codes.append((kernel_name, kernel_stream.getvalue()))
+        self._kernel_codes.append((kernel_name, kernel_stream.getvalue(), is_multi_pumped))
 
         self._allocated_global_arrays = set()
 

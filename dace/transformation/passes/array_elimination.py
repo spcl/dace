@@ -7,7 +7,7 @@ from dace.sdfg import nodes
 from dace.sdfg.analysis import cfg
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.dataflow import (RedundantArray, RedundantReadSlice, RedundantSecondArray, RedundantWriteSlice,
-                                          SqueezeViewRemove, UnsqueezeViewRemove)
+                                          SqueezeViewRemove, UnsqueezeViewRemove, RemoveSliceView)
 from dace.transformation.passes import analysis as ap
 from dace.transformation.transformation import SingleStateTransformation
 
@@ -68,6 +68,9 @@ class ArrayElimination(ppl.Pass):
             # Update access nodes with merged nodes
             access_nodes = {k: [n for n in v if n not in removed_nodes] for k, v in access_nodes.items()}
 
+            # Remove redundant views
+            removed_nodes |= self.remove_redundant_views(sdfg, state, access_nodes)
+
             # Remove redundant copies and views
             removed_nodes |= self.remove_redundant_copies(sdfg, state, removable_data, access_nodes)
 
@@ -117,6 +120,28 @@ class ArrayElimination(ppl.Pass):
                     # Remove merged node and associated edges
                     state.remove_node(node)
                     removed_nodes.add(node)
+        return removed_nodes
+
+    def remove_redundant_views(self, sdfg: SDFG, state: SDFGState, access_nodes: Dict[str, List[nodes.AccessNode]]):
+        """
+        Removes access nodes that contain views, which can be represented normally by memlets. For example, slices.
+        """
+        removed_nodes: Set[nodes.AccessNode] = set()
+        xforms = [RemoveSliceView()]
+        state_id = sdfg.node_id(state)
+
+        for nodeset in access_nodes.values():
+            for anode in list(nodeset):
+                for xform in xforms:
+                    # Quick path to setup match
+                    candidate = {type(xform).view: anode}
+                    xform.setup_match(sdfg, sdfg.sdfg_id, state_id, candidate, 0, override=True)
+
+                    # Try to apply
+                    if xform.can_be_applied(state, 0, sdfg):
+                        xform.apply(state, sdfg)
+                        removed_nodes.add(anode)
+                        nodeset.remove(anode)
         return removed_nodes
 
     def remove_redundant_copies(self, sdfg: SDFG, state: SDFGState, removable_data: Set[str],

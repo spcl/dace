@@ -1032,12 +1032,26 @@ def propagate_memlets_nested_sdfg(parent_sdfg, parent_state, nsdfg_node):
                 # Also make sure that there's no symbol in the border memlet's
                 # range that only exists inside the nested SDFG. If that's the
                 # case, use the entire range.
-                if border_memlet.src_subset is not None and any(s not in outer_symbols
-                                                                for s in border_memlet.src_subset.free_symbols):
-                    border_memlet.src_subset = subsets.Range.from_array(sdfg.arrays[border_memlet.data])
-                if border_memlet.dst_subset is not None and any(s not in outer_symbols
-                                                                for s in border_memlet.dst_subset.free_symbols):
-                    border_memlet.dst_subset = subsets.Range.from_array(sdfg.arrays[border_memlet.data])
+                if border_memlet.src_subset is not None:
+                    fallback_subset = subsets.Range.from_array(sdfg.arrays[border_memlet.data])
+                    for i, rng in enumerate(border_memlet.src_subset):
+                        fall_back = False
+                        for item in rng:
+                            if any(str(s) not in outer_symbols.keys() for s in item.free_symbols):
+                                fall_back = True
+                                break
+                        if fall_back:
+                            border_memlet.src_subset[i] = fallback_subset[i]
+                if border_memlet.dst_subset is not None:
+                    fallback_subset = subsets.Range.from_array(sdfg.arrays[border_memlet.data])
+                    for i, rng in enumerate(border_memlet.dst_subset):
+                        fall_back = False
+                        for item in rng:
+                            if any(str(s) not in outer_symbols.keys() for s in item.free_symbols):
+                                fall_back = True
+                                break
+                        if fall_back:
+                            border_memlet.dst_subset[i] = fallback_subset[i]
 
     # Propagate the inside 'border' memlets outside the SDFG by
     # offsetting, and unsqueezing if necessary.
@@ -1202,19 +1216,48 @@ def _propagate_node(dfg_state, node):
         external_edges = [e for e in dfg_state.in_edges(node) if e.dst_conn and e.dst_conn.startswith('IN_')]
         geticonn = lambda e: e.src_conn[4:]
         geteconn = lambda e: e.dst_conn[3:]
+        use_dst = False
     else:
         internal_edges = [e for e in dfg_state.in_edges(node) if e.dst_conn and e.dst_conn.startswith('IN_')]
         external_edges = [e for e in dfg_state.out_edges(node) if e.src_conn and e.src_conn.startswith('OUT_')]
         geticonn = lambda e: e.dst_conn[3:]
         geteconn = lambda e: e.src_conn[4:]
+        use_dst = True
 
     for edge in external_edges:
         if edge.data.is_empty():
             new_memlet = Memlet()
         else:
             internal_edge = next(e for e in internal_edges if geticonn(e) == geteconn(edge))
-            new_memlet = propagate_memlet(dfg_state, internal_edge.data, node, True, connector=geteconn(edge))
+            aligned_memlet = align_memlet(dfg_state, internal_edge, dst=use_dst)
+            new_memlet = propagate_memlet(dfg_state, aligned_memlet, node, True, connector=geteconn(edge))
         edge.data = new_memlet
+
+
+def align_memlet(state, e: gr.MultiConnectorEdge[Memlet], dst: bool) -> Memlet:
+    is_src = e.data._is_data_src
+    # Memlet is already aligned
+    if is_src is None or (is_src and not dst) or (not is_src and dst):
+        return e.data
+
+    # Data<->Code memlets always have one data container
+    mpath = state.memlet_path(e)
+    if not isinstance(mpath[0].src, nodes.AccessNode) or not isinstance(mpath[-1].dst, nodes.AccessNode):
+        return e.data
+
+    # Otherwise, find other data container
+    result = copy.deepcopy(e.data)
+    if dst:
+        node = mpath[-1].dst
+    else:
+        node = mpath[0].src
+
+    # Fix memlet fields
+    result.data = node.data
+    result.subset = e.data.other_subset
+    result.other_subset = e.data.subset
+    result._is_data_src = not is_src
+    return result
 
 
 # External API
@@ -1272,6 +1315,16 @@ def propagate_memlet(dfg_state,
     if arr is None:
         if memlet.data not in sdfg.arrays:
             raise KeyError('Data descriptor (Array, Stream) "%s" not defined ' 'in SDFG.' % memlet.data)
+
+        # FIXME: A memlet alone (without an edge) cannot figure out whether it is data<->data or data<->code
+        #        so this test cannot be used
+        # If the data container is not specified on the memlet, use other data
+        # if memlet._is_data_src is not None:
+        #     if use_dst and memlet._is_data_src:
+        #         raise ValueError('Cannot propagate memlet - source data container given but destination is necessary')
+        #     elif not use_dst and not memlet._is_data_src:
+        #         raise ValueError('Cannot propagate memlet - destination data container given but source is necessary')
+
         arr = sdfg.arrays[memlet.data]
 
     # Propagate subset
