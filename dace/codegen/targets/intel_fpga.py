@@ -1474,41 +1474,30 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
                                (ast.Num, ast.Constant)) and int(node.right.n) == node.right.n and node.right.n >= 0):
 
                 left_value = cppunparse.cppunparse(self.visit(node.left), expr_semicolon=False)
-                
-
 
                 from dace.frontend.python import astutils
                 try:
-                    unparsed = symbolic.pystr_to_symbolic(astutils.evalnode(node.right, {
-                        **self.constants,
-                        'dace': dace,
-                    }))
+                    unparsed = symbolic.pystr_to_symbolic(
+                        astutils.evalnode(node.right, {
+                            **self.constants,
+                            'dace': dace,
+                        }))
                     evaluated = symbolic.symstr(evaluate(unparsed, self.constants))
                     infered_type = infer_expr_type(evaluated, self.dtypes)
-                    right_value = cppunparse.cppunparse(self.visit(node.right), expr_semicolon=False)
-                    if infered_type == int:
-                        right_value = right_value.replace("(double)", "")
+                    infered_type_str = str(infered_type)
+                    right_value = evaluated
+
+                    if infered_type_str == 'long long' or infered_type_str == 'int' or infered_type_str == 'long':
                         updated = ast.Name(id="pown({},{})".format(left_value, right_value))
-                        print("pown no exception")
                     else:
                         updated = ast.Name(id="pow({},{})".format(left_value, right_value))
-                        print("pow no exception")
 
-
-
-                except(TypeError, AttributeError, NameError, KeyError, ValueError, SyntaxError):
-                     #use pown for integer exponent and usual pow for double exponent
+                except (TypeError, AttributeError, NameError, KeyError, ValueError, SyntaxError):
                     right_value = cppunparse.cppunparse(self.visit(node.right), expr_semicolon=False)
-                    # if "(double)" in right_value:
-                    #     #right_value = right_value.replace("(double)", "")
-                    #     updated = ast.Name(id="pow({},{})".format(left_value, right_value))
-                    #     print("pown with exception")
-                    # else:
                     updated = ast.Name(id="pow({},{})".format(left_value, right_value))
-                    print("pow with exception")
 
                 return ast.copy_location(updated, node)
-                
+
         return self.generic_visit(node)
 
     def visit_Name(self, node):

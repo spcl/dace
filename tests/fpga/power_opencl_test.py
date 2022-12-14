@@ -52,11 +52,6 @@ def run_power_test(device_type: dace.dtypes.DeviceType):
     sdfg = power_test_kernel.to_sdfg(simplify=True)
     applied = sdfg.apply_transformations([FPGATransformSDFG])
     assert applied == 1
-    """ # Use FPGA Expansion for lib nodes, and expand them to enable further optimizations
-    from dace.libraries.blas import Dot
-    Dot.default_implementation = "FPGA_PartialSums"
-    sdfg.expand_library_nodes()
-    sdfg.apply_transformations_repeated([InlineSDFG], print_report=True) """
     sdfg.specialize(dict(N=N))
     sdfg(A=A, B=B, C=C)
 
