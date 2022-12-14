@@ -121,7 +121,7 @@ def map_fission(map_scope: tnodes.MapScope, tree: tnodes.ScheduleTreeNode) -> bo
             frontier.extend(scope.children)
     _augment_data(data_to_augment, map_scope, tree, sdfg)
     
-    parent_scope = tutils.find_parent(map_scope, tree)
+    parent_scope = map_scope.parent
     idx = parent_scope.children.index(map_scope)
     parent_scope.children.pop(idx)
     while len(partition) > 0:
