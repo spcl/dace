@@ -2038,7 +2038,7 @@ class ProgramVisitor(ExtNodeVisitor):
                         if i == o and n not in inner_indices:
                             outer_indices.append(n)
                         elif n not in inner_indices:
-                            inner_indices.add(n)
+                            inner_indices.append(n)
                     # Avoid the case where all indices are outer,
                     # i.e., the whole array is carried through the nested SDFG levels.
                     if len(outer_indices) < len(irng) or irng.num_elements() == 1:
@@ -4857,6 +4857,10 @@ class ProgramVisitor(ExtNodeVisitor):
             # If this subscript originates from an external array, create the
             # subset in the edge going to the connector, as well as a local
             # reference to the subset
+            # old_node = node
+            # if isinstance(node.value, ast.Name):
+            #     true_node = copy.deepcopy(old_node)
+            #     true_node.value.id = true_name
             if (true_name not in self.sdfg.arrays and isinstance(node.value, ast.Name)):
                 true_node = copy.deepcopy(node)
                 true_node.value.id = true_name
@@ -4872,7 +4876,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 if inference:
                     rng.offset(rng, True)
                     return self.sdfg.arrays[true_name].dtype, rng.size()
-                new_name, new_rng = self._add_read_access(name, rng, node)
+                new_name, new_rng = self._add_read_access(true_name, rng, node)
                 new_arr = self.sdfg.arrays[new_name]
                 full_rng = subsets.Range.from_array(new_arr)
                 if new_rng.ranges == full_rng.ranges:
