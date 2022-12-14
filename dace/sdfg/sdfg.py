@@ -1365,6 +1365,21 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
         """
         arglist = arglist or self.arglist(scalars_only=not with_arrays)
         return [v.as_arg(name=k, with_types=with_types, for_call=for_call) for k, v in arglist.items()]
+    
+    def python_signature_arglist(self, with_types=True, for_call=False, with_arrays=True, arglist=None) -> List[str]:
+        """ Returns a list of arguments necessary to call this SDFG,
+            formatted as a list of Data-Centric Python definitions.
+
+            :param with_types: If True, includes argument types in the result.
+            :param for_call: If True, returns arguments that can be used when
+                             calling the SDFG.
+            :param with_arrays: If True, includes arrays, otherwise,
+                                only symbols and scalars are included.
+            :param arglist: An optional cached argument list.
+            :return: A list of strings. For example: `['A: dace.float32[M]', 'b: dace.int32']`.
+        """
+        arglist = arglist or self.arglist(scalars_only=not with_arrays, free_symbols=[])
+        return [v.as_python_arg(name=k, with_types=with_types, for_call=for_call) for k, v in arglist.items()]
 
     def signature(self, with_types=True, for_call=False, with_arrays=True, arglist=None) -> str:
         """ Returns a C/C++ signature of this SDFG, used when generating code.
@@ -1380,6 +1395,21 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
             :param arglist: An optional cached argument list.
         """
         return ", ".join(self.signature_arglist(with_types, for_call, with_arrays, arglist))
+    
+    def python_signature(self, with_types=True, for_call=False, with_arrays=True, arglist=None) -> str:
+        """ Returns a Data-Centric Python signature of this SDFG, used when generating code.
+
+            :param with_types: If True, includes argument types (can be used
+                               for a function prototype). If False, only
+                               include argument names (can be used for function
+                               calls).
+            :param for_call: If True, returns arguments that can be used when
+                             calling the SDFG.
+            :param with_arrays: If True, includes arrays, otherwise,
+                                only symbols and scalars are included.
+            :param arglist: An optional cached argument list.
+        """
+        return ", ".join(self.python_signature_arglist(with_types, for_call, with_arrays, arglist))
 
     def _repr_html_(self):
         """ HTML representation of the SDFG, used mainly for Jupyter
