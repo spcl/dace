@@ -1,12 +1,13 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from dace import nodes, data, subsets
 from dace.codegen import control_flow as cf
+from dace.dtypes import TYPECLASS_TO_STRING
 from dace.properties import CodeBlock
 from dace.sdfg import SDFG
 from dace.sdfg.state import SDFGState
 from dace.memlet import Memlet
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set, Tuple
 
 INDENTATION = '  '
 
@@ -17,20 +18,61 @@ class UnsupportedScopeException(Exception):
 
 @dataclass
 class ScheduleTreeNode:
+    sdfg: SDFG
+    parent: Optional['ScheduleTreeScope'] = field(default=None, init=False)
 
     def as_string(self, indent: int = 0):
         return indent * INDENTATION + 'UNSUPPORTED'
+    
+    def as_python(self, indent: int = 0, defined_arrays: Set[str] = None) -> Tuple[str, Set[str]]:
+        string, defined_arrays = self.define_arrays(indent, defined_arrays)
+        return string + indent * INDENTATION + 'UNSUPPORTED', defined_arrays
+    
+    def define_arrays(self, indent: int, defined_arrays: Set[str]) -> Tuple[str, Set[str]]:
+        defined_arrays = defined_arrays or set()
+        string = ''
+        undefined_arrays = {name: desc for name, desc in self.sdfg.arrays.items() if not name in defined_arrays and desc.transient}
+        for name, desc in undefined_arrays.items():
+            string += indent * INDENTATION + f"{name} = numpy.ndarray({desc.shape}, {TYPECLASS_TO_STRING[desc.dtype].replace('::', '.')})\n"
+        defined_arrays |= undefined_arrays.keys()
+        return string, defined_arrays
 
 
 @dataclass
-class ScheduleTreeScope(ScheduleTreeNode):
+class ScheduleTreeScope(ScheduleTreeNode): 
+    top_level: bool
     children: List['ScheduleTreeNode']
 
-    def __init__(self, children: Optional[List['ScheduleTreeNode']] = None):
+    def __init__(self, sdfg: Optional[SDFG] = None, top_level: Optional[bool] = False, children: Optional[List['ScheduleTreeNode']] = None):
+        self.sdfg = sdfg
+        self.top_level = top_level
         self.children = children or []
+        for child in children:
+            child.parent = self
 
     def as_string(self, indent: int = 0):
         return '\n'.join([child.as_string(indent + 1) for child in self.children])
+    
+    def as_python(self, indent: int = 0, defined_arrays: Set[str] = None) -> Tuple[str, Set[str]]:
+        if self.top_level:
+            header = ''
+            for s in self.sdfg.free_symbols:
+                header += f"{s} = dace.symbol('{s}', {TYPECLASS_TO_STRING[self.sdfg.symbols[s]].replace('::', '.')})"
+            header += f"""
+@dace.program
+def {self.sdfg.label}({self.sdfg.python_signature()}):
+"""
+            defined_arrays = set([name for name, desc in self.sdfg.arrays.items() if not desc.transient])
+        else:
+            header = ''
+            defined_arrays = defined_arrays or set()
+        string, defined_arrays = self.define_arrays(indent + 1, defined_arrays)
+        for child in self.children:
+            substring, defined_arrays = child.as_python(indent + 1, defined_arrays)
+            string += substring
+            if string[-1] != '\n':
+                string += '\n'
+        return header + string, defined_arrays
 
     # TODO: Get input/output memlets?
 
@@ -206,6 +248,12 @@ class MapScope(DataflowScope):
         result = indent * INDENTATION + f'map {", ".join(self.node.map.params)} in [{rangestr}]:\n'
         return result + super().as_string(indent)
 
+    def as_python(self, indent: int = 0, defined_arrays: Set[str] = None) -> Tuple[str, Set[str]]:
+        rangestr = ', '.join(subsets.Range.dim_to_string(d) for d in self.node.map.range)
+        result = indent * INDENTATION + f'for {", ".join(self.node.map.params)} in dace.map[{rangestr}]:\n'
+        string, defined_arrays = super().as_python(indent, defined_arrays)
+        return result + string, defined_arrays
+
 
 @dataclass
 class ConsumeScope(DataflowScope):
@@ -243,6 +291,13 @@ class TaskletNode(ScheduleTreeNode):
         out_memlets = ', '.join(f'{v}' for v in self.out_memlets.values())
         return indent * INDENTATION + f'{out_memlets} = tasklet({in_memlets})'
 
+    def as_python(self, indent: int = 0, defined_arrays: Set[str] = None) -> Tuple[str, Set[str]]:
+        in_memlets = ', '.join(f"'{k}': {v}" for k, v in self.in_memlets.items())
+        out_memlets = ', '.join(f"'{k}': {v}" for k, v in self.out_memlets.items())
+        defined_arrays = defined_arrays or set()
+        string, defined_arrays = self.define_arrays(indent, defined_arrays)
+        return string + indent * INDENTATION + f"dace.tree.tasklet(label='{self.node.label}', inputs={{{in_memlets}}}, outputs={{{out_memlets}}}, code='{self.node.code.as_string}', language=dace.{self.node.language})", defined_arrays
+
 
 @dataclass
 class LibraryCall(ScheduleTreeNode):
@@ -258,6 +313,17 @@ class LibraryCall(ScheduleTreeNode):
         own_properties = ', '.join(f'{k}={getattr(self.node, k)}' for k, v in self.node.__properties__.items()
                                    if v.owner not in {nodes.Node, nodes.CodeNode, nodes.LibraryNode})
         return indent * INDENTATION + f'{out_memlets} = library {libname}[{own_properties}]({in_memlets})'
+
+    def as_python(self, indent: int = 0, defined_arrays: Set[str] = None) -> Tuple[str, Set[str]]:
+        in_memlets = ', '.join(f"'{k}': {v}" for k, v in self.in_memlets.items())
+        out_memlets = ', '.join(f"'{k}': {v}" for k, v in self.out_memlets.items())
+        libname = type(self.node).__module__ + '.' + type(self.node).__qualname__
+        # Get the properties of the library node without its superclasses
+        own_properties = ', '.join(f'{k}={getattr(self.node, k)}' for k, v in self.node.__properties__.items()
+                                   if v.owner not in {nodes.Node, nodes.CodeNode, nodes.LibraryNode})
+        defined_arrays = defined_arrays or set()
+        string, defined_arrays = self.define_arrays(indent, defined_arrays)
+        return string + indent * INDENTATION + f"dace.tree.library(ltype={libname}, label='{self.node.label}', inputs={{{in_memlets}}}, outputs={{{out_memlets}}}, {own_properties})", defined_arrays
 
 
 @dataclass
@@ -276,6 +342,20 @@ class CopyNode(ScheduleTreeNode):
             wcr = ''
 
         return indent * INDENTATION + f'{self.target}{offset} = copy {self.memlet.data}[{self.memlet.subset}]{wcr}'
+        
+    def as_python(self, indent: int = 0, defined_arrays: Set[str] = None) -> Tuple[str, Set[str]]:
+        if self.memlet.other_subset is not None and any(s != 0 for s in self.memlet.other_subset.min_element()):
+            offset = f'[{self.memlet.other_subset}]'
+        else:
+            offset = f'[{self.memlet.subset}]'
+        if self.memlet.wcr is not None:
+            wcr = f' with {self.memlet.wcr}'
+        else:
+            wcr = ''
+
+        defined_arrays = defined_arrays or set()
+        string, defined_arrays = self.define_arrays(indent, defined_arrays)
+        return string + indent * INDENTATION + f'dace.tree.copy(src={self.memlet.data}[{self.memlet.subset}], dst={self.target}{offset}, wcr={self.memlet.wcr})', defined_arrays
 
 
 @dataclass

@@ -4,11 +4,12 @@ from typing import Dict, List, Set
 import dace
 from dace import symbolic, data
 from dace.codegen import control_flow as cf
-from dace.sdfg.sdfg import SDFG
+from dace.sdfg.sdfg import InterstateEdge, SDFG
 from dace.sdfg.state import SDFGState
 from dace.sdfg import utils as sdutil, graph as gr
 from dace.frontend.python.astutils import negate_expr
-from dace.sdfg.analysis.schedule_tree import treenodes as tn, passes as stpasses
+from dace.sdfg.analysis.schedule_tree import treenodes as tn, passes as stpasses, utils as tutils
+from dace.transformation.helpers import unsqueeze_memlet
 from dace.properties import CodeBlock
 from dace.memlet import Memlet
 
@@ -50,8 +51,11 @@ def replace_memlets(sdfg: SDFG, array_mapping: Dict[str, Memlet]):
     :param sdfg: The SDFG.
     :param array_mapping: A mapping from internal data descriptor names to external memlets.
     """
-    # TODO replace, normalize, and compose
-    pass
+    # TODO: Support Interstate edges
+    for state in sdfg.states():
+        for e in state.edges():
+            if e.data.data in array_mapping:
+                e.data = unsqueeze_memlet(e.data, array_mapping[e.data.data])
 
 
 def remove_name_collisions(sdfg: SDFG):
@@ -75,8 +79,27 @@ def remove_name_collisions(sdfg: SDFG):
 
         # Rename duplicate data containers
         for name, desc in nsdfg.arrays.items():
-            # Will already be renamed during conversion
-            if parent_node is not None and not desc.transient:
+            # TODO: Is it better to do this while parsing the SDFG?
+            pdesc = desc
+            pnode = parent_node
+            csdfg = nsdfg
+            cname = name
+            while pnode is not None and not pdesc.transient:
+                parent_state = csdfg.parent
+                parent_sdfg = csdfg.parent_sdfg
+                edge = list(parent_state.edges_by_connector(parent_node, cname))[0]
+                path = parent_state.memlet_path(edge)
+                if path[0].src is parent_node:
+                    parent_name = path[-1].dst.data
+                else:
+                    parent_name = path[0].src.data
+                pdesc = parent_sdfg.arrays[parent_name]
+                csdfg = parent_sdfg
+                pnode = csdfg.parent_nsdfg_node
+                cname = parent_name
+            if pnode is None and not pdesc.transient and name != cname:
+                replacements[name] = cname
+                name = cname
                 continue
 
             if name in identifiers_seen:
@@ -108,6 +131,17 @@ def remove_name_collisions(sdfg: SDFG):
         # If there is a name collision, replace all uses of the old names with the new names
         if replacements:
             nsdfg.replace_dict(replacements)
+            # TODO: Should this be handled differently?
+            # Replacing connector names
+            # Replacing edge connector names
+            if nsdfg.parent_sdfg:
+                nsdfg.parent_nsdfg_node.in_connectors = {replacements[c]: t for c, t in nsdfg.parent_nsdfg_node.in_connectors.items()}
+                nsdfg.parent_nsdfg_node.out_connectors = {replacements[c]: t for c, t in nsdfg.parent_nsdfg_node.out_connectors.items()}
+                for e in nsdfg.parent.all_edges(nsdfg.parent_nsdfg_node):
+                    if e.src_conn in replacements:
+                        e._src_conn = replacements[e.src_conn]
+                    elif e.dst_conn in replacements:
+                        e._dst_conn = replacements[e.dst_conn]
 
 
 def _make_view_node(state: SDFGState, edge: gr.MultiConnectorEdge[Memlet], view_name: str,
@@ -206,7 +240,7 @@ def prepare_schedule_tree_edges(state: SDFGState) -> Dict[gr.MultiConnectorEdge[
             else:
                 target_name = innermost_node.data
                 new_memlet = normalize_memlet(sdfg, state, e, outermost_node.data)
-                result[e] = tn.CopyNode(target=target_name, memlet=new_memlet)
+                result[e] = tn.CopyNode(sdfg=sdfg, target=target_name, memlet=new_memlet)
 
     return result
 
@@ -243,7 +277,7 @@ def state_schedule_tree(state: SDFGState) -> List[tn.ScheduleTreeNode]:
             # Create scope node and add to stack
             scopes.append(result)
             subnodes = []
-            result.append(NODE_TO_SCOPE_TYPE[type(node)](node=node, children=subnodes))
+            result.append(NODE_TO_SCOPE_TYPE[type(node)](node=node, sdfg=state.parent, top_level=False, children=subnodes))
             result = subnodes
         elif isinstance(node, dace.nodes.ExitNode):
             result = scopes.pop()
@@ -253,7 +287,6 @@ def state_schedule_tree(state: SDFGState) -> List[tn.ScheduleTreeNode]:
             # Replace symbols and memlets in nested SDFGs to match the namespace of the parent SDFG
             # Two-step replacement (N -> __dacesym_N --> map[N]) to avoid clashes
             symbolic.safe_replace(node.symbol_mapping, node.sdfg.replace_dict)
-            replace_memlets(node.sdfg, nested_array_mapping)
 
             # Create memlets for nested SDFG mapping, or nview schedule nodes if slice cannot be determined
             for e in state.all_edges(node):
@@ -279,17 +312,19 @@ def state_schedule_tree(state: SDFGState) -> List[tn.ScheduleTreeNode]:
                                  src_desc=sdfg.arrays[e.data.data],
                                  view_desc=node.sdfg.arrays[conn]))
 
+            replace_memlets(node.sdfg, nested_array_mapping)
+
             # Insert the nested SDFG flattened
             nested_stree = as_schedule_tree(node.sdfg, in_place=True, toplevel=False)
             result.extend(nested_stree.children)
         elif isinstance(node, dace.nodes.Tasklet):
             in_memlets = {e.dst_conn: e.data for e in state.in_edges(node) if e.dst_conn}
             out_memlets = {e.src_conn: e.data for e in state.out_edges(node) if e.src_conn}
-            result.append(tn.TaskletNode(node=node, in_memlets=in_memlets, out_memlets=out_memlets))
+            result.append(tn.TaskletNode(sdfg=sdfg, node=node, in_memlets=in_memlets, out_memlets=out_memlets))
         elif isinstance(node, dace.nodes.LibraryNode):
             in_memlets = {e.dst_conn: e.data for e in state.in_edges(node) if e.dst_conn}
             out_memlets = {e.src_conn: e.data for e in state.out_edges(node) if e.src_conn}
-            result.append(tn.LibraryCall(node=node, in_memlets=in_memlets, out_memlets=out_memlets))
+            result.append(tn.LibraryCall(sdfg=sdfg, node=node, in_memlets=in_memlets, out_memlets=out_memlets))
         elif isinstance(node, dace.nodes.AccessNode):
             # If one of the neighboring edges has a schedule tree node attached to it, use that
             for e in state.all_edges(node):
@@ -412,12 +447,12 @@ def as_schedule_tree(sdfg: SDFG, in_place: bool = False, toplevel: bool = True) 
             raise tn.UnsupportedScopeException(type(node).__name__)
 
         if node.first_state is not None:
-            result = [tn.StateLabel(state=node.first_state)] + result
+            result = [tn.StateLabel(sdfg=node.first_state.parent, state=node.first_state)] + result
 
         return result
 
     # Recursive traversal of the control flow tree
-    result = tn.ScheduleTreeScope(children=totree(cfg))
+    result = tn.ScheduleTreeScope(sdfg=sdfg, top_level=True, children=totree(cfg))
 
     # Clean up tree
     stpasses.remove_unused_and_duplicate_labels(result)
