@@ -133,6 +133,7 @@ def _define_literal_ex(pv: ProgramVisitor,
         if dtype is not None:
             desc.dtype = dtype
     else:  # From literal / constant
+        obj = [el.value if isinstance(el, StringLiteral) else el for el in obj]
         if dtype is None:
             arr = np.array(obj, copy=copy, order=str(order), subok=subok, ndmin=ndmin)
         else:
