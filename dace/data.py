@@ -52,6 +52,8 @@ def create_datadescriptor(obj, no_custom_desc=False):
                                              for k, v in interface['descr']})
                 else:
                     raise TypeError(f'Cannot infer data type of array interface object "{interface}"')
+            elif issubclass(numpy.dtype(interface['typestr']).type, str):
+                raise TypeError(f"String arrays are unsupported (value={obj}, dtype={interface['typestr']})")
             else:
                 dtype = dtypes.typeclass(numpy.dtype(interface['typestr']).type)
         itemsize = numpy.dtype(interface['typestr']).itemsize
