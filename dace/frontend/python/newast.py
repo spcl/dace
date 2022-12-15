@@ -3092,7 +3092,13 @@ class ProgramVisitor(ExtNodeVisitor):
             results.extend(self._gettype(node.value))
 
         if len(results) != len(elts):
-            raise DaceSyntaxError(self, node, 'Function returns %d values but %d provided' % (len(results), len(elts)))
+            if len(elts) != 1:
+                if len(results) < len(elts):
+                    raise DaceSyntaxError(self, node, f'too few values to unpack (expected {len(elts)} values but {len(results)} were provided')
+                else:
+                    raise DaceSyntaxError(self, node, f'too main values to unpack (expected {len(elts)} values but {len(results)} were provided')
+            else:
+                results = self._gettype(ast.parse(f'numpy.array({astutils.unparse(node.value)})').body[0].value)
 
         defined_vars = {**self.variables, **self.scope_vars}
         defined_arrays = {**self.sdfg.arrays, **self.scope_arrays}
