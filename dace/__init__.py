@@ -7,7 +7,10 @@ from .dtypes import *
 from .frontend.python.interface import *
 from .frontend.python.wrappers import *
 from .frontend.python.ndloop import ndrange
-from .frontend.operations import *
+from .frontend.operations import reduce, elementwise
+
+# Import built-in hooks
+from .hooks import profile
 
 from . import data, subsets
 from .config import Config
