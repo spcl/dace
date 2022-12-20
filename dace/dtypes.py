@@ -381,7 +381,7 @@ class typeclass(object):
         elif wrapped_type is bool:
             wrapped_type = numpy.bool_
         elif getattr(wrapped_type, '__name__', '') == 'bool_' and typename is None:
-            typename = 'bool_'
+            typename = 'bool'
 
         self.type = wrapped_type  # Type in Python
         self.ctype = _CTYPES[wrapped_type]  # Type in C
