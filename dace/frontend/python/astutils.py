@@ -222,7 +222,6 @@ def subscript_to_ast_slice_recursive(node):
 
 
 class ExtUnparser(astunparse.Unparser):
-
     def _Subscript(self, t):
         self.dispatch(t.value)
         self.write('[')
@@ -254,7 +253,7 @@ def unparse(node):
     if isinstance(node, sympy.Basic):
         return sympy.printing.pycode(node)
     # Support for numerical constants
-    if isinstance(node, (numbers.Number, numpy.bool, numpy.bool_)):
+    if isinstance(node, (numbers.Number, numpy.bool_)):
         return str(node)
     # Suport for string
     if isinstance(node, str):
@@ -354,7 +353,7 @@ def negate_expr(node):
     if isinstance(node, sympy.Basic):
         return sympy.Not(node)
     # Support for numerical constants
-    if isinstance(node, (numbers.Number, numpy.bool, numpy.bool_)):
+    if isinstance(node, (numbers.Number, numpy.bool_)):
         return str(not node)
     # Negation support for strings (most likely dace.Data.Scalar names)
     if isinstance(node, str):
@@ -365,8 +364,7 @@ def negate_expr(node):
         node = node.code
     if hasattr(node, "__len__"):
         if len(node) > 1:
-            raise ValueError("negate_expr only expects "
-                             "single expressions, got: {}".format(node))
+            raise ValueError("negate_expr only expects " "single expressions, got: {}".format(node))
         expr = node[0]
     else:
         expr = node
@@ -386,9 +384,7 @@ def copy_tree(node: ast.AST) -> ast.AST:
     :param node: The tree to copy.
     :return: The copied tree.
     """
-
     class Copier(ast.NodeTransformer):
-
         def visit_Num(self, node):
             # Ignore n
             return ast.copy_location(ast.Num(n=node.n), node)
@@ -437,7 +433,6 @@ class ExtNodeTransformer(ast.NodeTransformer):
         this class is capable of traversing over top-level expressions in 
         bodies in order to discern DaCe statements from others.
     """
-
     def visit_TopLevel(self, node):
         clsname = type(node).__name__
         if getattr(self, "visit_TopLevel" + clsname, False):
@@ -476,7 +471,6 @@ class ExtNodeVisitor(ast.NodeVisitor):
         As opposed to `NodeVisitor`, this class is capable of traversing over 
         top-level expressions in bodies in order to discern DaCe statements 
         from others. """
-
     def visit_TopLevel(self, node):
         clsname = type(node).__name__
         if getattr(self, "visit_TopLevel" + clsname, False):
@@ -507,7 +501,6 @@ class NameFound(Exception):
 
 
 class ASTFindReplace(ast.NodeTransformer):
-
     def __init__(self, repldict: Dict[str, str], trigger_names: Set[str] = None):
         self.replace_count = 0
         self.repldict = repldict
@@ -542,7 +535,6 @@ class ASTFindReplace(ast.NodeTransformer):
 
 
 class RemoveSubscripts(ast.NodeTransformer):
-
     def __init__(self, keywords: Set[str]):
         self.keywords = keywords
 
@@ -558,7 +550,6 @@ class TaskletFreeSymbolVisitor(ast.NodeVisitor):
     Simple Python AST visitor to find free symbols in a code, not including
     attributes and function calls.
     """
-
     def __init__(self, defined_syms):
         super().__init__()
         self.free_symbols = set()
@@ -589,14 +580,12 @@ class TaskletFreeSymbolVisitor(ast.NodeVisitor):
 
 
 class AnnotateTopLevel(ExtNodeTransformer):
-
     def visit_TopLevel(self, node):
         node.toplevel = True
         return super().visit_TopLevel(node)
 
 
 class ConstantExtractor(ast.NodeTransformer):
-
     def __init__(self, globals: Dict[str, Any]):
         super().__init__()
         self.id = 0
@@ -620,7 +609,6 @@ class ConstantExtractor(ast.NodeTransformer):
 
 class ASTHelperMixin:
     """ A mixin that adds useful helper functions for AST node transformers and visitors """
-
     def generic_visit_filtered(self, node: ast.AST, filter: Optional[Set[str]] = None):
         """
         Modification of ast.NodeTransformer.generic_visit that visits all fields without the
