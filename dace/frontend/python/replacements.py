@@ -4644,7 +4644,7 @@ def _tasklet(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, label: StringLi
             if out == var:
                 if not (outer_var, outer_rng, 'w') in pv.accesses:
                     pv.accesses[(outer_var, outer_rng, 'w')] = (out, rng)
-                pv.outputs[out] = (state, Memlet(data=outer_var, subset=outer_rng), [])
+                pv.outputs[out] = (state, Memlet(data=outer_var, subset=outer_rng), set())
                 break
 
 
@@ -4669,7 +4669,7 @@ def _library(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, ltype: type, la
             if out == var:
                 if not (outer_var, outer_rng, 'w') in pv.accesses:
                     pv.accesses[(outer_var, outer_rng, 'w')] = (out, rng)
-                pv.outputs[out] = (state, Memlet(data=outer_var, subset=outer_rng), [])
+                pv.outputs[out] = (state, Memlet(data=outer_var, subset=outer_rng), set())
                 break
 
 
@@ -4683,5 +4683,5 @@ def _tasklet(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, src: str, dst: 
         if dst == var:
             if not (outer_var, outer_rng, 'w') in pv.accesses:
                 pv.accesses[(outer_var, outer_rng, 'w')] = (dst, rng)
-            pv.outputs[dst] = (state, Memlet(data=outer_var, subset=outer_rng), [])
+            pv.outputs[dst] = (state, Memlet(data=outer_var, subset=outer_rng), set())
             break
