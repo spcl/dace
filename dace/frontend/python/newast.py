@@ -2038,7 +2038,7 @@ class ProgramVisitor(ExtNodeVisitor):
                         if i == o and n not in inner_indices:
                             outer_indices.append(n)
                         elif n not in inner_indices:
-                            inner_indices.append(n)
+                            inner_indices.add(n)
                     # Avoid the case where all indices are outer,
                     # i.e., the whole array is carried through the nested SDFG levels.
                     if len(outer_indices) < len(irng) or irng.num_elements() == 1:
