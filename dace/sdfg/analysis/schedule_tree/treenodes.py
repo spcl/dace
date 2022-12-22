@@ -312,7 +312,9 @@ class TaskletNode(ScheduleTreeNode):
         return string + indent * INDENTATION + f"dace.tree.tasklet(label='{self.node.label}', inputs={{{in_memlets}}}, outputs={{{out_memlets}}}, code='{self.node.code.as_string}', language=dace.{self.node.language})", defined_arrays
 
     def is_data_used(self, name: str) -> bool:
-        return name in self.in_memlets.keys() | self.out_memlets.keys()
+        used_data = set([memlet.data for memlet in self.in_memlets.values()])
+        used_data |= set([memlet.data for memlet in self.out_memlets.values()])
+        return name in used_data
 
 
 @dataclass
@@ -342,7 +344,9 @@ class LibraryCall(ScheduleTreeNode):
         return string + indent * INDENTATION + f"dace.tree.library(ltype={libname}, label='{self.node.label}', inputs={{{in_memlets}}}, outputs={{{out_memlets}}}, {own_properties})", defined_arrays
 
     def is_data_used(self, name: str) -> bool:
-        return name in self.in_memlets.keys() | self.out_memlets.keys()
+        used_data = set([memlet.data for memlet in self.in_memlets.values()])
+        used_data |= set([memlet.data for memlet in self.out_memlets.values()])
+        return name in used_data
 
 
 @dataclass
