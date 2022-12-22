@@ -32,10 +32,23 @@ class ScheduleTreeNode:
         defined_arrays = defined_arrays or set()
         string = ''
         undefined_arrays = {name: desc for name, desc in self.sdfg.arrays.items() if not name in defined_arrays and desc.transient}
+        if hasattr(self, 'children'):
+            times_used = {name: 0 for name in undefined_arrays}
+            for child in self.children:
+                for name in undefined_arrays:
+                    if child.is_data_used(name):
+                        times_used[name] += 1
+            undefined_arrays = {name: desc for name, desc in undefined_arrays.items() if times_used[name] > 1}
         for name, desc in undefined_arrays.items():
             string += indent * INDENTATION + f"{name} = numpy.ndarray({desc.shape}, {TYPECLASS_TO_STRING[desc.dtype].replace('::', '.')})\n"
         defined_arrays |= undefined_arrays.keys()
         return string, defined_arrays
+    
+    def is_data_used(self, name: str) -> bool:
+        for child in self.children:
+            if child.is_data_used(name):
+                return True
+        return False
 
 
 @dataclass
@@ -298,6 +311,9 @@ class TaskletNode(ScheduleTreeNode):
         string, defined_arrays = self.define_arrays(indent, defined_arrays)
         return string + indent * INDENTATION + f"dace.tree.tasklet(label='{self.node.label}', inputs={{{in_memlets}}}, outputs={{{out_memlets}}}, code='{self.node.code.as_string}', language=dace.{self.node.language})", defined_arrays
 
+    def is_data_used(self, name: str) -> bool:
+        return name in self.in_memlets.keys() | self.out_memlets.keys()
+
 
 @dataclass
 class LibraryCall(ScheduleTreeNode):
@@ -324,6 +340,9 @@ class LibraryCall(ScheduleTreeNode):
         defined_arrays = defined_arrays or set()
         string, defined_arrays = self.define_arrays(indent, defined_arrays)
         return string + indent * INDENTATION + f"dace.tree.library(ltype={libname}, label='{self.node.label}', inputs={{{in_memlets}}}, outputs={{{out_memlets}}}, {own_properties})", defined_arrays
+
+    def is_data_used(self, name: str) -> bool:
+        return name in self.in_memlets.keys() | self.out_memlets.keys()
 
 
 @dataclass
