@@ -156,7 +156,7 @@ class SVEUnparser(cppunparse.CPPUnparser):
             # Unparsing a scalar
             if isinstance(expect, dtypes.vector):
                 # Expecting a vector: duplicate the scalar
-                if expect.type in [np.bool, np.bool_, bool]:
+                if expect.type in [np.bool_, bool]:
                     # Special case for duplicating boolean into predicate
                     suffix = f'b{self.pred_bits}'
                     #self.write(f'svptrue_{suffix}()')
