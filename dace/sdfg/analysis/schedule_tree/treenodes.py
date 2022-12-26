@@ -1,4 +1,5 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
+import copy
 from dataclasses import dataclass, field
 from dace import nodes, data, subsets
 from dace.codegen import control_flow as cf
@@ -18,7 +19,8 @@ class UnsupportedScopeException(Exception):
 
 @dataclass
 class ScheduleTreeNode:
-    sdfg: SDFG
+    # sdfg: SDFG
+    # sdfg: Optional[SDFG] = field(default=None, init=False)
     parent: Optional['ScheduleTreeScope'] = field(default=None, init=False)
 
     def as_string(self, indent: int = 0):
@@ -29,39 +31,59 @@ class ScheduleTreeNode:
         return string + indent * INDENTATION + 'UNSUPPORTED', defined_arrays
     
     def define_arrays(self, indent: int, defined_arrays: Set[str]) -> Tuple[str, Set[str]]:
-        defined_arrays = defined_arrays or set()
-        string = ''
-        undefined_arrays = {name: desc for name, desc in self.sdfg.arrays.items() if not name in defined_arrays and desc.transient}
-        if hasattr(self, 'children'):
-            times_used = {name: 0 for name in undefined_arrays}
-            for child in self.children:
-                for name in undefined_arrays:
-                    if child.is_data_used(name):
-                        times_used[name] += 1
-            undefined_arrays = {name: desc for name, desc in undefined_arrays.items() if times_used[name] > 1}
-        for name, desc in undefined_arrays.items():
-            string += indent * INDENTATION + f"{name} = numpy.ndarray({desc.shape}, {TYPECLASS_TO_STRING[desc.dtype].replace('::', '.')})\n"
-        defined_arrays |= undefined_arrays.keys()
-        return string, defined_arrays
+        return '', defined_arrays
+        # defined_arrays = defined_arrays or set()
+        # string = ''
+        # undefined_arrays = {name: desc for name, desc in self.sdfg.arrays.items() if not name in defined_arrays and desc.transient}
+        # if hasattr(self, 'children'):
+        #     times_used = {name: 0 for name in undefined_arrays}
+        #     for child in self.children:
+        #         for name in undefined_arrays:
+        #             if child.is_data_used(name):
+        #                 times_used[name] += 1
+        #     undefined_arrays = {name: desc for name, desc in undefined_arrays.items() if times_used[name] > 1}
+        # for name, desc in undefined_arrays.items():
+        #     string += indent * INDENTATION + f"{name} = numpy.ndarray({desc.shape}, {TYPECLASS_TO_STRING[desc.dtype].replace('::', '.')})\n"
+        # defined_arrays |= undefined_arrays.keys()
+        # return string, defined_arrays
     
     def is_data_used(self, name: str) -> bool:
-        for child in self.children:
-            if child.is_data_used(name):
-                return True
-        return False
+        pass
+        # for child in self.children:
+        #     if child.is_data_used(name):
+        #         return True
+        # return False
 
 
 @dataclass
-class ScheduleTreeScope(ScheduleTreeNode): 
+class ScheduleTreeScope(ScheduleTreeNode):
+    sdfg: SDFG
     top_level: bool
     children: List['ScheduleTreeNode']
+    containers: Optional[Dict[str, data.Data]] = field(default_factory=dict, init=False)
 
+    # def __init__(self, sdfg: Optional[SDFG] = None, top_level: Optional[bool] = False, children: Optional[List['ScheduleTreeNode']] = None):
     def __init__(self, sdfg: Optional[SDFG] = None, top_level: Optional[bool] = False, children: Optional[List['ScheduleTreeNode']] = None):
         self.sdfg = sdfg
         self.top_level = top_level
         self.children = children or []
-        for child in children:
-            child.parent = self
+        # self.__post_init__()
+        # for child in children:
+        #     child.parent = self
+        # _, defined_arrays = self.define_arrays(0, set())
+        # self.containers = {name: copy.deepcopy(sdfg.arrays[name]) for name in defined_arrays}
+        # if top_level:
+        #     self.containers.update({name: copy.deepcopy(desc) for name, desc in sdfg.arrays.items() if not desc.transient})
+        # # self.containers = {name: copy.deepcopy(container) for name, container in sdfg.arrays.items()}
+    
+    # def __post_init__(self):
+    #     for child in self.children:
+    #         child.parent = self
+    #     _, defined_arrays = self.define_arrays(0, set())
+    #     self.containers = {name: copy.deepcopy(self.sdfg.arrays[name]) for name in defined_arrays}
+    #     if self.top_level:
+    #         self.containers.update({name: copy.deepcopy(desc) for name, desc in self.sdfg.arrays.items() if not desc.transient})
+    #     # self.containers = {name: copy.deepcopy(container) for name, container in sdfg.arrays.items()}
 
     def as_string(self, indent: int = 0):
         return '\n'.join([child.as_string(indent + 1) for child in self.children])
@@ -70,22 +92,56 @@ class ScheduleTreeScope(ScheduleTreeNode):
         if self.top_level:
             header = ''
             for s in self.sdfg.free_symbols:
-                header += f"{s} = dace.symbol('{s}', {TYPECLASS_TO_STRING[self.sdfg.symbols[s]].replace('::', '.')})"
+                header += f"{s} = dace.symbol('{s}', {TYPECLASS_TO_STRING[self.sdfg.symbols[s]].replace('::', '.')})\n"
             header += f"""
 @dace.program
 def {self.sdfg.label}({self.sdfg.python_signature()}):
 """
-            defined_arrays = set([name for name, desc in self.sdfg.arrays.items() if not desc.transient])
+            # defined_arrays = set([name for name, desc in self.sdfg.arrays.items() if not desc.transient])
+            defined_arrays = set([name for name, desc in self.containers.items() if not desc.transient])        
         else:
             header = ''
             defined_arrays = defined_arrays or set()
-        string, defined_arrays = self.define_arrays(indent + 1, defined_arrays)
+        cindent = indent + 1
+        # string, defined_arrays = self.define_arrays(indent + 1, defined_arrays)
+        string = ''
+        undefined_arrays = {name: desc for name, desc in self.containers.items() if name not in defined_arrays}
+        for name, desc in undefined_arrays.items():
+            string += cindent * INDENTATION + f"{name} = numpy.ndarray({desc.shape}, {TYPECLASS_TO_STRING[desc.dtype].replace('::', '.')})\n"
+        defined_arrays |= undefined_arrays.keys()
         for child in self.children:
             substring, defined_arrays = child.as_python(indent + 1, defined_arrays)
             string += substring
             if string[-1] != '\n':
                 string += '\n'
         return header + string, defined_arrays
+    
+    def define_arrays(self, indent: int, defined_arrays: Set[str]) -> Tuple[str, Set[str]]:
+        defined_arrays = defined_arrays or set()
+        string = ''
+        undefined_arrays = {}
+        for sdfg in self.sdfg.all_sdfgs_recursive():
+            undefined_arrays.update({name: desc for name, desc in sdfg.arrays.items() if not name in defined_arrays and desc.transient})
+        # undefined_arrays = {name: desc for name, desc in self.sdfg.arrays.items() if not name in defined_arrays and desc.transient}
+        times_used = {name: 0 for name in undefined_arrays}
+        for child in self.children:
+            for name in undefined_arrays:
+                if child.is_data_used(name):
+                    times_used[name] += 1
+        undefined_arrays = {name: desc for name, desc in undefined_arrays.items() if times_used[name] > 1}
+        if not self.containers:
+            self.containers = {}
+        for name, desc in undefined_arrays.items():
+            string += indent * INDENTATION + f"{name} = numpy.ndarray({desc.shape}, {TYPECLASS_TO_STRING[desc.dtype].replace('::', '.')})\n"
+            self.containers[name] = copy.deepcopy(desc)
+        defined_arrays |= undefined_arrays.keys()
+        return string, defined_arrays
+    
+    def is_data_used(self, name: str) -> bool:
+        for child in self.children:
+            if child.is_data_used(name):
+                return True
+        return False
 
     # TODO: Get input/output memlets?
 
@@ -309,7 +365,8 @@ class TaskletNode(ScheduleTreeNode):
         out_memlets = ', '.join(f"'{k}': {v}" for k, v in self.out_memlets.items())
         defined_arrays = defined_arrays or set()
         string, defined_arrays = self.define_arrays(indent, defined_arrays)
-        return string + indent * INDENTATION + f"dace.tree.tasklet(label='{self.node.label}', inputs={{{in_memlets}}}, outputs={{{out_memlets}}}, code='{self.node.code.as_string}', language=dace.{self.node.language})", defined_arrays
+        code = self.node.code.as_string.replace('\n', '\\n')
+        return string + indent * INDENTATION + f"dace.tree.tasklet(label='{self.node.label}', inputs={{{in_memlets}}}, outputs={{{out_memlets}}}, code='{code}', language=dace.{self.node.language})", defined_arrays
 
     def is_data_used(self, name: str) -> bool:
         used_data = set([memlet.data for memlet in self.in_memlets.values()])
@@ -379,6 +436,9 @@ class CopyNode(ScheduleTreeNode):
         defined_arrays = defined_arrays or set()
         string, defined_arrays = self.define_arrays(indent, defined_arrays)
         return string + indent * INDENTATION + f'dace.tree.copy(src={self.memlet.data}[{self.memlet.subset}], dst={self.target}{offset}, wcr={self.memlet.wcr})', defined_arrays
+
+    def is_data_used(self, name: str) -> bool:
+        return name is self.memlet.data or name is self.target
 
 
 @dataclass

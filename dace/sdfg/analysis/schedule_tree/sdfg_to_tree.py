@@ -17,6 +17,19 @@ import time
 import sys
 
 
+def populate_containers(scope: tn.ScheduleTreeScope, defined_arrays: Set[str] = None):
+    defined_arrays = defined_arrays or set()
+    if scope.top_level:
+        scope.containers = {name: copy.deepcopy(desc) for name, desc in scope.sdfg.arrays.items() if not desc.transient}
+        defined_arrays = set(scope.containers.keys())
+    _, defined_arrays = scope.define_arrays(0, defined_arrays)
+    for child in scope.children:
+        child.parent = scope
+        if isinstance(child, tn.ScheduleTreeScope):
+            # _, defined_arrays = child.define_arrays(0, defined_arrays)
+            populate_containers(child, defined_arrays)
+
+
 def normalize_memlet(sdfg: SDFG, state: SDFGState, original: gr.MultiConnectorEdge[Memlet], data: str) -> Memlet:
     """
     Normalizes a memlet to a given data descriptor.
@@ -77,6 +90,10 @@ def remove_name_collisions(sdfg: SDFG):
         replacements: Dict[str, str] = {}
         parent_node = nsdfg.parent_nsdfg_node
 
+        # Preserve top-level SDFG names
+        if not parent_node:
+            continue
+
         # Rename duplicate data containers
         for name, desc in nsdfg.arrays.items():
             # TODO: Is it better to do this while parsing the SDFG?
@@ -97,6 +114,7 @@ def remove_name_collisions(sdfg: SDFG):
                 csdfg = parent_sdfg
                 pnode = csdfg.parent_nsdfg_node
                 cname = parent_name
+            # if pnode is None and not pdesc.transient and name != cname:
             if pnode is None and not pdesc.transient and name != cname:
                 replacements[name] = cname
                 name = cname
@@ -240,7 +258,8 @@ def prepare_schedule_tree_edges(state: SDFGState) -> Dict[gr.MultiConnectorEdge[
             else:
                 target_name = innermost_node.data
                 new_memlet = normalize_memlet(sdfg, state, e, outermost_node.data)
-                result[e] = tn.CopyNode(sdfg=sdfg, target=target_name, memlet=new_memlet)
+                result[e] = tn.CopyNode(target=target_name, memlet=new_memlet)
+                # result[e] = tn.CopyNode(sdfg=sdfg, target=target_name, memlet=new_memlet)
 
     return result
 
@@ -320,11 +339,13 @@ def state_schedule_tree(state: SDFGState) -> List[tn.ScheduleTreeNode]:
         elif isinstance(node, dace.nodes.Tasklet):
             in_memlets = {e.dst_conn: e.data for e in state.in_edges(node) if e.dst_conn}
             out_memlets = {e.src_conn: e.data for e in state.out_edges(node) if e.src_conn}
-            result.append(tn.TaskletNode(sdfg=sdfg, node=node, in_memlets=in_memlets, out_memlets=out_memlets))
+            result.append(tn.TaskletNode(node=node, in_memlets=in_memlets, out_memlets=out_memlets))
+            # result.append(tn.TaskletNode(sdfg=sdfg, node=node, in_memlets=in_memlets, out_memlets=out_memlets))
         elif isinstance(node, dace.nodes.LibraryNode):
             in_memlets = {e.dst_conn: e.data for e in state.in_edges(node) if e.dst_conn}
             out_memlets = {e.src_conn: e.data for e in state.out_edges(node) if e.src_conn}
-            result.append(tn.LibraryCall(sdfg=sdfg, node=node, in_memlets=in_memlets, out_memlets=out_memlets))
+            result.append(tn.LibraryCall(node=node, in_memlets=in_memlets, out_memlets=out_memlets))
+            # result.append(tn.LibraryCall(sdfg=sdfg, node=node, in_memlets=in_memlets, out_memlets=out_memlets))
         elif isinstance(node, dace.nodes.AccessNode):
             # If one of the neighboring edges has a schedule tree node attached to it, use that
             for e in state.all_edges(node):
@@ -447,12 +468,16 @@ def as_schedule_tree(sdfg: SDFG, in_place: bool = False, toplevel: bool = True) 
             raise tn.UnsupportedScopeException(type(node).__name__)
 
         if node.first_state is not None:
-            result = [tn.StateLabel(sdfg=node.first_state.parent, state=node.first_state)] + result
+            result = [tn.StateLabel(state=node.first_state)] + result
+            # result = [tn.StateLabel(sdfg=node.first_state.parent, state=node.first_state)] + result
 
         return result
 
     # Recursive traversal of the control flow tree
     result = tn.ScheduleTreeScope(sdfg=sdfg, top_level=True, children=totree(cfg))
+
+    if toplevel:
+        populate_containers(result)
 
     # Clean up tree
     stpasses.remove_unused_and_duplicate_labels(result)

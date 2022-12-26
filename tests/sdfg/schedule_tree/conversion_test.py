@@ -24,6 +24,8 @@ def test_map_with_tasklet_and_library():
     val0 = map_with_tasklet_and_library(A, B, cst)
     sdfg0 = map_with_tasklet_and_library.to_sdfg()
     tree = as_schedule_tree(sdfg0)
+    pcode, _ = tree.as_python()
+    print(pcode)
     sdfg1 = as_sdfg(tree)
     val1 = sdfg1(A=A, B=B, cst=cst, N=A.shape[0])
     
