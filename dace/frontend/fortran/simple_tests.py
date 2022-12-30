@@ -9,7 +9,7 @@ current = os.path.dirname(os.path.realpath(__file__))
 parent = os.path.dirname(current)
 sys.path.append(parent)
 
-from fcdc import *
+from dace.frontend.fortran.fortran_parser import *
 
 
 def test_fortran_frontend_simplify():

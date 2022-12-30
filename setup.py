@@ -73,9 +73,9 @@ setup(name='dace',
       },
       include_package_data=True,
       install_requires=[
-          'numpy', 'networkx >= 2.5', 'astunparse', 'sympy', 'pyyaml', 'ply', 'websockets', 'requests', 'flask','fparser',
-          'aenum >= 3.1', 'dataclasses; python_version < "3.7"', 'dill', 'pyreadline;platform_system=="Windows"',
-          'typing-compat; python_version < "3.8"'
+          'numpy', 'networkx >= 2.5', 'astunparse', 'sympy', 'pyyaml', 'ply', 'websockets', 'requests', 'flask',
+          'fparser', 'aenum >= 3.1', 'dataclasses; python_version < "3.7"', 'dill',
+          'pyreadline;platform_system=="Windows"', 'typing-compat; python_version < "3.8"'
       ] + cmake_requires,
       extras_require={
           'testing': ['coverage', 'pytest-cov', 'scipy', 'absl-py', 'opt_einsum', 'pymlir', 'click'],
@@ -86,7 +86,7 @@ setup(name='dace',
               'dacelab = dace.cli.dacelab:main',
               'sdfv = dace.cli.sdfv:main',
               'sdfgcc = dace.cli.sdfgcc:main',
-              'sdfgfc = dace.cli.sdfgfc:main',
+              'fcfd = dace.cli.fcdc:main',
               'sdprof = dace.cli.sdprof:main',
           ],
       })
