@@ -9,7 +9,7 @@ from six import StringIO
 import numpy as np
 
 import dace
-from dace import registry, subsets, dtypes
+from dace import registry, subsets, dtypes, symbolic
 from dace.codegen import cppunparse
 from dace.config import Config
 from dace.codegen import exceptions as cgx
@@ -20,7 +20,7 @@ from dace.codegen.targets.target import make_absolute
 from dace.codegen.targets import cpp, fpga
 from dace.codegen.common import codeblock_to_cpp
 from dace.codegen.tools.type_inference import infer_expr_type
-from dace.frontend.python.astutils import rname, unparse
+from dace.frontend.python.astutils import rname, unparse, evalnode
 from dace.frontend import operations
 from dace.sdfg import find_input_arraynode, find_output_arraynode
 from dace.sdfg import nodes, utils as sdutils
@@ -1468,13 +1468,34 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
 
     def visit_BinOp(self, node):
         if node.op.__class__.__name__ == 'Pow':
+
             # Special case for integer power: do not generate dace namespaces (dace::math) but just call pow
             if not (isinstance(node.right,
                                (ast.Num, ast.Constant)) and int(node.right.n) == node.right.n and node.right.n >= 0):
+
                 left_value = cppunparse.cppunparse(self.visit(node.left), expr_semicolon=False)
-                right_value = cppunparse.cppunparse(self.visit(node.right), expr_semicolon=False)
-                updated = ast.Name(id="pow({},{})".format(left_value, right_value))
+
+                try:
+                    unparsed = symbolic.pystr_to_symbolic(
+                        evalnode(node.right, {
+                            **self.constants,
+                            'dace': dace,
+                        }))
+                    evaluated = symbolic.symstr(evaluate(unparsed, self.constants))
+                    infered_type = infer_expr_type(evaluated, self.dtypes)
+                    right_value = evaluated
+
+                    if infered_type == dtypes.int64 or infered_type == dtypes.int32:
+                        updated = ast.Name(id="pown({},{})".format(left_value, right_value))
+                    else:
+                        updated = ast.Name(id="pow({},{})".format(left_value, right_value))
+
+                except (TypeError, AttributeError, NameError, KeyError, ValueError, SyntaxError):
+                    right_value = cppunparse.cppunparse(self.visit(node.right), expr_semicolon=False)
+                    updated = ast.Name(id="pow({},{})".format(left_value, right_value))
+
                 return ast.copy_location(updated, node)
+
         return self.generic_visit(node)
 
     def visit_Name(self, node):
