@@ -20,7 +20,7 @@ from dace.codegen.targets.target import make_absolute
 from dace.codegen.targets import cpp, fpga
 from dace.codegen.common import codeblock_to_cpp
 from dace.codegen.tools.type_inference import infer_expr_type
-from dace.frontend.python.astutils import rname, unparse
+from dace.frontend.python.astutils import rname, unparse, evalnode
 from dace.frontend import operations
 from dace.sdfg import find_input_arraynode, find_output_arraynode
 from dace.sdfg import nodes, utils as sdutils
@@ -1475,19 +1475,17 @@ class OpenCLDaceKeywordRemover(cpp.DaCeKeywordRemover):
 
                 left_value = cppunparse.cppunparse(self.visit(node.left), expr_semicolon=False)
 
-                from dace.frontend.python import astutils
                 try:
                     unparsed = symbolic.pystr_to_symbolic(
-                        astutils.evalnode(node.right, {
+                        evalnode(node.right, {
                             **self.constants,
                             'dace': dace,
                         }))
                     evaluated = symbolic.symstr(evaluate(unparsed, self.constants))
                     infered_type = infer_expr_type(evaluated, self.dtypes)
-                    infered_type_str = str(infered_type)
                     right_value = evaluated
 
-                    if infered_type_str == 'long long' or infered_type_str == 'int' or infered_type_str == 'long':
+                    if infered_type == dtypes.int64 or infered_type == dtypes.int32:
                         updated = ast.Name(id="pown({},{})".format(left_value, right_value))
                     else:
                         updated = ast.Name(id="pow({},{})".format(left_value, right_value))
