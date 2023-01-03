@@ -41,31 +41,8 @@ class FPGATransformState(transformation.MultiStateTransformation):
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
         state = self.state
 
-        for node, graph in state.all_nodes_recursive():
-            # Consume scopes are currently unsupported
-            if isinstance(node, (nodes.ConsumeEntry, nodes.ConsumeExit)):
-                return False
-
-            # Streams have strict conditions due to code generator limitations
-            if (isinstance(node, nodes.AccessNode) and isinstance(graph.parent.arrays[node.data], data.Stream)):
-                nodedesc = graph.parent.arrays[node.data]
-                sdict = graph.scope_dict()
-                if nodedesc.storage in [
-                        dtypes.StorageType.CPU_Heap, dtypes.StorageType.CPU_Pinned, dtypes.StorageType.CPU_ThreadLocal
-                ]:
-                    return False
-
-                # Cannot allocate FIFO from CPU code
-                if sdict[node] is None:
-                    return False
-
-                # Arrays of streams cannot have symbolic size on FPGA
-                if dace.symbolic.issymbolic(nodedesc.total_size, graph.parent.constants):
-                    return False
-
-                # Streams cannot be unbounded on FPGA
-                if nodedesc.buffer_size < 1:
-                    return False
+        if not xfh.can_run_state_on_fpga(state):
+            return False
 
         for node in state.nodes():
 
