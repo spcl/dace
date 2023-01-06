@@ -8,7 +8,7 @@ from dace.properties import CodeBlock
 from dace.sdfg import SDFG
 from dace.sdfg.state import SDFGState
 from dace.memlet import Memlet
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple, Union
 
 INDENTATION = '  '
 
@@ -88,7 +88,7 @@ class ScheduleTreeScope(ScheduleTreeNode):
     def as_string(self, indent: int = 0):
         return '\n'.join([child.as_string(indent + 1) for child in self.children])
     
-    def as_python(self, indent: int = 0, defined_arrays: Set[str] = None) -> Tuple[str, Set[str]]:
+    def as_python(self, indent: int = 0, defined_arrays: Set[str] = None, def_offset: int = 1, sep_defs: bool = False) -> Tuple[str, Set[str]]:
         if self.top_level:
             header = ''
             for s in self.sdfg.free_symbols:
@@ -102,19 +102,23 @@ def {self.sdfg.label}({self.sdfg.python_signature()}):
         else:
             header = ''
             defined_arrays = defined_arrays or set()
-        cindent = indent + 1
+        cindent = indent + def_offset
         # string, defined_arrays = self.define_arrays(indent + 1, defined_arrays)
-        string = ''
+        definitions = ''
+        body = ''
         undefined_arrays = {name: desc for name, desc in self.containers.items() if name not in defined_arrays}
         for name, desc in undefined_arrays.items():
-            string += cindent * INDENTATION + f"{name} = numpy.ndarray({desc.shape}, {TYPECLASS_TO_STRING[desc.dtype].replace('::', '.')})\n"
+            definitions += cindent * INDENTATION + f"{name} = numpy.ndarray({desc.shape}, {TYPECLASS_TO_STRING[desc.dtype].replace('::', '.')})\n"
         defined_arrays |= undefined_arrays.keys()
         for child in self.children:
             substring, defined_arrays = child.as_python(indent + 1, defined_arrays)
-            string += substring
-            if string[-1] != '\n':
-                string += '\n'
-        return header + string, defined_arrays
+            body += substring
+            if body[-1] != '\n':
+                body += '\n'
+        if sep_defs:
+            return definitions, body, defined_arrays
+        else:
+            return header + definitions + body, defined_arrays
     
     def define_arrays(self, indent: int, defined_arrays: Set[str]) -> Tuple[str, Set[str]]:
         defined_arrays = defined_arrays or set()
@@ -213,6 +217,15 @@ class ForScope(ControlFlowScope):
         result = (indent * INDENTATION + f'for {node.itervar} = {node.init}; {node.condition.as_string}; '
                   f'{node.itervar} = {node.update}:\n')
         return result + super().as_string(indent)
+    
+    def as_python(self, indent: int = 0, defined_arrays: Set[str] = None) -> Tuple[str, Set[str]]:
+        node = self.header
+        result = indent * INDENTATION + f'{node.itervar} = {node.init}\n'
+        result += indent * INDENTATION + f'while {node.condition.as_string}:\n'
+        defs, body, defined_arrays = super().as_python(indent, defined_arrays, def_offset=0, sep_defs=True)
+        result = defs + result + body
+        result += (indent + 1) * INDENTATION + f'{node.itervar} = {node.update}\n'
+        return result, defined_arrays
 
 
 @dataclass
@@ -250,6 +263,11 @@ class IfScope(ControlFlowScope):
     def as_string(self, indent: int = 0):
         result = indent * INDENTATION + f'if {self.condition.as_string}:\n'
         return result + super().as_string(indent)
+    
+    def as_python(self, indent: int = 0, defined_arrays: Set[str] = None) -> Tuple[str, Set[str]]:
+        result = indent * INDENTATION + f'if {self.condition.as_string}:\n'
+        string, defined_arrays = super().as_python(indent, defined_arrays)
+        return result + string, defined_arrays
 
 
 @dataclass
@@ -377,12 +395,18 @@ class TaskletNode(ScheduleTreeNode):
 @dataclass
 class LibraryCall(ScheduleTreeNode):
     node: nodes.LibraryNode
-    in_memlets: Dict[str, Memlet]
-    out_memlets: Dict[str, Memlet]
+    in_memlets: Union[Dict[str, Memlet], Set[Memlet]]
+    out_memlets: Union[Dict[str, Memlet], Set[Memlet]]
 
     def as_string(self, indent: int = 0):
-        in_memlets = ', '.join(f'{v}' for v in self.in_memlets.values())
-        out_memlets = ', '.join(f'{v}' for v in self.out_memlets.values())
+        if isinstance(self.in_memlets, set):
+            in_memlets = ', '.join(f'{v}' for v in self.in_memlets)
+        else:
+            in_memlets = ', '.join(f'{v}' for v in self.in_memlets.values())
+        if isinstance(self.out_memlets, set):
+            out_memlets = ', '.join(f'{v}' for v in self.out_memlets)
+        else:
+            out_memlets = ', '.join(f'{v}' for v in self.out_memlets.values())
         libname = type(self.node).__name__
         # Get the properties of the library node without its superclasses
         own_properties = ', '.join(f'{k}={getattr(self.node, k)}' for k, v in self.node.__properties__.items()
@@ -390,8 +414,14 @@ class LibraryCall(ScheduleTreeNode):
         return indent * INDENTATION + f'{out_memlets} = library {libname}[{own_properties}]({in_memlets})'
 
     def as_python(self, indent: int = 0, defined_arrays: Set[str] = None) -> Tuple[str, Set[str]]:
-        in_memlets = ', '.join(f"'{k}': {v}" for k, v in self.in_memlets.items())
-        out_memlets = ', '.join(f"'{k}': {v}" for k, v in self.out_memlets.items())
+        if isinstance(self.in_memlets, set):
+            in_memlets = ', '.join(f'{v}' for v in self.in_memlets)
+        else:
+            in_memlets = ', '.join(f"'{k}': {v}" for k, v in self.in_memlets.items())
+        if isinstance(self.out_memlets, set):
+            out_memlets = ', '.join(f'{v}' for v in self.out_memlets)
+        else:
+            out_memlets = ', '.join(f"'{k}': {v}" for k, v in self.out_memlets.items())
         libname = type(self.node).__module__ + '.' + type(self.node).__qualname__
         # Get the properties of the library node without its superclasses
         own_properties = ', '.join(f'{k}={getattr(self.node, k)}' for k, v in self.node.__properties__.items()
@@ -401,8 +431,14 @@ class LibraryCall(ScheduleTreeNode):
         return string + indent * INDENTATION + f"dace.tree.library(ltype={libname}, label='{self.node.label}', inputs={{{in_memlets}}}, outputs={{{out_memlets}}}, {own_properties})", defined_arrays
 
     def is_data_used(self, name: str) -> bool:
-        used_data = set([memlet.data for memlet in self.in_memlets.values()])
-        used_data |= set([memlet.data for memlet in self.out_memlets.values()])
+        if isinstance(self.in_memlets, set):
+            used_data = set([memlet.data for memlet in self.in_memlets])
+        else:
+            used_data = set([memlet.data for memlet in self.in_memlets.values()])
+        if isinstance(self.out_memlets, set):
+            used_data |= set([memlet.data for memlet in self.out_memlets])
+        else:
+            used_data |= set([memlet.data for memlet in self.out_memlets.values()])
         return name in used_data
 
 

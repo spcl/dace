@@ -33,5 +33,43 @@ def test_map_with_tasklet_and_library():
     assert np.allclose(val1, ref)
 
 
+def test_azimint_naive():
+
+    N, npt = (dace.symbol(s) for s in ('N', 'npt'))
+    @dace.program
+    def dace_azimint_naive(data: dace.float64[N], radius: dace.float64[N]):
+        rmax = np.amax(radius)
+        res = np.zeros((npt, ), dtype=np.float64)
+        for i in range(npt):
+        # for i in dace.map[0:npt]:
+            r1 = rmax * i / npt
+            r2 = rmax * (i + 1) / npt
+            mask_r12 = np.logical_and((r1 <= radius), (radius < r2))
+            on_values = 0
+            tmp = np.float64(0)
+            for j in dace.map[0:N]:
+                if mask_r12[j]:
+                    tmp += data[j]
+                    on_values += 1
+            res[i] = tmp / on_values
+        return res
+    
+    rng = np.random.default_rng(42)
+    SN, Snpt = 1000, 10
+    data, radius = rng.random((SN, )), rng.random((SN, ))
+    # ref = dace_azimint_naive(data, radius, npt=Snpt)
+
+    sdfg0 = dace_azimint_naive.to_sdfg()
+    tree = as_schedule_tree(sdfg0)
+    print(tree.as_string())
+    pcode, _ = tree.as_python()
+    print(pcode)
+    sdfg1 = as_sdfg(tree)
+    val = sdfg1(data=data, radius=radius, N=SN, npt=Snpt)
+    
+    assert np.allclose(val, ref)
+
+
 if __name__ == "__main__":
-    test_map_with_tasklet_and_library()
+    # test_map_with_tasklet_and_library()
+    test_azimint_naive()

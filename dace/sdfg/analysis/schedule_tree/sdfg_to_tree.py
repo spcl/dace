@@ -69,6 +69,9 @@ def replace_memlets(sdfg: SDFG, array_mapping: Dict[str, Memlet]):
         for e in state.edges():
             if e.data.data in array_mapping:
                 e.data = unsqueeze_memlet(e.data, array_mapping[e.data.data])
+    # for e in sdfg.edges():
+    #     for k, v in e.data.assignments.items():
+            
 
 
 def remove_name_collisions(sdfg: SDFG):
@@ -115,7 +118,7 @@ def remove_name_collisions(sdfg: SDFG):
                 pnode = csdfg.parent_nsdfg_node
                 cname = parent_name
             # if pnode is None and not pdesc.transient and name != cname:
-            if pnode is None and not pdesc.transient and name != cname:
+            if pnode is None and name != cname:
                 replacements[name] = cname
                 name = cname
                 continue
@@ -153,8 +156,8 @@ def remove_name_collisions(sdfg: SDFG):
             # Replacing connector names
             # Replacing edge connector names
             if nsdfg.parent_sdfg:
-                nsdfg.parent_nsdfg_node.in_connectors = {replacements[c]: t for c, t in nsdfg.parent_nsdfg_node.in_connectors.items()}
-                nsdfg.parent_nsdfg_node.out_connectors = {replacements[c]: t for c, t in nsdfg.parent_nsdfg_node.out_connectors.items()}
+                nsdfg.parent_nsdfg_node.in_connectors = {replacements[c] if c in replacements else c: t for c, t in nsdfg.parent_nsdfg_node.in_connectors.items()}
+                nsdfg.parent_nsdfg_node.out_connectors = {replacements[c] if c in replacements else c: t for c, t in nsdfg.parent_nsdfg_node.out_connectors.items()}
                 for e in nsdfg.parent.all_edges(nsdfg.parent_nsdfg_node):
                     if e.src_conn in replacements:
                         e._src_conn = replacements[e.src_conn]
@@ -342,8 +345,15 @@ def state_schedule_tree(state: SDFGState) -> List[tn.ScheduleTreeNode]:
             result.append(tn.TaskletNode(node=node, in_memlets=in_memlets, out_memlets=out_memlets))
             # result.append(tn.TaskletNode(sdfg=sdfg, node=node, in_memlets=in_memlets, out_memlets=out_memlets))
         elif isinstance(node, dace.nodes.LibraryNode):
-            in_memlets = {e.dst_conn: e.data for e in state.in_edges(node) if e.dst_conn}
-            out_memlets = {e.src_conn: e.data for e in state.out_edges(node) if e.src_conn}
+            # NOTE: LibraryNodes do not necessarily have connectors
+            if node.in_connectors:
+                in_memlets = {e.dst_conn: e.data for e in state.in_edges(node) if e.dst_conn}
+            else:
+                in_memlets = set([e.data for e in state.in_edges(node)])
+            if node.out_connectors:
+                out_memlets = {e.src_conn: e.data for e in state.out_edges(node) if e.src_conn}
+            else:
+                out_memlets = set([e.data for e in state.out_edges(node)])
             result.append(tn.LibraryCall(node=node, in_memlets=in_memlets, out_memlets=out_memlets))
             # result.append(tn.LibraryCall(sdfg=sdfg, node=node, in_memlets=in_memlets, out_memlets=out_memlets))
         elif isinstance(node, dace.nodes.AccessNode):
@@ -437,32 +447,32 @@ def as_schedule_tree(sdfg: SDFG, in_place: bool = False, toplevel: bool = True) 
                         if sdfg.out_degree(node.state) == 1 and parent.sequential:
                             # Conditional state in sequential block! Add "if not condition goto exit"
                             result.append(
-                                tn.StateIfScope(condition=CodeBlock(negate_expr(e.data.condition)),
+                                tn.StateIfScope(sdfg=sdfg, top_level=False, condition=CodeBlock(negate_expr(e.data.condition)),
                                                 children=[tn.GotoNode(target=None)]))
                             result.extend(edge_body)
                         else:
                             # Add "if condition" with the body above
-                            result.append(tn.StateIfScope(condition=e.data.condition, children=edge_body))
+                            result.append(tn.StateIfScope(sdfg=sdfg, top_level=False, condition=e.data.condition, children=edge_body))
                     else:
                         result.extend(edge_body)
 
         elif isinstance(node, cf.ForScope):
-            result.append(tn.ForScope(header=node, children=totree(node.body)))
+            result.append(tn.ForScope(sdfg=sdfg, top_level=False, header=node, children=totree(node.body)))
         elif isinstance(node, cf.IfScope):
-            result.append(tn.IfScope(condition=node.condition, children=totree(node.body)))
+            result.append(tn.IfScope(sdfg=sdfg, top_level=False, condition=node.condition, children=totree(node.body)))
             if node.orelse is not None:
-                result.append(tn.ElseScope(children=totree(node.orelse)))
+                result.append(tn.ElseScope(sdfg=sdfg, top_level=False, children=totree(node.orelse)))
         elif isinstance(node, cf.IfElseChain):
             # Add "if" for the first condition, "elif"s for the rest
-            result.append(tn.IfScope(condition=node.body[0][0], children=totree(node.body[0][1])))
+            result.append(tn.IfScope(sdfg=sdfg, top_level=False, condition=node.body[0][0], children=totree(node.body[0][1])))
             for cond, body in node.body[1:]:
-                result.append(tn.ElifScope(condition=cond, children=totree(body)))
+                result.append(tn.ElifScope(sdfg=sdfg, top_level=False, condition=cond, children=totree(body)))
             # "else goto exit"
-            result.append(tn.ElseScope(children=[tn.GotoNode(target=None)]))
+            result.append(tn.ElseScope(sdfg=sdfg, top_level=False, children=[tn.GotoNode(target=None)]))
         elif isinstance(node, cf.WhileScope):
-            result.append(tn.WhileScope(header=node, children=totree(node.body)))
+            result.append(tn.WhileScope(sdfg=sdfg, top_level=False, header=node, children=totree(node.body)))
         elif isinstance(node, cf.DoWhileScope):
-            result.append(tn.DoWhileScope(header=node, children=totree(node.body)))
+            result.append(tn.DoWhileScope(sdfg=sdfg, top_level=False, header=node, children=totree(node.body)))
         else:
             # e.g., "SwitchCaseScope"
             raise tn.UnsupportedScopeException(type(node).__name__)
