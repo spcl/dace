@@ -2610,6 +2610,19 @@ class ProgramVisitor(ExtNodeVisitor):
                     if boolarr is not None:
                         inp_memlet.dynamic = True
                         out_memlet.dynamic = True
+                    
+                    if op:
+                        write_access = None
+                        for k, v in self.accesses.items():
+                            if v == (target_name, target_subset):
+                                write_access = k
+                                break
+                        if write_access:
+                            if (write_access[0], write_access[1], 'r') not in self.accesses:
+                                self.accesses[(write_access[0], write_access[1], 'r')] = (target_name, target_subset)
+                            if target_name not in self.inputs:
+                                self.inputs[target_name] = self.outputs[target_name]
+                            input_memlets['__pseudo_read'] = copy.deepcopy(out_memlet)
 
                     tasklet_code += '__out = __inp'
                     state.add_mapped_tasklet(state.label, {
@@ -2650,6 +2663,19 @@ class ProgramVisitor(ExtNodeVisitor):
                     for m in inp_memlet.values():
                         m.dynamic = True
                     memlet.dynamic = True
+                
+                if op:
+                    write_access = None
+                    for k, v in self.accesses.items():
+                        if v == (target_name, target_subset):
+                            write_access = k
+                            break
+                    if write_access:
+                        if (write_access[0], write_access[1], 'r') not in self.accesses:
+                            self.accesses[(write_access[0], write_access[1], 'r')] = (target_name, target_subset)
+                        if target_name not in self.inputs:
+                            self.inputs[target_name] = self.outputs[target_name]
+                        input_memlets['__pseudo_read'] = copy.deepcopy(memlet)
 
                 inp_memlet.update(input_memlets)
                 state.add_mapped_tasklet(state.label, {
@@ -2693,6 +2719,22 @@ class ProgramVisitor(ExtNodeVisitor):
 
             if op:
                 out_memlet.wcr = LambdaProperty.from_string('lambda x, y: x {} y'.format(op))
+            
+                write_access = None
+                for k, v in self.accesses.items():
+                    if v == (target_name, target_subset):
+                        write_access = k
+                        break
+                if write_access:
+                    if (write_access[0], write_access[1], 'r') not in self.accesses:
+                        self.accesses[(write_access[0], write_access[1], 'r')] = (target_name, target_subset)
+                    if target_name not in self.inputs:
+                        self.inputs[target_name] = self.outputs[target_name]
+                    tasklet.in_connectors['__pseudo_read'] = dace.typeclass(None)
+                    hidden_op = state.add_read(target_name, debuginfo=self.current_lineinfo)
+                    hidden_memlet = Memlet.simple(target_name, '%s' % target_subset)
+                    hidden_memlet.wcr = LambdaProperty.from_string('lambda x, y: x {} y'.format(op))
+                    state.add_edge(hidden_op, None, tasklet, '__pseudo_read', hidden_memlet)
 
             state.add_edge(tasklet, '__out', op2, None, out_memlet)
 
