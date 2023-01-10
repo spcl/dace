@@ -69,8 +69,11 @@ def replace_memlets(sdfg: SDFG, array_mapping: Dict[str, Memlet]):
         for e in state.edges():
             if e.data.data in array_mapping:
                 e.data = unsqueeze_memlet(e.data, array_mapping[e.data.data])
-    # for e in sdfg.edges():
-    #     for k, v in e.data.assignments.items():
+    for e in sdfg.edges():
+        syms = e.data.read_symbols()
+        for s in syms:
+            if s in array_mapping:
+                e.data.replace(s, str(array_mapping[s]))
             
 
 

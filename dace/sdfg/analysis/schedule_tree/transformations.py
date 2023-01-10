@@ -91,6 +91,7 @@ def map_fission(map_scope: tnodes.MapScope, tree: tnodes.ScheduleTreeNode) -> bo
     # State-scope check: if the body consists of a single state-scope, certain conditions apply.
     partition = tutils.partition_scope_body(map_scope)
     if len(partition) == 1:
+
         child = partition[0]
         conditions = []
         if isinstance(child, list):
@@ -102,10 +103,12 @@ def map_fission(map_scope: tnodes.MapScope, tree: tnodes.ScheduleTreeNode) -> bo
             conditions.append(child.header.condition)
         elif isinstance(child, tnodes.WhileScope):
             conditions.append(child.header.test)
+
         for cond in conditions:
             map = map_scope.node.map
             if any(p in cond.get_free_symbols() for p in map.params):
                 return False
+
             # TODO: How to run the check below in the ScheduleTree?
             # for s in cond.get_free_symbols():
             #     for e in graph.edges_by_connector(self.nested_sdfg, s):
@@ -145,3 +148,32 @@ def map_fission(map_scope: tnodes.MapScope, tree: tnodes.ScheduleTreeNode) -> bo
         parent_scope.children.insert(idx, scope)
     
     return True
+
+
+def if_fission(if_scope: tnodes.IfScope, tree: tnodes.ScheduleTreeNode) -> bool:
+
+    parent_scope = if_scope.parent
+    idx = parent_scope.children.index(if_scope)
+    if len(parent_scope.children) > idx + 1 and isinstance(parent_scope.children[idx+1],
+                                                           (tnodes.ElifScope, tnodes.ElseScope)):
+        return False
+    
+    partition = tutils.partition_scope_body(if_scope)
+    if len(partition) < 2:
+        return False
+    
+    parent_scope.children.pop(idx)
+    while len(partition) > 0:
+        child_scope = partition.pop()
+        if not isinstance(child_scope, list):
+            child_scope = [child_scope]
+        scope = tnodes.IfScope(if_scope.sdfg, False, child_scope, deepcopy(if_scope.condition))
+        scope.parent = parent_scope
+        parent_scope.children.insert(idx, scope)
+
+    return True
+
+
+def wcr_to_reduce(map_scope: tnodes.MapScope, tree: tnodes.ScheduleTreeNode) -> bool:
+
+    pass
