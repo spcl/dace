@@ -3,6 +3,7 @@
 Assortment of passes for schedule trees.
 """
 
+from dace import data as dt, Memlet, subsets as sbs, symbolic as sym
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from typing import Set
 
@@ -61,3 +62,69 @@ def remove_empty_scopes(stree: tn.ScheduleTreeScope):
             return self.generic_visit(node)
 
     return RemoveEmptyScopes().visit(stree)
+
+
+def wcr_to_reduce(stree: tn.ScheduleTreeScope):
+    """
+    Converts WCR assignments to reductions.
+
+    :param stree: The schedule tree to remove WCR assignments from.
+    """
+
+    class WCRToReduce(tn.ScheduleNodeTransformer):
+
+        def visit(self, node: tn.ScheduleTreeNode):
+
+            if isinstance(node, tn.TaskletNode):
+
+                wcr_found = False
+                for _, memlet in node.out_memlets.items():
+                    if memlet.wcr:
+                        wcr_found = True
+                        break
+
+                if wcr_found:
+
+                    loop_found = False
+                    rng = None
+                    idx = None
+                    parent = node.parent
+                    while parent:
+                        if isinstance(parent, (tn.MapScope, tn.ForScope)):
+                            loop_found = True
+                            rng = parent.node.map.range
+                            break
+                        parent = parent.parent
+                    
+                    if loop_found:
+
+                        for conn, memlet in node.out_memlets.items():
+                            if memlet.wcr:
+
+                                scope = node.parent
+                                while memlet.data not in scope.containers:
+                                    scope = scope.parent
+                                desc = scope.containers[memlet.data]
+
+                                shape = rng.size() + list(desc.shape) if not isinstance(desc, dt.Scalar) else rng.size()
+                                parent.containers[f'{memlet.data}_arr'] = dt.Array(desc.dtype, shape, transient=True)
+                                
+                                indices = [(sym.pystr_to_symbolic(s), sym.pystr_to_symbolic(s), 1) for s in parent.node.map.params]
+                                if not isinstance(desc, dt.Scalar):
+                                    indices.extend(memlet.subset.ranges)
+                                memlet.subset = sbs.Range(indices)
+                                
+                                from dace.libraries.standard import Reduce
+                                rednode = Reduce(memlet.wcr)
+                                libcall = tn.LibraryCall(rednode, {Memlet.from_array(f'{memlet.data}_arr', parent.containers[f'{memlet.data}_arr'])}, {Memlet.from_array(memlet.data, desc)})
+                                
+                                memlet.data = f'{memlet.data}_arr'
+                                memlet.wcr = None
+                    
+                                parent.children.append(libcall)
+
+                
+            return self.generic_visit(node)
+    
+    return WCRToReduce().visit(stree)
+
