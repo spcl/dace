@@ -3,6 +3,7 @@
 Assortment of passes for schedule trees.
 """
 
+import copy
 from dace import data as dt, Memlet, subsets as sbs, symbolic as sym
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from typing import Set
@@ -128,3 +129,60 @@ def wcr_to_reduce(stree: tn.ScheduleTreeScope):
     
     return WCRToReduce().visit(stree)
 
+
+def canonicalize_if(tree: tn.ScheduleTreeScope):
+    """
+    Canonicalizes sequences of if-elif-else scopes to sequences of if scopes.
+    """
+
+    from dace.sdfg.nodes import CodeBlock
+    from dace.sdfg.analysis.schedule_tree.transformations import if_fission
+
+    class CanonicalizeIf(tn.ScheduleNodeTransformer):
+
+
+        def visit(self, node: tn.ScheduleTreeNode):
+            if not isinstance(node, (tn.ElifScope, tn.ElseScope)):
+                return super().visit(node)
+            
+            parent = node.parent
+            node_idx = parent.children.index(node)
+
+            conditions = []
+            for curr_node in reversed(parent.children[:node_idx]):
+                conditions.append(curr_node.condition)
+                if isinstance(curr_node, tn.IfScope):
+                    break
+            condition = f"not ({' or '.join([f'({c.as_string})' for c in conditions])})"
+            if isinstance(node, tn.ElifScope):
+                condition = f"{condition} and {node.condition.as_string}"
+            new_node = tn.IfScope(node.sdfg, node.top_level, node.children, CodeBlock(condition))
+            new_node.parent = node.parent
+
+            return self.generic_visit(new_node)
+
+    CanonicalizeIf().visit(tree)
+    print(tree.as_string())
+    print()
+
+    frontier = list(tree.children)
+    while frontier:
+        node = frontier.pop()
+        if isinstance(node, tn.IfScope):
+            parent = node.parent
+            node_idx = parent.children.index(node)
+            next_node = None
+            if len(parent.children) > node_idx + 1:
+                next_node = parent.children[node_idx + 1]
+            if_fission(node, distribute=True)
+            end = len(parent.children)
+            if next_node:
+                end = parent.children.index(next_node)
+            for child in parent.children[node_idx: end]:
+                if len(child.children) > 1:
+                    frontier.append(child)
+            # frontier.extend(parent.children[node_idx: end])
+        elif isinstance(node, tn.ScheduleTreeScope):
+            frontier.extend(node.children)
+    
+    return tree

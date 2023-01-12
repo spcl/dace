@@ -150,24 +150,30 @@ def map_fission(map_scope: tnodes.MapScope, tree: tnodes.ScheduleTreeNode) -> bo
     return True
 
 
-def if_fission(if_scope: tnodes.IfScope, tree: tnodes.ScheduleTreeNode) -> bool:
+def if_fission(if_scope: tnodes.IfScope, distribute: bool = False) -> bool:
+
+    from dace.sdfg.nodes import CodeBlock
 
     parent_scope = if_scope.parent
     idx = parent_scope.children.index(if_scope)
+
+    # Check transformation conditions
+    # Scope must not have subsequent elif or else scopes
     if len(parent_scope.children) > idx + 1 and isinstance(parent_scope.children[idx+1],
                                                            (tnodes.ElifScope, tnodes.ElseScope)):
         return False
     
+    # Apply transformations
     partition = tutils.partition_scope_body(if_scope)
-    if len(partition) < 2:
-        return False
-    
     parent_scope.children.pop(idx)
     while len(partition) > 0:
         child_scope = partition.pop()
-        if not isinstance(child_scope, list):
-            child_scope = [child_scope]
-        scope = tnodes.IfScope(if_scope.sdfg, False, child_scope, deepcopy(if_scope.condition))
+        if isinstance(child_scope, list) and len(child_scope) == 1 and isinstance(child_scope[0], tnodes.IfScope) and distribute:
+            scope = tnodes.IfScope(if_scope.sdfg, False, child_scope[0].children, CodeBlock(f"{if_scope.condition.as_string} and {child_scope[0].condition.as_string}"))
+        else:
+            if not isinstance(child_scope, list):
+                child_scope = [child_scope]
+            scope = tnodes.IfScope(if_scope.sdfg, False, child_scope, deepcopy(if_scope.condition))
         scope.parent = parent_scope
         parent_scope.children.insert(idx, scope)
 
