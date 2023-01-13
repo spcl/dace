@@ -67,6 +67,9 @@ class ScheduleTreeScope(ScheduleTreeNode):
         self.sdfg = sdfg
         self.top_level = top_level
         self.children = children or []
+        if self.children:
+            for child in children:
+                child.parent = self
         # self.__post_init__()
         # for child in children:
         #     child.parent = self
@@ -568,5 +571,7 @@ class ScheduleNodeTransformer(ScheduleNodeVisitor):
                         new_values.extend(value)
                         continue
                 new_values.append(value)
+            for val in new_values:
+                val.parent = node
             node.children[:] = new_values
         return node
