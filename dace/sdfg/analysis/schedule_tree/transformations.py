@@ -1,9 +1,10 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
-from copy import deepcopy
-from dace import data as dt, Memlet, SDFG
+import copy
+from dace import data as dt, Memlet, SDFG, subsets
 from dace.sdfg.analysis.schedule_tree import treenodes as tnodes
 from dace.sdfg.analysis.schedule_tree import utils as tutils
-from typing import Dict, Set
+import re
+from typing import Dict, List, Set, Union
 
 
 _dataflow_nodes = (tnodes.ViewNode, tnodes.RefSetNode, tnodes.CopyNode, tnodes.DynScopeCopyNode, tnodes.TaskletNode, tnodes.LibraryCall)
@@ -16,25 +17,56 @@ def _update_memlets(data: Dict[str, dt.Data], memlets: Dict[str, Memlet], index:
             memlets[conn] = Memlet(data=memlet.data, subset=subset)
 
 
-# def _augment_data(data: Dict[str, dt.Data], map_scope: tnodes.MapScope, tree: tnodes.ScheduleTreeNode, sdfg: SDFG):
-def _augment_data(data: Set[str], map_scope: tnodes.MapScope, tree: tnodes.ScheduleTreeNode, sdfg: SDFG):
+def _augment_data(data: Set[str], loop: Union[tnodes.MapScope, tnodes.ForScope], tree: tnodes.ScheduleTreeNode):
     
-    # Generate map-related indices, sizes and, strides
-    map = map_scope.node.map
-    index = ", ".join(f"{p} - {r[0]}" for p, r in zip(map.params, map.range))
-    size = map.range.size()
+    # Generate loop-related indices, sizes and, strides
+    if isinstance(loop, tnodes.MapScope):
+        map = loop.node.map
+        index = ", ".join(f"{p}/{r[2]}-{r[0]}" if r[2] != 1 else f"{p}-{r[0]}" for p, r in zip(map.params, map.range))
+        size = map.range.size()
+    else:
+        itervar = loop.header.itervar
+        start = loop.header.init
+        # NOTE: Condition expression may be inside parentheses
+        par = re.search(f"^\s*(\(?)\s*{itervar}", loop.header.condition.as_string).group(1) == '('
+        if par:
+            stop_match = re.search(f"\(\s*{itervar}\s*([<>=]+)\s*(.+)\s*\)", loop.header.condition.as_string)
+        else:
+            stop_match = re.search(f"{itervar}\s*([<>=]+)\s*(.+)", loop.header.condition.as_string)
+        stop_op = stop_match.group(1)
+        assert stop_op in ("<", "<=", ">", ">=")
+        stop = stop_match.group(2)
+        # NOTE: Update expression may be inside parentheses
+        par = re.search(f"^\s*(\(?)\s*{itervar}", loop.header.update).group(1) == '('
+        if par:
+            step_match = re.search(f"\(\s*{itervar}\s*([(*+-/%)]+)\s*([a-zA-Z0-9_]+)\s*\)", loop.header.update)
+        else:
+            step_match = re.search(f"{itervar}\s*([(*+-/%)]+)\s*([a-zA-Z0-9_]+)", loop.header.update)
+        try:
+            step_op = step_match.group(1)
+            step = step_match.group(2)
+            if step_op == '+':
+                step = int(step)
+                index = f"{itervar}/{step}-{start}" if step != 1 else f"{itervar}-{start}"
+            else:
+                raise ValueError
+        except (AttributeError, ValueError):
+            step = 1 if '<' in stop_op  else -1
+            index = itervar
+        if "=" in stop_op:
+            stop = f"{stop} + ({step})"
+        size = subsets.Range.from_string(f"{start}:{stop}:{step}").size()
+
     strides = [1] * len(size)
     for i in range(len(size) - 2, -1, -1):
         strides[i] = strides[i+1] * size[i+1]
 
     # Augment data descriptors
     replace = dict()
-    # for name, nsdfg in data.items():
     for name in data:
-        # desc = nsdfg.arrays[name]
-        desc = map_scope.containers[name]
+        desc = loop.containers[name]
         if isinstance(desc, dt.Scalar):
-            # nsdfg.arrays[name] = dt.Array(desc.dtype, size, True, storage=desc.storage)
+
             desc = dt.Array(desc.dtype, size, True, storage=desc.storage)
             replace[name] = True
         else:
@@ -43,15 +75,8 @@ def _augment_data(data: Set[str], map_scope: tnodes.MapScope, tree: tnodes.Sched
             new_strides = [s * mult for s in strides]
             desc.strides = (*new_strides, *desc.strides)
             replace[name] = False
-        del map_scope.containers[name]
-        map_scope.parent.containers[name] = desc
-        # if sdfg.parent:
-        #     nsdfg_node = nsdfg.parent_nsdfg_node
-        #     nsdfg_state = nsdfg.parent
-        #     nsdfg_node.out_connectors = {**nsdfg_node.out_connectors, name: None}
-        #     sdfg.arrays[name] = deepcopy(nsdfg.arrays[name])
-        #     access = nsdfg_state.add_access(name)
-        #     nsdfg_state.add_edge(nsdfg_node, name, access, None, Memlet.from_array(name, sdfg.arrays[name]))
+        del loop.containers[name]
+        loop.parent.containers[name] = desc
     
     # Update memlets
     frontier = list(tree.children)
@@ -67,6 +92,61 @@ def _augment_data(data: Set[str], map_scope: tnodes.MapScope, tree: tnodes.Sched
                     node.memlet = Memlet(data=node.memlet.data, subset=subset)
         if hasattr(node, 'children'):
             frontier.extend(node.children)
+
+
+
+def loop_fission(loop: Union[tnodes.MapScope, tnodes.ForScope], tree: tnodes.ScheduleTreeNode) -> List[Union[tnodes.MapScope, tnodes.ForScope]]:
+    """
+    Applies the LoopFission transformation to the input MapScope or ForScope.
+
+    :param loop: The MapScope or ForScope.
+    :param tree: The ScheduleTree.
+    :return: True if the transformation applies successfully, otherwise False.
+    """
+
+    sdfg = loop.sdfg
+
+    ####################################
+    # Check if LoopFission can be applied
+
+    # Basic check: cannot fission an empty MapScope/ForScope or one that has a single child.
+    partition = tutils.partition_scope_body(loop)
+    if len(partition) < 2:
+        return [loop]
+    
+    data_to_augment = set()
+    frontier = list(partition)
+    while len(frontier) > 0:
+        scope = frontier.pop()
+        if isinstance(scope, _dataflow_nodes):
+            try:
+                for _, memlet in scope.out_memlets.items():
+                    if memlet.data in loop.containers:
+                        data_to_augment.add(memlet.data)
+            except AttributeError:
+                if scope.target in loop.containers:
+                    data_to_augment.add(scope.target)
+        if hasattr(scope, 'children'):
+            frontier.extend(scope.children)
+    _augment_data(data_to_augment, loop, tree)
+
+    new_scopes = []
+    while partition:
+        child = partition.pop(0)
+        if not isinstance(child, list):
+            child = [child]
+        if isinstance(loop, tnodes.MapScope):
+            scope = tnodes.MapScope(sdfg, False, child, copy.deepcopy(loop.node))
+        else:
+            scope = tnodes.ForScope(sdfg, False, child, copy.copy(loop.header))
+        for child in scope.children:
+            child.parent = scope
+            if isinstance(child, tnodes.ScheduleTreeScope):
+                scope.containers.update(child.containers)
+        scope.parent = loop.parent
+        new_scopes.append(scope)
+
+    return new_scopes
 
 
 def map_fission(map_scope: tnodes.MapScope, tree: tnodes.ScheduleTreeNode) -> bool:
@@ -134,7 +214,7 @@ def map_fission(map_scope: tnodes.MapScope, tree: tnodes.ScheduleTreeNode) -> bo
                 #     data_to_augment[scope.target] = scope.sdfg
         if hasattr(scope, 'children'):
             frontier.extend(scope.children)
-    _augment_data(data_to_augment, map_scope, tree, sdfg)
+    _augment_data(data_to_augment, map_scope, tree)
     
     parent_scope = map_scope.parent
     idx = parent_scope.children.index(map_scope)
@@ -143,41 +223,46 @@ def map_fission(map_scope: tnodes.MapScope, tree: tnodes.ScheduleTreeNode) -> bo
         child_scope = partition.pop()
         if not isinstance(child_scope, list):
             child_scope = [child_scope]
-        scope = tnodes.MapScope(sdfg, False, child_scope, deepcopy(map_scope.node))
+        scope = tnodes.MapScope(sdfg, False, child_scope, copy.deepcopy(map_scope.node))
         scope.parent = parent_scope
         parent_scope.children.insert(idx, scope)
     
     return True
 
 
-def if_fission(if_scope: tnodes.IfScope, distribute: bool = False) -> bool:
+def if_fission(if_scope: tnodes.IfScope, assume_canonical: bool = False, distribute: bool = False) -> List[tnodes.IfScope]:
 
     from dace.sdfg.nodes import CodeBlock
 
-    parent_scope = if_scope.parent
-    idx = parent_scope.children.index(if_scope)
-
     # Check transformation conditions
     # Scope must not have subsequent elif or else scopes
-    if len(parent_scope.children) > idx + 1 and isinstance(parent_scope.children[idx+1],
-                                                           (tnodes.ElifScope, tnodes.ElseScope)):
-        return False
+    if not assume_canonical:
+        idx = if_scope.parent.children.index(if_scope)
+        if len(if_scope.parent.children) > idx + 1 and isinstance(if_scope.parent.children[idx+1],
+                                                                  (tnodes.ElifScope, tnodes.ElseScope)):
+            return [if_scope]
+    if len(if_scope.children) < 2 and not (isinstance(if_scope.children[0], tnodes.IfScope) and distribute):
+        return [if_scope]
     
-    # Apply transformations
+    new_scopes = []
     partition = tutils.partition_scope_body(if_scope)
-    parent_scope.children.pop(idx)
-    while len(partition) > 0:
-        child_scope = partition.pop()
-        if isinstance(child_scope, list) and len(child_scope) == 1 and isinstance(child_scope[0], tnodes.IfScope) and distribute:
-            scope = tnodes.IfScope(if_scope.sdfg, False, child_scope[0].children, CodeBlock(f"{if_scope.condition.as_string} and {child_scope[0].condition.as_string}"))
+    while partition:
+        child = partition.pop(0)
+        if isinstance(child, list) and len(child) == 1 and isinstance(child[0], tnodes.IfScope) and distribute:
+            scope = tnodes.IfScope(if_scope.sdfg, False, child[0].children, CodeBlock(f"{if_scope.condition.as_string} and {child[0].condition.as_string}"))
+            scope.containers.update(child[0].containers)           
         else:
-            if not isinstance(child_scope, list):
-                child_scope = [child_scope]
-            scope = tnodes.IfScope(if_scope.sdfg, False, child_scope, deepcopy(if_scope.condition))
-        scope.parent = parent_scope
-        parent_scope.children.insert(idx, scope)
+            if not isinstance(child, list):
+                child = [child]
+            scope = tnodes.IfScope(if_scope.sdfg, False, child, copy.deepcopy(if_scope.condition))
+        for child in scope.children:
+            child.parent = scope
+            if isinstance(child, tnodes.ScheduleTreeScope):
+                scope.containers.update(child.containers)
+        scope.parent = if_scope.parent
+        new_scopes.append(scope)
 
-    return True
+    return new_scopes
 
 
 def wcr_to_reduce(map_scope: tnodes.MapScope, tree: tnodes.ScheduleTreeNode) -> bool:
