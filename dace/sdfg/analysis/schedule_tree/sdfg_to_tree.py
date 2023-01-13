@@ -17,6 +17,39 @@ import time
 import sys
 
 
+def dealias_sdfg(sdfg: SDFG):
+    for nsdfg in sdfg.all_sdfgs_recursive():
+
+        if not nsdfg.parent:
+            continue
+
+        replacements: Dict[str, str] = {}
+
+        parent_sdfg = nsdfg.parent_sdfg
+        parent_state = nsdfg.parent
+        parent_node = nsdfg.parent_nsdfg_node
+
+        for name, desc in nsdfg.arrays.items():
+            if desc.transient:
+                continue
+            for edge in parent_state.edges_by_connector(parent_node, name):
+                parent_name = edge.data.data
+                assert parent_name in parent_sdfg.arrays
+                if name != parent_name:
+                    replacements[name] = parent_name
+                    break
+        
+        if replacements:
+            nsdfg.replace_dict(replacements)
+            parent_node.in_connectors = {replacements[c] if c in replacements else c: t for c, t in parent_node.in_connectors.items()}
+            parent_node.out_connectors = {replacements[c] if c in replacements else c: t for c, t in parent_node.out_connectors.items()}
+            for e in parent_state.all_edges(parent_node):
+                if e.src_conn in replacements:
+                    e._src_conn = replacements[e.src_conn]
+                elif e.dst_conn in replacements:
+                    e._dst_conn = replacements[e.dst_conn]
+
+
 def populate_containers(scope: tn.ScheduleTreeScope, defined_arrays: Set[str] = None):
     defined_arrays = defined_arrays or set()
     if scope.top_level:
@@ -70,10 +103,17 @@ def replace_memlets(sdfg: SDFG, array_mapping: Dict[str, Memlet]):
             if e.data.data in array_mapping:
                 e.data = unsqueeze_memlet(e.data, array_mapping[e.data.data])
     for e in sdfg.edges():
+        repl_dict = dict()
         syms = e.data.read_symbols()
+        for memlet in e.data.get_read_memlets(sdfg.arrays):
+            if memlet.data in array_mapping:
+                repl_dict[str(memlet)] = unsqueeze_memlet(memlet, array_mapping[memlet.data])
+                if memlet.data in syms:
+                    syms.remove(memlet.data)
         for s in syms:
             if s in array_mapping:
-                e.data.replace(s, str(array_mapping[s]))
+                repl_dict[s] = str(array_mapping[s])
+        e.data.replace_dict(repl_dict)
             
 
 
@@ -102,28 +142,8 @@ def remove_name_collisions(sdfg: SDFG):
 
         # Rename duplicate data containers
         for name, desc in nsdfg.arrays.items():
-            # TODO: Is it better to do this while parsing the SDFG?
-            pdesc = desc
-            pnode = parent_node
-            csdfg = nsdfg
-            cname = name
-            while pnode is not None and not pdesc.transient:
-                parent_state = csdfg.parent
-                parent_sdfg = csdfg.parent_sdfg
-                edge = list(parent_state.edges_by_connector(parent_node, cname))[0]
-                path = parent_state.memlet_path(edge)
-                if path[0].src is parent_node:
-                    parent_name = path[-1].dst.data
-                else:
-                    parent_name = path[0].src.data
-                pdesc = parent_sdfg.arrays[parent_name]
-                csdfg = parent_sdfg
-                pnode = csdfg.parent_nsdfg_node
-                cname = parent_name
-            # if pnode is None and not pdesc.transient and name != cname:
-            if pnode is None and name != cname:
-                replacements[name] = cname
-                name = cname
+
+            if not desc.transient:
                 continue
 
             if name in identifiers_seen:
@@ -155,17 +175,6 @@ def remove_name_collisions(sdfg: SDFG):
         # If there is a name collision, replace all uses of the old names with the new names
         if replacements:
             nsdfg.replace_dict(replacements)
-            # TODO: Should this be handled differently?
-            # Replacing connector names
-            # Replacing edge connector names
-            if nsdfg.parent_sdfg:
-                nsdfg.parent_nsdfg_node.in_connectors = {replacements[c] if c in replacements else c: t for c, t in nsdfg.parent_nsdfg_node.in_connectors.items()}
-                nsdfg.parent_nsdfg_node.out_connectors = {replacements[c] if c in replacements else c: t for c, t in nsdfg.parent_nsdfg_node.out_connectors.items()}
-                for e in nsdfg.parent.all_edges(nsdfg.parent_nsdfg_node):
-                    if e.src_conn in replacements:
-                        e._src_conn = replacements[e.src_conn]
-                    elif e.dst_conn in replacements:
-                        e._dst_conn = replacements[e.dst_conn]
 
 
 def _make_view_node(state: SDFGState, edge: gr.MultiConnectorEdge[Memlet], view_name: str,
@@ -404,6 +413,7 @@ def as_schedule_tree(sdfg: SDFG, in_place: bool = False, toplevel: bool = True) 
 
     if toplevel:  # Top-level SDFG preparation (only perform once)
         # Handle name collisions (in arrays, state labels, symbols)
+        dealias_sdfg(sdfg)
         remove_name_collisions(sdfg)
 
     #############################
@@ -482,7 +492,6 @@ def as_schedule_tree(sdfg: SDFG, in_place: bool = False, toplevel: bool = True) 
 
         if node.first_state is not None:
             result = [tn.StateLabel(state=node.first_state)] + result
-            # result = [tn.StateLabel(sdfg=node.first_state.parent, state=node.first_state)] + result
 
         return result
 
