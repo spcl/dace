@@ -54,6 +54,9 @@ def populate_containers(scope: tn.ScheduleTreeScope, defined_arrays: Set[str] = 
     defined_arrays = defined_arrays or set()
     if scope.top_level:
         scope.containers = {name: copy.deepcopy(desc) for name, desc in scope.sdfg.arrays.items() if not desc.transient}
+        scope.symbols = dict()
+        for sdfg in scope.sdfg.all_sdfgs_recursive():
+            scope.symbols.update(sdfg.symbols)
         defined_arrays = set(scope.containers.keys())
     _, defined_arrays = scope.define_arrays(0, defined_arrays)
     for child in scope.children:
@@ -445,7 +448,7 @@ def as_schedule_tree(sdfg: SDFG, in_place: bool = False, toplevel: bool = True) 
 
                     if e not in parent.assignments_to_ignore:
                         for aname, aval in e.data.assignments.items():
-                            edge_body.append(tn.AssignNode(name=aname, value=CodeBlock(aval)))
+                            edge_body.append(tn.AssignNode(name=aname, value=CodeBlock(aval), edge=InterstateEdge(assignments={aname: aval})))
 
                     if not parent.sequential:
                         if e not in parent.gotos_to_ignore:

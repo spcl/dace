@@ -5,8 +5,9 @@ from dace import nodes, data, subsets
 from dace.codegen import control_flow as cf
 from dace.dtypes import TYPECLASS_TO_STRING
 from dace.properties import CodeBlock
-from dace.sdfg import SDFG
+from dace.sdfg import SDFG, InterstateEdge
 from dace.sdfg.state import SDFGState
+from dace.symbolic import symbol
 from dace.memlet import Memlet
 from typing import Dict, List, Optional, Set, Tuple, Union
 
@@ -47,7 +48,7 @@ class ScheduleTreeNode:
         # defined_arrays |= undefined_arrays.keys()
         # return string, defined_arrays
     
-    def is_data_used(self, name: str) -> bool:
+    def is_data_used(self, name: str, include_symbols: bool = False) -> bool:
         pass
         # for child in self.children:
         #     if child.is_data_used(name):
@@ -61,6 +62,7 @@ class ScheduleTreeScope(ScheduleTreeNode):
     top_level: bool
     children: List['ScheduleTreeNode']
     containers: Optional[Dict[str, data.Data]] = field(default_factory=dict, init=False)
+    symbols: Optional[Dict[str, symbol]] = field(default_factory=dict, init=False)
 
     # def __init__(self, sdfg: Optional[SDFG] = None, top_level: Optional[bool] = False, children: Optional[List['ScheduleTreeNode']] = None):
     def __init__(self, sdfg: Optional[SDFG] = None, top_level: Optional[bool] = False, children: Optional[List['ScheduleTreeNode']] = None):
@@ -202,6 +204,7 @@ class AssignNode(ScheduleTreeNode):
     """
     name: str
     value: CodeBlock
+    edge: InterstateEdge
 
     def as_string(self, indent: int = 0):
         return indent * INDENTATION + f'assign {self.name} = {self.value.as_string}'
@@ -389,9 +392,14 @@ class TaskletNode(ScheduleTreeNode):
         code = self.node.code.as_string.replace('\n', '\\n')
         return string + indent * INDENTATION + f"dace.tree.tasklet(label='{self.node.label}', inputs={{{in_memlets}}}, outputs={{{out_memlets}}}, code='{code}', language=dace.{self.node.language})", defined_arrays
 
-    def is_data_used(self, name: str) -> bool:
+    def is_data_used(self, name: str, include_symbols: bool = False) -> bool:
         used_data = set([memlet.data for memlet in self.in_memlets.values()])
         used_data |= set([memlet.data for memlet in self.out_memlets.values()])
+        if include_symbols:
+            for memlet in self.in_memlets.values():
+                used_data |= memlet.subset.free_symbols
+                if memlet.other_subset:
+                    used_data |= memlet.other_subset.free_symbols
         return name in used_data
 
 

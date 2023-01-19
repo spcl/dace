@@ -1,6 +1,7 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
-from dace import data as dt, Memlet, SDFG, subsets
+from dace import data as dt, dtypes, Memlet, SDFG, subsets
+from dace.sdfg import nodes as dnodes
 from dace.sdfg.analysis.schedule_tree import treenodes as tnodes
 from dace.sdfg.analysis.schedule_tree import utils as tutils
 import re
@@ -15,7 +16,20 @@ def _update_memlets(data: Dict[str, dt.Data], memlets: Dict[str, Memlet], index:
         if memlet.data in data:
             subset = index if replace[memlet.data] else f"{index}, {memlet.subset}"
             memlets[conn] = Memlet(data=memlet.data, subset=subset)
-
+        # else:
+        #     repl_dict = dict()
+        #     for s in memlet.subset.free_symbols:
+        #         if s in data:
+        #             repl_dict[s] = f"{s}({index})"
+        #     if repl_dict:
+        #         memlet.subset.replace(repl_dict)
+        #     if memlet.other_subset:
+        #         repl_dict = dict()
+        #         for s in memlet.other_subset.free_symbols:
+        #             if s in data:
+        #                 repl_dict[s] = f"{s}({index})"
+        #         if repl_dict:
+        #             memlet.other_subset.replace(repl_dict)
 
 def _augment_data(data: Set[str], loop: Union[tnodes.MapScope, tnodes.ForScope], tree: tnodes.ScheduleTreeNode):
     
@@ -115,6 +129,7 @@ def loop_fission(loop: Union[tnodes.MapScope, tnodes.ForScope], tree: tnodes.Sch
         return [loop]
     
     data_to_augment = set()
+    assignments = dict()
     frontier = list(partition)
     while len(frontier) > 0:
         scope = frontier.pop()
@@ -126,15 +141,46 @@ def loop_fission(loop: Union[tnodes.MapScope, tnodes.ForScope], tree: tnodes.Sch
             except AttributeError:
                 if scope.target in loop.containers:
                     data_to_augment.add(scope.target)
-        if hasattr(scope, 'children'):
+        elif isinstance(scope, tnodes.AssignNode):
+            symbol = tree.symbols[scope.name]
+            loop.containers[scope.name] = dt.Scalar(symbol.dtype, transient=True)
+            data_to_augment.add(scope.name)
+            repl_dict = {scope.name: '__out'}
+            out_memlets = {'__out': Memlet(data=scope.name, subset='0')}
+            in_memlets = dict()
+            for i, memlet in enumerate(scope.edge.get_read_memlets(scope.parent.sdfg.arrays)):
+                repl_dict[str(memlet)] = f'__in{i}'
+                in_memlets[f'__in{i}'] = memlet
+            scope.edge.replace_dict(repl_dict)
+            tasklet = dnodes.Tasklet('some_label', in_memlets.keys(), {'__out'},
+                                     f"__out = {scope.edge.assignments['__out']}")
+            tnode = tnodes.TaskletNode(tasklet, in_memlets, out_memlets)
+            tnode.parent = loop
+            idx = loop.children.index(scope)
+            loop.children[idx] = tnode
+            idx = partition.index(scope)
+            partition[idx] = tnode
+            assignments[scope.name] = (scope.value, scope.edge, idx)
+        elif hasattr(scope, 'children'):
             frontier.extend(scope.children)
     _augment_data(data_to_augment, loop, tree)
 
     new_scopes = []
-    while partition:
-        child = partition.pop(0)
+    # while partition:
+    #     child = partition.pop(0)
+    for i, child in enumerate(partition):
         if not isinstance(child, list):
             child = [child]
+        
+        for c in list(child):
+            idx = child.index(c)
+            # Reverse access?
+            for name, (value, edge, index) in assignments.items():
+                if index == i:
+                    continue
+                if c.is_data_used(name, True):
+                    child.insert(idx, tnodes.AssignNode(name, copy.deepcopy(value), copy.deepcopy(edge)))
+
         if isinstance(loop, tnodes.MapScope):
             scope = tnodes.MapScope(sdfg, False, child, copy.deepcopy(loop.node))
         else:
