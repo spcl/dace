@@ -76,7 +76,7 @@ def _get_csrmv_operands(node: dace.sdfg.nodes.LibraryNode,
 
 
 @dace.library.expansion
-class ExpandCSRMMPure(ExpandTransformation):
+class ExpandCSRMVPure(ExpandTransformation):
     environments = []
 
     @staticmethod
@@ -113,7 +113,7 @@ class ExpandCSRMMPure(ExpandTransformation):
 
             init_state = nsdfg.add_state_before(nstate, node.label + "_initstate")
             init_state.add_mapped_tasklet(
-                'csrmm_init', {'_o%d' % i: '0:%s' % symstr(d)
+                'csrmv_init', {'_o%d' % i: '0:%s' % symstr(d)
                                for i, d in enumerate(shape_c)}, {},
                 'out = 0', {'out': dace.Memlet.simple('_c', ','.join(['_o%d' % i for i in range(len(shape_c))]))},
                 external_edges=True)
@@ -135,7 +135,7 @@ class ExpandCSRMMPure(ExpandTransformation):
             nsdfg.add_datadesc('_cin', cin_desc)
 
             init_state.add_mapped_tasklet(
-                'csrmm_init', {'_o%d' % i: '0:%s' % symstr(d)
+                'csrmv_init', {'_o%d' % i: '0:%s' % symstr(d)
                                for i, d in enumerate(cdesc.shape)},
                 {'_in': dace.Memlet.simple('_cin', ','.join(['_o%d' % i for i in range(len(cdesc.shape))]))},
                 f'_out = {node.beta} * _in',
@@ -487,8 +487,8 @@ class ExpandCSRMVCuSPARSE(ExpandTransformation):
             nstate.add_nedge(b, gb, dace.Memlet.from_array('_b', bdesc))
 
             nstate.add_edge(gar, None, tasklet, '_conn_a_rows', dace.Memlet.from_array('_a_rows_gpu', arows))
-            nstate.add_edge(gac, None, tasklet, '_conn_a_cols', dace.Memlet.from_array('_a_cols_gpu', arows))
-            nstate.add_edge(gav, None, tasklet, '_conn_a_vals', dace.Memlet.from_array('_a_vals_gpu', arows))
+            nstate.add_edge(gac, None, tasklet, '_conn_a_cols', dace.Memlet.from_array('_a_cols_gpu', acols))
+            nstate.add_edge(gav, None, tasklet, '_conn_a_vals', dace.Memlet.from_array('_a_vals_gpu', avals))
             nstate.add_edge(gb, None, tasklet, '_conn_b', dace.Memlet.from_array('_b_gpu', bdesc))
             nstate.add_edge(tasklet, '_conn_c', gc, None, dace.Memlet.from_array('_c_gpu', cdesc))
             nstate.add_nedge(gc, c, dace.Memlet.from_array('_c', cdesc))
@@ -563,8 +563,6 @@ class CSRMV(dace.sdfg.nodes.LibraryNode):
             ))
         if len(size_b) != 1:
             raise ValueError("Matrix-vector product only supported on vector B")
-        if len(size_out_c) != 1:
-            raise ValueError("Matrix-vector product only supported on vector C")
         
 
         A_rows = size_a_rowptr[0] - 1
@@ -572,6 +570,8 @@ class CSRMV(dace.sdfg.nodes.LibraryNode):
         out_subset = dc(out_memlet.subset)
         out_subset.squeeze()
         size_out_c = out_subset.size()
+        if len(size_out_c) != 1:
+            raise ValueError("Matrix-vector product only supported on vector C")
         if size_in_c is not None and size_in_c != size_out_c:
             raise ValueError("Input vector C must match output vector C.")
 
