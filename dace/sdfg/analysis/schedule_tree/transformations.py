@@ -5,34 +5,13 @@ from dace.sdfg import nodes as dnodes
 from dace.sdfg.analysis.schedule_tree import treenodes as tnodes
 from dace.sdfg.analysis.schedule_tree import utils as tutils
 import re
-from typing import Dict, List, Set, Union
+from typing import Dict, List, Set, Tuple, Union
 
 
 _dataflow_nodes = (tnodes.ViewNode, tnodes.RefSetNode, tnodes.CopyNode, tnodes.DynScopeCopyNode, tnodes.TaskletNode, tnodes.LibraryCall)
 
 
-def _update_memlets(data: Dict[str, dt.Data], memlets: Dict[str, Memlet], index: str, replace: Dict[str, bool]):
-    for conn, memlet in memlets.items():
-        if memlet.data in data:
-            subset = index if replace[memlet.data] else f"{index}, {memlet.subset}"
-            memlets[conn] = Memlet(data=memlet.data, subset=subset)
-        # else:
-        #     repl_dict = dict()
-        #     for s in memlet.subset.free_symbols:
-        #         if s in data:
-        #             repl_dict[s] = f"{s}({index})"
-        #     if repl_dict:
-        #         memlet.subset.replace(repl_dict)
-        #     if memlet.other_subset:
-        #         repl_dict = dict()
-        #         for s in memlet.other_subset.free_symbols:
-        #             if s in data:
-        #                 repl_dict[s] = f"{s}({index})"
-        #         if repl_dict:
-        #             memlet.other_subset.replace(repl_dict)
-
-def _augment_data(data: Set[str], loop: Union[tnodes.MapScope, tnodes.ForScope], tree: tnodes.ScheduleTreeNode):
-    
+def _get_loop_size(loop: Union[tnodes.MapScope, tnodes.ForScope]) -> Tuple[str, list, list]:
     # Generate loop-related indices, sizes and, strides
     if isinstance(loop, tnodes.MapScope):
         map = loop.node.map
@@ -74,6 +53,62 @@ def _augment_data(data: Set[str], loop: Union[tnodes.MapScope, tnodes.ForScope],
     strides = [1] * len(size)
     for i in range(len(size) - 2, -1, -1):
         strides[i] = strides[i+1] * size[i+1]
+    
+    return index, size, strides
+
+
+def _update_memlets(data: Dict[str, dt.Data], memlets: Dict[str, Memlet], index: str, replace: Dict[str, bool]):
+    for conn, memlet in memlets.items():
+        if memlet.data in data:
+            subset = index if replace[memlet.data] else f"{index}, {memlet.subset}"
+            memlets[conn] = Memlet(data=memlet.data, subset=subset)
+
+
+def _augment_data(data: Set[str], loop: Union[tnodes.MapScope, tnodes.ForScope], tree: tnodes.ScheduleTreeNode):
+    
+    # # Generate loop-related indices, sizes and, strides
+    # if isinstance(loop, tnodes.MapScope):
+    #     map = loop.node.map
+    #     index = ", ".join(f"{p}/{r[2]}-{r[0]}" if r[2] != 1 else f"{p}-{r[0]}" for p, r in zip(map.params, map.range))
+    #     size = map.range.size()
+    # else:
+    #     itervar = loop.header.itervar
+    #     start = loop.header.init
+    #     # NOTE: Condition expression may be inside parentheses
+    #     par = re.search(f"^\s*(\(?)\s*{itervar}", loop.header.condition.as_string).group(1) == '('
+    #     if par:
+    #         stop_match = re.search(f"\(\s*{itervar}\s*([<>=]+)\s*(.+)\s*\)", loop.header.condition.as_string)
+    #     else:
+    #         stop_match = re.search(f"{itervar}\s*([<>=]+)\s*(.+)", loop.header.condition.as_string)
+    #     stop_op = stop_match.group(1)
+    #     assert stop_op in ("<", "<=", ">", ">=")
+    #     stop = stop_match.group(2)
+    #     # NOTE: Update expression may be inside parentheses
+    #     par = re.search(f"^\s*(\(?)\s*{itervar}", loop.header.update).group(1) == '('
+    #     if par:
+    #         step_match = re.search(f"\(\s*{itervar}\s*([(*+-/%)]+)\s*([a-zA-Z0-9_]+)\s*\)", loop.header.update)
+    #     else:
+    #         step_match = re.search(f"{itervar}\s*([(*+-/%)]+)\s*([a-zA-Z0-9_]+)", loop.header.update)
+    #     try:
+    #         step_op = step_match.group(1)
+    #         step = step_match.group(2)
+    #         if step_op == '+':
+    #             step = int(step)
+    #             index = f"{itervar}/{step}-{start}" if step != 1 else f"{itervar}-{start}"
+    #         else:
+    #             raise ValueError
+    #     except (AttributeError, ValueError):
+    #         step = 1 if '<' in stop_op  else -1
+    #         index = itervar
+    #     if "=" in stop_op:
+    #         stop = f"{stop} + ({step})"
+    #     size = subsets.Range.from_string(f"{start}:{stop}:{step}").size()
+
+    # strides = [1] * len(size)
+    # for i in range(len(size) - 2, -1, -1):
+    #     strides[i] = strides[i+1] * size[i+1]
+
+    index, size, strides = _get_loop_size(loop)
 
     # Augment data descriptors
     replace = dict()
@@ -127,6 +162,8 @@ def loop_fission(loop: Union[tnodes.MapScope, tnodes.ForScope], tree: tnodes.Sch
     partition = tutils.partition_scope_body(loop)
     if len(partition) < 2:
         return [loop]
+
+    index, _, _ = _get_loop_size(loop)
     
     data_to_augment = set()
     assignments = dict()
@@ -143,10 +180,10 @@ def loop_fission(loop: Union[tnodes.MapScope, tnodes.ForScope], tree: tnodes.Sch
                     data_to_augment.add(scope.target)
         elif isinstance(scope, tnodes.AssignNode):
             symbol = tree.symbols[scope.name]
-            loop.containers[scope.name] = dt.Scalar(symbol.dtype, transient=True)
-            data_to_augment.add(scope.name)
+            loop.containers[f"{scope.name}_arr"] = dt.Scalar(symbol.dtype, transient=True)
+            data_to_augment.add(f"{scope.name}_arr")
             repl_dict = {scope.name: '__out'}
-            out_memlets = {'__out': Memlet(data=scope.name, subset='0')}
+            out_memlets = {'__out': Memlet(data=f"{scope.name}_arr", subset='0')}
             in_memlets = dict()
             for i, memlet in enumerate(scope.edge.get_read_memlets(scope.parent.sdfg.arrays)):
                 repl_dict[str(memlet)] = f'__in{i}'
@@ -160,10 +197,14 @@ def loop_fission(loop: Union[tnodes.MapScope, tnodes.ForScope], tree: tnodes.Sch
             loop.children[idx] = tnode
             idx = partition.index(scope)
             partition[idx] = tnode
-            assignments[scope.name] = (scope.value, scope.edge, idx)
+            edge = copy.deepcopy(scope.edge)
+            edge.assignments['__out'] = f"{scope.name}_arr[{index}]"
+            assignments[scope.name] = (dnodes.CodeBlock(f"{scope.name}[{index}]"), edge, idx)
         elif hasattr(scope, 'children'):
             frontier.extend(scope.children)
     _augment_data(data_to_augment, loop, tree)
+    print(data_to_augment)
+
 
     new_scopes = []
     # while partition:
@@ -179,7 +220,7 @@ def loop_fission(loop: Union[tnodes.MapScope, tnodes.ForScope], tree: tnodes.Sch
                 if index == i:
                     continue
                 if c.is_data_used(name, True):
-                    child.insert(idx, tnodes.AssignNode(name, copy.deepcopy(value), copy.deepcopy(edge)))
+                    child.insert(idx, tnodes.AssignNode(f"{name}", copy.deepcopy(value), copy.deepcopy(edge)))
 
         if isinstance(loop, tnodes.MapScope):
             scope = tnodes.MapScope(sdfg, False, child, copy.deepcopy(loop.node))
