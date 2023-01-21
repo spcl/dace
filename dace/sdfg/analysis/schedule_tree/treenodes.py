@@ -386,11 +386,23 @@ class TaskletNode(ScheduleTreeNode):
 
     def as_python(self, indent: int = 0, defined_arrays: Set[str] = None) -> Tuple[str, Set[str]]:
         in_memlets = ', '.join(f"'{k}': {v}" for k, v in self.in_memlets.items())
-        out_memlets = ', '.join(f"'{k}': {v}" for k, v in self.out_memlets.items())
+        # out_memlets = ', '.join(f"'{k}': {v}" for k, v in self.out_memlets.items())
+        out_memlets_dict = dict()
+        wcr = dict()
+        for k, v in self.out_memlets.items():
+            if v.wcr:
+                w = copy.deepcopy(v)
+                w.wcr = None
+                out_memlets_dict[k] = w
+                wcr[k] = v.wcr
+            else:
+                out_memlets_dict[k] = v
+        out_memlets = ', '.join(f"'{k}': {v}" for k, v in out_memlets_dict.items())
+        wcr_memlets = ', '.join(f"'{k}': {v}" for k, v in wcr.items())
         defined_arrays = defined_arrays or set()
         string, defined_arrays = self.define_arrays(indent, defined_arrays)
         code = self.node.code.as_string.replace('\n', '\\n')
-        return string + indent * INDENTATION + f"dace.tree.tasklet(label='{self.node.label}', inputs={{{in_memlets}}}, outputs={{{out_memlets}}}, code='{code}', language=dace.{self.node.language})", defined_arrays
+        return string + indent * INDENTATION + f"dace.tree.tasklet(label='{self.node.label}', inputs={{{in_memlets}}}, outputs={{{out_memlets}}}, wcr={{{wcr_memlets}}}, code='{code}', language=dace.{self.node.language})", defined_arrays
 
     def is_data_used(self, name: str, include_symbols: bool = False) -> bool:
         used_data = set([memlet.data for memlet in self.in_memlets.values()])
