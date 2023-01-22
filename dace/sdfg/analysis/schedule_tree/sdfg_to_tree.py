@@ -416,7 +416,6 @@ def as_schedule_tree(sdfg: SDFG, in_place: bool = False, toplevel: bool = True) 
 
     if toplevel:  # Top-level SDFG preparation (only perform once)
         # Handle name collisions (in arrays, state labels, symbols)
-        dealias_sdfg(sdfg)
         remove_name_collisions(sdfg)
 
     #############################
@@ -502,6 +501,7 @@ def as_schedule_tree(sdfg: SDFG, in_place: bool = False, toplevel: bool = True) 
     result = tn.ScheduleTreeScope(sdfg=sdfg, top_level=True, children=totree(cfg))
 
     if toplevel:
+        dealias_sdfg(sdfg)
         populate_containers(result)
 
     # Clean up tree
