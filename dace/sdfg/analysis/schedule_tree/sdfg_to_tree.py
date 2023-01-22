@@ -2,7 +2,7 @@
 import copy
 from typing import Dict, List, Set
 import dace
-from dace import symbolic, data
+from dace import data, subsets, symbolic
 from dace.codegen import control_flow as cf
 from dace.sdfg.sdfg import InterstateEdge, SDFG
 from dace.sdfg.state import SDFGState
@@ -24,6 +24,9 @@ def dealias_sdfg(sdfg: SDFG):
             continue
 
         replacements: Dict[str, str] = {}
+        inv_replacements: Dict[str, List[str]] = {}
+        parent_edges: Dict[str, Memlet] = {}
+        to_unsqueeze: Set[str] = set()
 
         parent_sdfg = nsdfg.parent_sdfg
         parent_state = nsdfg.parent
@@ -37,7 +40,53 @@ def dealias_sdfg(sdfg: SDFG):
                 assert parent_name in parent_sdfg.arrays
                 if name != parent_name:
                     replacements[name] = parent_name
+                    parent_edges[name] = edge
+                    if parent_name in inv_replacements:
+                        inv_replacements[parent_name].append(name)
+                        to_unsqueeze.add(parent_name)
+                    else:
+                        inv_replacements[parent_name] = [name]
                     break
+        
+        if to_unsqueeze:
+            for parent_name in to_unsqueeze:
+                parent_arr = parent_sdfg.arrays[parent_name]
+                if isinstance(parent_arr, data.View):
+                    parent_arr = data.Array(parent_arr.dtype, parent_arr.shape, parent_arr.transient,
+                                            parent_arr.allow_conflicts, parent_arr.storage, parent_arr.location,
+                                            parent_arr.strides, parent_arr.offset, parent_arr.may_alias,
+                                            parent_arr.lifetime, parent_arr.alignment, parent_arr.debuginfo,
+                                            parent_arr.total_size, parent_arr.start_offset, parent_arr.optional,
+                                            parent_arr.pool)
+                child_names = inv_replacements[parent_name]
+                for name in child_names:
+                    child_arr = copy.deepcopy(parent_arr)
+                    child_arr.transient = False
+                    nsdfg.arrays[name] = child_arr
+                for state in nsdfg.states():
+                    for e in state.edges():
+                        if e.data.data in child_names:
+                            e.data = unsqueeze_memlet(e.data, parent_edges[e.data.data].data)
+                for e in nsdfg.edges():
+                    repl_dict = dict()
+                    syms = e.data.read_symbols()
+                    for memlet in e.data.get_read_memlets(nsdfg.arrays):
+                        if memlet.data in child_names:
+                            repl_dict[str(memlet)] = unsqueeze_memlet(memlet, parent_edges[memlet.data].data)
+                            if memlet.data in syms:
+                                syms.remove(memlet.data)
+                    for s in syms:
+                        if s in parent_edges:
+                            repl_dict[s] = str(parent_edges[s].data)
+                    e.data.replace_dict(repl_dict)
+                for name in child_names:
+                    edge = parent_edges[name]
+                    for e in parent_state.memlet_tree(edge):
+                        if e.data.data == parent_name:
+                            e.data.subset = subsets.Range.from_array(parent_arr)
+                        else:
+                            e.data.other_subset = subsets.Range.from_array(parent_arr)
+
         
         if replacements:
             nsdfg.replace_dict(replacements)
@@ -415,6 +464,7 @@ def as_schedule_tree(sdfg: SDFG, in_place: bool = False, toplevel: bool = True) 
     xfh.replace_code_to_code_edges(sdfg)
 
     if toplevel:  # Top-level SDFG preparation (only perform once)
+        dealias_sdfg(sdfg)
         # Handle name collisions (in arrays, state labels, symbols)
         remove_name_collisions(sdfg)
 
@@ -501,7 +551,6 @@ def as_schedule_tree(sdfg: SDFG, in_place: bool = False, toplevel: bool = True) 
     result = tn.ScheduleTreeScope(sdfg=sdfg, top_level=True, children=totree(cfg))
 
     if toplevel:
-        dealias_sdfg(sdfg)
         populate_containers(result)
 
     # Clean up tree
