@@ -9,6 +9,7 @@ from dace.sdfg import SDFG, InterstateEdge
 from dace.sdfg.state import SDFGState
 from dace.symbolic import symbol
 from dace.memlet import Memlet
+import math
 from typing import Dict, List, Optional, Set, Tuple, Union
 
 INDENTATION = '  '
@@ -373,24 +374,12 @@ class PipelineScope(DataflowScope):
         return result + super().as_string(indent)
 
 
-def _memlets_as_string(d: Dict[str, Memlet]) -> Tuple[str, str]:
-
-    memlets_dict = dict()
-    wcr_dict = dict()
-
-    for k, v in d.items():
-
-        assert v.other_subset == None
-        w = copy.deepcopy(v)
-        w.wcr = None
-
-        memlets_dict[k] = w
-        wcr_dict[k] = v.wcr
-
-    memlets_str = ', '.join(f"'{k}': {v}" for k, v in memlets_dict.items())
-    wcr_str = ', '.join(f"'{k}': {v}" for k, v in wcr_dict.items())
-
-    return memlets_str, wcr_str
+def _memlet_to_str(memlet: Memlet) -> str:
+    assert memlet.other_subset == None
+    wcr = ""
+    if memlet.wcr:
+        wcr = f"({math.prod(memlet.subset.size())}, {memlet.wcr})"
+    return f"{memlet.data}{wcr}[{memlet.subset}]"
 
 
 @dataclass
@@ -405,18 +394,16 @@ class TaskletNode(ScheduleTreeNode):
         return indent * INDENTATION + f'{out_memlets} = tasklet({in_memlets})'
 
     def as_python(self, indent: int = 0, defined_arrays: Set[str] = None) -> Tuple[str, Set[str]]:
-        in_memlets, in_wcr = _memlets_as_string(self.in_memlets)
-        out_memlets, out_wcr = _memlets_as_string(self.out_memlets)
+        explicit_dataflow = indent * INDENTATION + "with dace.tasklet:\n"
+        for conn, memlet in self.in_memlets.items():
+            explicit_dataflow += (indent + 1) * INDENTATION + f"{conn} << {_memlet_to_str(memlet)}\n"
+        for conn, memlet in self.out_memlets.items():
+            explicit_dataflow += (indent + 1) * INDENTATION + f"{conn} >> {_memlet_to_str(memlet)}\n"
+        code = self.node.code.as_string.replace('\n', f"\n{(indent + 1) * INDENTATION}")
+        explicit_dataflow += (indent + 1) * INDENTATION + code
         defined_arrays = defined_arrays or set()
         string, defined_arrays = self.define_arrays(indent, defined_arrays)
-        code = self.node.code.as_string.replace('\n', '\\n')
-        return (
-            string + indent * INDENTATION + (f"dace.tree.tasklet(label='{self.node.label}', inputs={{{in_memlets}}}, "
-                                             f"inputs_wcr={{{in_wcr}}}, outputs={{{out_memlets}}}, "
-                                             f"outputs_wcr={{{out_wcr}}}, code='{code}', "
-                                             f"language=dace.{self.node.language})"),
-            defined_arrays
-        )
+        return string + explicit_dataflow, defined_arrays
 
     def is_data_used(self, name: str, include_symbols: bool = False) -> bool:
         used_data = set([memlet.data for memlet in self.in_memlets.values()])
