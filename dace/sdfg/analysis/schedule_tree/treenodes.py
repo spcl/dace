@@ -9,7 +9,7 @@ from dace.sdfg import SDFG, InterstateEdge
 from dace.sdfg.state import SDFGState
 from dace.symbolic import symbol
 from dace.memlet import Memlet
-import math
+from functools import reduce
 from typing import Dict, List, Optional, Set, Tuple, Union
 
 INDENTATION = '  '
@@ -378,7 +378,7 @@ def _memlet_to_str(memlet: Memlet) -> str:
     assert memlet.other_subset == None
     wcr = ""
     if memlet.wcr:
-        wcr = f"({math.prod(memlet.subset.size())}, {memlet.wcr})"
+        wcr = f"({reduce(lambda x, y: x * y, memlet.subset.size())}, {memlet.wcr})"
     return f"{memlet.data}{wcr}[{memlet.subset}]"
 
 
@@ -523,6 +523,15 @@ class ViewNode(ScheduleTreeNode):
 
     def as_string(self, indent: int = 0):
         return indent * INDENTATION + f'{self.target} = view {self.memlet} as {self.view_desc.shape}'
+    
+    def as_python(self, indent: int = 0, defined_arrays: Set[str] = None) -> Tuple[str, Set[str]]:
+        defined_arrays = defined_arrays or set()
+        string, defined_arrays = self.define_arrays(indent, defined_arrays)
+        return string + indent * INDENTATION + f"{self.target} = {self.memlet}", defined_arrays
+    
+    def is_data_used(self, name: str) -> bool:
+        # NOTE: View data must not be considered used
+        return name is self.memlet.data
 
 
 @dataclass
