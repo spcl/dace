@@ -1,10 +1,12 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+""" Tests conversion of Tasklets from SDFG to ScheduleTree and back. """
 import dace
 import numpy as np
 from dace.sdfg.analysis.schedule_tree.sdfg_to_tree import as_schedule_tree, as_sdfg
 
 
 def test_simple_tasklet():
+    """ Tests a Tasklet with a single (non-WCR) output. """
 
     @dace.program
     def simple_tasklet(A: dace.float32[3, 3]):
@@ -35,6 +37,7 @@ def test_simple_tasklet():
 
 
 def test_multiple_outputs_tasklet():
+    """ Tests a Tasklet with multiple (non-WCR) outputs. """
 
     @dace.program
     def multiple_outputs_tasklet(A: dace.float32[3, 3]):
@@ -69,6 +72,7 @@ def test_multiple_outputs_tasklet():
 
 
 def test_simple_wcr_tasklet():
+    """ Tests a Tasklet with a single WCR output. """
 
     @dace.program
     def simple_wcr_tasklet(A: dace.float32[3, 3]):
@@ -99,6 +103,7 @@ def test_simple_wcr_tasklet():
 
 
 def test_simple_wcr_tasklet2():
+    """ Tests a tasklet with a single WCR output. The output is also (fake) input with WCR. """
 
     @dace.program
     def simple_wcr_tasklet2(A: dace.float32[3, 3]):
