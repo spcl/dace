@@ -98,7 +98,39 @@ def test_simple_wcr_tasklet():
     assert np.allclose(val_post, ref)
 
 
+def test_simple_wcr_tasklet2():
+
+    @dace.program
+    def simple_wcr_tasklet2(A: dace.float32[3, 3]):
+        ret = dace.float32(2)
+        with dace.tasklet:
+            c << A[1, 1]
+            n << A[0, 1]
+            s << A[2, 1]
+            w << A[1, 0]
+            e << A[1, 2]
+            inp << ret(1, lambda x, y: x + y)
+            out =  (c + n + s + w + e) / 5
+            out >> ret(1, lambda x, y: x + y)
+        return ret
+    
+    sdfg_pre = simple_wcr_tasklet2.to_sdfg()
+    tree = as_schedule_tree(sdfg_pre)
+    sdfg_post = as_sdfg(tree)
+
+    rng = np.random.default_rng(42)
+    A = rng.random((3, 3), dtype=np.float32)
+    ref = 2 + (A[1, 1] + A[0, 1] + A[2, 1] + A[1, 0] + A[1, 2]) / 5
+
+    val_pre = sdfg_pre(A=A)[0]
+    val_post = sdfg_post(A=A)[0]
+
+    assert np.allclose(val_pre, ref)
+    assert np.allclose(val_post, ref)
+
+
 if __name__ == "__main__":
-    # test_simple_tasklet()
-    # test_multiple_outputs_tasklet()
+    test_simple_tasklet()
+    test_multiple_outputs_tasklet()
     test_simple_wcr_tasklet()
+    test_simple_wcr_tasklet2()
