@@ -1198,9 +1198,6 @@ class ProgramVisitor(ExtNodeVisitor):
         for vname, arrname in self.variables.items():
             if vname.startswith('__return'):
                 if isinstance(self.sdfg.arrays[arrname], data.View):
-                    # If it is a registered view, ignore.
-                    if vname in self.views and self.views[vname][0].startswith('__return'):
-                        continue
                     # In case of a view, make a copy
                     # NOTE: If we are at the top level SDFG (not always clear),
                     # and it is a View of an input array, can we return a NumPy
@@ -1236,8 +1233,7 @@ class ProgramVisitor(ExtNodeVisitor):
 
         for arrname, arr in self.sdfg.arrays.items():
             # Return values become non-transient (accessible by the outside)
-            if arrname.startswith('__return') and not (
-                    vname in self.views and self.views[vname][0].startswith('__return')):
+            if arrname.startswith('__return'):
                 arr.transient = False
                 self.outputs[arrname] = (None, Memlet.from_array(arrname, arr), [])
 
@@ -4757,34 +4753,25 @@ class ProgramVisitor(ExtNodeVisitor):
             if not strides:
                 strides = None
 
-            # if is_index:
-            #     tmp = self.sdfg.temp_data_name()
-            #     tmp, tmparr = self.sdfg.add_scalar(tmp, arrobj.dtype, arrobj.storage, transient=True)
-            # else:
-            #     tmp, tmparr = self.sdfg.add_view(array,
-            #                                      other_subset.size(),
-            #                                      arrobj.dtype,
-            #                                      storage=arrobj.storage,
-            #                                      strides=strides,
-            #                                      find_new_name=True)
-            #     self.views[tmp] = (array,
-            #                        Memlet(f'{array}[{expr.subset}]->{other_subset}', volume=expr.accesses,
-            #                               wcr=expr.wcr))
-            tmp, tmparr = self.sdfg.add_view(array,
-                                             other_subset.size(),
-                                             arrobj.dtype,
-                                             storage=arrobj.storage,
-                                             strides=strides,
-                                             find_new_name=True)
-            self.views[tmp] = (array, Memlet(f'{array}[{expr.subset}]->{other_subset}', volume=expr.accesses, 
-                                             wcr=expr.wcr))
+            if is_index:
+                tmp = self.sdfg.temp_data_name()
+                tmp, tmparr = self.sdfg.add_scalar(tmp, arrobj.dtype, arrobj.storage, transient=True)
+            else:
+                tmp, tmparr = self.sdfg.add_view(array,
+                                                 other_subset.size(),
+                                                 arrobj.dtype,
+                                                 storage=arrobj.storage,
+                                                 strides=strides,
+                                                 find_new_name=True)
+                self.views[tmp] = (array,
+                                   Memlet(f'{array}[{expr.subset}]->{other_subset}', volume=expr.accesses,
+                                          wcr=expr.wcr))
             self.variables[tmp] = tmp
-            self.last_state.add_access(tmp, debuginfo=self.current_lineinfo)
-            # if not isinstance(tmparr, data.View):
-            #     rnode = self.last_state.add_read(array, debuginfo=self.current_lineinfo)
-            #     wnode = self.last_state.add_write(tmp, debuginfo=self.current_lineinfo)
-            #     self.last_state.add_nedge(
-            #         rnode, wnode, Memlet(f'{array}[{expr.subset}]->{other_subset}', volume=expr.accesses, wcr=expr.wcr))
+            if not isinstance(tmparr, data.View):
+                rnode = self.last_state.add_read(array, debuginfo=self.current_lineinfo)
+                wnode = self.last_state.add_write(tmp, debuginfo=self.current_lineinfo)
+                self.last_state.add_nedge(
+                    rnode, wnode, Memlet(f'{array}[{expr.subset}]->{other_subset}', volume=expr.accesses, wcr=expr.wcr))
             return tmp
 
     def _parse_subscript_slice(self,
