@@ -4625,21 +4625,36 @@ for op, method in _boolop_to_method.items():
 
 
 @oprepo.replaces('dace.tree.tasklet')
-def _tasklet(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, label: StringLiteral, inputs: Dict[StringLiteral, str], outputs: Dict[StringLiteral, str], wcr: Dict[StringLiteral, Any], code: StringLiteral, language: dtypes.Language):
+def _tasklet(pv: 'ProgramVisitor',
+             sdfg: SDFG,
+             state: SDFGState,
+             label: StringLiteral,
+             inputs: Dict[StringLiteral, str],
+             inputs_wcr: Dict[StringLiteral, Union[None, Callable[[Any, Any], Any]]],
+             outputs: Dict[StringLiteral, str],
+             outputs_wcr: Dict[StringLiteral, Union[None, Callable[[Any, Any], Any]]],
+             code: StringLiteral,
+             language: dtypes.Language):
+
+    # Extract strings from StringLiterals
     label = label.value
     inputs = {k.value: v for k, v in inputs.items()}
+    inputs_wcr = {k.value: v for k, v in inputs_wcr.items()}
     outputs = {k.value: v for k, v in outputs.items()}
-    wcr = {k.value: v for k, v in wcr.items()}
+    outputs_wcr = {k.value: v for k, v in outputs_wcr.items()}
     code = code.value
+
+    # Create Tasklet
     tasklet = state.add_tasklet(label, inputs.keys(), outputs.keys(), code, language)
     for conn, name in inputs.items():
         access = state.add_access(name)
-        state.add_edge(access, None, tasklet, conn, Memlet.from_array(name, sdfg.arrays[name]))
+        memlet = Memlet.from_array(name, sdfg.arrays[name])
+        memlet.wcr = inputs_wcr[conn]
+        state.add_edge(access, None, tasklet, conn, memlet)
     for conn, name in outputs.items():
         access = state.add_access(name)
         memlet = Memlet.from_array(name, sdfg.arrays[name])
-        if conn in wcr:
-            memlet.wcr = wcr[conn]
+        memlet.wcr = outputs_wcr[conn]
         state.add_edge(tasklet, conn, access, None, memlet)
 
     # Handle scope output
