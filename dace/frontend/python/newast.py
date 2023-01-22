@@ -4779,11 +4779,12 @@ class ProgramVisitor(ExtNodeVisitor):
             self.views[tmp] = (array, Memlet(f'{array}[{expr.subset}]->{other_subset}', volume=expr.accesses, 
                                              wcr=expr.wcr))
             self.variables[tmp] = tmp
-            if not isinstance(tmparr, data.View):
-                rnode = self.last_state.add_read(array, debuginfo=self.current_lineinfo)
-                wnode = self.last_state.add_write(tmp, debuginfo=self.current_lineinfo)
-                self.last_state.add_nedge(
-                    rnode, wnode, Memlet(f'{array}[{expr.subset}]->{other_subset}', volume=expr.accesses, wcr=expr.wcr))
+            self.last_state.add_access(tmp, debuginfo=self.current_lineinfo)
+            # if not isinstance(tmparr, data.View):
+            #     rnode = self.last_state.add_read(array, debuginfo=self.current_lineinfo)
+            #     wnode = self.last_state.add_write(tmp, debuginfo=self.current_lineinfo)
+            #     self.last_state.add_nedge(
+            #         rnode, wnode, Memlet(f'{array}[{expr.subset}]->{other_subset}', volume=expr.accesses, wcr=expr.wcr))
             return tmp
 
     def _parse_subscript_slice(self,
