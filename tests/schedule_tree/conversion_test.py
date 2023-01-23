@@ -57,13 +57,10 @@ def test_azimint_naive():
     rng = np.random.default_rng(42)
     SN, Snpt = 1000, 10
     data, radius = rng.random((SN, )), rng.random((SN, ))
-    # ref = dace_azimint_naive(data, radius, npt=Snpt)
+    ref = dace_azimint_naive(data, radius, npt=Snpt)
 
     sdfg0 = dace_azimint_naive.to_sdfg()
     tree = as_schedule_tree(sdfg0)
-    print(tree.as_string())
-    pcode, _ = tree.as_python()
-    print(pcode)
     sdfg1 = as_sdfg(tree)
     val = sdfg1(data=data, radius=radius, N=SN, npt=Snpt)
     
