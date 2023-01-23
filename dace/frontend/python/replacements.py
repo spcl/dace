@@ -4668,18 +4668,37 @@ def _tasklet(pv: 'ProgramVisitor',
 
 
 @oprepo.replaces('dace.tree.library')
-def _library(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, ltype: type, label: StringLiteral, inputs: Dict[StringLiteral, str], outputs: Dict[StringLiteral, str], **kwargs):
+def _library(pv: 'ProgramVisitor', 
+             sdfg: SDFG,
+             state: SDFGState,
+             ltype: type,
+             label: StringLiteral,
+             inputs: Union[Dict[StringLiteral, str], Set[str]],
+             outputs: Union[Dict[StringLiteral, str], Set[str]],
+             **kwargs):
+
+    # Extract strings from StringLiterals
     label = label.value
-    inputs = {k.value: v for k, v in inputs.items()}
-    outputs = {k.value: v for k, v in outputs.items()}
+    if isinstance(inputs, dict):
+        inputs = {k.value: v for k, v in inputs.items()}
+    else:
+        inputs = {i: v for i, v in enumerate(inputs)}
+    if isinstance(outputs, dict):
+        outputs = {k.value: v for k, v in outputs.items()}
+    else:
+        outputs = {i: v for i, v in enumerate(outputs)}
+    
+    # Create LibraryNode
     tasklet = ltype(label, **kwargs)
     state.add_node(tasklet)
-    for conn, name in inputs.items():
+    for k, name in inputs.items():
         access = state.add_access(name)
+        conn = k if isinstance(k, str) else None
         state.add_edge(access, None, tasklet, conn, Memlet.from_array(name, sdfg.arrays[name]))
-    for conn, name in outputs.items():
+    for k, name in outputs.items():
         access = state.add_access(name)
         memlet = Memlet.from_array(name, sdfg.arrays[name])
+        conn = k if isinstance(k, str) else None
         state.add_edge(tasklet, conn, access, None, memlet)
     
     # Handle scope output
@@ -4693,7 +4712,7 @@ def _library(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, ltype: type, la
 
 
 @oprepo.replaces('dace.tree.copy')
-def _tasklet(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, src: str, dst: str, wcr: str = None):
+def _copy(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, src: str, dst: str, wcr: str = None):
     src_access = state.add_access(src)
     dst_access = state.add_access(dst)
     state.add_nedge(src_access, dst_access, Memlet.from_array(dst, sdfg.arrays[dst], wcr=None))
