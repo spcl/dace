@@ -1390,7 +1390,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], StateGraphView
         """
         import dace.libraries.standard as stdlib  # Avoid import loop
         debuginfo = _getdebuginfo(debuginfo or self._default_lineinfo)
-        result = stdlib.Reduce(wcr, axes, identity, schedule=schedule, debuginfo=debuginfo)
+        result = stdlib.Reduce('Reduce', wcr, axes, identity, schedule=schedule, debuginfo=debuginfo)
         self.add_node(result)
         return result
 
