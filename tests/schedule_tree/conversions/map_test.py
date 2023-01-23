@@ -26,7 +26,6 @@ def test_simple_map():
     
     sdfg_pre = simple_map.to_sdfg()
     tree = as_schedule_tree(sdfg_pre)
-    print(tree.as_string())
     sdfg_post = as_sdfg(tree)
 
     rng = np.random.default_rng(42)

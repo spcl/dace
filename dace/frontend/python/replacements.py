@@ -4354,7 +4354,8 @@ def _datatype_converter(sdfg: SDFG, state: SDFGState, arg: UfuncInput, dtype: dt
         'name': "_convert_to_{}_".format(dtype.to_string()),
         'inputs': ['__inp'],
         'outputs': ['__out'],
-        'code': "__out = dace.{}(__inp)".format(dtype.to_string())
+        'code': "__out = {}(__inp)".format(f"dace.{dtype.to_string()}" if dtype not in (dace.bool, dace.bool_)
+                                                                       else dtype.to_string())
     }
     tasklet_params = _set_tasklet_params(impl, [arg])
 
