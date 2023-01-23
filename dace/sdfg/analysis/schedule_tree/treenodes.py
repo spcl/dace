@@ -30,7 +30,7 @@ class ScheduleTreeNode:
     
     def as_python(self, indent: int = 0, defined_arrays: Set[str] = None) -> Tuple[str, Set[str]]:
         string, defined_arrays = self.define_arrays(indent, defined_arrays)
-        return string + indent * INDENTATION + 'UNSUPPORTED', defined_arrays
+        return string + indent * INDENTATION + 'pass', defined_arrays
     
     def define_arrays(self, indent: int, defined_arrays: Set[str]) -> Tuple[str, Set[str]]:
         return '', defined_arrays
@@ -114,7 +114,10 @@ def {self.sdfg.label}({self.sdfg.python_signature()}):
         body = ''
         undefined_arrays = {name: desc for name, desc in self.containers.items() if name not in defined_arrays}
         for name, desc in undefined_arrays.items():
-            definitions += cindent * INDENTATION + f"{name} = numpy.ndarray({desc.shape}, {TYPECLASS_TO_STRING[desc.dtype].replace('::', '.')})\n"
+            if isinstance(desc, data.Scalar):
+                definitions += cindent * INDENTATION + f"{name} = numpy.{desc.dtype.as_numpy_dtype()}(0)\n"
+            else:
+                definitions += cindent * INDENTATION + f"{name} = numpy.ndarray({desc.shape}, {TYPECLASS_TO_STRING[desc.dtype].replace('::', '.')})\n"
         defined_arrays |= undefined_arrays.keys()
         for child in self.children:
             substring, defined_arrays = child.as_python(indent + 1, defined_arrays)
@@ -275,6 +278,11 @@ class IfScope(ControlFlowScope):
         result = indent * INDENTATION + f'if {self.condition.as_string}:\n'
         string, defined_arrays = super().as_python(indent, defined_arrays)
         return result + string, defined_arrays
+    
+    def is_data_used(self, name: str) -> bool:
+        result = name in self.condition.get_free_symbols()
+        result |= super().is_data_used(name)
+        return result
 
 
 @dataclass
