@@ -3116,6 +3116,12 @@ class ProgramVisitor(ExtNodeVisitor):
 
             if (not is_return and isinstance(target, ast.Name) and true_name and not op
                     and not isinstance(true_array, data.Scalar) and not (true_array.shape == (1, ))):
+                if true_name in self.views:
+                    if result in self.sdfg.arrays and self.views[true_name] == (
+                            result, Memlet.from_array(result, self.sdfg.arrays[result])):
+                        continue
+                    else:
+                        raise DaceSyntaxError(self, target, 'Cannot reassign View "{}"'.format(name))
                 if (isinstance(result, str) and result in self.sdfg.arrays
                         and self.sdfg.arrays[result].is_equivalent(true_array)):
                     # Skip error if the arrays are defined exactly in the same way.

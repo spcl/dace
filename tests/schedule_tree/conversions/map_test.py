@@ -197,7 +197,6 @@ def test_multiple_outputs_mixed_map():
     assert np.allclose(val_post[1], ref1)
 
 
-# NOTE: This fails due to input connector appearing to be written (issue with Views)
 def test_nested_simple_map():
     """ Tests a nested Map Scope with a single (non-WCR) output. """
 
