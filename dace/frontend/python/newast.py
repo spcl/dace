@@ -1048,7 +1048,12 @@ class ProgramVisitor(ExtNodeVisitor):
                  closure: SDFGClosure = None,
                  nested: bool = False,
                  tmp_idx: int = 0,
-                 simplify: Optional[bool] = None):
+                 simplify: Optional[bool] = None,
+                 variable_p2i_names: Optional[Dict[str, str]] = None,
+                 variable_i2p_names: Optional[Dict[str, str]] = None,
+                 variable_ast_nodes: Optional[Dict[str, str]] = None,
+                 variable_types: Optional[Dict[str, str]] = None,
+                 variable_values: Optional[Dict[str, str]] = None):
         """ ProgramVisitor init method
 
         Arguments:
@@ -1091,6 +1096,7 @@ class ProgramVisitor(ExtNodeVisitor):
         self.variables = dict()  # Dict[str, str]
         self.accesses = dict()
         self.views: Dict[str, Tuple[str, Memlet]] = {}  # Keeps track of views
+        self.slices: Dict[str, Tuple[str, Memlet]] = {}
         self.nested_closure_arrays: Dict[str, Tuple[Any, data.Data]] = {}
         self.annotated_types: Dict[str, data.Data] = annotated_types or {}
 
@@ -1139,6 +1145,48 @@ class ProgramVisitor(ExtNodeVisitor):
 
         # Indirections
         self.indirections = dict()
+
+        self.variable_p2i_names: Dict[str, str] = dict()  # program_name: internal_name
+        self.variable_i2p_names: Dict[str, str] = dict()  # internal_name: program_name
+        self.variable_ast_nodes: Dict[str, ast.AST] = dict() # internal_name: ast_node
+        self.variable_types: Dict[str, str] = dict()  # internal_name: type
+        self.variable_values: Dict[str, Any] = dict()  # internal_name: value
+
+        # Variable types are:
+        # - Data: Scalar, Array, View, Stream
+        # - SlicedData: Slice of an Array or View
+        # - Symbol: DaCe/Sympy symbol
+        # - SymExpr: DaCe/Sympy symbolic expression
+        # - BoolConstant: bool, numpy.bool_
+        # - NumConstant: int, float, complex, and all similar NumPy datatypes
+        # - StrConstant: StringLiteral (str or bytes)
+        # - Slice: Python slice
+        # - List: Python list
+        # - Tuple: Python tuple
+        # - Dict: Python dict
+        # - Set: Python set
+        # - Undefined: Undefined variable (temporary)
+
+        if variable_p2i_names:
+            self.variable_p2i_names.update(variable_p2i_names)
+        else:
+            self.variable_p2i_names.update({k: k for k in scope_arrays.keys()})
+        if variable_i2p_names:
+            self.variable_i2p_names.update(variable_i2p_names)
+        else:
+            self.variable_i2p_names.update({k: k for k in scope_arrays.keys()})
+        if variable_ast_nodes:
+            self.variable_ast_nodes.update(variable_ast_nodes)
+        else:
+            self.variable_ast_nodes.update({k: ast.Name(id=k, lineno=line_offset, col_offset=col_offset) for k in scope_arrays.keys()})
+        if variable_types:
+            self.variable_types.update(variable_types)
+        else:
+            self.variable_types.update({k: "Data" for k in scope_arrays.keys()})
+        if variable_values:
+            self.variable_values.update(variable_values)
+        else:
+            self.variable_values.update(scope_arrays)
 
     @classmethod
     def progress_count(cls) -> int:
@@ -1373,7 +1421,12 @@ class ProgramVisitor(ExtNodeVisitor):
                             annotated_types=self.annotated_types,
                             closure=self.closure,
                             nested=True,
-                            tmp_idx=self.sdfg._temp_transients + 1)
+                            tmp_idx=self.sdfg._temp_transients + 1,
+                            variable_p2i_names=self.variable_p2i_names,
+                            variable_i2p_names=self.variable_i2p_names,
+                            variable_ast_nodes=self.variable_ast_nodes,
+                            variable_types=self.variable_types,
+                            variable_values=self.variable_values)
 
         try:
             return pv.parse_program(node, is_tasklet)
@@ -2162,11 +2215,21 @@ class ProgramVisitor(ExtNodeVisitor):
         # 2. `for i in parrange(...)`: Creates a 1D map
         # 3. `for i,j,k in dace.map[0:M, 0:N, 0:K]`: Creates an ND map
         # print(ast.dump(node))
-        indices = self._parse_for_indices(node.target)
+        # indices = self._parse_for_indices(node.target)
+        ntarget_iname = self.visit(node.target)
+        ntarget_type = self.variable_types[ntarget_iname]
+        if not ntarget_type in ("Undefined", "Tuple"):
+            raise DaceSyntaxError(self, node, f"For index {astutils.unparse(node.target)} is invalid.")
+        if ntarget_type == "Undefined":
+            pname = self.variable_i2p_names[ntarget_iname]
+            indices = [pname]
+            self.variable_types[ntarget_iname] = "Symbol"
         iterator, ranges, ast_ranges, schedule = self._parse_for_iterator(node.iter)
 
         if len(indices) != len(ranges):
             raise DaceSyntaxError(self, node, "Number of indices and ranges of for-loop do not match")
+        
+        self.variable_values[ntarget_iname] = subsets.Range([(r[0], f"{r[1]} - 1", r[2]) for r in ranges])
 
         if iterator == 'dace.map':
             if node.orelse:
@@ -3075,29 +3138,143 @@ class ProgramVisitor(ExtNodeVisitor):
             return
         self._visit_assign(node, node.target, None, dtype=dtype)
 
-    def _visit_assign(self, node, node_target, op, dtype=None, is_return=False):
+    def _visit_assign(self, node: Union[ast.Assign, ast.AnnAssign], node_target, op, dtype=None, is_return=False):
         # Get targets (elts) and results
         elts = None
         results = None
+
+        # NOTE: Do we need really "extend" here?
+        # If yes, maybe it is better to "append" with tuples and then flatten.
+        # Removes complexity from lower-level visitor methods.
+        lhs = []
         if isinstance(node_target, (ast.Tuple, ast.List)):
-            elts = node_target.elts
+            for n in node_target.elts:
+                lhs.append(self.visit(n))
         else:
-            elts = [node_target]
+            lhs.append(self.visit(node_target))
 
         results = []
         if isinstance(node.value, (ast.Tuple, ast.List)):
             for n in node.value.elts:
-                results.extend(self._gettype(n))
+                results.append(self.visit(n))
         else:
-            results.extend(self._gettype(node.value))
+            results.append(self.visit(node.value))
 
-        if len(results) != len(elts):
+        # if len(results) != len(elts):
+        if len(lhs) != len(results):
             raise DaceSyntaxError(self, node, 'Function returns %d values but %d provided' % (len(results), len(elts)))
 
         defined_vars = {**self.variables, **self.scope_vars}
         defined_arrays = {**self.sdfg.arrays, **self.scope_arrays}
 
-        for target, (result, _) in zip(elts, results):
+        # for target, (result, _) in zip(elts, results):
+        for target, result in zip(lhs, results):
+
+            rhs_type = self.variable_types[result]
+            print(rhs_type)
+            if rhs_type == "Data":
+                raise NotImplementedError
+            elif rhs_type == "SlicedData":
+
+                rhs_value = self.variable_values[result]
+
+                rhs_idataname = rhs_value["data"]
+                rhs_dataname = self.variable_i2p_names[rhs_idataname]
+                rhs_datadesc = self.variable_values[rhs_idataname]
+                if self.nested:
+                    if rhs_dataname not in self.sdfg.arrays:
+                        desc = copy.deepcopy(rhs_datadesc)
+                        desc.transient = False
+                        self.sdfg.add_datadesc(rhs_dataname, desc)
+                    if rhs_dataname not in self.inputs:
+                        self.inputs[rhs_dataname] = (self.last_state, Memlet.from_array(rhs_dataname, rhs_datadesc), ())
+            
+                rhs_slicename = rhs_value["slice"]
+                rhs_slicevalue = self.variable_values[rhs_slicename]
+                rhs_slicetype = self.variable_types[rhs_slicename]
+                if rhs_slicetype == "Slice":
+                    rhs_slice = (tuple(self.variable_values[item] for item in rhs_slicevalue),)
+                elif rhs_slicetype == "NumConstant":
+                    rhs_slice = rhs_slicevalue
+                elif rhs_slicetype == "Symbol":
+                    rhs_slice = self.variable_i2p_names[rhs_slicename]
+                rhs_node = self.variable_ast_nodes[result]
+                print(rhs_slice)
+                rhs_expr: MemletExpr = ParseMemlet(self, self.sdfg.arrays, rhs_node, rhs_slice)
+                if not isinstance(rhs_expr.subset, subsets.Range):
+                    rhs_expr.subset = subsets.Range.from_indices(rhs_expr.subset)
+                rhs_memlet = Memlet(data=rhs_dataname, subset=rhs_expr.subset)
+            
+            lhs_type = self.variable_types[target]
+            print(lhs_type)
+            if lhs_type == "Data":
+                raise NotImplementedError
+            elif lhs_type == "SlicedData":
+
+                lhs_value = self.variable_values[target]
+
+                lhs_idataname = lhs_value["data"]
+                lhs_dataname = self.variable_i2p_names[lhs_idataname]
+                lhs_datadesc = self.variable_values[lhs_idataname]
+
+                if self.nested:
+                    if lhs_dataname not in self.sdfg.arrays:
+                        desc = copy.deepcopy(lhs_datadesc)
+                        desc.transient = False
+                        self.sdfg.add_datadesc(lhs_dataname, desc)
+                    if lhs_dataname not in self.outputs:
+                        self.outputs[lhs_dataname] = (self.last_state, Memlet.from_array(lhs_dataname, lhs_datadesc), ())
+
+                lhs_slicename = lhs_value["slice"]
+                lhs_slicevalue = self.variable_values[lhs_slicename]
+                lhs_slicetype = self.variable_types[lhs_slicename]
+                if lhs_slicetype == "Slice":
+                    lhs_slice = (tuple(self.variable_values[item] for item in lhs_slicevalue),)
+                elif lhs_slicetype == "NumConstant":
+                    lhs_slice = lhs_slicevalue
+                elif lhs_slicetype == "Symbol":
+                    lhs_slice = self.variable_i2p_names[lhs_slicename]
+                lhs_node = self.variable_ast_nodes[target]
+                lhs_expr: MemletExpr = ParseMemlet(self, self.sdfg.arrays, lhs_node, lhs_slice)
+                if not isinstance(lhs_expr.subset, subsets.Range):
+                    lhs_expr.subset = subsets.Range.from_indices(lhs_expr.subset)
+                lhs_memlet = Memlet(data=lhs_dataname, subset=lhs_expr.subset)
+
+            # if result[1] == "Slice":
+            #     rhs_name, rhs_memlet = self.slices[result[0]]
+            # if target[1] == "Slice":
+            #     lhs_name, lhs_memlet = self.slices[target[0]]
+            # else:
+            #     lhs_name = target[0]
+            #     rhs_desc = self.sdfg.arrays[rhs_name]
+            #     self.sdfg.add_scalar(lhs_name, rhs_desc.dtype, rhs_desc.storage, transient=True)
+            #     lhs_memlet = Memlet(data=lhs_name)
+            
+            assert lhs_memlet.subset.size() == rhs_memlet.subset.size()
+
+            if lhs_memlet.subset.size() == [1]:
+                tasklet = nodes.Tasklet(f"__assign_{node.lineno}_{node.col_offset}", {"__inp"}, {"__out"},
+                                        "__out = __inp", debuginfo=self.current_lineinfo)
+                rhs_access = self.last_state.add_access(rhs_dataname)
+                self.last_state.add_edge(rhs_access, None, tasklet, "__inp", copy.deepcopy(rhs_memlet))
+                lhs_access = self.last_state.add_access(lhs_dataname)
+                self.last_state.add_edge(tasklet, "__out", lhs_access, None, copy.deepcopy(lhs_memlet))
+            else:
+                ranges = lhs_memlet.subset.offset_new(lhs_memlet.subset, negative=True)
+                params = [f"__i{i}_{node.lineno}_{node.col_offset}" for i in range(len(ranges))]
+                inp_index = ", ".join([f"{p} + {r[0]}" for p, r in zip(params, rhs_memlet.subset)])
+                out_index = ", ".join([f"{p} + {r[0]}" for p, r in zip(params, lhs_memlet.subset)])
+                self.last_state.add_mapped_tasklet(
+                    name=f"__assign_{node.lineno}_{node.col_offset}",
+                    map_ranges={it: rng for it, rng in zip(params, ranges)},
+                    inputs={"__inp": Memlet(data=rhs_dataname, subset=inp_index)},
+                    outputs={"__out": Memlet(data=lhs_dataname, subset=out_index)},
+                    code="__out = __inp",
+                    external_edges=True,
+                    debuginfo=self.current_lineinfo
+                )
+
+            continue
 
             name = rname(target)
             true_name = None
@@ -3146,7 +3323,7 @@ class ProgramVisitor(ExtNodeVisitor):
             new_data, rng = None, None
             dtype_keys = tuple(dtypes.DTYPE_TO_TYPECLASS.keys())
             if not (result in self.sdfg.symbols or symbolic.issymbolic(result) or isinstance(result, dtype_keys) or
-                    (isinstance(result, str) and result in self.sdfg.arrays)):
+                    result in self.sdfg.arrays or result in self.slices):
                 raise DaceSyntaxError(
                     self, node, "In assignments, the rhs may only be "
                     "data, numerical/boolean constants "
@@ -4511,13 +4688,22 @@ class ProgramVisitor(ExtNodeVisitor):
         if name in self.sdfg.symbols:
             return name
 
-        if name not in self.scope_vars:
-            raise DaceSyntaxError(self, node, 'Use of undefined variable "%s"' % name)
-        rname = self.scope_vars[name]
-        if rname in self.scope_arrays:
-            rng = subsets.Range.from_array(self.scope_arrays[rname])
-            rname, _ = self._add_read_access(rname, rng, node)
-        return rname
+        # if name not in self.scope_vars:
+        #     raise DaceSyntaxError(self, node, 'Use of undefined variable "%s"' % name)
+        # rname = self.scope_vars[name]
+        # if rname in self.scope_arrays:
+        #     rng = subsets.Range.from_array(self.scope_arrays[rname])
+        #     rname, _ = self._add_read_access(rname, rng, node)
+        # return rname
+
+        if name in self.scope_vars:
+            rname = self.scope_vars[name]
+            if rname in self.scope_arrays:
+                rng = subsets.Range.from_array(self.scope_arrays[rname])
+                rname, _ = self._add_read_access(rname, rng, node)
+            return rname
+        
+        return name
 
     #### Visitors that return arrays
     def visit_Str(self, node: ast.Str):
@@ -4536,17 +4722,51 @@ class ProgramVisitor(ExtNodeVisitor):
         return node.n
 
     def visit_Constant(self, node: ast.Constant):
-        if isinstance(node.value, bool):
-            return dace.bool_(node.value)
-        if isinstance(node.value, (int, float, complex)):
-            return dtypes.DTYPE_TO_TYPECLASS[type(node.value)](node.value)
-        if isinstance(node.value, (str, bytes)):
-            return StringLiteral(node.value)
-        return node.value
+        # Constants always generate a new internal variable
+        program_name = internal_name = self._new_variable_name(node)
+        if isinstance(node.value, (bool, numpy.bool_)):
+            nvalue = dace.bool_(node.value)
+            ntype = "BoolConstant"
+        elif isinstance(node.value, Number):
+            nvalue = dtypes.DTYPE_TO_TYPECLASS[type(node.value)](node.value) 
+            ntype = "NumConstant"
+        elif isinstance(node.value, (str, bytes)):
+            nvalue = StringLiteral(node.value)  
+            ntype = "StrConstant"
+        else:
+            nvalue = node.value
+            ntype = "Unknown"
+        self.variable_p2i_names[program_name] = internal_name
+        self.variable_i2p_names[internal_name] = program_name
+        self.variable_ast_nodes[internal_name] = node
+        self.variable_types[internal_name] = ntype
+        self.variable_values[internal_name] = nvalue
+        self._print_variable_info(internal_name)
+        return internal_name
 
-    def visit_Name(self, node: ast.Name):
-        # If visiting a name, check if it is a defined variable or a global
-        return self._visitname(node.id, node)
+    def visit_Name(self, node: ast.Name) -> str:
+
+        # Program name is the variable name as it appears in the parsed (DaCe) Python program.
+        program_name = node.id
+
+        # If the (program) variable has already been defined, return its internal name.
+        if program_name in self.variable_p2i_names:
+            internal_name = self.variable_p2i_names[node.id]
+            self._print_variable_info(internal_name)
+            return internal_name
+
+        # If no such (program) variable has been defined, define it as "undefined" and return.
+        # An "undefined" variable is expected only in a "Store" context, i.e., RHS of assignment.
+        if not isinstance(node.ctx, ast.Store): 
+            raise DaceSyntaxError(self, node, f"Variable {program_name} is undefined.")
+        internal_name = f"__var_{node.lineno}_{node.col_offset}"
+        self.variable_p2i_names[program_name] = internal_name
+        self.variable_i2p_names[internal_name] = program_name
+        self.variable_ast_nodes[internal_name] = node
+        self.variable_types[internal_name] = "Undefined"
+        self.variable_values[internal_name] = None
+        self._print_variable_info(internal_name)
+        return internal_name
 
     def visit_NameConstant(self, node: ast.NameConstant):
         return self.visit_Constant(node)
@@ -4592,8 +4812,43 @@ class ProgramVisitor(ExtNodeVisitor):
     def visit_Lambda(self, node: ast.Lambda):
         # Return a string representation of the function
         return astutils.unparse(node)
+    
+    def visit_Slice(self, node: ast.Slice):
+        # Slices always generate a new internal variable
+        program_name = internal_name = self._new_variable_name(node)
+        self.variable_p2i_names[program_name] = internal_name
+        self.variable_i2p_names[internal_name] = program_name
+        self.variable_ast_nodes[internal_name] = node
+        self.variable_types[internal_name] = "Slice"
+        lower, upper, step = self.visit(node.lower), self.visit(node.upper), self.visit(node.step)
+        self.variable_values[internal_name] = (lower, upper, step)
+        self._print_variable_info(internal_name)
+        return internal_name
 
     ############################################################
+
+    def _print_variable_info(self, internal_name: str):
+
+        program_name = self.variable_i2p_names[internal_name]
+        ast_node = self.variable_ast_nodes[internal_name]
+        vtype = self.variable_types[internal_name]
+        value = self.variable_values[internal_name]
+
+        report = f"""Variable {internal_name}:
+    Defined at line {ast_node.lineno}, column {ast_node.col_offset}
+    AST node type: {type(ast_node).__name__}
+    Python representation: {astutils.unparse(ast_node)}
+    Program name: {program_name}
+    Variable type: {vtype}
+    Variable value: {value}
+"""
+        print(report)
+
+    def _new_variable_name(self, node: ast.AST) -> str:
+        i = 0
+        while f"__var_{node.lineno}_{node.col_offset}_{i}" in self.variable_i2p_names:
+            i += 1
+        return f"__var_{node.lineno}_{node.col_offset}_{i}"
 
     def _gettype(self, opnode: ast.AST) -> List[Tuple[str, str]]:
         """ Returns an operand and its type as a 2-tuple of strings. """
@@ -4610,7 +4865,9 @@ class ProgramVisitor(ExtNodeVisitor):
 
         result = []
         for operand in operands:
-            if isinstance(operand, str) and operand in self.sdfg.arrays:
+            if operand in self.slices:
+                result.append((operand, 'Slice'))
+            elif isinstance(operand, str) and operand in self.sdfg.arrays:
                 result.append((operand, type(self.sdfg.arrays[operand])))
             elif isinstance(operand, str) and operand in self.scope_arrays:
                 result.append((operand, type(self.scope_arrays[operand])))
@@ -4846,6 +5103,89 @@ class ProgramVisitor(ExtNodeVisitor):
     ### Subscript (slicing) handling
     def visit_Subscript(self, node: ast.Subscript, inference: bool = False):
 
+        # Parse subscript value
+        nvalue_dname = astutils.unparse(node.value)  # "Debug" name
+        nvalue_iname = self.visit(node.value)  # Internal name
+        nvalue_type = self.variable_types[nvalue_iname]
+        nvalue_value = self.variable_values[nvalue_iname]
+        # print(nvalue_dname, nvalue_iname, nvalue_type, nvalue_value)
+
+        # Type checks
+        # Undefined variables cannot be subscripted
+        if nvalue_type == "Undefined":
+            raise DaceSyntaxError(self, node, f"Undefined variable {nvalue_dname} cannot be subscripted.")
+        # NOTE: Allow only Data slicing (for now)
+        if not nvalue_type.endswith("Data"):
+            raise DaceSyntaxError(self, node, f"{nvalue_type} value {nvalue_dname} cannot be subscripted.")
+        # Value checks
+        # Only Arrays and Views can be subscripted
+        if nvalue_type == "Data" and not isinstance(nvalue_value, data.Array):
+            raise DaceSyntaxError(self, node, f"{nvalue_dname} is {type(nvalue_value)} and cannot be subscripted.")
+
+        # Parse subscript slice
+        nslice_dname = astutils.unparse(node.slice)  # "Debug" name
+        nslice_iname = self.visit(node.slice)  # Internal name
+        nslice_type = self.variable_types[nslice_iname]
+        nslice_value = self.variable_values[nslice_iname]
+        # print(nslice_dname, nslice_iname, nslice_type, nslice_value)
+
+        # Type checks
+        # NOTE: Only allow NumConstants and Slices (for now)
+        if nslice_type not in ("Symbol", "NumConstant", "Slice"):
+            raise DaceSyntaxError(self, node, f"Subscript slices may only be numerical constants and (Python) Slices.")
+        # Value checks
+        # None?
+
+        program_name = internal_name = self._new_variable_name(node)
+        self.variable_p2i_names[program_name] = internal_name
+        self.variable_i2p_names[internal_name] = program_name
+        self.variable_ast_nodes[internal_name] = node
+        # print(astutils.unparse(node))
+        self.variable_types[internal_name] = "SlicedData"
+        self.variable_values[internal_name] = {"data": nvalue_iname, "slice": nslice_iname}
+        self._print_variable_info(internal_name)
+        return internal_name
+
+        if nslice_type == "NumConstant":
+            slice_value = nslice_value
+        if nslice_type == "Slice":
+            if any(t != "NumConstant" for _, t in nslice_value):
+                raise DaceSyntaxError(self, node, "Lower, upper, and step of a Slice must be numerical constants.")
+            slice_value = (tuple(v for v, _ in nslice_value),)
+
+        # If needed, add Data to (nested) SDFG
+        # NOTE: Here it is assumed that the program and internal names of Data are the same.
+        if self.nested and nvalue_type.endswith("Data"):
+            if nvalue_dname not in self.sdfg.arrays:
+                desc = copy.deepcopy(nvalue_value)
+                desc.transient = False
+                self.sdfg.add_datadesc(nvalue_dname, desc)
+            else:
+                desc = self.sdfg.arrays[nvalue_dname]
+            if isinstance(node.ctx, ast.Load):
+                if nvalue_dname not in self.inputs:
+                    self.inputs[nvalue_dname] = (self.last_state, Memlet.from_array(nvalue_dname, desc), ())
+            else:
+                if nvalue_dname not in self.outputs:
+                    self.outputs[nvalue_dname] = (self.last_state, Memlet.from_array(nvalue_dname, desc), ())
+
+        # Construct Memlet
+        # slice = self._parse_subscript_slice(slice_value)
+        expr: MemletExpr = ParseMemlet(self, self.sdfg.arrays, node, slice_value)
+        
+        view_name = f"__view_{node.lineno}_{node.col_offset}"
+        if not isinstance(expr.subset, subsets.Range):
+            if isinstance(expr.subset, subsets.Indices):
+                expr.subset = subsets.Range.from_indices(expr.subset)
+            else:
+                raise NotImplementedError(f"Subsets of type {type(expr.subset)} are not currently supported.")
+        self.slices[view_name] = (nvalue_dname, Memlet(data=nvalue_dname, subset=expr.subset, volume=expr.accesses, wcr=expr.wcr))
+        return view_name
+
+
+
+
+
         if self.nested:
 
             defined_vars = {**self.variables, **self.scope_vars}
@@ -4857,29 +5197,35 @@ class ProgramVisitor(ExtNodeVisitor):
             # If this subscript originates from an external array, create the
             # subset in the edge going to the connector, as well as a local
             # reference to the subset
-            if (true_name not in self.sdfg.arrays and isinstance(node.value, ast.Name)):
-                true_node = copy.deepcopy(node)
-                true_node.value.id = true_name
+            # if (true_name not in self.sdfg.arrays and isinstance(node.value, ast.Name)):
+            if (name not in self.sdfg.arrays and isinstance(node.value, ast.Name)):
+                desc = copy.deepcopy(defined_arrays[name])
+                self.sdfg.add_datadesc(name, desc)
+                self.inputs[name] = (self.last_state, Memlet.from_array(name, desc), ())
+                self.outputs[name] = (self.last_state, Memlet.from_array(name, desc), ())
 
-                # Visit slice contents
-                nslice = self._parse_subscript_slice(node.slice)
+                # true_node = copy.deepcopy(node)
+                # true_node.value.id = true_name
 
-                # Try to construct memlet from subscript
-                expr: MemletExpr = ParseMemlet(self, defined_arrays, true_node, nslice)
-                rng = expr.subset
-                if isinstance(rng, subsets.Indices):
-                    rng = subsets.Range.from_indices(rng)
-                if inference:
-                    rng.offset(rng, True)
-                    return self.sdfg.arrays[true_name].dtype, rng.size()
-                new_name, new_rng = self._add_read_access(name, rng, node)
-                new_arr = self.sdfg.arrays[new_name]
-                full_rng = subsets.Range.from_array(new_arr)
-                if new_rng.ranges == full_rng.ranges:
-                    return new_name
-                else:
-                    new_name, _ = self.make_slice(new_name, new_rng)
-                    return new_name
+                # # Visit slice contents
+                # nslice = self._parse_subscript_slice(node.slice)
+
+                # # Try to construct memlet from subscript
+                # expr: MemletExpr = ParseMemlet(self, defined_arrays, true_node, nslice)
+                # rng = expr.subset
+                # if isinstance(rng, subsets.Indices):
+                #     rng = subsets.Range.from_indices(rng)
+                # if inference:
+                #     rng.offset(rng, True)
+                #     return self.sdfg.arrays[true_name].dtype, rng.size()
+                # new_name, new_rng = self._add_read_access(name, rng, node)
+                # new_arr = self.sdfg.arrays[new_name]
+                # full_rng = subsets.Range.from_array(new_arr)
+                # if new_rng.ranges == full_rng.ranges:
+                #     return new_name
+                # else:
+                #     new_name, _ = self.make_slice(new_name, new_rng)
+                #     return new_name
 
         # Obtain array/tuple
         node_parsed = self._gettype(node.value)
@@ -4920,7 +5266,17 @@ class ProgramVisitor(ExtNodeVisitor):
             rng.offset(rng, True)
             return self.sdfg.arrays[array].dtype, rng.size()
 
-        return self._add_read_slice(array, node, expr)
+        if expr.arrdims:
+            return self._add_read_slice(array, node, expr)
+        
+        slice_name = f"__slice_{node.lineno}_{node.col_offset}"
+        if not isinstance(expr.subset, subsets.Range):
+            if isinstance(expr.subset, subsets.Indices):
+                expr.subset = subsets.Range.from_indices(expr.subset)
+            else:
+                raise NotImplementedError(f"Subsets of type {type(expr.subset)} are not currently supported.")
+        self.slices[slice_name] = (array, Memlet(data=array, subset=expr.subset, volume=expr.accesses, wcr=expr.wcr))
+        return slice_name
 
     def _visit_ast_or_value(self, node: ast.AST) -> Any:
         result = self.visit(node)
