@@ -230,6 +230,14 @@ required:
                     All stack allocated arrays (i.e. StorageType.Register) with
                     size larger than this will be allocated on the heap.
 
+            extra_cmake_args:
+                type: str
+                default: ''
+                title: Additional CMake configuration arguments
+                description: >
+                    If set, specifies additional arguments to the initial invocation
+                    of ``cmake``.
+
             #############################################
             # CPU compiler
             cpu:
