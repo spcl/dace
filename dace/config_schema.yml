@@ -282,10 +282,10 @@ required:
                 required:
                     backend:
                         type: str
-                        default: 'cuda'
+                        default: 'auto'
                         title: Compilation backend
                         description: >
-                            Backend to compile for ('cuda' for NVIDIA or 'hip' for AMD).
+                            Backend to compile for ('auto' for automatic detection, 'cuda' for NVIDIA, or 'hip' for AMD).
 
                     path:
                         type: str
