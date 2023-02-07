@@ -5,6 +5,16 @@ from dace.data import Array
 from typing import List
 import dataclasses
 from dace.frontend.python.replacements import Size
+from sympy import Expr
+
+
+def expr_is_contained(expr, other_expr):
+    if not (isinstance(expr, Expr) and isinstance(other_expr, Expr)):
+        return False
+    for symbol in expr.free_symbols:
+        if symbol not in other_expr.free_symbols:
+            return False
+    return True
 
 
 def combine(shape, strides, dims):
@@ -19,7 +29,8 @@ def combine(shape, strides, dims):
 
     new_stride_element = strides[dims[0]]
     for d in dims[0:]:
-        if (strides[d] < new_stride_element) == True:
+        if (strides[d] < new_stride_element) == True or strides[d] == 1 or expr_is_contained(
+                strides[d], new_stride_element):
             new_stride_element = strides[d]
 
     combined_strides = strides[0:dims[0]]
@@ -100,7 +111,7 @@ def simplify_input(shape, strides, axes):
         r = rem[1]
         s = shape[rem[0]]
         for i in range(len(out_strides)):
-            if (out_strides[i] > r) == True:
+            if (out_strides[i] > r) == True or r == 1 or expr_is_contained(r, out_strides[i]):
                 out_strides[i] //= s
 
     return shape, strides, axes, out_shape, out_strides
@@ -209,13 +220,7 @@ def get_reduction_schedule(in_array: Array,
         schedule.changed_axes = [axes[-1] - len(axes) + 1]
 
         # compute strides of this input shape
-        removed_shapes = [s for i, s in enumerate(schedule.in_shape) if i in axes[:-1]]
-        removed_strides = [s for i, s in enumerate(schedule.in_strides) if i in axes[:-1]]
         schedule.changed_in_strides = [s for i, s in enumerate(schedule.in_strides) if i not in axes[:-1]]
-        for i in range(len(schedule.changed_in_strides)):
-            for r in range(len(removed_strides)):
-                schedule.changed_in_strides[i] = schedule.changed_in_strides[i] if schedule.changed_in_strides[
-                    i] < removed_strides[r] else schedule.changed_in_strides[i] // removed_shapes[r]
 
         axes = schedule.changed_axes
         shape = schedule.changed_in_shape
@@ -243,8 +248,8 @@ def get_reduction_schedule(in_array: Array,
             schedule.grid = [1]
 
         # 32 threads per block unless contiguous dimension too small
-        threads_per_block = warp_size if (
-            shape[contiguous_dimension] > warp_size) == True else shape[contiguous_dimension]
+        threads_per_block = shape[contiguous_dimension] if (
+            shape[contiguous_dimension] < warp_size) == True else warp_size
         schedule.block = [threads_per_block]
 
         stride = warp_size * num_loaded_elements if schedule.vectorize else warp_size
