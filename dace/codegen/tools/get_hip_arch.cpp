@@ -3,7 +3,6 @@
 
 #include <iostream>
 #include <set>
-#include <sstream>
 #include <string>
 
 int main(int argc, char **argv) {
@@ -17,11 +16,16 @@ int main(int argc, char **argv) {
     if (hipGetDeviceProperties(&prop, i) != hipSuccess ||
         (prop.major == 99 && prop.minor == 99))
       continue;
-    std::stringstream ss;
-    // Cut-off after 6th character, start with 3rd (after "gfx")
-    prop.gcnArchName[6] = '\0';
-    ss << prop.gcnArchName + 3;
-    architectures.insert(ss.str());
+
+    // Find architecture, ignoring anything that succeeds a colon
+    void *colon = memchr(prop.gcnArchName, ':', 256);
+    if (colon)
+      *(char *)colon = '\0';
+
+    // Trim starting "gfx"
+    std::string str = prop.gcnArchName + 3;
+
+    architectures.insert(str);
   }
 
   // Print out architectures
