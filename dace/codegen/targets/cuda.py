@@ -1617,6 +1617,13 @@ void  *{kname}_args[] = {{ {kargs} }};
                 callsite_stream.write(
                     'DACE_CUDA_CHECK({backend}EventSynchronize(__state->gpu_context->events[{ev}]));'.format(
                         ev=ev, backend=self.backend), sdfg, state_id, [e.src, e.dst])
+
+            # FIXME: verify this actually wroks as intended
+            # We solve a situation where there is a memlet to a dynamic map where the destination connection
+            # is identical to the data
+            if e.data.data == e.dst_conn:
+                continue
+
             callsite_stream.write(
                 self._cpu_codegen.memlet_definition(sdfg, e.data, False, e.dst_conn, e.dst.in_connectors[e.dst_conn]),
                 sdfg, state_id, node)
