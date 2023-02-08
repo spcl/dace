@@ -1577,6 +1577,13 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
 
         # make sure dynamic map inputs are properly handled
         for e in dace.sdfg.dynamic_map_inputs(state, scope_entry):
+            
+            # FIXME: identical fix to the one on line 1567
+            # We solve a situation where there is a memlet to a dynamic map where the destination connection
+            # is identical to the data
+            if e.data.data == e.dst_conn:
+                continue
+            
             self._localcode.write(
                 self._cpu_codegen.memlet_definition(sdfg, e.data, False, e.dst_conn, e.dst.in_connectors[e.dst_conn]),
                 sdfg, state_id, scope_entry)
@@ -1831,6 +1838,13 @@ void  *{kname}_args[] = {{ {kargs} }};
 
         # handle dynamic map inputs
         for e in dace.sdfg.dynamic_map_inputs(sdfg.states()[state_id], dfg_scope.source_nodes()[0]):
+            
+            # FIXME: identical fix to the one on line 1567
+            # We solve a situation where there is a memlet to a dynamic map where the destination connection
+            # is identical to the data
+            if e.data.data == e.dst_conn:
+                continue
+            
             kernel_stream.write(
                 self._cpu_codegen.memlet_definition(sdfg, e.data, False, e.dst_conn, e.dst.in_connectors[e.dst_conn]),
                 sdfg, state_id,
