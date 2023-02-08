@@ -2208,6 +2208,42 @@ class ProgramVisitor(ExtNodeVisitor):
             if s.name in self.defined:
                 repldict[s] = self.defined[s.name]
         return expr.subs(repldict)
+    
+    def _parse_iterator(self, internal_name):
+        iterator_type = self.variable_types[internal_name]
+        iterator_value = self.variable_values[internal_name]
+        if iterator_type == "Call":
+            method = iterator_value["func"]
+            args = iterator_value["args"]
+            if not method in ("range", "zip"):
+                raise NotImplementedError
+            if method == "range":
+                return "Symbol"
+            #     start = 0
+            #     step = 1
+            #     if len(args) == 1:  # (par)range(stop)
+            #         stop = self.varia
+            #     valr, astr = visit_ast_or_value(node.args[0])
+            #     ranges = [('0', valr, '1')]
+            #     ast_ranges = [(zero, astr, one)]
+            # elif len(node.args) == 2:  # (par)range(start, stop)
+            #     valr0, astr0 = visit_ast_or_value(node.args[0])
+            #     valr1, astr1 = visit_ast_or_value(node.args[1])
+            #     ranges = [(valr0, valr1, '1')]
+            #     ast_ranges = [(astr0, astr1, one)]
+            # elif len(node.args) == 3:  # (par)range(start, stop, step)
+            #     valr0, astr0 = visit_ast_or_value(node.args[0])
+            #     valr1, astr1 = visit_ast_or_value(node.args[1])
+            #     valr2, astr2 = visit_ast_or_value(node.args[2])
+            #     ranges = [(valr0, valr1, valr2)]
+            #     ast_ranges = [(astr0, astr1, astr2)]
+            # else:
+            #     raise DaceSyntaxError(self, node, 'Invalid number of arguments for "%s"' % iterator)
+            
+            elif method == "zip":
+                return tuple(self._parse_iterator(arg) for arg in args)
+        elif iterator_type == "Data":
+            return "SlicedData"
 
     def visit_For(self, node: ast.For):
         # We allow three types of for loops:
@@ -2218,13 +2254,25 @@ class ProgramVisitor(ExtNodeVisitor):
         # indices = self._parse_for_indices(node.target)
         ntarget_iname = self.visit(node.target)
         ntarget_type = self.variable_types[ntarget_iname]
-        if not ntarget_type in ("Undefined", "Tuple"):
-            raise DaceSyntaxError(self, node, f"For index {astutils.unparse(node.target)} is invalid.")
         if ntarget_type == "Undefined":
-            pname = self.variable_i2p_names[ntarget_iname]
-            indices = [pname]
-            self.variable_types[ntarget_iname] = "Symbol"
-        iterator, ranges, ast_ranges, schedule = self._parse_for_iterator(node.iter)
+            num_targets = 1
+        elif ntarget_type == "Tuple":
+            num_targets = len(self.variable_values[ntarget_iname])
+        else:
+            raise DaceSyntaxError(self, node, f"For index {astutils.unparse(node.target)} is invalid.")
+        
+        if num_targets != 1:
+            raise NotImplementedError
+
+        # if ntarget_type == "Undefined":
+        #     pname = self.variable_i2p_names[ntarget_iname]
+        #     indices = [pname]
+        #     self.variable_types[ntarget_iname] = "Symbol"
+        # iterator, ranges, ast_ranges, schedule = self._parse_for_iterator(node.iter)
+        niter_iname = self.visit(node.iter)
+        niter_type = self.variable_types[niter_iname]
+        niter_value = self.variable_values[niter_iname]
+        print(self._parse_iterator(niter_iname))
 
         if len(indices) != len(ranges):
             raise DaceSyntaxError(self, node, "Number of indices and ranges of for-loop do not match")
@@ -4381,6 +4429,18 @@ class ProgramVisitor(ExtNodeVisitor):
         state.add_edge(tasklet, out_conn, ws, None, Memlet(arr_name))
 
     def visit_Call(self, node: ast.Call, create_callbacks=False):
+        program_name = internal_name = self._new_variable_name(node)
+        self.variable_p2i_names[program_name] = internal_name
+        self.variable_i2p_names[internal_name] = program_name
+        self.variable_ast_nodes[internal_name] = node
+        self.variable_types[internal_name] = "Call"
+        nfunc = self.visit(node.func)
+        ndargs = self.visit(ast.List(elts=node.args))
+        # nkeywords = self.visit(node.keywords)
+        nkeywords = self.visit(ast.Dict(keys=[], values=[]))
+        self.variable_values[internal_name] = {"func": nfunc, "args": ndargs, "keywords": nkeywords}
+        print(self._print_variable_info(internal_name))
+        return internal_name
         func = None
         funcname = None
         # If the call directly refers to an SDFG or dace-compatible program
@@ -4749,6 +4809,9 @@ class ProgramVisitor(ExtNodeVisitor):
         # Program name is the variable name as it appears in the parsed (DaCe) Python program.
         program_name = node.id
 
+        if program_name in ("range", "zip"):
+            return program_name
+
         # If the (program) variable has already been defined, return its internal name.
         if program_name in self.variable_p2i_names:
             internal_name = self.variable_p2i_names[node.id]
@@ -4759,7 +4822,7 @@ class ProgramVisitor(ExtNodeVisitor):
         # An "undefined" variable is expected only in a "Store" context, i.e., RHS of assignment.
         if not isinstance(node.ctx, ast.Store): 
             raise DaceSyntaxError(self, node, f"Variable {program_name} is undefined.")
-        internal_name = f"__var_{node.lineno}_{node.col_offset}"
+        internal_name = self._new_variable_name(node)
         self.variable_p2i_names[program_name] = internal_name
         self.variable_i2p_names[internal_name] = program_name
         self.variable_ast_nodes[internal_name] = node
@@ -4798,8 +4861,15 @@ class ProgramVisitor(ExtNodeVisitor):
         return [self.visit(a) for a in node.elts]
 
     def visit_Tuple(self, node: ast.Tuple):
-        # Recursively loop over elements
-        return tuple(self.visit(a) for a in node.elts)
+        # Slices always generate a new internal variable
+        program_name = internal_name = self._new_variable_name(node)
+        self.variable_p2i_names[program_name] = internal_name
+        self.variable_i2p_names[internal_name] = program_name
+        self.variable_ast_nodes[internal_name] = node
+        self.variable_types[internal_name] = "Tuple"
+        self.variable_values[internal_name] = tuple(self.visit(a) for a in node.elts)
+        self._print_variable_info(internal_name)
+        return internal_name
 
     def visit_Set(self, node: ast.Set):
         # Recursively loop over elements
