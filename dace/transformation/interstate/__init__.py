@@ -7,6 +7,7 @@ from .state_elimination import (EndStateElimination, StartStateElimination, Stat
 from .fpga_transform_state import FPGATransformState
 from .fpga_transform_sdfg import FPGATransformSDFG
 from .gpu_transform_sdfg import GPUTransformSDFG
+from .gpu_transform_sdfg_cloudsc import GPUTransformSDFGCloudSC
 from .sdfg_nesting import NestSDFG, InlineSDFG, InlineTransients, RefineNestedAccess
 from .loop_unroll import LoopUnroll
 from .loop_peeling import LoopPeeling

@@ -543,7 +543,7 @@ def auto_optimize(sdfg: SDFG,
     # Apply GPU transformations and set library node implementations
 
     if device == dtypes.DeviceType.GPU:
-        sdfg.apply_gpu_transformations()
+        sdfg.apply_gpu_transformations_cloudsc()
         sdfg.simplify()
 
     # fuse subgraphs greedily
@@ -588,6 +588,7 @@ def auto_optimize(sdfg: SDFG,
     infer_types.infer_connector_types(sdfg)
     infer_types.set_default_schedule_and_storage_types(sdfg, None)
     sdfg.expand_library_nodes()
+
 
     # TODO(later): Safe vectorization
 

@@ -2608,6 +2608,34 @@ class SDFG(OrderedDiGraph[SDFGState, InterstateEdge]):
                                    validate_all=validate_all,
                                    permissive=permissive,
                                    states=states)
+        
+
+    def apply_gpu_transformations_cloudsc(self,
+                                  states=None,
+                                  validate=True,
+                                  validate_all=False,
+                                  permissive=False,
+                                  sequential_innermaps=True,
+                                  register_transients=True):
+        """ Applies a series of transformations on the SDFG for it to
+            generate GPU code.
+            :param sequential_innermaps: Make all internal maps Sequential.
+            :param register_transients: Make all transients inside GPU maps registers.
+            :note: It is recommended to apply redundant array removal
+            transformation after this transformation. Alternatively,
+            you can simplify() after this transformation.
+            :note: This is an in-place operation on the SDFG.
+        """
+        # Avoiding import loops
+        from dace.transformation.interstate import GPUTransformSDFGCloudSC
+
+        self.apply_transformations(GPUTransformSDFGCloudSC,
+                                   options=dict(sequential_innermaps=sequential_innermaps,
+                                                register_trans=register_transients),
+                                   validate=validate,
+                                   validate_all=validate_all,
+                                   permissive=permissive,
+                                   states=states)
 
     def apply_fpga_transformations(self, states=None, validate=True, validate_all=False, permissive=False):
         """ Applies a series of transformations on the SDFG for it to
