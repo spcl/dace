@@ -741,7 +741,7 @@ class AST_translator:
                 special_list_in[self.name_mapping[sdfg][libstate] + "_task"] = dtypes.pointer(
                     sdfg.arrays.get(self.name_mapping[sdfg][libstate]).dtype)
                 special_list_out.append(self.name_mapping[sdfg][libstate] + "_task_out")
-            used_vars = [node for node in ast_transforms.walk(node) if isinstance(node, ast_internal_classes.Name_Node)]
+            used_vars = [node for node in ast_transforms.mywalk(node) if isinstance(node, ast_internal_classes.Name_Node)]
 
             for i in used_vars:
                 for j in sdfg.arrays:
@@ -771,7 +771,7 @@ class AST_translator:
             tw = fcdc_utils.TaskletWriter(output_names_tasklet.copy(), output_names_changed.copy(), sdfg,
                                           self.name_mapping)
             if not isinstance(rettype, ast_internal_classes.Void) and hasret:
-                special_list_in[retval.name] = dtypes.Pointer(self.get_dace_type(rettype))
+                special_list_in[retval.name] = pointer(self.get_dace_type(rettype))
                 special_list_out.append(retval.name + "_out")
                 text = tw.write_code(
                     ast_internal_classes.BinOp_Node(lval=retval, op="=", rval=node, line_number=node.line_number))

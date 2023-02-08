@@ -2,6 +2,7 @@
 
 from fparser.api import parse
 import os
+import sys
 from fparser.common.readfortran import FortranStringReader, FortranFileReader
 
 #dace imports

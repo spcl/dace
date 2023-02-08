@@ -694,11 +694,9 @@ def mywalk(node):
     only want to modify nodes in place and don't care about the context.
     """
     from collections import deque
-    #print("HERE")
     todo = deque([node])
     while todo:
         node = todo.popleft()
-        #print(node.__class__.__name__)
         todo.extend(iter_child_nodes(node))
         yield node
 
