@@ -5,13 +5,41 @@ testing or optimization.
 """
 from collections import deque
 import copy
-from typing import Deque, Dict, List, Set
+from typing import Deque, Dict, List, Set, Tuple, Union
 from dace import data
-from dace.sdfg import nodes as nd, SDFG, SDFGState, utils as sdutil
+from dace.sdfg import nodes as nd, SDFG, SDFGState, utils as sdutil, InterstateEdge
+from dace.sdfg.graph import Edge
 from dace.sdfg.state import StateSubgraphView
 
 
-def cutout_state(state: SDFGState, *nodes: nd.Node, make_copy: bool = True) -> SDFG:
+def _stateset_frontier(states: Set[SDFGState]) -> Tuple[Set[SDFGState], Set[Edge[InterstateEdge]]]:
+    """
+    For a set of states, return the frontier.
+    The frontier in this case refers to the predecessor states leading into the given set of states.
+
+    :param states: The set of states to find the frontier of.
+    :return: A tuple of the frontier states and the frontier edges.
+    """
+    frontier = set()
+    frontier_edges = set()
+    for state in states:
+        for iedge in state.parent.in_edges(state):
+            if iedge.src not in states:
+                if iedge.src not in frontier:
+                    frontier.add(iedge.src)
+                if iedge not in frontier_edges:
+                    frontier_edges.add(iedge)
+    return frontier, frontier_edges
+
+
+def multistate_cutout(*states: SDFGState, inserted_states: Dict[SDFGState, SDFGState] = None) -> SDFG:
+    pass
+
+
+def cutout_state(state: SDFGState,
+                 *nodes: nd.Node,
+                 make_copy: bool = True,
+                 inserted_nodes: Dict[Union[nd.Node, SDFGState], Union[nd.Node, SDFGState]]) -> SDFG:
     """
     Cut out a subgraph of a state from an SDFG to run separately for localized testing or optimization.
     The subgraph defined by the list of nodes will be extended to include access nodes of data containers necessary
@@ -21,6 +49,7 @@ def cutout_state(state: SDFGState, *nodes: nd.Node, make_copy: bool = True) -> S
     :param state: The SDFG state in which the subgraph resides.
     :param nodes: The nodes in the subgraph to cut out.
     :param make_copy: If True, deep-copies every SDFG element in the copy. Otherwise, original references are kept.
+    :param inserted_nodes: A dictionary mapping the original nodes to the new nodes in the cutout SDFG.
     """
     create_element = copy.deepcopy if make_copy else (lambda x: x)
     sdfg = state.parent
@@ -50,7 +79,8 @@ def cutout_state(state: SDFGState, *nodes: nd.Node, make_copy: bool = True) -> S
 
     # Add a single state with the extended subgraph
     new_state = new_sdfg.add_state(state.label, is_start_state=True)
-    inserted_nodes: Dict[nd.Node, nd.Node] = {}
+    if inserted_nodes is None:
+        inserted_nodes = {}
     for e in subgraph.edges():
         if e.src not in inserted_nodes:
             inserted_nodes[e.src] = create_element(e.src)
@@ -65,13 +95,36 @@ def cutout_state(state: SDFGState, *nodes: nd.Node, make_copy: bool = True) -> S
             new_state.add_node(inserted_nodes[n])
 
     # Remove remaining dangling connectors from scope nodes
-    for node in inserted_nodes.values():
-        used_connectors = set(e.dst_conn for e in new_state.in_edges(node))
-        for conn in (node.in_connectors.keys() - used_connectors):
-            node.remove_in_connector(conn)
-        used_connectors = set(e.src_conn for e in new_state.out_edges(node))
-        for conn in (node.out_connectors.keys() - used_connectors):
-            node.remove_out_connector(conn)
+    for orig_node in inserted_nodes.keys():
+        new_node = inserted_nodes[orig_node]
+        if isinstance(orig_node, (nd.EntryNode, nd.ExitNode)):
+            used_connectors = set(e.dst_conn for e in new_state.in_edges(new_node))
+            for conn in (new_node.in_connectors.keys() - used_connectors):
+                new_node.remove_in_connector(conn)
+            used_connectors = set(e.src_conn for e in new_state.out_edges(new_node))
+            for conn in (new_node.out_connectors.keys() - used_connectors):
+                new_node.remove_out_connector(conn)
+        else:
+            used_connectors = set(e.dst_conn for e in new_state.in_edges(new_node))
+            for conn in (new_node.in_connectors.keys() - used_connectors):
+                for e in state.in_edges(orig_node):
+                    if e.dst_conn and e.dst_conn == conn:
+                        # TODO: create alibi node.
+                        prune = False
+                        break
+                if prune:
+                    new_node.remove_in_connector(conn)
+            used_connectors = set(e.src_conn for e in new_state.out_edges(new_node))
+            for conn in (new_node.out_connectors.keys() - used_connectors):
+                for e in state.out_edges(orig_node):
+                    if e.src_conn and e.src_conn == conn:
+                        # TODO: create alibi node.
+                        prune = False
+                        break
+                if prune:
+                    new_node.remove_out_connector(conn)
+
+    inserted_nodes[state] = new_state
 
     return new_sdfg
 
