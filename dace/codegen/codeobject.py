@@ -49,4 +49,6 @@ class CodeObject(object):
 
     @property
     def clean_code(self):
-        return re.sub(r'[ \t]*////__(DACE:|CODEGEN;)[^\n]*', '', self.code)
+        # FIXME: temporarily disables removing the codegen debugging
+        return self.code
+        #return re.sub(r'[ \t]*////__(DACE:|CODEGEN;)[^\n]*', '', self.code)
