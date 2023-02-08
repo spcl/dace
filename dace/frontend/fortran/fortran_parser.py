@@ -18,9 +18,9 @@ from dace import symbolic as sym
 from copy import deepcopy as dpcp
 
 from dace.properties import CodeBlock
-from fparser.two import ParserFactory as pf
-from fparser.two import FortranStringReader as fsr
-from fparser.two import FortranFileReader as ffr
+from fparser.two.parser import ParserFactory as pf
+from fparser.common.readfortran import FortranStringReader as fsr
+from fparser.common.readfortran import FortranFileReader as ffr
 from fparser.two.symbol_table import SymbolTable
 
 

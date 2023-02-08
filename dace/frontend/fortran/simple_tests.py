@@ -1,7 +1,7 @@
-# Copyright 2022 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2023 ETH Zurich and the DaCe authors. All rights reserved.
 
 from fparser.common.readfortran import FortranStringReader
-from fparser.two.parser import *
+from fparser.two.parser import ParserFactory
 import sys, os
 import numpy as np
 
@@ -9,7 +9,7 @@ current = os.path.dirname(os.path.realpath(__file__))
 parent = os.path.dirname(current)
 sys.path.append(parent)
 
-from dace.frontend.fortran.fortran_parser import *
+from dace.frontend.fortran import fortran_parser
 
 
 def test_fortran_frontend_simplify():
@@ -31,7 +31,7 @@ def test_fortran_frontend_simplify():
                     
                     END SUBROUTINE symbol_test_function
                     """
-    sdfg = create_sdfg_from_string(test_string, "symbol_test")
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "symbol_test")
     sdfg.simplify(verbose=True)
     a = np.full([2, 3], 42, order="F", dtype=np.float64)
     sdfg(d_0=a)
@@ -55,7 +55,7 @@ def test_fortran_frontend_scalar():
                     
                     END SUBROUTINE scalar_test_function
                     """
-    sdfg = create_sdfg_from_string(test_string, "scalar_test")
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "scalar_test")
     sdfg.simplify(verbose=True)
     res = np.zeros((1, ), dtype=np.float64)[0]
     res = 42.0
@@ -83,7 +83,7 @@ def test_fortran_frontend_input_output_connector():
                     
                     END SUBROUTINE ioc_test_function
                     """
-    sdfg = create_sdfg_from_string(test_string, "ioc_test")
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "ioc_test")
     sdfg.simplify(verbose=True)
     a = np.full([2, 3], 42, order="F", dtype=np.float64)
     sdfg(d_0=a)
@@ -133,7 +133,7 @@ aa(1,1)=res(1,1,1)
 
 END SUBROUTINE viewlens
                     """
-    sdfg = create_sdfg_from_string(test_string, test_name)
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, test_name)
     sdfg.simplify(verbose=True)
     a = np.full([10, 11, 12], 42, order="F", dtype=np.float64)
     b = np.full([1, 1, 2], 42, order="F", dtype=np.float64)
@@ -185,7 +185,7 @@ ENDDO
 
 END SUBROUTINE viewlens
                     """
-    sdfg = create_sdfg_from_string(test_string, test_name)
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, test_name)
     sdfg.simplify(verbose=True)
     a = np.full([10, 11, 12], 42, order="F", dtype=np.float64)
     b = np.full([10, 11, 12], 42, order="F", dtype=np.float64)
@@ -236,7 +236,7 @@ ENDDO
 
 END SUBROUTINE viewlens
                     """
-    sdfg = create_sdfg_from_string(test_string, test_name)
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, test_name)
     sdfg.simplify(verbose=True)
     a = np.full([10, 11, 12], 42, order="F", dtype=np.float64)
     b = np.full([10, 11, 12], 42, order="F", dtype=np.float64)
@@ -262,7 +262,7 @@ def test_fortran_frontend_array_access():
                     
                     END SUBROUTINE array_access_test_function
                     """
-    sdfg = create_sdfg_from_string(test_string, "array_access_test")
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "array_access_test")
     sdfg.simplify(verbose=True)
     a = np.full([4], 42, order="F", dtype=np.float64)
     sdfg(d_0=a)
@@ -291,7 +291,7 @@ def test_fortran_frontend_array_ranges():
                     
                     END SUBROUTINE array_ranges_test_function
                     """
-    sdfg = create_sdfg_from_string(test_string, "array_access_test")
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "array_access_test")
     sdfg.simplify(verbose=True)
     d = np.full([3, 4, 5], 42, order="F", dtype=np.float64)
     sdfg(d_0=d)
@@ -329,7 +329,7 @@ def test_fortran_frontend_if1():
                                     
                     END SUBROUTINE if1_test_function
                     """
-    sdfg = create_sdfg_from_string(test_string, "if1_test")
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "if1_test")
     sdfg.simplify(verbose=True)
     d = np.full([3, 4, 5], 42, order="F", dtype=np.float64)
     sdfg(d_0=d)
@@ -362,7 +362,7 @@ def test_fortran_frontend_loop1():
                    d(1,1,2)=LLFALL(2)                 
                    END SUBROUTINE loop1_test_function
                     """
-    sdfg = create_sdfg_from_string(test_string, "loop1_test")
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "loop1_test")
     sdfg.simplify(verbose=True)
     d = np.full([3, 4, 5], 42, order="F", dtype=np.float64)
     sdfg(d_0=d)
@@ -394,7 +394,7 @@ def test_fortran_frontend_function_statement1():
                    d(1,1,2)=RES                 
                    END SUBROUTINE function_statement1_test_function
                     """
-    sdfg = create_sdfg_from_string(test_string, "function_statement1_test")
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "function_statement1_test")
     sdfg.simplify(verbose=True)
     d = np.full([3, 4, 5], 42, order="F", dtype=np.float64)
     sdfg(d_0=d)
@@ -423,7 +423,7 @@ def test_fortran_frontend_pow1():
                    d(1,1,2)=ZHRC(1)                 
                    END SUBROUTINE pow1_test_function
                     """
-    sdfg = create_sdfg_from_string(test_string, "pow1_test")
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "pow1_test")
     sdfg.simplify(verbose=True)
     d = np.full([3, 4, 5], 42, order="F", dtype=np.float64)
     sdfg(d_0=d)
@@ -451,7 +451,7 @@ def test_fortran_frontend_pow2():
                    d(1,1,2)=ZHRC(1)                 
                    END SUBROUTINE pow2_test_function
                     """
-    sdfg = create_sdfg_from_string(test_string, "pow2_test")
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "pow2_test")
     sdfg.simplify(verbose=True)
     d = np.full([3, 4, 5], 42, order="F", dtype=np.float64)
     sdfg(d_0=d)
@@ -476,7 +476,7 @@ def test_fortran_frontend_sign1():
                    d(1,1,2)=SIGN(ZSIGK(1),ZHRC(1))                 
                    END SUBROUTINE sign1_test_function
                     """
-    sdfg = create_sdfg_from_string(test_string, "sign1_test")
+    sdfg = fortran_parser.create_sdfg_from_string(test_string, "sign1_test")
     sdfg.simplify(verbose=True)
     d = np.full([3, 4, 5], 42, order="F", dtype=np.float64)
     sdfg(d_0=d)
@@ -485,19 +485,19 @@ def test_fortran_frontend_sign1():
 
 if __name__ == "__main__":
 
-    # test_fortran_frontend_array_access()
-    # test_fortran_frontend_simplify()
-    # test_fortran_frontend_input_output_connector()
-    # test_fortran_frontend_view_test()
-    # test_fortran_frontend_view_test_2()
+    test_fortran_frontend_array_access()
+    test_fortran_frontend_simplify()
+    test_fortran_frontend_input_output_connector()
+    test_fortran_frontend_view_test()
+    test_fortran_frontend_view_test_2()
     test_fortran_frontend_view_test_3()
-    # test_fortran_frontend_array_ranges()
-    # test_fortran_frontend_if1()
-    # test_fortran_frontend_loop1()
-    # test_fortran_frontend_function_statement1()
+    test_fortran_frontend_array_ranges()
+    test_fortran_frontend_if1()
+    test_fortran_frontend_loop1()
+    test_fortran_frontend_function_statement1()
 
-    # test_fortran_frontend_pow1()
-    # test_fortran_frontend_pow2()
-    # test_fortran_frontend_sign1()
-    # test_fortran_frontend_scalar()
+    test_fortran_frontend_pow1()
+    test_fortran_frontend_pow2()
+    test_fortran_frontend_sign1()
+    #test_fortran_frontend_scalar()
     print("All tests passed")
