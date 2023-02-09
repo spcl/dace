@@ -138,8 +138,6 @@ def get_reduction_schedule(in_array: Array,
     :return: ReductionSchedule object that descibes the GPU schedule used to perform the reduction
     """
 
-    # use_mini_warps = False
-
     @dataclasses.dataclass
     class ReductionSchedule:
         grid: List[Size]  #: dimension of the grid
@@ -269,9 +267,7 @@ def get_reduction_schedule(in_array: Array,
         # we are reducing a non-contiguous dimension
 
         schedule.grid = shape[:axes[0]]  # add all leading dimensions into the grid
-        grid_dim = symbolic.int_ceil(shape[contiguous_dimension], 32) if isinstance(
-            shape[contiguous_dimension], Expr) else shape[contiguous_dimension] / 32
-        # schedule.grid.append(symbolic.int_ceil(shape[contiguous_dimension], 32))  # each block computes 32 output values
+        grid_dim = symbolic.int_ceil(shape[contiguous_dimension], 32) # each block computes 32 output values
         schedule.grid.append(grid_dim)
 
         schedule.block = [16, 32]  # we use 16 threads per output value (could be any value in {1, ... , 32})
