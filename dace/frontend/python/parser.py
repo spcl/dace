@@ -254,13 +254,28 @@ class DaceProgram(pycommon.SDFGConvertible):
                 entry = self._cache.get(cachekey)
                 return entry.sdfg
 
-        sdfg = self._parse(args, kwargs, simplify=simplify, save=save, validate=validate)
+        sdfg, _ = self._parse(args, kwargs, simplify=simplify, save=save, validate=validate)
 
         if use_cache:
             # Add to cache
             self._cache.add(cachekey, sdfg, None)
 
         return sdfg
+    
+    def to_visitor(self, *args, simplify=None, validate=False, **kwargs) -> newast.ProgramVisitor:
+        """
+        Creates an SDFG from the DaCe function and returns the ProgramVisitor. If no type hints are provided on the
+        function, example arrays/scalars (i.e., with the same shape and type) must be given to this method in order to
+        construct a valid SDFG.
+
+        :param args: JIT (i.e., without type hints) argument examples.
+        :param kwargs: JIT (i.e., without type hints) keyword argument examples.
+        :param simplify: Whether to simplify the SDFG after parsing (default is None, which uses the .dace.conf setting)
+        :param validate: Whether to validate the parsed SDFG
+        :return: An SDFG object that can be transformed, saved, or called.
+        """
+
+        return self._visit(args, kwargs, simplify=simplify, validate=validate)
 
     def __sdfg__(self, *args, **kwargs) -> SDFG:
         return self._parse(args, kwargs, simplify=None, save=False, validate=False)
@@ -470,7 +485,7 @@ class DaceProgram(pycommon.SDFGConvertible):
         from dace.transformation import helpers as xfh
 
         # Obtain DaCe program as SDFG
-        sdfg, cached = self._generate_pdp(args, kwargs, simplify=simplify)
+        sdfg, cached, _ = self._generate_pdp(args, kwargs, simplify=simplify)
 
         # Apply simplification pass automatically
         if not cached and (simplify == True or
@@ -487,6 +502,29 @@ class DaceProgram(pycommon.SDFGConvertible):
             sdfg.validate()
 
         return sdfg
+    
+    def _visit(self, args, kwargs, simplify=None, validate=False) -> newast.ProgramVisitor:
+        """ 
+        Try to parse a DaceProgram object and return the `ProgramVisitor` object
+        that corresponds to it.
+
+        :param function: DaceProgram object (obtained from the ``@dace.program``
+                        decorator).
+        :param args: The given arguments to the function.
+        :param kwargs: The given keyword arguments to the function.
+        :param simplify: Whether to apply simplification pass or not (None
+                       uses configuration-defined value). 
+        :param validate: If True, validates the resulting SDFG after creation.
+        :return: The generated ProgramVisitor object.
+        """
+        # Obtain DaCe program as SDFG
+        sdfg, _, visitor = self._generate_pdp(args, kwargs, simplify=simplify)
+
+        # Validate SDFG
+        if validate:
+            sdfg.validate()
+
+        return visitor
 
     def _evaluate_annotation(self, ann):
         try:
@@ -870,16 +908,17 @@ class DaceProgram(pycommon.SDFGConvertible):
             sdfg = copy.deepcopy(sdfg)
 
             cached = True
+            visitor = None
         else:
             cached = False
 
             try:
-                sdfg = newast.parse_dace_program(self.name,
-                                                 parsed_ast,
-                                                 argtypes,
-                                                 self.dec_kwargs,
-                                                 closure,
-                                                 simplify=simplify)
+                sdfg, visitor = newast.parse_dace_program(self.name,
+                                                          parsed_ast,
+                                                          argtypes,
+                                                          self.dec_kwargs,
+                                                          closure,
+                                                          simplify=simplify)
             except Exception:
                 if Config.get_bool('frontend', 'verbose_errors'):
                     from dace.frontend.python import astutils
@@ -897,4 +936,4 @@ class DaceProgram(pycommon.SDFGConvertible):
             sdfg._recompile = self.recompile
 
 
-        return sdfg, cached
+        return sdfg, cached, visitor
