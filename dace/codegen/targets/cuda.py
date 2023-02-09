@@ -1124,10 +1124,31 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
             # Per-thread load (same as CPU copies)
             else:
                 self._cpu_codegen.copy_memory(sdfg, dfg, state_id, src_node, dst_node, edge, None, callsite_stream)
+
+        # FIXME: handle tasklet writing to GPU memory - should be merged with the code above
+        # FIXME: works only for simple scalar operations - does not supper structures
+        # FIXME: should we synchronize here?
+        elif (isinstance(src_node, nodes.Tasklet) and isinstance(dst_node, nodes.AccessNode)
+                and not CUDACodeGen._in_device_code
+                and (src_storage in cpu_storage_types or src_storage == dtypes.StorageType.Register)
+                and dst_storage == dtypes.StorageType.GPU_Global):
+
+            dst_desc = dst_node.desc(sdfg)
+            _, uconn, _, _, memlet = edge
+
+            # Since a tasklet always produce a register, we need to take its address
+            callsite_stream.write(
+                f'{self.backend}MemcpyAsync('
+                f'{cpp.cpp_ptr_expr(sdfg, memlet, dst_desc)},'
+                f'&{uconn},'
+                f'sizeof({dst_desc.dtype}),'
+                'cudaMemcpyHostToDevice);\n'
+            )
         else:
             self._cpu_codegen.copy_memory(sdfg, dfg, state_id, src_node, dst_node, edge, None, callsite_stream)
 
     def copy_memory(self, sdfg, dfg, state_id, src_node, dst_node, memlet, function_stream, callsite_stream):
+
         state = sdfg.node(state_id)
         if isinstance(src_node, nodes.Tasklet):
             src_storage = dtypes.StorageType.Register

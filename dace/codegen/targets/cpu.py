@@ -19,7 +19,7 @@ from dace.sdfg import nodes, utils as sdutils
 from dace.sdfg import (ScopeSubgraphView, SDFG, scope_contains_scope, is_array_stream_view, NodeNotExpandedError,
                        dynamic_map_inputs, local_transients)
 from dace.sdfg.scope import is_devicelevel_gpu, is_devicelevel_fpga
-from typing import Union
+from typing import Optional, Union
 from dace.codegen.targets import fpga
 
 
@@ -919,6 +919,7 @@ class CPUCodeGen(TargetCodeGenerator):
                         in_local_name = self.memlet_ctor(sdfg, in_memlets[0], node.out_connectors[uconn], False)
 
                     state_dfg = sdfg.nodes()[state_id]
+                    write_expr: Optional[str] = None
 
                     if memlet.wcr is not None:
                         nc = not cpp.is_write_conflicted(dfg, edge, sdfg_schedule=self._toplevel_schedule)
@@ -933,6 +934,8 @@ class CPUCodeGen(TargetCodeGenerator):
                         ptrname = cpp.ptr(memlet.data, desc, sdfg, self._frame)
                         is_global = desc.lifetime in (dtypes.AllocationLifetime.Global,
                                                       dtypes.AllocationLifetime.Persistent)
+                        dst_is_gpu = desc.storage == dtypes.StorageType.GPU_Global
+
                         try:
                             defined_type, _ = self._dispatcher.declared_arrays.get(ptrname, is_global=is_global)
                         except KeyError:
@@ -965,12 +968,32 @@ class CPUCodeGen(TargetCodeGenerator):
                                 decouple_array_interfaces=decouple_array_interfaces)
                             write_expr = f"*({ptr_str} + {array_expr}) = {in_local_name};"
                         else:
-                            desc_dtype = desc.dtype
-                            expr = cpp.cpp_array_expr(sdfg, memlet, codegen=self._frame)
-                            write_expr = codegen.make_ptr_assignment(in_local_name, conntype, expr, desc_dtype)
+
+                            # FIXME: should we also support scalars for writing into GPU?
+                            from dace.codegen.targets.cuda import CUDACodeGen  # Avoid import loop
+
+                            if not CUDACodeGen._in_device_code and dst_is_gpu:
+                                dispatcher.dispatch_copy(
+                                    node,
+                                    dst_node,
+                                    edge,
+                                    sdfg,
+                                    dfg,
+                                    state_id,
+                                    function_stream,
+                                    result,
+                                )
+                            else:
+                                # FIXME: why are generating here the array expression for GPU kernel?
+                                # this method is also called from cuda.py through the dispatch_subgraph method.
+                                # should this not be within CUDA?
+                                desc_dtype = desc.dtype
+                                expr = cpp.cpp_array_expr(sdfg, memlet, codegen=self._frame)
+                                write_expr = codegen.make_ptr_assignment(in_local_name, conntype, expr, desc_dtype)
 
                     # Write out
-                    result.write(write_expr, sdfg, state_id, node)
+                    if write_expr is not None:
+                        result.write(write_expr, sdfg, state_id, node)
 
             # Dispatch array-to-array outgoing copies here
             elif isinstance(node, nodes.AccessNode):
